@@ -66,7 +66,7 @@ def run_command(uids, env, n, timeout, retries, backoff, no_progress, save_resul
             
         # Get miners
         miners_dict = await miners(uids)
-        active_miners = {uid: m for uid, m in miners_dict.items() if m.model}
+            active_miners = {uid: m for uid, m in miners_dict.items() if m.model}
         logger.info("Found %d active miners out of %d total", len(active_miners), len(miners_dict))
             
         # Run evaluation

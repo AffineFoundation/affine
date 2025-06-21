@@ -54,19 +54,19 @@ async def test_all_environments():
     
     # Test COIN environment
     print("\n📎 Testing COIN Environment:")
-    coin_env = af.COIN()
+        coin_env = af.COIN()
     coin_challenge = await coin_env.generate()
     print(f"✅ COIN Challenge: {coin_challenge.prompt}")
     
     # Test correct evaluation
-    correct_response = af.Response(
+        correct_response = af.Response(
         response=coin_challenge.extra['answer'],
-        latency_seconds=0.1,
-        attempts=1,
+            latency_seconds=0.1,
+            attempts=1,
         model="test",
-        error=None
-    )
-    
+            error=None
+        )
+        
     evaluation = await coin_env.evaluate(coin_challenge, correct_response)
     print(f"✅ COIN Correct Score: {evaluation.score}")
     assert evaluation.score == 1.0, "COIN correct answer should score 1.0"
@@ -85,11 +85,11 @@ async def test_all_environments():
     sat_response = af.Response(
         response=solution_str,
         latency_seconds=0.2,
-        attempts=1,
+            attempts=1,
         model="test",
-        error=None
-    )
-    
+            error=None
+        )
+        
     sat_evaluation = await sat_env.evaluate(sat_challenge, sat_response)
     print(f"✅ SAT Correct Score: {sat_evaluation.score}")
     assert sat_evaluation.score == 1.0, "SAT planted solution should score 1.0"
@@ -106,12 +106,12 @@ async def test_all_environments():
     # Test with UNSAT claim (should fail)
     unsat_response = af.Response(
         response="UNSAT",
-        latency_seconds=0.1,
-        attempts=1,
+            latency_seconds=0.1,
+            attempts=1,
         model="test",
-        error=None
-    )
-    
+            error=None
+        )
+        
     unsat_evaluation = await sat1_env.evaluate(sat1_challenge, unsat_response)
     print(f"✅ SAT1 UNSAT Score: {unsat_evaluation.score}")
     assert unsat_evaluation.score == 0.0, "SAT1 UNSAT claim should score 0.0"
@@ -143,7 +143,7 @@ async def test_enhanced_features():
     
     # Test progress bars with multiple challenges
     print("\n📊 Testing Progress Bars:")
-    coin_env = af.COIN()
+        coin_env = af.COIN()
     challenges = await coin_env.many(5)
     print(f"✅ Generated {len(challenges)} challenges")
     
@@ -266,15 +266,15 @@ async def test_error_handling():
     challenge = await coin_env.generate()
     
     # Response with error
-    error_response = af.Response(
-        response=None,
-        latency_seconds=5.0,
-        attempts=3,
+        error_response = af.Response(
+            response=None,
+            latency_seconds=5.0,
+            attempts=3,
         model="test",
-        error="Connection timeout"
-    )
-    
-    evaluation = await coin_env.evaluate(challenge, error_response)
+            error="Connection timeout"
+        )
+        
+            evaluation = await coin_env.evaluate(challenge, error_response)
     print(f"✅ Error response handled: Score = {evaluation.score}")
     
     # Test SAT with incomplete solution
@@ -497,9 +497,9 @@ async def test_elo_system():
                 response = af.Response(
                     response=response_text,
                     latency_seconds=random.uniform(0.1, 0.5),
-                    attempts=1,
+                attempts=1,
                     model=miner.model,
-                    error=None
+                error=None
                 )
                 
                 evaluation = await challenge.evaluate(response)

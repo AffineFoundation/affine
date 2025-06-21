@@ -52,7 +52,58 @@ uv pip install -e .
 af --help
 ```
 
-### 2. **Configuration Setup**
+### 2. **Prerequisites: Chutes.ai Platform Setup**
+
+Affine integrates with the **Chutes.ai platform** for model deployment and evaluation. You must complete the Chutes setup first:
+
+#### **🔑 Create Bittensor Wallet (if needed)**
+```bash
+# Install Bittensor CLI (if not already installed)
+pip install 'bittensor<8'
+
+# Create wallet
+btcli wallet new_coldkey --n_words 24 --wallet.name chutes-user
+btcli wallet new_hotkey --wallet.name chutes-user --n_words 24 --wallet.hotkey chutes-user-hotkey
+```
+
+#### **🚀 Install & Register with Chutes**
+```bash
+# Install Chutes CLI
+pip install chutes
+
+# Register with Chutes (requires Bittensor wallet)
+chutes register
+
+# Create API key for Affine
+chutes keys create --name affine-key --admin
+```
+
+#### **💰 Enable Developer Role (if needed)**
+
+For model deployment, you may need developer access:
+
+**Option A: Validators/Subnet Owners (Free)**
+```bash
+# Link your validator/owner key for free developer access
+chutes link \
+  --hotkey-path ~/.bittensor/wallets/wallet/hotkeys/hotkey \
+  --hotkey-type subnet_owner  # or "validator"
+```
+
+**Option B: TAO Deposit (Refundable)**
+```bash
+# Check current deposit amount
+curl -s https://api.chutes.ai/developer_deposit | jq .
+
+# Get your deposit address
+curl -s https://api.chutes.ai/users/me \
+  -H 'authorization: Bearer YOUR_API_KEY'
+
+# Send TAO to the deposit address (via Bittensor wallet)
+# Then wait 7+ days to request refund if needed
+```
+
+### 3. **Configuration Setup**
 
 ```bash
 # Set your API credentials
@@ -71,7 +122,7 @@ af set CHUTES_IMAGE chutes/sglang:v0.4.6
 af config --show
 ```
 
-### 3. **Run Your First Challenge**
+### 4. **Run Your First Challenge**
 
 ```bash
 # Simple coin flip challenges with progress bars
@@ -548,6 +599,24 @@ asyncio.run(test_custom_env())
 ---
 
 ## 🚨 **Troubleshooting & Best Practices**
+
+### **Platform Dependencies**
+
+Affine integrates with multiple platforms that must be properly configured:
+
+- **🔗 Chutes.ai**: Required for model evaluation and deployment
+- **⛓️ Bittensor**: Blockchain network for miner discovery and validation  
+- **🤗 HuggingFace**: Model repository for deployment pipeline
+- **🐍 Python 3.9+**: Required runtime environment
+
+**⚠️ Important**: Complete the Chutes setup (Section 2) before using Affine for model evaluation.
+
+### **Bittensor Integration Notes**
+
+Affine follows standard Bittensor development patterns:
+- `bt.async_subtensor()` for async operations (miner discovery, metagraph queries)
+- `bt.subtensor()` for sync operations (blockchain commits, transactions)
+- Standard wallet initialization: `bt.wallet(name=coldkey, hotkey=hotkey)`
 
 ### **Common Issues**
 
