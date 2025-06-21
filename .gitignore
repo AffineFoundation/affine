@@ -1,3 +1,40 @@
+# Project-specific ignores
+quick_test.py
+COMPREHENSIVE_VALIDATION.ipynb
+test_validation.ipynb
+test_*.py
+*_test.py
+*.tmp
+*.temp
+
+# Affine-specific
+.affine/
+~/.affine/results/test_*
+
+# Model files (too heavy for git)
+affine/model/
+model/
+models/
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.onnx
+*.h5
+*.pkl
+*.pickle
+
+# Jupyter notebook outputs and checkpoints
+*.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
 # Results
 results/
 
@@ -75,9 +112,6 @@ docs/_build/
 
 # PyBuilder
 target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
 
 # IPython
 profile_default/

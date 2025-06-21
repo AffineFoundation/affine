@@ -11,12 +11,16 @@ dependencies = [
     "ipykernel>=6.0.0",
     "click>=8.0.0",
     "click-log>=0.4.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "huggingface_hub",
+    "alive-progress>=3.0.0",
 ]
 readme = "README.md"
 requires-python = ">=3.9"
 
 [project.scripts]
-af = "affine:cli"
+af = "affine.cli:cli"
 
 [build-system]
 requires = ["setuptools>=61.0"]

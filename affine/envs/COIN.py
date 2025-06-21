@@ -1,19 +1,35 @@
+"""
+COIN environment - Simple coin flip guessing challenge.
+"""
 import random
-import affine as af
+from .. import BaseEnv, Challenge, Response, Evaluation
 
-class COIN(af.BaseEnv):
-    async def generate(self) -> af.Challenge:
-        return af.Challenge(
+
+class COIN(BaseEnv):
+    """Simple coin flip guessing challenge environment."""
+    
+    async def generate(self) -> Challenge:
+        """Generate a coin flip challenge."""
+        answer = random.choice(["HEADS", "TAILS"])
+        return Challenge(
             env=self,
             prompt="I flipped a coin, guess HEADS or TAILS.",
-            extra={"answer": random.choice(["HEADS", "TAILS"])}
+            extra={"answer": answer}
         )
 
-    async def evaluate(self, challenge: af.Challenge, response: af.Response) -> af.Evaluation:
-        ans = challenge.extra["answer"]
-        guess = (response.response or "").strip().upper()
-        return af.Evaluation(
+    async def evaluate(self, challenge: Challenge, response: Response) -> Evaluation:
+        """Evaluate the coin flip guess."""
+        expected_answer = challenge.extra["answer"]
+        user_guess = (response.response or "").strip().upper()
+        
+        is_correct = user_guess == expected_answer
+        
+        return Evaluation(
             env=self,
-            score=float(guess == ans),
-            extra={"answer": ans, "guess": guess}
+            score=float(is_correct),
+            extra={
+                "expected": expected_answer,
+                "guess": user_guess,
+                "correct": is_correct
+            }
         )
