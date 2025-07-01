@@ -15,6 +15,8 @@ from abc import ABC, abstractmethod
 from alive_progress import alive_bar
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional, Union
+from .sample_manager import SampleManager
+from . import val_config
 
 # ── load env ─────────────────────────────────────────────────────────────────
 load_dotenv(os.path.expanduser("~/.affine/config.env"), override=True)
@@ -40,7 +42,8 @@ def setup_logging(verbosity: int):
     elif verbosity == 2: level = logging.DEBUG
     elif verbosity == 1: level = logging.INFO
     else: level = logging.CRITICAL + 1
-    for noisy_logger in [ "websockets", "bittensor", "bittensor-cli", "btdecode", "asyncio"]:
+    # Suppress noisy loggers
+    for noisy_logger in ["websockets", "bittensor", "bittensor-cli", "btdecode", "asyncio", "fsspec", "datasets.utils.file_utils"]:
         logging.getLogger(noisy_logger).setLevel(logging.WARNING)
     logging.basicConfig(
         level=level,
@@ -68,7 +71,48 @@ class BaseEnv(BaseModel, ABC):
         arbitrary_types_allowed = True
 
     async def many(self, n: int) -> List["Challenge"]:
-        return [await self.generate() for _ in range(n)]
+        """Generate n challenges, always using samples from JSONL"""
+        return await self._many_from_samples(n)
+    
+    async def _many_from_samples(self, n: int) -> List["Challenge"]:
+        """Get challenges from samples, generating more if needed, with background replenishment"""
+        sample_manager = SampleManager()
+        
+        # Use the new ensure_samples_available method which handles parallel generation
+        available_samples = await sample_manager.ensure_samples_available(self, n)
+        
+        # Create challenges from samples
+        challenges = []
+        sample_ids_to_remove = []
+        
+        for sample in available_samples:
+            challenge = Challenge(
+                env=self,
+                prompt=sample.prompt,
+                extra=sample.extra.copy()
+            )
+            challenges.append(challenge)
+            sample_ids_to_remove.append(sample.id)
+        
+        # Remove used samples immediately
+        if sample_ids_to_remove:
+            env_name = self.__class__.__name__
+            sample_manager.remove_samples(env_name, sample_ids_to_remove)
+            logger.debug(f"Removed {len(sample_ids_to_remove)} used samples for {env_name}")
+        
+        # Get current stats
+        stats = sample_manager.get_stats(self.__class__.__name__)
+        
+        # If samples are running low (less than certain % of target), trigger background replenishment
+        if stats.total < (val_config.TARGET_STOCK * val_config.STOCK_REPLENISH_THRESHOLD):
+            logger.info(f"Sample stock running low ({stats.total}/{val_config.TARGET_STOCK}), triggering background replenishment")
+            # Store the background task in the environment for later cleanup
+            if not hasattr(self, '_background_tasks'):
+                self._background_tasks = []
+            replenish_task = asyncio.create_task(sample_manager.replenish_stock_background(self))
+            self._background_tasks.append(replenish_task)
+        
+        return challenges
 
     @abstractmethod
     async def generate(self) -> "Challenge":
@@ -78,6 +122,57 @@ class BaseEnv(BaseModel, ABC):
     async def evaluate(self, challenge: "Challenge", response: Response) -> "Evaluation":
         ...
 
+    async def generate_input_with_llm(self, prompt: str, model: str = "deepseek-ai/DeepSeek-R1", timeout: float = val_config.LLM_RESPONSE_TIMEOUT) -> str:
+        """Generate input using LLM call"""
+        url = "https://llm.chutes.ai/v1/chat/completions"
+        token = get_conf("CHUTES_API_KEY")
+        hdr = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        
+        logger.debug(f"Making LLM API call to {url} with model {model}")
+        logger.debug(f"Prompt length: {len(prompt)} characters")
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    json={"model": model, "messages": [{"role": "user", "content": prompt}]},
+                    headers=hdr,
+                    timeout=timeout
+                ) as r:
+                    text = await r.text(errors="ignore")
+                    if r.status != 200:
+                        logger.error(f"LLM API error: {r.status} - {text}")
+                        raise RuntimeError(f"{r.status}:{text}")
+                    data = await r.json()
+                    response = data["choices"][0]["message"]["content"]
+                    logger.debug(f"Got LLM response of length: {len(response)} characters")
+                    return response
+        except Exception as e:
+            logger.error(f"LLM call failed: {str(e)}")
+            raise
+
+    async def generate_inputs_parallel(self, prompts: List[str], max_concurrent: int = val_config.MAX_CONCURRENT_REQUESTS, model: str = "deepseek-ai/DeepSeek-R1", timeout: float = val_config.LLM_RESPONSE_TIMEOUT) -> List[str]:
+        """Generate multiple inputs in parallel using LLM calls"""
+        logger.debug(f"Starting parallel generation of {len(prompts)} prompts with max_concurrent={max_concurrent}")
+        semaphore = asyncio.Semaphore(max_concurrent)
+        
+        async def generate_with_semaphore(prompt: str) -> str:
+            async with semaphore:
+                try:
+                    logger.debug("Acquiring semaphore for LLM call")
+                    result = await self.generate_input_with_llm(prompt, model, timeout)
+                    logger.debug("Successfully generated input with LLM")
+                    return result
+                except Exception as e:
+                    logger.error(f"Failed to generate input: {e}")
+                    return None
+        
+        tasks = [generate_with_semaphore(prompt) for prompt in prompts]
+        logger.debug(f"Created {len(tasks)} tasks for parallel execution")
+        results = await asyncio.gather(*tasks)
+        logger.debug(f"Completed parallel generation with {len([r for r in results if r is not None])} successful results")
+        return results
+
 class Challenge(BaseModel):
     env: BaseEnv
     prompt: str
@@ -85,6 +180,18 @@ class Challenge(BaseModel):
 
     async def evaluate(self, response: Response) -> "Evaluation":
         return await self.env.evaluate(self, response)
+        
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert challenge to dictionary format for sample storage"""
+        data = {
+            'prompt': self.prompt  # Always include the prompt
+        }
+        # Flatten extra fields into top level
+        if self.extra:
+            # Don't overwrite prompt if it exists in extra
+            extra_data = {k: v for k, v in self.extra.items() if k != 'prompt'}
+            data.update(extra_data)
+        return data
 
 class Evaluation(BaseModel):
     env: BaseEnv
@@ -115,7 +222,7 @@ async def get_chute(model: str) -> Dict[str, Any]:
             return info
 
 async def miners(uids: Optional[Union[int, List[int]]] = None, no_null: bool = False) -> Dict[int, Miner]:
-    NETUID = 120
+    NETUID = val_config.BITTENSOR_NETUID
     s = bt.async_subtensor()
     await s.initialize()
     meta = await s.metagraph(NETUID)
@@ -131,6 +238,8 @@ async def miners(uids: Optional[Union[int, List[int]]] = None, no_null: bool = F
         hk = meta.hotkeys[uid] if 0 <= uid < len(meta.hotkeys) else ""
         commits = revs.get(hk) or []
         blk, mdl = commits[-1] if commits else (None, None)
+        mdl = "deepseek-ai/DeepSeek-R1"
+        logger.debug("Revealed model: %s", mdl)
         if no_null and blk is None:
             continue
         out[uid] = Miner(uid=uid, hotkey=hk,
@@ -195,7 +304,7 @@ async def _run_one(
 async def run(
     challenges: Union[Challenge, List[Challenge]],
     miners: Optional[Union[Dict[int, Miner], List[Miner], int, List[int]]] = None,
-    timeout: float = 120.0,
+    timeout: float = val_config.LLM_RESPONSE_TIMEOUT,
     retries: int = 3,
     backoff: float = 1.0,
     progress: bool = True,
@@ -224,8 +333,9 @@ async def run(
 # ── CLI & commands ────────────────────────────────────────────────────────────
 from .envs.coin import COIN
 from .envs.sat import SAT
+from .envs.abd import ABD
 
-ENVS = {"COIN": COIN, "SAT": SAT}
+ENVS = {"COIN": COIN, "SAT": SAT, "ABD": ABD}
 
 # ── persistent Elo helpers ──────────────────────────────────────────
 ELO_FILE = os.path.expanduser("~/.affine/results/elo.json")
@@ -268,11 +378,31 @@ def cli(verbose):
 @click.option('-n', '--num', 'n', default=1, show_default=True, help='Number of challenges')
 def run_command(uids, env, n):
     """Run N challenges in ENV against miners."""
-    logger.debug("Running %d challenges in %s for UIDs %s", n, env, uids)
+    # Get recommended timeout based on environment
+    env_class = ENVS[env.upper()]
+    timeout = getattr(env_class, 'LLM_RESPONSE_TIMEOUT', 600.0)
+    logger.debug("Using recommended timeout: %ds for %s environment", timeout, env)
+    
+    logger.debug("Running %d challenges in %s for UIDs %s with timeout %ds", n, env, uids, timeout)
+    
     async def _coro():
-        chals = await ENVS[env.upper()]().many(n)
+        env_instance = ENVS[env.upper()]()
+        chals = await env_instance.many(n)
         ms = await miners(uids)
-        return await run(challenges=chals, miners=ms)
+        results = await run(challenges=chals, miners=ms, timeout=timeout)
+        
+        # Wait for any background replenishment tasks to complete
+        if hasattr(env_instance, '_background_tasks'):
+            background_tasks = [task for task in env_instance._background_tasks if not task.done()]
+            if background_tasks:
+                logger.info(f"Waiting for {len(background_tasks)} background tasks to complete...")
+                try:
+                    await asyncio.gather(*background_tasks, return_exceptions=True)
+                    logger.info("Background tasks completed")
+                except Exception as e:
+                    logger.warning(f"Some background tasks failed: {e}")
+        
+        return results
     results = asyncio.run(_coro())
     print_results(results)
     save(results)
@@ -320,7 +450,7 @@ def deploy(filename, chutes_api_key, hf_user, hf_token, chute_user, wallet_cold,
             existing_repo=existing_repo,
             blocks_until_reveal=blocks_until_reveal
         )
-        click.echo(f"✅ Deployment completed successfully!")
+        click.echo(f"Deployment completed successfully!")
         click.echo(f"Repository: {repo_id}")
         return repo_id
     
@@ -347,10 +477,95 @@ def set_config(key: str, value: str):
     logger.info("Set %s in %s", key, path)
     click.echo(f"Set {key} in {path}")
 
+@cli.command('gen')
+@click.argument('env', type=click.Choice(list(ENVS), case_sensitive=False), required=False)
+@click.option('-n', '--num', type=int, default=None, help='Number of samples to generate per environment')
+@click.option('--stock', default=val_config.TARGET_STOCK, show_default=True, help='Target stock level (generate only if below this)')
+@click.option('--max-concurrent', default=val_config.MAX_CONCURRENT_REQUESTS, show_default=True, help='Maximum concurrent sample generation tasks')
+def gen_samples(env, num, stock, max_concurrent):
+    """Generate samples for environments. If ENV not specified, generates for all.
+    If -n is specified, generates exactly that many samples regardless of current stock.
+    If -n is not specified, generates samples to meet the target stock level."""
+    sample_manager = SampleManager()
+    
+    # Determine which environments to process
+    if env:
+        env_names = [env.upper()]
+    else:
+        env_names = list(ENVS.keys())
+    
+    async def _generate():
+        for env_name in env_names:
+            logger.info(f"Processing {env_name}")
+            
+            # Check current stock
+            stats = sample_manager.get_stats(env_name)
+            
+            if num is not None:
+                # If -n is specified, generate exactly that many samples
+                actual_generate = num
+                click.echo(f"{env_name}: Generating {actual_generate} samples (current: {stats.total})")
+            else:
+                # If -n is not specified, generate to meet target stock
+                if stats.total >= stock:
+                    click.echo(f"✓ {env_name}: {stats.total} available samples (target: {stock}) - skipping")
+                    continue
+                
+                needed = stock - stats.total
+                actual_generate = needed
+                click.echo(f"{env_name}: Generating {actual_generate} samples to meet target (current: {stats.total}, target: {stock})")
+            
+            # Generate samples using the new parallel method
+            env_instance = ENVS[env_name]()
+            samples = await sample_manager.generate_samples_for_env(env_instance, actual_generate, max_concurrent)
+            
+            # Store the samples
+            sample_manager.add_samples(env_name, samples)
+            
+            # Show updated stats
+            new_stats = sample_manager.get_stats(env_name)
+            click.echo(f"{env_name}: Generated {len(samples)} samples. Total available: {new_stats.total}")
+    
+    asyncio.run(_generate())
+
+@cli.command('samples')
+@click.argument('env', type=click.Choice(list(ENVS), case_sensitive=False), required=False)
+def samples_info(env):
+    """Show sample statistics. If ENV not specified, shows all environments."""
+    sample_manager = SampleManager()
+    
+    # Show statistics
+    if env:
+        stats = {env.upper(): sample_manager.get_stats(env.upper())}
+    else:
+        stats = sample_manager.get_all_stats()
+    
+    if not stats:
+        click.echo("No sample data found. Run 'af gen' to generate samples.")
+        return
+    
+    click.echo("Sample Statistics:")
+    click.echo("-" * 50)
+    header = f"{'Environment':<12} {'Available':<10} {'Target':<8} {'Status':<12}"
+    click.echo(header)
+    click.echo("-" * 50)
+    
+    for env_name, stat in stats.items():
+        if stat.total == 0:
+            status = "No samples"
+        elif stat.total >= stat.target_stock:
+            status = "Good"
+        elif stat.total >= stat.target_stock * 0.5:
+            status = "Low"
+        else:
+            status = "Critical"
+        
+        click.echo(f"{env_name:<12} {stat.total:<10} {stat.target_stock:<8} {status:<12}")
+
 @cli.command('validate')
-@click.option("--k-factor", "-k", default=32, show_default=True, help="Elo K-factor")
-@click.option("--challenges", "-c", default=2, show_default=True, help="SAT challenges per game")
-@click.option("--delay", "-d", default=5.0, show_default=True, help="Retry delay (s)")
+@click.option("--k-factor", "-k", default=val_config.ELO_K_FACTOR, show_default=True, help="Elo K-factor")
+@click.option("--challenges", "-c", default=val_config.CHALLENGES_PER_GAME, show_default=True, help="SAT challenges per game")
+@click.option("--delay", "-d", default=val_config.RETRY_DELAY, show_default=True, help="Retry delay (s)")
 def validator(k_factor: int, challenges: int, delay: float):
     """Continuously pit two random miners head-to-head."""
     elo: Dict[str, float] = load_elo()
@@ -393,9 +608,9 @@ def validator(k_factor: int, challenges: int, delay: float):
 
         # Compose message
         if sa != sb:
-            msg = f"🏆 Winner: {winner.uid} (score {sa:.2f} – {sb:.2f}) against {loser.uid}"
+            msg = f"Winner: {winner.uid} (score {sa:.2f} – {sb:.2f}) against {loser.uid}"
         else:
-            msg = f"🤝 Draw on scores ({sa:.2f} – {sb:.2f}), tiebreak winner {winner.uid}"
+            msg = f"Draw on scores ({sa:.2f} – {sb:.2f}), tiebreak winner {winner.uid}"
 
         # Output
         if progress is None:

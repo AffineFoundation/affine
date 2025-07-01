@@ -63,7 +63,7 @@ async def get_chutes_model_info(model: str) -> dict:
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
-                    print(f"✓ vLLM config fetched for model '{model}'")
+                    print(f"vLLM config fetched for model '{model}'")
                     return data
                 else:
                     print(f"Failed to fetch vLLM config: HTTP {response.status}")
