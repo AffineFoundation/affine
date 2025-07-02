@@ -76,17 +76,20 @@ uv run af run 5 SAT -n 10
 - **Background Replenishment**: Stock is automatically replenished in the background
 - **Smart Stock Management**: Maintains target inventory levels automatically
 
-## Validation & Elo Ratings
+## Validation & Scoring
 
-Affine includes a comprehensive validation system that gives each miner the same challenges and calculates Elo ratings based on comparative performance:
+Affine includes a comprehensive validation system using GRPO (Group Relative Performance Optimization) that tests miners across multiple domains with Sybil-proof scoring:
 
 ### Basic Validation
 ```bash
-# Validate specific miners with default settings (10 samples each, SAT environment)
+# Validate specific miners with default settings (10 samples per environment, all environments)
 uv run af validate --uids "1,2,3,4,5"
 
 # Validate with specific environment and custom samples
-uv run af validate --uids "1,2,3,4,5" --env COIN --samples 20
+uv run af validate --uids "1,2,3,4,5" --env "SAT" --samples 20
+
+# Validate with multiple environments
+uv run af validate --uids "1,2,3,4,5" --env "SAT,ABD" --samples 15
 
 # Multiple validation cycles
 uv run af validate --uids "1,2,3,4,5" --cycles 3
@@ -94,34 +97,42 @@ uv run af validate --uids "1,2,3,4,5" --cycles 3
 # Continuous validation (runs until interrupted)
 uv run af validate --uids "1,2,3,4,5" --cycles 0
 
-# Validate all available miners
-uv run af validate --env COIN --samples 15
+# Validate all available miners across all environments
+uv run af validate --env "ALL" --samples 15
 ```
 
-### Check Elo Ratings
+### Check Evaluation Scores
 ```bash
-# View Elo ratings for specific miners
-uv run af elo --uids "1,2,3,4,5"
+# View eval scores for specific miners
+uv run af scores --uids "1,2,3,4,5"
 
-# View all Elo ratings
-uv run af elo
+# View all eval scores (top 20)
+uv run af scores
+
+# View more miners
+uv run af scores --limit 50
 ```
 
 ### Validation Options
 
 - **`--uids`**: Specify which miners to validate (comma-separated)
-- **`--env`**: Choose environment (COIN/SAT/ABD, default: SAT)
-- **`--samples`**: Number of samples each miner faces (default: 10)
+- **`--env`**: Choose environment(s) to test (SAT/ABD/COIN/ALL, or comma-separated like "SAT,ABD", default: ALL)
+- **`--samples`**: Number of samples each miner faces per environment (default: 10)
 - **`--cycles`**: Number of validation cycles (default: 1, use 0 for continuous)
-- **`--k-factor`**: Elo rating sensitivity (default: 32)
+- **`--ema-alpha`**: Exponential moving average smoothing factor (default: 0.1)
+- **`--skew-penalty`**: Weight for domain skew penalty (default: 0.1)
 - **`--delay`**: Delay between cycles in seconds (default: 5.0)
 
 ### How It Works
 
-1. **Fair Comparison**: All miners get the exact same set of challenges
-2. **Total Cost Predictable**: N miners × S samples = total evaluations
-3. **Pairwise Elo Updates**: Every miner pair is compared and Elo ratings updated
-4. **Simple & Clear**: Easy to understand and configure
+1. **Multi-Environment Testing**: Miners are tested across multiple environments (SAT, ABD, COIN)
+2. **GRPO Scoring**: Group Relative Performance Optimization - scores are relative to group averages
+3. **Sybil-Proof Design**: Per-model aggregation collapses Sybil clones into one score
+4. **Two-Step Winner Selection**:
+   - **Step 1**: Find the best performing model (using aggregate performance from all miners running each model)
+   - **Step 2**: Among miners using the winning model, select the one with oldest block commitment (first-come priority)
+5. **Winner-Take-All**: Final score = min(environment_scores) - punishes environment imbalance
+6. **Smooth Updates**: Exponential moving average reduces score volatility
 
 ### Debugging Tools
 ```bash

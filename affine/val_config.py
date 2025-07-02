@@ -13,7 +13,9 @@ LLM_RESPONSE_TIMEOUT = 600  # Default timeout for LLM API responses in seconds
 DEFAULT_PROGRAM_EXECUTION_TIMEOUT = 30  # Default timeout for program execution in seconds
 
 # Validation configurations
-ELO_K_FACTOR = 32  # K-factor for Elo rating calculations
+# GRPO evaluation parameters
+EVALUATOR_EMA_ALPHA = 0.1  # Exponential moving average smoothing factor
+EVALUATOR_SKEW_PENALTY_WEIGHT = 0.1  # Weight for domain skew penalty
 DEFAULT_SAMPLES = 10  # Default number of samples each miner will face
 RETRY_DELAY = 5.0  # Delay between validation retries in seconds
 MAX_MINERS_PER_BATCH = 64  # Maximum number of miners to process in a validation batch

@@ -344,33 +344,8 @@ from .envs.abd import ABD
 
 ENVS = {"COIN": COIN, "SAT": SAT, "ABD": ABD}
 
-# ── persistent Elo helpers ──────────────────────────────────────────
-ELO_FILE = os.path.expanduser("~/.affine/results/elo.json")
-
-def load_elo() -> Dict[str, float]:
-    """Load Elo table from disk, creating it if absent."""
-    if not os.path.exists(ELO_FILE):
-        # Ensure directory exists and create an empty file
-        os.makedirs(os.path.dirname(ELO_FILE), exist_ok=True)
-        with open(ELO_FILE, "w") as f:
-            json.dump({}, f)
-        return defaultdict(lambda: 1500.0)
-
-    try:
-        with open(ELO_FILE) as f:
-            data = json.load(f)
-        return {k: float(v) for k, v in data.items()}
-    except Exception:
-        # Corrupted file: start fresh
-        return defaultdict(lambda: 1500.0)
-
-def save_elo(table: Dict[str, float]) -> None:
-    """Persist Elo dict to disk."""
-    os.makedirs(os.path.dirname(ELO_FILE), exist_ok=True)
-    # convert defaultdict to regular dict for json
-    serial = dict(table)
-    with open(ELO_FILE, "w") as f:
-        json.dump(serial, f, indent=2)
+# ── GRPO evaluation system ─────────────────────────────────────────
+from .evaluator import Evaluator
 
 @click.group()
 @click.option('-v', '--verbose', count=True,
@@ -570,14 +545,15 @@ def samples_info(env):
         click.echo(f"{env_name:<12} {stat.total:<10} {stat.target_stock:<8} {status:<12}")
 
 @cli.command('validate')
-@click.option("--k-factor", "-k", default=val_config.ELO_K_FACTOR, show_default=True, help="Elo K-factor")
-@click.option("--samples", "-s", default=val_config.DEFAULT_SAMPLES, show_default=True, help="Number of samples each miner will face")
+@click.option("--samples", "-s", default=val_config.DEFAULT_SAMPLES, show_default=True, help="Number of samples each miner will face per environment")
 @click.option("--delay", "-d", default=val_config.RETRY_DELAY, show_default=True, help="Delay between validation cycles (s)")
 @click.option("--uids", "-u", default=None, help="Comma-separated UIDs to validate (e.g., '1,2,3,4,5'). If not specified, uses all available miners.")
-@click.option("--env", "-e", type=click.Choice(list(ENVS), case_sensitive=False), default="SAT", show_default=True, help="Environment to use for validation")
+@click.option("--env", "-e", default="ALL", show_default=True, help="Environment to test (SAT/ABD/COIN/ALL), or comma-separated for multiple (e.g., 'SAT,ABD')")
 @click.option("--cycles", "-c", default=1, show_default=True, type=int, help="Number of validation cycles to run. Use 0 for continuous mode.")
-def validator(k_factor: int, samples: int, delay: float, uids: str, env: str, cycles: int):
-    """Validate miners by giving each the same number of samples and comparing performance."""
+@click.option("--ema-alpha", default=val_config.EVALUATOR_EMA_ALPHA, show_default=True, help="Exponential moving average smoothing factor")
+@click.option("--skew-penalty", default=val_config.EVALUATOR_SKEW_PENALTY_WEIGHT, show_default=True, help="Weight for domain skew penalty")
+def validator(samples: int, delay: float, uids: str, env: str, cycles: int, ema_alpha: float, skew_penalty: float):
+    """Validate miners using GRPO (Group Relative Performance Optimization) across multiple environments."""
     # Parse UIDs if provided
     target_uids = None
     if uids:
@@ -590,71 +566,66 @@ def validator(k_factor: int, samples: int, delay: float, uids: str, env: str, cy
     else:
         logger.info("Validating all available miners")
     
-    # Get environment instance
-    env_instance = ENVS[env.upper()]()
-    logger.info(f"Using environment: {env.upper()}")
+    # Parse environments
+    if env.upper() == "ALL":
+        env_names = list(ENVS.keys())  # Use all available environments
+    else:
+        env_names = [e.strip().upper() for e in env.split(',')]
+        for environment in env_names:
+            if environment not in ENVS:
+                click.echo(f"Invalid environment: {environment}. Available environments: {list(ENVS.keys())}", err=True)
+                sys.exit(1)
     
-    elo: Dict[str, float] = load_elo()
-    if isinstance(elo, dict) and not isinstance(elo, defaultdict):
-        elo = defaultdict(lambda: 1500.0, elo)
+    logger.info(f"Using environments: {env_names}")
+    
+    # Initialize GRPO evaluator
+    evaluator = Evaluator(
+        required_domains=env_names,
+        ema_alpha=ema_alpha,
+        skew_penalty_weight=skew_penalty
+    )
 
-    def update_elo_pairwise(a: Miner, b: Miner, score_a: float, score_b: float):
-        """Update Elo ratings for two miners based on their scores"""
-        ra, rb = elo[a.hotkey], elo[b.hotkey]
-        qa, qb = 10**(ra/400), 10**(rb/400)
-        ea, eb = qa/(qa+qb), 1 - qa/(qa+qb)
+    async def run_validation_cycle(available_miners: List[Miner]) -> List[Any]:
+        """Run one validation cycle: test each miner across all environments and return all results."""
+        click.echo(f"🔄 Running GRPO validation cycle with {len(available_miners)} miners ({samples} samples per environment)")
         
-        # Determine winner (1.0 for win, 0.5 for tie, 0.0 for loss)
-        if score_a > score_b:
-            result_a = 1.0
-        elif score_a < score_b:
-            result_a = 0.0
-        else:
-            # Tie - use tiebreaker
-            if a.block is not None and b.block is not None:
-                result_a = 1.0 if a.block < b.block else 0.0
-            else:
-                result_a = 1.0 if a.uid < b.uid else 0.0
+        all_results = []
         
-        elo[a.hotkey] = ra + k_factor * (result_a - ea)
-        elo[b.hotkey] = rb + k_factor * ((1 - result_a) - eb)
-        save_elo(elo)
-        logger.trace("ELO updated: %s→%.1f, %s→%.1f", a.hotkey, elo[a.hotkey], b.hotkey, elo[b.hotkey])
-
-    async def run_validation_cycle(available_miners: List[Miner]) -> Dict[int, float]:
-        """Run one validation cycle: give each miner the same samples and return their scores."""
-        click.echo(f"🔄 Running validation cycle with {len(available_miners)} miners ({samples} samples each)")
+        # Test each environment
+        for env_name in env_names:
+            click.echo(f"🧪 Testing environment: {env_name}")
+            env_instance = ENVS[env_name]()
+            
+            # Generate challenges for this environment
+            challenges = await env_instance.many(samples)
+            click.echo(f"📝 Generated {len(challenges)} {env_name} challenges")
+            
+            # Run all miners on these challenges
+            env_results = await run(challenges=challenges, miners=available_miners, progress=False)
+            all_results.extend(env_results)
+            
+            # Show environment results
+            env_scores = {}
+            for result in env_results:
+                uid = result.miner.uid
+                if uid not in env_scores:
+                    env_scores[uid] = 0.0
+                env_scores[uid] += result.evaluation.score
+            
+            click.echo(f"📊 {env_name} Results:")
+            sorted_results = sorted(env_scores.items(), key=lambda x: x[1], reverse=True)
+            for uid, score in sorted_results:
+                click.echo(f"   UID {uid}: {score:.3f}")
         
-        # Generate the same set of challenges for all miners
-        challenges = await env_instance.many(samples)
-        click.echo(f"📝 Generated {len(challenges)} challenges")
-        
-        # Run all miners on the same challenges
-        results = await run(challenges=challenges, miners=available_miners, progress=False)
-        
-        # Aggregate scores by miner
-        miner_scores = {}
-        for result in results:
-            uid = result.miner.uid
-            if uid not in miner_scores:
-                miner_scores[uid] = 0.0
-            miner_scores[uid] += result.evaluation.score
-        
-        # Show results
-        click.echo(f"📊 Cycle Results:")
-        sorted_results = sorted(miner_scores.items(), key=lambda x: x[1], reverse=True)
-        for uid, score in sorted_results:
-            click.echo(f"   UID {uid}: {score:.3f}")
-        
-        return miner_scores
+        return all_results
 
     async def main_loop():
-        """Run validation cycles with the new simplified approach.
+        """Run validation cycles using GRPO evaluation.
 
         Each cycle:
           1. Fetch miners with models
-          2. Give each miner the same set of samples
-          3. Compare all scores pairwise and update Elo ratings
+          2. Test each miner across all required domains
+          3. Use GRPO evaluation to determine winner and update scores
         """
         cycle_count = 0
         while True:
@@ -681,9 +652,9 @@ def validator(k_factor: int, samples: int, delay: float, uids: str, env: str, cy
                 click.echo(f"🎯 Filtered to {len(available)} target miners")
                 logger.info(f"Filtered to {len(available)} target miners")
                 
-            if len(available) < 2:
-                click.echo(f"⚠️  Only {len(available)} miner(s) available with models. Need at least 2 for validation.")
-                logger.debug("Only %d miner(s) with model; retrying in %ds", len(available), delay)
+            if len(available) < 1:
+                click.echo(f"⚠️  No miners available with models.")
+                logger.debug("No miners with model; retrying in %ds", delay)
                 await asyncio.sleep(delay)
                 continue
 
@@ -692,43 +663,38 @@ def validator(k_factor: int, samples: int, delay: float, uids: str, env: str, cy
                 available = available[:val_config.MAX_MINERS_PER_BATCH]
                 click.echo(f"🔢 Limited to {len(available)} miners (max batch size)")
 
-            # Run validation cycle
-            miner_scores = await run_validation_cycle(available)
+            # Run validation cycle across all domains
+            all_results = await run_validation_cycle(available)
             
-            # Update Elo ratings by comparing all pairs
-            uid_to_miner = {m.uid: m for m in available}
-            comparisons_made = 0
+            # Evaluate using GRPO
+            click.echo(f"⚡ Computing Evaluation scores...")
+            evaluation_round = evaluator.evaluate_round(all_results)
             
-            click.echo(f"⚡ Updating Elo ratings...")
-            for i, (uid_a, score_a) in enumerate(miner_scores.items()):
-                for uid_b, score_b in list(miner_scores.items())[i+1:]:
-                    miner_a = uid_to_miner[uid_a]
-                    miner_b = uid_to_miner[uid_b] 
-                    update_elo_pairwise(miner_a, miner_b, score_a, score_b)
-                    comparisons_made += 1
-            
-            click.echo(f"📈 Made {comparisons_made} pairwise Elo comparisons")
+            # Show winner
+            if evaluation_round.winner_uid is not None:
+                click.echo(f"🏆 Winner: UID {evaluation_round.winner_uid} (model: {evaluation_round.winner_model}) with score {evaluation_round.winner_score:.4f}")
+            else:
+                click.echo("⚠️  No winner determined (insufficient domain coverage or no results)")
 
             # Show leaderboard
-            if elo:
-                # Filter leaderboard to only show relevant miners if UIDs were specified
+            leaderboard = evaluator.get_leaderboard(limit=10)
+            if leaderboard:
                 if target_uids:
-                    # Get hotkeys for target UIDs
-                    target_hotkeys = {m.hotkey for m in available if m.uid in target_uids}
-                    filtered_elo = {hk: rating for hk, rating in elo.items() if hk in target_hotkeys}
-                    sorted_elo = sorted(filtered_elo.items(), key=lambda kv: kv[1], reverse=True)
-                    click.echo(f"\n🏅 Elo leaderboard (UIDs: {','.join(map(str, target_uids))}, {env.upper()}):")
+                    filtered_leaderboard = [perf for perf in leaderboard if perf.uid in target_uids]
+                    click.echo(f"\n🏅 GRPO Leaderboard (UIDs: {','.join(map(str, target_uids))}, Envs: {','.join(env_names)}):")
+                    display_leaderboard = filtered_leaderboard
                 else:
-                    sorted_elo = sorted(elo.items(), key=lambda kv: kv[1], reverse=True)
-                    click.echo(f"\n🏅 Elo leaderboard ({env.upper()}):")
+                    click.echo(f"\n🏅 GRPO Leaderboard (Envs: {','.join(env_names)}):")
+                    display_leaderboard = leaderboard
                 
-                click.echo("{:<5} {:<5} {:<40} {:>8}".format("#", "UID", "Hotkey", "Elo"))
-                click.echo("-"*60)
-                hotkey_to_uid = {m.hotkey: m.uid for m in available}
-                for rank, (hk, rating) in enumerate(sorted_elo, 1):
-                    uid = hotkey_to_uid.get(hk, "?")
-                    display_hotkey = hk[:40] if len(hk) > 40 else hk
-                    click.echo(f"{rank:<5} {uid:<5} {display_hotkey:<40} {rating:>8.1f}")
+                click.echo("{:<5} {:<5} {:<30} {:>8} {:>8} {:>8}".format("#", "UID", "Model", "Final", env_names[0] if env_names else "E1", env_names[1] if len(env_names) > 1 else "E2"))
+                click.echo("-" * 80)
+                
+                for rank, perf in enumerate(display_leaderboard[:10], 1):
+                    model_display = (perf.model[:28] + "..") if perf.model and len(perf.model) > 30 else (perf.model or "Unknown")
+                    score1 = perf.grpo_scores.get(env_names[0], 0.0) if env_names else 0.0
+                    score2 = perf.grpo_scores.get(env_names[1], 0.0) if len(env_names) > 1 else 0.0
+                    click.echo(f"{rank:<5} {perf.uid:<5} {model_display:<30} {perf.final_score:>8.3f} {score1:>8.3f} {score2:>8.3f}")
 
             # Increment cycle counter
             cycle_count += 1
@@ -746,70 +712,61 @@ def validator(k_factor: int, samples: int, delay: float, uids: str, env: str, cy
     if target_uids:
         uids_str = ','.join(map(str, target_uids))
         if cycles > 0:
-            logger.info("Starting validator (k=%d, s=%d, d=%.1f, env=%s, uids=%s, cycles=%d)", k_factor, samples, delay, env.upper(), uids_str, cycles)
+            logger.info("Starting GRPO validator (s=%d, d=%.1f, envs=%s, uids=%s, cycles=%d)", samples, delay, ','.join(env_names), uids_str, cycles)
         else:
-            logger.info("Starting validator (k=%d, s=%d, d=%.1f, env=%s, uids=%s, cycles=∞)", k_factor, samples, delay, env.upper(), uids_str)
+            logger.info("Starting GRPO validator (s=%d, d=%.1f, envs=%s, uids=%s, cycles=∞)", samples, delay, ','.join(env_names), uids_str)
     else:
         if cycles > 0:
-            logger.info("Starting validator (k=%d, s=%d, d=%.1f, env=%s, uids=all, cycles=%d)", k_factor, samples, delay, env.upper(), cycles)
+            logger.info("Starting GRPO validator (s=%d, d=%.1f, envs=%s, uids=all, cycles=%d)", samples, delay, ','.join(env_names), cycles)
         else:
-            logger.info("Starting validator (k=%d, s=%d, d=%.1f, env=%s, uids=all, cycles=∞)", k_factor, samples, delay, env.upper())
+            logger.info("Starting GRPO validator (s=%d, d=%.1f, envs=%s, uids=all, cycles=∞)", samples, delay, ','.join(env_names))
     
     asyncio.run(main_loop())
     
     # Show final summary if limited cycles were specified
     if cycles > 0:
         click.echo("\n" + "="*60)
-        click.echo("🎯 FINAL VALIDATION SUMMARY")
+        click.echo("🎯 FINAL GRPO VALIDATION SUMMARY")
         click.echo("="*60)
         
-        # Show final Elo ratings
-        final_elo = load_elo()
-        if final_elo:
+        # Show final GRPO leaderboard
+        final_leaderboard = evaluator.get_leaderboard(limit=20)
+        if final_leaderboard:
             if target_uids:
-                # Get miner info for target UIDs
-                async def get_final_miners():
-                    return await miners(target_uids, no_null=False)
-                final_miners = asyncio.run(get_final_miners())
-                target_hotkeys = {m.hotkey for m in final_miners.values() if m.uid in target_uids}
-                filtered_elo = {hk: rating for hk, rating in final_elo.items() if hk in target_hotkeys}
-                sorted_final_elo = sorted(filtered_elo.items(), key=lambda kv: kv[1], reverse=True)
-                hotkey_to_uid = {m.hotkey: m.uid for m in final_miners.values()}
-                
-                click.echo(f"Final Elo Rankings (UIDs: {','.join(map(str, target_uids))}, {env.upper()}):")
+                filtered_leaderboard = [perf for perf in final_leaderboard if perf.uid in target_uids]
+                click.echo(f"Final GRPO Rankings (UIDs: {','.join(map(str, target_uids))}, Envs: {','.join(env_names)}):")
+                display_leaderboard = filtered_leaderboard
             else:
-                sorted_final_elo = sorted(final_elo.items(), key=lambda kv: kv[1], reverse=True)
-                # Get all miners for UID mapping
-                async def get_all_miners():
-                    return await miners(no_null=False)
-                all_miners = asyncio.run(get_all_miners())
-                hotkey_to_uid = {m.hotkey: m.uid for m in all_miners.values()}
-                
-                click.echo(f"Final Elo Rankings ({env.upper()}):")
+                click.echo(f"Final GRPO Rankings (Envs: {','.join(env_names)}):")
+                display_leaderboard = final_leaderboard
             
-            click.echo("{:<5} {:<5} {:<35} {:>8}".format("#", "UID", "Hotkey", "Elo"))
-            click.echo("-" * 55)
+            click.echo("{:<5} {:<5} {:<25} {:>8} {:>8} {:>8}".format("#", "UID", "Model", "Final", env_names[0] if env_names else "E1", env_names[1] if len(env_names) > 1 else "E2"))
+            click.echo("-" * 75)
             
-            for rank, (hotkey, rating) in enumerate(sorted_final_elo, 1):
-                uid = hotkey_to_uid.get(hotkey, "?")
-                display_hotkey = hotkey[:35] if len(hotkey) > 35 else hotkey
-                click.echo(f"{rank:<5} {uid:<5} {display_hotkey:<35} {rating:>8.1f}")
+            for rank, perf in enumerate(display_leaderboard[:15], 1):
+                model_display = (perf.model[:23] + "..") if perf.model and len(perf.model) > 25 else (perf.model or "Unknown")
+                score1 = perf.grpo_scores.get(env_names[0], 0.0) if env_names else 0.0
+                score2 = perf.grpo_scores.get(env_names[1], 0.0) if len(env_names) > 1 else 0.0
+                click.echo(f"{rank:<5} {perf.uid:<5} {model_display:<25} {perf.final_score:>8.3f} {score1:>8.3f} {score2:>8.3f}")
         
-        click.echo(f"\n✅ Validation completed: {cycles} cycles, {env.upper()} environment")
+        click.echo(f"\n✅ GRPO Validation completed: {cycles} cycles, {','.join(env_names)} environments")
         if target_uids:
             click.echo(f"   Miners tested: {','.join(map(str, target_uids))}")
-        click.echo(f"   Samples per miner: {samples}")
-        click.echo(f"   K-factor: {k_factor}")
-        click.echo("\n💾 Elo ratings saved to ~/.affine/results/elo.json")
+        click.echo(f"   Samples per environment: {samples}")
+        click.echo(f"   EMA alpha: {ema_alpha}")
+        click.echo(f"   Skew penalty weight: {skew_penalty}")
+        click.echo("\n💾 Evaluation scores saved to ~/.affine/results/evaluator_scores.json")
 
-@cli.command('elo')
+@cli.command('scores')
 @click.option("--uids", "-u", default=None, help="Comma-separated UIDs to show (e.g., '1,2,3,4,5'). If not specified, shows all.")
-def show_elo(uids: str):
-    """Show current Elo ratings."""
-    elo = load_elo()
+@click.option("--limit", "-l", default=20, help="Maximum number of miners to show")
+def show_scores(uids: str, limit: int):
+    """Show current Evaluation Scores."""
+    evaluator = Evaluator()
     
-    if not elo:
-        click.echo("No Elo ratings found. Run 'af validate' to generate Elo scores.")
+    leaderboard = evaluator.get_leaderboard()
+    if not leaderboard:
+        click.echo("No Evaluation Scores found. Run 'af validate' to generate Evaluation scores.")
         return
     
     # Parse UIDs if provided
@@ -821,39 +778,64 @@ def show_elo(uids: str):
             click.echo(f"Invalid UIDs format: {uids}. Use comma-separated integers like '1,2,3,4,5'", err=True)
             sys.exit(1)
     
-    # Get miner information to map hotkeys to UIDs
-    async def get_miner_info():
-        if target_uids:
-            return await miners(target_uids, no_null=False)
-        else:
-            return await miners(no_null=False)
-    
-    miners_dict = asyncio.run(get_miner_info())
-    hotkey_to_uid = {m.hotkey: m.uid for m in miners_dict.values()}
-    
-    # Filter Elo ratings if UIDs specified
+    # Filter leaderboard if UIDs specified
     if target_uids:
-        target_hotkeys = {m.hotkey for m in miners_dict.values() if m.uid in target_uids}
-        filtered_elo = {hk: rating for hk, rating in elo.items() if hk in target_hotkeys}
-        sorted_elo = sorted(filtered_elo.items(), key=lambda kv: kv[1], reverse=True)
-        if target_uids:
-            click.echo(f"🏅 Elo Ratings (UIDs: {','.join(map(str, target_uids))}):")
-        else:
-            click.echo("🏅 Elo Ratings (Filtered):")
+        filtered_leaderboard = [perf for perf in leaderboard if perf.uid in target_uids]
+        click.echo(f"🏅 Evaluation Scores (UIDs: {','.join(map(str, target_uids))}):")
+        display_leaderboard = filtered_leaderboard
     else:
-        sorted_elo = sorted(elo.items(), key=lambda kv: kv[1], reverse=True)
-        click.echo("🏅 Elo Ratings (All):")
+        click.echo("🏅 Evaluation Scores (All):")
+        display_leaderboard = leaderboard[:limit]
     
-    click.echo("{:<5} {:<5} {:<40} {:>8}".format("#", "UID", "Hotkey", "Elo"))
-    click.echo("-" * 60)
+    if not display_leaderboard:
+        click.echo("No miners found with the specified UIDs.")
+        return
     
-    for rank, (hotkey, rating) in enumerate(sorted_elo, 1):
-        uid = hotkey_to_uid.get(hotkey, "?")
-        # Truncate hotkey for display
-        display_hotkey = hotkey[:40] if len(hotkey) > 40 else hotkey
-        click.echo(f"{rank:<5} {uid:<5} {display_hotkey:<40} {rating:>8.1f}")
+    # Determine available domains
+    domains = set()
+    for perf in display_leaderboard:
+        domains.update(perf.grpo_scores.keys())
+    domains = sorted(list(domains))
     
-    click.echo(f"\nTotal miners with Elo ratings: {len(sorted_elo)}")
+    # Header
+    header_parts = ["{:<5}", "{:<5}", "{:<25}", "{:>8}"]
+    header_values = ["#", "UID", "Model", "Final"]
+    
+    for domain in domains[:3]:  # Show up to 3 domains
+        header_parts.append("{:>8}")
+        header_values.append(domain[:7])
+    
+    header_format = " ".join(header_parts)
+    click.echo(header_format.format(*header_values))
+    click.echo("-" * (10 + 5 + 25 + 8 + 8 * len(domains[:3])))
+    
+    for rank, perf in enumerate(display_leaderboard, 1):
+        model_display = (perf.model[:23] + "..") if perf.model and len(perf.model) > 25 else (perf.model or "Unknown")
+        
+        row_values = [rank, perf.uid, model_display, f"{perf.final_score:.3f}"]
+        
+        for domain in domains[:3]:
+            score = perf.grpo_scores.get(domain, 0.0)
+            row_values.append(f"{score:.3f}")
+        
+        row_format = f"{rank:<5} {perf.uid:<5} {model_display:<25} {perf.final_score:>8.3f}"
+        for domain in domains[:3]:
+            score = perf.grpo_scores.get(domain, 0.0)
+            row_format += f" {score:>8.3f}"
+        
+        click.echo(row_format)
+    
+    click.echo(f"\nTotal miners with Evaluation Scores: {len(leaderboard)}")
+    click.echo(f"Domains: {', '.join(domains)}")
+    
+    # Show recent rounds
+    recent_rounds = evaluator.get_recent_rounds(limit=5)
+    if recent_rounds:
+        click.echo(f"\n📊 Recent Evaluation Rounds:")
+        for round_obj in recent_rounds[-3:]:
+            timestamp_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(round_obj.timestamp))
+            winner_info = f"UID {round_obj.winner_uid}" if round_obj.winner_uid else "No winner"
+            click.echo(f"   {timestamp_str}: {winner_info} (score: {round_obj.winner_score:.3f})")
 
 @cli.command('test-miners')
 @click.option("--uids", "-u", default=None, help="Comma-separated UIDs to test (e.g., '1,2,3,4,5'). If not specified, tests all.")
