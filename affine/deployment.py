@@ -8,7 +8,7 @@ import bittensor as bt
 from pathlib import Path
 from huggingface_hub import HfApi
 from typing import Dict, Optional
-
+from . import val_config
 
 class DeploymentConfig:
     """Configuration container for deployment parameters"""
@@ -61,7 +61,7 @@ def _generate_repo_name(hf_user: str) -> str:
 
 async def push_to_huggingface(local_path: str, repo_id: str, hf_token: str) -> None:
     """Push model to HuggingFace Hub"""
-    print(f"📤 Pushing model from {local_path} to {repo_id}")
+    print(f"Pushing model from {local_path} to {repo_id}")
     hf_api = HfApi(token=hf_token)
     
     # Create or verify repository
@@ -82,7 +82,7 @@ async def push_to_huggingface(local_path: str, repo_id: str, hf_token: str) -> N
                 files.append(os.path.join(root, filename))
     
     # Upload files
-    print(f"📁 Uploading {len(files)} files...")
+    print(f"Uploading {len(files)} files...")
     for file_path in files:
         relative_path = os.path.relpath(file_path, local_path)
         hf_api.upload_file(
@@ -93,7 +93,7 @@ async def push_to_huggingface(local_path: str, repo_id: str, hf_token: str) -> N
         )
         print(f"  ✓ {relative_path}")
     
-    print(f"✅ Successfully pushed to {repo_id}")
+    print(f"Successfully pushed to {repo_id}")
 
 
 async def push_to_chain(repo_id: str, blocks_until_reveal: int, wallet_cold: str, wallet_hot: str) -> None:
@@ -105,17 +105,17 @@ async def push_to_chain(repo_id: str, blocks_until_reveal: int, wallet_cold: str
     
     sub.set_reveal_commitment(
         wallet=wallet,
-        netuid=120,
+        netuid=val_config.BITTENSOR_NETUID,
         data=repo_id,
         blocks_until_reveal=blocks_until_reveal
     )
     
-    print(f"✅ Committed to chain ({blocks_until_reveal} blocks until reveal)")
+    print(f"Committed to chain ({blocks_until_reveal} blocks until reveal)")
 
 
 async def deploy_to_chutes(repo_id: str, chute_user: str, chutes_api_key: str) -> None:
     """Deploy model to Chutes platform"""
-    print(f"🚀 Deploying {repo_id} to Chutes...")
+    print(f"Deploying {repo_id} to Chutes...")
     
     temp_chute_name = "temp_chute"
     temp_chute_file = f"{temp_chute_name}.py"
@@ -169,7 +169,7 @@ chute = build_sglang_chute(
 
 async def test_deployment(repo_id: str, chutes_api_key: str) -> None:
     """Test deployment with a warm-up request"""
-    print("🔥 Testing deployment...")
+    print("Testing deployment...")
     
     headers = {
         "Authorization": f"Bearer {chutes_api_key}",
