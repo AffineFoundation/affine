@@ -238,7 +238,7 @@ async def miners(uids: Optional[Union[int, List[int]]] = None, no_null: bool = F
         hk = meta.hotkeys[uid] if 0 <= uid < len(meta.hotkeys) else ""
         commits = revs.get(hk) or []
         blk, mdl = commits[-1] if commits else (None, None)
-        mdl = "deepseek-ai/DeepSeek-R1"
+        # mdl = "deepseek-ai/DeepSeek-R1"
         logger.debug("Revealed model: %s", mdl)
         if no_null and blk is None:
             continue
