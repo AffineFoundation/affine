@@ -122,7 +122,7 @@ class BaseEnv(BaseModel, ABC):
     async def evaluate(self, challenge: "Challenge", response: Response) -> "Evaluation":
         ...
 
-    async def generate_input_with_llm(self, prompt: str, model: str = "deepseek-ai/DeepSeek-R1", timeout: float = val_config.LLM_RESPONSE_TIMEOUT) -> str:
+    async def generate_input_with_llm(self, prompt: str, model: str = "unsloth/gemma-3-27b-it", timeout: float = val_config.LLM_RESPONSE_TIMEOUT) -> str:
         """Generate input using LLM call"""
         url = "https://llm.chutes.ai/v1/chat/completions"
         token = get_conf("CHUTES_API_KEY")
@@ -151,7 +151,7 @@ class BaseEnv(BaseModel, ABC):
             logger.error(f"LLM call failed: {str(e)}")
             raise
 
-    async def generate_inputs_parallel(self, prompts: List[str], max_concurrent: int = val_config.MAX_CONCURRENT_REQUESTS, model: str = "deepseek-ai/DeepSeek-R1", timeout: float = val_config.LLM_RESPONSE_TIMEOUT) -> List[str]:
+    async def generate_inputs_parallel(self, prompts: List[str], max_concurrent: int = val_config.MAX_CONCURRENT_REQUESTS, model: str = "unsloth/gemma-3-27b-it", timeout: float = val_config.LLM_RESPONSE_TIMEOUT) -> List[str]:
         """Generate multiple inputs in parallel using LLM calls"""
         logger.debug(f"Starting parallel generation of {len(prompts)} prompts with max_concurrent={max_concurrent}")
         semaphore = asyncio.Semaphore(max_concurrent)
@@ -223,10 +223,15 @@ async def get_chute(model: str) -> Dict[str, Any]:
 
 async def miners(uids: Optional[Union[int, List[int]]] = None, no_null: bool = False) -> Dict[int, Miner]:
     NETUID = val_config.BITTENSOR_NETUID
+    logger.debug(f"Initializing Bittensor subtensor for NETUID {NETUID}...")
     s = bt.async_subtensor()
+    logger.debug("Connecting to Bittensor network...")
     await s.initialize()
+    logger.debug("Fetching metagraph...")
     meta = await s.metagraph(NETUID)
+    logger.debug("Fetching revealed commitments...")
     revs = await s.get_all_revealed_commitments(NETUID)
+    logger.debug("Bittensor network calls completed")
 
     if uids is None:
         uids = list(range(len(meta.hotkeys)))
@@ -238,7 +243,7 @@ async def miners(uids: Optional[Union[int, List[int]]] = None, no_null: bool = F
         hk = meta.hotkeys[uid] if 0 <= uid < len(meta.hotkeys) else ""
         commits = revs.get(hk) or []
         blk, mdl = commits[-1] if commits else (None, None)
-        # mdl = "deepseek-ai/DeepSeek-R1"
+        # mdl = "unsloth/gemma-3-27b-it"
         logger.debug("Revealed model: %s", mdl)
         if no_null and blk is None:
             continue
@@ -248,10 +253,12 @@ async def miners(uids: Optional[Union[int, List[int]]] = None, no_null: bool = F
 
     with_models = [m for m in out.values() if m.model]
     if with_models:
+        logger.debug(f"Fetching chute info for {len(with_models)} miners with models...")
         infos = await asyncio.gather(
             *[get_chute(m.model) for m in with_models],
             return_exceptions=True
         )
+        logger.debug("Chute info fetching completed")
         for m, info in zip(with_models, infos):
             if not isinstance(info, Exception):
                 m.chute = info
@@ -564,140 +571,340 @@ def samples_info(env):
 
 @cli.command('validate')
 @click.option("--k-factor", "-k", default=val_config.ELO_K_FACTOR, show_default=True, help="Elo K-factor")
-@click.option("--challenges", "-c", default=val_config.CHALLENGES_PER_GAME, show_default=True, help="SAT challenges per game")
-@click.option("--delay", "-d", default=val_config.RETRY_DELAY, show_default=True, help="Retry delay (s)")
-def validator(k_factor: int, challenges: int, delay: float):
-    """Continuously pit two random miners head-to-head."""
+@click.option("--samples", "-s", default=val_config.DEFAULT_SAMPLES, show_default=True, help="Number of samples each miner will face")
+@click.option("--delay", "-d", default=val_config.RETRY_DELAY, show_default=True, help="Delay between validation cycles (s)")
+@click.option("--uids", "-u", default=None, help="Comma-separated UIDs to validate (e.g., '1,2,3,4,5'). If not specified, uses all available miners.")
+@click.option("--env", "-e", type=click.Choice(list(ENVS), case_sensitive=False), default="SAT", show_default=True, help="Environment to use for validation")
+@click.option("--cycles", "-c", default=1, show_default=True, type=int, help="Number of validation cycles to run. Use 0 for continuous mode.")
+def validator(k_factor: int, samples: int, delay: float, uids: str, env: str, cycles: int):
+    """Validate miners by giving each the same number of samples and comparing performance."""
+    # Parse UIDs if provided
+    target_uids = None
+    if uids:
+        try:
+            target_uids = [int(x.strip()) for x in uids.split(',')]
+            logger.info(f"Validating specific UIDs: {target_uids}")
+        except ValueError:
+            click.echo(f"Invalid UIDs format: {uids}. Use comma-separated integers like '1,2,3,4,5'", err=True)
+            sys.exit(1)
+    else:
+        logger.info("Validating all available miners")
+    
+    # Get environment instance
+    env_instance = ENVS[env.upper()]()
+    logger.info(f"Using environment: {env.upper()}")
+    
     elo: Dict[str, float] = load_elo()
     if isinstance(elo, dict) and not isinstance(elo, defaultdict):
         elo = defaultdict(lambda: 1500.0, elo)
 
-    def update_elo(a: Miner, b: Miner, score_a: float):
+    def update_elo_pairwise(a: Miner, b: Miner, score_a: float, score_b: float):
+        """Update Elo ratings for two miners based on their scores"""
         ra, rb = elo[a.hotkey], elo[b.hotkey]
         qa, qb = 10**(ra/400), 10**(rb/400)
         ea, eb = qa/(qa+qb), 1 - qa/(qa+qb)
-        elo[a.hotkey] = ra + k_factor*(score_a - ea)
-        elo[b.hotkey] = rb + k_factor*((1-score_a) - eb)
+        
+        # Determine winner (1.0 for win, 0.5 for tie, 0.0 for loss)
+        if score_a > score_b:
+            result_a = 1.0
+        elif score_a < score_b:
+            result_a = 0.0
+        else:
+            # Tie - use tiebreaker
+            if a.block is not None and b.block is not None:
+                result_a = 1.0 if a.block < b.block else 0.0
+            else:
+                result_a = 1.0 if a.uid < b.uid else 0.0
+        
+        elo[a.hotkey] = ra + k_factor * (result_a - ea)
+        elo[b.hotkey] = rb + k_factor * ((1 - result_a) - eb)
         save_elo(elo)
         logger.trace("ELO updated: %s→%.1f, %s→%.1f", a.hotkey, elo[a.hotkey], b.hotkey, elo[b.hotkey])
 
-    async def play_game(a: Miner, b: Miner, progress=None, task_id=None):
-        # Announce match
-        if progress is None:
-            click.echo(f"▶ Match {a.uid} vs {b.uid}")
-        else:
-            progress.console.print(f"▶ Match {a.uid} vs {b.uid}")
-
-        # Run the challenges for this pair
-        results = await run(challenges=await SAT().many(challenges), miners=[a, b], progress=False)
-
-        # Aggregate scores
-        sa = sum(r.evaluation.score for r in results if r.miner.hotkey == a.hotkey)
-        sb = sum(r.evaluation.score for r in results if r.miner.hotkey == b.hotkey)
-
-        # Determine outcome and update Elo
-        if sa != sb:
-            winner = a if sa > sb else b
-        else:
-            winner = a if a.block < b.block else b
-
-        loser = b if winner is a else a
-
-        # Single-line Elo update equivalent to previous logic
-        update_elo(a, b, float(sa > sb) if sa != sb else float(a.block < b.block))
-
-        # Compose message
-        if sa != sb:
-            msg = f"Winner: {winner.uid} (score {sa:.2f} – {sb:.2f}) against {loser.uid}"
-        else:
-            msg = f"Draw on scores ({sa:.2f} – {sb:.2f}), tiebreak winner {winner.uid}"
-
-        # Output
-        if progress is None:
-            click.echo(msg)
-        else:
-            progress.console.print(msg)
-
-        # Mark progress bar complete if provided
-        if progress is not None and task_id is not None:
-            progress.update(task_id, advance=1)
+    async def run_validation_cycle(available_miners: List[Miner]) -> Dict[int, float]:
+        """Run one validation cycle: give each miner the same samples and return their scores."""
+        click.echo(f"🔄 Running validation cycle with {len(available_miners)} miners ({samples} samples each)")
+        
+        # Generate the same set of challenges for all miners
+        challenges = await env_instance.many(samples)
+        click.echo(f"📝 Generated {len(challenges)} challenges")
+        
+        # Run all miners on the same challenges
+        results = await run(challenges=challenges, miners=available_miners, progress=False)
+        
+        # Aggregate scores by miner
+        miner_scores = {}
+        for result in results:
+            uid = result.miner.uid
+            if uid not in miner_scores:
+                miner_scores[uid] = 0.0
+            miner_scores[uid] += result.evaluation.score
+        
+        # Show results
+        click.echo(f"📊 Cycle Results:")
+        sorted_results = sorted(miner_scores.items(), key=lambda x: x[1], reverse=True)
+        for uid, score in sorted_results:
+            click.echo(f"   UID {uid}: {score:.3f}")
+        
+        return miner_scores
 
     async def main_loop():
-        """Run continuous validation cycles with concurrent matches.
+        """Run validation cycles with the new simplified approach.
 
         Each cycle:
-          1. Fetch up-to-date miners (with a model).
-          2. Shuffle and take up to 64 ⇒ pair into ⌊n/2⌋ matches (max 32).
-          3. Launch a play_game task per pair and await them concurrently.
+          1. Fetch miners with models
+          2. Give each miner the same set of samples
+          3. Compare all scores pairwise and update Elo ratings
         """
+        cycle_count = 0
         while True:
-            all_miners_dict = await miners(no_null=True)
+            # Fetch miners - either specific UIDs or all miners
+            if target_uids:
+                click.echo(f"🔍 Fetching miner info for UIDs: {target_uids}...")
+                logger.info(f"Fetching miners for UIDs: {target_uids}")
+                all_miners_dict = await miners(target_uids, no_null=False)
+                logger.info(f"Fetched {len(all_miners_dict)} miners")
+            else:
+                click.echo("🔍 Fetching all available miners...")
+                logger.info("Fetching all miners")
+                all_miners_dict = await miners(no_null=False)
+                logger.info(f"Fetched {len(all_miners_dict)} miners")
 
             # Keep only miners that have registered a model
             available = [m for m in all_miners_dict.values() if m.model]
+            click.echo(f"📋 Found {len(available)} miners with models")
+            logger.info(f"Found {len(available)} miners with models")
+            
+            # Additional filtering by target UIDs if some miners didn't have models
+            if target_uids:
+                available = [m for m in available if m.uid in target_uids]
+                click.echo(f"🎯 Filtered to {len(available)} target miners")
+                logger.info(f"Filtered to {len(available)} target miners")
+                
             if len(available) < 2:
+                click.echo(f"⚠️  Only {len(available)} miner(s) available with models. Need at least 2 for validation.")
                 logger.debug("Only %d miner(s) with model; retrying in %ds", len(available), delay)
                 await asyncio.sleep(delay)
                 continue
 
-            random.shuffle(available)
+            # Limit to max batch size
+            if len(available) > val_config.MAX_MINERS_PER_BATCH:
+                available = available[:val_config.MAX_MINERS_PER_BATCH]
+                click.echo(f"🔢 Limited to {len(available)} miners (max batch size)")
 
-            # Limit to first 64 miners (or less) then pair them
-            sample_size = min(64, len(available))
-            selected = available[:sample_size]
+            # Run validation cycle
+            miner_scores = await run_validation_cycle(available)
+            
+            # Update Elo ratings by comparing all pairs
+            uid_to_miner = {m.uid: m for m in available}
+            comparisons_made = 0
+            
+            click.echo(f"⚡ Updating Elo ratings...")
+            for i, (uid_a, score_a) in enumerate(miner_scores.items()):
+                for uid_b, score_b in list(miner_scores.items())[i+1:]:
+                    miner_a = uid_to_miner[uid_a]
+                    miner_b = uid_to_miner[uid_b] 
+                    update_elo_pairwise(miner_a, miner_b, score_a, score_b)
+                    comparisons_made += 1
+            
+            click.echo(f"📈 Made {comparisons_made} pairwise Elo comparisons")
 
-            pairs = [(selected[i], selected[i + 1])
-                     for i in range(0, (sample_size // 2) * 2, 2)]
-            if not pairs:
-                await asyncio.sleep(delay)
-                continue
-
-            # Keep at most 32 matches
-            pairs = pairs[:32]
-
-            logger.debug("Validator batch: %d matches queued", len(pairs))
-
-            try:
-                from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
-                rich_available = True
-            except ImportError:
-                rich_available = False
-
-            if rich_available:
-                progress = Progress(
-                    SpinnerColumn(),
-                    TextColumn("{task.description}"),
-                    BarColumn(),
-                    TimeElapsedColumn(),
-                    transient=True,
-                )
-
-                with progress:
-                    tasks = []
-                    for a, b in pairs:
-                        t_id = progress.add_task(f"{a.uid} vs {b.uid}", total=1)
-                        tasks.append(asyncio.create_task(play_game(a, b, progress, t_id)))
-
-                    await asyncio.gather(*tasks)
-            else:
-                # Fallback: no progress bars, just run concurrently
-                tasks = [asyncio.create_task(play_game(a, b)) for a, b in pairs]
-                await asyncio.gather(*tasks)
-
-            # ── leaderboard ─────────────────────────────────────────
+            # Show leaderboard
             if elo:
-                sorted_elo = sorted(elo.items(), key=lambda kv: kv[1], reverse=True)
-                click.echo("\n🏅 Elo leaderboard:")
-                click.echo("{:<5} {:<48} {:>8}".format("#", "Hotkey", "Elo"))
-                click.echo("-"*65)
+                # Filter leaderboard to only show relevant miners if UIDs were specified
+                if target_uids:
+                    # Get hotkeys for target UIDs
+                    target_hotkeys = {m.hotkey for m in available if m.uid in target_uids}
+                    filtered_elo = {hk: rating for hk, rating in elo.items() if hk in target_hotkeys}
+                    sorted_elo = sorted(filtered_elo.items(), key=lambda kv: kv[1], reverse=True)
+                    click.echo(f"\n🏅 Elo leaderboard (UIDs: {','.join(map(str, target_uids))}, {env.upper()}):")
+                else:
+                    sorted_elo = sorted(elo.items(), key=lambda kv: kv[1], reverse=True)
+                    click.echo(f"\n🏅 Elo leaderboard ({env.upper()}):")
+                
+                click.echo("{:<5} {:<5} {:<40} {:>8}".format("#", "UID", "Hotkey", "Elo"))
+                click.echo("-"*60)
+                hotkey_to_uid = {m.hotkey: m.uid for m in available}
                 for rank, (hk, rating) in enumerate(sorted_elo, 1):
-                    click.echo(f"{rank:<5} {hk:<48} {rating:>8.1f}")
+                    uid = hotkey_to_uid.get(hk, "?")
+                    display_hotkey = hk[:40] if len(hk) > 40 else hk
+                    click.echo(f"{rank:<5} {uid:<5} {display_hotkey:<40} {rating:>8.1f}")
 
-            # Wait before the next batch
-            await asyncio.sleep(delay)
+            # Increment cycle counter
+            cycle_count += 1
+            
+            # Check if we've completed the specified number of cycles
+            if cycles > 0 and cycle_count >= cycles:
+                click.echo(f"\n✅ Completed {cycle_count} validation cycles.")
+                break
+            
+            # Wait before the next cycle
+            if cycles == 0 or cycle_count < cycles:
+                click.echo(f"⏳ Waiting {delay}s before next cycle...")
+                await asyncio.sleep(delay)
 
-    logger.info("Starting validator (k=%d, c=%d, d=%.1f)", k_factor, challenges, delay)
+    if target_uids:
+        uids_str = ','.join(map(str, target_uids))
+        if cycles > 0:
+            logger.info("Starting validator (k=%d, s=%d, d=%.1f, env=%s, uids=%s, cycles=%d)", k_factor, samples, delay, env.upper(), uids_str, cycles)
+        else:
+            logger.info("Starting validator (k=%d, s=%d, d=%.1f, env=%s, uids=%s, cycles=∞)", k_factor, samples, delay, env.upper(), uids_str)
+    else:
+        if cycles > 0:
+            logger.info("Starting validator (k=%d, s=%d, d=%.1f, env=%s, uids=all, cycles=%d)", k_factor, samples, delay, env.upper(), cycles)
+        else:
+            logger.info("Starting validator (k=%d, s=%d, d=%.1f, env=%s, uids=all, cycles=∞)", k_factor, samples, delay, env.upper())
+    
     asyncio.run(main_loop())
+    
+    # Show final summary if limited cycles were specified
+    if cycles > 0:
+        click.echo("\n" + "="*60)
+        click.echo("🎯 FINAL VALIDATION SUMMARY")
+        click.echo("="*60)
+        
+        # Show final Elo ratings
+        final_elo = load_elo()
+        if final_elo:
+            if target_uids:
+                # Get miner info for target UIDs
+                async def get_final_miners():
+                    return await miners(target_uids, no_null=False)
+                final_miners = asyncio.run(get_final_miners())
+                target_hotkeys = {m.hotkey for m in final_miners.values() if m.uid in target_uids}
+                filtered_elo = {hk: rating for hk, rating in final_elo.items() if hk in target_hotkeys}
+                sorted_final_elo = sorted(filtered_elo.items(), key=lambda kv: kv[1], reverse=True)
+                hotkey_to_uid = {m.hotkey: m.uid for m in final_miners.values()}
+                
+                click.echo(f"Final Elo Rankings (UIDs: {','.join(map(str, target_uids))}, {env.upper()}):")
+            else:
+                sorted_final_elo = sorted(final_elo.items(), key=lambda kv: kv[1], reverse=True)
+                # Get all miners for UID mapping
+                async def get_all_miners():
+                    return await miners(no_null=False)
+                all_miners = asyncio.run(get_all_miners())
+                hotkey_to_uid = {m.hotkey: m.uid for m in all_miners.values()}
+                
+                click.echo(f"Final Elo Rankings ({env.upper()}):")
+            
+            click.echo("{:<5} {:<5} {:<35} {:>8}".format("#", "UID", "Hotkey", "Elo"))
+            click.echo("-" * 55)
+            
+            for rank, (hotkey, rating) in enumerate(sorted_final_elo, 1):
+                uid = hotkey_to_uid.get(hotkey, "?")
+                display_hotkey = hotkey[:35] if len(hotkey) > 35 else hotkey
+                click.echo(f"{rank:<5} {uid:<5} {display_hotkey:<35} {rating:>8.1f}")
+        
+        click.echo(f"\n✅ Validation completed: {cycles} cycles, {env.upper()} environment")
+        if target_uids:
+            click.echo(f"   Miners tested: {','.join(map(str, target_uids))}")
+        click.echo(f"   Samples per miner: {samples}")
+        click.echo(f"   K-factor: {k_factor}")
+        click.echo("\n💾 Elo ratings saved to ~/.affine/results/elo.json")
+
+@cli.command('elo')
+@click.option("--uids", "-u", default=None, help="Comma-separated UIDs to show (e.g., '1,2,3,4,5'). If not specified, shows all.")
+def show_elo(uids: str):
+    """Show current Elo ratings."""
+    elo = load_elo()
+    
+    if not elo:
+        click.echo("No Elo ratings found. Run 'af validate' to generate Elo scores.")
+        return
+    
+    # Parse UIDs if provided
+    target_uids = None
+    if uids:
+        try:
+            target_uids = [int(x.strip()) for x in uids.split(',')]
+        except ValueError:
+            click.echo(f"Invalid UIDs format: {uids}. Use comma-separated integers like '1,2,3,4,5'", err=True)
+            sys.exit(1)
+    
+    # Get miner information to map hotkeys to UIDs
+    async def get_miner_info():
+        if target_uids:
+            return await miners(target_uids, no_null=False)
+        else:
+            return await miners(no_null=False)
+    
+    miners_dict = asyncio.run(get_miner_info())
+    hotkey_to_uid = {m.hotkey: m.uid for m in miners_dict.values()}
+    
+    # Filter Elo ratings if UIDs specified
+    if target_uids:
+        target_hotkeys = {m.hotkey for m in miners_dict.values() if m.uid in target_uids}
+        filtered_elo = {hk: rating for hk, rating in elo.items() if hk in target_hotkeys}
+        sorted_elo = sorted(filtered_elo.items(), key=lambda kv: kv[1], reverse=True)
+        if target_uids:
+            click.echo(f"🏅 Elo Ratings (UIDs: {','.join(map(str, target_uids))}):")
+        else:
+            click.echo("🏅 Elo Ratings (Filtered):")
+    else:
+        sorted_elo = sorted(elo.items(), key=lambda kv: kv[1], reverse=True)
+        click.echo("🏅 Elo Ratings (All):")
+    
+    click.echo("{:<5} {:<5} {:<40} {:>8}".format("#", "UID", "Hotkey", "Elo"))
+    click.echo("-" * 60)
+    
+    for rank, (hotkey, rating) in enumerate(sorted_elo, 1):
+        uid = hotkey_to_uid.get(hotkey, "?")
+        # Truncate hotkey for display
+        display_hotkey = hotkey[:40] if len(hotkey) > 40 else hotkey
+        click.echo(f"{rank:<5} {uid:<5} {display_hotkey:<40} {rating:>8.1f}")
+    
+    click.echo(f"\nTotal miners with Elo ratings: {len(sorted_elo)}")
+
+@cli.command('test-miners')
+@click.option("--uids", "-u", default=None, help="Comma-separated UIDs to test (e.g., '1,2,3,4,5'). If not specified, tests all.")
+def test_miners(uids: str):
+    """Test miners connection and display basic info (debugging tool)."""
+    # Parse UIDs if provided
+    target_uids = None
+    if uids:
+        try:
+            target_uids = [int(x.strip()) for x in uids.split(',')]
+            click.echo(f"🔍 Testing specific UIDs: {target_uids}")
+        except ValueError:
+            click.echo(f"Invalid UIDs format: {uids}. Use comma-separated integers like '1,2,3,4,5'", err=True)
+            sys.exit(1)
+    else:
+        click.echo("🔍 Testing all available miners")
+    
+    async def test_miners_async():
+        try:
+            click.echo("📡 Connecting to Bittensor network...")
+            
+            if target_uids:
+                miners_dict = await miners(target_uids, no_null=False)
+            else:
+                miners_dict = await miners(no_null=False)
+            
+            click.echo(f"✅ Successfully fetched {len(miners_dict)} miners")
+            
+            # Show basic info
+            click.echo("\n📋 Miner Information:")
+            click.echo("{:<5} {:<20} {:<10}".format("UID", "Model", "Block"))
+            click.echo("-" * 40)
+            
+            for uid, miner in sorted(miners_dict.items()):
+                model = miner.model[:18] + "..." if miner.model and len(miner.model) > 20 else (miner.model or "None")
+                click.echo(f"{uid:<5} {model:<20} {miner.block or 'N/A':<10}")
+            
+            # Count miners with models
+            with_models = [m for m in miners_dict.values() if m.model]
+            click.echo(f"\n🎯 Found {len(with_models)} miners with models")
+            
+            if len(with_models) >= 2:
+                click.echo("✅ Sufficient miners for validation")
+            else:
+                click.echo("⚠️  Need at least 2 miners with models for validation")
+                
+        except Exception as e:
+            click.echo(f"❌ Error: {str(e)}")
+            logger.error(f"Test miners failed: {str(e)}", exc_info=True)
+    
+    asyncio.run(test_miners_async())
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 def print_results(results: List[Result]):

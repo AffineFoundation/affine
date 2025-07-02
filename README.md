@@ -76,10 +76,63 @@ uv run af run 5 SAT -n 10
 - **Background Replenishment**: Stock is automatically replenished in the background
 - **Smart Stock Management**: Maintains target inventory levels automatically
 
+## Validation & Elo Ratings
+
+Affine includes a comprehensive validation system that gives each miner the same challenges and calculates Elo ratings based on comparative performance:
+
+### Basic Validation
+```bash
+# Validate specific miners with default settings (10 samples each, SAT environment)
+uv run af validate --uids "1,2,3,4,5"
+
+# Validate with specific environment and custom samples
+uv run af validate --uids "1,2,3,4,5" --env COIN --samples 20
+
+# Multiple validation cycles
+uv run af validate --uids "1,2,3,4,5" --cycles 3
+
+# Continuous validation (runs until interrupted)
+uv run af validate --uids "1,2,3,4,5" --cycles 0
+
+# Validate all available miners
+uv run af validate --env COIN --samples 15
+```
+
+### Check Elo Ratings
+```bash
+# View Elo ratings for specific miners
+uv run af elo --uids "1,2,3,4,5"
+
+# View all Elo ratings
+uv run af elo
+```
+
+### Validation Options
+
+- **`--uids`**: Specify which miners to validate (comma-separated)
+- **`--env`**: Choose environment (COIN/SAT/ABD, default: SAT)
+- **`--samples`**: Number of samples each miner faces (default: 10)
+- **`--cycles`**: Number of validation cycles (default: 1, use 0 for continuous)
+- **`--k-factor`**: Elo rating sensitivity (default: 32)
+- **`--delay`**: Delay between cycles in seconds (default: 5.0)
+
+### How It Works
+
+1. **Fair Comparison**: All miners get the exact same set of challenges
+2. **Total Cost Predictable**: N miners × S samples = total evaluations
+3. **Pairwise Elo Updates**: Every miner pair is compared and Elo ratings updated
+4. **Simple & Clear**: Easy to understand and configure
+
+### Debugging Tools
+```bash
+# Test miner connectivity and basic info
+uv run af test-miners --uids "1,2,3,4,5"
+```
+
 ## Environments
 
-- **COIN**: Simple coin flip guessing game
-- **SAT**: Boolean satisfiability problems
-- **ABD**: Program input deduction challenges
+- **COIN**: Simple coin flip guessing game (easy, ~50% random success)
+- **SAT**: Boolean satisfiability problems (medium difficulty logic)
+- **ABD**: Program input deduction challenges (hardest, requires reasoning)
 
 Each environment supports automatic sample management with background stock replenishment.

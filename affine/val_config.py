@@ -14,7 +14,7 @@ DEFAULT_PROGRAM_EXECUTION_TIMEOUT = 30  # Default timeout for program execution 
 
 # Validation configurations
 ELO_K_FACTOR = 32  # K-factor for Elo rating calculations
-CHALLENGES_PER_GAME = 2  # Number of challenges per validation game
+DEFAULT_SAMPLES = 10  # Default number of samples each miner will face
 RETRY_DELAY = 5.0  # Delay between validation retries in seconds
 MAX_MINERS_PER_BATCH = 64  # Maximum number of miners to process in a validation batch
 MAX_MATCHES_PER_BATCH = 32  # Maximum number of matches to run in a validation batch

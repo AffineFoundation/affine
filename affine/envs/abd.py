@@ -172,7 +172,7 @@ class ABD(af.BaseEnv):
             generated_inputs = await self.generate_inputs_parallel(
                 prompts, 
                 max_concurrent,
-                model="deepseek-ai/DeepSeek-R1"
+                model="unsloth/gemma-3-27b-it"
             )
             logger.debug(f"Generated {len(generated_inputs)} inputs")
         except Exception as e:
