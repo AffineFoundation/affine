@@ -341,8 +341,9 @@ async def run(
 from .envs.coin import COIN
 from .envs.sat import SAT
 from .envs.abd import ABD
+from .envs.gpqa import GPQA
 
-ENVS = {"COIN": COIN, "SAT": SAT, "ABD": ABD}
+ENVS = {"COIN": COIN, "SAT": SAT, "ABD": ABD, "GPQA": GPQA}
 
 # ── GRPO evaluation system ─────────────────────────────────────────
 from .evaluator import Evaluator
@@ -640,6 +641,9 @@ def validator(samples: int, delay: float, uids: str, env: str, cycles: int, ema_
                 logger.info("Fetching all miners")
                 all_miners_dict = await miners(no_null=False)
                 logger.info(f"Fetched {len(all_miners_dict)} miners")
+
+            # for miner in all_miners_dict.values():
+            #     miner.model = "Qwen/Qwen2.5-Coder-32B-Instruct"
 
             # Keep only miners that have registered a model
             available = [m for m in all_miners_dict.values() if m.model]

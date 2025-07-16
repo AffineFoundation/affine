@@ -14,6 +14,7 @@ dependencies = [
     "alive_progress>=3.0.0",
     "pydantic>=2.0.0",
     "huggingface_hub",
+    "datasets",
 ]
 readme = "README.md"
 requires-python = ">=3.9"
