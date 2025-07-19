@@ -314,13 +314,16 @@ async def run(challenges, miners, timeout=120, retries=0, backoff=1, progress=Tr
     if isinstance(miners, dict):  mmap = miners
     elif isinstance(miners, list) and all(hasattr(m, "uid") for m in miners):  mmap = {m.uid: m for m in miners}
     else: mmap = await miners(miners)
+    if logger.isEnabledFor(logging.TRACE):
+        logger.trace("Running %d challenges on %d miners",
+                     len(challenges), len(mmap))
     logger.trace("Running challenges: %s on miners: %s", [chal.prompt[:30] for chal in challenges], list(mmap.keys()))
 
     async def _run_one(chal, model):
         url = "https://llm.chutes.ai/v1/chat/completions"
         hdr = {"Authorization": f"Bearer {get_conf('CHUTES_API_KEY')}", "Content-Type": "application/json"}
         start = time.monotonic()
-        logger.trace("Starting %r on model=%s", chal.prompt[:30], model)
+        logger.trace("Starting challenge on %s", model)
         for attempt in range(1, retries + 2):
             try:
                 async with HTTP_SEM, sess.post(url, json={"model": model, "messages":[{"role":"user","content":chal.prompt}]}, headers=hdr, timeout=timeout) as r:
@@ -392,132 +395,119 @@ def validate(coldkey: str, hotkey: str):
     coldkey = coldkey or get_conf("BT_WALLET_COLD", "default")
     hotkey = hotkey or get_conf("BT_WALLET_HOT", "default")
     wallet = bt.wallet(name=coldkey, hotkey=hotkey)
-
     async def main():
         K, alpha = 10, 0.999
+        logger.debug("Validator started with K=%d, alpha=%.3f", K, alpha)
         subtensor = await get_subtensor()
-        meta      = await subtensor.metagraph(NETUID)
-
-        env_instances = {name: env() for name, env in ENVS.items()}
-
-        # — Initial state
-        miners_map   = await miners(no_null=True, metagraph=meta)
-        hotkeys      = [m.hotkey for m in miners_map.values()]
-        blocks       = {m.hotkey: m.block for m in miners_map.values()}
-        scores       = {m.hotkey: defaultdict(float) for m in miners_map.values()}
+        meta = await subtensor.metagraph(NETUID)
         window_start = await subtensor.get_current_block()
-
+        miners_map = await miners(no_null=True, metagraph=meta)
+        hotkeys = [m.hotkey for m in miners_map.values()]
+        blocks = {m.hotkey: m.block for m in miners_map.values()}
+        scores = {m.hotkey: defaultdict(float) for m in miners_map.values()}
         while True:
             try:
-                # — Refresh miners and metagraph state.
-                # Pulls new commits from the chain and gets the latest metagraph info.
-                meta       = await subtensor.metagraph(NETUID)
+                logger.trace("Refreshing metagraph and miners...")
+                meta = await subtensor.metagraph(NETUID)
                 miners_map = await miners(no_null=True, metagraph=meta)
-                
-                # - Reset any new/updated miners’ blocks & scores
-                # If you block is increased we zero your score (you need to build it back again.)
                 for m in miners_map.values():
-                    if blocks.get(m.hotkey) != m.block:
-                        blocks[m.hotkey], scores[m.hotkey] = m.block, defaultdict(float)
-
-                # - Remove miners if m.chute is None or m.chute['hot'] is False
+                    if m.hotkey not in blocks or blocks[m.hotkey] != m.block:
+                        logger.debug("Miner %s block updated: %s -> %s", m.hotkey, blocks.get(m.hotkey), m.block)
+                        blocks[m.hotkey] = m.block
+                        scores[m.hotkey] = scores.get(m.hotkey, defaultdict(float))
                 miners_map = {hk: m for hk, m in miners_map.items() if m.chute and m.chute.get('hot', False)}
+                logger.debug("Active hot miners: %d", len(miners_map))
 
-                # - Dedupe same‑model hotkeys, keeping the earliest block first.
-                # You can't submit someone elses model (there is only one Kimi2)
-                hotkeys = list(
-                    {m.model: m.hotkey for m in sorted(miners_map.values(), key=lambda m: blocks[m.hotkey])}
-                    .values()
-                )
-                miners_map = {hk: miners_map[hk] for hk in hotkeys}
-                blocks     = {hk: blocks[hk]     for hk in hotkeys}
-                scores     = {hk: scores[hk]     for hk in hotkeys}
+                # Deduplicate miners by model, keep lowest block
+                best_by_model = {}
+                for m in miners_map.values():
+                    cur = best_by_model.get(m.model)
+                    if cur is None or (m.block or float("inf")) < (cur.block or float("inf")):
+                        best_by_model[m.model] = m
+                miners_map = {m.hotkey: m for m in best_by_model.values()}
+                blocks = {hk: m.block for hk, m in miners_map.items()}
+                scores = {hk: scores.get(hk, defaultdict(float)) for hk in miners_map}
+                hotkeys = list(miners_map)
+                logger.trace("Deduplicated miners: %d", len(miners_map))
 
-                # — Collect scores for K blocks
+                # Collect scores for K blocks
+                logger.debug("Collecting scores for window [%d, %d)", window_start, window_start + K)
                 while await subtensor.get_current_block() < window_start + K:
                     blk = await subtensor.get_current_block()
-                    challenges = [await env().generate() for env in ENVS.values()]
-                    results    = await run(challenges=challenges, miners=miners_map)
+                    # Build challenges for this block
+                    challenges = []
+                    for env_cls in ENVS.values():
+                        try:
+                            challenges.append(await env_cls().generate())
+                        except Exception as gen_err:
+                            logger.debug("Skipping env %s due to error: %s", env_cls.__name__, gen_err)
+
+                    if not challenges:
+                        logger.debug("No challenges generated at block %d, skipping", blk)
+                        await asyncio.sleep(1)
+                        continue
+
+                    logger.trace("Running %d challenges at block %d", len(challenges), blk)
+                    results = await run(challenges=challenges, miners=miners_map)
                     await sink(f"affine/results/{wallet.hotkey.ss58_address}/{blk:08d}.json", [r.json() for r in results])
+                    logger.trace("Computed scores for window %d", window_start)
                     for r in results:
                         if r.response.success:
                             e, hk, raw = r.challenge.env.name, r.miner.hotkey, r.evaluation.score
-                            prev = scores[hk][e]
-                            scores[hk][e] = raw * (1 - alpha) + prev * alpha
-
-                # — Compute dense ranks & custom dominance counts
+                            scores[hk][e] = raw * (1 - alpha) + scores[hk][e] * alpha
+                logger.trace("Computed scores for window %d", window_start)
                 ranks, counts = {}, defaultdict(int)
                 for e in ENVS:
                     uniq = sorted({scores[h][e] for h in hotkeys}, reverse=True)
                     rank_of = {score: i+1 for i, score in enumerate(uniq)}
                     ranks[e] = {h: rank_of[scores[h][e]] for h in hotkeys}
-
-                # - Compute pareto dominance scores.
                 env_list = list(ENVS)
                 for a in hotkeys:
                     for b in hotkeys:
-                        if a == b: continue
-                        better = sum(ranks[e][a] < ranks[e][b] for e in env_list)
-                        not_worse = all(ranks[e][a] <= ranks[e][b] for e in env_list)
-                        if not_worse and better >= 1:
-                            counts[a] += 1
-
-                # — Pick best (most wins), tie-break by oldest block
+                        if a != b:
+                            better = sum(ranks[e][a] < ranks[e][b] for e in env_list)
+                            not_worse = all(ranks[e][a] <= ranks[e][b] for e in env_list)
+                            if not_worse and better >= 1: counts[a] += 1
                 best_key, best = (-1, None), None
                 for h in hotkeys:
                     key = (counts.get(h, 0), -blocks.get(h, 0))
-                    if key > best_key:
-                        best_key, best = key, h
-
-                # — Prepare weights
+                    if key > best_key: best_key, best = key, h
+                logger.trace("Computed ranks for window %d", window_start)
                 weights = [1.0 if hk == best else 0.0 for hk in meta.hotkeys]
-
-                # — Sink snapshot
                 snap_key = f"affine/snapshots/{wallet.hotkey.ss58_address}/{window_start:08d}.json"
                 await sink(snap_key, {
                     "window_start": window_start,
-                    "scores":       {hk: dict(scores[hk]) for hk in hotkeys},
-                    "blocks":       blocks,
-                    "weights":      weights,
-                    "miners":       {hk: {'uid': miner.uid, 'model': miner.model} for hk, miner in miners_map.items()}
+                    "scores": {hk: dict(scores[hk]) for hk in hotkeys},
+                    "blocks": blocks,
+                    "weights": weights,
+                    "miners": {hk: {'uid': miner.uid, 'model': miner.model} for hk, miner in miners_map.items()}
                 })
+                logger.trace("Snapshot saved: %s", snap_key)
 
                 # — Render Rich table
                 table = Table(title=f"Window {window_start}–{window_start+K}")
                 table.add_column("Miner UID", style="bold")
                 table.add_column("Block", justify="right")
                 table.add_column("Model", justify="right")
-                for e in ENVS:
-                    table.add_column(f"{e} Score", justify="right")
-                    table.add_column(f"{e} Rank", justify="right")
+                [table.add_column(f"{e} Score", justify="right") or table.add_column(f"{e} Rank", justify="right") for e in ENVS]
                 table.add_column("Weight", justify="right")
                 for hk in hotkeys:
                     miner = miners_map.get(hk)
-                    if not miner:continue
+                    if not miner: continue
                     row = [str(miner.uid), str(miner.block), miner.model]
                     for e in ENVS: row.extend([f"{scores[hk][e]:.4f}", str(ranks[e][hk])])
                     row.append(f"{weights[meta.hotkeys.index(hk)]:.2f}")
                     table.add_row(*row)
                 console.print(table)
-
-                # — Submit weights on chain
-                await subtensor.set_weights(
-                    wallet=wallet,
-                    netuid=NETUID,
-                    uids=meta.uids,
-                    weights=weights,
-                    wait_for_inclusion=False
-                )
-
-                # — Slide window
+                await subtensor.set_weights(wallet=wallet, netuid=NETUID, uids=meta.uids, weights=weights, wait_for_inclusion=False)
                 window_start += K
-
             except KeyboardInterrupt:
+                logger.debug("Validator interrupted by user")
                 sys.exit()
             except Exception as e:
+                logger.debug("Transient error: %s. Continuing validator loop…", e)
                 console.log(f"[yellow]Transient error:[/yellow] {e}. Continuing validator loop…")
                 continue
-
     asyncio.run(main())
     
     
