@@ -434,14 +434,8 @@ def validate(coldkey: str, hotkey: str):
                 logger.debug("Collecting scores for window [%d, %d)", window_start, window_start + K)
                 while await subtensor.get_current_block() < window_start + K:
                     blk = await subtensor.get_current_block()
-                    # Build challenges for this block
-                    challenges = []
-                    for env_cls in ENVS.values():
-                        try:
-                            challenges.append(await env_cls().generate())
-                        except Exception as gen_err:
-                            logger.debug("Skipping env %s due to error: %s", env_cls.__name__, gen_err)
-
+                    challenges = [await env().generate() for env in ENVS.values() if
+                                  (lambda c: c is not None)(await (lambda: (env().generate()))())]
                     if not challenges:
                         logger.debug("No challenges generated at block %d, skipping", blk)
                         await asyncio.sleep(1)
