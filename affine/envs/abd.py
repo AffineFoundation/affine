@@ -64,7 +64,7 @@ Format your response with <INPUT> </INPUT> tags like this:
 Please generate a valid input:"""
 
 class ABD(af.BaseEnv):
-    __version__: int = "0.0.0"
+    __version__: str = "0.0.0"
     def __init__(self):
         super().__init__()
         self._executor = af.utils.ProgramExecutor()

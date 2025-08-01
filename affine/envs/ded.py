@@ -34,7 +34,7 @@ def _normalize(text: str) -> str:
 #                              Affine Env                                     #
 # --------------------------------------------------------------------------- #
 class DED(af.BaseEnv):
-    __version__: int = "0.0.0"
+    __version__: str = "0.0.0"
     def __init__(self):
         super().__init__()
         self._executor = af.utils.ProgramExecutor()
