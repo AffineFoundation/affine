@@ -360,12 +360,17 @@ LOG_TEMPLATE = (
     "{score:>6.4f} │ "
     "{latency:>6.3f}s"
 )
-async def run(challenges, miners, timeout=150, retries=0, backoff=1, progress=True) -> List[Result]:
-    if not isinstance(challenges, list): challenges = [challenges]
-    if isinstance(miners, Miner): miners = [miners]
-    if isinstance(miners, dict):  mmap = miners
-    elif isinstance(miners, list) and all(hasattr(m, "uid") for m in miners):  mmap = {m.uid: m for m in miners}
-    else: mmap = await miners(miners)
+async def run(challenges, miner_list, timeout=150, retries=0, backoff=1, progress=True) -> List[Result]:
+    if not isinstance(challenges, list):
+        challenges = [challenges]
+    if isinstance(miner_list, Miner):
+        miner_list = [miner_list]
+    if isinstance(miner_list, dict):
+        mmap = miner_list
+    elif isinstance(miner_list, list) and all(hasattr(m, "uid") for m in miner_list):
+        mmap = {m.uid: m for m in miner_list}
+    else:
+        mmap = await miners(miner_list)
     logger.trace("Running challenges: %s on miners: %s", [chal.prompt[:30] for chal in challenges], list(mmap.keys()))
     response = []
     async def proc(miner, chal):
@@ -881,7 +886,7 @@ chute = build_sglang_chute(
 
         while not (miner.chute or {}).get("hot", False):
             challenge = await SAT().generate()
-            await run(challenges=challenge, miners=[miner])
+            await run(challenges=challenge, miner_list=[miner])
             await sub.wait_for_block()
             miner = (await miners(netuid=NETUID))[my_uid]
             logger.trace("Checked hot status: %s", (miner.chute or {}).get("hot"))
