@@ -129,13 +129,29 @@ class ABD(af.BaseEnv):
 
     def extract_input_from_response(self, response: str) -> str:
         """Pull out the last <INPUT>…</INPUT> block."""
+        # SECURITY FIX: Add size limits to prevent DoS attacks
+        if not response or len(response) > 500_000:  # 500KB limit
+            af.logger.warning(f"Response too large or empty: {len(response) if response else 0} chars")
+            return ""
+            
         response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
         response = re.sub(r"<thinking>.*?</thinking>", "", response, flags=re.DOTALL)
         matches = re.findall(r"<INPUT>(.*?)</INPUT>", response, re.IGNORECASE | re.DOTALL)
         if not matches:
             af.logger.trace("No <INPUT> tags found in response.")
             return ""
-        lines = [ln.rstrip() for ln in matches[-1].strip().splitlines()]
+            
+        # Additional security: limit input size and line count
+        raw_input = matches[-1].strip()
+        if len(raw_input) > 10_000:  # 10KB limit for input
+            af.logger.warning("Extracted input too large, truncating")
+            raw_input = raw_input[:10_000]
+            
+        lines = [ln.rstrip() for ln in raw_input.splitlines()]
+        if len(lines) > 1000:  # Max 1000 lines
+            af.logger.warning("Too many input lines, truncating")
+            lines = lines[:1000]
+            
         while lines and not lines[-1].strip():
             lines.pop()
         extracted_input = "\n".join(lines)

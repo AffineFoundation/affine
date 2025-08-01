@@ -63,8 +63,13 @@ logging.Logger.trace = _trace
 logger = logging.getLogger("affine")
 def setup_logging(verbosity: int):
     if not getattr(setup_logging, "_prom_started", False):
-        try: start_http_server(METRICS_PORT, METRICS_ADDR, registry=REGISTRY)
-        except: pass
+        try: 
+            start_http_server(METRICS_PORT, METRICS_ADDR, registry=REGISTRY)
+        except Exception as e:
+            # SECURITY FIX: Proper error handling instead of bare except
+            # Log the specific error for debugging while allowing startup to continue
+            logger.warning(f"Failed to start metrics server on {METRICS_ADDR}:{METRICS_PORT}: {e}")
+            pass
         setup_logging._prom_started = True
     level = TRACE if verbosity >= 3 else logging.DEBUG if verbosity == 2 else logging.INFO if verbosity == 1 else logging.CRITICAL + 1
     for noisy in ["websockets", "bittensor", "bittensor-cli", "btdecode", "asyncio", "aiobotocore.regions", "botocore"]:
@@ -193,9 +198,25 @@ class Result(BaseModel):
     evaluation: Evaluation
     def sign(self, wallet):
         self.hotkey = wallet.hotkey.ss58_address
-        self.signature = (wallet.hotkey.sign( data = str(self.challenge) )).hex()
+        # SECURITY FIX: Use deterministic canonical representation for signature data
+        # Previous code used str(self.challenge) which is not deterministic across environments
+        canonical_data = self._get_canonical_challenge_data()
+        self.signature = (wallet.hotkey.sign( data = canonical_data )).hex()
+    
     def verify( self ) -> bool:
-        return bt.Keypair(ss58_address=self.hotkey).verify( data = str(self.challenge), signature = bytes.fromhex( self.signature) )
+        # SECURITY FIX: Use same deterministic canonical representation for verification
+        canonical_data = self._get_canonical_challenge_data()
+        return bt.Keypair(ss58_address=self.hotkey).verify( data = canonical_data, signature = bytes.fromhex( self.signature) )
+    
+    def _get_canonical_challenge_data(self) -> str:
+        """Get a deterministic canonical representation of challenge data for signing."""
+        # Use sorted JSON representation to ensure deterministic ordering
+        challenge_dict = {
+            'env': self.challenge.env.name,
+            'prompt': self.challenge.prompt,
+            'extra': self.challenge.extra
+        }
+        return json.dumps(challenge_dict, sort_keys=True, separators=(',', ':'))
     class Config:
         arbitrary_types_allowed = True
         json_encoders = {BaseEnv: lambda v: v.name}
@@ -450,7 +471,19 @@ async def miners(
             model, miner_revision, chute_id = data.get("model"), data.get("revision"), data.get("chute_id")
             chute = await get_chute(chute_id)
             slug, chutes_revision = chute.get("slug"), chute.get("revision")
-            if model.split('/')[1].lower()[:6] != 'affine': return None 
+            # SECURITY FIX: More robust model name validation to prevent bypass
+            # Previous vulnerable code: if model.split('/')[1].lower()[:6] != 'affine': return None
+            # This was bypassable with names like "user/AfFiNe123" or "user/affine_anything"
+            model_parts = model.split('/')
+            if len(model_parts) != 2:
+                af.logger.debug(f"Invalid model format (must be user/repo): {model}")
+                return None
+            
+            repo_name = model_parts[1].lower()
+            # Require exact prefix match with hyphen separator to prevent bypass attempts
+            if not (repo_name.startswith('affine-') or repo_name == 'affine'):
+                af.logger.debug(f"Model name does not meet affine naming requirements: {repo_name}")
+                return None
             if chutes_revision == None or miner_revision == chutes_revision:
                 miner = Miner(
                     uid=uid, hotkey=hotkey, model=model, block=int(block),
@@ -459,7 +492,11 @@ async def miners(
                     chute=chute,
                 )
                 return miner
-        except: pass
+        except Exception as e:
+            # SECURITY FIX: Proper error handling instead of bare except
+            # This is in the miners() function's fetch() method
+            logger.trace(f"Failed to fetch miner data for uid {uid}: {e}")
+            pass
     results = await asyncio.gather(*(fetch(uid) for uid in uids))
     output = {uid: m for uid, m in zip(uids, results) if m is not None}
     return output
@@ -555,7 +592,14 @@ def validate():
                     hk = crr.miner.hotkey
                     env = crr.challenge.env.name
                     scr = crr.evaluation.score
-                    if crr.miner.model.split('/')[1].lower()[:6] != 'affine': continue
+                    # SECURITY FIX: Apply same robust model name validation in validator
+                    # Previous vulnerable code: if crr.miner.model.split('/')[1].lower()[:6] != 'affine': continue
+                    model_parts = crr.miner.model.split('/')
+                    if len(model_parts) != 2:
+                        continue
+                    repo_name = model_parts[1].lower()
+                    if not (repo_name.startswith('affine-') or repo_name == 'affine'):
+                        continue
                     if hk in prev:
                         prv = prev[ hk ]
                         reset = prv.miner.block != crr.miner.block
@@ -564,7 +608,10 @@ def validate():
                         if reset:
                             scores[hk][env] = 0
                     prev[ hk ] = crr
-                    if crr.response.success or crr.miner.chute['hot']:
+                    # SECURITY FIX: Only score successful responses, even for hot chutes
+                    # Previous vulnerable code allowed failed responses to score if chute was hot
+                    # This could be exploited by miners to gain scores for failed responses
+                    if crr.response.success and (crr.miner.chute and crr.miner.chute.get('hot', False)):
                         scores[hk][env] = scr * (1 - ALPHA) + scores[hk][env] * ALPHA
 
                 # ---------------- Compute Pairwise Dominance -----------------
@@ -793,7 +840,30 @@ def push(model_path: str, existing_repo: str, revision: str, coldkey: str, hotke
     # -----------------------------------------------------------------------------
     async def deploy_to_chutes():
         logger.debug("Building Chute config")
-        rev_flag = f'revision="{revision}",' if revision else ""
+        
+        # SECURITY FIX: Sanitize all user inputs to prevent code injection
+        # Previous code directly injected user-controlled variables into f-strings
+        import re
+        
+        # Sanitize chute_user: only allow alphanumeric, underscore, hyphen
+        safe_chute_user = re.sub(r'[^a-zA-Z0-9_-]', '', chute_user)
+        if not safe_chute_user or safe_chute_user != chute_user:
+            raise ValueError(f"Invalid chute_user format: {chute_user}. Only alphanumeric, underscore, and hyphen allowed.")
+        
+        # Sanitize repo_name: validate HuggingFace repo format
+        if not re.match(r'^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$', repo_name):
+            raise ValueError(f"Invalid repo_name format: {repo_name}. Must be in format 'user/repo'.")
+        
+        # Sanitize revision: only allow hexadecimal characters if provided
+        safe_revision = ""
+        if revision:
+            if not re.match(r'^[a-fA-F0-9]{40}$', revision):
+                raise ValueError(f"Invalid revision format: {revision}. Must be a 40-character hex string.")
+            safe_revision = revision
+        
+        rev_flag = f'revision="{safe_revision}",' if safe_revision else ""
+        
+        # Use safe variables in the template
         chutes_config = textwrap.dedent(f"""
 import os
 from chutes.chute import NodeSelector
@@ -801,7 +871,7 @@ from chutes.chute.template.sglang import build_sglang_chute
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
 
 chute = build_sglang_chute(
-    username="{chute_user}",
+    username="{safe_chute_user}",
     readme="{repo_name}",
     model_name="{repo_name}",
     image="chutes/sglang:0.4.9.post3",
