@@ -311,15 +311,16 @@ async def dataset(
     # 3) stream each Result from each shard
     for blk, key in keys:
         shard_file = await load_shard(key)
-        for line in shard_file.open("r"):
-            try:
-                item = json.loads(line)
-                r = Result.model_validate(item)
-                if r.verify():
-                    yield r
-            except Exception:
-                # skip invalid or corrupt entries
-                continue
+        with shard_file.open("r") as fh:
+            for line in fh:
+                try:
+                    item = json.loads(line)
+                    r = Result.model_validate(item)
+                    if r.verify():
+                        yield r
+                except Exception:
+                    # skip invalid or corrupt entries
+                    continue
 
 
 # --------------------------------------------------------------------------- #
