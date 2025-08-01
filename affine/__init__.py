@@ -192,10 +192,22 @@ class Result(BaseModel):
     response: Response
     evaluation: Evaluation
     def sign(self, wallet):
+        """Sign the entire result payload to prevent tampering."""
         self.hotkey = wallet.hotkey.ss58_address
-        self.signature = (wallet.hotkey.sign( data = str(self.challenge) )).hex()
-    def verify( self ) -> bool:
-        return bt.Keypair(ss58_address=self.hotkey).verify( data = str(self.challenge), signature = bytes.fromhex( self.signature) )
+        self.signature = ""
+        payload = json.dumps(self.model_dump(mode="json"), sort_keys=True)
+        self.signature = wallet.hotkey.sign(data=payload).hex()
+
+    def verify(self) -> bool:
+        """Verify the signature against the result payload."""
+        sig = self.signature
+        self.signature = ""
+        payload = json.dumps(self.model_dump(mode="json"), sort_keys=True)
+        self.signature = sig
+        return bt.Keypair(ss58_address=self.hotkey).verify(
+            data=payload,
+            signature=bytes.fromhex(sig),
+        )
     class Config:
         arbitrary_types_allowed = True
         json_encoders = {BaseEnv: lambda v: v.name}
@@ -449,7 +461,8 @@ async def miners(
             model, miner_revision, chute_id = data.get("model"), data.get("revision"), data.get("chute_id")
             chute = await get_chute(chute_id)
             slug, chutes_revision = chute.get("slug"), chute.get("revision")
-            if model.split('/')[1].lower()[:6] != 'affine': return None 
+            if not model or '/' not in model or model.split('/', 1)[1].lower()[:6] != 'affine':
+                return None
             if chutes_revision == None or miner_revision == chutes_revision:
                 miner = Miner(
                     uid=uid, hotkey=hotkey, model=model, block=int(block),
@@ -554,7 +567,9 @@ def validate():
                     hk = crr.miner.hotkey
                     env = crr.challenge.env.name
                     scr = crr.evaluation.score
-                    if crr.miner.model.split('/')[1].lower()[:6] != 'affine': continue
+                    model = crr.miner.model or ""
+                    if '/' not in model or model.split('/', 1)[1].lower()[:6] != 'affine':
+                        continue
                     if hk in prev:
                         prv = prev[ hk ]
                         reset = prv.miner.block != crr.miner.block
@@ -791,18 +806,20 @@ def push(model_path: str, existing_repo: str, revision: str, coldkey: str, hotke
     # 8. Deploy Chute
     # -----------------------------------------------------------------------------
     async def deploy_to_chutes():
+        """Deploy sanitized configuration to Chutes."""
         logger.debug("Building Chute config")
-        rev_flag = f'revision="{revision}",' if revision else ""
-        chutes_config = textwrap.dedent(f"""
+        rev_flag = f'revision={json.dumps(revision)},' if revision else ""
+        chutes_config = textwrap.dedent(
+            f"""
 import os
 from chutes.chute import NodeSelector
 from chutes.chute.template.sglang import build_sglang_chute
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
 
 chute = build_sglang_chute(
-    username="{chute_user}",
-    readme="{repo_name}",
-    model_name="{repo_name}",
+    username={json.dumps(chute_user)},
+    readme={json.dumps(repo_name)},
+    model_name={json.dumps(repo_name)},
     image="chutes/sglang:0.4.9.post3",
     concurrency=20,
     {rev_flag}
@@ -814,7 +831,8 @@ chute = build_sglang_chute(
         "--trust-remote-code "
     ),
 )
-""")
+"""
+        )
         tmp_file = Path("tmp_chute.py")
         tmp_file.write_text(chutes_config)
         logger.debug("Wrote Chute config to %s", tmp_file)
