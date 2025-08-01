@@ -4,9 +4,9 @@ We will mine reasoning for the world.
 
 ## Introduction
 
-Affine is a an incentivized RL environment which pays miners which make incremental improvements on a set of tasks (for instance, program abduction or coding). The mechanism is sybil-proof (you can't cheat by deploying multiple miners), decoy-proof (you can't cheat by packing models into certain environments), copy-proof (you can't cheat by stealing models), overfitting-proof (you can't cheat by overfitting to a single env). 
+Affine is an incentivized RL environment which pays miners which make incremental improvements on a set of tasks (for instance, program abduction or coding). The mechanism is sybil-proof (you can't cheat by deploying multiple miners), decoy-proof (you can't cheat by packing models into certain environments), copy-proof (you can't cheat by stealing models), overfitting-proof (you can't cheat by overfitting to a single env).
 
-How does Affine work? Affine validators incentivize miners to submit models to Subnet 64 on Bittensor (a.k.a Chutes) where they are inference load balanced and publicly available. These models are evaluated on a set of RL-environments with validators looking for the model which dominates the pareto frontier -- namely the model which out competes all other models on all envs (see `af validator`) The network is winners-take-all where miners are forced to copy, download and improve the pareto frontier model.
+How does Affine work? Affine validators incentivize miners to submit models to Subnet 64 on Bittensor (a.k.a Chutes) where they are inference load balanced and publicly available. These models are evaluated on a set of RL-environments with validators looking for the model which dominates the pareto frontier -- namely the model which outcompetes all other models on all envs (see `af validator`) The network is winners-take-all where miners are forced to copy, download and improve the pareto frontier model.
 
 Why affine? Directed incentives for RL have never been achieved. The ability to direct intelligence and aggregate the work-effort of a large non-permissioned group of individuals on RL tasks will unlock fast advancement in intelligence, we intend to commoditize reasoning (intelligence's highest form) and break the intelligence sound barrier.
 
