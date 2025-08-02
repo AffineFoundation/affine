@@ -8,8 +8,12 @@ import subprocess
 import selectors
 import threading
 import time
+import logging
 from contextlib import contextmanager
 from typing import List, Tuple, Optional
+
+# SECURITY FIX: Add logging for security-related events
+logger = logging.getLogger("affine.executor")
 
 try:
     import resource  # POSIX only
@@ -73,7 +77,7 @@ class ProgramExecutor:
                     os.remove(path)
                 finally:
                     with self._lock:
-                        if path in self._tmp_files:
+                                if path in self._tmp_files:
                             self._tmp_files.remove(path)
 
     def _posix_rlimits(self) -> None:
@@ -84,8 +88,11 @@ class ProgramExecutor:
         def _try_set(res, vals):
             try:
                 resource.setrlimit(res, vals)
-            except Exception:
-                pass
+            except Exception as e:
+                # SECURITY FIX: Log resource limit failures instead of silently ignoring
+                # This is critical for detecting when sandboxing fails
+                logger.warning(f"Failed to set resource limit {res} to {vals}: {e}")
+                # Still don't raise to maintain compatibility, but log the issue
 
         # CPU seconds
         if self.cpu_time and hasattr(resource, "RLIMIT_CPU"):

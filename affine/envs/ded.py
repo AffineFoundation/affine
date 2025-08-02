@@ -78,19 +78,26 @@ class DED(af.BaseEnv):
         ver_raw = sample.get("verification_info") or sample.get("test_cases")
         af.logger.trace(f"Verification raw data: {str(ver_raw)[:50]}...")
 
-        # try JSON first, then Python‐literal
+        # SECURITY FIX: More defensive parsing of verification info
+        # try JSON first, then Python‐literal with size limits
         try:
             if isinstance(ver_raw, str):
+                # Prevent DoS attacks with very large strings
+                if len(ver_raw) > 100_000:  # 100KB limit
+                    raise ValueError("Verification info too large")
+                    
                 try:
                     ver_json = json.loads(ver_raw)
                     af.logger.trace("Parsed verification info via json.loads")
                 except json.JSONDecodeError:
+                    # ast.literal_eval is safer than eval but still risky with large/complex data
+                    af.logger.trace("JSON parsing failed, trying ast.literal_eval")
                     ver_json = ast.literal_eval(ver_raw)
                     af.logger.trace("Parsed verification info via ast.literal_eval")
             else:
                 ver_json = ver_raw
         except Exception as err:
-            af.logger.trace(f"Failed to parse verification info: {err}")
+            af.logger.warning(f"Failed to parse verification info: {err}")
             return af.Evaluation(
                 env=self,
                 score=0.0,
