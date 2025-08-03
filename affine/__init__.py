@@ -600,6 +600,8 @@ def validate():
                     repo_name = model_parts[1].lower()
                     if not (repo_name.startswith('affine-') or repo_name == 'affine'):
                         continue
+                    if hk not in scores:
+                        continue
                     if hk in prev:
                         prv = prev[ hk ]
                         reset = prv.miner.block != crr.miner.block
