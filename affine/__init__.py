@@ -426,22 +426,39 @@ async def run(challenges, miners, timeout=150, retries=0, backoff=1 )-> List[Res
         try: ev = await chal.evaluate(resp)
         except Exception as e: ev = Evaluation(env=chal.env, score=0.0, extra={"error": str(e), "evaluation_failed": True})
         return Result(miner=miner, challenge=chal, response=resp, evaluation=ev)
-    tasks = [ asyncio.create_task(proc(m, chal)) for m in mmap.values() if m.model for chal in challenges]  
+    # Fix: Get current event loop explicitly to prevent "Future attached to different loop" error
+    loop = asyncio.get_running_loop()
+    tasks = [ loop.create_task(proc(m, chal)) for m in mmap.values() if m.model for chal in challenges]  
     total = len(tasks); completed = 0
-    for task in asyncio.as_completed(tasks): 
-        result: Result = await task
-        response.append(result); completed += 1
-        logger.debug(
-            LOG_TEMPLATE.format(
-                pct    = completed / total * 100,
-                env    = result.challenge.env.name,                   
-                uid    = result.miner.uid,                 
-                model  = result.miner.model[:50] or "",         
-                success= "RECV" if result.response.success else "NULL",
-                score  = result.evaluation.score,
-                latency= result.response.latency_seconds
+    
+    # Fix: Use asyncio.gather with proper exception handling instead of as_completed
+    try:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error(f"Task failed with exception: {result}")
+                # Skip failed tasks but continue processing
+                continue
+            response.append(result)
+            completed += 1
+            logger.debug(
+                LOG_TEMPLATE.format(
+                    pct    = completed / total * 100,
+                    env    = result.challenge.env.name,                   
+                    uid    = result.miner.uid,                 
+                    model  = result.miner.model[:50] or "",         
+                    success= "RECV" if result.response.success else "NULL",
+                    score  = result.evaluation.score,
+                    latency= result.response.latency_seconds
+                )
             )
-        )
+    except Exception as e:
+        logger.error(f"Error in task execution: {e}")
+        # Cancel any remaining tasks
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        raise
     return response
 
 
