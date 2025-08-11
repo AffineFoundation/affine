@@ -20,6 +20,7 @@ import traceback
 import itertools
 from .utils import *
 import datetime as dt
+from datetime import datetime
 from tqdm import tqdm
 import bittensor as bt
 import datasets as hf_ds                    
@@ -70,9 +71,15 @@ CACHE = Gauge( "cache", "cache", registry=REGISTRY)
 
 # Model gating check cache
 MODEL_GATING_CACHE = {}  # {model_id: (is_gated, last_checked)}
+# Model SHA cache for weight deduplication
+MODEL_SHA_CACHE = {}  # {model_id: (sha, last_checked)}
+# Model first uploader tracking {model_sha: (hotkey, block_uploaded)}
+MODEL_FIRST_UPLOADER = {}
 # Replace global loop-bound lock with per-event-loop lazy locks to avoid cross-loop errors
 _GATING_LOCKS: Dict[int, asyncio.Lock] = {}
+_SHA_LOCKS: Dict[int, asyncio.Lock] = {}
 GATING_TTL = 300  # 5 minutes
+SHA_TTL = 3600  # 1 hour
 
 def _get_gating_lock() -> asyncio.Lock:
     """Return an asyncio.Lock bound to the current running loop."""
@@ -86,6 +93,20 @@ def _get_gating_lock() -> asyncio.Lock:
     if lock is None:
         lock = asyncio.Lock()
         _GATING_LOCKS[key] = lock
+    return lock
+
+def _get_sha_lock() -> asyncio.Lock:
+    """Return an asyncio.Lock bound to the current running loop for SHA operations."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # Fallback if called when no loop is running yet
+        loop = asyncio.get_event_loop()
+    key = id(loop)
+    lock = _SHA_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _SHA_LOCKS[key] = lock
     return lock
 
 # --------------------------------------------------------------------------- #
@@ -148,6 +169,45 @@ async def check_model_gated(model_id: str) -> Optional[bool]:
             is_gated, _ = MODEL_GATING_CACHE[model_id]
             MODEL_GATING_CACHE[model_id] = (is_gated, now)  # Update timestamp
             return is_gated
+        return None
+
+async def get_model_weights_sha(model_id: str, revision: Optional[str] = None) -> Optional[str]:
+    """Get SHA of model weights from Hugging Face, with caching."""
+    cache_key = f"{model_id}@{revision or 'main'}"
+    async with _get_sha_lock():
+        now = time.time()
+        if cache_key in MODEL_SHA_CACHE:
+            sha, ts = MODEL_SHA_CACHE[cache_key]
+            if now - ts < SHA_TTL:
+                return sha
+        
+        # Check HF API for model files and get the SHA
+        try:
+            from huggingface_hub import HfApi
+            api = HfApi()
+            
+            # Get repository info to find the commit SHA for weights
+            repo_info = await asyncio.to_thread(
+                api.repo_info, 
+                repo_id=model_id, 
+                repo_type="model",
+                revision=revision
+            )
+            
+            # Use the commit SHA as the unique identifier for the model weights
+            weights_sha = repo_info.sha
+            MODEL_SHA_CACHE[cache_key] = (weights_sha, now)
+            logger.trace(f"Got weights SHA for {model_id}@{revision}: {weights_sha}")
+            return weights_sha
+            
+        except Exception as e:
+            logger.trace(f"SHA check failed for {model_id}@{revision}: {e}")
+        
+        # Use cached value if available
+        if cache_key in MODEL_SHA_CACHE:
+            sha, _ = MODEL_SHA_CACHE[cache_key]
+            MODEL_SHA_CACHE[cache_key] = (sha, now)  # Update timestamp
+            return sha
         return None
 
 
@@ -893,6 +953,87 @@ async def get_weights(tail=TAIL):
 
     logger.info("Collected results.")
 
+    # Check for duplicate model weights and filter to earliest uploaders only
+    logger.info("Checking for duplicate model weights...")
+    sha_to_first_uploader = {}  # {sha: (hotkey, created_at_timestamp)}
+    unique_miners = {}  # hotkeys that have unique models or were first to upload
+    
+    for hk in prev:
+        miner = prev[hk].miner
+        if not miner.model:
+            continue
+            
+        try:
+            # Get the SHA of the model weights
+            model_sha = await get_model_weights_sha(miner.model, miner.revision)
+            if not model_sha:
+                logger.trace(f"Could not get SHA for {miner.model}@{miner.revision}, skipping duplicate check")
+                unique_miners[hk] = miner
+                continue
+                
+            # Get the chute creation timestamp for accurate ordering
+            chute_created_at = None
+            if miner.chute and miner.chute.get('created_at'):
+                try:
+                    chute_created_at = datetime.fromisoformat(miner.chute['created_at'].replace('Z', '+00:00'))
+                except Exception as e:
+                    logger.trace(f"Could not parse chute created_at for {hk}: {e}")
+            
+            # Fallback to block number if chute timestamp unavailable
+            fallback_time = miner.block if chute_created_at is None else None
+            comparison_time = chute_created_at or fallback_time
+                
+            # Check if this SHA has been seen before
+            if model_sha in sha_to_first_uploader:
+                existing_hk, existing_time = sha_to_first_uploader[model_sha]
+                
+                # Compare timestamps (or block numbers as fallback)
+                is_earlier = False
+                if chute_created_at is not None and isinstance(existing_time, datetime):
+                    is_earlier = chute_created_at < existing_time
+                elif fallback_time is not None and isinstance(existing_time, int):
+                    is_earlier = fallback_time < existing_time
+                elif chute_created_at is not None and isinstance(existing_time, int):
+                    # Current has timestamp, existing has block - prefer timestamp (assume earlier)
+                    is_earlier = True
+                elif fallback_time is not None and isinstance(existing_time, datetime):
+                    # Current has block, existing has timestamp - prefer timestamp (assume later)
+                    is_earlier = False
+                    
+                if is_earlier:
+                    # This miner uploaded earlier, replace the previous one
+                    time_desc = chute_created_at.isoformat() if chute_created_at else f"block {fallback_time}"
+                    existing_desc = existing_time.isoformat() if isinstance(existing_time, datetime) else f"block {existing_time}"
+                    logger.info(f"Found earlier uploader for SHA {model_sha[:8]}: {hk} ({time_desc}) vs {existing_hk} ({existing_desc})")
+                    if existing_hk in unique_miners:
+                        del unique_miners[existing_hk]
+                        # Reset scores for the replaced miner
+                        for env in ENVS:
+                            succ[existing_hk][env] = 0
+                            cnt[existing_hk][env] = 0
+                    sha_to_first_uploader[model_sha] = (hk, comparison_time)
+                    unique_miners[hk] = miner
+                else:
+                    # This miner uploaded later, don't count their scores
+                    time_desc = chute_created_at.isoformat() if chute_created_at else f"block {fallback_time}"
+                    existing_desc = existing_time.isoformat() if isinstance(existing_time, datetime) else f"block {existing_time}"
+                    logger.info(f"Found duplicate model weights SHA {model_sha[:8]}: {hk} ({time_desc}) uploaded after {existing_hk} ({existing_desc}), excluding from rewards")
+                    # Reset scores for the duplicate miner
+                    for env in ENVS:
+                        succ[hk][env] = 0
+                        cnt[hk][env] = 0
+            else:
+                # First time seeing this SHA
+                sha_to_first_uploader[model_sha] = (hk, comparison_time)
+                unique_miners[hk] = miner
+                
+        except Exception as e:
+            logger.trace(f"Error checking SHA for {miner.model}@{miner.revision}: {e}")
+            # On error, allow the miner to participate (fail open)
+            unique_miners[hk] = miner
+    
+    logger.info(f"After duplicate filtering: {len(unique_miners)} unique miners from {len(prev)} total")
+
     # compute accuracy & maxenv
     acc = {
         hk: {e: (float(succ[hk][e])/cnt[hk][e] if cnt[hk][e] else 0)
@@ -921,21 +1062,26 @@ async def get_weights(tail=TAIL):
             dom[a] += 1
     logger.info("Computed dominance counts.")
 
-    # select best non-gated model, fallback to any if none available
+    # select best non-gated model from unique miners only, fallback to any unique if none available
     non_gated_candidates = []
-    for hk in prev:
+    for hk in unique_miners:
+        if hk not in prev:  # Skip if not in prev (shouldn't happen)
+            continue
         miner = prev[hk].miner
         if miner.model:
             is_gated = await check_model_gated(miner.model)
             if is_gated is False:  # Only add if explicitly non-gated
                 non_gated_candidates.append(hk)
     
-    # Select best from non-gated models, or fallback to all models
+    # Select best from non-gated unique models, or fallback to all unique models
     if non_gated_candidates:
         best = max(non_gated_candidates, key=lambda hk: (dom[hk], -prev[hk].miner.block))
-        logger.info(f"Selected non-gated model for weights")
+        logger.info(f"Selected non-gated unique model for weights")
+    elif unique_miners:
+        logger.warning("No non-gated unique models found, selecting from all unique available models")
+        best = max(unique_miners.keys(), key=lambda hk: (dom[hk], -prev[hk].miner.block))
     else:
-        logger.warning("No non-gated models found, selecting from all available models")
+        logger.warning("No unique models found, falling back to all available models")
         best = max(prev, key=lambda hk: (dom[hk], -prev[hk].miner.block))
     
     best_uid = meta.hotkeys.index(best)
