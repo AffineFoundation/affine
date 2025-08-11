@@ -172,7 +172,7 @@ async def check_model_gated(model_id: str) -> Optional[bool]:
         return None
 
 async def get_model_weights_sha(model_id: str, revision: Optional[str] = None) -> Optional[str]:
-    """Get SHA of model weights from Hugging Face, with caching."""
+    """Get SHA of actual model weight files from Hugging Face, with caching."""
     cache_key = f"{model_id}@{revision or 'main'}"
     async with _get_sha_lock():
         now = time.time()
@@ -181,27 +181,66 @@ async def get_model_weights_sha(model_id: str, revision: Optional[str] = None) -
             if now - ts < SHA_TTL:
                 return sha
         
-        # Check HF API for model files and get the SHA
+        # Get actual model file hashes instead of git commit SHA
         try:
             from huggingface_hub import HfApi
             api = HfApi()
             
-            # Get repository info to find the commit SHA for weights
-            repo_info = await asyncio.to_thread(
-                api.repo_info, 
-                repo_id=model_id, 
+            # First get list of all files in the repo
+            files = await asyncio.to_thread(
+                api.list_repo_files,
+                repo_id=model_id,
+                repo_type="model", 
+                revision=revision
+            )
+            
+            # Filter to main model weight files (safetensors, bin files)
+            model_files = []
+            for f in files:
+                # Include main model weight files, exclude other files like config.json, tokenizer files, etc.
+                if (f.endswith('.safetensors') or f.endswith('.bin')) and \
+                   ('model' in f.lower() or 'pytorch_model' in f.lower()):
+                    # Exclude specific non-weight files
+                    if not any(exclude in f.lower() for exclude in ['tokenizer', 'config', 'generation', 'training']):
+                        model_files.append(f)
+            
+            if not model_files:
+                logger.trace(f"No model weight files found for {model_id}@{revision}")
+                return None
+                
+            # Get file info including SHA256 hashes
+            paths_info = await asyncio.to_thread(
+                api.get_paths_info,
+                repo_id=model_id,
+                paths=model_files,
                 repo_type="model",
                 revision=revision
             )
             
-            # Use the commit SHA as the unique identifier for the model weights
-            weights_sha = repo_info.sha
+            # Extract and combine SHA256 hashes of actual model files
+            file_hashes = []
+            for info in paths_info:
+                if hasattr(info, 'lfs') and info.lfs and hasattr(info.lfs, 'sha256'):
+                    file_hashes.append(f"{info.path}:{info.lfs.sha256}")
+                    logger.trace(f"Model file {info.path}: {info.lfs.sha256}")
+                else:
+                    logger.trace(f"No LFS SHA256 found for {info.path}")
+            
+            if not file_hashes:
+                logger.trace(f"No file hashes available for {model_id}@{revision}")
+                return None
+            
+            # Create combined hash of all model file hashes
+            # Sort to ensure consistent ordering
+            combined_hash_input = "|".join(sorted(file_hashes))
+            weights_sha = hashlib.sha256(combined_hash_input.encode()).hexdigest()
+            
             MODEL_SHA_CACHE[cache_key] = (weights_sha, now)
-            logger.trace(f"Got weights SHA for {model_id}@{revision}: {weights_sha}")
+            logger.trace(f"Got model weights SHA for {model_id}@{revision}: {weights_sha} (from {len(file_hashes)} files)")
             return weights_sha
             
         except Exception as e:
-            logger.trace(f"SHA check failed for {model_id}@{revision}: {e}")
+            logger.trace(f"Model weights SHA check failed for {model_id}@{revision}: {e}")
         
         # Use cached value if available
         if cache_key in MODEL_SHA_CACHE:
@@ -987,24 +1026,52 @@ async def get_weights(tail=TAIL):
             if model_sha in sha_to_first_uploader:
                 existing_hk, existing_time = sha_to_first_uploader[model_sha]
                 
-                # Compare timestamps (or block numbers as fallback)
+                # Special override: Alphatao users are always considered first (super user)
+                current_is_alphatao = miner.model and miner.model.startswith('Alphatao')
+                existing_miner = prev.get(existing_hk)
+                existing_is_alphatao = existing_miner and existing_miner.miner.model and existing_miner.miner.model.startswith('Alphatao')
+                
                 is_earlier = False
-                if chute_created_at is not None and isinstance(existing_time, datetime):
-                    is_earlier = chute_created_at < existing_time
-                elif fallback_time is not None and isinstance(existing_time, int):
-                    is_earlier = fallback_time < existing_time
-                elif chute_created_at is not None and isinstance(existing_time, int):
-                    # Current has timestamp, existing has block - prefer timestamp (assume earlier)
+                if current_is_alphatao and not existing_is_alphatao:
+                    # Current is Alphatao, existing is not - Alphatao wins
                     is_earlier = True
-                elif fallback_time is not None and isinstance(existing_time, datetime):
-                    # Current has block, existing has timestamp - prefer timestamp (assume later)
+                elif not current_is_alphatao and existing_is_alphatao:
+                    # Current is not Alphatao, existing is - existing Alphatao wins
                     is_earlier = False
+                elif current_is_alphatao and existing_is_alphatao:
+                    # Both are Alphatao - use normal timestamp comparison between them
+                    if chute_created_at is not None and isinstance(existing_time, datetime):
+                        is_earlier = chute_created_at < existing_time
+                    elif fallback_time is not None and isinstance(existing_time, int):
+                        is_earlier = fallback_time < existing_time
+                    elif chute_created_at is not None and isinstance(existing_time, int):
+                        is_earlier = True
+                    elif fallback_time is not None and isinstance(existing_time, datetime):
+                        is_earlier = False
+                else:
+                    # Neither is Alphatao - use normal timestamp comparison
+                    if chute_created_at is not None and isinstance(existing_time, datetime):
+                        is_earlier = chute_created_at < existing_time
+                    elif fallback_time is not None and isinstance(existing_time, int):
+                        is_earlier = fallback_time < existing_time
+                    elif chute_created_at is not None and isinstance(existing_time, int):
+                        # Current has timestamp, existing has block - prefer timestamp (assume earlier)
+                        is_earlier = True
+                    elif fallback_time is not None and isinstance(existing_time, datetime):
+                        # Current has block, existing has timestamp - prefer timestamp (assume later)
+                        is_earlier = False
                     
                 if is_earlier:
                     # This miner uploaded earlier, replace the previous one
                     time_desc = chute_created_at.isoformat() if chute_created_at else f"block {fallback_time}"
                     existing_desc = existing_time.isoformat() if isinstance(existing_time, datetime) else f"block {existing_time}"
-                    logger.info(f"Found earlier uploader for SHA {model_sha[:8]}: {hk} ({time_desc}) vs {existing_hk} ({existing_desc})")
+                    
+                    # Add special logging for Alphatao override
+                    if current_is_alphatao and not existing_is_alphatao:
+                        logger.info(f"Alphatao super user override for SHA {model_sha[:8]}: {hk} (Alphatao) replaces {existing_hk} (non-Alphatao)")
+                    else:
+                        logger.info(f"Found earlier uploader for SHA {model_sha[:8]}: {hk} ({time_desc}) vs {existing_hk} ({existing_desc})")
+                    
                     if existing_hk in unique_miners:
                         del unique_miners[existing_hk]
                         # Reset scores for the replaced miner
@@ -1017,7 +1084,13 @@ async def get_weights(tail=TAIL):
                     # This miner uploaded later, don't count their scores
                     time_desc = chute_created_at.isoformat() if chute_created_at else f"block {fallback_time}"
                     existing_desc = existing_time.isoformat() if isinstance(existing_time, datetime) else f"block {existing_time}"
-                    logger.info(f"Found duplicate model weights SHA {model_sha[:8]}: {hk} ({time_desc}) uploaded after {existing_hk} ({existing_desc}), excluding from rewards")
+                    
+                    # Add special logging for when non-Alphatao is blocked by Alphatao
+                    if not current_is_alphatao and existing_is_alphatao:
+                        logger.info(f"Found duplicate model weights SHA {model_sha[:8]}: {hk} (non-Alphatao) blocked by existing Alphatao super user {existing_hk}, excluding from rewards")
+                    else:
+                        logger.info(f"Found duplicate model weights SHA {model_sha[:8]}: {hk} ({time_desc}) uploaded after {existing_hk} ({existing_desc}), excluding from rewards")
+                    
                     # Reset scores for the duplicate miner
                     for env in ENVS:
                         succ[hk][env] = 0
