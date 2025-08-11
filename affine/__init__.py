@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # --------------------------------------------------------------------------- #
 #                             Imports                                         #
@@ -1107,22 +1106,27 @@ chute = build_sglang_chute(
     username="{chute_user}",
     readme="{repo_name}",
     model_name="{repo_name}",
-    image="chutes/sglang:0.4.9.post3",
+    image="chutes/sglang:0.4.9.post6",
     concurrency=20,
     {rev_flag}
     node_selector=NodeSelector(
         gpu_count=8,
-        min_vram_gb_per_gpu=24,
+        min_vram_gb_per_gpu=80,
     ),
-    engine_args=(
-        "--trust-remote-code "
-    ),
+    engine_args="--tensor-parallel-size 8 --max-model-len 32768",
 )
 """)
         tmp_file = Path("tmp_chute.py")
         tmp_file.write_text(chutes_config)
         logger.debug("Wrote Chute config to %s", tmp_file)
         logger.debug("=== chute file ===\n%s", tmp_file.read_text())
+
+        # If chut already exists, skip redepoly
+        existing_id = await get_latest_chute_id(repo_name, api_key=chutes_api_key)
+        if existing_id:
+            logger.debug("Chute already exists (%s); skipping redeploy", existing_id)
+            tmp_file.unlink(missing_ok=True)
+            return
 
         cmd = ["chutes", "deploy", f"{tmp_file.stem}:chute", "--public"]
         env = {**os.environ, "CHUTES_API_KEY": chutes_api_key}
@@ -1132,14 +1136,26 @@ chute = build_sglang_chute(
             stderr=asyncio.subprocess.STDOUT,
             stdin=asyncio.subprocess.PIPE,
         )
-        # Auto-answer the interactive Y/N prompt
+        # Auto answer the interactive Y/N prompt
         if proc.stdin:
             proc.stdin.write(b"y\n")
             await proc.stdin.drain()
             proc.stdin.close()
         stdout, _ = await proc.communicate()
-        output = stdout.decode().split('confirm? (y/n)')[1].strip()
-        logger.trace(output)
+        full = stdout.decode()
+        logger.trace(full)
+
+        # If chute already exists, skip redeploy
+        if "already exists" in full:
+            logger.debug("Chute already exists; skipping redeploy")
+            tmp_file.unlink(missing_ok=True)
+            return
+
+        # Keep original parsing
+        try:
+            output = full.split('confirm? (y/n)', 1)[1].strip()
+        except Exception:
+            output = full
 
         import re
         match = re.search(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+\|\s+(\w+)', output)
@@ -1182,3 +1198,4 @@ chute = build_sglang_chute(
 
     asyncio.run(warmup_model())
     logger.debug("Mining setup complete. Model is live!")  
+
