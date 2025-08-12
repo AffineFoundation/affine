@@ -13,7 +13,6 @@ import argparse
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 
-# Import required modules
 try:
     import boto3
     from botocore.exceptions import ClientError
@@ -44,7 +43,7 @@ S3_SECRET_KEY = os.getenv('S3_SECRET_KEY')
 S3_REGION = os.getenv('S3_REGION')
 S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME')
 
-# Required for ABD generation (if using the actual ABD class)
+# Required for ABD generation 
 CHUTES_API_KEY = os.getenv('CHUTES_API_KEY')
 
 if not all([S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION, S3_BUCKET_NAME]):
@@ -60,7 +59,7 @@ async def generate_sat_data_from_env() -> Dict[str, Any]:
     sat_env = SAT()
     challenge = await sat_env.generate()
     
-    # Extract the data we need for the dataset
+
     cls = challenge.extra.get("cls", [])
     sol = challenge.extra.get("sol", {})
     
@@ -80,7 +79,7 @@ async def generate_abd_data_from_env() -> Optional[Dict[str, Any]]:
     """Generate ABD problem using the actual ABD environment"""
     print(f"  Generating ABD problem using ABD environment...")
     
-    # Check if we have CHUTES_API_KEY for LLM generation
+
     if not CHUTES_API_KEY:
         print("    Warning: CHUTES_API_KEY not set, ABD generation may fail")
         print("    ABD uses LLM to generate diverse inputs for programs")
@@ -90,7 +89,7 @@ async def generate_abd_data_from_env() -> Optional[Dict[str, Any]]:
         abd_env = ABD()
         challenge = await abd_env.generate()
         
-        # Extract the data we need
+
         program = challenge.extra.get("program", "")
         expected_output = challenge.extra.get("expected_output", "")
         
@@ -128,10 +127,10 @@ async def generate_mixed_dataset(n: int, sat_ratio: float = 0.5, use_real_envs: 
     
     print(f"Target: {n_sat} SAT problems, {n_abd} ABD problems")
     
-    # Set up logging for affine module
+
     affine.debug()
     
-    # Track statistics
+
     sat_count = 0
     abd_count = 0
     abd_failures = 0
@@ -140,7 +139,7 @@ async def generate_mixed_dataset(n: int, sat_ratio: float = 0.5, use_real_envs: 
         print(f"\n[{i+1}/{n}] Generating example...")
         
         if i < n_sat or (i >= n_sat and abd_count >= n_abd):
-            # Generate SAT-only
+
             print("  Type: SAT-only")
             sat_data = await generate_sat_data_from_env()
             entry = {
@@ -172,7 +171,7 @@ async def generate_mixed_dataset(n: int, sat_ratio: float = 0.5, use_real_envs: 
                 }
                 abd_count += 1
             else:
-                # Fallback to SAT if ABD generation failed
+
                 print("  Fallback to SAT due to ABD generation failure")
                 sat_data = await generate_sat_data_from_env()
                 entry = {
@@ -282,14 +281,14 @@ async def main():
             print("Aborted.")
             return
     
-    # Generate dataset
+
     dataset = await generate_mixed_dataset(
         args.num_examples, 
         args.sat_ratio,
         use_real_envs=not args.simplified
     )
     
-    # Save to file
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"synthetic_dataset_{timestamp}.json"
     
@@ -300,7 +299,7 @@ async def main():
     file_size = os.path.getsize(filename) / 1024
     print(f"Saved {len(dataset)} entries ({file_size:.2f} KB)")
     
-    # Validate structure if requested
+
     if args.validate:
         print("\nValidating dataset structure...")
         valid = True
@@ -318,7 +317,7 @@ async def main():
                 print(f"  ERROR: Entry {i} missing 'sat' or 'abd' in env")
                 valid = False
             else:
-                # Validate SAT structure if present
+
                 if entry["env"]["sat"] and entry["env"]["sat"] is not False:
                     if not isinstance(entry["env"]["sat"], dict):
                         print(f"  ERROR: Entry {i} sat is not dict or false")
@@ -327,7 +326,7 @@ async def main():
                         print(f"  ERROR: Entry {i} sat missing 'cls' or 'sol'")
                         valid = False
                 
-                # Validate ABD structure if present
+
                 if entry["env"]["abd"] and entry["env"]["abd"] is not False:
                     if not isinstance(entry["env"]["abd"], dict):
                         print(f"  ERROR: Entry {i} abd is not dict or false")
@@ -344,10 +343,10 @@ async def main():
                 print("Aborting upload due to validation errors.")
                 return
     
-    # Upload to S3
+
     url = upload_to_s3(filename, dry_run=args.dry_run, presign_hours=args.presign_hours)
     
-    # Delete local file if requested and upload was successful
+
     if url and args.delete_local and not args.dry_run:
         os.remove(filename)
         print(f"\nDeleted local file: {filename}")
