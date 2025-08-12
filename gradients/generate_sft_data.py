@@ -10,7 +10,7 @@ import json
 import asyncio
 import argparse
 from datetime import datetime
-from typing import AsyncGenerator, Dict, Optional
+from typing import AsyncGenerator
 import tempfile
 
 try:
@@ -49,8 +49,8 @@ if not all([S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION, S3_BUCKET_NAME
 async def stream_affine_data(
     min_score: float = 0.0,
     tail: int = 100,
-    max_results: Optional[int] = None
-) -> AsyncGenerator[Dict, None]:
+    max_results: int | None = None
+) -> AsyncGenerator[dict, None]:
     """Stream filtered affine data"""
     collected = 0
     
@@ -75,7 +75,7 @@ async def stream_affine_data(
 async def collect_and_save(
     min_score: float = 0.0,
     tail: int = 100,
-    max_results: Optional[int] = None,
+    max_results: int | None = None,
     show_progress: bool = True
 ) -> tuple[str, int, dict]:
     """Stream data directly to file and return filename, count, and stats"""
@@ -115,7 +115,7 @@ async def collect_and_save(
     return filename, count, stats
 
 
-def upload_to_s3(filename: str, dry_run: bool = False, presign_hours: int = 168) -> Optional[str]:
+def upload_to_s3(filename: str, dry_run: bool = False, presign_hours: int = 168) -> str | None:
     """Upload file to S3"""
     s3_key = f"affine_data/{os.path.basename(filename)}"
     file_size = os.path.getsize(filename) / 1024
