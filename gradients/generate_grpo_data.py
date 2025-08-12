@@ -106,7 +106,7 @@ async def generate_abd_data_from_env() -> ABDData | None:
         return None
 
 
-async def generate_mixed_dataset(n: int, sat_ratio: float = 0.5, use_real_envs: bool = True) -> list[dict]:
+async def generate_mixed_dataset(n: int, sat_ratio: float = 0.5) -> list[dict[str, any]]:
     """
     Generate a mixed dataset with SAT and ABD problems.
     Each entry has both 'sat' and 'abd' keys as required.
@@ -114,11 +114,9 @@ async def generate_mixed_dataset(n: int, sat_ratio: float = 0.5, use_real_envs: 
     Args:
         n: Number of examples to generate
         sat_ratio: Ratio of SAT vs ABD problems (0.0-1.0)
-        use_real_envs: If True, use actual SAT/ABD env classes; if False, use simplified generation
     """
     print(f"\n{'='*60}")
     print(f"Generating {n} synthetic examples (SAT ratio: {sat_ratio:.1%})")
-    print(f"Using {'real' if use_real_envs else 'simplified'} environment generation")
     print(f"{'='*60}")
     
     dataset = []
@@ -253,7 +251,6 @@ async def main():
     parser.add_argument("--presign-hours", type=int, default=168, help="Presigned URL expiration in hours")
     parser.add_argument("--delete-local", action="store_true", help="Delete local JSON after successful upload")
     parser.add_argument("--validate", action="store_true", help="Validate dataset structure before upload")
-    parser.add_argument("--simplified", action="store_true", help="Use simplified generation (no LLM needed for ABD)")
     
     args = parser.parse_args()
     
@@ -263,12 +260,11 @@ async def main():
     print("=" * 60)
     
     # Check for ABD requirements
-    if not args.simplified and not CHUTES_API_KEY:
+    if not CHUTES_API_KEY:
         print("\n⚠️  WARNING: CHUTES_API_KEY not set in .env")
         print("ABD generation uses an LLM to create diverse program inputs.")
         print("Without it, ABD problems will fail and fall back to SAT.")
         print("To fix: Add CHUTES_API_KEY to your .env file")
-        print("Or use --simplified flag for basic ABD generation\n")
         response = input("Continue anyway? (y/n): ")
         if response.lower() != 'y':
             print("Aborted.")
@@ -277,8 +273,7 @@ async def main():
 
     dataset = await generate_mixed_dataset(
         args.num_examples, 
-        args.sat_ratio,
-        use_real_envs=not args.simplified
+        args.sat_ratio
     )
     
 
