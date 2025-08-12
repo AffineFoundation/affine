@@ -27,10 +27,6 @@ S3_BUCKET_NAME=your_bucket_name
 # Required for generate_grpo_data.py (ABD uses LLM to create diverse inputs)
 CHUTES_API_KEY=your_chutes_api_key
 
-# Optional: Affine configuration for SFT data extraction
-SUBTENSOR_ENDPOINT=finney  # or your custom endpoint
-```
-
 ## Dataset Generation Scripts
 
 ### 1. `generate_sft_data.py` - Extract Real Affine Data for SFT
@@ -174,9 +170,3 @@ curl https://api.gradients.io/v1/tasks/create_grpo \
   - SFT data: Simple prompt-response pairs with scores
   - GRPO data: Includes `env` field with problem specifications for reward calculation
 
-## Troubleshooting
-
-- **S3 Upload Errors:** Check your `.env` file has correct S3 credentials
-- **Affine Module Errors:** Ensure the affine module is properly installed
-- **Gradients API Errors:** Verify your API key and endpoint URLs
-- **Expired URLs:** Re-run the script to generate fresh presigned URLs
