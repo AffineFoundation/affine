@@ -11,7 +11,7 @@ import random
 import asyncio
 import argparse
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from .models import SATData, ABDData, SATEnvironment, ABDEnvironment, EnvironmentData, DatasetEntry
 
 # Import required modules
 try:
@@ -53,7 +53,7 @@ if not all([S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION, S3_BUCKET_NAME
     sys.exit(1)
 
 
-async def generate_sat_data_from_env() -> Dict[str, Any]:
+async def generate_sat_data_from_env() -> SATData:
     """Generate SAT problem using the actual SAT environment"""
     print(f"  Generating SAT problem using SAT environment...")
     
@@ -69,14 +69,14 @@ async def generate_sat_data_from_env() -> Dict[str, Any]:
     
     print(f"    Generated SAT with {len(cls)} clauses")
     
-    return {
-        "prompt": challenge.prompt,
-        "cls": cls,
-        "sol": sol_str
-    }
+    return SATData(
+        prompt=challenge.prompt,
+        cls=cls,
+        sol=sol_str
+    )
 
 
-async def generate_abd_data_from_env() -> Optional[Dict[str, Any]]:
+async def generate_abd_data_from_env() -> ABDData | None:
     """Generate ABD problem using the actual ABD environment"""
     print(f"  Generating ABD problem using ABD environment...")
     
@@ -96,18 +96,18 @@ async def generate_abd_data_from_env() -> Optional[Dict[str, Any]]:
         
         print(f"    Generated ABD with program length {len(program)} chars")
         
-        return {
-            "prompt": challenge.prompt,
-            "program": program,
-            "expected_output": expected_output
-        }
+        return ABDData(
+            prompt=challenge.prompt,
+            program=program,
+            expected_output=expected_output
+        )
     except Exception as e:
         print(f"    Failed to generate ABD data: {e}")
         print(f"    This may be due to missing CHUTES_API_KEY or dataset access")
         return None
 
 
-async def generate_mixed_dataset(n: int, sat_ratio: float = 0.5, use_real_envs: bool = True) -> List[Dict[str, Any]]:
+async def generate_mixed_dataset(n: int, sat_ratio: float = 0.5, use_real_envs: bool = True) -> list[dict]:
     """
     Generate a mixed dataset with SAT and ABD problems.
     Each entry has both 'sat' and 'abd' keys as required.
@@ -143,16 +143,13 @@ async def generate_mixed_dataset(n: int, sat_ratio: float = 0.5, use_real_envs: 
             # Generate SAT-only
             print("  Type: SAT-only")
             sat_data = await generate_sat_data_from_env()
-            entry = {
-                "prompt": sat_data["prompt"],
-                "env": {
-                    "sat": {
-                        "cls": sat_data["cls"],
-                        "sol": sat_data["sol"]
-                    },
-                    "abd": False
-                }
-            }
+            entry = DatasetEntry(
+                prompt=sat_data.prompt,
+                env=EnvironmentData(
+                    sat=SATEnvironment(cls=sat_data.cls, sol=sat_data.sol),
+                    abd=False
+                )
+            ).dict()
             sat_count += 1
             
         else:
@@ -160,31 +157,27 @@ async def generate_mixed_dataset(n: int, sat_ratio: float = 0.5, use_real_envs: 
             abd_data = await generate_abd_data_from_env()
             
             if abd_data:
-                entry = {
-                    "prompt": abd_data["prompt"],
-                    "env": {
-                        "sat": False,
-                        "abd": {
-                            "program": abd_data["program"],
-                            "expected_output": abd_data["expected_output"]
-                        }
-                    }
-                }
+                entry = DatasetEntry(
+                    prompt=abd_data.prompt,
+                    env=EnvironmentData(
+                        sat=False,
+                        abd=ABDEnvironment(
+                            program=abd_data.program,
+                            expected_output=abd_data.expected_output
+                        )
+                    )
+                ).dict()
                 abd_count += 1
             else:
-                # Fallback to SAT if ABD generation failed
                 print("  Fallback to SAT due to ABD generation failure")
                 sat_data = await generate_sat_data_from_env()
-                entry = {
-                    "prompt": sat_data["prompt"],
-                    "env": {
-                        "sat": {
-                            "cls": sat_data["cls"],
-                            "sol": sat_data["sol"]
-                        },
-                        "abd": False
-                    }
-                }
+                entry = DatasetEntry(
+                    prompt=sat_data.prompt,
+                    env=EnvironmentData(
+                        sat=SATEnvironment(cls=sat_data.cls, sol=sat_data.sol),
+                        abd=False
+                    )
+                ).dict()
                 sat_count += 1
                 abd_failures += 1
         
@@ -203,7 +196,7 @@ async def generate_mixed_dataset(n: int, sat_ratio: float = 0.5, use_real_envs: 
     return dataset
 
 
-def upload_to_s3(filename: str, dry_run: bool = False, presign_hours: int = 168) -> Optional[str]:
+def upload_to_s3(filename: str, dry_run: bool = False, presign_hours: int = 168) -> str | None:
     """Upload file to S3"""
     s3_key = f"synthetic_data/{os.path.basename(filename)}"
     file_size = os.path.getsize(filename) / 1024
