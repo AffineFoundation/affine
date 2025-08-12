@@ -24,9 +24,11 @@ S3_SECRET_KEY=your_secret_key_here
 S3_REGION=us-east-1  # Your S3 region
 S3_BUCKET_NAME=your_bucket_name
 
+# Required for generate_grpo_data.py (ABD uses LLM to create diverse inputs)
+CHUTES_API_KEY=your_chutes_api_key
+
 # Optional: Affine configuration for SFT data extraction
 SUBTENSOR_ENDPOINT=finney  # or your custom endpoint
-CHUTES_API_KEY=your_chutes_api_key  # If using affine.dataset()
 ```
 
 ## Dataset Generation Scripts
