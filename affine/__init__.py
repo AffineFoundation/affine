@@ -154,6 +154,14 @@ async def check_model_gated(model_id: str) -> Optional[bool]:
             return is_gated
         return None
 
+async def hf_model_revision_exists(model_id: str, revision: Optional[str]) -> bool:
+    """Return True if the HF model (and revision if provided) exists."""
+    try:
+        api = HfApi(token=os.getenv("HF_TOKEN"))
+        return await asyncio.to_thread(lambda: bool(api.repo_info(repo_id=model_id, revision=revision, repo_type="model")))
+    except Exception:
+        return False
+
 
 # --------------------------------------------------------------------------- #
 #                               Subtensor                                     #
@@ -557,6 +565,13 @@ async def run(challenges, miners, timeout=240, retries=0, backoff=1 )-> List[Res
                 logger.trace(f"Miner {miner.uid} - {err} for model {miner.model}")
                 resp = Response(response=None, latency_seconds=0, attempts=0, model=miner.model, error=err, success=False)
                 ev = Evaluation(env=chal.env, score=0.0, extra={"error": err, "gated": is_gated})
+                return Result(miner=miner, challenge=chal, response=resp, evaluation=ev)
+            # Verify model/revision still exists on HF
+            if not await hf_model_revision_exists(miner.model, miner.revision):
+                err = "Model or revision not found"
+                logger.trace(f"Miner {miner.uid} - {err} for {miner.model}@{miner.revision}")
+                resp = Response(response=None, latency_seconds=0, attempts=0, model=miner.model, error=err, success=False)
+                ev = Evaluation(env=chal.env, score=0.0, extra={"error": err, "hf_missing": True})
                 return Result(miner=miner, challenge=chal, response=resp, evaluation=ev)
         
         # Normal processing for non-gated models
