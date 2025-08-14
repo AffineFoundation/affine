@@ -69,6 +69,9 @@ NRESULTS = Gauge( "nresults", "nresults", registry=REGISTRY)
 MAXENV = Gauge("maxenv", "maxenv", ["env"], registry=REGISTRY)
 CACHE = Gauge( "cache", "cache", registry=REGISTRY)
 
+# Minimal caches for last computed submission
+LAST_UIDS: List[int] = []
+LAST_WEIGHTS: List[float] = []
 # Model gating check cache
 MODEL_GATING_CACHE = {}  # {model_id: (is_gated, last_checked)}
 # Replace global loop-bound lock with per-event-loop lazy locks to avoid cross-loop errors
@@ -741,7 +744,15 @@ def runner():
 # --------------------------------------------------------------------------- #
 #                               Validator                                     #
 # --------------------------------------------------------------------------- #
-    
+     
+def _build_weight_arrays(eligible_uids, dom_map, best_uid, base=0.001):
+    uids = [u for u in eligible_uids if u != best_uid] + [best_uid]
+    n = len(uids) - 1
+    if n <= 0: return [best_uid], [1.0]
+    s = sum(max(dom_map.get(u, 0), 0) for u in uids[:-1])
+    shares = [base * (max(dom_map.get(u, 0), 0) / s) if s else (base / n) for u in uids[:-1]]
+    return uids, shares + [1.0 - base]
+
 async def _set_weights_with_confirmation(
     wallet: "bt.wallet",
     netuid: int,
@@ -870,6 +881,8 @@ def signer(host: str, port: int):
 async def retry_set_weights( wallet: bt.Wallet, best_uid:int, retry: int = 10 ):
     # Delegate to signer; fallback to shared helper only if signer is unreachable
     signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
+    global LAST_UIDS, LAST_WEIGHTS
+    uids, weights = (LAST_UIDS, LAST_WEIGHTS) if (LAST_UIDS and LAST_WEIGHTS) else ([best_uid], [1.0])
     try:
         logger.info(f"Calling signer at {signer_url} for set_weights uid={best_uid}")
         parsed = urlparse(signer_url)
@@ -886,8 +899,8 @@ async def retry_set_weights( wallet: bt.Wallet, best_uid:int, retry: int = 10 ):
                 f"{signer_url}/set_weights",
                 json={
                     "netuid": NETUID,
-                    "weights": [1.0],
-                    "uids": [best_uid],
+                    "weights": weights,
+                    "uids": uids,
                     "wait_for_inclusion": False,
                 },
             )
@@ -909,7 +922,7 @@ async def retry_set_weights( wallet: bt.Wallet, best_uid:int, retry: int = 10 ):
     except ClientConnectorError as e:
         logger.info(f"Signer not reachable ({type(e).__name__}: {e}); falling back to local set_weights once")
         ok = await _set_weights_with_confirmation(
-            wallet, NETUID, [best_uid], [1.0], False,
+            wallet, NETUID, uids, weights, False,
             retries=int(os.getenv("SIGNER_RETRIES", "10")),
             delay_s=float(os.getenv("SIGNER_RETRY_DELAY", "2")),
             log_prefix="[validator-fallback]",
@@ -1090,7 +1103,11 @@ async def get_weights(tail=TAIL):
             if a > 0:
                 SCORE.labels(uid=uid, env=e).set(a)
                 RANK.labels(uid=uid, env=e).set(ranks[e].get(hk, 0))
-
+    # Cache pre-built uids/weights for next round
+    global LAST_UIDS, LAST_WEIGHTS
+    eligible_uids = [meta.hotkeys.index(hk) for hk in eligible]
+    dom_map = {meta.hotkeys.index(hk): dom.get(hk, 0) for hk in eligible}
+    LAST_UIDS, LAST_WEIGHTS = _build_weight_arrays(eligible_uids, dom_map, best_uid)
     return best_uid, best
 
         
