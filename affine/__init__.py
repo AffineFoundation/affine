@@ -145,32 +145,6 @@ def get_conf(key, default=None) -> Any:
         raise ValueError(f"{key} not set.\nYou must set env var: {key} in .env")
     return v or default
 
-async def check_model_gated(model_id: str, revision: Optional[str] = None) -> Optional[bool]:
-    async with _get_gating_lock():
-        now = time.time()
-        cached = MODEL_GATING_CACHE.get(model_id)
-        if cached and now - cached[1] < GATING_TTL:
-            return cached[0]
-        try:
-            r = await asyncio.to_thread(requests.get, f"https://huggingface.co/api/models/{model_id}", timeout=5)
-            if r.status_code == 200:
-                is_gated = r.json().get("gated", False)
-                if revision:
-                    try:
-                        ok = await asyncio.to_thread(lambda: bool(HfApi(token=os.getenv("HF_TOKEN")).repo_info(repo_id=model_id, revision=revision, repo_type="model")))
-                        if not ok: is_gated = True
-                    except:
-                        pass
-                MODEL_GATING_CACHE[model_id] = (is_gated, now)
-                return is_gated
-        except Exception as e:
-            logger.trace(f"Gate check failed for {model_id}: {e}")
-        if cached:
-            MODEL_GATING_CACHE[model_id] = (cached[0], now)
-            return cached[0]
-        return None
-
-
 # --------------------------------------------------------------------------- #
 #                               Subtensor                                     #
 # --------------------------------------------------------------------------- #
@@ -771,15 +745,6 @@ async def watchdog(timeout: int = 600, sleep_div: float = 6.0):
             os._exit(1)
         await asyncio.sleep(sleep)
             
-# --------------------------------------------------------------------------- #
-#                               Runner                                        #
-# --------------------------------------------------------------------------- #
-import contextlib
-@cli.command("runner")
-def runner():
-    coldkey = get_conf("BT_WALLET_COLD", "default")
-    hotkey  = get_conf("BT_WALLET_HOT",  "default")
-    wallet  = bt.wallet(name=coldkey, hotkey=hotkey)
 
     async def _run():
         subtensor = None

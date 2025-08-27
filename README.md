@@ -98,8 +98,8 @@ import affine as af
 af.trace(); af.debug(); af.info()
 
 # Get all miner info or only for UID =5
-miners = await af.miners()
-miner = await af.miners( 5 )
+miners = await af.get_miners()
+miner = await af.get_miners( 5 )
 
 # Generate a SAT challenge
 chal = await af.SAT.generate() 
@@ -117,6 +117,6 @@ evaluation = chal.evaluate( response )
 print( evaluation.score )
 
 # Async generator of results from last 100 blocks.
-async for res in af.dataset(100):
+async for res in af.rollouts(100):
     print (res)          # Result objects
 ```
