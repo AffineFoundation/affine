@@ -1,11 +1,6 @@
 import random
 import asyncio
-import logging
-import os
 import json
-import aiohttp
-from botocore.config import Config
-from aiobotocore.session import get_session
 import affine as af
 from collections import deque
 from typing import Any, Deque, List, Optional, Dict
@@ -107,98 +102,57 @@ class R2BufferedDataset:
         buffer_size: int = 100,
         max_batch: int = 10,
         seed: Optional[int] = None,
+        config: str = "default",
+        split: str = "train",
     ):
         self.dataset_name   = dataset_name
+        self.config         = config
+        self.split          = split
         self.buffer_size    = buffer_size
         self.max_batch      = max_batch
         self._rng           = random.Random(seed)
-
-        short_name          = dataset_name
-        self._dataset_folder= f"affine/datasets/{short_name}/"
-        self._index_key     = self._dataset_folder + "index.json"
-
-        self._folder        = af.FOLDER
-        bucket_id           = af.BUCKET
-        endpoint            = af.ENDPOINT
-        access_key          = af.ACCESS
-        secret_key          = af.SECRET
-
-        self._endpoint_url  = endpoint
-        self._access_key    = access_key
-        self._secret_key    = secret_key
 
         self._buffer: Deque[Any] = deque()
         self._lock   = asyncio.Lock()
         self._fill_task = None
 
-        self._index: Optional[Dict[str, Any]] = None
-        self._files: list[Dict[str, Any]] = []
-        self._next_file_index: int = 0
+        # Postgres scan state
+        self._db_offset: int = 0
         self.total_size = total_size
 
-    def _client_ctx(self):
-        if not self._endpoint_url:
-            raise RuntimeError("R2 endpoint is not configured (missing R2_BUCKET_ID)")
-        sess = get_session()
-        return sess.create_client(
-            "s3",
-            endpoint_url=self._endpoint_url,
-            aws_access_key_id=self._access_key,
-            aws_secret_access_key=self._secret_key,
-            config=Config(max_pool_connections=256),
+    async def _read_next_rows(self, desired: int) -> list[Any]:
+        # Try reading from current offset; if empty and offset > 0, wrap to 0 once
+        rows: List[Any] = await af.select_dataset_rows(
+            dataset_name=self.dataset_name,
+            config=self.config,
+            split=self.split,
+            limit=desired,
+            offset=self._db_offset,
+            include_index=False,
         )
-
-    async def _ensure_index(self) -> None:
-        if self._index is not None:
-            return
-        af.logger.trace(f"Loading R2 index: s3://{self._folder}/{self._index_key}")
-        async with self._client_ctx() as c:
-            resp = await c.get_object(Bucket=self._folder, Key=self._index_key)
-            body = await resp["Body"].read()
-            self._index = json.loads(body.decode())
-        self._files = list(self._index.get("files", []))
-        if not self.total_size:
-            self.total_size = int(self._index.get("total_rows", 0))
-        if not self._files:
-            raise RuntimeError("R2 index contains no files")
-        self._next_file_index = 0
-
-    async def _read_next_file(self) -> list[Any]:
-        await self._ensure_index()
-        if not self._files:
-            return []
-        if self._next_file_index >= len(self._files):
-            self._next_file_index = 0
-        file_info = self._files[self._next_file_index]
-        self._next_file_index += 1
-        key = file_info.get("key") or (self._dataset_folder + file_info.get("filename", ""))
-        if not key:
-            return []
-        af.logger.trace(f"Downloading R2 chunk: s3://{self._folder}/{key}")
-        async with self._client_ctx() as c:
-            resp = await c.get_object(Bucket=self._folder, Key=key)
-            body = await resp["Body"].read()
-        try:
-            data = json.loads(body.decode())
-        except Exception as e:
-            af.logger.warning(f"Failed to parse chunk {key}: {e!r}")
-            return []
-        if not isinstance(data, list):
-            return []
-        return data
+        if not rows and self._db_offset:
+            self._db_offset = 0
+            rows = await af.select_dataset_rows(
+                dataset_name=self.dataset_name,
+                config=self.config,
+                split=self.split,
+                limit=desired,
+                offset=self._db_offset,
+                include_index=False,
+            )
+        self._db_offset += len(rows)
+        return rows
 
     async def _fill_buffer(self) -> None:
-        af.logger.trace("Starting R2 buffer fill")
+        af.logger.trace("Starting DB buffer fill")
         while len(self._buffer) < self.buffer_size:
-            rows = await self._read_next_file()
+            desired = self.max_batch if self.max_batch else (self.buffer_size - len(self._buffer))
+            rows = await self._read_next_rows(desired)
             if not rows:
                 break
-            if self.max_batch and len(rows) > self.max_batch:
-                start = self._rng.randint(0, max(0, len(rows) - self.max_batch))
-                rows = rows[start:start + self.max_batch]
             for item in rows:
                 self._buffer.append(item)
-        af.logger.trace("R2 buffer fill complete")
+        af.logger.trace("DB buffer fill complete")
 
     async def get(self) -> Any:
         async with self._lock:

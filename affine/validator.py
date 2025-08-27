@@ -48,10 +48,6 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
 
     # --- fetch + prune --------------------------------------------------------
     st = await af.get_subtensor()
-    blk = await st.get_current_block()
-    af.logger.info(f"Pruning {tail} blocks from {blk - tail} to {blk}")
-    await af.prune(tail=tail)
-
     meta = await st.metagraph(af.NETUID)
     BASE_HK = meta.hotkeys[0]
     N_envs = len(af.ENVS)
@@ -60,40 +56,23 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     cnt   = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env counts
     succ  = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env correct (0/1 or [0,1])
     prev  = {}                                                # last sample per hk
-    v_id  = {}                                                # (model, revision) per hk
     first_block = {}                                          # earliest block for current version
-
-    # --- ingest ---------------------------------------------------------------
-    af.logger.info(f"Loading data from {blk - tail} to {blk}")
-    async for c in af.rollouts(tail=tail):
-        af.NRESULTS.inc()
-        hk, env = c.miner.hotkey, c.challenge.env.name
-
-        # keep the base hk; otherwise require model family
-        try:
-            name = c.miner.model.split("/", 1)[1].lower()
-        except Exception:
-            name = str(c.miner.model).lower()
-        if hk not in cnt or (hk != BASE_HK and not name.startswith("affine")):
-            continue
-
-        cur_vid = (c.miner.model, c.miner.revision)
-
-        # On version change, reset ALL env streams and timestamp to current block
-        if v_id.get(hk) != cur_vid:
-            v_id[hk] = cur_vid
-            first_block[hk] = c.miner.block
-            for e in af.ENVS:
-                cnt[hk][e] = 0
-                succ[hk][e] = 0
-
-        # accumulate on successes.
-        prev[hk] = c
-        if c.response.success:
-            cnt[hk][env]  += 1
-            succ[hk][env] += float(c.evaluation.score)
-
-    af.logger.info("Collected results.")
+    current_miners = await af.get_miners(meta=meta)
+    db_sem = asyncio.Semaphore(10)
+    async def process_miner(uid, mi):
+        if mi.hotkey not in cnt:
+            return
+        for env in af.ENVS:
+            async with db_sem:
+                count = await af.count(env_name=str(env), hotkey=mi.hotkey, revision=mi.revision)
+                if count == 0: continue
+                rows = await af.select_rows(env_name=str(env), hotkey=mi.hotkey, revision=mi.revision)
+            af.logger.debug(f"Pulled {len(rows)} for miner uid: {uid}")
+            for r in rows:
+                if r['success']:
+                    cnt[mi.hotkey][str(env)] += 1
+                    succ[mi.hotkey][str(env)] += float(r['score'])
+    await asyncio.gather(*(process_miner(uid, mi) for uid, mi in current_miners.items()))
 
     if not prev:
         af.logger.warning("No results collected; defaulting to uid 0")

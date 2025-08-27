@@ -17,6 +17,30 @@ from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, T
 
 import affine as af
 
+async def sign_results(wallet: Any, results: List["af.Result"]) -> Tuple[str, List["af.Result"]]:
+    """Sign results via external signer if available, otherwise sign locally."""
+    hotkey_addr: str = ""
+    try:
+        signer_url = af.get_conf("SIGNER_URL", default="http://signer:8080")
+        timeout = aiohttp.ClientTimeout(connect=2, total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            payloads = [str(r.challenge) for r in results]
+            resp = await session.post(f"{signer_url}/sign", json={"payloads": payloads})
+            if resp.status == 200:
+                data = await resp.json()
+                sigs = data.get("signatures") or []
+                hotkey_addr = data.get("hotkey") or ""
+                for r, s in zip(results, sigs):
+                    r.hotkey = hotkey_addr
+                    r.signature = s
+                return hotkey_addr, results
+    except Exception as e:
+        af.logger.info(f"sink: signer unavailable, using local signing: {type(e).__name__}: {e}")
+    hotkey_addr = wallet.hotkey.ss58_address
+    for r in results:
+        r.sign(wallet)
+    return hotkey_addr, results
+
 async def _set_weights_with_confirmation(
     wallet: "bt.wallet",
     netuid: int,
