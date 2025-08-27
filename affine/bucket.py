@@ -172,11 +172,3 @@ async def sink(wallet: bt.wallet, results: list["af.Result"], block: int = None)
                            ContentType="application/json")
     if len(merged) == len(dumped):              # shard was new
         await _update_index(key)
-
-async def prune(tail: int):
-    sub = await af.get_subtensor(); cur = await sub.get_current_block()
-    for f in CACHE_DIR.glob("*.jsonl"):
-        b = f.name.split("-", 1)[0]
-        if b.isdigit() and int(b) < cur - tail:
-            try: f.unlink()
-            except OSError: pass
