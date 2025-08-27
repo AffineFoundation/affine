@@ -156,13 +156,13 @@ Example from README:
 ```python
 import affine as af
 af.trace(); af.debug(); af.info()
-miners = await af.miners(); miner = await af.miners(5)
+miners = await af.get_miners(); miner = await af.get_miners(5)
 chal = await af.SAT.generate()
 chals = await af.ABDUCTION().many(10); chals = await af.DEDUCTION().many(10)
 response = await af.query(chal.prompt, model=miner.model)
 evaluation = chal.evaluate(response)
 print(evaluation.score)
-async for res in af.dataset(100):
+async for res in af.rollouts(100):
     print(res)
 ```
 
