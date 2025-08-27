@@ -67,7 +67,6 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
                 count = await af.count(env_name=str(env), hotkey=mi.hotkey, revision=mi.revision)
                 if count == 0: continue
                 rows = await af.select_rows(env_name=str(env), hotkey=mi.hotkey, revision=mi.revision)
-            af.logger.debug(f"Pulled {len(rows)} for miner uid: {uid}")
             for r in rows:
                 if r['success']:
                     cnt[mi.hotkey][str(env)] += 1
