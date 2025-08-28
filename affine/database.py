@@ -171,9 +171,10 @@ async def _get_engine():
         # - POOL_SIZE: number of persistent connections in pool
         # - MAX_OVERFLOW: extra transient connections beyond pool_size
         # - POOL_TIMEOUT: seconds to wait for connection checkout
-        pool_size = int(os.getenv("DB_POOL_SIZE", os.getenv("POOL_SIZE", "100")))
-        max_overflow = int(os.getenv("DB_MAX_OVERFLOW", os.getenv("MAX_OVERFLOW", "200")))
-        pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", os.getenv("POOL_TIMEOUT", "300")))
+        # Conservative defaults to avoid exhausting Postgres when many runners are active
+        pool_size = int(os.getenv("DB_POOL_SIZE", os.getenv("POOL_SIZE", "4")))
+        max_overflow = int(os.getenv("DB_MAX_OVERFLOW", os.getenv("MAX_OVERFLOW", "2")))
+        pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", os.getenv("POOL_TIMEOUT", "60")))
         _engine = create_async_engine(
             DATABASE_URL,
             echo=False,
@@ -183,6 +184,7 @@ async def _get_engine():
             pool_timeout=pool_timeout,
             pool_size=pool_size,
             max_overflow=max_overflow,
+            pool_use_lifo=True,
         )
         _sessionmaker = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
         try:
@@ -203,6 +205,7 @@ async def _get_engine():
                     pool_timeout=pool_timeout,
                     pool_size=pool_size,
                     max_overflow=max_overflow,
+                    pool_use_lifo=True,
                 )
                 _sessionmaker = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
                 await asyncio.sleep(0.5)

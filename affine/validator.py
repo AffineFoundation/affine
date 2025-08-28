@@ -58,24 +58,27 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     prev  = {}                                                # last sample per hk
     first_block = {}                                          # earliest block for current version
     current_miners = await af.get_miners(meta=meta)
-    db_sem = asyncio.Semaphore(10)
+    db_sem = asyncio.Semaphore(4)
     async def process_miner(uid, mi):
         if mi.hotkey not in cnt:
             return
         for env in af.ENVS:
-            async with db_sem:
-                count = await af.count(env_name=str(env), hotkey=mi.hotkey, revision=mi.revision)
-                if count == 0: continue
-                rows = await af.select_rows(env_name=str(env), hotkey=mi.hotkey, revision=mi.revision)
-            for r in rows:
-                if r['success']:
-                    cnt[mi.hotkey][str(env)] += 1
-                    succ[mi.hotkey][str(env)] += float(r['score'])
+            try:
+                async with db_sem:
+                    count = await af.count(env_name=str(env), hotkey=mi.hotkey, revision=mi.revision)
+                    if count == 0: continue
+                    rows = await af.select_rows(env_name=str(env), hotkey=mi.hotkey, revision=mi.revision)
+                for r in rows:
+                    if r['success']:
+                        cnt[mi.hotkey][str(env)] += 1
+                        succ[mi.hotkey][str(env)] += float(r['score'])
+            except Exception as e:
+                af.logger.warning(f'Error in dataset polling... {e}')
     await asyncio.gather(*(process_miner(uid, mi) for uid, mi in current_miners.items()))
 
     if not prev:
         af.logger.warning("No results collected; defaulting to uid 0")
-        return 0, BASE_HK
+        return [0], [1.0]
 
     # --- accuracy + MAXENV ----------------------------------------------------
     acc = {

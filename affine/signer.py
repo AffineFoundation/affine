@@ -184,6 +184,33 @@ def signer(host: str, port: int):
                 netuid = int(payload.get('netuid', af.NETUID))
                 uids = payload.get('uids') or []
                 weights = payload.get('weights') or []
+                # Coerce to proper shapes/types for robustness
+                if isinstance(uids, int):
+                    uids = [uids]
+                if isinstance(weights, (int, float, str)):
+                    try:
+                        weights = [float(weights)]
+                    except Exception:
+                        weights = [0.0]
+                # Ensure lists
+                if not isinstance(uids, list):
+                    uids = list(uids)
+                if not isinstance(weights, list):
+                    weights = list(weights)
+                # Cast element types
+                try:
+                    uids = [int(u) for u in uids]
+                except Exception:
+                    uids = []
+                try:
+                    weights = [float(w) for w in weights]
+                except Exception:
+                    weights = []
+                # Trim to matching length if mismatched
+                if len(weights) != len(uids):
+                    m = min(len(uids), len(weights))
+                    uids = uids[:m]
+                    weights = weights[:m]
                 wait_for_inclusion = bool(payload.get('wait_for_inclusion', False))
                 ok = await _set_weights_with_confirmation(
                     wallet,
