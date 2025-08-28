@@ -88,7 +88,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
 
     # --- eligibility: require near-max samples per env ------------------------
     required = {
-        e: 100 + int(ELIG * max((cnt[hk][e] for hk in active_hks), default=0))
+        e: 50 + int(ELIG * max((cnt[hk][e] for hk in active_hks), default=0))
         for e in af.ENVS
     }
     eligible = {hk for hk in active_hks if all(cnt[hk][e] >= required[e] for e in af.ENVS)}
