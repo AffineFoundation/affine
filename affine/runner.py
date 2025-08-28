@@ -80,29 +80,72 @@ def runner():
                 )
             )
             return worst_env, miner
-                    
+
+        sink_semaphore = asyncio.Semaphore(3)
+        inflight_semaphore = asyncio.Semaphore(30)
+        state_lock = asyncio.Lock()  # Protect shared state variables
+
+        async def one():
+            async with inflight_semaphore:
+                sel = await next()
+                if sel is None:
+                    return
+                env_name, miner = sel
+                # <<< added
+                pair = (miner.hotkey, miner.revision)
+                chal = await envs[env_name].generate()
+                results = await af.run(chal, miner, timeout=180)
+                nobackoff = results[0].response.success and results[0].response != None and results[0].response != ""
+                
+                # Protect shared state modifications with lock
+                async with state_lock:
+                    if nobackoff:
+                        BACKOFF[pair] = max(0.0, BACKOFF[pair] - 10)
+                    else:
+                        BACKOFF[pair] += 10
+                    COUNTS_PER_ENV[env_name][pair] = COUNTS_PER_ENV[env_name].get(pair, 0) + 1
+                async with sink_semaphore:
+                    await af.sink(wallet=wallet, results=results)
+
         while True:
             try:
                 await refresh_miners()
                 await refresh_counts()
                 af.HEARTBEAT = time.monotonic()
-                sink_semaphore = asyncio.Semaphore(3)
-                inflight_semaphore = asyncio.Semaphore(30)
-                async def one():
-                    async with inflight_semaphore:
-                        sel = await next()
-                        if sel is None:return
-                        env_name, miner = sel
-                        pair = (miner.hotkey, miner.revision)                     # <<< added
-                        chal = await envs[env_name].generate()
-                        results = await af.run(chal, miner, timeout=180)
-                        nobackoff = results[0].response.success and results[0].response != None and results[0].response != ""
-                        if nobackoff: BACKOFF[pair] = max(0.0, BACKOFF[pair] - 10)
-                        else: BACKOFF[pair] += 10
-                        COUNTS_PER_ENV[env_name][pair] = COUNTS_PER_ENV[env_name].get(pair, 0) + 1
-                        async with sink_semaphore:
-                            await af.sink(wallet=wallet, results=results)
-                await asyncio.gather(*[one() for _ in range(60)])
+                
+                # Continuous execution with periodic refresh
+                running_tasks = set()
+                refresh_time = time.monotonic() + 1200  # Refresh every 20 minutes
+
+                # Start initial batch of tasks up to semaphore limit
+                for _ in range(30):
+                    task = asyncio.create_task(one())
+                    running_tasks.add(task)
+
+                # Continuously maintain running tasks until refresh time
+                while time.monotonic() < refresh_time:
+                    if not running_tasks:
+                        break
+
+                    # Wait for at least one task to complete (with timeout for refresh check)
+                    try:
+                        done, running_tasks = await asyncio.wait(
+                            running_tasks, 
+                            return_when=asyncio.FIRST_COMPLETED,
+                            timeout=30  # Check refresh time every 30 seconds
+                        )
+                    except asyncio.TimeoutError:
+                        continue
+
+                    # Start new tasks to replace completed ones
+                    for _ in done:
+                        new_task = asyncio.create_task(one())
+                        running_tasks.add(new_task)
+                
+                # Cancel any remaining tasks before refresh
+                if running_tasks:
+                    for task in running_tasks:
+                        task.cancel()
                     
             except Exception as e:
                 af.logger.warning(f'Exception:{e}')
