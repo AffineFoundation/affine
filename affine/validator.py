@@ -321,10 +321,7 @@ def validate():
                 SETBLOCK = await subtensor.get_current_block()
                 af.LASTSET.set_function(lambda: SETBLOCK - LAST)
                 LAST = BLOCK           
-            
-                # ---------------- Other telemetry ------------------------
-                af.CACHE.set(sum( f.stat().st_size for f in af.CACHE_DIR.glob("*.jsonl") if f.is_file()))
-                
+                            
             except asyncio.CancelledError: break
             except Exception as e:
                 traceback.print_exc()
