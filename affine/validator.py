@@ -55,31 +55,25 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     # Tallies for all known hotkeys (so metrics update is safe even if some have no data)
     cnt   = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env counts
     succ  = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env correct (0/1 or [0,1])
-    prev  = {}                                                # last sample per hk
     first_block = {}                                          # earliest block for current version
     current_miners = await af.get_miners(meta=meta)
-    db_sem = asyncio.Semaphore(4)
-    async def process_miner(uid, mi):
-        if mi.hotkey not in cnt:
-            return
-        for env in af.ENVS:
-            try:
-                async with db_sem:
-                    count = await af.count(env_name=str(env), hotkey=mi.hotkey, revision=mi.revision)
-                    if count == 0: continue
-                    rows = await af.select_rows(env_name=str(env), hotkey=mi.hotkey, revision=mi.revision)
-                for r in rows:
-                    if r['success']:
-                        cnt[mi.hotkey][str(env)] += 1
-                        succ[mi.hotkey][str(env)] += float(r['score'])
-            except Exception as e:
-                af.logger.warning(f'Error in dataset polling... {e}')
-    await asyncio.gather(*(process_miner(uid, mi) for uid, mi in current_miners.items()))
-
-    if not prev:
-        af.logger.warning("No results collected; defaulting to uid 0")
-        return [0], [1.0]
-
+    prev  = { m.hotkey: m for m in current_miners.values() }
+    pairs = [ (mi.hotkey, mi.revision) for mi in current_miners.values() ]
+    for env in af.ENVS:
+        try:
+            agg = await af.aggregate_success_by_env(env_name=str(env), pairs=pairs)
+            total_suc = 0
+            for hk, stats in agg.items():
+                n = int(stats.get("n_success", 0) or 0)
+                s = float(stats.get("sum_score", 0.0) or 0.0)
+                if n:
+                    cnt[hk][str(env)] += n
+                    succ[hk][str(env)] += s
+                    total_suc += n
+                
+            af.logger.trace(f'Aggregated {total_suc} successes for env: {env}')
+        except Exception as e:
+            af.logger.warning(f'Error in dataset polling (agg) for env {env}... {e}')
     # --- accuracy + MAXENV ----------------------------------------------------
     acc = {
         hk: {e: (succ[hk][e] / cnt[hk][e] if cnt[hk][e] else 0.0) for e in af.ENVS}
@@ -94,7 +88,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
 
     # --- eligibility: require near-max samples per env ------------------------
     required = {
-        e: int(ELIG * max((cnt[hk][e] for hk in active_hks), default=0))
+        e: 100 + int(ELIG * max((cnt[hk][e] for hk in active_hks), default=0))
         for e in af.ENVS
     }
     eligible = {hk for hk in active_hks if all(cnt[hk][e] >= required[e] for e in af.ENVS)}
@@ -156,7 +150,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
 
     def ts(hk: str) -> int:
         """Block-number timestamp; default to last seen block."""
-        return int(first_block.get(hk, prev[hk].miner.block))
+        return int(first_block.get(hk, prev[hk].block))
 
     best = max(pool_for_dom, key=lambda hk: (dom_full.get(hk, 0), -ts(hk))) if pool_for_dom else active_hks[0]
     best_uid = meta.hotkeys.index(best)
@@ -219,7 +213,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
             + ["Pts", "Elig", "Wgt"]
         )
         def row(hk: str):
-            m = prev[hk].miner
+            m = prev[hk]
             w = 1.0 if hk == best else 0.0
             model_name = str(m.model)[:50]
             env_cols = []
@@ -257,7 +251,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
         + ["Pts", "Elig", "Wgt"]
     )
     def row(hk: str):
-        m = prev[hk].miner
+        m = prev[hk]
         w = weight_by_hk.get(hk, 0.0)
         model_name = str(m.model)[:50]
         env_cols = []

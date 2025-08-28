@@ -30,7 +30,7 @@ def runner():
         BACKOFF_CAP    = float(af.get_conf("AFFINE_BACKOFF_CAP", "300"))   # cap (s)
         DEAD_STREAK_N  = int(af.get_conf("AFFINE_DEAD_STREAK_N", "5"))     # consecutive fails → dead cooldown
         DEAD_COOLDOWN  = float(af.get_conf("AFFINE_DEAD_COOL_S", str(15*60)))  # s
-        COUNT_CONCUR   = int(af.get_conf("AFFINE_COUNT_CONCUR",  "8"))     # concurrency for baseline counting
+        COUNT_CONCUR   = int(af.get_conf("AFFINE_COUNT_CONCUR",  "1"))     # concurrency for baseline counting
         RUN_TIMEOUT    = int(af.get_conf("AFFINE_RUN_TIMEOUT",   "180"))   # per-query timeout (s)
 
         # ── state: metagraph/miners/envs ─────────────────────────────────────
@@ -209,10 +209,21 @@ def runner():
                             else:
                                 flat.append(it)
                         af.logger.debug(f"sink_worker: flushing {len(flat)} results")
-                        try:
-                            await af.sink(wallet=wallet, block=blk, results=flat)
-                        except Exception:
-                            traceback.print_exc()
+                        retry_count = 0
+                        max_retries = 3
+                        while retry_count <= max_retries:
+                            try:
+                                await af.sink(wallet=wallet, block=blk, results=flat)
+                                break
+                            except Exception as e:
+                                retry_count += 1
+                                if retry_count > max_retries:
+                                    af.logger.error(f"sink failed after {max_retries} retries: {e}")
+                                    traceback.print_exc()
+                                    break
+                                else:
+                                    af.logger.warning(f"sink attempt {retry_count} failed, retrying: {e}")
+                                    await asyncio.sleep(0.5 * retry_count)  # exponential backoff
                         batch.clear()
                         first_put = None
             except asyncio.CancelledError:

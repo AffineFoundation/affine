@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.engine import make_url
 from sqlalchemy import (
     Table, Column, MetaData, String, Integer, Float, Text, Boolean,
-    DateTime, UniqueConstraint, Index, select, func
+    DateTime, UniqueConstraint, Index, select, func, tuple_
 )
 import affine as af
 nest_asyncio.apply()
@@ -378,6 +378,41 @@ async def select_rows(
         res = await session.execute(stmt)
         return [dict(row._mapping) for row in res.fetchall()]
     
+
+async def aggregate_success_by_env(*, env_name: str, pairs: list[tuple[str, str]]) -> Dict[str, Dict[str, float]]:
+    """
+    Aggregate counts and score sums of success==true for given (hotkey, revision) pairs in one scan.
+
+    Returns a mapping: {hotkey: {"n_success": int, "sum_score": float}}
+    """
+    if not pairs:
+        return {}
+    await _get_engine()
+    sm = _sm()
+    # Build grouped aggregation with tuple IN for (hotkey, revision)
+    stmt = (
+        select(
+            affine_results.c.hotkey.label("hotkey"),
+            func.count().filter(affine_results.c.success.is_(True)).label("n_success"),
+            func.coalesce(
+                func.sum(affine_results.c.score).filter(affine_results.c.success.is_(True)),
+                0.0,
+            ).label("sum_score"),
+        )
+        .where(affine_results.c.env_name == env_name)
+        .where(tuple_(affine_results.c.hotkey, affine_results.c.revision).in_(pairs))
+        .group_by(affine_results.c.hotkey)
+    )
+    async with sm() as session:
+        res = await session.execute(stmt)
+        out: Dict[str, Dict[str, float]] = {}
+        for row in res.fetchall():
+            m = row._mapping
+            out[str(m["hotkey"])] = {
+                "n_success": float(m["n_success"]) if m["n_success"] is not None else 0.0,
+                "sum_score": float(m["sum_score"]) if m["sum_score"] is not None else 0.0,
+            }
+        return out
 
 def _result_to_row(r: "af.Result", r2_key: str, r2_last_modified: dt.datetime) -> Dict[str, Any]:
     env_obj = getattr(r.challenge, "env", None)
