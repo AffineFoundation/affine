@@ -35,7 +35,7 @@ async def sign_results(wallet: Any, results: List["af.Result"]) -> Tuple[str, Li
                     r.signature = s
                 return hotkey_addr, results
     except Exception as e:
-        af.logger.info(f"sink: signer unavailable, using local signing: {type(e).__name__}: {e}")
+        af.logger.trace(f"sink: signer unavailable, using local signing: {type(e).__name__}: {e}")
     hotkey_addr = wallet.hotkey.ss58_address
     for r in results:
         r.sign(wallet)

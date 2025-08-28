@@ -413,6 +413,43 @@ async def aggregate_success_by_env(*, env_name: str, pairs: list[tuple[str, str]
                 "sum_score": float(m["sum_score"]) if m["sum_score"] is not None else 0.0,
             }
         return out
+    
+
+from typing import Dict, Tuple, List
+from sqlalchemy import select, func, tuple_
+async def get_env_counts(*, pairs: List[Tuple[str, str]]) -> Dict[str, Dict[Tuple[str, str], int]]:
+    """
+    Count successful results for specific (hotkey, revision) pairs across all envs.
+
+    Returns: { env_name: { (hotkey, revision): n_success } }
+    """
+    if not pairs:
+        return {}
+
+    await _get_engine()
+    sm = _sm()
+
+    stmt = (
+        select(
+            affine_results.c.env_name.label("env_name"),
+            affine_results.c.hotkey.label("hotkey"),
+            affine_results.c.revision.label("revision"),
+            func.count().filter(affine_results.c.success.is_(True)).label("n_success"),
+        )
+        .where(tuple_(affine_results.c.hotkey, affine_results.c.revision).in_(pairs))
+        .group_by(affine_results.c.env_name, affine_results.c.hotkey, affine_results.c.revision)
+    )
+
+    async with sm() as session:
+        res = await session.execute(stmt)
+        out: Dict[str, Dict[Tuple[str, str], int]] = {}
+        for row in res.fetchall():
+            m = row._mapping
+            env = str(m["env_name"])
+            pair = (str(m["hotkey"]), str(m["revision"]))
+            out.setdefault(env, {})[pair] = int(m["n_success"] or 0)
+        return out
+
 
 def _result_to_row(r: "af.Result", r2_key: str, r2_last_modified: dt.datetime) -> Dict[str, Any]:
     env_obj = getattr(r.challenge, "env", None)
