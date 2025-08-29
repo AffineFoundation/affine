@@ -12,7 +12,6 @@ class ELR(af.BaseEnv):
     __version__: str = "0.0.0"
     def __init__(self):
         super().__init__()
-        self._executor = af.utils.ProgramExecutor()
 
     async def generate(self) -> af.Challenge:
         af.logger.trace("Generating a new challenge.")
