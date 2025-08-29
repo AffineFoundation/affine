@@ -4,6 +4,7 @@ import random
 import asyncio
 import affine as af
 from typing import Any, Dict, Optional, Tuple
+from .utils import run_in_sandbox
 
 MODELS = ["unsloth/gemma-3-12b-it"]
 PROMPT_TEMPLATE = """You are a programming expert. Given a Python program and its expected output, you need to determine the exact input that would produce this output.
@@ -74,7 +75,7 @@ class ABD(af.BaseEnv):
     __version__: str = "0.0.1"
     def __init__(self):
         super().__init__()
-        self._executor = af.utils.ProgramExecutor()
+        # Use sandboxed code execution per run; no persistent state needed here
         
     async def _create_challenge(
         self, program: str, example_in: str, example_out: str
@@ -99,10 +100,7 @@ class ABD(af.BaseEnv):
             af.logger.trace("Generated input insufficient, retrying")
             return None
 
-        loop = asyncio.get_running_loop()
-        output, error = await loop.run_in_executor(
-            None, self._executor.execute, program, gen_input
-        )
+        output, error = await run_in_sandbox(program, gen_input)
         af.logger.trace(f"Executed program with generated input. Output: {output}, Error: {error}, program: {program}")
         if error or not output.strip():
             af.logger.trace("Generated input contains error")
@@ -190,10 +188,7 @@ class ABD(af.BaseEnv):
                 env=self, score=0.0,
                 extra={"error": "Invalid input for program", "generated_input": gen_in, "expected_output": expected}
             )
-        loop = asyncio.get_running_loop()
-        out, err = await loop.run_in_executor(
-            None, self._executor.execute, prog, gen_in
-        )
+        out, err = await run_in_sandbox(prog, gen_in)
         af.logger.trace(f"Executed program with generated input. Output: {out}, Error: {err}")
         if err:
             af.logger.trace("Error occurred during program execution.")
@@ -207,3 +202,6 @@ class ABD(af.BaseEnv):
             env=self, score=1.0 if ok else 0.0,
             extra={"outputs_match": ok, "generated_input": gen_in, "generated_output": out, 'expected_output': expected}
         )
+
+    async def _run_in_sandbox(self, program: str, stdin_text: str = "") -> Tuple[str, str]:
+        return await run_in_sandbox(program, stdin_text)

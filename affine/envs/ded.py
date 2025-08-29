@@ -3,9 +3,9 @@ import ast
 import time
 import json
 import asyncio
-import subprocess
 import affine as af
 from typing import Any, Dict, List, Tuple
+from .utils import strip_fences, run_in_sandbox
 
 # -------------------------------- Helpers -------------------------------- #
 def _to_str(x) -> str:
@@ -44,7 +44,7 @@ class DED(af.BaseEnv):
     __version__: str = "0.0.1"
     def __init__(self):
         super().__init__()
-        self._executor = af.utils.ProgramExecutor()
+        # No local executor; execution happens in Quixand sandbox
 
     # ----------------------------- Env API -------------------------------- #
     async def generate(self) -> af.Challenge:
@@ -71,8 +71,8 @@ class DED(af.BaseEnv):
         self, challenge: af.Challenge, response: af.Response
     ) -> af.Evaluation:
         af.logger.trace("Starting evaluation of the challenge.")
-        raw_reply = response.response
-        program = self._executor._strip_fences(raw_reply)
+        raw_reply = response.response or ""
+        program = strip_fences(raw_reply)
         af.logger.trace(f"Stripped program from response: {program[:50]}...")
 
         # ---------------- Verification info ---------------------------- #
@@ -108,7 +108,6 @@ class DED(af.BaseEnv):
             )
         af.logger.trace(f"Found {len(cases)} test cases.")
 
-        loop = asyncio.get_running_loop()
         passed, total = 0, len(cases)
         details = []
 
@@ -142,12 +141,7 @@ class DED(af.BaseEnv):
                 total -= 1
                 continue
 
-            try:
-                out, err = await loop.run_in_executor(
-                    None, self._executor.execute, exec_prog, inp
-                )
-            except subprocess.TimeoutExpired:
-                out, err = "", "TIMEOUT"
+            out, err = await self._run_in_sandbox(exec_prog, inp)
 
             ok_run = not err.strip()
             out_norm = _normalize(out)
@@ -177,3 +171,11 @@ class DED(af.BaseEnv):
         )
         af.logger.trace(f"Evaluation completed with score: {score}")
         return af.Evaluation(env=self, score=score, feedback=feedback)
+
+
+    async def _run_in_sandbox(self, program: str, stdin_text: str = "") -> Tuple[str, str]:
+        """Execute Python code inside a Quixand sandbox with optional stdin.
+
+        Returns (stdout, stderr) as text.
+        """
+        return await run_in_sandbox(program, stdin_text)
