@@ -80,6 +80,18 @@ affine_results = Table(
 Index("ix_results_env", affine_results.c.env_name)
 Index("ix_results_hotkey", affine_results.c.hotkey)
 Index("ix_results_r2lm", affine_results.c.r2_last_modified.desc())
+# b-tree index with 3 prefixes
+# only keep rows in index where success = true to reduce index size
+# store score on leafs to make sum(*) faster
+Index(
+    "ix_results_success_env_hotkey_rev_cover",
+    affine_results.c.env_name,
+    affine_results.c.hotkey,
+    affine_results.c.revision,
+    postgresql_where=affine_results.c.success.is_(True),
+    postgresql_include=["score"],
+)
+
 
 # --------------------------------------------------------------------------- #
 #                         Dataset storage (minimal)                           #
@@ -393,13 +405,14 @@ async def aggregate_success_by_env(*, env_name: str, pairs: list[tuple[str, str]
     stmt = (
         select(
             affine_results.c.hotkey.label("hotkey"),
-            func.count().filter(affine_results.c.success.is_(True)).label("n_success"),
+            func.count().label("n_success"),
             func.coalesce(
                 func.sum(affine_results.c.score).filter(affine_results.c.success.is_(True)),
                 0.0,
             ).label("sum_score"),
         )
         .where(affine_results.c.env_name == env_name)
+        .where(affine_results.c.success.is_(True))
         .where(tuple_(affine_results.c.hotkey, affine_results.c.revision).in_(pairs))
         .group_by(affine_results.c.hotkey)
     )
@@ -434,8 +447,9 @@ async def get_env_counts(*, pairs: List[Tuple[str, str]]) -> Dict[str, Dict[Tupl
             affine_results.c.env_name.label("env_name"),
             affine_results.c.hotkey.label("hotkey"),
             affine_results.c.revision.label("revision"),
-            func.count().filter(affine_results.c.success.is_(True)).label("n_success"),
+            func.count().label("n_success"),
         )
+        .where(affine_results.c.success.is_(True))
         .where(tuple_(affine_results.c.hotkey, affine_results.c.revision).in_(pairs))
         .group_by(affine_results.c.env_name, affine_results.c.hotkey, affine_results.c.revision)
     )
