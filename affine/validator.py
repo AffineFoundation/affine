@@ -233,7 +233,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
             ]
         rows = sorted((row(hk) for hk in active_hks), key=lambda r: (r[-3], r[0]), reverse=True)
         print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
-        return [best_uid], [1.0]
+        return [0], [1.0]
 
     # Eligible path: normalize scores to weights over the eligible pool only
     total_points = sum(score[hk] for hk in eligible)
