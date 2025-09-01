@@ -22,7 +22,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 
 # 5) Sync deps
-RUN uv venv --python python3 $VENV_DIR \
+RUN uv venv --python python3.11 $VENV_DIR \
  && uv sync
 
 # Pre install.

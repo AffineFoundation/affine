@@ -10,7 +10,6 @@ import socket
 import asyncio
 import aiohttp
 import asyncio
-import bittensor as bt
 from urllib.parse import urlparse
 from aiohttp import ClientConnectorError
 from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, TypeVar, Awaitable
@@ -18,6 +17,8 @@ from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, T
 import affine as af
 
 async def sign_results(wallet: Any, results: List["af.Result"]) -> Tuple[str, List["af.Result"]]:
+    import bittensor as bt
+
     """Sign results via external signer if available, otherwise sign locally."""
     hotkey_addr: str = ""
     try:
@@ -51,6 +52,8 @@ async def _set_weights_with_confirmation(
     delay_s: float = 2.0,
     log_prefix: str = "",
 ) -> bool:
+    import bittensor as bt
+
     for attempt in range(retries):
         try:
             st = await af.get_subtensor()
@@ -79,7 +82,9 @@ async def _set_weights_with_confirmation(
         await asyncio.sleep(delay_s)
     return False
 
-async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[float], retry: int = 10 ):
+async def retry_set_weights( wallet: 'bt.Wallet', uids: List[int], weights: List[float], retry: int = 10 ):
+    import bittensor as bt
+
     # Delegate to signer; fallback to shared helper only if signer is unreachable
     signer_url = af.get_conf('SIGNER_URL', default='http://signer:8080')
     try:
@@ -139,9 +144,11 @@ async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[f
 @click.option('--host', default=os.getenv('SIGNER_HOST', '0.0.0.0'))
 @click.option('--port', default=int(os.getenv('SIGNER_PORT', '8080')))
 def signer(host: str, port: int):
+    import bittensor as bt
+    from aiohttp import web
+
     """Start lightweight HTTP signer service."""
     async def _run():
-        from aiohttp import web
         coldkey = af.get_conf("BT_WALLET_COLD", "default")
         hotkey = af.get_conf("BT_WALLET_HOT", "default")
         wallet = bt.wallet(name=coldkey, hotkey=hotkey)

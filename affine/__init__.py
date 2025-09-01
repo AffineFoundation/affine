@@ -25,7 +25,6 @@ from .utils import *
 from math import comb
 import datetime as dt
 from tqdm import tqdm
-import bittensor as bt
 import datasets as hf_ds                    
 from pathlib import Path
 from tqdm.asyncio import tqdm
@@ -63,6 +62,7 @@ def get_conf(key, default=None) -> Any:
 # --------------------------------------------------------------------------- #
 SUBTENSOR = None
 async def get_subtensor():
+    import bittensor as bt
     global SUBTENSOR
     if SUBTENSOR == None:
         logger.trace("Making Bittensor connection...")
@@ -218,158 +218,3 @@ from .chutes import *
 from .runner import *
 from .validator import *
 from .miners import * 
-
-# --------------------------------------------------------------------------- #
-#                          Dataset upload CLI                                 #
-# --------------------------------------------------------------------------- #
-import click
-import datasets as hf_ds
-import asyncio as _asyncio
-from sqlalchemy.dialects.postgresql import insert as _pg_insert
-from sqlalchemy.exc import DBAPIError
-from .database import _get_engine as _get_engine, _sm as _sm, dataset_rows as dataset_rows
-import asyncpg
-
-@cli.command("upload-dataset")
-@click.argument("dataset_name", type=str)
-@click.option("--config", "config", type=str, default="default", help="Dataset config (HF)")
-@click.option("--split", "split", type=str, default="train", help="Dataset split (HF)")
-def upload_dataset_cmd(dataset_name: str, config: str, split: str):
-    """Upload an HF dataset's rows into Postgres `dataset_rows`.
-
-    Example:
-      affine upload-dataset satpalsr/rl-python --config default --split train
-    """
-    async def _run():
-        af.logger.debug(f"Starting upload for dataset: {dataset_name} with config: {config} and split: {split}")
-        await _get_engine()
-        sm = _sm()
-        ds = hf_ds.load_dataset(dataset_name, name=None if config == "default" else config, split=split)
-        af.logger.debug(f"Loaded dataset: {dataset_name} with {len(ds)} rows")
-        batch: list[dict] = []
-        BATCH = BATCH_SIZE
-        idx = 0
-        total_rows = len(ds)
-        async with sm() as session:
-            def _make_stmt(rows: list[dict]):
-                af.logger.debug(f"Preparing statement for batch of size: {len(rows)}")
-                values = [
-                    {
-                        "dataset_name": dataset_name,
-                        "config": config,
-                        "split": split,
-                        "row_index": r["__row_index__"],
-                        "data": {k: v for k, v in r.items() if k != "__row_index__"},
-                    }
-                    for r in rows
-                ]
-                stmt = _pg_insert(dataset_rows).values(values)
-                # Idempotent upsert: on conflict, do nothing
-                stmt = stmt.on_conflict_do_nothing(index_elements=[
-                    dataset_rows.c.dataset_name,
-                    dataset_rows.c.config,
-                    dataset_rows.c.split,
-                    dataset_rows.c.row_index,
-                ])
-                return stmt
-
-            async def _execute_batch_with_retries(rows: list[dict], *, max_retries: int = 5) -> None:
-                """Execute and commit a batch with retries on transient disconnects."""
-                delay = 0.5
-                attempt = 0
-                while True:
-                    try:
-                        af.logger.debug(f"Executing batch of size: {len(rows)} (attempt {attempt+1})")
-                        await session.execute(_make_stmt(rows))
-                        await session.commit()
-                        af.logger.debug("Batch committed")
-                        return
-                    except (DBAPIError, asyncpg.ConnectionDoesNotExistError) as e:
-                        try:
-                            await session.rollback()
-                        except Exception:
-                            pass
-                        is_invalidated = isinstance(e, DBAPIError) and getattr(e, "connection_invalidated", False)
-                        msg = str(getattr(e, "orig", e)).lower()
-                        is_disconnect = isinstance(e, asyncpg.ConnectionDoesNotExistError) or "connection was closed" in msg
-                        retriable = is_invalidated or is_disconnect
-                        attempt += 1
-                        if not retriable or attempt >= max_retries:
-                            af.logger.error(f"Giving up on batch after {attempt} attempts due to error: {e}")
-                            raise
-                        af.logger.warning(f"Transient DB disconnect during batch (attempt {attempt}); retrying in {delay:.1f}s…")
-                        await asyncio.sleep(delay)
-                        delay = min(delay * 2, 5.0)
-
-            # Iterate rows
-            for row in ds:  # type: ignore
-                # Attach running index; if HF provides _keys, we still assign our own index
-                payload = dict(row)
-                payload["__row_index__"] = idx
-                batch.append(payload)
-                idx += 1
-                if len(batch) >= BATCH:
-                    await _execute_batch_with_retries(batch)
-                    batch.clear()
-                # Show progress
-                af.logger.info(f"Progress: {idx}/{total_rows} rows uploaded")
-
-            if batch:
-                af.logger.debug(f"Executing final batch of size: {len(batch)}")
-                await _execute_batch_with_retries(batch)
-                af.logger.debug(f"Final batch committed")
-                af.logger.info(f"Progress: {idx}/{total_rows} rows uploaded")
-
-        af.logger.info(f"Uploaded {idx} rows for {dataset_name} [{config}/{split}] to dataset_rows")
-
-    _asyncio.run(_run())
-
-
-# --------------------------------------------------------------------------- #
-#                               Stats CLI                                     #
-# --------------------------------------------------------------------------- #
-@cli.command("stats")
-def stats_cmd():
-    """Show counts of samples per env and per miner (hotkey)."""
-    async def _run():
-        await _get_engine()
-        sm = _sm()
-        async with sm() as session:
-            # Per-env counts
-            stmt_env = (
-                select(
-                    affine_results.c.env_name.label("env_name"),
-                    func.count().label("n"),
-                )
-                .group_by(affine_results.c.env_name)
-                .order_by(func.count().desc())
-            )
-            res_env = await session.execute(stmt_env)
-            env_counts = [(m["env_name"], int(m["n"])) for m in res_env.mappings().all()]
-
-            # Per-miner counts
-            stmt_miner = (
-                select(
-                    affine_results.c.hotkey.label("hotkey"),
-                    func.count().label("n"),
-                )
-                .group_by(affine_results.c.hotkey)
-                .order_by(func.count().desc())
-            )
-            res_miner = await session.execute(stmt_miner)
-            miner_counts = [(m["hotkey"], int(m["n"])) for m in res_miner.mappings().all()]
-
-        if env_counts:
-            click.echo("Per‑env sample counts:")
-            click.echo(tabulate(env_counts, headers=["env_name", "count"], tablefmt="github"))
-            click.echo()
-        else:
-            click.echo("No data found for env counts.")
-
-        if miner_counts:
-            click.echo("Per‑miner sample counts:")
-            click.echo(tabulate(miner_counts, headers=["hotkey", "count"], tablefmt="github"))
-        else:
-            click.echo("No data found for miner counts.")
-
-    _asyncio.run(_run())

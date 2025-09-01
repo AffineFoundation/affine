@@ -4,10 +4,11 @@ import re
 from typing import Tuple, Optional
 import affine as af
 import quixand as qx
+import atexit
+
 
 config = qx.Config(timeout=600, image="python:3.11-slim")
 executors = af.singleton('slim-playground', lambda: qx.Playground(n=2, config=config))
-executors().prewarm()
 
 def strip_fences(text: str) -> str:
     """Extract code from ```python ...``` or generic ``` ``` fences; fallback to raw text.
@@ -49,7 +50,9 @@ async def run_in_sandbox(
             + "            print(res)\n"
         )
 
-    sbx: Optional[qx.Sandbox] = executors().create()
+    ply = executors()
+    atexit.register(ply.close)
+    sbx: Optional[qx.Sandbox] = ply.create()
     try:
         sbx.files.write("/workspace/main.py", src)
         redir = ""

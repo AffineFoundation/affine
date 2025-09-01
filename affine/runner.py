@@ -6,7 +6,6 @@ from __future__ import annotations
 import time, random, asyncio, traceback, contextlib
 from collections import defaultdict
 from typing import Dict, List, Tuple, Any
-import bittensor as bt
 import affine as af
 
 # --------------------------------------------------------------------------- #
@@ -14,6 +13,7 @@ import affine as af
 # --------------------------------------------------------------------------- #
 @af.cli.command("runner")
 def runner():
+    import bittensor as bt
     coldkey = af.get_conf("BT_WALLET_COLD", "default")
     hotkey  = af.get_conf("BT_WALLET_HOT",  "default")
     wallet  = bt.wallet(name=coldkey, hotkey=hotkey)
@@ -21,6 +21,7 @@ def runner():
     async def _run():
         
         envs = { env.__name__: env() for env in af.ENVS.values() }
+        print (envs)
 
         # State
         EPS = 1e-3
@@ -38,7 +39,11 @@ def runner():
         async def refresh_counts():
             nonlocal COUNTS_PER_ENV
             PAIRS = [ (m.hotkey, m.revision) for m in MINERS.values() ]
-            COUNTS_PER_ENV = await af.get_env_counts(pairs=PAIRS)
+            all_counts = await af.get_env_counts(pairs=PAIRS)
+            # Only keep counts for envs that are in af.ENVS
+            COUNTS_PER_ENV = {}
+            for env_name in af.ENVS.keys():
+                COUNTS_PER_ENV[env_name] = all_counts.get(env_name, {})
 
         SELECT_LOG_TEMPLATE = (
             "[SELECT] "
@@ -56,7 +61,7 @@ def runner():
             # Get all hotkey, revision pairs to select from.
             pairs = [ (m.hotkey, m.revision) for m in MINERS.values() ]
             # Get a weight per env.
-            weights_per_env = {env_name: 1/sum(env_counts.values()) for env_name, env_counts in COUNTS_PER_ENV.items()}
+            weights_per_env = {env_name: 1/max(1, sum(env_counts.values())) for env_name, env_counts in COUNTS_PER_ENV.items()}
             # Select the env with the least number of samples.
             worst_env = random.choices( list(weights_per_env.keys()), weights = list(weights_per_env.values()))[0]
             # Get all counts for the worst env.
@@ -64,7 +69,7 @@ def runner():
             # Get the average env count.
             mean_env_count = sum([ c for c in env_counts.values() ])/(len(pairs) + EPS)
             # Weight to be selected is mean/(count + backoff)
-            weights_hotkey_env = { p: mean_env_count/(env_counts.get(p, 0) + BACKOFF[p] + EPS) for p in pairs }
+            weights_hotkey_env = { p: (mean_env_count + EPS)/(env_counts.get(p, 0) + BACKOFF[p] + EPS) for p in pairs }
             # Pick the miner with weights.
             worst_miner = random.choices( list(weights_hotkey_env.keys()), weights = list(weights_hotkey_env.values()))[0]
             # return the env and the miner

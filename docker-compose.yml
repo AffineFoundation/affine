@@ -12,6 +12,7 @@ services:
     volumes:
       - ./.env:/app/.env:ro
       - validator-cache:/app/data/blocks
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8001:8000"           # host 8001 → container’s AFFINE_METRICS_PORT=8000
     environment:
@@ -34,6 +35,7 @@ services:
       - .env
     volumes:
       - ./.env:/app/.env:ro
+      - /var/run/docker.sock:/var/run/docker.sock
       # runner doesn’t need the cache—omit or give its own if desired
     ports:
       - "8002:8000"           # host 8002 → container’s AFFINE_METRICS_PORT=8000
@@ -41,33 +43,7 @@ services:
       - AFFINE_METRICS_PORT=8000
       - AFFINE_METRICS_ADDR=0.0.0.0
       - SIGNER_URL=http://signer:8080
-    command: ["-vv", "runner"]
-
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: affine-prometheus
-    restart: unless-stopped
-    volumes:
-      - ./prometheus.yml:/prometheus/prometheus.yml:ro
-    ports:
-      - "9090:9090"
-    command:
-      - "--config.file=/prometheus/prometheus.yml"
-      - "--log.level=warn"
-
-  grafana:
-    image: grafana/grafana:latest
-    container_name: affine-grafana
-    restart: unless-stopped
-    ports:
-      - "8000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_SERVER_HTTP_ADDR=0.0.0.0
-      - GF_LOG_LEVEL=warn       
-      - GF_LOG_MODE=console     
-    volumes:
-      - grafana-storage:/var/lib/grafana:rw
+    command: ["-vvv", "runner"]
 
   signer:
     image: thebes1618/affine:latest

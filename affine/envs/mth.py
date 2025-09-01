@@ -1,12 +1,12 @@
 from __future__ import annotations
 import re
+import time
 import math
 import json
+import atexit
 import affine as af
 import quixand as qx
-from typing import Tuple, Optional
-from .utils import strip_fences
-from typing import Optional, Tuple, Any, Dict
+from typing import Tuple, Optional, Any, Dict
 
 # ----------------------------
 # Config / Singletons
@@ -14,12 +14,12 @@ from typing import Optional, Tuple, Any, Dict
 LEAN_IMAGE = "leanprovercommunity/lean:latest"
 lean_config = qx.Config(timeout=600, image=LEAN_IMAGE, workdir="/workspace")
 lean_executors = af.singleton('lean-proof', lambda: qx.Playground(n=2, config=lean_config))
-lean_executors().prewarm()
 
-math_dataset = af.singleton('rl-math', lambda: af.utils.R2BufferedDataset(
-    dataset_name="satpalsr/rl-math",
+math_dataset = af.singleton('gsm8k', lambda: af.utils.R2BufferedDataset(
+    dataset_name="openai/gsm8k",
     buffer_size=10,
     max_batch=1,
+    config='main'
 ))
 
 # ----------------------------
@@ -27,66 +27,70 @@ math_dataset = af.singleton('rl-math', lambda: af.utils.R2BufferedDataset(
 # ----------------------------
 def _strip_fences(text: str) -> str:
     """Extract code from ```lang ...``` fences; fallback to raw text. Last block wins."""
+    if not text:
+        return ""
     blocks = re.findall(r"```(?:\w+)?\s*\n([\s\S]*?)```", text, re.DOTALL)
-    if blocks:
-        return blocks[-1].strip()
-    return text.strip()
+    return (blocks[-1] if blocks else text).strip()
 
-def _parse_response(payload: str) -> Tuple[Optional[str], Optional[str]]:
+def _extract_answer_from_gsm8k(answer_text: str) -> str:
+    """
+    Extract the final answer from GSM8K format.
+    GSM8K answers end with #### followed by the final answer.
+    """
+    if not answer_text:
+        return ""
+    match = re.search(r'####\s*([^\n\r]+)', answer_text)
+    return match.group(1).strip() if match else str(answer_text).strip()
+
+def _parse_response(payload: str) -> Tuple[Optional[str], Optional[str], Optional[Dict[str, Any]]]:
     """
     Parse miner response.
-    Preference: JSON with keys {"final_answer": <str|num>, "proof_lean": <code>}.
+    Preference: strict JSON -> {"final_answer": <str|num>, "proof_lean": "```lean ...```"}.
     Fallbacks: detect 'Final Answer: ...' line and ```lean``` fenced block.
-    Returns (final_answer_str, lean_proof_src_or_None).
+    Return (final_answer_str_or_None, lean_src_or_None, parsed_json_or_None).
     """
     if not payload:
-        return None, None
+        return None, None, None
 
-    # Try JSON
+    # Try JSON first
     try:
         data = json.loads(payload)
         ans = str(data.get("final_answer", "")).strip() or None
-        proof = data.get("proof_lean", None)
-        if isinstance(proof, str):
-            proof = proof.strip()
-        return ans, proof
+        raw_proof = data.get("proof_lean", None)
+        proof = _strip_fences(raw_proof) if isinstance(raw_proof, str) else None
+        return ans, proof, data
     except Exception:
         pass
 
-    # Try "Final Answer:" style
+    # Fallback "Final Answer: ..." and fenced lean
     m = re.search(r"(?i)final\s*answer\s*:\s*([^\n\r]+)", payload)
     ans = m.group(1).strip() if m else None
 
-    # Try ```lean fenced code
     lean_blocks = re.findall(r"```lean\s*\n([\s\S]*?)```", payload, re.DOTALL | re.IGNORECASE)
     proof = lean_blocks[-1].strip() if lean_blocks else None
 
-    return ans, proof
+    return ans, proof, None
 
 def _answers_equal(expected: str, got: str, *, tol: float = 1e-9) -> bool:
     """
     Compare answers leniently:
-      - exact string match (trimmed)
-      - numeric equality (float-ish) within tolerance
-      - integer string equivalence
+      - exact trimmed string
+      - numeric equality within tolerance
+      - fraction a/b allowed
     """
     if expected is None or got is None:
         return False
 
     e = str(expected).strip()
     g = str(got).strip()
-
     if e == g:
         return True
 
-    # Try numeric comparison
     def _num(s: str):
-        # allow things like "4", "4.0", "+4", "-3/2" (fraction fallback)
         s = s.replace(",", "").strip()
         try:
             return float(s)
         except Exception:
-            # fraction a/b
             frac = re.match(r"^\s*([+-]?\d+)\s*/\s*([+-]?\d+)\s*$", s)
             if frac:
                 a, b = int(frac.group(1)), int(frac.group(2))
@@ -96,49 +100,23 @@ def _answers_equal(expected: str, got: str, *, tol: float = 1e-9) -> bool:
 
     en = _num(e)
     gn = _num(g)
-    if en is not None and gn is not None:
-        return math.isfinite(en) and math.isfinite(gn) and abs(en - gn) <= tol
-
+    if en is not None and gn is not None and math.isfinite(en) and math.isfinite(gn):
+        return abs(en - gn) <= tol
     return False
 
-
-def _lean_wrapper(expected_expr: str, user_proof_body: str) -> str:
+def _normalize_literal_for_lean(claimed: str) -> str:
     """
-    Wrap the miner's Lean proof inside a theorem that asserts the expected result.
-    We require miners to prove:  result_is_correct : result = <expected_expr>
-    The user proof body should conclude this equality.
-
-    NOTE: keep wrapper minimal to avoid extra dependencies.
+    Convert the miner's claimed answer string into a Lean Int-ish literal/expression.
+    Policy:
+      - integers become '123'
+      - proper fractions a/b -> Int.ediv a b (truncating). This pairs with the prompt requirement.
+      - floats: if near-int -> that int; else floor (to avoid non-int).
+    This keeps the wrapper minimal (no mathlib rationals).
     """
-    # Very lightweight Lean 4 file; users can 'by' finish the proof they supply.
-    return f"""\
-import Std
-
-open Std
-
--- Prove that the computed result equals the expected expression.
--- Miners must provide a proof of:
---   theorem result_is_correct : result = ({expected_expr}) := by
--- where `result` is defined below (miners can redefine or give a direct proof).
--- They can also directly prove: theorem result_is_correct : ({expected_expr}) = ({expected_expr}) := rfl
-
-/-- Miner-defined result (OPTIONAL). They may also ignore and provide a direct proof. -/
-def result : Int := 0
-
-/-- The required correctness statement. -/
-theorem result_is_correct : result = ({expected_expr}) := by
-{user_proof_body}
-"""
-
-
-def _normalize_expected_for_lean(expected: str) -> str:
-    """
-    Convert expected answer string into a Lean Int or Rat-like literal where possible.
-    For simplicity, treat as Int if it parses, else as Int division if 'a/b'.
-    (This keeps the wrapper minimal and avoids importing mathlib rational machinery.)
-    """
-    s = expected.strip()
-    # int?
+    if claimed is None:
+        return "0"
+    s = claimed.strip()
+    # integer?
     try:
         iv = int(s)
         return str(iv)
@@ -149,40 +127,51 @@ def _normalize_expected_for_lean(expected: str) -> str:
     if m:
         a, b = int(m.group(1)), int(m.group(2))
         if b == 0:
-            # fallback — Lean can't handle division by zero; leave as 0 to force failure
             return "0"
-        # use Int division if exact (a % b == 0), else leave as an expression with Int.div?
         if a % b == 0:
             return str(a // b)
-        # non-integer: represent as (a / b) over Int -> not legal equality for Int.
-        # Better: keep numerator and expect miners to convert; but to keep it simple,
-        # we encode expected as an Int if it's integral; otherwise, force them to set `result`
-        # to the exact same expression with Int.div (which is truncating). We'll hint in prompt.
         return f"Int.ediv ({a}) ({b})"
     # float?
     try:
         fv = float(s)
-        # Represent as Int via rounding if exact integer; else floor to avoid mismatches
         if math.isfinite(fv) and abs(fv - round(fv)) < 1e-12:
             return str(int(round(fv)))
         return str(int(math.floor(fv)))
     except Exception:
         pass
-    # last resort: 0 (this will likely fail unless miners adjust)
+    # fallthrough
     return "0"
 
+def _lean_wrapper_expect_claim(claim_expr: str, user_proof_body: str) -> str:
+    """
+    Wrap the miner's Lean proof inside a theorem that asserts:
+        theorem result_equals_claim : result = (<claim_expr>) := by
+            <user_proof_body>
+    The miner proves their claimed value. Separately, we check that claim vs ground truth.
+    """
+    return f"""\
+import Std
+open Std
+
+/-- Optional: miner-defined computed result. They may ignore and prove directly. -/
+def result : Int := 0
+
+/-- The miner must prove that their computed result equals their claimed answer. -/
+theorem result_equals_claim : result = ({claim_expr}) := by
+{user_proof_body}
+"""
 
 def _compile_lean_in_container(lean_src: str) -> Tuple[bool, str]:
     """
     Write Lean file into a fresh Lean sandbox and run `lean --make Main.lean`.
     Returns (ok, compiler_stderr_or_log).
     """
-    sbx: Optional[qx.Sandbox] = lean_executors().create()
+    ply = lean_executors()
+    atexit.register(ply.close)
+    sbx: Optional[qx.Sandbox] = ply.create()
     try:
         sbx.files.write("/workspace/Main.lean", lean_src)
-        # quick compilation
         r = sbx.run("bash -lc 'lean --make /workspace/Main.lean 1>/workspace/_out.txt 2>/workspace/_err.txt || true'")
-        # Read logs
         out = ""
         err = ""
         try:
@@ -193,9 +182,7 @@ def _compile_lean_in_container(lean_src: str) -> Tuple[bool, str]:
             err = sbx.files.read("/workspace/_err.txt")
         except Exception:
             pass
-        # If `lean --make` exited with 0, we consider ok.
         ok = (r.exit_code == 0)
-        # lean --make may return 0 even with warnings; we accept as success.
         return ok, (err or out or "")
     finally:
         if sbx is not None:
@@ -203,42 +190,38 @@ def _compile_lean_in_container(lean_src: str) -> Tuple[bool, str]:
                 sbx.shutdown()
             except Exception:
                 pass
+
 # ----------------------------
 # Env
 # ----------------------------
-class MTHLean(af.BaseEnv):
+class MTH(af.BaseEnv):
     """
-    Math + Lean-proof environment.
-
-    - generate(): pulls one math item and asks miner for BOTH final answer and a Lean proof
-      that the answer equals the ground truth.
-    - evaluate(): checks numeric equality and compiles the Lean proof in an isolated container.
+    Math + Lean-proof environment (HARD mode).
+    The prompt does NOT reveal ground truth.
+    Miners must:
+      (1) Solve and produce a single canonical 'final_answer'.
+      (2) Provide Lean code that PROVES their claimed answer (result = claim).
+    Evaluation:
+      - Check numeric equality (claimed vs hidden truth).
+      - Compile Lean proof and ensure the claim theorem type matches their claim.
+      - Score = 1.0 only if BOTH pass; otherwise 0.0.
     """
-    __version__: str = "0.1.0"
+    __version__: str = "0.2.0"
 
     def __init__(self):
         super().__init__()
 
     async def _next_item(self) -> Dict[str, Any]:
         """
-        Pulls one item from the math dataset.
-        Expected keys:
+        Pull a single item. Expected keys:
           - question: str
-          - answer: str|number
+          - answer: str|number (GSM8K format with ####)
           - id: optional
         """
-        # R2BufferedDataset usually exposes an async iterator / next()
-        item = await math_dataset().next()
-        # Normalize
+        item = await math_dataset().get()
         q = str(item.get("question", "")).strip()
         a = item.get("answer", None)
-        if isinstance(a, (int, float)):
-            a_str = str(a)
-        elif a is None:
-            a_str = ""
-        else:
-            a_str = str(a).strip()
-
+        a_str = str(a).strip() if not isinstance(a, (int, float)) else str(a)
         return {
             "id": item.get("id", f"{int(time.time()*1000)}"),
             "question": q,
@@ -248,86 +231,76 @@ class MTHLean(af.BaseEnv):
     async def generate(self):
         item = await self._next_item()
 
-        expected = item["answer"]
+        # Keep the true expected hidden from the prompt.
+        hidden_expected = _extract_answer_from_gsm8k(item["answer"])
         qtxt = item["question"]
 
         prompt = f"""\
-            You are given a math problem and must do TWO things:
+You are given a math problem. You must do **two** things:
 
-            1) Compute the **Final Answer** (a single canonical value).
-            2) Provide a **Lean 4 proof** that the answer equals the expected value.
+1) **Solve** it and produce a single canonical value as `"final_answer"`.
+2) **Prove** your claimed answer in **Lean 4**.
 
-            Return your result as JSON with two fields:
-            {{
-            "final_answer": "<value>",
-            "proof_lean": "lean\\n<LEAN PROOF CODE HERE>\\n"
-            }}
+Return **JSON only** (no extra text), in this shape:
+{{
+"final_answer": "<value>",
+"proof_lean": "```lean\\n<LEAN CODE HERE>\\n```"
+}}
 
-            markdown
-            Copy code
+### Rules
+- `final_answer` must be a single literal like `7`, `-12`, `3/4`, or `42.0`.
+- In your Lean code, include a theorem named **`result_equals_claim`** with the exact type:
 
-            ### Problem
-            {qtxt}
+theorem result_equals_claim : result = (<your_claim_literal>) := by
 
-            ### Requirements
-            - `final_answer` must be a single value (e.g., `4`, `-3/2`, `42.0`).
-            - In `proof_lean`, include a theorem named `result_is_correct` that proves:
-            `result = ({expected})`
-            You may define `def result : Int := ...` if helpful, or prove equality directly.
-            - If the expected answer is a non-integer rational a/b, use integer division `Int.ediv a b`
-            in the proof equality (this env checks Int equality by default). If your answer is integral,
-            prove equality to that integer.
-            - Put the Lean code **inside** a ```lean fenced block as shown above.
+You may optionally define `def result : Int := ...` or directly prove the equality.
+- Use **`Int`** values/equalities only. If your answer is a non-integer rational `a/b`,
+use **`Int.ediv a b`** for the claimed literal (truncating division). If it is integral,
+use that integer.
+- Put all Lean code inside a ```lean fenced block.
 
-            ### Example Skeleton
-            ```lean
-            -- You can ignore result and prove the equality directly if you prefer.
-            -- Or define:
-            def result : Int := 4
-            theorem result_is_correct : result = (4) := by
-            -- your proof here (e.g., rfl if trivially defined)
-            rfl
+### Problem
+{qtxt}
         """
+        # Keep the hidden truth only in the challenge metadata, not in the prompt.
         extra = {
-        "id": item["id"],
-        "expected": expected,
-        "question": qtxt,
-        "ts": time.time(),
+            "id": item["id"],
+            "expected": hidden_expected,
+            "question": qtxt,
+            "ts": time.time(),
         }
         return af.Challenge(env=self, prompt=prompt, extra=extra)
 
     async def evaluate(self, challenge: af.Challenge, response: af.Response):
-        expected = str(challenge.extra.get("expected", "")).strip()
-        payload = response.response or ""
+      # 0) Basics
+      payload = response.response or ""
+      hidden_expected = str(challenge.extra.get("expected", "")).strip()
 
-        # Parse miner output
-        got_ans, lean_code = _parse_response(payload)
+      # 1) Parse miner output
+      got_ans, lean_code, parsed = _parse_response(payload)
 
-        # 1) Check numeric/lenient equality
-        ans_ok = _answers_equal(expected, got_ans or "")
+      # 2) Check numeric/lenient equality with hidden truth
+      ans_ok = _answers_equal(hidden_expected, got_ans or "")
 
-        # 2) Compile Lean proof inside docker
-        proof_ok = False
-        compile_log = ""
-        if lean_code:
-            user_body = _strip_fences(lean_code)
-            # Allow users who pasted full file with theorem name present already:
-            # If they already declared theorem result_is_correct, accept their file as-is.
-            if re.search(r"theorem\s+result_is_correct\s*:", user_body):
-                lean_src = user_body
-            else:
-                lean_expected = _normalize_expected_for_lean(expected)
-                lean_src = _lean_wrapper(lean_expected, user_body)
+      # 3) Compile Lean proof that asserts equality to the miner's claim
+      proof_ok = False
+      compile_log = ""
+      if lean_code and got_ans:
+          claim_expr = _normalize_literal_for_lean(got_ans)
+          lean_src = _lean_wrapper_expect_claim(claim_expr, _strip_fences(lean_code))
+          proof_ok, compile_log = _compile_lean_in_container(lean_src)
+      else:
+          compile_log = "Missing Lean code and/or final_answer."
 
-            proof_ok, compile_log = _compile_lean_in_container(lean_src)
+      # 4) Score: must pass BOTH
+      score = float(ans_ok and proof_ok)
 
-        score = float(ans_ok and proof_ok)
-
-        extra = {
-            "expected": expected,
-            "got_answer": got_ans,
-            "answer_ok": bool(ans_ok),
-            "proof_ok": bool(proof_ok),
-            "compile_log": compile_log[-4000:],  # keep it reasonable
-        }
-        return af.Evaluation(env=self, score=score, extra=extra)
+      extra = {
+          "expected_hidden": hidden_expected,  # stored for audit
+          "got_answer": got_ans,
+          "answer_ok": bool(ans_ok),
+          "proof_ok": bool(proof_ok),
+          "compile_log": (compile_log or "")[-4000:],
+          "parsed_json": bool(parsed is not None),
+      }
+      return af.Evaluation(env=self, score=score, extra=extra)
