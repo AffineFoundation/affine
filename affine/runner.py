@@ -1,19 +1,12 @@
-
 #!/usr/bin/env python3
 # --------------------------------------------------------------------------- #
 #                             Imports                                         #
 # --------------------------------------------------------------------------- #
 from __future__ import annotations
-import time
-import random
-import asyncio
-import traceback
-import contextlib
-from .utils import *
-import bittensor as bt
+import time, random, asyncio, traceback, contextlib
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, TypeVar, Awaitable, AsyncIterator
-
+from typing import Dict, List, Tuple, Any
+import bittensor as bt
 import affine as af
 
 # --------------------------------------------------------------------------- #
@@ -26,219 +19,149 @@ def runner():
     wallet  = bt.wallet(name=coldkey, hotkey=hotkey)
 
     async def _run():
-        subtensor = None
-        envs = [cls() for cls in af.ENVS.values()]
+        
+        envs = { env.__name__: env() for env in af.ENVS.values() }
 
-        # ── config ───────────────────────────────────────────────────────────
-        MAX_USES       = 30
-        REFRESH_S      = 600     # metagraph/miners refresh cadence (s)
-        SINK_BATCH     = 300     # flush threshold
-        SINK_MAX_WAIT  = 60*5      # max seconds to hold partial batch
-        BACKOFF0       = 5
-        BACKOFF_CAP    = 300
+        # State
+        EPS = 1e-3
+        MINERS: Dict[int, any] = None
+        MINER_BY_PAIR: Dict[Tuple[str, str], any] = {}
+        BACKOFF = defaultdict(float)
 
-        # ── state ───────────────────────────────────────────────────────────
-        chal_cache, i_env = {}, 0
-        last_sync = 0.0
-        delay = defaultdict(lambda: BACKOFF0)   # uid -> current delay
-        cooldown_until = defaultdict(float)     # uid -> t when allowed again
-        miners_map = {}
+        async def refresh_miners():
+            nonlocal MINERS, MINER_BY_PAIR
+            MINERS = await af.get_miners()
+            # build (hotkey, revision) → miner index
+            MINER_BY_PAIR = { (m.hotkey, m.revision): m for m in MINERS.values() }
 
-        # results pipeline
-        sink_q: asyncio.Queue = asyncio.Queue()
+        COUNTS_PER_ENV: Dict[str, Dict[Tuple[str, str], int]] = None
+        async def refresh_counts():
+            nonlocal COUNTS_PER_ENV
+            PAIRS = [ (m.hotkey, m.revision) for m in MINERS.values() ]
+            COUNTS_PER_ENV = await af.get_env_counts(pairs=PAIRS)
+            
+            # Get all valid env names from the ENVS registry
+            valid_env_names = set(af.ENVS.keys())
+            
+            # Remove any env from counts that's not in ENVS
+            COUNTS_PER_ENV = {env_name: counts for env_name, counts in COUNTS_PER_ENV.items() 
+                              if env_name in valid_env_names}
+            
+            # Add zero counts for all ENVS that are not in get_env_counts
+            for env_name in valid_env_names:
+                if env_name not in COUNTS_PER_ENV:
+                    COUNTS_PER_ENV[env_name] = {}
 
-        # monitoring state
-        last_status_log = 0.0
-        total_requests = 0
-        requests_since_last_log = 0
+        SELECT_LOG_TEMPLATE = (
+            "[SELECT] "
+            "U{uid:>3d} │ "
+            "{model:<50s} │ "
+            "{env:<3} │ "
+            "CNT {count:>4d} │ "
+            "WGT {weight:>12.4f} │ "
+            "BKO {backoff:>6.1f}"
+        )
 
-        def ok(res_list):
-            if not res_list: return False
-            r = res_list[0]
-            if not r.response.success: return False
-            return True
+        async def next():
+            # Return if we still dont have any miners.
+            if len(MINERS.values()) == 0 or len(COUNTS_PER_ENV.values()) == 0: return None
+            # Get all hotkey, revision pairs to select from.
+            pairs = [ (m.hotkey, m.revision) for m in MINERS.values() ]
+            # Get a weight per env.
+            weights_per_env = {env_name: 1/(sum(env_counts.values()) + 1) for env_name, env_counts in COUNTS_PER_ENV.items()}
+            # Select the env with the least number of samples.
+            worst_env = random.choices( list(weights_per_env.keys()), weights = list(weights_per_env.values()))[0]
+            # Get all counts for the worst env.
+            env_counts = COUNTS_PER_ENV[worst_env]
+            # Get the average env count.
+            mean_env_count = sum([ c for c in env_counts.values() ])/(len(pairs) + EPS)
+            # Weight to be selected is mean/(count + backoff)
+            weights_hotkey_env = { p: (mean_env_count + EPS)/(env_counts.get(p, 0) + BACKOFF[p] + EPS) for p in pairs }
+            # Pick the miner with weights.
+            worst_miner = random.choices( list(weights_hotkey_env.keys()), weights = list(weights_hotkey_env.values()))[0]
+            # return the env and the miner
+            miner =  MINER_BY_PAIR[worst_miner]
+            af.logger.debug(
+                SELECT_LOG_TEMPLATE.format(
+                    uid=miner.uid,
+                    model=(miner.model or "")[:50],
+                    env=worst_env,
+                    count=COUNTS_PER_ENV[worst_env].get(worst_miner, 0),
+                    weight=weights_hotkey_env[worst_miner],
+                    backoff=BACKOFF[worst_miner],
+                )
+            )
+            return worst_env, miner
 
-        async def next_chal():
-            nonlocal i_env
-            e = envs[i_env]; i_env = (i_env + 1) % len(envs)
-            chal, uses = chal_cache.get(e, (None, 0))
-            if chal is None or uses >= MAX_USES:
-                chal, uses = await e.generate(), 0
-            chal_cache[e] = (chal, uses + 1)
-            return chal
+        sink_semaphore = asyncio.Semaphore(3)
+        inflight_semaphore = asyncio.Semaphore(30)
+        state_lock = asyncio.Lock()  # Protect shared state variables
 
-        async def schedule(miner, inflight, now):
-            nonlocal total_requests, requests_since_last_log
-            uid = int(miner.uid)
-            if uid in inflight: return
-            if now < cooldown_until[uid]: return
-            chal = await next_chal()
-            inflight[uid] = asyncio.create_task(af.run(chal, miner, timeout=180))
-            total_requests += 1
-            requests_since_last_log += 1
-
-        async def ensure_subtensor():
-            nonlocal subtensor
-            if subtensor is None:
-                subtensor = await af.get_subtensor()
-            return subtensor
-
-        async def refresh_miners(now):
-            nonlocal last_sync, miners_map
-            if (now - last_sync) >= REFRESH_S or last_sync == 0:
-                st = await ensure_subtensor()
-                meta = await st.metagraph(af.NETUID)
-                miners_map = await af.get_miners(meta=meta)
-                last_sync = now
-                af.logger.debug(f"refresh: miners={len(miners_map)}")
-
-        async def sink_worker():
-            """Consumes results from sink_q and flushes in batches of SINK_BATCH or after SINK_MAX_WAIT."""
-            nonlocal subtensor
-            batch = []
-            first_put_time = None
-            while True:
-                try:
-                    # If we have started a batch, only wait up to the remaining hold time; otherwise wait for first item.
-                    if first_put_time is None:
-                        af.logger.debug(f"sink_worker: queue size={sink_q.qsize()}")
-                        item = await sink_q.get()
-                        first_put_time = time.monotonic()
-                        batch.append(item)
-                        # Opportunistically drain without blocking to build the batch quickly
-                        while len(batch) < SINK_BATCH:
-                            try:
-                                more = sink_q.get_nowait()
-                                batch.append(more)
-                            except asyncio.QueueEmpty:
-                                break
+        async def one():
+            async with inflight_semaphore:
+                sel = await next()
+                if sel is None:
+                    return
+                env_name, miner = sel
+                # <<< added
+                pair = (miner.hotkey, miner.revision)
+                chal = await envs[env_name].generate()
+                results = await af.run(chal, miner, timeout=180)
+                nobackoff = results[0].response.success and results[0].response != None and results[0].response != ""
+                
+                # Protect shared state modifications with lock
+                async with state_lock:
+                    if nobackoff:
+                        BACKOFF[pair] = max(0.0, BACKOFF[pair] - 10)
                     else:
-                        remaining = SINK_MAX_WAIT - (time.monotonic() - first_put_time)
-                        timeout = remaining if remaining > 0.05 else 0.05
-                        try:
-                            item = await asyncio.wait_for(sink_q.get(), timeout=timeout)
-                            batch.append(item)
-                            while len(batch) < SINK_BATCH:
-                                try:
-                                    more = sink_q.get_nowait()
-                                    batch.append(more)
-                                except asyncio.QueueEmpty:
-                                    break
-                        except asyncio.TimeoutError:
-                            pass
+                        BACKOFF[pair] += 10
+                    COUNTS_PER_ENV[env_name][pair] = COUNTS_PER_ENV[env_name].get(pair, 0) + 1
+                async with sink_semaphore:
+                    await af.sink(wallet=wallet, results=results)
 
-                    elapsed = (time.monotonic() - first_put_time) if first_put_time is not None else 0.0
-                    af.logger.debug(f"Until Sink: {len(batch)}/{SINK_BATCH} Time: {elapsed}/{SINK_MAX_WAIT}")
-                    await asyncio.sleep(3)
-                    if len(batch) >= SINK_BATCH or (batch and elapsed >= SINK_MAX_WAIT):
-                        st = await ensure_subtensor()
-                        blk = await st.get_current_block()
-                        # Flatten: items may be single Result or list[Result]
-                        flat = []
-                        for it in batch:
-                            if isinstance(it, list):
-                                flat.extend(it)
-                            else:
-                                flat.append(it)
-                        af.logger.debug(f"sink_worker: flushing {len(flat)} results")
-                        try:
-                            await af.sink(wallet=wallet, block=blk, results=flat)
-                        except Exception:
-                            traceback.print_exc()
-                            # keep going; don't drop future batches
-                        batch.clear()
-                        first_put_time = None
-                except asyncio.CancelledError:
-                    # drain and final flush
-                    flat = []
-                    while not sink_q.empty():
-                        it = sink_q.get_nowait()
-                        if isinstance(it, list): flat.extend(it)
-                        else: flat.append(it)
-                    if flat:
-                        try:
-                            st = await ensure_subtensor()
-                            blk = await st.get_current_block()
-                            af.logger.debug(f"sink_worker: final flush {len(flat)}")
-                            await af.sink(wallet=wallet, block=blk, results=flat)
-                        except Exception:
-                            traceback.print_exc()
-                    break
-
-        async def main_loop():
-            nonlocal last_status_log, requests_since_last_log
-            inflight = {}
-            sink_task = asyncio.create_task(sink_worker())
+        while True:
             try:
-                while True:
-                    now = time.monotonic()
-                    # heartbeat + ensure subtensor
-                    _ = await ensure_subtensor()
-                    # periodic refresh
-                    await refresh_miners(now)
-                    if not miners_map:
-                        await asyncio.sleep(1)
+                await refresh_miners()
+                await refresh_counts()
+                af.HEARTBEAT = time.monotonic()
+                
+                # Continuous execution with periodic refresh
+                running_tasks = set()
+                refresh_time = time.monotonic() + 1200  # Refresh every 20 minutes
+
+                # Start initial batch of tasks up to semaphore limit
+                for _ in range(30):
+                    task = asyncio.create_task(one())
+                    running_tasks.add(task)
+
+                # Continuously maintain running tasks until refresh time
+                while time.monotonic() < refresh_time:
+                    if not running_tasks:
+                        break
+
+                    # Wait for at least one task to complete (with timeout for refresh check)
+                    try:
+                        done, running_tasks = await asyncio.wait(
+                            running_tasks, 
+                            return_when=asyncio.FIRST_COMPLETED,
+                            timeout=30  # Check refresh time every 30 seconds
+                        )
+                    except asyncio.TimeoutError:
                         continue
 
-                    # periodic status logging
-                    if now - last_status_log >= 30:
-                        elapsed = now - last_status_log if last_status_log > 0 else 30
-                        rps = requests_since_last_log / elapsed
-                        cooldown_count = sum(1 for uid in miners_map.keys() if now < cooldown_until[uid])
-                        queue_size = sink_q.qsize()
-                        af.logger.info(f"[STATUS] miners={len(miners_map)} inflight={len(inflight)} cooldown={cooldown_count} queue={queue_size} req/s={rps:.1f} total_req={total_requests}")
-                        last_status_log = now
-                        requests_since_last_log = 0
-
-                    # seed/respect cooldowns
-                    for m in miners_map.values():
-                        await schedule(m, inflight, now)
-
-                    if not inflight:
-                        await asyncio.sleep(0.2)
-                        continue
-
-                    done, _ = await asyncio.wait(inflight.values(), return_when=asyncio.FIRST_COMPLETED)
-                    now = time.monotonic()
-                    for t in done:
-                        uid = next((u for u, tk in list(inflight.items()) if tk is t), None)
-                        miner = miners_map.get(uid)
-                        inflight.pop(uid, None)
-                        try:
-                            res_list = await t  # list[Result]; may be []
-                        except Exception as e:
-                            af.logger.debug(f"miner {uid} task error: {e}")
-                            res_list = []
-
-                        if ok(res_list):
-                            # reset backoff, enqueue results (non-blocking)
-                            delay[uid] = BACKOFF0
-                            cooldown_until[uid] = now
-                            # push entire list; sink worker will flatten
-                            sink_q.put_nowait(res_list)
-                            queue_size = sink_q.qsize()
-                            af.logger.debug(f"miner {uid} OK; queued {len(res_list)}, queue_size={queue_size}")
-                        else:
-                            print ('not ok')
-                            # exponential backoff + jitter
-                            d = min(delay[uid] * 2, BACKOFF_CAP)
-                            jitter = random.uniform(0, d * 0.2)
-                            delay[uid] = d
-                            cooldown_until[uid] = now + d + jitter
-                            af.logger.debug(f"miner {uid} FAIL; cooldown {d:+.1f}s(+{jitter:.1f})")
-
-                        # try to reschedule
-                        if miner:
-                            await schedule(miner, inflight, now)
-            except asyncio.CancelledError:
-                pass
-            finally:
-                # cancel sink worker and wait for final flush
-                sink_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await sink_task
-
-        await main_loop()
+                    # Start new tasks to replace completed ones
+                    for _ in done:
+                        new_task = asyncio.create_task(one())
+                        running_tasks.add(new_task)
+                
+                # Cancel any remaining tasks before refresh
+                if running_tasks:
+                    for task in running_tasks:
+                        task.cancel()
+                    
+            except Exception as e:
+                af.logger.warning(f'Exception:{e}')
+                af.logger.warning(traceback.format_exc())
 
     async def main():
         await asyncio.gather(_run(), af.watchdog(timeout=600))
