@@ -25,7 +25,6 @@ from .utils import *
 from math import comb
 import datetime as dt
 from tqdm import tqdm
-import bittensor as bt
 import datasets as hf_ds                    
 from pathlib import Path
 from tqdm.asyncio import tqdm
@@ -150,6 +149,7 @@ def get_conf(key, default=None) -> Any:
 # --------------------------------------------------------------------------- #
 SUBTENSOR = None
 async def get_subtensor():
+    import bittensor as bt
     global SUBTENSOR
     if SUBTENSOR == None:
         logger.trace("Making Bittensor connection...")

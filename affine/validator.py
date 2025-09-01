@@ -9,7 +9,6 @@ import time
 import asyncio
 import traceback
 import itertools
-import bittensor as bt
 from tabulate import tabulate
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, TypeVar, Awaitable
@@ -29,6 +28,8 @@ Z_WIN       = 0.5      # keep "better" threshold floor-based (set >0 to scale wi
 ELIG        = 0.03 
 
 async def get_weights(tail: int = TAIL, scale: float = 1):
+    import bittensor as bt
+
     """
     Compute miner weights using ε-Pareto dominance and combinatoric subset winners.
 
@@ -297,7 +298,8 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
 
         
 @af.cli.command("validate")
-def validate():
+def validate(): 
+    import bittensor as bt
     coldkey = af.get_conf("BT_WALLET_COLD", "default")
     hotkey  = af.get_conf("BT_WALLET_HOT", "default")
     wallet  = bt.wallet(name=coldkey, hotkey=hotkey)    

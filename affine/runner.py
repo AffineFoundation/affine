@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio, random, time, traceback
 from typing import Any, Dict, List
 import statistics as stats
-import bittensor as bt
 import affine as af
 
 @af.cli.command("runner")
 def runner():
+    import bittensor as bt
     wallet  = bt.wallet(
         name=af.get_conf("BT_WALLET_COLD", "default"),
         hotkey=af.get_conf("BT_WALLET_HOT",  "default"),
