@@ -39,6 +39,18 @@ def runner():
             nonlocal COUNTS_PER_ENV
             PAIRS = [ (m.hotkey, m.revision) for m in MINERS.values() ]
             COUNTS_PER_ENV = await af.get_env_counts(pairs=PAIRS)
+            
+            # Get all valid env names from the ENVS registry
+            valid_env_names = set(af.ENVS.keys())
+            
+            # Remove any env from counts that's not in ENVS
+            COUNTS_PER_ENV = {env_name: counts for env_name, counts in COUNTS_PER_ENV.items() 
+                              if env_name in valid_env_names}
+            
+            # Add zero counts for all ENVS that are not in get_env_counts
+            for env_name in valid_env_names:
+                if env_name not in COUNTS_PER_ENV:
+                    COUNTS_PER_ENV[env_name] = {}
 
         SELECT_LOG_TEMPLATE = (
             "[SELECT] "
@@ -56,7 +68,7 @@ def runner():
             # Get all hotkey, revision pairs to select from.
             pairs = [ (m.hotkey, m.revision) for m in MINERS.values() ]
             # Get a weight per env.
-            weights_per_env = {env_name: 1/sum(env_counts.values()) for env_name, env_counts in COUNTS_PER_ENV.items()}
+            weights_per_env = {env_name: 1/(sum(env_counts.values()) + 1) for env_name, env_counts in COUNTS_PER_ENV.items()}
             # Select the env with the least number of samples.
             worst_env = random.choices( list(weights_per_env.keys()), weights = list(weights_per_env.values()))[0]
             # Get all counts for the worst env.
@@ -64,7 +76,7 @@ def runner():
             # Get the average env count.
             mean_env_count = sum([ c for c in env_counts.values() ])/(len(pairs) + EPS)
             # Weight to be selected is mean/(count + backoff)
-            weights_hotkey_env = { p: mean_env_count/(env_counts.get(p, 0) + BACKOFF[p] + EPS) for p in pairs }
+            weights_hotkey_env = { p: (mean_env_count + EPS)/(env_counts.get(p, 0) + BACKOFF[p] + EPS) for p in pairs }
             # Pick the miner with weights.
             worst_miner = random.choices( list(weights_hotkey_env.keys()), weights = list(weights_hotkey_env.values()))[0]
             # return the env and the miner
