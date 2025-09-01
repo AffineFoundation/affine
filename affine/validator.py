@@ -297,7 +297,9 @@ def validate():
     wallet  = bt.wallet(name=coldkey, hotkey=hotkey)    
     async def _run():     
         LAST = 0
-        TEMPO = 100
+        TEMPO = 360
+        INNER_TEMPO = 100
+        NETUID = 120
         subtensor = None
         while True:
             try:
@@ -306,8 +308,9 @@ def validate():
                 HEARTBEAT = time.monotonic()
                 if subtensor is None: subtensor = await af.get_subtensor()
                 BLOCK = await subtensor.get_current_block()
-                if BLOCK % TEMPO != 0 or BLOCK <= LAST: 
-                    af.logger.debug(f'Waiting ... {BLOCK} % {TEMPO} == {BLOCK % TEMPO} != 0')
+                I = (TEMPO + 1 + NETUID + 1 + BLOCK) % (TEMPO + 1) % INNER_TEMPO
+                if I != 0:
+                    af.logger.debug(f'Waiting ... ({TEMPO} + 1 + {NETUID} + 1 + {BLOCK}) % ({TEMPO} + 1) % {INNER_TEMPO} = {I} != 0')
                     await subtensor.wait_for_block()
                     continue
                 
@@ -316,7 +319,7 @@ def validate():
         
                 # ---------------- Set weights. ------------------------
                 af.logger.info("Setting weights ...")
-                await af.retry_set_weights( wallet, uids=uids, weights=weights, retry = 3)
+                # await af.retry_set_weights( wallet, uids=uids, weights=weights, retry = 3)
                 subtensor = await af.get_subtensor()
                 SETBLOCK = await subtensor.get_current_block()
                 af.LASTSET.set_function(lambda: SETBLOCK - LAST)
