@@ -319,7 +319,7 @@ def validate():
         
                 # ---------------- Set weights. ------------------------
                 af.logger.info("Setting weights ...")
-                # await af.retry_set_weights( wallet, uids=uids, weights=weights, retry = 3)
+                await af.retry_set_weights( wallet, uids=uids, weights=weights, retry = 3)
                 subtensor = await af.get_subtensor()
                 SETBLOCK = await subtensor.get_current_block()
                 af.LASTSET.set_function(lambda: SETBLOCK - LAST)
