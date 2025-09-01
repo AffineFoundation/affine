@@ -10,11 +10,9 @@ import click
 import asyncio
 import textwrap
 from .utils import *
-import bittensor as bt
 from pathlib import Path
 from huggingface_hub import HfApi
 from huggingface_hub import snapshot_download
-from bittensor.core.errors import MetadataError
 from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, TypeVar, Awaitable
 
 import affine as af
@@ -26,6 +24,9 @@ import affine as af
 @click.option("--model_path", "-p", default = './model_path', required=True, type=click.Path(), help="Local directory to save the model")
 @click.option('--hf-token', default=None, help="Hugging Face API token (env HF_TOKEN if unset)")
 def pull(uid: int, model_path: str, hf_token: str):
+    import bittensor as bt
+    from bittensor.core.errors import MetadataError
+
     """Pulls a model from a specific miner UID if exists."""
 
     # 1. Ensure HF token
@@ -70,6 +71,9 @@ def pull(uid: int, model_path: str, hf_token: str):
 @click.option('--chutes-api-key', default=None, help='Chutes API key (env CHUTES_API_KEY if unset)')
 def push(model_path: str, existing_repo: str, revision: str, coldkey: str, hotkey: str, chutes_api_key: str):
     """Pushes a model to be hosted by your miner."""
+    import bittensor as bt
+    from bittensor.core.errors import MetadataError
+
     # -----------------------------------------------------------------------------
     # 1. Wallet & config
     # -----------------------------------------------------------------------------

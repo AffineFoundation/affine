@@ -12,7 +12,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    volumes:
+      - ./.env:/app/.env:ro
+      - validator-cache:/app/data/blocks
+      - /var/run/docker.sock:/var/run/docker.sock
   runner:
     <<: *affine_image
+    volumes:
+      - ./.env:/app/.env:ro
+      - /var/run/docker.sock:/var/run/docker.sock
   signer:
     <<: *affine_image 
