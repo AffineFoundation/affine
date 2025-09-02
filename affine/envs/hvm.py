@@ -22,7 +22,7 @@ import affine as af
 # --------------------------------------------------------------------------- #
 
 class HVM(af.BaseEnv):
-    __version__: str = "0.1.0"
+    __version__: str = "0.1.1"  # newline-robust compare + consistent emit
 
     def __init__(self, seed: Optional[int] = None) -> None:
         super().__init__()
@@ -70,9 +70,14 @@ class HVM(af.BaseEnv):
         passed = 0
         for idx, (inp, exp) in enumerate(zip(inputs, expected)):
             ok, out = self._run_vm_sandbox(spec, holes, inp)
-            correct = ok and (out == exp)
+            exp_c = self._canon(exp)
+            out_c = self._canon(out) if ok else ""
+            correct = ok and (out_c == exp_c)
             details.append({
-                "input": inp, "expected": exp, "got": out,
+                "input": inp,
+                "expected": exp, "expected_repr": repr(exp),
+                "got": out, "got_repr": repr(out),
+                "expected_canon": exp_c, "got_canon": out_c,
                 "passed": bool(correct), "sandbox_ok": bool(ok),
             })
             if correct:
@@ -152,8 +157,8 @@ class HVM(af.BaseEnv):
         }
 
     def _forge_io(self, prog: Dict[str, Any], n_cases: int) -> Tuple[List[List[int]], List[str]]:
+        """Create inputs and expected outputs by sampling concrete hole values in-domain."""
         rng = self._rng
-        # Choose secret concrete hole values within domains
         chosen = {h: rng.choice(dom) for h, dom in prog["hole_domains"].items()}
         inputs: List[List[int]] = []
         expected: List[str] = []
@@ -168,8 +173,9 @@ class HVM(af.BaseEnv):
                 case = [a, b]
 
             ok, out = self._run_vm_local(prog, chosen, case)
-            if not ok or not out.strip():
-                return self._forge_io(prog, n_cases)  # resample on degenerate
+            if not ok or out == "":
+                # resample on degenerate
+                return self._forge_io(prog, n_cases)
             inputs.append(case)
             expected.append(out)
         return inputs, expected
@@ -191,7 +197,7 @@ class HVM(af.BaseEnv):
 
         case_lines = []
         for i, (inp, out) in enumerate(zip(inputs, expected)):
-            case_lines.append(f"Case #{i}: input={inp}  expected stdout=\\n---\\n{out}---")
+            case_lines.append(f"Case #{i}: input={inp}  expected stdout=\n---\n{out}\n---")
 
         return f"""You are given a small stack-based Virtual Machine program with UNKNOWN constants (holes).
 Instruction set:
@@ -226,64 +232,93 @@ Return ONLY the hole mapping in this exact format:
     # --------------------------- VM runners -------------------------------- #
 
     def _run_vm_local(self, prog: Dict[str, Any], holes: Dict[str, int], inputs: List[int]) -> Tuple[bool, str]:
-        """Deterministic interpreter for gold-label forging (no sandbox)."""
-        ip = 0; steps = 0; stack: List[int] = []; out: List[str] = []
-        code = prog["code"]; max_steps = int(prog["max_steps"]); cap = int(prog["stack_cap"])
+        """Deterministic interpreter for gold-label forging (no sandbox). Emits NO trailing newline."""
+        ip = 0
+        steps = 0
+        stack: List[int] = []
+        out: List[str] = []
+        code = prog["code"]
+        max_steps = int(prog["max_steps"])
+        cap = int(prog["stack_cap"])
 
         def push(v: int) -> bool:
-            if len(stack) >= cap: return False
-            stack.append(int(v)); return True
+            if len(stack) >= cap:
+                return False
+            stack.append(int(v))
+            return True
 
         while True:
-            if steps > max_steps or ip < 0 or ip >= len(code): return (False, "")
-            op, arg = code[ip]; steps += 1
+            if steps > max_steps or ip < 0 or ip >= len(code):
+                return (False, "")
+            op, arg = code[ip]
+            steps += 1
 
             if op == "PUSH":
-                if arg is None: return (False, "")
+                if arg is None:
+                    return (False, "")
                 if isinstance(arg, str) and arg.startswith("?"):
-                    if arg not in holes or not push(holes[arg]): return (False, "")
+                    if arg not in holes or not push(holes[arg]):
+                        return (False, "")
                 else:
-                    if not push(int(arg)): return (False, "")
+                    if not push(int(arg)):
+                        return (False, "")
                 ip += 1
             elif op == "LOAD":
-                idx = int(arg or -1); 
-                if idx < 0 or idx >= len(inputs): return (False, "")
-                if not push(inputs[idx]): return (False, "")
+                idx = int(arg or -1)
+                if idx < 0 or idx >= len(inputs):
+                    return (False, "")
+                if not push(inputs[idx]):
+                    return (False, "")
                 ip += 1
-            elif op in ("ADD","SUB","MUL","DIV","MOD"):
-                if len(stack) < 2: return (False, "")
-                b = stack.pop(); a = stack.pop()
-                if op == "ADD": c = a + b
-                elif op == "SUB": c = a - b
-                elif op == "MUL": c = a * b
-                elif op == "DIV": 
-                    if b == 0: return (False, "")
+            elif op in ("ADD", "SUB", "MUL", "DIV", "MOD"):
+                if len(stack) < 2:
+                    return (False, "")
+                b = stack.pop()
+                a = stack.pop()
+                if op == "ADD":
+                    c = a + b
+                elif op == "SUB":
+                    c = a - b
+                elif op == "MUL":
+                    c = a * b
+                elif op == "DIV":
+                    if b == 0:
+                        return (False, "")
                     c = int(a / b)
                 else:
-                    if b == 0: return (False, "")
+                    if b == 0:
+                        return (False, "")
                     c = a % b
-                if not push(c): return (False, "")
+                if not push(c):
+                    return (False, "")
                 ip += 1
             elif op == "DUP":
-                if not stack or not push(stack[-1]): return (False, "")
+                if not stack or not push(stack[-1]):
+                    return (False, "")
                 ip += 1
             elif op == "SWAP":
-                if len(stack) < 2: return (False, "")
-                stack[-1], stack[-2] = stack[-2], stack[-1]; ip += 1
+                if len(stack) < 2:
+                    return (False, "")
+                stack[-1], stack[-2] = stack[-2], stack[-1]
+                ip += 1
             elif op == "POP":
-                if not stack: return (False, "")
-                stack.pop(); ip += 1
-            elif op in ("JMP","JMPZ","JMPNZ"):
+                if not stack:
+                    return (False, "")
+                stack.pop()
+                ip += 1
+            elif op in ("JMP", "JMPZ", "JMPNZ"):
                 tgt_raw = arg
                 if isinstance(tgt_raw, str) and tgt_raw.startswith("?"):
-                    if tgt_raw not in holes: return (False, "")
+                    if tgt_raw not in holes:
+                        return (False, "")
                     tgt = holes[tgt_raw]
                 else:
                     tgt = int(tgt_raw)
                 if op == "JMP":
                     ip = tgt
                 else:
-                    if not stack: return (False, "")
+                    if not stack:
+                        return (False, "")
                     top = stack.pop()
                     cond = (top == 0)
                     if (op == "JMPZ" and cond) or (op == "JMPNZ" and not cond):
@@ -291,13 +326,16 @@ Return ONLY the hole mapping in this exact format:
                     else:
                         ip += 1
             elif op == "PRINT":
-                if not stack: return (False, "")
-                out.append(str(int(stack.pop()))); ip += 1
+                if not stack:
+                    return (False, "")
+                out.append(str(int(stack.pop())))
+                ip += 1
             elif op == "HALT":
                 break
             else:
                 return (False, "")
-        return (True, "\n".join(out) + ("\n" if out else ""))
+        # NO trailing newline
+        return (True, "\n".join(out))
 
     def _run_vm_sandbox(self, prog: Dict[str, Any], holes: Dict[str, int], inputs: List[int]) -> Tuple[bool, str]:
         """Run inside the repo's sandbox using ProgramExecutor.execute(code, stdin)."""
@@ -366,7 +404,8 @@ while True:
         break
     else:
         raise SystemExit(15)
-sys.stdout.write("\\n".join(out) + ("\\n" if out else ""))
+# NO trailing newline
+sys.stdout.write("\n".join(out))
 """
         payload = json.dumps({
             "code": prog["code"],
@@ -376,19 +415,34 @@ sys.stdout.write("\\n".join(out) + ("\\n" if out else ""))
             "stack_cap": prog["stack_cap"],
         })
         out, err = self._executor.execute(runner, stdin=payload)
-        return (err.strip() == "", out if err.strip() == "" else "")
-
-    # --------------------------- Parsing ----------------------------------- #
+        ok = (err.strip() == "")
+        return (ok, out if ok else "")
 
     def _parse_holes(self, text: str) -> Optional[Dict[str, int]]:
         m = re.findall(r"<HOLES>\s*(.*?)\s*</HOLES>", text, flags=re.DOTALL | re.IGNORECASE)
-        if not m: return None
+        if not m:
+            return None
         block = m[-1]
         out: Dict[str, int] = {}
         for line in block.strip().splitlines():
             line = line.strip()
-            if not line or line.startswith("#"): continue
+            if not line or line.startswith("#"):
+                continue
             mm = re.match(r"(\?[a-zA-Z]\w*)\s*=\s*(-?\d+)$", line)
-            if not mm: return None
+            if not mm:
+                return None
             out[mm.group(1)] = int(mm.group(2))
         return out
+
+    @staticmethod
+    def _canon(s: str) -> str:
+        """Normalize for robust comparison: unify newlines, strip one trailing newline, rstrip each line."""
+        if s is None:
+            return ""
+        # unify CRLF/CR to LF
+        s = s.replace("\r\n", "\n").replace("\r", "\n")
+        # strip exactly one trailing newline
+        if s.endswith("\n"):
+            s = s[:-1]
+        # rstrip each line (avoid trailing spaces mismatches)
+        return "\n".join(line.rstrip() for line in s.split("\n"))
