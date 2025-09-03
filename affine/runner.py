@@ -97,27 +97,42 @@ def runner():
         inflight_semaphore = asyncio.Semaphore(30)
         state_lock = asyncio.Lock()  # Protect shared state variables
 
-        async def one():
-            async with inflight_semaphore:
-                sel = await next()
-                if sel is None:
-                    return
-                env_name, miner = sel
-                # <<< added
-                pair = (miner.hotkey, miner.revision)
-                chal = await envs[env_name].generate()
-                results = await af.run(chal, miner, timeout=180)
-                nobackoff = results[0].response.success and results[0].response != None and results[0].response != ""
-                
-                # Protect shared state modifications with lock
-                async with state_lock:
-                    if nobackoff:
-                        BACKOFF[pair] = max(0.0, BACKOFF[pair] - 10)
-                    else:
-                        BACKOFF[pair] += 10
-                    COUNTS_PER_ENV[env_name][pair] = COUNTS_PER_ENV[env_name].get(pair, 0) + 1
-                async with sink_semaphore:
+        async def _sink(results):
+            """Do sink I/O under its own small semaphore, off the critical path."""
+            async with sink_semaphore:
+                try:
                     await af.sink(wallet=wallet, results=results)
+                except Exception as e:
+                    af.logger.warning(f'sink error: {e}')
+                    af.logger.warning(traceback.format_exc())
+
+        async def one():
+            # NOTE: don't take inflight here; only around the miner RPC
+            sel = await next()
+            if sel is None:
+                return
+            env_name, miner = sel
+            pair = (miner.hotkey, miner.revision)
+            chal = await envs[env_name].generate()
+
+            # Only the miner RPC is bounded by 'inflight'
+            async with inflight_semaphore:
+                results = await af.run(chal, miner, timeout=180)
+
+            # Be defensive about response to avoid attribute errors
+            resp = getattr(results[0], "response", None)
+            nobackoff = bool(resp and getattr(resp, "success", False) and resp != "")
+
+            # Shared state updates stay protected
+            async with state_lock:
+                if nobackoff:
+                    BACKOFF[pair] = max(0.0, BACKOFF[pair] - 10)
+                else:
+                    BACKOFF[pair] += 10
+                COUNTS_PER_ENV[env_name][pair] = COUNTS_PER_ENV[env_name].get(pair, 0) + 1
+
+            # Offload the sink so we immediately free the 'one()' slot
+            asyncio.create_task(_sink(results))
 
         while True:
             try:
