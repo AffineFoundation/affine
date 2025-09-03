@@ -55,8 +55,8 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     # Tallies for all known hotkeys (so metrics update is safe even if some have no data)
     cnt   = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env counts
     succ  = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env correct (0/1 or [0,1])
-    first_block = {}                                          # earliest block for current version
     current_miners = await af.get_miners(meta=meta)
+    first_block = { m.block: m for m in current_miners.values() } # earliest block for current version
     prev  = { m.hotkey: m for m in current_miners.values() }
     pairs = [ (mi.hotkey, mi.revision) for mi in current_miners.values() ]
     for env in af.ENVS:
