@@ -35,14 +35,6 @@ def _register_from_module(mod) -> None:
 for _m in (_sat, _abd, _ded, _hvm):
     _register_from_module(_m)
 
-# Auto-discover any other env modules in this package
-_pkg_path = str(Path(__file__).parent)
-for _, _name, _ in iter_modules([_pkg_path]):
-    if _name.startswith("__"):
-        continue
-    mod = import_module(f"{__name__}.{_name}")
-    _register_from_module(mod)
-
 def get_env(name: str):
     return ENVS.get(name)
 
