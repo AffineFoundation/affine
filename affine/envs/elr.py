@@ -9,10 +9,9 @@ dataset = af.singleton('euler', lambda: af.utils.R2BufferedDataset(
 ))
 
 class ELR(af.BaseEnv):
-    __version__: str = "0.0.0"
+    __version__: str = "0.0.1"
     def __init__(self):
         super().__init__()
-        self._executor = af.utils.ProgramExecutor()
 
     async def generate(self) -> af.Challenge:
         af.logger.trace("Generating a new challenge.")
