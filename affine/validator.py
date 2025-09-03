@@ -48,10 +48,6 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
 
     # --- fetch + prune --------------------------------------------------------
     st = await af.get_subtensor()
-    blk = await st.get_current_block()
-    af.logger.info(f"Pruning {tail} blocks from {blk - tail} to {blk}")
-    await af.prune(tail=tail)
-
     meta = await st.metagraph(af.NETUID)
     BASE_HK = meta.hotkeys[0]
     N_envs = len(af.ENVS)
@@ -59,46 +55,25 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     # Tallies for all known hotkeys (so metrics update is safe even if some have no data)
     cnt   = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env counts
     succ  = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env correct (0/1 or [0,1])
-    prev  = {}                                                # last sample per hk
-    v_id  = {}                                                # (model, revision) per hk
-    first_block = {}                                          # earliest block for current version
-
-    # --- ingest ---------------------------------------------------------------
-    af.logger.info(f"Loading data from {blk - tail} to {blk}")
-    async for c in af.rollouts(tail=tail):
-        af.NRESULTS.inc()
-        hk, env = c.miner.hotkey, c.challenge.env.name
-
-        # keep the base hk; otherwise require model family
+    current_miners = await af.get_miners(meta=meta)
+    first_block = { m.block: m for m in current_miners.values() } # earliest block for current version
+    prev  = { m.hotkey: m for m in current_miners.values() }
+    pairs = [ (mi.hotkey, mi.revision) for mi in current_miners.values() ]
+    for env in af.ENVS:
         try:
-            name = c.miner.model.split("/", 1)[1].lower()
-        except Exception:
-            name = str(c.miner.model).lower()
-        if hk not in cnt or (hk != BASE_HK and not name.startswith("affine")):
-            continue
-
-        cur_vid = (c.miner.model, c.miner.revision)
-
-        # On version change, reset ALL env streams and timestamp to current block
-        if v_id.get(hk) != cur_vid:
-            v_id[hk] = cur_vid
-            first_block[hk] = c.miner.block
-            for e in af.ENVS:
-                cnt[hk][e] = 0
-                succ[hk][e] = 0
-
-        # accumulate on successes.
-        prev[hk] = c
-        if c.response.success:
-            cnt[hk][env]  += 1
-            succ[hk][env] += float(c.evaluation.score)
-
-    af.logger.info("Collected results.")
-
-    if not prev:
-        af.logger.warning("No results collected; defaulting to uid 0")
-        return 0, BASE_HK
-
+            agg = await af.aggregate_success_by_env(env_name=str(env), pairs=pairs)
+            total_suc = 0
+            for hk, stats in agg.items():
+                n = int(stats.get("n_success", 0) or 0)
+                s = float(stats.get("sum_score", 0.0) or 0.0)
+                if n:
+                    cnt[hk][str(env)] += n
+                    succ[hk][str(env)] += s
+                    total_suc += n
+                
+            af.logger.trace(f'Aggregated {total_suc} successes for env: {env}')
+        except Exception as e:
+            af.logger.warning(f'Error in dataset polling (agg) for env {env}... {e}')
     # --- accuracy + MAXENV ----------------------------------------------------
     acc = {
         hk: {e: (succ[hk][e] / cnt[hk][e] if cnt[hk][e] else 0.0) for e in af.ENVS}
@@ -113,7 +88,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
 
     # --- eligibility: require near-max samples per env ------------------------
     required = {
-        e: int(ELIG * max((cnt[hk][e] for hk in active_hks), default=0))
+        e: 150 + int(ELIG * max((cnt[hk][e] for hk in active_hks), default=0))
         for e in af.ENVS
     }
     eligible = {hk for hk in active_hks if all(cnt[hk][e] >= required[e] for e in af.ENVS)}
@@ -175,7 +150,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
 
     def ts(hk: str) -> int:
         """Block-number timestamp; default to last seen block."""
-        return int(first_block.get(hk, prev[hk].miner.block))
+        return int(first_block.get(hk, prev[hk].block))
 
     best = max(pool_for_dom, key=lambda hk: (dom_full.get(hk, 0), -ts(hk))) if pool_for_dom else active_hks[0]
     best_uid = meta.hotkeys.index(best)
@@ -238,7 +213,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
             + ["Pts", "Elig", "Wgt"]
         )
         def row(hk: str):
-            m = prev[hk].miner
+            m = prev[hk]
             w = 1.0 if hk == best else 0.0
             model_name = str(m.model)[:50]
             env_cols = []
@@ -276,7 +251,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
         + ["Pts", "Elig", "Wgt"]
     )
     def row(hk: str):
-        m = prev[hk].miner
+        m = prev[hk]
         w = weight_by_hk.get(hk, 0.0)
         model_name = str(m.model)[:50]
         env_cols = []
@@ -322,7 +297,9 @@ def validate():
     wallet  = bt.wallet(name=coldkey, hotkey=hotkey)    
     async def _run():     
         LAST = 0
-        TEMPO = 100
+        TEMPO = 360
+        INNER_TEMPO = 100
+        NETUID = 120
         subtensor = None
         while True:
             try:
@@ -331,8 +308,9 @@ def validate():
                 HEARTBEAT = time.monotonic()
                 if subtensor is None: subtensor = await af.get_subtensor()
                 BLOCK = await subtensor.get_current_block()
-                if BLOCK % TEMPO != 0 or BLOCK <= LAST: 
-                    af.logger.debug(f'Waiting ... {BLOCK} % {TEMPO} == {BLOCK % TEMPO} != 0')
+                I = (TEMPO + 1 + NETUID + 1 + BLOCK) % (TEMPO + 1) % INNER_TEMPO
+                if I != 0:
+                    af.logger.debug(f'Waiting ... ({TEMPO} + 1 + {NETUID} + 1 + {BLOCK}) % ({TEMPO} + 1) % {INNER_TEMPO} = {I} != 0')
                     await subtensor.wait_for_block()
                     continue
                 
@@ -346,10 +324,7 @@ def validate():
                 SETBLOCK = await subtensor.get_current_block()
                 af.LASTSET.set_function(lambda: SETBLOCK - LAST)
                 LAST = BLOCK           
-            
-                # ---------------- Other telemetry ------------------------
-                af.CACHE.set(sum( f.stat().st_size for f in af.CACHE_DIR.glob("*.jsonl") if f.is_file()))
-                
+                            
             except asyncio.CancelledError: break
             except Exception as e:
                 traceback.print_exc()
