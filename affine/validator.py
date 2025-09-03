@@ -51,7 +51,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     meta = await st.metagraph(af.NETUID)
     BASE_HK = meta.hotkeys[0]
     N_envs = len(af.ENVS)
-
+    
     # Tallies for all known hotkeys (so metrics update is safe even if some have no data)
     cnt   = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env counts
     succ  = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env correct (0/1 or [0,1])
