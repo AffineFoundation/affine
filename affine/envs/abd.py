@@ -176,11 +176,19 @@ class ABD(af.BaseEnv):
         prog = challenge.extra["program"]
         expected = challenge.extra["expected_output"]
         gen_in = self.extract_input_from_response(response.response or "")
-        if not gen_in:
-            af.logger.trace("No input found in response.")
+        resp_text = response.response or ""
+        tags_present = bool(re.search(r"<INPUT>.*?</INPUT>", resp_text, re.IGNORECASE | re.DOTALL))
+        if not gen_in and not tags_present:
+            af.logger.trace("No <INPUT> tags found in response.")
             return af.Evaluation(
                 env=self, score=0.0,
                 extra={"error": "No input found", "expected_output": expected}
+            )
+        if not self._validate_input_for_program(prog, gen_in):
+            af.logger.trace("Provided input is invalid or insufficient for the program.")
+            return af.Evaluation(
+                env=self, score=0.0,
+                extra={"error": "Invalid input for program", "generated_input": gen_in, "expected_output": expected}
             )
         loop = asyncio.get_running_loop()
         out, err = await loop.run_in_executor(
