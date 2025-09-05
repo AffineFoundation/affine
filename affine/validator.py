@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # --------------------------------------------------------------------------- #
 #                             Imports                                         #
@@ -43,7 +42,9 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
       5) Normalize scores over eligibles to produce weights. Metrics + summary emitted.
 
     Returns:
-      (uids, weights): list of eligible UIDs (best last) and their weights (sum to 1).
+      (uids, weights, summary_data):
+        - list of eligible UIDs (best last) and their weights (sum to 1).
+        - list of dicts with detailed stats for all active miners.
     """
 
     # --- fetch + prune --------------------------------------------------------
@@ -198,6 +199,23 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
 
     # If no eligible miners exist, fall back to the canonical best with weight 1.0.
     if not eligible:
+        summary_data = []
+        for uid, hk in enumerate(meta.hotkeys):
+            if hk not in active_hks: continue
+            is_best = (hk == best)
+            w = 1.0 if is_best else 0.0
+            if hk in active_hks:
+                summary_data.append({
+                    "uid": uid,
+                    "hotkey": hk,
+                    "weight": w,
+                    "score": score.get(hk, 0.0),
+                    "eligible": False,
+                    "accuracy": acc[hk],
+                    "counts": {e: cnt[hk][e] for e in af.ENVS},
+                })
+
+
         af.logger.warning("No eligible miners; assigning weight 1.0 to canonical best.")
         for uid, hk in enumerate(meta.hotkeys):
             af.WEIGHT.labels(uid=uid).set(1.0 if hk == best else 0.0)
@@ -233,7 +251,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
             ]
         rows = sorted((row(hk) for hk in active_hks), key=lambda r: (r[-3], r[0]), reverse=True)
         print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
-        return [best_uid], [1.0]
+        return [best_uid], [1.0], summary_data
 
     # Eligible path: normalize scores to weights over the eligible pool only
     total_points = sum(score[hk] for hk in eligible)
@@ -242,6 +260,20 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
         weight_by_hk = {hk: (1.0 if hk == best else 0.0) for hk in eligible}
     else:
         weight_by_hk = {hk: (score[hk] / total_points) for hk in eligible}
+
+    # --- Construct summary data for all active miners ---
+    summary_data = []
+    for hk in active_hks:
+        m = prev[hk]
+        summary_data.append({
+            "uid": m.uid,
+            "hotkey": hk,
+            "weight": weight_by_hk.get(hk, 0.0),
+            "score": score.get(hk, 0.0),
+            "eligible": hk in eligible,
+            "accuracy": acc[hk],
+            "counts": {e: cnt[hk][e] for e in af.ENVS},
+        })
 
     # --- summary printout -----------------------------------------------------
     hdr = (
@@ -275,18 +307,17 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
 
     # --- Prometheus updates ---------------------------------------------------
-    for uid, hk in enumerate(meta.hotkeys):
-        af.WEIGHT.labels(uid=uid).set(weight_by_hk.get(hk, 0.0))
-        for e in af.ENVS:
-            a = acc[hk][e]
+    for s_item in summary_data:
+        af.WEIGHT.labels(uid=s_item["uid"]).set(s_item["weight"])
+        for e, a in s_item["accuracy"].items():
             if a > 0:
-                af.SCORE.labels(uid=uid, env=e).set(a)
+                af.SCORE.labels(uid=s_item["uid"], env=e).set(a)
 
     # --- Return weights in a stable shape (best last, as before) -------------
     eligible_uids = [meta.hotkeys.index(hk) for hk in eligible]
     uids = [u for u in eligible_uids if u != best_uid] + [best_uid]
     weights = [weight_by_hk.get(meta.hotkeys[u], 0.0) for u in uids]
-    return uids, weights
+    return uids, weights, summary_data
 
 
         
@@ -314,10 +345,23 @@ def validate():
                     await subtensor.wait_for_block()
                     continue
                 
-                # ---------------- Set weights. ------------------------
-                uids, weights = await get_weights()
-        
-                # ---------------- Set weights. ------------------------
+                # ---------------- Get weights and summary. -----------------
+                uids, weights, summary_data = await get_weights()
+
+                # ---------------- Sink weights summary to DB (optional). ----
+                try:
+                    # This operation is non-critical. If it fails (e.g., due to
+                    # read-only credentials or network issues), log a debug message
+                    # and continue without crashing the validator.
+                    await af.sink_weights(
+                        validator_hotkey=wallet.hotkey.ss58_address,
+                        block_number=BLOCK,
+                        weights_data=summary_data,
+                    )
+                except Exception as e:
+                    af.logger.debug(f"Could not sink weights to DB (expected for read-only users): {e}")
+
+                # ---------------- Set weights on-chain. ---------------------
                 af.logger.info("Setting weights ...")
                 await af.retry_set_weights( wallet, uids=uids, weights=weights, retry = 3)
                 subtensor = await af.get_subtensor()
