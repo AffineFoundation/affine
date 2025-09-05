@@ -13,7 +13,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError, DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.engine import make_url
 from sqlalchemy import (
-    Table, Column, MetaData, String, Integer, Float, Text, Boolean,
+    Table, Column, MetaData, String, Integer, Float, Text, Boolean, JSON,
     DateTime, UniqueConstraint, Index, select, func, tuple_
 )
 import affine as af
@@ -91,6 +91,27 @@ Index(
     postgresql_where=affine_results.c.success.is_(True),
     postgresql_include=["score"],
 )
+
+# New table for validator weights
+affine_weights = Table(
+    "affine_weights",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("validator_hotkey", String(128), nullable=False),
+    Column("block_number", Integer, nullable=False),
+    Column("uid", Integer, nullable=False),
+    Column("hotkey", String(128), nullable=False),
+    Column("weight", Float, nullable=False),
+    Column("score", Float, nullable=False),
+    Column("eligible", Boolean, nullable=False),
+    Column("accuracy", JSONB, nullable=True),
+    Column("counts", JSONB, nullable=True),
+    Column("timestamp", DateTime(timezone=True), server_default=func.now(), nullable=False),
+    UniqueConstraint("validator_hotkey", "block_number", "uid", name="uq_validator_block_uid"),
+)
+
+Index("ix_weights_validator_block", affine_weights.c.validator_hotkey, affine_weights.c.block_number.desc())
+Index("ix_weights_uid", affine_weights.c.uid)
 
 
 # --------------------------------------------------------------------------- #
@@ -549,3 +570,42 @@ async def sink(*, wallet: Any, results: List["af.Result"], block: Optional[int] 
             stmt = stmt.on_conflict_do_nothing(index_elements=["hotkey", "challenge_id"])
             await session.execute(stmt)
             await session.commit()
+
+async def sink_weights(
+    *,
+    validator_hotkey: str,
+    block_number: int,
+    weights_data: List[Dict[str, Any]]
+) -> None:
+    """Persist calculated weights and summary stats into Postgres."""
+    if not weights_data:
+        return
+
+    now_ts = dt.datetime.now(tz=TIMEZONE)
+    rows: List[Dict[str, Any]] = [
+        {
+            "validator_hotkey": validator_hotkey,
+            "block_number": block_number,
+            "timestamp": now_ts,
+            "uid": d.get("uid"),
+            "hotkey": d.get("hotkey"),
+            "weight": d.get("weight"),
+            "score": d.get("score"),
+            "eligible": d.get("eligible"),
+            "accuracy": d.get("accuracy"),
+            "counts": d.get("counts"),
+        }
+        for d in weights_data
+    ]
+
+    await _get_engine()
+    sm = _sm()
+    async with sm() as session:
+        # Insert in batches for large lists
+        for i in range(0, len(rows), BATCH_SIZE):
+            chunk = rows[i : i + BATCH_SIZE]
+            stmt = pg_insert(affine_weights).values(chunk)
+            stmt = stmt.on_conflict_do_nothing(index_elements=["validator_hotkey", "block_number", "uid"])
+            await session.execute(stmt)
+            await session.commit()
+    af.logger.info(f"Sunk {len(rows)} weight records to DB for block {block_number}")
