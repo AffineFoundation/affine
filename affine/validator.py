@@ -213,6 +213,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
                     "eligible": False,
                     "accuracy": acc[hk],
                     "counts": {e: cnt[hk][e] for e in af.ENVS},
+                    "layer_points": layer_points[hk],
                 })
 
 
@@ -273,6 +274,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
             "eligible": hk in eligible,
             "accuracy": acc[hk],
             "counts": {e: cnt[hk][e] for e in af.ENVS},
+            "layer_points": layer_points[hk], # <-- ADDED THIS LINE
         })
 
     # --- summary printout -----------------------------------------------------
