@@ -103,8 +103,10 @@ async def _get_client() -> aiohttp.ClientSession:
 
 
 TERMINAL = {400, 404, 410}
-async def query(prompt, model: str = "unsloth/gemma-3-12b-it", slug: str = "llm", timeout=150, retries=0, backoff=1) -> af.Response:
-    url = f"https://{slug}.chutes.ai/v1/chat/completions"
+# openrouter: "https://openrouter.ai/api/v1/chat/completions"
+async def query(prompt, model: str = "qwen/qwen3-max", slug: str = "llm", timeout=150, retries=0, backoff=1,
+                provider: Optional[str] = None) -> af.Response:
+    url = f"https://{slug}.chutes.ai/v1/chat/completions" if provider is None else provider
     hdr = {"Authorization": f"Bearer {af.get_conf('CHUTES_API_KEY')}", "Content-Type": "application/json"}
     start = time.monotonic()
     af.QCOUNT.labels(model=model).inc()
