@@ -106,6 +106,7 @@ affine_weights = Table(
     Column("eligible", Boolean, nullable=False),
     Column("accuracy", JSONB, nullable=True),
     Column("counts", JSONB, nullable=True),
+    Column("layer_points", JSONB, nullable=True), # <-- ADDED THIS LINE
     Column("timestamp", DateTime(timezone=True), server_default=func.now(), nullable=False),
     UniqueConstraint("validator_hotkey", "block_number", "uid", name="uq_validator_block_uid"),
 )
@@ -594,6 +595,7 @@ async def sink_weights(
             "eligible": d.get("eligible"),
             "accuracy": d.get("accuracy"),
             "counts": d.get("counts"),
+            "layer_points": d.get("layer_points"), # <-- ADDED THIS LINE
         }
         for d in weights_data
     ]
