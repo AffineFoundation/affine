@@ -95,6 +95,11 @@ class BaseEnv(BaseModel, ABC):
     async def generate(self) -> "Challenge": ...
     @abstractmethod
     async def evaluate(self, challenge: "Challenge", response: "Response") -> "Evaluation": ...
+    async def many(self, count: int) -> List["Challenge"]:
+        out = []
+        for _ in range(count):
+            out.append(await self.generate())
+        return out
 
 # --------------------------------------------------------------------------- #
 #                         Models with new (de)serialisation                   #
