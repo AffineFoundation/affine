@@ -98,8 +98,9 @@ import affine as af
 af.trace(); af.debug(); af.info()
 
 # Get all miner info or only for UID =5
-miners = await af.get_miners()
-miner = await af.get_miners( 5 )
+all_miners = await af.get_miners()
+miner = await af.get_miners(5)
+miner = miner[5]
 
 # Generate a SAT challenge
 chal = await af.SAT.generate() 
