@@ -22,11 +22,11 @@ ALPHA = 0.9
 # Tuned ε-margins:
 #  - 'not-worse' uses a smaller Z to ease dominance when sample sizes are large.
 #  - 'better_any' uses a tiny fixed margin so small but consistent edges can win size-1 subsets.
-EPS_FLOOR   = 0.002    # 0.20 percentage points floor for "not worse" tolerance
-Z_NOT_WORSE = 0.84     # one-sided ~80% cushion for "not worse" (was 1.645)
-EPS_WIN     = 0.0015   # 0.15 percentage points to claim "better on at least one env"
-Z_WIN       = 0.0      # keep "better" threshold floor-based (set >0 to scale with n)
-ELIG        = 0.01 
+EPS_FLOOR   = 0.005    # 0.20 percentage points floor for "not worse" tolerance
+Z_NOT_WORSE = 1.28     # one-sided ~80% cushion for "not worse" (was 1.645)
+EPS_WIN     = 0.004  # 0.15 percentage points to claim "better on at least one env"
+Z_WIN       = 0.5      # keep "better" threshold floor-based (set >0 to scale with n)
+ELIG        = 0.03 
 
 async def get_weights(tail: int = TAIL, scale: float = 1):
     """
@@ -39,7 +39,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
       4) Combinatoric scoring:
            - For every non-empty subset S of ENVS, pick the ε-Pareto winner on S.
            - Award K_|S| where K_1 = scale, K_s = C(N, s-1)*K_{s-1}.
-         Fallback if no dominance edges on S: highest mean accuracy on S, then earliest version.
+         Fallback if no dominance edges on S: earliest version (earlier block wins).
       5) Normalize scores over eligibles to produce weights. Metrics + summary emitted.
 
     Returns:
@@ -56,8 +56,8 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     cnt   = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env counts
     succ  = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env correct (0/1 or [0,1])
     current_miners = await af.get_miners(meta=meta)
-    first_block = { m.block: m for m in current_miners.values() } # earliest block for current version
     prev  = { m.hotkey: m for m in current_miners.values() }
+    first_block = { m.hotkey: m.block for m in current_miners.values() }  # earliest block for current version
     pairs = [ (mi.hotkey, mi.revision) for mi in current_miners.values() ]
     for env in af.ENVS:
         try:
@@ -88,7 +88,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
 
     # --- eligibility: require near-max samples per env ------------------------
     required = {
-        e: 150 + int(ELIG * max((cnt[hk][e] for hk in active_hks), default=0))
+        e: 500 + int(ELIG * max((cnt[hk][e] for hk in active_hks), default=0))
         for e in af.ENVS
     }
     eligible = {hk for hk in active_hks if all(cnt[hk][e] >= required[e] for e in af.ENVS)}
@@ -166,18 +166,14 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     def subset_winner(env_subset):
         """
         Winner on env_subset via ε-Pareto. If no dominance edges, fall back to:
-          1) highest mean accuracy on the subset,
-          2) earliest version start block.
+          earliest version start block (earlier block wins).
         """
         dom_local = defaultdict(int)
         for x, y in itertools.permutations(pool_for_dom, 2):
             if dominates_on(x, y, env_subset):
                 dom_local[x] += 1
 
-        def mean_acc(hk: str) -> float:
-            return sum(acc[hk][e] for e in env_subset) / len(env_subset)
-
-        return max(pool_for_dom, key=lambda hk: (dom_local.get(hk, 0), mean_acc(hk), -ts(hk)))
+        return max(pool_for_dom, key=lambda hk: (dom_local.get(hk, 0), -ts(hk)))
 
     # Calculate combinatoric scores for all miners (not just eligible)
     K = layer_weights(N_envs, scale)
