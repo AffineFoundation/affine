@@ -406,13 +406,10 @@ async def aggregate_success_by_env(*, env_name: str, pairs: list[tuple[str, str]
         select(
             affine_results.c.hotkey.label("hotkey"),
             func.count().label("n_success"),
-            func.coalesce(
-                func.sum(affine_results.c.score).filter(affine_results.c.success.is_(True)),
-                0.0,
-            ).label("sum_score"),
+            func.coalesce(func.sum(affine_results.c.score), 0.0).label("sum_score"),
         )
         .where(affine_results.c.env_name == env_name)
-        .where(affine_results.c.success.is_(True))
+        .where(affine_results.c.success.is_(True)) # only keep rows where success = true
         .where(tuple_(affine_results.c.hotkey, affine_results.c.revision).in_(pairs))
         .group_by(affine_results.c.hotkey)
     )
