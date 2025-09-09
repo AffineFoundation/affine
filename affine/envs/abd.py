@@ -71,7 +71,7 @@ dataset = af.singleton('rl-python', lambda: af.utils.R2BufferedDataset(
 ))
 
 class ABD(af.BaseEnv):
-    __version__: str = "0.0.0"
+    __version__: str = "0.0.1"
     def __init__(self):
         super().__init__()
         self._executor = af.utils.ProgramExecutor()

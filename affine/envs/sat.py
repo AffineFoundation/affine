@@ -3,7 +3,7 @@ import random, re
 import affine as af
 
 class SAT(af.BaseEnv):
-    __version__: str = "0.0.2"
+    __version__: str = "0.0.3"
     n: int
     k: int
     m: int

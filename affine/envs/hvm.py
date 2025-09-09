@@ -22,7 +22,7 @@ import affine as af
 # --------------------------------------------------------------------------- #
 
 class HVM(af.BaseEnv):
-    __version__: str = "0.1.1"  # newline-robust compare + consistent emit
+    __version__: str = "0.1.2"  # newline-robust compare + consistent emit
 
     def __init__(self, seed: Optional[int] = None) -> None:
         super().__init__()

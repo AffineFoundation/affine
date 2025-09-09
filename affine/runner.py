@@ -1,184 +1,186 @@
 #!/usr/bin/env python3
-# --------------------------------------------------------------------------- #
-#                             Imports                                         #
-# --------------------------------------------------------------------------- #
 from __future__ import annotations
-import time, random, asyncio, traceback, contextlib
-from collections import defaultdict
-from typing import Dict, List, Tuple, Any
+import asyncio, random, time, traceback
+from typing import Any, Dict, List
+import statistics as stats
 import bittensor as bt
 import affine as af
 
-# --------------------------------------------------------------------------- #
-#                               Runner                                        #
-# --------------------------------------------------------------------------- #
 @af.cli.command("runner")
 def runner():
-    coldkey = af.get_conf("BT_WALLET_COLD", "default")
-    hotkey  = af.get_conf("BT_WALLET_HOT",  "default")
-    wallet  = bt.wallet(name=coldkey, hotkey=hotkey)
+    wallet  = bt.wallet(
+        name=af.get_conf("BT_WALLET_COLD", "default"),
+        hotkey=af.get_conf("BT_WALLET_HOT",  "default"),
+    )
 
-    async def _run():
-        
-        envs = { env.__name__: env() for env in af.ENVS.values() }
+    # --- Tunables ------------------------------------------------------------
+    CONCURRENCY         = int(af.get_conf("CONCURRENCY", 300))       # global cap
+    ROUND_TIMEOUT_SEC   = float(af.get_conf("ROUND_TIMEOUT_SEC", 180))
+    REFRESH_MINERS_SEC  = int(af.get_conf("REFRESH_MINERS_SEC", 600))
+    SLEEP_EMPTY_SEC     = float(af.get_conf("SLEEP_EMPTY_SEC", 3))
+    MAX_SAMPLE          = int(af.get_conf("MAX_SAMPLE", 0))         # 0 = all miners
+    FAILURE_PENALTY     = float(af.get_conf("FAILURE_PENALTY", 0.0))
+    USE_ZSCORE          = bool(int(af.get_conf("GRPO_USE_ZSCORE", 0)))
+    LAUNCH_EVERY_SEC    = float(af.get_conf("LAUNCH_EVERY_SEC", 30)) # <-- new
+    MAX_INFLIGHT_ROUNDS = int(af.get_conf("MAX_INFLIGHT_ROUNDS", 4)) # soft guard
+    EPS                 = 1e-9
 
-        # State
-        EPS = 1e-3
-        MINERS: Dict[int, any] = None
-        MINER_BY_PAIR: Dict[Tuple[str, str], any] = {}
-        BACKOFF = defaultdict(float)
+    # Build envs once; if your env set changes at runtime, add a refresher.
+    def build_envs() -> Dict[str, Any]:
+        return {E.__name__: E() for E in af.ENVS.values()}
 
-        async def refresh_miners():
-            nonlocal MINERS, MINER_BY_PAIR
-            MINERS = await af.get_miners()
-            # build (hotkey, revision) → miner index
-            MINER_BY_PAIR = { (m.hotkey, m.revision): m for m in MINERS.values() }
+    async def refresh_miners() -> Dict[int, Any]:
+        return await af.get_miners()  # {uid -> MinerInfo}
 
-        COUNTS_PER_ENV: Dict[str, Dict[Tuple[str, str], int]] = None
-        async def refresh_counts():
-            nonlocal COUNTS_PER_ENV
-            PAIRS = [ (m.hotkey, m.revision) for m in MINERS.values() ]
-            COUNTS_PER_ENV = await af.get_env_counts(pairs=PAIRS)
-            
-            # Get all valid env names from the ENVS registry
-            valid_env_names = set(af.ENVS.keys())
-            
-            # Remove any env from counts that's not in ENVS
-            COUNTS_PER_ENV = {env_name: counts for env_name, counts in COUNTS_PER_ENV.items() 
-                              if env_name in valid_env_names}
-            
-            # Add zero counts for all ENVS that are not in get_env_counts
-            for env_name in valid_env_names:
-                if env_name not in COUNTS_PER_ENV:
-                    COUNTS_PER_ENV[env_name] = {}
+    async def run_one(miner, chal):
+        try:
+            res = (await af.run(chal, miner, timeout=ROUND_TIMEOUT_SEC))[0]
+            return miner, res
+        except Exception:
+            return miner, None
 
-        SELECT_LOG_TEMPLATE = (
-            "[SELECT] "
-            "U{uid:>3d} │ "
-            "{model:<50s} │ "
-            "{env:<3} │ "
-            "CNT {count:>4d} │ "
-            "WGT {weight:>12.4f} │ "
-            "BKO {backoff:>6.1f}"
+    def apply_grpo(results: List[Any]):
+        succ = [r.evaluation.score for r in results if r and r.response.success]
+        mean = (sum(succ)/len(succ)) if succ else 0.0
+        if USE_ZSCORE and len(succ) > 1:
+            std = stats.pstdev(succ) or EPS
+            for r in results:
+                if not r: 
+                    continue
+                if r.response.success:
+                    r.evaluation.score = (r.evaluation.score - mean) / std
+                else:
+                    r.evaluation.score = (-mean - FAILURE_PENALTY) / std
+        else:
+            for r in results:
+                if not r: 
+                    continue
+                if r.response.success:
+                    r.evaluation.score = r.evaluation.score - mean
+                else:
+                    r.evaluation.score = -mean - FAILURE_PENALTY
+
+    async def broadcast_round(env, miners: List[Any], req_sem: asyncio.Semaphore, round_id: int, env_name: str):
+        """Fire one challenge to a cohort of miners; does not block subsequent rounds."""
+        round_start_ts = time.monotonic()
+        chal = await env.generate()
+
+        cohort = miners[:] if MAX_SAMPLE <= 0 else random.sample(miners, min(MAX_SAMPLE, len(miners)))
+        random.shuffle(cohort)
+
+        async def bound(m):
+            # Global concurrency guard across overlapping rounds
+            async with req_sem:
+                return await run_one(m, chal)
+
+        # Kick off all miner requests for this round (bounded by req_sem)
+        pairs = await asyncio.gather(*[asyncio.create_task(bound(m)) for m in cohort])
+
+        # GRPO adjust on successful first responses
+        first_results = [r for (_m, r) in pairs if r]
+        grpo_avg = 0.0
+        if first_results:
+            apply_grpo(first_results)
+            # Calculate average GRPO-adjusted score
+            grpo_scores = [r.evaluation.score for r in first_results]
+            grpo_avg = sum(grpo_scores) / len(grpo_scores)
+
+        # Sink everything we got in one batch
+        batch_results = [r for (_m, r) in pairs if r is not None]
+        if batch_results:
+            sink_start = time.monotonic()
+            await af.sink(wallet=wallet, results=batch_results)
+            sink_dur = time.monotonic() - sink_start
+        else:
+            sink_dur = 0.0
+
+        # Round summary logging
+        attempted = len(cohort)
+        ok = sum(1 for (_m, r) in pairs if r and getattr(r.response, "success", False))
+        fail = sum(1 for (_m, r) in pairs if r and not getattr(r.response, "success", False))
+        err = sum(1 for (_m, r) in pairs if r is None)
+        round_dur = time.monotonic() - round_start_ts
+        af.logger.info(
+            f"[round {round_id}] env={env_name} attempted={attempted} ok={ok} fail={fail} err={err} "
+            f"dur={round_dur:.2f}s sink={len(batch_results)} in {sink_dur:.2f}s grpo_avg={grpo_avg:.3f}"
         )
 
-        async def next():
-            # Return if we still dont have any miners.
-            if len(MINERS.values()) == 0 or len(COUNTS_PER_ENV.values()) == 0: return None
-            # Get all hotkey, revision pairs to select from.
-            pairs = [ (m.hotkey, m.revision) for m in MINERS.values() ]
-            # Get a weight per env.
-            weights_per_env = {env_name: 1/(sum(env_counts.values()) + 1) for env_name, env_counts in COUNTS_PER_ENV.items()}
-            # Select the env with the least number of samples.
-            worst_env = random.choices( list(weights_per_env.keys()), weights = list(weights_per_env.values()))[0]
-            # Get all counts for the worst env.
-            env_counts = COUNTS_PER_ENV[worst_env]
-            # Get the average env count.
-            mean_env_count = sum([ c for c in env_counts.values() ])/(len(pairs) + EPS)
-            # Weight to be selected is mean/(count + backoff)
-            weights_hotkey_env = { p: (mean_env_count + EPS)/(env_counts.get(p, 0) + BACKOFF[p] + EPS) for p in pairs }
-            # Pick the miner with weights.
-            worst_miner = random.choices( list(weights_hotkey_env.keys()), weights = list(weights_hotkey_env.values()))[0]
-            # return the env and the miner
-            miner =  MINER_BY_PAIR[worst_miner]
-            af.logger.debug(
-                SELECT_LOG_TEMPLATE.format(
-                    uid=miner.uid,
-                    model=(miner.model or "")[:50],
-                    env=worst_env,
-                    count=COUNTS_PER_ENV[worst_env].get(worst_miner, 0),
-                    weight=weights_hotkey_env[worst_miner],
-                    backoff=BACKOFF[worst_miner],
-                )
-            )
-            return worst_env, miner
+    async def miner_refresher(state):
+        """Periodically refresh miner list."""
+        while True:
+            try:
+                state["miners"] = await refresh_miners()
+            except Exception as e:
+                af.logger.warning(f"[miner_refresher] {e}\n{traceback.format_exc()}")
+            await asyncio.sleep(REFRESH_MINERS_SEC)
 
-        sink_semaphore = asyncio.Semaphore(3)
-        inflight_semaphore = asyncio.Semaphore(30)
-        state_lock = asyncio.Lock()  # Protect shared state variables
+    async def launcher():
+        """
+        Launch a new round every LAUNCH_EVERY_SEC seconds, regardless of
+        in-flight rounds. Uses a global semaphore to cap total requests.
+        """
+        envs = build_envs()
+        env_names = list(envs.keys())
+        idx = 0
+        round_seq = 1
 
-        async def _sink(results):
-            """Do sink I/O under its own small semaphore, off the critical path."""
-            async with sink_semaphore:
-                try:
-                    await af.sink(wallet=wallet, results=results)
-                except Exception as e:
-                    af.logger.warning(f'sink error: {e}')
-                    af.logger.warning(traceback.format_exc())
+        # Shared state and controls
+        state: Dict[str, Any] = {"miners": await refresh_miners()}
+        req_sem = asyncio.Semaphore(CONCURRENCY)
+        inflight_rounds: set[asyncio.Task] = set()
 
-        async def one():
-            # NOTE: don't take inflight here; only around the miner RPC
-            sel = await next()
-            if sel is None:
-                return
-            env_name, miner = sel
-            pair = (miner.hotkey, miner.revision)
-            chal = await envs[env_name].generate()
-
-            # Only the miner RPC is bounded by 'inflight'
-            async with inflight_semaphore:
-                results = await af.run(chal, miner, timeout=600)
-
-            # Be defensive about response to avoid attribute errors
-            resp = getattr(results[0], "response", None)
-            nobackoff = bool(resp and getattr(resp, "success", False) and resp != "")
-
-            # Shared state updates stay protected
-            async with state_lock:
-                if nobackoff:
-                    BACKOFF[pair] = max(0.0, BACKOFF[pair] - 10)
-                else:
-                    BACKOFF[pair] += 10
-                COUNTS_PER_ENV[env_name][pair] = COUNTS_PER_ENV[env_name].get(pair, 0) + 1
-
-            # Offload the sink so we immediately free the 'one()' slot
-            asyncio.create_task(_sink(results))
+        # Start background miner refresher
+        asyncio.create_task(miner_refresher(state))
 
         while True:
             try:
-                await refresh_miners()
-                await refresh_counts()
+                miners_dict = state.get("miners") or {}
+                miners_list = list(miners_dict.values())
+
+                if not miners_list or not env_names:
+                    await asyncio.sleep(SLEEP_EMPTY_SEC)
+                    continue
+
+                # Soft backpressure: avoid unbounded backlog of overlapping rounds
+                # (Does NOT wait for previous round to finish; only limits # of concurrent rounds)
+                if len(inflight_rounds) >= MAX_INFLIGHT_ROUNDS:
+                    # Prune done tasks and try again quickly
+                    done = {t for t in inflight_rounds if t.done()}
+                    inflight_rounds -= done
+                    await asyncio.sleep(0.05)
+                    continue
+
+                env_name = env_names[idx % len(env_names)]
+                idx += 1
+
                 af.HEARTBEAT = time.monotonic()
-                
-                # Continuous execution with periodic refresh
-                running_tasks = set()
-                refresh_time = time.monotonic() + 1200  # Refresh every 20 minutes
 
-                # Start initial batch of tasks up to semaphore limit
-                for _ in range(30):
-                    task = asyncio.create_task(one())
-                    running_tasks.add(task)
+                # Launch round without awaiting its completion
+                af.logger.info(
+                    f"[round {round_seq}] launch env={env_name} miners={len(miners_list)} inflight={len(inflight_rounds)}/{MAX_INFLIGHT_ROUNDS}"
+                )
+                t = asyncio.create_task(broadcast_round(envs[env_name], miners_list, req_sem, round_seq, env_name))
+                inflight_rounds.add(t)
+                round_seq += 1
 
-                # Continuously maintain running tasks until refresh time
-                while time.monotonic() < refresh_time:
-                    if not running_tasks:
-                        break
+                # Cleanup finished tasks in the background
+                def _done(_):
+                    inflight_rounds.discard(t)
+                t.add_done_callback(_done)
 
-                    # Wait for at least one task to complete (with timeout for refresh check)
-                    try:
-                        done, running_tasks = await asyncio.wait(
-                            running_tasks, 
-                            return_when=asyncio.FIRST_COMPLETED,
-                            timeout=30  # Check refresh time every 30 seconds
-                        )
-                    except asyncio.TimeoutError:
-                        continue
+                # Tick at fixed cadence
+                await asyncio.sleep(LAUNCH_EVERY_SEC)
 
-                    # Start new tasks to replace completed ones
-                    for _ in done:
-                        new_task = asyncio.create_task(one())
-                        running_tasks.add(new_task)
-                
-                # Cancel any remaining tasks before refresh
-                if running_tasks:
-                    for task in running_tasks:
-                        task.cancel()
-                    
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
-                af.logger.warning(f'Exception:{e}')
-                af.logger.warning(traceback.format_exc())
+                af.logger.warning(f"[launcher] Exception: {e}\n{traceback.format_exc()}")
+                await asyncio.sleep(0.5)
 
     async def main():
-        await asyncio.gather(_run(), af.watchdog(timeout=600))
+        await asyncio.gather(
+            launcher(),
+            af.watchdog(timeout=600),
+        )
 
     asyncio.run(main())
