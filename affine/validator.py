@@ -33,8 +33,8 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     Compute miner weights using ε-Pareto dominance and combinatoric subset winners.
 
     Pipeline
-      1) Ingest last `tail` blocks → per-miner per-env accuracy.
-      2) Determine eligibility (>=90% of per-env max count).
+      1) Ingest last `tail` blocks → per-miner per-env mean GRPO score.
+      2) Determine eligibility (>=90% of per-env max total samples with scores).
       3) Global ε-dominance (all envs) for canonical 'best' (for tie breaks / summaries).
       4) Combinatoric scoring:
            - For every non-empty subset S of ENVS, pick the ε-Pareto winner on S.
@@ -53,38 +53,42 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     N_envs = len(af.ENVS)
     
     # Tallies for all known hotkeys (so metrics update is safe even if some have no data)
-    cnt   = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env counts
-    succ  = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env correct (0/1 or [0,1])
+    cnt      = {hk: defaultdict(int)     for hk in meta.hotkeys}  # per-env total samples with scores
+    sumscore = {hk: defaultdict(float)   for hk in meta.hotkeys}  # per-env sum of GRPO scores
+    sumsq    = {hk: defaultdict(float)   for hk in meta.hotkeys}  # per-env sum of squares
     current_miners = await af.get_miners(meta=meta)
     prev  = { m.hotkey: m for m in current_miners.values() }
     first_block = { m.hotkey: m.block for m in current_miners.values() }  # earliest block for current version
     pairs = [ (mi.hotkey, mi.revision) for mi in current_miners.values() ]
     for env in af.ENVS:
         try:
-            agg = await af.aggregate_success_by_env(env_name=str(env), pairs=pairs)
-            total_suc = 0
+            # Use the registered class' declared __version__ for filtering
+            env_cls = af.ENVS.get(str(env)) if hasattr(af, "ENVS") else None
+            agg = await af.aggregate_scores_by_env(env_name=str(env), pairs=pairs, env_version=getattr(env_cls, "__version__", None))
+            total = 0
             for hk, stats in agg.items():
-                n = int(stats.get("n_success", 0) or 0)
-                s = float(stats.get("sum_score", 0.0) or 0.0)
+                n   = int(stats.get("n_total", 0) or 0)
+                s   = float(stats.get("sum_score", 0.0) or 0.0)
+                ssq = float(stats.get("sum_sq_score", 0.0) or 0.0)
                 if n:
-                    cnt[hk][str(env)] += n
-                    succ[hk][str(env)] += s
-                    total_suc += n
-                
-            af.logger.trace(f'Aggregated {total_suc} successes for env: {env}')
+                    cnt[hk][str(env)]      += n
+                    sumscore[hk][str(env)] += s
+                    sumsq[hk][str(env)]    += ssq
+                    total += n
+            af.logger.trace(f'Aggregated {total} total samples for env: {env}')
         except Exception as e:
             af.logger.warning(f'Error in dataset polling (agg) for env {env}... {e}')
-    # --- accuracy + MAXENV ----------------------------------------------------
-    acc = {
-        hk: {e: (succ[hk][e] / cnt[hk][e] if cnt[hk][e] else 0.0) for e in af.ENVS}
+    # --- mean GRPO + MAXENV ---------------------------------------------------
+    mean = {
+        hk: {e: (sumscore[hk][e] / cnt[hk][e] if cnt[hk][e] else 0.0) for e in af.ENVS}
         for hk in meta.hotkeys
     }
 
     active_hks = list(prev.keys())
     for e in af.ENVS:
-        max_e = max((acc[hk][e] for hk in active_hks), default=0.0)
+        max_e = max((mean[hk][e] for hk in active_hks), default=0.0)
         af.MAXENV.labels(env=e).set(max_e)
-    af.logger.info("Computed accuracy & updated MAXENV.")
+    af.logger.info("Computed mean GRPO & updated MAXENV.")
 
     # --- eligibility: require near-max samples per env ------------------------
     required = {
@@ -94,21 +98,26 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     eligible = {hk for hk in active_hks if all(cnt[hk][e] >= required[e] for e in af.ENVS)}
 
     # --- ε-Pareto dominance helpers ------------------------------------------
-    def thr_not_worse(a_i: float, n_i: int, a_j: float, n_j: int) -> float:
-        """Tolerance for 'not worse' on an env: max(EPS_FLOOR, Z * SE_diff)."""
+    def _var(hk: str, e: str) -> float:
+        n = cnt[hk][e]
+        if n <= 1:
+            return 0.0
+        s = sumscore[hk][e]
+        ssq = sumsq[hk][e]
+        mu = s / n
+        v = (ssq / n) - (mu * mu)
+        return v if v > 0.0 else 0.0
+
+    def thr_not_worse(a_i: float, n_i: int, v_i: float, a_j: float, n_j: int, v_j: float) -> float:
         if Z_NOT_WORSE <= 0:
             return EPS_FLOOR
-        var = (a_i * (1 - a_i)) / max(n_i, 1) + (a_j * (1 - a_j)) / max(n_j, 1)
-        return max(EPS_FLOOR, Z_NOT_WORSE * math.sqrt(var))
+        se = math.sqrt((v_i / max(n_i, 1)) + (v_j / max(n_j, 1)))
+        return max(EPS_FLOOR, Z_NOT_WORSE * se)
 
-    def thr_better(a_i: float, n_i: int, a_j: float, n_j: int, nw: float) -> float:
-        """
-        Margin to claim 'better on at least one env'. Kept ≤ 'not worse' tolerance.
-        Floor-based by default; set Z_WIN>0 to scale with SE_diff.
-        """
+    def thr_better(a_i: float, n_i: int, v_i: float, a_j: float, n_j: int, v_j: float, nw: float) -> float:
         if Z_WIN > 0:
-            var = (a_i * (1 - a_i)) / max(n_i, 1) + (a_j * (1 - a_j)) / max(n_j, 1)
-            t = max(EPS_WIN, Z_WIN * math.sqrt(var))
+            se = math.sqrt((v_i / max(n_i, 1)) + (v_j / max(n_j, 1)))
+            t = max(EPS_WIN, Z_WIN * se)
         else:
             t = EPS_WIN
         return min(t, nw)
@@ -122,10 +131,11 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
         better_any    = False
         tie_all       = True
         for e in subset:
-            ai, aj = acc[a][e], acc[b][e]
+            ai, aj = mean[a][e], mean[b][e]
             ni, nj = cnt[a][e], cnt[b][e]
-            nw  = thr_not_worse(ai, ni, aj, nj)
-            bet = thr_better(ai, ni, aj, nj, nw)
+            vi, vj = _var(a, e), _var(b, e)
+            nw  = thr_not_worse(ai, ni, vi, aj, nj, vj)
+            bet = thr_better(ai, ni, vi, aj, nj, vj, nw)
 
             if ai < aj - nw:
                 not_worse_all = False
@@ -198,8 +208,8 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
         for uid, hk in enumerate(meta.hotkeys):
             af.WEIGHT.labels(uid=uid).set(1.0 if hk == best else 0.0)
             for e in af.ENVS:
-                a = acc[hk][e]
-                if a > 0:
+                a = mean[hk][e]
+                if cnt[hk][e] > 0:
                     af.SCORE.labels(uid=uid, env=e).set(a)
 
         hdr = (
@@ -214,7 +224,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
             model_name = str(m.model)[:50]
             env_cols = []
             for e in af.ENVS:
-                base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}"
+                base = f"{100 * mean[hk][e]:.2f}/{cnt[hk][e]}"
                 if hk == env_winners.get(e):
                     env_cols.append(f"*{base}*")
                 else:
@@ -252,7 +262,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
         model_name = str(m.model)[:50]
         env_cols = []
         for e in af.ENVS:
-            base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}"
+            base = f"{100 * mean[hk][e]:.2f}/{cnt[hk][e]}"
             if hk == env_winners.get(e):
                 env_cols.append(f"*{base}*")
             else:
@@ -274,8 +284,8 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     for uid, hk in enumerate(meta.hotkeys):
         af.WEIGHT.labels(uid=uid).set(weight_by_hk.get(hk, 0.0))
         for e in af.ENVS:
-            a = acc[hk][e]
-            if a > 0:
+            a = mean[hk][e]
+            if cnt[hk][e] > 0:
                 af.SCORE.labels(uid=uid, env=e).set(a)
 
     # --- Return weights in a stable shape (best last, as before) -------------

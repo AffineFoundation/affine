@@ -9,7 +9,7 @@ dataset = af.singleton('euler', lambda: af.utils.R2BufferedDataset(
 ))
 
 class ELR(af.BaseEnv):
-    __version__: str = "0.0.1"
+    __version__: str = "0.0.2"
     def __init__(self):
         super().__init__()
 

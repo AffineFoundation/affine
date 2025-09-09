@@ -44,7 +44,7 @@ from huggingface_hub import snapshot_download
 from bittensor.core.errors import MetadataError
 from pydantic import BaseModel, Field, validator, ValidationError
 from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, TypeVar, Awaitable
-__version__ = "0.0.0"
+__version__ = "0.0.1"
 
 from .logging import *
 
