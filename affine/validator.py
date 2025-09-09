@@ -24,7 +24,7 @@ ALPHA = 0.9
 #  - 'better_any' uses a tiny fixed margin so small but consistent edges can win size-1 subsets.
 EPS_FLOOR   = 0.005    # 0.20 percentage points floor for "not worse" tolerance
 Z_NOT_WORSE = 1.28     # one-sided ~80% cushion for "not worse" (was 1.645)
-EPS_WIN     = 0.004  # 0.15 percentage points to claim "better on at least one env"
+EPS_WIN     = 0.008  # 0.15 percentage points to claim "better on at least one env"
 Z_WIN       = 0.5      # keep "better" threshold floor-based (set >0 to scale with n)
 ELIG        = 0.03 
 
