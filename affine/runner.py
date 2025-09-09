@@ -117,7 +117,7 @@ def runner():
 
             # Only the miner RPC is bounded by 'inflight'
             async with inflight_semaphore:
-                results = await af.run(chal, miner, timeout=180)
+                results = await af.run(chal, miner, timeout=600)
 
             # Be defensive about response to avoid attribute errors
             resp = getattr(results[0], "response", None)
