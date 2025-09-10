@@ -17,21 +17,21 @@ ENVS: Dict[str, Type[object]] = {
     'DED': _ded.DED
 }
 
-# def _register_from_module(mod) -> None:
-#     try:
-#         # Lazy import to avoid circulars at module import time
-#         from .. import BaseEnv as _BaseEnv  # type: ignore
-#     except Exception:
-#         _BaseEnv = object  # fallback type during very early import
-#     for attr_name in dir(mod):
-#         if attr_name.startswith("_"):
-#             continue
-#         attr = getattr(mod, attr_name)
-#         if isinstance(attr, type) and issubclass(attr, _BaseEnv):
-#             ENVS[attr.__name__] = attr
-#             globals()[attr.__name__] = attr
-#             if attr.__name__ not in __all__:
-#                 __all__.append(attr.__name__)
+def _register_from_module(mod) -> None:
+    try:
+        # Lazy import to avoid circulars at module import time
+        from .. import BaseEnv as _BaseEnv  # type: ignore
+    except Exception:
+        _BaseEnv = object  # fallback type during very early import
+    for attr_name in dir(mod):
+        if attr_name.startswith("_"):
+            continue
+        attr = getattr(mod, attr_name)
+        if isinstance(attr, type) and issubclass(attr, _BaseEnv):
+            ENVS[attr.__name__] = attr
+            globals()[attr.__name__] = attr
+            if attr.__name__ not in __all__:
+                __all__.append(attr.__name__)
 
 # Register built-ins
 for _m in (_sat, _abd, _ded):
