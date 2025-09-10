@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Tuple, Optional
 import affine as af
-import quixand as qx
+from affine import quixand as qx
 import atexit
 
 

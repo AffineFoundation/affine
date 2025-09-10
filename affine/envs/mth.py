@@ -5,7 +5,7 @@ import math
 import json
 import atexit
 import affine as af
-import quixand as qx
+from affine import quixand as qx
 from typing import Tuple, Optional, Any, Dict
 
 # ----------------------------
