@@ -61,6 +61,42 @@ async def check_model_gated(model_id: str, revision: Optional[str] = None) -> Op
         return None
 
 # --------------------------------------------------------------------------- #
+#                               HF weights SHA                                #
+# --------------------------------------------------------------------------- #
+async def get_weights_sha(model_id: str, revision: Optional[str] = None) -> Optional[str]:
+    try:
+        def _repo_info():
+            api = HfApi(token=os.getenv("HF_TOKEN", None))
+            return api.repo_info(repo_id=model_id, repo_type="model", revision=revision, files_metadata=True)
+        info = await asyncio.to_thread(_repo_info)
+
+        siblings = getattr(info, "siblings", None) or []
+
+        def _name(s) -> str:
+            return (getattr(s, "rfilename", None) or getattr(s, "path", "") or "")
+
+        # 1) Prefer exact 'model.safetensors'
+        for s in siblings:
+            name = _name(s)
+            lfsi = getattr(s, "lfs", None) or {}
+            sha = lfsi.get("sha256") if isinstance(lfsi, dict) else None
+            if sha and name.endswith("model.safetensors"):
+                return str(sha)
+
+        # 2) Any '*.safetensors'
+        for s in siblings:
+            name = _name(s)
+            lfsi = getattr(s, "lfs", None) or {}
+            sha = lfsi.get("sha256") if isinstance(lfsi, dict) else None
+            if sha and name.endswith(".safetensors"):
+                return str(sha)
+
+        return None
+    except Exception as e:
+        af.logger.trace(f"HF weights sha lookup failed for {model_id}@{revision}: {e}")
+        return None
+
+# --------------------------------------------------------------------------- #
 #                               QUERY                                         #
 # --------------------------------------------------------------------------- #
 # Lazy-initialised semaphore and shared HTTP client
@@ -259,20 +295,40 @@ async def get_miners(
                     slug = slug,
                     chute=chute,
                 )
+                miner.weights_sha = await get_weights_sha(model, miner_revision)
                 return miner
         except: pass
     results = await asyncio.gather(*(fetch(uid) for uid in uids))
     output = {uid: m for uid, m in zip(uids, results) if m is not None}
     # Remove duplicates.
     if output:
-        best_by_model: Dict[str, Tuple[int, int]] = {}
+        # First, prefer unique by weights_sha: keep earliest block per SHA
+        best_by_sha: Dict[str, Tuple[int, int]] = {}
         for uid, m in output.items():
-            if not m.model:
+            if not m.weights_sha:
                 continue
             blk = m.block if isinstance(m.block, int) else (int(m.block) if m.block is not None else (2**63 - 1))
-            prev = best_by_model.get(m.model)
+            prev = best_by_sha.get(m.weights_sha)
             if prev is None or blk < prev[0]:
-                best_by_model[m.model] = (blk, uid)
-        selected_uids = {uid for _, uid in best_by_model.values()}
-        output = {uid: m for uid, m in output.items() if uid in selected_uids}
+                best_by_sha[m.weights_sha] = (blk, uid)
+        if best_by_sha:
+            keep_uids = set(output.keys())
+            for sha, (_blk, keep_uid) in best_by_sha.items():
+                dup_uids = [u for u, mm in output.items() if mm.weights_sha == sha]
+                for u in dup_uids:
+                    if u != keep_uid and u in keep_uids:
+                        keep_uids.remove(u)
+            output = {uid: m for uid, m in output.items() if uid in keep_uids}
+        # Then, still ensure one per model (earliest block) to collapse accidental duplicates
+        if output:
+            best_by_model: Dict[str, Tuple[int, int]] = {}
+            for uid, m in output.items():
+                if not m.model:
+                    continue
+                blk = m.block if isinstance(m.block, int) else (int(m.block) if m.block is not None else (2**63 - 1))
+                prev = best_by_model.get(m.model)
+                if prev is None or blk < prev[0]:
+                    best_by_model[m.model] = (blk, uid)
+            selected_uids = {uid for _, uid in best_by_model.values()}
+            output = {uid: m for uid, m in output.items() if uid in selected_uids}
     return output

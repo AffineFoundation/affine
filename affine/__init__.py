@@ -166,7 +166,7 @@ class Miner(BaseModel):
     revision: Optional[str] = None; block: Optional[int] = None
     chute: Optional[Dict[str, Any]] = None
     slug: Optional[str] = None
-    
+    weights_sha: Optional[str] = None
 
 class Result(BaseModel):
     version: str = __version__
