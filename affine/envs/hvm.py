@@ -4,6 +4,7 @@ import json, random, re
 from typing import Any, Dict, List, Optional, Tuple
 
 import affine as af
+from .utils import run_in_sandbox
 
 # --------------------------------------------------------------------------- #
 # HVM: Hole-filled Virtual Machine
@@ -28,7 +29,6 @@ class HVM(af.BaseEnv):
         super().__init__()
         self._rng = random.Random(seed)
         # Use the repo's hardened sandbox runner (same one used by ABD/DED).
-        self._executor = af.utils.ProgramExecutor()
 
     # --------------------------- Public API -------------------------------- #
     async def generate(self) -> af.Challenge:
@@ -65,7 +65,7 @@ class HVM(af.BaseEnv):
             if v not in dom:
                 return af.Evaluation(env=self, score=0.0, extra={"error": f"value {v} for {h} outside domain {dom}"})
 
-        # Run each case inside the sandboxed ProgramExecutor (like ABD/DED)
+        # Run each case inside the sandboxed run_in_sandbox (like ABD/DED)
         details: List[Dict[str, Any]] = []
         passed = 0
         for idx, (inp, exp) in enumerate(zip(inputs, expected)):
@@ -338,7 +338,7 @@ Return ONLY the hole mapping in this exact format:
         return (True, "\n".join(out))
 
     def _run_vm_sandbox(self, prog: Dict[str, Any], holes: Dict[str, int], inputs: List[int]) -> Tuple[bool, str]:
-        """Run inside the repo's sandbox using ProgramExecutor.execute(code, stdin)."""
+        """Run inside the repo's sandbox using run_in_sandbox(code, stdin)."""
         runner = r"""
 import sys, json
 data = json.loads(sys.stdin.read())
@@ -414,7 +414,7 @@ sys.stdout.write("\n".join(out))
             "max_steps": prog["max_steps"],
             "stack_cap": prog["stack_cap"],
         })
-        out, err = self._executor.execute(runner, stdin=payload)
+        out, err = run_in_sandbox(runner, payload)
         ok = (err.strip() == "")
         return (ok, out if ok else "")
 
