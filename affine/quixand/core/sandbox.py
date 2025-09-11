@@ -75,6 +75,7 @@ class Sandbox:
 		self.files = FilesFacade(self)
 		self.proxy = ProxyFacade(self)
 		self.id = self._handle.id
+		self.container_id = self._handle.container_id
 		self._closed = False
 
 	def status(self) -> SandboxStatus:
