@@ -4,7 +4,7 @@ import random
 import asyncio
 import affine as af
 from typing import Any, Dict, Optional, Tuple
-from .utils import run_in_sandbox
+from .executor import SandboxExecutor
 
 MODELS = ["unsloth/gemma-3-12b-it"]
 PROMPT_TEMPLATE = """You are a programming expert. Given a Python program and its expected output, you need to determine the exact input that would produce this output.
@@ -100,7 +100,7 @@ class ABD(af.BaseEnv):
             af.logger.trace("Generated input insufficient, retrying")
             return None
 
-        output, error = await run_in_sandbox(program, gen_input)
+        output, error = await SandboxExecutor.execute_code(program, gen_input)
         af.logger.trace(f"Executed program with generated input. Output: {output}, Error: {error}, program: {program}")
         if error or not output.strip():
             af.logger.trace("Generated input contains error")
@@ -188,7 +188,7 @@ class ABD(af.BaseEnv):
                 env=self, score=0.0,
                 extra={"error": "Invalid input for program", "generated_input": gen_in, "expected_output": expected}
             )
-        out, err = await run_in_sandbox(prog, gen_in)
+        out, err = await SandboxExecutor.execute_code(prog, gen_in)
         af.logger.trace(f"Executed program with generated input. Output: {out}, Error: {err}")
         if err:
             af.logger.trace("Error occurred during program execution.")
@@ -202,6 +202,3 @@ class ABD(af.BaseEnv):
             env=self, score=1.0 if ok else 0.0,
             extra={"outputs_match": ok, "generated_input": gen_in, "generated_output": out, 'expected_output': expected}
         )
-
-    async def _run_in_sandbox(self, program: str, stdin_text: str = "") -> Tuple[str, str]:
-        return await run_in_sandbox(program, stdin_text)

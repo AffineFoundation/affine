@@ -5,7 +5,7 @@ import json
 import asyncio
 import affine as af
 from typing import Any, Dict, List, Tuple
-from .utils import strip_fences, run_in_sandbox
+from .executor import SandboxExecutor
 
 # -------------------------------- Helpers -------------------------------- #
 def _to_str(x) -> str:
@@ -72,7 +72,7 @@ class DED(af.BaseEnv):
     ) -> af.Evaluation:
         af.logger.trace("Starting evaluation of the challenge.")
         raw_reply = response.response or ""
-        program = strip_fences(raw_reply)
+        program = SandboxExecutor.strip_fences(raw_reply)
         af.logger.trace(f"Stripped program from response: {program[:50]}...")
 
         # ---------------- Verification info ---------------------------- #
@@ -141,7 +141,7 @@ class DED(af.BaseEnv):
                 total -= 1
                 continue
 
-            out, err = await self._run_in_sandbox(exec_prog, inp)
+            out, err = await SandboxExecutor.execute_code(exec_prog, inp)
 
             ok_run = not err.strip()
             out_norm = _normalize(out)
@@ -172,10 +172,3 @@ class DED(af.BaseEnv):
         af.logger.trace(f"Evaluation completed with score: {score}")
         return af.Evaluation(env=self, score=score, feedback=feedback)
 
-
-    async def _run_in_sandbox(self, program: str, stdin_text: str = "") -> Tuple[str, str]:
-        """Execute Python code inside a Quixand sandbox with optional stdin.
-
-        Returns (stdout, stderr) as text.
-        """
-        return await run_in_sandbox(program, stdin_text)

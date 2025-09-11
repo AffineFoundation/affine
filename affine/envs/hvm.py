@@ -4,7 +4,7 @@ import json, random, re
 from typing import Any, Dict, List, Optional, Tuple
 
 import affine as af
-from .utils import run_in_sandbox
+from .executor import SandboxExecutor
 
 # --------------------------------------------------------------------------- #
 # HVM: Hole-filled Virtual Machine
@@ -414,7 +414,8 @@ sys.stdout.write("\n".join(out))
             "max_steps": prog["max_steps"],
             "stack_cap": prog["stack_cap"],
         })
-        out, err = run_in_sandbox(runner, payload)
+        import asyncio
+        out, err = asyncio.run(SandboxExecutor.execute_code(runner, payload))
         ok = (err.strip() == "")
         return (ok, out if ok else "")
 

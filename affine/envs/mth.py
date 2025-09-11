@@ -3,17 +3,9 @@ import re
 import time
 import math
 import json
-import atexit
 import affine as af
-from affine import quixand as qx
 from typing import Tuple, Optional, Any, Dict
-
-# ----------------------------
-# Config / Singletons
-# ----------------------------
-LEAN_IMAGE = "leanprovercommunity/lean:latest"
-lean_config = qx.Config(timeout=600, image=LEAN_IMAGE, workdir="/workspace")
-lean_executors = af.singleton('lean-proof', lambda: qx.Playground(n=2, config=lean_config))
+from .executor import SandboxExecutor
 
 math_dataset = af.singleton('gsm8k', lambda: af.utils.R2BufferedDataset(
     dataset_name="openai/gsm8k",
@@ -161,35 +153,6 @@ theorem result_equals_claim : result = ({claim_expr}) := by
 {user_proof_body}
 """
 
-def _compile_lean_in_container(lean_src: str) -> Tuple[bool, str]:
-    """
-    Write Lean file into a fresh Lean sandbox and run `lean --make Main.lean`.
-    Returns (ok, compiler_stderr_or_log).
-    """
-    ply = lean_executors()
-    atexit.register(ply.close)
-    sbx: Optional[qx.Sandbox] = ply.create()
-    try:
-        sbx.files.write("/workspace/Main.lean", lean_src)
-        r = sbx.run("bash -lc 'lean --make /workspace/Main.lean 1>/workspace/_out.txt 2>/workspace/_err.txt || true'")
-        out = ""
-        err = ""
-        try:
-            out = sbx.files.read("/workspace/_out.txt")
-        except Exception:
-            pass
-        try:
-            err = sbx.files.read("/workspace/_err.txt")
-        except Exception:
-            pass
-        ok = (r.exit_code == 0)
-        return ok, (err or out or "")
-    finally:
-        if sbx is not None:
-            try:
-                sbx.shutdown()
-            except Exception:
-                pass
 
 # ----------------------------
 # Env
@@ -288,7 +251,7 @@ use that integer.
       if lean_code and got_ans:
           claim_expr = _normalize_literal_for_lean(got_ans)
           lean_src = _lean_wrapper_expect_claim(claim_expr, _strip_fences(lean_code))
-          proof_ok, compile_log = _compile_lean_in_container(lean_src)
+          proof_ok, compile_log = SandboxExecutor.compile_lean(lean_src)
       else:
           compile_log = "Missing Lean code and/or final_answer."
 
