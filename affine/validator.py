@@ -213,7 +213,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
                     af.SCORE.labels(uid=uid, env=e).set(a)
 
         hdr = (
-            ["UID", "Model", "Rev"]
+            ["UID", "Model", "Rev", "BLK"]
             + [f"{e}" for e in af.ENVS]
             + [f"L{s}" for s in range(1, N_envs + 1)]
             + ["Pts", "Elig", "Wgt"]
@@ -230,7 +230,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
                 else:
                     env_cols.append(base)
             return [
-                m.uid, model_name, str(m.revision)[:5],
+                m.uid, model_name, str(m.revision)[:5], m.block,
                 *env_cols,
                 *[f"{layer_points[hk][s]:.1f}" for s in range(1, N_envs + 1)],
                 f"{score.get(hk, 0.0):.2f}",
