@@ -15,7 +15,7 @@ def runner():
 
     # --- Tunables ------------------------------------------------------------
     CONCURRENCY         = int(af.get_conf("CONCURRENCY", 300))       # global cap
-    ROUND_TIMEOUT_SEC   = float(af.get_conf("ROUND_TIMEOUT_SEC", 180))
+    ROUND_TIMEOUT_SEC   = float(af.get_conf("ROUND_TIMEOUT_SEC", 30))
     REFRESH_MINERS_SEC  = int(af.get_conf("REFRESH_MINERS_SEC", 600))
     SLEEP_EMPTY_SEC     = float(af.get_conf("SLEEP_EMPTY_SEC", 3))
     MAX_SAMPLE          = int(af.get_conf("MAX_SAMPLE", 0))         # 0 = all miners
@@ -91,6 +91,7 @@ def runner():
             sink_start = time.monotonic()
             await af.sink(wallet=wallet, results=batch_results)
             sink_dur = time.monotonic() - sink_start
+            af.logger.info(f"[round {round_id}] sink: wrote {len(batch_results)} results in {sink_dur:.2f}s")
         else:
             sink_dur = 0.0
 

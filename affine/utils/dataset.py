@@ -32,6 +32,17 @@ class R2BufferedDataset:
         self.total_size = total_size
 
     async def _read_next_rows(self, desired: int) -> list[Any]:
+        # Lazy-resolve total size from Hippius meta if not provided
+        if not self.total_size:
+            try:
+                self.total_size = await af.get_dataset_size(
+                    dataset_name=self.dataset_name,
+                    config=self.config,
+                    split=self.split,
+                )
+            except Exception:
+                # Size is optional; proceed without
+                pass
         # Try reading from current offset; if empty and offset > 0, wrap to 0 once
         rows: List[Any] = await af.select_dataset_rows(
             dataset_name=self.dataset_name,
@@ -66,15 +77,23 @@ class R2BufferedDataset:
         af.logger.trace("DB buffer fill complete")
 
     async def get(self) -> Any:
-        async with self._lock:
-            if not self._fill_task or self._fill_task.done():
-                self._fill_task = asyncio.create_task(self._fill_buffer())
-            if not self._buffer:
+        # Block until there is an item available; avoids IndexError when buffers are temporarily empty
+        while True:
+            async with self._lock:
+                if not self._fill_task or self._fill_task.done():
+                    self._fill_task = asyncio.create_task(self._fill_buffer())
+                if self._buffer:
+                    item = self._buffer.popleft()
+                    if self._fill_task.done():
+                        self._fill_task = asyncio.create_task(self._fill_buffer())
+                    return item
+            # Wait for fill to complete or make progress
+            try:
                 await self._fill_task
-            item = self._buffer.popleft()
-            if self._fill_task.done():
-                self._fill_task = asyncio.create_task(self._fill_buffer())
-            return item
+            except Exception:
+                # ignore transient fill errors and retry
+                pass
+            await asyncio.sleep(0.1)
 
     def __aiter__(self):
         return self
