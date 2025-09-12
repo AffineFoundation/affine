@@ -7,7 +7,7 @@ import logging
 from typing import Dict, Any, Optional, List, Tuple
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(".env.local")
 
 import affine as af
 

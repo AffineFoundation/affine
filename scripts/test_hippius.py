@@ -7,8 +7,8 @@ from dotenv import load_dotenv
 from aiobotocore.session import get_session
 from botocore.config import Config
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env.local explicitly
+load_dotenv(".env.local")
 
 
 def _get_env(name: str, default: str | None = None) -> str:
@@ -26,13 +26,17 @@ async def _amain() -> None:
     access_key = base64.b64encode(seed.encode("utf-8")).decode("utf-8")
     secret_key = seed
 
+    cfg = Config(
+        s3={"addressing_style": "path"},
+        max_pool_connections=64,
+    )
     async with get_session().create_client(
         "s3",
         endpoint_url=endpoint,
         region_name=region,
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
-        config=Config(max_pool_connections=64),
+        config=cfg,
     ) as c:
         # Ensure bucket exists
         try:
@@ -68,5 +72,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

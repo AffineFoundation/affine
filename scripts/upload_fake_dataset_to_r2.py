@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from aiobotocore.session import get_session
 from botocore.config import Config
 
-load_dotenv()
+load_dotenv(".env.local")
 
 
 def _dataset_root(dataset_name: str, config: str, split: str) -> str:
@@ -44,13 +44,17 @@ async def _get_client():
     if not seed:
         raise RuntimeError("HIPPIUS_SEED_PHRASE is required")
     access = base64.b64encode(seed.encode("utf-8")).decode("utf-8")
+    cfg = Config(
+        s3={"addressing_style": "path"},
+        max_pool_connections=64,
+    )
     return get_session().create_client(
         "s3",
         endpoint_url=endpoint,
         region_name=region,
         aws_access_key_id=access,
         aws_secret_access_key=seed,
-        config=Config(max_pool_connections=64),
+        config=cfg,
     )
 
 
@@ -142,5 +146,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

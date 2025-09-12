@@ -8,13 +8,13 @@ import logging
 import time
 from typing import Any, List
 
-import datasets as hf_ds
+# optional: datasets will be imported lazily inside _try_load_hf_dataset
 import aiohttp
 from aiobotocore.session import get_session
 from botocore.config import Config
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(".env.local")
 
 
 """Uploader targets Hippius S3-compatible storage."""
@@ -60,7 +60,10 @@ get_client_ctx = lambda: get_session().create_client(
     region_name=REGION,
     aws_access_key_id=ACCESS,
     aws_secret_access_key=SECRET,
-    config=Config(max_pool_connections=256),
+    config=Config(
+        s3={"addressing_style": "path"},
+        max_pool_connections=256,
+    ),
 )
 
 
@@ -122,8 +125,15 @@ async def _upload_page(c, *, bucket: str, key: str, rows: List[dict]) -> None:
 
 async def _try_load_hf_dataset(dataset_name: str, config: str, split: str):
     def _load():
+        try:
+            import datasets as hf_ds  # type: ignore
+        except Exception:
+            return None
         name_arg = None if config == "default" else config
-        return hf_ds.load_dataset(dataset_name, name=name_arg, split=split)
+        try:
+            return hf_ds.load_dataset(dataset_name, name=name_arg, split=split)
+        except Exception:
+            return None
     return await asyncio.to_thread(_load)
 
 
@@ -375,5 +385,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

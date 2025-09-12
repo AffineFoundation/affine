@@ -4,6 +4,7 @@ import json
 import uuid
 import time
 import asyncio
+import base64
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -19,26 +20,58 @@ except Exception:  # pragma: no cover - safe fallback for utility-only usage
     class _AFStub:  # minimal stub for logger usage in optional paths
         logger = _NullLogger()
     af = _AFStub()  # type: ignore
+
 from aiobotocore.session import get_session
 from botocore.config import Config
-from botocore.exceptions import ClientError, ParamValidationError
+from botocore.exceptions import ClientError
+
+# --------------------------------------------------------------------------- #
+#                      Hippius S3 Configuration                               #
+# --------------------------------------------------------------------------- #
+
+# Load configuration from environment variables
+HIPPIUS_ENDPOINT = os.getenv("HIPPIUS_ENDPOINT", "https://s3.hippius.com")
+HIPPIUS_REGION = os.getenv("HIPPIUS_REGION", "decentralized")
+HIPPIUS_SEED_PHRASE = os.getenv("HIPPIUS_SEED_PHRASE")
+HIPPIUS_BUCKET = os.getenv("HIPPIUS_BUCKET")
+
+if not HIPPIUS_SEED_PHRASE:
+    raise ValueError("HIPPIUS_SEED_PHRASE must be set in your .env file.")
+if not HIPPIUS_BUCKET:
+    raise ValueError("HIPPIUS_BUCKET must be set in your .env file.")
+
+FOLDER = HIPPIUS_BUCKET
+STREAMS_PREFIX = os.getenv("AFFINE_STREAMS_PREFIX", "rollouts")
+
+def _hippius_access_from_seed(seed: str) -> Tuple[str, str]:
+    """Generates S3 credentials from a Hippius seed phrase."""
+    access_key = base64.b64encode(seed.encode("utf-8")).decode("utf-8")
+    secret_key = seed
+    return access_key, secret_key
+
+# Generate credentials once
+ACCESS_KEY, SECRET_KEY = _hippius_access_from_seed(HIPPIUS_SEED_PHRASE)
+
+# S3 Client Factory using a context manager
+def get_client_ctx():
+    """Returns an async context manager for a configured S3 client."""
+    return get_session().create_client(
+        "s3",
+        endpoint_url=HIPPIUS_ENDPOINT,
+        region_name=HIPPIUS_REGION,
+        aws_access_key_id=ACCESS_KEY,
+        aws_secret_access_key=SECRET_KEY,
+        config=Config(
+            s3={"addressing_style": "path"},
+            max_pool_connections=256,
+        ),
+    )
 
 # --------------------------------------------------------------------------- #
 #                       R2-backed multi-writer shard store                    #
 # --------------------------------------------------------------------------- #
 
-# Stream path layout
-# streams/{miner}/{envver}/
-#   meta/
-#     active.json
-#     next_seq.json
-#     catalog.jsonl   (append-only)
-#   shards/
-#     shard-{seq:08d}.jsonl
-#   leases/
-#     shard-{seq:08d}.lease.json
-
-# Tunables
+# Tunables (remain the same)
 POOL = int(os.getenv("R2_POOL", "10"))
 MAX_SHARD = 32 * 1024 * 1024  # 32 MiB
 MIN_COPY_PART = 8 * 1024 * 1024
@@ -47,39 +80,6 @@ APPEND_CONCURRENCY = int(os.getenv("R2_MAX_CONCURRENCY", "16"))
 TAIL_BLOCKS_DEFAULT = int(os.getenv("AFFINE_TAIL", "20000"))
 AGG_CONCURRENCY = int(os.getenv("AFFINE_AGG_CONCURRENCY", "32"))
 SINK_LOG = os.getenv("AFFINE_SINK_LOG", "0") == "1"
-
-# Legacy keys for compatibility (unused by new design)
-WINDOW: int = int(os.getenv("AFFINE_WINDOW", "20"))
-RESULT_PREFIX = "affine/results/"
-INDEX_KEY = "affine/index.json"
-
-# Hippius S3 configuration
-HIPPIUS_ENDPOINT = os.getenv("HIPPIUS_ENDPOINT", "https://s3.hippius.com")
-HIPPIUS_REGION = os.getenv("HIPPIUS_REGION", "decentralized")
-HIPPIUS_SEED_PHRASE = os.getenv("HIPPIUS_SEED_PHRASE", "")
-HIPPIUS_BUCKET = os.getenv("HIPPIUS_BUCKET", os.getenv("AFFINE_BUCKET", "affine"))
-STREAMS_PREFIX = os.getenv("AFFINE_STREAMS_PREFIX", "rollouts")
-
-def _hippius_access_from_seed(seed: str) -> str:
-    try:
-        import base64 as _b64
-        return _b64.b64encode(seed.encode("utf-8")).decode("utf-8")
-    except Exception:
-        return seed
-
-FOLDER = HIPPIUS_BUCKET
-ACCESS = _hippius_access_from_seed(HIPPIUS_SEED_PHRASE)
-SECRET = HIPPIUS_SEED_PHRASE
-ENDPOINT = HIPPIUS_ENDPOINT
-
-get_client_ctx = lambda: get_session().create_client(
-    "s3",
-    endpoint_url=ENDPOINT,
-    region_name=HIPPIUS_REGION,
-    aws_access_key_id=ACCESS,
-    aws_secret_access_key=SECRET,
-    config=Config(max_pool_connections=256),
-)
 
 CACHE_DIR = Path(os.getenv("AFFINE_CACHE_DIR", Path.home() / ".cache" / "affine" / "blocks"))
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -131,7 +131,6 @@ def _dumps(o: Any) -> bytes:
 def _dataset_root(dataset_name: str, config: str, split: str) -> str:
     cfg = config or "default"
     spl = split or "train"
-    # Use URL-safe dataset name path as provided
     return f"datasets/{dataset_name}/{cfg}/{spl}"
 
 def _dataset_meta_key(root: str) -> str:
@@ -228,43 +227,66 @@ async def _put_json(c, *, bucket: str, key: str, body: dict, if_none_match: bool
             raise
 
 async def _append_jsonl(c, *, bucket: str, key: str, line_obj: dict) -> None:
-    # Atomic append using MPU compose: copy old + upload tail, promote with If-Match on old ETag
     tail = _dumps(line_obj) + b"\n"
     try:
         h = await c.head_object(Bucket=bucket, Key=key)
-        old_len = int(h["ContentLength"])
-        old_etag = h.get("ETag")
     except ClientError as e:
         code = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
         if code in (404, 403):
-            # Create fresh
+            # Create fresh object with first line
             await c.put_object(Bucket=bucket, Key=key, Body=tail, ContentType="application/json")
             if SINK_LOG:
                 af.logger.info(f"sink: created new shard key={key} bytes={len(tail)}")
             return
         raise
 
-    # Simplified append: download existing object and PUT concatenated body.
-    # This avoids MPU copy/promotion pitfalls on providers with limited CopyObject semantics.
-    body_bytes = b""
-    if old_len > 0:
-        for attempt in range(12):
-            try:
-                o = await c.get_object(Bucket=bucket, Key=key)
-                body_bytes = await o["Body"].read()
-                break
-            except ClientError as e:
-                msg = (e.response.get("Error", {}).get("Message", "") or str(e)).lower()
-                code = e.response.get("Error", {}).get("Code")
-                http = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-                if ("publish is in progress" in msg or code in ("NoSuchKey", "ServiceUnavailable") or http in (404, 503)) and attempt < 11:
-                    await asyncio.sleep(0.1 * (attempt + 1))
-                    continue
+    # Attempt Hippius append with version-based CAS
+    for attempt in range(8):
+        # Ensure object is readable (HEAD 200); tolerate transient 202/503
+        try:
+            h = await c.head_object(Bucket=bucket, Key=key)
+            http_status = (h.get("ResponseMetadata", {}) or {}).get("HTTPStatusCode", 200)
+        except ClientError as e:
+            http_status = (e.response or {}).get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if http_status != 200:
+            await asyncio.sleep(0.1 * (attempt + 1))
+            continue
+
+        headers = (h.get("ResponseMetadata", {}) or {}).get("HTTPHeaders", {}) if isinstance(h, dict) else {}
+        ver_str = (headers or {}).get("x-amz-meta-append-version", "0")
+        try:
+            ver = int(str(ver_str))
+        except Exception:
+            ver = 0
+        meta = {
+            "append": "true",
+            "append-if-version": str(ver),
+            "append-id": uuid.uuid4().hex,
+        }
+        try:
+            await c.put_object(Bucket=bucket, Key=key, Body=tail, ContentType="application/json", Metadata=meta)
+            if SINK_LOG:
+                af.logger.info(f"sink: hippus-append ok bytes={len(tail)} -> {key} v={ver}")
+            return
+        except ClientError as e:
+            resp = e.response or {}
+            http = (resp.get("ResponseMetadata", {}) or {}).get("HTTPStatusCode")
+            code = (resp.get("Error", {}) or {}).get("Code")
+            msg = (resp.get("Error", {}) or {}).get("Message", "").lower()
+            # Retry on CAS failure or temporary unavailability
+            if http in (412, 503) or "precondition" in (msg or "") or "not yet ready" in (msg or ""):
+                await asyncio.sleep(0.1 * (attempt + 1))
+                continue
+            # If server doesn't recognize append (InvalidRequest/NotImplemented), fail fast
+            if code in ("InvalidRequest", "NotImplemented") or http in (400, 501):
                 raise
-    new_body = body_bytes + tail
-    await c.put_object(Bucket=bucket, Key=key, Body=new_body, ContentType="application/json")
-    if SINK_LOG:
-        af.logger.info(f"sink: appended tail bytes={len(tail)} total_bytes={len(new_body)} -> {key}")
+            # Transient publish window
+            if http in (500,) or "publish is in progress" in msg:
+                await asyncio.sleep(0.1 * (attempt + 1))
+                continue
+            raise
+    # If we exit the loop without returning, all retries failed
+    raise RuntimeError("hippus-append failed after retries")
 
 
 # --------------------------------------------------------------------------- #
@@ -392,7 +414,9 @@ async def sink(*, wallet: Any, results: List["af.Result"], block: Optional[int] 
             try:
                 await c.create_bucket(Bucket=FOLDER, CreateBucketConfiguration={"LocationConstraint": HIPPIUS_REGION})
             except Exception:
-                pass
+                # If it fails (e.g., already exists), proceed anyway. The object writes will fail if it's truly inaccessible.
+                af.logger.warning(f"Could not create or confirm bucket '{FOLDER}'. Writes may fail.")
+
         # Optional simplified path: disable leases/pool for single-writer environments
         no_lease = os.getenv("AFFINE_NO_LEASE", "0") == "1"
         if no_lease:
@@ -432,7 +456,7 @@ async def sink(*, wallet: Any, results: List["af.Result"], block: Optional[int] 
                         h = await c.head_object(Bucket=FOLDER, Key=shard_key)
                         old_len = int(h["ContentLength"])
                     except ClientError as e:
-                        if e.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
+                        if e.response.get("ResponseMetadata", {}).get("HTTPStatusCode") in (404, 403):
                             old_len = 0
                         else:
                             raise
@@ -476,14 +500,14 @@ async def _load_catalog_and_active(c, *, root: str) -> Tuple[List[int], List[int
     # Active
     t0 = time.perf_counter()
     _ea, active = await _get_json(c, bucket=FOLDER, key=active_key)
-    af.logger.debug(f"r2: read active key={active_key} time={time.perf_counter()-t0:.3f}s ok={bool(active)}")
+    af.logger.debug(f"s3: read active key={active_key} time={time.perf_counter()-t0:.3f}s ok={bool(active)}")
     seqs_active = list((active or {}).get("seqs", []))
     # Catalog (append-only jsonl)
     seqs_open: set[int] = set()
     seqs_close: set[int] = set()
     try:
         t1 = time.perf_counter()
-        af.logger.debug(f"r2: get catalog key={catalog_key} ...")
+        af.logger.debug(f"s3: get catalog key={catalog_key} ...")
         r = await c.get_object(Bucket=FOLDER, Key=catalog_key)
         async for raw in r["Body"]:
             try:
@@ -497,7 +521,7 @@ async def _load_catalog_and_active(c, *, root: str) -> Tuple[List[int], List[int
                     seqs_close.add(int(ev.get("seq")))
             except Exception:
                 continue
-        af.logger.debug(f"r2: catalog read done key={catalog_key} time={time.perf_counter()-t1:.3f}s open={len(seqs_open)} close={len(seqs_close)}")
+        af.logger.debug(f"s3: catalog read done key={catalog_key} time={time.perf_counter()-t1:.3f}s open={len(seqs_open)} close={len(seqs_close)}")
     except ClientError:
         pass
     # Fallback discovery: if nothing known/active, probe first shard
@@ -505,13 +529,13 @@ async def _load_catalog_and_active(c, *, root: str) -> Tuple[List[int], List[int
         try:
             first_key = _shard_key(root, 1)
             await c.head_object(Bucket=FOLDER, Key=first_key)
-            af.logger.debug(f"r2: fallback discovered shard=1 for root={root}")
+            af.logger.debug(f"s3: fallback discovered shard=1 for root={root}")
             return [1], []
         except Exception:
             pass
     # Known shards = open - close, plus current active (for safety)
     known = sorted((seqs_open - seqs_close) | set(seqs_active))
-    af.logger.info(f"r2: root={root} known_shards={len(known)} active={len(seqs_active)}")
+    af.logger.info(f"s3: root={root} known_shards={len(known)} active={len(seqs_active)}")
     return known, seqs_active
 
 
@@ -523,9 +547,9 @@ async def _cache_shard(key: str, sem: asyncio.Semaphore) -> Path:
         try:
             t0 = time.perf_counter()
             h = await c.head_object(Bucket=FOLDER, Key=key)
-            af.logger.debug(f"r2: head shard key={key} time={time.perf_counter()-t0:.3f}s size={h.get('ContentLength')}")
+            af.logger.debug(f"s3: head shard key={key} time={time.perf_counter()-t0:.3f}s size={h.get('ContentLength')}")
         except ClientError as e:
-            if e.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
+            if e.response.get("ResponseMetadata", {}).get("HTTPStatusCode") in (404, 403):
                 raise
             raise
         if out.exists() and mod.exists():
@@ -534,7 +558,7 @@ async def _cache_shard(key: str, sem: asyncio.Semaphore) -> Path:
         t1 = time.perf_counter()
         o = await c.get_object(Bucket=FOLDER, Key=key)
         body = await o["Body"].read()
-        af.logger.debug(f"r2: get shard key={key} time={time.perf_counter()-t1:.3f}s bytes={len(body)}")
+        af.logger.debug(f"s3: get shard key={key} time={time.perf_counter()-t1:.3f}s bytes={len(body)}")
         lm = h["LastModified"].isoformat()
     tmp = out.with_suffix(".tmp")
     with tmp.open("wb") as f:
@@ -637,7 +661,7 @@ async def _aggregate_for_pairs(root: str, *, env_name: str, pairs: List[Tuple[st
         return out
     
 
-# ---------------------- Dataset local cache helpers (R2) --------------------- #
+# ---------------------- Dataset local cache helpers (S3) --------------------- #
 async def _cache_dataset_page(root: str, page_index: int, sem: asyncio.Semaphore) -> Path:
     key = _dataset_page_key(root, page_index)
     # Build dataset-specific cache directory
@@ -650,7 +674,7 @@ async def _cache_dataset_page(root: str, page_index: int, sem: asyncio.Semaphore
         try:
             h = await c.head_object(Bucket=FOLDER, Key=key)
         except ClientError as e:
-            if e.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
+            if e.response.get("ResponseMetadata", {}).get("HTTPStatusCode") in (404, 403):
                 raise
             raise
         if out.exists() and mod.exists():
@@ -670,11 +694,7 @@ async def _cache_dataset_page(root: str, page_index: int, sem: asyncio.Semaphore
 async def aggregate_success_by_env(*, env_name: str, pairs: List[Tuple[str, str]], env_version: Optional[str] = None) -> Dict[str, Dict[str, float]]:
     if not pairs:
         return {}
-    # Aggregate per miner stream root(s) discovered from pairs' hotkeys
-    # We don't need to list streams; we can derive roots by miner hk and env
-    # but to avoid double-scan, compute once per miner
     results: Dict[str, Dict[str, float]] = {}
-    # Build per-miner roots
     miner_roots = list({_stream_root(hk, env_name, env_version) for hk, _ in pairs})
     sem = asyncio.Semaphore(AGG_CONCURRENCY)
     async def worker(rt: str):
@@ -718,21 +738,64 @@ async def aggregate_scores_by_env(*, env_name: str, pairs: List[Tuple[str, str]]
 # --------------------------------------------------------------------------- #
 #                         Compatibility shims for CLI                          #
 # --------------------------------------------------------------------------- #
+# NOTE: The postgres-based CLI commands are removed as they are incompatible
+# with a pure S3-based storage model for datasets.
 dataset_rows = None  # type: ignore
+async def _get_engine(): return None
+def _sm(): raise RuntimeError("Database engine is not available in S3-backed mode")
 
-async def _get_engine():  # type: ignore
-    return None
 
-def _sm():  # type: ignore
-    raise RuntimeError("Database engine is not available in R2-backed mode")
+# ----------------------------- S3 dataset reads ----------------------------- #
+async def select_dataset_rows(*, dataset_name: str, config: str = "default", split: str = "train", limit: int = 1000, offset: int = 0, include_index: bool = False) -> List[Dict[str, Any]]:
+    if limit <= 0:
+        return []
+    root = _dataset_root(dataset_name, config, split)
+    async with get_client_ctx() as c:
+        _etag, meta = await _get_json(c, bucket=FOLDER, key=_dataset_meta_key(root))
+        if not meta:
+            return []
+        total = int(meta.get("total", 0))
+        page_size = int(meta.get("page_size", 1000))
+        if offset >= total:
+            return []
+        # Compute page range and slice bounds
+        start = max(0, int(offset))
+        end = min(total, start + int(limit))
+        first_page = start // page_size
+        last_page = (end - 1) // page_size if end > 0 else first_page
 
-async def select_dataset_rows(*, dataset_name: str, config: str = "default", split: str = "train", limit: int = 1000, offset: int = 0, include_index: bool = False) -> List[Dict[str, Any]]:  # noqa: E501
-    """Return dataset rows from Hippius object storage.
-
-    If include_index is True, attach __row_index__ with the global row index.
-    """
-    out = await _select_dataset_rows_r2(dataset_name=dataset_name, config=config, split=split, limit=limit, offset=offset, include_index=include_index)
-    return out or []
+    sem = asyncio.Semaphore(APPEND_CONCURRENCY)
+    keys = list(range(first_page, last_page + 1))
+    tasks = [asyncio.create_task(_cache_dataset_page(root, pidx, sem)) for pidx in keys]
+    pages: Dict[int, Path] = {}
+    for pidx, t in zip(keys, tasks):
+        try:
+            pages[pidx] = await t
+        except Exception:
+            pass
+    # Iterate and collect rows within bounds
+    out: List[Dict[str, Any]] = []
+    for pidx in range(first_page, last_page + 1):
+        p = pages.get(pidx)
+        if not p: continue
+        page_start_global = pidx * page_size
+        page_end_global = page_start_global + page_size
+        sel_start = max(start, page_start_global)
+        sel_end = min(end, page_end_global)
+        if sel_end <= sel_start: continue
+        rel_start = sel_start - page_start_global
+        rel_end = sel_end - page_start_global
+        rel_idx = 0
+        async for raw in _jsonl(p):
+            if rel_idx >= rel_end: break
+            if rel_idx >= rel_start:
+                try: rec = _loads(raw)
+                except Exception: rec = None
+                if isinstance(rec, dict):
+                    if include_index: rec["__row_index__"] = page_start_global + rel_idx
+                    out.append(rec)
+            rel_idx += 1
+    return out
 
 async def get_dataset_size(*, dataset_name: str, config: str = "default", split: str = "train") -> int:
     """Return total number of rows for a dataset from Hippius meta."""
@@ -743,87 +806,10 @@ async def get_dataset_size(*, dataset_name: str, config: str = "default", split:
             return int(meta["total"])
     return 0
 
-# ----------------------------- R2 dataset reads ----------------------------- #
-async def _select_dataset_rows_r2(*, dataset_name: str, config: str, split: str, limit: int, offset: int, include_index: bool) -> Optional[List[Dict[str, Any]]]:
-    if limit <= 0:
-        return []
-    root = _dataset_root(dataset_name, config, split)
-    async with get_client_ctx() as c:
-        _etag, meta = await _get_json(c, bucket=FOLDER, key=_dataset_meta_key(root))
-        if not meta:
-            return None
-        total = int(meta.get("total", 0))
-        page_size = int(meta.get("page_size", 1000))
-        if offset >= total:
-            return []
-        # Compute page range and slice bounds
-        start = max(0, int(offset))
-        end = min(total, start + int(limit))
-        first_page = start // page_size
-        last_page = (end - 1) // page_size if end > 0 else first_page
-    sem = asyncio.Semaphore(APPEND_CONCURRENCY)
-    # Cache needed pages
-    keys = list(range(first_page, last_page + 1))
-    tasks = [asyncio.create_task(_cache_dataset_page(root, pidx, sem)) for pidx in keys]
-    pages: Dict[int, Path] = {}
-    for pidx, t in zip(keys, tasks):
-        try:
-            pages[pidx] = await t
-        except Exception:
-            # Missing page should not happen if meta exists; treat as empty
-            pass
-    # Iterate and collect rows within bounds
-    out: List[Dict[str, Any]] = []
-    global_index_base = first_page * page_size
-    current_index_start = start
-    for pidx in range(first_page, last_page + 1):
-        p = pages.get(pidx)
-        if not p:
-            continue
-        page_start_global = pidx * page_size
-        page_end_global = page_start_global + page_size
-        sel_start = max(start, page_start_global)
-        sel_end = min(end, page_end_global)
-        if sel_end <= sel_start:
-            continue
-        # Relative line indices within the page
-        rel_start = sel_start - page_start_global
-        rel_end = sel_end - page_start_global
-        rel_idx = 0
-        async for raw in _jsonl(p):
-            if rel_idx >= rel_end:
-                break
-            if rel_idx >= rel_start:
-                try:
-                    rec = _loads(raw)
-                except Exception:
-                    rec = None
-                if isinstance(rec, dict):
-                    if include_index:
-                        rec["__row_index__"] = page_start_global + rel_idx
-                    out.append(rec)
-            rel_idx += 1
-    return out
-
+# These are not supported in S3-only mode
 async def count(**filters: Any) -> int:
-    raise RuntimeError("Count is not supported in R2-backed mode")
-
-async def select_rows(*, limit: int = 1000, order: str = "r2_last_modified", ascending: bool = False, **filters: Any) -> List[Dict[str, Any]]:  # noqa: E501
-    raise RuntimeError("Select is not supported in R2-backed mode")
-
+    raise RuntimeError("Count is not supported in S3-backed mode")
+async def select_rows(*, limit: int = 1000, order: str = "r2_last_modified", ascending: bool = False, **filters: Any) -> List[Dict[str, Any]]:
+    raise RuntimeError("Select is not supported in S3-backed mode")
 async def get_env_counts(*, pairs: List[Tuple[str, str]], env_version: Optional[str] = None) -> Dict[str, Dict[Tuple[str, str], int]]:
-    # Build counts by summing success across envs via aggregate_success_by_env; caller rarely uses this.
-    if not pairs:
-        return {}
-    out: Dict[str, Dict[Tuple[str, str], int]] = {}
-    for e in af.ENVS:
-        agg = await aggregate_success_by_env(env_name=str(e), pairs=pairs, env_version=env_version)
-        env_map: Dict[Tuple[str, str], int] = {}
-        for hk, vals in agg.items():
-            for _hk, rev in pairs:
-                if _hk == hk:
-                    env_map[(hk, rev)] = int(vals.get("n_success", 0))
-        out[str(e)] = env_map
-    return out
-
-
+    raise RuntimeError("get_env_counts is not supported in S3-backed mode")

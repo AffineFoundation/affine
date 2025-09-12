@@ -26,7 +26,10 @@ from math import comb
 import datetime as dt
 from tqdm import tqdm
 import bittensor as bt
-import datasets as hf_ds                    
+try:
+    import datasets as hf_ds  # type: ignore
+except Exception:
+    hf_ds = None  # type: ignore
 from pathlib import Path
 from tqdm.asyncio import tqdm
 from tabulate import tabulate
@@ -223,7 +226,10 @@ from .miners import *
 #                          Dataset upload CLI                                 #
 # --------------------------------------------------------------------------- #
 import click
-import datasets as hf_ds
+try:
+    import datasets as hf_ds  # type: ignore
+except Exception:
+    hf_ds = None  # type: ignore
 import asyncio as _asyncio
 from sqlalchemy.dialects.postgresql import insert as _pg_insert
 from sqlalchemy.exc import DBAPIError

@@ -10,7 +10,7 @@ from typing import List, Tuple, Optional
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(".env.local")
 
 import affine as af
 
