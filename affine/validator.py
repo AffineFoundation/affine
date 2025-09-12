@@ -60,24 +60,38 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     prev  = { m.hotkey: m for m in current_miners.values() }
     first_block = { m.hotkey: m.block for m in current_miners.values() }  # earliest block for current version
     pairs = [ (mi.hotkey, mi.revision) for mi in current_miners.values() ]
-    for env in af.ENVS:
+    # Parallelize per-env aggregation to speed up reads
+    async def env_worker(env) -> Tuple[str, Dict[str, Dict[str, float]]]:
         try:
-            # Use the registered class' declared __version__ for filtering
             env_cls = af.ENVS.get(str(env)) if hasattr(af, "ENVS") else None
-            agg = await af.aggregate_scores_by_env(env_name=str(env), pairs=pairs, env_version=getattr(env_cls, "__version__", None))
+            env_name = str(env)
+            env_version = getattr(env_cls, "__version__", None)
+            af.logger.info(f"weights: aggregating env={env_name} version={env_version} miners={len(pairs)}")
+            t0 = time.perf_counter()
+            agg = await af.aggregate_scores_by_env(env_name=env_name, pairs=pairs, env_version=env_version)
+            af.logger.info(f"weights: aggregated env={env_name} in {time.perf_counter()-t0:.3f}s counts={ {hk: int((v or {}).get('n_total',0)) for hk,v in (agg or {}).items()} }")
+            return env_name, (agg or {})
+        except Exception as e:
+            af.logger.warning(f'Error in dataset polling (agg) for env {env}... {e}')
+            return str(env), {}
+
+    tasks = [asyncio.create_task(env_worker(env)) for env in af.ENVS]
+    for t in tasks:
+        env_name, agg = await t
+        try:
             total = 0
             for hk, stats in agg.items():
                 n   = int(stats.get("n_total", 0) or 0)
                 s   = float(stats.get("sum_score", 0.0) or 0.0)
                 ssq = float(stats.get("sum_sq_score", 0.0) or 0.0)
                 if n:
-                    cnt[hk][str(env)]      += n
-                    sumscore[hk][str(env)] += s
-                    sumsq[hk][str(env)]    += ssq
+                    cnt[hk][env_name]      += n
+                    sumscore[hk][env_name] += s
+                    sumsq[hk][env_name]    += ssq
                     total += n
-            af.logger.trace(f'Aggregated {total} total samples for env: {env}')
+            af.logger.trace(f'Aggregated {total} total samples for env: {env_name}')
         except Exception as e:
-            af.logger.warning(f'Error in dataset polling (agg) for env {env}... {e}')
+            af.logger.warning(f'Error in dataset polling (agg) for env {env_name}... {e}')
     # --- mean GRPO + MAXENV ---------------------------------------------------
     mean = {
         hk: {e: (sumscore[hk][e] / cnt[hk][e] if cnt[hk][e] else 0.0) for e in af.ENVS}
@@ -348,5 +362,7 @@ def validate():
     
     
 @af.cli.command("weights")
-def weights():
+@af.click.option('-v', '--verbose', count=True, help='Increase verbosity (-v INFO, -vv DEBUG, -vvv TRACE)')
+def weights(verbose: int):
+    af.setup_logging(verbose)
     asyncio.run(get_weights())

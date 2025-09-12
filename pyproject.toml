@@ -28,6 +28,7 @@ dependencies = [
     "sqlalchemy>=2.0.43",
     "nest-asyncio>=1.6.0",
     "greenlet>=3.2.4",
+    "minio>=7.2.16",
 ]
 readme = "README.md"
 requires-python = ">=3.9"

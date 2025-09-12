@@ -21,7 +21,7 @@ except Exception:  # pragma: no cover - safe fallback for utility-only usage
     af = _AFStub()  # type: ignore
 from aiobotocore.session import get_session
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ParamValidationError
 
 # --------------------------------------------------------------------------- #
 #                       R2-backed multi-writer shard store                    #
@@ -45,21 +45,37 @@ MIN_COPY_PART = 8 * 1024 * 1024
 LEASE_TTL_S = int(os.getenv("R2_LEASE_TTL", "30"))
 APPEND_CONCURRENCY = int(os.getenv("R2_MAX_CONCURRENCY", "16"))
 TAIL_BLOCKS_DEFAULT = int(os.getenv("AFFINE_TAIL", "20000"))
+AGG_CONCURRENCY = int(os.getenv("AFFINE_AGG_CONCURRENCY", "32"))
+SINK_LOG = os.getenv("AFFINE_SINK_LOG", "0") == "1"
 
 # Legacy keys for compatibility (unused by new design)
 WINDOW: int = int(os.getenv("AFFINE_WINDOW", "20"))
 RESULT_PREFIX = "affine/results/"
 INDEX_KEY = "affine/index.json"
 
-FOLDER = os.getenv("R2_FOLDER", "affine")
-BUCKET = os.getenv("R2_BUCKET_ID", "80f15715bb0b882c9e967c13e677ed7d")
-ACCESS = os.getenv("R2_WRITE_ACCESS_KEY_ID", "ff3f4f078019b064bfb6347c270bee4d")
-SECRET = os.getenv("R2_WRITE_SECRET_ACCESS_KEY", "a94b20516013519b2959cbbb441b9d1ec8511dce3c248223d947be8e85ec754d")
-ENDPOINT = f"https://{BUCKET}.r2.cloudflarestorage.com"
+# Hippius S3 configuration
+HIPPIUS_ENDPOINT = os.getenv("HIPPIUS_ENDPOINT", "https://s3.hippius.com")
+HIPPIUS_REGION = os.getenv("HIPPIUS_REGION", "decentralized")
+HIPPIUS_SEED_PHRASE = os.getenv("HIPPIUS_SEED_PHRASE", "")
+HIPPIUS_BUCKET = os.getenv("HIPPIUS_BUCKET", os.getenv("AFFINE_BUCKET", "affine"))
+STREAMS_PREFIX = os.getenv("AFFINE_STREAMS_PREFIX", "rollouts")
+
+def _hippius_access_from_seed(seed: str) -> str:
+    try:
+        import base64 as _b64
+        return _b64.b64encode(seed.encode("utf-8")).decode("utf-8")
+    except Exception:
+        return seed
+
+FOLDER = HIPPIUS_BUCKET
+ACCESS = _hippius_access_from_seed(HIPPIUS_SEED_PHRASE)
+SECRET = HIPPIUS_SEED_PHRASE
+ENDPOINT = HIPPIUS_ENDPOINT
 
 get_client_ctx = lambda: get_session().create_client(
     "s3",
     endpoint_url=ENDPOINT,
+    region_name=HIPPIUS_REGION,
     aws_access_key_id=ACCESS,
     aws_secret_access_key=SECRET,
     config=Config(max_pool_connections=256),
@@ -73,9 +89,10 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 #                             Utility helpers                                  #
 # --------------------------------------------------------------------------- #
 def _stream_root(miner: str, env_name: str, env_version: Optional[str]) -> str:
+    from urllib.parse import quote as _quote
     ev = env_version or "0"
-    envver = f"{env_name}+{ev}"
-    return f"streams/{miner}/{envver}"
+    envver = _quote(f"{env_name}+{ev}", safe="")
+    return f"{STREAMS_PREFIX}/{miner}/{envver}"
 
 def _meta_keys(root: str) -> Tuple[str, str, str]:
     return (
@@ -128,31 +145,87 @@ def _dataset_page_key(root: str, page_index: int) -> str:
 #                      CAS helpers (ETag-based optimistic)                     #
 # --------------------------------------------------------------------------- #
 async def _get_json(c, *, bucket: str, key: str) -> Tuple[Optional[str], Optional[dict]]:
-    try:
-        r = await c.get_object(Bucket=bucket, Key=key)
-        body = await r["Body"].read()
-        return r.get("ETag"), _loads(body)
-    except ClientError as e:
-        if e.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
-            return None, None
-        raise
+    """Fetch JSON with retries; treat 404/403 as missing and tolerate transient errors.
+
+    Some providers return transient errors or empty ClientError payloads. We retry
+    a few times, and if we can't determine existence, we fall back to HEAD to decide.
+    """
+    for attempt in range(8):
+        try:
+            r = await c.get_object(Bucket=bucket, Key=key)
+            body = await r["Body"].read()
+            return r.get("ETag"), _loads(body)
+        except ClientError as e:
+            meta = e.response.get("ResponseMetadata", {}) if isinstance(e.response, dict) else {}
+            http = meta.get("HTTPStatusCode")
+            msg = (e.response.get("Error", {}).get("Message", "") if isinstance(e.response, dict) else "") or str(e)
+            low = msg.lower()
+            # Missing
+            if http in (404, 403):
+                return None, None
+            # Unknown/empty code: try HEAD to detect existence
+            if http is None:
+                try:
+                    await c.head_object(Bucket=bucket, Key=key)
+                except ClientError as e2:
+                    h2 = (e2.response.get("ResponseMetadata", {}) if isinstance(e2.response, dict) else {}).get("HTTPStatusCode")
+                    if h2 in (404, 403):
+                        return None, None
+                # If HEAD succeeded or inconclusive, retry get
+                if attempt < 7:
+                    await asyncio.sleep(0.1 * (attempt + 1))
+                    continue
+            # Transient service conditions
+            if http in (500, 503) or "publish is in progress" in low:
+                if attempt < 7:
+                    await asyncio.sleep(0.1 * (attempt + 1))
+                    continue
+            raise
 
 async def _put_json(c, *, bucket: str, key: str, body: dict, if_none_match: bool = False, match_etag: Optional[str] = None) -> bool:
-    try:
-        params = {"Bucket": bucket, "Key": key, "Body": _dumps(body), "ContentType": "application/json"}
-        if if_none_match:
-            params["IfNoneMatch"] = "*"
-        if match_etag:
-            params["IfMatch"] = match_etag
-        await c.put_object(**params)
-        return True
-    except ClientError as e:
-        code = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-        if code in (412, 409):
-            return False
-        if code == 404 and match_etag:
-            return False
-        raise
+    """Robust JSON write with optional existence/CAS semantics.
+
+    Falls back to explicit HEAD checks to avoid providers that don't support
+    conditional headers on PutObject.
+    """
+    # If-None-Match semantics: only create if object does not exist
+    if if_none_match:
+        try:
+            await c.head_object(Bucket=bucket, Key=key)
+            return False  # already exists
+        except ClientError as e:
+            code = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if code not in (404, 403):
+                raise
+            # does not exist or not visible → proceed
+    # If-Match semantics: only write if current ETag matches
+    if match_etag:
+        try:
+            h = await c.head_object(Bucket=bucket, Key=key)
+            curr = h.get("ETag")
+            if not curr or curr != match_etag:
+                return False
+        except ClientError as e:
+            code = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if code in (404, 403):
+                return False
+            raise
+    # Unconditional write with retries for transient provider errors
+    payload = _dumps(body)
+    for attempt in range(8):
+        try:
+            await c.put_object(Bucket=bucket, Key=key, Body=payload, ContentType="application/json")
+            return True
+        except ClientError as e:
+            meta = e.response.get("ResponseMetadata", {}) if isinstance(e.response, dict) else {}
+            http = meta.get("HTTPStatusCode")
+            msg = (e.response.get("Error", {}).get("Message", "") if isinstance(e.response, dict) else "") or str(e)
+            low = msg.lower()
+            if http in (500, 503) or "publish is in progress" in low or http is None:
+                if attempt < 7:
+                    await asyncio.sleep(0.1 * (attempt + 1))
+                    continue
+            raise
 
 async def _append_jsonl(c, *, bucket: str, key: str, line_obj: dict) -> None:
     # Atomic append using MPU compose: copy old + upload tail, promote with If-Match on old ETag
@@ -162,63 +235,36 @@ async def _append_jsonl(c, *, bucket: str, key: str, line_obj: dict) -> None:
         old_len = int(h["ContentLength"])
         old_etag = h.get("ETag")
     except ClientError as e:
-        if e.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
+        code = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if code in (404, 403):
             # Create fresh
             await c.put_object(Bucket=bucket, Key=key, Body=tail, ContentType="application/json")
+            if SINK_LOG:
+                af.logger.info(f"sink: created new shard key={key} bytes={len(tail)}")
             return
         raise
 
-    tmp = f"{key}.tmp.{uuid.uuid4().hex}"
-    mpu = await c.create_multipart_upload(Bucket=bucket, Key=tmp, ContentType="application/json")
-    upload_id = mpu["UploadId"]
-    parts = []
-    try:
-        if old_len > 0:
-            if old_len <= 5 * 1024 * 1024 * 1024:
-                cp = await c.upload_part_copy(
-                    Bucket=bucket,
-                    Key=tmp,
-                    PartNumber=1,
-                    UploadId=upload_id,
-                    CopySource={"Bucket": bucket, "Key": key},
-                    CopySourceIfMatch=old_etag,
-                )
-                parts.append({"ETag": cp["CopyPartResult"]["ETag"], "PartNumber": 1})
-            else:
-                # Chunked copy in ranges (rare given 32 MiB shards)
-                part_no = 1
-                for start in range(0, old_len, MIN_COPY_PART):
-                    end = min(old_len - 1, start + MIN_COPY_PART - 1)
-                    cp = await c.upload_part_copy(
-                        Bucket=bucket,
-                        Key=tmp,
-                        PartNumber=part_no,
-                        UploadId=upload_id,
-                        CopySource={"Bucket": bucket, "Key": key},
-                        CopySourceIfMatch=old_etag,
-                        CopySourceRange=f"bytes={start}-{end}",
-                    )
-                    parts.append({"ETag": cp["CopyPartResult"]["ETag"], "PartNumber": part_no})
-                    part_no += 1
-        # Tail as last part
-        up = await c.upload_part(Bucket=bucket, Key=tmp, PartNumber=len(parts) + 1, UploadId=upload_id, Body=tail)
-        parts.append({"ETag": up["ETag"], "PartNumber": len(parts) + 1})
-        await c.complete_multipart_upload(Bucket=bucket, Key=tmp, UploadId=upload_id, MultipartUpload={"Parts": parts})
-        # Promote with If-Match against current destination ETag (old_etag)
-        await c.copy_object(
-            Bucket=bucket,
-            Key=key,
-            CopySource={"Bucket": bucket, "Key": tmp},
-            IfMatch=old_etag,
-            MetadataDirective="REPLACE",
-        )
-        await c.delete_object(Bucket=bucket, Key=tmp)
-    except ClientError:
-        try:
-            await c.abort_multipart_upload(Bucket=bucket, Key=tmp, UploadId=upload_id)
-        except Exception:
-            pass
-        raise
+    # Simplified append: download existing object and PUT concatenated body.
+    # This avoids MPU copy/promotion pitfalls on providers with limited CopyObject semantics.
+    body_bytes = b""
+    if old_len > 0:
+        for attempt in range(12):
+            try:
+                o = await c.get_object(Bucket=bucket, Key=key)
+                body_bytes = await o["Body"].read()
+                break
+            except ClientError as e:
+                msg = (e.response.get("Error", {}).get("Message", "") or str(e)).lower()
+                code = e.response.get("Error", {}).get("Code")
+                http = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                if ("publish is in progress" in msg or code in ("NoSuchKey", "ServiceUnavailable") or http in (404, 503)) and attempt < 11:
+                    await asyncio.sleep(0.1 * (attempt + 1))
+                    continue
+                raise
+    new_body = body_bytes + tail
+    await c.put_object(Bucket=bucket, Key=key, Body=new_body, ContentType="application/json")
+    if SINK_LOG:
+        af.logger.info(f"sink: appended tail bytes={len(tail)} total_bytes={len(new_body)} -> {key}")
 
 
 # --------------------------------------------------------------------------- #
@@ -339,7 +385,35 @@ async def sink(*, wallet: Any, results: List["af.Result"], block: Optional[int] 
         by_stream.setdefault(root, []).append(doc)
 
     async with get_client_ctx() as c:
-        # For each stream, ensure pool and append
+        # Ensure bucket exists (best-effort) before writing leases/shards
+        try:
+            await c.head_bucket(Bucket=FOLDER)
+        except Exception:
+            try:
+                await c.create_bucket(Bucket=FOLDER, CreateBucketConfiguration={"LocationConstraint": HIPPIUS_REGION})
+            except Exception:
+                pass
+        # Optional simplified path: disable leases/pool for single-writer environments
+        no_lease = os.getenv("AFFINE_NO_LEASE", "0") == "1"
+        if no_lease:
+            # Write to fixed shard-00000001 and maintain minimal meta so reader can discover it
+            for root, docs in by_stream.items():
+                shard_key = _shard_key(root, 1)
+                active_key, _next_key, catalog_key = _meta_keys(root)
+                for d in docs:
+                    await _append_jsonl(c, bucket=FOLDER, key=shard_key, line_obj=d)
+                # best-effort active pool with seq=1
+                try:
+                    await _put_json(c, bucket=FOLDER, key=active_key, body={"ver": 1, "pool": 1, "seqs": [1]})
+                except Exception:
+                    pass
+                # best-effort catalog open event
+                try:
+                    await _append_jsonl(c, bucket=FOLDER, key=catalog_key, line_obj={"ts": _now(), "op": "open", "seq": 1})
+                except Exception:
+                    pass
+            return
+        # For each stream, ensure pool and append (pooled shards with leases)
         for root, docs in by_stream.items():
             seqs = await _ensure_pool(c, root=root)
             holder = f"runner-{uuid.uuid4().hex[:8]}"
@@ -400,12 +474,16 @@ async def sink(*, wallet: Any, results: List["af.Result"], block: Optional[int] 
 async def _load_catalog_and_active(c, *, root: str) -> Tuple[List[int], List[int]]:
     active_key, _next_key, catalog_key = _meta_keys(root)
     # Active
+    t0 = time.perf_counter()
     _ea, active = await _get_json(c, bucket=FOLDER, key=active_key)
+    af.logger.debug(f"r2: read active key={active_key} time={time.perf_counter()-t0:.3f}s ok={bool(active)}")
     seqs_active = list((active or {}).get("seqs", []))
     # Catalog (append-only jsonl)
     seqs_open: set[int] = set()
     seqs_close: set[int] = set()
     try:
+        t1 = time.perf_counter()
+        af.logger.debug(f"r2: get catalog key={catalog_key} ...")
         r = await c.get_object(Bucket=FOLDER, Key=catalog_key)
         async for raw in r["Body"]:
             try:
@@ -419,10 +497,21 @@ async def _load_catalog_and_active(c, *, root: str) -> Tuple[List[int], List[int
                     seqs_close.add(int(ev.get("seq")))
             except Exception:
                 continue
+        af.logger.debug(f"r2: catalog read done key={catalog_key} time={time.perf_counter()-t1:.3f}s open={len(seqs_open)} close={len(seqs_close)}")
     except ClientError:
         pass
+    # Fallback discovery: if nothing known/active, probe first shard
+    if not seqs_open and not seqs_active:
+        try:
+            first_key = _shard_key(root, 1)
+            await c.head_object(Bucket=FOLDER, Key=first_key)
+            af.logger.debug(f"r2: fallback discovered shard=1 for root={root}")
+            return [1], []
+        except Exception:
+            pass
     # Known shards = open - close, plus current active (for safety)
     known = sorted((seqs_open - seqs_close) | set(seqs_active))
+    af.logger.info(f"r2: root={root} known_shards={len(known)} active={len(seqs_active)}")
     return known, seqs_active
 
 
@@ -432,7 +521,9 @@ async def _cache_shard(key: str, sem: asyncio.Semaphore) -> Path:
     mod = out.with_suffix(".modified")
     async with sem, get_client_ctx() as c:
         try:
+            t0 = time.perf_counter()
             h = await c.head_object(Bucket=FOLDER, Key=key)
+            af.logger.debug(f"r2: head shard key={key} time={time.perf_counter()-t0:.3f}s size={h.get('ContentLength')}")
         except ClientError as e:
             if e.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
                 raise
@@ -440,8 +531,10 @@ async def _cache_shard(key: str, sem: asyncio.Semaphore) -> Path:
         if out.exists() and mod.exists():
             if h["LastModified"].isoformat() == mod.read_text().strip():
                 return out
+        t1 = time.perf_counter()
         o = await c.get_object(Bucket=FOLDER, Key=key)
         body = await o["Body"].read()
+        af.logger.debug(f"r2: get shard key={key} time={time.perf_counter()-t1:.3f}s bytes={len(body)}")
         lm = h["LastModified"].isoformat()
     tmp = out.with_suffix(".tmp")
     with tmp.open("wb") as f:
@@ -582,27 +675,43 @@ async def aggregate_success_by_env(*, env_name: str, pairs: List[Tuple[str, str]
     # but to avoid double-scan, compute once per miner
     results: Dict[str, Dict[str, float]] = {}
     # Build per-miner roots
-    miner_roots = {_stream_root(hk, env_name, env_version) for hk, _ in pairs}
-    for root in miner_roots:
-        agg = await _aggregate_for_pairs(root, env_name=env_name, pairs=pairs, env_version=env_version, success_only=True)
-        for hk, vals in agg.items():
+    miner_roots = list({_stream_root(hk, env_name, env_version) for hk, _ in pairs})
+    sem = asyncio.Semaphore(AGG_CONCURRENCY)
+    async def worker(rt: str):
+        async with sem:
+            try:
+                return await _aggregate_for_pairs(rt, env_name=env_name, pairs=pairs, env_version=env_version, success_only=True)
+            except Exception:
+                return {}
+    tasks = [asyncio.create_task(worker(rt)) for rt in miner_roots]
+    for t in tasks:
+        agg = await t
+        for hk, vals in (agg or {}).items():
             r = results.setdefault(hk, {"n_success": 0.0, "sum_score": 0.0})
-            r["n_success"] += vals.get("n_success", 0.0)
-            r["sum_score"] += vals.get("sum_score", 0.0)
+            r["n_success"] += float(vals.get("n_success", 0.0))
+            r["sum_score"] += float(vals.get("sum_score", 0.0))
     return results
 
 async def aggregate_scores_by_env(*, env_name: str, pairs: List[Tuple[str, str]], env_version: Optional[str] = None) -> Dict[str, Dict[str, float]]:
     if not pairs:
         return {}
     results: Dict[str, Dict[str, float]] = {}
-    miner_roots = {_stream_root(hk, env_name, env_version) for hk, _ in pairs}
-    for root in miner_roots:
-        agg = await _aggregate_for_pairs(root, env_name=env_name, pairs=pairs, env_version=env_version, success_only=False)
-        for hk, vals in agg.items():
+    miner_roots = list({_stream_root(hk, env_name, env_version) for hk, _ in pairs})
+    sem = asyncio.Semaphore(AGG_CONCURRENCY)
+    async def worker(rt: str):
+        async with sem:
+            try:
+                return await _aggregate_for_pairs(rt, env_name=env_name, pairs=pairs, env_version=env_version, success_only=False)
+            except Exception:
+                return {}
+    tasks = [asyncio.create_task(worker(rt)) for rt in miner_roots]
+    for t in tasks:
+        agg = await t
+        for hk, vals in (agg or {}).items():
             r = results.setdefault(hk, {"n_total": 0.0, "sum_score": 0.0, "sum_sq_score": 0.0})
-            r["n_total"] += vals.get("n_total", 0.0)
-            r["sum_score"] += vals.get("sum_score", 0.0)
-            r["sum_sq_score"] += vals.get("sum_sq_score", 0.0)
+            r["n_total"] += float(vals.get("n_total", 0.0))
+            r["sum_score"] += float(vals.get("sum_score", 0.0))
+            r["sum_sq_score"] += float(vals.get("sum_sq_score", 0.0))
     return results
 
 
@@ -617,95 +726,22 @@ async def _get_engine():  # type: ignore
 def _sm():  # type: ignore
     raise RuntimeError("Database engine is not available in R2-backed mode")
 
-_HF_CACHE: dict[tuple[str, str, str], Any] = {}
-_HF_CACHE_LOCK = asyncio.Lock()
-
-async def _get_hf_dataset_split(dataset_name: str, config: str, split: str):
-    key = (dataset_name, config, split)
-    if key in _HF_CACHE:
-        return _HF_CACHE[key]
-    async with _HF_CACHE_LOCK:
-        if key in _HF_CACHE:
-            return _HF_CACHE[key]
-        def _load():
-            from datasets import load_dataset
-            name_arg = None if config == "default" else config
-            return load_dataset(dataset_name, name=name_arg, split=split)
-        try:
-            ds = await asyncio.to_thread(_load)
-        except Exception as e:
-            try:
-                af.logger.warning(f"HF dataset load failed for {dataset_name} [{config}/{split}]: {e}; using fallback samples if available")
-            except Exception:
-                pass
-            # Minimal built-in fallback for known datasets
-            if dataset_name == "satpalsr/rl-python":
-                ds = [
-                    {
-                        "program": "a=int(input()); b=int(input()); print(a+b)",
-                        "inputs": "2\n3\n",
-                        "output": "5\n",
-                    },
-                    {
-                        "program": "print(input())",
-                        "inputs": "hello\n",
-                        "output": "hello\n",
-                    },
-                    {
-                        "program": "a=int(input()); print(a*2)",
-                        "inputs": "7\n",
-                        "output": "14\n",
-                    },
-                ]
-            else:
-                ds = []
-        _HF_CACHE[key] = ds
-        return ds
-
 async def select_dataset_rows(*, dataset_name: str, config: str = "default", split: str = "train", limit: int = 1000, offset: int = 0, include_index: bool = False) -> List[Dict[str, Any]]:  # noqa: E501
-    """Return dataset rows, preferring R2 object-store if present, else HF.
+    """Return dataset rows from Hippius object storage.
 
     If include_index is True, attach __row_index__ with the global row index.
     """
-    # Try R2 first
-    try:
-        out = await _select_dataset_rows_r2(dataset_name=dataset_name, config=config, split=split, limit=limit, offset=offset, include_index=include_index)
-        if out is not None:
-            return out
-    except Exception:
-        pass
-    # HF fallback
-    ds = await _get_hf_dataset_split(dataset_name, config, split)
-    n = len(ds)
-    if offset >= n or limit <= 0:
-        return []
-    start = max(0, int(offset))
-    end = min(n, start + int(limit))
-    rows: List[Dict[str, Any]] = []
-    for idx in range(start, end):
-        rec = dict(ds[int(idx)])
-        if include_index:
-            rec["__row_index__"] = idx
-        rows.append(rec)
-    return rows
+    out = await _select_dataset_rows_r2(dataset_name=dataset_name, config=config, split=split, limit=limit, offset=offset, include_index=include_index)
+    return out or []
 
 async def get_dataset_size(*, dataset_name: str, config: str = "default", split: str = "train") -> int:
-    """Return total number of rows for a dataset from R2 if available, else HF."""
-    # R2
-    try:
-        async with get_client_ctx() as c:
-            root = _dataset_root(dataset_name, config, split)
-            _etag, meta = await _get_json(c, bucket=FOLDER, key=_dataset_meta_key(root))
-            if meta and isinstance(meta.get("total"), int):
-                return int(meta["total"])
-    except Exception:
-        pass
-    # HF fallback
-    ds = await _get_hf_dataset_split(dataset_name, config, split)
-    try:
-        return int(len(ds))
-    except Exception:
-        return 0
+    """Return total number of rows for a dataset from Hippius meta."""
+    async with get_client_ctx() as c:
+        root = _dataset_root(dataset_name, config, split)
+        _etag, meta = await _get_json(c, bucket=FOLDER, key=_dataset_meta_key(root))
+        if meta and isinstance(meta.get("total"), int):
+            return int(meta["total"])
+    return 0
 
 # ----------------------------- R2 dataset reads ----------------------------- #
 async def _select_dataset_rows_r2(*, dataset_name: str, config: str, split: str, limit: int, offset: int, include_index: bool) -> Optional[List[Dict[str, Any]]]:
