@@ -120,3 +120,27 @@ print( evaluation.score )
 async for res in af.rollouts(100):
     print (res)          # Result objects
 ```
+
+## LCB (LiveCodeBench) Environment
+
+Enable the experimental LCB code-generation environment via env vars:
+
+```bash
+export AFFINE_ENABLE_LCB=true
+# Optional tuning
+export AFFINE_LCB_DATASET=livecodebench/code_generation_lite
+export AFFINE_LCB_CONFIG=release_v6
+export AFFINE_LCB_SPLIT=test
+export AFFINE_LCB_TIMEOUT=30
+export AFFINE_LCB_CPU=10
+export AFFINE_LCB_MEM_MB=512
+```
+
+Ingest dataset rows into Postgres (once):
+
+```bash
+af upload-dataset livecodebench/code_generation_lite --config release_v6 --split test
+```
+
+Then run the validator or the SDK and `LCB` will appear among the envs when enabled. The first
+version uses strict pass@1 (all public tests must pass to score 1.0).
