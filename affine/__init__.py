@@ -46,7 +46,7 @@ from pydantic import BaseModel, Field, validator, ValidationError
 from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, TypeVar, Awaitable
 __version__ = "0.0.1"
 
-from .logging import *
+from .af_logging import *
 
 # --------------------------------------------------------------------------- #
 #                             Utility helpers                                 #
@@ -216,6 +216,7 @@ from .signer import *
 from .database import *
 from .chutes import *
 from .runner import *
+from .runner_uids import *
 from .validator import *
 from .miners import * 
 
