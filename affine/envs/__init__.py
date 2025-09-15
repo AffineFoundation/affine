@@ -8,6 +8,7 @@ from . import sat as _sat
 from . import abd as _abd
 from . import ded as _ded
 # from . import elr as _elr
+from . import hvm as _hvm
 
 __all__ = []
 
@@ -31,16 +32,8 @@ def _register_from_module(mod) -> None:
                 __all__.append(attr.__name__)
 
 # Register built-ins
-for _m in (_sat, _abd, _ded):
+for _m in (_sat, _abd, _ded, _hvm):
     _register_from_module(_m)
-
-# Auto-discover any other env modules in this package
-_pkg_path = str(Path(__file__).parent)
-for _, _name, _ in iter_modules([_pkg_path]):
-    if _name.startswith("__"):
-        continue
-    mod = import_module(f"{__name__}.{_name}")
-    _register_from_module(mod)
 
 def get_env(name: str):
     return ENVS.get(name)
