@@ -10,9 +10,11 @@ services:
   validator:
     <<: *affine_image
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: affine/Dockerfile
   runner:
     <<: *affine_image
   signer:
+    <<: *affine_image
+  agentenv:
     <<: *affine_image 

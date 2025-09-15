@@ -19,8 +19,14 @@ services:
       - AFFINE_METRICS_PORT=8000
       - AFFINE_METRICS_ADDR=0.0.0.0
       - SIGNER_URL=http://signer:8080
+      - DED_SERVER_URL=http://agentenv:9001
+      - HVM_SERVER_URL=http://agentenv:9002
+      - ABD_SERVER_URL=http://agentenv:9003
+      - SAT_SERVER_URL=http://agentenv:9004
     depends_on:
       signer:
+        condition: service_healthy
+      agentenv:
         condition: service_healthy
     command: ["-vv", "validate"]
 
@@ -34,13 +40,19 @@ services:
       - .env
     volumes:
       - ./.env:/app/.env:ro
-      # runner doesn’t need the cache—omit or give its own if desired
     ports:
       - "8002:8000"           # host 8002 → container’s AFFINE_METRICS_PORT=8000
     environment:
       - AFFINE_METRICS_PORT=8000
       - AFFINE_METRICS_ADDR=0.0.0.0
       - SIGNER_URL=http://signer:8080
+      - DED_SERVER_URL=http://agentenv:9001
+      - HVM_SERVER_URL=http://agentenv:9002
+      - ABD_SERVER_URL=http://agentenv:9003
+      - SAT_SERVER_URL=http://agentenv:9004
+    depends_on:
+      agentenv:
+        condition: service_healthy
     command: ["-vv", "runner"]
 
   prometheus:
@@ -91,13 +103,30 @@ services:
       start_period: 5s
     command: ["-v", "signer"]
 
+  agentenv:
+    image: thebes1618/affine:latest
+    container_name: agentenv-servers
+    restart: unless-stopped
+    command: ["envs"]
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -fsS http://localhost:9001/ >/dev/null && curl -fsS http://localhost:9002/ >/dev/null && curl -fsS http://localhost:9003/ >/dev/null && curl -fsS http://localhost:9004/ >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    ports:
+      - "9010:9001"
+      - "9011:9002"
+      - "9012:9003"
+      - "9013:9004"
+
   watchtower:
     image: containrrr/watchtower
     container_name: affine-watchtower
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    command: --interval 30 affine-validator affine-runner affine-signer
+    command: --interval 30 affine-validator affine-runner affine-signer agentenv-servers
 
 volumes:
   grafana-storage:

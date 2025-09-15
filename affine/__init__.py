@@ -374,3 +374,52 @@ def stats_cmd():
             click.echo("No data found for miner counts.")
 
     _asyncio.run(_run())
+
+@cli.command("envs")
+@click.option("--ded-port", default=int(os.getenv("DED_PORT", "9001")), show_default=True, type=int)
+@click.option("--hvm-port", default=int(os.getenv("HVM_PORT", "9002")), show_default=True, type=int)
+@click.option("--abd-port", default=int(os.getenv("ABD_PORT", "9003")), show_default=True, type=int)
+@click.option("--sat-port", default=int(os.getenv("SAT_PORT", "9004")), show_default=True, type=int)
+@click.option("--host", default=os.getenv("ENVS_HOST", "0.0.0.0"), show_default=True)
+def envs(ded_port: int, hvm_port: int, abd_port: int, sat_port: int, host: str):
+    """Launches the environment servers (DED/HVM/ABD/SAT)."""
+    import subprocess, atexit, sys, time
+    procs = []
+    def _spawn(mod: str, port: int):
+        return subprocess.Popen([sys.executable, "-m", mod], env={**os.environ, "PORT": str(port), "HOST": host})
+    procs.append(_spawn("agentenv_affine.ded_launch", ded_port))
+    procs.append(_spawn("agentenv_affine.hvm_launch", hvm_port))
+    procs.append(_spawn("agentenv_affine.abd_launch", abd_port))
+    procs.append(_spawn("agentenv_affine.sat_launch", sat_port))
+
+    def _cleanup():
+        for p in procs:
+            try:
+                p.terminate()
+            except Exception:
+                pass
+        for p in procs:
+            try:
+                p.wait(timeout=5)
+            except Exception:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+    atexit.register(_cleanup)
+
+    try:
+        # Guard loop: stay in the foreground as long as all 4 servers are running
+        while True:
+            all_alive = all(p.poll() is None for p in procs)
+            if not all_alive:
+                # If one dies, exit with its return code
+                for p in procs:
+                    rc = p.poll()
+                    if rc is not None:
+                        sys.exit(rc)
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        _cleanup()
