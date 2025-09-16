@@ -202,8 +202,6 @@ class ABD(UniversalRemoteEnv):
     def __init__(self): super().__init__(_DEF_SPEC('ABD'))
 class SAT(UniversalRemoteEnv):
     def __init__(self): super().__init__(_DEF_SPEC('SAT'))
-
-# New envs
 class SEARCHQA(UniversalRemoteEnv):
     def __init__(self): super().__init__(SEARCHQA_SPEC)
 class LMRL_MAZE(UniversalRemoteEnv):
