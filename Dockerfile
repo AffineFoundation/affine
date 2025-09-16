@@ -43,18 +43,27 @@ RUN uv pip install -e .
 
 # 8) Install agentenv-affine (env servers) from GitHub
 WORKDIR /app
-RUN uv pip install "git+https://github.com/AffineFoundation/AgentGym_Affine.git@main#subdirectory=agentenv-affine"
+RUN uv pip install \n    "git+https://github.com/AffineFoundation/AgentGym_Affine.git@main#subdirectory=agentenv-affine" \
+    "git+https://github.com/AffineFoundation/AgentGym_Affine.git@main#subdirectory=agentenv-searchqa" \
+    "git+https://github.com/AffineFoundation/AgentGym_Affine.git@main#subdirectory=agentenv-lmrlgym" \
+    "git+https://github.com/AffineFoundation/AgentGym_Affine.git@main#subdirectory=agentenv-tool"
 
 # 9) Expose env server ports (used by `af envs`)
-EXPOSE 9001 9002 9003 9004
+EXPOSE 9001 9002 9003 9004 36001 8000 8030
 
 # Default entrypoint remains the affine CLI
 ENTRYPOINT ["af"]
 
 # --- Dev stage: use local submodule for agentenv-affine if building locally ---
 FROM base AS dev-agentenv
-COPY AgentGym_Affine/agentenv-affine /app/agentenv-affine
-RUN uv pip install -e /app/agentenv-affine
+COPY AgentGym_Affine/agentenv-affine   /app/agentenv-affine
+COPY AgentGym_Affine/agentenv-searchqa /app/agentenv-searchqa
+COPY AgentGym_Affine/agentenv-lmrlgym  /app/agentenv-lmrlgym
+COPY AgentGym_Affine/agentenv-tool     /app/agentenv-tool
+RUN uv pip install -e /app/agentenv-affine \
+    && uv pip install -e /app/agentenv-searchqa \
+    && uv pip install -e /app/agentenv-lmrlgym \
+    && uv pip install -e /app/agentenv-tool
 ENTRYPOINT ["af"]
 
 # --- Final release stage (default) ---

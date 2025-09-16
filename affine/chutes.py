@@ -157,10 +157,19 @@ async def run(challenges, miners, timeout=240, retries=0, backoff=1 )-> List[af.
                 ev = af.Evaluation(env=chal.env, score=0.0, extra={"error": err, "gated": is_gated})
                 return af.Result(miner=miner, challenge=chal, response=resp, evaluation=ev)
         
-        # Normal processing for non-gated models
+        # Step-env delegation (AgentGym-style multi-turn)
+        try:
+            if hasattr(chal.env, "rollout") and getattr(chal.env, "step_mode", False):
+                return await chal.env.rollout(miner, chal)
+        except Exception as e:
+            af.logger.warning(f"Step-env rollout failed, falling back to single-shot: {e}")
+
+        # Normal processing for non-gated models (single-shot)
         resp = await query(chal.prompt, miner.model, miner.slug, timeout, retries, backoff)
-        try: ev = await chal.evaluate(resp)
-        except Exception as e: ev = af.Evaluation(env=chal.env, score=0.0, extra={"error": str(e), "evaluation_failed": True})
+        try:
+            ev = await chal.evaluate(resp)
+        except Exception as e:
+            ev = af.Evaluation(env=chal.env, score=0.0, extra={"error": str(e), "evaluation_failed": True})
         return af.Result(miner=miner, challenge=chal, response=resp, evaluation=ev)
     
     tasks = [ asyncio.create_task(proc(m, chal)) for m in mmap.values() if m.model for chal in challenges]  

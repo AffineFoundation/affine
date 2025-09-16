@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Type
 
 
-from .remote import DED, HVM, ABD, SAT
+from .remote import DED, HVM, ABD, SAT, SEARCHQA, LMRL_MAZE, LMRL_WORDLE, ACADEMIA
 
 __all__ = []
 
@@ -17,7 +17,7 @@ def _register_env(cls) -> None:
     if cls.__name__ not in __all__:
         __all__.append(cls.__name__)
 
-for _cls in (DED, HVM, ABD, SAT):
+for _cls in (DED, HVM, ABD, SAT, SEARCHQA, LMRL_MAZE, LMRL_WORDLE, ACADEMIA):
     _register_env(_cls)
 
 # Export helpers and registry as well
