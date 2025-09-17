@@ -23,7 +23,7 @@ if not os.getenv("CHUTES_API_KEY") and os.getenv("CHUTES_API_KEY"):
     exit(0)
 
 class AgentRequest(BaseModel):
-    problem_statement: str = Field(default="", description="The problem statement to solve")
+    problem_statement: str = Field(description="The problem statement to solve")
     run_id: Optional[str] = Field(default="default", description="Run ID for tracking")
 
 class EmbeddingRequest(BaseModel):
@@ -114,24 +114,29 @@ async def health_check():
     return "OK"
 
 @app.post("/run")
-async def solve_problem(request: Optional[AgentRequest] = None):
-    if request is None:
-        request = AgentRequest(problem_statement="")
+async def solve_problem(request: AgentRequest):
+    if not request.problem_statement:
+        logger.warning("No problem statement provided in request")
+        return {
+            "success": False,
+            "error": "No problem statement provided. Please provide 'problem_statement' in request body"
+        }
 
     try:
         problem_statement = request.problem_statement
-        if not problem_statement:
-            with open('problem_statement.txt', 'r', encoding='utf-8') as f:
-                problem_statement = f.read().strip()
         agent_input = {
             "problem_statement": problem_statement,
         }
+        with open("input.json", "w", encoding="utf-8") as f:
+            json.dump(agent_input, f)
+        logger.info(f"Processing problem: {problem_statement[:100]}...")
         loop = asyncio.get_running_loop()
     
         try:
             from api.top.rank_1.agent import agent_main
             result = await loop.run_in_executor(None, agent_main, agent_input)
             output = {"success": True, "output": result}
+            logger.info("Agent execution completed successfully")
         except Exception as e:
             logger.error(f"Exception during agent execution: {str(e)}", exc_info=True)
             error = traceback.format_exc()
@@ -160,13 +165,10 @@ async def general_exception_handler(request: Request, exc: Exception):
 
 def main():
     import quixand as qs
-    chutes_api_key = os.getenv("CHUTES_API_KEY", "")
-    if not chutes_api_key:
-        print("Warning: CHUTES_API_KEY not set. Some features may not work.")
-        exit(0)
+    chutes_api_key = os.getenv("CHUTES_API_KEY")
 
+    print("=== Ridges Agent Example ===\n")
 
-    print("=== Ridges Agent Simple Example ===\n")
     image = qs.Templates.build("env_templates/ridges", name="ridges-agent")
     print(f"Image built: {image}\n")
     
@@ -175,25 +177,24 @@ def main():
         timeout=300,
         env={
             "CHUTES_API_KEY": chutes_api_key,
+            "AGENT_MODEL": "deepseek-ai/DeepSeek-V3",
         },
     )
-    print(f"Container ID: {sandbox.id[:8]}\n")
+    print(f"Container ID: {sandbox.container_id[:8]}\n")
     
     try:
-        problem = "Write a quick sort algorithm in Python"
-        print(f"\nWriting problem: {problem}")
-
-        sandbox.files.write("problem_statement.txt", problem)
-        
-        print("\nSending request to Agent...")
+        problem = "Write a quicksort algorithm in Python without comments"
+        print(f"Problem: {problem}")
         response = sandbox.proxy.run(
             port=8000,
             path="/run",
             method="POST",
+            payload={
+                "problem_statement": problem,
+            },
             timeout=300
         )
-        print(f"\nAgent response: {response}")
-            
+        print(f"Agent response: {response}")
     finally:
         print("\nShutting down container...")
         sandbox.shutdown()
