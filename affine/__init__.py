@@ -440,6 +440,15 @@ async def sign_results( wallet, results ):
         return hotkey, results
 
 # ── Minimal sink / misc helpers (optional) ──────────────────────────────────
+# Global buffer to reduce R2 writes; flush on threshold or force.
+SINK_BUFFER: list["Result"] = []
+SINK_BUFFER_SIZE = int(os.getenv("AFFINE_SINK_BUFFER", "2000"))
+async def sink_enqueue(wallet, block, results, force: bool = False):
+    global SINK_BUFFER
+    SINK_BUFFER.extend(results)
+    if not force and len(SINK_BUFFER) < SINK_BUFFER_SIZE: return
+    buf, SINK_BUFFER = SINK_BUFFER, []
+    await sink(wallet=wallet, results=buf, block=block)
 async def sink(wallet: bt.wallet, results: list["Result"], block: int = None):
     if not results: return
     if block is None:
@@ -831,7 +840,7 @@ def runner():
                                 flat.append(it)
                         logger.debug(f"sink_worker: flushing {len(flat)} results")
                         try:
-                            await sink(wallet=wallet, block=blk, results=flat)
+                            await sink_enqueue(wallet, blk, flat)
                         except Exception:
                             traceback.print_exc()
                             # keep going; don't drop future batches
@@ -849,7 +858,7 @@ def runner():
                             st = await ensure_subtensor()
                             blk = await st.get_current_block()
                             logger.debug(f"sink_worker: final flush {len(flat)}")
-                            await sink(wallet=wallet, block=blk, results=flat)
+                            await sink_enqueue(wallet, blk, flat, force=True)
                         except Exception:
                             traceback.print_exc()
                     break
@@ -1123,7 +1132,7 @@ async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[f
         return
     
 # --- Scoring hyperparameters --------------------------------------------------
-TAIL = 20_000
+TAIL = 10_000
 ALPHA = 0.9
 EPS_FLOOR   = 0.005
 Z_NOT_WORSE = 1.28
@@ -1752,4 +1761,4 @@ chute = build_sglang_chute(
         logger.debug("Model is now hot and ready")
 
     asyncio.run(warmup_model())
-    logger.debug("Mining setup complete. Model is live!")  
+    logger.debug("Mining setup complete. Model is live!")
