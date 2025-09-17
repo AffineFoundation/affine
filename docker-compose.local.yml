@@ -5,14 +5,16 @@ version: "3.8"
 
 x-affine-image: &affine_image
   image: affine:local
+  build:
+    context: ..
+    dockerfile: affine/Dockerfile
 
 services:
   validator:
     <<: *affine_image
-    build:
-      context: .
-      dockerfile: Dockerfile
   runner:
     <<: *affine_image
   signer:
+    <<: *affine_image
+  agentenv:
     <<: *affine_image 

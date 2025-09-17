@@ -5,7 +5,8 @@ FROM rust:1.79-slim-bullseye AS base
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip python3-dev \
-    build-essential curl pkg-config libssl-dev \
+    build-essential curl pkg-config libssl-dev ca-certificates git \
+ && update-ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 # 2) Create and activate venv
@@ -16,22 +17,46 @@ ENV PATH="$VENV_DIR/bin:$PATH"
 # 3) Install the 'uv' CLI
 RUN pip install uv
 
+# Base workdir
 WORKDIR /app
 
-# 4) Copy dependency descriptors
-COPY pyproject.toml uv.lock ./
+# 4) Prepare project directories
+RUN mkdir -p /app/affine
 
-# 5) Sync deps
+# 5) Copy dependency descriptors for affine
+COPY affine/pyproject.toml /app/affine/pyproject.toml
+COPY affine/uv.lock /app/affine/uv.lock
+
+# 6) Sync deps for affine
+WORKDIR /app/affine
 RUN uv venv --python python3 $VENV_DIR \
  && uv sync
 
-# Pre install.
+# Pre install affine in editable mode (metadata)
 ENV VIRTUAL_ENV=$VENV_DIR
 RUN uv pip install -e .
 
-# 6) Copy your code & install it
-COPY . .
+# 7) Copy affine code and reinstall
+COPY affine /app/affine
 ENV VIRTUAL_ENV=$VENV_DIR
 RUN uv pip install -e .
 
+# 8) Install agentenv-affine (env servers) from GitHub
+WORKDIR /app
+RUN uv pip install "git+https://github.com/romain13190/AgentGym_Affine@main#subdirectory=agentenv-affine"
+
+# 9) Expose env server ports (used by `af envs`)
+EXPOSE 8010 8011 8012 8013
+
+# Default entrypoint remains the affine CLI
+ENTRYPOINT ["af"]
+
+# --- Dev stage: use local submodule for agentenv-affine if building locally ---
+FROM base AS dev-agentenv
+COPY AgentGym_Affine/agentenv-affine /app/agentenv-affine
+RUN uv pip install -e /app/agentenv-affine
+ENTRYPOINT ["af"]
+
+# --- Final release stage (default) ---
+FROM base AS release
 ENTRYPOINT ["af"]

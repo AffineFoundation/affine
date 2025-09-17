@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # --------------------------------------------------------------------------- #
 #                             Imports                                         #
@@ -70,7 +69,7 @@ METRICS_ADDR   = os.getenv("AFFINE_METRICS_ADDR", "0.0.0.0")
 REGISTRY       = CollectorRegistry(auto_describe=True)
 QCOUNT  = Counter("qcount", "qcount", ["model"], registry=REGISTRY)
 SCORE   = Gauge( "score", "score", ["uid", "env"], registry=REGISTRY)
-RANK    = Gauge( "rank", "rank", ["uid", "env"], registry=REGISTRY)
+RANK    = Gauge( "rank", "rank", ["uid"], registry=REGISTRY)
 WEIGHT  = Gauge( "weight", "weight", ["uid"], registry=REGISTRY)
 LASTSET = Gauge( "lastset", "lastset", registry=REGISTRY)
 NRESULTS = Gauge( "nresults", "nresults", registry=REGISTRY)
@@ -376,10 +375,11 @@ async def dataset(
     tail: int,
     *,
     max_concurrency: int = 10,      # parallel S3 downloads
-) -> AsyncIterator["Result"]:
+) -> AsyncIterator[Dict[str, Any]]:
     """
-    Stream `Result`s in deterministic order while pre‑downloading future
-    shards concurrently.
+    Stream raw result objects (as dict) in deterministic order while pre-downloading
+    future shards concurrently. Avoids instantiating envs/Result to keep ingestion
+    lightweight and independent from runtime env servers.
     """
     # ── figure out which windows we need ────────────────────────────────
     sub  = await get_subtensor()
@@ -389,7 +389,7 @@ async def dataset(
         k for k in await _index()
         if (h := Path(k).name.split("-", 1)[0]).isdigit() and int(h) in need
     ]
-    keys.sort()    
+    keys.sort()
     # ── helpers ────────────────────────────────
     sem = asyncio.Semaphore(max_concurrency)     # throttle S3
     async def _prefetch(key: str) -> Path:       # just downloads / caches
@@ -397,7 +397,7 @@ async def dataset(
     tasks: list[asyncio.Task[Path]] = [
         asyncio.create_task(_prefetch(k)) for k in keys[:max_concurrency]
     ]
-    next_key = max_concurrency            
+    next_key = max_concurrency
     bar = tqdm(f"Dataset=({cur}, {cur - tail})", unit="res", dynamic_ncols=True)
     # ── main loop: iterate over keys in order ───────────────────────────
     for i, key in enumerate(keys):
@@ -407,10 +407,11 @@ async def dataset(
             next_key += 1
         async for raw in _jsonl(path):
             try:
-                r = Result.model_validate(_loads(raw))
-                if r.verify():
-                    bar.update(1)
-                    yield r
+                obj = _loads(raw)
+                if not isinstance(obj, dict):
+                    continue
+                bar.update(1)
+                yield obj
             except Exception:
                 pass
     bar.close()
@@ -499,7 +500,7 @@ async def _get_client() -> aiohttp.ClientSession:
         limit = int(os.getenv("AFFINE_HTTP_CONCURRENCY", "400"))  # raise this
         conn = aiohttp.TCPConnector(
             limit=limit,              # match or exceed your semaphore
-            limit_per_host=0,         # don’t artificially throttle per host
+            limit_per_host=0,         # don't artificially throttle per host
             ttl_dns_cache=300,        # cache DNS results
             enable_cleanup_closed=True
         )
@@ -1167,7 +1168,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     # Tallies for all known hotkeys (so metrics update is safe even if some have no data)
     cnt   = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env counts
     succ  = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env correct (0/1 or [0,1])
-    prev  = {}                                                # last sample per hk
+    prev  = {}                                                # last sample per hk (raw dict)
     v_id  = {}                                                # (model, revision) per hk
     first_block = {}                                          # earliest block for current version
 
@@ -1176,48 +1177,68 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
         commits = await st.get_all_revealed_commitments(NETUID)
         for uid, hk in enumerate(meta.hotkeys):
             if hk in commits:
-                blk, _ = commits[hk][-1]
-                first_block[hk] = 0 if uid == 0 else int(blk)
+                blk2, _ = commits[hk][-1]
+                first_block[hk] = 0 if uid == 0 else int(blk2)
     except Exception:
         pass
 
     # --- ingest ---------------------------------------------------------------
     logger.info(f"Loading data from {blk - tail} to {blk}")
-    async for c in dataset(tail=tail):
+    async for obj in dataset(tail=tail):
         NRESULTS.inc()
-        hk, env = c.miner.hotkey, c.challenge.env.name
+        miner_obj = (obj.get("miner") or {})
+        hk = miner_obj.get("hotkey")
+        # derive env name from denormalized or nested structure
+        dn = obj.get("_dn") or {}
+        env = dn.get("env_name") or ((obj.get("challenge") or {}).get("env"))
+        if not hk or not env:
+            continue
 
         # keep the base hk; otherwise require model family
+        model_val = miner_obj.get("model")
         try:
-            name = c.miner.model.split("/", 1)[1].lower()
+            name = model_val.split("/", 1)[1].lower()
         except Exception:
-            name = str(c.miner.model).lower()
+            name = str(model_val).lower()
         if hk not in cnt or (hk != BASE_HK and not name.startswith("affine")):
             continue
 
-        cur_vid = (c.miner.model, c.miner.revision)
+        cur_vid = (model_val, miner_obj.get("revision"))
 
         # On version change, reset ALL env streams and timestamp to current block
         if v_id.get(hk) != cur_vid:
             v_id[hk] = cur_vid
-            first_block[hk] = c.miner.block
+            try:
+                first_block[hk] = int(miner_obj.get("block") or 0)
+            except Exception:
+                first_block[hk] = 0
             for e in ENVS:
                 cnt[hk][e] = 0
                 succ[hk][e] = 0
         else:
             # Keep earliest commit block for the active version
             try:
-                fb = int(first_block.get(hk, c.miner.block)) if first_block.get(hk) is not None else int(c.miner.block)
-                cb = int(c.miner.block) if c.miner.block is not None else fb
+                fb = int(first_block.get(hk, miner_obj.get("block")) or 0)
+                cb = int(miner_obj.get("block") or fb)
                 first_block[hk] = fb if fb <= cb else cb
             except Exception:
                 pass
 
         # accumulate on successes.
-        prev[hk] = c
-        if c.response.success:
-            cnt[hk][env]  += 1
-            succ[hk][env] += float(c.evaluation.score)
+        prev[hk] = obj
+        success = dn.get("success")
+        if success is None:
+            success = bool((obj.get("response") or {}).get("success"))
+        if success:
+            score = dn.get("score")
+            if score is None:
+                try:
+                    score = float((obj.get("evaluation") or {}).get("score"))
+                except Exception:
+                    score = None
+            if score is not None:
+                cnt[hk][env]  += 1
+                succ[hk][env] += float(score)
 
     logger.info("Collected results.")
 
@@ -1371,9 +1392,9 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
             + ["Pts", "Elig", "Wgt"]
         )
         def row(hk: str):
-            m = prev[hk].miner
+            m = (prev[hk].get("miner") or {})
             w = 1.0 if hk == best else 0.0
-            model_name = str(m.model)[:50]
+            model_name = str(m.get("model"))[:50]
             env_cols = []
             for e in ENVS:
                 base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}"
@@ -1382,7 +1403,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
                 else:
                     env_cols.append(base)
             return [
-                m.uid, model_name, str(m.revision)[:5],
+                m.get("uid", 0), model_name, str(m.get("revision"))[:5],
                 *env_cols,
                 *[f"{layer_points[hk][s]:.1f}" for s in range(1, N_envs + 1)],
                 f"{score.get(hk, 0.0):.2f}",
@@ -1409,9 +1430,9 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
         + ["Pts", "Elig", "Wgt"]
     )
     def row(hk: str):
-        m = prev[hk].miner
+        m = (prev[hk].get("miner") or {})
         w = weight_by_hk.get(hk, 0.0)
-        model_name = str(m.model)[:50]
+        model_name = str(m.get("model"))[:50]
         env_cols = []
         for e in ENVS:
             base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}"
@@ -1420,7 +1441,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
             else:
                 env_cols.append(base)
         return [
-            m.uid, model_name[:30], str(m.revision)[:5],
+            m.get("uid", 0), model_name[:30], str(m.get("revision"))[:5],
             *env_cols,
             *[f"{layer_points[hk][s]:.1f}" for s in range(1, N_envs + 1)],
             f"{score.get(hk, 0.0):.2f}",
@@ -1733,7 +1754,7 @@ chute = build_sglang_chute(
     asyncio.run(commit_to_chain())
 
     # -----------------------------------------------------------------------------
-    # 9. Warm up model until it’s marked hot
+    # 9. Warm up model until it's marked hot
     # -----------------------------------------------------------------------------
     async def warmup_model():
         logger.debug("Warming up model with SAT challenges")
@@ -1752,4 +1773,54 @@ chute = build_sglang_chute(
         logger.debug("Model is now hot and ready")
 
     asyncio.run(warmup_model())
-    logger.debug("Mining setup complete. Model is live!")  
+    logger.debug("Mining setup complete. Model is live!")
+
+
+@cli.command("envs")
+@click.option("--ded-port", default=int(os.getenv("DED_PORT", "9001")), show_default=True, type=int)
+@click.option("--hvm-port", default=int(os.getenv("HVM_PORT", "9002")), show_default=True, type=int)
+@click.option("--abd-port", default=int(os.getenv("ABD_PORT", "9003")), show_default=True, type=int)
+@click.option("--sat-port", default=int(os.getenv("SAT_PORT", "9004")), show_default=True, type=int)
+@click.option("--host", default=os.getenv("ENVS_HOST", "0.0.0.0"), show_default=True)
+def envs(ded_port: int, hvm_port: int, abd_port: int, sat_port: int, host: str):
+    """Launches the environment servers (DED/HVM/ABD/SAT)."""
+    import subprocess, atexit, sys, time
+    procs = []
+    def _spawn(mod: str, port: int):
+        return subprocess.Popen([sys.executable, "-m", mod], env={**os.environ, "PORT": str(port), "HOST": host})
+    procs.append(_spawn("agentenv_affine.ded_launch", ded_port))
+    procs.append(_spawn("agentenv_affine.hvm_launch", hvm_port))
+    procs.append(_spawn("agentenv_affine.abd_launch", abd_port))
+    procs.append(_spawn("agentenv_affine.sat_launch", sat_port))
+
+    def _cleanup():
+        for p in procs:
+            try:
+                p.terminate()
+            except Exception:
+                pass
+        for p in procs:
+            try:
+                p.wait(timeout=5)
+            except Exception:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+    atexit.register(_cleanup)
+
+    try:
+        # Guard loop: stay in the foreground as long as all 4 servers are running
+        while True:
+            all_alive = all(p.poll() is None for p in procs)
+            if not all_alive:
+                # If one dies, exit with its return code
+                for p in procs:
+                    rc = p.poll()
+                    if rc is not None:
+                        sys.exit(rc)
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        _cleanup()
