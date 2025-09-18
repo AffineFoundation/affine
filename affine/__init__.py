@@ -79,9 +79,11 @@ CACHE = Gauge( "cache", "cache", registry=REGISTRY)
 
 # Model gating check cache
 MODEL_GATING_CACHE = {}  # {model_id: (is_gated, last_checked)}
-# Replace global loop-bound lock with per-event-loop lazy locks to avoid cross-loop errors
 _GATING_LOCKS: Dict[int, asyncio.Lock] = {}
 GATING_TTL = 3600  # 60 min
+WEIGHTS_SHA_CACHE: Dict[Tuple[str, Optional[str]], Tuple[Optional[set[str]], float]] = {}
+_WEIGHTS_LOCKS: Dict[int, asyncio.Lock] = {}
+WEIGHTS_TTL = 3600  # 60 min
 
 def _get_gating_lock() -> asyncio.Lock:
     """Return an asyncio.Lock bound to the current running loop."""
@@ -95,6 +97,18 @@ def _get_gating_lock() -> asyncio.Lock:
     if lock is None:
         lock = asyncio.Lock()
         _GATING_LOCKS[key] = lock
+    return lock
+
+def _get_weights_lock() -> asyncio.Lock:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.get_event_loop()
+    key = id(loop)
+    lock = _WEIGHTS_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _WEIGHTS_LOCKS[key] = lock
     return lock
 
 # --------------------------------------------------------------------------- #
@@ -265,6 +279,7 @@ class Miner(BaseModel):
     revision: Optional[str] = None; block: Optional[int] = None
     chute: Optional[Dict[str, Any]] = None
     slug: Optional[str] = None
+    weights_shas: Optional[set[str]] = None
     
 
 class Result(BaseModel):
@@ -633,6 +648,32 @@ async def get_latest_chute_id(model_name: str, api_key: Optional[str] = None) ->
             return chute.get("chute_id")
     return None
 
+async def get_weights_shas(model_id: str, revision: Optional[str] = None) -> Optional[set[str]]:
+    key = (model_id, revision)
+    now = time.time()
+    cached = WEIGHTS_SHA_CACHE.get(key)
+    if cached and now - cached[1] < WEIGHTS_TTL:
+        return cached[0]
+    async with _get_weights_lock():
+        cached = WEIGHTS_SHA_CACHE.get(key)
+        if cached and now - cached[1] < WEIGHTS_TTL:
+            return cached[0]
+        try:
+            def _repo_info():
+                return HfApi(token=os.getenv("HF_TOKEN")).repo_info(
+                    repo_id=model_id, repo_type="model", revision=revision, files_metadata=True
+                )
+            info = await asyncio.to_thread(_repo_info)
+            sib = getattr(info, "siblings", None) or []
+            def _name(s): return getattr(s, "rfilename", None) or getattr(s, "path", "")
+            shas = {str(getattr(s, "lfs", {})["sha256"]) for s in sib
+                    if (isinstance(getattr(s, "lfs", None), dict) and _name(s).endswith(".safetensors") and "sha256" in getattr(s, "lfs", {}))}
+            WEIGHTS_SHA_CACHE[key] = (shas or None, now)
+            return shas or None
+        except Exception as e:
+            logger.trace(f"HF weights sha lookup failed for {model_id}@{revision}: {e}")
+            WEIGHTS_SHA_CACHE[key] = (None, now)
+            return None
 
 async def miners(
     uids: Optional[Union[int, List[int]]] = None,
@@ -644,7 +685,7 @@ async def miners(
     commits = await sub.get_all_revealed_commitments(netuid)
     if uids is None:uids = list(range(len(meta.hotkeys)))
     elif isinstance(uids, int): uids = [uids]    
-    meta_sem = asyncio.Semaphore(int(os.getenv("AFFINE_META_CONCURRENCY", "64")))
+    meta_sem = asyncio.Semaphore(int(os.getenv("AFFINE_META_CONCURRENCY", "12")))
     async def fetch(uid: int):
         try:
             hotkey = meta.hotkeys[ uid ]
@@ -663,28 +704,45 @@ async def miners(
             chutes_name, slug, chutes_revision = chute.get('name'), chute.get("slug"), chute.get("revision")
             if model != chutes_name or (uid != 0 and chutes_name.split('/')[1].lower()[:6] != 'affine'): return None
             if chutes_revision == None or miner_revision == chutes_revision:
-                miner = Miner(
+                async with meta_sem:
+                    shas = await get_weights_shas(model, miner_revision)
+                return Miner(
                     uid=uid, hotkey=hotkey, model=model, block=int(block),
                     revision = miner_revision,
                     slug = slug,
                     chute=chute,
+                    weights_shas=shas,
                 )
-                return miner
         except: pass
     results = await asyncio.gather(*(fetch(uid) for uid in uids))
     output = {uid: m for uid, m in zip(uids, results) if m is not None}
     # Remove duplicates.
     if output:
-        best_by_model: Dict[str, Tuple[int, int]] = {}
+        earliest_by_sha: Dict[str, Tuple[int, int]] = {}
         for uid, m in output.items():
-            if not m.model:
-                continue
+            if not m.weights_shas: continue
             blk = m.block if isinstance(m.block, int) else (int(m.block) if m.block is not None else (2**63 - 1))
-            prev = best_by_model.get(m.model)
-            if prev is None or blk < prev[0]:
-                best_by_model[m.model] = (blk, uid)
-        selected_uids = {uid for _, uid in best_by_model.values()}
-        output = {uid: m for uid, m in output.items() if uid in selected_uids}
+            for sha in m.weights_shas:
+                prev = earliest_by_sha.get(sha)
+                if prev is None or blk < prev[0]:
+                    earliest_by_sha[sha] = (blk, uid)
+        if earliest_by_sha:
+            keep = set(output.keys())
+            for uid, m in output.items():
+                if m.weights_shas and any(earliest_by_sha.get(s, (None, uid))[1] != uid for s in m.weights_shas):
+                    if uid in keep: keep.remove(uid)
+            output = {uid: m for uid, m in output.items() if uid in keep}
+        if output:
+            best_by_model: Dict[str, Tuple[int, int]] = {}
+            for uid, m in output.items():
+                if not m.model:
+                    continue
+                blk = m.block if isinstance(m.block, int) else (int(m.block) if m.block is not None else (2**63 - 1))
+                prev = best_by_model.get(m.model)
+                if prev is None or blk < prev[0]:
+                    best_by_model[m.model] = (blk, uid)
+            selected_uids = {uid for _, uid in best_by_model.values()}
+            output = {uid: m for uid, m in output.items() if uid in selected_uids}
     return output
 
 
