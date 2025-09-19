@@ -318,13 +318,6 @@ HIPPIUS_REGION       = os.getenv("HIPPIUS_REGION", "decentralized")
 HIPPIUS_BUCKET_NAME  = os.getenv("HIPPIUS_BUCKET_NAME", "my-affine-validator-bucket")
 HIPPIUS_SEED_PHRASE  = os.getenv("HIPPIUS_SEED_PHRASE", "")
 
-# Legacy R2 configuration used by training dataset utilities (unchanged)
-FOLDER  = os.getenv("R2_FOLDER", "affine")
-BUCKET  = os.getenv("R2_BUCKET_ID", "80f15715bb0b882c9e967c13e677ed7d")
-ACCESS  = os.getenv("R2_WRITE_ACCESS_KEY_ID", "ff3f4f078019b064bfb6347c270bee4d")
-SECRET  = os.getenv("R2_WRITE_SECRET_ACCESS_KEY", "a94b20516013519b2959cbbb441b9d1ec8511dce3c248223d947be8e85ec754d")
-ENDPOINT = f"https://{BUCKET}.r2.cloudflarestorage.com"
-
 from botocore import UNSIGNED
 import base64
 

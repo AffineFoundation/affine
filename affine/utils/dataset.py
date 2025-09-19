@@ -117,14 +117,9 @@ class R2BufferedDataset:
         self._dataset_folder= f"affine/datasets/{short_name}/"
         self._index_key     = self._dataset_folder + "index.json"
 
-        self._folder        = af.FOLDER
-        endpoint            = af.ENDPOINT
-        access_key          = af.ACCESS
-        secret_key          = af.SECRET
-
-        self._endpoint_url  = endpoint
-        self._access_key    = access_key
-        self._secret_key    = secret_key
+        self._bucket        = af.HIPPIUS_BUCKET_NAME
+        self._endpoint_url  = af.HIPPIUS_ENDPOINT_URL
+        self._region        = af.HIPPIUS_REGION
 
         self._buffer: Deque[Any] = deque()
         self._lock   = asyncio.Lock()
@@ -136,23 +131,16 @@ class R2BufferedDataset:
         self.total_size = total_size
 
     def _client_ctx(self):
-        if not self._endpoint_url:
-            raise RuntimeError("R2 endpoint is not configured (missing R2_BUCKET_ID)")
-        sess = get_session()
-        return sess.create_client(
-            "s3",
-            endpoint_url=self._endpoint_url,
-            aws_access_key_id=self._access_key,
-            aws_secret_access_key=self._secret_key,
-            config=Config(max_pool_connections=256),
-        )
+        if not self._endpoint_url or not getattr(self, "_bucket", None):
+            raise RuntimeError("Hippius endpoint/bucket is not configured")
+        return af.create_s3_reader_client(self._endpoint_url, self._region)
 
     async def _ensure_index(self) -> None:
         if self._index is not None:
             return
-        af.logger.trace(f"Loading R2 index: s3://{self._folder}/{self._index_key}")
+        af.logger.trace(f"Loading S3 index: s3://{self._bucket}/{self._index_key}")
         async with self._client_ctx() as c:
-            resp = await c.get_object(Bucket=self._folder, Key=self._index_key)
+            resp = await c.get_object(Bucket=self._bucket, Key=self._index_key)
             body = await resp["Body"].read()
             self._index = json.loads(body.decode())
         self._files = list(self._index.get("files", []))
@@ -173,9 +161,9 @@ class R2BufferedDataset:
         key = file_info.get("key") or (self._dataset_folder + file_info.get("filename", ""))
         if not key:
             return []
-        af.logger.trace(f"Downloading R2 chunk: s3://{self._folder}/{key}")
+        af.logger.trace(f"Downloading S3 chunk: s3://{self._bucket}/{key}")
         async with self._client_ctx() as c:
-            resp = await c.get_object(Bucket=self._folder, Key=key)
+            resp = await c.get_object(Bucket=self._bucket, Key=key)
             body = await resp["Body"].read()
         try:
             data = json.loads(body.decode())
@@ -187,7 +175,7 @@ class R2BufferedDataset:
         return data
 
     async def _fill_buffer(self) -> None:
-        af.logger.trace("Starting R2 buffer fill")
+        af.logger.trace("Starting S3 buffer fill")
         while len(self._buffer) < self.buffer_size:
             rows = await self._read_next_file()
             if not rows:
@@ -197,7 +185,7 @@ class R2BufferedDataset:
                 rows = rows[start:start + self.max_batch]
             for item in rows:
                 self._buffer.append(item)
-        af.logger.trace("R2 buffer fill complete")
+        af.logger.trace("S3 buffer fill complete")
 
     async def get(self) -> Any:
         async with self._lock:
