@@ -318,6 +318,13 @@ HIPPIUS_REGION       = os.getenv("HIPPIUS_REGION", "decentralized")
 HIPPIUS_BUCKET_NAME  = os.getenv("HIPPIUS_BUCKET_NAME", "my-affine-validator-bucket")
 HIPPIUS_SEED_PHRASE  = os.getenv("HIPPIUS_SEED_PHRASE", "")
 
+# Legacy R2 configuration used by training dataset utilities (unchanged)
+FOLDER  = os.getenv("R2_FOLDER", "affine")
+BUCKET  = os.getenv("R2_BUCKET_ID", "80f15715bb0b882c9e967c13e677ed7d")
+ACCESS  = os.getenv("R2_WRITE_ACCESS_KEY_ID", "ff3f4f078019b064bfb6347c270bee4d")
+SECRET  = os.getenv("R2_WRITE_SECRET_ACCESS_KEY", "a94b20516013519b2959cbbb441b9d1ec8511dce3c248223d947be8e85ec754d")
+ENDPOINT = f"https://{BUCKET}.r2.cloudflarestorage.com"
+
 from botocore import UNSIGNED
 import base64
 
@@ -362,6 +369,13 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 # LRU cache for listing validator buckets: hotkey -> (timestamp, [keys])
 LIST_TTL_SECONDS = int(os.getenv("AFFINE_LIST_TTL", "100"))
 _LIST_CACHE: Dict[str, Tuple[float, list[str]]] = {}
+
+# Commitments cache (get_all_commitments) with long TTL (default 1 hour)
+AFFINE_COMMITMENTS_TTL = int(os.getenv("AFFINE_COMMITMENTS_TTL", "3600"))
+_COMMITMENTS_CACHE: Tuple[float, Optional[Dict[str, str]]] = (0.0, None)
+
+# Local validator bucket name, determined at startup
+LOCAL_BUCKET_NAME: Optional[str] = None
 
 def _w(b: int) -> int: return (b // WINDOW) * WINDOW
 
@@ -435,55 +449,38 @@ async def dataset(
     cur  = await sub.get_current_block()
     need = {w for w in range(_w(cur - tail), _w(cur) + WINDOW, WINDOW)}
 
-    # Discover validator buckets via commitments
+    # Discover validator buckets via get_all_commitments (cached)
     meta = await sub.metagraph(NETUID)
-    refs: list[tuple[str, str, str, str]] = []  # (endpoint, region, bucket, key)
     now = time.time()
-
-    def _parse_storage_commitment(obj) -> Optional[tuple[str, str, str]]:
+    global _COMMITMENTS_CACHE
+    ts, cached = _COMMITMENTS_CACHE
+    if not cached or (now - ts) > AFFINE_COMMITMENTS_TTL:
         try:
-            fields = getattr(obj, "fields", None)
-            if fields is None and isinstance(obj, dict):
-                fields = obj.get("fields")
-            if not fields:
-                return None
-            f0 = fields[0]
-            raw = getattr(f0, "raw", None)
-            if raw is None and isinstance(f0, dict):
-                raw = f0.get("raw") or f0.get("Raw") or f0.get("raw_value")
-            if isinstance(raw, (bytes, bytearray)):
-                data = json.loads(raw.decode("utf-8"))
-                if isinstance(data, dict) and data.get("type") == "hippius_v1":
-                    endpoint = data.get("endpoint") or HIPPIUS_ENDPOINT_URL
-                    region = data.get("region") or HIPPIUS_REGION
-                    bucket = data.get("bucket")
-                    if bucket:
-                        return (endpoint, region, bucket)
+            commitments = await sub.get_all_commitments(netuid=NETUID)
         except Exception:
-            return None
-        return None
+            commitments = {}
+        _COMMITMENTS_CACHE = (now, commitments)
+    else:
+        commitments = cached or {}
+
+    refs: list[tuple[str, str, str, str]] = []  # (endpoint, region, bucket, key)
 
     for uid, hotkey in enumerate(meta.hotkeys):
-        # Query commitments pallet storage: Commitments::CommitmentOf(netuid, hotkey)
+        s = commitments.get(hotkey)
+        if not isinstance(s, str) or not s:
+            continue
         try:
-            reg = await sub.query_storage(
-                module="Commitments",
-                storage_name="CommitmentOf",
-                params=[NETUID, hotkey],
-            )
+            payload = json.loads(s)
         except Exception:
             continue
-        if not reg:
+        if not (isinstance(payload, dict) and payload.get("type") == "hippius_v1"):
             continue
-        # Registration struct with .info (CommitmentInfo)
-        commitment_info = getattr(reg, "info", None)
-        if commitment_info is None and isinstance(reg, dict):
-            commitment_info = reg.get("info")
-        if not commitment_info:
+        endpoint = payload.get("endpoint") or HIPPIUS_ENDPOINT_URL
+        region   = payload.get("region") or HIPPIUS_REGION
+        bucket   = payload.get("bucket")
+        if not bucket:
             continue
-        s3info = _parse_storage_commitment(commitment_info)
-        if not s3info:
-            continue
+        s3info = (endpoint, region, bucket)
 
         # LRU list cache per hotkey
         cached = _LIST_CACHE.get(hotkey)
@@ -590,14 +587,16 @@ async def sink(wallet: bt.wallet, results: list["Result"], block: int = None):
     hotkey, signed = await sign_results(wallet, valid)
     key = f"{RESULT_PREFIX}{_w(block):09d}-{hotkey}.json"
     dumped = [r.model_dump(mode="json") for r in signed]
+    # Prefer bucket determined during startup; otherwise derive from our hotkey
+    target_bucket = LOCAL_BUCKET_NAME or f"affine-v1-{hotkey}"
     async with create_s3_writer_client(HIPPIUS_ENDPOINT_URL, HIPPIUS_REGION, HIPPIUS_SEED_PHRASE) as c:
         try:
-            r = await c.get_object(Bucket=HIPPIUS_BUCKET_NAME, Key=key)
+            r = await c.get_object(Bucket=target_bucket, Key=key)
             merged = json.loads(await r["Body"].read()) + dumped
         except c.exceptions.NoSuchKey:
             merged = dumped
         await c.put_object(
-            Bucket=HIPPIUS_BUCKET_NAME,
+            Bucket=target_bucket,
             Key=key,
             Body=_dumps(merged),
             ContentType="application/json",
@@ -1139,32 +1138,146 @@ def runner():
 # --------------------------------------------------------------------------- #
 
 _STORAGE_COMMITTED = False
-async def ensure_storage_commitment(wallet: "bt.wallet"):
+async def ensure_storage_commitment(wallet: "bt.wallet", bucket_name: str):
     """
-    Commit this validator's public Hippius bucket info on-chain for discovery.
-    Payload format:
-      {"type":"hippius_v1","endpoint":...,"region":...,"bucket":...}
+    Publish this validator's Hippius bucket info on-chain for discovery using high-level commit API.
+    Payload format: {"type":"hippius_v1","endpoint":...,"region":...,"bucket":...}
     """
     global _STORAGE_COMMITTED
     if _STORAGE_COMMITTED:
         return
     sub = await get_subtensor()
-    payload_obj = {
+    payload_json = json.dumps({
         "type": "hippius_v1",
         "endpoint": HIPPIUS_ENDPOINT_URL,
         "region": HIPPIUS_REGION,
-        "bucket": HIPPIUS_BUCKET_NAME,
-    }
-    payload_json = json.dumps(payload_obj, separators=(",", ":"))
-    payload_bytes = payload_json.encode("utf-8")
-    if len(payload_bytes) > 128:
-        logger.critical(f"Storage commitment too large ({len(payload_bytes)} bytes > 128). Use BigRaw format on-chain.")
-        raise ValueError("Commitment size exceeds 128 bytes")
-    # Strictly use commitments pallet (no fallback)
-    commitment = {"fields": [{"raw": payload_bytes}]}
-    await sub.set_commitment(wallet=wallet, netuid=NETUID, commitment=commitment, wait_for_inclusion=True)
+        "bucket": bucket_name,
+    }, separators=(",", ":"))
+    # The high-level commit handles Data::Raw and size internally
+    await sub.commit(wallet=wallet, netuid=NETUID, data=payload_json)
     _STORAGE_COMMITTED = True
-    logger.debug("Committed Hippius storage details via set_commitment")
+    logger.debug("Committed Hippius storage details via subtensor.commit")
+
+
+async def _get_hotkey_from_signer() -> Optional[str]:
+    """Fetch hotkey from signer service /hotkey endpoint."""
+    url = os.getenv("SIGNER_URL", "http://signer:8080").rstrip("/")
+    try:
+        timeout = aiohttp.ClientTimeout(connect=2, total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f"{url}/hotkey") as r:
+                if r.status == 200:
+                    data = await r.json()
+                    hk = data.get("hotkey")
+                    if isinstance(hk, str) and hk:
+                        return hk
+    except Exception as e:
+        logger.trace(f"signer /hotkey fetch failed: {e}")
+    return None
+
+
+async def ensure_public_bucket_exists(bucket_name: str) -> None:
+    """Idempotently create Hippius bucket and set public-read policy."""
+    async with create_s3_writer_client(HIPPIUS_ENDPOINT_URL, HIPPIUS_REGION, HIPPIUS_SEED_PHRASE) as c:
+        # Exists?
+        try:
+            lb = await c.list_buckets()
+            names = {b.get("Name") for b in (lb.get("Buckets") or [])}
+            if bucket_name in names:
+                exists = True
+            else:
+                exists = False
+        except Exception:
+            exists = False
+
+        if not exists:
+            try:
+                # Region config may or may not be required by the gateway
+                try:
+                    await c.create_bucket(
+                        Bucket=bucket_name,
+                        CreateBucketConfiguration={"LocationConstraint": HIPPIUS_REGION},
+                    )
+                except Exception:
+                    await c.create_bucket(Bucket=bucket_name)
+                logger.debug(f"Created bucket {bucket_name}")
+            except Exception as e:
+                msg = str(e)
+                if "BucketAlreadyOwnedByYou" in msg or "BucketAlreadyExists" in msg:
+                    logger.debug(f"Bucket {bucket_name} already exists or owned")
+                else:
+                    raise
+
+        # Set public-read policy
+        policy = {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": "*",
+                    "Action": ["s3:GetObject"],
+                    "Resource": [f"arn:aws:s3:::{bucket_name}/*"],
+                }
+            ],
+        }
+        try:
+            await c.put_bucket_policy(Bucket=bucket_name, Policy=json.dumps(policy))
+        except Exception as e:
+            # Some gateways accept set_bucket_policy equivalent; put_bucket_policy is standard S3
+            logger.debug(f"put_bucket_policy failed (may already be public): {e}")
+
+
+async def ensure_validator_setup(wallet: "bt.wallet") -> None:
+    """
+    Startup self-check:
+      - Determine own hotkey (wallet or signer)
+      - Ensure registered on metagraph
+      - Compute standardized bucket name and create/make public if needed
+      - Ensure on-chain commitment matches expected, otherwise update via commit()
+      - Cache bucket for sink()
+    """
+    global LOCAL_BUCKET_NAME
+
+    # Determine hotkey
+    hotkey = getattr(getattr(wallet, "hotkey", None), "ss58_address", None)
+    if not hotkey:
+        hotkey = await _get_hotkey_from_signer()
+    if not hotkey:
+        raise RuntimeError("Unable to determine validator hotkey from wallet or signer")
+
+    # Registration check
+    sub = await get_subtensor()
+    meta = await sub.metagraph(NETUID)
+    if hotkey not in meta.hotkeys:
+        raise SystemExit(f"Validator hotkey {hotkey} not registered on netuid {NETUID}")
+
+    # Standardized bucket name
+    expected_bucket = f"affine-v1-{hotkey}"
+
+    # Ensure bucket exists and is public
+    await ensure_public_bucket_exists(expected_bucket)
+    LOCAL_BUCKET_NAME = expected_bucket
+
+    # Ensure commitment matches expected
+    try:
+        commitments = await sub.get_all_commitments(netuid=NETUID)
+    except Exception:
+        commitments = {}
+    cur = commitments.get(hotkey)
+    expected_json = json.dumps(
+        {"type": "hippius_v1", "endpoint": HIPPIUS_ENDPOINT_URL, "region": HIPPIUS_REGION, "bucket": expected_bucket},
+        separators=(",", ":"),
+    )
+    needs_update = True
+    if isinstance(cur, str) and cur:
+        try:
+            a = json.loads(cur)
+            b = json.loads(expected_json)
+            needs_update = not (isinstance(a, dict) and isinstance(b, dict) and a == b)
+        except Exception:
+            needs_update = True
+    if needs_update:
+        await ensure_storage_commitment(wallet, expected_bucket)
 
     
 async def _set_weights_with_confirmation(
@@ -1229,6 +1342,13 @@ def signer(host: str, port: int):
 
         async def health(_request: "web.Request"):
             return web.json_response({"ok": True})
+
+        async def hotkey_handler(_request: "web.Request"):
+            try:
+                return web.json_response({"hotkey": wallet.hotkey.ss58_address})
+            except Exception as e:
+                logger.error(f"[signer] /hotkey error: {e}")
+                return web.json_response({"success": False, "error": str(e)}, status=500)
     
         async def sign_handler(request: "web.Request"):
             try:
@@ -1274,6 +1394,7 @@ def signer(host: str, port: int):
         app = web.Application(middlewares=[access_log])
         app.add_routes([
             web.get('/healthz', health),
+            web.get('/hotkey', hotkey_handler),
             web.post('/set_weights', set_weights_handler),
             web.post('/sign', sign_handler),
         ])
@@ -1684,7 +1805,10 @@ def validate():
         LAST = 0
         TEMPO = 100
         subtensor = None
-        await ensure_storage_commitment(wallet)
+
+        # --- Startup self-check and setup ---
+        await ensure_validator_setup(wallet)
+
         while True:
             try:
                 # ---------------- Wait for set weights. -----------------
