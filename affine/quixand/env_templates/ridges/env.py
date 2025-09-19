@@ -164,12 +164,12 @@ async def general_exception_handler(request: Request, exc: Exception):
     )
 
 def main():
-    import quixand as qs
+    from affine import quixand as qs
     chutes_api_key = os.getenv("CHUTES_API_KEY")
 
     print("=== Ridges Agent Example ===\n")
 
-    image = qs.Templates.build("env_templates/ridges", name="ridges-agent")
+    image = qs.Templates.ridges()
     print(f"Image built: {image}\n")
     
     sandbox = qs.Sandbox(
@@ -186,13 +186,8 @@ def main():
         problem = "Write a quicksort algorithm in Python without comments"
         print(f"Problem: {problem}")
         response = sandbox.proxy.run(
-            port=8000,
-            path="/run",
-            method="POST",
-            payload={
-                "problem_statement": problem,
-            },
-            timeout=300
+            problem_statement=problem,
+            _timeout=300
         )
         print(f"Agent response: {response}")
     finally:
