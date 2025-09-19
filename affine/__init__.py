@@ -717,7 +717,20 @@ def runner():
 
     async def _run():
         subtensor = None
-        envs = [cls() for cls in ENVS.values()]
+        # QS required: the legacy 1-shot path is no longer supported
+        QS_IMAGE = os.getenv("AFFINE_QS_IMAGE")
+        if not QS_IMAGE:
+            raise RuntimeError("AFFINE_QS_IMAGE doit être défini (image contenant agentenv_affine)")
+        QS_ENVS  = [s.strip().upper() for s in os.getenv("AFFINE_QS_KEYS", "DED,HVM,ABD,SAT").split(",") if s.strip()]
+        QS_MAX_ROUNDS = int(os.getenv("AFFINE_QS_MAX_ROUNDS", "30"))
+        from .envs.qs_orchestrator import QSandboxes  # type: ignore
+        from .envs.multiturn import run_multiturn_with_chutes  # type: ignore
+        qs_pool = QSandboxes(image=QS_IMAGE, timeout_seconds=24*3600)
+        qs_clients: dict[str, object] = {}
+        for key in QS_ENVS:
+            qs_pool.start(key)
+            qs_clients[key] = qs_pool.client(key)
+            logger.info(f"[runner] QS env ready: {key}")
 
         # ── config ───────────────────────────────────────────────────────────
         MAX_USES       = 30
@@ -757,13 +770,51 @@ def runner():
             chal_cache[e] = (chal, uses + 1)
             return chal
 
+        # QS‑mode helpers
+        async def llm_call_from_conversation(conversation: list[dict]) -> str:
+            # Compose a simple transcript to query the LLM backend
+            transcript = []
+            for m in conversation:
+                role = m.get("from") or ("assistant" if m.get("loss") else "user")
+                val = m.get("value") or ""
+                transcript.append(f"{role.upper()}: {val}")
+            prompt = "\n".join(transcript)
+            # Reuse existing query() helper (Chutes)
+            # Miner/model will be injected per call in proc_qs
+            return prompt  # actual model call is inside proc_qs
+
+
+        async def proc_qs(miner, env_key: str, env_client):
+            # env_client is RemoteEnvQS; multi‑turn loop with run_multiturn
+            from .envs.multiturn import run_multiturn  # type: ignore
+            # llm_call: wrap existing query() using miner model/slug
+            async def _llm_call(conv: list[dict]) -> str:
+                transcript = []
+                for m in conv:
+                    role = m.get("from") or ("assistant" if m.get("loss") else "user")
+                    val = m.get("value") or ""
+                    transcript.append(f"{role.upper()}: {val}")
+                prompt = "\n".join(transcript)
+                r = await query(prompt, miner.model, miner.slug, timeout=180)
+                return r.response or ""
+            ev = await run_multiturn(env_key=env_key, env=env_client, llm_call=_llm_call, max_rounds=QS_MAX_ROUNDS)
+            # Synthesize a Response for logging/sink (no single final text in multi‑turn)
+            final = Response(response=None, latency_seconds=0.0, attempts=1, model=miner.model, error=None, success=bool(ev.score > 0.0))
+            # Create a minimal Challenge marker for bookkeeping
+            chal = Challenge(env=env_client, prompt=f"QS::{env_key}", extra={})
+            return Result(miner=miner, challenge=chal, response=final, evaluation=ev)
+
         async def schedule(miner, inflight, now):
             nonlocal total_requests, requests_since_last_log
             uid = int(miner.uid)
             if uid in inflight: return
             if now < cooldown_until[uid]: return
-            chal = await next_chal()
-            inflight[uid] = asyncio.create_task(run(chal, miner, timeout=180))
+            # QS path (required): round-robin over QS_ENVS
+            key = QS_ENVS[ (total_requests) % max(1, len(QS_ENVS)) ]
+            client = qs_clients.get(key)
+            if client is None:
+                return
+            inflight[uid] = asyncio.create_task(proc_qs(miner, key, client))
             total_requests += 1
             requests_since_last_log += 1
 
@@ -835,7 +886,6 @@ def runner():
                             await sink(wallet=wallet, block=blk, results=flat)
                         except Exception:
                             traceback.print_exc()
-                            # keep going; don't drop future batches
                         batch.clear()
                         first_put_time = None
                 except asyncio.CancelledError:
@@ -910,7 +960,6 @@ def runner():
                             queue_size = sink_q.qsize()
                             logger.debug(f"miner {uid} OK; queued {len(res_list)}, queue_size={queue_size}")
                         else:
-                            print ('not ok')
                             # exponential backoff + jitter
                             d = min(delay[uid] * 2, BACKOFF_CAP)
                             jitter = random.uniform(0, d * 0.2)
@@ -1776,51 +1825,25 @@ chute = build_sglang_chute(
     logger.debug("Mining setup complete. Model is live!")
 
 
-@cli.command("envs")
-@click.option("--ded-port", default=int(os.getenv("DED_PORT", "9001")), show_default=True, type=int)
-@click.option("--hvm-port", default=int(os.getenv("HVM_PORT", "9002")), show_default=True, type=int)
-@click.option("--abd-port", default=int(os.getenv("ABD_PORT", "9003")), show_default=True, type=int)
-@click.option("--sat-port", default=int(os.getenv("SAT_PORT", "9004")), show_default=True, type=int)
-@click.option("--host", default=os.getenv("ENVS_HOST", "0.0.0.0"), show_default=True)
-def envs(ded_port: int, hvm_port: int, abd_port: int, sat_port: int, host: str):
-    """Launches the environment servers (DED/HVM/ABD/SAT)."""
-    import subprocess, atexit, sys, time
-    procs = []
-    def _spawn(mod: str, port: int):
-        return subprocess.Popen([sys.executable, "-m", mod], env={**os.environ, "PORT": str(port), "HOST": host})
-    procs.append(_spawn("agentenv_affine.ded_launch", ded_port))
-    procs.append(_spawn("agentenv_affine.hvm_launch", hvm_port))
-    procs.append(_spawn("agentenv_affine.abd_launch", abd_port))
-    procs.append(_spawn("agentenv_affine.sat_launch", sat_port))
 
-    def _cleanup():
-        for p in procs:
+@cli.command("envs-qs")
+@click.option("--image", required=True, help="Docker image with agentenv_affine installed")
+@click.option("--action", type=click.Choice(["start","stop-all"]), default="start")
+@click.option("--timeout", type=int, default=86400, show_default=True)
+def envs_qs(image: str, action: str, timeout: int):
+    """Launch environment servers via Quixand (no exposed ports; proxy)."""
+    from .envs.qs_orchestrator import QSandboxes
+    from .envs import register_qs_env
+    pool = QSandboxes(image=image, timeout_seconds=timeout)
+    if action == "start":
+        for name in ("DED","HVM","ABD","SAT"):
             try:
-                p.terminate()
-            except Exception:
-                pass
-        for p in procs:
-            try:
-                p.wait(timeout=5)
-            except Exception:
-                try:
-                    p.kill()
-                except Exception:
-                    pass
-    atexit.register(_cleanup)
-
-    try:
-        # Guard loop: stay in the foreground as long as all 4 servers are running
-        while True:
-            all_alive = all(p.poll() is None for p in procs)
-            if not all_alive:
-                # If one dies, exit with its return code
-                for p in procs:
-                    rc = p.poll()
-                    if rc is not None:
-                        sys.exit(rc)
-            time.sleep(0.5)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        _cleanup()
+                sbx = pool.start(name)
+                register_qs_env(f"{name}_QS", sbx)
+                af.logger.info(f"QS env started and registered: {name}_QS")
+            except Exception as e:
+                af.logger.error(f"Failed to start QS env {name}: {e}")
+        click.echo("QS envs started and registered (DED_QS, HVM_QS, ABD_QS, SAT_QS)")
+    else:
+        pool.stop_all()
+        click.echo("QS envs stopped")

@@ -45,8 +45,8 @@ RUN uv pip install -e .
 WORKDIR /app
 RUN uv pip install "git+https://github.com/romain13190/AgentGym_Affine@main#subdirectory=agentenv-affine"
 
-# 9) Expose env server ports (used by `af envs`)
-EXPOSE 8010 8011 8012 8013
+# 9) No port exposure needed with Quixand proxy
+# EXPOSE 8010 8011 8012 8013
 
 # Default entrypoint remains the affine CLI
 ENTRYPOINT ["af"]
