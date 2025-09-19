@@ -23,6 +23,7 @@ import traceback
 import itertools
 from .utils import *
 from math import comb
+from dataclasses import dataclass
 import datetime as dt
 from tqdm import tqdm
 import bittensor as bt
@@ -31,6 +32,7 @@ from pathlib import Path
 from tqdm.asyncio import tqdm
 from tabulate import tabulate
 from dotenv import load_dotenv
+from types import SimpleNamespace
 from typing import AsyncIterator
 from urllib.parse import urlparse
 from huggingface_hub import HfApi
@@ -43,7 +45,7 @@ from aiobotocore.session import get_session
 from huggingface_hub import snapshot_download
 from bittensor.core.errors import MetadataError
 from pydantic import BaseModel, Field, validator, ValidationError
-from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, TypeVar, Awaitable
+from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, TypeVar, Awaitable, Iterable, DefaultDict, MutableMapping, Collection
 __version__ = "0.0.0"
 
 # --------------------------------------------------------------------------- #
@@ -287,6 +289,188 @@ class Result(BaseModel):
     def __repr__(self): return f"<Result {self.miner.uid=} {self.challenge.env.name=} score={self.evaluation.score:.4f}>"
     __str__ = __repr__
 
+# --------------------------------------------------------------------------- #
+#                       Online IRT (2PL) utilities                            #
+# --------------------------------------------------------------------------- #
+
+
+def _sigmoid(x: float) -> float:
+    """Numerically stable logistic function."""
+
+    if x >= 0:
+        z = math.exp(-x)
+        return 1.0 / (1.0 + z)
+    z = math.exp(x)
+    return z / (1.0 + z)
+
+
+def _clamp(x: float, lo: float, hi: float) -> float:
+    if x < lo:
+        return lo
+    if x > hi:
+        return hi
+    return x
+
+
+@dataclass
+class _EnvParams:
+    discrimination: float = 1.0
+    difficulty: float = 0.0
+    count: int = 0
+
+
+@dataclass
+class _ChallengeParams:
+    bias: float = 0.0
+    count: int = 0
+
+
+@dataclass
+class _AbilityParams:
+    theta: float = 0.0
+    count: int = 0
+
+
+class OnlineIRT2PL:
+    """Online multi-facet two-parameter logistic estimator."""
+
+    def __init__(
+        self,
+        env_names: Iterable[str] = (),
+        *,
+        theta_prior: float = 0.0,
+        discrimination_prior: float = 1.0,
+        difficulty_prior: float = 0.0,
+        challenge_prior: float = 0.0,
+        theta_lr: float = 0.2,
+        difficulty_lr: float = 0.05,
+        discrimination_lr: float = 0.01,
+        challenge_lr: float = 0.03,
+        theta_clip: float = 6.0,
+        diff_clip: float = 6.0,
+        disc_bounds: Tuple[float, float] = (0.25, 5.0),
+        challenge_decay: float = 0.01,
+    ) -> None:
+        self._theta_prior = theta_prior
+        self._discrimination_prior = discrimination_prior
+        self._difficulty_prior = difficulty_prior
+        self._challenge_prior = challenge_prior
+        self._theta_lr = theta_lr
+        self._difficulty_lr = difficulty_lr
+        self._discrimination_lr = discrimination_lr
+        self._challenge_lr = challenge_lr
+        self._theta_clip = theta_clip
+        self._diff_clip = diff_clip
+        self._disc_bounds = disc_bounds
+        self._challenge_decay = challenge_decay
+
+        self._env_state: Dict[str, _EnvParams] = {
+            name: _EnvParams(discrimination=discrimination_prior, difficulty=difficulty_prior)
+            for name in env_names
+        }
+        self._challenge_state: Dict[str, _ChallengeParams] = {}
+        self._ability_state: Dict[Tuple[str, str], _AbilityParams] = {}
+
+    def _ensure_env(self, env: str) -> _EnvParams:
+        env_state = self._env_state.get(env)
+        if env_state is None:
+            env_state = _EnvParams(
+                discrimination=self._discrimination_prior,
+                difficulty=self._difficulty_prior,
+            )
+            self._env_state[env] = env_state
+        return env_state
+
+    def _ensure_challenge(self, challenge_id: Optional[str]) -> Optional[_ChallengeParams]:
+        if not challenge_id:
+            return None
+        chal = self._challenge_state.get(challenge_id)
+        if chal is None:
+            chal = _ChallengeParams(bias=self._challenge_prior)
+            self._challenge_state[challenge_id] = chal
+        return chal
+
+    def _ensure_ability(self, miner_key: Tuple[str, str]) -> _AbilityParams:
+        ability = self._ability_state.get(miner_key)
+        if ability is None:
+            ability = _AbilityParams(theta=self._theta_prior)
+            self._ability_state[miner_key] = ability
+        return ability
+
+    def observe(
+        self,
+        *,
+        miner_key: Tuple[str, str],
+        env: str,
+        success: float,
+        challenge_id: Optional[str] = None,
+        weight: float = 1.0,
+    ) -> float:
+        ability = self._ensure_ability(miner_key)
+        env_state = self._ensure_env(env)
+        challenge_state = self._ensure_challenge(challenge_id)
+
+        bias = env_state.difficulty
+        if challenge_state is not None:
+            challenge_state.bias *= (1.0 - self._challenge_decay)
+            bias += challenge_state.bias
+
+        eta = env_state.discrimination * (ability.theta - bias)
+        prob = _sigmoid(eta)
+        residual = (success - prob) * weight
+
+        ability.count += 1
+        ability_step = self._theta_lr / math.sqrt(max(1, ability.count))
+        ability.theta += ability_step * env_state.discrimination * residual
+        ability.theta = _clamp(ability.theta, -self._theta_clip, self._theta_clip)
+
+        env_state.count += 1
+        difficulty_step = self._difficulty_lr / math.sqrt(max(1, env_state.count))
+        env_state.difficulty -= difficulty_step * env_state.discrimination * residual
+        env_state.difficulty = _clamp(env_state.difficulty, -self._diff_clip, self._diff_clip)
+
+        discr_step = self._discrimination_lr / math.sqrt(max(1, env_state.count))
+        env_state.discrimination += discr_step * (ability.theta - bias) * residual
+        env_state.discrimination = _clamp(
+            env_state.discrimination,
+            self._disc_bounds[0],
+            self._disc_bounds[1],
+        )
+
+        if challenge_state is not None:
+            challenge_state.count += 1
+            chal_step = self._challenge_lr / math.sqrt(max(1, challenge_state.count))
+            challenge_state.bias += chal_step * residual
+            challenge_state.bias = _clamp(challenge_state.bias, -self._diff_clip, self._diff_clip)
+
+        return prob
+
+    def predict(self, *, miner_key: Tuple[str, str], env: str, challenge_id: Optional[str] = None) -> float:
+        ability = self._ensure_ability(miner_key)
+        env_state = self._ensure_env(env)
+        bias = env_state.difficulty
+        if challenge_id:
+            chal = self._challenge_state.get(challenge_id)
+            if chal is not None:
+                bias += chal.bias
+        eta = env_state.discrimination * (ability.theta - bias)
+        return _sigmoid(eta)
+
+    def miner_params(self, miner_key: Tuple[str, str]) -> Tuple[float, int]:
+        ability = self._ensure_ability(miner_key)
+        return ability.theta, ability.count
+
+    def env_params(self, env: str) -> Tuple[float, float]:
+        env_state = self._ensure_env(env)
+        return env_state.discrimination, env_state.difficulty
+
+    def challenge_params(self, challenge_id: str) -> Tuple[float, int]:
+        chal = self._challenge_state.get(challenge_id)
+        if chal is None:
+            return 0.0, 0
+        return chal.bias, chal.count
+
+
 # Central env registry
 from .envs import ENVS
 
@@ -302,13 +486,27 @@ FOLDER  = os.getenv("R2_FOLDER", "affine" )
 BUCKET  = os.getenv("R2_BUCKET_ID", "80f15715bb0b882c9e967c13e677ed7d" )
 ACCESS  = os.getenv("R2_WRITE_ACCESS_KEY_ID", "ff3f4f078019b064bfb6347c270bee4d")
 SECRET  = os.getenv("R2_WRITE_SECRET_ACCESS_KEY", "a94b20516013519b2959cbbb441b9d1ec8511dce3c248223d947be8e85ec754d")
+REGION  = os.getenv("R2_REGION", "auto")
 ENDPOINT = f"https://{BUCKET}.r2.cloudflarestorage.com"
 
-get_client_ctx = lambda: get_session().create_client(
-    "s3", endpoint_url=ENDPOINT,
-    aws_access_key_id=ACCESS, aws_secret_access_key=SECRET,
-    config=Config(max_pool_connections=256)
+_S3_SIGNATURE = os.getenv("R2_SIGNATURE_VERSION", "s3v4")
+_MAX_POOL = int(os.getenv("R2_MAX_POOL_CONNECTIONS", "256"))
+S3_CLIENT_CONFIG = Config(
+    signature_version=_S3_SIGNATURE,
+    max_pool_connections=_MAX_POOL,
 )
+
+def get_client_ctx():
+    """Return an aiobotocore S3 client configured for Cloudflare R2."""
+
+    return get_session().create_client(
+        "s3",
+        region_name=REGION,
+        endpoint_url=ENDPOINT,
+        aws_access_key_id=ACCESS,
+        aws_secret_access_key=SECRET,
+        config=S3_CLIENT_CONFIG,
+    )
 
 CACHE_DIR = Path(os.getenv("AFFINE_CACHE_DIR",
                  Path.home() / ".cache" / "affine" / "blocks"))
@@ -327,8 +525,46 @@ except ModuleNotFoundError:
 # ── Index helpers ───────────────────────────────────────────────────────────
 async def _index() -> list[str]:
     async with get_client_ctx() as c:
-        r = await c.get_object(Bucket=FOLDER, Key=INDEX_KEY)
-        return json.loads(await r["Body"].read())
+        try:
+            r = await c.get_object(Bucket=FOLDER, Key=INDEX_KEY)
+        except c.exceptions.NoSuchKey:
+            logger.info("R2 index %s missing; attempting prefix scan under %s", INDEX_KEY, RESULT_PREFIX)
+            paginator = c.get_paginator("list_objects_v2")
+            keys: list[str] = []
+            prefix_candidates = [RESULT_PREFIX]
+            if RESULT_PREFIX and not RESULT_PREFIX.startswith("results"):
+                prefix_candidates.append(RESULT_PREFIX.lstrip("/"))
+            prefix_candidates.append("")  # fallback to whole bucket
+
+            for prefix in prefix_candidates:
+                paginate_kwargs = {"Bucket": FOLDER}
+                if prefix:
+                    paginate_kwargs["Prefix"] = prefix
+                async for page in paginator.paginate(**paginate_kwargs):
+                    for item in page.get("Contents", []):
+                        key = item.get("Key")
+                        if isinstance(key, str):
+                            keys.append(key)
+                if keys:
+                    logger.info("Found %d R2 objects using prefix '%s'", len(keys), prefix)
+                    break
+
+            if not keys:
+                raise RuntimeError(
+                    "No R2 result shards found; index missing and prefix scan returned no objects. "
+                    "Verify R2 bucket (%s) contains validator results." % FOLDER
+                )
+
+            return sorted(keys)
+
+        payload = await r["Body"].read()
+        data = json.loads(payload)
+        if isinstance(data, dict) and "files" in data:
+            files = data.get("files") or []
+            return [f.get("key") for f in files if isinstance(f, dict) and f.get("key")]
+        if isinstance(data, list):
+            return [str(item) for item in data]
+        raise RuntimeError(f"Unsupported index payload format for {INDEX_KEY}: {type(data).__name__}")
 
 async def _update_index(k: str) -> None:
     async with get_client_ctx() as c:
@@ -414,8 +650,203 @@ async def dataset(
             except Exception:
                 pass
     bar.close()
-    
-    
+
+
+async def rollouts(
+    tail: int,
+    *,
+    max_concurrency: int = 10,
+) -> AsyncIterator["Result"]:
+    """Alias for ``dataset`` to match the newer validator code path."""
+
+    async for item in dataset(tail, max_concurrency=max_concurrency):
+        yield item
+
+
+# --------------------------------------------------------------------------- #
+#                     R2 query helpers for validator tooling                  #
+# --------------------------------------------------------------------------- #
+_R2_SHARD_ROWS_CACHE: Dict[str, Tuple[str, List[Dict[str, Any]]]] = {}
+_R2_SHARD_LOCKS: Dict[str, asyncio.Lock] = {}
+_R2_FETCH_SEMS: Dict[int, asyncio.Semaphore] = {}
+
+
+def _pair_key(hotkey: Any, revision: Any) -> Optional[Tuple[str, str]]:
+    """Normalise (hotkey, revision) pairs for comparisons."""
+
+    if hotkey is None:
+        return None
+    hk = str(hotkey)
+    rev = "" if revision is None else str(revision)
+    return hk, rev
+
+
+def _get_fetch_sem() -> asyncio.Semaphore:
+    """Reuse a per-loop semaphore for throttling shard downloads."""
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.get_event_loop()
+    key = id(loop)
+    sem = _R2_FETCH_SEMS.get(key)
+    if sem is None:
+        max_conc = int(os.getenv("AFFINE_R2_FETCH_CONCURRENCY", "8"))
+        sem = asyncio.Semaphore(max(1, max_conc))
+        _R2_FETCH_SEMS[key] = sem
+    return sem
+
+
+async def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
+    """Load a JSONL cache shard into memory on a background thread."""
+
+    def _read() -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        with path.open("rb") as f:
+            for raw in f:
+                raw = raw.strip()
+                if raw:
+                    rows.append(_loads(raw))
+        return rows
+
+    return await asyncio.to_thread(_read)
+
+
+async def _load_shard_rows(key: str) -> Tuple[dt.datetime, List[Dict[str, Any]]]:
+    """Return cached rows and last-modified timestamp for an R2 shard key."""
+
+    lock = _R2_SHARD_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _R2_SHARD_LOCKS[key] = lock
+
+    async with lock:
+        sem = _get_fetch_sem()
+        path = await _cache_shard(key, sem)
+        mod_path = path.with_suffix(".modified")
+        mod_iso = mod_path.read_text().strip()
+        cache_entry = _R2_SHARD_ROWS_CACHE.get(key)
+        if cache_entry and cache_entry[0] == mod_iso:
+            rows = cache_entry[1]
+        else:
+            rows = await _read_jsonl(path)
+            _R2_SHARD_ROWS_CACHE[key] = (mod_iso, rows)
+        timestamp = dt.datetime.fromisoformat(mod_iso)
+        return timestamp, rows
+
+
+def _normalize_r2_row(
+    raw: Dict[str, Any],
+    *,
+    key: str,
+    index: int,
+    last_modified: dt.datetime,
+) -> Optional[Dict[str, Any]]:
+    """Project a raw R2 result payload into the database-like row shape."""
+
+    challenge = raw.get("challenge") or {}
+    evaluation = raw.get("evaluation") or {}
+    response = raw.get("response") or {}
+    miner = raw.get("miner") or {}
+
+    env_name = challenge.get("env") or evaluation.get("env")
+    if env_name is None:
+        return None
+    env_name = str(env_name)
+
+    env_version = challenge.get("extra", {}).get("env_version")
+    if env_version is None:
+        env_cls = ENVS.get(env_name)
+        env_version = getattr(env_cls, "__version__", None) if env_cls else None
+
+    hotkey = miner.get("hotkey") or raw.get("hotkey")
+    if hotkey is None:
+        return None
+    hotkey_str = str(hotkey)
+
+    revision = miner.get("revision")
+    revision_str = None if revision is None else str(revision)
+
+    model = miner.get("model")
+    uid = miner.get("uid")
+    miner_block = miner.get("block")
+
+    challenge_id = challenge.get("challenge_id")
+    score_val = evaluation.get("score")
+    try:
+        score = float(score_val) if score_val is not None else None
+    except (TypeError, ValueError):
+        score = None
+
+    success_val = response.get("success")
+    success = None if success_val is None else bool(success_val)
+
+    return {
+        "env_name": env_name,
+        "env_version": env_version,
+        "uid": uid,
+        "hotkey": hotkey_str,
+        "model": model,
+        "revision": revision_str,
+        "challenge_id": challenge_id,
+        "score": score,
+        "success": success,
+        "miner_block": miner_block,
+        "signer_hotkey": raw.get("hotkey"),
+        "result_version": raw.get("version"),
+        "r2_key": key,
+        "r2_last_modified": last_modified,
+        "_order": (last_modified, index),
+    }
+
+
+async def _iter_r2_rows(
+    *,
+    pairs: set[Tuple[str, str]],
+    env_name: Optional[str],
+    env_version: Optional[str],
+    order: Literal["asc", "desc"],
+) -> AsyncIterator[Dict[str, Any]]:
+    """Yield filtered R2 rows matching the supplied miner revisions."""
+
+    if not pairs:
+        return
+
+    keys = sorted(await _index())
+    key_iter: Iterable[str]
+    if order == "desc":
+        key_iter = reversed(keys)
+    else:
+        key_iter = keys
+
+    for key in key_iter:
+        last_modified, rows = await _load_shard_rows(key)
+        idx_iter = range(len(rows)) if order == "asc" else range(len(rows) - 1, -1, -1)
+        for idx in idx_iter:
+            row = _normalize_r2_row(rows[idx], key=key, index=idx, last_modified=last_modified)
+            if row is None:
+                continue
+            if env_name is not None and row["env_name"] != env_name:
+                continue
+            if env_version is not None and row.get("env_version") != env_version:
+                continue
+            rev_key = (row["hotkey"], "" if row["revision"] is None else str(row["revision"]))
+            if rev_key not in pairs:
+                continue
+            yield row
+
+
+def _normalise_pairs(pairs: Sequence[Tuple[str, Optional[str]]]) -> set[Tuple[str, str]]:
+    """Convert user-supplied (hotkey, revision) tuples into canonical keys."""
+
+    normalised: set[Tuple[str, str]] = set()
+    for hotkey, revision in pairs:
+        key = _pair_key(hotkey, revision)
+        if key is not None:
+            normalised.add(key)
+    return normalised
+
+
 # --------------------------------------------------------------------------- #
 async def sign_results( wallet, results ):
     try:
@@ -679,6 +1110,501 @@ async def miners(
     return output
 
 
+async def get_miners(
+    uids: Optional[Union[int, List[int]]] = None,
+    netuid: int = NETUID,
+    meta: object = None,
+) -> Dict[int, Miner]:
+    """Alias retained for backwards compatibility with the IRT validator code."""
+    return await miners(uids=uids, netuid=netuid, meta=meta)
+
+
+async def fetch_recent_results(
+    *,
+    pairs: List[Tuple[str, str]],
+    env_name: Optional[str] = None,
+    env_version: Optional[str] = None,
+    limit: int = 1000,
+    ascending: bool = True,
+) -> List[Dict[str, Any]]:
+    """Fetch recent validator results directly from R2 storage."""
+
+    if not pairs or limit <= 0:
+        return []
+
+    pair_keys = _normalise_pairs(pairs)
+    if not pair_keys:
+        return []
+
+    collected: List[Dict[str, Any]] = []
+    async for row in _iter_r2_rows(
+        pairs=pair_keys,
+        env_name=env_name,
+        env_version=env_version,
+        order="desc",
+    ):
+        collected.append(row)
+        if len(collected) >= limit:
+            break
+
+    if not collected:
+        return []
+
+    collected.sort(key=lambda r: r["_order"], reverse=not ascending)
+    for row in collected:
+        row.pop("_order", None)
+    return collected
+
+
+async def aggregate_success_by_env(
+    *,
+    env_name: str,
+    pairs: List[Tuple[str, str]],
+    env_version: Optional[str] = None,
+) -> Dict[str, Dict[str, float]]:
+    if not pairs:
+        return {}
+
+    pair_keys = _normalise_pairs(pairs)
+    if not pair_keys:
+        return {}
+
+    totals: Dict[str, Dict[str, float]] = {}
+    async for row in _iter_r2_rows(
+        pairs=pair_keys,
+        env_name=env_name,
+        env_version=env_version,
+        order="asc",
+    ):
+        if row.get("success") is True:
+            hotkey = row["hotkey"]
+            stats = totals.setdefault(hotkey, {"n_success": 0.0, "sum_score": 0.0})
+            stats["n_success"] += 1.0
+            score = row.get("score")
+            if score is not None:
+                stats["sum_score"] += float(score)
+    return totals
+
+
+async def aggregate_scores_by_env(
+    *,
+    env_name: str,
+    pairs: List[Tuple[str, str]],
+    env_version: Optional[str] = None,
+) -> Dict[str, Dict[str, float]]:
+    if not pairs:
+        return {}
+
+    pair_keys = _normalise_pairs(pairs)
+    if not pair_keys:
+        return {}
+
+    totals: Dict[str, Dict[str, float]] = {}
+    async for row in _iter_r2_rows(
+        pairs=pair_keys,
+        env_name=env_name,
+        env_version=env_version,
+        order="asc",
+    ):
+        score = row.get("score")
+        if score is None:
+            continue
+        hotkey = row["hotkey"]
+        stats = totals.setdefault(hotkey, {"n_total": 0.0, "sum_score": 0.0, "sum_sq_score": 0.0})
+        score_f = float(score)
+        stats["n_total"] += 1.0
+        stats["sum_score"] += score_f
+        stats["sum_sq_score"] += score_f * score_f
+    return totals
+
+
+# --------------------------------------------------------------------------- #
+#                         Validator scoring pipeline                          #
+# --------------------------------------------------------------------------- #
+
+
+def _mk_key(hk: Union[str, Any], rev: Optional[str]) -> Tuple[str, str]:
+    return (str(hk), str(rev) if rev is not None else "")
+
+
+def _ingest_observations(
+    irt: OnlineIRT2PL,
+    observations: Iterable[Dict[str, Any]],
+    *,
+    pair_keys: Collection[Tuple[str, str]],
+) -> Tuple[int, DefaultDict[Tuple[str, str], DefaultDict[str, int]]]:
+    counts_pair: DefaultDict[Tuple[str, str], DefaultDict[str, int]] = defaultdict(lambda: defaultdict(int))
+    total_rows = 0
+    for obs in observations:
+        miner_key = _mk_key(obs["hotkey"], obs["revision"])
+        if miner_key not in pair_keys:
+            continue
+        success_flag = obs["success"]
+        if success_flag is None:
+            success_flag = 1.0 if (obs.get("score") or 0.0) > 0.0 else 0.0
+        else:
+            success_flag = 1.0 if success_flag else 0.0
+        env = obs["env"]
+        irt.observe(
+            miner_key=miner_key,
+            env=env,
+            success=success_flag,
+            challenge_id=obs.get("challenge_id"),
+        )
+        counts_pair[miner_key][env] += 1
+        total_rows += 1
+    return total_rows, counts_pair
+
+
+def _compute_predictions(
+    *,
+    irt: OnlineIRT2PL,
+    env_names: Sequence[str],
+    meta_hotkeys: Sequence[str],
+    key_by_hotkey: Mapping[str, Tuple[str, str]],
+    counts_pair: Mapping[Tuple[str, str], Mapping[str, int]],
+) -> Tuple[Dict[str, Dict[str, int]], Dict[str, Dict[str, float]], Dict[str, Dict[str, float]]]:
+    cnt: Dict[str, Dict[str, int]] = {}
+    mean: Dict[str, Dict[str, float]] = {}
+    variance: Dict[str, Dict[str, float]] = {}
+    for hk in meta_hotkeys:
+        pair_key = key_by_hotkey.get(hk)
+        cnt_row: Dict[str, int] = {}
+        mean_row: Dict[str, float] = {}
+        var_row: Dict[str, float] = {}
+        for env in env_names:
+            n_obs = 0
+            p = 0.5
+            if pair_key is not None:
+                env_counts = counts_pair.get(pair_key)
+                if env_counts is not None:
+                    n_obs = int(env_counts.get(env, 0))
+                p = irt.predict(miner_key=pair_key, env=env)
+            cnt_row[env] = n_obs
+            mean_row[env] = p
+            var_row[env] = max(0.0, p * (1.0 - p))
+        cnt[hk] = cnt_row
+        mean[hk] = mean_row
+        variance[hk] = var_row
+    return cnt, mean, variance
+
+
+TAIL = 20_000
+EPS_FLOOR = 0.005
+Z_NOT_WORSE = 1.28
+EPS_WIN = 0.008
+Z_WIN = 0.5
+ELIG = 0.03
+
+
+async def get_weights(tail: int = TAIL, scale: float = 1.0):
+    """Compute validator weights using ε-Pareto dominance over env subsets."""
+
+    subtensor = await get_subtensor()
+    meta = await subtensor.metagraph(NETUID)
+    env_names = tuple(str(e) for e in ENVS)
+    n_envs = len(env_names)
+
+    current_miners = await get_miners(meta=meta)
+    prev = {m.hotkey: m for m in current_miners.values()}
+    first_block = {m.hotkey: m.block for m in current_miners.values()}
+    pairs_db = [(mi.hotkey, mi.revision) for mi in current_miners.values()]
+    pair_keys = {_mk_key(hk, rev) for hk, rev in pairs_db}
+    key_by_hotkey = {m.hotkey: _mk_key(m.hotkey, m.revision) for m in current_miners.values()}
+
+    irt = OnlineIRT2PL(env_names=env_names)
+    observations: List[Dict[str, Any]] = []
+
+    for env_name in env_names:
+        env_cls = ENVS.get(env_name)
+        env_version = getattr(env_cls, "__version__", None)
+        try:
+            rows = await fetch_recent_results(
+                pairs=pairs_db,
+                env_name=env_name,
+                env_version=env_version,
+                limit=tail,
+                ascending=True,
+            )
+            for row in rows:
+                observations.append(
+                    {
+                        "env": str(row.get("env_name", env_name)),
+                        "hotkey": row.get("hotkey"),
+                        "revision": row.get("revision"),
+                        "success": row.get("success"),
+                        "score": row.get("score"),
+                        "challenge_id": row.get("challenge_id"),
+                        "ts": row.get("r2_last_modified"),
+                    }
+                )
+        except Exception as exc:
+            logger.warning("Error pulling recent results for env %s: %s", env_name, exc)
+
+    observations.sort(key=lambda r: r["ts"] or dt.datetime.min)
+    total_rows, counts_pair = _ingest_observations(irt, observations, pair_keys=pair_keys)
+    cnt, mean, variance = _compute_predictions(
+        irt=irt,
+        env_names=env_names,
+        meta_hotkeys=meta.hotkeys,
+        key_by_hotkey=key_by_hotkey,
+        counts_pair=counts_pair,
+    )
+
+    active_hks = list(prev.keys())
+    for env in env_names:
+        max_e = max((mean.get(hk, {}).get(env, 0.0) for hk in active_hks), default=0.0)
+        MAXENV.labels(env=env).set(max_e)
+        a_env, b_env = irt.env_params(env)
+        logger.debug("[IRT] env=%s a=%.3f b=%.3f", env, a_env, b_env)
+
+    logger.info("Computed online 2PL IRT & updated MAXENV (rows=%d, miners=%d).", total_rows, len(active_hks))
+
+    required = {
+        e: 10 + int(ELIG * max((cnt[hk][e] for hk in active_hks), default=0))
+        for e in env_names
+    }
+    eligible = {hk for hk in active_hks if all(cnt[hk][e] >= required[e] for e in env_names)}
+
+    def _var(hk: str, e: str) -> float:
+        n = cnt[hk][e]
+        if n <= 1:
+            return 0.0
+        return variance[hk][e]
+
+    def thr_not_worse(a_i: float, n_i: int, v_i: float, a_j: float, n_j: int, v_j: float) -> float:
+        if Z_NOT_WORSE <= 0:
+            return EPS_FLOOR
+        se = math.sqrt((v_i / max(n_i, 1)) + (v_j / max(n_j, 1)))
+        return max(EPS_FLOOR, Z_NOT_WORSE * se)
+
+    def thr_better(a_i: float, n_i: int, v_i: float, a_j: float, n_j: int, v_j: float, nw: float) -> float:
+        if Z_WIN > 0:
+            se = math.sqrt((v_i / max(n_i, 1)) + (v_j / max(n_j, 1)))
+            t = max(EPS_WIN, Z_WIN * se)
+        else:
+            t = EPS_WIN
+        return min(t, nw)
+
+    def dominates_on(a: str, b: str, subset: Sequence[str]) -> bool:
+        not_worse_all = True
+        better_any = False
+        tie_all = True
+        for e in subset:
+            ai, aj = mean[a][e], mean[b][e]
+            ni, nj = cnt[a][e], cnt[b][e]
+            vi, vj = _var(a, e), _var(b, e)
+            nw = thr_not_worse(ai, ni, vi, aj, nj, vj)
+            bet = thr_better(ai, ni, vi, aj, nj, vj, nw)
+
+            if ai < aj - nw:
+                not_worse_all = False
+            if ai >= aj + bet:
+                better_any = True
+            if abs(ai - aj) > nw:
+                tie_all = False
+
+        if not_worse_all and better_any:
+            return True
+        if tie_all and first_block.get(a, float("inf")) < first_block.get(b, float("inf")):
+            return True
+        return False
+
+    dom_full = defaultdict(int)
+    pool_for_dom = eligible if eligible else set(active_hks)
+    for a, b in itertools.permutations(pool_for_dom, 2):
+        if dominates_on(a, b, env_names):
+            dom_full[a] += 1
+    logger.info("Computed ε-dominance counts (full env set).")
+
+    def ts(hk: str) -> int:
+        return int(first_block.get(hk, prev[hk].block))
+
+    best = max(pool_for_dom, key=lambda hk: (dom_full.get(hk, 0), -ts(hk))) if pool_for_dom else active_hks[0]
+    best_uid = meta.hotkeys.index(best)
+
+    def layer_weights(n: int, kappa: float):
+        weights = {1: kappa}
+        for s in range(2, n + 1):
+            weights[s] = kappa * (2**s)
+        return weights
+
+    def subset_winner(env_subset: Sequence[str]):
+        dom_local = defaultdict(int)
+        for x, y in itertools.permutations(pool_for_dom, 2):
+            if dominates_on(x, y, env_subset):
+                dom_local[x] += 1
+        return max(pool_for_dom, key=lambda hk: (dom_local.get(hk, 0), -ts(hk)))
+
+    layer_points = {hk: defaultdict(float) for hk in active_hks}
+    score = defaultdict(float)
+    env_winners = {e: subset_winner((e,)) for e in env_names}
+
+    k_by_layer = layer_weights(n_envs, scale)
+    for s in range(1, n_envs + 1):
+        for env_subset in itertools.combinations(env_names, s):
+            winner = subset_winner(env_subset)
+            score[winner] += k_by_layer[s]
+            layer_points[winner][s] += k_by_layer[s]
+
+    if not eligible:
+        logger.warning("No eligible miners; assigning weight 1.0 to canonical best.")
+        for uid, hk in enumerate(meta.hotkeys):
+            WEIGHT.labels(uid=uid).set(1.0 if hk == best else 0.0)
+            for env in env_names:
+                a = mean[hk][env]
+                if cnt[hk][env] > 0:
+                    SCORE.labels(uid=uid, env=env).set(a)
+
+        hdr = (
+            ["UID", "Model", "Rev"]
+            + [f"{e}" for e in env_names]
+            + [f"L{s}" for s in range(1, n_envs + 1)]
+            + ["Pts", "Elig", "Wgt"]
+        )
+
+        def row(hk: str):
+            m = prev[hk]
+            w = 1.0 if hk == best else 0.0
+            model_name = str(m.model)[:50]
+            env_cols = []
+            for env in env_names:
+                base = f"{100 * mean[hk][env]:.2f}/{cnt[hk][env]}"
+                env_cols.append(f"*{base}*" if hk == env_winners.get(env) else base)
+            return [
+                m.uid,
+                model_name,
+                str(m.revision)[:5],
+                *env_cols,
+                *[f"{layer_points[hk][s]:.1f}" for s in range(1, n_envs + 1)],
+                f"{score.get(hk, 0.0):.2f}",
+                "Y" if hk in eligible else "N",
+                f"{w:.4f}",
+            ]
+
+        rows = sorted((row(hk) for hk in active_hks), key=lambda r: (r[-3], r[0]), reverse=True)
+        print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
+        return [best_uid], [1.0]
+
+    total_points = sum(score[hk] for hk in eligible)
+    if total_points <= 0:
+        logger.warning("Combinatoric scoring returned zero total; falling back to canonical best.")
+        weight_by_hk = {hk: (1.0 if hk == best else 0.0) for hk in eligible}
+    else:
+        weight_by_hk = {hk: (score[hk] / total_points) for hk in eligible}
+
+    hdr = (
+        ["UID", "Model", "Rev"]
+        + [f"{e}" for e in env_names]
+        + [f"L{s}" for s in range(1, n_envs + 1)]
+        + ["Pts", "Elig", "Wgt"]
+    )
+
+    def row(hk: str):
+        m = prev[hk]
+        w = weight_by_hk.get(hk, 0.0)
+        model_name = str(m.model)[:50]
+        env_cols = []
+        for env in env_names:
+            base = f"{100 * mean[hk][env]:.2f}/{cnt[hk][env]}"
+            env_cols.append(f"*{base}*" if hk == env_winners.get(env) else base)
+        return [
+            m.uid,
+            model_name[:30],
+            str(m.revision)[:5],
+            *env_cols,
+            *[f"{layer_points[hk][s]:.1f}" for s in range(1, n_envs + 1)],
+            f"{score.get(hk, 0.0):.2f}",
+            "Y" if hk in eligible else "N",
+            f"{w:.4f}",
+        ]
+
+    ranked_rows = sorted((row(hk) for hk in eligible), key=lambda r: float(r[-3]), reverse=True)
+    unranked_rows = sorted((row(hk) for hk in active_hks if hk not in eligible), key=lambda r: float(r[-3]), reverse=True)
+    rows = ranked_rows + unranked_rows
+    print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
+
+    for uid, hk in enumerate(meta.hotkeys):
+        WEIGHT.labels(uid=uid).set(weight_by_hk.get(hk, 0.0))
+        for env in env_names:
+            a = mean[hk][env]
+            if cnt[hk][env] > 0:
+                SCORE.labels(uid=uid, env=env).set(a)
+
+    eligible_uids = [meta.hotkeys.index(hk) for hk in eligible]
+    uids = [u for u in eligible_uids if u != best_uid] + [best_uid]
+    weights = [weight_by_hk.get(meta.hotkeys[u], 0.0) for u in uids]
+    return uids, weights
+
+
+def validate():
+    coldkey = get_conf("BT_WALLET_COLD", "default")
+    hotkey = get_conf("BT_WALLET_HOT", "default")
+    wallet = bt.wallet(name=coldkey, hotkey=hotkey)
+
+    async def _run():
+        LAST = 0
+        TEMPO = 360
+        INNER_TEMPO = 100
+        subtensor = None
+        while True:
+            try:
+                global HEARTBEAT
+                HEARTBEAT = time.monotonic()
+                if subtensor is None:
+                    subtensor = await get_subtensor()
+                block = await subtensor.get_current_block()
+                interval = (TEMPO + 1 + NETUID + 1 + block) % (TEMPO + 1) % INNER_TEMPO
+                if interval != 0:
+                    logger.debug(
+                        "Waiting ... (%s + 1 + %s + 1 + %s) %% (%s + 1) %% %s = %s != 0",
+                        TEMPO,
+                        NETUID,
+                        block,
+                        TEMPO,
+                        INNER_TEMPO,
+                        interval,
+                    )
+                    await subtensor.wait_for_block()
+                    continue
+
+                uids, weights = await get_weights()
+
+                logger.info("Setting weights ...")
+                await retry_set_weights(wallet, uids=uids, weights=weights, retry=3)
+                subtensor = await get_subtensor()
+                set_block = await subtensor.get_current_block()
+                LASTSET.set_function(lambda: set_block - LAST)
+                LAST = block
+
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:  # pragma: no cover - operational loop
+                traceback.print_exc()
+                logger.info("Error in validator loop: %s. Continuing ...", exc)
+                subtensor = None
+                await asyncio.sleep(10)
+                continue
+
+    async def _main():
+        await asyncio.gather(_run(), watchdog(timeout=60 * 20))
+
+    asyncio.run(_main())
+def weights_cmd():
+    asyncio.run(get_weights())
+
+
+validator = SimpleNamespace(
+    OnlineIRT2PL=OnlineIRT2PL,
+    _mk_key=_mk_key,
+    _ingest_observations=_ingest_observations,
+    _compute_predictions=_compute_predictions,
+    get_weights=get_weights,
+    validate=validate,
+    weights=weights_cmd,
+)
+
+
 # --------------------------------------------------------------------------- #
 #                               CLI                                           #
 # --------------------------------------------------------------------------- #
@@ -688,6 +1614,9 @@ def cli(verbose):
     """Affine CLI"""
     setup_logging(verbose)
     
+cli.add_command(click.command("validate")(validate))
+cli.add_command(click.command("weights")(weights_cmd))
+
 # --------------------------------------------------------------------------- #
 #                               Watchdog                                      #
 # --------------------------------------------------------------------------- #
@@ -1122,387 +2051,6 @@ async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[f
         logger.warning(f"Signer call timed out: {e}. Not falling back to local because validator has no wallet.")
         return
     
-# --- Scoring hyperparameters --------------------------------------------------
-TAIL = 20_000
-ALPHA = 0.9
-EPS_FLOOR   = 0.005
-Z_NOT_WORSE = 1.28
-EPS_WIN     = 0.008
-Z_WIN       = 0.5
-ELIG        = 0.03 
-
-async def get_weights(tail: int = TAIL, scale: float = 1):
-    """
-    Compute miner weights using ε-Pareto dominance and combinatoric subset winners.
-
-    Pipeline
-      1) Ingest last `tail` blocks → per-miner per-env accuracy.
-      2) Determine eligibility (>=90% of per-env max count AND must be queryable).
-      3) Global ε-dominance (all envs) for canonical 'best' (for tie breaks / summaries).
-      4) Combinatoric scoring:
-           - For every non-empty subset S of ENVS, pick the ε-Pareto winner on S.
-           - Award K_|S| where K_1 = scale, K_s = C(N, s-1)*K_{s-1}.
-         Fallback if no dominance edges on S: earliest version (earlier block wins).
-      5) Normalize scores over eligibles to produce weights. Metrics + summary emitted.
-
-    Returns:
-      (uids, weights): list of eligible UIDs (best last) and their weights (sum to 1).
-    """
-
-    # --- fetch + prune --------------------------------------------------------
-    st = await get_subtensor()
-    blk = await st.get_current_block()
-    logger.info(f"Pruning {tail} blocks from {blk - tail} to {blk}")
-    await prune(tail=tail)
-
-    meta = await st.metagraph(NETUID)
-    BASE_HK = meta.hotkeys[0]
-    N_envs = len(ENVS)
-    
-    # --- get currently queryable miners ---------------------------------------
-    queryable_miners = await miners(meta=meta)
-    queryable_hks = {m.hotkey for m in queryable_miners.values()}
-    logger.info(f"Found {len(queryable_hks)} queryable miners (hot, valid chute, not gated)")
-
-    # Tallies for all known hotkeys (so metrics update is safe even if some have no data)
-    cnt   = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env counts
-    succ  = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env correct (0/1 or [0,1])
-    prev  = {}                                                # last sample per hk
-    v_id  = {}                                                # (model, revision) per hk
-    first_block = {}                                          # earliest block for current version
-
-    # Pre-seed earliest commit block per miner from on-chain commitments
-    try:
-        commits = await st.get_all_revealed_commitments(NETUID)
-        for uid, hk in enumerate(meta.hotkeys):
-            if hk in commits:
-                blk, _ = commits[hk][-1]
-                first_block[hk] = 0 if uid == 0 else int(blk)
-    except Exception:
-        pass
-
-    # --- ingest ---------------------------------------------------------------
-    logger.info(f"Loading data from {blk - tail} to {blk}")
-    async for c in dataset(tail=tail):
-        NRESULTS.inc()
-        hk, env = c.miner.hotkey, c.challenge.env.name
-
-        # keep the base hk; otherwise require model family
-        try:
-            name = c.miner.model.split("/", 1)[1].lower()
-        except Exception:
-            name = str(c.miner.model).lower()
-        if hk not in cnt or (hk != BASE_HK and not name.startswith("affine")):
-            continue
-
-        cur_vid = (c.miner.model, c.miner.revision)
-
-        # On version change, reset ALL env streams and timestamp to current block
-        if v_id.get(hk) != cur_vid:
-            v_id[hk] = cur_vid
-            first_block[hk] = c.miner.block
-            for e in ENVS:
-                cnt[hk][e] = 0
-                succ[hk][e] = 0
-        else:
-            # Keep earliest commit block for the active version
-            try:
-                fb = int(first_block.get(hk, c.miner.block)) if first_block.get(hk) is not None else int(c.miner.block)
-                cb = int(c.miner.block) if c.miner.block is not None else fb
-                first_block[hk] = fb if fb <= cb else cb
-            except Exception:
-                pass
-
-        # accumulate on successes.
-        prev[hk] = c
-        if c.response.success:
-            cnt[hk][env]  += 1
-            succ[hk][env] += float(c.evaluation.score)
-
-    logger.info("Collected results.")
-
-    if not prev:
-        logger.warning("No results collected; defaulting to uid 0")
-        return [0], [1.0]
-
-    # --- accuracy + MAXENV ----------------------------------------------------
-    acc = {
-        hk: {e: (succ[hk][e] / cnt[hk][e] if cnt[hk][e] else 0.0) for e in ENVS}
-        for hk in meta.hotkeys
-    }
-
-    active_hks = list(prev.keys())
-    for e in ENVS:
-        max_e = max((acc[hk][e] for hk in active_hks), default=0.0)
-        MAXENV.labels(env=e).set(max_e)
-    logger.info("Computed accuracy & updated MAXENV.")
-
-    # --- eligibility: must be queryable AND meet sample requirements ---------
-    required = {}
-    for e in ENVS:
-        max_cnt = max((cnt[hk][e] for hk in active_hks), default=0)
-        max_cnt = min(max_cnt, 2000)
-        required[e] = 10 + int(ELIG * max_cnt)
-    # Only eligible if: 1) currently queryable, 2) meets sample requirements
-    eligible = {hk for hk in active_hks 
-                if hk in queryable_hks and all(cnt[hk][e] >= required[e] for e in ENVS)}
-    logger.info(f"Eligible miners: {len(eligible)} (from {len(active_hks)} active, {len(queryable_hks)} queryable)")
-
-    # --- ε-Pareto dominance helpers ------------------------------------------
-    def thr_not_worse(a_i: float, n_i: int, a_j: float, n_j: int) -> float:
-        """Tolerance for 'not worse' on an env: max(EPS_FLOOR, Z * SE_diff) with capped n to blunt volume advantage."""
-        if Z_NOT_WORSE <= 0:
-            return EPS_FLOOR
-        n_i_eff = min(int(n_i), 1000)
-        n_j_eff = min(int(n_j), 1000)
-        var = (a_i * (1 - a_i)) / max(n_i_eff, 1) + (a_j * (1 - a_j)) / max(n_j_eff, 1)
-        return max(EPS_FLOOR, Z_NOT_WORSE * math.sqrt(var))
-
-    def thr_better(a_i: float, n_i: int, a_j: float, n_j: int, nw: float) -> float:
-        """
-        Margin to claim 'better on at least one env'. Kept ≤ 'not worse' tolerance.
-        Floor-based by default; set Z_WIN>0 to scale with SE_diff.
-        """
-        if Z_WIN > 0:
-            n_i_eff = min(int(n_i), 1000)
-            n_j_eff = min(int(n_j), 1000)
-            var = (a_i * (1 - a_i)) / max(n_i_eff, 1) + (a_j * (1 - a_j)) / max(n_j_eff, 1)
-            t = max(EPS_WIN, Z_WIN * math.sqrt(var))
-        else:
-            t = EPS_WIN
-        return min(t, nw)
-
-    def dominates_on(a: str, b: str, subset) -> bool:
-        """
-        True iff 'a' is not-worse than 'b' on every env in `subset` (within thr_not_worse),
-        and strictly better on at least one env by thr_better. Full ε-ties break by earlier start.
-        """
-        not_worse_all = True
-        better_any    = False
-        tie_all       = True
-        for e in subset:
-            ai, aj = acc[a][e], acc[b][e]
-            ni, nj = cnt[a][e], cnt[b][e]
-            nw  = thr_not_worse(ai, ni, aj, nj)
-            bet = thr_better(ai, ni, aj, nj, nw)
-
-            if ai < aj - nw:
-                not_worse_all = False
-            if ai >= aj + bet:
-                better_any = True
-            if abs(ai - aj) > nw:
-                tie_all = False
-
-        if not_worse_all and better_any:
-            return True
-        if tie_all and first_block.get(a, float("inf")) < first_block.get(b, float("inf")):
-            return True
-        return False
-
-    # Global dominance (full ENVS) for summary + canonical "best"
-    dom_full = defaultdict(int)
-    # Pool for dominance should be eligible miners, or queryable miners if no eligible ones
-    pool_for_dom = eligible if eligible else (queryable_hks & set(active_hks))
-    for a, b in itertools.permutations(pool_for_dom, 2):
-        if dominates_on(a, b, ENVS):
-            dom_full[a] += 1
-    logger.info("Computed ε-dominance counts (full env set).")
-
-    def ts(hk: str) -> int:
-        """Block-number timestamp; prefer earliest commit"""
-        return int(first_block[hk]) if hk in first_block else float('inf')
-
-    # Best should be from queryable miners only
-    best_candidates = pool_for_dom if pool_for_dom else (queryable_hks if queryable_hks else active_hks[:1])
-    best = max(best_candidates, key=lambda hk: (dom_full.get(hk, 0), -ts(hk))) if best_candidates else active_hks[0]
-    best_uid = meta.hotkeys.index(best)
-
-    # --- combinatoric scoring over all non-empty env subsets ------------------
-    def layer_weights(N: int, kappa: float):
-        """Per-subset weights K_s: K_1=kappa; K_s=C(N,s-1)*K_{s-1} for s>=2."""
-        K = {1: kappa}
-        for s in range(2, N + 1):
-            K[s] = kappa * (2**s)
-        return K
-
-    def subset_winner(env_subset):
-        """
-        Winner on env_subset via ε-Pareto. If no dominance edges, fall back to:
-          earliest version start block (earlier block wins).
-        """
-        dom_local = defaultdict(int)
-        for x, y in itertools.permutations(pool_for_dom, 2):
-            if dominates_on(x, y, env_subset):
-                dom_local[x] += 1
-
-        return max(pool_for_dom, key=lambda hk: (dom_local.get(hk, 0), -ts(hk)))
-
-    # Calculate combinatoric scores for all miners (not just eligible)
-    K = layer_weights(N_envs, scale)
-    score = defaultdict(float)
-    layer_points = {hk: defaultdict(float) for hk in active_hks}
-
-    # --- Find single-env winners for highlighting ----------------------------
-    env_winners = {}
-    for e in ENVS:
-        env_winners[e] = subset_winner((e,))
-
-    # Award K_s to each subset winner
-    for s in range(1, N_envs + 1):
-        for env_subset in itertools.combinations(ENVS, s):
-            w = subset_winner(env_subset)
-            score[w] += K[s]
-            layer_points[w][s] += K[s]
-
-    # If no eligible miners exist, fall back to uid 0 with weight 1.0.
-    if not eligible:
-        logger.warning(f"No eligible miners (queryable={len(queryable_hks)}); assigning weight 1.0 to uid 0.")
-        for uid, hk in enumerate(meta.hotkeys):
-            WEIGHT.labels(uid=uid).set(1.0 if uid == 0 else 0.0)
-            for e in ENVS:
-                a = acc[hk][e]
-                if a > 0:
-                    SCORE.labels(uid=uid, env=e).set(a)
-
-        hdr = (
-            ["UID", "Model", "Rev"]
-            + [f"{e}" for e in ENVS]
-            + [f"L{s}" for s in range(1, N_envs + 1)]
-            + ["Pts", "Elig", "Wgt"]
-        )
-        def row(hk: str):
-            m = prev[hk].miner
-            w = 1.0 if hk == best else 0.0
-            model_name = str(m.model)[:50]
-            env_cols = []
-            for e in ENVS:
-                base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}"
-                if hk == env_winners.get(e):
-                    env_cols.append(f"*{base}*")
-                else:
-                    env_cols.append(base)
-            return [
-                m.uid, model_name, str(m.revision)[:5],
-                *env_cols,
-                *[f"{layer_points[hk][s]:.1f}" for s in range(1, N_envs + 1)],
-                f"{score.get(hk, 0.0):.2f}",
-                "Y" if hk in eligible else "N",
-                f"{w:.4f}",
-            ]
-        rows = sorted((row(hk) for hk in active_hks), key=lambda r: (r[-3], r[0]), reverse=True)
-        print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
-        return [0], [1.0]  # Always return uid 0 when no eligible miners
-
-    # Eligible path: normalize scores to weights over the eligible pool only
-    total_points = sum(score[hk] for hk in eligible)
-    if total_points <= 0:
-        logger.warning("Combinatoric scoring returned zero total; falling back to canonical best.")
-        weight_by_hk = {hk: (1.0 if hk == best else 0.0) for hk in eligible}
-    else:
-        weight_by_hk = {hk: (score[hk] / total_points) for hk in eligible}
-
-    # --- summary printout -----------------------------------------------------
-    hdr = (
-        ["UID", "Model", "Rev"]
-        + [f"{e}" for e in ENVS]
-        + [f"L{s}" for s in range(1, N_envs + 1)]
-        + ["Pts", "Elig", "Wgt"]
-    )
-    def row(hk: str):
-        m = prev[hk].miner
-        w = weight_by_hk.get(hk, 0.0)
-        model_name = str(m.model)[:50]
-        env_cols = []
-        for e in ENVS:
-            base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}"
-            if hk == env_winners.get(e):
-                env_cols.append(f"*{base}*")
-            else:
-                env_cols.append(base)
-        return [
-            m.uid, model_name[:30], str(m.revision)[:5],
-            *env_cols,
-            *[f"{layer_points[hk][s]:.1f}" for s in range(1, N_envs + 1)],
-            f"{score.get(hk, 0.0):.2f}",
-            "Y" if hk in eligible else "N",
-            f"{w:.4f}",
-        ]
-    ranked_rows   = sorted((row(hk) for hk in eligible), key=lambda r: float(r[-3]), reverse=True)
-    unranked_rows = sorted((row(hk) for hk in active_hks if hk not in eligible), key=lambda r: float(r[-3]), reverse=True)
-    rows = ranked_rows + unranked_rows
-    print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
-
-    # --- Prometheus updates ---------------------------------------------------
-    for uid, hk in enumerate(meta.hotkeys):
-        WEIGHT.labels(uid=uid).set(weight_by_hk.get(hk, 0.0))
-        for e in ENVS:
-            a = acc[hk][e]
-            if a > 0:
-                SCORE.labels(uid=uid, env=e).set(a)
-
-    # --- Return weights in a stable shape (best last, as before) -------------
-    eligible_uids = [meta.hotkeys.index(hk) for hk in eligible]
-    uids = [u for u in eligible_uids if u != best_uid] + [best_uid]
-    weights = [weight_by_hk.get(meta.hotkeys[u], 0.0) for u in uids]
-    return uids, weights
-
-
-        
-@cli.command("validate")
-def validate():
-    global HEARTBEAT
-    coldkey = get_conf("BT_WALLET_COLD", "default")
-    hotkey  = get_conf("BT_WALLET_HOT", "default")
-    wallet  = bt.wallet(name=coldkey, hotkey=hotkey)    
-    async def _run():     
-        LAST = 0
-        TEMPO = 100
-        subtensor = None
-        while True:
-            try:
-                # ---------------- Wait for set weights. -----------------
-                HEARTBEAT = time.monotonic()
-                if subtensor is None: subtensor = await get_subtensor()
-                BLOCK = await subtensor.get_current_block()
-                if BLOCK % TEMPO != 0 or BLOCK <= LAST: 
-                    logger.debug(f'Waiting ... {BLOCK} % {TEMPO} == {BLOCK % TEMPO} != 0')
-                    await subtensor.wait_for_block()
-                    continue
-                
-                # ---------------- Set weights. ------------------------
-                uids, weights = await get_weights()
-        
-                # ---------------- Set weights. ------------------------
-                logger.info("Setting weights ...")
-                await retry_set_weights( wallet, uids=uids, weights=weights, retry = 3)
-                subtensor = await get_subtensor()
-                SETBLOCK = await subtensor.get_current_block()
-                LASTSET.set_function(lambda: SETBLOCK - LAST)
-                LAST = BLOCK           
-            
-                # ---------------- Other telemetry ------------------------
-                CACHE.set(sum( f.stat().st_size for f in CACHE_DIR.glob("*.jsonl") if f.is_file()))
-                
-            except asyncio.CancelledError: break
-            except Exception as e:
-                traceback.print_exc()
-                logger.info(f"Error in validator loop: {e}. Continuing ...")
-                subtensor = None  # Force reconnection on next iteration
-                await asyncio.sleep(10)  # Wait before retrying
-                continue
-            
-    async def main():
-        await asyncio.gather(
-            _run(),
-            watchdog(timeout = (60 * 20))
-        )
-    asyncio.run(main())
-    
-    
-@cli.command("weights")
-def weights():
-    asyncio.run(get_weights())
-
 # --------------------------------------------------------------------------- #
 #                              Pull Model                                     #
 # --------------------------------------------------------------------------- #
