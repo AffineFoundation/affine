@@ -311,23 +311,57 @@ from .envs import ENVS
 # ── ENV ──────────────────────────────────────────────────────────────────────
 WINDOW        = int(os.getenv("AFFINE_WINDOW", 20))
 RESULT_PREFIX = "affine/results/"
-INDEX_KEY     = "affine/index.json"
 
-FOLDER  = os.getenv("R2_FOLDER", "affine" )
-BUCKET  = os.getenv("R2_BUCKET_ID", "80f15715bb0b882c9e967c13e677ed7d" )
-ACCESS  = os.getenv("R2_WRITE_ACCESS_KEY_ID", "ff3f4f078019b064bfb6347c270bee4d")
-SECRET  = os.getenv("R2_WRITE_SECRET_ACCESS_KEY", "a94b20516013519b2959cbbb441b9d1ec8511dce3c248223d947be8e85ec754d")
-ENDPOINT = f"https://{BUCKET}.r2.cloudflarestorage.com"
+# Hippius S3 configuration (validator-managed public buckets)
+HIPPIUS_ENDPOINT_URL = os.getenv("HIPPIUS_ENDPOINT_URL", "https://s3.hippius.com")
+HIPPIUS_REGION       = os.getenv("HIPPIUS_REGION", "decentralized")
+HIPPIUS_BUCKET_NAME  = os.getenv("HIPPIUS_BUCKET_NAME", "my-affine-validator-bucket")
+HIPPIUS_SEED_PHRASE  = os.getenv("HIPPIUS_SEED_PHRASE", "")
 
-get_client_ctx = lambda: get_session().create_client(
-    "s3", endpoint_url=ENDPOINT,
-    aws_access_key_id=ACCESS, aws_secret_access_key=SECRET,
-    config=Config(max_pool_connections=256)
-)
+from botocore import UNSIGNED
+import base64
+
+def _hippius_access_keys(seed: str) -> tuple[str, str]:
+    """Return (access_key, secret_key) derived from HIPPIUS seed phrase."""
+    if not seed:
+        return ("", "")
+    return (base64.b64encode(seed.encode("utf-8")).decode("utf-8"), seed)
+
+def create_s3_writer_client(endpoint: str, region: str, seed_phrase: str):
+    """Authenticated client for writing to validator's bucket."""
+    access_key, secret_key = _hippius_access_keys(seed_phrase)
+    return get_session().create_client(
+        "s3",
+        endpoint_url=endpoint,
+        region_name=region,
+        aws_access_key_id=access_key or None,
+        aws_secret_access_key=secret_key or None,
+        config=Config(
+            max_pool_connections=256,
+            s3={"addressing_style": "path"}
+        ),
+    )
+
+def create_s3_reader_client(endpoint: str, region: str):
+    """Anonymous client for reading public buckets."""
+    return get_session().create_client(
+        "s3",
+        endpoint_url=endpoint,
+        region_name=region,
+        config=Config(
+            signature_version=UNSIGNED,
+            max_pool_connections=256,
+            s3={"addressing_style": "path"}
+        ),
+    )
 
 CACHE_DIR = Path(os.getenv("AFFINE_CACHE_DIR",
                  Path.home() / ".cache" / "affine" / "blocks"))
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+# LRU cache for listing validator buckets: hotkey -> (timestamp, [keys])
+LIST_TTL_SECONDS = int(os.getenv("AFFINE_LIST_TTL", "100"))
+_LIST_CACHE: Dict[str, Tuple[float, list[str]]] = {}
 
 def _w(b: int) -> int: return (b // WINDOW) * WINDOW
 
@@ -340,39 +374,34 @@ except ModuleNotFoundError:
     _dumps = lambda o: json.dumps(o, separators=(",", ":")).encode()
     
 # ── Index helpers ───────────────────────────────────────────────────────────
-async def _index() -> list[str]:
-    async with get_client_ctx() as c:
-        r = await c.get_object(Bucket=FOLDER, Key=INDEX_KEY)
-        return json.loads(await r["Body"].read())
-
-async def _update_index(k: str) -> None:
-    async with get_client_ctx() as c:
-        try:
-            r = await c.get_object(Bucket=FOLDER, Key=INDEX_KEY)
-            idx = set(json.loads(await r["Body"].read()))
-        except c.exceptions.NoSuchKey:
-            idx = set()
-        if k not in idx:
-            idx.add(k)
-            await c.put_object(Bucket=FOLDER, Key=INDEX_KEY,
-                               Body=_dumps(sorted(idx)),
-                               ContentType="application/json")
+# Index file is no longer used; validators publish to their own public buckets
+# and discovery is done via on-chain commitments.
 
 # ── Shard cache ─────────────────────────────────────────────────────────────
-async def _cache_shard(key: str, sem: asyncio.Semaphore) -> Path:
-    name, out = Path(key).name, None
-    out = CACHE_DIR / f"{name}.jsonl"; mod = out.with_suffix(".modified")
-    async with sem, get_client_ctx() as c:
+async def _cache_shard(ref: tuple[str, str, str, str], sem: asyncio.Semaphore) -> Path:
+    """
+    Download and cache a shard from a public Hippius bucket.
+
+    ref = (endpoint, region, bucket, key)
+    """
+    endpoint, region, bucket, key = ref
+    name = Path(key).name
+    out = CACHE_DIR / f"{name}.jsonl"
+    mod = out.with_suffix(".modified")
+    async with sem, create_s3_reader_client(endpoint, region) as c:
         if out.exists() and mod.exists():
-            h = await c.head_object(Bucket=FOLDER, Key=key)
-            if h["LastModified"].isoformat() == mod.read_text().strip():
+            h = await c.head_object(Bucket=bucket, Key=key)
+            lm_remote = h["LastModified"].isoformat()
+            if lm_remote == mod.read_text().strip():
                 return out
-        o = await c.get_object(Bucket=FOLDER, Key=key)
-        body, lm = await o["Body"].read(), o["LastModified"].isoformat()
+        o = await c.get_object(Bucket=bucket, Key=key)
+        body = await o["Body"].read()
+        lm_remote = o["LastModified"].isoformat()
     tmp = out.with_suffix(".tmp")
     with tmp.open("wb") as f:
         f.write(b"\n".join(_dumps(i) for i in _loads(body)) + b"\n")
-    os.replace(tmp, out); mod.write_text(lm)
+    os.replace(tmp, out)
+    mod.write_text(lm_remote)
     return out
 
 # ── Local JSON‑Lines iterator ───────────────────────────────────────────────
@@ -395,31 +424,116 @@ async def dataset(
     """
     Stream `Result`s in deterministic order while pre‑downloading future
     shards concurrently.
+
+    Discovery:
+      - Read latest validator commitments from chain.
+      - Expect versioned payload: {"type":"hippius_v1","endpoint","region","bucket"}
+      - List objects anonymously from each public bucket (LRU+TTL cached).
+      - Filter keys in requested block windows and matching "-{hotkey}.json".
     """
-    # ── figure out which windows we need ────────────────────────────────
     sub  = await get_subtensor()
     cur  = await sub.get_current_block()
     need = {w for w in range(_w(cur - tail), _w(cur) + WINDOW, WINDOW)}
-    keys = [
-        k for k in await _index()
-        if (h := Path(k).name.split("-", 1)[0]).isdigit() and int(h) in need
-    ]
-    keys.sort()    
+
+    # Discover validator buckets via commitments
+    meta = await sub.metagraph(NETUID)
+    refs: list[tuple[str, str, str, str]] = []  # (endpoint, region, bucket, key)
+    now = time.time()
+
+    def _parse_storage_commitment(obj) -> Optional[tuple[str, str, str]]:
+        try:
+            fields = getattr(obj, "fields", None)
+            if fields is None and isinstance(obj, dict):
+                fields = obj.get("fields")
+            if not fields:
+                return None
+            f0 = fields[0]
+            raw = getattr(f0, "raw", None)
+            if raw is None and isinstance(f0, dict):
+                raw = f0.get("raw") or f0.get("Raw") or f0.get("raw_value")
+            if isinstance(raw, (bytes, bytearray)):
+                data = json.loads(raw.decode("utf-8"))
+                if isinstance(data, dict) and data.get("type") == "hippius_v1":
+                    endpoint = data.get("endpoint") or HIPPIUS_ENDPOINT_URL
+                    region = data.get("region") or HIPPIUS_REGION
+                    bucket = data.get("bucket")
+                    if bucket:
+                        return (endpoint, region, bucket)
+        except Exception:
+            return None
+        return None
+
+    for uid, hotkey in enumerate(meta.hotkeys):
+        # Query commitments pallet storage: Commitments::CommitmentOf(netuid, hotkey)
+        try:
+            reg = await sub.query_storage(
+                module="Commitments",
+                storage_name="CommitmentOf",
+                params=[NETUID, hotkey],
+            )
+        except Exception:
+            continue
+        if not reg:
+            continue
+        # Registration struct with .info (CommitmentInfo)
+        commitment_info = getattr(reg, "info", None)
+        if commitment_info is None and isinstance(reg, dict):
+            commitment_info = reg.get("info")
+        if not commitment_info:
+            continue
+        s3info = _parse_storage_commitment(commitment_info)
+        if not s3info:
+            continue
+
+        # LRU list cache per hotkey
+        cached = _LIST_CACHE.get(hotkey)
+        if cached and now - cached[0] < LIST_TTL_SECONDS:
+            keys = cached[1]
+        else:
+            keys = []
+            try:
+                async with create_s3_reader_client(s3info[0], s3info[1]) as c:
+                    token = None
+                    while True:
+                        kw = {"Bucket": s3info[2], "Prefix": RESULT_PREFIX}
+                        if token:
+                            kw["ContinuationToken"] = token
+                        r = await c.list_objects_v2(**kw)
+                        for obj in (r.get("Contents") or []):
+                            k = obj["Key"]
+                            name = Path(k).name
+                            head = name.split("-", 1)[0]
+                            if head.isdigit() and int(head) in need and name.endswith(f"-{hotkey}.json"):
+                                keys.append(k)
+                        if r.get("IsTruncated"):
+                            token = r.get("NextContinuationToken")
+                            continue
+                        break
+                _LIST_CACHE[hotkey] = (now, keys)
+            except Exception:
+                continue
+
+        for k in keys:
+            refs.append((s3info[0], s3info[1], s3info[2], k))
+
+    # Deterministic order across validators
+    refs.sort(key=lambda r: r[3])
+
     # ── helpers ────────────────────────────────
     sem = asyncio.Semaphore(max_concurrency)     # throttle S3
-    async def _prefetch(key: str) -> Path:       # just downloads / caches
-        return await _cache_shard(key, sem)
+    async def _prefetch(ref: tuple[str, str, str, str]) -> Path:
+        return await _cache_shard(ref, sem)
     tasks: list[asyncio.Task[Path]] = [
-        asyncio.create_task(_prefetch(k)) for k in keys[:max_concurrency]
+        asyncio.create_task(_prefetch(r)) for r in refs[:max_concurrency]
     ]
-    next_key = max_concurrency            
+    next_idx = max_concurrency
     bar = tqdm(f"Dataset=({cur}, {cur - tail})", unit="res", dynamic_ncols=True)
-    # ── main loop: iterate over keys in order ───────────────────────────
-    for i, key in enumerate(keys):
+    # ── main loop: iterate over refs in order ───────────────────────────
+    for i, ref in enumerate(refs):
         path = await tasks[i]
-        if next_key < len(keys):
-            tasks.append(asyncio.create_task(_prefetch(keys[next_key])))
-            next_key += 1
+        if next_idx < len(refs):
+            tasks.append(asyncio.create_task(_prefetch(refs[next_idx])))
+            next_idx += 1
         async for raw in _jsonl(path):
             try:
                 r = Result.model_validate(_loads(raw))
@@ -465,25 +579,29 @@ async def sink_enqueue(wallet, block, results, force: bool = False):
     buf, SINK_BUFFER = SINK_BUFFER, []
     await sink(wallet=wallet, results=buf, block=block)
 async def sink(wallet: bt.wallet, results: list["Result"], block: int = None):
-    if not results: return
+    if not results:
+        return
     if block is None:
-        sub = await get_subtensor(); block = await sub.get_current_block()
+        sub = await get_subtensor()
+        block = await sub.get_current_block()
     valid = [r for r in results if getattr(r.response, "success", False)]
     if not valid:
         return
-    hotkey, signed = await sign_results( wallet, valid )
+    hotkey, signed = await sign_results(wallet, valid)
     key = f"{RESULT_PREFIX}{_w(block):09d}-{hotkey}.json"
-    dumped = [ r.model_dump(mode="json") for r in signed ]
-    async with get_client_ctx() as c:
+    dumped = [r.model_dump(mode="json") for r in signed]
+    async with create_s3_writer_client(HIPPIUS_ENDPOINT_URL, HIPPIUS_REGION, HIPPIUS_SEED_PHRASE) as c:
         try:
-            r = await c.get_object(Bucket=FOLDER, Key=key)
+            r = await c.get_object(Bucket=HIPPIUS_BUCKET_NAME, Key=key)
             merged = json.loads(await r["Body"].read()) + dumped
         except c.exceptions.NoSuchKey:
             merged = dumped
-        await c.put_object(Bucket=FOLDER, Key=key, Body=_dumps(merged),
-                           ContentType="application/json")
-    if len(merged) == len(dumped):              # shard was new
-        await _update_index(key)
+        await c.put_object(
+            Bucket=HIPPIUS_BUCKET_NAME,
+            Key=key,
+            Body=_dumps(merged),
+            ContentType="application/json",
+        )
 
 async def prune(tail: int):
     sub = await get_subtensor(); cur = await sub.get_current_block()
@@ -690,10 +808,22 @@ async def miners(
         try:
             hotkey = meta.hotkeys[ uid ]
             if hotkey not in commits: return None
-            commit = commits[hotkey]
-            block, data = commit[-1]     
+            commit_series = commits[hotkey]
+            # pick the most recent commitment that contains model info (ignore storage-only commits)
+            block = None
+            data = None
+            for blk, datum in reversed(commit_series):
+                try:
+                    payload = json.loads(datum)
+                except Exception:
+                    continue
+                if isinstance(payload, dict) and "model" in payload:
+                    block = blk
+                    data = payload
+                    break
+            if data is None:
+                return None
             block = 0 if uid == 0 else block
-            data = json.loads(data)
             model, miner_revision, chute_id = data.get("model"), data.get("revision"), data.get("chute_id")
             async with meta_sem:
                 chute = await get_chute(chute_id)
@@ -1007,6 +1137,35 @@ def runner():
 # --------------------------------------------------------------------------- #
 #                               Validator                                     #
 # --------------------------------------------------------------------------- #
+
+_STORAGE_COMMITTED = False
+async def ensure_storage_commitment(wallet: "bt.wallet"):
+    """
+    Commit this validator's public Hippius bucket info on-chain for discovery.
+    Payload format:
+      {"type":"hippius_v1","endpoint":...,"region":...,"bucket":...}
+    """
+    global _STORAGE_COMMITTED
+    if _STORAGE_COMMITTED:
+        return
+    sub = await get_subtensor()
+    payload_obj = {
+        "type": "hippius_v1",
+        "endpoint": HIPPIUS_ENDPOINT_URL,
+        "region": HIPPIUS_REGION,
+        "bucket": HIPPIUS_BUCKET_NAME,
+    }
+    payload_json = json.dumps(payload_obj, separators=(",", ":"))
+    payload_bytes = payload_json.encode("utf-8")
+    if len(payload_bytes) > 128:
+        logger.critical(f"Storage commitment too large ({len(payload_bytes)} bytes > 128). Use BigRaw format on-chain.")
+        raise ValueError("Commitment size exceeds 128 bytes")
+    # Strictly use commitments pallet (no fallback)
+    commitment = {"fields": [{"raw": payload_bytes}]}
+    await sub.set_commitment(wallet=wallet, netuid=NETUID, commitment=commitment, wait_for_inclusion=True)
+    _STORAGE_COMMITTED = True
+    logger.debug("Committed Hippius storage details via set_commitment")
+
     
 async def _set_weights_with_confirmation(
     wallet: "bt.wallet",
@@ -1525,6 +1684,7 @@ def validate():
         LAST = 0
         TEMPO = 100
         subtensor = None
+        await ensure_storage_commitment(wallet)
         while True:
             try:
                 # ---------------- Wait for set weights. -----------------

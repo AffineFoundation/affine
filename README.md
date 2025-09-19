@@ -34,6 +34,25 @@ Set env vars, chutes api key.
 cp .env.example .env
 ```
 
+Validator Storage Setup (Hippius S3)
+1) Create and fund a Hippius account (main account).
+2) Create a sub-account with UploadDelete permissions for your validator and securely store its 12-word seed phrase.
+3) Create a public Hippius S3 bucket owned by your account. You can use any S3 client; see integration.md for full examples. In Python (Minio client) this is roughly:
+   - make_bucket(bucket_name)
+   - set_bucket_policy(bucket_name, {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":["s3:GetObject"],"Resource":[f"arn:aws:s3:::{bucket_name}/*"]}]})
+4) Update your .env with the HIPPIUS_* variables:
+```env
+HIPPIUS_ENDPOINT_URL="https://s3.hippius.com"
+HIPPIUS_REGION="decentralized"
+HIPPIUS_BUCKET_NAME="your-public-bucket"
+HIPPIUS_SEED_PHRASE="twelve words for your sub-account here"
+```
+Notes:
+- Access Key = base64(seed phrase), Secret Key = seed phrase.
+- Buckets must be public to allow anonymous reads by data consumers.
+- Your validator will automatically commit its bucket details on-chain when running af validate.
+- Keep your main Hippius account funded to cover storage costs.
+
 (Recommended): Run the validator with docker and watchtower autoupdate.
 ```bash
 # Run the validator with watchtower.

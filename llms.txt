@@ -1,10 +1,10 @@
 ## Affine: Comprehensive LLM/Validator Guide (llms.txt)
 
 ### Overview
-Affine is an incentivized RL system built on Bittensor Subnet 120. Validators continuously generate challenges across multiple environments, query miners’ hosted LLMs via Chutes, evaluate responses, and publish signed results to Cloudflare R2. A winners-take-all scoring rule uses ε-Pareto dominance over environment subsets to set on-chain weights.
+Affine is an incentivized RL system built on Bittensor Subnet 120. Validators continuously generate challenges across multiple environments, query miners’ hosted LLMs via Chutes, evaluate responses, and publish signed results to validator-managed public Hippius S3 buckets. A winners-take-all scoring rule uses ε-Pareto dominance over environment subsets to set on-chain weights.
 
 ### Repository map (high level)
-- `affine/__init__.py`: CLI, core models, validator/runner, R2 storage, signer client, scoring, miners/query, Prometheus metrics
+- `affine/__init__.py`: CLI, core models, validator/runner, Hippius storage, signer client, scoring, miners/query, Prometheus metrics
 - `affine/envs/`: task generators and evaluators
   - `sat.py`: k-SAT generation and evaluation
   - `abd.py`: program abduction (infer stdin to match output)
@@ -56,23 +56,25 @@ Install via uv and run the `af` CLI (see README for full steps).
 - Filters out gated models and non-`affine/*` families (except base UID 0)
 - Deduplicates by keeping earliest block per model
 
-### Results pipeline and storage (Cloudflare R2)
+### Results pipeline and storage (Hippius public S3)
 - Windowing
   - `AFFINE_WINDOW` (default 20) defines shard window based on block numbers
   - A shard key is `affine/results/{WINDOW_START_BLOCK}-{HOTKEY}.json`
-- Index
-  - `affine/index.json` contains a JSON array of shard keys
-  - When a shard is first written, the index is updated (deduplicated and sorted)
+- Discovery
+  - Each validator commits their public bucket details on-chain as: `{"type":"hippius_v1","endpoint","region","bucket"}`
+  - Data consumers list objects anonymously from each public bucket with prefix `affine/results/` and aggregate results
 - Sink
-  - Results are signed (via signer service or local wallet) and appended to the shard; new shard triggers index update
+  - Results are signed (via signer service or local wallet) and appended to the shard in the validator's public Hippius bucket
 - Local cache
   - Shards are downloaded once and stored under `AFFINE_CACHE_DIR` (default `~/.cache/affine/blocks`), with `.modified` timestamp files
   - `dataset(tail)` streams `Result` objects from cached JSONL, validating signatures
 
-R2/S3 client
-- Uses `aiobotocore` with endpoint `https://{R2_BUCKET_ID}.r2.cloudflarestorage.com`
-- Bucket: `R2_FOLDER` (default `affine`)
-- Keys: `INDEX_KEY=affine/index.json`, `RESULT_PREFIX=affine/results/`
+Hippius S3 client
+- Uses `aiobotocore`
+  - Writer (validators): endpoint `${HIPPIUS_ENDPOINT_URL}` (default `https://s3.hippius.com`), region `${HIPPIUS_REGION}` (default `decentralized`), auth: `access_key=base64(seed)`, `secret_key=seed`
+  - Reader (consumers): anonymous client with `signature_version=UNSIGNED`
+- Bucket: `${HIPPIUS_BUCKET_NAME}` (created public by the validator)
+- Keys: `RESULT_PREFIX=affine/results/`
 
 ### Scoring and weight setting
 - Periodic cadence: validator waits for blocks where `block % TEMPO == 0` (TEMPO=100)
@@ -131,9 +133,10 @@ Key hyperparameters (defaults)
 - Chutes/Hugging Face
   - `CHUTES_API_KEY` (required for queries/deploy), `CHUTE_USER`
   - `HF_USER`, `HF_TOKEN`
-- R2/S3
-  - `R2_BUCKET_ID` (account subdomain), `R2_FOLDER` (bucket root folder), `R2_WRITE_ACCESS_KEY_ID`, `R2_WRITE_SECRET_ACCESS_KEY`
-  - `AFFINE_WINDOW` (shard size), `AFFINE_CACHE_DIR`
+- Hippius S3
+  - `HIPPIUS_ENDPOINT_URL` (default `https://s3.hippius.com`), `HIPPIUS_REGION` (default `decentralized`)
+  - `HIPPIUS_BUCKET_NAME` (your public bucket), `HIPPIUS_SEED_PHRASE` (sub-account seed for writer auth)
+  - `AFFINE_WINDOW` (shard size), `AFFINE_CACHE_DIR`, `AFFINE_LIST_TTL` (LRU/TTL for list calls)
 - Networking/Concurrency
   - `AFFINE_METRICS_ADDR`, `AFFINE_METRICS_PORT`
   - `AFFINE_HTTP_CONCURRENCY` (default 16), `AFFINE_UPLOAD_CONCURRENCY` (default 2)
@@ -166,15 +169,13 @@ async for res in af.dataset(100):
     print(res)
 ```
 
-### Static site (R2 index viewer)
-- Index key: `affine/index.json` (JSON array of shard keys)
-- Endpoint template: `https://{R2_BUCKET_ID}.r2.cloudflarestorage.com/{R2_FOLDER}/{OBJECT_KEY}`
-- Requires S3 SigV4 signing in the browser (region `auto`, service `s3`, `x-amz-content-sha256=UNSIGNED-PAYLOAD`)
-- Flow: fetch index → for each key fetch shard → render list/download
-- Prefer presigned URLs or read-only keys for public deployments
+### Static viewing
+- The centralized `affine/index.json` is removed. Discovery is decentralized via on-chain commitments per validator.
+- A viewer must resolve validator commitments from the chain, then anonymously list objects from each public Hippius bucket.
+- See `integration.md` for Hippius public bucket policy examples and access notes.
 
 ### Notes and best practices
-- Always override the example/default R2 credentials with your own via `.env`
+- Set HIPPIUS_* variables in your .env; never expose your sub-account seed phrase. Ensure your main Hippius account remains funded
 - Keep HF repos private during upload; visibility is set to public right before deploy
 - The validator requires a running signer service; do not expose wallet keys in validator containers
 - For ABD/DED, ensure models return only the requested content (stdin or fenced python) to avoid grading penalties
@@ -193,5 +194,3 @@ af -vvv pull <uid> --model_path ./my_model
 # Push your model (deploy chute and commit on-chain):
 af -vvv push --model_path ./my_model
 ```
-
-
