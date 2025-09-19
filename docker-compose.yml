@@ -23,6 +23,10 @@ services:
       - HVM_SERVER_URL=http://agentenv:9002
       - ABD_SERVER_URL=http://agentenv:9003
       - SAT_SERVER_URL=http://agentenv:9004
+      - SEARCHQA_SERVER_URL=${SEARCHQA_SERVER_URL:-http://127.0.0.1:36001}
+      - LMRLGYM_SERVER_URL=${LMRLGYM_SERVER_URL:-http://127.0.0.1:8014}
+      - ACADEMIA_SERVER_URL=${ACADEMIA_SERVER_URL:-http://127.0.0.1:8030}
+      - SQLGYM_SERVER_URL=${SQLGYM_SERVER_URL:-http://127.0.0.1:8015}
     depends_on:
       signer:
         condition: service_healthy
@@ -50,6 +54,10 @@ services:
       - HVM_SERVER_URL=http://agentenv:9002
       - ABD_SERVER_URL=http://agentenv:9003
       - SAT_SERVER_URL=http://agentenv:9004
+      - SEARCHQA_SERVER_URL=${SEARCHQA_SERVER_URL:-http://127.0.0.1:36001}
+      - LMRLGYM_SERVER_URL=${LMRLGYM_SERVER_URL:-http://127.0.0.1:8014}
+      - ACADEMIA_SERVER_URL=${ACADEMIA_SERVER_URL:-http://127.0.0.1:8030}
+      - SQLGYM_SERVER_URL=${SQLGYM_SERVER_URL:-http://127.0.0.1:8015}
     depends_on:
       agentenv:
         condition: service_healthy
