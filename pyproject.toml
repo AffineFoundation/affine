@@ -24,10 +24,9 @@ dependencies = [
     "tabulate>=0.9.0",
     "prometheus-client>=0.21.0",
     "anyio>=4.3",
-    "quixand[docker]>=0.1.5",
 ]
 readme = "README.md"
-requires-python = ">=3.9,<3.12"
+requires-python = ">=3.10,<3.12"
 
 [project.scripts]
 af = "affine:cli"
@@ -41,3 +40,4 @@ include = ["affine"]
 
 [tool.uv.sources]
 affine = { path = ".", editable = true }
+quixand = { path = "../Quixand", editable = true }

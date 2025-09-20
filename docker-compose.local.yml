@@ -14,6 +14,8 @@ services:
     <<: *affine_image
   runner:
     <<: *affine_image
+    environment:
+      - AFFINE_QS_IMAGE=affine:local
   signer:
     <<: *affine_image
   agentenv:

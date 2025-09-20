@@ -425,19 +425,28 @@ async def sign_results( wallet, results ):
         async with aiohttp.ClientSession(timeout=timeout) as session:
             payloads = [str(r.challenge) for r in results]
             resp = await session.post(f"{signer_url}/sign", json={"payloads": payloads})
-            if resp.status == 200:
-                data = await resp.json()
-                sigs = data.get("signatures") or []
-                hotkey = data.get("hotkey")
-                for r, s in zip(results, sigs):
-                    r.hotkey = hotkey
-                    r.signature = s
+            # Force fallback on non-200 to avoid returning undefined hotkey
+            raw = await resp.text(errors="ignore")
+            if resp.status != 200:
+                raise RuntimeError(f"signer_http_{resp.status}: {raw[:200]}")
+            try:
+                data = json.loads(raw) if raw else {}
+            except Exception:
+                raise RuntimeError("signer_invalid_json")
+            sigs = data.get("signatures") or []
+            hotkey = data.get("hotkey")
+            if not hotkey or len(sigs) < len(results):
+                raise RuntimeError("signer_bad_response")
+            for r, s in zip(results, sigs):
+                r.hotkey = hotkey
+                r.signature = s
+            return hotkey, results
     except Exception as e:
-        logger.info(f"sink: signer unavailable, using local signing: {type(e).__name__}: {e}")
+        logger.info(f"sink: signer unavailable or error, using local signing: {type(e).__name__}: {e}")
+        # Local fallback: sign with the runner's wallet
         hotkey = wallet.hotkey.ss58_address
-        for r in results: 
+        for r in results:
             r.sign(wallet)
-    finally:
         return hotkey, results
 
 # ── Minimal sink / misc helpers (optional) ──────────────────────────────────
@@ -720,16 +729,33 @@ def runner():
         # QS required: the legacy 1-shot path is no longer supported
         QS_IMAGE = os.getenv("AFFINE_QS_IMAGE")
         if not QS_IMAGE:
-            raise RuntimeError("AFFINE_QS_IMAGE doit être défini (image contenant agentenv_affine)")
+            raise RuntimeError("AFFINE_QS_IMAGE not set (image containing agentenv_affine)")
         QS_ENVS  = [s.strip().upper() for s in os.getenv("AFFINE_QS_KEYS", "DED,HVM,ABD,SAT").split(",") if s.strip()]
         QS_MAX_ROUNDS = int(os.getenv("AFFINE_QS_MAX_ROUNDS", "30"))
         from .envs.qs_orchestrator import QSandboxes  # type: ignore
         from .envs.multiturn import run_multiturn_with_chutes  # type: ignore
+        # Ensure local state dir for Quixand exists (handles, watchdog, etc.)
+        try:
+            os.makedirs(os.path.expanduser("~/.quixand"), exist_ok=True)
+        except Exception:
+            pass
         qs_pool = QSandboxes(image=QS_IMAGE, timeout_seconds=24*3600)
         qs_clients: dict[str, object] = {}
+        qs_env_ids: dict[str, int] = {}
         for key in QS_ENVS:
-            qs_pool.start(key)
+            sbx = qs_pool.start(key)
             qs_clients[key] = qs_pool.client(key)
+            try:
+                st = sbx.status()
+                logger.info(f"[runner] QS {key} started: sbx_id={sbx.id} container_id={sbx.container_id} state={st.state}")
+            except Exception:
+                logger.warning(f"[runner] QS {key} status unavailable")
+            try:
+                # Create a single env instance per QS env and reuse via reset()
+                qs_env_ids[key] = await qs_clients[key].create()  # type: ignore[attr-defined]
+            except Exception as e:
+                logger.error(f"[runner] Failed to create env for {key}: {e}")
+                logger.error("[runner] Hint: ensure /var/run/docker.sock is mounted into runner and DOCKER_HOST=unix:///var/run/docker.sock; also QS image must include uvicorn and agentenv*")
             logger.info(f"[runner] QS env ready: {key}")
 
         # ── config ───────────────────────────────────────────────────────────
@@ -756,10 +782,10 @@ def runner():
         requests_since_last_log = 0
 
         def ok(res_list):
-            if not res_list: return False
-            r = res_list[0]
-            if not r.response.success: return False
-            return True
+            if not res_list:
+                return False
+            r = res_list[0] if isinstance(res_list, (list, tuple)) else res_list
+            return bool(getattr(r.response, "success", False))
 
         async def next_chal():
             nonlocal i_env
@@ -797,7 +823,9 @@ def runner():
                 prompt = "\n".join(transcript)
                 r = await query(prompt, miner.model, miner.slug, timeout=180)
                 return r.response or ""
-            ev = await run_multiturn(env_key=env_key, env=env_client, llm_call=_llm_call, max_rounds=QS_MAX_ROUNDS)
+            # Use reset on a persistent env_id instead of creating new instances
+            env_id = qs_env_ids.get(env_key)
+            ev = await run_multiturn(env_key=env_key, env=env_client, llm_call=_llm_call, max_rounds=QS_MAX_ROUNDS, env_id=env_id)
             # Synthesize a Response for logging/sink (no single final text in multi‑turn)
             final = Response(response=None, latency_seconds=0.0, attempts=1, model=miner.model, error=None, success=bool(ev.score > 0.0))
             # Create a minimal Challenge marker for bookkeeping
@@ -951,6 +979,18 @@ def runner():
                             logger.debug(f"miner {uid} task error: {e}")
                             res_list = []
 
+                        # Detailed per-result logging (uid/env/model/score/latency)
+                        _to_log = res_list if isinstance(res_list, (list, tuple)) else ([res_list] if res_list else [])
+                        for _r in _to_log:
+                            try:
+                                logger.info(
+                                    f"[RESULT] U{_r.miner.uid:>3d} │ {_r.miner.model[:50] if _r.miner.model else '':<50s} │ "
+                                    f"{_r.challenge.env.name:<3} │ {'RECV' if _r.response.success else 'NULL':^4s} │ "
+                                    f"{_r.evaluation.score:>6.4f} │ {_r.response.latency_seconds:>6.3f}s"
+                                )
+                            except Exception:
+                                pass
+
                         if ok(res_list):
                             # reset backoff, enqueue results (non-blocking)
                             delay[uid] = BACKOFF0
@@ -958,7 +998,8 @@ def runner():
                             # push entire list; sink worker will flatten
                             sink_q.put_nowait(res_list)
                             queue_size = sink_q.qsize()
-                            logger.debug(f"miner {uid} OK; queued {len(res_list)}, queue_size={queue_size}")
+                            n_queued = (len(res_list) if isinstance(res_list, (list, tuple)) else 1)
+                            logger.debug(f"miner {uid} OK; queued {n_queued}, queue_size={queue_size}")
                         else:
                             # exponential backoff + jitter
                             d = min(delay[uid] * 2, BACKOFF_CAP)

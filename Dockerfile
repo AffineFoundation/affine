@@ -1,11 +1,12 @@
 # syntax=docker/dockerfile:1.4
-FROM rust:1.79-slim-bullseye AS base
+FROM rust:1.79-slim-bookworm AS base
 
 # 1) Install Python + venv support
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip python3-dev \
     build-essential curl pkg-config libssl-dev ca-certificates git \
+    procps \
  && update-ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
@@ -27,14 +28,19 @@ RUN mkdir -p /app/affine
 COPY affine/pyproject.toml /app/affine/pyproject.toml
 COPY affine/uv.lock /app/affine/uv.lock
 
-# 6) Sync deps for affine
+# 5b) Copy local Quixand for editable install
+COPY Quixand /app/Quixand
+
+# 6) Sync deps for affine (uv will pick [tool.uv.sources] overrides)
 WORKDIR /app/affine
 RUN uv venv --python python3 $VENV_DIR \
  && uv sync
 
 # Pre install affine in editable mode (metadata)
 ENV VIRTUAL_ENV=$VENV_DIR
-RUN uv pip install -e .
+RUN uv pip install -e . \
+ && uv pip install -e /app/Quixand \
+ && uv pip install uvicorn
 
 # 7) Copy affine code and reinstall
 COPY affine /app/affine

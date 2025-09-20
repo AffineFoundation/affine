@@ -28,10 +28,9 @@ dependencies = [
     "sqlalchemy>=2.0.43",
     "nest-asyncio>=1.6.0",
     "greenlet>=3.2.4",
-    "quixand[docker]>=0.1.5",
 ]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 [project.scripts]
 af = "affine:cli"
@@ -44,4 +43,5 @@ build-backend = "setuptools.build_meta"
 include = ["affine"]
 
 [tool.uv.sources]
-affine = { path = ".", editable = true } 
+affine = { path = ".", editable = true }
+quixand = { path = "../../Quixand", editable = true } 

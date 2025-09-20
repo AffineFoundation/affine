@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   validator:
-    image: thebes1618/affine:latest
+    image: affine:local
     container_name: affine-validator
     restart: unless-stopped
     mem_reservation: "6g"
@@ -25,7 +25,7 @@ services:
     command: ["-vv", "validate"]
 
   runner:
-    image: thebes1618/affine:latest
+    image: affine:local
     container_name: affine-runner
     restart: unless-stopped
     mem_reservation: "6g"
@@ -35,13 +35,18 @@ services:
     volumes:
       - ./.env:/app/.env:ro
       - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.bittensor/wallets:/root/.bittensor/wallets:ro
     environment:
       - AFFINE_METRICS_PORT=8000
       - AFFINE_METRICS_ADDR=0.0.0.0
       - SIGNER_URL=http://signer:8080
-      - AFFINE_QS_IMAGE=thebes1618/affine:latest
-      - AFFINE_QS_KEYS=DED,HVM,ABD,SAT
+      - AFFINE_QS_IMAGE=affine:local
+      - AFFINE_QS_KEYS=SAT
       - AFFINE_QS_MAX_ROUNDS=30
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    depends_on:
+      signer:
+        condition: service_healthy
     command: ["-vv", "runner"]
 
   prometheus:

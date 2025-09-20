@@ -7,6 +7,7 @@ import affine as af
 from .remote_qs import RemoteEnvQS
 
 import quixand as qs
+import logging
 
 # Specifies the FastAPI modules and internal ports for each environment
 ENV_SPECS: Dict[str, Tuple[str, int]] = {
@@ -30,15 +31,37 @@ class QSandboxes:
 		module, port = ENV_SPECS[name]
 		if name in self.sandboxes:
 			return self.sandboxes[name]
+		# Override image ENTRYPOINT ["af"] with a shell to run uvicorn
+		# Pass the uvicorn command as a single string argument to /bin/sh -lc
+		cmd = f"/opt/venv/bin/python3 -m uvicorn {module} --host 0.0.0.0 --port {port} || python3 -m uvicorn {module} --host 0.0.0.0 --port {port}"
 		sbx = qs.Sandbox(
 			template=self.image,
-			resources=qs.Resources(network="none"),  # no port exposed; we use proxy
-			command=[
-				"uvicorn", module, "--host", "0.0.0.0", "--port", str(port)
-			],
+			resources=qs.Resources(network="bridge"),
+			env={"PATH": "/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
+			entrypoint=["/bin/sh", "-lc"],
+			command=[cmd],
 			timeout=self.timeout_seconds,
 		)
 		self.sandboxes[name] = sbx
+		try:
+			st = sbx.status()
+			logging.info(f"[QSandboxes] started {name}: sbx_id={sbx.id} container_id={sbx.container_id} state={st.state}")
+			# Basic environment diagnostics inside sandbox
+			res_py = sbx.run(["sh","-lc","/opt/venv/bin/python -V || python3 -V; which python || true; which python3 || true"]) ; logging.info(f"[QSandboxes] {name} python: {res_py.text.strip()}")
+			res_uv = sbx.run(["sh","-lc","which uvicorn || true; /opt/venv/bin/python -m pip show uvicorn || python3 -m pip show uvicorn || pip3 show uvicorn || true"]) ; logging.info(f"[QSandboxes] {name} uvicorn: {res_uv.text.strip()}")
+			res_pk = sbx.run(["sh","-lc","/opt/venv/bin/python3 -c 'import importlib.util as u;print(\"agentenv_affine:\", bool(u.find_spec(\"agentenv_affine\")));print(\"agentenv_alfworld:\", bool(u.find_spec(\"agentenv_alfworld\")))' || true"]) ; logging.info(f"[QSandboxes] {name} pkgs: {res_pk.text.strip()}")
+			res_ps = sbx.run(["sh","-lc","ps -ef | sed -n '1,120p'"]) ; logging.info(f"[QSandboxes] {name} ps -ef:\n{res_ps.text}")
+		except Exception as e:
+			logging.warning(f"[QSandboxes] diagnostics failed for {name}: {e}")
+			try:
+				import docker  # type: ignore
+				cli = docker.from_env()
+				c = cli.containers.get(sbx.container_id)
+				logs = c.logs(tail=200).decode(errors="ignore") if hasattr(c, "logs") else ""
+				if logs:
+					logging.error(f"[QSandboxes] {name} container logs (tail):\n{logs}")
+			except Exception as e2:
+				logging.warning(f"[QSandboxes] failed to fetch docker logs for {name}: {e2}")
 		return sbx
 
 	def client(self, name: str) -> RemoteEnvQS:

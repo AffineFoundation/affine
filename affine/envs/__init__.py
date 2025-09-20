@@ -3,13 +3,6 @@ from pkgutil import iter_modules
 from pathlib import Path
 from typing import Dict, Type
 
-# Import known env modules so their classes are available for export/registration
-from . import sat as _sat
-from . import abd as _abd
-from . import ded as _ded
-# from . import elr as _elr
-# from . import hvm as _hvm
-
 __all__ = []
 
 # Central registry mapping env name -> class
@@ -30,10 +23,6 @@ def _register_from_module(mod) -> None:
             globals()[attr.__name__] = attr
             if attr.__name__ not in __all__:
                 __all__.append(attr.__name__)
-
-# Register built-ins
-for _m in (_sat, _abd, _ded):
-    _register_from_module(_m)
 
 # QS variant registration helper
 from .remote_qs import RemoteEnvQS as _RemoteEnvQS  # type: ignore

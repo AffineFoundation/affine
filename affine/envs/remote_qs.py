@@ -4,11 +4,14 @@ import anyio
 from typing import Any, Dict, Optional
 
 import affine as af
+import json
 
 try:
 	import quixand as qs  # type: ignore
 except Exception:  # pragma: no cover
 	qs = None  # type: ignore
+
+from pydantic import PrivateAttr
 
 
 class RemoteEnvQS(af.BaseEnv):
@@ -18,14 +21,28 @@ class RemoteEnvQS(af.BaseEnv):
 	Expected: a Quixand Sandbox launched with uvicorn serving the FastAPI app
 	from agentenv (e.g., agentenv_affine.ded_server:app) listening on 8000.
 	"""
+	_sbx: Any = PrivateAttr(default=None)
+	_timeout: int = PrivateAttr(default=300)
+
 	def __init__(self, sandbox: "qs.Sandbox", timeout: int = 300):  # type: ignore[name-defined]
 		super().__init__()
-		self.sbx = sandbox
-		self.timeout = timeout
+		self._sbx = sandbox
+		self._timeout = timeout
 
 	async def _run(self, *, path: str, method: str = "GET", payload: Optional[Dict[str, Any]] = None) -> Any:
 		def _call():
-			return self.sbx.proxy.run(path=path, method=method, payload=payload, timeout=self.timeout, ensure_ready=True)
+			# Convert path like "/observation?id=123" into endpoint and params
+			endpoint_and_query = path.lstrip("/")
+			if "?" in endpoint_and_query:
+				endpoint, query = endpoint_and_query.split("?", 1)
+				from urllib.parse import parse_qsl
+				params = dict(parse_qsl(query))
+			else:
+				endpoint, params = endpoint_and_query, {}
+			if payload:
+				params.update(payload)
+			func = getattr(self._sbx.proxy, endpoint)
+			return func(_timeout=self._timeout, _ensure_ready=True, **params)
 		return await anyio.to_thread.run_sync(_call)
 
 	# AgentGym-like endpoints
@@ -41,7 +58,10 @@ class RemoteEnvQS(af.BaseEnv):
 		return res if isinstance(res, list) else []
 
 	async def step(self, env_id: int, action: str) -> Dict[str, Any]:
-		return await self._run(path="/step", method="POST", payload={"id": env_id, "action": action})
+		# Ensure action is JSON-safe even if proxy builds JSON naively.
+		# Using json.dumps wraps/escapes quotes and backslashes so the outer JSON stays valid.
+		safe_action = json.dumps(action)
+		return await self._run(path="/step", method="POST", payload={"id": env_id, "action": safe_action})
 
 	async def reset(self, env_id: int, **kwargs: Any) -> Dict[str, Any]:
 		payload = {"id": env_id, **kwargs}

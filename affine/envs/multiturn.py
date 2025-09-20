@@ -56,18 +56,35 @@ async def run_multiturn(
 	env: RemoteEnvQS,
 	llm_call: Callable[[List[ConversationMessage]], "Awaitable[str]"],
 	max_rounds: int = 30,
+	env_id: int | None = None,
 ) -> af.Evaluation:
 	"""Generic multi-turn loop:
-	- initializes the environment (create + first observation)
+	- initializes the environment (create + first observation) or reset existing env_id
 	- maintains a conversation history similar to AgentGym
 	- queries the LLM and calls /step until done or max_rounds
 	Returns an Evaluation (score + extras)
 	"""
 	# init
 	conv: List[ConversationMessage] = list(get_conversation_start(env_key))
-	chal = await env.generate()  # performs create + initial observation
-	env_id = int(chal.extra.get("id"))
-	obs = chal.prompt
+
+	# Determine initial observation via reset or create
+	if env_id is not None:
+		try:
+			res0 = await env.reset(env_id)
+			obs = res0.get("observation") if isinstance(res0, dict) else None
+			if not obs:
+				obs = await env.observation(env_id)
+			chal = af.Challenge(env=env, prompt=obs, extra={"id": env_id})
+		except Exception:
+			# Fallback to creating a new episode if reset requires extra params or failed
+			chal = await env.generate()
+			env_id = int(chal.extra.get("id"))
+			obs = chal.prompt
+	else:
+		chal = await env.generate()  # performs create + initial observation
+		env_id = int(chal.extra.get("id"))
+		obs = chal.prompt
+
 	conv.append({"from": "human", "loss": None, "value": obs})
 
 	reward = 0.0
@@ -99,9 +116,10 @@ async def run_multiturn_with_chutes(
 	model: str,
 	slug: str,
 	max_rounds: int = 30,
+	env_id: int | None = None,
 ) -> af.Evaluation:
-	"""Multi‑turn prêt à l’emploi avec le backend chutes (affine.query).
-	Sérialise la conversation en transcript et appelle `affine.query` à chaque tour.
+	"""Ready-to-use multi-turn with the chutes backend (affine.query).
+	Serializes the conversation as a transcript and calls `affine.query` at each turn.
 	"""
 	from .. import query  # chutes chat API wrapper
 
@@ -115,4 +133,4 @@ async def run_multiturn_with_chutes(
 		r = await query(prompt, model, slug, timeout=180)
 		return r.response or ""
 
-	return await run_multiturn(env_key=env_key, env=env, llm_call=_llm_call, max_rounds=max_rounds)
+	return await run_multiturn(env_key=env_key, env=env, llm_call=_llm_call, max_rounds=max_rounds, env_id=env_id)
