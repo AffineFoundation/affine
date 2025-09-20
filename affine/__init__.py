@@ -420,16 +420,16 @@ class OnlineIRT2PL:
         residual = (success - prob) * weight
 
         ability.count += 1
-        ability_step = self._theta_lr / math.sqrt(max(1, ability.count))
+        ability_step = self._theta_lr
         ability.theta += ability_step * env_state.discrimination * residual
         ability.theta = _clamp(ability.theta, -self._theta_clip, self._theta_clip)
 
         env_state.count += 1
-        difficulty_step = self._difficulty_lr / math.sqrt(max(1, env_state.count))
+        difficulty_step = self._difficulty_lr
         env_state.difficulty -= difficulty_step * env_state.discrimination * residual
         env_state.difficulty = _clamp(env_state.difficulty, -self._diff_clip, self._diff_clip)
 
-        discr_step = self._discrimination_lr / math.sqrt(max(1, env_state.count))
+        discr_step = self._discrimination_lr
         env_state.discrimination += discr_step * (ability.theta - bias) * residual
         env_state.discrimination = _clamp(
             env_state.discrimination,
@@ -439,7 +439,7 @@ class OnlineIRT2PL:
 
         if challenge_state is not None:
             challenge_state.count += 1
-            chal_step = self._challenge_lr / math.sqrt(max(1, challenge_state.count))
+            chal_step = self._challenge_lr
             challenge_state.bias += chal_step * residual
             challenge_state.bias = _clamp(challenge_state.bias, -self._diff_clip, self._diff_clip)
 
