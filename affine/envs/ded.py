@@ -64,7 +64,6 @@ class DED(af.BaseEnv):
             "• is returned as a single ```python … ``` fenced block.\n"
         )
         prompt = sample["prompt"].rstrip() + extra_hint
-        sample['timestamp'] = time.time() 
         return af.Challenge(env=self, prompt=prompt, extra=sample)
 
     async def evaluate(

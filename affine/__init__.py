@@ -217,6 +217,7 @@ class Challenge(BaseModel):
     prompt: str
     extra: Dict[str, Any] = Field(default_factory=dict)
     challenge_id: Optional[str] = None
+    timestamp: Optional[float] = Field(default_factory=time.time)
     @root_validator(pre=True)
     def set_challenge_id(cls, values):
         if "challenge_id" not in values or values["challenge_id"] is None:
@@ -268,6 +269,7 @@ class Response(BaseModel):
     model: str
     error: Optional[str]
     success: bool
+    timestamp: Optional[float] = Field(default_factory=time.time)
     def __repr__(self):
         return (f"<Response model={self.model!r} success={self.success} "
                 f"latency={self.latency_seconds:.3f}s attempts={self.attempts} "
