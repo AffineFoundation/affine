@@ -1,109 +1,24 @@
-import random
 import asyncio
-import logging
-import os
 import json
-import aiohttp
-from botocore.config import Config
-from aiobotocore.session import get_session
-import affine as af
+import logging
+import random
 from collections import deque
-from typing import Any, Deque, List, Optional, Dict
+from typing import Any, Deque, Dict, List, Optional
 
-# class BufferedDataset:
-#     def __init__(
-#         self,
-#         dataset_name: str,
-#         total_size: int,
-#         buffer_size: int = 100,
-#         max_batch: int = 10,
-#         seed: Optional[int] = None,
-#         split: str = "train",
-#         config: str = "default",
-#         max_retries: int = 5,
-#         initial_backoff: float = 10.0,
-#         backoff_factor: float = 2.0,
-#         max_backoff: float = 30.0
-#     ):
-#         self.dataset_name   = dataset_name
-#         self.total_size     = total_size
-#         self.buffer_size    = buffer_size
-#         self.max_batch      = max_batch
-#         self.split          = split
-#         self.config         = config
-#         self.max_retries    = max_retries
-#         self.initial_backoff= initial_backoff
-#         self.backoff_factor = backoff_factor
-#         self.max_backoff    = max_backoff
+import aiohttp
+import affine as af
 
-#         self._buffer: Deque[Any] = deque()
-#         self._lock   = asyncio.Lock()
-#         self._fill_task = None
-#         self._rng    = random.Random(seed)
-
-#     async def fetch_hf(self, offset: int, length: int) -> List[Any]:
-#         url = (
-#             f"https://datasets-server.huggingface.co/rows?"
-#             f"dataset={self.dataset_name}"
-#             f"&config={self.config}"
-#             f"&split={self.split}"
-#             f"&offset={offset}"
-#             f"&length={length}"
-#         )
-#         backoff = self.initial_backoff
-#         for attempt in range(1, self.max_retries + 1):
-#             af.logger.trace(f"HF fetch attempt {attempt}: offset={offset}, len={length}")
-#             async with aiohttp.ClientSession() as sess:
-#                 async with sess.get(url, timeout=30) as resp:
-#                     if resp.status == 429:
-#                         af.logger.warning(f"Ratelimit hit; sleeping {backoff:.1f}s")
-#                         await asyncio.sleep(backoff)
-#                         backoff = min(backoff * self.backoff_factor, self.max_backoff)
-#                         continue
-#                     resp.raise_for_status()
-#                     data = await resp.json()
-#                     rows = [r["row"] for r in data.get("rows", [])]
-#                     af.logger.trace(f"Fetched {len(rows)} rows")
-#                     return rows
-#         raise RuntimeError("HF rate-limit retries exhausted")
-
-#     async def _fill_buffer(self) -> None:
-#         af.logger.trace("Starting buffer fill")
-#         while len(self._buffer) < self.buffer_size:
-#             batch = self.max_batch
-#             offset = self._rng.randint(0, max(0, self.total_size - batch))
-#             try:
-#                 rows = await self.fetch_hf(offset, batch)
-#             except Exception as e:
-#                 af.logger.warning(f"Fetch error: {e!r}")
-#                 continue
-#             for item in rows:
-#                 self._buffer.append(item)
-#         af.logger.trace("Buffer fill complete")
-
-#     async def get(self) -> Any:
-#         async with self._lock:
-#             if not self._fill_task or self._fill_task.done():
-#                 self._fill_task = asyncio.create_task(self._fill_buffer())
-#             if not self._buffer:
-#                 await self._fill_task
-#             item = self._buffer.popleft()
-#             if self._fill_task.done():
-#                 self._fill_task = asyncio.create_task(self._fill_buffer())
-#             return item
-
-#     def __aiter__(self):
-#         return self
-
-#     async def __anext__(self):
-#         return await self.get()
-
-
-class R2BufferedDataset:
+class S3BufferedDataset:
+    """
+    Buffered dataset reader for the public 'affine-datasets' Hippius S3 bucket.
+    
+    This implementation uses aiohttp for direct, anonymous HTTP GET requests to
+    completely avoid botocore's complex credential resolution and signing logic,
+    providing a robust way to fetch data from a public bucket.
+    """
     def __init__(
         self,
         dataset_name: str,
-        total_size: int = 0,
         buffer_size: int = 100,
         max_batch: int = 10,
         seed: Optional[int] = None,
@@ -113,93 +28,123 @@ class R2BufferedDataset:
         self.max_batch      = max_batch
         self._rng           = random.Random(seed)
 
-        short_name          = dataset_name
-        self._dataset_folder= f"affine/datasets/{short_name}/"
-        self._index_key     = self._dataset_folder + "index.json"
+        # Correctly parse the dataset name to match the bucket structure
+        # e.g., "satpalsr/rl-python" -> "rl-python"
+        short_name = self.dataset_name.split('/')[-1]
 
-        self._bucket        = af.HIPPIUS_BUCKET_NAME
-        self._endpoint_url  = af.HIPPIUS_ENDPOINT_URL
-        self._region        = af.HIPPIUS_REGION
+        # Configuration for the public training dataset bucket
+        self._bucket         = "affine-datasets"
+        self._endpoint_url   = "https://s3.hippius.com"
+        
+        # Construct the base URL for the dataset
+        self._base_data_url = f"{self._endpoint_url.rstrip('/')}/{self._bucket}/affine/datasets/{short_name}"
+        self._index_url      = f"{self._base_data_url}/index.json"
 
+        # Internal state
         self._buffer: Deque[Any] = deque()
         self._lock   = asyncio.Lock()
         self._fill_task = None
-
         self._index: Optional[Dict[str, Any]] = None
         self._files: list[Dict[str, Any]] = []
         self._next_file_index: int = 0
-        self.total_size = total_size
 
-    def _client_ctx(self):
-        if not self._endpoint_url or not getattr(self, "_bucket", None):
-            raise RuntimeError("Hippius endpoint/bucket is not configured")
-        return af.create_s3_reader_client(self._endpoint_url, self._region)
+    async def _http_get(self, url: str) -> bytes:
+        """Performs a simple, anonymous GET request."""
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as response:
+                response.raise_for_status()
+                return await response.read()
 
     async def _ensure_index(self) -> None:
+        """Fetches and parses the index.json file via HTTP."""
         if self._index is not None:
             return
-        af.logger.trace(f"Loading S3 index: s3://{self._bucket}/{self._index_key}")
-        async with self._client_ctx() as c:
-            resp = await c.get_object(Bucket=self._bucket, Key=self._index_key)
-            body = await resp["Body"].read()
-            self._index = json.loads(body.decode())
+        
+        af.logger.trace(f"Loading S3 index via HTTP from: {self._index_url}")
+        try:
+            body = await self._http_get(self._index_url)
+            self._index = json.loads(body.decode('utf-8'))
+        except aiohttp.ClientResponseError as e:
+            af.logger.error(f"Failed to fetch S3 index at {self._index_url}. Status: {e.status}. Message: {e.message}. Ensure the bucket is public and the file exists.")
+            raise e
+        except Exception as e:
+            af.logger.error(f"An unexpected error occurred while fetching S3 index at {self._index_url}.")
+            raise e
+        
         self._files = list(self._index.get("files", []))
-        if not self.total_size:
-            self.total_size = int(self._index.get("total_rows", 0))
         if not self._files:
-            raise RuntimeError("R2 index contains no files")
+            raise RuntimeError(f"S3 index at {self._index_url} contains no files.")
         self._next_file_index = 0
 
     async def _read_next_file(self) -> list[Any]:
+        """Reads the next data chunk file specified in the index."""
         await self._ensure_index()
         if not self._files:
             return []
+        
         if self._next_file_index >= len(self._files):
-            self._next_file_index = 0
+            self._next_file_index = 0 # Loop back to the start
+        
         file_info = self._files[self._next_file_index]
         self._next_file_index += 1
-        key = file_info.get("key") or (self._dataset_folder + file_info.get("filename", ""))
-        if not key:
+        
+        # Construct the full URL for the data chunk
+        file_name = file_info.get("filename")
+        if not file_name:
             return []
-        af.logger.trace(f"Downloading S3 chunk: s3://{self._bucket}/{key}")
-        async with self._client_ctx() as c:
-            resp = await c.get_object(Bucket=self._bucket, Key=key)
-            body = await resp["Body"].read()
+        
+        chunk_url = f"{self._base_data_url}/{file_name}"
+        af.logger.trace(f"Downloading S3 chunk via HTTP from: {chunk_url}")
+        body = await self._http_get(chunk_url)
+
         try:
-            data = json.loads(body.decode())
+            data = json.loads(body.decode('utf-8'))
         except Exception as e:
-            af.logger.warning(f"Failed to parse chunk {key}: {e!r}")
+            af.logger.warning(f"Failed to parse JSON chunk from {chunk_url}: {e!r}")
             return []
-        if not isinstance(data, list):
-            return []
-        return data
+            
+        return data if isinstance(data, list) else []
 
     async def _fill_buffer(self) -> None:
+        """Continuously fills the internal buffer with data."""
         af.logger.trace("Starting S3 buffer fill")
         while len(self._buffer) < self.buffer_size:
-            rows = await self._read_next_file()
-            if not rows:
-                break
-            if self.max_batch and len(rows) > self.max_batch:
-                start = self._rng.randint(0, max(0, len(rows) - self.max_batch))
-                rows = rows[start:start + self.max_batch]
-            for item in rows:
-                self._buffer.append(item)
+            try:
+                rows = await self._read_next_file()
+                if not rows:
+                    af.logger.warning("No rows returned from S3 chunk, will retry after a short delay.")
+                    await asyncio.sleep(5)
+                    continue
+                
+                if self.max_batch and len(rows) > self.max_batch:
+                    start = self._rng.randint(0, max(0, len(rows) - self.max_batch))
+                    rows = rows[start:start + self.max_batch]
+                
+                self._buffer.extend(rows)
+            except Exception as e:
+                af.logger.error(f"Error in fill_buffer task: {e!r}. Retrying in 10 seconds.")
+                await asyncio.sleep(10)
+
         af.logger.trace("S3 buffer fill complete")
 
     async def get(self) -> Any:
+        """Gets one item from the buffer, refilling it if necessary."""
         async with self._lock:
-            if not self._fill_task or self._fill_task.done():
-                self._fill_task = asyncio.create_task(self._fill_buffer())
             if not self._buffer:
+                if not self._fill_task or self._fill_task.done():
+                    self._fill_task = asyncio.create_task(self._fill_buffer())
                 await self._fill_task
+
+            if not self._buffer:
+                raise RuntimeError("S3BufferedDataset: failed to retrieve data from S3 after retries.")
+
             item = self._buffer.popleft()
-            if self._fill_task.done():
+            
+            if len(self._buffer) < (self.buffer_size // 2) and (not self._fill_task or self._fill_task.done()):
                 self._fill_task = asyncio.create_task(self._fill_buffer())
+                
             return item
 
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        return await self.get()
+# Backward-compatibility alias.
+R2BufferedDataset = S3BufferedDataset

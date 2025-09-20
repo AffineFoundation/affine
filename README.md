@@ -40,8 +40,7 @@ On validator startup, Affine will:
 - Verify you are registered on the metagraph
 - Compute a standardized bucket name: affine-v1-{HOTKEY_SS58}
 - Create the bucket if missing and apply a public-read policy
-- Publish the on-chain commitment via subtensor.commit with:
-  {"type":"hippius_v1","endpoint":"https://s3.hippius.com","region":"decentralized","bucket":"affine-v1-{HOTKEY}"}
+- No on-chain storage publishing is used. Data discovery is deterministic using bucket name: affine-v1-{HOTKEY_SS58}.
 
 Minimal .env required:
 ```env
@@ -53,7 +52,7 @@ HIPPIUS_SEED_PHRASE="twelve words for your sub-account here"
 Notes:
 - Access Key = base64(seed phrase), Secret Key = seed phrase.
 - Buckets are managed automatically; do not set a bucket name in .env.
-- Commitment is set using the new commitments pallet (no legacy fallback).
+- No on-chain storage commitment is used for storage discovery.
 - Keep your main Hippius account funded to cover storage costs.
 - The signer service exposes GET /hotkey so the validator can self-identify when the wallet isn’t local.
 

@@ -315,7 +315,6 @@ RESULT_PREFIX = "affine/results/"
 # Hippius S3 configuration (validator-managed public buckets)
 HIPPIUS_ENDPOINT_URL = os.getenv("HIPPIUS_ENDPOINT_URL", "https://s3.hippius.com")
 HIPPIUS_REGION       = os.getenv("HIPPIUS_REGION", "decentralized")
-HIPPIUS_BUCKET_NAME  = os.getenv("HIPPIUS_BUCKET_NAME", "my-affine-validator-bucket")
 HIPPIUS_SEED_PHRASE  = os.getenv("HIPPIUS_SEED_PHRASE", "")
 
 from botocore import UNSIGNED
@@ -363,9 +362,6 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 LIST_TTL_SECONDS = int(os.getenv("AFFINE_LIST_TTL", "100"))
 _LIST_CACHE: Dict[str, Tuple[float, list[str]]] = {}
 
-# Commitments cache (get_all_commitments) with long TTL (default 1 hour)
-AFFINE_COMMITMENTS_TTL = int(os.getenv("AFFINE_COMMITMENTS_TTL", "3600"))
-_COMMITMENTS_CACHE: Tuple[float, Optional[Dict[str, str]]] = (0.0, None)
 
 # Local validator bucket name, determined at startup
 LOCAL_BUCKET_NAME: Optional[str] = None
@@ -382,7 +378,7 @@ except ModuleNotFoundError:
     
 # ── Index helpers ───────────────────────────────────────────────────────────
 # Index file is no longer used; validators publish to their own public buckets
-# and discovery is done via on-chain commitments.
+# and discovery is done via deterministic naming without on-chain commitments.
 
 # ── Shard cache ─────────────────────────────────────────────────────────────
 async def _cache_shard(ref: tuple[str, str, str, str], sem: asyncio.Semaphore) -> Path:
@@ -432,48 +428,27 @@ async def dataset(
     Stream `Result`s in deterministic order while pre‑downloading future
     shards concurrently.
 
-    Discovery:
-      - Read latest validator commitments from chain.
-      - Expect versioned payload: {"type":"hippius_v1","endpoint","region","bucket"}
+    Discovery (deterministic):
+      - Get latest metagraph and iterate active validator hotkeys.
+      - Construct bucket name: affine-v1-{HOTKEY_SS58_ADDRESS}.
       - List objects anonymously from each public bucket (LRU+TTL cached).
+      - If a bucket does not exist, skip it silently.
       - Filter keys in requested block windows and matching "-{hotkey}.json".
     """
     sub  = await get_subtensor()
     cur  = await sub.get_current_block()
     need = {w for w in range(_w(cur - tail), _w(cur) + WINDOW, WINDOW)}
 
-    # Discover validator buckets via get_all_commitments (cached)
+    # Deterministic validator bucket discovery (no on-chain commitments)
     meta = await sub.metagraph(NETUID)
     now = time.time()
-    global _COMMITMENTS_CACHE
-    ts, cached = _COMMITMENTS_CACHE
-    if not cached or (now - ts) > AFFINE_COMMITMENTS_TTL:
-        try:
-            commitments = await sub.get_all_commitments(netuid=NETUID)
-        except Exception:
-            commitments = {}
-        _COMMITMENTS_CACHE = (now, commitments)
-    else:
-        commitments = cached or {}
 
     refs: list[tuple[str, str, str, str]] = []  # (endpoint, region, bucket, key)
 
-    for uid, hotkey in enumerate(meta.hotkeys):
-        s = commitments.get(hotkey)
-        if not isinstance(s, str) or not s:
-            continue
-        try:
-            payload = json.loads(s)
-        except Exception:
-            continue
-        if not (isinstance(payload, dict) and payload.get("type") == "hippius_v1"):
-            continue
-        endpoint = payload.get("endpoint") or HIPPIUS_ENDPOINT_URL
-        region   = payload.get("region") or HIPPIUS_REGION
-        bucket   = payload.get("bucket")
-        if not bucket:
-            continue
-        s3info = (endpoint, region, bucket)
+    for hotkey in meta.hotkeys:
+        endpoint = HIPPIUS_ENDPOINT_URL
+        region = HIPPIUS_REGION
+        bucket = f"affine-v1-{hotkey}"
 
         # LRU list cache per hotkey
         cached = _LIST_CACHE.get(hotkey)
@@ -482,10 +457,10 @@ async def dataset(
         else:
             keys = []
             try:
-                async with create_s3_reader_client(s3info[0], s3info[1]) as c:
+                async with create_s3_reader_client(endpoint, region) as c:
                     token = None
                     while True:
-                        kw = {"Bucket": s3info[2], "Prefix": RESULT_PREFIX}
+                        kw = {"Bucket": bucket, "Prefix": RESULT_PREFIX}
                         if token:
                             kw["ContinuationToken"] = token
                         r = await c.list_objects_v2(**kw)
@@ -500,11 +475,16 @@ async def dataset(
                             continue
                         break
                 _LIST_CACHE[hotkey] = (now, keys)
-            except Exception:
-                continue
+            except Exception as e:
+                # If the bucket does not exist yet, skip silently
+                msg = str(e)
+                if "NoSuchBucket" in msg or "404" in msg:
+                    keys = []
+                else:
+                    keys = []
 
         for k in keys:
-            refs.append((s3info[0], s3info[1], s3info[2], k))
+            refs.append((endpoint, region, bucket, k))
 
     # Deterministic order across validators
     refs.sort(key=lambda r: r[3])
@@ -1130,28 +1110,6 @@ def runner():
 #                               Validator                                     #
 # --------------------------------------------------------------------------- #
 
-_STORAGE_COMMITTED = False
-async def ensure_storage_commitment(wallet: "bt.wallet", bucket_name: str):
-    """
-    Publish this validator's Hippius bucket info on-chain for discovery using high-level commit API.
-    Payload format: {"type":"hippius_v1","endpoint":...,"region":...,"bucket":...}
-    """
-    global _STORAGE_COMMITTED
-    if _STORAGE_COMMITTED:
-        return
-    sub = await get_subtensor()
-    payload_json = json.dumps({
-        "type": "hippius_v1",
-        "endpoint": HIPPIUS_ENDPOINT_URL,
-        "region": HIPPIUS_REGION,
-        "bucket": bucket_name,
-    }, separators=(",", ":"))
-    # The high-level commit handles Data::Raw and size internally
-    await sub.commit(wallet=wallet, netuid=NETUID, data=payload_json)
-    _STORAGE_COMMITTED = True
-    logger.debug("Committed Hippius storage details via subtensor.commit")
-
-
 async def _get_hotkey_from_signer() -> Optional[str]:
     """Fetch hotkey from signer service /hotkey endpoint."""
     url = os.getenv("SIGNER_URL", "http://signer:8080").rstrip("/")
@@ -1226,7 +1184,6 @@ async def ensure_validator_setup(wallet: "bt.wallet") -> None:
       - Determine own hotkey (wallet or signer)
       - Ensure registered on metagraph
       - Compute standardized bucket name and create/make public if needed
-      - Ensure on-chain commitment matches expected, otherwise update via commit()
       - Cache bucket for sink()
     """
     global LOCAL_BUCKET_NAME
@@ -1251,26 +1208,6 @@ async def ensure_validator_setup(wallet: "bt.wallet") -> None:
     await ensure_public_bucket_exists(expected_bucket)
     LOCAL_BUCKET_NAME = expected_bucket
 
-    # Ensure commitment matches expected
-    try:
-        commitments = await sub.get_all_commitments(netuid=NETUID)
-    except Exception:
-        commitments = {}
-    cur = commitments.get(hotkey)
-    expected_json = json.dumps(
-        {"type": "hippius_v1", "endpoint": HIPPIUS_ENDPOINT_URL, "region": HIPPIUS_REGION, "bucket": expected_bucket},
-        separators=(",", ":"),
-    )
-    needs_update = True
-    if isinstance(cur, str) and cur:
-        try:
-            a = json.loads(cur)
-            b = json.loads(expected_json)
-            needs_update = not (isinstance(a, dict) and isinstance(b, dict) and a == b)
-        except Exception:
-            needs_update = True
-    if needs_update:
-        await ensure_storage_commitment(wallet, expected_bucket)
 
     
 async def _set_weights_with_confirmation(

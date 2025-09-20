@@ -11,7 +11,7 @@ Affine is an incentivized RL system built on Bittensor Subnet 120. Validators co
   - `ded.py`: program deduction (write code to pass test cases)
 - `affine/utils/`: runtime utilities
   - `executor.py`: safe Python program runner for ABD/DED
-  - `dataset.py`: buffered Hugging Face dataset fetcher
+  - `dataset.py`: S3BufferedDataset (public Hippius 'affine-datasets')
 - Packaging/config: `pyproject.toml`, `Dockerfile`, `docker-compose.yml`, `docker-compose.local.yml`, `prometheus.yml`
 - Ops/content: `build_and_push.sh` (if present), `site/` (static viewer), `notebooks/`
 
@@ -61,8 +61,8 @@ Install via uv and run the `af` CLI (see README for full steps).
   - `AFFINE_WINDOW` (default 20) defines shard window based on block numbers
   - A shard key is `affine/results/{WINDOW_START_BLOCK}-{HOTKEY}.json`
 - Discovery
-  - Each validator commits their public bucket details on-chain as: `{"type":"hippius_v1","endpoint","region","bucket"}`
-  - Data consumers list objects anonymously from each public bucket with prefix `affine/results/` and aggregate results
+  - Buckets are named deterministically: `affine-v1-{HOTKEY_SS58}`
+  - Data consumers iterate active validators from the metagraph, construct each bucket name, and list objects anonymously with prefix `affine/results/` to aggregate results
 - Sink
   - Results are signed (via signer service or local wallet) and appended to the shard in the validator's public Hippius bucket
 - Local cache
@@ -73,7 +73,7 @@ Hippius S3 client
 - Uses `aiobotocore`
   - Writer (validators): endpoint `${HIPPIUS_ENDPOINT_URL}` (default `https://s3.hippius.com`), region `${HIPPIUS_REGION}` (default `decentralized`), auth: `access_key=base64(seed)`, `secret_key=seed`
   - Reader (consumers): anonymous client with `signature_version=UNSIGNED`
-- Bucket: `${HIPPIUS_BUCKET_NAME}` (created public by the validator)
+- Buckets: `affine-v1-{HOTKEY}` (auto-created and public by the validator)
 - Keys: `RESULT_PREFIX=affine/results/`
 
 ### Scoring and weight setting
@@ -122,9 +122,9 @@ Key hyperparameters (defaults)
 - Strips code fences; if program defines `solve()` and produces no output, auto-injects `if __name__ == "__main__":` runner
 - Cleans up temp files; kills entire process group on timeout/truncation
 
-### Buffered dataset (Hugging Face)
-- `BufferedDataset` fetches random windows from `https://datasets-server.huggingface.co/rows` with retries and exponential backoff
-- Internal buffer filled concurrently and served via `get()`; used by ABD/DED
+### Buffered dataset (Hippius public S3)
+- `S3BufferedDataset` reads from the public Hippius bucket `affine-datasets` anonymously
+- Reads `index.json` under `affine/datasets/{dataset_name}/` then fetches listed JSON files; results are buffered and served via `get()`; used by ABD/DED
 
 ### Configuration (env vars)
 - Bittensor/Subtensor
@@ -135,7 +135,7 @@ Key hyperparameters (defaults)
   - `HF_USER`, `HF_TOKEN`
 - Hippius S3
   - `HIPPIUS_ENDPOINT_URL` (default `https://s3.hippius.com`), `HIPPIUS_REGION` (default `decentralized`)
-  - `HIPPIUS_BUCKET_NAME` (your public bucket), `HIPPIUS_SEED_PHRASE` (sub-account seed for writer auth)
+  - `HIPPIUS_SEED_PHRASE` (sub-account seed for writer auth); validator buckets are auto-created as `affine-v1-{HOTKEY}`
   - `AFFINE_WINDOW` (shard size), `AFFINE_CACHE_DIR`, `AFFINE_LIST_TTL` (LRU/TTL for list calls)
 - Networking/Concurrency
   - `AFFINE_METRICS_ADDR`, `AFFINE_METRICS_PORT`
@@ -170,8 +170,8 @@ async for res in af.dataset(100):
 ```
 
 ### Static viewing
-- The centralized `affine/index.json` is removed. Discovery is decentralized via on-chain commitments per validator.
-- A viewer must resolve validator commitments from the chain, then anonymously list objects from each public Hippius bucket.
+- The centralized `affine/index.json` is removed. Discovery uses deterministic validator buckets.
+- A viewer should iterate active validators from the metagraph, construct bucket names `affine-v1-{hotkey}`, then anonymously list objects from each public Hippius bucket.
 - See `integration.md` for Hippius public bucket policy examples and access notes.
 
 ### Notes and best practices
