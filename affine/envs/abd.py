@@ -112,7 +112,7 @@ class ABD(af.BaseEnv):
         return af.Challenge(
             env=self,
             prompt=PROMPT_TEMPLATE.format(program=program, output=output),
-            extra={"program": program, "expected_output": output, 'timestamp': time.time() },
+            extra={"program": program, "expected_output": output},
         )
 
     async def generate(self) -> af.Challenge:
