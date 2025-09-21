@@ -1,20 +1,20 @@
 import asyncio
+import base64
 import json
-import logging
+import os
 import random
 from collections import deque
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
-import aiohttp
 import affine as af
+from aiobotocore.session import get_session
+from botocore.config import Config
 
 class S3BufferedDataset:
     """
     Buffered dataset reader for the public 'affine-datasets' Hippius S3 bucket.
     
-    This implementation uses aiohttp for direct, anonymous HTTP GET requests to
-    completely avoid botocore's complex credential resolution and signing logic,
-    providing a robust way to fetch data from a public bucket.
+    This implementation uses an AUTHENTICATED aiobotocore client.
     """
     def __init__(
         self,
@@ -28,17 +28,21 @@ class S3BufferedDataset:
         self.max_batch      = max_batch
         self._rng           = random.Random(seed)
 
-        # Correctly parse the dataset name to match the bucket structure
-        # e.g., "satpalsr/rl-python" -> "rl-python"
         short_name = self.dataset_name.split('/')[-1]
 
-        # Configuration for the public training dataset bucket
+        # Configuration for the public dataset bucket
         self._bucket         = "affine-datasets"
-        self._endpoint_url   = "https://s3.hippius.com"
+        self._endpoint_url   = os.getenv("HIPPIUS_ENDPOINT_URL", "https://s3.hippius.com")
+        self._region         = os.getenv("HIPPIUS_REGION", "decentralized")
+        self._dataset_folder = f"affine/datasets/{short_name}/"
+        self._index_key      = self._dataset_folder + "index.json"
+
+        # --- AUTHENTICATION ---
+        _dataset_seed_phrase = os.getenv("HIPPIUS_SEED_PHRASE")
+        if not _dataset_seed_phrase or len(_dataset_seed_phrase.split()) != 12:
+            raise ValueError("HIPPIUS_SEED_PHRASE environment variable is not set or is invalid.")
         
-        # Construct the base URL for the dataset
-        self._base_data_url = f"{self._endpoint_url.rstrip('/')}/{self._bucket}/affine/datasets/{short_name}"
-        self._index_url      = f"{self._base_data_url}/index.json"
+        self._access_key, self._secret_key = self._hippius_access_from_seed(_dataset_seed_phrase)
 
         # Internal state
         self._buffer: Deque[Any] = deque()
@@ -48,103 +52,93 @@ class S3BufferedDataset:
         self._files: list[Dict[str, Any]] = []
         self._next_file_index: int = 0
 
-    async def _http_get(self, url: str) -> bytes:
-        """Performs a simple, anonymous GET request."""
-        timeout = aiohttp.ClientTimeout(total=60)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url) as response:
-                response.raise_for_status()
-                return await response.read()
+    def _hippius_access_from_seed(self, seed: str) -> Tuple[str, str]:
+        access_key = base64.b64encode(seed.encode("utf-8")).decode("utf-8")
+        secret_key = seed
+        return access_key, secret_key
+
+    def _client_ctx(self):
+        """Creates a properly authenticated aiobotocore client."""
+        session = get_session()
+        return session.create_client(
+            "s3",
+            endpoint_url=self._endpoint_url,
+            region_name=self._region,
+            aws_access_key_id=self._access_key,
+            aws_secret_access_key=self._secret_key,
+            config=Config(s3={"addressing_style": "path"}, max_pool_connections=256),
+        )
 
     async def _ensure_index(self) -> None:
-        """Fetches and parses the index.json file via HTTP."""
+        """Fetches and parses the index.json file from the Hippius S3 bucket."""
         if self._index is not None:
             return
-        
-        af.logger.trace(f"Loading S3 index via HTTP from: {self._index_url}")
-        try:
-            body = await self._http_get(self._index_url)
-            self._index = json.loads(body.decode('utf-8'))
-        except aiohttp.ClientResponseError as e:
-            af.logger.error(f"Failed to fetch S3 index at {self._index_url}. Status: {e.status}. Message: {e.message}. Ensure the bucket is public and the file exists.")
-            raise e
-        except Exception as e:
-            af.logger.error(f"An unexpected error occurred while fetching S3 index at {self._index_url}.")
-            raise e
+        af.logger.trace(f"Loading Hippius S3 index: s3://{self._bucket}/{self._index_key}")
+        async with self._client_ctx() as c:
+            try:
+                resp = await c.get_object(Bucket=self._bucket, Key=self._index_key)
+                body = await resp["Body"].read()
+                self._index = json.loads(body.decode('utf-8'))
+            except Exception as e:
+                af.logger.error(f"Failed to fetch Hippius S3 index s3://{self._bucket}/{self._index_key}. Error: {e!r}")
+                raise e
         
         self._files = list(self._index.get("files", []))
         if not self._files:
-            raise RuntimeError(f"S3 index at {self._index_url} contains no files.")
+            raise RuntimeError(f"Hippius S3 index at s3://{self._bucket}/{self._index_key} contains no files.")
         self._next_file_index = 0
 
     async def _read_next_file(self) -> list[Any]:
-        """Reads the next data chunk file specified in the index."""
         await self._ensure_index()
-        if not self._files:
-            return []
-        
-        if self._next_file_index >= len(self._files):
-            self._next_file_index = 0 # Loop back to the start
-        
+        if not self._files: return []
+        if self._next_file_index >= len(self._files): self._next_file_index = 0
         file_info = self._files[self._next_file_index]
         self._next_file_index += 1
-        
-        # Construct the full URL for the data chunk
-        file_name = file_info.get("filename")
-        if not file_name:
-            return []
-        
-        chunk_url = f"{self._base_data_url}/{file_name}"
-        af.logger.trace(f"Downloading S3 chunk via HTTP from: {chunk_url}")
-        body = await self._http_get(chunk_url)
-
+        key = file_info.get("key") or (self._dataset_folder + file_info.get("filename", ""))
+        if not key: return []
+        af.logger.trace(f"Downloading Hippius S3 chunk: s3://{self._bucket}/{key}")
+        async with self._client_ctx() as c:
+            resp = await c.get_object(Bucket=self._bucket, Key=key)
+            body = await resp["Body"].read()
         try:
             data = json.loads(body.decode('utf-8'))
         except Exception as e:
-            af.logger.warning(f"Failed to parse JSON chunk from {chunk_url}: {e!r}")
+            af.logger.warning(f"Failed to parse JSON chunk {key}: {e!r}")
             return []
-            
         return data if isinstance(data, list) else []
 
     async def _fill_buffer(self) -> None:
-        """Continuously fills the internal buffer with data."""
-        af.logger.trace("Starting S3 buffer fill")
+        af.logger.trace("Starting Hippius S3 buffer fill")
         while len(self._buffer) < self.buffer_size:
             try:
                 rows = await self._read_next_file()
                 if not rows:
-                    af.logger.warning("No rows returned from S3 chunk, will retry after a short delay.")
+                    af.logger.warning("No rows returned from Hippius S3 chunk, will retry.")
                     await asyncio.sleep(5)
                     continue
-                
                 if self.max_batch and len(rows) > self.max_batch:
-                    start = self._rng.randint(0, max(0, len(rows) - self.max_batch))
+                    start = random.randint(0, max(0, len(rows) - self.max_batch))
                     rows = rows[start:start + self.max_batch]
-                
                 self._buffer.extend(rows)
             except Exception as e:
-                af.logger.error(f"Error in fill_buffer task: {e!r}. Retrying in 10 seconds.")
+                af.logger.error(f"Error in fill_buffer task: {e!r}. Retrying in 10s.")
                 await asyncio.sleep(10)
-
-        af.logger.trace("S3 buffer fill complete")
+        af.logger.trace("Hippius S3 buffer fill complete")
 
     async def get(self) -> Any:
-        """Gets one item from the buffer, refilling it if necessary."""
         async with self._lock:
-            if not self._buffer:
-                if not self._fill_task or self._fill_task.done():
-                    self._fill_task = asyncio.create_task(self._fill_buffer())
-                await self._fill_task
-
-            if not self._buffer:
-                raise RuntimeError("S3BufferedDataset: failed to retrieve data from S3 after retries.")
-
-            item = self._buffer.popleft()
-            
-            if len(self._buffer) < (self.buffer_size // 2) and (not self._fill_task or self._fill_task.done()):
+            if len(self._buffer) < self.buffer_size and (not self._fill_task or self._fill_task.done()):
                 self._fill_task = asyncio.create_task(self._fill_buffer())
-                
+        retries = 60 
+        while not self._buffer and retries > 0:
+            if self._fill_task and self._fill_task.done() and self._fill_task.exception():
+                raise self._fill_task.exception()
+            await asyncio.sleep(0.5)
+            retries -= 1
+        if not self._buffer:
+            raise RuntimeError("Hippius S3BufferedDataset: Buffer remained empty after waiting.")
+        async with self._lock:
+            item = self._buffer.popleft()
             return item
 
-# Backward-compatibility alias.
 R2BufferedDataset = S3BufferedDataset

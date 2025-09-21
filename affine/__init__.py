@@ -306,7 +306,7 @@ class Result(BaseModel):
 from .envs import ENVS
 
 # --------------------------------------------------------------------------- #
-#                   S3 helpers                                                #
+#                  Hippius S3 helpers                                         #
 # --------------------------------------------------------------------------- #
 # ── ENV ──────────────────────────────────────────────────────────────────────
 WINDOW        = int(os.getenv("AFFINE_WINDOW", 20))
@@ -342,17 +342,32 @@ def create_s3_writer_client(endpoint: str, region: str, seed_phrase: str):
     )
 
 def create_s3_reader_client(endpoint: str, region: str):
-    """Anonymous client for reading public buckets."""
-    return get_session().create_client(
-        "s3",
-        endpoint_url=endpoint,
-        region_name=region,
-        config=Config(
-            signature_version=UNSIGNED,
-            max_pool_connections=256,
-            s3={"addressing_style": "path"}
-        ),
-    )
+    """Authenticated/anonymous client for reading public buckets."""
+    seed = os.getenv("HIPPIUS_SEED_PHRASE", "")
+    if seed:
+        access_key, secret_key = _hippius_access_keys(seed)
+        return get_session().create_client(
+            "s3",
+            endpoint_url=endpoint,
+            region_name=region,
+            aws_access_key_id=access_key or None,
+            aws_secret_access_key=secret_key or None,
+            config=Config(
+                max_pool_connections=256,
+                s3={"addressing_style": "path"}
+            ),
+        )
+    else:
+        return get_session().create_client(
+            "s3",
+            endpoint_url=endpoint,
+            region_name=region,
+            config=Config(
+                signature_version=UNSIGNED,
+                max_pool_connections=256,
+                s3={"addressing_style": "path"}
+            ),
+        )
 
 CACHE_DIR = Path(os.getenv("AFFINE_CACHE_DIR",
                  Path.home() / ".cache" / "affine" / "blocks"))
@@ -422,7 +437,7 @@ async def _jsonl(p: Path):
 async def dataset(
     tail: int,
     *,
-    max_concurrency: int = 10,      # parallel S3 downloads
+    max_concurrency: int = 10,      # parallel Hippius s3 downloads
 ) -> AsyncIterator["Result"]:
     """
     Stream `Result`s in deterministic order while pre‑downloading future
