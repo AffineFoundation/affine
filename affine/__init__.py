@@ -1237,9 +1237,32 @@ def signer(host: str, port: int):
                 logger.error(f"[signer] set_weights error: {e}")
                 return web.json_response({"success": False, "error": str(e)}, status=500)
 
+        async def get_hotkey_handler(request: "web.Request"):
+            return web.json_response({
+                "success": True,
+                "hotkey": wallet.hotkey.ss58_address
+            })
+
+        async def commit_handler(request: "web.Request"):
+            try:
+                payload = await request.json()
+                data = payload.get("data")
+                if not isinstance(data, str):
+                    return web.json_response({"success": False, "error": "Invalid data payload"}, status=400)
+                st = await get_subtensor()
+                await st.commit(wallet=wallet, netuid=NETUID, data=data)
+                await st.wait_for_block()
+                logger.info(f"[signer] /commit: successful for data='{data[:50]}...'")
+                return web.json_response({"success": True})
+            except Exception as e:
+                logger.error(f"[signer] /commit error: {e}")
+                return web.json_response({"success": False, "error": str(e)}, status=500)
+
         app = web.Application(middlewares=[access_log])
         app.add_routes([
             web.get('/healthz', health),
+            web.get('/hotkey', get_hotkey_handler),
+            web.post('/commit', commit_handler),
             web.post('/set_weights', set_weights_handler),
             web.post('/sign', sign_handler),
         ])
@@ -1258,7 +1281,7 @@ def signer(host: str, port: int):
 
     asyncio.run(_run())
 
-async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[float], retry: int = 10 ):
+async def retry_set_weights( wallet: Optional[bt.Wallet], uids: List[int], weights: List[float], retry: int = 10 ):
     # Delegate to signer; fallback to shared helper only if signer is unreachable
     signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
     try:
@@ -1298,6 +1321,9 @@ async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[f
             logger.warning(f"Signer responded error: status={resp.status} body={data}")
             return
     except ClientConnectorError as e:
+        if wallet is None:
+            logger.error(f"Signer not reachable ({type(e).__name__}: {e}) and no wallet available; cannot set_weights.")
+            return
         logger.info(f"Signer not reachable ({type(e).__name__}: {e}); falling back to local set_weights once")
         ok = await _set_weights_with_confirmation(
             wallet, NETUID, uids, weights, False,
@@ -1643,9 +1669,6 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
 @cli.command("validate")
 def validate():
     global HEARTBEAT
-    coldkey = get_conf("BT_WALLET_COLD", "default")
-    hotkey  = get_conf("BT_WALLET_HOT", "default")
-    wallet  = bt.wallet(name=coldkey, hotkey=hotkey)    
     async def _run():     
         LAST = 0
         TEMPO = 100
@@ -1655,7 +1678,12 @@ def validate():
         try:
             st = await get_subtensor()
             meta = await st.metagraph(NETUID)
-            my_hotkey = wallet.hotkey.ss58_address
+            signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
+            async with aiohttp.ClientSession() as session:
+                resp = await session.get(f"{signer_url}/hotkey")
+                resp.raise_for_status()
+                _hk = await resp.json()
+                my_hotkey = _hk.get("hotkey", "")
             try:
                 my_uid = meta.hotkeys.index(my_hotkey)
             except ValueError:
@@ -1691,11 +1719,14 @@ def validate():
                 need_commit = True
             if need_commit:
                 try:
-                    await st.commit(wallet=wallet, netuid=NETUID, data=payload)
-                    logger.info(f"Updated on-chain bucket commitment to {payload}")
+                    signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
+                    async with aiohttp.ClientSession() as session:
+                        resp = await session.post(f"{signer_url}/commit", json={"data": payload})
+                        resp.raise_for_status()
+                    logger.info(f"Delegated on-chain bucket commitment to signer: {payload}")
                     await st.wait_for_block()
                 except Exception as e:
-                    logger.warning(f"Failed to submit bucket commitment: {e}")
+                    logger.warning(f"Failed to submit bucket commitment via signer: {e}")
         except Exception as e:
             logger.warning(f"Startup commitment management failed: {e}")
 
@@ -1715,7 +1746,7 @@ def validate():
         
                 # ---------------- Set weights. ------------------------
                 logger.info("Setting weights ...")
-                await retry_set_weights( wallet, uids=uids, weights=weights, retry = 3)
+                await retry_set_weights( None, uids=uids, weights=weights, retry = 3)
                 subtensor = await get_subtensor()
                 SETBLOCK = await subtensor.get_current_block()
                 LASTSET.set_function(lambda: SETBLOCK - LAST)
