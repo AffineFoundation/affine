@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     patch \
     bash \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 ARG PREINSTALL_ENV

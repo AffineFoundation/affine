@@ -23,58 +23,33 @@ def main():
         print("Starting a new game...")
         reset_response = sandbox.proxy.reset(
             id=env_id,
-            game=5,  # Game ID
+            game=0,  # Game ID
             world_type="Text"  # Text-based world
         )
-        available_actions = reset_response.get("available_actions", [])
-        print(f"reset_response:\n{reset_response}\n")
-        print("-" * 50 + "\n")
-        
-        step_count = 0
-        max_steps = 30
-        done = False
+        print(f"start :\n{reset_response}\n")
+        step_response = sandbox.proxy.step(
+            id=env_id,
+            action="go to dresser 1"
+        )
+        print(f"step 1:\n{step_response}\n")
 
-        while not done and step_count < max_steps:
-            if not available_actions:
-                print("No available actions. Game might be stuck.")
-                break
-            
-            action = random.choice(available_actions)
-            print(f"Step {step_count + 1}: Taking action - '{action}'")
-            
-            step_response = sandbox.proxy.step(
-                id=env_id,
-                action=action
-            )
-            
-            observation = step_response.get("observation", "")
-            done = step_response.get("done", False)
-            reward = step_response.get("reward", 0)
-            available_actions = step_response.get("available_actions", [])
-            
-            print(f"  Reward: {reward}")
-            print(f"  Done: {done}")
-            if observation:
-                obs_preview = observation[:150] + "..." if len(observation) > 150 else observation
-                print(f"  Observation: {obs_preview}")
-            print()
-            
-            step_count += 1
+        step_response = sandbox.proxy.step(
+            id=env_id,
+            action="take alarmclock 2 from dresser 1"
+        )
+        print(f"step 2:\n{step_response}\n")
 
-            if done:
-                print(f"Task completed successfully in {step_count} steps!")
-                break
-        
-        if not done:
-            print(f"Reached maximum steps ({max_steps}) without completing the task.")
-        
-        print("\nGetting final environment details...")
-        detail_response = sandbox.proxy.detail(id=env_id)
-        
-        if detail_response:
-            print("Final environment state:")
-            for key, value in detail_response.items():
-                    print(f"  {key}: {value}")
+        step_response = sandbox.proxy.step(
+            id=env_id,
+            action="examine alarmclock 2"
+        )
+        print(f"step 3:\n{step_response}\n")
+
+        step_response = sandbox.proxy.step(
+            id=env_id,
+            action="use desklamp 1"
+        )
+        print(f"step 4:\n{step_response}\n")
 
     except Exception as e:
         print(f"Error occurred: {e}")
