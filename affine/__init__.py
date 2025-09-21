@@ -35,6 +35,7 @@ from typing import AsyncIterator
 from urllib.parse import urlparse
 from huggingface_hub import HfApi
 from botocore.config import Config
+from botocore import UNSIGNED
 from collections import defaultdict
 from abc import ABC, abstractmethod
 from pydantic import root_validator
@@ -312,7 +313,7 @@ from .envs import ENVS
 # --------------------------------------------------------------------------- #
 # ── ENV ──────────────────────────────────────────────────────────────────────
 WINDOW        = int(os.getenv("AFFINE_WINDOW", 20))
-RESULT_PREFIX = "affine/results/"
+RESULT_PREFIX = "results/"
 INDEX_KEY     = "affine/index.json"
 
 FOLDER  = os.getenv("R2_FOLDER", "affine" )
@@ -326,6 +327,38 @@ get_client_ctx = lambda: get_session().create_client(
     aws_access_key_id=ACCESS, aws_secret_access_key=SECRET,
     config=Config(max_pool_connections=256)
 )
+
+# Validator-specific R2 (per-validator bucket storage)
+ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", os.getenv("R2_BUCKET_ID", "80f15715bb0b882c9e967c13e677ed7d"))
+VALIDATOR_BUCKET = os.getenv("VALIDATOR_R2_BUCKET_NAME")
+VALIDATOR_ENDPOINT = f"https://{ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+def get_validator_client_ctx(readonly: bool = False):
+    if readonly:
+        return get_session().create_client(
+            "s3",
+            endpoint_url=VALIDATOR_ENDPOINT,
+            config=Config(max_pool_connections=256, signature_version=UNSIGNED),
+        )
+    else:
+        return get_session().create_client(
+            "s3",
+            endpoint_url=VALIDATOR_ENDPOINT,
+            aws_access_key_id=ACCESS,
+            aws_secret_access_key=SECRET,
+            config=Config(max_pool_connections=256),
+        )
+
+def get_public_client_ctx(endpoint_url: str):
+    """
+    Unsigned public client for reading other validators' public buckets.
+    Each validator may be on a different R2 account, so endpoint_url is per-validator.
+    """
+    return get_session().create_client(
+        "s3",
+        endpoint_url=endpoint_url,
+        config=Config(max_pool_connections=256, signature_version=UNSIGNED),
+    )
 
 CACHE_DIR = Path(os.getenv("AFFINE_CACHE_DIR",
                  Path.home() / ".cache" / "affine" / "blocks"))
@@ -389,47 +422,137 @@ async def _jsonl(p: Path):
         for l in await asyncio.to_thread(_read): yield l
 
 # ── Core async stream (Result objects) ──────────────────────────────────────
+# Cached fetcher for all validators' bucket commitments (TTL by blocks)
+async def _get_all_validator_commitments(ttl_blocks: int = 300) -> Dict[str, str]:
+    """
+    Returns mapping hotkey -> raw commitment string (JSON) as committed on-chain.
+    Discovery is fully on-chain. Caches by current block height for ~ttl_blocks.
+    """
+    if not hasattr(_get_all_validator_commitments, "_cache"):
+        _get_all_validator_commitments._cache = {"block": -1, "data": {}}
+    cache = _get_all_validator_commitments._cache
+    st = await get_subtensor()
+    cur = await st.get_current_block()
+    if cache.get("data") and (cur - (cache.get("block") or -1)) < ttl_blocks:
+        return cache["data"]
+
+    out: Dict[str, str] = {}
+    try:
+        if hasattr(st, "get_all_commitments"):
+            commits = await st.get_all_commitments(NETUID)
+            if isinstance(commits, dict):
+                for hk, val in commits.items():
+                    # normalize value from possible (block, data) shapes
+                    if isinstance(val, (list, tuple)) and val:
+                        cand = val[-1]
+                        if isinstance(cand, (list, tuple)) and len(cand) >= 2:
+                            cand = cand[1]
+                        val = cand
+                    if isinstance(val, (bytes, bytearray)):
+                        val = val.decode("utf-8", "ignore")
+                    if isinstance(val, str) and val:
+                        out[hk] = val
+        else:
+            commits = await st.get_all_revealed_commitments(NETUID)
+            for hk, hist in (commits or {}).items():
+                try:
+                    _, data = hist[-1]
+                    if isinstance(data, (bytes, bytearray)):
+                        data = data.decode("utf-8", "ignore")
+                    if isinstance(data, str) and data:
+                        out[hk] = data
+                except Exception:
+                    continue
+    except Exception as e:
+        logger.warning(f"Failed to fetch validator commitments: {e}")
+
+    cache["block"] = cur
+    cache["data"] = out
+    return out
+
+# ── Core async stream (Result objects) — decentralized read ───────────────────
 async def dataset(
     tail: int,
     *,
     max_concurrency: int = 10,      # parallel S3 downloads
 ) -> AsyncIterator["Result"]:
     """
-    Stream `Result`s in deterministic order while pre‑downloading future
-    shards concurrently.
+    Stream `Result`s from all validators' public R2 buckets in deterministic order.
+    Results are discovered via on-chain bucket commitments and read via public R2.
     """
-    # ── figure out which windows we need ────────────────────────────────
-    sub  = await get_subtensor()
-    cur  = await sub.get_current_block()
+    st = await get_subtensor()
+    cur = await st.get_current_block()
     need = {w for w in range(_w(cur - tail), _w(cur) + WINDOW, WINDOW)}
-    keys = [
-        k for k in await _index()
-        if (h := Path(k).name.split("-", 1)[0]).isdigit() and int(h) in need
-    ]
-    keys.sort()    
-    # ── helpers ────────────────────────────────
-    sem = asyncio.Semaphore(max_concurrency)     # throttle S3
-    async def _prefetch(key: str) -> Path:       # just downloads / caches
-        return await _cache_shard(key, sem)
-    tasks: list[asyncio.Task[Path]] = [
-        asyncio.create_task(_prefetch(k)) for k in keys[:max_concurrency]
-    ]
-    next_key = max_concurrency            
+
+    # Discover commitments -> parse per-validator endpoint and bucket
+    hk_to_commit = await _get_all_validator_commitments()
+    keys: list[tuple[str, str, str]] = []  # (endpoint_url, bucket, key)
+    for hk, raw in hk_to_commit.items():
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else raw
+            bucket = str(data["bucket"]).strip()
+            account_id = str(data["account_id"]).strip()
+            if not bucket or not account_id:
+                raise ValueError("missing bucket/account_id")
+            endpoint_url = f"https://{account_id}.r2.cloudflarestorage.com"
+        except Exception:
+            logger.warning(f"Skipping validator {hk[:8]} due to invalid commitment format.")
+            continue
+        try:
+            continuation = None
+            while True:
+                params = {"Bucket": bucket, "Prefix": RESULT_PREFIX}
+                async with get_public_client_ctx(endpoint_url) as c:
+                    if continuation:
+                        params["ContinuationToken"] = continuation
+                    resp = await c.list_objects_v2(**params)
+                for obj in (resp.get("Contents") or []):
+                    k = obj.get("Key") or ""
+                    name = Path(k).name
+                    head = name.split("-", 1)[0]  # old format safety
+                    head_num = None
+                    if head.isdigit():
+                        head_num = int(head)
+                    else:
+                        stem = Path(name).stem
+                        if stem.isdigit():
+                            head_num = int(stem)
+                    if head_num is not None and head_num in need:
+                        keys.append((endpoint_url, bucket, k))
+                if not resp.get("IsTruncated"):
+                    break
+                continuation = resp.get("NextContinuationToken")
+                if not continuation:
+                    break
+        except Exception:
+            # Skip buckets we cannot list (not public or misconfigured)
+            continue
+
+    # Deterministic order
+    keys.sort(key=lambda bk: bk[1])
+
+    sem = asyncio.Semaphore(max_concurrency)
     bar = tqdm(f"Dataset=({cur}, {cur - tail})", unit="res", dynamic_ncols=True)
-    # ── main loop: iterate over keys in order ───────────────────────────
-    for i, key in enumerate(keys):
-        path = await tasks[i]
-        if next_key < len(keys):
-            tasks.append(asyncio.create_task(_prefetch(keys[next_key])))
-            next_key += 1
-        async for raw in _jsonl(path):
+
+    async def fetch_lines(endpoint_url: str, bucket: str, key: str) -> list[bytes]:
+        async with sem, get_public_client_ctx(endpoint_url) as c:
+            try:
+                obj = await c.get_object(Bucket=bucket, Key=key)
+                body = await obj["Body"].read()
+                return [l for l in body.split(b"\n") if l]
+            except Exception:
+                return []
+
+    for endpoint_url, bucket, key in keys:
+        lines = await fetch_lines(endpoint_url, bucket, key)
+        for raw in lines:
             try:
                 r = Result.model_validate(_loads(raw))
                 if r.verify():
                     bar.update(1)
                     yield r
             except Exception:
-                pass
+                continue
     bar.close()
     
     
@@ -473,19 +596,19 @@ async def sink(wallet: bt.wallet, results: list["Result"], block: int = None):
     valid = [r for r in results if getattr(r.response, "success", False)]
     if not valid:
         return
-    hotkey, signed = await sign_results( wallet, valid )
-    key = f"{RESULT_PREFIX}{_w(block):09d}-{hotkey}.json"
-    dumped = [ r.model_dump(mode="json") for r in signed ]
-    async with get_client_ctx() as c:
+    hotkey, signed = await sign_results(wallet, valid)
+    key = f"{RESULT_PREFIX}{_w(block):09d}.jsonl"
+    dumped = [r.model_dump(mode="json") for r in signed]
+    async with get_validator_client_ctx(readonly=False) as c:
         try:
-            r = await c.get_object(Bucket=FOLDER, Key=key)
-            merged = json.loads(await r["Body"].read()) + dumped
+            r = await c.get_object(Bucket=VALIDATOR_BUCKET, Key=key)
+            prev = await r["Body"].read()
         except c.exceptions.NoSuchKey:
-            merged = dumped
-        await c.put_object(Bucket=FOLDER, Key=key, Body=_dumps(merged),
-                           ContentType="application/json")
-    if len(merged) == len(dumped):              # shard was new
-        await _update_index(key)
+            prev = b""
+        lines = b"".join(_dumps(i) + b"\n" for i in dumped)
+        body = prev + lines
+        await c.put_object(Bucket=VALIDATOR_BUCKET, Key=key, Body=body,
+                           ContentType="application/jsonl")
 
 async def prune(tail: int):
     sub = await get_subtensor(); cur = await sub.get_current_block()
@@ -1527,6 +1650,55 @@ def validate():
         LAST = 0
         TEMPO = 100
         subtensor = None
+
+        # Startup routine: ensure validator R2 bucket commitment is set
+        try:
+            st = await get_subtensor()
+            meta = await st.metagraph(NETUID)
+            my_hotkey = wallet.hotkey.ss58_address
+            try:
+                my_uid = meta.hotkeys.index(my_hotkey)
+            except ValueError:
+                logger.error("Validator hotkey not found in metagraph; please register before running validate.")
+                return
+            bucket = os.getenv("VALIDATOR_R2_BUCKET_NAME")
+            account_id = os.getenv("R2_ACCOUNT_ID") or os.getenv("R2_BUCKET_ID")
+            if not bucket or not account_id:
+                logger.error("VALIDATOR_R2_BUCKET_NAME and R2_ACCOUNT_ID must be set; cannot sink results.")
+                return
+            # Optional: verify bucket exists and credentials work
+            try:
+                async with get_validator_client_ctx(readonly=False) as c:
+                    await c.head_bucket(Bucket=bucket)
+            except Exception as e:
+                logger.warning(f"Bucket existence check failed for {bucket}: {e}")
+            # Structured on-chain commitment JSON
+            payload = json.dumps({"bucket": bucket, "account_id": account_id}, separators=(",", ":"))
+            need_commit = False
+            try:
+                current = await st.get_commitment(netuid=NETUID, uid=my_uid)
+                if isinstance(current, (bytes, bytearray)):
+                    current = current.decode("utf-8", "ignore")
+                # Normalize whitespace differences by parsing JSON when possible
+                same = False
+                try:
+                    same = json.loads(current) == json.loads(payload)
+                except Exception:
+                    same = current == payload
+                if not same:
+                    need_commit = True
+            except Exception:
+                need_commit = True
+            if need_commit:
+                try:
+                    await st.commit(wallet=wallet, netuid=NETUID, data=payload)
+                    logger.info(f"Updated on-chain bucket commitment to {payload}")
+                    await st.wait_for_block()
+                except Exception as e:
+                    logger.warning(f"Failed to submit bucket commitment: {e}")
+        except Exception as e:
+            logger.warning(f"Startup commitment management failed: {e}")
+
         while True:
             try:
                 # ---------------- Wait for set weights. -----------------
