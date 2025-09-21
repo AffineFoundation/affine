@@ -82,6 +82,8 @@ class Templates:
 		base_image = "python:3.11-slim"
 		if env_name == "webshop":
 			base_image = "python:3.8-slim"
+		elif env_name == "webarena":
+			base_image = "python:3.10.13-slim"
 		return Templates.build(
 			template_path,
 			name=f"agentgym-{env_name}",
