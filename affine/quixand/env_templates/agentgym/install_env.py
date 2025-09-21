@@ -106,6 +106,10 @@ def install_environment():
         subprocess.run([
             "pip", "install", "--force-reinstall", "typing-extensions==4.5.0"
         ], check=False)
+    elif env_name == "sqlgym":
+        subprocess.run([
+            "pip", "install", "requests", "sqlgym"
+        ], check=False)
     print(f"Environment {env_name} installation completed")
 
 if __name__ == "__main__":
