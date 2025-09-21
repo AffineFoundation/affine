@@ -66,6 +66,19 @@ def install_environment():
     if env_yaml_path.exists():
         print(f"Found {env_yaml_path.name} for {env_name}, setting up conda environment...")
         install_miniconda(env_yaml_path)
+    
+    print("Installing required Python packages...")
+    try:
+        subprocess.run([
+            sys.executable, "-m", "pip", "install", "--upgrade",
+            "pip", "setuptools", "wheel"
+        ], check=True)
+        subprocess.run([
+            sys.executable, "-m", "pip", "install", "--no-cache-dir",
+            "fastapi", "uvicorn", "httpx", "pydantic"
+        ], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Warning: Failed to install some packages: {e}")
 
     setup_script = env_path / "setup.sh"
     if setup_script.exists():

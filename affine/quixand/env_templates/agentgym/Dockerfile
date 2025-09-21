@@ -11,24 +11,24 @@ RUN apt-get update && apt-get install -y \
     bash \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-
-RUN git clone --recursive https://github.com/WooooDyy/AgentGym
-
 ARG PREINSTALL_ENV
 ENV ENV_NAME=${PREINSTALL_ENV}
 
+WORKDIR /app
+
+ADD https://github.com/WooooDyy/AgentGym/archive/d014732d9fe39b975c368c03749bfd50950067f6.tar.gz /tmp/agentgym.tar.gz
+RUN mkdir /app/AgentGym && tar -xzf /tmp/agentgym.tar.gz -C /app/AgentGym --strip-components=1
+
 COPY install_env.py /app/
-COPY env.py /app/
-
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir fastapi uvicorn httpx pydantic
-
 ENV PATH=/opt/miniconda/envs/agentenv/bin:/opt/miniconda/bin:$PATH
-RUN python /app/install_env.py && cd AgentGym/agentenv && pip install -e . && pip uninstall accelerate deepspeed tensorboard -y
+RUN python /app/install_env.py
+
+COPY agentenv /app/agentenv
+RUN cd agentenv && pip install -e .
 
 ENV ALFWORLD_DATA=/root/.cache/alfworld
 
-WORKDIR /sandbox
+COPY env.py /app/
 
+WORKDIR /sandbox
 CMD ["uvicorn", "env:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "/app"]

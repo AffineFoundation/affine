@@ -9,6 +9,7 @@ import asyncio
 import httpx
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+from functools import partial
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -18,6 +19,8 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+ENV_NAME = os.environ.get("ENV_NAME")
 
 class EvaluatorRequest(BaseModel):
     model: str
@@ -111,8 +114,8 @@ def inject_evaluator_endpoint(app: FastAPI):
                 "academia": "AcademiaTask",
                 "searchqa": "SearchQATask",
             }
-            
-            class_name = task_modules[os.environ.get("ENV_NAME")]
+
+            class_name = task_modules[ENV_NAME]
             module = importlib.import_module("agentenv.envs")
             task_class = getattr(module, class_name)
 
@@ -171,10 +174,13 @@ def inject_evaluator_endpoint(app: FastAPI):
             logger.info(f"data_idxs: {data_idxs}")
             for data_idx in data_idxs:
                 try:
-                    exps = await asyncio.to_thread(
-                        evaluator.eval,
-                        max_rounds=request.max_round,
-                        idxs=[data_idx]
+                    exps = await loop.run_in_executor(
+                        None,
+                        partial(
+                            evaluator.eval,
+                            max_rounds=request.max_round,
+                            idxs=[data_idx]
+                        )
                     )
                     
                     reward = exps.score
@@ -224,8 +230,10 @@ def inject_evaluator_endpoint(app: FastAPI):
             logger.error(f"Import error: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to import required modules: {e}")
         except Exception as e:
-            logger.error(f"Evaluation error: {e}")
-            raise HTTPException(status_code=500, detail=f"Evaluation failed: {e}")
+            import traceback
+            tb_str = traceback.format_exc()
+            logger.error(tb_str)
+            raise HTTPException(status_code=500, detail=f"Evaluation failed: {e}, {tb_str}")
     
     logger.info("Evaluator endpoint injected successfully")
 
@@ -239,6 +247,8 @@ def create_app():
     module_name = f"agentenv_{env_name}.server"
     try:
         logger.info(f"Importing module: {module_name}")
+        if ENV_NAME == "webarena":
+            os.chdir("/app/AgentGym/agentenv-webarena")
         server_module = importlib.import_module(module_name)
         app = server_module.app
         logger.info(f"Successfully loaded {env_name} environment app")

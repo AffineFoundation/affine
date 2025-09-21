@@ -4,6 +4,7 @@ import os
 import json
 import time
 import logging
+import argparse
 from affine import quixand as qs
 
 logging.basicConfig(
@@ -18,7 +19,7 @@ if not os.getenv("CHUTES_API_KEY"):
 
 def test_evaluator_endpoint(sandbox):
     evaluation_request = {
-        "model": "deepseek-ai/DeepSeek-V3",
+        "model": "deepseek-ai/DeepSeek-R1",
         "ids": [0], # testcase ids
         "max_round": 20,
         # "data_len": 200,
@@ -34,7 +35,7 @@ def test_evaluator_endpoint(sandbox):
     
     start_time = time.time()
     try:
-        response = sandbox.proxy.evaluator(**evaluation_request, _timeout=300)
+        response = sandbox.proxy.evaluator(**evaluation_request, _timeout=600)
         elapsed = time.time() - start_time
 
         print(f"Evaluation completed in {elapsed:.2f} seconds\n")
@@ -62,7 +63,28 @@ def test_evaluator_endpoint(sandbox):
 
 
 def main():
-    env_name = "alfworld"
+    AVAILABLE_ENVS = [
+        "webshop",
+        "alfworld",
+        "babyai",
+        "sciworld",
+        # "webarena", # not support
+        "textcraft",
+        "sqlgym",
+    ]
+    
+    parser = argparse.ArgumentParser(description='Run AgentGym evaluator for specified environment')
+    parser.add_argument(
+        '--env',
+        type=str,
+        default="alfworld",
+        choices=AVAILABLE_ENVS,
+        help=f'Environment name to evaluate. Available options: {", ".join(AVAILABLE_ENVS)}'
+    )
+    
+    args = parser.parse_args()
+    env_name = args.env
+    
     print(f"Building Docker image for {env_name} environment...")
     image = qs.Templates.agentgym(env_name)
     
@@ -71,7 +93,6 @@ def main():
         template=image,
         env={
             "CHUTES_API_KEY": os.getenv("CHUTES_API_KEY"),
-            "AGENT_MODEL": "deepseek-ai/DeepSeek-V3",
         },
     )
     print(f"Container ID: {sandbox.container_id[:12]}\n")
