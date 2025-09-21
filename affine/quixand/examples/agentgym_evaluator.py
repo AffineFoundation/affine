@@ -20,7 +20,7 @@ def test_evaluator_endpoint(sandbox):
     evaluation_request = {
         "model": "deepseek-ai/DeepSeek-V3",
         "ids": [0], # testcase ids
-        "max_round": 30,
+        "max_round": 20,
         # "data_len": 200,
         # "timeout": 300
         # "max_tokens": 2048,
@@ -52,7 +52,7 @@ def test_evaluator_endpoint(sandbox):
             print(f"  ID {detail['id']}")
             print(f"  Reward {detail['reward']}")
             print(f"  Success {detail['success']}")
-            print(f"  experiences {str(detail['experiences'])[:100]}")
+            print(f"  experiences {str(detail['experiences'])}")
 
         return response
 
@@ -72,7 +72,6 @@ def main():
         env={
             "CHUTES_API_KEY": os.getenv("CHUTES_API_KEY"),
             "AGENT_MODEL": "deepseek-ai/DeepSeek-V3",
-            "LOG_LEVEL": "debug"
         },
     )
     print(f"Container ID: {sandbox.container_id[:12]}\n")
