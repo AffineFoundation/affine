@@ -20,12 +20,17 @@ WORKDIR /app
 ADD https://github.com/WooooDyy/AgentGym/archive/d014732d9fe39b975c368c03749bfd50950067f6.tar.gz /tmp/agentgym.tar.gz
 RUN mkdir /app/AgentGym && tar -xzf /tmp/agentgym.tar.gz -C /app/AgentGym --strip-components=1
 
-COPY install_env.py /app/
+
 ENV PATH=/opt/miniconda/envs/agentenv/bin:/opt/miniconda/bin:$PATH
-RUN python /app/install_env.py
+
+COPY preprocess_env.sh /app/
+RUN chmod +x /app/preprocess_env.sh && /app/preprocess_env.sh
 
 COPY agentenv /app/agentenv
 RUN cd agentenv && pip install -e .
+
+COPY postprocess_env.sh /app/
+RUN chmod +x /app/postprocess_env.sh && /app/postprocess_env.sh
 
 ENV ALFWORLD_DATA=/root/.cache/alfworld
 

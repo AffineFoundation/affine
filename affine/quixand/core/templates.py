@@ -80,7 +80,7 @@ class Templates:
 	def agentgym(env_name: str) -> str:
 		template_path = get_env_templates_dir("agentgym")
 		base_image = "python:3.11-slim"
-		if env_name == "webshop":
+		if env_name in ["webshop", "sciworld"]:
 			base_image = "python:3.8-slim"
 		elif env_name == "webarena":
 			base_image = "python:3.10.13-slim"
