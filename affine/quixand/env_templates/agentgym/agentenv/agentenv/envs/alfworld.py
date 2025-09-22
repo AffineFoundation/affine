@@ -585,7 +585,7 @@ class AlfWorldEnvClient(BaseEnvClient):
             "done": response["done"],
         }
         return StepOutput(
-            state=response["observation"],
+            state=self.observe(),
             reward=response["reward"],
             done=response["done"],
         )

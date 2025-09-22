@@ -247,8 +247,7 @@ def create_app():
     module_name = f"agentenv_{env_name}.server"
     try:
         logger.info(f"Importing module: {module_name}")
-        if ENV_NAME == "webarena":
-            os.chdir("/app/AgentGym/agentenv-webarena")
+        os.chdir(f"/app/AgentGym/agentenv-{ENV_NAME}")
         if ENV_NAME == "sqlgym":
             sys.path.insert(0, "/app/AgentGym/agentenv-sqlgym")
             os.environ["AGENTENV_SQLGYM_BIRD_PATH"] = "/app/AgentGym/agentenv-sqlgym/bird/"

@@ -21,7 +21,8 @@ def test_evaluator_endpoint(sandbox):
     evaluation_request = {
         "model": "deepseek-ai/DeepSeek-R1",
         "ids": [0], # testcase ids
-        "max_round": 20,
+        "max_round": 5,
+        # "base_url": "https://llm.chutes.ai/v1",
         # "data_len": 200,
         # "timeout": 300
         # "max_tokens": 2048,

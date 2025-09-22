@@ -108,8 +108,17 @@ def install_environment():
         ], check=False)
     elif env_name == "sqlgym":
         subprocess.run([
-            "pip", "install", "requests", "sqlgym"
+            "pip", "install", "sqlgym", "requests"
         ], check=False)
+    elif env_name == "sciworld":
+        subprocess.run([
+            "pip", "install", "numpy", "requests"
+        ], check=False)
+        subprocess.run(
+            "apt-get update && apt-get install -y --no-install-recommends openjdk-17-jdk-headless && rm -rf /var/lib/apt/lists/*",
+            shell=True,
+            check=True
+        )
     print(f"Environment {env_name} installation completed")
 
 if __name__ == "__main__":
