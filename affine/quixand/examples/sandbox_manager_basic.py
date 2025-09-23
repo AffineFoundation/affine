@@ -8,10 +8,10 @@ def main():
     print("=== Basic get_sandbox Example ===\n")
     print("Using the global get_sandbox function - no manager needed!\n")
 
-    # Get a non-shared sandbox (creates new instance)
-    print("1. Creating a non-shared sandbox...")
+    # Get a shared sandbox (creates new instance)
+    print("1. Creating a shared sandbox...")
     sandbox1 = qs.get_sandbox("python:3.11-slim", shared=True)
-    print(f"   Sandbox created: {sandbox1.id[:8]}")
+    print(f"   Sandbox Container ID: {sandbox1.container_id[:12]}")
 
     # Execute some commands
     result = sandbox1.run(["python", "-c", "print('Hello from sandbox 1!')"])
@@ -27,7 +27,7 @@ def main():
         "agentgym:alfworld",
         shared=False,
     )
-    print(f"   Sandbox created: {sandbox2.id[:8]}")
+    print(f"   Sandbox Container ID: {sandbox2.container_id[:12]}")
 
     response = sandbox2.proxy.evaluator(
         model="deepseek-ai/DeepSeek-R1", ids=[0], max_round=5, _timeout=600
@@ -38,7 +38,7 @@ def main():
     print(f"current stats: ", qs.get_manager_stats())
 
     del sandbox2
-    print("\n4. After release sandbox2():")
+    print("\n4. After release sandbox2:")
     print(f"   Verify that the sandbox will be automatically released without the need for shutdown")
     print(f"   Active sandboxes: {qs.get_manager_stats()}")
 
