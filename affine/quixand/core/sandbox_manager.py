@@ -31,10 +31,10 @@ class SandboxWrapper:
         self._sandbox = sandbox
         self._manager = manager
         self._closed = False
-        
+
     def __getattr__(self, name):
         return getattr(self._sandbox, name)
-    
+
     def shutdown(self):
         if not self._closed:
             try:
@@ -44,25 +44,25 @@ class SandboxWrapper:
             finally:
                 self._manager._active_sandboxes.discard(self._sandbox)
                 self._closed = True
-    
+
     def __enter__(self):
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.shutdown()
-    
+
     def __del__(self):
         self.shutdown()
 
 
 class SandboxManager:
     """Manages sandbox instances with shared and pooled modes.
-    
+
     Provides two modes:
     1. Shared mode: Global singleton sandbox instances by template
     2. Non-shared mode: Uses Playground for pooled sandbox optimization
     """
-    
+
     def __init__(self, config: Optional[Config] = None):
         self._config = config or Config()
         self._shared_sandboxes: Dict[str, Sandbox] = {}
@@ -70,22 +70,22 @@ class SandboxManager:
         self._sandbox_lock = Lock()
         self._playground_lock = Lock()
         self._active_sandboxes: weakref.WeakSet[Sandbox] = weakref.WeakSet()
-        
+
         # Register cleanup on exit
         atexit.register(self.cleanup)
-    
+
     def get_sandbox(
-        self, 
+        self,
         template: str,
         shared: bool = False,
         pool_size: int = 3,
         timeout: int = 600,
         env: Optional[Dict[str, str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ) -> Sandbox:
         """Get a sandbox instance.
-        
+
         Args:
             template: Template name or Docker image
             shared: If True, returns a shared global instance
@@ -94,21 +94,28 @@ class SandboxManager:
             env: Environment variables
             metadata: Sandbox metadata
             **kwargs: Additional sandbox configuration
-            
+
         Returns:
             Sandbox instance
         """
         # Build template if it's a known template
         image, env = self._resolve_template(template, env)
-        
+
         if shared:
             return self._get_shared_sandbox(image, timeout, env, metadata, **kwargs)
         else:
-            return self._get_pooled_sandbox(image, pool_size, timeout, env, metadata, **kwargs)
-    
-    def _resolve_template(self, template: str, env: Optional[Dict[str, str]] = None) -> tuple[str, Optional[Dict[str, str]]]:
+            return self._get_pooled_sandbox(
+                image, pool_size, timeout, env, metadata, **kwargs
+            )
+
+    def _resolve_template(
+        self, template: str, env: Optional[Dict[str, str]] = None
+    ) -> tuple[str, Optional[Dict[str, str]]]:
         """Resolve template name to Docker image and update env with CHUTES_API_KEY if needed."""
-        def ensure_chutes_api_key(env_dict: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+
+        def ensure_chutes_api_key(
+            env_dict: Optional[Dict[str, str]],
+        ) -> Optional[Dict[str, str]]:
             api_key = os.getenv("CHUTES_API_KEY")
             assert api_key, "please set env CHUTES_API_KEY"
 
@@ -117,26 +124,26 @@ class SandboxManager:
             elif "CHUTES_API_KEY" not in env_dict:
                 env_dict["CHUTES_API_KEY"] = api_key
             return env_dict
-        
+
         if template.startswith("agentgym:"):
             env_name = template.split(":", 1)[1]
             updated_env = ensure_chutes_api_key(env)
             return Templates.agentgym(env_name), updated_env
-        
+
         if template == "ridges" or template.startswith("ridges:"):
             name = template.split(":", 1)[-1] if ":" in template else "ridges"
             updated_env = ensure_chutes_api_key(env)
             return Templates.ridges(name), updated_env
 
         return template, env
-    
+
     def _get_shared_sandbox(
         self,
         image: str,
         timeout: int,
         env: Optional[Dict[str, str]],
         metadata: Optional[Dict[str, Any]],
-        **kwargs
+        **kwargs,
     ) -> Sandbox:
         """Get or create a shared sandbox instance."""
         with self._sandbox_lock:
@@ -152,19 +159,15 @@ class SandboxManager:
                 except Exception:
                     # Sandbox is dead, remove it
                     del self._shared_sandboxes[image]
-            
+
             # Create new shared sandbox
             sandbox = Sandbox(
-                template=image,
-                timeout=timeout,
-                env=env,
-                metadata=metadata,
-                **kwargs
+                template=image, timeout=timeout, env=env, metadata=metadata, **kwargs
             )
             self._shared_sandboxes[image] = sandbox
             self._active_sandboxes.add(sandbox)
             return sandbox
-    
+
     def _get_pooled_sandbox(
         self,
         image: str,
@@ -172,7 +175,7 @@ class SandboxManager:
         timeout: int,
         env: Optional[Dict[str, str]],
         metadata: Optional[Dict[str, Any]],
-        **kwargs
+        **kwargs,
     ) -> SandboxWrapper:
         """Get a sandbox from playground pool with automatic cleanup wrapper."""
         with self._playground_lock:
@@ -187,16 +190,15 @@ class SandboxManager:
                 playground = Playground(n=pool_size, config=config)
                 playground.prewarm()
                 self._playgrounds[image] = playground
-            
+
             playground = self._playgrounds[image]
             sandbox = playground.create()
 
             self._active_sandboxes.add(sandbox)
-            
+
             # Return wrapped sandbox for automatic cleanup
             return SandboxWrapper(sandbox, self)
 
-    
     def cleanup_playgrounds(self) -> None:
         """Clean up all playgrounds."""
         with self._playground_lock:
@@ -206,10 +208,10 @@ class SandboxManager:
                 except Exception:
                     pass
             self._playgrounds.clear()
-    
+
     def cleanup(self) -> None:
         self.cleanup_playgrounds()
-        
+
         # Clean up any remaining active sandboxes
         for sandbox in list(self._active_sandboxes):
             try:
@@ -218,7 +220,7 @@ class SandboxManager:
                 pass
         self._shared_sandboxes.clear()
         self._active_sandboxes.clear()
-    
+
     def stats(self) -> Dict[str, Any]:
         """Get manager statistics."""
         return {
@@ -228,7 +230,7 @@ class SandboxManager:
             "playground_count": len(self._playgrounds),
             "active_sandboxes": len(self._active_sandboxes),
         }
-    
+
     def __del__(self):
         """Cleanup on deletion."""
         try:
@@ -238,21 +240,17 @@ class SandboxManager:
 
 
 # Global convenience function
-def get_sandbox(
-    template: str,
-    shared: bool = False,
-    **kwargs
-) -> Sandbox:
+def get_sandbox(template: str, shared: bool = False, **kwargs) -> Sandbox:
     """Get a sandbox using the global manager.
-    
+
     This is the recommended way to get sandboxes. It ensures only one
     global SandboxManager exists in the application.
-    
+
     Args:
         template: Template name or Docker image
         shared: If True, returns a shared global instance
         **kwargs: Additional sandbox configuration
-        
+
     Returns:
         Sandbox instance
     """
