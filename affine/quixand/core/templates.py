@@ -5,7 +5,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from ..config import Config
 
@@ -90,6 +90,7 @@ class Templates:
 			build_args={"PREINSTALL_ENV": env_name, "BASE_IMAGE": base_image}
 		)
 
+	@staticmethod
 	def ridges(name="ridges") -> str:
 		return Templates.build(
 			get_env_templates_dir("ridges"),
