@@ -10,8 +10,11 @@ class QSTimeout(Exception):
 	pass
 
 
+from typing import Optional
+
+
 class QSProcessError(Exception):
-	def __init__(self, message: str, exit_code: int | None = None):
+	def __init__(self, message: str, exit_code: Optional[int] = None):
 		super().__init__(message)
 		self.exit_code = exit_code
 
@@ -27,5 +30,4 @@ class QSTemplateError(Exception):
 
 class QSProxyError(Exception):
 	pass
-
 

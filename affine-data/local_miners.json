@@ -1,0 +1,40 @@
+{
+  "miners": [
+    {
+      "uid": 1,
+      "hotkey": "local-hotkey-1",
+      "model": "deepseek-ai/DeepSeek-R1",
+      "slug": "llm",
+      "revision": null,
+      "block": 0,
+      "weights_shas": []
+    },
+    {
+      "uid": 2,
+      "hotkey": "local-hotkey-2",
+      "model": "deepseek-ai/DeepSeek-V3.1",
+      "slug": "llm",
+      "revision": null,
+      "block": 0,
+      "weights_shas": []
+    },
+    {
+      "uid": 3,
+      "hotkey": "local-hotkey-3",
+      "model": "zai-org/GLM-4.5-FP8",
+      "slug": "llm",
+      "revision": null,
+      "block": 0,
+      "weights_shas": []
+    },
+    {
+      "uid": 4,
+      "hotkey": "local-hotkey-4",
+      "model": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
+      "slug": "llm",
+      "revision": null,
+      "block": 0,
+      "weights_shas": []
+    }
+  ]
+}

@@ -12,7 +12,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    volumes:
+      - ./affine-data:/app/affine-data
   runner:
     <<: *affine_image
+    volumes:
+      - ./affine-data:/app/affine-data
   signer:
-    <<: *affine_image 
+    <<: *affine_image
+    volumes:
+      - ./affine-data:/app/affine-data

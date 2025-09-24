@@ -277,8 +277,9 @@ class AgentGymContainerEnv(BaseEnv):
 
     async def _health_check(self, sbx):
         # Use container-internal health check via proxy
+        timeout = int(os.getenv("AFFINE_AGENTGYM_HEALTH_TIMEOUT", "180"))
         try:
-            await asyncio.to_thread(lambda: sbx.proxy._health(port=8000, timeout=60))
+            await asyncio.to_thread(lambda: sbx.proxy._health(port=8000, timeout=timeout))
         except Exception as e:
             raise RuntimeError(f"Sandbox for {self.env_name} failed health: {e}")
 
@@ -433,6 +434,79 @@ class Miner(BaseModel):
     weights_shas: Optional[set[str]] = None
     
 
+_LOCAL_MINERS_CACHE: Optional[Dict[int, "Miner"]] = None
+_LOCAL_MINERS_MTIME: float = 0.0
+
+
+def _load_local_miners_from_file() -> Optional[Dict[int, "Miner"]]:
+    """Optional override: load miner definitions from AFFINE_LOCAL_MINERS."""
+    path_str = os.getenv("AFFINE_LOCAL_MINERS")
+    if not path_str:
+        return None
+    path = Path(path_str).expanduser()
+    global _LOCAL_MINERS_CACHE, _LOCAL_MINERS_MTIME
+    try:
+        mtime = path.stat().st_mtime
+    except FileNotFoundError:
+        if _LOCAL_MINERS_CACHE is None:
+            logger.warning(f"AFFINE_LOCAL_MINERS file not found: {path}")
+        _LOCAL_MINERS_CACHE = {}
+        _LOCAL_MINERS_MTIME = 0.0
+        return {}
+    if _LOCAL_MINERS_CACHE is not None and mtime == _LOCAL_MINERS_MTIME:
+        return _LOCAL_MINERS_CACHE
+    try:
+        raw = json.loads(path.read_text())
+    except Exception as exc:
+        logger.error(f"Failed to read AFFINE_LOCAL_MINERS file {path}: {exc}")
+        _LOCAL_MINERS_CACHE = {}
+        _LOCAL_MINERS_MTIME = mtime
+        return {}
+
+    entries = raw.get("miners") if isinstance(raw, dict) and "miners" in raw else raw
+    if not isinstance(entries, list):
+        logger.error("AFFINE_LOCAL_MINERS must be a list or contain a 'miners' list")
+        _LOCAL_MINERS_CACHE = {}
+        _LOCAL_MINERS_MTIME = mtime
+        return {}
+
+    parsed: Dict[int, Miner] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            logger.warning(f"Skipping malformed miner entry: {entry}")
+            continue
+        try:
+            uid = int(entry["uid"])
+            hotkey = str(entry["hotkey"])
+        except Exception:
+            logger.warning(f"Skipping miner entry missing uid/hotkey: {entry}")
+            continue
+        weights = entry.get("weights_shas")
+        if isinstance(weights, list):
+            weights = {str(w) for w in weights}
+        elif weights is not None and not isinstance(weights, set):
+            weights = {str(weights)}
+        try:
+            parsed[uid] = Miner(
+                uid=uid,
+                hotkey=hotkey,
+                model=entry.get("model"),
+                revision=entry.get("revision"),
+                block=entry.get("block"),
+                chute=entry.get("chute"),
+                slug=entry.get("slug"),
+                weights_shas=weights,
+            )
+        except ValidationError as exc:
+            logger.warning(f"Skipping miner entry validation error: {exc}")
+            continue
+
+    _LOCAL_MINERS_CACHE = parsed
+    _LOCAL_MINERS_MTIME = mtime
+    logger.info(f"Loaded {len(parsed)} local miners from {path}")
+    return parsed
+
+
 class Result(BaseModel):
     version: str = __version__
     signature: str = ""
@@ -551,6 +625,16 @@ async def _jsonl(p: Path):
             with p.open("rb") as f: return f.read().splitlines()
         for l in await asyncio.to_thread(_read): yield l
 
+_LOCAL_RESULTS_LOCK = asyncio.Lock()
+
+
+def _append_jsonl(path: Path, docs: Sequence[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        for doc in docs:
+            fh.write(json.dumps(doc, separators=(",", ":")))
+            fh.write("\n")
+
 # ── Core async stream (Result objects) ──────────────────────────────────────
 async def dataset(
     tail: int,
@@ -630,15 +714,26 @@ async def sink_enqueue(wallet, block, results, force: bool = False):
     buf, SINK_BUFFER = SINK_BUFFER, []
     await sink(wallet=wallet, results=buf, block=block)
 async def sink(wallet: bt.wallet, results: list["Result"], block: int = None):
-    if not results: return
-    if block is None:
-        sub = await get_subtensor(); block = await sub.get_current_block()
+    if not results:
+        return
     valid = [r for r in results if getattr(r.response, "success", False)]
     if not valid:
         return
-    hotkey, signed = await sign_results( wallet, valid )
+
+    local_path = os.getenv("AFFINE_LOCAL_RESULTS")
+    if local_path:
+        docs = [r.model_dump(mode="json") for r in valid]
+        path = Path(local_path).expanduser()
+        async with _LOCAL_RESULTS_LOCK:
+            await asyncio.to_thread(_append_jsonl, path, docs)
+        logger.info(f"Local sink wrote {len(docs)} results to {path}")
+        return
+
+    if block is None:
+        sub = await get_subtensor(); block = await sub.get_current_block()
+    hotkey, signed = await sign_results(wallet, valid)
     key = f"{RESULT_PREFIX}{_w(block):09d}-{hotkey}.json"
-    dumped = [ r.model_dump(mode="json") for r in signed ]
+    dumped = [r.model_dump(mode="json") for r in signed]
     async with get_client_ctx() as c:
         try:
             r = await c.get_object(Bucket=FOLDER, Key=key)
@@ -864,6 +959,9 @@ async def miners(
     netuid: int = NETUID,
     meta: object = None,
 ) -> Dict[int, Miner]:
+    local = _load_local_miners_from_file()
+    if local is not None:
+        return local
     sub = await get_subtensor()
     meta = meta or await sub.metagraph(netuid)
     commits = await sub.get_all_revealed_commitments(netuid)
@@ -984,6 +1082,8 @@ def runner():
     hotkey  = get_conf("BT_WALLET_HOT",  "default")
     wallet  = bt.wallet(name=coldkey, hotkey=hotkey)
 
+    local_miners_enabled = bool(os.getenv("AFFINE_LOCAL_MINERS"))
+
     async def _run():
         subtensor = None
         envs = _build_envs()
@@ -1048,6 +1148,8 @@ def runner():
 
         async def ensure_subtensor():
             nonlocal subtensor
+            if local_miners_enabled:
+                return None
             if subtensor is None:
                 subtensor = await get_subtensor()
             return subtensor
@@ -1055,9 +1157,12 @@ def runner():
         async def refresh_miners(now):
             nonlocal last_sync, miners_map
             if (now - last_sync) >= REFRESH_S or last_sync == 0:
-                st = await ensure_subtensor()
-                meta = await st.metagraph(NETUID)
-                miners_map = await miners(meta=meta)
+                if local_miners_enabled:
+                    miners_map = await miners()
+                else:
+                    st = await ensure_subtensor()
+                    meta = await st.metagraph(NETUID)
+                    miners_map = await miners(meta=meta)
                 last_sync = now
                 logger.debug(f"refresh: miners={len(miners_map)}")
 
@@ -1142,7 +1247,8 @@ def runner():
                 while True:
                     HEARTBEAT = now = time.monotonic()
                     # heartbeat + ensure subtensor
-                    _ = await ensure_subtensor()
+                    if not local_miners_enabled:
+                        _ = await ensure_subtensor()
                     # periodic refresh
                     await refresh_miners(now)
                     if not miners_map:
