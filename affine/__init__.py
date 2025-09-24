@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # --------------------------------------------------------------------------- #
 #                             Imports                                         #
@@ -45,6 +44,8 @@ from bittensor.core.errors import MetadataError
 from pydantic import BaseModel, Field, validator, ValidationError
 from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, TypeVar, Awaitable
 __version__ = "0.0.0"
+from .quixand.core.sandbox import Sandbox
+from .quixand.core.templates import Templates
 
 # --------------------------------------------------------------------------- #
 #                       Constants & global singletons                         #
@@ -203,11 +204,148 @@ class BaseEnv(BaseModel, ABC):
     def name(self) -> str: return self.__class__.__name__
     def __hash__(self):     return hash(self.name)
     def __repr__(self):     return self.name
-    # API expected from concrete envs
-    @abstractmethod
-    async def generate(self) -> "Challenge": ...
-    @abstractmethod
-    async def evaluate(self, challenge: "Challenge", response: "Response") -> "Evaluation": ...
+    # No abstract API enforced; envs may provide helper methods if needed.
+
+# --------------------------------------------------------------------------- #
+#                   AgentGym containerized evaluation env                     #
+# --------------------------------------------------------------------------- #
+
+# Shared pools keyed by env_name (persistent, one container per env)
+_AG_POOL: Dict[str, Any] = {}
+_AG_LOCKS: Dict[str, asyncio.Lock] = {}
+_AG_SEMS: Dict[str, asyncio.Semaphore] = {}
+
+class AgentGymContainerEnv(BaseEnv):
+    """AgentGym env backed by a persistent Quixand Sandbox per env_name.
+
+    This environment delegates evaluation to a FastAPI service inside the
+    sandbox at /evaluator and /health.
+    """
+    env_name: str
+    data_len: int = 200
+    max_round: int = 10
+    evaluator_timeout: int = 1200
+
+    # Internal counter for fallback id selection
+    _round_counter: int = 0
+
+    @property
+    def name(self) -> str:  # override to expose agentgym:<env>
+        return f"agentgym:{self.env_name}"
+
+
+    def _get_lock(self) -> asyncio.Lock:
+        lk = _AG_LOCKS.get(self.env_name)
+        if lk is None:
+            lk = asyncio.Lock()
+            _AG_LOCKS[self.env_name] = lk
+        return lk
+
+    async def _get_shared(self):
+        """Return a shared Sandbox + semaphore for this env_name, creating it if missing."""
+        if Sandbox is None or Templates is None:
+            raise RuntimeError("Quixand Sandbox/Templates not available")
+        async with self._get_lock():
+            sbx = _AG_POOL.get(self.env_name)
+            if sbx is None:
+                # Build sandbox from template
+                tmpl = Templates.agentgym(self.env_name)
+                # Use long timeout to avoid watchdog killing long episodes
+                sbx_env = {
+                    "CHUTES_API_KEY": os.getenv("CHUTES_API_KEY", ""),
+                    # Ensure local loopbacks are not proxied
+                    "NO_PROXY": "localhost,127.0.0.1",
+                }
+                sbx = Sandbox(
+                    tmpl,
+                    timeout=max(int(self.evaluator_timeout) + 900, 1800),
+                    env=sbx_env,
+                )
+                # Store immediately to avoid duplicate creations on slow health
+                _AG_POOL[self.env_name] = sbx
+                # Best-effort health check (non-fatal)
+                try:
+                    await self._health_check(sbx)
+                except Exception as e:
+                    logger.warning(f"ensure_ready pending for {self.name}: {e}")
+            # Per-env concurrency
+            sem = _AG_SEMS.get(self.env_name)
+            if sem is None:
+                sem = asyncio.Semaphore(int(os.getenv("AFFINE_ENV_CONCURRENCY", "16")))
+                _AG_SEMS[self.env_name] = sem
+            return sbx, sem
+
+    async def _health_check(self, sbx):
+        # Use container-internal health check via proxy
+        try:
+            await asyncio.to_thread(lambda: sbx.proxy._health(port=8000, timeout=60))
+        except Exception as e:
+            raise RuntimeError(f"Sandbox for {self.env_name} failed health: {e}")
+
+    async def ensure_ready(self):
+        """Warm the shared container when reuse is enabled (default)."""
+        reuse = os.getenv("AFFINE_REUSE_CONTAINERS", "1")
+        if reuse != "0":
+            await self._get_shared()
+
+    async def run_episode(self, policy: "Miner", task_id: Optional[int]) -> "Evaluation":
+        """Execute one AgentGym episode inside the container and return Evaluation.
+
+        The evaluator calls the miner's model through its base_url (Chutes slug).
+        """
+        sbx, sem = await self._get_shared()
+        base_url = f"https://{policy.slug}.chutes.ai/v1" if policy.slug else None
+        if not base_url:
+            raise RuntimeError("Miner slug/base_url missing")
+
+        # Fallback task id selection when not provided by runner
+        if task_id is None:
+            mode = os.getenv("AFFINE_TASK_ID_MODE", "round").lower()
+            if mode == "uid":
+                task_id = int(policy.uid) % int(self.data_len)
+            elif mode == "hash":
+                h = int(hashlib.sha256(policy.hotkey.encode()).hexdigest(), 16)
+                task_id = h % int(self.data_len)
+            else:
+                task_id = self._round_counter % int(self.data_len)
+                self._round_counter += 1
+
+        payload = {
+            "model": policy.model,
+            "base_url": base_url,
+            "temperature": 0.7,
+            "ids": [int(task_id)],
+            "max_round": int(self.max_round),
+            "timeout": int(self.evaluator_timeout),
+        }
+        start = time.monotonic()
+        async with sem:
+            try:
+                data = await asyncio.to_thread(lambda: sbx.proxy.evaluator(_timeout=self.evaluator_timeout, **payload))
+            except Exception as e:
+                raise RuntimeError(f"/evaluator call failed: {e}")
+        latency = time.monotonic() - start
+        total_score = float(data.get("total_score", data.get("score", 0.0)))
+        success_rate = float(data.get("success_rate", 0.0))
+        num_eval = int(data.get("num_evaluated", data.get("n", 0)))
+        extra_payload = {
+            "success_rate": success_rate,
+            "num_evaluated": num_eval,
+            "task_id": int(task_id),
+        }
+        if isinstance(data, dict):
+            if "details" in data:   extra_payload["details"] = data.get("details")
+            if "task_name" in data: extra_payload["task_name"] = data.get("task_name")
+            if "time_taken" in data: extra_payload["time_taken"] = data.get("time_taken")
+
+        logger.info(
+            f"[REWARD] U{policy.uid:>3d} agentgym:{self.env_name} id={task_id} total_score={total_score:.4f} success_rate={success_rate:.3f} n={num_eval} latency={latency:.3f}s"
+        )
+        return Evaluation(
+            env=self,
+            score=total_score,
+            extra=extra_payload,
+        )
 
 # --------------------------------------------------------------------------- #
 #                         Models with new (de)serialisation                   #
@@ -232,8 +370,14 @@ class Challenge(BaseModel):
         return values
     @validator("env", pre=True)
     def _parse_env(cls, v):
-        from .envs import ENVS as _ENVS
-        return _ENVS[v]() if isinstance(v, str) else v
+        if isinstance(v, str):
+            name = v.strip()
+            # Only activate if this env is currently configured
+            if name not in ENVS:
+                raise ValueError(f"Inactive env '{name}'")
+            env_name = name.split(":", 1)[1] if ":" in name else name
+            return AgentGymContainerEnv(env_name=env_name)
+        return v
     class Config:
         arbitrary_types_allowed = True
         json_encoders = {BaseEnv: lambda v: v.name}
@@ -251,8 +395,13 @@ class Evaluation(BaseModel):
     extra: Dict[str, Any] = Field(default_factory=dict)
     @validator("env", pre=True)
     def _parse_env(cls, v):
-        from .envs import ENVS as _ENVS
-        return _ENVS[v]() if isinstance(v, str) else v
+        if isinstance(v, str):
+            name = v.strip()
+            if name not in ENVS:
+                raise ValueError(f"Inactive env '{name}'")
+            env_name = name.split(":", 1)[1] if ":" in name else name
+            return AgentGymContainerEnv(env_name=env_name)
+        return v
     class Config:
         arbitrary_types_allowed = True
         json_encoders = {BaseEnv: lambda v: v.name}
@@ -304,8 +453,22 @@ class Result(BaseModel):
     def __repr__(self): return f"<Result {self.miner.uid=} {self.challenge.env.name=} score={self.evaluation.score:.4f}>"
     __str__ = __repr__
 
-# Central env registry
-from .envs import ENVS
+# Central env registry (Quixand‑only)
+def _get_env_list_from_envvar() -> Tuple[str, ...]:
+    spec = os.getenv("AFFINE_ENV_LIST", "").strip()
+    if not spec:
+        return tuple()
+    env_names: list[str] = []
+    for tok in [t.strip() for t in spec.split(",") if t.strip()]:
+        # Accept bare names and names already prefixed
+        if ":" in tok:
+            env_names.append(tok)
+        else:
+            env_names.append(f"agentgym:{tok}")
+    return tuple(env_names)
+
+# Keep variable name ENVS for scoring logic; values are env name strings
+ENVS: Tuple[str, ...] = _get_env_list_from_envvar()
 
 # --------------------------------------------------------------------------- #
 #                   S3 helpers                                                #
@@ -525,7 +688,7 @@ async def _get_client() -> aiohttp.ClientSession:
         limit = int(os.getenv("AFFINE_HTTP_CONCURRENCY", "400"))  # raise this
         conn = aiohttp.TCPConnector(
             limit=limit,              # match or exceed your semaphore
-            limit_per_host=0,         # don’t artificially throttle per host
+            limit_per_host=0,         # don't artificially throttle per host
             ttl_dns_cache=300,        # cache DNS results
             enable_cleanup_closed=True
         )
@@ -566,12 +729,12 @@ LOG_TEMPLATE = (
     "{pct:>3.0f}% | "
     "U{uid:>3d} │ "
     "{model:<50s} │ "
-    "{env:<3} │ "
+    "{env:<20} │ "
     "{success:^4s} │ "
     "{score:>6.4f} │ "
     "{latency:>6.3f}s"
 )
-async def run(challenges, miners, timeout=240, retries=0, backoff=1 )-> List[Result]:
+async def run(challenges, miners, timeout=240, retries=0, backoff=1, task_ids: Optional[Dict[str, int]] = None)-> List[Result]:
     if not isinstance(challenges, list): challenges = [challenges]
     if isinstance(miners, Miner): miners = [miners]
     if isinstance(miners, dict):  mmap = miners
@@ -582,9 +745,28 @@ async def run(challenges, miners, timeout=240, retries=0, backoff=1 )-> List[Res
     response = []
     
     async def proc(miner, chal):
-        resp = await query(chal.prompt, miner.model, miner.slug, timeout, retries, backoff)
-        try: ev = await chal.evaluate(resp)
-        except Exception as e: ev = Evaluation(env=chal.env, score=0.0, extra={"error": str(e), "evaluation_failed": True})
+        # AgentGym containerized path (Quixand-only)
+        if isinstance(chal.env, AgentGymContainerEnv):
+            start = time.monotonic()
+            try:
+                ev = await chal.env.run_episode(policy=miner, task_id=(task_ids or {}).get(chal.env.name) if task_ids else None)
+                resp = Response(response=None, latency_seconds=time.monotonic()-start, attempts=1, model=miner.model or "", error=None, success=True)
+            except Exception as e:
+                ev = Evaluation(env=chal.env, score=0.0, extra={"error": str(e), "evaluation_failed": True})
+                resp = Response(response=None, latency_seconds=time.monotonic()-start, attempts=1, model=miner.model or "", error=str(e), success=False)
+            # Update metrics for AgentGym immediately
+            try:
+                SCORE.labels(uid=miner.uid, env=chal.env.name).set(ev.score)
+            except Exception:
+                pass
+            # Log score line
+            logger.info(f"[SCORE] U{miner.uid:>3d} {chal.env.name:<20} = {ev.score:.4f}")
+            return Result(miner=miner, challenge=chal, response=resp, evaluation=ev)
+        # Unsupported env type path (should not occur now)
+        start = time.monotonic()
+        err = f"Unsupported environment type: {type(chal.env).__name__}"
+        ev = Evaluation(env=chal.env, score=0.0, extra={"error": err, "evaluation_failed": True})
+        resp = Response(response=None, latency_seconds=time.monotonic()-start, attempts=1, model=miner.model or "", error=err, success=False)
         return Result(miner=miner, challenge=chal, response=resp, evaluation=ev)
     
     tasks = [ asyncio.create_task(proc(m, chal)) for m in mmap.values() if m.model for chal in challenges]  
@@ -758,6 +940,25 @@ def cli(verbose):
     setup_logging(verbose)
     
 # --------------------------------------------------------------------------- #
+#                   Env builder (AFFINE_ENV_LIST support)                     #
+# --------------------------------------------------------------------------- #
+def _build_envs() -> List[BaseEnv]:
+    """Build active envs from AFFINE_ENV_LIST; accept bare names as agentgym."""
+    spec = os.getenv("AFFINE_ENV_LIST", "").strip()
+    if not spec:
+        raise RuntimeError("AFFINE_ENV_LIST is required and must list envs, e.g. 'webshop,agentgym:alfworld'")
+    envs: List[BaseEnv] = []
+    for tok in [t.strip() for t in spec.split(",") if t.strip()]:
+        if ":" in tok:
+            _, name = tok.split(":", 1)
+            envs.append(AgentGymContainerEnv(env_name=name))
+        else:
+            envs.append(AgentGymContainerEnv(env_name=tok))
+    if not envs:
+        raise RuntimeError("AFFINE_ENV_LIST contained no supported entries.")
+    return envs
+
+# --------------------------------------------------------------------------- #
 #                               Watchdog                                      #
 # --------------------------------------------------------------------------- #
 HEARTBEAT = None
@@ -785,7 +986,7 @@ def runner():
 
     async def _run():
         subtensor = None
-        envs = [cls() for cls in ENVS.values()]
+        envs = _build_envs()
 
         # ── config ───────────────────────────────────────────────────────────
         MAX_USES       = 30
@@ -796,11 +997,13 @@ def runner():
         BACKOFF_CAP    = 300
 
         # ── state ───────────────────────────────────────────────────────────
-        chal_cache, i_env = {}, 0
+        # Challenge cache per env (reused as placeholder to keep stable challenge_id)
+        chal_cache: Dict[str, Tuple[Challenge, int]] = {}
         last_sync = 0.0
-        delay = defaultdict(lambda: BACKOFF0)   # uid -> current delay
-        cooldown_until = defaultdict(float)     # uid -> t when allowed again
-        miners_map = {}
+        miners_map: Dict[int, Miner] = {}
+        # Per-env rounds and inflight tasks
+        env_round: Dict[str, int] = {e.name: 0 for e in envs}
+        env_inflight: Dict[str, Dict[int, asyncio.Task]] = {e.name: {} for e in envs}
 
         # results pipeline
         sink_q: asyncio.Queue = asyncio.Queue()
@@ -813,27 +1016,35 @@ def runner():
         def ok(res_list):
             if not res_list: return False
             r = res_list[0]
-            if not r.response.success: return False
+            if not getattr(r.response, "success", False): return False
             return True
 
-        async def next_chal():
-            nonlocal i_env
-            e = envs[i_env]; i_env = (i_env + 1) % len(envs)
-            chal, uses = chal_cache.get(e, (None, 0))
+        async def get_env_challenge(e: BaseEnv) -> Challenge:
+            key = e.name
+            chal, uses = chal_cache.get(key, (None, 0))
             if chal is None or uses >= MAX_USES:
-                chal, uses = await e.generate(), 0
-            chal_cache[e] = (chal, uses + 1)
+                # Build a stable placeholder challenge; actual evaluation happens in run_episode
+                chal, uses = Challenge(env=e, prompt=f"{e.name} placeholder", extra={}), 0
+            chal_cache[key] = (chal, uses + 1)
             return chal
 
-        async def schedule(miner, inflight, now):
+        async def schedule_env_round(e: BaseEnv):
             nonlocal total_requests, requests_since_last_log
-            uid = int(miner.uid)
-            if uid in inflight: return
-            if now < cooldown_until[uid]: return
-            chal = await next_chal()
-            inflight[uid] = asyncio.create_task(run(chal, miner, timeout=180))
-            total_requests += 1
-            requests_since_last_log += 1
+            name = e.name
+            if env_inflight[name]:
+                return
+            # Compute common id for this env round
+            tid = env_round[name] % (getattr(e, "data_len", 200) or 200)
+            chal = await get_env_challenge(e)
+            tasks = {}
+            for m in miners_map.values():
+                if not getattr(m, "model", None):
+                    continue
+                t = asyncio.create_task(run([chal], m, timeout=180, task_ids={name: tid}))
+                tasks[int(m.uid)] = t
+                total_requests += 1
+                requests_since_last_log += 1
+            env_inflight[name] = tasks
 
         async def ensure_subtensor():
             nonlocal subtensor
@@ -926,7 +1137,6 @@ def runner():
         async def main_loop():
             global HEARTBEAT
             nonlocal last_status_log, requests_since_last_log
-            inflight = {}
             sink_task = asyncio.create_task(sink_worker())
             try:
                 while True:
@@ -939,56 +1149,82 @@ def runner():
                         await asyncio.sleep(1)
                         continue
 
+                    # Pre-warm shared AgentGym envs if enabled
+                    for e in envs:
+                        if isinstance(e, AgentGymContainerEnv):
+                            try:
+                                await e.ensure_ready()
+                            except Exception as ex:
+                                logger.warning(f"ensure_ready failed for {e.name}: {ex}")
+
                     # periodic status logging
                     if now - last_status_log >= 30:
                         elapsed = now - last_status_log if last_status_log > 0 else 30
                         rps = requests_since_last_log / elapsed
-                        cooldown_count = sum(1 for uid in miners_map.keys() if now < cooldown_until[uid])
                         queue_size = sink_q.qsize()
-                        logger.info(f"[STATUS] miners={len(miners_map)} inflight={len(inflight)} cooldown={cooldown_count} queue={queue_size} req/s={rps:.1f} total_req={total_requests}")
+                        inflight_total = sum(len(d) for d in env_inflight.values())
+                        logger.info(f"[STATUS] miners={len(miners_map)} inflight={inflight_total} queue={queue_size} req/s={rps:.1f} total_req={total_requests}")
                         last_status_log = now
                         requests_since_last_log = 0
 
-                    # seed/respect cooldowns
-                    for m in miners_map.values():
-                        await schedule(m, inflight, now)
+                    # Schedule a round per env if idle
+                    for e in envs:
+                        await schedule_env_round(e)
 
-                    if not inflight:
+                    # Aggregate inflight tasks across envs
+                    all_tasks = [t for d in env_inflight.values() for t in d.values()]
+                    if not all_tasks:
                         await asyncio.sleep(0.2)
                         continue
 
-                    done, _ = await asyncio.wait(inflight.values(), return_when=asyncio.FIRST_COMPLETED)
-                    HEARTBEAT = now = time.monotonic()
+                    done, _ = await asyncio.wait(all_tasks, return_when=asyncio.FIRST_COMPLETED, timeout=5.0)
+                    HEARTBEAT = now = time.monotonic()  # tick during long episodes
                     for t in done:
-                        uid = next((u for u, tk in list(inflight.items()) if tk is t), None)
-                        miner = miners_map.get(uid)
-                        inflight.pop(uid, None)
+                        # locate env + uid for task
+                        found = None
+                        for name, d in env_inflight.items():
+                            for uid, tk in d.items():
+                                if tk is t:
+                                    found = (name, uid)
+                                    break
+                            if found: break
+                        name, uid = found if found else ("?", -1)
+                        # Remove inflight entry
+                        if name in env_inflight:
+                            env_inflight[name].pop(uid, None)
                         try:
-                            res_list = await t  # list[Result]; may be []
+                            res_list = await t  # list[Result]
                         except Exception as e:
-                            logger.debug(f"miner {uid} task error: {e}")
+                            logger.debug(f"task error env={name} uid={uid}: {e}")
                             res_list = []
 
-                        if ok(res_list):
-                            # reset backoff, enqueue results (non-blocking)
-                            delay[uid] = BACKOFF0
-                            cooldown_until[uid] = now
-                            # push entire list; sink worker will flatten
+                        if res_list:
+                            # enqueue results for sink
                             sink_q.put_nowait(res_list)
-                            queue_size = sink_q.qsize()
-                            logger.debug(f"miner {uid} OK; queued {len(res_list)}, queue_size={queue_size}")
-                        else:
-                            print ('not ok')
-                            # exponential backoff + jitter
-                            d = min(delay[uid] * 2, BACKOFF_CAP)
-                            jitter = random.uniform(0, d * 0.2)
-                            delay[uid] = d
-                            cooldown_until[uid] = now + d + jitter
-                            logger.debug(f"miner {uid} FAIL; cooldown {d:+.1f}s(+{jitter:.1f})")
+                            # Update metrics/logs for each result
+                            for r in res_list:
+                                try:
+                                    SCORE.labels(uid=r.miner.uid, env=r.challenge.env.name).set(r.evaluation.score)
+                                except Exception:
+                                    pass
+                                logger.debug(
+                                    LOG_TEMPLATE.format(
+                                        pct=0,
+                                        env=r.challenge.env.name,
+                                        uid=r.miner.uid,
+                                        model=(r.miner.model or "")[:50],
+                                        success="RECV" if getattr(r.response, "success", False) else "NULL",
+                                        score=r.evaluation.score,
+                                        latency=r.response.latency_seconds,
+                                    )
+                                )
 
-                        # try to reschedule
-                        if miner:
-                            await schedule(miner, inflight, now)
+                        # If env round completed (no more inflight), advance id and immediately schedule next round
+                        if name in env_inflight and not env_inflight[name]:
+                            env_round[name] = (env_round[name] + 1) % (next((e.data_len for e in envs if e.name == name), 200) or 200)
+                            e = next((e for e in envs if e.name == name), None)
+                            if e is not None:
+                                await schedule_env_round(e)
             except asyncio.CancelledError:
                 pass
             finally:
@@ -1000,7 +1236,8 @@ def runner():
         await main_loop()
 
     async def main():
-        await asyncio.gather(_run(), watchdog(timeout=600))
+        timeout = int(os.getenv("AFFINE_WATCHDOG_TIMEOUT", "900"))
+        await asyncio.gather(_run(), watchdog(timeout=timeout))
 
     asyncio.run(main())
 
@@ -1801,24 +2038,5 @@ chute = build_sglang_chute(
 
     asyncio.run(commit_to_chain())
 
-    # -----------------------------------------------------------------------------
-    # 9. Warm up model until it’s marked hot
-    # -----------------------------------------------------------------------------
-    async def warmup_model():
-        logger.debug("Warming up model with SAT challenges")
-        sub       = await get_subtensor()
-        meta      = await sub.metagraph(NETUID)
-        my_uid    = meta.hotkeys.index(wallet.hotkey.ss58_address)
-        miner  = (await miners(netuid=NETUID))[my_uid]
-
-        while not (miner.chute or {}).get("hot", False):
-            challenge = await SAT().generate()
-            await run(challenges=challenge, miners=[miner])
-            await sub.wait_for_block()
-            miner = (await miners(netuid=NETUID))[my_uid]
-            logger.trace("Checked hot status: %s", (miner.chute or {}).get("hot"))
-
-        logger.debug("Model is now hot and ready")
-
-    asyncio.run(warmup_model())
+    # Warmup via legacy SAT is removed in Quixand-only mode.
     logger.debug("Mining setup complete. Model is live!")
