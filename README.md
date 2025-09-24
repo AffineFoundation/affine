@@ -34,6 +34,28 @@ Set env vars, chutes api key.
 cp .env.example .env
 ```
 
+Validator Storage Setup (Hippius S3 — automated)
+On validator startup, Affine will:
+- Determine your hotkey (local wallet or the signer service /hotkey endpoint)
+- Verify you are registered on the metagraph
+- Compute a standardized bucket name: affine-v1-{HOTKEY_SS58}
+- Create the bucket if missing and apply a public-read policy
+- No on-chain storage publishing is used. Data discovery is deterministic using bucket name: affine-v1-{HOTKEY_SS58}.
+
+Minimal .env required:
+```env
+HIPPIUS_ENDPOINT_URL="https://s3.hippius.com"
+HIPPIUS_REGION="decentralized"
+HIPPIUS_SEED_PHRASE="twelve words for your sub-account here"
+```
+
+Notes:
+- Access Key = base64(seed phrase), Secret Key = seed phrase.
+- Buckets are managed automatically; do not set a bucket name in .env.
+- No on-chain storage commitment is used for storage discovery.
+- Keep your main Hippius account funded to cover storage costs.
+- The signer service exposes GET /hotkey so the validator can self-identify when the wallet isn’t local.
+
 (Recommended): Run the validator with docker and watchtower autoupdate.
 ```bash
 # Run the validator with watchtower.

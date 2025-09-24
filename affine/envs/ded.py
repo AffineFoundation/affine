@@ -34,7 +34,7 @@ def _normalize(text: str) -> str:
 # --------------------------------------------------------------------------- #
 #                              Affine Env                                     #
 # --------------------------------------------------------------------------- #
-dataset = af.singleton('rl-python', lambda: af.utils.R2BufferedDataset(
+dataset = af.singleton('rl-python', lambda: af.utils.S3BufferedDataset(
         dataset_name="satpalsr/rl-python",
         buffer_size=5,
         max_batch=5,
