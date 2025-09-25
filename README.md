@@ -37,7 +37,7 @@ cp .env.example .env
 (Recommended): Run the validator with docker and watchtower autoupdate.
 ```bash
 # Run the validator with watchtower.
-docker-compose down && docker-compose pull && docker-compose up -d && docker-compose logs -f
+docker compose down && docker compose pull && docker compose up -d && docker compose logs -f
 ```
 
 Run the validator using the local override (build local image) + base compose
@@ -94,7 +94,7 @@ Affine is also an SDK you can use to generate and evaluate models envs.
 ```python
 import affine as af
 
-# Optionally turn on logging 
+# Optionally turn on logging
 af.trace(); af.debug(); af.info()
 
 # Get all miner info or only for UID =5
@@ -102,7 +102,7 @@ miners = await af.miners()
 miner = await af.miners( 5 )
 
 # Generate a SAT challenge
-chal = await af.SAT.generate() 
+chal = await af.SAT.generate()
 
 # Generate a bunch.
 chals = await af.ABDUCTION().many( 10 )
@@ -113,7 +113,7 @@ chals = await af.DEDUCTION().many( 10 )
 response = await af.query( chal.prompt, model = miner.model )
 
 # Evaluate the response
-evaluation = chal.evaluate( response ) 
+evaluation = chal.evaluate( response )
 print( evaluation.score )
 
 # Async generator of results from last 100 blocks.
