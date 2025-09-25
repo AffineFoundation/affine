@@ -21,6 +21,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 ENV_NAME = os.environ.get("ENV_NAME")
+TOOL_NAME = os.environ.get("TOOL_NAME", "")
 
 class EvaluatorRequest(BaseModel):
     model: str
@@ -114,15 +115,18 @@ def inject_evaluator_endpoint(app: FastAPI):
                 "academia": "AcademiaTask",
                 "searchqa": "SearchQATask",
             }
-
-            class_name = task_modules[ENV_NAME]
+            if ENV_NAME == "tool" or ENV_NAME == "lmrlgym":
+                class_name = task_modules[TOOL_NAME]
+            else:
+                class_name = task_modules[ENV_NAME]
             module = importlib.import_module("agentenv.envs")
             task_class = getattr(module, class_name)
 
             env_server_base = request.env_server_base
             if not env_server_base:
                 env_server_base = f"http://localhost:8000"
-
+            if ENV_NAME == "lmrlgym":
+                env_server_base += f"/{TOOL_NAME}"
             env_args = {
                 "env_server_base": env_server_base,
                 "data_len": request.data_len,
@@ -239,21 +243,27 @@ def inject_evaluator_endpoint(app: FastAPI):
 
 
 def create_app():
-    env_name = os.environ.get("ENV_NAME", "")
-    if not env_name:
-        logger.error("ENV_NAME environment variable is not set")
-    logger.info(f"Loading {env_name} environment server")
-
-    module_name = f"agentenv_{env_name}.server"
+    logger.info(f"Loading {ENV_NAME} environment server")
+    if ENV_NAME == "tool":
+        module_name = f"agentenv_{TOOL_NAME}.{TOOL_NAME}_server"
+    else:
+        module_name = f"agentenv_{ENV_NAME}.server"
     try:
         logger.info(f"Importing module: {module_name}")
         os.chdir(f"/app/AgentGym/agentenv-{ENV_NAME}")
+        if ENV_NAME == "lmrlgym":
+            sys.path.insert(0, "/app/AgentGym/agentenv-lmrlgym/lmrlgym")
         if ENV_NAME == "sqlgym":
             sys.path.insert(0, "/app/AgentGym/agentenv-sqlgym")
             os.environ["AGENTENV_SQLGYM_BIRD_PATH"] = "/app/AgentGym/agentenv-sqlgym/bird/"
+        if ENV_NAME == "tool":
+            sys.path.insert(0, "/app/AgentGym/agentenv-tool/Toolusage/toolusage")
+            sys.path.insert(0, "/app/AgentGym/agentenv-tool")
+            os.environ["PROJECT_PATH"] = "/app/AgentGym/agentenv-tool/Toolusage"
+
         server_module = importlib.import_module(module_name)
         app = server_module.app
-        logger.info(f"Successfully loaded {env_name} environment app")
+        logger.info(f"Successfully loaded {ENV_NAME} environment app")
         
         inject_health_endpoint(app)
         inject_evaluator_endpoint(app)

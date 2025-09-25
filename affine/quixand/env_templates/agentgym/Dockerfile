@@ -17,9 +17,10 @@ ENV ENV_NAME=${PREINSTALL_ENV}
 
 WORKDIR /app
 
-ADD https://github.com/WooooDyy/AgentGym/archive/d014732d9fe39b975c368c03749bfd50950067f6.tar.gz /tmp/agentgym.tar.gz
-RUN mkdir /app/AgentGym && tar -xzf /tmp/agentgym.tar.gz -C /app/AgentGym --strip-components=1
-
+RUN git clone --recurse-submodules https://github.com/WooooDyy/AgentGym.git AgentGym \
+    && cd AgentGym \
+    && git checkout d014732d9fe39b975c368c03749bfd50950067f6 \
+    && git submodule update --init --recursive
 
 ENV PATH=/opt/miniconda/envs/agentenv/bin:/opt/miniconda/bin:$PATH
 
@@ -34,6 +35,8 @@ RUN chmod +x /app/postprocess_env.sh && /app/postprocess_env.sh
 
 ENV ALFWORLD_DATA=/root/.cache/alfworld
 
+ARG TOOL_NAME
+ENV TOOL_NAME=${TOOL_NAME}
 COPY env.py /app/
 
 WORKDIR /sandbox
