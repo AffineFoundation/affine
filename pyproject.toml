@@ -27,15 +27,55 @@ dependencies = [
 readme = "README.md"
 requires-python = ">=3.9,<3.12"
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-xdist>=3.5.0",
+    "pytest-rich>=0.1.1",
+    "requests>=2.28.0",
+    "rich>=13.0.0",
+    "testcontainers>=3.7.0",
+]
+
 [project.scripts]
 af = "affine:cli"
+test = "scripts.test:main"
+lint = "scripts.lint:fix"
+lint-check = "scripts.lint:check"
+format = "scripts.lint:format"
+format-check = "scripts.lint:format_check"
 
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["affine"]
+include = ["affine", "scripts"]
 
 [tool.uv.sources]
 affine = { path = ".", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["testsuite"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "integration: marks tests as integration tests (may be slow)",
+    "unit: marks tests as unit tests (fast)",
+]
+addopts = [
+    "--tb=short",
+    "--strict-markers",
+    "-ra",
+    "-s",
+    "--capture=no",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:testcontainers.core.waiting_utils",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.13.2",
+]
