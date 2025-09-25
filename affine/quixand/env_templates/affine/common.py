@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-
+import openai
 
 class EvaluatorRequest(BaseModel):
     model: str
@@ -42,24 +42,52 @@ def inject_health_endpoint(app: FastAPI):
         return "ok"
 
 
-async def _llm_chat(base_url: str, model: str, prompt: str) -> str:
-    api_key = os.environ.get("CHUTES_API_KEY", "")
-    if not api_key:
-        raise HTTPException(status_code=401, detail="CHUTES_API_KEY is not set")
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.7,
-        "top_p": 1.0,
-    }
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        r = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
-        txt = await r.aread()
-        if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=f"LLM error: {txt[:200].decode(errors='ignore')}")
-        data = r.json()
-        return (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+async def _llm_chat(
+    base_url: str, 
+    model: str, 
+    prompt: str, 
+    timeout_secs: float = 600.0,
+    max_tokens: Optional[int] = None,
+    temperature: float = 0.7
+) -> str:
+    if not base_url.strip():
+        raise HTTPException(status_code=400, detail="base_url cannot be empty")
+    if not model.strip():
+        raise HTTPException(status_code=400, detail="model cannot be empty")
+    if not prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt cannot be empty")
+    if timeout_secs <= 0:
+        raise HTTPException(status_code=400, detail="timeout_secs must be positive")
+
+    try:
+        client = openai.AsyncOpenAI(
+            base_url=base_url.rstrip('/'),
+            api_key=os.getenv("CHUTES_API_KEY"),
+            timeout=httpx.Timeout(timeout_secs),
+            max_retries=0
+        )
+        async def _make_request():
+            return await client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=False
+            )
+        
+        response = await _make_request()
+        
+        if not response.choices:
+            raise HTTPException(status_code=502, detail="Empty response from API")
+            
+        content = response.choices[0].message.content
+        if content is None:
+            raise HTTPException(status_code=502, detail="Generated content is null")
+        
+        return content.strip()
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def inject_evaluator_endpoint(app: FastAPI, env_name: str):
@@ -107,7 +135,7 @@ def inject_evaluator_endpoint(app: FastAPI, env_name: str):
                 score = float(getattr(ev, 'score', 0.0))
                 total += score
                 ok += 1.0 if score > 0 else 0.0
-                details.append({"id": int(idx), "reward": score, "success": bool(score > 0)})
+                details.append({"id": int(idx), "reward": score, "success": bool(score > 0), "experiences": {"prompt": prompt, "content": content}})
             except Exception as e:
                 details.append({"id": int(idx), "reward": 0.0, "success": False, "error": str(e)})
 

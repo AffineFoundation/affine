@@ -22,7 +22,8 @@ RUN pip install --no-cache-dir \
     pydantic==2.9.2 \
     aiofiles==24.1.0 \
     aiohttp==3.10.10 \
-    datasets==3.0.2
+    datasets==3.0.2 \
+    openai
 
 # Copy server
 COPY abd.py /app/abd.py
