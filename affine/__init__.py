@@ -1214,8 +1214,11 @@ def runner():
                     logger.debug(f"Until Sink: {len(batch)}/{SINK_BATCH} Time: {elapsed}/{SINK_MAX_WAIT}")
                     await asyncio.sleep(3)
                     if len(batch) >= SINK_BATCH or (batch and elapsed >= SINK_MAX_WAIT):
-                        st = await ensure_subtensor()
-                        blk = await st.get_current_block()
+                        if local_miners_enabled:
+                            blk = None
+                        else:
+                            st = await ensure_subtensor()
+                            blk = await st.get_current_block()
                         # Flatten: items may be single Result or list[Result]
                         flat = []
                         for it in batch:
@@ -1240,8 +1243,11 @@ def runner():
                         else: flat.append(it)
                     if flat:
                         try:
-                            st = await ensure_subtensor()
-                            blk = await st.get_current_block()
+                            if local_miners_enabled:
+                                blk = None
+                            else:
+                                st = await ensure_subtensor()
+                                blk = await st.get_current_block()
                             logger.debug(f"sink_worker: final flush {len(flat)}")
                             await sink_enqueue(wallet, blk, flat, force=True)
                         except Exception:
