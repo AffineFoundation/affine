@@ -32,7 +32,8 @@ COPY common.py /app/common.py
 COPY utils.py /app/utils.py
 COPY env.py /app/env.py
 
+ARG ENV_NAME
+ENV ENV_NAME=${ENV_NAME}
 EXPOSE 8000
-CMD ["uvicorn", "env:app", "--host", "0.0.0.0", "--port", "8000"]
-
+CMD ["uvicorn", "env:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "/app"]
 
