@@ -24,6 +24,11 @@ case "$ENV_NAME" in
         echo "Installing sqlgym-specific packages..."
         pip install sqlgym requests || true
         ;;
+
+    "babyai")
+        echo "Installing babyai-specific packages..."
+        pip install requests || true
+        ;;
     
     "sciworld")
         echo "Installing sciworld-specific packages..."
