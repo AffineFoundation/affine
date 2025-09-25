@@ -207,19 +207,18 @@ class BaseEnv(BaseModel, ABC):
     # No abstract API enforced; envs may provide helper methods if needed.
 
 # --------------------------------------------------------------------------- #
-#                   AgentGym containerized evaluation env                     #
+#                   Containerized evaluation env (base + impls)               #
 # --------------------------------------------------------------------------- #
 
-# Shared pools keyed by env_name (persistent, one container per env)
-_AG_POOL: Dict[str, Any] = {}
-_AG_LOCKS: Dict[str, asyncio.Lock] = {}
-_AG_SEMS: Dict[str, asyncio.Semaphore] = {}
+# Shared pools keyed by full env name (one container per logical env)
+_SBX_POOL: Dict[str, Any] = {}
+_SBX_LOCKS: Dict[str, asyncio.Lock] = {}
+_SBX_SEMS: Dict[str, asyncio.Semaphore] = {}
 
-class AgentGymContainerEnv(BaseEnv):
-    """AgentGym env backed by a persistent Quixand Sandbox per env_name.
+class ContainerEnv(BaseEnv):
+    """Base class for containerized envs evaluated via a FastAPI service.
 
-    This environment delegates evaluation to a FastAPI service inside the
-    sandbox at /evaluator and /health.
+    Subclasses must implement `_build_template_image()` and `name`.
     """
     env_name: str
     data_len: int = 200
@@ -229,76 +228,76 @@ class AgentGymContainerEnv(BaseEnv):
     # Internal counter for fallback id selection
     _round_counter: int = 0
 
-    @property
-    def name(self) -> str:  # override to expose agentgym:<env>
-        return f"agentgym:{self.env_name}"
-
+    def _pool_key(self) -> str:
+        return self.name
 
     def _get_lock(self) -> asyncio.Lock:
-        lk = _AG_LOCKS.get(self.env_name)
+        lk = _SBX_LOCKS.get(self._pool_key())
         if lk is None:
             lk = asyncio.Lock()
-            _AG_LOCKS[self.env_name] = lk
+            _SBX_LOCKS[self._pool_key()] = lk
         return lk
 
+    def _build_template_image(self) -> str:
+        raise NotImplementedError
+
     async def _get_shared(self):
-        """Return a shared Sandbox + semaphore for this env_name, creating it if missing."""
+        """Return a shared Sandbox + semaphore for this env, creating it if missing."""
         if Sandbox is None or Templates is None:
             raise RuntimeError("Quixand Sandbox/Templates not available")
         async with self._get_lock():
-            sbx = _AG_POOL.get(self.env_name)
+            sbx = _SBX_POOL.get(self._pool_key())
             if sbx is None:
-                # Build sandbox from template
-                tmpl = Templates.agentgym(self.env_name)
-                # Use long timeout to avoid watchdog killing long episodes
+                tmpl = self._build_template_image()
+                logger.info(f"[ENV] Creating sandbox for {self.name} image={tmpl} ENV_NAME={self.env_name}")
                 sbx_env = {
                     "CHUTES_API_KEY": os.getenv("CHUTES_API_KEY", ""),
-                    # Ensure local loopbacks are not proxied
                     "NO_PROXY": "localhost,127.0.0.1",
+                    "ENV_NAME": self.env_name,
+                    "PYTHONPATH": "/app",
                 }
-                sbx = Sandbox(
-                    tmpl,
-                    timeout=max(int(self.evaluator_timeout) + 900, 1800),
-                    env=sbx_env,
-                )
-                # Store immediately to avoid duplicate creations on slow health
-                _AG_POOL[self.env_name] = sbx
-                # Best-effort health check (non-fatal)
+                try:
+                    sbx = Sandbox(
+                        tmpl,
+                        timeout=max(int(self.evaluator_timeout) + 900, 1800),
+                        env=sbx_env,
+                    )
+                except Exception as e:
+                    logger.error(f"[ENV] Sandbox creation failed for {self.name}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+                    raise
+                _SBX_POOL[self._pool_key()] = sbx
+                try:
+                    logger.debug(f"[ENV] Sandbox started for {self.name} id={getattr(sbx, 'id', '?')} container_id={getattr(sbx, 'container_id', '?')}")
+                except Exception:
+                    pass
                 try:
                     await self._health_check(sbx)
                 except Exception as e:
                     logger.warning(f"ensure_ready pending for {self.name}: {e}")
-            # Per-env concurrency
-            sem = _AG_SEMS.get(self.env_name)
+            sem = _SBX_SEMS.get(self._pool_key())
             if sem is None:
                 sem = asyncio.Semaphore(int(os.getenv("AFFINE_ENV_CONCURRENCY", "16")))
-                _AG_SEMS[self.env_name] = sem
+                _SBX_SEMS[self._pool_key()] = sem
             return sbx, sem
 
     async def _health_check(self, sbx):
-        # Use container-internal health check via proxy
         try:
+            logger.debug(f"[ENV] Health check for {self.name} on port 8000")
             await asyncio.to_thread(lambda: sbx.proxy._health(port=8000, timeout=60))
         except Exception as e:
-            raise RuntimeError(f"Sandbox for {self.env_name} failed health: {e}")
+            raise RuntimeError(f"Sandbox for {self.name} failed health: {e}")
 
     async def ensure_ready(self):
-        """Warm the shared container when reuse is enabled (default)."""
         reuse = os.getenv("AFFINE_REUSE_CONTAINERS", "1")
         if reuse != "0":
             await self._get_shared()
 
     async def run_episode(self, policy: "Miner", task_id: Optional[int]) -> "Evaluation":
-        """Execute one AgentGym episode inside the container and return Evaluation.
-
-        The evaluator calls the miner's model through its base_url (Chutes slug).
-        """
         sbx, sem = await self._get_shared()
         base_url = f"https://{policy.slug}.chutes.ai/v1" if policy.slug else None
         if not base_url:
             raise RuntimeError("Miner slug/base_url missing")
 
-        # Fallback task id selection when not provided by runner
         if task_id is None:
             mode = os.getenv("AFFINE_TASK_ID_MODE", "round").lower()
             if mode == "uid":
@@ -321,8 +320,10 @@ class AgentGymContainerEnv(BaseEnv):
         start = time.monotonic()
         async with sem:
             try:
+                logger.debug(f"[ENV] Calling /evaluator for {self.name} payload={{'model': payload['model'], 'ids': payload['ids'], 'max_round': payload['max_round'], 'timeout': payload['timeout']}}")
                 data = await asyncio.to_thread(lambda: sbx.proxy.evaluator(_timeout=self.evaluator_timeout, **payload))
             except Exception as e:
+                logger.error(f"[ENV] /evaluator call failed for {self.name}: {type(e).__name__}: {e}")
                 raise RuntimeError(f"/evaluator call failed: {e}")
         latency = time.monotonic() - start
         total_score = float(data.get("total_score", data.get("score", 0.0)))
@@ -339,13 +340,29 @@ class AgentGymContainerEnv(BaseEnv):
             if "time_taken" in data: extra_payload["time_taken"] = data.get("time_taken")
 
         logger.info(
-            f"[REWARD] U{policy.uid:>3d} agentgym:{self.env_name} id={task_id} total_score={total_score:.4f} success_rate={success_rate:.3f} n={num_eval} latency={latency:.3f}s"
+            f"[REWARD] U{policy.uid:>3d} {self.name:<20} id={task_id} total_score={total_score:.4f} success_rate={success_rate:.3f} n={num_eval} latency={latency:.3f}s"
         )
         return Evaluation(
             env=self,
             score=total_score,
             extra=extra_payload,
         )
+
+class AgentGymContainerEnv(ContainerEnv):
+    @property
+    def name(self) -> str:
+        return f"agentgym:{self.env_name}"
+
+    def _build_template_image(self) -> str:
+        return Templates.agentgym(self.env_name)
+
+class AffineContainerEnv(ContainerEnv):
+    @property
+    def name(self) -> str:
+        return f"affine:{self.env_name}"
+
+    def _build_template_image(self) -> str:
+        return Templates.affine(self.env_name)
 
 # --------------------------------------------------------------------------- #
 #                         Models with new (de)serialisation                   #
@@ -375,8 +392,16 @@ class Challenge(BaseModel):
             # Only activate if this env is currently configured
             if name not in ENVS:
                 raise ValueError(f"Inactive env '{name}'")
-            env_name = name.split(":", 1)[1] if ":" in name else name
-            return AgentGymContainerEnv(env_name=env_name)
+            # Support prefixes: agentgym:<env> and affine:<env>
+            if ":" in name:
+                prefix, env_name = name.split(":", 1)
+                if prefix == "agentgym":
+                    return AgentGymContainerEnv(env_name=env_name)
+                if prefix == "affine":
+                    return AffineContainerEnv(env_name=env_name)
+                raise ValueError(f"Unknown env prefix '{prefix}'")
+            # Bare names default to agentgym for backwards compat
+            return AgentGymContainerEnv(env_name=name)
         return v
     class Config:
         arbitrary_types_allowed = True
@@ -399,8 +424,14 @@ class Evaluation(BaseModel):
             name = v.strip()
             if name not in ENVS:
                 raise ValueError(f"Inactive env '{name}'")
-            env_name = name.split(":", 1)[1] if ":" in name else name
-            return AgentGymContainerEnv(env_name=env_name)
+            if ":" in name:
+                prefix, env_name = name.split(":", 1)
+                if prefix == "agentgym":
+                    return AgentGymContainerEnv(env_name=env_name)
+                if prefix == "affine":
+                    return AffineContainerEnv(env_name=env_name)
+                raise ValueError(f"Unknown env prefix '{prefix}'")
+            return AgentGymContainerEnv(env_name=name)
         return v
     class Config:
         arbitrary_types_allowed = True
@@ -460,11 +491,10 @@ def _get_env_list_from_envvar() -> Tuple[str, ...]:
         return tuple()
     env_names: list[str] = []
     for tok in [t.strip() for t in spec.split(",") if t.strip()]:
-        # Accept bare names and names already prefixed
-        if ":" in tok:
-            env_names.append(tok)
-        else:
-            env_names.append(f"agentgym:{tok}")
+        # Accept bare names and names already prefixed; default bare to agentgym
+        if ":" not in tok:
+            tok = f"agentgym:{tok}"
+        env_names.append(tok)
     return tuple(env_names)
 
 # Keep variable name ENVS for scoring logic; values are env name strings
@@ -745,8 +775,8 @@ async def run(challenges, miners, timeout=240, retries=0, backoff=1, task_ids: O
     response = []
     
     async def proc(miner, chal):
-        # AgentGym containerized path (Quixand-only)
-        if isinstance(chal.env, AgentGymContainerEnv):
+        # Containerized path (AgentGym or Affine)
+        if isinstance(chal.env, ContainerEnv):
             start = time.monotonic()
             try:
                 ev = await chal.env.run_episode(policy=miner, task_id=(task_ids or {}).get(chal.env.name) if task_ids else None)
@@ -946,12 +976,17 @@ def _build_envs() -> List[BaseEnv]:
     """Build active envs from AFFINE_ENV_LIST; accept bare names as agentgym."""
     spec = os.getenv("AFFINE_ENV_LIST", "").strip()
     if not spec:
-        raise RuntimeError("AFFINE_ENV_LIST is required and must list envs, e.g. 'webshop,agentgym:alfworld'")
+        raise RuntimeError("AFFINE_ENV_LIST is required and must list envs, e.g. 'webshop,agentgym:alfworld,affine:sat'")
     envs: List[BaseEnv] = []
     for tok in [t.strip() for t in spec.split(",") if t.strip()]:
         if ":" in tok:
-            _, name = tok.split(":", 1)
-            envs.append(AgentGymContainerEnv(env_name=name))
+            prefix, name = tok.split(":", 1)
+            if prefix == "agentgym":
+                envs.append(AgentGymContainerEnv(env_name=name))
+            elif prefix == "affine":
+                envs.append(AffineContainerEnv(env_name=name))
+            else:
+                logger.warning(f"Unknown env prefix in AFFINE_ENV_LIST: {prefix}")
         else:
             envs.append(AgentGymContainerEnv(env_name=tok))
     if not envs:
@@ -1149,9 +1184,9 @@ def runner():
                         await asyncio.sleep(1)
                         continue
 
-                    # Pre-warm shared AgentGym envs if enabled
+                    # Pre-warm shared container envs if enabled
                     for e in envs:
-                        if isinstance(e, AgentGymContainerEnv):
+                        if isinstance(e, ContainerEnv):
                             try:
                                 await e.ensure_ready()
                             except Exception as ex:
