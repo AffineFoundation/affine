@@ -46,6 +46,7 @@ from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, T
 __version__ = "0.0.0"
 from .quixand.core.sandbox import Sandbox
 from .quixand.core.templates import Templates
+from .quixand.core.sandbox_manager import get_sandbox
 
 # --------------------------------------------------------------------------- #
 #                       Constants & global singletons                         #
@@ -248,8 +249,7 @@ class ContainerEnv(BaseEnv):
         async with self._get_lock():
             sbx = _SBX_POOL.get(self._pool_key())
             if sbx is None:
-                tmpl = self._build_template_image()
-                logger.info(f"[ENV] Creating sandbox for {self.name} image={tmpl} ENV_NAME={self.env_name}")
+                logger.info(f"[ENV] Creating sandbox via SandboxManager for {self.name} ENV_NAME={self.env_name}")
                 sbx_env = {
                     "CHUTES_API_KEY": os.getenv("CHUTES_API_KEY", ""),
                     "NO_PROXY": "localhost,127.0.0.1",
@@ -257,8 +257,9 @@ class ContainerEnv(BaseEnv):
                     "PYTHONPATH": "/app",
                 }
                 try:
-                    sbx = Sandbox(
-                        tmpl,
+                    sbx = get_sandbox(
+                        template=self.name,             # e.g., "affine:sat" or "agentgym:webshop"
+                        shared=True,                    # one shared sandbox per env
                         timeout=max(int(self.evaluator_timeout) + 900, 1800),
                         env=sbx_env,
                     )

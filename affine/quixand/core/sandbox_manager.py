@@ -130,6 +130,12 @@ class SandboxManager:
             updated_env = ensure_chutes_api_key(env)
             return Templates.agentgym(env_name), updated_env
 
+        # Affine-prefixed logical templates (abd/ded/sat...)
+        if template.startswith("affine:"):
+            env_name = template.split(":", 1)[1]
+            updated_env = ensure_chutes_api_key(env)
+            return Templates.affine(env_name), updated_env
+
         if template == "ridges" or template.startswith("ridges:"):
             name = template.split(":", 1)[-1] if ":" in template else "ridges"
             updated_env = ensure_chutes_api_key(env)
