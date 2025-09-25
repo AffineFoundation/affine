@@ -91,6 +91,17 @@ class Templates:
 		)
 
 	@staticmethod
+	def affine(env_name: str) -> str:
+		"""Build the 'affine' env template image for a specific env name (abd/ded/sat)."""
+		template_path = get_env_templates_dir("affine")
+		base_image = "python:3.11-slim"
+		return Templates.build(
+			template_path,
+			name=f"affine-{env_name}",
+			build_args={"ENV_NAME": env_name, "BASE_IMAGE": base_image}
+		)
+
+	@staticmethod
 	def ridges(name="ridges") -> str:
 		return Templates.build(
 			get_env_templates_dir("ridges"),
