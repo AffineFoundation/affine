@@ -80,14 +80,27 @@ class Templates:
 	def agentgym(env_name: str) -> str:
 		template_path = get_env_templates_dir("agentgym")
 		base_image = "python:3.11-slim"
+		tool_name = ""
 		if env_name in ["webshop", "sciworld"]:
 			base_image = "python:3.8-slim"
 		elif env_name == "webarena":
 			base_image = "python:3.10.13-slim"
+		elif env_name == "webarena":
+			base_image = "python:3.10.13-slim"
+		elif env_name in ["academia", "movie", "sheet", "todo", "weather"]:
+			base_image = "python:3.8.13-slim"
+			tool_name = env_name
+			env_name = "tool"
+		elif env_name in ["maze", "wordle"]:
+			base_image = "python:3.9.12-slim"
+			tool_name = env_name
+			env_name = "lmrlgym"
+		elif env_name == "searchqa":
+			base_image = "python:3.10-slim"
 		return Templates.build(
 			template_path,
 			name=f"agentgym-{env_name}",
-			build_args={"PREINSTALL_ENV": env_name, "BASE_IMAGE": base_image}
+			build_args={"PREINSTALL_ENV": env_name, "TOOL_NAME": tool_name, "BASE_IMAGE": base_image}
 		)
 
 	@staticmethod

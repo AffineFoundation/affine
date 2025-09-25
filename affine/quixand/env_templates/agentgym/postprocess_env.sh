@@ -19,7 +19,7 @@ case "$ENV_NAME" in
         echo "Installing webshop-specific packages..."
         pip install --force-reinstall typing-extensions==4.5.0 || true
         ;;
-    
+
     "sqlgym")
         echo "Installing sqlgym-specific packages..."
         pip install sqlgym requests || true
@@ -29,7 +29,18 @@ case "$ENV_NAME" in
         echo "Installing babyai-specific packages..."
         pip install requests || true
         ;;
-    
+
+    "lmrlgym")
+        echo "Installing lmrlgym-specific packages..."
+        pip install pycparser cffi
+        pip install -r /app/AgentGym/agentenv-lmrlgym/lmrlgym/requirements.txt
+        ;;
+
+    "tool")
+        echo "Installing babyai-specific packages..."
+        pip install geopy || true
+        ;;
+
     "sciworld")
         echo "Installing sciworld-specific packages..."
         pip install numpy requests || true
