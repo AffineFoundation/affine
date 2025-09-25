@@ -1083,6 +1083,10 @@ def runner():
     wallet  = bt.wallet(name=coldkey, hotkey=hotkey)
 
     local_miners_enabled = bool(os.getenv("AFFINE_LOCAL_MINERS"))
+    max_episodes = int(os.getenv("AFFINE_MAX_EPISODES", "0"))
+    summary_path = os.getenv("AFFINE_SUMMARY_FILE") or os.getenv("AFFINE_SUMMARY_PATH")
+
+    summary_records: Dict[str, Dict[int, Dict[str, Any]]] = defaultdict(lambda: defaultdict(lambda: {"scores": [], "latencies": [], "success": 0, "total": 0, "model": None}))
 
     async def _run():
         subtensor = None
@@ -1112,6 +1116,7 @@ def runner():
         last_status_log = 0.0
         total_requests = 0
         requests_since_last_log = 0
+        completed_counts: Dict[Tuple[str, int], int] = defaultdict(int)
 
         def ok(res_list):
             if not res_list: return False
@@ -1137,9 +1142,13 @@ def runner():
             tid = env_round[name] % (getattr(e, "data_len", 200) or 200)
             chal = await get_env_challenge(e)
             tasks = {}
-            for m in miners_map.values():
-                if not getattr(m, "model", None):
-                    continue
+            eligible_miners = [m for m in miners_map.values() if getattr(m, "model", None)]
+            if max_episodes > 0:
+                eligible_miners = [m for m in eligible_miners if completed_counts[(name, m.uid)] < max_episodes]
+            if not eligible_miners:
+                env_inflight[name] = {}
+                return
+            for m in eligible_miners:
                 t = asyncio.create_task(run([chal], m, timeout=180, task_ids={name: tid}))
                 tasks[int(m.uid)] = t
                 total_requests += 1
@@ -1255,6 +1264,21 @@ def runner():
                         await asyncio.sleep(1)
                         continue
 
+                    if max_episodes > 0:
+                        all_done = True
+                        for e in envs:
+                            for m in miners_map.values():
+                                if not getattr(m, "model", None):
+                                    continue
+                                if completed_counts[(e.name, m.uid)] < max_episodes:
+                                    all_done = False
+                                    break
+                            if not all_done:
+                                break
+                        if all_done:
+                            logger.info("Max episode limit reached for all miners; exiting runner loop.")
+                            break
+
                     # Pre-warm shared AgentGym envs if enabled
                     for e in envs:
                         if isinstance(e, AgentGymContainerEnv):
@@ -1309,6 +1333,15 @@ def runner():
                             sink_q.put_nowait(res_list)
                             # Update metrics/logs for each result
                             for r in res_list:
+                                stats = summary_records[r.challenge.env.name][r.miner.uid]
+                                stats["scores"].append(r.evaluation.score)
+                                stats["latencies"].append(r.response.latency_seconds)
+                                stats["total"] += 1
+                                if getattr(r.response, "success", False):
+                                    stats["success"] += 1
+                                if not stats["model"]:
+                                    stats["model"] = r.miner.model
+                                completed_counts[(r.challenge.env.name, r.miner.uid)] += 1
                                 try:
                                     SCORE.labels(uid=r.miner.uid, env=r.challenge.env.name).set(r.evaluation.score)
                                 except Exception:
@@ -1346,6 +1379,41 @@ def runner():
         await asyncio.gather(_run(), watchdog(timeout=timeout))
 
     asyncio.run(main())
+
+    if summary_path:
+        try:
+            output: List[Dict[str, Any]] = []
+            for env_name, miner_entries in summary_records.items():
+                env_entry = {"env": env_name, "miners": []}
+                for uid, stats in miner_entries.items():
+                    total = stats["total"]
+                    if total == 0:
+                        continue
+                    avg_score = sum(stats["scores"]) / total if total else 0.0
+                    avg_latency = sum(stats["latencies"]) / total if total else 0.0
+                    success_rate = stats["success"] / total if total else 0.0
+                    env_entry["miners"].append(
+                        {
+                            "uid": uid,
+                            "model": stats["model"],
+                            "total": total,
+                            "success": stats["success"],
+                            "success_rate": success_rate,
+                            "average_score": avg_score,
+                            "average_latency": avg_latency,
+                            "scores": stats["scores"],
+                        }
+                    )
+                output.append(env_entry)
+            path = Path(summary_path).expanduser()
+            if output:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(output, indent=2))
+                logger.info(f"Summary written to {path}")
+            else:
+                logger.info(f"No evaluation data collected; summary not written to {summary_path}")
+        except Exception as exc:
+            logger.warning(f"Failed to write summary file {summary_path}: {exc}")
 
 
 
