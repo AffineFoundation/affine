@@ -52,9 +52,6 @@ uv run --extra dev pytest testsuite/ -m integration
 # Run specific test files
 uv run --extra dev pytest testsuite/test_integration_docker_compose.py -v
 uv run --extra dev pytest testsuite/test_unit_example.py -v
-
-# Run tests in parallel
-uv run --extra dev pytest testsuite/ -n auto
 ```
 
 ## What the tests do
