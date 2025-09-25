@@ -72,6 +72,8 @@ def main():
         # "webarena", # not support
         "textcraft",
         "sqlgym",
+        "maze",
+        "wordle",
     ]
     
     parser = argparse.ArgumentParser(description='Run AgentGym evaluator for specified environment')
@@ -87,15 +89,7 @@ def main():
     env_name = args.env
     
     print(f"Building Docker image for {env_name} environment...")
-    image = qs.Templates.agentgym(env_name)
-    
-    print("Starting sandbox container...")
-    sandbox = qs.Sandbox(
-        template=image,
-        env={
-            "CHUTES_API_KEY": os.getenv("CHUTES_API_KEY"),
-        },
-    )
+    sandbox = qs.get_sandbox(f"agentgym:{env_name}")
     print(f"Container ID: {sandbox.container_id[:12]}\n")
 
     try:

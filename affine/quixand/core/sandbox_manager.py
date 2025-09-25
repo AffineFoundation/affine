@@ -78,7 +78,7 @@ class SandboxManager:
         self,
         template: str,
         shared: bool = False,
-        pool_size: int = 3,
+        pool_size: int = 1,
         timeout: int = 600,
         env: Optional[Dict[str, str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -128,6 +128,9 @@ class SandboxManager:
         if template.startswith("agentgym:"):
             env_name = template.split(":", 1)[1]
             updated_env = ensure_chutes_api_key(env)
+            updated_env["TODO_KEY"] = os.environ.get("AGENTGYM_TOOL_TODO_KEY", "")
+            updated_env["MOVIE_KEY"] = os.environ.get("AGENTGYM_TOOL_MOVIE_KEY", "")
+            updated_env["SHEET_EMAIL"] = os.environ.get("AGENTGYM_TOOL_SHEET_EMAIL", "")
             return Templates.agentgym(env_name), updated_env
 
         if template == "ridges" or template.startswith("ridges:"):
