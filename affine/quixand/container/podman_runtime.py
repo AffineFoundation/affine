@@ -673,3 +673,93 @@ class PodmanRuntime(ContainerRuntime):
         # Wait for thread to finish
         if session._stream_thread:
             session._stream_thread.join(timeout=1)
+    
+    def list_images(self, filters: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+        """List Podman images.
+        
+        Args:
+            filters: Optional filters for images (e.g., {'reference': 'qs/*'})
+        
+        Returns:
+            List of image dictionaries with details
+        """
+        try:
+            images = []
+            all_images = self.client.images.list()
+            
+            for img in all_images:
+                img_dict = {
+                    'Id': img.id,
+                    'RepoTags': img.tags if hasattr(img, 'tags') else [],
+                    'Created': img.attrs.get('Created', ''),
+                    'Size': img.attrs.get('Size', 0),
+                }
+                
+                # Apply filters if provided
+                if filters and 'reference' in filters:
+                    ref_filter = filters['reference']
+                    # Check if any tag matches the reference filter
+                    if img_dict['RepoTags']:
+                        matching = False
+                        for tag in img_dict['RepoTags']:
+                            # Simple wildcard matching
+                            if ref_filter.endswith('*'):
+                                prefix = ref_filter[:-1]
+                                if tag.startswith(prefix):
+                                    matching = True
+                                    break
+                            elif tag == ref_filter:
+                                matching = True
+                                break
+                        if matching:
+                            images.append(img_dict)
+                else:
+                    images.append(img_dict)
+            
+            return images
+        except Exception as e:
+            raise RuntimeError(f"Failed to list images: {e}")
+    
+    def remove_image(self, image: str, force: bool = False, noprune: bool = False) -> None:
+        """Remove a Podman image.
+        
+        Args:
+            image: Image name or ID to remove
+            force: Force removal even if containers are using the image
+            noprune: Do not delete untagged parents
+        """
+        try:
+            img = self.client.images.get(image)
+            img.remove(force=force)
+        except NotFound:
+            # Image doesn't exist, that's fine
+            pass
+        except Exception as e:
+            # Check if image is being used
+            if "image is being used" in str(e).lower() and not force:
+                raise RuntimeError(f"Image {image} is being used by a container. Use force=True to remove anyway.")
+            else:
+                raise RuntimeError(f"Failed to remove image {image}: {e}")
+    
+    def get_images_with_prefix(self, prefix: str) -> List[str]:
+        """Get all images with a specific prefix.
+        
+        Args:
+            prefix: Image name prefix (e.g., 'qs/mytemplate:')
+        
+        Returns:
+            List of full image tags matching the prefix
+        """
+        try:
+            all_images = self.list_images()
+            matching_images = []
+            
+            for image in all_images:
+                if image.get('RepoTags'):
+                    for tag in image['RepoTags']:
+                        if tag.startswith(prefix):
+                            matching_images.append(tag)
+            
+            return matching_images
+        except Exception as e:
+            raise RuntimeError(f"Failed to get images with prefix {prefix}: {e}")
