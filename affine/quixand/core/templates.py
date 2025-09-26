@@ -107,7 +107,7 @@ class Templates:
 	def affine(env_name: str) -> str:
 		"""Build the 'affine' env template image for a specific env name (abd/ded/sat)."""
 		template_path = get_env_templates_dir("affine")
-		base_image = "python:3.11-slim"
+		base_image = "thebes1618/affine:latest"
 		return Templates.build(
 			template_path,
 			name=f"affine-{env_name}",
