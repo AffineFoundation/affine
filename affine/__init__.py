@@ -44,8 +44,6 @@ from bittensor.core.errors import MetadataError
 from pydantic import BaseModel, Field, validator, ValidationError
 from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, TypeVar, Awaitable
 __version__ = "0.0.0"
-from .quixand.core.sandbox import Sandbox
-from .quixand.core.templates import Templates
 from .quixand.core.sandbox_manager import get_sandbox
 
 # --------------------------------------------------------------------------- #
@@ -218,8 +216,6 @@ _SBX_SEMS: Dict[str, asyncio.Semaphore] = {}
 
 class ContainerEnv(BaseEnv):
     """Base class for containerized envs evaluated via a FastAPI service.
-
-    Subclasses must implement `_build_template_image()` and `name`.
     """
     env_name: str
     data_len: int = 200
@@ -239,21 +235,14 @@ class ContainerEnv(BaseEnv):
             _SBX_LOCKS[self._pool_key()] = lk
         return lk
 
-    def _build_template_image(self) -> str:
-        raise NotImplementedError
-
     async def _get_shared(self):
         """Return a shared Sandbox + semaphore for this env, creating it if missing."""
-        if Sandbox is None or Templates is None:
-            raise RuntimeError("Quixand Sandbox/Templates not available")
         async with self._get_lock():
             sbx = _SBX_POOL.get(self._pool_key())
             if sbx is None:
                 logger.info(f"[ENV] Creating sandbox via SandboxManager for {self.name} ENV_NAME={self.env_name}")
                 sbx_env = {
-                    "CHUTES_API_KEY": os.getenv("CHUTES_API_KEY", ""),
                     "NO_PROXY": "localhost,127.0.0.1",
-                    "ENV_NAME": self.env_name,
                     "PYTHONPATH": "/app",
                 }
                 try:
@@ -345,16 +334,10 @@ class AgentGymContainerEnv(ContainerEnv):
     def name(self) -> str:
         return f"agentgym:{self.env_name}"
 
-    def _build_template_image(self) -> str:
-        return Templates.agentgym(self.env_name)
-
 class AffineContainerEnv(ContainerEnv):
     @property
     def name(self) -> str:
         return f"affine:{self.env_name}"
-
-    def _build_template_image(self) -> str:
-        return Templates.affine(self.env_name)
 
 # --------------------------------------------------------------------------- #
 #                         Models with new (de)serialisation                   #
@@ -483,9 +466,6 @@ def _get_env_list_from_envvar() -> Tuple[str, ...]:
         return tuple()
     env_names: list[str] = []
     for tok in [t.strip() for t in spec.split(",") if t.strip()]:
-        # Accept bare names and names already prefixed; default bare to agentgym
-        if ":" not in tok:
-            tok = f"agentgym:{tok}"
         env_names.append(tok)
     return tuple(env_names)
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List, Set
 
 from ..config import Config
+from ..adapters.local_docker import get_runtime
 
 
 INDEX = Config.templates_dir() / "index.json"
@@ -41,20 +42,16 @@ class Templates:
 		
 		# Use runtime from Config
 		cfg = Config()
-		runtime = cfg.runtime or "docker"
+		runtime_str = cfg.runtime or "docker"
 		
 		# Check if image already exists
-		if _image_exists(img_name, runtime):
-			print(f"Using cached image: {img_name}")
-			# Still update the index for consistency
+		if _image_exists(img_name, runtime_str):
 			idx = _load_index()
 			idx[name or p.name] = {"image": img_name, "digest": digest_content}
 			INDEX.write_text(json.dumps(idx, indent=2))
 			return img_name
 		
-		# Build the image if it doesn't exist
-		print(f"Building new image: {img_name}")
-		cmd = [runtime, "build", "-f", str(dockerfile), "-t", img_name]
+		cmd = [runtime_str, "build", "-f", str(dockerfile), "-t", img_name]
 		
 		# Add build arguments if provided
 		if build_args:
@@ -62,6 +59,10 @@ class Templates:
 				cmd.extend(["--build-arg", f"{key}={value}"])
 		cmd.append(str(build_path))
 		subprocess.check_call(cmd)
+		
+		# Clean up old images with same name but different hash
+		_cleanup_old_images(name or p.name, digest_content[:12])
+		
 		idx = _load_index()
 		idx[name or p.name] = {"image": img_name, "digest": digest_content}
 		INDEX.write_text(json.dumps(idx, indent=2))
@@ -79,6 +80,28 @@ class Templates:
 	
 	@staticmethod
 	def agentgym(env_name: str) -> str:
+		allowed_envs = [
+			"webshop",
+			"alfworld",
+			"babyai",
+			"sciworld",
+			"textcraft",
+			"sqlgym",
+			"maze",
+			"wordle",
+			"academia",
+			"movie",
+			"sheet",
+			"todo",
+			"weather",
+		]
+		
+		if env_name not in allowed_envs:
+			raise ValueError(
+				f"Invalid AgentGym environment name: '{env_name}'. "
+				f"Allowed values are: {', '.join(allowed_envs)}"
+			)
+		
 		template_path = get_env_templates_dir("agentgym")
 		base_image = "python:3.11-slim"
 		tool_name = ""
@@ -106,12 +129,21 @@ class Templates:
 
 	@staticmethod
 	def affine(env_name: str) -> str:
-		"""Build the 'affine' env template image for a specific env name (abd/ded/sat)."""
+		"""Build the 'affine' env template image for a specific env name (sat/abd/ded/hvm/elr)."""
+		allowed_envs = ["sat", "abd", "ded", "hvm", "elr"]
+		
+		if env_name not in allowed_envs:
+			raise ValueError(
+				f"Invalid Affine environment name: '{env_name}'. "
+				f"Allowed values are: {', '.join(allowed_envs)}"
+			)
+		
 		template_path = get_env_templates_dir("affine")
+		repo_root = Path(__file__).resolve().parent.parent.parent.parent
 		return Templates.build(
 			template_path,
 			name=f"affine",
-	    	build_path="."
+	    	build_path=str(repo_root)
 		)
 
 	@staticmethod
@@ -201,6 +233,26 @@ def _image_exists(image_name: str, runtime: str = "docker") -> bool:
 		return bool(result.stdout.strip())
 	except Exception:
 		return False
+
+
+def _cleanup_old_images(name: str, current_hash: str) -> None:
+	"""Remove old images with same name but different hash."""
+	cfg = Config()
+	runtime = get_runtime(cfg.runtime)
+	
+	prefix = f"qs/{name}:"
+	current_tag = f"{prefix}{current_hash}"
+	
+	try:
+		old_images = runtime.get_images_with_prefix(prefix)
+		for img_tag in old_images:
+			if img_tag != current_tag:
+				try:
+					runtime.remove_image(img_tag, force=False)
+				except Exception:
+					pass
+	except Exception:
+		pass
 
 
 def get_env_templates_dir(env_template) -> str:
