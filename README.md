@@ -34,6 +34,16 @@ Set env vars, chutes api key.
 cp .env.example .env
 ```
 
+**IMPORTANT R2 Configuration:**
+
+For Affine to scale, validators must serve their results via a public, CDN-cached custom domain. This avoids rate limits and improves network performance.
+
+1.  **Create your R2 bucket** in the Cloudflare dashboard.
+2.  **Enable Public Access:** In your bucket's settings, make sure the bucket is publicly accessible. This allows the CDN to pull data.
+3.  **Connect a Custom Domain:** In the bucket's settings, go to "Custom Domains" and connect a domain/subdomain you control (e.g., `r2-results.my-validator.net`).
+4.  **Create a Cache Rule:** This is the most critical step. In your domain's settings in the main Cloudflare dashboard, go to "Caching" -> "Cache Rules". Create a new rule for your custom subdomain with the setting **"Cache Everything"**. This ensures `.json` result files are cached by the CDN.
+5.  Fill in `VALIDATOR_R2_PUBLIC_URL` in your `.env` file with this new URL.
+
 (Recommended): Run the validator with docker and watchtower autoupdate.
 ```bash
 # Run the validator with watchtower.

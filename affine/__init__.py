@@ -35,6 +35,7 @@ from typing import AsyncIterator
 from urllib.parse import urlparse
 from huggingface_hub import HfApi
 from botocore.config import Config
+from botocore import UNSIGNED
 from collections import defaultdict
 from abc import ABC, abstractmethod
 from pydantic import root_validator
@@ -312,7 +313,7 @@ from .envs import ENVS
 # --------------------------------------------------------------------------- #
 # ── ENV ──────────────────────────────────────────────────────────────────────
 WINDOW        = int(os.getenv("AFFINE_WINDOW", 20))
-RESULT_PREFIX = "affine/results/"
+RESULT_PREFIX = "results/"
 INDEX_KEY     = "affine/index.json"
 
 FOLDER  = os.getenv("R2_FOLDER", "affine" )
@@ -326,6 +327,38 @@ get_client_ctx = lambda: get_session().create_client(
     aws_access_key_id=ACCESS, aws_secret_access_key=SECRET,
     config=Config(max_pool_connections=256)
 )
+
+# Validator-specific R2 (per-validator bucket storage)
+ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", os.getenv("R2_BUCKET_ID", "80f15715bb0b882c9e967c13e677ed7d"))
+VALIDATOR_BUCKET = os.getenv("VALIDATOR_R2_BUCKET_NAME")
+VALIDATOR_ENDPOINT = f"https://{ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+def get_validator_client_ctx(readonly: bool = False):
+    if readonly:
+        return get_session().create_client(
+            "s3",
+            endpoint_url=VALIDATOR_ENDPOINT,
+            config=Config(max_pool_connections=256, signature_version=UNSIGNED),
+        )
+    else:
+        return get_session().create_client(
+            "s3",
+            endpoint_url=VALIDATOR_ENDPOINT,
+            aws_access_key_id=ACCESS,
+            aws_secret_access_key=SECRET,
+            config=Config(max_pool_connections=256),
+        )
+
+def get_public_client_ctx(endpoint_url: str):
+    """
+    Unsigned public client for reading other validators' public buckets.
+    Each validator may be on a different R2 account, so endpoint_url is per-validator.
+    """
+    return get_session().create_client(
+        "s3",
+        endpoint_url=endpoint_url,
+        config=Config(max_pool_connections=256, signature_version=UNSIGNED),
+    )
 
 CACHE_DIR = Path(os.getenv("AFFINE_CACHE_DIR",
                  Path.home() / ".cache" / "affine" / "blocks"))
@@ -389,47 +422,153 @@ async def _jsonl(p: Path):
         for l in await asyncio.to_thread(_read): yield l
 
 # ── Core async stream (Result objects) ──────────────────────────────────────
+# Cached fetcher for all validators' bucket commitments (TTL by blocks)
+async def _get_all_validator_commitments(ttl_blocks: int = 300) -> Dict[str, str]:
+    """
+    Returns mapping hotkey -> raw commitment string (JSON) as committed on-chain.
+    Discovery is fully on-chain. Caches by current block height for ~ttl_blocks.
+    """
+    if not hasattr(_get_all_validator_commitments, "_cache"):
+        _get_all_validator_commitments._cache = {"block": -1, "data": {}}
+    cache = _get_all_validator_commitments._cache
+    st = await get_subtensor()
+    cur = await st.get_current_block()
+    if cache.get("data") and (cur - (cache.get("block") or -1)) < ttl_blocks:
+        return cache["data"]
+
+    out: Dict[str, str] = {}
+    try:
+        if hasattr(st, "get_all_commitments"):
+            commits = await st.get_all_commitments(NETUID)
+            if isinstance(commits, dict):
+                for hk, val in commits.items():
+                    # normalize value from possible (block, data) shapes
+                    if isinstance(val, (list, tuple)) and val:
+                        cand = val[-1]
+                        if isinstance(cand, (list, tuple)) and len(cand) >= 2:
+                            cand = cand[1]
+                        val = cand
+                    if isinstance(val, (bytes, bytearray)):
+                        val = val.decode("utf-8", "ignore")
+                    if isinstance(val, str) and val:
+                        out[hk] = val
+        else:
+            commits = await st.get_all_revealed_commitments(NETUID)
+            for hk, hist in (commits or {}).items():
+                try:
+                    _, data = hist[-1]
+                    if isinstance(data, (bytes, bytearray)):
+                        data = data.decode("utf-8", "ignore")
+                    if isinstance(data, str) and data:
+                        out[hk] = data
+                except Exception:
+                    continue
+    except Exception as e:
+        logger.warning(f"Failed to fetch validator commitments: {e}")
+
+    cache["block"] = cur
+    cache["data"] = out
+    return out
+
+# ── Core async stream (Result objects) — decentralized read ───────────────────
 async def dataset(
     tail: int,
     *,
-    max_concurrency: int = 10,      # parallel S3 downloads
+    max_concurrency: int = 64,  # parallel HTTP downloads
 ) -> AsyncIterator["Result"]:
     """
-    Stream `Result`s in deterministic order while pre‑downloading future
-    shards concurrently.
+    Stream results from validators' public CDN endpoints over HTTPS to avoid S3 API rate limits.
+    Uses on-chain commitments to discover each validator's r2_url, then fetches shard files
+    results/{WINDOW}.jsonl directly. Lightweight local caching is preserved in CACHE_DIR.
     """
-    # ── figure out which windows we need ────────────────────────────────
-    sub  = await get_subtensor()
-    cur  = await sub.get_current_block()
+    st = await get_subtensor()
+    cur = await st.get_current_block()
     need = {w for w in range(_w(cur - tail), _w(cur) + WINDOW, WINDOW)}
-    keys = [
-        k for k in await _index()
-        if (h := Path(k).name.split("-", 1)[0]).isdigit() and int(h) in need
-    ]
-    keys.sort()    
-    # ── helpers ────────────────────────────────
-    sem = asyncio.Semaphore(max_concurrency)     # throttle S3
-    async def _prefetch(key: str) -> Path:       # just downloads / caches
-        return await _cache_shard(key, sem)
-    tasks: list[asyncio.Task[Path]] = [
-        asyncio.create_task(_prefetch(k)) for k in keys[:max_concurrency]
-    ]
-    next_key = max_concurrency            
+
+    # Discover commitments and extract public r2_url per validator
+    hk_to_commit = await _get_all_validator_commitments()
+    validators: list[tuple[str, int, str]] = []  # (hotkey, uid, r2_url)
+    try:
+        meta = await st.metagraph(NETUID)
+        hotkeys = list(getattr(meta, "hotkeys", []))
+    except Exception:
+        hotkeys = []
+
+    for hk, raw in hk_to_commit.items():
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else raw
+            r2_url = (data.get("r2_url") or "").strip()
+            if not r2_url:
+                # Skip validators that have not published a public URL yet
+                continue
+            uid = hotkeys.index(hk) if hk in hotkeys else -1
+            validators.append((hk, uid, r2_url.rstrip("/")))
+        except Exception:
+            logger.trace(f"Invalid commitment payload for {hk[:8]}")
+            continue
+
+    if not validators:
+        return
+
+    # HTTP client tuned for high concurrency across hosts
+    timeout = aiohttp.ClientTimeout(total=60)
+    connector = aiohttp.TCPConnector(
+        limit=max_concurrency,
+        limit_per_host=0,
+        enable_cleanup_closed=True,
+        ttl_dns_cache=300,
+    )
+    sem = asyncio.Semaphore(max_concurrency)
     bar = tqdm(f"Dataset=({cur}, {cur - tail})", unit="res", dynamic_ncols=True)
-    # ── main loop: iterate over keys in order ───────────────────────────
-    for i, key in enumerate(keys):
-        path = await tasks[i]
-        if next_key < len(keys):
-            tasks.append(asyncio.create_task(_prefetch(keys[next_key])))
-            next_key += 1
-        async for raw in _jsonl(path):
+
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        async def fetch_and_cache(hk: str, base_url: str, w: int) -> list[bytes]:
+            # Use block-prefixed cache filenames so prune() continues to work.
+            out = CACHE_DIR / f"{w:09d}-{hk[:12]}.jsonl"
+            if out.exists():
+                try:
+                    data = await asyncio.to_thread(out.read_bytes)
+                    return [l for l in data.split(b"\n") if l]
+                except Exception:
+                    pass
+
+            shard_url = f"{base_url}/{RESULT_PREFIX}{w:09d}.jsonl"
             try:
-                r = Result.model_validate(_loads(raw))
-                if r.verify():
-                    bar.update(1)
-                    yield r
+                async with sem, session.get(shard_url) as resp:
+                    if resp.status != 200:
+                        return []
+                    body = await resp.read()
+            except Exception:
+                return []
+
+            # Write-through cache (best-effort)
+            try:
+                tmp = out.with_suffix(".tmp")
+                await asyncio.to_thread(tmp.write_bytes, body if body.endswith(b"\n") else body + b"\n")
+                await asyncio.to_thread(os.replace, tmp, out)
             except Exception:
                 pass
+            return [l for l in body.split(b"\n") if l]
+
+        tasks: list[asyncio.Task] = []
+        for hk, uid, base in validators:
+            for w in need:
+                tasks.append(asyncio.create_task(fetch_and_cache(hk, base, w)))
+
+        for fut in asyncio.as_completed(tasks):
+            try:
+                lines = await fut
+            except Exception:
+                continue
+            for raw in lines:
+                try:
+                    r = Result.model_validate(_loads(raw))
+                    if r.verify():
+                        bar.update(1)
+                        yield r
+                except Exception:
+                    continue
+
     bar.close()
     
     
@@ -473,19 +612,19 @@ async def sink(wallet: bt.wallet, results: list["Result"], block: int = None):
     valid = [r for r in results if getattr(r.response, "success", False)]
     if not valid:
         return
-    hotkey, signed = await sign_results( wallet, valid )
-    key = f"{RESULT_PREFIX}{_w(block):09d}-{hotkey}.json"
-    dumped = [ r.model_dump(mode="json") for r in signed ]
-    async with get_client_ctx() as c:
+    hotkey, signed = await sign_results(wallet, valid)
+    key = f"{RESULT_PREFIX}{_w(block):09d}.jsonl"
+    dumped = [r.model_dump(mode="json") for r in signed]
+    async with get_validator_client_ctx(readonly=False) as c:
         try:
-            r = await c.get_object(Bucket=FOLDER, Key=key)
-            merged = json.loads(await r["Body"].read()) + dumped
+            r = await c.get_object(Bucket=VALIDATOR_BUCKET, Key=key)
+            prev = await r["Body"].read()
         except c.exceptions.NoSuchKey:
-            merged = dumped
-        await c.put_object(Bucket=FOLDER, Key=key, Body=_dumps(merged),
-                           ContentType="application/json")
-    if len(merged) == len(dumped):              # shard was new
-        await _update_index(key)
+            prev = b""
+        lines = b"".join(_dumps(i) + b"\n" for i in dumped)
+        body = prev + lines
+        await c.put_object(Bucket=VALIDATOR_BUCKET, Key=key, Body=body,
+                           ContentType="application/jsonl")
 
 async def prune(tail: int):
     sub = await get_subtensor(); cur = await sub.get_current_block()
@@ -1114,9 +1253,32 @@ def signer(host: str, port: int):
                 logger.error(f"[signer] set_weights error: {e}")
                 return web.json_response({"success": False, "error": str(e)}, status=500)
 
+        async def get_hotkey_handler(request: "web.Request"):
+            return web.json_response({
+                "success": True,
+                "hotkey": wallet.hotkey.ss58_address
+            })
+
+        async def commit_handler(request: "web.Request"):
+            try:
+                payload = await request.json()
+                data = payload.get("data")
+                if not isinstance(data, str):
+                    return web.json_response({"success": False, "error": "Invalid data payload"}, status=400)
+                st = await get_subtensor()
+                await st.commit(wallet=wallet, netuid=NETUID, data=data)
+                await st.wait_for_block()
+                logger.info(f"[signer] /commit: successful for data='{data[:50]}...'")
+                return web.json_response({"success": True})
+            except Exception as e:
+                logger.error(f"[signer] /commit error: {e}")
+                return web.json_response({"success": False, "error": str(e)}, status=500)
+
         app = web.Application(middlewares=[access_log])
         app.add_routes([
             web.get('/healthz', health),
+            web.get('/hotkey', get_hotkey_handler),
+            web.post('/commit', commit_handler),
             web.post('/set_weights', set_weights_handler),
             web.post('/sign', sign_handler),
         ])
@@ -1135,7 +1297,7 @@ def signer(host: str, port: int):
 
     asyncio.run(_run())
 
-async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[float], retry: int = 10 ):
+async def retry_set_weights( wallet: Optional[bt.Wallet], uids: List[int], weights: List[float], retry: int = 10 ):
     # Delegate to signer; fallback to shared helper only if signer is unreachable
     signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
     try:
@@ -1175,6 +1337,9 @@ async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[f
             logger.warning(f"Signer responded error: status={resp.status} body={data}")
             return
     except ClientConnectorError as e:
+        if wallet is None:
+            logger.error(f"Signer not reachable ({type(e).__name__}: {e}) and no wallet available; cannot set_weights.")
+            return
         logger.info(f"Signer not reachable ({type(e).__name__}: {e}); falling back to local set_weights once")
         ok = await _set_weights_with_confirmation(
             wallet, NETUID, uids, weights, False,
@@ -1520,13 +1685,68 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
 @cli.command("validate")
 def validate():
     global HEARTBEAT
-    coldkey = get_conf("BT_WALLET_COLD", "default")
-    hotkey  = get_conf("BT_WALLET_HOT", "default")
-    wallet  = bt.wallet(name=coldkey, hotkey=hotkey)    
     async def _run():     
         LAST = 0
         TEMPO = 100
         subtensor = None
+
+        # Startup routine: ensure validator R2 bucket commitment is set
+        try:
+            st = await get_subtensor()
+            meta = await st.metagraph(NETUID)
+            signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
+            async with aiohttp.ClientSession() as session:
+                resp = await session.get(f"{signer_url}/hotkey")
+                resp.raise_for_status()
+                _hk = await resp.json()
+                my_hotkey = _hk.get("hotkey", "")
+            try:
+                my_uid = meta.hotkeys.index(my_hotkey)
+            except ValueError:
+                logger.error("Validator hotkey not found in metagraph; please register before running validate.")
+                return
+            bucket = os.getenv("VALIDATOR_R2_BUCKET_NAME")
+            account_id = os.getenv("R2_ACCOUNT_ID") or os.getenv("R2_BUCKET_ID")
+            public_url = os.getenv("VALIDATOR_R2_PUBLIC_URL")
+            if not bucket or not account_id or not public_url:
+                logger.error("VALIDATOR_R2_BUCKET_NAME, R2_ACCOUNT_ID, and VALIDATOR_R2_PUBLIC_URL must be set; cannot sink results or publish public URL.")
+                return
+            # Optional: verify bucket exists and credentials work
+            try:
+                async with get_validator_client_ctx(readonly=False) as c:
+                    await c.head_bucket(Bucket=bucket)
+            except Exception as e:
+                logger.warning(f"Bucket existence check failed for {bucket}: {e}")
+            # Structured on-chain commitment JSON (includes public CDN URL)
+            payload = json.dumps({"bucket": bucket, "account_id": account_id, "r2_url": public_url}, separators=(",", ":"))
+            need_commit = False
+            try:
+                current = await st.get_commitment(netuid=NETUID, uid=my_uid)
+                if isinstance(current, (bytes, bytearray)):
+                    current = current.decode("utf-8", "ignore")
+                # Normalize whitespace differences by parsing JSON when possible
+                same = False
+                try:
+                    same = json.loads(current) == json.loads(payload)
+                except Exception:
+                    same = current == payload
+                if not same:
+                    need_commit = True
+            except Exception:
+                need_commit = True
+            if need_commit:
+                try:
+                    signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
+                    async with aiohttp.ClientSession() as session:
+                        resp = await session.post(f"{signer_url}/commit", json={"data": payload})
+                        resp.raise_for_status()
+                    logger.info(f"Delegated on-chain bucket commitment to signer: {payload}")
+                    await st.wait_for_block()
+                except Exception as e:
+                    logger.warning(f"Failed to submit bucket commitment via signer: {e}")
+        except Exception as e:
+            logger.warning(f"Startup commitment management failed: {e}")
+
         while True:
             try:
                 # ---------------- Wait for set weights. -----------------
@@ -1543,7 +1763,7 @@ def validate():
         
                 # ---------------- Set weights. ------------------------
                 logger.info("Setting weights ...")
-                await retry_set_weights( wallet, uids=uids, weights=weights, retry = 3)
+                await retry_set_weights( None, uids=uids, weights=weights, retry = 3)
                 subtensor = await get_subtensor()
                 SETBLOCK = await subtensor.get_current_block()
                 LASTSET.set_function(lambda: SETBLOCK - LAST)
