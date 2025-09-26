@@ -300,15 +300,7 @@ class ContainerEnv(BaseEnv):
             raise RuntimeError("Miner slug/base_url missing")
 
         if task_id is None:
-            mode = os.getenv("AFFINE_TASK_ID_MODE", "round").lower()
-            if mode == "uid":
-                task_id = int(policy.uid) % int(self.data_len)
-            elif mode == "hash":
-                h = int(hashlib.sha256(policy.hotkey.encode()).hexdigest(), 16)
-                task_id = h % int(self.data_len)
-            else:
-                task_id = self._round_counter % int(self.data_len)
-                self._round_counter += 1
+            task_id = random.randint(0, int(self.data_len) - 1)
 
         payload = {
             "model": policy.model,
@@ -321,7 +313,6 @@ class ContainerEnv(BaseEnv):
         start = time.monotonic()
         async with sem:
             try:
-                logger.debug(f"[ENV] Calling /evaluator for {self.name} payload={{'model': payload['model'], 'ids': payload['ids'], 'max_round': payload['max_round'], 'timeout': payload['timeout']}}")
                 data = await asyncio.to_thread(lambda: sbx.proxy.evaluator(_timeout=self.evaluator_timeout, **payload))
             except Exception as e:
                 logger.error(f"[ENV] /evaluator call failed for {self.name}: {type(e).__name__}: {e}")
@@ -1070,7 +1061,8 @@ def runner():
             if env_inflight[name]:
                 return
             # Compute common id for this env round
-            tid = env_round[name] % (getattr(e, "data_len", 200) or 200)
+            data_len = (getattr(e, "data_len", 200) or 200)
+            tid = random.randint(0, int(data_len) - 1)
             chal = await get_env_challenge(e)
             tasks = {}
             for m in miners_map.values():
@@ -1164,7 +1156,7 @@ def runner():
                         try:
                             st = await ensure_subtensor()
                             blk = await st.get_current_block()
-                            logger.debug(f"sink_worker: final flush {len(flat)}")
+                            logger.trace(f"sink_worker: final flush {len(flat)}")
                             await sink_enqueue(wallet, blk, flat, force=True)
                         except Exception:
                             traceback.print_exc()

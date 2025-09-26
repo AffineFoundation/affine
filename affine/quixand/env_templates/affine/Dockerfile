@@ -3,7 +3,10 @@ FROM ${BASE_IMAGE}
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    VENV_DIR=/opt/venv \
+    VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:$PATH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -36,5 +39,6 @@ COPY env.py /app/env.py
 ARG ENV_NAME
 ENV ENV_NAME=${ENV_NAME}
 EXPOSE 8000
-CMD ["uvicorn", "env:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "/app"]
+ENTRYPOINT ["/opt/venv/bin/uvicorn"]
+CMD ["env:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "/app"]
 
