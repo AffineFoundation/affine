@@ -474,85 +474,101 @@ async def _get_all_validator_commitments(ttl_blocks: int = 300) -> Dict[str, str
 async def dataset(
     tail: int,
     *,
-    max_concurrency: int = 10,      # parallel S3 downloads
+    max_concurrency: int = 64,  # parallel HTTP downloads
 ) -> AsyncIterator["Result"]:
     """
-    Stream `Result`s from all validators' public R2 buckets in deterministic order.
-    Results are discovered via on-chain bucket commitments and read via public R2.
+    Stream results from validators' public CDN endpoints over HTTPS to avoid S3 API rate limits.
+    Uses on-chain commitments to discover each validator's r2_url, then fetches shard files
+    results/{WINDOW}.jsonl directly. Lightweight local caching is preserved in CACHE_DIR.
     """
     st = await get_subtensor()
     cur = await st.get_current_block()
     need = {w for w in range(_w(cur - tail), _w(cur) + WINDOW, WINDOW)}
 
-    # Discover commitments -> parse per-validator endpoint and bucket
+    # Discover commitments and extract public r2_url per validator
     hk_to_commit = await _get_all_validator_commitments()
-    keys: list[tuple[str, str, str]] = []  # (endpoint_url, bucket, key)
+    validators: list[tuple[str, int, str]] = []  # (hotkey, uid, r2_url)
+    try:
+        meta = await st.metagraph(NETUID)
+        hotkeys = list(getattr(meta, "hotkeys", []))
+    except Exception:
+        hotkeys = []
+
     for hk, raw in hk_to_commit.items():
         try:
             data = json.loads(raw) if isinstance(raw, str) else raw
-            bucket = str(data["bucket"]).strip()
-            account_id = str(data["account_id"]).strip()
-            if not bucket or not account_id:
-                raise ValueError("missing bucket/account_id")
-            endpoint_url = f"https://{account_id}.r2.cloudflarestorage.com"
+            r2_url = (data.get("r2_url") or "").strip()
+            if not r2_url:
+                # Skip validators that have not published a public URL yet
+                continue
+            uid = hotkeys.index(hk) if hk in hotkeys else -1
+            validators.append((hk, uid, r2_url.rstrip("/")))
         except Exception:
-            logger.warning(f"Skipping validator {hk[:8]} due to invalid commitment format.")
-            continue
-        try:
-            continuation = None
-            while True:
-                params = {"Bucket": bucket, "Prefix": RESULT_PREFIX}
-                async with get_public_client_ctx(endpoint_url) as c:
-                    if continuation:
-                        params["ContinuationToken"] = continuation
-                    resp = await c.list_objects_v2(**params)
-                for obj in (resp.get("Contents") or []):
-                    k = obj.get("Key") or ""
-                    name = Path(k).name
-                    head = name.split("-", 1)[0]  # old format safety
-                    head_num = None
-                    if head.isdigit():
-                        head_num = int(head)
-                    else:
-                        stem = Path(name).stem
-                        if stem.isdigit():
-                            head_num = int(stem)
-                    if head_num is not None and head_num in need:
-                        keys.append((endpoint_url, bucket, k))
-                if not resp.get("IsTruncated"):
-                    break
-                continuation = resp.get("NextContinuationToken")
-                if not continuation:
-                    break
-        except Exception:
-            # Skip buckets we cannot list (not public or misconfigured)
+            logger.trace(f"Invalid commitment payload for {hk[:8]}")
             continue
 
-    # Deterministic order
-    keys.sort(key=lambda bk: bk[1])
+    if not validators:
+        return
 
+    # HTTP client tuned for high concurrency across hosts
+    timeout = aiohttp.ClientTimeout(total=60)
+    connector = aiohttp.TCPConnector(
+        limit=max_concurrency,
+        limit_per_host=0,
+        enable_cleanup_closed=True,
+        ttl_dns_cache=300,
+    )
     sem = asyncio.Semaphore(max_concurrency)
     bar = tqdm(f"Dataset=({cur}, {cur - tail})", unit="res", dynamic_ncols=True)
 
-    async def fetch_lines(endpoint_url: str, bucket: str, key: str) -> list[bytes]:
-        async with sem, get_public_client_ctx(endpoint_url) as c:
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        async def fetch_and_cache(hk: str, base_url: str, w: int) -> list[bytes]:
+            # Use block-prefixed cache filenames so prune() continues to work.
+            out = CACHE_DIR / f"{w:09d}-{hk[:12]}.jsonl"
+            if out.exists():
+                try:
+                    data = await asyncio.to_thread(out.read_bytes)
+                    return [l for l in data.split(b"\n") if l]
+                except Exception:
+                    pass
+
+            shard_url = f"{base_url}/{RESULT_PREFIX}{w:09d}.jsonl"
             try:
-                obj = await c.get_object(Bucket=bucket, Key=key)
-                body = await obj["Body"].read()
-                return [l for l in body.split(b"\n") if l]
+                async with sem, session.get(shard_url) as resp:
+                    if resp.status != 200:
+                        return []
+                    body = await resp.read()
             except Exception:
                 return []
 
-    for endpoint_url, bucket, key in keys:
-        lines = await fetch_lines(endpoint_url, bucket, key)
-        for raw in lines:
+            # Write-through cache (best-effort)
             try:
-                r = Result.model_validate(_loads(raw))
-                if r.verify():
-                    bar.update(1)
-                    yield r
+                tmp = out.with_suffix(".tmp")
+                await asyncio.to_thread(tmp.write_bytes, body if body.endswith(b"\n") else body + b"\n")
+                await asyncio.to_thread(os.replace, tmp, out)
+            except Exception:
+                pass
+            return [l for l in body.split(b"\n") if l]
+
+        tasks: list[asyncio.Task] = []
+        for hk, uid, base in validators:
+            for w in need:
+                tasks.append(asyncio.create_task(fetch_and_cache(hk, base, w)))
+
+        for fut in asyncio.as_completed(tasks):
+            try:
+                lines = await fut
             except Exception:
                 continue
+            for raw in lines:
+                try:
+                    r = Result.model_validate(_loads(raw))
+                    if r.verify():
+                        bar.update(1)
+                        yield r
+                except Exception:
+                    continue
+
     bar.close()
     
     
@@ -1691,8 +1707,9 @@ def validate():
                 return
             bucket = os.getenv("VALIDATOR_R2_BUCKET_NAME")
             account_id = os.getenv("R2_ACCOUNT_ID") or os.getenv("R2_BUCKET_ID")
-            if not bucket or not account_id:
-                logger.error("VALIDATOR_R2_BUCKET_NAME and R2_ACCOUNT_ID must be set; cannot sink results.")
+            public_url = os.getenv("VALIDATOR_R2_PUBLIC_URL")
+            if not bucket or not account_id or not public_url:
+                logger.error("VALIDATOR_R2_BUCKET_NAME, R2_ACCOUNT_ID, and VALIDATOR_R2_PUBLIC_URL must be set; cannot sink results or publish public URL.")
                 return
             # Optional: verify bucket exists and credentials work
             try:
@@ -1700,8 +1717,8 @@ def validate():
                     await c.head_bucket(Bucket=bucket)
             except Exception as e:
                 logger.warning(f"Bucket existence check failed for {bucket}: {e}")
-            # Structured on-chain commitment JSON
-            payload = json.dumps({"bucket": bucket, "account_id": account_id}, separators=(",", ":"))
+            # Structured on-chain commitment JSON (includes public CDN URL)
+            payload = json.dumps({"bucket": bucket, "account_id": account_id, "r2_url": public_url}, separators=(",", ":"))
             need_commit = False
             try:
                 current = await st.get_commitment(netuid=NETUID, uid=my_uid)
