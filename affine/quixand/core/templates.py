@@ -4,8 +4,9 @@ import hashlib
 import json
 import os
 import subprocess
+import fnmatch
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Set
 
 from ..config import Config
 
@@ -15,7 +16,7 @@ INDEX = Config.templates_dir() / "index.json"
 
 class Templates:
 	@staticmethod
-	def build(path: str, name: Optional[str] = None, build_args: Optional[Dict[str, Any]] = None) -> str:
+	def build(path: str, name: Optional[str] = None, build_args: Optional[Dict[str, Any]] = None, build_path: Optional[str] = None) -> str:
 		p = Path(path)
 		if not p.exists():
 			raise FileNotFoundError(path)
@@ -25,8 +26,10 @@ class Templates:
 		if not dockerfile.exists():
 			raise FileNotFoundError("No e2b.Dockerfile or Dockerfile found")
 
-		# Include build_args in digest calculation if provided
-		digest_content = _hash_dir(p)
+		if build_path is None or build_path == "":
+			build_path = p
+
+		digest_content = _hash_dir(build_path)
 		if build_args:
 			# Add build args to hash to ensure unique images for different build args
 			args_str = json.dumps(build_args, sort_keys=True)
@@ -57,10 +60,8 @@ class Templates:
 		if build_args:
 			for key, value in build_args.items():
 				cmd.extend(["--build-arg", f"{key}={value}"])
-		
-		cmd.append(str(p))
+		cmd.append(str(build_path))
 		subprocess.check_call(cmd)
-
 		idx = _load_index()
 		idx[name or p.name] = {"image": img_name, "digest": digest_content}
 		INDEX.write_text(json.dumps(idx, indent=2))
@@ -107,11 +108,10 @@ class Templates:
 	def affine(env_name: str) -> str:
 		"""Build the 'affine' env template image for a specific env name (abd/ded/sat)."""
 		template_path = get_env_templates_dir("affine")
-		base_image = "thebes1618/affine:latest"
 		return Templates.build(
 			template_path,
-			name=f"affine-{env_name}",
-			build_args={"ENV_NAME": env_name, "BASE_IMAGE": base_image}
+			name=f"affine",
+	    	build_path="."
 		)
 
 	@staticmethod
@@ -124,13 +124,60 @@ class Templates:
 
 def _hash_dir(path: Path) -> str:
 	h = hashlib.sha256()
-	for root, _, files in os.walk(path):
+	if isinstance(path, str):
+		path = Path(path)
+	
+	ignore_patterns = _load_dockerignore(path)
+	
+	for root, dirs, files in os.walk(path):
+		rel_root = Path(root).relative_to(path) if root != str(path) else Path(".")
+		dirs[:] = [d for d in dirs if not _should_ignore(rel_root / d, ignore_patterns)]
+		
 		for f in sorted(files):
-			pp = Path(root) / f
-			if pp.name.startswith(".git"):
+			rel_path = rel_root / f if str(rel_root) != "." else Path(f)
+			if _should_ignore(rel_path, ignore_patterns) or f.startswith(".git"):
 				continue
-			h.update(pp.read_bytes())
+			
+			full_path = Path(root) / f
+			try:
+				h.update(full_path.read_bytes())
+			except (OSError, IOError):
+				continue
 	return h.hexdigest()
+
+
+def _load_dockerignore(base_path: Path) -> Set[str]:
+	dockerignore_path = base_path / ".dockerignore"
+	if not dockerignore_path.exists():
+		return set()
+	patterns = set()
+	try:
+		with open(dockerignore_path, 'r') as f:
+			for line in f:
+				line = line.strip()
+				if line and not line.startswith('#'):
+					patterns.add(line)
+	except (OSError, IOError):
+		return set()
+	return patterns
+
+
+def _should_ignore(path: Path, patterns: Set[str]) -> bool:
+	if not patterns:
+		return False
+	path_str = str(path).replace(os.sep, '/')
+	for pattern in patterns:
+		if pattern.startswith('!'):
+			continue
+		pattern = pattern.rstrip('/')
+		if fnmatch.fnmatch(path_str, pattern):
+			return True
+		if '/' not in pattern:
+			parts = path_str.split('/')
+			for part in parts:
+				if fnmatch.fnmatch(part, pattern):
+					return True
+	return False
 
 
 def _load_index() -> dict:

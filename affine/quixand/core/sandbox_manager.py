@@ -137,6 +137,12 @@ class SandboxManager:
         if template.startswith("affine:"):
             env_name = template.split(":", 1)[1]
             updated_env = ensure_chutes_api_key(env)
+            for k, v in os.environ.copy().items():
+                if "r2" in k.lower():
+                    updated_env[k] = v
+                elif "hippius" in k.lower():
+                    updated_env[k] = v
+            updated_env["ENV_NAME"] = env_name
             return Templates.affine(env_name), updated_env
 
         if template == "ridges" or template.startswith("ridges:"):
