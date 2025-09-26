@@ -34,7 +34,7 @@ class BaseTask:
         max_rounds: Optional[int] = None,
     ) -> ExperienceOutput:
         client.reset(idx)
-        reward = 0.0
+        accumulated_reward = 0.0
         done = False
         state = client.observe()
         if isinstance(agent, APIAgent):
@@ -57,11 +57,12 @@ class BaseTask:
                 raise NotImplementedError
 
             step_output = client.step(generated_text)
-            state, reward, done = (
+            state, step_reward, done = (
                 step_output.state,
                 step_output.reward,
                 step_output.done,
             )
+            accumulated_reward += step_reward
 
             if isinstance(agent, APIAgent):
                 conversation.append(
@@ -79,7 +80,7 @@ class BaseTask:
         if isinstance(agent, APIAgent):
             return APIExperienceOutput(
                 conversation=conversation,
-                reward=reward,
+                reward=accumulated_reward,
             )
         else:
             raise NotImplementedError

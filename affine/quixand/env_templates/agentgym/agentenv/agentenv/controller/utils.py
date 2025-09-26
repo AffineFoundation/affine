@@ -252,9 +252,18 @@ class Evaluator(BaseAgentEnvController):
             generation_config=generation_config,
             max_rounds=max_rounds,
         )
-        rewards = np.array([exp.reward for exp in exps])
+        rewards = np.array([exp.reward for exp in exps], dtype=float)
+        if rewards.size:
+            success_mask = np.isclose(rewards, 1.0) | np.isclose(rewards, 100.0)
+            success = float(success_mask.mean())
+            score = float(rewards.mean())
+        else:
+            success = 0.0
+            score = 0.0
         return EvaluationOutput(
-            experiences=exps, score=rewards.mean(), success=(rewards == 1 or rewards == 100).mean()
+            experiences=exps,
+            score=score,
+            success=success,
         )
 
 
@@ -276,9 +285,18 @@ class BaseTrainer(BaseAgentEnvController):
             generation_config=generation_config,
             max_rounds=max_rounds,
         )
-        rewards = np.array([exp.reward for exp in exps])
+        rewards = np.array([exp.reward for exp in exps], dtype=float)
+        if rewards.size:
+            success_mask = np.isclose(rewards, 1.0) | np.isclose(rewards, 100.0)
+            success = float(success_mask.mean())
+            score = float(rewards.mean())
+        else:
+            success = 0.0
+            score = 0.0
         return EvaluationOutput(
-            experiences=exps, score=rewards.mean(), success=(rewards == 1 or rewards == 100).mean()
+            experiences=exps,
+            score=score,
+            success=success,
         )
 
     def save_model(self):
