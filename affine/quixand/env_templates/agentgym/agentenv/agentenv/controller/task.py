@@ -78,9 +78,10 @@ class BaseTask:
                 break
 
         if isinstance(agent, APIAgent):
+            denom = rounds if rounds > 0 else 1
             return APIExperienceOutput(
                 conversation=conversation,
-                reward=accumulated_reward,
+                reward=accumulated_reward / float(denom),
             )
         else:
             raise NotImplementedError

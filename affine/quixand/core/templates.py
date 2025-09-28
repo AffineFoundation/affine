@@ -4,10 +4,12 @@ import hashlib
 import json
 import os
 import subprocess
+import fnmatch
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Set
 
 from ..config import Config
+from ..adapters.local_docker import get_runtime
 
 
 INDEX = Config.templates_dir() / "index.json"
@@ -15,7 +17,7 @@ INDEX = Config.templates_dir() / "index.json"
 
 class Templates:
 	@staticmethod
-	def build(path: str, name: Optional[str] = None, build_args: Optional[Dict[str, Any]] = None) -> str:
+	def build(path: str, name: Optional[str] = None, build_args: Optional[Dict[str, Any]] = None, build_path: Optional[str] = None) -> str:
 		p = Path(path)
 		if not p.exists():
 			raise FileNotFoundError(path)
@@ -25,8 +27,10 @@ class Templates:
 		if not dockerfile.exists():
 			raise FileNotFoundError("No e2b.Dockerfile or Dockerfile found")
 
-		# Include build_args in digest calculation if provided
-		digest_content = _hash_dir(p)
+		if build_path is None or build_path == "":
+			build_path = p
+
+		digest_content = _hash_dir(build_path)
 		if build_args:
 			# Add build args to hash to ensure unique images for different build args
 			args_str = json.dumps(build_args, sort_keys=True)
@@ -38,29 +42,27 @@ class Templates:
 		
 		# Use runtime from Config
 		cfg = Config()
-		runtime = cfg.runtime or "docker"
+		runtime_str = cfg.runtime or "docker"
 		
 		# Check if image already exists
-		if _image_exists(img_name, runtime):
-			print(f"Using cached image: {img_name}")
-			# Still update the index for consistency
+		if _image_exists(img_name, runtime_str):
 			idx = _load_index()
 			idx[name or p.name] = {"image": img_name, "digest": digest_content}
 			INDEX.write_text(json.dumps(idx, indent=2))
 			return img_name
 		
-		# Build the image if it doesn't exist
-		print(f"Building new image: {img_name}")
-		cmd = [runtime, "build", "-f", str(dockerfile), "-t", img_name]
+		cmd = [runtime_str, "build", "-f", str(dockerfile), "-t", img_name]
 		
 		# Add build arguments if provided
 		if build_args:
 			for key, value in build_args.items():
 				cmd.extend(["--build-arg", f"{key}={value}"])
-		
-		cmd.append(str(p))
+		cmd.append(str(build_path))
 		subprocess.check_call(cmd)
-
+		
+		# Clean up old images with same name but different hash
+		_cleanup_old_images(name or p.name, digest_content[:12])
+		
 		idx = _load_index()
 		idx[name or p.name] = {"image": img_name, "digest": digest_content}
 		INDEX.write_text(json.dumps(idx, indent=2))
@@ -78,6 +80,28 @@ class Templates:
 	
 	@staticmethod
 	def agentgym(env_name: str) -> str:
+		allowed_envs = [
+			"webshop",
+			"alfworld",
+			"babyai",
+			"sciworld",
+			"textcraft",
+			"sqlgym",
+			"maze",
+			"wordle",
+			"academia",
+			"movie",
+			"sheet",
+			"todo",
+			"weather",
+		]
+		
+		if env_name not in allowed_envs:
+			raise ValueError(
+				f"Invalid AgentGym environment name: '{env_name}'. "
+				f"Allowed values are: {', '.join(allowed_envs)}"
+			)
+		
 		template_path = get_env_templates_dir("agentgym")
 		base_image = "python:3.11-slim"
 		tool_name = ""
@@ -105,13 +129,21 @@ class Templates:
 
 	@staticmethod
 	def affine(env_name: str) -> str:
-		"""Build the 'affine' env template image for a specific env name (abd/ded/sat)."""
+		"""Build the 'affine' env template image for a specific env name (sat/abd/ded/hvm/elr)."""
+		allowed_envs = ["sat", "abd", "ded", "hvm", "elr"]
+		
+		if env_name not in allowed_envs:
+			raise ValueError(
+				f"Invalid Affine environment name: '{env_name}'. "
+				f"Allowed values are: {', '.join(allowed_envs)}"
+			)
+		
 		template_path = get_env_templates_dir("affine")
-		base_image = "python:3.11-slim"
+		repo_root = Path(__file__).resolve().parent.parent.parent.parent
 		return Templates.build(
 			template_path,
 			name=f"affine-{env_name}",
-			build_args={"ENV_NAME": env_name, "BASE_IMAGE": base_image}
+	    	build_path=str(repo_root)
 		)
 
 	@staticmethod
@@ -124,13 +156,60 @@ class Templates:
 
 def _hash_dir(path: Path) -> str:
 	h = hashlib.sha256()
-	for root, _, files in os.walk(path):
+	if isinstance(path, str):
+		path = Path(path)
+	
+	ignore_patterns = _load_dockerignore(path)
+	
+	for root, dirs, files in os.walk(path):
+		rel_root = Path(root).relative_to(path) if root != str(path) else Path(".")
+		dirs[:] = [d for d in dirs if not _should_ignore(rel_root / d, ignore_patterns)]
+		
 		for f in sorted(files):
-			pp = Path(root) / f
-			if pp.name.startswith(".git"):
+			rel_path = rel_root / f if str(rel_root) != "." else Path(f)
+			if _should_ignore(rel_path, ignore_patterns) or f.startswith(".git"):
 				continue
-			h.update(pp.read_bytes())
+			
+			full_path = Path(root) / f
+			try:
+				h.update(full_path.read_bytes())
+			except (OSError, IOError):
+				continue
 	return h.hexdigest()
+
+
+def _load_dockerignore(base_path: Path) -> Set[str]:
+	dockerignore_path = base_path / ".dockerignore"
+	if not dockerignore_path.exists():
+		return set()
+	patterns = set()
+	try:
+		with open(dockerignore_path, 'r') as f:
+			for line in f:
+				line = line.strip()
+				if line and not line.startswith('#'):
+					patterns.add(line)
+	except (OSError, IOError):
+		return set()
+	return patterns
+
+
+def _should_ignore(path: Path, patterns: Set[str]) -> bool:
+	if not patterns:
+		return False
+	path_str = str(path).replace(os.sep, '/')
+	for pattern in patterns:
+		if pattern.startswith('!'):
+			continue
+		pattern = pattern.rstrip('/')
+		if fnmatch.fnmatch(path_str, pattern):
+			return True
+		if '/' not in pattern:
+			parts = path_str.split('/')
+			for part in parts:
+				if fnmatch.fnmatch(part, pattern):
+					return True
+	return False
 
 
 def _load_index() -> dict:
@@ -154,6 +233,26 @@ def _image_exists(image_name: str, runtime: str = "docker") -> bool:
 		return bool(result.stdout.strip())
 	except Exception:
 		return False
+
+
+def _cleanup_old_images(name: str, current_hash: str) -> None:
+	"""Remove old images with same name but different hash."""
+	cfg = Config()
+	runtime = get_runtime(cfg.runtime)
+	
+	prefix = f"qs/{name}:"
+	current_tag = f"{prefix}{current_hash}"
+	
+	try:
+		old_images = runtime.get_images_with_prefix(prefix)
+		for img_tag in old_images:
+			if img_tag != current_tag:
+				try:
+					runtime.remove_image(img_tag, force=False)
+				except Exception:
+					pass
+	except Exception:
+		pass
 
 
 def get_env_templates_dir(env_template) -> str:

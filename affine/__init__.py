@@ -44,8 +44,6 @@ from bittensor.core.errors import MetadataError
 from pydantic import BaseModel, Field, validator, ValidationError
 from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, TypeVar, Awaitable
 __version__ = "0.0.0"
-from .quixand.core.sandbox import Sandbox
-from .quixand.core.templates import Templates
 from .quixand.core.sandbox_manager import get_sandbox
 
 # --------------------------------------------------------------------------- #
@@ -218,8 +216,6 @@ _SBX_SEMS: Dict[str, asyncio.Semaphore] = {}
 
 class ContainerEnv(BaseEnv):
     """Base class for containerized envs evaluated via a FastAPI service.
-
-    Subclasses must implement `_build_template_image()` and `name`.
     """
     env_name: str
     data_len: int = 200
@@ -239,21 +235,14 @@ class ContainerEnv(BaseEnv):
             _SBX_LOCKS[self._pool_key()] = lk
         return lk
 
-    def _build_template_image(self) -> str:
-        raise NotImplementedError
-
     async def _get_shared(self):
         """Return a shared Sandbox + semaphore for this env, creating it if missing."""
-        if Sandbox is None or Templates is None:
-            raise RuntimeError("Quixand Sandbox/Templates not available")
         async with self._get_lock():
             sbx = _SBX_POOL.get(self._pool_key())
             if sbx is None:
                 logger.info(f"[ENV] Creating sandbox via SandboxManager for {self.name} ENV_NAME={self.env_name}")
                 sbx_env = {
-                    "CHUTES_API_KEY": os.getenv("CHUTES_API_KEY", ""),
                     "NO_PROXY": "localhost,127.0.0.1",
-                    "ENV_NAME": self.env_name,
                     "PYTHONPATH": "/app",
                 }
                 try:
@@ -302,15 +291,7 @@ class ContainerEnv(BaseEnv):
             raise RuntimeError("Miner slug/base_url missing")
 
         if task_id is None:
-            mode = os.getenv("AFFINE_TASK_ID_MODE", "round").lower()
-            if mode == "uid":
-                task_id = int(policy.uid) % int(self.data_len)
-            elif mode == "hash":
-                h = int(hashlib.sha256(policy.hotkey.encode()).hexdigest(), 16)
-                task_id = h % int(self.data_len)
-            else:
-                task_id = self._round_counter % int(self.data_len)
-                self._round_counter += 1
+            task_id = random.randint(0, int(self.data_len) - 1)
 
         payload = {
             "model": policy.model,
@@ -323,7 +304,6 @@ class ContainerEnv(BaseEnv):
         start = time.monotonic()
         async with sem:
             try:
-                logger.debug(f"[ENV] Calling /evaluator for {self.name} payload={{'model': payload['model'], 'ids': payload['ids'], 'max_round': payload['max_round'], 'timeout': payload['timeout']}}")
                 data = await asyncio.to_thread(lambda: sbx.proxy.evaluator(_timeout=self.evaluator_timeout, **payload))
             except Exception as e:
                 logger.error(f"[ENV] /evaluator call failed for {self.name}: {type(e).__name__}: {e}")
@@ -356,16 +336,10 @@ class AgentGymContainerEnv(ContainerEnv):
     def name(self) -> str:
         return f"agentgym:{self.env_name}"
 
-    def _build_template_image(self) -> str:
-        return Templates.agentgym(self.env_name)
-
 class AffineContainerEnv(ContainerEnv):
     @property
     def name(self) -> str:
         return f"affine:{self.env_name}"
-
-    def _build_template_image(self) -> str:
-        return Templates.affine(self.env_name)
 
 # --------------------------------------------------------------------------- #
 #                         Models with new (de)serialisation                   #
@@ -567,9 +541,6 @@ def _get_env_list_from_envvar() -> Tuple[str, ...]:
         return tuple()
     env_names: list[str] = []
     for tok in [t.strip() for t in spec.split(",") if t.strip()]:
-        # Accept bare names and names already prefixed; default bare to agentgym
-        if ":" not in tok:
-            tok = f"agentgym:{tok}"
         env_names.append(tok)
     return tuple(env_names)
 
@@ -1176,7 +1147,8 @@ def runner():
             if env_inflight[name]:
                 return
             # Compute common id for this env round
-            tid = env_round[name] % (getattr(e, "data_len", 200) or 200)
+            data_len = (getattr(e, "data_len", 200) or 200)
+            tid = random.randint(0, int(data_len) - 1)
             chal = await get_env_challenge(e)
             tasks = {}
             eligible_miners = [m for m in miners_map.values() if getattr(m, "model", None)]
@@ -1282,10 +1254,11 @@ def runner():
                         try:
                             if local_miners_enabled:
                                 blk = None
+                                logger.debug(f"sink_worker: final flush {len(flat)}")
                             else:
                                 st = await ensure_subtensor()
                                 blk = await st.get_current_block()
-                            logger.debug(f"sink_worker: final flush {len(flat)}")
+                                logger.trace(f"sink_worker: final flush {len(flat)}")
                             await sink_enqueue(wallet, blk, flat, force=True)
                         except Exception:
                             traceback.print_exc()
@@ -1778,8 +1751,11 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
             return EPS_FLOOR
         n_i_eff = min(int(n_i), 1000)
         n_j_eff = min(int(n_j), 1000)
-        var = (a_i * (1 - a_i)) / max(n_i_eff, 1) + (a_j * (1 - a_j)) / max(n_j_eff, 1)
-        return max(EPS_FLOOR, Z_NOT_WORSE * math.sqrt(var))
+        # Clamp accuracies into [0, 1] to ensure valid Bernoulli variance and avoid negative sqrt domain
+        p_i = min(max(a_i, 0.0), 1.0)
+        p_j = min(max(a_j, 0.0), 1.0)
+        var = (p_i * (1 - p_i)) / max(n_i_eff, 1) + (p_j * (1 - p_j)) / max(n_j_eff, 1)
+        return max(EPS_FLOOR, Z_NOT_WORSE * math.sqrt(max(var, 0.0)))
 
     def thr_better(a_i: float, n_i: int, a_j: float, n_j: int, nw: float) -> float:
         """
@@ -1789,8 +1765,11 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
         if Z_WIN > 0:
             n_i_eff = min(int(n_i), 1000)
             n_j_eff = min(int(n_j), 1000)
-            var = (a_i * (1 - a_i)) / max(n_i_eff, 1) + (a_j * (1 - a_j)) / max(n_j_eff, 1)
-            t = max(EPS_WIN, Z_WIN * math.sqrt(var))
+            # Clamp accuracies into [0, 1] to ensure valid Bernoulli variance and avoid negative sqrt domain
+            p_i = min(max(a_i, 0.0), 1.0)
+            p_j = min(max(a_j, 0.0), 1.0)
+            var = (p_i * (1 - p_i)) / max(n_i_eff, 1) + (p_j * (1 - p_j)) / max(n_j_eff, 1)
+            t = max(EPS_WIN, Z_WIN * math.sqrt(max(var, 0.0)))
         else:
             t = EPS_WIN
         return min(t, nw)
