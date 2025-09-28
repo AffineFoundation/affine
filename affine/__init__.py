@@ -1569,8 +1569,11 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
             return EPS_FLOOR
         n_i_eff = min(int(n_i), 1000)
         n_j_eff = min(int(n_j), 1000)
-        var = (a_i * (1 - a_i)) / max(n_i_eff, 1) + (a_j * (1 - a_j)) / max(n_j_eff, 1)
-        return max(EPS_FLOOR, Z_NOT_WORSE * math.sqrt(var))
+        # Clamp accuracies into [0, 1] to ensure valid Bernoulli variance and avoid negative sqrt domain
+        p_i = min(max(a_i, 0.0), 1.0)
+        p_j = min(max(a_j, 0.0), 1.0)
+        var = (p_i * (1 - p_i)) / max(n_i_eff, 1) + (p_j * (1 - p_j)) / max(n_j_eff, 1)
+        return max(EPS_FLOOR, Z_NOT_WORSE * math.sqrt(max(var, 0.0)))
 
     def thr_better(a_i: float, n_i: int, a_j: float, n_j: int, nw: float) -> float:
         """
@@ -1580,8 +1583,11 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
         if Z_WIN > 0:
             n_i_eff = min(int(n_i), 1000)
             n_j_eff = min(int(n_j), 1000)
-            var = (a_i * (1 - a_i)) / max(n_i_eff, 1) + (a_j * (1 - a_j)) / max(n_j_eff, 1)
-            t = max(EPS_WIN, Z_WIN * math.sqrt(var))
+            # Clamp accuracies into [0, 1] to ensure valid Bernoulli variance and avoid negative sqrt domain
+            p_i = min(max(a_i, 0.0), 1.0)
+            p_j = min(max(a_j, 0.0), 1.0)
+            var = (p_i * (1 - p_i)) / max(n_i_eff, 1) + (p_j * (1 - p_j)) / max(n_j_eff, 1)
+            t = max(EPS_WIN, Z_WIN * math.sqrt(max(var, 0.0)))
         else:
             t = EPS_WIN
         return min(t, nw)
