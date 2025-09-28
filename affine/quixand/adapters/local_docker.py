@@ -29,6 +29,9 @@ from ..container import (
     PTYSession
 )
 
+# Global flag to ensure cleanup only happens once per process
+_CLEANUP_EXECUTED = False
+
 
 @dataclass
 class LocalHandle(SandboxHandle):
@@ -67,6 +70,31 @@ class LocalDockerAdapter:
         # Use runtime from config directly
         self.runtime_name = self.cfg.runtime or "docker"
         self.runtime = get_runtime(self.runtime_name)
+        
+        self.cleanup_all_quixand_containers(self.runtime)
+
+    def cleanup_all_quixand_containers(self, runtime) -> int:
+        global _CLEANUP_EXECUTED
+        if not _CLEANUP_EXECUTED:
+            _CLEANUP_EXECUTED = True
+
+        containers = runtime.list_containers(all=True)
+
+        for container_info in containers:
+            if container_info.labels and "quixand.id" in container_info.labels:
+                try:
+                    if container_info.state in [ContainerState.RUNNING, ContainerState.PAUSED]:
+                        runtime.stop_container(container_info.id, timeout=30)
+
+                    runtime.remove_container(container_info.id)
+                    sandbox_id = container_info.labels.get("quixand.id")
+                    if sandbox_id:
+                        self._remove_state(sandbox_id)
+                        self._cleanup_host_dirs(sandbox_id)
+
+                except Exception as e:
+                    print(f"Warning: Failed to clean up container {container_info.id[:12]}: {e}")
+                    
 
     # lifecycle
     def create(self, cfg: "SandboxConfig") -> LocalHandle:
