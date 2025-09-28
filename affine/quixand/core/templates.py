@@ -142,7 +142,7 @@ class Templates:
 		repo_root = Path(__file__).resolve().parent.parent.parent.parent
 		return Templates.build(
 			template_path,
-			name=f"affine",
+			name=f"affine-{env_name}",
 	    	build_path=str(repo_root)
 		)
 
