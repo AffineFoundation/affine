@@ -481,10 +481,15 @@ RESULT_PREFIX = "affine/results/"
 INDEX_KEY     = "affine/index.json"
 
 FOLDER  = os.getenv("R2_FOLDER", "affine" )
-BUCKET  = os.getenv("R2_BUCKET_ID", "80f15715bb0b882c9e967c13e677ed7d" )
-ACCESS  = os.getenv("R2_WRITE_ACCESS_KEY_ID", "ff3f4f078019b064bfb6347c270bee4d")
-SECRET  = os.getenv("R2_WRITE_SECRET_ACCESS_KEY", "a94b20516013519b2959cbbb441b9d1ec8511dce3c248223d947be8e85ec754d")
+BUCKET  = os.getenv("R2_BUCKET_ID", "00523074f51300584834607253cae0fa" )
+ACCESS  = os.getenv("R2_WRITE_ACCESS_KEY_ID", "")
+SECRET  = os.getenv("R2_WRITE_SECRET_ACCESS_KEY", "")
 ENDPOINT = f"https://{BUCKET}.r2.cloudflarestorage.com"
+
+# Public (unauthenticated) read mode via r2.dev — set AFFINE_R2_PUBLIC=1 to enable
+PUBLIC_READ = os.getenv("AFFINE_R2_PUBLIC", "1") == "1"
+ACCOUNT_ID  = os.getenv("R2_ACCOUNT_ID", BUCKET)
+R2_PUBLIC_BASE = f"https://{FOLDER}.{ACCOUNT_ID}.r2.dev"
 
 get_client_ctx = lambda: get_session().create_client(
     "s3", endpoint_url=ENDPOINT,
@@ -508,6 +513,13 @@ except ModuleNotFoundError:
     
 # ── Index helpers ───────────────────────────────────────────────────────────
 async def _index() -> list[str]:
+    if PUBLIC_READ:
+        # Unauthenticated read from public R2 (r2.dev)
+        sess = await _get_client()
+        url = f"{R2_PUBLIC_BASE}/{INDEX_KEY}"
+        async with sess.get(url, timeout=aiohttp.ClientTimeout(total=30)) as r:
+            r.raise_for_status()
+            return json.loads(await r.text())
     async with get_client_ctx() as c:
         r = await c.get_object(Bucket=FOLDER, Key=INDEX_KEY)
         return json.loads(await r["Body"].read())
@@ -529,13 +541,27 @@ async def _update_index(k: str) -> None:
 async def _cache_shard(key: str, sem: asyncio.Semaphore) -> Path:
     name, out = Path(key).name, None
     out = CACHE_DIR / f"{name}.jsonl"; mod = out.with_suffix(".modified")
-    async with sem, get_client_ctx() as c:
-        if out.exists() and mod.exists():
-            h = await c.head_object(Bucket=FOLDER, Key=key)
-            if h["LastModified"].isoformat() == mod.read_text().strip():
-                return out
-        o = await c.get_object(Bucket=FOLDER, Key=key)
-        body, lm = await o["Body"].read(), o["LastModified"].isoformat()
+    async with sem:
+        if PUBLIC_READ:
+            # Unauthenticated read from public R2 (r2.dev)
+            sess = await _get_client()
+            url = f"{R2_PUBLIC_BASE}/{key}"
+            async with sess.get(url, timeout=aiohttp.ClientTimeout(total=60)) as r:
+                r.raise_for_status()
+                body = await r.read()
+                lm = r.headers.get("last-modified", str(time.time()))
+            tmp = out.with_suffix(".tmp")
+            with tmp.open("wb") as f:
+                f.write(b"\n".join(_dumps(i) for i in _loads(body)) + b"\n")
+            os.replace(tmp, out); mod.write_text(lm)
+            return out
+        async with get_client_ctx() as c:
+            if out.exists() and mod.exists():
+                h = await c.head_object(Bucket=FOLDER, Key=key)
+                if h["LastModified"].isoformat() == mod.read_text().strip():
+                    return out
+            o = await c.get_object(Bucket=FOLDER, Key=key)
+            body, lm = await o["Body"].read(), o["LastModified"].isoformat()
     tmp = out.with_suffix(".tmp")
     with tmp.open("wb") as f:
         f.write(b"\n".join(_dumps(i) for i in _loads(body)) + b"\n")
