@@ -22,7 +22,6 @@ class EvaluatorRequest(BaseModel):
     model: str
     base_url: str = "https://llm.chutes.ai/v1"
     ids: Optional[List[int]] = None
-    max_tokens: int = None
     timeout: int = 1200
     temperature: float = 0.7
 
@@ -50,7 +49,6 @@ async def llm_chat(
     model: str, 
     prompt: str, 
     timeout_secs: float = 600.0,
-    max_tokens: Optional[int] = None,
     temperature: float = 0.7
 ) -> str:
     if not base_url.strip():
@@ -73,7 +71,6 @@ async def llm_chat(
             return await client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=max_tokens,
                 temperature=temperature,
                 stream=False
             )
@@ -163,7 +160,6 @@ async def evaluate_model(request: EvaluatorRequest):
                     model=request.model,
                     prompt=challenge.prompt,
                     timeout_secs=request.timeout,
-                    max_tokens=request.max_tokens if request.max_tokens else 4096,
                     temperature=request.temperature
                 )
                 logger.info(f"llm response: {llm_response[:100]}")
