@@ -489,7 +489,7 @@ ENDPOINT = f"https://{BUCKET}.r2.cloudflarestorage.com"
 # Public (unauthenticated) read mode via r2.dev — set AFFINE_R2_PUBLIC=1 to enable
 PUBLIC_READ = os.getenv("AFFINE_R2_PUBLIC", "1") == "1"
 ACCOUNT_ID  = os.getenv("R2_ACCOUNT_ID", BUCKET)
-R2_PUBLIC_BASE = f"https://{FOLDER}.{ACCOUNT_ID}.r2.dev"
+R2_PUBLIC_BASE = f"https://{ACCOUNT_ID}.r2.cloudflarestorage.com"
 
 get_client_ctx = lambda: get_session().create_client(
     "s3", endpoint_url=ENDPOINT,
