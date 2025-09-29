@@ -18,6 +18,7 @@ affine.egg-info
 
 # Notebooks
 notebooks/
+examples/
 
 # Local env files
 .env
