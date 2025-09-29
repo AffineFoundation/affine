@@ -651,7 +651,7 @@ async def sign_results( wallet, results ):
 # ── Minimal sink / misc helpers (optional) ──────────────────────────────────
 # Global buffer to reduce R2 writes; flush on threshold or force.
 SINK_BUFFER: list["Result"] = []
-SINK_BUFFER_SIZE = int(os.getenv("AFFINE_SINK_BUFFER", "2000"))
+SINK_BUFFER_SIZE = int(os.getenv("AFFINE_SINK_BUFFER", "100"))
 async def sink_enqueue(wallet, block, results, force: bool = False):
     global SINK_BUFFER
     SINK_BUFFER.extend(results)
