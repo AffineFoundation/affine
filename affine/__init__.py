@@ -13,6 +13,7 @@ import click
 import socket
 import random
 import hashlib
+import base64
 import aiohttp
 import asyncio
 import logging
@@ -480,20 +481,36 @@ WINDOW        = int(os.getenv("AFFINE_WINDOW", 20))
 RESULT_PREFIX = "affine/results/"
 INDEX_KEY     = "affine/index.json"
 
+DB_VERSION = os.getenv("AFFINE_DB_VERSION", "v1")
+
+# Default to Cloudflare R2 settings, but override with Hippius if HIPPIUS_SEED_PHRASE is set
 FOLDER  = os.getenv("R2_FOLDER", "affine" )
 BUCKET  = os.getenv("R2_BUCKET_ID", "00523074f51300584834607253cae0fa" )
 ACCESS  = os.getenv("R2_WRITE_ACCESS_KEY_ID", "")
 SECRET  = os.getenv("R2_WRITE_SECRET_ACCESS_KEY", "")
+REGION  = os.getenv("R2_REGION", "us-east-1")
 ENDPOINT = f"https://{BUCKET}.r2.cloudflarestorage.com"
 
+HIPPIUS_SEED_PHRASE = os.getenv("HIPPIUS_SEED_PHRASE", "").strip()
+if HIPPIUS_SEED_PHRASE:
+    # Hippius S3 (MinIO-compatible) credentials
+    ACCESS  = base64.b64encode(HIPPIUS_SEED_PHRASE.encode("utf-8")).decode("utf-8")
+    SECRET  = HIPPIUS_SEED_PHRASE
+    ENDPOINT = os.getenv("HIPPIUS_ENDPOINT", "https://s3.hippius.com")
+    REGION   = os.getenv("HIPPIUS_REGION", "decentralized")
+
 # Public (unauthenticated) read mode via r2.dev — set AFFINE_R2_PUBLIC=1 to enable
-PUBLIC_READ = os.getenv("AFFINE_R2_PUBLIC", "1") == "1"
+# Default disabled; Hippius does not support R2 public gateway
+PUBLIC_READ = os.getenv("AFFINE_R2_PUBLIC", "0") == "1"
 ACCOUNT_ID  = os.getenv("R2_ACCOUNT_ID", BUCKET)
 R2_PUBLIC_BASE = f"https://{FOLDER}.{ACCOUNT_ID}.r2.dev"
 
 get_client_ctx = lambda: get_session().create_client(
-    "s3", endpoint_url=ENDPOINT,
-    aws_access_key_id=ACCESS, aws_secret_access_key=SECRET,
+    "s3",
+    region_name=REGION,
+    endpoint_url=ENDPOINT,
+    aws_access_key_id=ACCESS,
+    aws_secret_access_key=SECRET,
     config=Config(max_pool_connections=256)
 )
 
@@ -502,6 +519,78 @@ CACHE_DIR = Path(os.getenv("AFFINE_CACHE_DIR",
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 def _w(b: int) -> int: return (b // WINDOW) * WINDOW
+
+# Whitelist of hotkeys for multi-bucket dataset reads (fill later)
+WHITE_LIST_HOTKEYS: tuple[str, ...] = ()
+
+def _get_whitelist_hotkeys() -> tuple[str, ...]:
+    env = os.getenv("AFFINE_WHITELIST_HOTKEYS", "").strip()
+    if env:
+        return tuple(h.strip() for h in env.split(",") if h.strip())
+    return WHITE_LIST_HOTKEYS
+
+def _safe_bucket_token(s: str) -> str:
+    return re.sub(r"[^a-z0-9-]", "-", s.lower())
+
+def _bucket_name_for(hotkey: str) -> str:
+    return f"affine-{DB_VERSION}-{_safe_bucket_token(hotkey)}"
+
+WRITER_BUCKET: Optional[str] = None
+
+async def _resolve_hotkey(wallet) -> str:
+    try:
+        hk = wallet.hotkey.ss58_address
+        if hk:
+            return hk
+    except Exception:
+        pass
+    # Fallback to signer
+    try:
+        signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
+        sess = await _get_client()
+        async with sess.get(f"{signer_url}/get_hotkey_ss58_address", timeout=aiohttp.ClientTimeout(total=5)) as r:
+            if r.status == 200:
+                data = await r.json()
+                hk = data.get("hotkey_ss58_address")
+                if hk:
+                    return hk
+    except Exception:
+        pass
+    raise RuntimeError("Failed to resolve hotkey from wallet or signer")
+
+async def _ensure_bucket_exists(bucket: str) -> None:
+    async with get_client_ctx() as c:
+        exists = False
+        try:
+            resp = await c.list_buckets()
+            exists = any(b.get('Name') == bucket for b in resp.get('Buckets', []))
+        except Exception:
+            # If listing fails (permissions), try head/create path
+            try:
+                await c.head_bucket(Bucket=bucket)
+                exists = True
+            except Exception:
+                exists = False
+        if not exists:
+            try:
+                # Try with region first (MinIO/Hippius may ignore)
+                await c.create_bucket(Bucket=bucket, CreateBucketConfiguration={'LocationConstraint': REGION})
+            except Exception:
+                try:
+                    await c.create_bucket(Bucket=bucket)
+                except Exception:
+                    pass
+
+async def _get_writer_bucket(wallet) -> str:
+    global WRITER_BUCKET
+    if WRITER_BUCKET:
+        return WRITER_BUCKET
+    if HIPPIUS_SEED_PHRASE:
+        hk = await _resolve_hotkey(wallet)
+        WRITER_BUCKET = _bucket_name_for(hk)
+    else:
+        WRITER_BUCKET = FOLDER
+    return WRITER_BUCKET
 
 # ── fast JSON ───────────────────────────────────────────────────────────────
 try:
@@ -520,32 +609,59 @@ async def _index() -> list[str]:
         async with sess.get(url, timeout=aiohttp.ClientTimeout(total=30)) as r:
             r.raise_for_status()
             return json.loads(await r.text())
+    # Hippius multi-bucket read path using whitelist
+    wl = _get_whitelist_hotkeys()
+    if HIPPIUS_SEED_PHRASE and wl:
+        buckets = [_bucket_name_for(hk) for hk in wl]
+        items: list[str] = []
+        async with get_client_ctx() as c:
+            for bkt in buckets:
+                try:
+                    r = await c.get_object(Bucket=bkt, Key=INDEX_KEY)
+                    lst = json.loads(await r["Body"].read())
+                    # Prefix bucket name to key so downstream knows where to fetch
+                    items.extend([f"{bkt}|{k}" for k in lst])
+                except Exception:
+                    # Missing index or access error: skip this bucket
+                    continue
+        return items
+    # Default single-bucket path (R2 or single Hippius bucket configured via FOLDER)
     async with get_client_ctx() as c:
         r = await c.get_object(Bucket=FOLDER, Key=INDEX_KEY)
         return json.loads(await r["Body"].read())
 
-async def _update_index(k: str) -> None:
+async def _update_index(bucket: str, k: str) -> None:
     async with get_client_ctx() as c:
         try:
-            r = await c.get_object(Bucket=FOLDER, Key=INDEX_KEY)
+            r = await c.get_object(Bucket=bucket, Key=INDEX_KEY)
             idx = set(json.loads(await r["Body"].read()))
         except c.exceptions.NoSuchKey:
             idx = set()
+        except Exception:
+            idx = set()
         if k not in idx:
             idx.add(k)
-            await c.put_object(Bucket=FOLDER, Key=INDEX_KEY,
+            await c.put_object(Bucket=bucket, Key=INDEX_KEY,
                                Body=_dumps(sorted(idx)),
                                ContentType="application/json")
 
 # ── Shard cache ─────────────────────────────────────────────────────────────
+def _parse_bucket_and_key(composite: str) -> tuple[str, str]:
+    if "|" in composite:
+        b, k = composite.split("|", 1)
+        return b, k
+    return FOLDER, composite
+
 async def _cache_shard(key: str, sem: asyncio.Semaphore) -> Path:
-    name, out = Path(key).name, None
-    out = CACHE_DIR / f"{name}.jsonl"; mod = out.with_suffix(".modified")
+    bucket, obj_key = _parse_bucket_and_key(key)
+    name = Path(obj_key).name
+    # Include bucket in cache filename to avoid collisions across DB versions
+    out = CACHE_DIR / f"{bucket}-{name}.jsonl"; mod = out.with_suffix(".modified")
     async with sem:
         if PUBLIC_READ:
             # Unauthenticated read from public R2 (r2.dev)
             sess = await _get_client()
-            url = f"{R2_PUBLIC_BASE}/{key}"
+            url = f"{R2_PUBLIC_BASE}/{obj_key}"
             async with sess.get(url, timeout=aiohttp.ClientTimeout(total=60)) as r:
                 r.raise_for_status()
                 body = await r.read()
@@ -557,10 +673,10 @@ async def _cache_shard(key: str, sem: asyncio.Semaphore) -> Path:
             return out
         async with get_client_ctx() as c:
             if out.exists() and mod.exists():
-                h = await c.head_object(Bucket=FOLDER, Key=key)
+                h = await c.head_object(Bucket=bucket, Key=obj_key)
                 if h["LastModified"].isoformat() == mod.read_text().strip():
                     return out
-            o = await c.get_object(Bucket=FOLDER, Key=key)
+            o = await c.get_object(Bucket=bucket, Key=obj_key)
             body, lm = await o["Body"].read(), o["LastModified"].isoformat()
     tmp = out.with_suffix(".tmp")
     with tmp.open("wb") as f:
@@ -666,17 +782,22 @@ async def sink(wallet: bt.wallet, results: list["Result"], block: int = None):
         return
     hotkey, signed = await sign_results( wallet, valid )
     key = f"{RESULT_PREFIX}{_w(block):09d}-{hotkey}.json"
+    # Select target bucket: per-hotkey on Hippius; fallback to single-bucket (FOLDER)
+    bucket = _bucket_name_for(hotkey) if HIPPIUS_SEED_PHRASE else FOLDER
     dumped = [ r.model_dump(mode="json") for r in signed ]
     async with get_client_ctx() as c:
         try:
-            r = await c.get_object(Bucket=FOLDER, Key=key)
+            r = await c.get_object(Bucket=bucket, Key=key)
             merged = json.loads(await r["Body"].read()) + dumped
         except c.exceptions.NoSuchKey:
             merged = dumped
-        await c.put_object(Bucket=FOLDER, Key=key, Body=_dumps(merged),
+        except Exception:
+            # If any error in read path, treat as new shard
+            merged = dumped
+        await c.put_object(Bucket=bucket, Key=key, Body=_dumps(merged),
                            ContentType="application/json")
     if len(merged) == len(dumped):              # shard was new
-        await _update_index(key)
+        await _update_index(bucket, key)
 
 async def prune(tail: int):
     sub = await get_subtensor(); cur = await sub.get_current_block()
@@ -1171,6 +1292,14 @@ def runner():
         async def main_loop():
             global HEARTBEAT
             nonlocal last_status_log, requests_since_last_log
+            # Ensure writer bucket exists on startup (Hippius path)
+            try:
+                if HIPPIUS_SEED_PHRASE:
+                    hk = await _resolve_hotkey(wallet)
+                    bkt = _bucket_name_for(hk)
+                    await _ensure_bucket_exists(bkt)
+            except Exception:
+                pass
             sink_task = asyncio.create_task(sink_worker())
             try:
                 while True:
@@ -1343,6 +1472,14 @@ def signer(host: str, port: int):
 
         async def health(_request: "web.Request"):
             return web.json_response({"ok": True})
+        
+        
+        async def get_hotkey_ss58_address(request: "web.Request"):
+            try:
+                return web.json_response({ "hotkey_ss58_address": wallet.hotkey.ss58_address })
+            except Exception as e:
+                logger.error(f"[signer] /get_hotkey_ss58_address error: {e}")
+                return web.json_response({"success": False, "error": str(e)}, status=500)
     
         async def sign_handler(request: "web.Request"):
             try:
