@@ -24,8 +24,7 @@ from .utils import *
 from math import comb
 import datetime as dt
 from tqdm import tqdm
-import bittensor as bt
-import datasets as hf_ds                    
+import datasets as hf_ds
 from pathlib import Path
 from tqdm.asyncio import tqdm
 from tabulate import tabulate
@@ -40,11 +39,78 @@ from pydantic import root_validator
 from aiohttp import ClientConnectorError
 from aiobotocore.session import get_session
 from huggingface_hub import snapshot_download
-from bittensor.core.errors import MetadataError
 from pydantic import BaseModel, Field, validator, ValidationError
 from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, TypeVar, Awaitable
 __version__ = "0.0.0"
 from .quixand.core.sandbox_manager import get_sandbox
+
+# --------------------------------------------------------------------------- #
+#                       Bittensor lazy import                                 #
+# --------------------------------------------------------------------------- #
+# Bittensor aggressively parses sys.argv during module import and intercepts
+# --help/-h flags, printing its own argparse help and preventing Click from
+# handling CLI commands properly. This was causing all `af <command> --help`
+# invocations to show bittensor's help instead of the actual command help.
+#
+# Solution: Lazy import bittensor only when needed, with argv protection to
+# temporarily strip help flags during import. This preserves Click CLI behavior
+# while still allowing bittensor functionality when actually used.
+#
+# See: https://github.com/opentensor/bittensor/issues (known upstream issue)
+
+_bt_module = None
+_bt_metadata_error = None
+
+def _import_bittensor():
+    """
+    Lazily import bittensor with argv protection to prevent help flag interception.
+
+    Returns the bittensor module and caches it for subsequent calls.
+    """
+    global _bt_module, _bt_metadata_error
+    if _bt_module is None:
+        # Temporarily remove help flags to prevent bittensor from intercepting them
+        _argv_backup = sys.argv[:]
+        sys.argv = [arg for arg in sys.argv if arg not in ('--help', '-h')]
+
+        try:
+            import bittensor as bt
+            from bittensor.core.errors import MetadataError
+            _bt_module = bt
+            _bt_metadata_error = MetadataError
+        finally:
+            # Always restore original argv
+            sys.argv = _argv_backup
+
+    return _bt_module
+
+def _get_bt():
+    """Get the bittensor module, importing if necessary."""
+    return _import_bittensor()
+
+# Provide bt as a module-level name for convenience (but it imports on first access)
+class _LazyBittensor:
+    """Proxy object that imports bittensor on first attribute access."""
+    def __getattr__(self, name):
+        # Import bittensor and also set MetadataError globally when first accessed
+        _import_bittensor()
+        # Update the global MetadataError to the real exception class
+        globals()['MetadataError'] = _bt_metadata_error
+        return getattr(_bt_module, name)
+
+bt = _LazyBittensor()
+
+# Placeholder for MetadataError - will be replaced with real class on first bt access
+# If code tries to use MetadataError before bt, force the import
+class _MetadataErrorPlaceholder(Exception):
+    """Placeholder that triggers bittensor import when accessed."""
+    def __init__(self, *args, **kwargs):
+        _import_bittensor()
+        globals()['MetadataError'] = _bt_metadata_error
+        # This is a fallback that shouldn't normally be hit
+        super().__init__(*args, **kwargs)
+
+MetadataError = _MetadataErrorPlaceholder
 
 # --------------------------------------------------------------------------- #
 #                       Constants & global singletons                         #
