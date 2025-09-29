@@ -77,7 +77,8 @@ class LocalDockerAdapter:
         global _CLEANUP_EXECUTED
         if not _CLEANUP_EXECUTED:
             _CLEANUP_EXECUTED = True
-
+        else:
+            return
         containers = runtime.list_containers(all=True)
 
         for container_info in containers:
