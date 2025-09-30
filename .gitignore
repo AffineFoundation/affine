@@ -143,3 +143,6 @@ dmypy.json
 cython_debug/
 
 affine/models/
+
+# Ruff
+.ruff-cache/
