@@ -190,6 +190,39 @@ async def get_subtensor():
             logger.trace("Connected to fallback")
     return SUBTENSOR
 
+async def _reconnect_subtensor(use_fallback: bool = False):
+    """Force re-creation of the global SUBTENSOR, optionally using fallback endpoint."""
+    global SUBTENSOR
+    try:
+        endpoint = get_conf('SUBTENSOR_FALLBACK', default="wss://lite.sub.latent.to:443") if use_fallback else get_conf('SUBTENSOR_ENDPOINT', default='finney')
+        logger.warning(f"Reconnecting subtensor to {'fallback' if use_fallback else 'primary'} endpoint: {endpoint}")
+        SUBTENSOR = bt.async_subtensor(endpoint)
+        await SUBTENSOR.initialize()
+        logger.trace("Reconnected subtensor successfully")
+    except Exception as e:
+        logger.warning(f"Subtensor reconnect failed ({'fallback' if use_fallback else 'primary'}): {type(e).__name__}: {e}")
+        raise
+
+async def get_current_block_robust(timeout: float = 10.0) -> Optional[int]:
+    """Fetch current block with a timeout; on failure, reconnect to fallback and retry once.
+
+    Returns None if both attempts fail.
+    """
+    # First try on current connection
+    try:
+        st = await get_subtensor()
+        return await asyncio.wait_for(st.get_current_block(), timeout=timeout)
+    except Exception as e:
+        logger.warning(f"get_current_block timeout/error on primary: {type(e).__name__}: {e}")
+        # Try fallback reconnection once
+        try:
+            await _reconnect_subtensor(use_fallback=True)
+            st = await get_subtensor()
+            return await asyncio.wait_for(st.get_current_block(), timeout=timeout)
+        except Exception as e2:
+            logger.error(f"get_current_block failed on fallback as well: {type(e2).__name__}: {e2}")
+            return None
+
 # --------------------------------------------------------------------------- #
 #                           Base‑level data models                            #
 # --------------------------------------------------------------------------- #
@@ -1135,8 +1168,13 @@ def runner():
                     logger.debug(f"Until Sink: {len(batch)}/{SINK_BATCH} Time: {elapsed}/{SINK_MAX_WAIT}")
                     await asyncio.sleep(3)
                     if len(batch) >= SINK_BATCH or (batch and elapsed >= SINK_MAX_WAIT):
-                        st = await ensure_subtensor()
-                        blk = await st.get_current_block()
+                        # Get current block robustly; if it fails, keep batch and retry next loop
+                        _ = await ensure_subtensor()
+                        blk = await get_current_block_robust(timeout=10.0)
+                        if blk is None:
+                            logger.warning("sink_worker: failed to fetch current block on primary and fallback; retaining batch for retry")
+                            # Keep batch and first_put_time unchanged; retry on next loop
+                            continue
                         # Flatten: items may be single Result or list[Result]
                         flat = []
                         for it in batch:
