@@ -174,21 +174,7 @@ async def check_model_gated(model_id: str, revision: Optional[str] = None) -> Op
 # --------------------------------------------------------------------------- #
 #                               Subtensor                                     #
 # --------------------------------------------------------------------------- #
-SUBTENSOR = None
-async def get_subtensor():
-    global SUBTENSOR
-    if SUBTENSOR == None:
-        logger.trace("Making Bittensor connection...")
-        SUBTENSOR = bt.async_subtensor( get_conf('SUBTENSOR_ENDPOINT', default='finney') )
-        try:
-            await SUBTENSOR.initialize()
-            logger.trace("Connected")
-        except Exception as e:
-            logger.warning(f"Failed to initialize subtensor: {e}, falling back to {'wss://lite.sub.latent.to:443'}")
-            SUBTENSOR = bt.async_subtensor( get_conf('SUBTENSOR_FALLBACK', default="wss://lite.sub.latent.to:443") )
-            await SUBTENSOR.initialize()
-            logger.trace("Connected to fallback")
-    return SUBTENSOR
+from affine.utils.subtensor import get_subtensor
 
 # --------------------------------------------------------------------------- #
 #                           Base‑level data models                            #
@@ -610,7 +596,11 @@ async def dataset(
     bar = tqdm(f"Dataset=({cur}, {cur - tail})", unit="res", dynamic_ncols=True)
     # ── main loop: iterate over keys in order ───────────────────────────
     for i, key in enumerate(keys):
-        path = await tasks[i]
+        try:
+            path = await tasks[i]
+        except Exception as e:
+            logger.warning(f"task[{i}] failed, skip")
+            continue
         if next_key < len(keys):
             tasks.append(asyncio.create_task(_prefetch(keys[next_key])))
             next_key += 1
