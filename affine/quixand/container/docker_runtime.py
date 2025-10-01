@@ -99,6 +99,14 @@ class DockerRuntime(ContainerRuntime):
             'network_mode': config.resources.network if config.resources else 'bridge',
         }
         
+        if config.restart_policy:
+            if config.restart_policy == 'always':
+                host_config_kwargs['restart_policy'] = {'Name': 'always'}
+            elif config.restart_policy == 'unless-stopped':
+                host_config_kwargs['restart_policy'] = {'Name': 'unless-stopped'}
+            elif config.restart_policy == 'on-failure':
+                host_config_kwargs['restart_policy'] = {'Name': 'on-failure', 'MaximumRetryCount': 5}
+        
         if config.resources:
             if config.resources.cpu_limit:
                 # Convert CPU cores to nano CPUs (1 core = 1e9 nano CPUs)

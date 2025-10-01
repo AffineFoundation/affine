@@ -142,6 +142,9 @@ class LocalDockerAdapter:
         if cfg.resources:
             # Use Resources directly from config
             resources = cfg.resources
+        
+        # Determine restart policy - use 'unless-stopped' for shared sandboxes
+        restart_policy = getattr(cfg, 'restart_policy', None)
 
         # Create container configuration
         container_config = ContainerConfig(
@@ -160,7 +163,8 @@ class LocalDockerAdapter:
             labels={
                 "quixand.id": sbx_id,
                 "quixand.created": datetime.utcnow().isoformat(),
-            }
+            },
+            restart_policy=restart_policy
         )
 
         # Create and start container

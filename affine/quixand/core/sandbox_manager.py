@@ -176,8 +176,14 @@ class SandboxManager:
                     del self._shared_sandboxes[image]
 
             # Create new shared sandbox
+            restart_policy = kwargs.pop('restart_policy', 'unless-stopped')
             sandbox = Sandbox(
-                template=image, timeout=timeout, env=env, metadata=metadata, **kwargs
+                template=image,
+                timeout=timeout,
+                env=env,
+                metadata=metadata,
+                restart_policy=restart_policy,
+                **kwargs
             )
             self._shared_sandboxes[image] = sandbox
             self._active_sandboxes.add(sandbox)

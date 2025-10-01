@@ -41,7 +41,7 @@ class Adapter(Protocol):
 
 
 class SandboxConfig:
-	def __init__(self, *, image: str, timeout: int, env: dict | None, workdir: str | None, metadata: dict | None, resources: Optional["Resources"] = None, volumes: Optional[list] = None, command: Optional[list[str]] = None, entrypoint: Optional[list[str]] = None):
+	def __init__(self, *, image: str, timeout: int, env: dict | None, workdir: str | None, metadata: dict | None, resources: Optional["Resources"] = None, volumes: Optional[list] = None, command: Optional[list[str]] = None, entrypoint: Optional[list[str]] = None, restart_policy: Optional[str] = None):
 		self.image = image
 		self.timeout = timeout
 		self.env = env or {}
@@ -51,6 +51,7 @@ class SandboxConfig:
 		self.volumes = volumes or []
 		self.command = command
 		self.entrypoint = entrypoint
+		self.restart_policy = restart_policy  # Restart policy: no, always, on-failure, unless-stopped
 
 
 class Resources:

@@ -102,6 +102,11 @@ class PodmanRuntime(ContainerRuntime):
         # Only add mounts if they exist
         if mounts:
             container_kwargs['mounts'] = mounts
+        
+        # Add restart policy if specified
+        if config.restart_policy:
+            # Podman uses restart_policy directly
+            container_kwargs['restart_policy'] = config.restart_policy
 
         # Add resource limits
         if config.resources:

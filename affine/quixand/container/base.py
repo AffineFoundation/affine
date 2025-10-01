@@ -51,6 +51,7 @@ class ContainerConfig:
     command: Optional[List[str]] = None
     labels: Dict[str, str] = field(default_factory=dict)
     ports: Dict[str, int] = field(default_factory=dict)  # container_port: host_port
+    restart_policy: Optional[str] = None  # Restart policy: no, always, on-failure, unless-stopped
 
 
 @dataclass
