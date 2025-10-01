@@ -60,7 +60,7 @@ class FilesFacade:
 
 
 class Sandbox:
-	def __init__(self, template: Optional[str] = None, timeout: int = 300, metadata: Optional[dict] = None, env: Optional[dict] = None, workdir: Optional[str] = None, adapter: str | Adapter | None = None, resources: Optional[Resources] = None, volumes: Optional[list] = None, command: Optional[list[str]] = None, entrypoint: Optional[list[str]] = None):
+	def __init__(self, template: Optional[str] = None, timeout: int = 300, metadata: Optional[dict] = None, env: Optional[dict] = None, workdir: Optional[str] = None, adapter: str | Adapter | None = None, resources: Optional[Resources] = None, volumes: Optional[list] = None, command: Optional[list[str]] = None, entrypoint: Optional[list[str]] = None, restart_policy: Optional[str] = None):
 		self._cfg = Config()
 		image = template or self._cfg.image
 		self._adapter = _resolve_adapter(adapter or self._cfg.adapter, self._cfg)
@@ -70,7 +70,7 @@ class Sandbox:
 			pids_limit=resources.pids_limit if resources else None,
 			network=resources.network if resources else "bridge",
 		)
-		sbx_cfg = SandboxConfig(image=image, timeout=timeout, env=env, workdir=workdir or self._cfg.workdir, metadata=metadata, resources=adapt_res, volumes=volumes, command=command, entrypoint=entrypoint)
+		sbx_cfg = SandboxConfig(image=image, timeout=timeout, env=env, workdir=workdir or self._cfg.workdir, metadata=metadata, resources=adapt_res, volumes=volumes, command=command, entrypoint=entrypoint, restart_policy=restart_policy)
 		self._handle = self._adapter.create(sbx_cfg)
 		self.files = FilesFacade(self)
 		self.proxy = ProxyFacade(self)
