@@ -1125,8 +1125,14 @@ def runner():
                     logger.debug(f"Until Sink: {len(batch)}/{SINK_BATCH} Time: {elapsed}/{SINK_MAX_WAIT}")
                     await asyncio.sleep(3)
                     if len(batch) >= SINK_BATCH or (batch and elapsed >= SINK_MAX_WAIT):
-                        st = await ensure_subtensor()
-                        blk = await st.get_current_block()
+                        try:
+                            st = await ensure_subtensor()
+                            blk = await st.get_current_block()
+                        except BaseException as e:
+                            logger.warning(f"sink_worker: get_current_block() failed, will retry later. err={e!r}")
+                            traceback.print_exc()
+                            continue
+
                         # Flatten: items may be single Result or list[Result]
                         flat = []
                         for it in batch:
@@ -1137,27 +1143,16 @@ def runner():
                         logger.debug(f"sink_worker: flushing {len(flat)} results")
                         try:
                             await sink_enqueue(wallet, blk, flat)
-                        except Exception:
+                        except Exception as e:
+                            logger.warning(f"sink_worker: sink_enqueue() failed, will retry later. err={e!r}")
                             traceback.print_exc()
                             # keep going; don't drop future batches
                         batch.clear()
                         first_put_time = None
-                except asyncio.CancelledError:
-                    # drain and final flush
-                    flat = []
-                    while not sink_q.empty():
-                        it = sink_q.get_nowait()
-                        if isinstance(it, list): flat.extend(it)
-                        else: flat.append(it)
-                    if flat:
-                        try:
-                            st = await ensure_subtensor()
-                            blk = await st.get_current_block()
-                            logger.trace(f"sink_worker: final flush {len(flat)}")
-                            await sink_enqueue(wallet, blk, flat, force=True)
-                        except Exception:
-                            traceback.print_exc()
-                    break
+                except BaseException:
+                    traceback.print_exc()
+                    logger.error("sink_worker: unexpected error, continuing loop")
+                    await asyncio.sleep(1)
 
         async def main_loop():
             global HEARTBEAT
