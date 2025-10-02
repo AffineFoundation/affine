@@ -26,7 +26,6 @@ TOOL_NAME = os.environ.get("TOOL_NAME", "")
 class EvaluatorRequest(BaseModel):
     model: str
     base_url: str = "https://llm.chutes.ai/v1"
-    max_tokens: int = None
     temperature: float = 0.7
     top_p: float = 1.0
     ids: Optional[List[int]] = None
@@ -153,7 +152,6 @@ def inject_evaluator_endpoint(app: FastAPI):
                 api_key=api_key,
                 base_url=request.base_url,
                 model=request.model,
-                max_tokens=request.max_tokens,
                 temperature=request.temperature,
                 top_p=request.top_p,
             )
