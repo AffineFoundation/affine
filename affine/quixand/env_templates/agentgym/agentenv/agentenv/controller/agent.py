@@ -15,19 +15,17 @@ class APIAgent:
         api_key: str,
         base_url: str,
         model: str,
-        max_tokens: int = 16384,
         temperature: float = 1,
         top_p: float = 1,
         timeout: float = 300.0,
     ) -> None:
         """
         Initialize the API agent with configuration parameters.
-        
+
         Args:
             api_key: API key for authentication
             base_url: Base URL of the API endpoint
             model: Model identifier to use
-            max_tokens: Maximum tokens in the response
             temperature: Temperature parameter for generation
             top_p: Top-p parameter for generation
             timeout: Request timeout in seconds
@@ -35,7 +33,6 @@ class APIAgent:
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')  # Remove trailing slash if present
         self.model = model
-        self.max_tokens = max_tokens
         self.temperature = temperature
         self.top_p = top_p
         self.timeout = timeout
@@ -69,7 +66,6 @@ class APIAgent:
         return {
             "model": self.model,
             "messages": messages,
-            "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             "top_p": self.top_p,
         }
