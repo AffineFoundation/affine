@@ -15,7 +15,7 @@ class APIAgent:
         api_key: str,
         base_url: str,
         model: str,
-        max_tokens: int = 4096,
+        max_tokens: int = 16384,
         temperature: float = 1,
         top_p: float = 1,
         timeout: float = 300.0,
