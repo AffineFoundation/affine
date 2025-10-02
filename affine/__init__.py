@@ -1834,9 +1834,79 @@ def validate():
     asyncio.run(main())
     
     
+async def validate_api_key(api_key: str, base_url: str = "https://llm.chutes.ai/v1") -> bool:
+    """Validate the API key by making a test request to the API."""
+    if not api_key:
+        return False
+    try:
+        sess = await _get_client()
+        async with sess.get(
+            f"{base_url}/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=aiohttp.ClientTimeout(total=10.0)
+        ) as response:
+            return response.status >= 200 and response.status < 300
+    except Exception as e:
+        logger.error(f"API key validation failed: {e}")
+        return False
+
+def check_env_variables() -> bool:
+    """Check if required environment variables are set and not using default values."""
+    errors = []
+
+    # Check CHUTES_API_KEY
+    chutes_api_key = os.getenv("CHUTES_API_KEY", "")
+    if not chutes_api_key:
+        errors.append("CHUTES_API_KEY is not set")
+
+    # Check HF_USER
+    hf_user = os.getenv("HF_USER", "")
+    if not hf_user:
+        errors.append("HF_USER is not set")
+    elif hf_user == "myaccount":
+        errors.append("HF_USER is still set to default value 'myaccount'. Please set your actual Hugging Face username")
+
+    # Check HF_TOKEN
+    hf_token = os.getenv("HF_TOKEN", "")
+    if not hf_token:
+        errors.append("HF_TOKEN is not set")
+    elif hf_token == "hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx":
+        errors.append("HF_TOKEN is still set to default value. Please set your actual Hugging Face token")
+
+    if errors:
+        logger.error("Environment variable check failed:")
+        for error in errors:
+            logger.error(f"  - {error}")
+        logger.info("\nPlease set the required environment variables in your .env file:")
+        logger.info("  HF_USER=your_huggingface_username")
+        logger.info("  HF_TOKEN=your_huggingface_token")
+        return False
+    
+    return True
+
 @cli.command("weights")
 def weights():
-    asyncio.run(get_weights())
+    async def _run_weights():
+        try:
+            if not check_env_variables():
+                return
+
+            api_key = os.getenv("CHUTES_API_KEY", "")
+            is_valid = await validate_api_key(api_key)
+            if not is_valid:
+                logger.error("CHUTES_API_KEY validation failed. The key may be invalid or expired.")
+                logger.info("Please check your CHUTES_API_KEY and ensure it has proper permissions")
+                return
+            
+            logger.debug("All environment variables validated successfully")
+            return await get_weights()
+        finally:
+            for client in _CLIENTS.values():
+                if client and not client.closed:
+                    await client.close()
+            _CLIENTS.clear()
+    
+    asyncio.run(_run_weights())
 
 # --------------------------------------------------------------------------- #
 #                              Pull Model                                     #
