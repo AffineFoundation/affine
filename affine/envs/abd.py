@@ -99,6 +99,10 @@ class ABD(af.BaseEnv):
             af.logger.trace("Generated input insufficient, retrying")
             return None
 
+        # Ensure final newline for stdin-based programs
+        if gen_input and not gen_input.endswith("\n"):
+            gen_input += "\n"
+
         loop = asyncio.get_running_loop()
         output, error = await loop.run_in_executor(
             None, self._executor.execute, program, gen_input
@@ -112,7 +116,7 @@ class ABD(af.BaseEnv):
         return af.Challenge(
             env=self,
             prompt=PROMPT_TEMPLATE.format(program=program, output=output),
-            extra={"program": program, "expected_output": output, 'timestamp': time.time() },
+            extra={"program": program, "expected_output": output},
         )
 
     async def generate(self) -> af.Challenge:
@@ -190,6 +194,9 @@ class ABD(af.BaseEnv):
                 env=self, score=0.0,
                 extra={"error": "Invalid input for program", "generated_input": gen_in, "expected_output": expected}
             )
+        # Ensure final newline for stdin-based programs
+        if gen_in and not gen_in.endswith("\n"):
+            gen_in += "\n"
         loop = asyncio.get_running_loop()
         out, err = await loop.run_in_executor(
             None, self._executor.execute, prog, gen_in

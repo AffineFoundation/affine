@@ -34,6 +34,8 @@ services:
       - .env
     volumes:
       - ./.env:/app/.env:ro
+      - ~/.bittensor/wallets:/root/.bittensor/wallets:ro
+      - /var/run/docker.sock:/var/run/docker.sock
       # runner doesn’t need the cache—omit or give its own if desired
     ports:
       - "8002:8000"           # host 8002 → container’s AFFINE_METRICS_PORT=8000

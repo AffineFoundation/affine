@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # --------------------------------------------------------------------------- #
 #                             Imports                                         #
@@ -47,6 +46,7 @@ from bittensor.core.errors import MetadataError
 from pydantic import BaseModel, Field, validator, ValidationError
 from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, TypeVar, Awaitable, Iterable, DefaultDict, MutableMapping, Collection
 __version__ = "0.0.0"
+from .quixand.core.sandbox_manager import get_sandbox
 
 # --------------------------------------------------------------------------- #
 #                       Constants & global singletons                         #
@@ -81,9 +81,11 @@ CACHE = Gauge( "cache", "cache", registry=REGISTRY)
 
 # Model gating check cache
 MODEL_GATING_CACHE = {}  # {model_id: (is_gated, last_checked)}
-# Replace global loop-bound lock with per-event-loop lazy locks to avoid cross-loop errors
 _GATING_LOCKS: Dict[int, asyncio.Lock] = {}
 GATING_TTL = 3600  # 60 min
+WEIGHTS_SHA_CACHE: Dict[Tuple[str, Optional[str]], Tuple[Optional[set[str]], float]] = {}
+_WEIGHTS_LOCKS: Dict[int, asyncio.Lock] = {}
+WEIGHTS_TTL = 3600  # 60 min
 
 def _get_gating_lock() -> asyncio.Lock:
     """Return an asyncio.Lock bound to the current running loop."""
@@ -97,6 +99,18 @@ def _get_gating_lock() -> asyncio.Lock:
     if lock is None:
         lock = asyncio.Lock()
         _GATING_LOCKS[key] = lock
+    return lock
+
+def _get_weights_lock() -> asyncio.Lock:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.get_event_loop()
+    key = id(loop)
+    lock = _WEIGHTS_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _WEIGHTS_LOCKS[key] = lock
     return lock
 
 # --------------------------------------------------------------------------- #
@@ -162,21 +176,7 @@ async def check_model_gated(model_id: str, revision: Optional[str] = None) -> Op
 # --------------------------------------------------------------------------- #
 #                               Subtensor                                     #
 # --------------------------------------------------------------------------- #
-SUBTENSOR = None
-async def get_subtensor():
-    global SUBTENSOR
-    if SUBTENSOR == None:
-        logger.trace("Making Bittensor connection...")
-        SUBTENSOR = bt.async_subtensor( get_conf('SUBTENSOR_ENDPOINT', default='finney') )
-        try:
-            await SUBTENSOR.initialize()
-            logger.trace("Connected")
-        except Exception as e:
-            logger.warning(f"Failed to initialize subtensor: {e}, falling back to {'wss://lite.sub.latent.to:443'}")
-            SUBTENSOR = bt.async_subtensor( get_conf('SUBTENSOR_FALLBACK', default="wss://lite.sub.latent.to:443") )
-            await SUBTENSOR.initialize()
-            logger.trace("Connected to fallback")
-    return SUBTENSOR
+from affine.utils.subtensor import get_subtensor
 
 # --------------------------------------------------------------------------- #
 #                           Base‑level data models                            #
@@ -191,11 +191,141 @@ class BaseEnv(BaseModel, ABC):
     def name(self) -> str: return self.__class__.__name__
     def __hash__(self):     return hash(self.name)
     def __repr__(self):     return self.name
-    # API expected from concrete envs
-    @abstractmethod
-    async def generate(self) -> "Challenge": ...
-    @abstractmethod
-    async def evaluate(self, challenge: "Challenge", response: "Response") -> "Evaluation": ...
+    # No abstract API enforced; envs may provide helper methods if needed.
+
+# --------------------------------------------------------------------------- #
+#                   Containerized evaluation env (base + impls)               #
+# --------------------------------------------------------------------------- #
+
+# Shared pools keyed by full env name (one container per logical env)
+_SBX_POOL: Dict[str, Any] = {}
+_SBX_LOCKS: Dict[str, asyncio.Lock] = {}
+_SBX_SEMS: Dict[str, asyncio.Semaphore] = {}
+
+class ContainerEnv(BaseEnv):
+    """Base class for containerized envs evaluated via a FastAPI service.
+    """
+    env_name: str
+    data_len: int = 200
+    max_round: int = 10
+    evaluator_timeout: int = 1200
+
+    # Internal counter for fallback id selection
+    _round_counter: int = 0
+
+    def _pool_key(self) -> str:
+        return self.name
+
+    def _get_lock(self) -> asyncio.Lock:
+        lk = _SBX_LOCKS.get(self._pool_key())
+        if lk is None:
+            lk = asyncio.Lock()
+            _SBX_LOCKS[self._pool_key()] = lk
+        return lk
+
+    async def _get_shared(self):
+        """Return a shared Sandbox + semaphore for this env, creating it if missing."""
+        async with self._get_lock():
+            sbx = _SBX_POOL.get(self._pool_key())
+            if sbx is None:
+                logger.info(f"[ENV] Creating sandbox via SandboxManager for {self.name} ENV_NAME={self.env_name}")
+                sbx_env = {
+                    "NO_PROXY": "localhost,127.0.0.1",
+                    "PYTHONPATH": "/app",
+                }
+                try:
+                    sbx = get_sandbox(
+                        template=self.name,             # e.g., "affine:sat" or "agentgym:webshop"
+                        shared=True,                    # one shared sandbox per env
+                        timeout=max(int(self.evaluator_timeout) + 900, 1800),
+                        env=sbx_env,
+                    )
+                except Exception as e:
+                    logger.error(f"[ENV] Sandbox creation failed for {self.name}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+                    raise
+                _SBX_POOL[self._pool_key()] = sbx
+                try:
+                    logger.debug(f"[ENV] Sandbox started for {self.name} id={getattr(sbx, 'id', '?')} container_id={getattr(sbx, 'container_id', '?')}")
+                except Exception:
+                    pass
+                try:
+                    await self._health_check(sbx)
+                except Exception as e:
+                    logger.warning(f"ensure_ready pending for {self.name}: {e}")
+            sem = _SBX_SEMS.get(self._pool_key())
+            if sem is None:
+                sem = asyncio.Semaphore(int(os.getenv("AFFINE_ENV_CONCURRENCY", "16")))
+                _SBX_SEMS[self._pool_key()] = sem
+            return sbx, sem
+
+    async def _health_check(self, sbx):
+        try:
+            logger.debug(f"[ENV] Health check for {self.name} on port 8000")
+            await asyncio.to_thread(lambda: sbx.proxy._health(port=8000, timeout=60))
+        except Exception as e:
+            raise RuntimeError(f"Sandbox for {self.name} failed health: {e}")
+
+    async def ensure_ready(self):
+        reuse = os.getenv("AFFINE_REUSE_CONTAINERS", "1")
+        if reuse != "0":
+            await self._get_shared()
+
+    async def run_episode(self, policy: "Miner", task_id: Optional[int]) -> "Evaluation":
+        sbx, sem = await self._get_shared()
+        base_url = f"https://{policy.slug}.chutes.ai/v1" if policy.slug else None
+        if not base_url:
+            raise RuntimeError("Miner slug/base_url missing")
+
+        if task_id is None:
+            task_id = random.randint(0, int(self.data_len) - 1)
+
+        payload = {
+            "model": policy.model,
+            "base_url": base_url,
+            "temperature": 0.7,
+            "ids": [int(task_id)],
+            "max_round": int(self.max_round),
+            "timeout": int(self.evaluator_timeout),
+        }
+        start = time.monotonic()
+        async with sem:
+            try:
+                data = await asyncio.to_thread(lambda: sbx.proxy.evaluator(_timeout=self.evaluator_timeout, **payload))
+            except Exception as e:
+                logger.error(f"[ENV] /evaluator call failed for {self.name}: {type(e).__name__}: {e}")
+                raise RuntimeError(f"/evaluator call failed: {e}")
+        latency = time.monotonic() - start
+        total_score = float(data.get("total_score", data.get("score", 0.0)))
+        success_rate = float(data.get("success_rate", 0.0))
+        num_eval = int(data.get("num_evaluated", data.get("n", 0)))
+        extra_payload = {
+            "success_rate": success_rate,
+            "num_evaluated": num_eval,
+            "task_id": int(task_id),
+        }
+        if isinstance(data, dict):
+            if "details" in data:   extra_payload["details"] = data.get("details")
+            if "task_name" in data: extra_payload["task_name"] = data.get("task_name")
+            if "time_taken" in data: extra_payload["time_taken"] = data.get("time_taken")
+
+        logger.info(
+            f"[REWARD] U{policy.uid:>3d} {self.name:<20} id={task_id} total_score={total_score:.4f} success_rate={success_rate:.3f} n={num_eval} latency={latency:.3f}s"
+        )
+        return Evaluation(
+            env=self,
+            score=total_score,
+            extra=extra_payload,
+        )
+
+class AgentGymContainerEnv(ContainerEnv):
+    @property
+    def name(self) -> str:
+        return f"agentgym:{self.env_name}"
+
+class AffineContainerEnv(ContainerEnv):
+    @property
+    def name(self) -> str:
+        return f"affine:{self.env_name}"
 
 # --------------------------------------------------------------------------- #
 #                         Models with new (de)serialisation                   #
@@ -205,6 +335,7 @@ class Challenge(BaseModel):
     prompt: str
     extra: Dict[str, Any] = Field(default_factory=dict)
     challenge_id: Optional[str] = None
+    timestamp: Optional[float] = Field(default_factory=time.time)
     @root_validator(pre=True)
     def set_challenge_id(cls, values):
         if "challenge_id" not in values or values["challenge_id"] is None:
@@ -219,8 +350,22 @@ class Challenge(BaseModel):
         return values
     @validator("env", pre=True)
     def _parse_env(cls, v):
-        from .envs import ENVS as _ENVS
-        return _ENVS[v]() if isinstance(v, str) else v
+        if isinstance(v, str):
+            name = v.strip()
+            # Only activate if this env is currently configured
+            if name not in ENVS:
+                raise ValueError(f"Inactive env '{name}'")
+            # Support prefixes: agentgym:<env> and affine:<env>
+            if ":" in name:
+                prefix, env_name = name.split(":", 1)
+                if prefix == "agentgym":
+                    return AgentGymContainerEnv(env_name=env_name)
+                if prefix == "affine":
+                    return AffineContainerEnv(env_name=env_name)
+                raise ValueError(f"Unknown env prefix '{prefix}'")
+            # Bare names default to agentgym for backwards compat
+            return AgentGymContainerEnv(env_name=name)
+        return v
     class Config:
         arbitrary_types_allowed = True
         json_encoders = {BaseEnv: lambda v: v.name}
@@ -238,8 +383,19 @@ class Evaluation(BaseModel):
     extra: Dict[str, Any] = Field(default_factory=dict)
     @validator("env", pre=True)
     def _parse_env(cls, v):
-        from .envs import ENVS as _ENVS
-        return _ENVS[v]() if isinstance(v, str) else v
+        if isinstance(v, str):
+            name = v.strip()
+            if name not in ENVS:
+                raise ValueError(f"Inactive env '{name}'")
+            if ":" in name:
+                prefix, env_name = name.split(":", 1)
+                if prefix == "agentgym":
+                    return AgentGymContainerEnv(env_name=env_name)
+                if prefix == "affine":
+                    return AffineContainerEnv(env_name=env_name)
+                raise ValueError(f"Unknown env prefix '{prefix}'")
+            return AgentGymContainerEnv(env_name=name)
+        return v
     class Config:
         arbitrary_types_allowed = True
         json_encoders = {BaseEnv: lambda v: v.name}
@@ -256,6 +412,7 @@ class Response(BaseModel):
     model: str
     error: Optional[str]
     success: bool
+    timestamp: Optional[float] = Field(default_factory=time.time)
     def __repr__(self):
         return (f"<Response model={self.model!r} success={self.success} "
                 f"latency={self.latency_seconds:.3f}s attempts={self.attempts} "
@@ -267,6 +424,7 @@ class Miner(BaseModel):
     revision: Optional[str] = None; block: Optional[int] = None
     chute: Optional[Dict[str, Any]] = None
     slug: Optional[str] = None
+    weights_shas: Optional[set[str]] = None
     
 
 class Result(BaseModel):
@@ -289,190 +447,18 @@ class Result(BaseModel):
     def __repr__(self): return f"<Result {self.miner.uid=} {self.challenge.env.name=} score={self.evaluation.score:.4f}>"
     __str__ = __repr__
 
-# --------------------------------------------------------------------------- #
-#                       Online IRT (2PL) utilities                            #
-# --------------------------------------------------------------------------- #
+# Central env registry (Quixand‑only)
+def _get_env_list_from_envvar() -> Tuple[str, ...]:
+    spec = os.getenv("AFFINE_ENV_LIST", "").strip()
+    if not spec:
+        return tuple()
+    env_names: list[str] = []
+    for tok in [t.strip() for t in spec.split(",") if t.strip()]:
+        env_names.append(tok)
+    return tuple(env_names)
 
-
-def _sigmoid(x: float) -> float:
-    """Numerically stable logistic function."""
-
-    if x >= 0:
-        z = math.exp(-x)
-        return 1.0 / (1.0 + z)
-    z = math.exp(x)
-    return z / (1.0 + z)
-
-
-def _clamp(x: float, lo: float, hi: float) -> float:
-    if x < lo:
-        return lo
-    if x > hi:
-        return hi
-    return x
-
-
-@dataclass
-class _EnvParams:
-    discrimination: float = 1.0
-    difficulty: float = 0.0
-    count: int = 0
-
-
-@dataclass
-class _ChallengeParams:
-    bias: float = 0.0
-    count: int = 0
-
-
-@dataclass
-class _AbilityParams:
-    theta: float = 0.0
-    count: int = 0
-
-
-class OnlineIRT2PL:
-    """Online multi-facet two-parameter logistic estimator."""
-
-    def __init__(
-        self,
-        env_names: Iterable[str] = (),
-        *,
-        theta_prior: float = 0.0,
-        discrimination_prior: float = 1.0,
-        difficulty_prior: float = 0.0,
-        challenge_prior: float = 0.0,
-        theta_lr: float = 0.2,
-        difficulty_lr: float = 0.05,
-        discrimination_lr: float = 0.01,
-        challenge_lr: float = 0.03,
-        theta_clip: float = 6.0,
-        diff_clip: float = 6.0,
-        disc_bounds: Tuple[float, float] = (0.25, 5.0),
-        challenge_decay: float = 0.01,
-    ) -> None:
-        self._theta_prior = theta_prior
-        self._discrimination_prior = discrimination_prior
-        self._difficulty_prior = difficulty_prior
-        self._challenge_prior = challenge_prior
-        self._theta_lr = theta_lr
-        self._difficulty_lr = difficulty_lr
-        self._discrimination_lr = discrimination_lr
-        self._challenge_lr = challenge_lr
-        self._theta_clip = theta_clip
-        self._diff_clip = diff_clip
-        self._disc_bounds = disc_bounds
-        self._challenge_decay = challenge_decay
-
-        self._env_state: Dict[str, _EnvParams] = {
-            name: _EnvParams(discrimination=discrimination_prior, difficulty=difficulty_prior)
-            for name in env_names
-        }
-        self._challenge_state: Dict[str, _ChallengeParams] = {}
-        self._ability_state: Dict[Tuple[str, str], _AbilityParams] = {}
-
-    def _ensure_env(self, env: str) -> _EnvParams:
-        env_state = self._env_state.get(env)
-        if env_state is None:
-            env_state = _EnvParams(
-                discrimination=self._discrimination_prior,
-                difficulty=self._difficulty_prior,
-            )
-            self._env_state[env] = env_state
-        return env_state
-
-    def _ensure_challenge(self, challenge_id: Optional[str]) -> Optional[_ChallengeParams]:
-        if not challenge_id:
-            return None
-        chal = self._challenge_state.get(challenge_id)
-        if chal is None:
-            chal = _ChallengeParams(bias=self._challenge_prior)
-            self._challenge_state[challenge_id] = chal
-        return chal
-
-    def _ensure_ability(self, miner_key: Tuple[str, str]) -> _AbilityParams:
-        ability = self._ability_state.get(miner_key)
-        if ability is None:
-            ability = _AbilityParams(theta=self._theta_prior)
-            self._ability_state[miner_key] = ability
-        return ability
-
-    def observe(
-        self,
-        *,
-        miner_key: Tuple[str, str],
-        env: str,
-        success: float,
-        challenge_id: Optional[str] = None,
-        weight: float = 1.0,
-    ) -> float:
-        ability = self._ensure_ability(miner_key)
-        env_state = self._ensure_env(env)
-        challenge_state = self._ensure_challenge(challenge_id)
-
-        bias = env_state.difficulty
-        if challenge_state is not None:
-            challenge_state.bias *= (1.0 - self._challenge_decay)
-            bias += challenge_state.bias
-
-        eta = env_state.discrimination * (ability.theta - bias)
-        prob = _sigmoid(eta)
-        residual = (success - prob) * weight
-
-        ability.count += 1
-        ability_step = self._theta_lr
-        ability.theta += ability_step * env_state.discrimination * residual
-        ability.theta = _clamp(ability.theta, -self._theta_clip, self._theta_clip)
-
-        env_state.count += 1
-        difficulty_step = self._difficulty_lr
-        env_state.difficulty -= difficulty_step * env_state.discrimination * residual
-        env_state.difficulty = _clamp(env_state.difficulty, -self._diff_clip, self._diff_clip)
-
-        discr_step = self._discrimination_lr
-        env_state.discrimination += discr_step * (ability.theta - bias) * residual
-        env_state.discrimination = _clamp(
-            env_state.discrimination,
-            self._disc_bounds[0],
-            self._disc_bounds[1],
-        )
-
-        if challenge_state is not None:
-            challenge_state.count += 1
-            chal_step = self._challenge_lr
-            challenge_state.bias += chal_step * residual
-            challenge_state.bias = _clamp(challenge_state.bias, -self._diff_clip, self._diff_clip)
-
-        return prob
-
-    def predict(self, *, miner_key: Tuple[str, str], env: str, challenge_id: Optional[str] = None) -> float:
-        ability = self._ensure_ability(miner_key)
-        env_state = self._ensure_env(env)
-        bias = env_state.difficulty
-        if challenge_id:
-            chal = self._challenge_state.get(challenge_id)
-            if chal is not None:
-                bias += chal.bias
-        eta = env_state.discrimination * (ability.theta - bias)
-        return _sigmoid(eta)
-
-    def miner_params(self, miner_key: Tuple[str, str]) -> Tuple[float, int]:
-        ability = self._ensure_ability(miner_key)
-        return ability.theta, ability.count
-
-    def env_params(self, env: str) -> Tuple[float, float]:
-        env_state = self._ensure_env(env)
-        return env_state.discrimination, env_state.difficulty
-
-    def challenge_params(self, challenge_id: str) -> Tuple[float, int]:
-        chal = self._challenge_state.get(challenge_id)
-        if chal is None:
-            return 0.0, 0
-        return chal.bias, chal.count
-
-
-# Central env registry
-from .envs import ENVS
+# Keep variable name ENVS for scoring logic; values are env name strings
+ENVS: Tuple[str, ...] = _get_env_list_from_envvar()
 
 # --------------------------------------------------------------------------- #
 #                   S3 helpers                                                #
@@ -483,17 +469,21 @@ RESULT_PREFIX = "affine/results/"
 INDEX_KEY     = "affine/index.json"
 
 FOLDER  = os.getenv("R2_FOLDER", "affine" )
-BUCKET  = os.getenv("R2_BUCKET_ID", "80f15715bb0b882c9e967c13e677ed7d" )
-ACCESS  = os.getenv("R2_WRITE_ACCESS_KEY_ID", "ff3f4f078019b064bfb6347c270bee4d")
-SECRET  = os.getenv("R2_WRITE_SECRET_ACCESS_KEY", "a94b20516013519b2959cbbb441b9d1ec8511dce3c248223d947be8e85ec754d")
-REGION  = os.getenv("R2_REGION", "auto")
+BUCKET  = os.getenv("R2_BUCKET_ID", "00523074f51300584834607253cae0fa" )
+ACCESS  = os.getenv("R2_WRITE_ACCESS_KEY_ID", "")
+SECRET  = os.getenv("R2_WRITE_SECRET_ACCESS_KEY", "")
 ENDPOINT = f"https://{BUCKET}.r2.cloudflarestorage.com"
 
-_S3_SIGNATURE = os.getenv("R2_SIGNATURE_VERSION", "s3v4")
-_MAX_POOL = int(os.getenv("R2_MAX_POOL_CONNECTIONS", "256"))
-S3_CLIENT_CONFIG = Config(
-    signature_version=_S3_SIGNATURE,
-    max_pool_connections=_MAX_POOL,
+# Public (unauthenticated) read mode via r2.dev — set AFFINE_R2_PUBLIC=1 to enable
+PUBLIC_READ = os.getenv("AFFINE_R2_PUBLIC", "1") == "1"
+ACCOUNT_ID  = os.getenv("R2_ACCOUNT_ID", BUCKET)
+
+R2_PUBLIC_BASE = f"https://pub-bf429ea7a5694b99adaf3d444cbbe64d.r2.dev"
+
+get_client_ctx = lambda: get_session().create_client(
+    "s3", endpoint_url=ENDPOINT,
+    aws_access_key_id=ACCESS, aws_secret_access_key=SECRET,
+    config=Config(max_pool_connections=256)
 )
 
 def get_client_ctx():
@@ -524,6 +514,13 @@ except ModuleNotFoundError:
     
 # ── Index helpers ───────────────────────────────────────────────────────────
 async def _index() -> list[str]:
+    if PUBLIC_READ:
+        # Unauthenticated read from public R2 (r2.dev)
+        sess = await _get_client()
+        url = f"{R2_PUBLIC_BASE}/{INDEX_KEY}"
+        async with sess.get(url, timeout=aiohttp.ClientTimeout(total=30)) as r:
+            r.raise_for_status()
+            return json.loads(await r.text())
     async with get_client_ctx() as c:
         try:
             r = await c.get_object(Bucket=FOLDER, Key=INDEX_KEY)
@@ -583,13 +580,27 @@ async def _update_index(k: str) -> None:
 async def _cache_shard(key: str, sem: asyncio.Semaphore) -> Path:
     name, out = Path(key).name, None
     out = CACHE_DIR / f"{name}.jsonl"; mod = out.with_suffix(".modified")
-    async with sem, get_client_ctx() as c:
-        if out.exists() and mod.exists():
-            h = await c.head_object(Bucket=FOLDER, Key=key)
-            if h["LastModified"].isoformat() == mod.read_text().strip():
-                return out
-        o = await c.get_object(Bucket=FOLDER, Key=key)
-        body, lm = await o["Body"].read(), o["LastModified"].isoformat()
+    async with sem:
+        if PUBLIC_READ:
+            # Unauthenticated read from public R2 (r2.dev)
+            sess = await _get_client()
+            url = f"{R2_PUBLIC_BASE}/{key}"
+            async with sess.get(url, timeout=aiohttp.ClientTimeout(total=60)) as r:
+                r.raise_for_status()
+                body = await r.read()
+                lm = r.headers.get("last-modified", str(time.time()))
+            tmp = out.with_suffix(".tmp")
+            with tmp.open("wb") as f:
+                f.write(b"\n".join(_dumps(i) for i in _loads(body)) + b"\n")
+            os.replace(tmp, out); mod.write_text(lm)
+            return out
+        async with get_client_ctx() as c:
+            if out.exists() and mod.exists():
+                h = await c.head_object(Bucket=FOLDER, Key=key)
+                if h["LastModified"].isoformat() == mod.read_text().strip():
+                    return out
+            o = await c.get_object(Bucket=FOLDER, Key=key)
+            body, lm = await o["Body"].read(), o["LastModified"].isoformat()
     tmp = out.with_suffix(".tmp")
     with tmp.open("wb") as f:
         f.write(b"\n".join(_dumps(i) for i in _loads(body)) + b"\n")
@@ -637,7 +648,11 @@ async def dataset(
     bar = tqdm(f"Dataset=({cur}, {cur - tail})", unit="res", dynamic_ncols=True)
     # ── main loop: iterate over keys in order ───────────────────────────
     for i, key in enumerate(keys):
-        path = await tasks[i]
+        try:
+            path = await tasks[i]
+        except Exception as e:
+            logger.warning(f"task[{i}] failed, skip")
+            continue
         if next_key < len(keys):
             tasks.append(asyncio.create_task(_prefetch(keys[next_key])))
             next_key += 1
@@ -871,6 +886,15 @@ async def sign_results( wallet, results ):
         return hotkey, results
 
 # ── Minimal sink / misc helpers (optional) ──────────────────────────────────
+# Global buffer to reduce R2 writes; flush on threshold or force.
+SINK_BUFFER: list["Result"] = []
+SINK_BUFFER_SIZE = int(os.getenv("AFFINE_SINK_BUFFER", "100"))
+async def sink_enqueue(wallet, block, results, force: bool = False):
+    global SINK_BUFFER
+    SINK_BUFFER.extend(results)
+    if not force and len(SINK_BUFFER) < SINK_BUFFER_SIZE: return
+    buf, SINK_BUFFER = SINK_BUFFER, []
+    await sink(wallet=wallet, results=buf, block=block)
 async def sink(wallet: bt.wallet, results: list["Result"], block: int = None):
     if not results: return
     if block is None:
@@ -930,7 +954,7 @@ async def _get_client() -> aiohttp.ClientSession:
         limit = int(os.getenv("AFFINE_HTTP_CONCURRENCY", "400"))  # raise this
         conn = aiohttp.TCPConnector(
             limit=limit,              # match or exceed your semaphore
-            limit_per_host=0,         # don’t artificially throttle per host
+            limit_per_host=0,         # don't artificially throttle per host
             ttl_dns_cache=300,        # cache DNS results
             enable_cleanup_closed=True
         )
@@ -971,12 +995,12 @@ LOG_TEMPLATE = (
     "{pct:>3.0f}% | "
     "U{uid:>3d} │ "
     "{model:<50s} │ "
-    "{env:<3} │ "
+    "{env:<20} │ "
     "{success:^4s} │ "
     "{score:>6.4f} │ "
     "{latency:>6.3f}s"
 )
-async def run(challenges, miners, timeout=240, retries=0, backoff=1 )-> List[Result]:
+async def run(challenges, miners, timeout=240, retries=0, backoff=1, task_ids: Optional[Dict[str, int]] = None)-> List[Result]:
     if not isinstance(challenges, list): challenges = [challenges]
     if isinstance(miners, Miner): miners = [miners]
     if isinstance(miners, dict):  mmap = miners
@@ -987,9 +1011,28 @@ async def run(challenges, miners, timeout=240, retries=0, backoff=1 )-> List[Res
     response = []
     
     async def proc(miner, chal):
-        resp = await query(chal.prompt, miner.model, miner.slug, timeout, retries, backoff)
-        try: ev = await chal.evaluate(resp)
-        except Exception as e: ev = Evaluation(env=chal.env, score=0.0, extra={"error": str(e), "evaluation_failed": True})
+        # Containerized path (AgentGym or Affine)
+        if isinstance(chal.env, ContainerEnv):
+            start = time.monotonic()
+            try:
+                ev = await chal.env.run_episode(policy=miner, task_id=(task_ids or {}).get(chal.env.name) if task_ids else None)
+                resp = Response(response=None, latency_seconds=time.monotonic()-start, attempts=1, model=miner.model or "", error=None, success=True)
+            except Exception as e:
+                ev = Evaluation(env=chal.env, score=0.0, extra={"error": str(e), "evaluation_failed": True})
+                resp = Response(response=None, latency_seconds=time.monotonic()-start, attempts=1, model=miner.model or "", error=str(e), success=False)
+            # Update metrics for AgentGym immediately
+            try:
+                SCORE.labels(uid=miner.uid, env=chal.env.name).set(ev.score)
+            except Exception:
+                pass
+            # Log score line
+            logger.info(f"[SCORE] U{miner.uid:>3d} {chal.env.name:<20} = {ev.score:.4f}")
+            return Result(miner=miner, challenge=chal, response=resp, evaluation=ev)
+        # Unsupported env type path (should not occur now)
+        start = time.monotonic()
+        err = f"Unsupported environment type: {type(chal.env).__name__}"
+        ev = Evaluation(env=chal.env, score=0.0, extra={"error": err, "evaluation_failed": True})
+        resp = Response(response=None, latency_seconds=time.monotonic()-start, attempts=1, model=miner.model or "", error=err, success=False)
         return Result(miner=miner, challenge=chal, response=resp, evaluation=ev)
     
     tasks = [ asyncio.create_task(proc(m, chal)) for m in mmap.values() if m.model for chal in challenges]  
@@ -1055,6 +1098,32 @@ async def get_latest_chute_id(model_name: str, api_key: Optional[str] = None) ->
             return chute.get("chute_id")
     return None
 
+async def get_weights_shas(model_id: str, revision: Optional[str] = None) -> Optional[set[str]]:
+    key = (model_id, revision)
+    now = time.time()
+    cached = WEIGHTS_SHA_CACHE.get(key)
+    if cached and now - cached[1] < WEIGHTS_TTL:
+        return cached[0]
+    async with _get_weights_lock():
+        cached = WEIGHTS_SHA_CACHE.get(key)
+        if cached and now - cached[1] < WEIGHTS_TTL:
+            return cached[0]
+        try:
+            def _repo_info():
+                return HfApi(token=os.getenv("HF_TOKEN")).repo_info(
+                    repo_id=model_id, repo_type="model", revision=revision, files_metadata=True
+                )
+            info = await asyncio.to_thread(_repo_info)
+            sib = getattr(info, "siblings", None) or []
+            def _name(s): return getattr(s, "rfilename", None) or getattr(s, "path", "")
+            shas = {str(getattr(s, "lfs", {})["sha256"]) for s in sib
+                    if (isinstance(getattr(s, "lfs", None), dict) and _name(s).endswith(".safetensors") and "sha256" in getattr(s, "lfs", {}))}
+            WEIGHTS_SHA_CACHE[key] = (shas or None, now)
+            return shas or None
+        except Exception as e:
+            logger.trace(f"HF weights sha lookup failed for {model_id}@{revision}: {e}")
+            WEIGHTS_SHA_CACHE[key] = (None, now)
+            return None
 
 async def miners(
     uids: Optional[Union[int, List[int]]] = None,
@@ -1066,7 +1135,7 @@ async def miners(
     commits = await sub.get_all_revealed_commitments(netuid)
     if uids is None:uids = list(range(len(meta.hotkeys)))
     elif isinstance(uids, int): uids = [uids]    
-    meta_sem = asyncio.Semaphore(int(os.getenv("AFFINE_META_CONCURRENCY", "64")))
+    meta_sem = asyncio.Semaphore(int(os.getenv("AFFINE_META_CONCURRENCY", "12")))
     async def fetch(uid: int):
         try:
             hotkey = meta.hotkeys[ uid ]
@@ -1085,28 +1154,45 @@ async def miners(
             chutes_name, slug, chutes_revision = chute.get('name'), chute.get("slug"), chute.get("revision")
             if model != chutes_name or (uid != 0 and chutes_name.split('/')[1].lower()[:6] != 'affine'): return None
             if chutes_revision == None or miner_revision == chutes_revision:
-                miner = Miner(
+                async with meta_sem:
+                    shas = await get_weights_shas(model, miner_revision)
+                return Miner(
                     uid=uid, hotkey=hotkey, model=model, block=int(block),
                     revision = miner_revision,
                     slug = slug,
                     chute=chute,
+                    weights_shas=shas,
                 )
-                return miner
         except: pass
     results = await asyncio.gather(*(fetch(uid) for uid in uids))
     output = {uid: m for uid, m in zip(uids, results) if m is not None}
     # Remove duplicates.
     if output:
-        best_by_model: Dict[str, Tuple[int, int]] = {}
+        earliest_by_sha: Dict[str, Tuple[int, int]] = {}
         for uid, m in output.items():
-            if not m.model:
-                continue
+            if not m.weights_shas: continue
             blk = m.block if isinstance(m.block, int) else (int(m.block) if m.block is not None else (2**63 - 1))
-            prev = best_by_model.get(m.model)
-            if prev is None or blk < prev[0]:
-                best_by_model[m.model] = (blk, uid)
-        selected_uids = {uid for _, uid in best_by_model.values()}
-        output = {uid: m for uid, m in output.items() if uid in selected_uids}
+            for sha in m.weights_shas:
+                prev = earliest_by_sha.get(sha)
+                if prev is None or blk < prev[0]:
+                    earliest_by_sha[sha] = (blk, uid)
+        if earliest_by_sha:
+            keep = set(output.keys())
+            for uid, m in output.items():
+                if m.weights_shas and any(earliest_by_sha.get(s, (None, uid))[1] != uid for s in m.weights_shas):
+                    if uid in keep: keep.remove(uid)
+            output = {uid: m for uid, m in output.items() if uid in keep}
+        if output:
+            best_by_model: Dict[str, Tuple[int, int]] = {}
+            for uid, m in output.items():
+                if not m.model:
+                    continue
+                blk = m.block if isinstance(m.block, int) else (int(m.block) if m.block is not None else (2**63 - 1))
+                prev = best_by_model.get(m.model)
+                if prev is None or blk < prev[0]:
+                    best_by_model[m.model] = (blk, uid)
+            selected_uids = {uid for _, uid in best_by_model.values()}
+            output = {uid: m for uid, m in output.items() if uid in selected_uids}
     return output
 
 
@@ -1618,6 +1704,30 @@ cli.add_command(click.command("validate")(validate))
 cli.add_command(click.command("weights")(weights_cmd))
 
 # --------------------------------------------------------------------------- #
+#                   Env builder (AFFINE_ENV_LIST support)                     #
+# --------------------------------------------------------------------------- #
+def _build_envs() -> List[BaseEnv]:
+    """Build active envs from AFFINE_ENV_LIST; accept bare names as agentgym."""
+    spec = os.getenv("AFFINE_ENV_LIST", "").strip()
+    if not spec:
+        raise RuntimeError("AFFINE_ENV_LIST is required and must list envs, e.g. 'webshop,agentgym:alfworld,affine:sat'")
+    envs: List[BaseEnv] = []
+    for tok in [t.strip() for t in spec.split(",") if t.strip()]:
+        if ":" in tok:
+            prefix, name = tok.split(":", 1)
+            if prefix == "agentgym":
+                envs.append(AgentGymContainerEnv(env_name=name))
+            elif prefix == "affine":
+                envs.append(AffineContainerEnv(env_name=name))
+            else:
+                logger.warning(f"Unknown env prefix in AFFINE_ENV_LIST: {prefix}")
+        else:
+            envs.append(AgentGymContainerEnv(env_name=tok))
+    if not envs:
+        raise RuntimeError("AFFINE_ENV_LIST contained no supported entries.")
+    return envs
+
+# --------------------------------------------------------------------------- #
 #                               Watchdog                                      #
 # --------------------------------------------------------------------------- #
 HEARTBEAT = None
@@ -1645,7 +1755,7 @@ def runner():
 
     async def _run():
         subtensor = None
-        envs = [cls() for cls in ENVS.values()]
+        envs = _build_envs()
 
         # ── config ───────────────────────────────────────────────────────────
         MAX_USES       = 30
@@ -1656,11 +1766,13 @@ def runner():
         BACKOFF_CAP    = 300
 
         # ── state ───────────────────────────────────────────────────────────
-        chal_cache, i_env = {}, 0
+        # Challenge cache per env (reused as placeholder to keep stable challenge_id)
+        chal_cache: Dict[str, Tuple[Challenge, int]] = {}
         last_sync = 0.0
-        delay = defaultdict(lambda: BACKOFF0)   # uid -> current delay
-        cooldown_until = defaultdict(float)     # uid -> t when allowed again
-        miners_map = {}
+        miners_map: Dict[int, Miner] = {}
+        # Per-env rounds and inflight tasks
+        env_round: Dict[str, int] = {e.name: 0 for e in envs}
+        env_inflight: Dict[str, Dict[int, asyncio.Task]] = {e.name: {} for e in envs}
 
         # results pipeline
         sink_q: asyncio.Queue = asyncio.Queue()
@@ -1673,27 +1785,36 @@ def runner():
         def ok(res_list):
             if not res_list: return False
             r = res_list[0]
-            if not r.response.success: return False
+            if not getattr(r.response, "success", False): return False
             return True
 
-        async def next_chal():
-            nonlocal i_env
-            e = envs[i_env]; i_env = (i_env + 1) % len(envs)
-            chal, uses = chal_cache.get(e, (None, 0))
+        async def get_env_challenge(e: BaseEnv) -> Challenge:
+            key = e.name
+            chal, uses = chal_cache.get(key, (None, 0))
             if chal is None or uses >= MAX_USES:
-                chal, uses = await e.generate(), 0
-            chal_cache[e] = (chal, uses + 1)
+                # Build a stable placeholder challenge; actual evaluation happens in run_episode
+                chal, uses = Challenge(env=e, prompt=f"{e.name} placeholder", extra={}), 0
+            chal_cache[key] = (chal, uses + 1)
             return chal
 
-        async def schedule(miner, inflight, now):
+        async def schedule_env_round(e: BaseEnv):
             nonlocal total_requests, requests_since_last_log
-            uid = int(miner.uid)
-            if uid in inflight: return
-            if now < cooldown_until[uid]: return
-            chal = await next_chal()
-            inflight[uid] = asyncio.create_task(run(chal, miner, timeout=180))
-            total_requests += 1
-            requests_since_last_log += 1
+            name = e.name
+            if env_inflight[name]:
+                return
+            # Compute common id for this env round
+            data_len = (getattr(e, "data_len", 200) or 200)
+            tid = random.randint(0, int(data_len) - 1)
+            chal = await get_env_challenge(e)
+            tasks = {}
+            for m in miners_map.values():
+                if not getattr(m, "model", None):
+                    continue
+                t = asyncio.create_task(run([chal], m, timeout=180, task_ids={name: tid}))
+                tasks[int(m.uid)] = t
+                total_requests += 1
+                requests_since_last_log += 1
+            env_inflight[name] = tasks
 
         async def ensure_subtensor():
             nonlocal subtensor
@@ -1749,8 +1870,14 @@ def runner():
                     logger.debug(f"Until Sink: {len(batch)}/{SINK_BATCH} Time: {elapsed}/{SINK_MAX_WAIT}")
                     await asyncio.sleep(3)
                     if len(batch) >= SINK_BATCH or (batch and elapsed >= SINK_MAX_WAIT):
-                        st = await ensure_subtensor()
-                        blk = await st.get_current_block()
+                        try:
+                            st = await ensure_subtensor()
+                            blk = await st.get_current_block()
+                        except BaseException as e:
+                            logger.warning(f"sink_worker: get_current_block() failed, will retry later. err={e!r}")
+                            traceback.print_exc()
+                            continue
+
                         # Flatten: items may be single Result or list[Result]
                         flat = []
                         for it in batch:
@@ -1760,33 +1887,21 @@ def runner():
                                 flat.append(it)
                         logger.debug(f"sink_worker: flushing {len(flat)} results")
                         try:
-                            await sink(wallet=wallet, block=blk, results=flat)
-                        except Exception:
+                            await sink_enqueue(wallet, blk, flat)
+                        except Exception as e:
+                            logger.warning(f"sink_worker: sink_enqueue() failed, will retry later. err={e!r}")
                             traceback.print_exc()
                             # keep going; don't drop future batches
                         batch.clear()
                         first_put_time = None
-                except asyncio.CancelledError:
-                    # drain and final flush
-                    flat = []
-                    while not sink_q.empty():
-                        it = sink_q.get_nowait()
-                        if isinstance(it, list): flat.extend(it)
-                        else: flat.append(it)
-                    if flat:
-                        try:
-                            st = await ensure_subtensor()
-                            blk = await st.get_current_block()
-                            logger.debug(f"sink_worker: final flush {len(flat)}")
-                            await sink(wallet=wallet, block=blk, results=flat)
-                        except Exception:
-                            traceback.print_exc()
-                    break
+                except BaseException:
+                    traceback.print_exc()
+                    logger.error("sink_worker: unexpected error, continuing loop")
+                    await asyncio.sleep(1)
 
         async def main_loop():
             global HEARTBEAT
             nonlocal last_status_log, requests_since_last_log
-            inflight = {}
             sink_task = asyncio.create_task(sink_worker())
             try:
                 while True:
@@ -1799,56 +1914,82 @@ def runner():
                         await asyncio.sleep(1)
                         continue
 
+                    # Pre-warm shared container envs if enabled
+                    for e in envs:
+                        if isinstance(e, ContainerEnv):
+                            try:
+                                await e.ensure_ready()
+                            except Exception as ex:
+                                logger.warning(f"ensure_ready failed for {e.name}: {ex}")
+
                     # periodic status logging
                     if now - last_status_log >= 30:
                         elapsed = now - last_status_log if last_status_log > 0 else 30
                         rps = requests_since_last_log / elapsed
-                        cooldown_count = sum(1 for uid in miners_map.keys() if now < cooldown_until[uid])
                         queue_size = sink_q.qsize()
-                        logger.info(f"[STATUS] miners={len(miners_map)} inflight={len(inflight)} cooldown={cooldown_count} queue={queue_size} req/s={rps:.1f} total_req={total_requests}")
+                        inflight_total = sum(len(d) for d in env_inflight.values())
+                        logger.info(f"[STATUS] miners={len(miners_map)} inflight={inflight_total} queue={queue_size} req/s={rps:.1f} total_req={total_requests}")
                         last_status_log = now
                         requests_since_last_log = 0
 
-                    # seed/respect cooldowns
-                    for m in miners_map.values():
-                        await schedule(m, inflight, now)
+                    # Schedule a round per env if idle
+                    for e in envs:
+                        await schedule_env_round(e)
 
-                    if not inflight:
+                    # Aggregate inflight tasks across envs
+                    all_tasks = [t for d in env_inflight.values() for t in d.values()]
+                    if not all_tasks:
                         await asyncio.sleep(0.2)
                         continue
 
-                    done, _ = await asyncio.wait(inflight.values(), return_when=asyncio.FIRST_COMPLETED)
-                    HEARTBEAT = now = time.monotonic()
+                    done, _ = await asyncio.wait(all_tasks, return_when=asyncio.FIRST_COMPLETED, timeout=5.0)
+                    HEARTBEAT = now = time.monotonic()  # tick during long episodes
                     for t in done:
-                        uid = next((u for u, tk in list(inflight.items()) if tk is t), None)
-                        miner = miners_map.get(uid)
-                        inflight.pop(uid, None)
+                        # locate env + uid for task
+                        found = None
+                        for name, d in env_inflight.items():
+                            for uid, tk in d.items():
+                                if tk is t:
+                                    found = (name, uid)
+                                    break
+                            if found: break
+                        name, uid = found if found else ("?", -1)
+                        # Remove inflight entry
+                        if name in env_inflight:
+                            env_inflight[name].pop(uid, None)
                         try:
-                            res_list = await t  # list[Result]; may be []
+                            res_list = await t  # list[Result]
                         except Exception as e:
-                            logger.debug(f"miner {uid} task error: {e}")
+                            logger.debug(f"task error env={name} uid={uid}: {e}")
                             res_list = []
 
-                        if ok(res_list):
-                            # reset backoff, enqueue results (non-blocking)
-                            delay[uid] = BACKOFF0
-                            cooldown_until[uid] = now
-                            # push entire list; sink worker will flatten
+                        if res_list:
+                            # enqueue results for sink
                             sink_q.put_nowait(res_list)
-                            queue_size = sink_q.qsize()
-                            logger.debug(f"miner {uid} OK; queued {len(res_list)}, queue_size={queue_size}")
-                        else:
-                            print ('not ok')
-                            # exponential backoff + jitter
-                            d = min(delay[uid] * 2, BACKOFF_CAP)
-                            jitter = random.uniform(0, d * 0.2)
-                            delay[uid] = d
-                            cooldown_until[uid] = now + d + jitter
-                            logger.debug(f"miner {uid} FAIL; cooldown {d:+.1f}s(+{jitter:.1f})")
+                            # Update metrics/logs for each result
+                            for r in res_list:
+                                try:
+                                    SCORE.labels(uid=r.miner.uid, env=r.challenge.env.name).set(r.evaluation.score)
+                                except Exception:
+                                    pass
+                                logger.debug(
+                                    LOG_TEMPLATE.format(
+                                        pct=0,
+                                        env=r.challenge.env.name,
+                                        uid=r.miner.uid,
+                                        model=(r.miner.model or "")[:50],
+                                        success="RECV" if getattr(r.response, "success", False) else "NULL",
+                                        score=r.evaluation.score,
+                                        latency=r.response.latency_seconds,
+                                    )
+                                )
 
-                        # try to reschedule
-                        if miner:
-                            await schedule(miner, inflight, now)
+                        # If env round completed (no more inflight), advance id and immediately schedule next round
+                        if name in env_inflight and not env_inflight[name]:
+                            env_round[name] = (env_round[name] + 1) % (next((e.data_len for e in envs if e.name == name), 200) or 200)
+                            e = next((e for e in envs if e.name == name), None)
+                            if e is not None:
+                                await schedule_env_round(e)
             except asyncio.CancelledError:
                 pass
             finally:
@@ -1860,7 +2001,8 @@ def runner():
         await main_loop()
 
     async def main():
-        await asyncio.gather(_run(), watchdog(timeout=600))
+        timeout = int(os.getenv("AFFINE_WATCHDOG_TIMEOUT", "900"))
+        await asyncio.gather(_run(), watchdog(timeout=timeout))
 
     asyncio.run(main())
 
@@ -2051,6 +2193,466 @@ async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[f
         logger.warning(f"Signer call timed out: {e}. Not falling back to local because validator has no wallet.")
         return
     
+# --- Scoring hyperparameters --------------------------------------------------
+TAIL = 10_000
+ALPHA = 0.9
+EPS_FLOOR   = 0.005
+Z_NOT_WORSE = 1.28
+EPS_WIN     = 0.008
+Z_WIN       = 0.5
+ELIG        = 0.03 
+
+async def get_weights(tail: int = TAIL, scale: float = 1):
+    """
+    Compute miner weights using ε-Pareto dominance and combinatoric subset winners.
+
+    Pipeline
+      1) Ingest last `tail` blocks → per-miner per-env accuracy.
+      2) Determine eligibility (>=90% of per-env max count AND must be queryable).
+      3) Global ε-dominance (all envs) for canonical 'best' (for tie breaks / summaries).
+      4) Combinatoric scoring:
+           - For every non-empty subset S of ENVS, pick the ε-Pareto winner on S.
+           - Award K_|S| where K_1 = scale, K_s = C(N, s-1)*K_{s-1}.
+         Fallback if no dominance edges on S: earliest version (earlier block wins).
+      5) Normalize scores over eligibles to produce weights. Metrics + summary emitted.
+
+    Returns:
+      (uids, weights): list of eligible UIDs (best last) and their weights (sum to 1).
+    """
+
+    # --- fetch + prune --------------------------------------------------------
+    st = await get_subtensor()
+    blk = await st.get_current_block()
+    logger.info(f"Pruning {tail} blocks from {blk - tail} to {blk}")
+    await prune(tail=tail)
+
+    meta = await st.metagraph(NETUID)
+    BASE_HK = meta.hotkeys[0]
+    N_envs = len(ENVS)
+    
+    # --- get currently queryable miners ---------------------------------------
+    queryable_miners = await miners(meta=meta)
+    queryable_hks = {m.hotkey for m in queryable_miners.values()}
+    logger.info(f"Found {len(queryable_hks)} queryable miners (hot, valid chute, not gated)")
+
+    # Tallies for all known hotkeys (so metrics update is safe even if some have no data)
+    cnt   = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env counts
+    succ  = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env correct (0/1 or [0,1])
+    prev  = {}                                                # last sample per hk
+    v_id  = {}                                                # (model, revision) per hk
+    first_block = {}                                          # earliest block for current version
+
+    # Pre-seed earliest commit block per miner from on-chain commitments
+    try:
+        commits = await st.get_all_revealed_commitments(NETUID)
+        for uid, hk in enumerate(meta.hotkeys):
+            if hk in commits:
+                blk, _ = commits[hk][-1]
+                first_block[hk] = 0 if uid == 0 else int(blk)
+    except Exception:
+        pass
+
+    # --- ingest ---------------------------------------------------------------
+    logger.info(f"Loading data from {blk - tail} to {blk}")
+    async for c in dataset(tail=tail):
+        NRESULTS.inc()
+        hk, env = c.miner.hotkey, c.challenge.env.name
+
+        # keep the base hk; otherwise require model family
+        try:
+            name = c.miner.model.split("/", 1)[1].lower()
+        except Exception:
+            name = str(c.miner.model).lower()
+        if hk not in cnt or (hk != BASE_HK and not name.startswith("affine")):
+            continue
+
+        cur_vid = (c.miner.model, c.miner.revision)
+
+        # On version change, reset ALL env streams and timestamp to current block
+        if v_id.get(hk) != cur_vid:
+            v_id[hk] = cur_vid
+            first_block[hk] = c.miner.block
+            for e in ENVS:
+                cnt[hk][e] = 0
+                succ[hk][e] = 0
+        else:
+            # Keep earliest commit block for the active version
+            try:
+                fb = int(first_block.get(hk, c.miner.block)) if first_block.get(hk) is not None else int(c.miner.block)
+                cb = int(c.miner.block) if c.miner.block is not None else fb
+                first_block[hk] = fb if fb <= cb else cb
+            except Exception:
+                pass
+
+        # accumulate on successes.
+        prev[hk] = c
+        if c.response.success:
+            cnt[hk][env]  += 1
+            succ[hk][env] += float(c.evaluation.score)
+
+    logger.info("Collected results.")
+
+    if not prev:
+        logger.warning("No results collected; defaulting to uid 0")
+        return [0], [1.0]
+
+    # --- accuracy + MAXENV ----------------------------------------------------
+    acc = {
+        hk: {e: (succ[hk][e] / cnt[hk][e] if cnt[hk][e] else 0.0) for e in ENVS}
+        for hk in meta.hotkeys
+    }
+
+    active_hks = list(prev.keys())
+    for e in ENVS:
+        max_e = max((acc[hk][e] for hk in active_hks), default=0.0)
+        MAXENV.labels(env=e).set(max_e)
+    logger.info("Computed accuracy & updated MAXENV.")
+
+    # --- eligibility: must be queryable AND meet sample requirements ---------
+    required = {}
+    for e in ENVS:
+        max_cnt = max((cnt[hk][e] for hk in active_hks), default=0)
+        max_cnt = min(max_cnt, 2000)
+        required[e] = 10 + int(ELIG * max_cnt)
+    # Only eligible if: 1) currently queryable, 2) meets sample requirements
+    eligible = {hk for hk in active_hks 
+                if hk in queryable_hks and all(cnt[hk][e] >= required[e] for e in ENVS)}
+    logger.info(f"Eligible miners: {len(eligible)} (from {len(active_hks)} active, {len(queryable_hks)} queryable)")
+
+    # --- ε-Pareto dominance helpers ------------------------------------------
+    def thr_not_worse(a_i: float, n_i: int, a_j: float, n_j: int) -> float:
+        """Tolerance for 'not worse' on an env: max(EPS_FLOOR, Z * SE_diff) with capped n to blunt volume advantage."""
+        if Z_NOT_WORSE <= 0:
+            return EPS_FLOOR
+        n_i_eff = min(int(n_i), 1000)
+        n_j_eff = min(int(n_j), 1000)
+        # Clamp accuracies into [0, 1] to ensure valid Bernoulli variance and avoid negative sqrt domain
+        p_i = min(max(a_i, 0.0), 1.0)
+        p_j = min(max(a_j, 0.0), 1.0)
+        var = (p_i * (1 - p_i)) / max(n_i_eff, 1) + (p_j * (1 - p_j)) / max(n_j_eff, 1)
+        return max(EPS_FLOOR, Z_NOT_WORSE * math.sqrt(max(var, 0.0)))
+
+    def thr_better(a_i: float, n_i: int, a_j: float, n_j: int, nw: float) -> float:
+        """
+        Margin to claim 'better on at least one env'. Kept ≤ 'not worse' tolerance.
+        Floor-based by default; set Z_WIN>0 to scale with SE_diff.
+        """
+        if Z_WIN > 0:
+            n_i_eff = min(int(n_i), 1000)
+            n_j_eff = min(int(n_j), 1000)
+            # Clamp accuracies into [0, 1] to ensure valid Bernoulli variance and avoid negative sqrt domain
+            p_i = min(max(a_i, 0.0), 1.0)
+            p_j = min(max(a_j, 0.0), 1.0)
+            var = (p_i * (1 - p_i)) / max(n_i_eff, 1) + (p_j * (1 - p_j)) / max(n_j_eff, 1)
+            t = max(EPS_WIN, Z_WIN * math.sqrt(max(var, 0.0)))
+        else:
+            t = EPS_WIN
+        return min(t, nw)
+
+    def dominates_on(a: str, b: str, subset) -> bool:
+        """
+        True iff 'a' is not-worse than 'b' on every env in `subset` (within thr_not_worse),
+        and strictly better on at least one env by thr_better. Full ε-ties break by earlier start.
+        """
+        not_worse_all = True
+        better_any    = False
+        tie_all       = True
+        for e in subset:
+            ai, aj = acc[a][e], acc[b][e]
+            ni, nj = cnt[a][e], cnt[b][e]
+            nw  = thr_not_worse(ai, ni, aj, nj)
+            bet = thr_better(ai, ni, aj, nj, nw)
+
+            if ai < aj - nw:
+                not_worse_all = False
+            if ai >= aj + bet:
+                better_any = True
+            if abs(ai - aj) > nw:
+                tie_all = False
+
+        if not_worse_all and better_any:
+            return True
+        if tie_all and first_block.get(a, float("inf")) < first_block.get(b, float("inf")):
+            return True
+        return False
+
+    # Global dominance (full ENVS) for summary + canonical "best"
+    dom_full = defaultdict(int)
+    # Pool for dominance should be eligible miners, or queryable miners if no eligible ones
+    pool_for_dom = eligible if eligible else (queryable_hks & set(active_hks))
+    for a, b in itertools.permutations(pool_for_dom, 2):
+        if dominates_on(a, b, ENVS):
+            dom_full[a] += 1
+    logger.info("Computed ε-dominance counts (full env set).")
+
+    def ts(hk: str) -> int:
+        """Block-number timestamp; prefer earliest commit"""
+        return int(first_block[hk]) if hk in first_block else float('inf')
+
+    # Best should be from queryable miners only
+    best_candidates = pool_for_dom if pool_for_dom else (queryable_hks if queryable_hks else active_hks[:1])
+    best = max(best_candidates, key=lambda hk: (dom_full.get(hk, 0), -ts(hk))) if best_candidates else active_hks[0]
+    best_uid = meta.hotkeys.index(best)
+
+    # --- combinatoric scoring over all non-empty env subsets ------------------
+    def layer_weights(N: int, kappa: float):
+        """Per-subset weights K_s: K_1=kappa; K_s=C(N,s-1)*K_{s-1} for s>=2."""
+        K = {1: kappa}
+        for s in range(2, N + 1):
+            K[s] = kappa * (2**s)
+        return K
+
+    def subset_winner(env_subset):
+        """
+        Winner on env_subset via ε-Pareto. If no dominance edges, fall back to:
+          earliest version start block (earlier block wins).
+        """
+        dom_local = defaultdict(int)
+        for x, y in itertools.permutations(pool_for_dom, 2):
+            if dominates_on(x, y, env_subset):
+                dom_local[x] += 1
+
+        return max(pool_for_dom, key=lambda hk: (dom_local.get(hk, 0), -ts(hk)))
+
+    # Calculate combinatoric scores for all miners (not just eligible)
+    K = layer_weights(N_envs, scale)
+    score = defaultdict(float)
+    layer_points = {hk: defaultdict(float) for hk in active_hks}
+
+    # --- Find single-env winners for highlighting ----------------------------
+    env_winners = {}
+    for e in ENVS:
+        env_winners[e] = subset_winner((e,))
+
+    # Award K_s to each subset winner
+    for s in range(1, N_envs + 1):
+        for env_subset in itertools.combinations(ENVS, s):
+            w = subset_winner(env_subset)
+            score[w] += K[s]
+            layer_points[w][s] += K[s]
+
+    # If no eligible miners exist, fall back to uid 0 with weight 1.0.
+    if not eligible:
+        logger.warning(f"No eligible miners (queryable={len(queryable_hks)}); assigning weight 1.0 to uid 0.")
+        for uid, hk in enumerate(meta.hotkeys):
+            WEIGHT.labels(uid=uid).set(1.0 if uid == 0 else 0.0)
+            for e in ENVS:
+                a = acc[hk][e]
+                if a > 0:
+                    SCORE.labels(uid=uid, env=e).set(a)
+
+        hdr = (
+            ["UID", "Model", "Rev"]
+            + [f"{e}" for e in ENVS]
+            + [f"L{s}" for s in range(1, N_envs + 1)]
+            + ["Pts", "Elig", "Wgt"]
+        )
+        def row(hk: str):
+            m = prev[hk].miner
+            w = 1.0 if hk == best else 0.0
+            model_name = str(m.model)[:50]
+            env_cols = []
+            for e in ENVS:
+                base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}"
+                if hk == env_winners.get(e):
+                    env_cols.append(f"*{base}*")
+                else:
+                    env_cols.append(base)
+            return [
+                m.uid, model_name, str(m.revision)[:5],
+                *env_cols,
+                *[f"{layer_points[hk][s]:.1f}" for s in range(1, N_envs + 1)],
+                f"{score.get(hk, 0.0):.2f}",
+                "Y" if hk in eligible else "N",
+                f"{w:.4f}",
+            ]
+        rows = sorted((row(hk) for hk in active_hks), key=lambda r: (r[-3], r[0]), reverse=True)
+        print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
+        return [0], [1.0]  # Always return uid 0 when no eligible miners
+
+    # Eligible path: normalize scores to weights over the eligible pool only
+    total_points = sum(score[hk] for hk in eligible)
+    if total_points <= 0:
+        logger.warning("Combinatoric scoring returned zero total; falling back to canonical best.")
+        weight_by_hk = {hk: (1.0 if hk == best else 0.0) for hk in eligible}
+    else:
+        weight_by_hk = {hk: (score[hk] / total_points) for hk in eligible}
+
+    # --- summary printout -----------------------------------------------------
+    hdr = (
+        ["UID", "Model", "Rev"]
+        + [f"{e}" for e in ENVS]
+        + [f"L{s}" for s in range(1, N_envs + 1)]
+        + ["Pts", "Elig", "Wgt"]
+    )
+    def row(hk: str):
+        m = prev[hk].miner
+        w = weight_by_hk.get(hk, 0.0)
+        model_name = str(m.model)[:50]
+        env_cols = []
+        for e in ENVS:
+            base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}"
+            if hk == env_winners.get(e):
+                env_cols.append(f"*{base}*")
+            else:
+                env_cols.append(base)
+        return [
+            m.uid, model_name[:30], str(m.revision)[:5],
+            *env_cols,
+            *[f"{layer_points[hk][s]:.1f}" for s in range(1, N_envs + 1)],
+            f"{score.get(hk, 0.0):.2f}",
+            "Y" if hk in eligible else "N",
+            f"{w:.4f}",
+        ]
+    ranked_rows   = sorted((row(hk) for hk in eligible), key=lambda r: float(r[-3]), reverse=True)
+    unranked_rows = sorted((row(hk) for hk in active_hks if hk not in eligible), key=lambda r: float(r[-3]), reverse=True)
+    rows = ranked_rows + unranked_rows
+    print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
+
+    # --- Prometheus updates ---------------------------------------------------
+    for uid, hk in enumerate(meta.hotkeys):
+        WEIGHT.labels(uid=uid).set(weight_by_hk.get(hk, 0.0))
+        for e in ENVS:
+            a = acc[hk][e]
+            if a > 0:
+                SCORE.labels(uid=uid, env=e).set(a)
+
+    # --- Return weights in a stable shape (best last, as before) -------------
+    eligible_uids = [meta.hotkeys.index(hk) for hk in eligible]
+    uids = [u for u in eligible_uids if u != best_uid] + [best_uid]
+    weights = [weight_by_hk.get(meta.hotkeys[u], 0.0) for u in uids]
+    return uids, weights
+
+
+        
+@cli.command("validate")
+def validate():
+    global HEARTBEAT
+    coldkey = get_conf("BT_WALLET_COLD", "default")
+    hotkey  = get_conf("BT_WALLET_HOT", "default")
+    wallet  = bt.wallet(name=coldkey, hotkey=hotkey)    
+    async def _run():     
+        LAST = 0
+        TEMPO = 100
+        subtensor = None
+        while True:
+            try:
+                # ---------------- Wait for set weights. -----------------
+                HEARTBEAT = time.monotonic()
+                if subtensor is None: subtensor = await get_subtensor()
+                BLOCK = await subtensor.get_current_block()
+                if BLOCK % TEMPO != 0 or BLOCK <= LAST: 
+                    logger.debug(f'Waiting ... {BLOCK} % {TEMPO} == {BLOCK % TEMPO} != 0')
+                    await subtensor.wait_for_block()
+                    continue
+                
+                # ---------------- Set weights. ------------------------
+                if os.getenv("AFFINE_FORCE_UID0", "1") == "1":
+                    uids, weights = [0], [1.0]
+                else:
+                    uids, weights = await get_weights()
+        
+                # ---------------- Set weights. ------------------------
+                logger.info("Setting weights ...")
+                await retry_set_weights( wallet, uids=uids, weights=weights, retry = 3)
+                subtensor = await get_subtensor()
+                SETBLOCK = await subtensor.get_current_block()
+                LASTSET.set_function(lambda: SETBLOCK - LAST)
+                LAST = BLOCK           
+            
+                # ---------------- Other telemetry ------------------------
+                CACHE.set(sum( f.stat().st_size for f in CACHE_DIR.glob("*.jsonl") if f.is_file()))
+                
+            except asyncio.CancelledError: break
+            except Exception as e:
+                traceback.print_exc()
+                logger.info(f"Error in validator loop: {e}. Continuing ...")
+                subtensor = None  # Force reconnection on next iteration
+                await asyncio.sleep(10)  # Wait before retrying
+                continue
+            
+    async def main():
+        await asyncio.gather(
+            _run(),
+            watchdog(timeout = (60 * 20))
+        )
+    asyncio.run(main())
+    
+    
+async def validate_api_key(api_key: str, base_url: str = "https://llm.chutes.ai/v1") -> bool:
+    """Validate the API key by making a test request to the API."""
+    if not api_key:
+        return False
+    try:
+        sess = await _get_client()
+        async with sess.get(
+            f"{base_url}/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=aiohttp.ClientTimeout(total=10.0)
+        ) as response:
+            return response.status >= 200 and response.status < 300
+    except Exception as e:
+        logger.error(f"API key validation failed: {e}")
+        return False
+
+def check_env_variables() -> bool:
+    """Check if required environment variables are set and not using default values."""
+    errors = []
+
+    # Check CHUTES_API_KEY
+    chutes_api_key = os.getenv("CHUTES_API_KEY", "")
+    if not chutes_api_key:
+        errors.append("CHUTES_API_KEY is not set")
+
+    # Check HF_USER
+    hf_user = os.getenv("HF_USER", "")
+    if not hf_user:
+        errors.append("HF_USER is not set")
+    elif hf_user == "myaccount":
+        errors.append("HF_USER is still set to default value 'myaccount'. Please set your actual Hugging Face username")
+
+    # Check HF_TOKEN
+    hf_token = os.getenv("HF_TOKEN", "")
+    if not hf_token:
+        errors.append("HF_TOKEN is not set")
+    elif hf_token == "hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx":
+        errors.append("HF_TOKEN is still set to default value. Please set your actual Hugging Face token")
+
+    if errors:
+        logger.error("Environment variable check failed:")
+        for error in errors:
+            logger.error(f"  - {error}")
+        logger.info("\nPlease set the required environment variables in your .env file:")
+        logger.info("  HF_USER=your_huggingface_username")
+        logger.info("  HF_TOKEN=your_huggingface_token")
+        return False
+    
+    return True
+
+@cli.command("weights")
+def weights():
+    async def _run_weights():
+        try:
+            if not check_env_variables():
+                return
+
+            api_key = os.getenv("CHUTES_API_KEY", "")
+            is_valid = await validate_api_key(api_key)
+            if not is_valid:
+                logger.error("CHUTES_API_KEY validation failed. The key may be invalid or expired.")
+                logger.info("Please check your CHUTES_API_KEY and ensure it has proper permissions")
+                return
+            
+            logger.debug("All environment variables validated successfully")
+            return await get_weights()
+        finally:
+            for client in _CLIENTS.values():
+                if client and not client.closed:
+                    await client.close()
+            _CLIENTS.clear()
+    
+    asyncio.run(_run_weights())
+
 # --------------------------------------------------------------------------- #
 #                              Pull Model                                     #
 # --------------------------------------------------------------------------- #
@@ -2280,24 +2882,5 @@ chute = build_sglang_chute(
 
     asyncio.run(commit_to_chain())
 
-    # -----------------------------------------------------------------------------
-    # 9. Warm up model until it’s marked hot
-    # -----------------------------------------------------------------------------
-    async def warmup_model():
-        logger.debug("Warming up model with SAT challenges")
-        sub       = await get_subtensor()
-        meta      = await sub.metagraph(NETUID)
-        my_uid    = meta.hotkeys.index(wallet.hotkey.ss58_address)
-        miner  = (await miners(netuid=NETUID))[my_uid]
-
-        while not (miner.chute or {}).get("hot", False):
-            challenge = await SAT().generate()
-            await run(challenges=challenge, miners=[miner])
-            await sub.wait_for_block()
-            miner = (await miners(netuid=NETUID))[my_uid]
-            logger.trace("Checked hot status: %s", (miner.chute or {}).get("hot"))
-
-        logger.debug("Model is now hot and ready")
-
-    asyncio.run(warmup_model())
-    logger.debug("Mining setup complete. Model is live!")  
+    # Warmup via legacy SAT is removed in Quixand-only mode.
+    logger.debug("Mining setup complete. Model is live!")

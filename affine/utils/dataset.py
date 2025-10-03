@@ -126,6 +126,8 @@ class R2BufferedDataset:
         self._endpoint_url  = endpoint
         self._access_key    = access_key
         self._secret_key    = secret_key
+        self._public_read   = getattr(af, "PUBLIC_READ", False)
+        self._public_base   = getattr(af, "R2_PUBLIC_BASE", "")
 
         self._buffer: Deque[Any] = deque()
         self._lock   = asyncio.Lock()
@@ -151,11 +153,19 @@ class R2BufferedDataset:
     async def _ensure_index(self) -> None:
         if self._index is not None:
             return
-        af.logger.trace(f"Loading R2 index: s3://{self._folder}/{self._index_key}")
-        async with self._client_ctx() as c:
-            resp = await c.get_object(Bucket=self._folder, Key=self._index_key)
-            body = await resp["Body"].read()
-            self._index = json.loads(body.decode())
+        if self._public_read:
+            url = f"{self._public_base}/{self._index_key}"
+            sess = await af._get_client()
+            af.logger.trace(f"Loading public R2 index: {url}")
+            async with sess.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                resp.raise_for_status()
+                self._index = await resp.json()
+        else:
+            af.logger.trace(f"Loading R2 index: s3://{self._folder}/{self._index_key}")
+            async with self._client_ctx() as c:
+                resp = await c.get_object(Bucket=self._folder, Key=self._index_key)
+                body = await resp["Body"].read()
+                self._index = json.loads(body.decode())
         self._files = list(self._index.get("files", []))
         if not self.total_size:
             self.total_size = int(self._index.get("total_rows", 0))
@@ -174,10 +184,18 @@ class R2BufferedDataset:
         key = file_info.get("key") or (self._dataset_folder + file_info.get("filename", ""))
         if not key:
             return []
-        af.logger.trace(f"Downloading R2 chunk: s3://{self._folder}/{key}")
-        async with self._client_ctx() as c:
-            resp = await c.get_object(Bucket=self._folder, Key=key)
-            body = await resp["Body"].read()
+        if self._public_read:
+            url = f"{self._public_base}/{key}"
+            af.logger.trace(f"Downloading public R2 chunk: {url}")
+            sess = await af._get_client()
+            async with sess.get(url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                resp.raise_for_status()
+                body = await resp.read()
+        else:
+            af.logger.trace(f"Downloading R2 chunk: s3://{self._folder}/{key}")
+            async with self._client_ctx() as c:
+                resp = await c.get_object(Bucket=self._folder, Key=key)
+                body = await resp["Body"].read()
         try:
             data = json.loads(body.decode())
         except Exception as e:
