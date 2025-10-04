@@ -1662,6 +1662,9 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
         Winner on env_subset via ε-Pareto. If no dominance edges, fall back to:
           earliest version start block (earlier block wins).
         """
+        if pool_for_dom:
+            return None
+            
         dom_local = defaultdict(int)
         for x, y in itertools.permutations(pool_for_dom, 2):
             if dominates_on(x, y, env_subset):
