@@ -771,6 +771,7 @@ async def run(challenges, miners, timeout=240, retries=0, backoff=1, task_ids: O
                 ev = await chal.env.run_episode(policy=miner, task_id=(task_ids or {}).get(chal.env.name) if task_ids else None)
                 resp = Response(response=None, latency_seconds=time.monotonic()-start, attempts=1, model=miner.model or "", error=None, success=True)
             except Exception as e:
+                traceback.print_exc()
                 ev = Evaluation(env=chal.env, score=0.0, extra={"error": str(e), "evaluation_failed": True})
                 resp = Response(response=None, latency_seconds=time.monotonic()-start, attempts=1, model=miner.model or "", error=str(e), success=False)
             # Update metrics for AgentGym immediately
@@ -1662,7 +1663,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
         Winner on env_subset via ε-Pareto. If no dominance edges, fall back to:
           earliest version start block (earlier block wins).
         """
-        if pool_for_dom:
+        if not pool_for_dom:
             return None
             
         dom_local = defaultdict(int)
@@ -1805,7 +1806,7 @@ def validate():
                     continue
                 
                 # ---------------- Set weights. ------------------------
-                if os.getenv("AFFINE_FORCE_UID0", "1") == "1":
+                if os.getenv("AFFINE_FORCE_UID0", "0") == "1":
                     uids, weights = [0], [1.0]
                 else:
                     uids, weights = await get_weights()
