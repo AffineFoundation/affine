@@ -1008,6 +1008,13 @@ def runner():
                 chal, uses = Challenge(env=e, prompt=f"{e.name} placeholder", extra={}), 0
             chal_cache[key] = (chal, uses + 1)
             return chal
+        
+        # Safe run here with a max concurrency allowed to hit the chutes endpoint at any point.
+        MAX_CONCURRENCY = int(os.getenv("AFFINE_RUNNER_MAX_CONCURRENCY", "50"))
+        run_sema = asyncio.Semaphore(MAX_CONCURRENCY)
+        async def safe_run(chals, miner, **kwargs):
+            async with run_sema:
+                return await run(chals, miner, **kwargs)
 
         async def schedule_env_round(e: BaseEnv):
             nonlocal total_requests, requests_since_last_log
@@ -1022,7 +1029,7 @@ def runner():
             for m in miners_map.values():
                 if not getattr(m, "model", None):
                     continue
-                t = asyncio.create_task(run([chal], m, timeout=180, task_ids={name: tid}))
+                t = asyncio.create_task(safe_run([chal], m, timeout=180, task_ids={name: tid}))
                 tasks[int(m.uid)] = t
                 total_requests += 1
                 requests_since_last_log += 1
