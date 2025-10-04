@@ -62,21 +62,8 @@ def singleton(key:str, factory):
     return get_instance
 
 # --------------------------------------------------------------------------- #
-#                       Prometheus                         #
+#                       Metrics removed                                       #
 # --------------------------------------------------------------------------- #
-from prometheus_client import Counter, CollectorRegistry, start_http_server, Gauge
-METRICS_PORT   = int(os.getenv("AFFINE_METRICS_PORT", "8000"))
-METRICS_ADDR   = os.getenv("AFFINE_METRICS_ADDR", "0.0.0.0")
-REGISTRY       = CollectorRegistry(auto_describe=True)
-QCOUNT  = Counter("qcount", "qcount", ["model"], registry=REGISTRY)
-SCORE   = Gauge( "score", "score", ["uid", "env"], registry=REGISTRY)
-RANK    = Gauge( "rank", "rank", ["uid", "env"], registry=REGISTRY)
-WEIGHT  = Gauge( "weight", "weight", ["uid"], registry=REGISTRY)
-LASTSET = Gauge( "lastset", "lastset", registry=REGISTRY)
-NRESULTS = Gauge( "nresults", "nresults", registry=REGISTRY)
-MAXENV = Gauge("maxenv", "maxenv", ["env"], registry=REGISTRY)
-CACHE = Gauge( "cache", "cache", registry=REGISTRY)
-
 # Model gating check cache
 MODEL_GATING_CACHE = {}  # {model_id: (is_gated, last_checked)}
 _GATING_LOCKS: Dict[int, asyncio.Lock] = {}
@@ -120,10 +107,7 @@ def _trace(self, msg, *args, **kwargs):
 logging.Logger.trace = _trace
 logger = logging.getLogger("affine")
 def setup_logging(verbosity: int):
-    if not getattr(setup_logging, "_prom_started", False):
-        try: start_http_server(METRICS_PORT, METRICS_ADDR, registry=REGISTRY)
-        except: pass
-        setup_logging._prom_started = True
+    # Metrics server removed
     level = TRACE if verbosity >= 3 else logging.DEBUG if verbosity == 2 else logging.INFO if verbosity == 1 else logging.CRITICAL + 1
     for noisy in ["websockets", "bittensor", "bittensor-cli", "btdecode", "asyncio", "aiobotocore.regions", "botocore"]:
         logging.getLogger(noisy).setLevel(logging.WARNING)
@@ -465,29 +449,22 @@ ENVS: Tuple[str, ...] = _get_env_list_from_envvar()
 WINDOW        = int(os.getenv("AFFINE_WINDOW", 20))
 RESULT_PREFIX = "affine/results/"
 INDEX_KEY     = "affine/index.json"
-
 FOLDER  = os.getenv("R2_FOLDER", "affine" )
 BUCKET  = os.getenv("R2_BUCKET_ID", "00523074f51300584834607253cae0fa" )
 ACCESS  = os.getenv("R2_WRITE_ACCESS_KEY_ID", "")
 SECRET  = os.getenv("R2_WRITE_SECRET_ACCESS_KEY", "")
 ENDPOINT = f"https://{BUCKET}.r2.cloudflarestorage.com"
-
-# Public (unauthenticated) read mode via r2.dev — set AFFINE_R2_PUBLIC=1 to enable
 PUBLIC_READ = os.getenv("AFFINE_R2_PUBLIC", "1") == "1"
 ACCOUNT_ID  = os.getenv("R2_ACCOUNT_ID", BUCKET)
-
 R2_PUBLIC_BASE = f"https://pub-bf429ea7a5694b99adaf3d444cbbe64d.r2.dev"
+CACHE_DIR = Path(os.getenv("AFFINE_CACHE_DIR", Path.home() / ".cache/affine/blocks"))
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 get_client_ctx = lambda: get_session().create_client(
     "s3", endpoint_url=ENDPOINT,
     aws_access_key_id=ACCESS, aws_secret_access_key=SECRET,
     config=Config(max_pool_connections=256)
 )
-
-CACHE_DIR = Path(os.getenv("AFFINE_CACHE_DIR",
-                 Path.home() / ".cache" / "affine" / "blocks"))
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
 def _w(b: int) -> int: return (b // WINDOW) * WINDOW
 
 # ── fast JSON ───────────────────────────────────────────────────────────────
@@ -617,26 +594,11 @@ async def dataset(
     
 # --------------------------------------------------------------------------- #
 async def sign_results( wallet, results ):
-    try:
-        signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
-        timeout = aiohttp.ClientTimeout(connect=2, total=30)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            payloads = [str(r.challenge) for r in results]
-            resp = await session.post(f"{signer_url}/sign", json={"payloads": payloads})
-            if resp.status == 200:
-                data = await resp.json()
-                sigs = data.get("signatures") or []
-                hotkey = data.get("hotkey")
-                for r, s in zip(results, sigs):
-                    r.hotkey = hotkey
-                    r.signature = s
-    except Exception as e:
-        logger.info(f"sink: signer unavailable, using local signing: {type(e).__name__}: {e}")
-        hotkey = wallet.hotkey.ss58_address
-        for r in results: 
-            r.sign(wallet)
-    finally:
-        return hotkey, results
+    # Always sign locally using the provided wallet
+    hotkey = wallet.hotkey.ss58_address
+    for r in results:
+        r.sign(wallet)
+    return hotkey, results
 
 # ── Minimal sink / misc helpers (optional) ──────────────────────────────────
 # Global buffer to reduce R2 writes; flush on threshold or force.
@@ -724,7 +686,7 @@ async def query(prompt, model: str = "unsloth/gemma-3-12b-it", slug: str = "llm"
     url = f"https://{slug}.chutes.ai/v1/chat/completions"
     hdr = {"Authorization": f"Bearer {get_conf('CHUTES_API_KEY')}", "Content-Type": "application/json"}
     start = time.monotonic()
-    QCOUNT.labels(model=model).inc()
+    # metrics removed
     R = lambda resp, at, err, ok: Response(response=resp, latency_seconds=time.monotonic()-start,
                                           attempts=at, model=model, error=err, success=ok)
     sess = await _get_client()
@@ -773,11 +735,6 @@ async def run(challenges, miners, timeout=240, retries=0, backoff=1, task_ids: O
             except Exception as e:
                 ev = Evaluation(env=chal.env, score=0.0, extra={"error": str(e), "evaluation_failed": True})
                 resp = Response(response=None, latency_seconds=time.monotonic()-start, attempts=1, model=miner.model or "", error=str(e), success=False)
-            # Update metrics for AgentGym immediately
-            try:
-                SCORE.labels(uid=miner.uid, env=chal.env.name).set(ev.score)
-            except Exception:
-                pass
             # Log score line
             logger.info(f"[SCORE] U{miner.uid:>3d} {chal.env.name:<20} = {ev.score:.4f}")
             return Result(miner=miner, challenge=chal, response=resp, evaluation=ev)
@@ -1221,12 +1178,8 @@ def runner():
                         if res_list:
                             # enqueue results for sink
                             sink_q.put_nowait(res_list)
-                            # Update metrics/logs for each result
+                            # Update logs for each result
                             for r in res_list:
-                                try:
-                                    SCORE.labels(uid=r.miner.uid, env=r.challenge.env.name).set(r.evaluation.score)
-                                except Exception:
-                                    pass
                                 logger.debug(
                                     LOG_TEMPLATE.format(
                                         pct=0,
@@ -1305,148 +1258,19 @@ async def _set_weights_with_confirmation(
         await asyncio.sleep(delay_s)
     return False
 
-@cli.command("signer")
-@click.option('--host', default=os.getenv('SIGNER_HOST', '0.0.0.0'))
-@click.option('--port', default=int(os.getenv('SIGNER_PORT', '8080')))
-def signer(host: str, port: int):
-    """Start lightweight HTTP signer service."""
-    async def _run():
-        from aiohttp import web
-        coldkey = get_conf("BT_WALLET_COLD", "default")
-        hotkey = get_conf("BT_WALLET_HOT", "default")
-        wallet = bt.wallet(name=coldkey, hotkey=hotkey)
-        @web.middleware
-        async def access_log(request: "web.Request", handler):
-            start = time.monotonic()
-            try:
-                resp = await handler(request)
-                return resp
-            finally:
-                dur = (time.monotonic() - start) * 1000
-                logger.info(
-                    f"[signer] {request.remote} {request.method} {request.path} -> {getattr(request, 'response', None) and getattr(request.response, 'status', '?')} {dur:.1f}ms"
-                )
-
-        async def health(_request: "web.Request"):
-            return web.json_response({"ok": True})
     
-        async def sign_handler(request: "web.Request"):
-            try:
-                payload = await request.json()
-                data = payload.get("payloads") or payload.get("data") or []
-                if isinstance(data, str):
-                    data = [data]
-                sigs = [(wallet.hotkey.sign(data=d)).hex() for d in data]
-                return web.json_response({
-                    "success": True,
-                    "signatures": sigs,
-                    "hotkey": wallet.hotkey.ss58_address
-                })
-            except Exception as e:
-                logger.error(f"[signer] /sign error: {e}")
-                return web.json_response({"success": False, "error": str(e)}, status=500)
-
-
-        async def set_weights_handler(request: "web.Request"):
-            try:
-                logger.info("[signer] /set_weights: request received")
-                payload = await request.json()
-                netuid = int(payload.get('netuid', NETUID))
-                uids = payload.get('uids') or []
-                weights = payload.get('weights') or []
-                wait_for_inclusion = bool(payload.get('wait_for_inclusion', False))
-                ok = await _set_weights_with_confirmation(
-                    wallet,
-                    netuid,
-                    uids,
-                    weights,
-                    wait_for_inclusion,
-                    retries=int(os.getenv("SIGNER_RETRIES", "10")),
-                    delay_s=float(os.getenv("SIGNER_RETRY_DELAY", "2")),
-                    log_prefix="[signer]",
-                )
-                logger.info(f"[signer] /set_weights: confirmation={'ok' if ok else 'failed'}")
-                return web.json_response({"success": True} if ok else {"success": False, "error": "confirmation failed"}, status=200 if ok else 500)
-            except Exception as e:
-                logger.error(f"[signer] set_weights error: {e}")
-                return web.json_response({"success": False, "error": str(e)}, status=500)
-
-        app = web.Application(middlewares=[access_log])
-        app.add_routes([
-            web.get('/healthz', health),
-            web.post('/set_weights', set_weights_handler),
-            web.post('/sign', sign_handler),
-        ])
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, host=host, port=port)
-        await site.start()
-        try:
-            hn = socket.gethostname()
-            ip = socket.gethostbyname(hn)
-        except Exception:
-            hn, ip = ("?", "?")
-        logger.info(f"Signer service listening on http://{host}:{port} hostname={hn} ip={ip}")
-        while True:
-            await asyncio.sleep(3600)
-
-    asyncio.run(_run())
 
 async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[float], retry: int = 10 ):
-    # Delegate to signer; fallback to shared helper only if signer is unreachable
-    signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
-    try:
-        logger.info(f"Calling signer at {signer_url} for set_weights uids={uids}")
-        parsed = urlparse(signer_url)
-        try:
-            infos = socket.getaddrinfo(parsed.hostname, parsed.port or 80, proto=socket.IPPROTO_TCP)
-            addrs = ",".join(sorted({i[4][0] for i in infos}))
-            logger.info(f"Signer DNS: host={parsed.hostname} -> {addrs}")
-        except Exception as e:
-            logger.warning(f"DNS resolve failed for {parsed.hostname}: {e}")
-        timeout = aiohttp.ClientTimeout(connect=2, total=120)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            start = time.monotonic()
-            resp = await session.post(
-                f"{signer_url}/set_weights",
-                json={
-                    "netuid": NETUID,
-                    "weights": weights,
-                    "uids": uids,
-                    "wait_for_inclusion": False,
-                },
-            )
-            dur_ms = (time.monotonic() - start) * 1000
-            logger.info(f"Signer HTTP response status={resp.status} in {dur_ms:.1f}ms")
-            # Try to parse JSON, otherwise log text (trimmed)
-            try:
-                data = await resp.json()
-            except Exception:
-                txt = await resp.text()
-                data = {"raw": (txt[:500] + ('…' if len(txt) > 500 else ''))}
-            logger.info(f"Signer response body={data}")
-            if resp.status == 200 and data.get("success"):
-                LASTSET.set(time.time())
-                return
-            # Do not fallback if signer exists but reports failure
-            logger.warning(f"Signer responded error: status={resp.status} body={data}")
-            return
-    except ClientConnectorError as e:
-        logger.info(f"Signer not reachable ({type(e).__name__}: {e}); falling back to local set_weights once")
-        ok = await _set_weights_with_confirmation(
-            wallet, NETUID, uids, weights, False,
-            retries=int(os.getenv("SIGNER_RETRIES", "10")),
-            delay_s=float(os.getenv("SIGNER_RETRY_DELAY", "2")),
-            log_prefix="[validator-fallback]",
-        )
-        if ok:
-            LASTSET.set(time.time())
-        else:
-            logger.error("Local set_weights confirmation failed")
-        return
-    except asyncio.TimeoutError as e:
-        logger.warning(f"Signer call timed out: {e}. Not falling back to local because validator has no wallet.")
-        return
+    """Set weights directly using the local wallet; no external signer."""
+    ok = await _set_weights_with_confirmation(
+        wallet, NETUID, uids, weights, False,
+        retries=int(os.getenv("SIGNER_RETRIES", "10")),
+        delay_s=float(os.getenv("SIGNER_RETRY_DELAY", "2")),
+        log_prefix="[validator]",
+    )
+    if not ok:
+        logger.error("Local set_weights confirmation failed")
+    return
     
 # --- Scoring hyperparameters --------------------------------------------------
 TAIL = 10_000
@@ -1510,7 +1334,6 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     # --- ingest ---------------------------------------------------------------
     logger.info(f"Loading data from {blk - tail} to {blk}")
     async for c in dataset(tail=tail):
-        NRESULTS.inc()
         hk, env = c.miner.hotkey, c.challenge.env.name
 
         # keep the base hk; otherwise require model family
@@ -1551,7 +1374,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
         logger.warning("No results collected; defaulting to uid 0")
         return [0], [1.0]
 
-    # --- accuracy + MAXENV ----------------------------------------------------
+    # --- accuracy -------------------------------------------------------------
     acc = {
         hk: {e: (succ[hk][e] / cnt[hk][e] if cnt[hk][e] else 0.0) for e in ENVS}
         for hk in meta.hotkeys
@@ -1560,8 +1383,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     active_hks = list(prev.keys())
     for e in ENVS:
         max_e = max((acc[hk][e] for hk in active_hks), default=0.0)
-        MAXENV.labels(env=e).set(max_e)
-    logger.info("Computed accuracy & updated MAXENV.")
+    logger.info("Computed accuracy.")
 
     # --- eligibility: must be queryable AND meet sample requirements ---------
     required = {}
@@ -1692,13 +1514,6 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     # If no eligible miners exist, fall back to uid 0 with weight 1.0.
     if not eligible:
         logger.warning(f"No eligible miners (queryable={len(queryable_hks)}); assigning weight 1.0 to uid 0.")
-        for uid, hk in enumerate(meta.hotkeys):
-            WEIGHT.labels(uid=uid).set(1.0 if uid == 0 else 0.0)
-            for e in ENVS:
-                a = acc[hk][e]
-                if a > 0:
-                    SCORE.labels(uid=uid, env=e).set(a)
-
         hdr = (
             ["UID", "Model", "Rev"]
             + [f"{e}" for e in ENVS]
@@ -1767,13 +1582,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     rows = ranked_rows + unranked_rows
     print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
 
-    # --- Prometheus updates ---------------------------------------------------
-    for uid, hk in enumerate(meta.hotkeys):
-        WEIGHT.labels(uid=uid).set(weight_by_hk.get(hk, 0.0))
-        for e in ENVS:
-            a = acc[hk][e]
-            if a > 0:
-                SCORE.labels(uid=uid, env=e).set(a)
+    # metrics removed
 
     # --- Return weights in a stable shape (best last, as before) -------------
     eligible_uids = [meta.hotkeys.index(hk) for hk in eligible]
@@ -1815,11 +1624,11 @@ def validate():
                 await retry_set_weights( wallet, uids=uids, weights=weights, retry = 3)
                 subtensor = await get_subtensor()
                 SETBLOCK = await subtensor.get_current_block()
-                LASTSET.set_function(lambda: SETBLOCK - LAST)
+                # metrics removed
                 LAST = BLOCK           
             
                 # ---------------- Other telemetry ------------------------
-                CACHE.set(sum( f.stat().st_size for f in CACHE_DIR.glob("*.jsonl") if f.is_file()))
+                # metrics removed
                 
             except asyncio.CancelledError: break
             except Exception as e:

@@ -14,5 +14,3 @@ services:
       dockerfile: Dockerfile
   runner:
     <<: *affine_image
-  signer:
-    <<: *affine_image 
