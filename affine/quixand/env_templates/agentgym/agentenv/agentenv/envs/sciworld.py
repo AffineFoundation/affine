@@ -845,15 +845,16 @@ class SciworldEnvClient(BaseEnvClient):
                 state="Invalid Action.\n\n" + self.observe(), reward=0.0, done=False
             )
         response = self._post("step", {"action": action})
+        clamped_score = max(0.0, response["score"])
         self.info = {
             "observation": response["observation"],
             "reward": response["reward"],
-            "score": response["score"],
+            "score": clamped_score,
             "done": response["done"],
         }
         return StepOutput(
             state=response["observation"],
-            reward=response["score"],
+            reward=clamped_score,
             done=response["done"],
         )
 
