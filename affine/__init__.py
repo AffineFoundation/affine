@@ -1806,7 +1806,7 @@ def validate():
                     continue
                 
                 # ---------------- Set weights. ------------------------
-                if os.getenv("AFFINE_FORCE_UID0", "0") == "1":
+                if os.getenv("AFFINE_FORCE_UID0", "1") == "1":
                     uids, weights = [0], [1.0]
                 else:
                     uids, weights = await get_weights()
