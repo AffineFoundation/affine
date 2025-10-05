@@ -57,7 +57,7 @@ class BaseTask:
                 raise NotImplementedError
 
             step_output = client.step(generated_text)
-            state, step_reward, done = (
+            state, reward, done = (
                 step_output.state,
                 step_output.reward,
                 step_output.done,
