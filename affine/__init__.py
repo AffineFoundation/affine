@@ -1422,7 +1422,7 @@ async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[f
     # Delegate to signer; fallback to shared helper only if signer is unreachable
     signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
     try:
-        logger.info(f"Calling signer at {signer_url} for set_weights uids={uids}")
+        logger.info(f"Calling signer at {signer_url} for set_weights uids={uids}, weights={weights}")
         parsed = urlparse(signer_url)
         try:
             infos = socket.getaddrinfo(parsed.hostname, parsed.port or 80, proto=socket.IPPROTO_TCP)
@@ -1771,7 +1771,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 0.0):
 
     if burn > 0.0:
         hk0 = meta.hotkeys[0]
-        logger.debug(
+        logger.info(
             f"Burn applied: requested burn={burn:.6f} to uid0-target (hotkey={hk0}, uid=0); "
         )
 
