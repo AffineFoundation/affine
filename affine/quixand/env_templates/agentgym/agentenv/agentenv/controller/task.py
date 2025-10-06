@@ -75,6 +75,8 @@ class BaseTask:
             rounds += 1
             if max_rounds is not None and rounds >= max_rounds:
                 break
+        if hasattr(client, "close"):
+            client.close(idx)
 
         if isinstance(agent, APIAgent):
             return APIExperienceOutput(
