@@ -884,15 +884,25 @@ async def miners(
     netuid: int = NETUID,
     meta: object = None,
 ) -> Dict[int, Miner]:
+    blacklist_str = os.getenv("AFFINE_MINER_BLACKLIST", "").strip()
+    blacklisted_hotkeys = set()
+    if blacklist_str:
+        blacklisted_hotkeys = {hk.strip() for hk in blacklist_str.split(",") if hk.strip()}
+        if blacklisted_hotkeys:
+            logger.info(f"Loaded {len(blacklisted_hotkeys)} blacklisted hotkeys from AFFINE_MINER_BLACKLIST")
+    
     sub = await get_subtensor()
     meta = meta or await sub.metagraph(netuid)
     commits = await sub.get_all_revealed_commitments(netuid)
     if uids is None:uids = list(range(len(meta.hotkeys)))
-    elif isinstance(uids, int): uids = [uids]    
+    elif isinstance(uids, int): uids = [uids]
     meta_sem = asyncio.Semaphore(int(os.getenv("AFFINE_META_CONCURRENCY", "12")))
     async def fetch(uid: int):
         try:
             hotkey = meta.hotkeys[ uid ]
+            if hotkey in blacklisted_hotkeys:
+                logger.debug(f"Skipping blacklisted miner uid={uid} hotkey={hotkey}")
+                return None
             if hotkey not in commits: return None
             commit = commits[hotkey]
             block, data = commit[-1]     
