@@ -1483,7 +1483,7 @@ EPS_WIN     = 0.008
 Z_WIN       = 0.5
 ELIG        = 0.03 
 
-async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 1.0):
+async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 0.0):
     """
     Compute miner weights using ε-Pareto dominance and combinatoric subset winners.
 
@@ -1500,6 +1500,13 @@ async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 1.0):
     Returns:
       (uids, weights): list of eligible UIDs (best last) and their weights (sum to 1).
     """
+    
+    burn = max(0.0, min(1.0, burn))
+    if burn >= 1:
+        logger.info(
+            f"Burn all"
+        )
+        return [0], [1.0]
 
     # --- fetch + prune --------------------------------------------------------
     st = await get_subtensor()
@@ -1762,7 +1769,6 @@ async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 1.0):
     else:
         weight_by_hk = {hk: (score[hk] / total_points) for hk in eligible}
 
-    burn = max(0.0, min(1.0, burn))
     if burn > 0.0:
         hk0 = meta.hotkeys[0]
         logger.debug(
@@ -1852,10 +1858,7 @@ def validate():
                 
                 # ---------------- Set weights. ------------------------
                 force_uid0 = float(os.getenv("AFFINE_FORCE_UID0", "1.0"))
-                if force_uid0 >= 0.0 and force_uid0 < 1:
-                    uids, weights = await get_weights(scale=0.5, burn=force_uid0)
-                else:
-                    uids, weights = [0], [1.0]
+                uids, weights = await get_weights(scale=0.5, burn=force_uid0)
                 # ---------------- Set weights. ------------------------
                 logger.info("Setting weights ...")
                 await retry_set_weights( wallet, uids=uids, weights=weights, retry = 3)
