@@ -2198,4 +2198,5 @@ from .tasks import (
     WEBSHOP_factory as WEBSHOP,
     BABYAI_factory as BABYAI,
     SCIWORLD_factory as SCIWORLD,
+    TEXTCRAFT_factory as TEXTCRAFT,
 )

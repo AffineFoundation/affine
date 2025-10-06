@@ -20,7 +20,7 @@ async def main():
     # Query the model directly.
     # NOTE: A CHUTES_API_KEY .env value is required for this command.
     evaluation = await chal.evaluate(miner)
-    print("===" * 30)
+    print("=" * 50)
     print("chal:", chal.env_name)
     print(evaluation)
 
@@ -29,8 +29,17 @@ async def main():
     # evaluation = await chal_alfworld.evaluate(miner, task_id=[0,1,2])
     # evaluation = await chal_alfworld.evaluate(miner, task_id=10)
     evaluation = await chal_alfworld.evaluate(miner)
-    print("===" * 30)
+    print("=" * 50)
+    print("chal:", chal_alfworld.env_name)
     print(evaluation)
+
+    print("=" * 50)
+    print("\nAll Available Environments:")
+    envs = af.tasks.list_available_environments()
+    for env_type, env_names in envs.items():
+        print(f"\n{env_type}:")
+        for name in env_names:
+            print(f"  - {name}")
 
 
 if __name__ == "__main__":

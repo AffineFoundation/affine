@@ -6,13 +6,66 @@ import random
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional, Union, TYPE_CHECKING
+from typing import Dict, Any, List, Optional, Union, TYPE_CHECKING, Type
+from dataclasses import dataclass
+from enum import Enum
 from pydantic import BaseModel, Field, validator, ValidationError
 
 from .quixand.core.sandbox_manager import get_sandbox
-from . import Miner
 
 logger = logging.getLogger(__name__)
+
+
+# ========================= Configuration =========================
+
+
+@dataclass
+class SandboxConfig:
+    """Sandbox configuration"""
+
+    timeout: int = 3600
+    proxy_timeout: int = 700
+    env: Dict[str, str] = None
+
+    def __post_init__(self):
+        if self.env is None:
+            self.env = {
+                "NO_PROXY": "localhost,127.0.0.1",
+                "PYTHONPATH": "/app",
+            }
+
+
+@dataclass
+class EvaluatorConfig:
+    """Evaluator configuration"""
+
+    temperature: float = 0.7
+    timeout: int = 600
+    max_round: int = 10
+
+    def to_payload(self, miner: "Miner", task_ids: List[int] = None) -> Dict[str, Any]:
+        """Convert to evaluator payload"""
+        payload = {
+            "model": miner.model,
+            "base_url": f"https://{miner.slug}.chutes.ai/v1",
+            "temperature": self.temperature,
+            "timeout": self.timeout,
+        }
+
+        if task_ids is not None:
+            payload["ids"] = task_ids
+
+        return payload
+
+
+class EnvType(Enum):
+    """Environment types"""
+
+    AFFINE = "affine"
+    AGENTGYM = "agentgym"
+
+
+# ========================= Models =========================
 
 
 class Evaluation(BaseModel):
@@ -20,13 +73,34 @@ class Evaluation(BaseModel):
     extra: Dict[str, Any] = Field(default_factory=dict)
 
 
+# ========================= Base Classes =========================
+
+
 class BaseSDKEnv(ABC):
     """Base class for all SDK environments"""
+
+    # Class-level configuration
+    _sandbox_config: SandboxConfig = None
+    _evaluator_config: EvaluatorConfig = None
 
     def __init__(self):
         super().__init__()
         self._sandbox = None
         self._sandbox_lock = None
+
+    @property
+    def sandbox_config(self) -> SandboxConfig:
+        """Get sandbox configuration"""
+        if self._sandbox_config is None:
+            self._sandbox_config = SandboxConfig()
+        return self._sandbox_config
+
+    @property
+    def evaluator_config(self) -> EvaluatorConfig:
+        """Get evaluator configuration"""
+        if self._evaluator_config is None:
+            self._evaluator_config = EvaluatorConfig()
+        return self._evaluator_config
 
     @property
     @abstractmethod
@@ -40,6 +114,125 @@ class BaseSDKEnv(ABC):
         """Return template name for sandbox creation"""
         pass
 
+    @property
+    @abstractmethod
+    def env_type(self) -> EnvType:
+        """Return environment type"""
+        pass
+
+    def get_sandbox(self) -> Any:
+        """Get or create sandbox instance"""
+        return get_sandbox(
+            template=self.template_name,
+            shared=True,
+            timeout=self.sandbox_config.timeout,
+            env=self.sandbox_config.env,
+        )
+
+    async def _evaluate_single_miner(
+        self, miner: "Miner", payload_extra: Dict[str, Any] = None
+    ) -> Evaluation:
+        """
+        Common evaluation logic for a single miner
+
+        Args:
+            miner: Miner instance
+            payload_extra: Additional payload parameters
+
+        Returns:
+            Evaluation result
+        """
+        sandbox = self.get_sandbox()
+
+        # Build payload
+        payload = self.evaluator_config.to_payload(miner)
+        if payload_extra:
+            payload.update(payload_extra)
+
+        # Execute evaluation
+        try:
+            proxy_timeout = (
+                self.sandbox_config.proxy_timeout
+                if self.env_type == EnvType.AFFINE
+                else self.sandbox_config.proxy_timeout + 600
+            )
+
+            result = await asyncio.to_thread(
+                lambda: sandbox.proxy.evaluator(_timeout=proxy_timeout, **payload)
+            )
+
+            return self._parse_evaluation_result(result, miner, payload_extra)
+
+        except Exception as e:
+            logger.error(f"Evaluation failed for {self.env_name}: {e}")
+            if logger.isEnabledFor(logging.DEBUG):
+                traceback.print_exc()
+
+            return self._create_error_evaluation(e, miner, payload_extra)
+
+    def _parse_evaluation_result(
+        self,
+        result: Dict[str, Any],
+        miner: "Miner",
+        payload_extra: Dict[str, Any] = None,
+    ) -> Evaluation:
+        """Parse evaluation result"""
+        total_score = float(result.get("total_score", 0.0))
+        success_rate = float(result.get("success_rate", 0.0))
+        details = result.get("details", [{}])[0]
+
+        extra = {
+            "success": bool(success_rate > 0),
+            "details": details,
+        }
+
+        if payload_extra:
+            extra.update(payload_extra)
+
+        return Evaluation(score=total_score, extra=extra)
+
+    def _create_error_evaluation(
+        self, error: Exception, miner: "Miner", payload_extra: Dict[str, Any] = None
+    ) -> Evaluation:
+        """Create error evaluation"""
+        extra = {
+            "success": False,
+            "error": str(error),
+            "miner": miner,
+        }
+
+        if payload_extra:
+            extra.update(payload_extra)
+
+        return Evaluation(score=0.0, extra=extra)
+
+    async def _evaluate_miners_batch(
+        self, miners: Union["Miner", Dict[str, "Miner"]], evaluate_func
+    ) -> Union[Evaluation, Dict[str, Evaluation]]:
+        """
+        Common batch evaluation logic
+
+        Args:
+            miners: Single miner or dict of miners
+            evaluate_func: Function to evaluate single miner
+
+        Returns:
+            Evaluation or dict of evaluations
+        """
+        if isinstance(miners, dict):
+            results = {}
+            for key, miner in miners.items():
+                if not self._validate_miner(miner):
+                    logger.warning(f"Skipping invalid miner entry: {key}")
+                    continue
+                results[key] = await evaluate_func(miner)
+            return results
+        else:
+            return await evaluate_func(miners)
+
+    def _validate_miner(self, miner: Any) -> bool:
+        """Validate miner object"""
+        return hasattr(miner, "model") and hasattr(miner, "slug")
 
     @abstractmethod
     async def evaluate(self, miner: Union["Miner", Dict[str, Any]]) -> "Evaluation":
@@ -54,185 +247,118 @@ class BaseSDKEnv(ABC):
         return await asyncio.gather(*tasks)
 
 
+# ========================= Environment Implementations =========================
+
+
 class AffineSDKEnv(BaseSDKEnv):
     """Base class for Affine environments (SAT, ABD, DED, HVM, ELR)"""
+
+    @property
+    def env_type(self) -> EnvType:
+        return EnvType.AFFINE
 
     @property
     def template_name(self) -> str:
         return f"affine:{self.env_name}"
 
-    async def evaluate(self, miner: Union["Miner", Dict[str, Any]]) -> Union["Evaluation", Dict[str, "Evaluation"]]:
-        """Evaluate using Affine environment endpoint.
-        
-        Args:
-            miner: A single Miner object or a dict[str, Miner].
-        Returns:
-            If input is a single Miner -> Evaluation
-            If input is a dict of miners -> dict[str, Evaluation]
-        """
-        import traceback
+    async def evaluate(
+        self, miner: Union["Miner", Dict[str, Any]]
+    ) -> Union["Evaluation", Dict[str, "Evaluation"]]:
+        """Evaluate using Affine environment endpoint."""
 
-        sbx_env = {
-            "NO_PROXY": "localhost,127.0.0.1",
-            "PYTHONPATH": "/app",
-        }
+        # Use the IDs from config or default
+        payload_extra = {"ids": [0]}
 
-        async def _evaluate_single(m):
-            """Internal helper to evaluate one miner"""
-            sandbox = get_sandbox(
-                template=self.template_name,
-                shared=True,
-                timeout=3600,
-                env=sbx_env,
-            )
+        async def evaluate_single(m):
+            return await self._evaluate_single_miner(m, payload_extra)
 
-            payload = {
-                "model": m.model,
-                "base_url": f"https://{m.slug}.chutes.ai/v1",
-                "temperature": 0.7,
-                "timeout": 600,
-                "ids": [0],
-            }
-
-            try:
-                result = await asyncio.to_thread(
-                    lambda: sandbox.proxy.evaluator(_timeout=700, **payload)
-                )
-
-                total_score = float(result.get("total_score", 0.0))
-                success_rate = float(result.get("success_rate", 0.0))
-                details = result.get("details", [{}])[0]
-
-                return Evaluation(
-                    score=total_score,
-                    extra={
-                        "success": bool(success_rate > 0),
-                        "details": details,
-                        "miner": m,
-                    },
-                )
-            except BaseException as e:
-                logger.error(f"Evaluation failed for {self.env_name}: {e}")
-                traceback.print_exc()
-                return Evaluation(
-                    score=0.0,
-                    extra={"success": False, "error": str(e), "miner": m},
-                )
-
-        if isinstance(miner, dict):
-            results = {}
-            for key, m in miner.items():
-                if not hasattr(m, "model") or not hasattr(m, "slug"):
-                    logger.warning(f"Skipping invalid miner entry: {key}")
-                    continue
-                results[key] = await _evaluate_single(m)
-            return results
-        else:
-            return await _evaluate_single(miner)
+        return await self._evaluate_miners_batch(miner, evaluate_single)
 
 
 class AgentGymSDKEnv(BaseSDKEnv):
     """Base class for AgentGym environments"""
 
-    def __init__(self, data_len: int = 200, max_round: int = 10):
+    # Default configuration for each environment - can be overridden in subclasses
+    DEFAULT_DATA_LEN = 200
+    DEFAULT_MAX_ROUND = 10
+    DEFAULT_TIMEOUT = 1200
+
+    def __init__(self, data_len: int = None, max_round: int = None):
         super().__init__()
-        self.data_len = data_len
-        self.max_round = max_round
+        # Use environment-specific defaults if not provided
+        self.data_len = data_len if data_len is not None else self.DEFAULT_DATA_LEN
+        self.max_round = max_round if max_round is not None else self.DEFAULT_MAX_ROUND
+
+        # Update evaluator config
+        if self._evaluator_config is None:
+            self._evaluator_config = EvaluatorConfig(
+                temperature=0.7, timeout=self.DEFAULT_TIMEOUT, max_round=self.max_round
+            )
+        else:
+            self._evaluator_config.max_round = self.max_round
+            self._evaluator_config.timeout = self.DEFAULT_TIMEOUT
+
+    @property
+    def env_type(self) -> EnvType:
+        return EnvType.AGENTGYM
 
     @property
     def template_name(self) -> str:
         return f"agentgym:{self.env_name}"
-    async def evaluate(
-        self, miner: Union["Miner", Dict[str, Any]], task_id: Union[int, List[int], None] = None
-    ) -> Union["Evaluation", Dict[str, "Evaluation"]]:
-        """Evaluate using AgentGym environment endpoint.
 
-        Args:
-            miner: A single Miner instance or a dict of miners.
-            task_id: Optional task index(es).
-        Returns:
-            If input is a single Miner → Evaluation
-            If input is a dict of miners → dict[str, Evaluation]
-        """
-        sbx_env = {
-            "NO_PROXY": "localhost,127.0.0.1",
-            "PYTHONPATH": "/app",
-        }
-
-        async def _evaluate_single(miner_obj, task_id_list):
-            sandbox = get_sandbox(
-                template=self.template_name,
-                shared=True,
-                timeout=3600,
-                env=sbx_env,
+    def _normalize_task_ids(self, task_id: Union[int, List[int], None]) -> List[int]:
+        """Normalize task IDs to list format"""
+        if task_id is None:
+            return [random.randint(0, self.data_len - 1)]
+        elif isinstance(task_id, int):
+            return [task_id]
+        elif isinstance(task_id, list):
+            return task_id if task_id else [random.randint(0, self.data_len - 1)]
+        else:
+            raise TypeError(
+                f"task_id must be int, list[int], or None, got {type(task_id)}"
             )
 
-            payload = {
-                "model": miner_obj.model,
-                "base_url": f"https://{miner_obj.slug}.chutes.ai/v1",
-                "temperature": 0.7,
-                "ids": task_id_list,
-                "max_round": self.max_round,
-                "timeout": 1200,
-            }
+    async def evaluate(
+        self,
+        miner: Union["Miner", Dict[str, Any]],
+        task_id: Union[int, List[int], None] = None,
+    ) -> Union["Evaluation", Dict[str, "Evaluation"]]:
+        """Evaluate using AgentGym environment endpoint."""
 
-            try:
-                result = await asyncio.to_thread(
-                    lambda: sandbox.proxy.evaluator(_timeout=1300, **payload)
-                )
+        task_ids = self._normalize_task_ids(task_id)
+        payload_extra = {
+            "ids": task_ids,
+            "max_round": self.max_round,
+            "task_id": task_ids,  # Keep for backward compatibility in extra
+        }
 
-                total_score = float(result.get("total_score", 0.0))
-                success_rate = float(result.get("success_rate", 0.0))
-                details = result.get("details", [{}])[0]
+        async def evaluate_single(m):
+            return await self._evaluate_single_miner(m, payload_extra)
 
-                return Evaluation(
-                    score=total_score,
-                    extra={
-                        "success": bool(success_rate > 0),
-                        "details": details,
-                        "task_id": task_id_list,
-                        "miner": miner_obj,
-                    },
-                )
-            except Exception as e:
-                logger.error(f"Evaluation failed for {self.env_name}: {e}")
-                return Evaluation(
-                    score=0.0,
-                    extra={
-                        "success": False,
-                        "error": str(e),
-                        "task_id": task_id_list,
-                        "miner": miner_obj,
-                    },
-                )
-
-        # normalize task_id
-        if task_id is None:
-            task_id = [random.randint(0, int(self.data_len) - 1)]
-        elif isinstance(task_id, int):
-            task_id = [task_id]
-        elif isinstance(task_id, list):
-            if len(task_id) == 0:
-                task_id = [random.randint(0, int(self.data_len) - 1)]
-        else:
-            raise TypeError(f"task_id must be int, list[int], or None, got {type(task_id)}")
-
-        # branch: single Miner or dict of miners
-        if isinstance(miner, dict):
-            results = {}
-            for key, m in miner.items():
-                if not hasattr(m, "model") or not hasattr(m, "slug"):
-                    logger.warning(f"Skipping invalid miner entry: {key}")
-                    continue
-                results[key] = await _evaluate_single(m, task_id)
-            return results
-        else:
-            return await _evaluate_single(miner, task_id)
+        return await self._evaluate_miners_batch(miner, evaluate_single)
 
 
-# Concrete environment implementations
+# ========================= Concrete Environments =========================
+
+# Environment registry for dynamic creation
+ENV_REGISTRY = {}
 
 
+def register_env(env_type: EnvType, env_name: str):
+    """Decorator to register environment classes"""
+
+    def decorator(cls):
+        ENV_REGISTRY[env_name] = cls
+        cls._env_type = env_type
+        cls._env_name = env_name
+        return cls
+
+    return decorator
+
+
+# Affine Environments
+@register_env(EnvType.AFFINE, "sat")
 class SAT(AffineSDKEnv):
     """SAT environment for SDK"""
 
@@ -241,6 +367,7 @@ class SAT(AffineSDKEnv):
         return "sat"
 
 
+@register_env(EnvType.AFFINE, "abd")
 class ABD(AffineSDKEnv):
     """ABD environment for SDK"""
 
@@ -249,6 +376,7 @@ class ABD(AffineSDKEnv):
         return "abd"
 
 
+@register_env(EnvType.AFFINE, "ded")
 class DED(AffineSDKEnv):
     """DED environment for SDK"""
 
@@ -257,6 +385,7 @@ class DED(AffineSDKEnv):
         return "ded"
 
 
+@register_env(EnvType.AFFINE, "hvm")
 class HVM(AffineSDKEnv):
     """HVM environment for SDK"""
 
@@ -265,6 +394,7 @@ class HVM(AffineSDKEnv):
         return "hvm"
 
 
+@register_env(EnvType.AFFINE, "elr")
 class ELR(AffineSDKEnv):
     """ELR environment for SDK"""
 
@@ -273,6 +403,8 @@ class ELR(AffineSDKEnv):
         return "elr"
 
 
+# AgentGym Environments
+@register_env(EnvType.AGENTGYM, "alfworld")
 class ALFWORLD(AgentGymSDKEnv):
     """ALFWORLD environment for SDK"""
 
@@ -281,14 +413,19 @@ class ALFWORLD(AgentGymSDKEnv):
         return "alfworld"
 
 
+@register_env(EnvType.AGENTGYM, "webshop")
 class WEBSHOP(AgentGymSDKEnv):
     """WEBSHOP environment for SDK"""
+
+    # Override default max_round for WEBSHOP
+    DEFAULT_MAX_ROUND = 10
 
     @property
     def env_name(self) -> str:
         return "webshop"
 
 
+@register_env(EnvType.AGENTGYM, "babyai")
 class BABYAI(AgentGymSDKEnv):
     """BABYAI environment for SDK"""
 
@@ -297,6 +434,7 @@ class BABYAI(AgentGymSDKEnv):
         return "babyai"
 
 
+@register_env(EnvType.AGENTGYM, "sciworld")
 class SCIWORLD(AgentGymSDKEnv):
     """SCIWORLD environment for SDK"""
 
@@ -305,6 +443,7 @@ class SCIWORLD(AgentGymSDKEnv):
         return "sciworld"
 
 
+@register_env(EnvType.AGENTGYM, "textcraft")
 class TEXTCRAFT(AgentGymSDKEnv):
     """TEXTCRAFT environment for SDK"""
 
@@ -313,47 +452,68 @@ class TEXTCRAFT(AgentGymSDKEnv):
         return "textcraft"
 
 
-# Convenience functions matching the SDK API
-async def SAT_factory() -> SAT:
-    """Create SAT environment"""
-    return SAT()
+# ========================= Factory Functions =========================
 
 
-async def ABD_factory() -> ABD:
-    """Create ABD environment"""
-    return ABD()
+def create_env_factory(env_class: Type[BaseSDKEnv], **default_kwargs):
+    """Create a factory function for environment"""
+
+    async def factory(**kwargs):
+        merged_kwargs = {**default_kwargs, **kwargs}
+        return env_class(**merged_kwargs)
+
+    factory.__name__ = f"{env_class.__name__}_factory"
+    factory.__doc__ = f"Create {env_class.__name__} environment"
+    return factory
 
 
-async def DED_factory() -> DED:
-    """Create DED environment"""
-    return DED()
+# Generate factory functions dynamically
+SAT_factory = create_env_factory(SAT)
+ABD_factory = create_env_factory(ABD)
+DED_factory = create_env_factory(DED)
+HVM_factory = create_env_factory(HVM)
+ELR_factory = create_env_factory(ELR)
+ALFWORLD_factory = create_env_factory(ALFWORLD)
+WEBSHOP_factory = create_env_factory(WEBSHOP)
+BABYAI_factory = create_env_factory(BABYAI)
+SCIWORLD_factory = create_env_factory(SCIWORLD)
+TEXTCRAFT_factory = create_env_factory(TEXTCRAFT)
 
 
-async def HVM_factory() -> HVM:
-    """Create HVM environment"""
-    return HVM()
+# ========================= Utility Functions =========================
 
 
-async def ELR_factory() -> ELR:
-    """Create ELR environment"""
-    return ELR()
+async def create_environment(env_name: str, **kwargs) -> BaseSDKEnv:
+    """
+    Create environment by name
+
+    Args:
+        env_name: Environment name
+        **kwargs: Environment-specific parameters
+
+    Returns:
+        Environment instance
+
+    Raises:
+        ValueError: If environment name is unknown
+    """
+    env_class = ENV_REGISTRY.get(env_name.lower())
+    if not env_class:
+        raise ValueError(f"Unknown environment: {env_name}")
+
+    return env_class(**kwargs)
 
 
-async def ALFWORLD_factory(**kwargs) -> ALFWORLD:
-    """Create ALFWORLD environment"""
-    return ALFWORLD(**kwargs)
+def list_available_environments() -> Dict[str, List[str]]:
+    """List all available environments grouped by type"""
+    result = {}
+    for env_name, env_class in ENV_REGISTRY.items():
+        env_type = env_class._env_type.value
+        if env_type not in result:
+            result[env_type] = []
+        result[env_type].append(env_name)
 
+    for env_type in result:
+        result[env_type].sort()
 
-async def WEBSHOP_factory(**kwargs) -> WEBSHOP:
-    """Create WEBSHOP environment"""
-    return WEBSHOP(**kwargs)
-
-
-async def BABYAI_factory(**kwargs) -> BABYAI:
-    """Create BABYAI environment"""
-    return BABYAI(**kwargs)
-
-
-async def SCIWORLD_factory(**kwargs) -> SCIWORLD:
-    """Create SCIWORLD environment"""
-    return SCIWORLD(**kwargs)
+    return result
