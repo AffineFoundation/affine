@@ -1467,6 +1467,7 @@ Z_NOT_WORSE = 1.28
 EPS_WIN     = 0.008
 Z_WIN       = 0.5
 ELIG        = 0.03 
+BURN_FRAC   = 1.0
 
 async def get_weights(tail: int = TAIL, scale: float = 1):
     """
@@ -1790,6 +1791,20 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     eligible_uids = [meta.hotkeys.index(hk) for hk in eligible]
     uids = [u for u in eligible_uids if u != best_uid] + [best_uid]
     weights = [weight_by_hk.get(meta.hotkeys[u], 0.0) for u in uids]
+    # --- Minimal burn: scale others by (1 - burn) and add burn to uid 0 ---
+    try:
+        burn = max(0.0, min(BURN_FRAC, 1.0))
+        weights = [(1.0 - burn) * w for w in weights]
+        base_uid = 0
+        if base_uid in uids:
+            i = uids.index(base_uid)
+            weights[i] += burn
+        else:
+            ins = len(uids) - 1 if (uids and uids[-1] == best_uid) else len(uids)
+            uids.insert(ins, base_uid)
+            weights.insert(ins, burn)
+    except Exception as e:
+        logger.warning(f"burn reweight failed: {e}")
     return uids, weights
 
 
@@ -1816,10 +1831,11 @@ def validate():
                     continue
                 
                 # ---------------- Set weights. ------------------------
-                if os.getenv("AFFINE_FORCE_UID0", "1") == "1":
-                    uids, weights = [0], [1.0]
-                else:
+                try:
                     uids, weights = await get_weights()
+                except Exception as e:
+                    logger.warning(f"get_weights failed, falling back to uid 0 burn: {e}")
+                    uids, weights = [0], [1.0]
         
                 # ---------------- Set weights. ------------------------
                 logger.info("Setting weights ...")
