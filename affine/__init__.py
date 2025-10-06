@@ -20,6 +20,7 @@ import requests
 import textwrap
 import traceback
 import itertools
+import atexit
 from .utils import *
 from math import comb
 import datetime as dt
@@ -683,6 +684,20 @@ async def prune(tail: int):
 # Lazy-initialised semaphore and shared HTTP client
 _HTTP_SEMS: Dict[int, asyncio.Semaphore] = {}
 _CLIENTS: Dict[int, aiohttp.ClientSession] = {}
+
+async def _cleanup_clients():
+    for client in _CLIENTS.values():
+        if client and not client.closed:
+            await client.close()
+    _CLIENTS.clear()
+
+def _sync_cleanup():
+    try:
+        asyncio.run(_cleanup_clients())
+    except RuntimeError:
+        pass
+
+atexit.register(_sync_cleanup)
 
 async def _get_sem() -> asyncio.Semaphore:
     try:
@@ -1468,7 +1483,7 @@ EPS_WIN     = 0.008
 Z_WIN       = 0.5
 ELIG        = 0.03 
 
-async def get_weights(tail: int = TAIL, scale: float = 1):
+async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 1.0):
     """
     Compute miner weights using ε-Pareto dominance and combinatoric subset winners.
 
@@ -1747,6 +1762,26 @@ async def get_weights(tail: int = TAIL, scale: float = 1):
     else:
         weight_by_hk = {hk: (score[hk] / total_points) for hk in eligible}
 
+    burn = max(0.0, min(1.0, burn))
+    if burn > 0.0:
+        hk0 = meta.hotkeys[0]
+        logger.debug(
+            f"Burn applied: requested burn={burn:.6f} to uid0-target (hotkey={hk0}, uid=0); "
+        )
+
+        # 1) Scale existing eligible weights to sum to (1 - burn)
+        for hk in list(weight_by_hk.keys()):
+            weight_by_hk[hk] = weight_by_hk.get(hk, 0.0) * (1.0 - burn)
+
+        # 2) Assign burn to hk0
+        if hk0 in weight_by_hk:
+            weight_by_hk[hk0] += burn
+        else:
+            # If hk0 wasn't in eligible set, add it so it appears in output/metrics
+            weight_by_hk[hk0] = burn
+            eligible = set(eligible)
+            eligible.add(hk0)
+
     # --- summary printout -----------------------------------------------------
     hdr = (
         ["UID", "Model", "Rev"]
@@ -1816,11 +1851,11 @@ def validate():
                     continue
                 
                 # ---------------- Set weights. ------------------------
-                if os.getenv("AFFINE_FORCE_UID0", "1") == "1":
-                    uids, weights = [0], [1.0]
+                force_uid0 = float(os.getenv("AFFINE_FORCE_UID0", "1.0"))
+                if force_uid0 >= 0.0 and force_uid0 < 1:
+                    uids, weights = await get_weights(scale=0.5, burn=force_uid0)
                 else:
-                    uids, weights = await get_weights()
-        
+                    uids, weights = [0], [1.0]
                 # ---------------- Set weights. ------------------------
                 logger.info("Setting weights ...")
                 await retry_set_weights( wallet, uids=uids, weights=weights, retry = 3)
@@ -1901,25 +1936,19 @@ def check_env_variables() -> bool:
 @cli.command("weights")
 def weights():
     async def _run_weights():
-        try:
-            if not check_env_variables():
-                return
+        if not check_env_variables():
+            return
 
-            api_key = os.getenv("CHUTES_API_KEY", "")
-            is_valid = await validate_api_key(api_key)
-            if not is_valid:
-                logger.error("CHUTES_API_KEY validation failed. The key may be invalid or expired.")
-                logger.info("Please check your CHUTES_API_KEY and ensure it has proper permissions")
-                return
-            
-            logger.debug("All environment variables validated successfully")
-            return await get_weights()
-        finally:
-            for client in _CLIENTS.values():
-                if client and not client.closed:
-                    await client.close()
-            _CLIENTS.clear()
-    
+        api_key = os.getenv("CHUTES_API_KEY", "")
+        is_valid = await validate_api_key(api_key)
+        if not is_valid:
+            logger.error("CHUTES_API_KEY validation failed. The key may be invalid or expired.")
+            logger.info("Please check your CHUTES_API_KEY and ensure it has proper permissions")
+            return
+        
+        logger.debug("All environment variables validated successfully")
+        return await get_weights()
+
     asyncio.run(_run_weights())
 
 # --------------------------------------------------------------------------- #
@@ -2153,3 +2182,20 @@ chute = build_sglang_chute(
 
     # Warmup via legacy SAT is removed in Quixand-only mode.
     logger.debug("Mining setup complete. Model is live!")
+
+# --------------------------------------------------------------------------- #
+#                              SDK Exports                                    #
+# --------------------------------------------------------------------------- #
+# Import SDK functions for easy access
+from .tasks import (
+    # Factory functions matching the expected API
+    SAT_factory as SAT,
+    ABD_factory as ABD,
+    DED_factory as DED,
+    HVM_factory as HVM,
+    ELR_factory as ELR,
+    ALFWORLD_factory as ALFWORLD,
+    WEBSHOP_factory as WEBSHOP,
+    BABYAI_factory as BABYAI,
+    SCIWORLD_factory as SCIWORLD,
+)

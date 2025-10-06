@@ -90,8 +90,7 @@ class ABD(af.BaseEnv):
         resp = await af.query(prompt, model=random.choice( MODELS ))
         llm_resp = resp.response
         if not llm_resp:
-            af.logger.trace(f"No response from LLM error: {resp.error}, continuing to next iteration.")
-            return None
+            raise RuntimeError(f"No response from LLM: {resp.error}")
 
         gen_input = self.extract_input_from_response(llm_resp)
         af.logger.trace(f"Extracted input from LLM response: {gen_input}")
