@@ -93,8 +93,8 @@ class WebarenaEnvClient(BaseEnvClient):
             raise TimeoutError(f"WebArena Reset Timeout: item id={idx}, you may consider restarting the web server.")
         return response
 
-    def close(self):
-        response = self._post("close",{})
+    def close(self, idx: int):
+        response = self._post("close",{"id": idx})
         return response
 
 class WebarenaTask(BaseTask):
