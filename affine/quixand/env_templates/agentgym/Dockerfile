@@ -38,6 +38,7 @@ ENV ALFWORLD_DATA=/root/.cache/alfworld
 ARG TOOL_NAME
 ENV TOOL_NAME=${TOOL_NAME}
 COPY env.py /app/
+COPY agentenv_webshop /app/AgentGym/agentenv-webshop/agentenv_webshop/
 
 WORKDIR /sandbox
 CMD ["uvicorn", "env:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "/app"]

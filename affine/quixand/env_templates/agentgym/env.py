@@ -3,10 +3,11 @@
 import os
 import sys
 import importlib
-import logging
+from loguru import logger
 import time
 import asyncio
 import httpx
+import traceback
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from functools import partial
@@ -14,11 +15,6 @@ from functools import partial
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 ENV_NAME = os.environ.get("ENV_NAME")
 TOOL_NAME = os.environ.get("TOOL_NAME", "")
@@ -201,6 +197,7 @@ def inject_evaluator_endpoint(app: FastAPI):
                     })
                 except Exception as e:
                     logger.error(f"Error evaluating index {data_idx}: {e}")
+                    traceback.print_exc()
                     details.append({
                         "id": data_idx,
                         "reward": 0.0,
@@ -234,7 +231,6 @@ def inject_evaluator_endpoint(app: FastAPI):
             logger.error(f"Import error: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to import required modules: {e}")
         except Exception as e:
-            import traceback
             tb_str = traceback.format_exc()
             logger.error(tb_str)
             raise HTTPException(status_code=500, detail=f"Evaluation failed: {e}, {tb_str}")

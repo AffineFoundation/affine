@@ -527,25 +527,33 @@ class AlfWorldEnvClient(BaseEnvClient):
         self.env_server_base = env_server_base
         self.timeout = timeout
         self.data_len = data_len
-
-        ok = requests.post(f"{self.env_server_base}/create", timeout=self.timeout)
-        if ok.status_code != 200:
-            raise requests.RequestException(f"Failed to create environment: {ok}")
         
         self.conversation_start = self.adapter_cls.conversation_start_dict[
             self.action_format
         ]
         
+        self.info = {}
+        self.env_ids = {}
+
+    def create(self) -> str:
+        ok = requests.post(f"{self.env_server_base}/create", timeout=self.timeout)
+        if ok.status_code != 200:
+            raise requests.RequestException(f"Failed to create environment: {ok}")
+        
         ok = ok.json()
-        # print(ok)
-        self.env_id = ok["id"]
-        self.info = None
+        env_id = ok["id"]
+        
+        self.info[env_id] = None
+        self.env_ids[env_id] = True
+        
+        return env_id
 
     def __len__(self):
         return self.data_len
 
-    def _post(self, path: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        data["id"] = self.env_id
+    def _post(self, path: str, data: Dict[str, Any], env_idx: str = None) -> Dict[str, Any]:
+        if env_idx is not None:
+            data["id"] = env_idx
         res = requests.post(
             f"{self.env_server_base}/{path}",
             json=data,
@@ -554,18 +562,25 @@ class AlfWorldEnvClient(BaseEnvClient):
         assert res.status_code == 200
         return res.json()
 
-    def _get(self, path: str) -> Dict[str, Any]:
+    def _get(self, path: str, env_idx: str = None) -> Dict[str, Any]:
+        params = {}
+        if env_idx is not None:
+            params["id"] = env_idx
         res = requests.get(
-            f"{self.env_server_base}/{path}?id={self.env_id}",
+            f"{self.env_server_base}/{path}",
+            params=params,
             timeout=self.timeout,
         )
         assert res.status_code == 200
         return res.json()
 
-    def observe(self) -> str:
-        return f"{self.info['observation']}\nAVAILABLE ACTIONS: {','.join(self.info['available_actions'])}"
+    def observe(self, env_idx: str) -> str:
+        info = self.info.get(env_idx)
+        if info and 'observation' in info and 'available_actions' in info:
+            return f"{info['observation']}\nAVAILABLE ACTIONS: {','.join(info['available_actions'])}"
+        return ""
 
-    def step(self, action: str) -> StepOutput:
+    def step(self, env_idx: str, action: str) -> StepOutput:
         if action.endswith("</s>"):
             action = action[:-5]
         try:
@@ -573,26 +588,28 @@ class AlfWorldEnvClient(BaseEnvClient):
         except Exception as e:
             print(e, action)
             return StepOutput(
-                state="Invalid Action.\n\n" + self.observe(), reward=0.0, done=False
+                state="Invalid Action.\n\n" + self.observe(env_idx), reward=0.0, done=False
             )
         # print(f"Action: {action}")
-        response = self._post("step", {"action": action})
+        response = self._post("step", {"action": action}, env_idx=env_idx)
         # print(response)
-        self.info = {
+        
+        self.info[env_idx] = {
             "observation": response["observation"],
             "available_actions": response["available_actions"],
             "reward": response["reward"],
             "done": response["done"],
         }
         return StepOutput(
-            state=self.observe(),
+            state=self.observe(env_idx),
             reward=response["reward"],
             done=response["done"],
         )
 
-    def reset(self, game: int, world_type: str = "Text") -> Dict[str, Any]:
-        response = self._post("reset", {"game": game, "world_type": world_type})
-        self.info = {
+    def reset(self, env_idx: str, game: int, world_type: str = "Text") -> Dict[str, Any]:
+        response = self._post("reset", {"game": game, "world_type": world_type}, env_idx=env_idx)
+        
+        self.info[env_idx] = {
             "observation": response["observation"],
             "available_actions": response["available_actions"],
             "reward": 0,
@@ -600,8 +617,17 @@ class AlfWorldEnvClient(BaseEnvClient):
         }
         return response
 
-    def close(self, idx: int):
-        response = self._post("close",{"id": idx})
+    def close(self, env_idx: str):
+        try:
+            response = self._post("close", {}, env_idx=env_idx)
+        except:
+            response = None
+            
+        if env_idx in self.info:
+            del self.info[env_idx]
+        if env_idx in self.env_ids:
+            del self.env_ids[env_idx]
+            
         return response
 
 class AlfWorldTask(BaseTask):

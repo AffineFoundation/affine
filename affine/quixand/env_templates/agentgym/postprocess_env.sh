@@ -12,6 +12,7 @@ if [ -z "$ENV_NAME" ]; then
 fi
 
 echo "Post-processing AgentGym environment: $ENV_NAME"
+pip install loguru || true
 
 # Environment-specific post-processing
 case "$ENV_NAME" in
