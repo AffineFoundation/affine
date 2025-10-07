@@ -47,6 +47,10 @@ def fallback_models(min_completion_cost: float = 0.0, min_context: int = 65536,
             continue
         if mod.get('context_length', mod.get('max_model_len', 0)) < min_context:
             continue
+        if 'text' not in mod.get('input_modalities', []):
+            continue
+        if 'text' not in mod.get('output_modalities', []):
+            continue
         model_ids.append(mod['id'])
     if not model_ids:
         raise RetryNeeded
