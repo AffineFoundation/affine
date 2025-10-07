@@ -35,18 +35,24 @@ def retry(fn: Callable | int = 5, retries: int | None = None) -> Callable:
 
 
 @retry()
-def fallback_models(retries: int = 3, min_completion_cost: float = 0.0, min_context: int = 65536,
+def fallback_models(min_completion_cost: float = 0.0, min_context: int = 65536,
                     owners: tuple = ('chutesai',), max_completion_cost: float = 1e9):
     models = requests.get('https://llm.chutes.ai/v1/models')
     models.raise_for_status()
     models = models.json()['data']
-    models = [mod["id"] for mod in models  #
-              if max_completion_cost >= mod['pricing']['completion'] >= min_completion_cost  #
-              and mod['context_length'] > min_context  #
-              and mod["id"].split('/')[-1] in owners]
-    if not models:
+
+    model_ids = []
+    for mod in models:
+        if not max_completion_cost >= mod['pricing']['completion'] >= min_completion_cost:
+            continue
+        if mod.get('context_length', mod.get('max_model_len', 0)) < min_context:
+            continue
+        if mod["id"].split('/')[0] not in owners:
+            continue
+        model_ids.append(mod['id'])
+    if not model_ids:
         raise RetryNeeded
-    return models
+    return model_ids
 
 
 MODELS = fallback_models(max_completion_cost=0.15)
