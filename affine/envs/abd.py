@@ -4,8 +4,9 @@ import random
 import asyncio
 import affine as af
 from typing import Any, Dict, Optional, Tuple
+from _utils import fallback_models, retry
 
-MODELS = ["unsloth/gemma-3-12b-it"]
+MODELS = fallback_models(max_completion_cost=0.15)
 PROMPT_TEMPLATE = """You are a programming expert. Given a Python program and its expected output, you need to determine the exact input that would produce this output.
 
 Program:
@@ -75,7 +76,8 @@ class ABD(af.BaseEnv):
     def __init__(self):
         super().__init__()
         self._executor = af.utils.ProgramExecutor()
-        
+
+    @retry()
     async def _create_challenge(
         self, program: str, example_in: str, example_out: str
     ) -> Optional[af.Challenge]:
