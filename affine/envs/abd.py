@@ -55,7 +55,7 @@ def fallback_models(min_completion_cost: float = 0.0, min_context: int = 65536,
     return model_ids
 
 
-MODELS = fallback_models(max_completion_cost=0.15)
+MODELS = fallback_models(max_completion_cost=0.2, min_context=32768)
 PROMPT_TEMPLATE = """You are a programming expert. Given a Python program and its expected output, you need to determine the exact input that would produce this output.
 
 Program:
