@@ -47,15 +47,13 @@ def fallback_models(min_completion_cost: float = 0.0, min_context: int = 65536,
             continue
         if mod.get('context_length', mod.get('max_model_len', 0)) < min_context:
             continue
-        if mod["id"].split('/')[0] not in owners:
-            continue
         model_ids.append(mod['id'])
     if not model_ids:
         raise RetryNeeded
     return model_ids
 
 
-MODELS = fallback_models(max_completion_cost=0.2, min_context=32768)
+MODELS = fallback_models(max_completion_cost=0.15)
 PROMPT_TEMPLATE = """You are a programming expert. Given a Python program and its expected output, you need to determine the exact input that would produce this output.
 
 Program:
