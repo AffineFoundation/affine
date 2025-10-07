@@ -103,4 +103,4 @@ def reset(reset_query: ResetQuery):
 
 @app.post("/close")
 def close(body: CloseRequestBody):
-    return webshop_env_server.close(body.id)
+    return webshop_env_server.close(body.env_idx)

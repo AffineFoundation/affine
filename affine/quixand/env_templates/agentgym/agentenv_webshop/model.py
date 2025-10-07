@@ -31,4 +31,4 @@ class ResetQuery(BaseModel):
     session_id: Optional[int] = None
 
 class CloseRequestBody(BaseModel):
-    id: int
+    env_idx: int
