@@ -4,7 +4,50 @@ import random
 import asyncio
 import affine as af
 from typing import Any, Dict, Optional, Tuple
-from _utils import fallback_models, retry
+import functools
+from typing import Callable
+import requests
+
+
+
+
+
+class RetryNeeded(ValueError):
+    pass
+
+def retry(fn: Callable | int = 5, retries: int | None = None) -> Callable:
+    if retries is None:
+        if not isinstance(fn, int):
+            raise ValueError("retry() has to be closed when used as a decorator")
+        return functools.partial(retry, retries=fn)
+
+    @functools.wraps(fn)
+    def _wrapped(*args, **kwargs):
+        for i in range(retries):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as e:
+                af.logger.trace(f'Error encountered: {e} - Retry {i}/{retries}')
+                if i == retries - 1:
+                    raise
+
+    return _wrapped
+
+
+@retry()
+def fallback_models(retries: int = 3, min_completion_cost: float = 0.0, min_context: int = 65536,
+                    owners: tuple = ('chutesai',), max_completion_cost: float = 1e9):
+    models = requests.get('https://llm.chutes.ai/v1/models')
+    models.raise_for_status()
+    models = models.json()['data']
+    models = [mod["id"] for mod in models  #
+              if max_completion_cost >= mod['pricing']['completion'] >= min_completion_cost  #
+              and mod['context_length'] > min_context  #
+              and mod["id"].split('/')[-1] in owners]
+    if not models:
+        raise RetryNeeded
+    return models
+
 
 MODELS = fallback_models(max_completion_cost=0.15)
 PROMPT_TEMPLATE = """You are a programming expert. Given a Python program and its expected output, you need to determine the exact input that would produce this output.
@@ -111,7 +154,7 @@ class ABD(af.BaseEnv):
         af.logger.trace(f"Executed program with generated input. Output: {output}, Error: {error}, program: {program}")
         if error or not output.strip():
             af.logger.trace("Generated input contains error")
-            return None            
+            return None
 
         af.logger.trace("Challenge created successfully.")
         return af.Challenge(
@@ -130,7 +173,7 @@ class ABD(af.BaseEnv):
             challenge = await self._create_challenge(program, example_in, example_out)
             if challenge is not None:
                 af.logger.trace("Generated challenge successfully.")
-                return challenge 
+                return challenge
             else:
                 af.logger.trace(f"Failed generation with null challenge, continuing...")
                 await asyncio.sleep(5)
