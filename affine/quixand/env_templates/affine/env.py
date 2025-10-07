@@ -195,17 +195,13 @@ async def evaluate_model(request: EvaluatorRequest):
             time_taken=time_taken,
             details=details
         )
-        
-    except ImportError as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to import environment {ENV_NAME}: {str(e)}"
-        )
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         logger.error(f"Evaluation failed: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Evaluation failed: {str(e)}"
+            detail=f"Evaluation failed: {type(e).__name__}: {repr(e)}"
         )
 
 @app.on_event("startup")
