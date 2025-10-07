@@ -32,19 +32,27 @@ class BabyAIEnvClient(BaseEnvClient):
         self.env_server_base = env_server_base
         self.timeout = timeout
         self.data_len = data_len
+        self.info = {}
+        self.env_ids = {} 
 
+    def create(self) -> str:
         ok = requests.post(f"{self.env_server_base}/create", timeout=self.timeout)
         if ok.status_code != 200:
             raise RequestException(f"Failed to create environment: {ok}")
-
         ok = ok.json()
-        self.env_id = ok["id"]
+        env_id = ok["id"]
+        
+        self.info[env_id] = {}
+        self.env_ids[env_id] = True
+        
+        return env_id
 
     def __len__(self):
         return self.data_len
 
-    def _post(self, path: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        data["id"] = self.env_id
+    def _post(self, path: str, data: Dict[str, Any], env_idx: str = None) -> Dict[str, Any]:
+        if env_idx is not None:
+            data["id"] = env_idx
         res = requests.post(
             f"{self.env_server_base}/{path}",
             json=data,
@@ -53,18 +61,22 @@ class BabyAIEnvClient(BaseEnvClient):
         assert res.status_code == 200
         return res.json()
 
-    def _get(self, path: str) -> Dict[str, Any]:
+    def _get(self, path: str, env_idx: str = None) -> Dict[str, Any]:
+        params = {}
+        if env_idx is not None:
+            params["id"] = env_idx
         res = requests.get(
-            f"{self.env_server_base}/{path}?id={self.env_id}",
+            f"{self.env_server_base}/{path}",
+            params=params,
             timeout=self.timeout,
         )
         assert res.status_code == 200
         return res.json()
 
-    def observe(self) -> str:
-        return self.info["observation"]
+    def observe(self, env_idx: str) -> str:
+        return self.info.get(env_idx, {}).get("observation", "")
 
-    def step(self, action: str) -> StepOutput:
+    def step(self, env_idx: str, action: str) -> StepOutput:
         action_matches = re.findall(r"Action:\s*(.*?)(?=\n|$)", action, re.DOTALL)
         if len(action_matches) > 1:
             return StepOutput(
@@ -75,8 +87,12 @@ class BabyAIEnvClient(BaseEnvClient):
         action = action_matches[-1] if action_matches else ""
         action = re.sub(r"[^A-Za-z0-9, ]+", "", action)
         action = " ".join(action.split()).strip()
-        response = self._post("step", {"action": action})
-        self.info = {
+        response = self._post("step", {"action": action}, env_idx=env_idx)
+        
+        if env_idx not in self.info:
+            self.info[env_idx] = {}
+            
+        self.info[env_idx] = {
             "observation": response["observation"],
             "reward": response["reward"],
             "score": response["score"],
@@ -88,9 +104,12 @@ class BabyAIEnvClient(BaseEnvClient):
             done=response["done"],
         )
 
-    def reset(self, data_idx: int = 0) -> Dict[str, Any]:
-        response = self._post("reset", {"data_idx": data_idx})
-        self.info = {
+    def reset(self, env_idx: str, data_idx: int = 0) -> Dict[str, Any]:
+        response = self._post("reset", {"data_idx": data_idx}, env_idx=env_idx)
+        
+        if env_idx not in self.info:
+            self.info[env_idx] = {}
+        self.info[env_idx] = {
             "observation": response["observation"],
             "reward": response["reward"],
             "score": response["score"],
@@ -98,8 +117,18 @@ class BabyAIEnvClient(BaseEnvClient):
         }
         return response
 
-    def close(self, idx: int):
-        response = self._post("close",{"id": idx})
+    def close(self, env_idx: str):
+        try:
+            response = self._post("close", {}, env_idx=env_idx)
+        except:
+            response = None
+            
+        # Clean up data in info
+        if env_idx in self.info:
+            del self.info[env_idx]
+        if env_idx in self.env_ids:
+            del self.env_ids[env_idx]
+            
         return response
 
 class BabyAITask(BaseTask):

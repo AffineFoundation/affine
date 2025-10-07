@@ -125,24 +125,31 @@ Now let's start a new game. Return your action and your thought in the format ab
         self.env_server_base = env_server_base
         self.timeout = timeout
         self.data_len = data_len
+        self.info = {}
+        self.env_ids = {}
 
+    def create(self) -> str:
         ok = requests.post(f"{self.env_server_base}/create", timeout=self.timeout)
         if ok.status_code != 200:
             raise RequestException(f"Failed to create environment: {ok}")
 
         ok = ok.json()
         print(ok)
-        self.env_id = ok["id"]
-        self.info = {
+        env_id = ok["id"]
+        self.info[env_id] = {
             "reward": 0,
             "done": False,
         }
+        self.env_ids[env_id] = True
+
+        return env_id
         
     def __len__(self):
         return self.data_len
 
-    def _post(self, path: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        data["id"] = self.env_id
+    def _post(self, path: str, data: Dict[str, Any], env_idx: str = None) -> Dict[str, Any]:
+        if env_idx is not None:
+            data["id"] = env_idx
         res = requests.post(
             f"{self.env_server_base}/{path}",
             json=data,
@@ -151,18 +158,22 @@ Now let's start a new game. Return your action and your thought in the format ab
         assert res.status_code == 200
         return res.json()
 
-    def _get(self, path: str) -> Dict[str, Any]:
+    def _get(self, path: str, env_idx: str = None) -> Dict[str, Any]:
+        params = {}
+        if env_idx is not None:
+            params["id"] = env_idx
         res = requests.get(
-            f"{self.env_server_base}/{path}?id={self.env_id}",
+            f"{self.env_server_base}/{path}",
+            params=params,
             timeout=self.timeout,
         )
         assert res.status_code == 200
         return res.json()
 
-    def observe(self) -> str:
-        return self.info["observation"]
+    def observe(self, env_idx: str) -> str:
+        return self.info.get(env_idx, {}).get("observation", "")
 
-    def step(self, action: str) -> StepOutput:
+    def step(self, env_idx: str, action: str) -> StepOutput:
         print(action)
         if action.endswith("</s>"):
             action = action[:-5]
@@ -172,12 +183,16 @@ Now let's start a new game. Return your action and your thought in the format ab
         else:
             action = _action[0].strip()
         print(f"Action: {action}")
-        response = self._post("step", {"action": action})
+        response = self._post("step", {"action": action}, env_idx=env_idx)
         print(response)
-        self.info.update(
+
+        if env_idx not in self.info:
+            self.info[env_idx] = {"reward": 0, "done": False}
+            
+        self.info[env_idx].update(
             {
                 "observation": response["observation"],
-                "reward": self.info["reward"] + response["reward"],
+                "reward": self.info[env_idx]["reward"] + response["reward"],
                 "done": response["done"],
             }
         )
@@ -187,20 +202,36 @@ Now let's start a new game. Return your action and your thought in the format ab
             done=response["done"],
         )
 
-    def reset(self, idx: int = 0) -> Dict[str, Any]:
-        response = self._post("reset", {"game": idx})
+    def reset(self, env_idx: str, idx: int = 0) -> Dict[str, Any]:
+        response = self._post("reset", {"game": idx}, env_idx=env_idx)
         print(response)
         self.first_observation = self._fully_first_observation
         response["observation"] = (
             self.first_observation + "\n" + response["observation"]
         )
-        self.info.update(
+        if env_idx not in self.info:
+            self.info[env_idx] = {}
+            
+        self.info[env_idx].update(
             {
                 "observation": response["observation"],
                 "reward": 0,
                 "done": False,
             }
         )
+        return response
+
+    def close(self, env_idx: str):
+        try:
+            response = self._post("close", {}, env_idx=env_idx)
+        except:
+            response = None
+            
+        if env_idx in self.info:
+            del self.info[env_idx]
+        if env_idx in self.env_ids:
+            del self.env_ids[env_idx]
+            
         return response
 
 
@@ -276,30 +307,47 @@ Now let's start a new game. Remember, the word you guess should be strictly in t
         self.env_server_base = env_server_base
         self.timeout = timeout
         self.data_len = data_len
-
+        
+        # Initialize info dict to store multiple environment instances
+        self.info = {}
+        self.env_ids = {}  # Store all created environment IDs
+        self.vocab = None  # Store vocab once fetched
+    
+    def create(self) -> str:
+        """Create a new environment instance and return env_id"""
         ok = requests.post(f"{self.env_server_base}/create", timeout=self.timeout)
         if ok.status_code != 200:
             raise RequestException(f"Failed to create environment: {ok}")
 
         ok = ok.json()
         print(ok)
-        self.env_id = ok["id"]
-        vocab = self._get("filtered_vocab")
-        self.info = {
+        env_id = ok["id"]
+        
+        # Fetch vocab if not already fetched
+        if self.vocab is None:
+            self.vocab = self._get("filtered_vocab", env_idx=env_id)
+        
+        # Initialize info for this environment instance
+        self.info[env_id] = {
             "observation": self.first_observation.replace(
-                "{{vocab}}", "\n".join(vocab)
+                "{{vocab}}", "\n".join(self.vocab)
             ),
-            "vocab": vocab,
+            "vocab": self.vocab,
             "reward": 0,
             "done": False,
         }
-        print(self.info["observation"])
+        self.env_ids[env_id] = True
+        print(self.info[env_id]["observation"])
+        
+        return env_id
 
     def __len__(self):
         return self.data_len
 
-    def _post(self, path: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        data["id"] = self.env_id
+    def _post(self, path: str, data: Dict[str, Any], env_idx: str = None) -> Dict[str, Any]:
+        # lmrlgym uses 'id' as the parameter name
+        if env_idx is not None:
+            data["id"] = env_idx
         res = requests.post(
             f"{self.env_server_base}/{path}",
             json=data,
@@ -308,18 +356,22 @@ Now let's start a new game. Remember, the word you guess should be strictly in t
         assert res.status_code == 200
         return res.json()
 
-    def _get(self, path: str) -> Dict[str, Any]:
+    def _get(self, path: str, env_idx: str = None) -> Dict[str, Any]:
+        params = {}
+        if env_idx is not None:
+            params["id"] = env_idx
         res = requests.get(
-            f"{self.env_server_base}/{path}?id={self.env_id}",
+            f"{self.env_server_base}/{path}",
+            params=params,
             timeout=self.timeout,
         )
         assert res.status_code == 200
         return res.json()
 
-    def observe(self) -> str:
-        return self.info["observation"]
+    def observe(self, env_idx: str) -> str:
+        return self.info.get(env_idx, {}).get("observation", "")
 
-    def step(self, action: str) -> StepOutput:
+    def step(self, env_idx: str, action: str) -> StepOutput:
         print(action)
         if action.endswith("</s>"):
             action = action[:-5]
@@ -329,12 +381,17 @@ Now let's start a new game. Remember, the word you guess should be strictly in t
         else:
             action = _action[0].strip()
         print(f"Action: {action}")
-        response = self._post("step", {"action": action})
+        response = self._post("step", {"action": action}, env_idx=env_idx)
         print(response)
-        self.info.update(
+        
+        # Update info for the corresponding env_idx
+        if env_idx not in self.info:
+            self.info[env_idx] = {"reward": 0, "done": False, "vocab": self.vocab}
+            
+        self.info[env_idx].update(
             {
                 "observation": response["observation"],
-                "reward": self.info["reward"] + response["reward"],
+                "reward": self.info[env_idx]["reward"] + response["reward"],
                 "done": response["done"],
             }
         )
@@ -344,17 +401,38 @@ Now let's start a new game. Remember, the word you guess should be strictly in t
             done=response["done"],
         )
 
-    def reset(self, idx: int = 0) -> Dict[str, Any]:
-        response = self._post("reset", {"seed": idx})
-        self.info.update(
+    def reset(self, env_idx: str, idx: int = 0) -> Dict[str, Any]:
+        # env_idx is the environment instance ID
+        response = self._post("reset", {"seed": idx}, env_idx=env_idx)
+        
+        # Update info for the corresponding env_idx
+        if env_idx not in self.info:
+            self.info[env_idx] = {"vocab": self.vocab}
+            
+        self.info[env_idx].update(
             {
                 "observation": self.first_observation.replace(
-                    "{{vocab}}", "\n".join(self.info["vocab"])
+                    "{{vocab}}", "\n".join(self.vocab if self.vocab else [])
                 ),
                 "reward": 0,
                 "done": False,
             }
         )
+        return response
+    
+    def close(self, env_idx: str):
+        """Close the specified environment instance and clean up resources"""
+        try:
+            response = self._post("close", {}, env_idx=env_idx)
+        except:
+            response = None
+            
+        # Clean up data in info
+        if env_idx in self.info:
+            del self.info[env_idx]
+        if env_idx in self.env_ids:
+            del self.env_ids[env_idx]
+            
         return response
 
 

@@ -33,10 +33,11 @@ class BaseTask:
         generation_config = None,
         max_rounds: Optional[int] = None,
     ) -> ExperienceOutput:
-        client.reset(idx)
+        env_id = client.create()
+        client.reset(env_id, idx)
         reward = 0.0
         done = False
-        state = client.observe()
+        state = client.observe(env_id)
         if isinstance(agent, APIAgent):
             conversation = [APIConversationMessage({"role": "user", "content": client.conversation_start[0]["value"], "reasoning_content": None}),
                             APIConversationMessage({"role": "assistant", "content": client.conversation_start[1]["value"], "reasoning_content": None}),
@@ -56,7 +57,7 @@ class BaseTask:
             else:
                 raise NotImplementedError
 
-            step_output = client.step(generated_text)
+            step_output = client.step(env_id, generated_text)
             state, reward, done = (
                 step_output.state,
                 step_output.reward,
@@ -76,7 +77,7 @@ class BaseTask:
             if max_rounds is not None and rounds >= max_rounds:
                 break
         if hasattr(client, "close"):
-            client.close(idx)
+            client.close(env_id)
 
         if isinstance(agent, APIAgent):
             return APIExperienceOutput(
