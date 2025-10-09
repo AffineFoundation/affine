@@ -1739,6 +1739,8 @@ async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 0.0):
             + ["Pts", "Elig", "Wgt"]
         )
         def row(hk: str):
+            if hk not in prev:
+                return None
             m = prev[hk].miner
             w = 1.0 if hk == best else 0.0
             model_name = str(m.model)[:50]
@@ -1757,7 +1759,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 0.0):
                 "Y" if hk in eligible else "N",
                 f"{w:.4f}",
             ]
-        rows = sorted((row(hk) for hk in active_hks), key=lambda r: (r[-3], r[0]), reverse=True)
+        rows = sorted((r for r in (row(hk) for hk in active_hks) if r is not None), key=lambda r: (r[-3], r[0]), reverse=True)
         print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
         return [0], [1.0]  # Always return uid 0 when no eligible miners
 
@@ -1796,6 +1798,8 @@ async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 0.0):
         + ["Pts", "Elig", "Wgt"]
     )
     def row(hk: str):
+        if hk not in prev:
+            return None
         m = prev[hk].miner
         w = weight_by_hk.get(hk, 0.0)
         model_name = str(m.model)[:50]
@@ -1814,8 +1818,8 @@ async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 0.0):
             "Y" if hk in eligible else "N",
             f"{w:.4f}",
         ]
-    ranked_rows   = sorted((row(hk) for hk in eligible), key=lambda r: float(r[-3]), reverse=True)
-    unranked_rows = sorted((row(hk) for hk in active_hks if hk not in eligible), key=lambda r: float(r[-3]), reverse=True)
+    ranked_rows   = sorted((r for r in (row(hk) for hk in eligible) if r is not None), key=lambda r: float(r[-3]), reverse=True)
+    unranked_rows = sorted((r for r in (row(hk) for hk in active_hks if hk not in eligible) if r is not None), key=lambda r: float(r[-3]), reverse=True)
     rows = ranked_rows + unranked_rows
     print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
 
