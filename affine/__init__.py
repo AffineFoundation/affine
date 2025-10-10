@@ -1863,7 +1863,7 @@ def validate():
                     continue
                 
                 # ---------------- Set weights. ------------------------
-                force_uid0 = 1.0
+                force_uid0 = 0.9
                 uids, weights = await get_weights(scale=0.5, burn=force_uid0)
                 # ---------------- Set weights. ------------------------
                 logger.info("Setting weights ...")
