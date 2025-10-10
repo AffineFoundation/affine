@@ -322,6 +322,7 @@ class AgentGymContainerEnv(ContainerEnv):
         return f"agentgym:{self.env_name}"
 
 class AffineContainerEnv(ContainerEnv):
+    evaluator_timeout: int = 280
     @property
     def name(self) -> str:
         return f"affine:{self.env_name}"
