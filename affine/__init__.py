@@ -1598,7 +1598,7 @@ async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 0.0):
 
     # --- eligibility: must be queryable AND meet sample requirements ---------
     required = {}
-    min_samples_per_env = 250
+    min_samples_per_env = 100
     for e in ENVS:
         max_cnt = max((cnt[hk][e] for hk in active_hks), default=0)
         max_cnt = min(max_cnt, 2000)
