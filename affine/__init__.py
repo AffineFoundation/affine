@@ -46,6 +46,7 @@ from pydantic import BaseModel, Field, validator, ValidationError
 from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, TypeVar, Awaitable
 __version__ = "0.0.0"
 from .quixand.core.sandbox_manager import get_sandbox
+from .sampling import MinerSampler, SamplingOrchestrator, SamplingConfig
 
 # --------------------------------------------------------------------------- #
 #                       Constants & global singletons                         #
@@ -1485,13 +1486,14 @@ async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[f
         return
     
 # --- Scoring hyperparameters --------------------------------------------------
-TAIL = 20_000
-ALPHA = 0.9
-EPS_FLOOR   = 0.005
-Z_NOT_WORSE = 1.28
-EPS_WIN     = 0.015
-Z_WIN       = 0.5
-ELIG        = 0.10 
+# These are now in SamplingConfig but kept for backward compatibility
+TAIL = SamplingConfig.TAIL
+ALPHA = SamplingConfig.ALPHA
+EPS_FLOOR = SamplingConfig.EPS_FLOOR
+Z_NOT_WORSE = SamplingConfig.Z_NOT_WORSE
+EPS_WIN = SamplingConfig.EPS_WIN
+Z_WIN = SamplingConfig.Z_WIN
+ELIG = SamplingConfig.ELIG
 
 async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 0.0):
     """
@@ -1518,6 +1520,10 @@ async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 0.0):
         )
         return [0], [1.0]
 
+    # Initialize sampling components
+    sampler = MinerSampler()
+    orchestrator = SamplingOrchestrator(sampler)
+    
     # --- fetch + prune --------------------------------------------------------
     st = await get_subtensor()
     blk = await st.get_current_block()
@@ -1533,20 +1539,17 @@ async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 0.0):
     queryable_hks = {m.hotkey for m in queryable_miners.values()}
     logger.info(f"Found {len(queryable_hks)} queryable miners (hot, valid chute, not gated)")
 
-    # Tallies for all known hotkeys (so metrics update is safe even if some have no data)
-    cnt   = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env counts
-    succ  = {hk: defaultdict(int)   for hk in meta.hotkeys}  # per-env correct (0/1 or [0,1])
-    prev  = {}                                                # last sample per hk
-    v_id  = {}                                                # (model, revision) per hk
-    first_block = {}                                          # earliest block for current version
-
+    # Collect raw results
+    results_list = []
+    
     # Pre-seed earliest commit block per miner from on-chain commitments
+    initial_first_block = {}
     try:
         commits = await st.get_all_revealed_commitments(NETUID)
         for uid, hk in enumerate(meta.hotkeys):
             if hk in commits:
-                blk, _ = commits[hk][-1]
-                first_block[hk] = 0 if uid == 0 else int(blk)
+                blk_commit, _ = commits[hk][-1]
+                initial_first_block[hk] = 0 if uid == 0 else int(blk_commit)
     except Exception:
         pass
 
@@ -1554,184 +1557,57 @@ async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 0.0):
     logger.info(f"Loading data from {blk - tail} to {blk}")
     async for c in dataset(tail=tail):
         NRESULTS.inc()
-        hk, env = c.miner.hotkey, c.challenge.env.name
-
-        # keep the base hk; otherwise require model family
-        try:
-            name = c.miner.model.split("/", 1)[1].lower()
-        except Exception:
-            name = str(c.miner.model).lower()
-        if hk not in cnt or (hk != BASE_HK and not name.startswith("affine")):
-            continue
-
-        cur_vid = (c.miner.model, c.miner.revision)
-
-        # On version change, reset ALL env streams and timestamp to current block
-        if v_id.get(hk) != cur_vid:
-            v_id[hk] = cur_vid
-            first_block[hk] = c.miner.block
-            for e in ENVS:
-                cnt[hk][e] = 0
-                succ[hk][e] = 0
-        else:
-            # Keep earliest commit block for the active version
-            try:
-                fb = int(first_block.get(hk, c.miner.block)) if first_block.get(hk) is not None else int(c.miner.block)
-                cb = int(c.miner.block) if c.miner.block is not None else fb
-                first_block[hk] = fb if fb <= cb else cb
-            except Exception:
-                pass
-
-        # accumulate on successes.
-        prev[hk] = c
-        if c.response.success:
-            cnt[hk][env]  += 1
-            succ[hk][env] += float(c.evaluation.score)
+        results_list.append(c)
 
     logger.info("Collected results.")
 
-    if not prev:
+    if not results_list:
         logger.warning("No results collected; defaulting to uid 0")
         return [0], [1.0]
-
-    # --- accuracy + MAXENV ----------------------------------------------------
-    acc = {
-        hk: {e: (succ[hk][e] / cnt[hk][e] if cnt[hk][e] else 0.0) for e in ENVS}
-        for hk in meta.hotkeys
-    }
-
+    
+    # Process sample data
+    cnt, succ, prev, v_id, first_block = orchestrator.process_sample_data(
+        results_list, meta.hotkeys, ENVS, BASE_HK
+    )
+    
+    # Merge initial first_block values
+    for hk, blk_val in initial_first_block.items():
+        if hk not in first_block:
+            first_block[hk] = blk_val
+    
+    # Calculate accuracies
+    acc = orchestrator.calculate_accuracies(cnt, succ, meta.hotkeys, ENVS)
+    
     active_hks = list(prev.keys())
     for e in ENVS:
         max_e = max((acc[hk][e] for hk in active_hks), default=0.0)
         MAXENV.labels(env=e).set(max_e)
     logger.info("Computed accuracy & updated MAXENV.")
 
-    # --- eligibility: must be queryable AND meet sample requirements ---------
-    required = {}
-    min_samples_per_env = 100
-    for e in ENVS:
-        max_cnt = max((cnt[hk][e] for hk in active_hks), default=0)
-        max_cnt = min(max_cnt, 2000)
-        required[e] = max(min_samples_per_env, 10 + int(ELIG * max_cnt))
-    # Only eligible if: 1) currently queryable, 2) meets sample requirements
-    eligible = {hk for hk in active_hks 
-                if hk in queryable_hks and all(cnt[hk][e] >= required[e] for e in ENVS)}
+    # Determine eligibility
+    eligible, required = sampler.calculate_eligibility(cnt, active_hks, queryable_hks, ENVS)
     logger.info(f"Eligible miners: {len(eligible)} (from {len(active_hks)} active, {len(queryable_hks)} queryable)")
 
-    # --- ε-Pareto dominance helpers ------------------------------------------
-    def thr_not_worse(a_i: float, n_i: int, a_j: float, n_j: int) -> float:
-        """Tolerance for 'not worse' on an env: max(EPS_FLOOR, Z * SE_diff) with capped n to blunt volume advantage."""
-        if Z_NOT_WORSE <= 0:
-            return EPS_FLOOR
-        n_i_eff = min(int(n_i), 1000)
-        n_j_eff = min(int(n_j), 1000)
-        # Clamp accuracies into [0, 1] to ensure valid Bernoulli variance and avoid negative sqrt domain
-        p_i = min(max(a_i, 0.0), 1.0)
-        p_j = min(max(a_j, 0.0), 1.0)
-        var = (p_i * (1 - p_i)) / max(n_i_eff, 1) + (p_j * (1 - p_j)) / max(n_j_eff, 1)
-        return max(EPS_FLOOR, Z_NOT_WORSE * math.sqrt(max(var, 0.0)))
-
-    def thr_better(a_i: float, n_i: int, a_j: float, n_j: int, nw: float) -> float:
-        """
-        Margin to claim 'better on at least one env'. Kept ≤ 'not worse' tolerance.
-        Floor-based by default; set Z_WIN>0 to scale with SE_diff.
-        """
-        if Z_WIN > 0:
-            n_i_eff = min(int(n_i), 1000)
-            n_j_eff = min(int(n_j), 1000)
-            # Clamp accuracies into [0, 1] to ensure valid Bernoulli variance and avoid negative sqrt domain
-            p_i = min(max(a_i, 0.0), 1.0)
-            p_j = min(max(a_j, 0.0), 1.0)
-            var = (p_i * (1 - p_i)) / max(n_i_eff, 1) + (p_j * (1 - p_j)) / max(n_j_eff, 1)
-            t = max(EPS_WIN, Z_WIN * math.sqrt(max(var, 0.0)))
-        else:
-            t = EPS_WIN
-        return min(t, nw)
-
-    def dominates_on(a: str, b: str, subset) -> bool:
-        """
-        True iff 'a' is not-worse than 'b' on every env in `subset` (within thr_not_worse),
-        and strictly better on at least one env by thr_better. Full ε-ties break by earlier start.
-        """
-        not_worse_all = True
-        better_any    = False
-        tie_all       = True
-        for e in subset:
-            ai, aj = acc[a][e], acc[b][e]
-            ni, nj = cnt[a][e], cnt[b][e]
-            nw  = thr_not_worse(ai, ni, aj, nj)
-            bet = thr_better(ai, ni, aj, nj, nw)
-
-            if ai < aj - nw:
-                not_worse_all = False
-            if ai >= aj + bet:
-                better_any = True
-            if abs(ai - aj) > nw:
-                tie_all = False
-
-        if not_worse_all and better_any:
-            return True
-        if tie_all and first_block.get(a, float("inf")) < first_block.get(b, float("inf")):
-            return True
-        return False
-
-    # Global dominance (full ENVS) for summary + canonical "best"
-    dom_full = defaultdict(int)
     # Pool for dominance should be eligible miners, or queryable miners if no eligible ones
     pool_for_dom = eligible if eligible else (queryable_hks & set(active_hks))
-    for a, b in itertools.permutations(pool_for_dom, 2):
-        if dominates_on(a, b, ENVS):
-            dom_full[a] += 1
+    
+    # Compute global dominance counts
+    dom_full = sampler.compute_dominance_counts(pool_for_dom, ENVS, acc, cnt, first_block)
     logger.info("Computed ε-dominance counts (full env set).")
 
+    # Find best miner
     def ts(hk: str) -> int:
         """Block-number timestamp; prefer earliest commit"""
         return int(first_block[hk]) if hk in first_block else float('inf')
-
-    # Best should be from queryable miners only
+    
     best_candidates = pool_for_dom if pool_for_dom else (queryable_hks if queryable_hks else active_hks[:1])
     best = max(best_candidates, key=lambda hk: (dom_full.get(hk, 0), -ts(hk))) if best_candidates else active_hks[0]
     best_uid = meta.hotkeys.index(best)
 
-    # --- combinatoric scoring over all non-empty env subsets ------------------
-    def layer_weights(N: int, kappa: float):
-        """Per-subset weights K_s: K_1=kappa; K_s=C(N,s-1)*K_{s-1} for s>=2."""
-        K = {1: kappa}
-        for s in range(2, N + 1):
-            K[s] = kappa * (2**s)
-        return K
-
-    def subset_winner(env_subset):
-        """
-        Winner on env_subset via ε-Pareto. If no dominance edges, fall back to:
-          earliest version start block (earlier block wins).
-        """
-        if not pool_for_dom:
-            return None
-            
-        dom_local = defaultdict(int)
-        for x, y in itertools.permutations(pool_for_dom, 2):
-            if dominates_on(x, y, env_subset):
-                dom_local[x] += 1
-
-        return max(pool_for_dom, key=lambda hk: (dom_local.get(hk, 0), -ts(hk)))
-
-    # Calculate combinatoric scores for all miners (not just eligible)
-    K = layer_weights(N_envs, scale)
-    score = defaultdict(float)
-    layer_points = {hk: defaultdict(float) for hk in active_hks}
-
-    # --- Find single-env winners for highlighting ----------------------------
-    env_winners = {}
-    for e in ENVS:
-        env_winners[e] = subset_winner((e,))
-
-    # Award K_s to each subset winner
-    for s in range(1, N_envs + 1):
-        for env_subset in itertools.combinations(ENVS, s):
-            w = subset_winner(env_subset)
-            score[w] += K[s]
-            layer_points[w][s] += K[s]
+    # Calculate combinatoric scores
+    score, layer_points, env_winners = sampler.calculate_combinatoric_scores(
+        ENVS, pool_for_dom, acc, cnt, first_block, scale
+    )
 
     # If no eligible miners exist, fall back to uid 0 with weight 1.0.
     if not eligible:
@@ -1774,32 +1650,8 @@ async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 0.0):
         print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
         return [0], [1.0]  # Always return uid 0 when no eligible miners
 
-    # Eligible path: normalize scores to weights over the eligible pool only
-    total_points = sum(score[hk] for hk in eligible)
-    if total_points <= 0:
-        logger.warning("Combinatoric scoring returned zero total; falling back to canonical best.")
-        weight_by_hk = {hk: (1.0 if hk == best else 0.0) for hk in eligible}
-    else:
-        weight_by_hk = {hk: (score[hk] / total_points) for hk in eligible}
-
-    if burn > 0.0:
-        hk0 = meta.hotkeys[0]
-        logger.info(
-            f"Burn applied: requested burn={burn:.6f} to uid0-target (hotkey={hk0}, uid=0); "
-        )
-
-        # 1) Scale existing eligible weights to sum to (1 - burn)
-        for hk in list(weight_by_hk.keys()):
-            weight_by_hk[hk] = weight_by_hk.get(hk, 0.0) * (1.0 - burn)
-
-        # 2) Assign burn to hk0
-        if hk0 in weight_by_hk:
-            weight_by_hk[hk0] += burn
-        else:
-            # If hk0 wasn't in eligible set, add it so it appears in output/metrics
-            weight_by_hk[hk0] = burn
-            eligible = set(eligible)
-            eligible.add(hk0)
+    # Calculate normalized weights
+    weight_by_hk, eligible = orchestrator.calculate_weights(eligible, score, burn, BASE_HK)
 
     # --- summary printout -----------------------------------------------------
     hdr = (
