@@ -458,7 +458,16 @@ def _get_env_list_from_envvar() -> Tuple[str, ...]:
     return tuple(env_names)
 
 # Keep variable name ENVS for scoring logic; values are env name strings
-ENVS: Tuple[str, ...] = _get_env_list_from_envvar()
+ENVS: Tuple[str, ...] = (
+    "agentgym:webshop",
+    "agentgym:alfworld",
+    "agentgym:babyai",
+    "agentgym:sciworld",
+    "agentgym:textcraft",
+    "affine:sat",
+    "affine:ded",
+    "affine:abd",
+)
 
 # --------------------------------------------------------------------------- #
 #                   S3 helpers                                                #
