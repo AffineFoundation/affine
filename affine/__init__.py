@@ -1485,13 +1485,13 @@ async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[f
         return
     
 # --- Scoring hyperparameters --------------------------------------------------
-TAIL = 10_000
+TAIL = 20_000
 ALPHA = 0.9
 EPS_FLOOR   = 0.005
 Z_NOT_WORSE = 1.28
-EPS_WIN     = 0.008
+EPS_WIN     = 0.015
 Z_WIN       = 0.5
-ELIG        = 0.03 
+ELIG        = 0.10 
 
 async def get_weights(tail: int = TAIL, scale: float = 1, burn: float = 0.0):
     """
