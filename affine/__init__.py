@@ -52,49 +52,15 @@ from .sampling import MinerSampler, SamplingOrchestrator, SamplingConfig
 #                       Constants & global singletons                         #
 # --------------------------------------------------------------------------- #
 from .config import NETUID, singleton, get_conf, _get_env_list_from_envvar, ENVS
-TRACE  = 5
-logging.addLevelName(TRACE, "TRACE")
 
 # --------------------------------------------------------------------------- #
-#                       Prometheus                         #
+#                       Prometheus & Logging                                  #
 # --------------------------------------------------------------------------- #
-from prometheus_client import Counter, CollectorRegistry, start_http_server, Gauge
-METRICS_PORT   = int(os.getenv("AFFINE_METRICS_PORT", "8000"))
-METRICS_ADDR   = os.getenv("AFFINE_METRICS_ADDR", "0.0.0.0")
-REGISTRY       = CollectorRegistry(auto_describe=True)
-QCOUNT  = Counter("qcount", "qcount", ["model"], registry=REGISTRY)
-SCORE   = Gauge( "score", "score", ["uid", "env"], registry=REGISTRY)
-RANK    = Gauge( "rank", "rank", ["uid", "env"], registry=REGISTRY)
-WEIGHT  = Gauge( "weight", "weight", ["uid"], registry=REGISTRY)
-LASTSET = Gauge( "lastset", "lastset", registry=REGISTRY)
-NRESULTS = Gauge( "nresults", "nresults", registry=REGISTRY)
-MAXENV = Gauge("maxenv", "maxenv", ["env"], registry=REGISTRY)
-CACHE = Gauge( "cache", "cache", registry=REGISTRY)
-
-
-# --------------------------------------------------------------------------- #
-#                               Logging                                       #
-# --------------------------------------------------------------------------- #
-def _trace(self, msg, *args, **kwargs):
-    if self.isEnabledFor(TRACE):
-        self._log(TRACE, msg, args, **kwargs)
-logging.Logger.trace = _trace
-logger = logging.getLogger("affine")
-def setup_logging(verbosity: int):
-    if not getattr(setup_logging, "_prom_started", False):
-        try: start_http_server(METRICS_PORT, METRICS_ADDR, registry=REGISTRY)
-        except: pass
-        setup_logging._prom_started = True
-    level = TRACE if verbosity >= 3 else logging.DEBUG if verbosity == 2 else logging.INFO if verbosity == 1 else logging.CRITICAL + 1
-    for noisy in ["websockets", "bittensor", "bittensor-cli", "btdecode", "asyncio", "aiobotocore.regions", "botocore"]:
-        logging.getLogger(noisy).setLevel(logging.WARNING)
-    logging.basicConfig(level=level,
-                        format="%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
-                        datefmt="%Y-%m-%d %H:%M:%S")
-    
-def info():setup_logging(1)
-def debug():setup_logging(2)
-def trace():setup_logging(3)
+from .setup import (
+    TRACE, METRICS_PORT, METRICS_ADDR, REGISTRY,
+    QCOUNT, SCORE, RANK, WEIGHT, LASTSET, NRESULTS, MAXENV, CACHE,
+    logger, setup_logging, info, debug, trace
+)
 
 # --------------------------------------------------------------------------- #
 #                             Utility helpers                                 #
