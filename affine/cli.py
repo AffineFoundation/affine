@@ -136,6 +136,16 @@ def runner():
                 subtensor = await get_subtensor()
             return subtensor
 
+        async def subtensor_alive():
+            while True:
+                try:
+                    st = await ensure_subtensor()
+                    await st.get_current_block()
+                    await asyncio.sleep(30)
+                except BaseException:
+                    pass
+
+
         async def refresh_miners(now):
             nonlocal last_sync, miners_map
             if (now - last_sync) >= REFRESH_S or last_sync == 0:
@@ -186,7 +196,6 @@ def runner():
                             blk = await st.get_current_block()
                         except BaseException as e:
                             logger.warning(f"sink_worker: get_current_block() failed, will retry later. err={e!r}")
-                            traceback.print_exc()
                             continue
 
                         flat = []
@@ -211,11 +220,11 @@ def runner():
         async def main_loop():
             global HEARTBEAT
             nonlocal last_status_log, requests_since_last_log
+            alive_task = asyncio.create_task(subtensor_alive())
             sink_task = asyncio.create_task(sink_worker())
             try:
                 while True:
                     HEARTBEAT = now = time.monotonic()
-                    _ = await ensure_subtensor()
                     await refresh_miners(now)
                     if not miners_map:
                         await asyncio.sleep(1)
@@ -292,8 +301,10 @@ def runner():
                 pass
             finally:
                 sink_task.cancel()
+                alive_task.cancel
                 with contextlib.suppress(asyncio.CancelledError):
                     await sink_task
+                    await alive_task
 
         await main_loop()
 

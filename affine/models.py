@@ -64,7 +64,8 @@ class ContainerEnv(BaseEnv):
                     "PYTHONPATH": "/app",
                 }
                 try:
-                    sbx = get_sandbox(
+                    sbx = await asyncio.to_thread(
+                        get_sandbox,
                         template=self.name,
                         shared=True,
                         timeout=max(int(self.evaluator_timeout) + 900, 1800),
