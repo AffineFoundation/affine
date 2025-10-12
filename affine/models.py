@@ -123,7 +123,7 @@ class ContainerEnv(BaseEnv):
                 data = await asyncio.to_thread(lambda: sbx.proxy.evaluator(_timeout=self.evaluator_timeout, **payload))
             except Exception as e:
                 logger.error(f"[ENV] /evaluator call failed for {self.name}: {type(e).__name__}: {e}")
-                raise RuntimeError(f"/evaluator call failed: {e}")
+                return Evaluation(env=self, score=0.0, extra={"error": str(e), "evaluation_failed": True})
         latency = time.monotonic() - start
         total_score = float(data.get("total_score", data.get("score", 0.0)))
         success_rate = float(data.get("success_rate", 0.0))
