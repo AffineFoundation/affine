@@ -51,17 +51,9 @@ from .sampling import MinerSampler, SamplingOrchestrator, SamplingConfig
 # --------------------------------------------------------------------------- #
 #                       Constants & global singletons                         #
 # --------------------------------------------------------------------------- #
-NETUID = 120
+from .config import NETUID, singleton, get_conf, _get_env_list_from_envvar, ENVS
 TRACE  = 5
 logging.addLevelName(TRACE, "TRACE")
-_SINGLETON_CACHE = {}
-def singleton(key:str, factory):
-    """Create a singleton factory function that creates an object only once."""
-    def get_instance():
-        if key not in _SINGLETON_CACHE:
-            _SINGLETON_CACHE[key] = factory()
-        return _SINGLETON_CACHE[key]
-    return get_instance
 
 # --------------------------------------------------------------------------- #
 #                       Prometheus                         #
@@ -108,11 +100,6 @@ def trace():setup_logging(3)
 #                             Utility helpers                                 #
 # --------------------------------------------------------------------------- #
 load_dotenv(override=True)
-def get_conf(key, default=None) -> Any:
-    v = os.getenv(key); 
-    if not v and default is None:
-        raise ValueError(f"{key} not set.\nYou must set env var: {key} in .env")
-    return v or default
 
 
 # --------------------------------------------------------------------------- #
@@ -127,28 +114,6 @@ from .models import (
     BaseEnv, ContainerEnv, AgentGymContainerEnv, AffineContainerEnv,
     Challenge, Evaluation, Response, Miner, Result,
     _SBX_POOL, _SBX_LOCKS, _SBX_SEMS
-)
-
-# Central env registry (Quixand‑only)
-def _get_env_list_from_envvar() -> Tuple[str, ...]:
-    spec = os.getenv("AFFINE_ENV_LIST", "").strip()
-    if not spec:
-        return tuple()
-    env_names: list[str] = []
-    for tok in [t.strip() for t in spec.split(",") if t.strip()]:
-        env_names.append(tok)
-    return tuple(env_names)
-
-# Keep variable name ENVS for scoring logic; values are env name strings
-ENVS: Tuple[str, ...] = (
-    "agentgym:webshop",
-    "agentgym:alfworld",
-    "agentgym:babyai",
-    "agentgym:sciworld",
-    "agentgym:textcraft",
-    "affine:sat",
-    "affine:ded",
-    "affine:abd",
 )
 
 # --------------------------------------------------------------------------- #
