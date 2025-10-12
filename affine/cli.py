@@ -24,16 +24,12 @@ from .storage import sink_enqueue, CACHE_DIR
 from .query import run, LOG_TEMPLATE
 from .miners import get_latest_chute_id, miners
 from .validator import get_weights, retry_set_weights, validate_api_key, check_env_variables, _set_weights_with_confirmation
+from .config import get_conf
 
 logger = logging.getLogger(__name__)
 NETUID = 120
 HEARTBEAT = None
 
-def get_conf(key, default=None):
-    v = os.getenv(key)
-    if not v and default is None:
-        raise ValueError(f"{key} not set.\nYou must set env var: {key} in .env")
-    return v or default
 
 def _build_envs() -> List[BaseEnv]:
     spec = os.getenv("AFFINE_ENV_LIST", "").strip()
@@ -74,7 +70,7 @@ def cli(verbose):
 
 @cli.command("runner")
 def runner():
-    from .metrics import SCORE
+    from .setup import SCORE
     coldkey = get_conf("BT_WALLET_COLD", "default")
     hotkey  = get_conf("BT_WALLET_HOT",  "default")
     wallet  = bt.wallet(name=coldkey, hotkey=hotkey)
@@ -395,7 +391,7 @@ def signer(host: str, port: int):
 
 @cli.command("validate")
 def validate():
-    from .metrics import LASTSET, CACHE, NRESULTS
+    from .setup import LASTSET, CACHE, NRESULTS
     global HEARTBEAT
     coldkey = get_conf("BT_WALLET_COLD", "default")
     hotkey  = get_conf("BT_WALLET_HOT", "default")

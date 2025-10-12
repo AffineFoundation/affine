@@ -1,6 +1,9 @@
 import os
 import logging
+from dotenv import load_dotenv
 from prometheus_client import Counter, CollectorRegistry, start_http_server, Gauge
+
+load_dotenv(override=True)
 
 TRACE = 5
 logging.addLevelName(TRACE, "TRACE")

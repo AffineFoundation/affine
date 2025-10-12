@@ -7,7 +7,7 @@ import logging
 import aiohttp
 import traceback
 from typing import Dict, List, Optional
-from .storage import get_conf
+from .config import get_conf
 
 logger = logging.getLogger("affine")
 

@@ -1,50 +1,7 @@
 #!/usr/bin/env python3
-# --------------------------------------------------------------------------- #
-#                             Imports                                         #
-# --------------------------------------------------------------------------- #
 from __future__ import annotations
-import os
-import re
-import sys
-import math
-import json
-import time
-import click
-import socket
-import random
-import hashlib
-import aiohttp
-import asyncio
-import logging
-import requests
-import textwrap
-import traceback
-import itertools
-import atexit
-from .utils import *
-from math import comb
-import datetime as dt
-from tqdm import tqdm
-import bittensor as bt
-import datasets as hf_ds                    
-from pathlib import Path
-from tqdm.asyncio import tqdm
-from tabulate import tabulate
-from dotenv import load_dotenv
-from typing import AsyncIterator
-from urllib.parse import urlparse
-from huggingface_hub import HfApi
-from botocore.config import Config
-from collections import defaultdict
-from abc import ABC, abstractmethod
-from pydantic import root_validator
-from aiohttp import ClientConnectorError
-from aiobotocore.session import get_session
-from huggingface_hub import snapshot_download
-from bittensor.core.errors import MetadataError
-from pydantic import BaseModel, Field, validator, ValidationError
-from typing import Any, Dict, List, Optional, Union, Tuple, Sequence, Literal, TypeVar, Awaitable
 __version__ = "0.0.0"
+from .utils import *
 from .quixand.core.sandbox_manager import get_sandbox
 from .sampling import MinerSampler, SamplingOrchestrator, SamplingConfig
 
@@ -61,12 +18,6 @@ from .setup import (
     QCOUNT, SCORE, RANK, WEIGHT, LASTSET, NRESULTS, MAXENV, CACHE,
     logger, setup_logging, info, debug, trace
 )
-
-# --------------------------------------------------------------------------- #
-#                             Utility helpers                                 #
-# --------------------------------------------------------------------------- #
-load_dotenv(override=True)
-
 
 # --------------------------------------------------------------------------- #
 #                               Subtensor                                     #
