@@ -3,9 +3,13 @@ import json
 import time
 import asyncio
 import aiohttp
+import requests
 from typing import Dict, List, Optional, Union
 from huggingface_hub import HfApi
-from .query import _get_client
+from affine.query import _get_client
+from affine.models import Miner
+from affine.setup import NETUID
+from affine.utils.subtensor import get_subtensor
 
 logger = __import__("logging").getLogger("affine")
 
@@ -47,8 +51,6 @@ def _get_weights_lock() -> asyncio.Lock:
 async def check_model_gated(
     model_id: str, revision: Optional[str] = None
 ) -> Optional[bool]:
-    import requests
-
     async with _get_gating_lock():
         now = time.time()
         cached = MODEL_GATING_CACHE.get(model_id)
@@ -243,14 +245,10 @@ def _filter_by_best_model(output: Dict[int, "Miner"]) -> Dict[int, "Miner"]:
 
 async def miners(
     uids: Optional[Union[int, List[int]]] = None,
-    netuid: int = None,
+    netuid: int = NETUID,
     meta: object = None,
     check_validity: bool = True,
 ) -> Dict[int, "Miner"]:
-    from . import Miner, NETUID
-    from .utils.subtensor import get_subtensor
-
-    netuid = netuid or NETUID
     blacklisted_hotkeys = _load_blacklist()
 
     sub = await get_subtensor()

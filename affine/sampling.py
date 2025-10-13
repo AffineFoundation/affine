@@ -4,14 +4,9 @@ Handles miner sampling and weight calculation using epsilon-Pareto dominance.
 """
 
 import math
-import time
-import logging
-import asyncio
 import itertools
 from collections import defaultdict
 from typing import Dict, List, Tuple, Optional, Any, Set
-
-logger = logging.getLogger("affine.sampling")
 
 
 class SamplingConfig:

@@ -9,8 +9,7 @@ import logging
 import threading
 from typing import Optional, Any
 import bittensor as bt
-
-logger = logging.getLogger(__name__)
+from affine.setup import logger
 
 
 class SubtensorWrapper:

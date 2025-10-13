@@ -7,9 +7,10 @@ import logging
 import aiohttp
 import traceback
 from typing import Dict, List, Optional
-from .config import get_conf
+from affine.config import get_conf
+from affine.models import Response, Result, Evaluation, Miner, ContainerEnv
+from affine.setup import logger
 
-logger = logging.getLogger("affine")
 
 _HTTP_SEMS: Dict[int, asyncio.Semaphore] = {}
 _CLIENTS: Dict[int, aiohttp.ClientSession] = {}
@@ -65,11 +66,9 @@ async def _get_client() -> aiohttp.ClientSession:
 TERMINAL = {400, 404, 410}
 
 async def query(prompt, model: str = "unsloth/gemma-3-12b-it", slug: str = "llm", timeout=150, retries=0, backoff=1):
-    from . import Response, QCOUNT
     url = f"https://{slug}.chutes.ai/v1/chat/completions"
     hdr = {"Authorization": f"Bearer {get_conf('CHUTES_API_KEY')}", "Content-Type": "application/json"}
     start = time.monotonic()
-    QCOUNT.labels(model=model).inc()
     R = lambda resp, at, err, ok: Response(response=resp, latency_seconds=time.monotonic()-start,
                                           attempts=at, model=model, error=err, success=ok)
     sess = await _get_client()
@@ -100,7 +99,6 @@ LOG_TEMPLATE = (
 )
 
 async def run(challenges, miners, timeout=240, retries=0, backoff=1, task_ids: Optional[Dict[str, int]] = None)-> List:
-    from . import Result, Response, Evaluation, Miner, ContainerEnv
     if not isinstance(challenges, list): challenges = [challenges]
     if isinstance(miners, Miner): miners = [miners]
     if isinstance(miners, dict):  mmap = miners
@@ -120,11 +118,6 @@ async def run(challenges, miners, timeout=240, retries=0, backoff=1, task_ids: O
                 traceback.print_exc()
                 ev = Evaluation(env=chal.env, score=0.0, extra={"error": str(e), "evaluation_failed": True})
                 resp = Response(response=None, latency_seconds=time.monotonic()-start, attempts=1, model=miner.model or "", error=str(e), success=False)
-            try:
-                from . import SCORE
-                SCORE.labels(uid=miner.uid, env=chal.env.name).set(ev.score)
-            except Exception:
-                pass
             logger.info(f"[SCORE] U{miner.uid:>3d} {chal.env.name:<20} = {ev.score:.4f}")
             return Result(miner=miner, challenge=chal, response=resp, evaluation=ev)
         start = time.monotonic()

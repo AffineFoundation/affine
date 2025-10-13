@@ -4,17 +4,19 @@ import socket
 import asyncio
 import logging
 import aiohttp
-import traceback
 import bittensor as bt
-from pathlib import Path
 from typing import List, Tuple
 from urllib.parse import urlparse
 from aiohttp import ClientConnectorError
 from tabulate import tabulate
-from .query import _get_client
-from .storage import prune, CACHE_DIR
+from affine.storage import prune, dataset
+from affine.config import get_conf
+from affine.setup import NETUID
+from affine.utils.subtensor import get_subtensor
+from affine.sampling import MinerSampler, SamplingOrchestrator, SamplingConfig
+from affine.miners import miners
+from affine.setup import ENVS, logger
 
-logger = logging.getLogger("affine")
 
 async def _set_weights_with_confirmation(
     wallet: "bt.wallet",
@@ -26,9 +28,6 @@ async def _set_weights_with_confirmation(
     delay_s: float = 2.0,
     log_prefix: str = "",
 ) -> bool:
-    from .storage import get_conf
-    from .utils.subtensor import get_subtensor
-    
     for attempt in range(retries):
         try:
             st = await get_subtensor()
@@ -57,13 +56,9 @@ async def _set_weights_with_confirmation(
         await asyncio.sleep(delay_s)
     return False
 
-async def retry_set_weights(wallet: bt.Wallet, uids: List[int], weights: List[float], retry: int = 10, netuid: int = None, lastset_metric = None):
-    from .storage import get_conf
-    from . import NETUID
-    
-    if netuid is None:
-        netuid = NETUID
-    
+
+async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[float], retry: int = 10 ):
+    # Delegate to signer; fallback to shared helper only if signer is unreachable
     signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
     try:
         logger.info(f"Calling signer at {signer_url} for set_weights uids={uids}, weights={weights}")
@@ -80,7 +75,7 @@ async def retry_set_weights(wallet: bt.Wallet, uids: List[int], weights: List[fl
             resp = await session.post(
                 f"{signer_url}/set_weights",
                 json={
-                    "netuid": netuid,
+                    "netuid": NETUID,
                     "weights": weights,
                     "uids": uids,
                     "wait_for_inclusion": False,
@@ -88,6 +83,7 @@ async def retry_set_weights(wallet: bt.Wallet, uids: List[int], weights: List[fl
             )
             dur_ms = (time.monotonic() - start) * 1000
             logger.info(f"Signer HTTP response status={resp.status} in {dur_ms:.1f}ms")
+            # Try to parse JSON, otherwise log text (trimmed)
             try:
                 data = await resp.json()
             except Exception:
@@ -95,43 +91,26 @@ async def retry_set_weights(wallet: bt.Wallet, uids: List[int], weights: List[fl
                 data = {"raw": (txt[:500] + ('…' if len(txt) > 500 else ''))}
             logger.info(f"Signer response body={data}")
             if resp.status == 200 and data.get("success"):
-                if lastset_metric:
-                    lastset_metric.set(time.time())
                 return
+            # Do not fallback if signer exists but reports failure
             logger.warning(f"Signer responded error: status={resp.status} body={data}")
             return
     except ClientConnectorError as e:
         logger.info(f"Signer not reachable ({type(e).__name__}: {e}); falling back to local set_weights once")
         ok = await _set_weights_with_confirmation(
-            wallet, netuid, uids, weights, False,
+            wallet, NETUID, uids, weights, False,
             retries=int(os.getenv("SIGNER_RETRIES", "10")),
             delay_s=float(os.getenv("SIGNER_RETRY_DELAY", "2")),
             log_prefix="[validator-fallback]",
         )
-        if ok:
-            if lastset_metric:
-                lastset_metric.set(time.time())
-        else:
+        if not ok:
             logger.error("Local set_weights confirmation failed")
         return
     except asyncio.TimeoutError as e:
         logger.warning(f"Signer call timed out: {e}. Not falling back to local because validator has no wallet.")
         return
 
-async def get_weights(tail: int = None, scale: float = 1, burn: float = 0.0, envs_tuple = None, netuid: int = None):
-    from .sampling import MinerSampler, SamplingOrchestrator, SamplingConfig
-    from .storage import dataset
-    from .miners import miners
-    from .utils.subtensor import get_subtensor
-    from . import NETUID, ENVS
-    
-    if tail is None:
-        tail = SamplingConfig.TAIL
-    if envs_tuple is None:
-        envs_tuple = ENVS
-    if netuid is None:
-        netuid = NETUID
-    
+async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: float = 0.0):
     burn = max(0.0, min(1.0, burn))
     if burn >= 1:
         logger.info(f"Burn all")
@@ -145,11 +124,11 @@ async def get_weights(tail: int = None, scale: float = 1, burn: float = 0.0, env
     logger.info(f"Pruning {tail} blocks from {blk - tail} to {blk}")
     await prune(tail=tail)
 
-    meta = await st.metagraph(netuid)
+    meta = await st.metagraph(NETUID)
     BASE_HK = meta.hotkeys[0]
-    N_envs = len(envs_tuple)
+    N_envs = len(ENVS)
     
-    queryable_miners = await miners(meta=meta, netuid=netuid, check_validity=False)
+    queryable_miners = await miners(meta=meta, netuid=NETUID, check_validity=False)
     queryable_hks = {m.hotkey for m in queryable_miners.values()}
     logger.info(f"Found {len(queryable_hks)} queryable miners (hot, valid chute, not gated)")
 
@@ -157,7 +136,7 @@ async def get_weights(tail: int = None, scale: float = 1, burn: float = 0.0, env
     
     initial_first_block = {}
     try:
-        commits = await st.get_all_revealed_commitments(netuid)
+        commits = await st.get_all_revealed_commitments(NETUID)
         for uid, hk in enumerate(meta.hotkeys):
             if hk in commits:
                 blk_commit, _ = commits[hk][-1]
@@ -176,24 +155,24 @@ async def get_weights(tail: int = None, scale: float = 1, burn: float = 0.0, env
         return [0], [1.0]
     
     cnt, succ, prev, v_id, first_block = orchestrator.process_sample_data(
-        results_list, meta.hotkeys, envs_tuple, BASE_HK
+        results_list, meta.hotkeys, ENVS, BASE_HK
     )
     
     for hk, blk_val in initial_first_block.items():
         if hk not in first_block:
             first_block[hk] = blk_val
     
-    acc = orchestrator.calculate_accuracies(cnt, succ, meta.hotkeys, envs_tuple)
+    acc = orchestrator.calculate_accuracies(cnt, succ, meta.hotkeys, ENVS)
     
     active_hks = list(prev.keys())
     logger.info("Computed accuracy & updated MAXENV.")
 
-    eligible, required = sampler.calculate_eligibility(cnt, active_hks, queryable_hks, envs_tuple)
+    eligible, required = sampler.calculate_eligibility(cnt, active_hks, queryable_hks, ENVS)
     logger.info(f"Eligible miners: {len(eligible)} (from {len(active_hks)} active, {len(queryable_hks)} queryable)")
 
     pool_for_dom = eligible if eligible else (queryable_hks & set(active_hks))
     
-    dom_full = sampler.compute_dominance_counts(pool_for_dom, envs_tuple, acc, cnt, first_block)
+    dom_full = sampler.compute_dominance_counts(pool_for_dom, ENVS, acc, cnt, first_block)
     logger.info("Computed ε-dominance counts (full env set).")
 
     def ts(hk: str) -> int:
@@ -204,7 +183,7 @@ async def get_weights(tail: int = None, scale: float = 1, burn: float = 0.0, env
     best_uid = meta.hotkeys.index(best)
 
     score, layer_points, env_winners = sampler.calculate_combinatoric_scores(
-        envs_tuple, pool_for_dom, acc, cnt, first_block, scale
+        ENVS, pool_for_dom, acc, cnt, first_block, scale
     )
 
     if not eligible:
@@ -212,7 +191,7 @@ async def get_weights(tail: int = None, scale: float = 1, burn: float = 0.0, env
         
         hdr = (
             ["UID", "Model", "Rev"]
-            + [f"{e}" for e in envs_tuple]
+            + [f"{e}" for e in ENVS]
             + [f"L{s}" for s in range(1, N_envs + 1)]
             + ["Pts", "Elig", "Wgt"]
         )
@@ -223,7 +202,7 @@ async def get_weights(tail: int = None, scale: float = 1, burn: float = 0.0, env
             w = 1.0 if hk == best else 0.0
             model_name = str(m.model)[:50]
             env_cols = []
-            for e in envs_tuple:
+            for e in ENVS:
                 base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}"
                 if hk == env_winners.get(e):
                     env_cols.append(f"*{base}*")
@@ -245,7 +224,7 @@ async def get_weights(tail: int = None, scale: float = 1, burn: float = 0.0, env
 
     hdr = (
         ["UID", "Model", "Rev"]
-        + [f"{e}" for e in envs_tuple]
+        + [f"{e}" for e in ENVS]
         + [f"L{s}" for s in range(1, N_envs + 1)]
         + ["Pts", "Elig", "Wgt"]
     )
@@ -256,7 +235,7 @@ async def get_weights(tail: int = None, scale: float = 1, burn: float = 0.0, env
         w = weight_by_hk.get(hk, 0.0)
         model_name = str(m.model)[:50]
         env_cols = []
-        for e in envs_tuple:
+        for e in ENVS:
             base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}"
             if hk == env_winners.get(e):
                 env_cols.append(f"*{base}*")

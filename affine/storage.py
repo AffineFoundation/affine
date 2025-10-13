@@ -4,12 +4,20 @@ import time
 import asyncio
 import logging
 import aiohttp
+import orjson
+import aiofiles
 from pathlib import Path
 from typing import AsyncIterator
+from tqdm.asyncio import tqdm
+
 from aiobotocore.session import get_session
 from botocore.config import Config
 
-logger = logging.getLogger("affine")
+from affine.config import get_conf
+from affine.utils.subtensor import get_subtensor
+from affine.models import Result
+from affine.query import _get_client
+from affine.setup import logger
 
 WINDOW        = int(os.getenv("AFFINE_WINDOW", 20))
 RESULT_PREFIX = "affine/results/"
@@ -38,16 +46,8 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 def _w(b: int) -> int: return (b // WINDOW) * WINDOW
 
-try:
-    import orjson as _json
-    _loads, _dumps = _json.loads, _json.dumps
-except ModuleNotFoundError:
-    _loads = lambda b: json.loads(b.decode())
-    _dumps = lambda o: json.dumps(o, separators=(",", ":")).encode()
-
 async def _index() -> list[str]:
     if PUBLIC_READ:
-        from . import _get_client
         sess = await _get_client()
         url = f"{R2_PUBLIC_BASE}/{INDEX_KEY}"
         async with sess.get(url, timeout=aiohttp.ClientTimeout(total=30)) as r:
@@ -67,7 +67,7 @@ async def _update_index(k: str) -> None:
         if k not in idx:
             idx.add(k)
             await c.put_object(Bucket=FOLDER, Key=INDEX_KEY,
-                               Body=_dumps(sorted(idx)),
+                               Body=orjson.dumps(sorted(idx)),
                                ContentType="application/json")
 
 async def _cache_shard(key: str, sem: asyncio.Semaphore) -> Path:
@@ -75,7 +75,6 @@ async def _cache_shard(key: str, sem: asyncio.Semaphore) -> Path:
     out = CACHE_DIR / f"{name}.jsonl"; mod = out.with_suffix(".modified")
     async with sem:
         if PUBLIC_READ:
-            from . import _get_client
             sess = await _get_client()
             url = f"{R2_PUBLIC_BASE}/{key}"
             async with sess.get(url, timeout=aiohttp.ClientTimeout(total=60)) as r:
@@ -84,7 +83,7 @@ async def _cache_shard(key: str, sem: asyncio.Semaphore) -> Path:
                 lm = r.headers.get("last-modified", str(time.time()))
             tmp = out.with_suffix(".tmp")
             with tmp.open("wb") as f:
-                f.write(b"\n".join(_dumps(i) for i in _loads(body)) + b"\n")
+                f.write(b"\n".join(orjson.dumps(i) for i in orjson.loads(body)) + b"\n")
             os.replace(tmp, out); mod.write_text(lm)
             return out
         async with get_client_ctx() as c:
@@ -96,29 +95,20 @@ async def _cache_shard(key: str, sem: asyncio.Semaphore) -> Path:
             body, lm = await o["Body"].read(), o["LastModified"].isoformat()
     tmp = out.with_suffix(".tmp")
     with tmp.open("wb") as f:
-        f.write(b"\n".join(_dumps(i) for i in _loads(body)) + b"\n")
+        f.write(b"\n".join(orjson.dumps(i) for i in orjson.loads(body)) + b"\n")
     os.replace(tmp, out); mod.write_text(lm)
     return out
 
-async def _jsonl(p: Path):
-    try:
-        import aiofiles
-        async with aiofiles.open(p, "rb") as f:
-            async for l in f: yield l.rstrip(b"\n")
-    except ModuleNotFoundError:
-        def _read():
-            with p.open("rb") as f: return f.read().splitlines()
-        for l in await asyncio.to_thread(_read): yield l
+async def _jsonl(path: Path) -> AsyncIterator[bytes]:
+    async with aiofiles.open(path, "rb") as f:
+        async for line in f:
+            yield line.rstrip(b"\n")
 
 async def dataset(
     tail: int,
     *,
     max_concurrency: int = 10,
 ) -> AsyncIterator["Result"]:
-    from .utils.subtensor import get_subtensor
-    from . import Result
-    from tqdm.asyncio import tqdm
-    
     sub  = await get_subtensor()
     cur  = await sub.get_current_block()
     need = {w for w in range(_w(cur - tail), _w(cur) + WINDOW, WINDOW)}
@@ -133,30 +123,31 @@ async def dataset(
     tasks: list[asyncio.Task[Path]] = [
         asyncio.create_task(_prefetch(k)) for k in keys[:max_concurrency]
     ]
-    next_key = max_concurrency            
-    bar = tqdm(f"Dataset=({cur}, {cur - tail})", unit="res", dynamic_ncols=True)
-    for i, key in enumerate(keys):
-        try:
-            path = await tasks[i]
-        except Exception as e:
-            logger.warning(f"task[{i}] failed, skip")
-            continue
-        if next_key < len(keys):
-            tasks.append(asyncio.create_task(_prefetch(keys[next_key])))
-            next_key += 1
-        async for raw in _jsonl(path):
+    next_key = max_concurrency
+    bar = tqdm(desc=f"Dataset=({cur}, {cur - tail})", unit="res", dynamic_ncols=True)
+    try:
+        for i, key in enumerate(keys):
             try:
-                r = Result.model_validate(_loads(raw))
-                if r.verify():
-                    bar.update(1)
-                    yield r
-            except Exception:
-                pass
-    bar.close()
+                path = await tasks[i]
+            except Exception as e:
+                logger.warning(f"task[{i}] failed, skip")
+                continue
+            if next_key < len(keys):
+                tasks.append(asyncio.create_task(_prefetch(keys[next_key])))
+                next_key += 1
+            async for raw in _jsonl(path):
+                try:
+                    r = Result.model_validate(orjson.loads(raw))
+                    if r.verify():
+                        bar.update(1)
+                        yield r
+                except Exception:
+                    pass
+    finally:
+        bar.close()
 
 async def sign_results( wallet, results ):
     try:
-        from . import get_conf
         signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
         timeout = aiohttp.ClientTimeout(connect=2, total=30)
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -188,8 +179,6 @@ async def sink_enqueue(wallet, block, results, force: bool = False):
     await sink(wallet=wallet, results=buf, block=block)
 
 async def sink(wallet, results: list["Result"], block: int = None):
-    from .utils.subtensor import get_subtensor
-    
     if not results: return
     if block is None:
         sub = await get_subtensor(); block = await sub.get_current_block()
@@ -205,14 +194,12 @@ async def sink(wallet, results: list["Result"], block: int = None):
             merged = json.loads(await r["Body"].read()) + dumped
         except c.exceptions.NoSuchKey:
             merged = dumped
-        await c.put_object(Bucket=FOLDER, Key=key, Body=_dumps(merged),
+        await c.put_object(Bucket=FOLDER, Key=key, Body=orjson.dumps(merged),
                            ContentType="application/json")
     if len(merged) == len(dumped):
         await _update_index(key)
 
 async def prune(tail: int):
-    from .utils.subtensor import get_subtensor
-    
     sub = await get_subtensor(); cur = await sub.get_current_block()
     for f in CACHE_DIR.glob("*.jsonl"):
         b = f.name.split("-", 1)[0]

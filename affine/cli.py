@@ -14,20 +14,19 @@ import contextlib
 import bittensor as bt
 from pathlib import Path
 from huggingface_hub import HfApi
-from collections import defaultdict
 from bittensor.core.errors import MetadataError
 from huggingface_hub import snapshot_download
 from typing import Dict, List, Tuple
-from .utils import get_subtensor
-from .models import BaseEnv, ContainerEnv, AgentGymContainerEnv, AffineContainerEnv, Challenge
-from .storage import sink_enqueue, CACHE_DIR
-from .query import run, LOG_TEMPLATE
-from .miners import get_latest_chute_id, miners
-from .validator import get_weights, retry_set_weights, _set_weights_with_confirmation
-from .config import get_conf
+from affine.utils.subtensor import get_subtensor
+from affine.models import BaseEnv, ContainerEnv, AgentGymContainerEnv, AffineContainerEnv, Challenge
+from affine.storage import sink_enqueue, CACHE_DIR
+from affine.query import run, LOG_TEMPLATE
+from affine.miners import get_latest_chute_id, miners
+from affine.validator import get_weights, retry_set_weights, _set_weights_with_confirmation
+from affine.config import get_conf
+from affine.setup import NETUID, setup_logging, logger
+from aiohttp import web
 
-logger = logging.getLogger(__name__)
-NETUID = 120
 HEARTBEAT = None
 
 
@@ -65,12 +64,10 @@ async def watchdog(timeout: int = 600, sleep_div: float = 6.0):
 @click.group()
 @click.option('-v', '--verbose', count=True, help='Increase verbosity (-v INFO, -vv DEBUG, -vvv TRACE)')
 def cli(verbose):
-    from . import setup_logging
     setup_logging(verbose)
 
 @cli.command("runner")
 def runner():
-    from .setup import SCORE
     coldkey = get_conf("BT_WALLET_COLD", "default")
     hotkey  = get_conf("BT_WALLET_HOT",  "default")
     wallet  = bt.wallet(name=coldkey, hotkey=hotkey)
@@ -83,8 +80,6 @@ def runner():
         REFRESH_S      = 600
         SINK_BATCH     = 300
         SINK_MAX_WAIT  = 60*5
-        BACKOFF0       = 5
-        BACKOFF_CAP    = 300
 
         chal_cache: Dict[str, Tuple[Challenge, int]] = {}
         last_sync = 0.0
@@ -276,10 +271,6 @@ def runner():
                         if res_list:
                             sink_q.put_nowait(res_list)
                             for r in res_list:
-                                try:
-                                    SCORE.labels(uid=r.miner.uid, env=r.challenge.env.name).set(r.evaluation.score)
-                                except Exception:
-                                    pass
                                 logger.debug(
                                     LOG_TEMPLATE.format(
                                         pct=0,
@@ -319,7 +310,6 @@ def runner():
 @click.option('--port', default=int(os.getenv('SIGNER_PORT', '8080')))
 def signer(host: str, port: int):
     async def _run():
-        from aiohttp import web
         coldkey = get_conf("BT_WALLET_COLD", "default")
         hotkey = get_conf("BT_WALLET_HOT", "default")
         wallet = bt.wallet(name=coldkey, hotkey=hotkey)
@@ -402,7 +392,6 @@ def signer(host: str, port: int):
 
 @cli.command("validate")
 def validate():
-    from .setup import LASTSET, CACHE, NRESULTS
     global HEARTBEAT
     coldkey = get_conf("BT_WALLET_COLD", "default")
     hotkey  = get_conf("BT_WALLET_HOT", "default")
@@ -425,12 +414,7 @@ def validate():
                 uids, weights = await get_weights(scale=0.5, burn=force_uid0)
                 logger.info("Setting weights ...")
                 await retry_set_weights( wallet, uids=uids, weights=weights, retry = 3)
-                subtensor = await get_subtensor()
-                SETBLOCK = await subtensor.get_current_block()
-                LASTSET.set_function(lambda: SETBLOCK - LAST)
                 LAST = BLOCK
-
-                CACHE.set(sum( f.stat().st_size for f in CACHE_DIR.glob("*.jsonl") if f.is_file()))
 
             except asyncio.CancelledError: break
             except Exception as e:
@@ -616,7 +600,6 @@ chute = build_sglang_chute(
         output = stdout.decode().split('confirm? (y/n)')[1].strip()
         logger.trace(output)
 
-        import re
         match = re.search(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+\|\s+(\w+)', output)
         if match and match.group(2) == "ERROR":
             logger.debug("Chutes deploy failed with the above error log")

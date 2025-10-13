@@ -126,8 +126,8 @@ class R2BufferedDataset:
         self._endpoint_url  = endpoint
         self._access_key    = access_key
         self._secret_key    = secret_key
-        self._public_read   = getattr(af, "PUBLIC_READ", False)
-        self._public_base   = getattr(af, "R2_PUBLIC_BASE", "")
+        self._public_read   = af.PUBLIC_READ
+        self._public_base   = af.R2_PUBLIC_BASE
 
         self._buffer: Deque[Any] = deque()
         self._lock   = asyncio.Lock()

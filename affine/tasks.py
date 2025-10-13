@@ -11,9 +11,8 @@ from dataclasses import dataclass
 from enum import Enum
 from pydantic import BaseModel, Field, validator, ValidationError
 
-from .quixand.core.sandbox_manager import get_sandbox
-
-logger = logging.getLogger(__name__)
+from affine.quixand.core.sandbox_manager import get_sandbox
+from affine.setup import logger
 
 
 # ========================= Configuration =========================

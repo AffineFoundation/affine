@@ -1,8 +1,5 @@
 from __future__ import annotations
 import os
-import re
-import sys
-import math
 import json
 import time
 import random
@@ -12,14 +9,12 @@ import asyncio
 import logging
 import textwrap
 import traceback
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Tuple
 from abc import ABC, abstractmethod
 from pydantic import BaseModel, Field, validator, root_validator, ValidationError
 import bittensor as bt
-from .quixand.core.sandbox_manager import get_sandbox
-
-logger = logging.getLogger("affine")
+from affine.quixand.core.sandbox_manager import get_sandbox
+from affine.setup import ENVS, logger
 
 __version__ = "0.0.0"
 
@@ -181,7 +176,6 @@ class Challenge(BaseModel):
     def _parse_env(cls, v):
         if isinstance(v, str):
             name = v.strip()
-            from . import ENVS
             if name not in ENVS:
                 raise ValueError(f"Inactive env '{name}'")
             if ":" in name:
@@ -211,7 +205,6 @@ class Evaluation(BaseModel):
     def _parse_env(cls, v):
         if isinstance(v, str):
             name = v.strip()
-            from . import ENVS
             if name not in ENVS:
                 raise ValueError(f"Inactive env '{name}'")
             if ":" in name:
