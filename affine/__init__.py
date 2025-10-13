@@ -1303,6 +1303,20 @@ def runner():
 #                               Validator                                     #
 # --------------------------------------------------------------------------- #
     
+def _filter_and_normalize_weights(uids: list[int], weights: list[float], allowed: set[int]) -> tuple[list[int], list[float]]:
+    pairs = [
+        (int(u), float(w))
+        for u, w in zip(uids, weights)
+        if isinstance(u, int) and isinstance(w, (int, float)) and w > 0.0 and u in allowed
+    ]
+    if not pairs:
+        return [], []
+    out_u, out_w = [list(t) for t in zip(*pairs)]
+    s = sum(out_w)
+    if s <= 0:
+        return [], []
+    return out_u, [w / s for w in out_w]
+
 async def _set_weights_with_confirmation(
     wallet: "bt.wallet",
     netuid: int,
@@ -1313,9 +1327,17 @@ async def _set_weights_with_confirmation(
     delay_s: float = 2.0,
     log_prefix: str = "",
 ) -> bool:
+    st = await get_subtensor()
+    meta0 = await st.metagraph(netuid)
+    qmap = await miners(meta=meta0)
+    allowed = set(qmap.keys())
+    allowed.add(0)
+    uids, weights = _filter_and_normalize_weights(uids, weights, allowed)
+    if not uids:
+        logger.warning(f"{log_prefix} no valid uids after filtering; aborting set_weights")
+        return False
     for attempt in range(retries):
         try:
-            st = await get_subtensor()
             ref = await st.get_current_block()
             logger.info(f"{log_prefix} set_weights attempt {attempt+1}/{retries}: netuid={netuid} uids={uids} weights={weights}")
             start = time.monotonic()
@@ -1485,7 +1507,7 @@ async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[f
         return
     
 # --- Scoring hyperparameters --------------------------------------------------
-TAIL = 20_000
+TAIL = 50_000
 ALPHA = 0.9
 EPS_FLOOR   = 0.005
 Z_NOT_WORSE = 1.28
