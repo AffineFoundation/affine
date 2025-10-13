@@ -51,7 +51,7 @@ from .miners import get_chute, get_chute_code, get_latest_chute_id, get_weights_
 # --------------------------------------------------------------------------- #
 #                   Validator (imported from validator module)                #
 # --------------------------------------------------------------------------- #
-from .validator import get_weights, retry_set_weights, validate_api_key, check_env_variables, _set_weights_with_confirmation
+from .validator import get_weights, retry_set_weights, _set_weights_with_confirmation
 
 # --------------------------------------------------------------------------- #
 #                   CLI (imported from cli module)                            #

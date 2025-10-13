@@ -149,7 +149,7 @@ async def get_weights(tail: int = None, scale: float = 1, burn: float = 0.0, env
     BASE_HK = meta.hotkeys[0]
     N_envs = len(envs_tuple)
     
-    queryable_miners = await miners(meta=meta, netuid=netuid)
+    queryable_miners = await miners(meta=meta, netuid=netuid, check_validity=False)
     queryable_hks = {m.hotkey for m in queryable_miners.values()}
     logger.info(f"Found {len(queryable_hks)} queryable miners (hot, valid chute, not gated)")
 
@@ -279,48 +279,3 @@ async def get_weights(tail: int = None, scale: float = 1, burn: float = 0.0, env
     uids = [u for u in eligible_uids if u != best_uid] + [best_uid]
     weights = [weight_by_hk.get(meta.hotkeys[u], 0.0) for u in uids]
     return uids, weights
-
-async def validate_api_key(api_key: str, base_url: str = "https://llm.chutes.ai/v1") -> bool:
-    if not api_key:
-        return False
-    try:
-        sess = await _get_client()
-        async with sess.get(
-            f"{base_url}/models",
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=aiohttp.ClientTimeout(total=10.0)
-        ) as response:
-            return response.status >= 200 and response.status < 300
-    except Exception as e:
-        logger.error(f"API key validation failed: {e}")
-        return False
-
-def check_env_variables() -> bool:
-    errors = []
-
-    chutes_api_key = os.getenv("CHUTES_API_KEY", "")
-    if not chutes_api_key:
-        errors.append("CHUTES_API_KEY is not set")
-
-    hf_user = os.getenv("HF_USER", "")
-    if not hf_user:
-        errors.append("HF_USER is not set")
-    elif hf_user == "myaccount":
-        errors.append("HF_USER is still set to default value 'myaccount'. Please set your actual Hugging Face username")
-
-    hf_token = os.getenv("HF_TOKEN", "")
-    if not hf_token:
-        errors.append("HF_TOKEN is not set")
-    elif hf_token == "hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx":
-        errors.append("HF_TOKEN is still set to default value. Please set your actual Hugging Face token")
-
-    if errors:
-        logger.error("Environment variable check failed:")
-        for error in errors:
-            logger.error(f"  - {error}")
-        logger.info("\nPlease set the required environment variables in your .env file:")
-        logger.info("  HF_USER=your_huggingface_username")
-        logger.info("  HF_TOKEN=your_huggingface_token")
-        return False
-    
-    return True

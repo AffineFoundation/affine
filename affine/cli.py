@@ -23,7 +23,7 @@ from .models import BaseEnv, ContainerEnv, AgentGymContainerEnv, AffineContainer
 from .storage import sink_enqueue, CACHE_DIR
 from .query import run, LOG_TEMPLATE
 from .miners import get_latest_chute_id, miners
-from .validator import get_weights, retry_set_weights, validate_api_key, check_env_variables, _set_weights_with_confirmation
+from .validator import get_weights, retry_set_weights, _set_weights_with_confirmation
 from .config import get_conf
 
 logger = logging.getLogger(__name__)
@@ -449,21 +449,7 @@ def validate():
 
 @cli.command("weights")
 def weights():
-    async def _run_weights():
-        if not check_env_variables():
-            return
-
-        api_key = os.getenv("CHUTES_API_KEY", "")
-        is_valid = await validate_api_key(api_key)
-        if not is_valid:
-            logger.error("CHUTES_API_KEY validation failed. The key may be invalid or expired.")
-            logger.info("Please check your CHUTES_API_KEY and ensure it has proper permissions")
-            return
-
-        logger.debug("All environment variables validated successfully")
-        return await get_weights()
-
-    asyncio.run(_run_weights())
+    asyncio.run(get_weights())
 
 @cli.command("pull")
 @click.argument("uid", type=int)
