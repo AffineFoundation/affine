@@ -185,19 +185,18 @@ async def sink(wallet, results: list["Result"], block: int = None):
     valid = [r for r in results if getattr(r.response, "success", False)]
     if not valid:
         return
-    hotkey, signed = await sign_results( wallet, valid )
-    key = f"{RESULT_PREFIX}{_w(block):09d}-{hotkey}.json"
-    dumped = [ r.model_dump(mode="json") for r in signed ]
+    hotkey, signed = await sign_results(wallet, valid)
+    timestamp = time.time_ns()  # ensure each upload gets a unique key
+    key = f"{RESULT_PREFIX}{_w(block):09d}-{hotkey}-{timestamp}.json"
+    dumped = [r.model_dump(mode="json") for r in signed]
     async with get_client_ctx() as c:
-        try:
-            r = await c.get_object(Bucket=FOLDER, Key=key)
-            merged = json.loads(await r["Body"].read()) + dumped
-        except c.exceptions.NoSuchKey:
-            merged = dumped
-        await c.put_object(Bucket=FOLDER, Key=key, Body=orjson.dumps(merged),
-                           ContentType="application/json")
-    if len(merged) == len(dumped):
-        await _update_index(key)
+        await c.put_object(
+            Bucket=FOLDER,
+            Key=key,
+            Body=orjson.dumps(dumped),
+            ContentType="application/json",
+        )
+    await _update_index(key)
 
 async def prune(tail: int):
     sub = await get_subtensor(); cur = await sub.get_current_block()
