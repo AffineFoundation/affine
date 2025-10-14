@@ -466,97 +466,18 @@ def pull(uid: int, model_path: str, hf_token: str):
         click.echo(f"Error pulling model: {e}", err=True)
         sys.exit(1)
 
-@cli.command("push")
-@click.option('--model_path',  default='./model_path', help='Local path to model artifacts.')
-@click.option('--existing-repo', default=None, help='Use an existing HF repo instead of uploading (format <user>/<repo>)')
-@click.option('--revision', default=None, help='Commit SHA to register (only relevant with --existing-repo)')
-@click.option('--coldkey',     default=None, help='Name of the cold wallet to use.')
-@click.option('--hotkey',      default=None, help='Name of the hot wallet to use.')
+
+@cli.command("chutes_push")
+@click.option('--repo', required=True, help='Existing HF repo id (e.g. <user>/<repo>)')
+@click.option('--revision', required=True, help='HF commit SHA to deploy')
 @click.option('--chutes-api-key', default=None, help='Chutes API key (env CHUTES_API_KEY if unset)')
-def push(model_path: str, existing_repo: str, revision: str, coldkey: str, hotkey: str, chutes_api_key: str):
-    coldkey = coldkey or get_conf("BT_WALLET_COLD", "default")
-    hotkey  = hotkey  or get_conf("BT_WALLET_HOT", "default")
-    logger.debug("Using coldkey=%s, hotkey=%s", coldkey, hotkey)
-    wallet = bt.wallet(name=coldkey, hotkey=hotkey)
-
-    hf_user        = get_conf("HF_USER")
-    hf_token       = get_conf("HF_TOKEN")
+def push(repo: str, revision: str, chutes_api_key: str, chute_user: str):
+    """Deploy an existing HF repo+revision to Chutes and print the chute info."""
     chutes_api_key = chutes_api_key or get_conf("CHUTES_API_KEY")
-    chute_user     = get_conf("CHUTE_USER")
-
-    repo_name = existing_repo or f"{hf_user}/Affine-{wallet.hotkey.ss58_address}"
-    logger.debug("Using existing HF repo: %s" if existing_repo else "Hugging Face repo: %s", repo_name)
-
-    api = HfApi(token=hf_token)
-    if not existing_repo:
-        api.create_repo(repo_id=repo_name, repo_type="model", private=True, exist_ok=True)
-        try: api.update_repo_visibility(repo_id=repo_name, private=True)
-        except Exception: logger.debug("Repo already private or visibility update failed")
-
-    async def deploy_model_to_hf():
-        logger.debug("Starting model upload from %s", model_path)
-        files = []
-        for root, _, fnames in os.walk(model_path):
-            if ".cache" in root or any(p.startswith(".") for p in root.split(os.sep)):
-                continue
-            for fname in fnames:
-                if not (fname.startswith(".") or fname.endswith(".lock")):
-                    files.append(os.path.join(root, fname))
-
-        SEM = asyncio.Semaphore(int(os.getenv("AFFINE_UPLOAD_CONCURRENCY", "2")))
-
-        async def _upload(path: str):
-            rel = os.path.relpath(path, model_path)
-            async with SEM:
-                await asyncio.to_thread(
-                    lambda: api.upload_file(
-                        path_or_fileobj=path,
-                        path_in_repo=rel,
-                        repo_id=repo_name,
-                        repo_type="model"
-                    )
-                )
-                logger.debug("Uploaded %s", rel)
-
-        await asyncio.gather(*(_upload(p) for p in files))
-        logger.debug("Model upload complete (%d files)", len(files))
-
-    asyncio.run(deploy_model_to_hf()) if not existing_repo else logger.debug("Skipping model upload because --existing-repo was provided")
-
-    if revision:
-        logger.debug("Using user-supplied revision: %s", revision)
-    else:
-        info      = api.repo_info(repo_id=repo_name, repo_type="model")
-        revision  = getattr(info, "sha", getattr(info, "oid", "")) or ""
-        logger.debug("Latest revision from HF: %s", revision)
-
-    chute_id = None
-
-    async def commit_to_chain():
-        logger.debug("Preparing on-chain commitment")
-        sub     = await get_subtensor()
-        payload = json.dumps({"model": repo_name, "revision": revision, "chute_id": chute_id})
-        while True:
-            try:
-                await sub.set_reveal_commitment(wallet=wallet, netuid=NETUID, data=payload, blocks_until_reveal=1)
-                logger.debug("On-chain commitment submitted")
-                break
-            except MetadataError as e:
-                if "SpaceLimitExceeded" in str(e):
-                    logger.debug("SpaceLimitExceeded – waiting one block before retrying")
-                    await sub.wait_for_block()
-                else:
-                    raise
-
-    try:
-        api.update_repo_visibility(repo_id=repo_name, private=False)
-        logger.debug("Repo made public")
-    except Exception:
-        logger.trace("Failed to make repo public (already public?)")
+    chute_user     = chute_user or get_conf("CHUTE_USER")
 
     async def deploy_to_chutes():
-        logger.debug("Building Chute config")
-        rev_flag = f'revision="{revision}",' if revision else ""
+        logger.debug("Building Chute config for repo=%s revision=%s", repo, revision)
         chutes_config = textwrap.dedent(f"""
 import os
 from chutes.chute import NodeSelector
@@ -565,26 +486,25 @@ os.environ["NO_PROXY"] = "localhost,127.0.0.1"
 
 chute = build_sglang_chute(
     username="{chute_user}",
-    readme="{repo_name}",
-    model_name="{repo_name}",
-    image="chutes/sglang:0.4.9.post3",
+    readme="{repo}",
+    model_name="{repo}",
+    image="chutes/sglang:nightly-2025081600",
     concurrency=20,
-    {rev_flag}
+    revision="{revision}",
     node_selector=NodeSelector(
-        gpu_count=8,
-        min_vram_gb_per_gpu=24,
+        gpu_count=1,
+        include=["a100", "h100"],
     ),
-    engine_args=(
-        "--trust-remote-code "
-    ),
+    max_instances=1,
+    scale_threshold=0.5,
+    shutdown_after_seconds=3600,
 )
 """)
         tmp_file = Path("tmp_chute.py")
         tmp_file.write_text(chutes_config)
         logger.debug("Wrote Chute config to %s", tmp_file)
-        logger.debug("=== chute file ===\n%s", tmp_file.read_text())
 
-        cmd = ["chutes", "deploy", f"{tmp_file.stem}:chute", "--public"]
+        cmd = ["chutes", "deploy", f"{tmp_file.stem}:chute", "--accept-fee"]
         env = {**os.environ, "CHUTES_API_KEY": chutes_api_key}
         proc = await asyncio.create_subprocess_exec(
             *cmd, env=env,
@@ -597,9 +517,9 @@ chute = build_sglang_chute(
             await proc.stdin.drain()
             proc.stdin.close()
         stdout, _ = await proc.communicate()
-        output = stdout.decode().split('confirm? (y/n)')[1].strip()
+        output = stdout.decode(errors="ignore")
         logger.trace(output)
-
+        import re
         match = re.search(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+\|\s+(\w+)', output)
         if match and match.group(2) == "ERROR":
             logger.debug("Chutes deploy failed with the above error log")
@@ -612,8 +532,45 @@ chute = build_sglang_chute(
 
     asyncio.run(deploy_to_chutes())
 
-    chute_id = asyncio.run(get_latest_chute_id(repo_name, api_key=chutes_api_key))
+    chute_id   = asyncio.run(get_latest_chute_id(repo, api_key=chutes_api_key))
+    chute_info = asyncio.run(get_chute(chute_id)) if chute_id else None
+    payload = {
+        "success": bool(chute_id),
+        "chute_id": chute_id,
+        "chute": chute_info,
+        "repo": repo,
+        "revision": revision,
+    }
+    click.echo(json.dumps(payload))
 
-    asyncio.run(commit_to_chain())
+@cli.command("commit")
+@click.option('--repo', required=True, help='HF repo id (e.g. <user>/<repo>)')
+@click.option('--revision', required=True, help='HF commit SHA')
+@click.option('--chute-id', required=True, help='Chutes deployment id')
+@click.option('--coldkey', default=None, help='Name of the cold wallet to use.')
+@click.option('--hotkey',  default=None, help='Name of the hot wallet to use.')
+def commit(repo: str, revision: str, chute_id: str, coldkey: str, hotkey: str):
+    """Commit repo+revision+chute_id on-chain (separate from deployment)."""
+    cold = coldkey or get_conf("BT_WALLET_COLD", "default")
+    hot  = hotkey  or get_conf("BT_WALLET_HOT",  "default")
+    wallet = bt.wallet(name=cold, hotkey=hot)
 
-    logger.debug("Mining setup complete. Model is live!")
+    async def _commit():
+        sub = await get_subtensor()
+        data = json.dumps({"model": repo, "revision": revision, "chute_id": chute_id})
+        while True:
+            try:
+                await sub.set_reveal_commitment(wallet=wallet, netuid=NETUID, data=data, blocks_until_reveal=1)
+                break
+            except MetadataError as e:
+                if "SpaceLimitExceeded" in str(e):
+                    await sub.wait_for_block()
+                else:
+                    raise
+
+    try:
+        asyncio.run(_commit())
+        click.echo(json.dumps({"success": True, "repo": repo, "revision": revision, "chute_id": chute_id}))
+    except Exception as e:
+        logger.error("Commit failed: %s", e)
+        click.echo(json.dumps({"success": False, "error": str(e)}))

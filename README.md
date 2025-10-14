@@ -63,10 +63,16 @@ IMPORTANT: you require a ***developer enabled account*** on Chutes to mine. Norm
 cp .env.example .env
 ```
 
-2. Miners need a chutes developer account ( `chutes.ai` )
+2. Miners need a chutes developer account ( `chutes.ai` ), and you must fund your Chutes account to deploy miners.
+
 ```bash
 chutes register
 ```
+
+After registering, you will need to fund your Chutes account with $TAO.
+Your Chutes payment address can be found in `~/.chutes/config.ini`.
+Send TAO to this address before deploying models.
+
 
 3. Register your miner to Affine (S120).
 ```bash
@@ -83,11 +89,33 @@ af -vvv pull <uid to pull> --model_path <i.e. ./my_model>
 ... magic RL stuff ...
 ```
 
-6. Push the model to your miner.
-```bash
-af -vvv push  --coldkey <your cold> --hotkey <your hot> --model_path <i.e. ./my_model>
-```
+6. Upload your model to Hugging Face (manual, required before deploying).
+   - Create or choose an existing model repo (e.g. `<user>/Affine-<repo>`)
+   - Push your model artifacts and obtain the commit SHA you wish to deploy
+   - You are responsible for the HF upload process (e.g. `huggingface-cli`, `git lfs`)
 
+7. Deploy the HF repo+revision to Chutes.
+```bash
+af -vvv chutes_push --repo <user/repo> --revision <sha> --chutes-api-key ...
+
+### Configure Chutes deployment settings
+
+You can customize how your Chute is deployed (GPU type, concurrency, scaling, etc.) by editing the Chutes config we generate in code.
+
+- Open `affine/affine/cli.py`
+- Find the `deploy_to_chutes()` function inside the `chutes_push` command
+- Edit the arguments passed to `build_sglang_chute(...)` to match your needs
+
+Refer to the official Chutes documentation for all available options and best practices: [chutesai/chutes](https://github.com/chutesai/chutes).
+
+
+```
+This prints a JSON payload including `chute_id`. Keep it for the next step.
+
+8. Commit the deployment on-chain (separate from deployment).
+```bash
+af -vvv commit --repo <user/repo> --revision <sha> --chute-id <chute_id> --coldkey <your cold> --hotkey <your hot>
+```
 
 # SDK
 Affine is also an SDK you can use to generate and evaluate models envs.
