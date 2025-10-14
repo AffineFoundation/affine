@@ -667,18 +667,13 @@ async def sink(wallet: bt.wallet, results: list["Result"], block: int = None):
     if not valid:
         return
     hotkey, signed = await sign_results( wallet, valid )
-    key = f"{RESULT_PREFIX}{_w(block):09d}-{hotkey}.json"
+    ts_micro = int(time.time() * 1_000_000)
+    key = f"{RESULT_PREFIX}{_w(block):09d}-{hotkey}-{ts_micro}.json"
     dumped = [ r.model_dump(mode="json") for r in signed ]
     async with get_client_ctx() as c:
-        try:
-            r = await c.get_object(Bucket=FOLDER, Key=key)
-            merged = json.loads(await r["Body"].read()) + dumped
-        except c.exceptions.NoSuchKey:
-            merged = dumped
-        await c.put_object(Bucket=FOLDER, Key=key, Body=_dumps(merged),
+        await c.put_object(Bucket=FOLDER, Key=key, Body=_dumps(dumped),
                            ContentType="application/json")
-    if len(merged) == len(dumped):              # shard was new
-        await _update_index(key)
+    await _update_index(key)
 
 async def prune(tail: int):
     sub = await get_subtensor(); cur = await sub.get_current_block()
