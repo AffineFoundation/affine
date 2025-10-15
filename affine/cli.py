@@ -127,6 +127,7 @@ def runner():
             """
             batch = []
             batch_start_time = None
+            last_debug_log_time = 0.0
 
             while True:
                 try:
@@ -171,9 +172,14 @@ def runner():
                         if batch_start_time
                         else 0.0
                     )
-                    logger.debug(
-                        f"Sink batch status: {len(batch)}/{SINK_BATCH_SIZE}, elapsed={elapsed:.1f}/{SINK_MAX_WAIT}"
-                    )
+
+                    # Log batch status every 30 seconds
+                    now = time.monotonic()
+                    if now - last_debug_log_time >= 30.0:
+                        logger.debug(
+                            f"Sink batch status: {len(batch)}/{SINK_BATCH_SIZE}, elapsed={elapsed:.1f}/{SINK_MAX_WAIT}"
+                        )
+                        last_debug_log_time = now
 
                     # Flush batch if size or time threshold reached
                     if len(batch) >= SINK_BATCH_SIZE or (
@@ -196,8 +202,9 @@ def runner():
                                 flattened.extend(item)
                             else:
                                 flattened.append(item)
-
-                        logger.debug(f"Flushing {len(flattened)} results to storage")
+                        logger.debug(
+                            f"Flushing batch: {len(batch)}/{SINK_BATCH_SIZE}, elapsed={elapsed:.1f}/{SINK_MAX_WAIT}, flattened: {len(flattened)}, results to storage"
+                        )
                         try:
                             await sink_enqueue(wallet, current_block, flattened)
                         except Exception as e:

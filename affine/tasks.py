@@ -109,12 +109,6 @@ class BaseSDKEnv(ABC):
 
     @property
     @abstractmethod
-    def template_name(self) -> str:
-        """Return template name for sandbox creation"""
-        pass
-
-    @property
-    @abstractmethod
     def env_type(self) -> EnvType:
         """Return environment type"""
         pass
@@ -122,7 +116,7 @@ class BaseSDKEnv(ABC):
     def get_sandbox(self) -> Any:
         """Get or create sandbox instance"""
         return get_sandbox(
-            template=self.template_name,
+            template=self.env_name,
             shared=True,
             timeout=self.sandbox_config.timeout,
             env=self.sandbox_config.env,
@@ -148,25 +142,17 @@ class BaseSDKEnv(ABC):
             payload.update(payload_extra)
 
         # Execute evaluation
-        try:
-            proxy_timeout = (
-                self.sandbox_config.proxy_timeout
-                if self.env_type == EnvType.AFFINE
-                else self.sandbox_config.proxy_timeout + 600
-            )
+        proxy_timeout = (
+            self.sandbox_config.proxy_timeout
+            if self.env_type == EnvType.AFFINE
+            else self.sandbox_config.proxy_timeout + 600
+        )
 
-            result = await asyncio.to_thread(
-                lambda: self._sandbox.proxy.evaluator(_timeout=proxy_timeout, **payload)
-            )
+        result = await asyncio.to_thread(
+            lambda: self._sandbox.proxy.evaluator(_timeout=proxy_timeout, **payload)
+        )
 
-            return self._parse_evaluation_result(result, miner, payload_extra)
-
-        except Exception as e:
-            logger.error(f"Evaluation failed for {self.env_name}: {e}")
-            if logger.isEnabledFor(logging.DEBUG):
-                traceback.print_exc()
-
-            return self._create_error_evaluation(e, miner, payload_extra)
+        return self._parse_evaluation_result(result, miner, payload_extra)
 
     def _parse_evaluation_result(
         self,
@@ -255,10 +241,6 @@ class AffineSDKEnv(BaseSDKEnv):
     def env_type(self) -> EnvType:
         return EnvType.AFFINE
 
-    @property
-    def template_name(self) -> str:
-        return f"affine:{self.env_name}"
-
     async def evaluate(
         self, miner: Union["Miner", Dict[str, Any]],
         task_id: Union[int, List[int], None] = None,
@@ -300,10 +282,6 @@ class AgentGymSDKEnv(BaseSDKEnv):
     @property
     def env_type(self) -> EnvType:
         return EnvType.AGENTGYM
-
-    @property
-    def template_name(self) -> str:
-        return f"agentgym:{self.env_name}"
 
     def _normalize_task_ids(self, task_id: Union[int, List[int], None]) -> List[int]:
         """Normalize task IDs to list format"""
