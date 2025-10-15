@@ -327,6 +327,7 @@ def runner():
                         result = await completed_task
                     except Exception as e:
                         logger.debug(f"Task failed env={env_name} uid={miner_uid}: {e}")
+                        traceback.print_exc()
                         result = None
 
                     # Enqueue result for sink consumer (only successful responses)
