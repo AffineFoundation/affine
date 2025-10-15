@@ -2,7 +2,6 @@ from __future__ import annotations
 import os
 import json
 import time
-import random
 import uuid
 import hashlib
 import aiohttp
@@ -105,7 +104,7 @@ class ContainerEnv(BaseEnv):
 
         env_task_id = task_id
         if env_task_id is None:
-            env_task_id = random.randint(0, int(self.data_len) - 1)
+            raise ValueError(f"task_id is required for {self.name}; pass a deterministic dataset index")
 
         payload = {
             "model": policy.model,
@@ -206,14 +205,19 @@ class Challenge(BaseModel):
         json_encoders = {BaseEnv: lambda v: v.name}
     def json(self, **kw): return json.dumps(self.dict(**kw))
     def ensure_environment_task_id(self, data_len: Optional[int] = None) -> Optional[int]:
-        """Assign (once) and return the environment-level task identifier."""
+        """Assign (once) and return the environment-level task identifier.
+
+        Derives a deterministic index from this challenge's UUID so every
+        validator maps the prompt to the same dataset slot.
+        """
         if data_len is None:
             env = getattr(self, "env", None)
             if env is not None:
                 data_len = getattr(env, "data_len", None)
         upper = int(data_len) if data_len else 0
-        if upper > 0 and self.environment_task_id is None:
-            self.environment_task_id = random.randrange(upper)
+        if upper > 0 and self.environment_task_id is None and self.task_id:
+            # Deterministic mapping: UUID -> dataset slot
+            self.environment_task_id = int(self.task_id, 16) % upper
         env_id = self.environment_task_id
         meta = dict(self.extra)
         if env_id is not None:
