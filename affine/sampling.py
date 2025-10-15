@@ -44,6 +44,7 @@ class SamplingConfig:
     MIN_SAMPLES_PER_ENV = 100
     MAX_SAMPLES_CAP = 2000
     SAMPLE_COUNT_CAP = 1000
+    RANK_GAP = 2  # Use 3rd place (0-indexed) for epsilon calculation
 
 
 class MinerSampler:
@@ -128,34 +129,45 @@ class MinerSampler:
         
         return eligible, required
     
-    def compute_epsilon_from_elo_variance(
+    def compute_epsilon_from_ranking_gap(
         self,
         elo_rankings: Dict[str, Dict[str, float]],
-        envs: Tuple[str, ...]
-    ) -> float:
+        envs: Tuple[str, ...],
+        rank_gap: Optional[int] = None
+    ) -> Dict[str, float]:
         """
-        Calculate epsilon for dominance based on average variance of ELO rankings per env.
+        Calculate per-environment epsilon based on ELO gap between top-ranked miners.
+        
+        This preserves Pareto optimality by using actual ranking differences rather than
+        statistical variance. The epsilon for each environment is defined as the absolute
+        difference between the 1st and (rank_gap+1)th ranked miner's ELO scores.
         
         Args:
             elo_rankings: ELO scores per hotkey per env
             envs: Environment names
+            rank_gap: Index gap for epsilon calculation (default: config.RANK_GAP, typically 2 for 3rd place)
             
         Returns:
-            Epsilon value for dominance comparison
+            Dict mapping env_name -> epsilon value
         """
-        variances = []
+        if rank_gap is None:
+            rank_gap = self.config.RANK_GAP
+            
+        epsilon_per_env = {}
+        
         for e in envs:
             scores = [elo_rankings[hk][e] for hk in elo_rankings if e in elo_rankings[hk]]
-            if len(scores) > 1:
-                mean = sum(scores) / len(scores)
-                variance = sum((s - mean) ** 2 for s in scores) / len(scores)
-                variances.append(variance)
+            scores_sorted = sorted(scores, reverse=True)
+            
+            # If insufficient miners, use floor epsilon
+            if len(scores_sorted) <= rank_gap:
+                epsilon_per_env[e] = self.config.EPS_FLOOR * 100
+            else:
+                # Use gap between 1st and (rank_gap+1)th miner
+                gap = abs(scores_sorted[0] - scores_sorted[rank_gap])
+                epsilon_per_env[e] = max(self.config.EPS_FLOOR * 100, gap)
         
-        if not variances:
-            return self.config.EPS_FLOOR * 100
-        
-        avg_variance = sum(variances) / len(variances)
-        return max(self.config.EPS_FLOOR * 100, math.sqrt(avg_variance) / 10.0)
+        return epsilon_per_env
     
     def dominates_on(
         self,
@@ -164,11 +176,11 @@ class MinerSampler:
         subset: Tuple[str, ...],
         elo: Dict[str, Dict[str, float]],
         first_block: Dict[str, int],
-        epsilon: float
+        epsilon: Dict[str, float]
     ) -> bool:
         """
         Check if miner 'a' dominates miner 'b' on the given environment subset using ELO scores.
-        Uses epsilon-Pareto dominance with tie-breaking by earliest block.
+        Uses epsilon-Pareto dominance with per-environment epsilon and tie-breaking by earliest block.
         
         Args:
             a: Hotkey of miner A
@@ -176,7 +188,7 @@ class MinerSampler:
             subset: Environment subset to compare on
             elo: ELO scores per hotkey per env
             first_block: First block seen for each hotkey
-            epsilon: Tolerance for dominance comparison
+            epsilon: Per-environment tolerance for dominance comparison
             
         Returns:
             True if A dominates B
@@ -188,12 +200,13 @@ class MinerSampler:
         for e in subset:
             elo_a = elo[a][e]
             elo_b = elo[b][e]
+            eps = epsilon.get(e, self.config.EPS_FLOOR * 100)
             
-            if elo_a < elo_b - epsilon:
+            if elo_a < elo_b - eps:
                 not_worse_all = False
-            if elo_a >= elo_b + epsilon:
+            if elo_a >= elo_b + eps:
                 better_any = True
-            if abs(elo_a - elo_b) > epsilon:
+            if abs(elo_a - elo_b) > eps:
                 tie_all = False
         
         if not_worse_all and better_any:
@@ -208,7 +221,7 @@ class MinerSampler:
         envs: Tuple[str, ...],
         elo: Dict[str, Dict[str, float]],
         first_block: Dict[str, int],
-        epsilon: float
+        epsilon: Dict[str, float]
     ) -> Dict[str, int]:
         """
         Compute dominance counts for the given miner pool using ELO scores.
@@ -218,7 +231,7 @@ class MinerSampler:
             envs: Environment names
             elo: ELO scores per hotkey per env
             first_block: First block seen for each hotkey
-            epsilon: Tolerance for dominance comparison
+            epsilon: Per-environment tolerance for dominance comparison
             
         Returns:
             Dict mapping hotkey -> dominance count
@@ -237,7 +250,7 @@ class MinerSampler:
         pool: Set[str],
         elo: Dict[str, Dict[str, float]],
         first_block: Dict[str, int],
-        epsilon: float
+        epsilon: Dict[str, float]
     ) -> Optional[str]:
         """
         Find winner on environment subset via ELO-based epsilon-Pareto dominance.
@@ -248,7 +261,7 @@ class MinerSampler:
             pool: Set of hotkeys to compare
             elo: ELO scores per hotkey per env
             first_block: First block seen for each hotkey
-            epsilon: Tolerance for dominance comparison
+            epsilon: Per-environment tolerance for dominance comparison
             
         Returns:
             Winning hotkey or None
@@ -282,7 +295,7 @@ class MinerSampler:
         pool: Set[str],
         elo: Dict[str, Dict[str, float]],
         first_block: Dict[str, int],
-        epsilon: float,
+        epsilon: Dict[str, float],
         scale: float
     ) -> Tuple[Dict[str, float], Dict[str, Dict[int, float]], Dict[str, str]]:
         """
@@ -293,7 +306,7 @@ class MinerSampler:
             pool: Set of hotkeys to score
             elo: ELO scores per hotkey per env
             first_block: First block seen for each hotkey
-            epsilon: Tolerance for dominance comparison
+            epsilon: Per-environment tolerance for dominance comparison
             scale: Scaling factor for layer weights
             
         Returns:
