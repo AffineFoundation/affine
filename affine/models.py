@@ -2,7 +2,7 @@ from __future__ import annotations
 import os
 import json
 import time
-import random
+import uuid
 import hashlib
 import aiohttp
 import asyncio
@@ -102,14 +102,15 @@ class ContainerEnv(BaseEnv):
         if not base_url:
             raise RuntimeError("Miner slug/base_url missing")
 
-        if task_id is None:
-            task_id = random.randint(0, int(self.data_len) - 1)
+        env_task_id = task_id
+        if env_task_id is None:
+            raise ValueError(f"task_id is required for {self.name}; pass a deterministic dataset index")
 
         payload = {
             "model": policy.model,
             "base_url": base_url,
             "temperature": 0.7,
-            "ids": [int(task_id)],
+            "ids": [int(env_task_id)],
             "max_round": int(self.max_round),
             "timeout": int(self.evaluator_timeout),
         }
@@ -127,7 +128,8 @@ class ContainerEnv(BaseEnv):
         extra_payload = {
             "success_rate": success_rate,
             "num_evaluated": num_eval,
-            "task_id": int(task_id),
+            "task_id": int(env_task_id),
+            "environment_task_id": int(env_task_id),
         }
         if isinstance(data, dict):
             if "details" in data:   extra_payload["details"] = data.get("details")
@@ -135,7 +137,7 @@ class ContainerEnv(BaseEnv):
             if "time_taken" in data: extra_payload["time_taken"] = data.get("time_taken")
 
         logger.info(
-            f"[REWARD] U{policy.uid:>3d} {self.name:<20} id={task_id} total_score={total_score:.4f} success_rate={success_rate:.3f} n={num_eval} latency={latency:.3f}s"
+            f"[REWARD] U{policy.uid:>3d} {self.name:<20} id={env_task_id} total_score={total_score:.4f} success_rate={success_rate:.3f} n={num_eval} latency={latency:.3f}s"
         )
         return Evaluation(
             env=self,
@@ -159,6 +161,8 @@ class Challenge(BaseModel):
     prompt: str
     extra: Dict[str, Any] = Field(default_factory=dict)
     challenge_id: Optional[str] = None
+    task_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    environment_task_id: Optional[int] = None
     timestamp: Optional[float] = Field(default_factory=time.time)
     @root_validator(pre=True)
     def set_challenge_id(cls, values):
@@ -171,6 +175,15 @@ class Challenge(BaseModel):
             canonical = json.dumps(base_dict, sort_keys=True, separators=(",", ":"))
             cid = hashlib.sha256(canonical.encode()).hexdigest()
             values["challenge_id"] = cid
+        return values
+    @root_validator
+    def propagate_task_id(cls, values):
+        extra = values.get("extra") or {}
+        task_id = values.get("task_id")
+        if task_id is not None:
+            extra = dict(extra)
+            extra["task_id"] = task_id
+            values["extra"] = extra
         return values
     @validator("env", pre=True)
     def _parse_env(cls, v):
@@ -191,8 +204,45 @@ class Challenge(BaseModel):
         arbitrary_types_allowed = True
         json_encoders = {BaseEnv: lambda v: v.name}
     def json(self, **kw): return json.dumps(self.dict(**kw))
+    def ensure_environment_task_id(self, data_len: Optional[int] = None) -> Optional[int]:
+        """Assign (once) and return the environment-level task identifier.
+
+        Derives a deterministic index from this challenge's UUID so every
+        validator maps the prompt to the same dataset slot.
+        """
+        if data_len is None:
+            env = getattr(self, "env", None)
+            if env is not None:
+                data_len = getattr(env, "data_len", None)
+        upper = int(data_len) if data_len else 0
+        if upper > 0 and self.environment_task_id is None and self.task_id:
+            # Deterministic mapping: UUID -> dataset slot
+            self.environment_task_id = int(self.task_id, 16) % upper
+        env_id = self.environment_task_id
+        meta = dict(self.extra)
+        if env_id is not None:
+            meta["dataset_id"] = env_id
+            meta["environment_task_id"] = env_id
+        else:
+            meta.pop("dataset_id", None)
+            meta.pop("environment_task_id", None)
+        self.extra = meta
+        return env_id
+
+    def attach_metadata(self, evaluation: "Evaluation", environment_task_id: Optional[int] = None) -> None:
+        """Propagate challenge identifiers onto an Evaluation payload."""
+        env_id = environment_task_id if environment_task_id is not None else self.environment_task_id
+        meta = dict(evaluation.extra)
+        if env_id is not None:
+            meta["environment_task_id"] = env_id
+        if self.task_id:
+            meta["task_id"] = self.task_id
+        evaluation.extra = meta
     async def evaluate(self, resp: "Response") -> "Evaluation":
-        return await self.env.evaluate(self, resp)
+        self.ensure_environment_task_id()
+        evaluation = await self.env.evaluate(self, resp)
+        self.attach_metadata(evaluation)
+        return evaluation
     def __repr__(self):
         return f"<Challenge env={self.env.name!r} prompt={_truncate(self.prompt)!r}>"
     __str__ = __repr__
