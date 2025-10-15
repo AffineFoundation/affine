@@ -145,8 +145,6 @@ async def query_miner(env: BaseSDKEnv, miner: Miner, task_id: Optional[int] = No
         )
         
     except Exception as e:
-        logger.error(f"Evaluation failed for miner uid={miner.uid} env={env.env}: {e}")
-        
         response = Response(
             response=None,
             latency_seconds=time.monotonic() - start,
