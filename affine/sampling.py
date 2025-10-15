@@ -299,7 +299,7 @@ class SamplingOrchestrator:
         
         for result in results:
             hk = result.miner.hotkey
-            env = result.challenge.env.name
+            env = result.challenge.env
             
             if hk not in cnt:
                 continue

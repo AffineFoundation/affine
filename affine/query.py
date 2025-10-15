@@ -125,14 +125,14 @@ async def query_miner(env: BaseSDKEnv, miner: Miner, task_id: Optional[int] = No
         
         # Build challenge from env
         challenge = Challenge(
-            env_name=env.env_name,
+            env=env.env_name,
             prompt=f"{env.env_name} evaluation",
             extra={"task_id": task_id} if task_id is not None else {}
         )
         
         # Build evaluation
         evaluation = Evaluation(
-            env_name=env.env_name,
+            env=env.env_name,
             score=evaluation_result.score,
             extra=evaluation_result.extra
         )
@@ -145,7 +145,7 @@ async def query_miner(env: BaseSDKEnv, miner: Miner, task_id: Optional[int] = No
         )
         
     except Exception as e:
-        logger.error(f"Evaluation failed for miner uid={miner.uid} env={env.env_name}: {e}")
+        logger.error(f"Evaluation failed for miner uid={miner.uid} env={env.env}: {e}")
         
         response = Response(
             response=None,
@@ -157,13 +157,13 @@ async def query_miner(env: BaseSDKEnv, miner: Miner, task_id: Optional[int] = No
         )
         
         challenge = Challenge(
-            env_name=env.env_name,
+            env=env.env_name,
             prompt=f"{env.env_name} evaluation",
             extra={"task_id": task_id, "error": str(e)}
         )
         
         evaluation = Evaluation(
-            env_name=env.env_name,
+            env=env.env_name,
             score=0.0,
             extra={"error": str(e), "evaluation_failed": True}
         )

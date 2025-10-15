@@ -40,14 +40,14 @@ class HVM(BaseEnv):
             "inputs": inputs,
             "expected": expected,
         }
-        return af.Challenge(env_name=self.name, prompt=prompt, extra=extra)
+        return af.Challenge(env=self.name, prompt=prompt, extra=extra)
 
     async def evaluate(self, challenge: af.Challenge, response: af.Response) -> af.Evaluation:
         resp_text = response.response or ""
         # Parse <HOLES> block
         holes = self._parse_holes(resp_text)
         if holes is None:
-            return af.Evaluation(env_name=self.name, score=0.0, extra={"error": "Missing or invalid <HOLES> block"})
+            return af.Evaluation(env=self.name, score=0.0, extra={"error": "Missing or invalid <HOLES> block"})
 
         # Pull program & cases back out
         spec = challenge.extra.get("program") or {}
@@ -58,12 +58,12 @@ class HVM(BaseEnv):
         hole_domains: Dict[str, List[int]] = spec.get("hole_domains", {})
         hole_names: List[str] = spec.get("holes", [])
         if set(holes.keys()) != set(hole_names):
-            return af.Evaluation(env_name=self.name, score=0.0, extra={"error": "Not all holes provided"})
+            return af.Evaluation(env=self.name, score=0.0, extra={"error": "Not all holes provided"})
 
         for h, v in holes.items():
             dom = hole_domains.get(h) or []
             if v not in dom:
-                return af.Evaluation(env_name=self.name, score=0.0, extra={"error": f"value {v} for {h} outside domain {dom}"})
+                return af.Evaluation(env=self.name, score=0.0, extra={"error": f"value {v} for {h} outside domain {dom}"})
 
         # Run each case inside the sandboxed ProgramExecutor (like ABD/DED)
         details: List[Dict[str, Any]] = []
@@ -84,7 +84,7 @@ class HVM(BaseEnv):
                 passed += 1
 
         score = 1.0 if passed == len(inputs) else 0.0
-        return af.Evaluation(env_name=self.name, score=score, extra={"passed": passed, "total": len(inputs), "details": details})
+        return af.Evaluation(env=self.name, score=score, extra={"passed": passed, "total": len(inputs), "details": details})
 
     # --------------------------- Generators -------------------------------- #
 

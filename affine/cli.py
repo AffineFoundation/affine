@@ -336,7 +336,7 @@ def runner():
                             logger.debug(
                                 f"[RESULT] U{result.miner.uid:>3d} │ "
                                 f"{(result.miner.model or '')[:50]:<50s} │ "
-                                f"{result.challenge.env_name:<20} │ "
+                                f"{result.challenge.env:<20} │ "
                                 f"{'RECV':^4s} │ "
                                 f"{result.evaluation.score:>6.4f} │ "
                                 f"{result.response.latency_seconds:>6.3f}s"
@@ -344,7 +344,7 @@ def runner():
                         else:
                             logger.debug(
                                 f"[SKIP]   U{result.miner.uid:>3d} │ "
-                                f"{result.challenge.env_name:<20} │ "
+                                f"{result.challenge.env:<20} │ "
                                 f"Failed response skipped: {result.response.error}"
                             )
 

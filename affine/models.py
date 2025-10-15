@@ -20,13 +20,13 @@ def _truncate(text: Optional[str], max_len: int = 80) -> str:
 class Challenge(BaseModel):
     """Challenge specification for evaluation."""
     
-    env_name: str
+    env: str
     prompt: str
     extra: Dict[str, Any] = Field(default_factory=dict)
     challenge_id: Optional[str] = None
     timestamp: Optional[float] = Field(default_factory=time.time)
     
-    @validator("env_name")
+    @validator("env")
     def validate_env(cls, value):
         """Validate environment name."""
         if value not in ENVS:
@@ -37,7 +37,7 @@ class Challenge(BaseModel):
         return json.dumps(self.dict(**kwargs))
     
     def __repr__(self):
-        return f"<Challenge env={self.env_name!r} prompt={_truncate(self.prompt)!r}>"
+        return f"<Challenge env={self.env!r} prompt={_truncate(self.prompt)!r}>"
     
     __str__ = __repr__
 
@@ -45,11 +45,11 @@ class Challenge(BaseModel):
 class Evaluation(BaseModel):
     """Evaluation result from running a challenge."""
     
-    env_name: str
+    env: str
     score: float
     extra: Dict[str, Any] = Field(default_factory=dict)
     
-    @validator("env_name")
+    @validator("env")
     def validate_env(cls, value):
         """Validate environment name."""
         if value not in ENVS:
@@ -61,7 +61,7 @@ class Evaluation(BaseModel):
     
     def __repr__(self):
         truncated_extra = {k: _truncate(str(v)) for k, v in self.extra.items()}
-        return f"<Evaluation env={self.env_name!r} score={self.score:.4f} extra={truncated_extra!r}>"
+        return f"<Evaluation env={self.env!r} score={self.score:.4f} extra={truncated_extra!r}>"
     
     __str__ = __repr__
 
@@ -133,7 +133,7 @@ class Result(BaseModel):
     def __repr__(self):
         return (
             f"<Result miner.uid={self.miner.uid} "
-            f"env={self.challenge.env_name} "
+            f"env={self.challenge.env} "
             f"score={self.evaluation.score:.4f}>"
         )
     
