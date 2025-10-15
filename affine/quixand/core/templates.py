@@ -80,6 +80,7 @@ class Templates:
 	
 	@staticmethod
 	def agentgym(env_name: str) -> str:
+		env_name = env_name.split(":")[-1]
 		allowed_envs = [
 			"webshop",
 			"alfworld",
@@ -130,6 +131,7 @@ class Templates:
 	@staticmethod
 	def affine(env_name: str) -> str:
 		"""Build the 'affine' env template image for a specific env name (sat/abd/ded/hvm/elr)."""
+		env_name = env_name.split(":")[-1]
 		allowed_envs = ["sat", "abd", "ded", "hvm", "elr"]
 		
 		if env_name not in allowed_envs:
