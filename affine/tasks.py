@@ -142,17 +142,24 @@ class BaseSDKEnv(ABC):
             payload.update(payload_extra)
 
         # Execute evaluation
-        proxy_timeout = (
-            self.sandbox_config.proxy_timeout
-            if self.env_type == EnvType.AFFINE
-            else self.sandbox_config.proxy_timeout + 600
-        )
+        try:
+            proxy_timeout = (
+                self.sandbox_config.proxy_timeout
+                if self.env_type == EnvType.AFFINE
+                else self.sandbox_config.proxy_timeout + 600
+            )
 
-        result = await asyncio.to_thread(
-            lambda: self._sandbox.proxy.evaluator(_timeout=proxy_timeout, **payload)
-        )
+            result = await asyncio.to_thread(
+                lambda: self._sandbox.proxy.evaluator(_timeout=proxy_timeout, **payload)
+            )
 
-        return self._parse_evaluation_result(result, miner, payload_extra)
+            return self._parse_evaluation_result(result, miner, payload_extra)
+
+        except asyncio.TimeoutError as e:
+            logger.error(f"Evaluation timeout for {self.env_name}: {e}, score set 0")
+            return self._create_error_evaluation(e, miner, payload_extra)
+        except Exception as e:
+            raise
 
     def _parse_evaluation_result(
         self,

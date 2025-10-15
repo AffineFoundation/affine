@@ -343,7 +343,7 @@ def runner():
                             )
                         else:
                             logger.debug(
-                                f"[SKIP] U{result.miner.uid:>3d} │ "
+                                f"[SKIP]   U{result.miner.uid:>3d} │ "
                                 f"{result.challenge.env_name:<20} │ "
                                 f"Failed response skipped: {result.response.error}"
                             )
