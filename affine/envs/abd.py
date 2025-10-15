@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Tuple
 import functools
 from typing import Callable
 import requests
-
+from .models import BaseEnv
 
 
 
@@ -122,7 +122,7 @@ dataset = af.singleton('rl-python', lambda: af.utils.R2BufferedDataset(
         max_batch=5,
 ))
 
-class ABD(af.BaseEnv):
+class ABD(BaseEnv):
     __version__: str = "0.0.0"
     def __init__(self):
         super().__init__()
@@ -166,7 +166,7 @@ class ABD(af.BaseEnv):
 
         af.logger.trace("Challenge created successfully.")
         return af.Challenge(
-            env=self,
+            env=self.name,
             prompt=PROMPT_TEMPLATE.format(program=program, output=output),
             extra={"program": program, "expected_output": output},
         )
@@ -237,13 +237,13 @@ class ABD(af.BaseEnv):
         if not gen_in and not tags_present:
             af.logger.trace("No <INPUT> tags found in response.")
             return af.Evaluation(
-                env=self, score=0.0,
+                env=self.name, score=0.0,
                 extra={"error": "No input found", "expected_output": expected}
             )
         if not self._validate_input_for_program(prog, gen_in):
             af.logger.trace("Provided input is invalid or insufficient for the program.")
             return af.Evaluation(
-                env=self, score=0.0,
+                env=self.name, score=0.0,
                 extra={"error": "Invalid input for program", "generated_input": gen_in, "expected_output": expected}
             )
         # Ensure final newline for stdin-based programs
@@ -257,12 +257,12 @@ class ABD(af.BaseEnv):
         if err:
             af.logger.trace("Error occurred during program execution.")
             return af.Evaluation(
-                env=self, score=0.0,
+                env=self.name, score=0.0,
                 extra={"error": err, "generated_output": out}
             )
         ok = self.compare_outputs(expected, out)
         af.logger.trace(f"Output comparison result: {ok}")
         return af.Evaluation(
-            env=self, score=1.0 if ok else 0.0,
+            env=self.name, score=1.0 if ok else 0.0,
             extra={"outputs_match": ok, "generated_input": gen_in, "generated_output": out, 'expected_output': expected}
         )

@@ -84,7 +84,7 @@ class BaseSDKEnv(ABC):
 
     def __init__(self):
         super().__init__()
-        self._sandbox = None
+        self._sandbox = self.get_sandbox()
         self._sandbox_lock = None
 
     @property
@@ -109,12 +109,6 @@ class BaseSDKEnv(ABC):
 
     @property
     @abstractmethod
-    def template_name(self) -> str:
-        """Return template name for sandbox creation"""
-        pass
-
-    @property
-    @abstractmethod
     def env_type(self) -> EnvType:
         """Return environment type"""
         pass
@@ -122,7 +116,7 @@ class BaseSDKEnv(ABC):
     def get_sandbox(self) -> Any:
         """Get or create sandbox instance"""
         return get_sandbox(
-            template=self.template_name,
+            template=self.env_name,
             shared=True,
             timeout=self.sandbox_config.timeout,
             env=self.sandbox_config.env,
@@ -141,7 +135,6 @@ class BaseSDKEnv(ABC):
         Returns:
             Evaluation result
         """
-        sandbox = self.get_sandbox()
 
         # Build payload
         payload = self.evaluator_config.to_payload(miner)
@@ -157,17 +150,16 @@ class BaseSDKEnv(ABC):
             )
 
             result = await asyncio.to_thread(
-                lambda: sandbox.proxy.evaluator(_timeout=proxy_timeout, **payload)
+                lambda: self._sandbox.proxy.evaluator(_timeout=proxy_timeout, **payload)
             )
 
             return self._parse_evaluation_result(result, miner, payload_extra)
 
-        except Exception as e:
-            logger.error(f"Evaluation failed for {self.env_name}: {e}")
-            if logger.isEnabledFor(logging.DEBUG):
-                traceback.print_exc()
-
+        except asyncio.TimeoutError as e:
+            logger.error(f"Evaluation timeout for {self.env_name}: {e}, score set 0")
             return self._create_error_evaluation(e, miner, payload_extra)
+        except Exception as e:
+            raise
 
     def _parse_evaluation_result(
         self,
@@ -256,12 +248,9 @@ class AffineSDKEnv(BaseSDKEnv):
     def env_type(self) -> EnvType:
         return EnvType.AFFINE
 
-    @property
-    def template_name(self) -> str:
-        return f"affine:{self.env_name}"
-
     async def evaluate(
-        self, miner: Union["Miner", Dict[str, Any]]
+        self, miner: Union["Miner", Dict[str, Any]],
+        task_id: Union[int, List[int], None] = None,
     ) -> Union["Evaluation", Dict[str, "Evaluation"]]:
         """Evaluate using Affine environment endpoint."""
 
@@ -300,10 +289,6 @@ class AgentGymSDKEnv(BaseSDKEnv):
     @property
     def env_type(self) -> EnvType:
         return EnvType.AGENTGYM
-
-    @property
-    def template_name(self) -> str:
-        return f"agentgym:{self.env_name}"
 
     def _normalize_task_ids(self, task_id: Union[int, List[int], None]) -> List[int]:
         """Normalize task IDs to list format"""
@@ -357,62 +342,62 @@ def register_env(env_type: EnvType, env_name: str):
 
 
 # Affine Environments
-@register_env(EnvType.AFFINE, "sat")
+@register_env(EnvType.AFFINE, "affine:sat")
 class SAT(AffineSDKEnv):
     """SAT environment for SDK"""
 
     @property
     def env_name(self) -> str:
-        return "sat"
+        return "affine:sat"
 
 
-@register_env(EnvType.AFFINE, "abd")
+@register_env(EnvType.AFFINE, "affine:abd")
 class ABD(AffineSDKEnv):
     """ABD environment for SDK"""
 
     @property
     def env_name(self) -> str:
-        return "abd"
+        return "affine:abd"
 
 
-@register_env(EnvType.AFFINE, "ded")
+@register_env(EnvType.AFFINE, "affine:ded")
 class DED(AffineSDKEnv):
     """DED environment for SDK"""
 
     @property
     def env_name(self) -> str:
-        return "ded"
+        return "affine:ded"
 
 
-@register_env(EnvType.AFFINE, "hvm")
+@register_env(EnvType.AFFINE, "affine:hvm")
 class HVM(AffineSDKEnv):
     """HVM environment for SDK"""
 
     @property
     def env_name(self) -> str:
-        return "hvm"
+        return "affine:hvm"
 
 
-@register_env(EnvType.AFFINE, "elr")
+@register_env(EnvType.AFFINE, "affine:elr")
 class ELR(AffineSDKEnv):
     """ELR environment for SDK"""
 
     @property
     def env_name(self) -> str:
-        return "elr"
+        return "affine:elr"
 
 
 # AgentGym Environments
-@register_env(EnvType.AGENTGYM, "alfworld")
+@register_env(EnvType.AGENTGYM, "agentgym:alfworld")
 class ALFWORLD(AgentGymSDKEnv):
     """ALFWORLD environment for SDK"""
 
     @property
     def env_name(self) -> str:
-        return "alfworld"
+        return "agentgym:alfworld"
 
 
-@register_env(EnvType.AGENTGYM, "webshop")
+@register_env(EnvType.AGENTGYM, "agentgym:webshop")
 class WEBSHOP(AgentGymSDKEnv):
     """WEBSHOP environment for SDK"""
 
@@ -421,34 +406,34 @@ class WEBSHOP(AgentGymSDKEnv):
 
     @property
     def env_name(self) -> str:
-        return "webshop"
+        return "agentgym:webshop"
 
 
-@register_env(EnvType.AGENTGYM, "babyai")
+@register_env(EnvType.AGENTGYM, "agentgym:babyai")
 class BABYAI(AgentGymSDKEnv):
     """BABYAI environment for SDK"""
 
     @property
     def env_name(self) -> str:
-        return "babyai"
+        return "agentgym:babyai"
 
 
-@register_env(EnvType.AGENTGYM, "sciworld")
+@register_env(EnvType.AGENTGYM, "agentgym:sciworld")
 class SCIWORLD(AgentGymSDKEnv):
     """SCIWORLD environment for SDK"""
 
     @property
     def env_name(self) -> str:
-        return "sciworld"
+        return "agentgym:sciworld"
 
 
-@register_env(EnvType.AGENTGYM, "textcraft")
+@register_env(EnvType.AGENTGYM, "agentgym:textcraft")
 class TEXTCRAFT(AgentGymSDKEnv):
     """TEXTCRAFT environment for SDK"""
 
     @property
     def env_name(self) -> str:
-        return "textcraft"
+        return "agentgym:textcraft"
 
 
 # ========================= Factory Functions =========================

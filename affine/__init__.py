@@ -18,7 +18,6 @@ from affine.setup import (
 #                   Data Models (imported from models module)                 #
 # --------------------------------------------------------------------------- #
 from affine.models import (
-    BaseEnv, ContainerEnv, AgentGymContainerEnv, AffineContainerEnv,
     Challenge, Evaluation, Response, Miner, Result
 )
 # --------------------------------------------------------------------------- #

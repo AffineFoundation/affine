@@ -5,7 +5,7 @@ import json
 import asyncio
 import subprocess
 import affine as af
-from typing import Any, Dict, List, Tuple
+from .models import BaseEnv
 
 # -------------------------------- Helpers -------------------------------- #
 def _to_str(x) -> str:
@@ -40,10 +40,9 @@ dataset = af.singleton('rl-python', lambda: af.utils.R2BufferedDataset(
         max_batch=5,
 ))
 
-class DED(af.BaseEnv):
+class DED(BaseEnv):
     __version__: str = "0.0.0"
     def __init__(self):
-        super().__init__()
         self._executor = af.utils.ProgramExecutor()
 
     # ----------------------------- Env API -------------------------------- #
@@ -64,7 +63,7 @@ class DED(af.BaseEnv):
             "• is returned as a single ```python … ``` fenced block.\n"
         )
         prompt = sample["prompt"].rstrip() + extra_hint
-        return af.Challenge(env=self, prompt=prompt, extra=sample)
+        return af.Challenge(env=self.name, prompt=prompt, extra=sample)
 
     async def evaluate(
         self, challenge: af.Challenge, response: af.Response
@@ -93,7 +92,7 @@ class DED(af.BaseEnv):
         except Exception as err:
             af.logger.trace(f"Failed to parse verification info: {err}")
             return af.Evaluation(
-                env=self,
+                env=self.name,
                 score=0.0,
                 feedback=f"Invalid verification_info format: {err}",
             )
@@ -103,7 +102,7 @@ class DED(af.BaseEnv):
         if not cases:
             af.logger.trace("No test_cases found in verification info.")
             return af.Evaluation(
-                env=self, score=0.0, feedback="No public test cases available"
+                env=self.name, score=0.0, feedback="No public test cases available"
             )
         af.logger.trace(f"Found {len(cases)} test cases.")
 
@@ -175,4 +174,4 @@ class DED(af.BaseEnv):
             {"passed": passed, "total": total, "tests": details}, ensure_ascii=False
         )
         af.logger.trace(f"Evaluation completed with score: {score}")
-        return af.Evaluation(env=self, score=score, feedback=feedback)
+        return af.Evaluation(env=self.name, score=score, feedback=feedback)

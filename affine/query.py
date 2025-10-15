@@ -8,7 +8,8 @@ import aiohttp
 import traceback
 from typing import Dict, List, Optional
 from affine.config import get_conf
-from affine.models import Response, Result, Evaluation, Miner, ContainerEnv
+from affine.models import Response, Result, Evaluation, Miner, Challenge
+from affine.tasks import BaseSDKEnv
 from affine.setup import logger
 
 
@@ -87,59 +88,87 @@ async def query(prompt, model: str = "unsloth/gemma-3-12b-it", slug: str = "llm"
             if attempt > retries: return R(None, attempt, str(e), False)
             await asyncio.sleep(backoff * 2**(attempt-1) * (1 + random.uniform(-0.1, 0.1)))
 
-LOG_TEMPLATE = (
-    "[RESULT] "
-    "{pct:>3.0f}% | "
-    "U{uid:>3d} │ "
-    "{model:<50s} │ "
-    "{env:<20} │ "
-    "{success:^4s} │ "
-    "{score:>6.4f} │ "
-    "{latency:>6.3f}s"
-)
 
-async def run(challenges, miners, timeout=240, retries=0, backoff=1, task_ids: Optional[Dict[str, int]] = None)-> List:
-    if not isinstance(challenges, list): challenges = [challenges]
-    if isinstance(miners, Miner): miners = [miners]
-    if isinstance(miners, dict):  mmap = miners
-    elif isinstance(miners, list) and all(hasattr(m, "uid") for m in miners):  mmap = {m.uid: m for m in miners}
-    else: mmap = await miners(miners)
+async def query_miner(env: BaseSDKEnv, miner: Miner, task_id: Optional[int] = None) -> Result:
+    """
+    Query a miner using SDK environment interface.
     
-    logger.trace("Running challenges: %s on miners: %s", [chal.prompt[:30] for chal in challenges], list(mmap.keys()))
-    response = []
+    Args:
+        env: SDK environment instance (e.g., DED(), ALFWORLD())
+        miner: Miner instance to query
+        task_id: Optional task ID for environments that support it
     
-    async def proc(miner, chal):
-        if isinstance(chal.env, ContainerEnv):
-            start = time.monotonic()
-            try:
-                ev = await chal.env.run_episode(policy=miner, task_id=(task_ids or {}).get(chal.env.name) if task_ids else None)
-                resp = Response(response=None, latency_seconds=time.monotonic()-start, attempts=1, model=miner.model or "", error=None, success=True)
-            except Exception as e:
-                traceback.print_exc()
-                ev = Evaluation(env=chal.env, score=0.0, extra={"error": str(e), "evaluation_failed": True})
-                resp = Response(response=None, latency_seconds=time.monotonic()-start, attempts=1, model=miner.model or "", error=str(e), success=False)
-            logger.info(f"[SCORE] U{miner.uid:>3d} {chal.env.name:<20} = {ev.score:.4f}")
-            return Result(miner=miner, challenge=chal, response=resp, evaluation=ev)
-        start = time.monotonic()
-        err = f"Unsupported environment type: {type(chal.env).__name__}"
-        ev = Evaluation(env=chal.env, score=0.0, extra={"error": err, "evaluation_failed": True})
-        resp = Response(response=None, latency_seconds=time.monotonic()-start, attempts=1, model=miner.model or "", error=err, success=False)
-        return Result(miner=miner, challenge=chal, response=resp, evaluation=ev)
+    Returns:
+        Result object containing evaluation outcome
+    """
+    if not miner.model:
+        logger.warning(f"Miner uid={miner.uid} has no model, skipping")
+        return None
     
-    tasks = [ asyncio.create_task(proc(m, chal)) for m in mmap.values() if m.model for chal in challenges]  
-    total = len(tasks); completed = 0
-    for task in asyncio.as_completed(tasks): 
-        result = await task
-        response.append(result); completed += 1
-        logger.debug(
-            LOG_TEMPLATE.format(
-                pct    = completed / total * 100,
-                env    = result.challenge.env.name,                   
-                uid    = result.miner.uid,                 
-                model  = result.miner.model[:50] or "",         
-                success= "RECV" if result.response.success else "NULL",
-                score  = result.evaluation.score,
-                latency= result.response.latency_seconds
-            )
+    logger.trace(f"Querying miner uid={miner.uid} on env={env.env_name} task_id={task_id}")
+    
+    start = time.monotonic()
+    
+    try:
+        # Call SDK evaluate method
+        evaluation_result = await env.evaluate(miner, task_id=task_id)
+        
+        # Build response
+        response = Response(
+            response=None,
+            latency_seconds=time.monotonic() - start,
+            attempts=1,
+            model=miner.model,
+            error=None,
+            success=evaluation_result.extra.get("success", False)
         )
-    return response
+        
+        # Build challenge from env
+        challenge = Challenge(
+            env=env.env_name,
+            prompt=f"{env.env_name} evaluation",
+            extra={"task_id": task_id} if task_id is not None else {}
+        )
+        
+        # Build evaluation
+        evaluation = Evaluation(
+            env=env.env_name,
+            score=evaluation_result.score,
+            extra=evaluation_result.extra
+        )
+        
+        return Result(
+            miner=miner,
+            challenge=challenge,
+            response=response,
+            evaluation=evaluation
+        )
+        
+    except Exception as e:
+        response = Response(
+            response=None,
+            latency_seconds=time.monotonic() - start,
+            attempts=1,
+            model=miner.model or "",
+            error=str(e),
+            success=False
+        )
+        
+        challenge = Challenge(
+            env=env.env_name,
+            prompt=f"{env.env_name} evaluation",
+            extra={"task_id": task_id, "error": str(e)}
+        )
+        
+        evaluation = Evaluation(
+            env=env.env_name,
+            score=0.0,
+            extra={"error": str(e), "evaluation_failed": True}
+        )
+        
+        return Result(
+            miner=miner,
+            challenge=challenge,
+            response=response,
+            evaluation=evaluation
+        )

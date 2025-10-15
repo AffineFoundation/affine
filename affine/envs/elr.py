@@ -1,6 +1,6 @@
 import re
 import affine as af
-from typing import Any, Dict, List, Tuple, Optional
+from .models import BaseEnv
 
 dataset = af.singleton('euler', lambda: af.utils.R2BufferedDataset(
         dataset_name="alexandonian/project-euler",
@@ -8,7 +8,7 @@ dataset = af.singleton('euler', lambda: af.utils.R2BufferedDataset(
         max_batch=5,
 ))
 
-class ELR(af.BaseEnv):
+class ELR(BaseEnv):
     __version__: str = "0.0.0"
     def __init__(self):
         super().__init__()
@@ -22,7 +22,7 @@ class ELR(af.BaseEnv):
 Provide your solution in blocks <Answer>...</Answer>
 For instance: 
 <Answer>20</Answer>"""
-        return af.Challenge(env=self, prompt=prompt, extra=sample)
+        return af.Challenge(env=self.name, prompt=prompt, extra=sample)
 
     def extract_answer_from_response(self, response: str) -> str:
         """Extract the answer from <Answer>...</Answer> tags."""
@@ -38,4 +38,4 @@ For instance:
         solution = challenge.extra['numerical_answer']
         extracted_answer = self.extract_answer_from_response(resp or "")
         ok = extracted_answer == str(solution)
-        return af.Evaluation(env=self, score=1.0 if ok else 0.0, extra={"extracted_answer": extracted_answer, "expected_answer": solution})
+        return af.Evaluation(env=self.name, score=1.0 if ok else 0.0, extra={"extracted_answer": extracted_answer, "expected_answer": solution})
