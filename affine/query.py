@@ -111,13 +111,21 @@ async def run(challenges, miners, timeout=240, retries=0, backoff=1, task_ids: O
     async def proc(miner, chal):
         if isinstance(chal.env, ContainerEnv):
             start = time.monotonic()
+            env_task_id = (task_ids or {}).get(chal.env.name)
+            if env_task_id is not None:
+                chal.environment_task_id = int(env_task_id)
+                chal.ensure_environment_task_id()
+                env_task_id = chal.environment_task_id
+            else:
+                env_task_id = chal.ensure_environment_task_id()
             try:
-                ev = await chal.env.run_episode(policy=miner, task_id=(task_ids or {}).get(chal.env.name) if task_ids else None)
+                ev = await chal.env.run_episode(policy=miner, task_id=env_task_id)
                 resp = Response(response=None, latency_seconds=time.monotonic()-start, attempts=1, model=miner.model or "", error=None, success=True)
             except Exception as e:
                 traceback.print_exc()
                 ev = Evaluation(env=chal.env, score=0.0, extra={"error": str(e), "evaluation_failed": True})
                 resp = Response(response=None, latency_seconds=time.monotonic()-start, attempts=1, model=miner.model or "", error=str(e), success=False)
+            chal.attach_metadata(ev, env_task_id)
             logger.info(f"[SCORE] U{miner.uid:>3d} {chal.env.name:<20} = {ev.score:.4f}")
             return Result(miner=miner, challenge=chal, response=resp, evaluation=ev)
         start = time.monotonic()

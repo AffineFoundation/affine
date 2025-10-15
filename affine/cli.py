@@ -5,7 +5,6 @@ import json
 import time
 import click
 import socket
-import random
 import asyncio
 import logging
 import textwrap
@@ -104,6 +103,7 @@ def runner():
             chal, uses = chal_cache.get(key, (None, 0))
             if chal is None or uses >= MAX_USES:
                 chal, uses = Challenge(env=e, prompt=f"{e.name} placeholder", extra={}), 0
+            chal.ensure_environment_task_id()
             chal_cache[key] = (chal, uses + 1)
             return chal
 
@@ -112,14 +112,14 @@ def runner():
             name = e.name
             if env_inflight[name]:
                 return
-            data_len = (getattr(e, "data_len", 200) or 200)
-            tid = random.randint(0, int(data_len) - 1)
             chal = await get_env_challenge(e)
+            env_task_id = chal.environment_task_id
+            chal_task_ids = {name: env_task_id} if env_task_id is not None else None
             tasks = {}
             for m in miners_map.values():
                 if not getattr(m, "model", None):
                     continue
-                t = asyncio.create_task(run([chal], m, timeout=180, task_ids={name: tid}))
+                t = asyncio.create_task(run([chal], m, timeout=180, task_ids=chal_task_ids))
                 tasks[int(m.uid)] = t
                 total_requests += 1
                 requests_since_last_log += 1
