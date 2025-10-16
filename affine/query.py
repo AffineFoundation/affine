@@ -89,15 +89,21 @@ async def query(prompt, model: str = "unsloth/gemma-3-12b-it", slug: str = "llm"
             await asyncio.sleep(backoff * 2**(attempt-1) * (1 + random.uniform(-0.1, 0.1)))
 
 
-async def query_miner(env: BaseSDKEnv, miner: Miner, task_id: Optional[int] = None) -> Result:
+async def query_miner(
+    env: BaseSDKEnv,
+    miner: Miner,
+    task_id: Optional[int] = None,
+    challenge_id: Optional[str] = None,
+) -> Result:
     """
     Query a miner using SDK environment interface.
-    
+
     Args:
         env: SDK environment instance (e.g., DED(), ALFWORLD())
         miner: Miner instance to query
         task_id: Optional task ID for environments that support it
-    
+        challenge_id: Optional globally unique identifier shared across miners
+
     Returns:
         Result object containing evaluation outcome
     """
@@ -109,10 +115,22 @@ async def query_miner(env: BaseSDKEnv, miner: Miner, task_id: Optional[int] = No
     
     start = time.monotonic()
     
+    extra_challenge: Dict[str, Optional[int | str]] = {}
+    if task_id is not None:
+        extra_challenge["task_id"] = int(task_id)
+    if challenge_id is not None:
+        extra_challenge["challenge_id"] = challenge_id
+
     try:
         # Call SDK evaluate method
         evaluation_result = await env.evaluate(miner, task_id=task_id)
-        
+
+        evaluation_extra = dict(evaluation_result.extra or {})
+        if task_id is not None and "task_id" not in evaluation_extra:
+            evaluation_extra["task_id"] = int(task_id)
+        if challenge_id is not None:
+            evaluation_extra.setdefault("challenge_id", challenge_id)
+
         # Build response
         response = Response(
             response=None,
@@ -120,55 +138,57 @@ async def query_miner(env: BaseSDKEnv, miner: Miner, task_id: Optional[int] = No
             attempts=1,
             model=miner.model,
             error=None,
-            success=evaluation_result.extra.get("success", False)
+            success=bool(evaluation_extra.get("success", False)),
         )
-        
+
         # Build challenge from env
         challenge = Challenge(
             env=env.env_name,
             prompt=f"{env.env_name} evaluation",
-            extra={"task_id": task_id} if task_id is not None else {}
+            extra=extra_challenge,
+            challenge_id=challenge_id,
         )
-        
+
         # Build evaluation
         evaluation = Evaluation(
             env=env.env_name,
             score=evaluation_result.score,
-            extra=evaluation_result.extra
+            extra=evaluation_extra,
         )
-        
+
         return Result(
-            miner=miner,
-            challenge=challenge,
-            response=response,
-            evaluation=evaluation
+            miner=miner, challenge=challenge, response=response, evaluation=evaluation
         )
-        
+
     except Exception as e:
+        evaluation_extra = {"error": str(e), "evaluation_failed": True}
+        if task_id is not None:
+            evaluation_extra["task_id"] = int(task_id)
+        if challenge_id is not None:
+            evaluation_extra["challenge_id"] = challenge_id
+
         response = Response(
             response=None,
             latency_seconds=time.monotonic() - start,
             attempts=1,
             model=miner.model or "",
             error=str(e),
-            success=False
+            success=False,
         )
-        
+
         challenge = Challenge(
             env=env.env_name,
             prompt=f"{env.env_name} evaluation",
-            extra={"task_id": task_id, "error": str(e)}
+            extra={**extra_challenge, "error": str(e)},
+            challenge_id=challenge_id,
         )
-        
+
         evaluation = Evaluation(
             env=env.env_name,
             score=0.0,
-            extra={"error": str(e), "evaluation_failed": True}
+            extra=evaluation_extra,
         )
-        
+
         return Result(
-            miner=miner,
-            challenge=challenge,
-            response=response,
-            evaluation=evaluation
+            miner=miner, challenge=challenge, response=response, evaluation=evaluation
         )

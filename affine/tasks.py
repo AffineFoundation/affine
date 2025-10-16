@@ -249,13 +249,23 @@ class AffineSDKEnv(BaseSDKEnv):
         return EnvType.AFFINE
 
     async def evaluate(
-        self, miner: Union["Miner", Dict[str, Any]],
+        self,
+        miner: Union["Miner", Dict[str, Any]],
         task_id: Union[int, List[int], None] = None,
     ) -> Union["Evaluation", Dict[str, "Evaluation"]]:
         """Evaluate using Affine environment endpoint."""
 
-        # Use the IDs from config or default
-        payload_extra = {"ids": [0]}
+        if task_id is None:
+            task_ids = [0]
+        elif isinstance(task_id, list):
+            task_ids = task_id if task_id else [0]
+        else:
+            task_ids = [int(task_id)]
+
+        payload_extra = {
+            "ids": task_ids,
+            "task_id": task_ids[0] if len(task_ids) == 1 else task_ids,
+        }
 
         async def evaluate_single(m):
             return await self._evaluate_single_miner(m, payload_extra)
@@ -314,7 +324,7 @@ class AgentGymSDKEnv(BaseSDKEnv):
         payload_extra = {
             "ids": task_ids,
             "max_round": self.max_round,
-            "task_id": task_ids,  # Keep for backward compatibility in extra
+            "task_id": task_ids[0] if len(task_ids) == 1 else task_ids,
         }
 
         async def evaluate_single(m):
