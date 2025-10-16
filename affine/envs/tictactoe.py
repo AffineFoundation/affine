@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, List, Mapping, MutableMapping, Tuple
+import re
+from typing import Any, List, Mapping, MutableMapping, Sequence, Tuple
 
 import numpy as np
 from gymnasium import spaces
@@ -10,251 +10,232 @@ from ..core.rng import make_rng
 from ..core.types import Verdict
 from .base import AffineEnv
 
-Board = np.ndarray
+_WIN_LINES = np.array(
+    [
+        (0, 1, 2),
+        (3, 4, 5),
+        (6, 7, 8),
+        (0, 3, 6),
+        (1, 4, 7),
+        (2, 5, 8),
+        (0, 4, 8),
+        (2, 4, 6),
+    ],
+    dtype=np.int8,
+)
 
 
-def _winner(board: Board) -> int | None:
-    """Return 1 if X wins, -1 if O wins, None otherwise."""
-    for i in range(3):
-        if np.all(board[i, :] == 1) or np.all(board[:, i] == 1):
-            return 1
-        if np.all(board[i, :] == -1) or np.all(board[:, i] == -1):
-            return -1
-    if np.all(board.diagonal() == 1) or np.all(np.fliplr(board).diagonal() == 1):
+def _score(flat: np.ndarray) -> int | None:
+    sums = flat[_WIN_LINES].sum(axis=1)
+    if 3 in sums:
         return 1
-    if np.all(board.diagonal() == -1) or np.all(np.fliplr(board).diagonal() == -1):
+    if -3 in sums:
         return -1
-    return None
+    if np.any(flat == 0):
+        return None
+    return 0
 
 
-def _minimax(board: Board, player: int) -> Tuple[int, int | None]:
-    """Return (score, best_move) for player. Score from env perspective (-1)."""
-    winner = _winner(board)
-    if winner:
-        return (1 if winner == -1 else -1, None)
-    moves = [i for i in range(9) if board.flat[i] == 0]
-    if not moves:
-        return (0, None)
-
-    best_score = -2 if player == -1 else 2
-    best_move = moves[0]
-    for move in moves:
-        r, c = divmod(move, 3)
-        board[r, c] = player
-        score, _ = _minimax(board, -player)
-        board[r, c] = 0
-        if (player == -1 and score > best_score) or (player == 1 and score < best_score):
-            best_score, best_move = score, move
-            if (player == -1 and score == 1) or (player == 1 and score == -1):
+def _minimax(flat: np.ndarray, player: int) -> Tuple[int, int | None]:
+    outcome = _score(flat)
+    if outcome is not None:
+        return {-1: 1, 0: 0, 1: -1}[outcome], None
+    empties = np.flatnonzero(flat == 0)
+    best = -2 if player == -1 else 2
+    choice = int(empties[0])
+    for move in map(int, empties):
+        flat[move] = player
+        score, _ = _minimax(flat, -player)
+        flat[move] = 0
+        if player == -1:
+            if score > best:
+                best, choice = score, move
+            if score == 1:
                 break
-    return best_score, best_move
+        else:
+            if score < best:
+                best, choice = score, move
+            if score == -1:
+                break
+    return best, choice
 
 
-def _parse_moves(data: Any) -> List[int]:
-    """Extract list of integers from various formats."""
-    if isinstance(data, int):
-        return [data]
-    if isinstance(data, str):
-        return [int(x) for x in data.replace(",", " ").split() if x.isdigit()]
-    if isinstance(data, dict):
-        if "moves" in data:
-            return _parse_moves(data["moves"])
-        if "miner_moves" in data:
-            return _parse_moves(data["miner_moves"])
-    if isinstance(data, (list, tuple)):
-        result = []
-        for item in data:
-            if isinstance(item, int):
-                result.append(item)
-            elif isinstance(item, dict) and "move" in item:
-                result.append(int(item["move"]))
-            elif isinstance(item, dict) and "action" in item:
-                result.append(int(item["action"]))
-            elif isinstance(item, dict) and "miner" in item:
-                result.append(int(item["miner"]))
-        return result
-    raise TypeError(f"Cannot parse moves from {type(data)}")
+def _opening(rng: np.random.Generator) -> Tuple[np.ndarray, List[int]]:
+    flat = np.zeros(9, dtype=np.int8)
+    history: List[int] = []
+    for _ in range(int(rng.integers(0, 4))):
+        candidates = [int(m) for m in rng.permutation(9) if flat[m] == 0]
+        if not candidates:
+            break
+        move = candidates[0]
+        flat[move] = 1
+        if _score(flat) is not None:
+            flat[move] = 0
+            continue
+        history.append(move)
+        _, reply = _minimax(flat, -1)
+        if reply is None or flat[reply] != 0:
+            flat[move] = 0
+            history.pop()
+            break
+        flat[reply] = -1
+        if _score(flat) is not None:
+            flat[reply] = 0
+            flat[move] = 0
+            history.pop()
+            break
+        history.append(int(reply))
+    return flat, history
 
 
-@dataclass
-class TicTacToeState:
-    board: Board
-    miner_turn: bool
-    transcript: List[dict]
+def _parse_moves(payload: Any) -> List[int]:
+    if isinstance(payload, int):
+        return [int(payload)]
+    if isinstance(payload, str):
+        return [int(x) for x in re.findall(r"-?\d+", payload)]
+    if isinstance(payload, Mapping):
+        for key in ("moves", "miner_moves", "sequence", "actions", "move", "action", "index"):
+            if key in payload:
+                return _parse_moves(payload[key])
+        raise TypeError("no move field in mapping")
+    if isinstance(payload, Sequence):
+        moves: List[int] = []
+        for item in payload:
+            moves.extend(_parse_moves(item))
+        return moves
+    raise TypeError(f"Cannot parse moves from {type(payload)}")
+
+
+def _replay(flat: np.ndarray, moves: Sequence[int]) -> str:
+    for move in moves:
+        if move < 0 or move >= 9:
+            return f"illegal:{move}"
+        if flat[move] != 0:
+            return f"occupied:{move}"
+        flat[move] = 1
+        outcome = _score(flat)
+        if outcome == 1:
+            return "win"
+        if outcome == 0:
+            return "draw"
+        _, reply = _minimax(flat, -1)
+        if reply is None:
+            return "draw"
+        flat[reply] = -1
+        outcome = _score(flat)
+        if outcome == -1:
+            return "loss"
+        if outcome == 0:
+            return "draw"
+    return "incomplete"
 
 
 class TicTacToeEnv(AffineEnv):
-    """Deterministic TicTacToe with perfect opponent."""
+    """Deterministic tic-tac-toe with a perfect opponent."""
 
     metadata = {"env_id": "tictactoe-v0", "spec_version": 1}
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.observation_space = spaces.Box(low=-1, high=1, shape=(3, 3), dtype=np.int8)
         self.action_space = spaces.Discrete(9)
-        self._state: TicTacToeState | None = None
+        self._board: np.ndarray | None = None
+        self._opening: List[int] = []
+        self._transcript: List[Tuple[str, int]] = []
 
-    def _reset(self, *, rng: np.random.Generator, info: MutableMapping[str, Any], options: Mapping[str, Any]) -> Tuple[Board, dict]:
-        board = np.zeros((3, 3), dtype=np.int8)
-        transcript = []
-        # Generate opening position
-        pairs = int(rng.integers(0, 4))
-        moves = list(rng.permutation(9))
-        for i in range(pairs):
-            if i * 2 >= len(moves):
-                break
-            m = int(moves[i * 2])
-            r, c = divmod(m, 3)
-            if board[r, c] != 0:
-                continue
-            board[r, c] = 1
-            transcript.append(m)
-            if _winner(board) or not (board == 0).any():
-                board[r, c] = 0
-                transcript.pop()
-                break
-            _, em = _minimax(board.copy(), -1)
-            if em is None:
-                board[r, c] = 0
-                transcript.pop()
-                break
-            er, ec = divmod(em, 3)
-            board[er, ec] = -1
-            transcript.append(em)
-            if _winner(board) or not (board == 0).any():
-                board[er, ec] = 0
-                transcript.pop()
-                break
+    def _reset(
+        self,
+        *,
+        rng: np.random.Generator,
+        info: MutableMapping[str, Any],
+        options: Mapping[str, Any],
+    ) -> Tuple[np.ndarray, Mapping[str, Any]]:
+        flat, opening = _opening(rng)
+        self._board = flat
+        self._opening = opening
+        self._transcript = []
+        info.update(
+            {
+                "miner_first": True,
+                "difficulty": len(opening) // 2,
+                "opening_moves": list(opening),
+            }
+        )
+        return flat.reshape(3, 3).copy(), {}
 
-        self._state = TicTacToeState(board.copy(), True, [])
-        info.update({"miner_first": True, "difficulty": len(transcript) // 2, "opening_moves": transcript})
-        return board.copy(), {}
-
-    def step(self, action: Any):
-        state = self._state
-        if not state or not state.miner_turn:
-            raise RuntimeError("Invalid state")
-
-        move = int(action)
-        info = {"challenge_id": self.challenge.challenge_id, "env_id": self.env_id()}
-
-        if not self.action_space.contains(move):
-            state.transcript.append({"role": "miner", "move": move, "illegal": True})
-            return state.board.copy(), -1.0, True, False, {**info, "reason": "illegal"}
-
-        r, c = divmod(move, 3)
-        if state.board[r, c] != 0:
-            state.transcript.append({"role": "miner", "move": move, "illegal": True})
-            return state.board.copy(), -1.0, True, False, {**info, "reason": "occupied"}
-
-        state.board[r, c] = 1
-        state.transcript.append({"role": "miner", "move": move})
-
-        winner = _winner(state.board)
-        if winner == 1:
-            reward, terminated, reason = 1.0, True, "win"
-        elif not (state.board == 0).any():
-            reward, terminated, reason = 0.0, True, "draw"
-        else:
-            _, em = _minimax(state.board.copy(), -1)
-            if em is None:
-                reward, terminated, reason = 0.0, True, "draw"
-            else:
-                er, ec = divmod(em, 3)
-                state.board[er, ec] = -1
-                state.transcript.append({"role": "env", "move": em})
-                winner = _winner(state.board)
-                if winner == -1:
-                    reward, terminated, reason = -1.0, True, "loss"
-                elif not (state.board == 0).any():
-                    reward, terminated, reason = 0.0, True, "draw"
-                else:
-                    reward, terminated, reason = 0.0, False, "continue"
-
-        info.update({
-            "miner_first": True,
+    def _info(self, reason: str) -> Mapping[str, Any]:
+        return {
+            "challenge_id": self.challenge.challenge_id,
+            "env_id": self.env_id(),
             "spec_hash": self.spec_hash(),
             "spec_version": self.spec_version(),
-            "difficulty": self.challenge.info.get("difficulty", 0),
-            "opening_moves": self.challenge.info.get("opening_moves", []),
-            "transcript": list(state.transcript),
+            "miner_first": True,
+            "difficulty": len(self._opening) // 2,
+            "opening_moves": list(self._opening),
+            "transcript": [{"role": role, "move": move} for role, move in self._transcript],
             "reason": reason,
-        })
-        return state.board.copy(), reward, terminated, False, info
+        }
+
+    def step(self, action: Any):
+        if self._board is None:
+            raise RuntimeError("Environment not reset.")
+        move = int(action)
+        board = self._board
+        if not self.action_space.contains(move):
+            self._transcript.append(("miner", move))
+            info = dict(self._info("illegal"))
+            info["transcript"][-1]["illegal"] = True
+            return board.reshape(3, 3).copy(), -1.0, True, False, info
+        if board[move] != 0:
+            self._transcript.append(("miner", move))
+            info = dict(self._info("occupied"))
+            info["transcript"][-1]["illegal"] = True
+            return board.reshape(3, 3).copy(), -1.0, True, False, info
+
+        board[move] = 1
+        self._transcript.append(("miner", move))
+        outcome = _score(board)
+        if outcome == 1:
+            return board.reshape(3, 3).copy(), 1.0, True, False, self._info("win")
+        if outcome == 0:
+            return board.reshape(3, 3).copy(), 0.0, True, False, self._info("draw")
+
+        _, reply = _minimax(board, -1)
+        if reply is None:
+            return board.reshape(3, 3).copy(), 0.0, True, False, self._info("draw")
+
+        board[reply] = -1
+        self._transcript.append(("env", int(reply)))
+        outcome = _score(board)
+        if outcome == -1:
+            return board.reshape(3, 3).copy(), -1.0, True, False, self._info("loss")
+        if outcome == 0:
+            return board.reshape(3, 3).copy(), 0.0, True, False, self._info("draw")
+        return board.reshape(3, 3).copy(), 0.0, False, False, self._info("continue")
 
     def verify(self, response: Any, info: Mapping[str, Any]) -> Verdict:
         challenge_id = info.get("challenge_id")
         if not challenge_id:
             return Verdict(False, "missing-challenge")
-
         try:
             moves = _parse_moves(response)
-        except Exception as e:
-            return Verdict(False, f"parse-error:{e}")
-
+        except Exception as exc:
+            return Verdict(False, f"parse-error:{exc}")
         rng = make_rng(self.env_id(), self.spec_version(), str(challenge_id))
-        board = np.zeros((3, 3), dtype=np.int8)
-
-        # Apply opening moves (regenerate)
-        pairs = int(rng.integers(0, 4))
-        perm = list(rng.permutation(9))
-        for i in range(pairs):
-            if i * 2 >= len(perm):
-                break
-            m = int(perm[i * 2])
-            r, c = divmod(m, 3)
-            if board[r, c] != 0:
-                continue
-            board[r, c] = 1
-            if _winner(board) or not (board == 0).any():
-                board[r, c] = 0
-                break
-            _, em = _minimax(board.copy(), -1)
-            if em is None:
-                board[r, c] = 0
-                break
-            er, ec = divmod(em, 3)
-            board[er, ec] = -1
-            if _winner(board) or not (board == 0).any():
-                board[er, ec] = 0
-                break
-
-        # Replay miner moves
-        for move in moves:
-            if move < 0 or move >= 9:
-                return Verdict(False, f"illegal:{move}")
-            r, c = divmod(move, 3)
-            if board[r, c] != 0:
-                return Verdict(False, f"occupied:{move}")
-            board[r, c] = 1
-            if _winner(board) == 1:
-                return Verdict(True, "win")
-            if not (board == 0).any():
-                return Verdict(False, "draw")
-            _, em = _minimax(board.copy(), -1)
-            if em is None:
-                return Verdict(False, "draw")
-            er, ec = divmod(em, 3)
-            board[er, ec] = -1
-            if _winner(board) == -1:
-                return Verdict(False, "loss")
-            if not (board == 0).any():
-                return Verdict(False, "draw")
-
-        return Verdict(False, "incomplete")
+        flat, opening = _opening(rng)
+        declared = info.get("opening_moves")
+        if declared is not None and list(declared) != opening:
+            return Verdict(False, "opening-mismatch")
+        result = _replay(flat.copy(), moves)
+        if result == "win":
+            return Verdict(True, "win")
+        return Verdict(False, result)
 
     def decode_action(self, response: Any) -> int:
-        if isinstance(response, (int, np.integer)):
-            return int(response)
-        if isinstance(response, str):
-            parts = [x for x in response.replace(",", " ").split() if x.isdigit()]
-            if parts:
-                return int(parts[0])
-        if isinstance(response, dict):
-            for key in ("move", "action", "index"):
-                if key in response:
-                    return int(response[key])
-        raise ValueError(f"Cannot decode action from {type(response)}")
+        moves = _parse_moves(response)
+        if not moves:
+            raise ValueError("No moves to decode.")
+        return moves[0]
 
 
 __all__ = ["TicTacToeEnv"]
