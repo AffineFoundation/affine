@@ -1,0 +1,29 @@
+version: "3.9"
+
+services:
+  validator:
+    build: .
+    image: affine-validator:latest
+    container_name: affine-validator
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - AFFINE_CACHE_DIR=/app/data/blocks
+    volumes:
+      - validator-cache:/app/data/blocks
+      - ~/.bittensor/wallets:/root/.bittensor/wallets:ro
+    command:
+      - validate
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: affine-watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 30 affine-validator
+
+volumes:
+  validator-cache:
+    name: affine-validator-cache

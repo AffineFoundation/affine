@@ -28,6 +28,7 @@ from .envs import (
     last_integer,
 )
 from .network import ChutesClient, ChutesResponse
+from .storage import BucketStorage, StorageError, get_storage
 from .validators import (
     ChallengeCommitment,
     ChallengeOutcome,
@@ -70,6 +71,7 @@ __all__ = [
     "beats_target",
     "block_hash",
     "build_block",
+    "BucketStorage",
     "canonical_bytes",
     "canonical_timestamp",
     "compute_vtrust",
@@ -82,6 +84,7 @@ __all__ = [
     "get_env",
     "hash_bytes",
     "hash_hex",
+    "get_storage",
     "loses_to_target",
     "last_integer",
     "load_block",
@@ -92,6 +95,7 @@ __all__ = [
     "serialize_block",
     "set_weights",
     "settings",
+    "StorageError",
     "ValidatorSampler",
     "VerifiedSample",
     "verify_block",
