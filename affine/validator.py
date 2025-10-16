@@ -154,7 +154,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
         logger.warning("No results collected; defaulting to uid 0")
         return [0], [1.0]
     
-    cnt, succ, prev, v_id, first_block = orchestrator.process_sample_data(
+    cnt, succ, prev, v_id, first_block, pairs_by_time = orchestrator.process_sample_data(
         results_list, meta.hotkeys, ENVS, BASE_HK
     )
     
@@ -172,8 +172,16 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
 
     pool_for_dom = eligible if eligible else (queryable_hks & set(active_hks))
     
-    dom_full = sampler.compute_dominance_counts(pool_for_dom, ENVS, acc, cnt, first_block)
-    logger.info("Computed ε-dominance counts (full env set).")
+    elo = sampler.compute_elo_scores(pairs_by_time, meta.hotkeys, ENVS)
+    logger.info(f"Computed ELO scores from {len(pairs_by_time)} pairwise comparisons.")
+    
+    epsilon_per_env = sampler.compute_epsilon_from_ranking_gap(elo, ENVS)
+    logger.info(f"Computed per-environment epsilon for dominance:")
+    for env_name, eps_val in epsilon_per_env.items():
+        logger.info(f"  {env_name}: {eps_val:.2f}")
+    
+    dom_full = sampler.compute_dominance_counts(pool_for_dom, ENVS, elo, first_block, epsilon_per_env)
+    logger.info("Computed ELO-based ε-dominance counts (full env set).")
 
     def ts(hk: str) -> int:
         return int(first_block[hk]) if hk in first_block else float('inf')
@@ -183,7 +191,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
     best_uid = meta.hotkeys.index(best)
 
     score, layer_points, env_winners = sampler.calculate_combinatoric_scores(
-        ENVS, pool_for_dom, acc, cnt, first_block, scale
+        ENVS, pool_for_dom, elo, first_block, epsilon_per_env, scale
     )
 
     if not eligible:
@@ -203,7 +211,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
             model_name = str(m.model)[:50]
             env_cols = []
             for e in ENVS:
-                base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}"
+                base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}/{elo[hk][e]:.0f}"
                 if hk == env_winners.get(e):
                     env_cols.append(f"*{base}*")
                 else:
@@ -236,7 +244,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
         model_name = str(m.model)[:50]
         env_cols = []
         for e in ENVS:
-            base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}"
+            base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}/{elo[hk][e]:.0f}"
             if hk == env_winners.get(e):
                 env_cols.append(f"*{base}*")
             else:

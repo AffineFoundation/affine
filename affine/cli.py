@@ -239,9 +239,6 @@ def runner():
             # Track all inflight tasks: {(env_name, miner_uid): Task}
             inflight_tasks: Dict[Tuple[str, int], asyncio.Task] = {}
             
-            # Track last task_id per env-miner pair to avoid immediate repeats
-            last_task_ids: Dict[Tuple[str, int], int] = {}
-
             while True:
                 HEARTBEAT = current_time = time.monotonic()
 
@@ -269,24 +266,19 @@ def runner():
 
                 # Submit new tasks for any env-miner pair not currently running
                 for env in envs:
-                    data_len = getattr(env, "data_len", 200) or 200
+                    data_len = getattr(env, "data_len", 1)
                     
                     for miner in miners_map.values():
                         if not getattr(miner, "model", None):
                             continue
 
                         task_key = (env.env_name, miner.uid)
-                        
+
                         # Skip if this env-miner pair already has a task running
                         if task_key in inflight_tasks:
                             continue
 
-                        # Generate task_id, avoiding immediate repeat
-                        last_id = last_task_ids.get(task_key, -1)
-                        task_id = random.randint(0, data_len - 1)
-                        if data_len > 1 and task_id == last_id:
-                            task_id = (task_id + 1) % data_len
-                        last_task_ids[task_key] = task_id
+                        task_id = random.randint(0, data_len - 1) % data_len
 
                         # Create task with semaphore control
                         task = asyncio.create_task(
