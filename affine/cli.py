@@ -52,11 +52,11 @@ def run_env(
     payload = {
         "env_id": env,
         "challenge_id": info["challenge_id"],
-        "observation": observation,
+        "observation": observation.tolist() if hasattr(observation, 'tolist') else observation,
         "info": info,
     }
     if json_output:
-        typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+        typer.echo(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
     else:
         typer.echo(f"env: {env}")
         typer.echo(f"challenge_id: {info['challenge_id']}")
