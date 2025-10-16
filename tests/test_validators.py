@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import pytest
 
-from affine.core.rng import derive_challenge_id
-from affine.core.types import Sample, Verdict
-from affine.envs.mult8 import Mult8Env
-from affine.validators import merge, vtrust, weights
-from affine.validators.merge import VerifiedSample
-from affine.validators.sampler import ChallengeCommitment, DuplicateDetector
+from affine import (
+    ChallengeCommitment,
+    DuplicateDetector,
+    Mult8Env,
+    Sample,
+    Verdict,
+    VerifiedSample,
+    compute_vtrust,
+    derive_challenge_id,
+    scoreboard,
+    verify_samples,
+    winner_takes_all,
+)
 
 
 def _make_sample(miner_id: int, *, role: str, ok: bool, reason: str) -> Sample:
@@ -80,14 +87,14 @@ def test_scoreboard_winner_takes_all() -> None:
         }
     }
     vtrust_scores = {"validator": 0.8}
-    scores = weights.scoreboard(buckets, vtrust_scores)
+    scores = scoreboard(buckets, vtrust_scores)
     assert scores == {31: 0.8}
-    assert weights.winner_takes_all(scores) == {31: 1.0}
+    assert winner_takes_all(scores) == {31: 1.0}
 
 
 def test_compute_vtrust_uses_wilson_lower_bound() -> None:
     stats = {"validator": (9, 10), "novice": (0, 0)}
-    scores = vtrust.compute_vtrust(stats, confidence=0.95)
+    scores = compute_vtrust(stats, confidence=0.95)
     assert scores["validator"] < 1.0
     assert scores["novice"] == 0.0
 
@@ -113,14 +120,14 @@ def test_challenge_commitment_roundtrip() -> None:
 
 def test_verify_samples_detects_mismatch() -> None:
     valid_sample = _make_mult8_sample()
-    buckets, stats = merge.verify_samples([valid_sample])
+    buckets, stats = verify_samples([valid_sample])
     assert stats["validator"] == (1, 1)
     verified = buckets[(valid_sample.env_id, valid_sample.challenge_id)]["validator"]["contender"]
     assert verified.valid
     tampered = _make_mult8_sample()
     tampered.challenge_id = "b" * len(tampered.challenge_id)
     tampered.compute_hash()
-    buckets_bad, stats_bad = merge.verify_samples([tampered])
+    buckets_bad, stats_bad = verify_samples([tampered])
     assert stats_bad["validator"] == (0, 1)
     bad_verified = buckets_bad[(tampered.env_id, tampered.challenge_id)]["validator"]["contender"]
     assert not bad_verified.valid

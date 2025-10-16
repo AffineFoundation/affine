@@ -10,15 +10,22 @@ import typer
 from nacl import signing
 
 from .config import settings
-from .core.types import Sample
-from .duel import RatioSchedule, duel_many_envs
-from .envs import registry as env_registry
-from .miners import ChutesClient
-from .validators import blocks as block_utils
-from .validators import merge as merge_utils
-from .validators import sampler as sampler_mod
-from .validators import vtrust as vtrust_mod
-from .validators import weights as weights_mod
+from .system import (
+    ChallengeCommitment,
+    ChallengeOutcome,
+    ChutesClient,
+    RatioSchedule,
+    Sample,
+    ValidatorSampler,
+    build_block,
+    compute_vtrust,
+    duel_many_envs,
+    get_env,
+    load_block,
+    scoreboard,
+    set_weights,
+    verify_samples,
+)
 
 app = typer.Typer(help="Affine subnet management CLI.")
 env_app = typer.Typer(help="Environment utilities.")
@@ -45,7 +52,7 @@ def run_env(
     seed: Optional[int] = typer.Option(None, help="Seed used when deriving challenge id."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
-    env_cls = env_registry.get(env)
+    env_cls = get_env(env)
     instance = env_cls()
     options = {"challenge_id": challenge_id} if challenge_id else {}
     observation, info = instance.reset(seed=seed, options=options)
@@ -65,8 +72,8 @@ def run_env(
 
 
 def _duel_stream_factory(
-    sampler: sampler_mod.ValidatorSampler,
-    outcomes: Mapping[str, List[sampler_mod.ChallengeOutcome]],
+    sampler: ValidatorSampler,
+    outcomes: Mapping[str, List[ChallengeOutcome]],
     champion_uid: int,
     contender_uid: int,
     *,
@@ -100,13 +107,13 @@ def duel(
 ) -> None:
     env_list = _split_envs(envs)
     chutes = ChutesClient(settings.chutes_url, api_key=settings.chutes_api_key, default_timeout=settings.chutes_timeout)
-    sampler = sampler_mod.ValidatorSampler(
+    sampler = ValidatorSampler(
         validator_hotkey=settings.validator_hotkey or "validator",
         chutes=chutes,
         epoch_anchor=settings.epoch_anchor,
         env_ids=env_list,
     )
-    outcomes: Dict[str, List[sampler_mod.ChallengeOutcome]] = {env_id: [] for env_id in env_list}
+    outcomes: Dict[str, List[ChallengeOutcome]] = {env_id: [] for env_id in env_list}
     ratio_schedule = RatioSchedule(initial=0.5 + epsilon, half_life_seconds=settings.ratio_decay_seconds)
 
     factory = _duel_stream_factory(sampler, outcomes, champion_uid=champion, contender_uid=contender, timeout=settings.chutes_timeout)
@@ -154,10 +161,10 @@ def validate(
     commit_digest = None
     if secret_seed_hex:
         seed_bytes = bytes.fromhex(secret_seed_hex)
-        commitment = sampler_mod.ChallengeCommitment(settings.validator_hotkey or "validator", settings.epoch_anchor)
+        commitment = ChallengeCommitment(settings.validator_hotkey or "validator", settings.epoch_anchor)
         commit_digest = commitment.commit(epoch, seed_bytes)
         commitment.reveal(epoch, seed_bytes)
-    sampler = sampler_mod.ValidatorSampler(
+    sampler = ValidatorSampler(
         validator_hotkey=settings.validator_hotkey or "validator",
         chutes=chutes,
         epoch_anchor=settings.epoch_anchor,
@@ -165,7 +172,7 @@ def validate(
         epoch=epoch,
         commitment=commitment,
     )
-    outcomes: Dict[str, List[sampler_mod.ChallengeOutcome]] = {env_id: [] for env_id in env_list}
+    outcomes: Dict[str, List[ChallengeOutcome]] = {env_id: [] for env_id in env_list}
     factory = _duel_stream_factory(sampler, outcomes, champion_uid=champion, contender_uid=contender, timeout=settings.chutes_timeout)
     signing_key = _load_signing_key(signing_key_hex)
     ratio_schedule = RatioSchedule(initial=settings.ratio_to_beat, half_life_seconds=settings.ratio_decay_seconds)
@@ -194,7 +201,7 @@ def validate(
     env_spec_versions = sampler.env_spec_versions()
     while cursor < len(all_samples):
         chunk = all_samples[cursor : cursor + block_size]
-        block, block_digest = block_utils.build_block(
+        block, block_digest = build_block(
             chunk,
             validator=settings.validator_hotkey or "validator",
             block_index=block_index,
@@ -210,9 +217,9 @@ def validate(
     if output_path:
         output_path.write_text(json.dumps(blocks, indent=2, ensure_ascii=False))
 
-    verified_groups, validator_stats = merge_utils.verify_samples(all_samples)
-    vtrust_scores = vtrust_mod.compute_vtrust(validator_stats)
-    weight_scores = weights_mod.scoreboard(verified_groups, vtrust_scores)
+    verified_groups, validator_stats = verify_samples(all_samples)
+    vtrust_scores = compute_vtrust(validator_stats)
+    weight_scores = scoreboard(verified_groups, vtrust_scores)
 
     summary = {
         "duel": {
@@ -247,9 +254,9 @@ def set_weights_cmd(
         data = json.loads(path.read_text())
         if isinstance(data, list):
             for entry in data:
-                blocks.append(block_utils.load_block(entry["block"] if "block" in entry else entry))
+                blocks.append(load_block(entry["block"] if "block" in entry else entry))
         else:
-            blocks.append(block_utils.load_block(data["block"] if "block" in data else data))
+            blocks.append(load_block(data["block"] if "block" in data else data))
 
     samples: List[Sample] = []
     for block in blocks:
@@ -257,10 +264,10 @@ def set_weights_cmd(
             if isinstance(sample, Sample):
                 samples.append(sample)
 
-    verified_groups, validator_stats = merge_utils.verify_samples(samples)
-    vtrust_scores = vtrust_mod.compute_vtrust(validator_stats)
-    score_map = weights_mod.scoreboard(verified_groups, vtrust_scores)
-    result = weights_mod.set_weights(netuid, score_map, dry_run=dry_run)
+    verified_groups, validator_stats = verify_samples(samples)
+    vtrust_scores = compute_vtrust(validator_stats)
+    score_map = scoreboard(verified_groups, vtrust_scores)
+    result = set_weights(netuid, score_map, dry_run=dry_run)
     typer.echo(json.dumps({"scores": score_map, "vtrust": vtrust_scores, "result": result}, indent=2, ensure_ascii=False))
 
 

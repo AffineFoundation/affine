@@ -4,9 +4,7 @@ from typing import Iterable, Optional
 
 import pytest
 
-from affine.duel.aggregate import duel_many_envs
-from affine.duel.arena import duel_env
-from affine.duel.ratio import RatioSchedule
+from affine import RatioSchedule, duel_env, duel_many_envs
 
 
 def test_duel_env_contender_wins_fast() -> None:

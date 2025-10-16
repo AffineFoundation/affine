@@ -1,7 +1,6 @@
 from nacl.signing import SigningKey
 
-from affine.core.types import Sample
-from affine.validators import blocks
+from affine import Sample, build_block, verify_block, verify_chain
 
 
 def sample_fixture() -> Sample:
@@ -29,7 +28,7 @@ def sample_fixture() -> Sample:
 def test_build_and_verify_block() -> None:
     signing_key = SigningKey.generate()
     sample = sample_fixture()
-    block, digest = blocks.build_block(
+    block, digest = build_block(
         [sample],
         validator="validator",
         block_index=0,
@@ -38,13 +37,13 @@ def test_build_and_verify_block() -> None:
         signing_key=signing_key,
     )
     assert block.header.sample_count == 1
-    assert blocks.verify_block(block, signing_key.verify_key)
+    assert verify_block(block, signing_key.verify_key)
 
 
 def test_verify_block_detects_tampering() -> None:
     signing_key = SigningKey.generate()
     sample = sample_fixture()
-    block, _ = blocks.build_block(
+    block, _ = build_block(
         [sample],
         validator="validator",
         block_index=0,
@@ -53,13 +52,13 @@ def test_verify_block_detects_tampering() -> None:
         signing_key=signing_key,
     )
     block.samples[0].response = "999"  # mutate payload
-    assert not blocks.verify_block(block, signing_key.verify_key)
+    assert not verify_block(block, signing_key.verify_key)
 
 
 def test_verify_chain_detects_breaks() -> None:
     signing_key = SigningKey.generate()
     sample = sample_fixture()
-    block1, digest1 = blocks.build_block(
+    block1, digest1 = build_block(
         [sample],
         validator="validator",
         block_index=0,
@@ -70,7 +69,7 @@ def test_verify_chain_detects_breaks() -> None:
     sample_new = sample_fixture()
     sample_new.challenge_id = "dcba"
     sample_new.compute_hash()
-    block2, _ = blocks.build_block(
+    block2, _ = build_block(
         [sample_new],
         validator="validator",
         block_index=1,
@@ -78,13 +77,13 @@ def test_verify_chain_detects_breaks() -> None:
         env_spec_versions={"mult8-v0": 1},
         signing_key=signing_key,
     )
-    assert blocks.verify_chain(
+    assert verify_chain(
         [block1, block2],
         {"validator": signing_key.verify_key},
         genesis_hash="0" * 64,
     )
     block2.header.prev_hash = "deadbeef"
-    assert not blocks.verify_chain(
+    assert not verify_chain(
         [block1, block2],
         {"validator": signing_key.verify_key},
         genesis_hash="0" * 64,
