@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 import inspect
-import json
 import re
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 import numpy as np
 from gymnasium import Env, spaces
@@ -84,7 +93,9 @@ class AffineEnv(Env):
         observation, extra = self._reset(rng=rng, info=info, options=options)
         merged = dict(info)
         merged.update(extra or {})
-        self._challenge = Challenge(env_id=self.env_id(), challenge_id=challenge_id, info=merged)
+        self._challenge = Challenge(
+            env_id=self.env_id(), challenge_id=challenge_id, info=merged
+        )
         return observation, merged
 
     def _reset(
@@ -153,7 +164,13 @@ class Mult8Env(AffineEnv):
             "expected": expected,
             "reason": verdict.reason or ("win" if verdict.ok else "loss"),
         }
-        return f"Compute {a} × {b}. Return only the integer result.", 1.0 if verdict.ok else -1.0, True, False, info
+        return (
+            f"Compute {a} × {b}. Return only the integer result.",
+            1.0 if verdict.ok else -1.0,
+            True,
+            False,
+            info,
+        )
 
     def verify(self, response: Any, info: Mapping[str, Any]) -> Verdict:
         factors = info.get("factors")
@@ -162,7 +179,9 @@ class Mult8Env(AffineEnv):
             if "expected" in info and int(info["expected"]) != expected:
                 return Verdict(False, "expected-mismatch")
         elif "challenge_id" in info:
-            rng = make_rng(self.env_id(), self.spec_version(), str(info["challenge_id"]))
+            rng = make_rng(
+                self.env_id(), self.spec_version(), str(info["challenge_id"])
+            )
             a = int(rng.integers(10_000_000, 100_000_000))
             b = int(rng.integers(10_000_000, 100_000_000))
             expected = a * b
@@ -259,7 +278,15 @@ def _parse_moves(payload: Any) -> List[int]:
     if isinstance(payload, str):
         return [int(x) for x in re.findall(r"-?\d+", payload)]
     if isinstance(payload, Mapping):
-        for key in ("moves", "miner_moves", "sequence", "actions", "move", "action", "index"):
+        for key in (
+            "moves",
+            "miner_moves",
+            "sequence",
+            "actions",
+            "move",
+            "action",
+            "index",
+        ):
             if key in payload:
                 return _parse_moves(payload[key])
         raise TypeError("no move field in mapping")
@@ -335,7 +362,9 @@ class TicTacToeEnv(AffineEnv):
             "miner_first": True,
             "difficulty": len(self._opening) // 2,
             "opening_moves": list(self._opening),
-            "transcript": [{"role": role, "move": move} for role, move in self._transcript],
+            "transcript": [
+                {"role": role, "move": move} for role, move in self._transcript
+            ],
             "reason": reason,
         }
 

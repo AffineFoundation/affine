@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, MutableMapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 from nacl import signing
@@ -12,7 +12,6 @@ from nacl.exceptions import BadSignatureError
 from .core import (
     Block,
     BlockHeader,
-    Challenge,
     Sample,
     Verdict,
     canonical_bytes,
@@ -20,12 +19,11 @@ from .core import (
     derive_challenge_id,
     hash_bytes,
     hash_hex,
-    make_rng,
     merkle_root,
 )
 from .duel import wilson_interval
 from .envs import AffineEnv, env_names, get_env
-from .network import ChutesClient, ChutesResponse
+from .network import ChutesClient
 
 
 def _jsonify(value: Any) -> Any:
@@ -82,7 +80,9 @@ class ChallengeCommitment:
     def commitment(self, epoch: int) -> Optional[str]:
         return self._commits.get(epoch)
 
-    def challenge_id(self, epoch: int, env_id: str, counter: int, spec_hash: str, *, size: int = 16) -> str:
+    def challenge_id(
+        self, epoch: int, env_id: str, counter: int, spec_hash: str, *, size: int = 16
+    ) -> str:
         try:
             seed = self._seeds[epoch]
         except KeyError as exc:  # pragma: no cover - defensive
@@ -158,7 +158,9 @@ def _expected_challenge_id(sample: Sample, spec_hash_value: str) -> Optional[str
         )
         digest = hash_bytes(payload)
         return digest[:16].hex()
-    return derive_challenge_id(sample.validator, sample.env_id, counter_int, anchor, spec_hash_value)
+    return derive_challenge_id(
+        sample.validator, sample.env_id, counter_int, anchor, spec_hash_value
+    )
 
 
 @dataclass
@@ -259,8 +261,12 @@ class ValidatorSampler:
     ) -> ChallengeOutcome:
         counter, challenge_id = self._next_challenge(env_id)
         env_cls = get_env(env_id)
-        champion = self._run_episode(env_cls, env_id, champion_uid, challenge_id, timeout)
-        contender = self._run_episode(env_cls, env_id, contender_uid, challenge_id, timeout)
+        champion = self._run_episode(
+            env_cls, env_id, champion_uid, challenge_id, timeout
+        )
+        contender = self._run_episode(
+            env_cls, env_id, contender_uid, challenge_id, timeout
+        )
         winner = self._decide(contender.verdict, champion.verdict)
         info: Dict[str, Any] = {
             "env_id": env_id,
@@ -293,7 +299,9 @@ class ValidatorSampler:
         self._counters[env_id] = counter + 1
         spec_hash_value = self._env_spec_hashes[env_id]
         if self._commitment is not None:
-            challenge_id = self._commitment.challenge_id(self.epoch, env_id, counter, spec_hash_value)
+            challenge_id = self._commitment.challenge_id(
+                self.epoch, env_id, counter, spec_hash_value
+            )
         else:
             challenge_id = derive_challenge_id(
                 self.validator_hotkey,
@@ -304,14 +312,29 @@ class ValidatorSampler:
             )
         return counter, challenge_id
 
-    def _run_episode(self, env_cls: type[AffineEnv], env_id: str, uid: int, challenge_id: str, timeout: float) -> MinerOutcome:
+    def _run_episode(
+        self,
+        env_cls: type[AffineEnv],
+        env_id: str,
+        uid: int,
+        challenge_id: str,
+        timeout: float,
+    ) -> MinerOutcome:
         env = env_cls()
         env_name = env_cls.env_id()
         if self._duplicates.check_and_mark(env_name, challenge_id, uid):
-            raise RuntimeError(f"duplicate sample for miner {uid} on challenge {challenge_id}")
+            raise RuntimeError(
+                f"duplicate sample for miner {uid} on challenge {challenge_id}"
+            )
         observation, info = env.reset(options={"challenge_id": challenge_id})
-        prompt = observation if isinstance(observation, str) else (
-            observation.decode() if isinstance(observation, (bytes, bytearray)) else json.dumps(_jsonify(observation), ensure_ascii=False)
+        prompt = (
+            observation
+            if isinstance(observation, str)
+            else (
+                observation.decode()
+                if isinstance(observation, (bytes, bytearray))
+                else json.dumps(_jsonify(observation), ensure_ascii=False)
+            )
         )
         transcript: List[Dict[str, Any]] = []
         miner_moves: List[int] = []
@@ -365,7 +388,9 @@ class ValidatorSampler:
 
         verification_payload: Any = miner_moves if miner_moves else transcript
         verdict = env.verify(verification_payload, final_info)
-        response_blob = json.dumps({"moves": miner_moves, "transcript": transcript}, ensure_ascii=False)
+        response_blob = json.dumps(
+            {"moves": miner_moves, "transcript": transcript}, ensure_ascii=False
+        )
         return MinerOutcome(
             uid=uid,
             prompt=prompt,
@@ -404,7 +429,12 @@ class VerifiedSample:
     errors: Tuple[str, ...] = ()
 
 
-def verify_samples(samples: Iterable[Sample]) -> Tuple[Dict[Tuple[str, str], Dict[str, Dict[str, VerifiedSample]]], Dict[str, Tuple[int, int]]]:
+def verify_samples(
+    samples: Iterable[Sample],
+) -> Tuple[
+    Dict[Tuple[str, str], Dict[str, Dict[str, VerifiedSample]]],
+    Dict[str, Tuple[int, int]],
+]:
     buckets: Dict[Tuple[str, str], Dict[str, Dict[str, VerifiedSample]]] = {}
     validator_stats: Dict[str, Tuple[int, int]] = {}
 
@@ -422,7 +452,10 @@ def verify_samples(samples: Iterable[Sample]) -> Tuple[Dict[Tuple[str, str], Dic
             errors.append("spec-hash-mismatch")
 
         expected_challenge = _expected_challenge_id(sample, info_spec_hash)
-        if expected_challenge is not None and sample.challenge_id.lower() != expected_challenge.lower():
+        if (
+            expected_challenge is not None
+            and sample.challenge_id.lower() != expected_challenge.lower()
+        ):
             errors.append("challenge-mismatch")
 
         response = _load_response(sample)
@@ -436,8 +469,12 @@ def verify_samples(samples: Iterable[Sample]) -> Tuple[Dict[Tuple[str, str], Dic
         valid = not errors
         wins, total = validator_stats.get(sample.validator, (0, 0))
         validator_stats[sample.validator] = (wins + (1 if valid else 0), total + 1)
-        bucket = buckets.setdefault((sample.env_id, sample.challenge_id), {}).setdefault(sample.validator, {})
-        bucket[sample.role] = VerifiedSample(sample=sample, verdict=verdict, valid=valid, errors=tuple(errors))
+        bucket = buckets.setdefault(
+            (sample.env_id, sample.challenge_id), {}
+        ).setdefault(sample.validator, {})
+        bucket[sample.role] = VerifiedSample(
+            sample=sample, verdict=verdict, valid=valid, errors=tuple(errors)
+        )
     return buckets, validator_stats
 
 
@@ -462,7 +499,9 @@ def decide_group(group: Mapping[str, VerifiedSample]) -> Optional[str]:
     return None
 
 
-def compute_vtrust(stats: Mapping[str, Tuple[int, int]], *, confidence: float = 0.95) -> Dict[str, float]:
+def compute_vtrust(
+    stats: Mapping[str, Tuple[int, int]], *, confidence: float = 0.95
+) -> Dict[str, float]:
     scores: Dict[str, float] = {}
     for validator, (wins, total) in stats.items():
         if total == 0:
@@ -539,7 +578,10 @@ def _leaf_bytes(sample: Sample) -> bytes:
 
 
 def block_hash(block: Block) -> str:
-    payload = {"header": block.header.canonical_dict(), "samples": list(block.sample_hashes())}
+    payload = {
+        "header": block.header.canonical_dict(),
+        "samples": list(block.sample_hashes()),
+    }
     return hash_hex(canonical_bytes(payload))
 
 
@@ -576,7 +618,12 @@ def build_block(
 
 
 def serialize_block(block: Block) -> str:
-    return json.dumps(block.canonical_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return json.dumps(
+        block.canonical_dict(),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
 
 
 def load_block(data: Mapping[str, Any]) -> Block:
@@ -587,7 +634,9 @@ def load_block(data: Mapping[str, Any]) -> Block:
         block_index=int(header_data["block_index"]),
         timestamp_ms=int(header_data["timestamp"]),
         validator=str(header_data["validator"]),
-        env_spec_versions={k: int(v) for k, v in header_data["env_spec_versions"].items()},
+        env_spec_versions={
+            k: int(v) for k, v in header_data["env_spec_versions"].items()
+        },
         sample_count=int(header_data["sample_count"]),
         merkle_root=str(header_data["merkle_root"]),
         signature=str(header_data.get("signature", "")),
@@ -626,7 +675,9 @@ def verify_block(block: Block, public_key: signing.VerifyKey) -> bool:
         public_key.verify(block.header.signing_bytes(), signature)
     except BadSignatureError:
         return False
-    expected_root = merkle_root([_leaf_bytes(sample) for sample in block.samples if isinstance(sample, Sample)])
+    expected_root = merkle_root(
+        [_leaf_bytes(sample) for sample in block.samples if isinstance(sample, Sample)]
+    )
     return expected_root == block.header.merkle_root
 
 

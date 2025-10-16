@@ -48,10 +48,16 @@ class ChutesClient:
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         start = time.perf_counter()
-        response = self._session.post(url, json=dict(payload), headers=headers, timeout=timeout or self._timeout)
+        response = self._session.post(
+            url, json=dict(payload), headers=headers, timeout=timeout or self._timeout
+        )
         response.raise_for_status()
         elapsed_ms = int((time.perf_counter() - start) * 1000)
-        data = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
+        data = (
+            response.json()
+            if response.headers.get("content-type", "").startswith("application/json")
+            else {}
+        )
         text = data.get("text") or data.get("response") or response.text
         return ChutesResponse(
             text=text,

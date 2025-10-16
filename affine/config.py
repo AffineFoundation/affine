@@ -42,15 +42,29 @@ class Settings:
     epoch_anchor: str = os.getenv("AFFINE_EPOCH_ANCHOR", "0" * 16)
     epsilon: float = _float("AFFINE_EPSILON", 0.01)
     max_trials: int = _int("AFFINE_MAX_TRIALS", 200)
-    bucket_endpoint: str = os.getenv("AFFINE_BUCKET_ENDPOINT", os.getenv("R2_ENDPOINT", ""))
+    bucket_endpoint: str = os.getenv(
+        "AFFINE_BUCKET_ENDPOINT", os.getenv("R2_ENDPOINT", "")
+    )
     bucket_name: str = os.getenv("AFFINE_BUCKET_NAME", os.getenv("R2_BUCKET_ID", ""))
-    bucket_prefix: str = os.getenv("AFFINE_BUCKET_PREFIX", os.getenv("R2_FOLDER", "affine"))
-    bucket_access_key: str = os.getenv("AFFINE_BUCKET_ACCESS_KEY", os.getenv("R2_WRITE_ACCESS_KEY_ID", ""))
-    bucket_secret_key: str = os.getenv("AFFINE_BUCKET_SECRET_KEY", os.getenv("R2_WRITE_SECRET_ACCESS_KEY", ""))
-    bucket_region: str = os.getenv("AFFINE_BUCKET_REGION", os.getenv("R2_REGION", "auto"))
+    bucket_prefix: str = os.getenv(
+        "AFFINE_BUCKET_PREFIX", os.getenv("R2_FOLDER", "affine")
+    )
+    bucket_access_key: str = os.getenv(
+        "AFFINE_BUCKET_ACCESS_KEY", os.getenv("R2_WRITE_ACCESS_KEY_ID", "")
+    )
+    bucket_secret_key: str = os.getenv(
+        "AFFINE_BUCKET_SECRET_KEY", os.getenv("R2_WRITE_SECRET_ACCESS_KEY", "")
+    )
+    bucket_region: str = os.getenv(
+        "AFFINE_BUCKET_REGION", os.getenv("R2_REGION", "auto")
+    )
     bucket_create: bool = _bool("AFFINE_BUCKET_CREATE", True)
-    bucket_public_base: str = os.getenv("AFFINE_BUCKET_PUBLIC_BASE", os.getenv("R2_PUBLIC_BASE", ""))
-    cache_dir: str = os.getenv("AFFINE_CACHE_DIR", str(Path.home() / ".cache" / "affine" / "blocks"))
+    bucket_public_base: str = os.getenv(
+        "AFFINE_BUCKET_PUBLIC_BASE", os.getenv("R2_PUBLIC_BASE", "")
+    )
+    cache_dir: str = os.getenv(
+        "AFFINE_CACHE_DIR", str(Path.home() / ".cache" / "affine" / "blocks")
+    )
 
     @property
     def ratio_decay_half_life(self) -> timedelta:
@@ -68,7 +82,9 @@ class Settings:
 
     @property
     def bucket_write_enabled(self) -> bool:
-        return bool(self.bucket_name and self.bucket_access_key and self.bucket_secret_key)
+        return bool(
+            self.bucket_name and self.bucket_access_key and self.bucket_secret_key
+        )
 
     @property
     def bucket_configured(self) -> bool:

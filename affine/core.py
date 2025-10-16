@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -20,7 +20,9 @@ JsonValue = Union[JsonPrimitive, Sequence["JsonValue"], Mapping[str, "JsonValue"
 def canonical_bytes(payload: Any) -> bytes:
     """Encode a payload into canonical JSON bytes."""
 
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def hash_bytes(data: bytes) -> bytes:
@@ -43,7 +45,10 @@ def merkle_root(leaves: Sequence[bytes]) -> str:
     while len(layer) > 1:
         if len(layer) % 2 == 1:
             layer.append(layer[-1])
-        layer = [hash_bytes(b"\x01" + layer[i] + layer[i + 1]) for i in range(0, len(layer), 2)]
+        layer = [
+            hash_bytes(b"\x01" + layer[i] + layer[i + 1])
+            for i in range(0, len(layer), 2)
+        ]
     return hash_hex(layer[0])
 
 
@@ -75,7 +80,11 @@ class Challenge:
     info: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"env_id": self.env_id, "challenge_id": self.challenge_id, "info": _freeze(self.info)}
+        return {
+            "env_id": self.env_id,
+            "challenge_id": self.challenge_id,
+            "info": _freeze(self.info),
+        }
 
 
 @dataclass(frozen=True)
@@ -208,7 +217,9 @@ def challenge_seed(env_id: str, spec_version: int, challenge_id: str) -> int:
 
 
 def make_rng(env_id: str, spec_version: int, challenge_id: str) -> np.random.Generator:
-    return np.random.Generator(np.random.PCG64(challenge_seed(env_id, spec_version, challenge_id)))
+    return np.random.Generator(
+        np.random.PCG64(challenge_seed(env_id, spec_version, challenge_id))
+    )
 
 
 def derive_challenge_id(
@@ -220,7 +231,9 @@ def derive_challenge_id(
     *,
     size: int = 16,
 ) -> str:
-    payload = f"{validator_hotkey}:{env_id}:{counter}:{epoch_anchor}:{spec_hash}".encode()
+    payload = (
+        f"{validator_hotkey}:{env_id}:{counter}:{epoch_anchor}:{spec_hash}".encode()
+    )
     digest = hash_bytes(payload)
     size = max(8, min(size, len(digest)))
     return digest[:size].hex()

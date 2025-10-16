@@ -16,7 +16,14 @@ from .core import (
     make_rng,
     merkle_root,
 )
-from .duel import RatioSchedule, beats_target, duel_env, duel_many_envs, loses_to_target, wilson_interval
+from .duel import (
+    RatioSchedule,
+    beats_target,
+    duel_env,
+    duel_many_envs,
+    loses_to_target,
+    wilson_interval,
+)
 from .envs import (
     AffineEnv,
     ENV_REGISTRY,

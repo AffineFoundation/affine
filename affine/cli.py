@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Mapping, Optional
@@ -47,7 +46,9 @@ def _configure_logging(verbosity: int) -> None:
         level = logging.INFO
     elif verbosity >= 2:
         level = logging.DEBUG
-    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
 
 
 @app.callback()
@@ -73,8 +74,12 @@ def _load_signing_key(hex_key: str) -> signing.SigningKey:
 @env_app.command("run")
 def run_env(
     env: str = typer.Argument(..., help="Environment identifier."),
-    challenge_id: Optional[str] = typer.Option(None, help="Override deterministic challenge id."),
-    seed: Optional[int] = typer.Option(None, help="Seed used when deriving challenge id."),
+    challenge_id: Optional[str] = typer.Option(
+        None, help="Override deterministic challenge id."
+    ),
+    seed: Optional[int] = typer.Option(
+        None, help="Seed used when deriving challenge id."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     env_cls = get_env(env)
@@ -84,7 +89,9 @@ def run_env(
     payload = {
         "env_id": env,
         "challenge_id": info["challenge_id"],
-        "observation": observation.tolist() if hasattr(observation, 'tolist') else observation,
+        "observation": observation.tolist()
+        if hasattr(observation, "tolist")
+        else observation,
         "info": info,
     }
     if json_output:
@@ -107,7 +114,12 @@ def _duel_stream_factory(
     def factory(env_id: str) -> Iterable[Optional[bool]]:
         def generator() -> Iterator[Optional[bool]]:
             while True:
-                outcome = sampler.sample(env_id, champion_uid=champion_uid, contender_uid=contender_uid, timeout=timeout)
+                outcome = sampler.sample(
+                    env_id,
+                    champion_uid=champion_uid,
+                    contender_uid=contender_uid,
+                    timeout=timeout,
+                )
                 outcomes[env_id].append(outcome)
                 if outcome.winner == "contender":
                     yield True
@@ -125,22 +137,36 @@ def _duel_stream_factory(
 def duel(
     contender: int = typer.Option(..., "--cont", help="Contender miner UID."),
     champion: int = typer.Option(..., "--champ", help="Champion miner UID."),
-    envs: str = typer.Option("tictactoe-v0,mult8-v0", help="Comma-separated environment ids."),
-    max_trials: int = typer.Option(settings.max_trials, help="Wilson max trials per environment."),
-    epsilon: float = typer.Option(settings.epsilon, help="Per-env ratio to beat (0.5 + epsilon)."),
+    envs: str = typer.Option(
+        "tictactoe-v0,mult8-v0", help="Comma-separated environment ids."
+    ),
+    max_trials: int = typer.Option(
+        settings.max_trials, help="Wilson max trials per environment."
+    ),
+    epsilon: float = typer.Option(
+        settings.epsilon, help="Per-env ratio to beat (0.5 + epsilon)."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
 ) -> None:
     env_list = _split_envs(envs)
     if contender is None:
-        raise typer.BadParameter("Set contender UID via --cont or AFFINE_CONTENDER_UID.")
+        raise typer.BadParameter(
+            "Set contender UID via --cont or AFFINE_CONTENDER_UID."
+        )
     if champion is None:
         raise typer.BadParameter("Set champion UID via --champ or AFFINE_CHAMPION_UID.")
     if not signing_key_hex:
-        raise typer.BadParameter("Provide a signing key via --signing-key or AFFINE_SIGNING_KEY_HEX.")
+        raise typer.BadParameter(
+            "Provide a signing key via --signing-key or AFFINE_SIGNING_KEY_HEX."
+        )
     cont_uid = int(contender)
     champ_uid = int(champion)
 
-    chutes = ChutesClient(settings.chutes_url, api_key=settings.chutes_api_key, default_timeout=settings.chutes_timeout)
+    chutes = ChutesClient(
+        settings.chutes_url,
+        api_key=settings.chutes_api_key,
+        default_timeout=settings.chutes_timeout,
+    )
     sampler = ValidatorSampler(
         validator_hotkey=settings.validator_hotkey or "validator",
         chutes=chutes,
@@ -148,9 +174,17 @@ def duel(
         env_ids=env_list,
     )
     outcomes: Dict[str, List[ChallengeOutcome]] = {env_id: [] for env_id in env_list}
-    ratio_schedule = RatioSchedule(initial=0.5 + epsilon, half_life_seconds=settings.ratio_decay_seconds)
+    ratio_schedule = RatioSchedule(
+        initial=0.5 + epsilon, half_life_seconds=settings.ratio_decay_seconds
+    )
 
-    factory = _duel_stream_factory(sampler, outcomes, champion_uid=champion, contender_uid=contender, timeout=settings.chutes_timeout)
+    factory = _duel_stream_factory(
+        sampler,
+        outcomes,
+        champion_uid=champion,
+        contender_uid=contender,
+        timeout=settings.chutes_timeout,
+    )
     result = duel_many_envs(
         contender,
         champion,
@@ -165,14 +199,18 @@ def duel(
 
     if json_output:
         serializable = dict(result)
-        serializable["per_env"] = {env_id: asdict(res) for env_id, res in result["per_env"].items()}  # type: ignore[index]
+        serializable["per_env"] = {
+            env_id: asdict(res) for env_id, res in result["per_env"].items()
+        }  # type: ignore[index]
         typer.echo(json.dumps(serializable, indent=2, ensure_ascii=False))
     else:
         typer.echo(f"winner_uid: {result['winner_uid']}")
         typer.echo(f"ratio_to_beat: {result['ratio_to_beat']:.4f}")
         typer.echo(f"stopped_early: {result['stopped_early']}")
         for env_id, res in result["per_env"].items():  # type: ignore[index]
-            typer.echo(f"- {env_id}: outcome={res.outcome}, trials={res.trials}, ci={res.ci}")
+            typer.echo(
+                f"- {env_id}: outcome={res.outcome}, trials={res.trials}, ci={res.ci}"
+            )
 
 
 def _state_file() -> Path:
@@ -213,28 +251,66 @@ def _persist_prev_hash(value: str) -> None:
 
 @app.command()
 def validate(
-    contender: Optional[int] = typer.Option(None, "--cont", help="Contender miner UID.", envvar="AFFINE_CONTENDER_UID"),
-    champion: Optional[int] = typer.Option(None, "--champ", help="Champion miner UID.", envvar="AFFINE_CHAMPION_UID"),
-    envs: str = typer.Option("tictactoe-v0,mult8-v0", help="Comma-separated environment ids."),
-    signing_key_hex: Optional[str] = typer.Option(None, "--signing-key", help="Validator ed25519 private key (hex).", envvar="AFFINE_SIGNING_KEY_HEX"),
-    epoch: int = typer.Option(0, help="Epoch identifier for commit-reveal scheduling.", envvar="AFFINE_EPOCH"),
-    secret_seed_hex: Optional[str] = typer.Option(None, "--secret-seed", help="Secret seed used for challenge commitments (hex).", envvar="AFFINE_SECRET_SEED_HEX"),
-    prev_hash: Optional[str] = typer.Option(None, "--prev-hash", help="Override previous block hash."),
+    contender: Optional[int] = typer.Option(
+        None, "--cont", help="Contender miner UID.", envvar="AFFINE_CONTENDER_UID"
+    ),
+    champion: Optional[int] = typer.Option(
+        None, "--champ", help="Champion miner UID.", envvar="AFFINE_CHAMPION_UID"
+    ),
+    envs: str = typer.Option(
+        "tictactoe-v0,mult8-v0", help="Comma-separated environment ids."
+    ),
+    signing_key_hex: Optional[str] = typer.Option(
+        None,
+        "--signing-key",
+        help="Validator ed25519 private key (hex).",
+        envvar="AFFINE_SIGNING_KEY_HEX",
+    ),
+    epoch: int = typer.Option(
+        0, help="Epoch identifier for commit-reveal scheduling.", envvar="AFFINE_EPOCH"
+    ),
+    secret_seed_hex: Optional[str] = typer.Option(
+        None,
+        "--secret-seed",
+        help="Secret seed used for challenge commitments (hex).",
+        envvar="AFFINE_SECRET_SEED_HEX",
+    ),
+    prev_hash: Optional[str] = typer.Option(
+        None, "--prev-hash", help="Override previous block hash."
+    ),
     block_size: int = typer.Option(settings.block_size, help="Samples per block."),
-    max_trials: int = typer.Option(settings.max_trials, help="Max trials per environment."),
-    output_path: Optional[Path] = typer.Option(None, "--out", help="Write blocks as JSON to this file."),
+    max_trials: int = typer.Option(
+        settings.max_trials, help="Max trials per environment."
+    ),
+    output_path: Optional[Path] = typer.Option(
+        None, "--out", help="Write blocks as JSON to this file."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON summary."),
-    upload: Optional[bool] = typer.Option(None, "--upload/--no-upload", help="Control whether blocks are uploaded to object storage."),
-    loop: bool = typer.Option(True, "--loop/--no-loop", help="Repeat validation continuously."),
-    loop_sleep: float = typer.Option(30.0, "--loop-sleep", help="Delay between loop iterations in seconds."),
+    upload: Optional[bool] = typer.Option(
+        None,
+        "--upload/--no-upload",
+        help="Control whether blocks are uploaded to object storage.",
+    ),
+    loop: bool = typer.Option(
+        True, "--loop/--no-loop", help="Repeat validation continuously."
+    ),
+    loop_sleep: float = typer.Option(
+        30.0, "--loop-sleep", help="Delay between loop iterations in seconds."
+    ),
 ) -> None:
     env_list = _split_envs(envs)
-    chutes = ChutesClient(settings.chutes_url, api_key=settings.chutes_api_key, default_timeout=settings.chutes_timeout)
+    chutes = ChutesClient(
+        settings.chutes_url,
+        api_key=settings.chutes_api_key,
+        default_timeout=settings.chutes_timeout,
+    )
     commitment = None
     commit_digest = None
     if secret_seed_hex:
         seed_bytes = bytes.fromhex(secret_seed_hex)
-        commitment = ChallengeCommitment(settings.validator_hotkey or "validator", settings.epoch_anchor)
+        commitment = ChallengeCommitment(
+            settings.validator_hotkey or "validator", settings.epoch_anchor
+        )
         commit_digest = commitment.commit(epoch, seed_bytes)
         commitment.reveal(epoch, seed_bytes)
     sampler = ValidatorSampler(
@@ -246,7 +322,9 @@ def validate(
         commitment=commitment,
     )
     signing_key = _load_signing_key(signing_key_hex)
-    ratio_schedule = RatioSchedule(initial=settings.ratio_to_beat, half_life_seconds=settings.ratio_decay_seconds)
+    ratio_schedule = RatioSchedule(
+        initial=settings.ratio_to_beat, half_life_seconds=settings.ratio_decay_seconds
+    )
 
     storage = None
     upload_enabled = upload if upload is not None else settings.bucket_write_enabled
@@ -261,7 +339,9 @@ def validate(
 
     try:
         while True:
-            outcomes: Dict[str, List[ChallengeOutcome]] = {env_id: [] for env_id in env_list}
+            outcomes: Dict[str, List[ChallengeOutcome]] = {
+                env_id: [] for env_id in env_list
+            }
             factory = _duel_stream_factory(
                 sampler,
                 outcomes,
@@ -283,7 +363,9 @@ def validate(
             all_samples: List[Sample] = []
             for env_id in env_list:
                 for outcome in outcomes[env_id]:
-                    all_samples.extend(outcome.as_samples(settings.validator_hotkey or "validator"))
+                    all_samples.extend(
+                        outcome.as_samples(settings.validator_hotkey or "validator")
+                    )
 
             blocks: List[Dict[str, object]] = []
             uploaded: List[Mapping[str, str]] = []
@@ -356,11 +438,19 @@ def validate(
 
 @app.command("set-weights")
 def set_weights_cmd(
-    block_files: Optional[List[Path]] = typer.Argument(None, help="Path(s) to block JSON files.", show_default=False),
+    block_files: Optional[List[Path]] = typer.Argument(
+        None, help="Path(s) to block JSON files.", show_default=False
+    ),
     netuid: int = typer.Option(settings.netuid, help="Subnet netuid."),
     dry_run: bool = typer.Option(True, help="Dry-run weight submission."),
-    from_bucket: bool = typer.Option(False, "--from-bucket", help="Load latest blocks from configured object storage."),
-    bucket_limit: int = typer.Option(20, "--bucket-limit", help="Maximum number of remote blocks to load."),
+    from_bucket: bool = typer.Option(
+        False,
+        "--from-bucket",
+        help="Load latest blocks from configured object storage.",
+    ),
+    bucket_limit: int = typer.Option(
+        20, "--bucket-limit", help="Maximum number of remote blocks to load."
+    ),
 ) -> None:
     blocks: List[Block] = []
     if block_files:
@@ -368,7 +458,9 @@ def set_weights_cmd(
             data = json.loads(path.read_text())
             if isinstance(data, list):
                 for entry in data:
-                    blocks.append(load_block(entry["block"] if "block" in entry else entry))
+                    blocks.append(
+                        load_block(entry["block"] if "block" in entry else entry)
+                    )
             else:
                 blocks.append(load_block(data["block"] if "block" in data else data))
     if from_bucket:
@@ -395,7 +487,13 @@ def set_weights_cmd(
     vtrust_scores = compute_vtrust(validator_stats)
     score_map = scoreboard(verified_groups, vtrust_scores)
     result = set_weights(netuid, score_map, dry_run=dry_run)
-    typer.echo(json.dumps({"scores": score_map, "vtrust": vtrust_scores, "result": result}, indent=2, ensure_ascii=False))
+    typer.echo(
+        json.dumps(
+            {"scores": score_map, "vtrust": vtrust_scores, "result": result},
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
 
 
 __all__ = ["app"]

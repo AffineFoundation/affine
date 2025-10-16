@@ -11,7 +11,9 @@ from .core import DuelResult
 _NORMAL = NormalDist()
 
 
-def wilson_interval(wins: int, trials: int, confidence: float = 0.95) -> tuple[float, float]:
+def wilson_interval(
+    wins: int, trials: int, confidence: float = 0.95
+) -> tuple[float, float]:
     if trials <= 0:
         return 0.0, 1.0
     if wins < 0 or wins > trials:
@@ -71,13 +73,19 @@ def duel_env(
             continue
         lower, upper = wilson_interval(wins, trials, confidence)
         if lower > ratio_to_beat_env:
-            return DuelResult(env_id, "contender", wins, losses, ties, trials, (lower, upper))
+            return DuelResult(
+                env_id, "contender", wins, losses, ties, trials, (lower, upper)
+            )
         if upper < ratio_to_beat_env:
-            return DuelResult(env_id, "champion", wins, losses, ties, trials, (lower, upper))
+            return DuelResult(
+                env_id, "champion", wins, losses, ties, trials, (lower, upper)
+            )
         if trials >= max_budget:
             break
     lower, upper = wilson_interval(wins, max(trials, 1), confidence)
-    return DuelResult(env_id, "inconclusive", wins, losses, ties, trials, (lower, upper))
+    return DuelResult(
+        env_id, "inconclusive", wins, losses, ties, trials, (lower, upper)
+    )
 
 
 class RatioSchedule:
@@ -143,7 +151,13 @@ def duel_many_envs(
 
     for env_id in env_ids:
         stream = stream_factory(env_id)
-        result = duel_env(stream, env_id=env_id, ratio_to_beat_env=per_env_ratio, z=z, max_budget=max_budget)
+        result = duel_env(
+            stream,
+            env_id=env_id,
+            ratio_to_beat_env=per_env_ratio,
+            z=z,
+            max_budget=max_budget,
+        )
         per_env[env_id] = result
         samples_used += result.wins + result.losses + result.ties
         if result.outcome == "contender":
@@ -166,7 +180,11 @@ def duel_many_envs(
             for result in per_env.values()
             if result.outcome == "contender"
         ]
-        ratio_snapshot = min(0.95, _geometric_mean(winning_ratios)) if winning_ratios else ratio_to_beat_global
+        ratio_snapshot = (
+            min(0.95, _geometric_mean(winning_ratios))
+            if winning_ratios
+            else ratio_to_beat_global
+        )
         dethroned = True
         if ratio_schedule:
             ratio_schedule.update(ratio_snapshot)

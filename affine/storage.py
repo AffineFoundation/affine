@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List, Mapping, Optional, Sequence
+from typing import List, Mapping, Optional, Sequence
 
 import boto3
 from botocore.exceptions import ClientError
@@ -77,7 +77,9 @@ class BucketStorage:
             return
         except ClientError as exc:
             if not self._config.create:
-                raise StorageError(f"Bucket {self.bucket} not accessible: {exc}") from exc
+                raise StorageError(
+                    f"Bucket {self.bucket} not accessible: {exc}"
+                ) from exc
         try:
             params: Mapping[str, object]
             if self._config.region in {"", "auto"}:
@@ -85,7 +87,9 @@ class BucketStorage:
             else:
                 params = {
                     "Bucket": self.bucket,
-                    "CreateBucketConfiguration": {"LocationConstraint": self._config.region},
+                    "CreateBucketConfiguration": {
+                        "LocationConstraint": self._config.region
+                    },
                 }
             self._client.create_bucket(**params)  # type: ignore[arg-type]
             self._ensured = True
@@ -94,8 +98,12 @@ class BucketStorage:
 
     def upload_block(self, block: Block, digest: str) -> Mapping[str, str]:
         self.ensure_bucket()
-        payload = json.dumps({"hash": digest, "block": block.canonical_dict()}, ensure_ascii=False)
-        key = _key(self.prefix, block.header.validator, block.header.block_index, digest)
+        payload = json.dumps(
+            {"hash": digest, "block": block.canonical_dict()}, ensure_ascii=False
+        )
+        key = _key(
+            self.prefix, block.header.validator, block.header.block_index, digest
+        )
         self._client.put_object(
             Bucket=self.bucket,
             Key=key,
@@ -161,11 +169,17 @@ class BucketStorage:
         return self._cache_dir / safe
 
 
-def get_storage(require_write: bool = True, create: bool | None = None) -> BucketStorage:
+def get_storage(
+    require_write: bool = True, create: bool | None = None
+) -> BucketStorage:
     if not settings.bucket_configured:
-        raise StorageError("Storage is not configured; set AFFINE_BUCKET_NAME and related variables.")
+        raise StorageError(
+            "Storage is not configured; set AFFINE_BUCKET_NAME and related variables."
+        )
     if require_write and not settings.bucket_write_enabled:
-        raise StorageError("Write access to storage requires AFFINE_BUCKET_ACCESS_KEY and AFFINE_BUCKET_SECRET_KEY.")
+        raise StorageError(
+            "Write access to storage requires AFFINE_BUCKET_ACCESS_KEY and AFFINE_BUCKET_SECRET_KEY."
+        )
     config = StorageConfig(
         endpoint=settings.bucket_endpoint,
         bucket=settings.bucket_name,
