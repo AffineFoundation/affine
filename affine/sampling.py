@@ -433,13 +433,14 @@ class SamplingOrchestrator:
                 cnt[hk][env] += 1
                 succ[hk][env] += float(result.evaluation.score)
             
-            challenge_id = str(result.challenge)
+            # Use challenge_id to match same tasks for ELO pairwise comparison
+            challenge_id = result.challenge.challenge_id
             if challenge_id in pending_pairs:
                 other_result = pending_pairs.pop(challenge_id)
                 pairs_by_time.append((other_result, result))
             else:
                 pending_pairs[challenge_id] = result
-                
+
         return cnt, succ, prev, v_id, first_block, pairs_by_time
     
     def calculate_accuracies(
