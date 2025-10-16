@@ -76,7 +76,7 @@ class MinerSampler:
         for result_a, result_b in results_by_time:
             hk_a = result_a.miner.hotkey
             hk_b = result_b.miner.hotkey
-            env = result_a.challenge.env.name
+            env = result_a.challenge.env
             
             if env not in envs or hk_a not in elo or hk_b not in elo:
                 continue
