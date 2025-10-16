@@ -10,17 +10,16 @@ import typer
 from nacl import signing
 
 from .config import settings
-from .system import (
+from .duel import RatioSchedule, duel_many_envs
+from .envs import get_env
+from .network import ChutesClient
+from .validators import (
     ChallengeCommitment,
     ChallengeOutcome,
-    ChutesClient,
-    RatioSchedule,
     Sample,
     ValidatorSampler,
     build_block,
     compute_vtrust,
-    duel_many_envs,
-    get_env,
     load_block,
     scoreboard,
     set_weights,
