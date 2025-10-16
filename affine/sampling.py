@@ -1,6 +1,6 @@
 """
 Sampling module for Affine validator.
-Handles miner sampling and weight calculation using epsilon-Pareto dominance.
+Handles miner sampling and weight calculation using z-score based Pareto dominance.
 """
 
 import math
@@ -14,14 +14,15 @@ class SamplingConfig:
     
     TAIL = 20_000
     ALPHA = 0.9
-    EPS_FLOOR = 0.005
-    Z_NOT_WORSE = 1.28
-    EPS_WIN = 0.015
-    Z_WIN = 0.5
     ELIG = 0.10
     MIN_SAMPLES_PER_ENV = 100
     MAX_SAMPLES_CAP = 2000
-    SAMPLE_COUNT_CAP = 1000
+    # Z-score threshold for significance on an environment (two-sided ~ 90% one-sided)
+    Z_EPS = 1.29
+    # Pareto rule: at least this many strictly better envs
+    PARETO_MIN_BETTER = 2
+    # Pareto rule: at most this many strictly worse envs (eligibility cutoff)
+    PARETO_MAX_WORSE = 2
 
 
 class MinerSampler:
@@ -60,54 +61,50 @@ class MinerSampler:
         
         return eligible, required
     
-    def threshold_not_worse(
-        self, 
-        a_i: float, 
-        n_i: int, 
-        a_j: float, 
-        n_j: int
-    ) -> float:
-        """
-        Calculate tolerance for 'not worse' comparison on an environment.
-        Uses statistical error with sample count capping.
-        """
-        if self.config.Z_NOT_WORSE <= 0:
-            return self.config.EPS_FLOOR
-            
-        n_i_eff = min(int(n_i), self.config.SAMPLE_COUNT_CAP)
-        n_j_eff = min(int(n_j), self.config.SAMPLE_COUNT_CAP)
-        
-        p_i = min(max(a_i, 0.0), 1.0)
-        p_j = min(max(a_j, 0.0), 1.0)
-        
-        var = (p_i * (1 - p_i)) / max(n_i_eff, 1) + (p_j * (1 - p_j)) / max(n_j_eff, 1)
-        return max(self.config.EPS_FLOOR, self.config.Z_NOT_WORSE * math.sqrt(max(var, 0.0)))
-    
-    def threshold_better(
+    def compute_env_stats(
         self,
-        a_i: float,
-        n_i: int,
-        a_j: float,
-        n_j: int,
-        nw: float
-    ) -> float:
+        envs: Tuple[str, ...],
+        pool: Set[str],
+        acc: Dict[str, Dict[str, float]]
+    ) -> Dict[str, Tuple[float, float]]:
         """
-        Calculate margin to claim 'better on at least one environment'.
-        Kept <= 'not worse' tolerance.
+        Compute per-environment (mean, std) of accuracies across the pool.
+        Returns a mapping env -> (mean, std).
         """
-        if self.config.Z_WIN > 0:
-            n_i_eff = min(int(n_i), self.config.SAMPLE_COUNT_CAP)
-            n_j_eff = min(int(n_j), self.config.SAMPLE_COUNT_CAP)
-            
-            p_i = min(max(a_i, 0.0), 1.0)
-            p_j = min(max(a_j, 0.0), 1.0)
-            
-            var = (p_i * (1 - p_i)) / max(n_i_eff, 1) + (p_j * (1 - p_j)) / max(n_j_eff, 1)
-            t = max(self.config.EPS_WIN, self.config.Z_WIN * math.sqrt(max(var, 0.0)))
-        else:
-            t = self.config.EPS_WIN
-            
-        return min(t, nw)
+        stats = {}
+        for e in envs:
+            values = [acc[hk][e] for hk in pool]
+            if not values:
+                stats[e] = (0.0, 0.0)
+                continue
+            mean = sum(values) / len(values)
+            var = sum((v - mean) * (v - mean) for v in values) / len(values)
+            std = math.sqrt(var)
+            stats[e] = (mean, std)
+        return stats
+
+    def compute_zscores(
+        self,
+        envs: Tuple[str, ...],
+        pool: Set[str],
+        acc: Dict[str, Dict[str, float]],
+        env_stats: Dict[str, Tuple[float, float]]
+    ) -> Dict[str, Dict[str, float]]:
+        """
+        Compute per-miner per-env z-scores using provided env_stats (mean, std).
+        If std is zero, z-score is treated as 0.0 (tie).
+        """
+        zscores: Dict[str, Dict[str, float]] = {}
+        for hk in pool:
+            zscores[hk] = {}
+            for e in envs:
+                mean, std = env_stats.get(e, (0.0, 0.0))
+                if std <= 0.0:
+                    z = 0.0
+                else:
+                    z = (acc[hk][e] - mean) / std
+                zscores[hk][e] = z
+        return zscores
     
     def dominates_on(
         self,
@@ -115,31 +112,31 @@ class MinerSampler:
         b: str,
         subset: Tuple[str, ...],
         acc: Dict[str, Dict[str, float]],
-        cnt: Dict[str, Dict[str, int]],
+        env_stats: Dict[str, Tuple[float, float]],
         first_block: Dict[str, int]
     ) -> bool:
         """
         Check if miner 'a' dominates miner 'b' on the given environment subset.
-        Uses epsilon-Pareto dominance with tie-breaking by earliest block.
+        Uses z-score based Pareto dominance with tie-breaking by earliest block.
         """
-        not_worse_all = True
-        better_any = False
+        better_count = 0
+        worse_count = 0
         tie_all = True
         
         for e in subset:
-            ai, aj = acc[a][e], acc[b][e]
-            ni, nj = cnt[a][e], cnt[b][e]
-            nw = self.threshold_not_worse(ai, ni, aj, nj)
-            bet = self.threshold_better(ai, ni, aj, nj, nw)
-            
-            if ai < aj - nw:
-                not_worse_all = False
-            if ai >= aj + bet:
-                better_any = True
-            if abs(ai - aj) > nw:
+            mean, std = env_stats.get(e, (0.0, 0.0))
+            # If std is zero, treat as tie (no significant variance)
+            if std <= 0.0:
+                continue
+            z_diff = (acc[a][e] - acc[b][e]) / std
+            if z_diff >= self.config.Z_EPS:
+                better_count += 1
+                tie_all = False
+            elif z_diff <= -self.config.Z_EPS:
+                worse_count += 1
                 tie_all = False
         
-        if not_worse_all and better_any:
+        if better_count >= self.config.PARETO_MIN_BETTER and worse_count <= self.config.PARETO_MAX_WORSE:
             return True
         if tie_all and first_block.get(a, float("inf")) < first_block.get(b, float("inf")):
             return True
@@ -150,54 +147,31 @@ class MinerSampler:
         pool: Set[str],
         envs: Tuple[str, ...],
         acc: Dict[str, Dict[str, float]],
-        cnt: Dict[str, Dict[str, int]],
+        env_stats: Dict[str, Tuple[float, float]],
         first_block: Dict[str, int]
     ) -> Dict[str, int]:
         """
         Compute dominance counts for the given miner pool on all environments.
         """
+        # Backward compatibility: if env_stats looks like counts or is empty, recompute
+        try:
+            any_val = next(iter(env_stats.values())) if env_stats else None
+            if not (isinstance(any_val, tuple) and len(any_val) == 2 and all(isinstance(x, (int, float)) for x in any_val)):
+                env_stats = self.compute_env_stats(envs, pool, acc)
+        except Exception:
+            env_stats = self.compute_env_stats(envs, pool, acc)
+
         dom_counts = defaultdict(int)
         
         for a, b in itertools.permutations(pool, 2):
-            if self.dominates_on(a, b, envs, acc, cnt, first_block):
+            if self.dominates_on(a, b, envs, acc, env_stats, first_block):
                 dom_counts[a] += 1
                 
         return dom_counts
     
-    def find_subset_winner(
-        self,
-        env_subset: Tuple[str, ...],
-        pool: Set[str],
-        acc: Dict[str, Dict[str, float]],
-        cnt: Dict[str, Dict[str, int]],
-        first_block: Dict[str, int]
-    ) -> Optional[str]:
-        """
-        Find winner on environment subset via epsilon-Pareto dominance.
-        Falls back to earliest version start block if no dominance edges.
-        """
-        if not pool:
-            return None
-            
-        dom_local = defaultdict(int)
-        for x, y in itertools.permutations(pool, 2):
-            if self.dominates_on(x, y, env_subset, acc, cnt, first_block):
-                dom_local[x] += 1
-        
-        def timestamp(hk: str) -> int:
-            return int(first_block[hk]) if hk in first_block else float('inf')
-        
-        return max(pool, key=lambda hk: (dom_local.get(hk, 0), -timestamp(hk)))
-    
-    def compute_layer_weights(self, n_envs: int, scale: float) -> Dict[int, float]:
-        """
-        Compute per-subset weights K_s.
-        K_1 = scale; K_s = scale * (2^s) for s >= 2.
-        """
-        K = {1: scale}
-        for s in range(2, n_envs + 1):
-            K[s] = scale * (2**s)
-        return K
+    # Note: subset winner and layered weights from the previous epsilon-Pareto
+    # approach have been removed. Scoring is now per-env with a single-layer
+    # point scheme and earliest-commit tie-breaks.
     
     def calculate_combinatoric_scores(
         self,
@@ -209,30 +183,58 @@ class MinerSampler:
         scale: float
     ) -> Tuple[Dict[str, float], Dict[str, Dict[int, float]], Dict[str, str]]:
         """
-        Calculate combinatoric scores for all miners using all environment subsets.
-        
-        Returns:
-            Tuple of (scores, layer_points, env_winners)
+        Calculate scores via per-environment point assignment using z-scores.
+        Rules:
+          - A miner is ineligible if they are worse (z <= -Z_EPS) on 2 or more envs.
+          - A miner is eligible only if they have at least 2 better envs (z >= Z_EPS).
+          - For each env, award exactly 1 point to the earliest-commit miner among
+            eligible miners with z >= Z_EPS. If none, no point is awarded.
+          - Final weight is normalized from total points.
+        Returns: (scores, layer_points, env_winners)
         """
-        n_envs = len(envs)
-        K = self.compute_layer_weights(n_envs, scale)
-        
         scores = defaultdict(float)
         layer_points = defaultdict(lambda: defaultdict(float))
-        env_winners = {}
-        
-        # Find single-env winners
+        env_winners: Dict[str, str] = {}
+
+        # Precompute env stats and z-scores
+        env_stats = self.compute_env_stats(envs, pool, acc)
+        zscores = self.compute_zscores(envs, pool, acc, env_stats)
+
+        # Determine miner eligibility (filter only by number of "worse" envs)
+        eligible: Set[str] = set()
+        for hk in pool:
+            worse = sum(1 for e in envs if zscores[hk][e] <= -self.config.Z_EPS)
+            if worse <= self.config.PARETO_MAX_WORSE:
+                eligible.add(hk)
+
+        # Award 1 point per env:
+        #   - Prefer earliest eligible miner with z >= Z_EPS on that env
+        #   - If none, earliest eligible miner with z > -Z_EPS (not worse)
+        #   - If still none, earliest eligible miner
         for e in envs:
-            env_winners[e] = self.find_subset_winner((e,), pool, acc, cnt, first_block)
-        
-        # Award K_s to each subset winner
-        for s in range(1, n_envs + 1):
-            for env_subset in itertools.combinations(envs, s):
-                winner = self.find_subset_winner(env_subset, pool, acc, cnt, first_block)
-                if winner:
-                    scores[winner] += K[s]
-                    layer_points[winner][s] += K[s]
-        
+            candidates = [hk for hk in pool if hk in eligible and zscores[hk][e] >= self.config.Z_EPS]
+            if not candidates:
+                candidates = [hk for hk in pool if hk in eligible and zscores[hk][e] > -self.config.Z_EPS]
+            if not candidates:
+                candidates = [hk for hk in pool if hk in eligible]
+            if not candidates:
+                continue
+            winner = min(candidates, key=lambda hk: first_block.get(hk, float('inf')))
+            env_winners[e] = winner
+            scores[winner] += 1.0
+            layer_points[winner][1] += 1.0
+
+        # Global fallback: if no points at all, pick earliest among miners with <=1 worse env
+        if sum(scores.values()) <= 0.0 and pool:
+            fallback_candidates = [
+                hk for hk in pool
+                if sum(1 for e in envs if zscores[hk][e] <= -self.config.Z_EPS) <= 1
+            ]
+            if fallback_candidates:
+                fb_winner = min(fallback_candidates, key=lambda hk: first_block.get(hk, float('inf')))
+                scores[fb_winner] += 1.0
+                layer_points[fb_winner][1] += 1.0
+
         return scores, layer_points, env_winners
     
     def apply_burn(
@@ -377,7 +379,7 @@ class SamplingOrchestrator:
         total_points = sum(scores.get(hk, 0.0) for hk in eligible)
         
         if total_points <= 0:
-            # Fall back to best miner
+            # Fallback: pick any best-by-score (should be rare since scoring handles ties)
             best = max(eligible, key=lambda hk: scores.get(hk, 0.0))
             weight_by_hk = {hk: (1.0 if hk == best else 0.0) for hk in eligible}
         else:
