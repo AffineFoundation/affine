@@ -6,7 +6,6 @@ readme = "README.md"
 authors = ["Affine Contributors <affine@affine.io>"]
 requires-python = ">=3.11"
 dependencies = [
-    "aiohttp>=3.10",
     "gymnasium>=0.29",
     "numpy>=1.24",
     "typer>=0.12",

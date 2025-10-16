@@ -54,3 +54,38 @@ def test_verify_block_detects_tampering() -> None:
     )
     block.samples[0].response = "999"  # mutate payload
     assert not blocks.verify_block(block, signing_key.verify_key)
+
+
+def test_verify_chain_detects_breaks() -> None:
+    signing_key = SigningKey.generate()
+    sample = sample_fixture()
+    block1, digest1 = blocks.build_block(
+        [sample],
+        validator="validator",
+        block_index=0,
+        prev_hash="0" * 64,
+        env_spec_versions={"mult8-v0": 1},
+        signing_key=signing_key,
+    )
+    sample_new = sample_fixture()
+    sample_new.challenge_id = "dcba"
+    sample_new.compute_hash()
+    block2, _ = blocks.build_block(
+        [sample_new],
+        validator="validator",
+        block_index=1,
+        prev_hash=digest1,
+        env_spec_versions={"mult8-v0": 1},
+        signing_key=signing_key,
+    )
+    assert blocks.verify_chain(
+        [block1, block2],
+        {"validator": signing_key.verify_key},
+        genesis_hash="0" * 64,
+    )
+    block2.header.prev_hash = "deadbeef"
+    assert not blocks.verify_chain(
+        [block1, block2],
+        {"validator": signing_key.verify_key},
+        genesis_hash="0" * 64,
+    )

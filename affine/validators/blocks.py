@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence, Tuple
 
 from nacl import signing
@@ -111,4 +110,28 @@ def verify_block(block: Block, public_key: signing.VerifyKey) -> bool:
     return expected_root == block.header.merkle_root
 
 
-__all__ = ["block_hash", "build_block", "load_block", "serialize_block", "verify_block"]
+def verify_chain(
+    blocks: Sequence[Block],
+    keys: Mapping[str, signing.VerifyKey],
+    *,
+    genesis_hash: str | None = None,
+) -> bool:
+    """Verify a sequence of blocks forms a valid hash chain with trusted signatures."""
+    if not blocks:
+        return True
+    previous_digest = genesis_hash
+    for index, block in enumerate(blocks):
+        validator = block.header.validator
+        public_key = keys.get(validator)
+        if public_key is None:
+            return False
+        if not verify_block(block, public_key):
+            return False
+        digest = block_hash(block)
+        if previous_digest is not None and block.header.prev_hash != previous_digest:
+            return False
+        previous_digest = digest
+    return True
+
+
+__all__ = ["block_hash", "build_block", "load_block", "serialize_block", "verify_block", "verify_chain"]

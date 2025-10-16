@@ -202,7 +202,7 @@ def validate(
             env_spec_versions=env_spec_versions,
             signing_key=signing_key,
         )
-        prev_hash = block_digest.split(":", 1)[1]
+        prev_hash = block_digest
         block_index += 1
         cursor += len(chunk)
         blocks.append({"hash": block_digest, "block": block.canonical_dict()})
