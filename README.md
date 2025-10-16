@@ -25,7 +25,7 @@ affine --help
 docker compose up -d --build
 ```
 
-The `validator` service runs `affine validate` in a loop, uploads blocks if credentials are present, and tails state in `/app/data/blocks` (persisted to the `validator-cache` volume). Watchtower is included so you can point it at a remote tag if you publish the image elsewhere.
+The `validator` service runs `affine validate` in a loop, uploads blocks if credentials are present, and tails state in `/app/data/blocks` (persisted to the `validator-cache` volume). The last block hash is recorded in that volume automatically; you no longer need to supply it manually. Watchtower is included so you can point it at a remote tag if you publish the image elsewhere.
 
 ### Dry-running weight submission
 

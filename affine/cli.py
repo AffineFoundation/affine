@@ -22,6 +22,7 @@ from .validators import (
     ChallengeOutcome,
     Sample,
     ValidatorSampler,
+    block_hash,
     build_block,
     compute_vtrust,
     load_block,
@@ -174,6 +175,42 @@ def duel(
             typer.echo(f"- {env_id}: outcome={res.outcome}, trials={res.trials}, ci={res.ci}")
 
 
+def _state_file() -> Path:
+    return settings.cache_path / "prev_hash.txt"
+
+
+def _load_prev_hash(storage, override: Optional[str]) -> str:
+    if override:
+        return override.strip().lower()
+    file = _state_file()
+    if file.exists():
+        value = file.read_text().strip()
+        if value:
+            return value
+    if storage is not None:
+        try:
+            keys = storage.list_latest_keys(limit=1)
+            if keys:
+                data = storage.download_blocks(keys[:1])[0]
+                digest = data.get("hash")
+                if isinstance(digest, str) and digest:
+                    return digest
+                block_payload = data.get("block", data)
+                if isinstance(block_payload, Mapping):
+                    block = load_block(block_payload)
+                    return block_hash(block)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Failed to derive prev hash from storage: %s", exc)
+    return "0" * 64
+
+
+def _persist_prev_hash(value: str) -> None:
+    try:
+        _state_file().write_text(value.strip())
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to persist prev hash: %s", exc)
+
+
 @app.command()
 def validate(
     contender: Optional[int] = typer.Option(None, "--cont", help="Contender miner UID.", envvar="AFFINE_CONTENDER_UID"),
@@ -182,7 +219,7 @@ def validate(
     signing_key_hex: Optional[str] = typer.Option(None, "--signing-key", help="Validator ed25519 private key (hex).", envvar="AFFINE_SIGNING_KEY_HEX"),
     epoch: int = typer.Option(0, help="Epoch identifier for commit-reveal scheduling.", envvar="AFFINE_EPOCH"),
     secret_seed_hex: Optional[str] = typer.Option(None, "--secret-seed", help="Secret seed used for challenge commitments (hex).", envvar="AFFINE_SECRET_SEED_HEX"),
-    prev_hash: str = typer.Option("0" * 64, help="Previous block hash.", envvar="AFFINE_PREV_BLOCK_HASH"),
+    prev_hash: Optional[str] = typer.Option(None, "--prev-hash", help="Override previous block hash."),
     block_size: int = typer.Option(settings.block_size, help="Samples per block."),
     max_trials: int = typer.Option(settings.max_trials, help="Max trials per environment."),
     output_path: Optional[Path] = typer.Option(None, "--out", help="Write blocks as JSON to this file."),
@@ -220,7 +257,7 @@ def validate(
         except StorageError as exc:
             raise typer.BadParameter(f"Storage unavailable: {exc}")
 
-    current_prev_hash = prev_hash
+    current_prev_hash = _load_prev_hash(storage, prev_hash)
 
     try:
         while True:
@@ -253,6 +290,7 @@ def validate(
             block_index = 0
             cursor = 0
             env_spec_versions = sampler.env_spec_versions()
+            emitted = False
             while cursor < len(all_samples):
                 chunk = all_samples[cursor : cursor + block_size]
                 block, block_digest = build_block(
@@ -271,6 +309,7 @@ def validate(
                 if storage is not None:
                     info = storage.upload_block(block, block_digest)
                     uploaded.append(info)
+                emitted = True
 
             if output_path:
                 output_path.write_text(json.dumps(blocks, indent=2, ensure_ascii=False))
@@ -303,6 +342,9 @@ def validate(
                 typer.echo(f"scores: {summary['scores']}")
                 if uploaded:
                     typer.echo(f"uploads: {uploaded}")
+
+            if emitted:
+                _persist_prev_hash(current_prev_hash)
 
             if not loop:
                 break
