@@ -182,10 +182,7 @@ async def sink(wallet, results: list["Result"], block: int = None):
     if not results: return
     if block is None:
         sub = await get_subtensor(); block = await sub.get_current_block()
-    valid = [r for r in results if getattr(r.response, "success", False)]
-    if not valid:
-        return
-    hotkey, signed = await sign_results(wallet, valid)
+    hotkey, signed = await sign_results(wallet, results)
     timestamp = time.time_ns()  # ensure each upload gets a unique key
     key = f"{RESULT_PREFIX}{_w(block):09d}-{hotkey}-{timestamp}.json"
     dumped = [r.model_dump(mode="json") for r in signed]
