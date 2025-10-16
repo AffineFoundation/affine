@@ -32,6 +32,22 @@ class Challenge(BaseModel):
         if value not in ENVS:
             raise ValueError(f"Unknown environment: '{value}'")
         return value
+
+    @root_validator(pre=True)
+    def ensure_challenge_id(cls, values):
+        """Ensure a deterministic challenge_id is present."""
+        if values.get("challenge_id"):
+            return values
+        env = values.get("env")
+        prompt = values.get("prompt", "")
+        extra = values.get("extra") or {}
+        canonical = json.dumps(
+            {"env": env, "prompt": prompt, "extra": extra},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        values["challenge_id"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return values
     
     def json(self, **kwargs):
         return json.dumps(self.dict(**kwargs))

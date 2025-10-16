@@ -11,12 +11,13 @@ import logging
 import textwrap
 import traceback
 import contextlib
+from uuid import uuid4
 import bittensor as bt
 from pathlib import Path
 from huggingface_hub import HfApi
 from bittensor.core.errors import MetadataError
 from huggingface_hub import snapshot_download
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Set
 from affine.utils.subtensor import get_subtensor
 from affine.storage import sink_enqueue, CACHE_DIR
 from affine.query import query_miner
@@ -231,16 +232,17 @@ def runner():
             global HEARTBEAT
             nonlocal total_requests_submitted, requests_since_last_status, last_status_log_time
 
-            async def execute_with_semaphore(env, miner, task_id):
+            async def execute_with_semaphore(env, miner, task_id, challenge_id):
                 """Wrapper to execute task with semaphore control."""
                 async with semaphore:
-                    return await query_miner(env, miner, task_id=task_id)
+                    return await query_miner(
+                        env, miner, task_id=task_id, challenge_id=challenge_id
+                    )
 
             # Track all inflight tasks: {(env_name, miner_uid): Task}
             inflight_tasks: Dict[Tuple[str, int], asyncio.Task] = {}
-            
-            # Track last task_id per env-miner pair to avoid immediate repeats
-            last_task_ids: Dict[Tuple[str, int], int] = {}
+            # Environment scheduling state
+            env_state: Dict[str, Dict[str, Any]] = {}
 
             while True:
                 HEARTBEAT = current_time = time.monotonic()
@@ -250,6 +252,17 @@ def runner():
                 if not miners_map:
                     await asyncio.sleep(1)
                     continue
+
+                # Filter miners with valid models
+                eligible_miners: Dict[int, Any] = {
+                    uid: miner
+                    for uid, miner in miners_map.items()
+                    if getattr(miner, "model", None)
+                }
+                if not eligible_miners:
+                    await asyncio.sleep(0.2)
+                    continue
+                current_uids: Set[int] = set(eligible_miners.keys())
 
                 # Log status periodically
                 if current_time - last_status_log_time >= STATUS_LOG_INTERVAL:
@@ -269,32 +282,67 @@ def runner():
 
                 # Submit new tasks for any env-miner pair not currently running
                 for env in envs:
-                    data_len = getattr(env, "data_len", 200) or 200
-                    
-                    for miner in miners_map.values():
-                        if not getattr(miner, "model", None):
-                            continue
+                    env_name = env.env_name
+                    data_len = getattr(env, "data_len", None)
+                    if not data_len or data_len <= 0:
+                        data_len = 1
 
-                        task_key = (env.env_name, miner.uid)
-                        
-                        # Skip if this env-miner pair already has a task running
+                    state = env_state.setdefault(
+                        env_name,
+                        {
+                            "task_id": None,
+                            "last_task_id": None,
+                            "assigned": set(),
+                            "completed": set(),
+                            "challenge_id": None,
+                        },
+                    )
+
+                    # Garbage-collect miners that disappeared
+                    state["assigned"] = {
+                        uid for uid in state["assigned"] if uid in current_uids
+                    }
+                    state["completed"] = {
+                        uid for uid in state["completed"] if uid in current_uids
+                    }
+
+                    # Determine if current challenge finished (all miners completed and no inflight tasks)
+                    env_inflight = {
+                        key
+                        for key in inflight_tasks.keys()
+                        if key[0] == env_name
+                    }
+                    if (
+                        state["task_id"] is None
+                        or (state["completed"] >= current_uids and not env_inflight)
+                    ):
+                        task_id = random.randint(0, data_len - 1)
+                        last_task_id = state.get("last_task_id")
+                        if data_len > 1 and last_task_id == task_id:
+                            task_id = (task_id + 1) % data_len
+                        state["task_id"] = task_id
+                        state["last_task_id"] = task_id
+                        state["assigned"] = set()
+                        state["completed"] = set()
+                        state["challenge_id"] = uuid4().hex
+
+                    task_id = state["task_id"]
+                    challenge_id = state["challenge_id"]
+
+                    for miner in eligible_miners.values():
+                        task_key = (env_name, miner.uid)
                         if task_key in inflight_tasks:
                             continue
+                        if miner.uid in state["assigned"]:
+                            continue
 
-                        # Generate task_id, avoiding immediate repeat
-                        last_id = last_task_ids.get(task_key, -1)
-                        task_id = random.randint(0, data_len - 1)
-                        if data_len > 1 and task_id == last_id:
-                            task_id = (task_id + 1) % data_len
-                        last_task_ids[task_key] = task_id
-
-                        # Create task with semaphore control
                         task = asyncio.create_task(
-                            execute_with_semaphore(env, miner, task_id)
+                            execute_with_semaphore(env, miner, task_id, challenge_id)
                         )
                         inflight_tasks[task_key] = task
                         total_requests_submitted += 1
                         requests_since_last_status += 1
+                        state["assigned"].add(miner.uid)
 
                 # Wait for at least one task to complete
                 if not inflight_tasks:
@@ -330,6 +378,10 @@ def runner():
                         traceback.print_exc()
                         result = None
 
+                    state = env_state.get(env_name)
+                    if state is not None:
+                        state["completed"].add(miner_uid)
+
                     # Enqueue result for sink consumer (only successful responses)
                     if result:
                         if result.response.error is None:
@@ -348,6 +400,10 @@ def runner():
                                 f"{result.challenge.env:<20} │ "
                                 f"Failed response skipped: {result.response.error}"
                             )
+                    else:
+                        logger.debug(
+                            f"[SKIP]   env={env_name} uid={miner_uid} task returned no result"
+                        )
 
         async def main_loop():
             """Main orchestration: run producer and consumer concurrently."""
@@ -703,4 +759,3 @@ def commit(repo: str, revision: str, chute_id: str, coldkey: str, hotkey: str):
     except Exception as e:
         logger.error("Commit failed: %s", e)
         click.echo(json.dumps({"success": False, "error": str(e)}))
-
