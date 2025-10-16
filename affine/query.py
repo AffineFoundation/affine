@@ -89,7 +89,7 @@ async def query(prompt, model: str = "unsloth/gemma-3-12b-it", slug: str = "llm"
             await asyncio.sleep(backoff * 2**(attempt-1) * (1 + random.uniform(-0.1, 0.1)))
 
 
-async def query_miner(env: BaseSDKEnv, miner: Miner, task_id: Optional[int] = None) -> Result:
+async def query_miner(env: BaseSDKEnv, miner: Miner, task_id: int) -> Result:
     """
     Query a miner using SDK environment interface.
     
@@ -126,8 +126,9 @@ async def query_miner(env: BaseSDKEnv, miner: Miner, task_id: Optional[int] = No
         # Build challenge from env
         challenge = Challenge(
             env=env.env_name,
-            prompt=f"{env.env_name} evaluation",
-            extra={"task_id": task_id} if task_id is not None else {}
+            prompt=f"{env.env_name} placeholder",
+            extra={"task_id": task_id},
+            challenge_id=f"{env.env_name}:{task_id}"
         )
         
         # Build evaluation
@@ -156,8 +157,9 @@ async def query_miner(env: BaseSDKEnv, miner: Miner, task_id: Optional[int] = No
         
         challenge = Challenge(
             env=env.env_name,
-            prompt=f"{env.env_name} evaluation",
-            extra={"task_id": task_id, "error": str(e)}
+            prompt=f"{env.env_name} placeholder",
+            extra={"task_id": task_id, "error": str(e)},
+            challenge_id=f"{env.env_name}:{task_id}"
         )
         
         evaluation = Evaluation(
