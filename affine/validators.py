@@ -474,27 +474,6 @@ def verify_samples(
     return buckets, validator_stats
 
 
-def decide_group(group: Mapping[str, VerifiedSample]) -> Optional[str]:
-    if "contender" not in group or "champion" not in group:
-        return None
-    contender = group["contender"].verdict
-    champion = group["champion"].verdict
-    score_map = {"win": 2, "draw": 1, "loss": 0}
-
-    def score(verdict: Verdict) -> int:
-        if verdict.ok and not verdict.reason:
-            return 2
-        return score_map.get(verdict.reason, 1 if verdict.ok else 0)
-
-    cont_score = score(contender)
-    champ_score = score(champion)
-    if cont_score > champ_score:
-        return "contender"
-    if cont_score < champ_score:
-        return "champion"
-    return None
-
-
 def compute_vtrust(
     stats: Mapping[str, Tuple[int, int]], *, confidence: float = 0.95
 ) -> Dict[str, float]:
@@ -519,7 +498,9 @@ def scoreboard(
                 continue
             if not roles["contender"].valid or not roles["champion"].valid:
                 continue
-            winner = decide_group(roles)
+            winner = ValidatorSampler._decide(
+                roles["contender"].verdict, roles["champion"].verdict
+            )
             if winner is None:
                 continue
             weight = vtrust.get(validator, 0.0)
@@ -831,7 +812,6 @@ __all__ = [
     "block_hash",
     "build_block",
     "compute_vtrust",
-    "decide_group",
     "load_block",
     "scoreboard",
     "serialize_block",
