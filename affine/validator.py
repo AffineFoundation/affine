@@ -4,6 +4,8 @@ import socket
 import asyncio
 import logging
 import aiohttp
+import math
+import itertools
 import bittensor as bt
 from typing import List, Tuple
 from urllib.parse import urlparse
@@ -170,6 +172,112 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
     eligible, required = sampler.calculate_eligibility(cnt, active_hks, queryable_hks, ENVS)
     logger.info(f"Eligible miners: {len(eligible)} (from {len(active_hks)} active, {len(queryable_hks)} queryable)")
 
+    # MAE-based similarity grouping post-filter to prevent copier clusters
+    # Build per-miner per-env stats using Welford from filtered results
+    try:
+        threshold = float(get_conf('AFFINE_MAE_THRESHOLD', default='0.20'))
+    except Exception:
+        threshold = 0.20
+
+    stats = {}
+    for hk in active_hks:
+        stats[hk] = {e: {'n': 0, 'mean': 0.0, 'm2': 0.0} for e in ENVS}
+
+    def _consider_result(r):
+        # Mirror process_sample_data filter so stats align with scoring pipeline
+        hk = r.miner.hotkey
+        if hk not in stats:
+            return False
+        try:
+            name = r.miner.model.split("/", 1)[1].lower()
+        except Exception:
+            name = str(r.miner.model).lower()
+        if hk != BASE_HK and not name.startswith("affine"):
+            return False
+        return True
+
+    for r in results_list:
+        if not _consider_result(r):
+            continue
+        hk = r.miner.hotkey
+        e = r.challenge.env
+        if e not in ENVS:
+            continue
+        x = float(r.evaluation.score)
+        s = stats[hk][e]
+        n1 = s['n'] + 1
+        delta = x - s['mean']
+        mean1 = s['mean'] + delta / n1
+        m2_1 = s['m2'] + delta * (x - mean1)
+        s['n'], s['mean'], s['m2'] = n1, mean1, m2_1
+
+    def _finalize(hk, e):
+        s = stats[hk][e]
+        n = s['n']
+        if n <= 1:
+            return n, s['mean'], 0.0
+        return n, s['mean'], math.sqrt(max(0.0, s['m2'] / (n - 1)))
+
+    def _directed_mae(a: str, b: str) -> float:
+        vals = []
+        for e in ENVS:
+            na, ma, sa = _finalize(a, e)
+            nb, mb, _ = _finalize(b, e)
+            if na >= 2 and sa > 0.0 and nb >= 1:
+                vals.append(abs(mb - ma) / sa)
+        if not vals:
+            return float('inf')
+        return sum(vals) / len(vals)
+
+    def _sym_mae(a: str, b: str) -> float:
+        dab = _directed_mae(a, b)
+        dba = _directed_mae(b, a)
+        if math.isinf(dab) or math.isinf(dba):
+            return float('inf')
+        return 0.5 * (dab + dba)
+
+    # Build similarity graph on current eligible set
+    elig_list = list(eligible)
+    graph = {hk: set() for hk in elig_list}
+    for i in range(len(elig_list)):
+        ai = elig_list[i]
+        for j in range(i + 1, len(elig_list)):
+            bj = elig_list[j]
+            d = _sym_mae(ai, bj)
+            if d < threshold:
+                graph[ai].add(bj)
+                graph[bj].add(ai)
+
+    # Connected components = groups; keep earliest block in each group
+    visited = set()
+    group_winners = []
+    groups = []
+    for hk in elig_list:
+        if hk in visited:
+            continue
+        comp = []
+        stack = [hk]
+        visited.add(hk)
+        while stack:
+            cur = stack.pop()
+            comp.append(cur)
+            for nb in graph[cur]:
+                if nb not in visited:
+                    visited.add(nb)
+                    stack.append(nb)
+        groups.append(comp)
+        winner = min(comp, key=lambda x: int(first_block.get(x, float('inf'))))
+        group_winners.append(winner)
+
+    if groups:
+        logger.info("MAE similarity groups (threshold=%.3f):" % threshold)
+        for idx, comp in enumerate(groups, 1):
+            members = sorted(comp, key=lambda x: int(first_block.get(x, float('inf'))))
+            earliest = members[0]
+            uids = [meta.hotkeys.index(h) for h in members]
+            logger.info(f"  Group {idx}: size={len(comp)} earliest={earliest} uids={uids}")
+
+    eligible = set(group_winners) if eligible else eligible
     pool_for_dom = eligible if eligible else (queryable_hks & set(active_hks))
     
     elo = sampler.compute_elo_scores(pairs_by_time, meta.hotkeys, ENVS)
@@ -224,6 +332,15 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
                 "Y" if hk in eligible else "N",
                 f"{w:.4f}",
             ]
+        # Print MAE groups summary (uids per group) before the table
+        if groups:
+            grp_lines = [f"MAE groups (uids per group, count={len(groups)}):"]
+            for idx, comp in enumerate(groups, 1):
+                ordered = sorted(comp, key=lambda x: int(first_block.get(x, float('inf'))))
+                uids = [meta.hotkeys.index(h) for h in ordered]
+                grp_lines.append(f"  G{idx}: uids={uids}")
+            print("\n".join(grp_lines))
+
         rows = sorted((r for r in (row(hk) for hk in active_hks) if r is not None), key=lambda r: (r[-3], r[0]), reverse=True)
         print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
         return [0], [1.0]
@@ -260,6 +377,16 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
     ranked_rows   = sorted((r for r in (row(hk) for hk in eligible) if r is not None), key=lambda r: float(r[-3]), reverse=True)
     unranked_rows = sorted((r for r in (row(hk) for hk in active_hks if hk not in eligible) if r is not None), key=lambda r: float(r[-3]), reverse=True)
     rows = ranked_rows + unranked_rows
+
+    # Print MAE groups summary (uids per group) before the table
+    if groups:
+        grp_lines = [f"MAE groups (uids per group, count={len(groups)}):"]
+        for idx, comp in enumerate(groups, 1):
+            ordered = sorted(comp, key=lambda x: int(first_block.get(x, float('inf'))))
+            uids = [meta.hotkeys.index(h) for h in ordered]
+            grp_lines.append(f"  G{idx}: uids={uids}")
+        print("\n".join(grp_lines))
+
     print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
 
     eligible_uids = [meta.hotkeys.index(hk) for hk in eligible]
