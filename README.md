@@ -17,7 +17,8 @@ affine --help
    - `AFFINE_CONTENDER_UID`, `AFFINE_CHAMPION_UID`
    - `AFFINE_SIGNING_KEY_HEX` (ed25519 private key in hex)
    - `AFFINE_BUCKET_*` if you are uploading blocks to R2 / S3 storage
-   - `BT_WALLET_*` so weight setting can access your bittensor wallet
+   - `AFFINE_EMISSION_ENABLED=0` (default) keeps the validator in dry-run mode so it never sets on-chain weights
+   - `BT_WALLET_*` only if you plan to enable emission by setting `AFFINE_EMISSION_ENABLED=1`
 2. Ensure your bittensor wallet directory is available at `~/.bittensor/wallets` on the host (the compose file mounts it read-only).
 3. Start the stack:
 
@@ -28,6 +29,8 @@ docker compose up -d --build
 The `validator` service runs `affine validate` in a loop, uploads blocks if credentials are present, and tails state in `/app/data/blocks` (persisted to the `validator-cache` volume). The last block hash is recorded in that volume automatically; you no longer need to supply it manually. Watchtower is included so you can point it at a remote tag if you publish the image elsewhere.
 
 ### Dry-running weight submission
+
+Emission is disabled by default in this parallel deployment. Validators still duel, build buckets, and compute weights, but the bittensor interface remains in dry-run mode unless `AFFINE_EMISSION_ENABLED=1` is set.
 
 After blocks exist locally or in the configured bucket, you can compute weights:
 

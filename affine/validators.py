@@ -526,7 +526,7 @@ def set_weights(
     netuid: int,
     scores: Mapping[int, float],
     *,
-    dry_run: bool = False,
+    dry_run: bool | None = None,
     wallet=None,
     wait_for_inclusion: bool = True,
     prompt: bool = False,
@@ -540,12 +540,50 @@ def set_weights(
 ) -> Dict[str, Any]:
     weights_map = winner_takes_all(scores)
     if not weights_map:
+        logger.info(
+            "set_weights skipped: no winning miner; scores=%s",
+            dict(scores),
+        )
         return {}
     uids = list(weights_map.keys())
     values = [weights_map[uid] for uid in uids]
-    result: Dict[str, Any] = {"uids": uids, "weights": values}
-    if dry_run:
+    config_dry_run = settings.emission_dry_run
+    forced = False
+    if dry_run is None:
+        effective_dry_run = config_dry_run
+    elif dry_run is False and config_dry_run:
+        effective_dry_run = True
+        forced = True
+    else:
+        effective_dry_run = dry_run
+    if effective_dry_run:
+        if forced:
+            logger.warning(
+                "set_weights requested with dry_run=False but emission is disabled; forcing dry-run.",
+            )
+        logger.info(
+            "Dry-run set_weights: netuid=%s, scores=%s, weights=%s, emission_enabled=%s",
+            netuid,
+            dict(scores),
+            dict(weights_map),
+            not config_dry_run,
+        )
+        result: Dict[str, Any] = {
+            "uids": uids,
+            "weights": values,
+            "dry_run": True,
+            "emission_enabled": not config_dry_run,
+        }
+        if forced:
+            result["forced"] = True
         return result
+
+    result: Dict[str, Any] = {
+        "uids": uids,
+        "weights": values,
+        "dry_run": False,
+        "emission_enabled": True,
+    }
 
     signer_url = signer_url or settings.signer_url
     signer_retries = (

@@ -76,6 +76,7 @@ class Settings:
     subtensor_fallback: str = os.getenv(
         "AFFINE_SUBTENSOR_FALLBACK", os.getenv("SUBTENSOR_FALLBACK", "")
     )
+    emission_enabled: bool = _bool("AFFINE_EMISSION_ENABLED", False)
 
     @property
     def ratio_decay_half_life(self) -> timedelta:
@@ -100,6 +101,10 @@ class Settings:
     @property
     def bucket_configured(self) -> bool:
         return bool(self.bucket_name)
+
+    @property
+    def emission_dry_run(self) -> bool:
+        return not self.emission_enabled
 
 
 settings = Settings()

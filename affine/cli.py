@@ -273,7 +273,9 @@ def validate(
         30.0, "--loop-sleep", help="Delay between loop iterations in seconds."
     ),
     submit_weights: bool = typer.Option(
-        False, "--submit-weights/--no-submit-weights", help="Submit weights to chain after each validation round."
+        False,
+        "--submit-weights/--no-submit-weights",
+        help="Attempt to submit weights after each validation round. Emission is disabled by default so this logs unless AFFINE_EMISSION_ENABLED is true.",
     ),
     wallet_name: Optional[str] = typer.Option(
         None, "--wallet-name", help="Bittensor wallet name.", envvar="AFFINE_WALLET_NAME"
@@ -322,9 +324,20 @@ def validate(
         initial=settings.ratio_to_beat, half_life_seconds=settings.ratio_decay_seconds
     )
 
+    emission_enabled = settings.emission_enabled
+    if emission_enabled:
+        logger.info("Emission enabled; weights will be submitted when requested.")
+    else:
+        logger.info("Emission disabled; operating in dry-run mode for weight updates.")
+    if submit_weights and not emission_enabled:
+        logger.warning(
+            "submit_weights requested but emission is disabled; proceeding with dry-run logging only."
+        )
+    should_emit = emission_enabled and submit_weights
+
     # Load wallet if weight submission is enabled
     wallet = None
-    if submit_weights:
+    if should_emit:
         if not wallet_name or not wallet_hotkey:
             raise typer.BadParameter(
                 "Wallet name and hotkey required for weight submission. "
@@ -336,6 +349,8 @@ def validate(
             logger.info(f"Loaded wallet: {wallet.name}/{wallet.hotkey_str}")
         except Exception as exc:
             raise typer.BadParameter(f"Failed to load wallet: {exc}")
+    elif submit_weights:
+        logger.info("Wallet details supplied but emission is disabled; skipping wallet load.")
 
     storage = None
     upload_enabled = upload if upload is not None else settings.bucket_write_enabled
@@ -343,6 +358,11 @@ def validate(
         try:
             storage = get_storage()
             storage.ensure_bucket()
+            logger.info(
+                "Object storage ready: bucket=%s prefix=%s",
+                storage.bucket,
+                storage.prefix,
+            )
         except StorageError as exc:
             raise typer.BadParameter(f"Storage unavailable: {exc}")
 
@@ -420,21 +440,27 @@ def validate(
                 weight_scores = scoreboard(verified_groups, vtrust_scores)
 
                 # Submit weights to chain if enabled
+                logger.info("Weight scores computed: %s", weight_scores)
                 weight_result = None
-                if submit_weights and weight_scores:
+                if weight_scores:
                     try:
-                        logger.info(f"Submitting weights for scores: {weight_scores}")
                         weight_result = set_weights(
                             netuid=settings.netuid,
                             scores=weight_scores,
-                            dry_run=False,
-                            wallet=wallet,
+                            dry_run=not should_emit,
+                            wallet=wallet if should_emit else None,
                             wait_for_inclusion=False,
                         )
-                        logger.info(f"Weight submission result: {weight_result}")
+                        action = "emission" if should_emit else "dry-run"
+                        logger.info(
+                            "Weight %s result: %s",
+                            action,
+                            weight_result,
+                        )
                     except Exception as exc:
-                        logger.error(f"Weight submission failed: {exc}")
-                        weight_result = {"error": str(exc)}
+                        action = "emission" if should_emit else "dry-run"
+                        logger.error(f"Weight {action} failed: {exc}", exc_info=True)
+                        weight_result = {"error": str(exc), "dry_run": not should_emit}
 
                 summary: Dict[str, object] = {
                     "duel": {
@@ -489,7 +515,10 @@ def set_weights_cmd(
         None, help="Path(s) to block JSON files.", show_default=False
     ),
     netuid: int = typer.Option(settings.netuid, help="Subnet netuid."),
-    dry_run: bool = typer.Option(True, help="Dry-run weight submission."),
+    dry_run: bool = typer.Option(
+        True,
+        help="Dry-run weight submission. Emission is disabled by default unless AFFINE_EMISSION_ENABLED is true.",
+    ),
     from_bucket: bool = typer.Option(
         False,
         "--from-bucket",
@@ -533,6 +562,18 @@ def set_weights_cmd(
     verified_groups, validator_stats = verify_samples(samples)
     vtrust_scores = compute_vtrust(validator_stats)
     score_map = scoreboard(verified_groups, vtrust_scores)
+    emission_enabled = settings.emission_enabled
+    if not emission_enabled and not dry_run:
+        logger.warning(
+            "set-weights command requested on-chain submission but emission is disabled; forcing dry-run."
+        )
+        dry_run = True
+    logger.info(
+        "set-weights command: emission_enabled=%s dry_run=%s scores=%s",
+        emission_enabled,
+        dry_run,
+        score_map,
+    )
     result = set_weights(netuid, score_map, dry_run=dry_run)
     typer.echo(
         json.dumps(
