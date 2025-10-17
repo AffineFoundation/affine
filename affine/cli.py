@@ -155,10 +155,6 @@ def duel(
         )
     if champion is None:
         raise typer.BadParameter("Set champion UID via --champ or AFFINE_CHAMPION_UID.")
-    if not signing_key_hex:
-        raise typer.BadParameter(
-            "Provide a signing key via --signing-key or AFFINE_SIGNING_KEY_HEX."
-        )
     cont_uid = int(contender)
     champ_uid = int(champion)
 
@@ -181,13 +177,13 @@ def duel(
     factory = _duel_stream_factory(
         sampler,
         outcomes,
-        champion_uid=champion,
-        contender_uid=contender,
+        champion_uid=champ_uid,
+        contender_uid=cont_uid,
         timeout=settings.chutes_timeout,
     )
     result = duel_many_envs(
-        contender,
-        champion,
+        cont_uid,
+        champ_uid,
         env_list,
         stream_factory=factory,
         ratio_to_beat_global=ratio_schedule.current(),
@@ -299,6 +295,18 @@ def validate(
     ),
 ) -> None:
     env_list = _split_envs(envs)
+    if contender is None:
+        raise typer.BadParameter(
+            "Set contender UID via --cont or AFFINE_CONTENDER_UID."
+        )
+    if champion is None:
+        raise typer.BadParameter("Set champion UID via --champ or AFFINE_CHAMPION_UID.")
+    if not signing_key_hex:
+        raise typer.BadParameter(
+            "Provide a signing key via --signing-key or AFFINE_SIGNING_KEY_HEX."
+        )
+    cont_uid = int(contender)
+    champ_uid = int(champion)
     chutes = ChutesClient(
         settings.chutes_url,
         api_key=settings.chutes_api_key,

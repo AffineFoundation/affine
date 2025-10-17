@@ -108,14 +108,14 @@ def test_duplicate_detector_marks_duplicates() -> None:
 
 def test_challenge_commitment_roundtrip() -> None:
     commitment = ChallengeCommitment("validator", "anchor")
-    seed = "00" * 32
+    seed = bytes(32)
     digest = commitment.commit(3, seed)
     commitment.reveal(3, seed)
     spec_hash = Mult8Env.spec_hash()
     cid = commitment.challenge_id(3, Mult8Env.env_id(), 0, spec_hash)
     assert isinstance(cid, str)
     assert commitment.commitment(3) == digest
-    assert commitment.revealed_seed(3) == bytes.fromhex(seed)
+    assert commitment.revealed_seed(3) == seed
 
 
 def test_verify_samples_detects_mismatch() -> None:

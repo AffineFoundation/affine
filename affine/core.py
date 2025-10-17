@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -7,14 +8,10 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
-try:  # pragma: no cover - optional dependency
-    from blake3 import blake3  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    blake3 = None  # type: ignore
-
-
 JsonPrimitive = Union[str, int, float, bool, None]
 JsonValue = Union[JsonPrimitive, Sequence["JsonValue"], Mapping[str, "JsonValue"]]  # type: ignore
+
+HASH_DIGEST_SIZE = 32
 
 
 def canonical_bytes(payload: Any) -> bytes:
@@ -26,16 +23,11 @@ def canonical_bytes(payload: Any) -> bytes:
 
 
 def hash_bytes(data: bytes) -> bytes:
-    if blake3 is not None:
-        return blake3(data).digest()
-    import hashlib
-
-    return hashlib.sha256(data).digest()
+    return hashlib.blake2b(data, digest_size=HASH_DIGEST_SIZE).digest()
 
 
 def hash_hex(data: bytes) -> str:
-    tag = "b3" if blake3 is not None else "sha256"
-    return f"{tag}:{hash_bytes(data).hex()}"
+    return f"b2:{hash_bytes(data).hex()}"
 
 
 def merkle_root(leaves: Sequence[bytes]) -> str:

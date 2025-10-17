@@ -12,7 +12,6 @@ dependencies = [
     "bittensor>=8.0.0",
     "requests>=2.31",
     "pynacl>=1.5",
-    "blake3>=0.4",
     "boto3>=1.34",
 ]
 

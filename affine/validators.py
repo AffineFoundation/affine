@@ -51,28 +51,18 @@ class ChallengeCommitment:
         self._commits: Dict[int, str] = {}
         self._seeds: Dict[int, bytes] = {}
 
-    def _normalize_seed(self, seed: bytes | str) -> bytes:
-        if isinstance(seed, bytes):
-            return seed
-        try:
-            return bytes.fromhex(seed)
-        except ValueError:
-            return seed.encode("utf-8")
-
-    def commit(self, epoch: int, seed: bytes | str) -> str:
-        material = self._normalize_seed(seed)
-        digest = hash_hex(material)
+    def commit(self, epoch: int, seed: bytes) -> str:
+        digest = hash_hex(seed)
         self._commits[epoch] = digest
         return digest
 
-    def reveal(self, epoch: int, seed: bytes | str) -> None:
-        material = self._normalize_seed(seed)
-        digest = hash_hex(material)
+    def reveal(self, epoch: int, seed: bytes) -> None:
+        digest = hash_hex(seed)
         expected = self._commits.get(epoch)
         if expected is not None and expected != digest:
             raise ValueError("revealed seed does not match prior commitment.")
         self._commits[epoch] = digest
-        self._seeds[epoch] = material
+        self._seeds[epoch] = seed
 
     def revealed_seed(self, epoch: int) -> Optional[bytes]:
         return self._seeds.get(epoch)
