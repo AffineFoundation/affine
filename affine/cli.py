@@ -5,7 +5,7 @@ import logging
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Mapping, Optional
+from typing import Dict, Iterable, List, Mapping, Optional
 
 import typer
 from nacl import signing
@@ -103,36 +103,6 @@ def run_env(
         typer.echo(f"info: {json.dumps(info, ensure_ascii=False)}")
 
 
-def _duel_stream_factory(
-    sampler: ValidatorSampler,
-    outcomes: Mapping[str, List[ChallengeOutcome]],
-    champion_uid: int,
-    contender_uid: int,
-    *,
-    timeout: float,
-) -> callable:
-    def factory(env_id: str) -> Iterable[Optional[bool]]:
-        def generator() -> Iterator[Optional[bool]]:
-            while True:
-                outcome = sampler.sample(
-                    env_id,
-                    champion_uid=champion_uid,
-                    contender_uid=contender_uid,
-                    timeout=timeout,
-                )
-                outcomes[env_id].append(outcome)
-                if outcome.winner == "contender":
-                    yield True
-                elif outcome.winner == "champion":
-                    yield False
-                else:
-                    yield None
-
-        return generator()
-
-    return factory
-
-
 @app.command()
 def duel(
     contender: int = typer.Option(..., "--cont", help="Contender miner UID."),
@@ -174,18 +144,27 @@ def duel(
         initial=0.5 + epsilon, half_life_seconds=settings.ratio_decay_seconds
     )
 
-    factory = _duel_stream_factory(
-        sampler,
-        outcomes,
-        champion_uid=champ_uid,
-        contender_uid=cont_uid,
-        timeout=settings.chutes_timeout,
-    )
+    def stream_factory(env_id: str) -> Iterable[Optional[bool]]:
+        while True:
+            outcome = sampler.sample(
+                env_id,
+                champion_uid=champ_uid,
+                contender_uid=cont_uid,
+                timeout=settings.chutes_timeout,
+            )
+            outcomes[env_id].append(outcome)
+            if outcome.winner == "contender":
+                yield True
+            elif outcome.winner == "champion":
+                yield False
+            else:
+                yield None
+
     result = duel_many_envs(
         cont_uid,
         champ_uid,
         env_list,
-        stream_factory=factory,
+        stream_factory=stream_factory,
         ratio_to_beat_global=ratio_schedule.current(),
         per_env_ratio=0.5 + epsilon,
         max_budget=max_trials,
