@@ -429,9 +429,8 @@ class SamplingOrchestrator:
                     pass
             
             prev[hk] = result
-            if result.response.success:
-                cnt[hk][env] += 1
-                succ[hk][env] += float(result.evaluation.score)
+            cnt[hk][env] += 1
+            succ[hk][env] += float(result.evaluation.score)
             
             # Use challenge_id to match same tasks for ELO pairwise comparison
             challenge_id = result.challenge.challenge_id
