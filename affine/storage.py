@@ -109,34 +109,34 @@ async def dataset(
     *,
     max_concurrency: int = 10,
 ) -> AsyncIterator["Result"]:
-    sub  = await get_subtensor()
-    cur  = await sub.get_current_block()
+    sub = await get_subtensor()
+    cur = await sub.get_current_block()
     need = {w for w in range(_w(cur - tail), _w(cur) + WINDOW, WINDOW)}
     keys = [
         k for k in await _index()
         if (h := Path(k).name.split("-", 1)[0]).isdigit() and int(h) in need
     ]
-    keys.sort()    
+    keys.sort()
     sem = asyncio.Semaphore(max_concurrency)
-    async def _prefetch(key: str) -> Path:
-        return await _cache_shard(key, sem)
-    tasks: list[asyncio.Task[Path]] = [
-        asyncio.create_task(_prefetch(k)) for k in keys[:max_concurrency]
-    ]
-    next_key = max_concurrency
+    
+    async def _prefetch(key: str) -> Path | None:
+        try:
+            return await _cache_shard(key, sem)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            logger.warning(f"Failed to fetch key: {key}, skipping")
+            return None
+    
     bar = tqdm(desc=f"Dataset=({cur}, {cur - tail})", unit="res", dynamic_ncols=True)
     try:
-        for i, key in enumerate(keys):
-            try:
-                path = await tasks[i]
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                logger.warning(f"task key: {key}, failed, skip")
+        tasks = [asyncio.create_task(_prefetch(k)) for k in keys]
+
+        for coro in asyncio.as_completed(tasks):
+            path = await coro
+            if path is None:
                 continue
-            if next_key < len(keys):
-                tasks.append(asyncio.create_task(_prefetch(keys[next_key])))
-                next_key += 1
+
             async for raw in _jsonl(path):
                 try:
                     r = Result.model_validate(orjson.loads(raw))
