@@ -15,6 +15,7 @@ from .core import Block
 from .duel import RatioSchedule, duel_many_envs
 from .envs import get_env
 from .network import ChutesClient
+from .persistence import BlockStore, BlockStoreError
 from .storage import StorageError, get_storage
 from .validators import (
     ChallengeCommitment,
@@ -192,7 +193,9 @@ def _state_file() -> Path:
     return settings.cache_path / "prev_hash.txt"
 
 
-def _load_prev_hash(storage, override: Optional[str]) -> str:
+def _load_prev_hash(
+    storage, override: Optional[str], block_store: Optional[BlockStore]
+) -> str:
     if override:
         return override.strip().lower()
     file = _state_file()
@@ -200,6 +203,13 @@ def _load_prev_hash(storage, override: Optional[str]) -> str:
         value = file.read_text().strip()
         if value:
             return value
+    if block_store is not None:
+        try:
+            digest = block_store.latest_digest()
+            if digest:
+                return digest
+        except BlockStoreError as exc:
+            logger.warning("Failed to derive prev hash from database: %s", exc)
     if storage is not None:
         try:
             keys = storage.list_latest_keys(limit=1)
@@ -352,6 +362,11 @@ def validate(
     elif submit_weights:
         logger.info("Wallet details supplied but emission is disabled; skipping wallet load.")
 
+    try:
+        block_store = BlockStore(settings.db_url)
+    except BlockStoreError as exc:
+        raise typer.BadParameter(f"Block database unavailable: {exc}")
+
     storage = None
     upload_enabled = upload if upload is not None else settings.bucket_write_enabled
     if upload_enabled:
@@ -366,7 +381,7 @@ def validate(
         except StorageError as exc:
             raise typer.BadParameter(f"Storage unavailable: {exc}")
 
-    current_prev_hash = _load_prev_hash(storage, prev_hash)
+    current_prev_hash = _load_prev_hash(storage, prev_hash, block_store)
 
     try:
         while True:
@@ -427,9 +442,21 @@ def validate(
                     cursor += len(chunk)
                     block_payload = {"hash": block_digest, "block": block.canonical_dict()}
                     blocks.append(block_payload)
+                    try:
+                        block_store.store_block(block, block_digest)
+                    except BlockStoreError as exc:
+                        logger.error("Failed to store block locally: %s", exc)
                     if storage is not None:
                         info = storage.upload_block(block, block_digest)
                         uploaded.append(info)
+                        bucket_meta = {
+                            "key": info.get("key"),
+                            "url": info.get("url"),
+                        }
+                        try:
+                            block_store.store_block(block, block_digest, bucket_info=bucket_meta)
+                        except BlockStoreError as exc:
+                            logger.warning("Failed to update block metadata after upload: %s", exc)
                     emitted = True
 
                 if output_path:
@@ -519,6 +546,12 @@ def set_weights_cmd(
         True,
         help="Dry-run weight submission. Emission is disabled by default unless AFFINE_EMISSION_ENABLED is true.",
     ),
+    from_db: bool = typer.Option(
+        True,
+        "--from-db/--no-db",
+        help="Load latest blocks from the local SQLite database.",
+    ),
+    db_limit: int = typer.Option(20, "--db-limit", help="Maximum number of local blocks to load."),
     from_bucket: bool = typer.Option(
         False,
         "--from-bucket",
@@ -529,16 +562,30 @@ def set_weights_cmd(
     ),
 ) -> None:
     blocks: List[Block] = []
+    seen_hashes: set[str] = set()
+
+    def add_block(block: Block) -> None:
+        digest = block_hash(block)
+        if digest in seen_hashes:
+            return
+        seen_hashes.add(digest)
+        blocks.append(block)
+
     if block_files:
         for path in block_files:
             data = json.loads(path.read_text())
             if isinstance(data, list):
                 for entry in data:
-                    blocks.append(
-                        load_block(entry["block"] if "block" in entry else entry)
-                    )
+                    add_block(load_block(entry["block"] if "block" in entry else entry))
             else:
-                blocks.append(load_block(data["block"] if "block" in data else data))
+                add_block(load_block(data["block"] if "block" in data else data))
+    if from_db:
+        try:
+            store = BlockStore(settings.db_url)
+            for block in store.latest_blocks(limit=db_limit):
+                add_block(block)
+        except BlockStoreError as exc:
+            raise typer.BadParameter(f"Local database unavailable: {exc}")
     if from_bucket:
         try:
             storage = get_storage(require_write=False, create=False)
@@ -551,7 +598,7 @@ def set_weights_cmd(
         for payload in payloads:
             block_payload = payload.get("block", payload)
             if isinstance(block_payload, Mapping):
-                blocks.append(load_block(block_payload))
+                add_block(load_block(block_payload))
 
     samples: List[Sample] = []
     for block in blocks:

@@ -27,6 +27,16 @@ def _bool(env_key: str, default: bool) -> bool:
     return raw.strip().lower() not in {"0", "false", "no", ""}
 
 
+def _default_db_path() -> str:
+    cache_default = Path.home() / ".cache" / "affine" / "blocks"
+    base = Path(os.getenv("AFFINE_CACHE_DIR", str(cache_default))).expanduser()
+    if base.name == "blocks":
+        target = base.parent / "affine.sqlite"
+    else:
+        target = base / "affine.sqlite" if base.suffix == "" else base
+    return str(target)
+
+
 @dataclass(frozen=True)
 class Settings:
     """Runtime configuration sourced from environment variables."""
@@ -65,6 +75,7 @@ class Settings:
     cache_dir: str = os.getenv(
         "AFFINE_CACHE_DIR", str(Path.home() / ".cache" / "affine" / "blocks")
     )
+    db_path: str = os.getenv("AFFINE_DB_PATH", _default_db_path())
     signer_url: str = os.getenv("AFFINE_SIGNER_URL", os.getenv("SIGNER_URL", ""))
     signer_retries: int = _int("AFFINE_SIGNER_RETRIES", 3)
     signer_retry_delay: float = _float("AFFINE_SIGNER_RETRY_DELAY", 2.0)
@@ -91,6 +102,19 @@ class Settings:
         path = Path(self.cache_dir)
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    @property
+    def db_file(self) -> Path:
+        path = Path(self.db_path)
+        if not path.is_absolute():
+            path = Path.home() / path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def db_url(self) -> str:
+        path = self.db_file
+        return f"sqlite:///{path}"
 
     @property
     def bucket_write_enabled(self) -> bool:

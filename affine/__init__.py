@@ -35,6 +35,7 @@ from .envs import (
     last_integer,
 )
 from .network import ChutesClient, ChutesResponse
+from .persistence import BlockStore, BlockStoreError
 from .storage import BucketStorage, StorageError, get_storage
 from .validators import (
     ChallengeCommitment,
@@ -75,6 +76,8 @@ __all__ = [
     "TicTacToeEnv",
     "Verdict",
     "beats_target",
+    "BlockStore",
+    "BlockStoreError",
     "block_hash",
     "build_block",
     "BucketStorage",
