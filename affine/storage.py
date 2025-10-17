@@ -130,7 +130,9 @@ async def dataset(
             try:
                 path = await tasks[i]
             except Exception as e:
-                logger.warning(f"task[{i}] failed, skip")
+                import traceback
+                traceback.print_exc()
+                logger.warning(f"task key: {key}, failed, skip")
                 continue
             if next_key < len(keys):
                 tasks.append(asyncio.create_task(_prefetch(keys[next_key])))
