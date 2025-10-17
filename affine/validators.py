@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
+import requests
 from nacl import signing
 from nacl.exceptions import BadSignatureError
 
+from .config import settings
 from .core import (
     Block,
     BlockHeader,
@@ -24,6 +27,9 @@ from .core import (
 from .duel import wilson_interval
 from .envs import AffineEnv, env_names, get_env
 from .network import ChutesClient
+
+
+logger = logging.getLogger(__name__)
 
 
 def _jsonify(value: Any) -> Any:
@@ -543,24 +549,145 @@ def set_weights(
     wallet=None,
     wait_for_inclusion: bool = True,
     prompt: bool = False,
-):
+    signer_url: str | None = None,
+    signer_retries: int | None = None,
+    signer_retry_delay: float | None = None,
+    signer_connect_timeout: float | None = None,
+    signer_read_timeout: float | None = None,
+    subtensor_endpoint: str | None = None,
+    subtensor_fallback: str | None = None,
+) -> Dict[str, Any]:
     weights_map = winner_takes_all(scores)
     if not weights_map:
         return {}
     uids = list(weights_map.keys())
     values = [weights_map[uid] for uid in uids]
+    result: Dict[str, Any] = {"uids": uids, "weights": values}
     if dry_run:
-        return {"uids": uids, "weights": values}
+        return result
+
+    signer_url = signer_url or settings.signer_url
+    signer_retries = (
+        signer_retries if signer_retries is not None else settings.signer_retries
+    )
+    signer_retry_delay = (
+        signer_retry_delay
+        if signer_retry_delay is not None
+        else settings.signer_retry_delay
+    )
+    connect_timeout = (
+        signer_connect_timeout
+        if signer_connect_timeout is not None
+        else settings.signer_connect_timeout
+    )
+    read_timeout = (
+        signer_read_timeout
+        if signer_read_timeout is not None
+        else settings.signer_read_timeout
+    )
+
+    last_signer_error: Optional[str] = None
+    if signer_url:
+        endpoint = signer_url.rstrip("/") + "/set_weights"
+        attempts = max(1, signer_retries)
+        payload = {
+            "netuid": netuid,
+            "uids": uids,
+            "weights": values,
+            "wait_for_inclusion": wait_for_inclusion,
+            "prompt": prompt,
+        }
+        for attempt in range(attempts):
+            try:
+                response = requests.post(
+                    endpoint,
+                    json=payload,
+                    timeout=(connect_timeout, read_timeout),
+                )
+            except (
+                requests.RequestException
+            ) as exc:  # pragma: no cover - network error path
+                last_signer_error = f"{type(exc).__name__}: {exc}"
+                logger.warning(
+                    "set_weights: signer request attempt %s/%s failed: %s",
+                    attempt + 1,
+                    attempts,
+                    last_signer_error,
+                )
+            else:
+                try:
+                    data = response.json()
+                except ValueError:
+                    data = {"raw": response.text[:500]}
+                if response.ok and data.get("success", True):
+                    result.update(
+                        {
+                            "method": "signer",
+                            "signer_url": signer_url,
+                            "response": data,
+                        }
+                    )
+                    return result
+                last_signer_error = f"status={response.status_code}, body={data}"
+                logger.warning(
+                    "set_weights: signer response attempt %s/%s unsuccessful: %s",
+                    attempt + 1,
+                    attempts,
+                    last_signer_error,
+                )
+            if attempt < attempts - 1 and signer_retry_delay > 0:
+                time.sleep(signer_retry_delay)
+        if last_signer_error:
+            result["signer_error"] = last_signer_error
+
     import bittensor as bt  # type: ignore
 
-    return bt.subtensor().set_weights(
-        netuid=netuid,
-        uids=uids,
-        weights=values,
-        wait_for_finalization=wait_for_inclusion,
-        prompt=prompt,
-        wallet=wallet,
-    )
+    endpoints: List[Optional[str]] = []
+    primary_endpoint = subtensor_endpoint or settings.subtensor_endpoint
+    fallback_endpoint = subtensor_fallback or settings.subtensor_fallback
+    for candidate in (primary_endpoint, fallback_endpoint, None):
+        if candidate is None:
+            if None not in endpoints:
+                endpoints.append(None)
+        else:
+            candidate = candidate.strip()
+            if not candidate:
+                continue
+            if candidate not in endpoints:
+                endpoints.append(candidate)
+
+    last_error: Optional[Exception] = None
+    for endpoint in endpoints:
+        try:
+            subtensor = bt.subtensor() if endpoint is None else bt.subtensor(endpoint)
+            kwargs = {
+                "netuid": netuid,
+                "uids": uids,
+                "weights": values,
+                "wait_for_finalization": wait_for_inclusion,
+                "prompt": prompt,
+            }
+            if wallet is not None:
+                kwargs["wallet"] = wallet
+            subtensor.set_weights(**kwargs)
+            result.update(
+                {
+                    "method": "subtensor",
+                    "subtensor_endpoint": endpoint or "default",
+                }
+            )
+            return result
+        except Exception as exc:  # pragma: no cover - network error path
+            last_error = exc
+            logger.warning(
+                "set_weights: subtensor call failed via endpoint %s: %s",
+                endpoint or "default",
+                exc,
+            )
+
+    if last_error is not None:
+        raise RuntimeError("set_weights failed via subtensor") from last_error
+    raise RuntimeError("set_weights failed without attempting subtensor")
 
 
 def _leaf_bytes(sample: Sample) -> bytes:

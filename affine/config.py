@@ -65,6 +65,17 @@ class Settings:
     cache_dir: str = os.getenv(
         "AFFINE_CACHE_DIR", str(Path.home() / ".cache" / "affine" / "blocks")
     )
+    signer_url: str = os.getenv("AFFINE_SIGNER_URL", os.getenv("SIGNER_URL", ""))
+    signer_retries: int = _int("AFFINE_SIGNER_RETRIES", 3)
+    signer_retry_delay: float = _float("AFFINE_SIGNER_RETRY_DELAY", 2.0)
+    signer_connect_timeout: float = _float("AFFINE_SIGNER_CONNECT_TIMEOUT", 2.0)
+    signer_read_timeout: float = _float("AFFINE_SIGNER_READ_TIMEOUT", 120.0)
+    subtensor_endpoint: str = os.getenv(
+        "AFFINE_SUBTENSOR_ENDPOINT", os.getenv("SUBTENSOR_ENDPOINT", "")
+    )
+    subtensor_fallback: str = os.getenv(
+        "AFFINE_SUBTENSOR_FALLBACK", os.getenv("SUBTENSOR_FALLBACK", "")
+    )
 
     @property
     def ratio_decay_half_life(self) -> timedelta:
