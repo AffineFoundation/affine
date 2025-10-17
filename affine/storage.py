@@ -109,34 +109,34 @@ async def dataset(
     *,
     max_concurrency: int = 10,
 ) -> AsyncIterator["Result"]:
-    sub  = await get_subtensor()
-    cur  = await sub.get_current_block()
+    sub = await get_subtensor()
+    cur = await sub.get_current_block()
     need = {w for w in range(_w(cur - tail), _w(cur) + WINDOW, WINDOW)}
     keys = [
         k for k in await _index()
         if (h := Path(k).name.split("-", 1)[0]).isdigit() and int(h) in need
     ]
-    keys.sort()    
+    keys.sort()
     sem = asyncio.Semaphore(max_concurrency)
-    async def _prefetch(key: str) -> Path:
-        return await _cache_shard(key, sem)
-    tasks: list[asyncio.Task[Path]] = [
-        asyncio.create_task(_prefetch(k)) for k in keys[:max_concurrency]
-    ]
-    next_key = max_concurrency
+    
+    async def _prefetch(key: str) -> Path | None:
+        try:
+            return await _cache_shard(key, sem)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            logger.warning(f"Failed to fetch key: {key}, skipping")
+            return None
+    
     bar = tqdm(desc=f"Dataset=({cur}, {cur - tail})", unit="res", dynamic_ncols=True)
     try:
-        for i, key in enumerate(keys):
-            try:
-                path = await tasks[i]
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                logger.warning(f"task key: {key}, failed, skip")
+        tasks = [asyncio.create_task(_prefetch(k)) for k in keys]
+
+        for coro in asyncio.as_completed(tasks):
+            path = await coro
+            if path is None:
                 continue
-            if next_key < len(keys):
-                tasks.append(asyncio.create_task(_prefetch(keys[next_key])))
-                next_key += 1
+
             async for raw in _jsonl(path):
                 try:
                     r = Result.model_validate(orjson.loads(raw))
@@ -184,18 +184,19 @@ async def sink(wallet, results: list["Result"], block: int = None):
     if not results: return
     if block is None:
         sub = await get_subtensor(); block = await sub.get_current_block()
-    hotkey, signed = await sign_results(wallet, results)
-    timestamp = time.time_ns()  # ensure each upload gets a unique key
-    key = f"{RESULT_PREFIX}{_w(block):09d}-{hotkey}-{timestamp}.json"
-    dumped = [r.model_dump(mode="json") for r in signed]
+    hotkey, signed = await sign_results( wallet, results )
+    key = f"{RESULT_PREFIX}{_w(block):09d}-{hotkey}.json"
+    dumped = [ r.model_dump(mode="json") for r in signed ]
     async with get_client_ctx() as c:
-        await c.put_object(
-            Bucket=FOLDER,
-            Key=key,
-            Body=orjson.dumps(dumped),
-            ContentType="application/json",
-        )
-    await _update_index(key)
+        try:
+            r = await c.get_object(Bucket=FOLDER, Key=key)
+            merged = json.loads(await r["Body"].read()) + dumped
+        except c.exceptions.NoSuchKey:
+            merged = dumped
+        await c.put_object(Bucket=FOLDER, Key=key, Body=orjson.dumps(merged),
+                           ContentType="application/json")
+    if len(merged) == len(dumped):
+        await _update_index(key)
 
 async def prune(tail: int):
     sub = await get_subtensor(); cur = await sub.get_current_block()
