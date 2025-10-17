@@ -73,31 +73,46 @@ async def _update_index(k: str) -> None:
 async def _cache_shard(key: str, sem: asyncio.Semaphore) -> Path:
     name, out = Path(key).name, None
     out = CACHE_DIR / f"{name}.jsonl"; mod = out.with_suffix(".modified")
-    async with sem:
-        if PUBLIC_READ:
-            sess = await _get_client()
-            url = f"{R2_PUBLIC_BASE}/{key}"
-            async with sess.get(url, timeout=aiohttp.ClientTimeout(total=60)) as r:
-                r.raise_for_status()
-                body = await r.read()
-                lm = r.headers.get("last-modified", str(time.time()))
+    max_retries = 5
+    base_delay = 2.0
+    
+    for attempt in range(max_retries):
+        try:
+            async with sem:
+                if PUBLIC_READ:
+                    sess = await _get_client()
+                    url = f"{R2_PUBLIC_BASE}/{key}"
+                    async with sess.get(url, timeout=aiohttp.ClientTimeout(total=60)) as r:
+                        r.raise_for_status()
+                        body = await r.read()
+                        lm = r.headers.get("last-modified", str(time.time()))
+                    tmp = out.with_suffix(".tmp")
+                    with tmp.open("wb") as f:
+                        f.write(b"\n".join(orjson.dumps(i) for i in orjson.loads(body)) + b"\n")
+                    os.replace(tmp, out); mod.write_text(lm)
+                    return out
+                async with get_client_ctx() as c:
+                    if out.exists() and mod.exists():
+                        h = await c.head_object(Bucket=FOLDER, Key=key)
+                        if h["LastModified"].isoformat() == mod.read_text().strip():
+                            return out
+                    o = await c.get_object(Bucket=FOLDER, Key=key)
+                    body, lm = await o["Body"].read(), o["LastModified"].isoformat()
             tmp = out.with_suffix(".tmp")
             with tmp.open("wb") as f:
                 f.write(b"\n".join(orjson.dumps(i) for i in orjson.loads(body)) + b"\n")
             os.replace(tmp, out); mod.write_text(lm)
             return out
-        async with get_client_ctx() as c:
-            if out.exists() and mod.exists():
-                h = await c.head_object(Bucket=FOLDER, Key=key)
-                if h["LastModified"].isoformat() == mod.read_text().strip():
-                    return out
-            o = await c.get_object(Bucket=FOLDER, Key=key)
-            body, lm = await o["Body"].read(), o["LastModified"].isoformat()
-    tmp = out.with_suffix(".tmp")
-    with tmp.open("wb") as f:
-        f.write(b"\n".join(orjson.dumps(i) for i in orjson.loads(body)) + b"\n")
-    os.replace(tmp, out); mod.write_text(lm)
-    return out
+        except aiohttp.ClientResponseError as e:
+            if e.status == 429 and attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                if attempt > 1:
+                    logger.warning(f"Rate limited for key: {key}, retrying in {delay}s (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(delay)
+            else:
+                raise
+        except Exception:
+            raise
 
 async def _jsonl(path: Path) -> AsyncIterator[bytes]:
     async with aiofiles.open(path, "rb") as f:
