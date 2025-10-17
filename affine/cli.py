@@ -293,6 +293,15 @@ def validate(
     loop_sleep: float = typer.Option(
         30.0, "--loop-sleep", help="Delay between loop iterations in seconds."
     ),
+    submit_weights: bool = typer.Option(
+        False, "--submit-weights/--no-submit-weights", help="Submit weights to chain after each validation round."
+    ),
+    wallet_name: Optional[str] = typer.Option(
+        None, "--wallet-name", help="Bittensor wallet name.", envvar="AFFINE_WALLET_NAME"
+    ),
+    wallet_hotkey: Optional[str] = typer.Option(
+        None, "--wallet-hotkey", help="Bittensor wallet hotkey.", envvar="AFFINE_WALLET_HOTKEY"
+    ),
 ) -> None:
     env_list = _split_envs(envs)
     if contender is None:
@@ -334,6 +343,21 @@ def validate(
         initial=settings.ratio_to_beat, half_life_seconds=settings.ratio_decay_seconds
     )
 
+    # Load wallet if weight submission is enabled
+    wallet = None
+    if submit_weights:
+        if not wallet_name or not wallet_hotkey:
+            raise typer.BadParameter(
+                "Wallet name and hotkey required for weight submission. "
+                "Use --wallet-name and --wallet-hotkey or set AFFINE_WALLET_NAME and AFFINE_WALLET_HOTKEY."
+            )
+        try:
+            import bittensor as bt
+            wallet = bt.wallet(name=wallet_name, hotkey=wallet_hotkey)
+            logger.info(f"Loaded wallet: {wallet.name}/{wallet.hotkey_str}")
+        except Exception as exc:
+            raise typer.BadParameter(f"Failed to load wallet: {exc}")
+
     storage = None
     upload_enabled = upload if upload is not None else settings.bucket_write_enabled
     if upload_enabled:
@@ -347,98 +371,134 @@ def validate(
 
     try:
         while True:
-            outcomes: Dict[str, List[ChallengeOutcome]] = {
-                env_id: [] for env_id in env_list
-            }
-            factory = _duel_stream_factory(
-                sampler,
-                outcomes,
-                champion_uid=champ_uid,
-                contender_uid=cont_uid,
-                timeout=settings.chutes_timeout,
-            )
-            result = duel_many_envs(
-                cont_uid,
-                champ_uid,
-                env_list,
-                stream_factory=factory,
-                ratio_to_beat_global=ratio_schedule.current(),
-                per_env_ratio=settings.ratio_to_beat,
-                max_budget=max_trials,
-                ratio_schedule=ratio_schedule,
-            )
-
-            all_samples: List[Sample] = []
-            for env_id in env_list:
-                for outcome in outcomes[env_id]:
-                    all_samples.extend(
-                        outcome.as_samples(settings.validator_hotkey or "validator")
-                    )
-
-            blocks: List[Dict[str, object]] = []
-            uploaded: List[Mapping[str, str]] = []
-            block_index = 0
-            cursor = 0
-            env_spec_versions = sampler.env_spec_versions()
-            emitted = False
-            while cursor < len(all_samples):
-                chunk = all_samples[cursor : cursor + block_size]
-                block, block_digest = build_block(
-                    chunk,
-                    validator=settings.validator_hotkey or "validator",
-                    block_index=block_index,
-                    prev_hash=current_prev_hash,
-                    env_spec_versions=env_spec_versions,
-                    signing_key=signing_key,
+            try:
+                outcomes: Dict[str, List[ChallengeOutcome]] = {
+                    env_id: [] for env_id in env_list
+                }
+                factory = _duel_stream_factory(
+                    sampler,
+                    outcomes,
+                    champion_uid=champ_uid,
+                    contender_uid=cont_uid,
+                    timeout=settings.chutes_timeout,
                 )
-                current_prev_hash = block_digest
-                block_index += 1
-                cursor += len(chunk)
-                block_payload = {"hash": block_digest, "block": block.canonical_dict()}
-                blocks.append(block_payload)
-                if storage is not None:
-                    info = storage.upload_block(block, block_digest)
-                    uploaded.append(info)
-                emitted = True
+                result = duel_many_envs(
+                    cont_uid,
+                    champ_uid,
+                    env_list,
+                    stream_factory=factory,
+                    ratio_to_beat_global=ratio_schedule.current(),
+                    per_env_ratio=settings.ratio_to_beat,
+                    max_budget=max_trials,
+                    ratio_schedule=ratio_schedule,
+                )
 
-            if output_path:
-                output_path.write_text(json.dumps(blocks, indent=2, ensure_ascii=False))
+                # Update champion if dethroned
+                if result.get("dethroned") and result["winner_uid"] == cont_uid:
+                    logger.info(f"Champion dethroned! New champion: {cont_uid} (was {champ_uid})")
+                    champ_uid = cont_uid
+                    # In continuous loop, contender would be updated by external logic
+                    # For now, this ensures the new champion is used in subsequent rounds
 
-            verified_groups, validator_stats = verify_samples(all_samples)
-            vtrust_scores = compute_vtrust(validator_stats)
-            weight_scores = scoreboard(verified_groups, vtrust_scores)
+                all_samples: List[Sample] = []
+                for env_id in env_list:
+                    for outcome in outcomes[env_id]:
+                        all_samples.extend(
+                            outcome.as_samples(settings.validator_hotkey or "validator")
+                        )
 
-            summary: Dict[str, object] = {
-                "duel": {
-                    "winner_uid": result["winner_uid"],
-                    "ratio_to_beat": result["ratio_to_beat"],
-                    "env_wins": result["env_wins"],
-                },
-                "blocks": blocks,
-                "vtrust": vtrust_scores,
-                "scores": weight_scores,
-            }
-            if uploaded:
-                summary["uploads"] = uploaded
-            if commit_digest:
-                summary["commitment"] = {"epoch": epoch, "digest": commit_digest}
+                blocks: List[Dict[str, object]] = []
+                uploaded: List[Mapping[str, str]] = []
+                block_index = 0
+                cursor = 0
+                env_spec_versions = sampler.env_spec_versions()
+                emitted = False
+                while cursor < len(all_samples):
+                    chunk = all_samples[cursor : cursor + block_size]
+                    block, block_digest = build_block(
+                        chunk,
+                        validator=settings.validator_hotkey or "validator",
+                        block_index=block_index,
+                        prev_hash=current_prev_hash,
+                        env_spec_versions=env_spec_versions,
+                        signing_key=signing_key,
+                    )
+                    current_prev_hash = block_digest
+                    block_index += 1
+                    cursor += len(chunk)
+                    block_payload = {"hash": block_digest, "block": block.canonical_dict()}
+                    blocks.append(block_payload)
+                    if storage is not None:
+                        info = storage.upload_block(block, block_digest)
+                        uploaded.append(info)
+                    emitted = True
 
-            if json_output:
-                typer.echo(json.dumps(summary, indent=2, ensure_ascii=False))
-            else:
-                typer.echo(f"winner_uid: {summary['duel']['winner_uid']}")
-                typer.echo(f"blocks_emitted: {len(blocks)}")
-                typer.echo(f"vtrust: {summary['vtrust']}")
-                typer.echo(f"scores: {summary['scores']}")
+                if output_path:
+                    output_path.write_text(json.dumps(blocks, indent=2, ensure_ascii=False))
+
+                verified_groups, validator_stats = verify_samples(all_samples)
+                vtrust_scores = compute_vtrust(validator_stats)
+                weight_scores = scoreboard(verified_groups, vtrust_scores)
+
+                # Submit weights to chain if enabled
+                weight_result = None
+                if submit_weights and weight_scores:
+                    try:
+                        logger.info(f"Submitting weights for scores: {weight_scores}")
+                        weight_result = set_weights(
+                            netuid=settings.netuid,
+                            scores=weight_scores,
+                            dry_run=False,
+                            wallet=wallet,
+                            wait_for_inclusion=False,
+                        )
+                        logger.info(f"Weight submission result: {weight_result}")
+                    except Exception as exc:
+                        logger.error(f"Weight submission failed: {exc}")
+                        weight_result = {"error": str(exc)}
+
+                summary: Dict[str, object] = {
+                    "duel": {
+                        "winner_uid": result["winner_uid"],
+                        "ratio_to_beat": result["ratio_to_beat"],
+                        "env_wins": result["env_wins"],
+                    },
+                    "blocks": blocks,
+                    "vtrust": vtrust_scores,
+                    "scores": weight_scores,
+                }
                 if uploaded:
-                    typer.echo(f"uploads: {uploaded}")
+                    summary["uploads"] = uploaded
+                if commit_digest:
+                    summary["commitment"] = {"epoch": epoch, "digest": commit_digest}
+                if weight_result is not None:
+                    summary["weights_submitted"] = weight_result
 
-            if emitted:
-                _persist_prev_hash(current_prev_hash)
+                if json_output:
+                    typer.echo(json.dumps(summary, indent=2, ensure_ascii=False))
+                else:
+                    typer.echo(f"winner_uid: {summary['duel']['winner_uid']}")
+                    typer.echo(f"blocks_emitted: {len(blocks)}")
+                    typer.echo(f"vtrust: {summary['vtrust']}")
+                    typer.echo(f"scores: {summary['scores']}")
+                    if uploaded:
+                        typer.echo(f"uploads: {uploaded}")
+                    if weight_result is not None:
+                        typer.echo(f"weights_submitted: {weight_result}")
 
-            if not loop:
-                break
-            if loop_sleep > 0:
+                if emitted:
+                    _persist_prev_hash(current_prev_hash)
+
+                if not loop:
+                    break
+
+            except Exception as exc:
+                logger.error(f"Validation round failed: {exc}", exc_info=True)
+                if not loop:
+                    raise  # Re-raise if not looping
+                # Continue to next iteration if looping
+
+            if loop and loop_sleep > 0:
                 time.sleep(loop_sleep)
     finally:
         chutes.close()
