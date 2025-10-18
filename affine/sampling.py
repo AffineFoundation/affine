@@ -19,7 +19,7 @@ class SamplingConfig:
     
     # Challenge algorithm parameters
     # Confidence level for Wilson score interval (can be adjusted easily)
-    CONFIDENCE_LEVEL = 0.90  # 90% confidence level
+    CONFIDENCE_LEVEL = 0.80  # confidence level
     
     @classmethod
     def get_z_score(cls) -> float:
@@ -311,15 +311,14 @@ class MinerSampler:
     
     def compute_layer_weights(self, n_envs: int, scale: float) -> Dict[int, float]:
         """
-        Compute per-subset weights K_s using power-law scaling.
-        K_s = scale * (s ** 0.7) for all s >= 1.
-        This provides balanced multi-environment incentives without extreme concentration.
+        Compute per-subset weights K_s.
+        K_1 = scale; K_s = scale * (2^s) for s >= 2.
         """
-        K = {}
-        for s in range(1, n_envs + 1):
-            K[s] = scale * (s ** 0.7)
+        K = {1: scale}
+        for s in range(2, n_envs + 1):
+            K[s] = scale * (2**s)
         return K
-    
+
     def calculate_combinatoric_scores(
         self,
         envs: Tuple[str, ...],
