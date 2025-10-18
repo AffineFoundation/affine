@@ -164,6 +164,19 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
     
     acc = orchestrator.calculate_accuracies(cnt, succ, meta.hotkeys, ENVS)
     
+    # Calculate confidence intervals for all miners
+    confidence_intervals = {}
+    for hk in meta.hotkeys:
+        confidence_intervals[hk] = {}
+        for e in ENVS:
+            if cnt[hk][e] > 0:
+                lower, upper = sampler.challenge_algo.wilson_score_interval(
+                    succ[hk][e], cnt[hk][e]
+                )
+                confidence_intervals[hk][e] = (lower, upper)
+            else:
+                confidence_intervals[hk][e] = (0.0, 0.0)
+    
     active_hks = list(prev.keys())
     logger.info("Computed accuracy.")
 
@@ -203,7 +216,8 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
             model_name = str(m.model)[:50]
             env_cols = []
             for e in ENVS:
-                base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}"
+                lower, upper = confidence_intervals[hk][e]
+                base = f"{100 * acc[hk][e]:.2f}/{100 * upper:.2f}/{100 * lower:.2f}/{cnt[hk][e]}"
                 if hk == env_winners.get(e):
                     env_cols.append(f"*{base}*")
                 else:
@@ -236,7 +250,8 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
         model_name = str(m.model)[:50]
         env_cols = []
         for e in ENVS:
-            base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}"
+            lower, upper = confidence_intervals[hk][e]
+            base = f"{100 * acc[hk][e]:.2f}/{100 * upper:.2f}/{100 * lower:.2f}/{cnt[hk][e]}"
             if hk == env_winners.get(e):
                 env_cols.append(f"*{base}*")
             else:
