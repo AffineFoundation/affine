@@ -397,7 +397,13 @@ class SamplingOrchestrator:
         
         pending_pairs = {}
         
-        for result in results:
+        # Sort results by timestamp to ensure deterministic pairing
+        # This prevents randomness in pending_pairs matching for same challenge_id
+        sorted_results = sorted(
+            results,
+            key=lambda r: r.response.timestamp if r.response.timestamp is not None else 0.0
+        )
+        for result in sorted_results:
             hk = result.miner.hotkey
             env = result.challenge.env
             
