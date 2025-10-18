@@ -1,6 +1,6 @@
 """
 Sampling module for Affine validator.
-Handles miner sampling and weight calculation using ELO-based epsilon-Pareto dominance.
+Handles miner sampling and weight calculation using challenge-based Pareto dominance.
 """
 
 import math
@@ -9,96 +9,172 @@ from collections import defaultdict
 from typing import Dict, List, Tuple, Optional, Any, Set
 
 
-def elo_update(rating_a: float, rating_b: float, score_a: float, k: float = 32.0) -> Tuple[float, float]:
-    """
-    Update ELO ratings for two players.
-    
-    Args:
-        rating_a: Current ELO rating of player A
-        rating_b: Current ELO rating of player B
-        score_a: Actual score of A (1.0 for win, 0.5 for draw, 0.0 for loss)
-        k: K-factor for ELO update speed
-    
-    Returns:
-        Tuple of (new_rating_a, new_rating_b)
-    """
-    expected_a = 1.0 / (1.0 + 10 ** ((rating_b - rating_a) / 400.0))
-    expected_b = 1.0 - expected_a
-    
-    new_rating_a = rating_a + k * (score_a - expected_a)
-    new_rating_b = rating_b + k * ((1.0 - score_a) - expected_b)
-    
-    return new_rating_a, new_rating_b
-
-
 class SamplingConfig:
     """Configuration parameters for sampling."""
     
-    TAIL = 20_000
-    ALPHA = 0.9
-    EPS_FLOOR = 0.005
-    Z_NOT_WORSE = 1.28
-    EPS_WIN = 0.015
-    Z_WIN = 0.5
-    ELIG = 0.10
-    MIN_SAMPLES_PER_ENV = 100
-    MAX_SAMPLES_CAP = 2000
-    SAMPLE_COUNT_CAP = 1000
-    RANK_GAP = 2  # Use 3rd place (0-indexed) for epsilon calculation
+    TAIL = 50_000  # Increased from 20k to 50k blocks for better statistical stability
+    MIN_SAMPLES_PER_ENV = 200  # Increased from 100 to 200 for stronger confidence intervals
+    MAX_SAMPLES_CAP = 5000  # Increased from 2000 to 5000
+    ELIG = 0.10  # Eligibility threshold: 10% of max samples
+    
+    # Challenge algorithm parameters
+    # Confidence level for Wilson score interval (can be adjusted easily)
+    CONFIDENCE_LEVEL = 0.90  # 90% confidence level
+    
+    @classmethod
+    def get_z_score(cls) -> float:
+        """
+        Calculate Z-score from confidence level.
+        Common values:
+        - 0.90 → 1.645
+        - 0.95 → 1.96
+        - 0.99 → 2.576
+        """
+        from scipy import stats
+        return stats.norm.ppf((1 + cls.CONFIDENCE_LEVEL) / 2)
+    
+    # Environment-specific score ranges for normalization
+    # Most environments use 0-1 range, but sciworld uses -100 to 100
+    ENV_SCORE_RANGES = {
+        "agentgym:sciworld": (-100.0, 100.0),
+        # All other environments default to (0.0, 1.0)
+    }
+    
+    @classmethod
+    def get_score_range(cls, env: str) -> tuple[float, float]:
+        """Get the score range for a specific environment."""
+        return cls.ENV_SCORE_RANGES.get(env, (0.0, 1.0))
+    
+    @classmethod
+    def normalize_score(cls, score: float, env: str) -> float:
+        """Normalize a score from environment-specific range to [0, 1]."""
+        min_score, max_score = cls.get_score_range(env)
+        if max_score == min_score:
+            return 0.0
+        return (score - min_score) / (max_score - min_score)
 
 
-class MinerSampler:
-    """Handles miner sampling and weight calculation with ELO scoring."""
+class ChallengeAlgorithm:
+    """
+    Bayesian confidence interval based challenge algorithm for miner comparison.
+    Uses Wilson score interval to determine winner in single environment.
+    """
     
     def __init__(self, config: Optional[SamplingConfig] = None):
         self.config = config or SamplingConfig()
-        self.elo_k_factor = 32.0
     
-    def compute_elo_scores(
-        self,
-        results_by_time: List[Tuple[Any, Any]],
-        hotkeys: List[str],
-        envs: Tuple[str, ...]
-    ) -> Dict[str, Dict[str, float]]:
+    def wilson_score_interval(self, successes: float, trials: int) -> Tuple[float, float]:
         """
-        Compute ELO scores for miners by processing pairwise results in time order.
+        Calculate Wilson score confidence interval.
         
         Args:
-            results_by_time: List of (result_a, result_b) pairs in time order
-            hotkeys: All hotkeys in metagraph
-            envs: Environment names
-            
+            successes: Total score sum (e.g., sum of evaluation scores)
+            trials: Number of samples
+        
         Returns:
-            Dict mapping hotkey -> env -> elo_score
+            (lower_bound, upper_bound) confidence interval based on CONFIDENCE_LEVEL
         """
-        elo = {hk: {e: 1500.0 for e in envs} for hk in hotkeys}
+        if trials == 0:
+            return (0.0, 0.0)
         
-        for result_a, result_b in results_by_time:
-            hk_a = result_a.miner.hotkey
-            hk_b = result_b.miner.hotkey
-            env = result_a.challenge.env
-            
-            if env not in envs or hk_a not in elo or hk_b not in elo:
-                continue
-                
-            score_a = float(result_a.evaluation.score) if result_a.response.success else 0.0
-            score_b = float(result_b.evaluation.score) if result_b.response.success else 0.0
-            
-            if score_a > score_b:
-                match_score = 1.0
-            elif score_a < score_b:
-                match_score = 0.0
+        # Clamp p_hat to [0, 1] to handle edge cases where scores might exceed expected range
+        p_hat = min(1.0, max(0.0, successes / trials))
+        z = self.config.get_z_score()
+        n = trials
+        
+        denominator = 1 + z**2 / n
+        center = p_hat + z**2 / (2 * n)
+        
+        # Ensure non-negative value under sqrt
+        variance_term = p_hat * (1 - p_hat) / n + z**2 / (4 * n**2)
+        variance_term = max(0.0, variance_term)
+        margin = z * math.sqrt(variance_term)
+        
+        lower = (center - margin) / denominator
+        upper = (center + margin) / denominator
+        
+        return (max(0.0, lower), min(1.0, upper))
+    
+    def challenge_winner(
+        self,
+        stats_a: Dict[str, Any],
+        stats_b: Dict[str, Any]
+    ) -> Optional[str]:
+        """
+        Determine winner between two miners in a single environment.
+        
+        Args:
+            stats_a: {
+                'hotkey': str,
+                'samples': int,
+                'total_score': float,
+                'first_block': int
+            }
+            stats_b: Same structure as stats_a
+        
+        Returns:
+            'a' | 'b' | None (tie)
+        
+        Logic:
+        1. Miners with insufficient samples (< MIN_SAMPLES_PER_ENV) auto-lose
+        2. Calculate confidence intervals for both (based on CONFIDENCE_LEVEL)
+        3. If B submitted later, B must satisfy: lower_b > upper_a to win
+        4. If A submitted later, A must satisfy: lower_a > upper_b to win
+        5. Otherwise, earlier submitter wins (anti-plagiarism)
+        """
+        samples_a = stats_a['samples']
+        samples_b = stats_b['samples']
+        min_samples = self.config.MIN_SAMPLES_PER_ENV
+        
+        # Sample count validation
+        if samples_a < min_samples and samples_b < min_samples:
+            return None  # Both insufficient
+        if samples_a < min_samples:
+            return 'b'
+        if samples_b < min_samples:
+            return 'a'
+        
+        # Calculate confidence intervals
+        lower_a, upper_a = self.wilson_score_interval(
+            stats_a['total_score'], samples_a
+        )
+        lower_b, upper_b = self.wilson_score_interval(
+            stats_b['total_score'], samples_b
+        )
+        
+        first_block_a = stats_a['first_block']
+        first_block_b = stats_b['first_block']
+        
+        # Anti-plagiarism: later submitter must significantly outperform
+        if first_block_a < first_block_b:
+            # B is later, B needs lower_b > upper_a to win
+            if lower_b > upper_a:
+                return 'b'
             else:
-                match_score = 0.5
-            
-            new_elo_a, new_elo_b = elo_update(
-                elo[hk_a][env], elo[hk_b][env], match_score, self.elo_k_factor
-            )
-            elo[hk_a][env] = new_elo_a
-            elo[hk_b][env] = new_elo_b
-        
-        return elo
-        
+                return 'a'  # A wins (earlier submission, anti-plagiarism)
+        elif first_block_b < first_block_a:
+            # A is later, A needs lower_a > upper_b to win
+            if lower_a > upper_b:
+                return 'a'
+            else:
+                return 'b'  # B wins (earlier submission, anti-plagiarism)
+        else:
+            # Same block (rare), compare confidence intervals directly
+            if lower_a > upper_b:
+                return 'a'
+            elif lower_b > upper_a:
+                return 'b'
+            else:
+                return None  # True tie
+
+
+class MinerSampler:
+    """Handles miner sampling and weight calculation with challenge-based scoring."""
+    
+    def __init__(self, config: Optional[SamplingConfig] = None):
+        self.config = config or SamplingConfig()
+        self.challenge_algo = ChallengeAlgorithm(config)
+    
     def calculate_eligibility(
         self,
         cnt: Dict[str, Dict[str, int]],
@@ -129,109 +205,63 @@ class MinerSampler:
         
         return eligible, required
     
-    def compute_epsilon_from_ranking_gap(
-        self,
-        elo_rankings: Dict[str, Dict[str, float]],
-        envs: Tuple[str, ...],
-        rank_gap: Optional[int] = None
-    ) -> Dict[str, float]:
-        """
-        Calculate per-environment epsilon based on ELO gap between top-ranked miners.
-        
-        This preserves Pareto optimality by using actual ranking differences rather than
-        statistical variance. The epsilon for each environment is defined as the absolute
-        difference between the 1st and (rank_gap+1)th ranked miner's ELO scores.
-        
-        Args:
-            elo_rankings: ELO scores per hotkey per env
-            envs: Environment names
-            rank_gap: Index gap for epsilon calculation (default: config.RANK_GAP, typically 2 for 3rd place)
-            
-        Returns:
-            Dict mapping env_name -> epsilon value
-        """
-        if rank_gap is None:
-            rank_gap = self.config.RANK_GAP
-            
-        epsilon_per_env = {}
-        
-        for e in envs:
-            scores = [elo_rankings[hk][e] for hk in elo_rankings if e in elo_rankings[hk]]
-            scores_sorted = sorted(scores, reverse=True)
-            
-            # If insufficient miners, use floor epsilon
-            if len(scores_sorted) <= rank_gap:
-                epsilon_per_env[e] = self.config.EPS_FLOOR * 100
-            else:
-                # Use gap between 1st and (rank_gap+1)th miner
-                gap = abs(scores_sorted[0] - scores_sorted[rank_gap])
-                epsilon_per_env[e] = max(self.config.EPS_FLOOR * 100, gap)
-        
-        return epsilon_per_env
-    
     def dominates_on(
         self,
         a: str,
         b: str,
         subset: Tuple[str, ...],
-        elo: Dict[str, Dict[str, float]],
-        first_block: Dict[str, int],
-        epsilon: Dict[str, float]
+        stats: Dict[str, Dict[str, Dict[str, Any]]]
     ) -> bool:
         """
-        Check if miner 'a' dominates miner 'b' on the given environment subset using ELO scores.
-        Uses epsilon-Pareto dominance with per-environment epsilon and tie-breaking by earliest block.
+        Check if miner 'a' dominates miner 'b' on the given environment subset using challenge algorithm.
         
         Args:
             a: Hotkey of miner A
             b: Hotkey of miner B
             subset: Environment subset to compare on
-            elo: ELO scores per hotkey per env
-            first_block: First block seen for each hotkey
-            epsilon: Per-environment tolerance for dominance comparison
+            stats: {hotkey: {env: {'samples': int, 'total_score': float, 'first_block': int}}}
             
         Returns:
-            True if A dominates B
+            True if A dominates B on this subset
+            
+        Dominance logic (Strict):
+        - A must win MORE environments than B in the subset
+        - Ties do not contribute to dominance
         """
-        not_worse_all = True
-        better_any = False
-        tie_all = True
+        wins_a = 0
+        wins_b = 0
         
         for e in subset:
-            elo_a = elo[a][e]
-            elo_b = elo[b][e]
-            eps = epsilon.get(e, self.config.EPS_FLOOR * 100)
+            stats_a = stats.get(a, {}).get(e, {'samples': 0, 'total_score': 0.0, 'first_block': float('inf')})
+            stats_b = stats.get(b, {}).get(e, {'samples': 0, 'total_score': 0.0, 'first_block': float('inf')})
             
-            if elo_a < elo_b - eps:
-                not_worse_all = False
-            if elo_a >= elo_b + eps:
-                better_any = True
-            if abs(elo_a - elo_b) > eps:
-                tie_all = False
+            winner = self.challenge_algo.challenge_winner(
+                {'hotkey': a, **stats_a},
+                {'hotkey': b, **stats_b}
+            )
+            
+            if winner == 'a':
+                wins_a += 1
+            elif winner == 'b':
+                wins_b += 1
+            # winner == None is a tie (doesn't count for either side)
         
-        if not_worse_all and better_any:
-            return True
-        if tie_all and first_block.get(a, float("inf")) < first_block.get(b, float("inf")):
-            return True
-        return False
+        # Strict dominance: A must win MORE environments than B
+        return wins_a > wins_b
     
     def compute_dominance_counts(
         self,
         pool: Set[str],
         envs: Tuple[str, ...],
-        elo: Dict[str, Dict[str, float]],
-        first_block: Dict[str, int],
-        epsilon: Dict[str, float]
+        stats: Dict[str, Dict[str, Dict[str, Any]]]
     ) -> Dict[str, int]:
         """
-        Compute dominance counts for the given miner pool using ELO scores.
+        Compute dominance counts for the given miner pool using challenge algorithm.
         
         Args:
             pool: Set of hotkeys to compare
             envs: Environment names
-            elo: ELO scores per hotkey per env
-            first_block: First block seen for each hotkey
-            epsilon: Per-environment tolerance for dominance comparison
+            stats: {hotkey: {env: {'samples': int, 'total_score': float, 'first_block': int}}}
             
         Returns:
             Dict mapping hotkey -> dominance count
@@ -239,7 +269,7 @@ class MinerSampler:
         dom_counts = defaultdict(int)
         
         for a, b in itertools.permutations(pool, 2):
-            if self.dominates_on(a, b, envs, elo, first_block, epsilon):
+            if self.dominates_on(a, b, envs, stats):
                 dom_counts[a] += 1
                 
         return dom_counts
@@ -248,20 +278,15 @@ class MinerSampler:
         self,
         env_subset: Tuple[str, ...],
         pool: Set[str],
-        elo: Dict[str, Dict[str, float]],
-        first_block: Dict[str, int],
-        epsilon: Dict[str, float]
+        stats: Dict[str, Dict[str, Dict[str, Any]]]
     ) -> Optional[str]:
         """
-        Find winner on environment subset via ELO-based epsilon-Pareto dominance.
-        Falls back to earliest version start block if no dominance edges.
+        Find winner on environment subset via challenge-based Pareto dominance.
         
         Args:
             env_subset: Environment subset to find winner for
             pool: Set of hotkeys to compare
-            elo: ELO scores per hotkey per env
-            first_block: First block seen for each hotkey
-            epsilon: Per-environment tolerance for dominance comparison
+            stats: {hotkey: {env: {'samples': int, 'total_score': float, 'first_block': int}}}
             
         Returns:
             Winning hotkey or None
@@ -271,42 +296,44 @@ class MinerSampler:
             
         dom_local = defaultdict(int)
         for x, y in itertools.permutations(pool, 2):
-            if self.dominates_on(x, y, env_subset, elo, first_block, epsilon):
+            if self.dominates_on(x, y, env_subset, stats):
                 dom_local[x] += 1
         
-        def timestamp(hk: str) -> int:
-            return int(first_block[hk]) if hk in first_block else float('inf')
+        def get_first_block(hk: str) -> int:
+            """Get earliest first_block across all envs in subset."""
+            blocks = [
+                stats.get(hk, {}).get(e, {}).get('first_block', float('inf'))
+                for e in env_subset
+            ]
+            return min(blocks) if blocks else float('inf')
         
-        return max(pool, key=lambda hk: (dom_local.get(hk, 0), -timestamp(hk)))
+        return max(pool, key=lambda hk: (dom_local.get(hk, 0), -get_first_block(hk)))
     
     def compute_layer_weights(self, n_envs: int, scale: float) -> Dict[int, float]:
         """
-        Compute per-subset weights K_s.
-        K_1 = scale; K_s = scale * (2^s) for s >= 2.
+        Compute per-subset weights K_s using power-law scaling.
+        K_s = scale * (s ** 0.7) for all s >= 1.
+        This provides balanced multi-environment incentives without extreme concentration.
         """
-        K = {1: scale}
-        for s in range(2, n_envs + 1):
-            K[s] = scale * (2**s)
+        K = {}
+        for s in range(1, n_envs + 1):
+            K[s] = scale * (s ** 0.7)
         return K
     
     def calculate_combinatoric_scores(
         self,
         envs: Tuple[str, ...],
         pool: Set[str],
-        elo: Dict[str, Dict[str, float]],
-        first_block: Dict[str, int],
-        epsilon: Dict[str, float],
+        stats: Dict[str, Dict[str, Dict[str, Any]]],
         scale: float
     ) -> Tuple[Dict[str, float], Dict[str, Dict[int, float]], Dict[str, str]]:
         """
-        Calculate combinatoric scores for all miners using ELO-based dominance.
+        Calculate combinatoric scores for all miners using challenge-based dominance.
         
         Args:
             envs: Environment names
             pool: Set of hotkeys to score
-            elo: ELO scores per hotkey per env
-            first_block: First block seen for each hotkey
-            epsilon: Per-environment tolerance for dominance comparison
+            stats: {hotkey: {env: {'samples': int, 'total_score': float, 'first_block': int}}}
             scale: Scaling factor for layer weights
             
         Returns:
@@ -320,11 +347,11 @@ class MinerSampler:
         env_winners = {}
         
         for e in envs:
-            env_winners[e] = self.find_subset_winner((e,), pool, elo, first_block, epsilon)
+            env_winners[e] = self.find_subset_winner((e,), pool, stats)
         
         for s in range(1, n_envs + 1):
             for env_subset in itertools.combinations(envs, s):
-                winner = self.find_subset_winner(env_subset, pool, elo, first_block, epsilon)
+                winner = self.find_subset_winner(env_subset, pool, stats)
                 if winner:
                     scores[winner] += K[s]
                     layer_points[winner][s] += K[s]
@@ -380,22 +407,24 @@ class SamplingOrchestrator:
         Dict[str, Any],
         Dict[str, Tuple[str, Optional[str]]],
         Dict[str, int],
-        List[Tuple[Any, Any]]
+        Dict[str, Dict[str, Dict[str, Any]]]
     ]:
         """
-        Process raw sample data into structured counts, metadata, and pairwise results.
+        Process raw sample data into structured counts and metadata.
         
         Returns:
-            Tuple of (cnt, succ, prev, v_id, first_block, pairs_by_time)
+            Tuple of (cnt, succ, prev, v_id, first_block, stats)
+            where stats = {hotkey: {env: {'samples': int, 'total_score': float, 'first_block': int}}}
         """
         cnt = {hk: defaultdict(int) for hk in meta_hotkeys}
         succ = {hk: defaultdict(int) for hk in meta_hotkeys}
         prev = {}
         v_id = {}
         first_block = {}
-        pairs_by_time = []
         
-        pending_pairs = {}
+        # Stats structure for challenge algorithm
+        stats = {hk: {} for hk in meta_hotkeys}
+        env_first_block = {hk: {e: float('inf') for e in envs} for hk in meta_hotkeys}
         
         # Sort results by timestamp to ensure deterministic pairing
         # This prevents randomness in pending_pairs matching for same challenge_id
@@ -426,6 +455,7 @@ class SamplingOrchestrator:
                 for e in envs:
                     cnt[hk][e] = 0
                     succ[hk][e] = 0
+                    env_first_block[hk][e] = float('inf')
             else:
                 try:
                     fb = int(first_block.get(hk, result.miner.block)) if first_block.get(hk) is not None else int(result.miner.block)
@@ -436,17 +466,28 @@ class SamplingOrchestrator:
             
             prev[hk] = result
             cnt[hk][env] += 1
-            succ[hk][env] += float(result.evaluation.score)
+            # Normalize score to [0, 1] range based on environment-specific score range
+            normalized_score = SamplingConfig.normalize_score(float(result.evaluation.score), env)
+            succ[hk][env] += normalized_score
             
-            # Use challenge_id to match same tasks for ELO pairwise comparison
-            challenge_id = result.challenge.challenge_id
-            if challenge_id in pending_pairs:
-                other_result = pending_pairs.pop(challenge_id)
-                pairs_by_time.append((other_result, result))
-            else:
-                pending_pairs[challenge_id] = result
+            # Track first block per environment
+            try:
+                block_num = int(result.miner.block)
+                if block_num < env_first_block[hk][env]:
+                    env_first_block[hk][env] = block_num
+            except Exception:
+                pass
+        
+        # Build stats structure for challenge algorithm
+        for hk in meta_hotkeys:
+            for e in envs:
+                stats[hk][e] = {
+                    'samples': cnt[hk][e],
+                    'total_score': succ[hk][e],
+                    'first_block': env_first_block[hk][e] if env_first_block[hk][e] != float('inf') else first_block.get(hk, float('inf'))
+                }
 
-        return cnt, succ, prev, v_id, first_block, pairs_by_time
+        return cnt, succ, prev, v_id, first_block, stats
     
     def calculate_accuracies(
         self,
