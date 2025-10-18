@@ -154,7 +154,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
         logger.warning("No results collected; defaulting to uid 0")
         return [0], [1.0]
     
-    cnt, succ, prev, v_id, first_block, pairs_by_time = orchestrator.process_sample_data(
+    cnt, succ, prev, v_id, first_block, stats = orchestrator.process_sample_data(
         results_list, meta.hotkeys, ENVS, BASE_HK
     )
     
@@ -165,23 +165,15 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
     acc = orchestrator.calculate_accuracies(cnt, succ, meta.hotkeys, ENVS)
     
     active_hks = list(prev.keys())
-    logger.info("Computed accuracy & updated MAXENV.")
+    logger.info("Computed accuracy.")
 
     eligible, required = sampler.calculate_eligibility(cnt, active_hks, queryable_hks, ENVS)
     logger.info(f"Eligible miners: {len(eligible)} (from {len(active_hks)} active, {len(queryable_hks)} queryable)")
 
     pool_for_dom = eligible if eligible else (queryable_hks & set(active_hks))
     
-    elo = sampler.compute_elo_scores(pairs_by_time, meta.hotkeys, ENVS)
-    logger.info(f"Computed ELO scores from {len(pairs_by_time)} pairwise comparisons.")
-    
-    epsilon_per_env = sampler.compute_epsilon_from_ranking_gap(elo, ENVS)
-    logger.info(f"Computed per-environment epsilon for dominance:")
-    for env_name, eps_val in epsilon_per_env.items():
-        logger.info(f"  {env_name}: {eps_val:.2f}")
-    
-    dom_full = sampler.compute_dominance_counts(pool_for_dom, ENVS, elo, first_block, epsilon_per_env)
-    logger.info("Computed ELO-based ε-dominance counts (full env set).")
+    dom_full = sampler.compute_dominance_counts(pool_for_dom, ENVS, stats)
+    logger.info("Computed challenge-based dominance counts (full env set).")
 
     def ts(hk: str) -> int:
         return int(first_block[hk]) if hk in first_block else float('inf')
@@ -191,7 +183,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
     best_uid = meta.hotkeys.index(best)
 
     score, layer_points, env_winners = sampler.calculate_combinatoric_scores(
-        ENVS, pool_for_dom, elo, first_block, epsilon_per_env, scale
+        ENVS, pool_for_dom, stats, scale
     )
 
     if not eligible:
@@ -211,7 +203,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
             model_name = str(m.model)[:50]
             env_cols = []
             for e in ENVS:
-                base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}/{elo[hk][e]:.0f}"
+                base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}"
                 if hk == env_winners.get(e):
                     env_cols.append(f"*{base}*")
                 else:
@@ -244,7 +236,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
         model_name = str(m.model)[:50]
         env_cols = []
         for e in ENVS:
-            base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}/{elo[hk][e]:.0f}"
+            base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}"
             if hk == env_winners.get(e):
                 env_cols.append(f"*{base}*")
             else:
