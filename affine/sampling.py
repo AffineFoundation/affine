@@ -279,9 +279,10 @@ class MinerSampler:
         env_subset: Tuple[str, ...],
         pool: Set[str],
         stats: Dict[str, Dict[str, Dict[str, Any]]]
-    ) -> Optional[str]:
+    ) -> List[str]:
         """
-        Find winner on environment subset via challenge-based Pareto dominance.
+        Find winner(s) on environment subset via challenge-based Pareto dominance.
+        Returns list of hotkeys that tie for first place (split rewards equally).
         
         Args:
             env_subset: Environment subset to find winner for
@@ -289,25 +290,23 @@ class MinerSampler:
             stats: {hotkey: {env: {'samples': int, 'total_score': float, 'first_block': int}}}
             
         Returns:
-            Winning hotkey or None
+            List of winning hotkeys (may contain multiple winners if tied)
         """
         if not pool:
-            return None
+            return []
             
         dom_local = defaultdict(int)
         for x, y in itertools.permutations(pool, 2):
             if self.dominates_on(x, y, env_subset, stats):
                 dom_local[x] += 1
+
+        # Find maximum dominance count
+        max_dom = max((dom_local.get(hk, 0) for hk in pool), default=0)
         
-        def get_first_block(hk: str) -> int:
-            """Get earliest first_block across all envs in subset."""
-            blocks = [
-                stats.get(hk, {}).get(e, {}).get('first_block', float('inf'))
-                for e in env_subset
-            ]
-            return min(blocks) if blocks else float('inf')
+        # Find all miners with maximum dominance count (tied winners)
+        tied_winners = [hk for hk in pool if dom_local.get(hk, 0) == max_dom]
         
-        return max(pool, key=lambda hk: (dom_local.get(hk, 0), -get_first_block(hk)))
+        return tied_winners
     
     def compute_layer_weights(self, n_envs: int, scale: float) -> Dict[int, float]:
         """
@@ -345,15 +344,27 @@ class MinerSampler:
         layer_points = defaultdict(lambda: defaultdict(float))
         env_winners = {}
         
+        # Calculate env_winners (pick earliest for display purposes)
         for e in envs:
-            env_winners[e] = self.find_subset_winner((e,), pool, stats)
-        
+            winners = self.find_subset_winner((e,), pool, stats)
+            if winners:
+                # For display, pick the earliest submitter among tied winners
+                def get_first_block(hk: str) -> int:
+                    return stats.get(hk, {}).get(e, {}).get('first_block', float('inf'))
+                env_winners[e] = min(winners, key=get_first_block)
+            else:
+                env_winners[e] = None
+
+        # Calculate scores with tie-splitting
         for s in range(1, n_envs + 1):
             for env_subset in itertools.combinations(envs, s):
-                winner = self.find_subset_winner(env_subset, pool, stats)
-                if winner:
-                    scores[winner] += K[s]
-                    layer_points[winner][s] += K[s]
+                winners = self.find_subset_winner(env_subset, pool, stats)
+                if winners:
+                    # Split reward equally among all tied winners
+                    reward_per_winner = K[s] / len(winners)
+                    for winner in winners:
+                        scores[winner] += reward_per_winner
+                        layer_points[winner][s] += reward_per_winner
         
         return scores, layer_points, env_winners
     
