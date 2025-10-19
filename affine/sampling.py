@@ -222,7 +222,7 @@ class MinerSampler:
         confidence_intervals: Optional[Dict[str, Dict[str, Tuple[float, float]]]] = None
     ) -> bool:
         """
-        Check if miner 'a' dominates miner 'b' on the given environment subset using challenge algorithm.
+        Check if miner 'a' Pareto-dominates miner 'b' on the given environment subset.
 
         Args:
             a: Hotkey of miner A
@@ -232,14 +232,13 @@ class MinerSampler:
             confidence_intervals: Pre-computed {hotkey: {env: (lower, upper)}}, optional
 
         Returns:
-            True if A dominates B on this subset
+            True if A Pareto-dominates B on this subset
 
-        Dominance logic (Strict):
-        - A must win MORE environments than B in the subset
-        - Ties do not contribute to dominance
+        Pareto Dominance:
+        - A must be >= B on ALL environments (no environment where B wins)
+        - A must be > B on AT LEAST ONE environment (at least one where A wins)
         """
-        wins_a = 0
-        wins_b = 0
+        at_least_one_strict_win = False
 
         for e in subset:
             stats_a = stats.get(a, {}).get(e, {'samples': 0, 'total_score': 0.0, 'first_block': float('inf')})
@@ -259,14 +258,16 @@ class MinerSampler:
                 confidence_interval_b=ci_b
             )
 
-            if winner == 'a':
-                wins_a += 1
-            elif winner == 'b':
-                wins_b += 1
-            # winner == None is a tie (doesn't count for either side)
+            if winner == 'b':
+                # B wins on this environment, so A does NOT dominate B
+                return False
+            elif winner == 'a':
+                # A wins on this environment
+                at_least_one_strict_win = True
+            # winner == None is a tie (A >= B satisfied, but not strict)
 
-        # Strict dominance: A must win MORE environments than B
-        return wins_a > wins_b
+        # A dominates B only if: A >= B on all envs AND A > B on at least one
+        return at_least_one_strict_win
     
     def compute_dominance_counts(
         self,
@@ -303,8 +304,8 @@ class MinerSampler:
         confidence_intervals: Optional[Dict[str, Dict[str, Tuple[float, float]]]] = None
     ) -> List[str]:
         """
-        Find winner(s) on environment subset via challenge-based Pareto dominance.
-        Returns list of hotkeys that tie for first place (split rewards equally).
+        Find winner(s) on environment subset via Pareto dominance.
+        Returns miners on Pareto frontier (not dominated by anyone).
 
         Args:
             env_subset: Environment subset to find winner for
@@ -313,23 +314,38 @@ class MinerSampler:
             confidence_intervals: Pre-computed {hotkey: {env: (lower, upper)}}, optional
 
         Returns:
-            List of winning hotkeys (may contain multiple winners if tied)
+            List of winning hotkeys on Pareto frontier (split rewards equally)
         """
         if not pool:
             return []
 
-        dom_local = defaultdict(int)
-        for x, y in itertools.permutations(pool, 2):
-            if self.dominates_on(x, y, env_subset, stats, confidence_intervals):
-                dom_local[x] += 1
+        # Find Pareto frontier: miners that are NOT dominated by anyone
+        pareto_frontier = []
 
-        # Find maximum dominance count
-        max_dom = max((dom_local.get(hk, 0) for hk in pool), default=0)
-        
-        # Find all miners with maximum dominance count (tied winners)
-        tied_winners = [hk for hk in pool if dom_local.get(hk, 0) == max_dom]
-        
-        return tied_winners
+        for candidate in pool:
+            is_dominated = False
+            for other in pool:
+                if candidate == other:
+                    continue
+                # Check if 'other' dominates 'candidate'
+                if self.dominates_on(other, candidate, env_subset, stats, confidence_intervals):
+                    is_dominated = True
+                    break
+
+            if not is_dominated:
+                pareto_frontier.append(candidate)
+
+        # Debug logging for single environment case
+        if len(env_subset) == 1 and len(pareto_frontier) > 1:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Multiple winners on single env {env_subset[0]}: {len(pareto_frontier)} miners tied")
+            for hk in pareto_frontier[:5]:  # Log first 5
+                env_stats = stats.get(hk, {}).get(env_subset[0], {})
+                ci = confidence_intervals.get(hk, {}).get(env_subset[0], (0, 0)) if confidence_intervals else (0, 0)
+                logger.warning(f"  {hk[:8]}: samples={env_stats.get('samples', 0)}, CI={ci}, first_block={env_stats.get('first_block', 'inf')}")
+
+        return pareto_frontier if pareto_frontier else list(pool)
     
     def compute_layer_weights(self, n_envs: int, scale: float) -> Dict[int, float]:
         """
