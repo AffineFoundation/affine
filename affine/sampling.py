@@ -1,10 +1,11 @@
 """
 Sampling module for Affine validator.
-Handles miner sampling and weight calculation using ELO-based epsilon-Pareto dominance.
+Handles miner sampling and weight calculation using ELO-based per-environment margins
+(signed Nash scoring) with MAE grouping and positive-score weight normalization.
 """
 
 import math
-import itertools
+import os
 from collections import defaultdict
 from typing import Dict, List, Tuple, Optional, Any, Set
 
@@ -34,17 +35,19 @@ def elo_update(rating_a: float, rating_b: float, score_a: float, k: float = 32.0
 class SamplingConfig:
     """Configuration parameters for sampling."""
     
-    TAIL = 20_000
+    TAIL = 40000
     ALPHA = 0.9
     EPS_FLOOR = 0.005
-    Z_NOT_WORSE = 1.28
-    EPS_WIN = 0.015
-    Z_WIN = 0.5
     ELIG = 0.10
     MIN_SAMPLES_PER_ENV = 100
     MAX_SAMPLES_CAP = 2000
     SAMPLE_COUNT_CAP = 1000
     RANK_GAP = 2  # Use 3rd place (0-indexed) for epsilon calculation
+    # Signed Nash scoring parameters (beta removed; use log1p on raw margins)
+    NASH_GAMMA = 0.2   # penalty weight for negative margins (>1 penalizes losses more)
+    # Epsilon adjustment for Nash
+    NASH_EPS_SCALE = 0.0     # scale epsilon down to be less strict
+    NASH_EPS_FLOOR_ELO = 0.0  # minimum epsilon in ELO units
 
 
 class MinerSampler:
@@ -169,125 +172,6 @@ class MinerSampler:
         
         return epsilon_per_env
     
-    def dominates_on(
-        self,
-        a: str,
-        b: str,
-        subset: Tuple[str, ...],
-        elo: Dict[str, Dict[str, float]],
-        first_block: Dict[str, int],
-        epsilon: Dict[str, float]
-    ) -> bool:
-        """
-        Check if miner 'a' dominates miner 'b' on the given environment subset using ELO scores.
-        Uses epsilon-Pareto dominance with per-environment epsilon and tie-breaking by earliest block.
-        
-        Args:
-            a: Hotkey of miner A
-            b: Hotkey of miner B
-            subset: Environment subset to compare on
-            elo: ELO scores per hotkey per env
-            first_block: First block seen for each hotkey
-            epsilon: Per-environment tolerance for dominance comparison
-            
-        Returns:
-            True if A dominates B
-        """
-        not_worse_all = True
-        better_any = False
-        tie_all = True
-        
-        for e in subset:
-            elo_a = elo[a][e]
-            elo_b = elo[b][e]
-            eps = epsilon.get(e, self.config.EPS_FLOOR * 100)
-            
-            if elo_a < elo_b - eps:
-                not_worse_all = False
-            if elo_a >= elo_b + eps:
-                better_any = True
-            if abs(elo_a - elo_b) > eps:
-                tie_all = False
-        
-        if not_worse_all and better_any:
-            return True
-        if tie_all and first_block.get(a, float("inf")) < first_block.get(b, float("inf")):
-            return True
-        return False
-    
-    def compute_dominance_counts(
-        self,
-        pool: Set[str],
-        envs: Tuple[str, ...],
-        elo: Dict[str, Dict[str, float]],
-        first_block: Dict[str, int],
-        epsilon: Dict[str, float]
-    ) -> Dict[str, int]:
-        """
-        Compute dominance counts for the given miner pool using ELO scores.
-        
-        Args:
-            pool: Set of hotkeys to compare
-            envs: Environment names
-            elo: ELO scores per hotkey per env
-            first_block: First block seen for each hotkey
-            epsilon: Per-environment tolerance for dominance comparison
-            
-        Returns:
-            Dict mapping hotkey -> dominance count
-        """
-        dom_counts = defaultdict(int)
-        
-        for a, b in itertools.permutations(pool, 2):
-            if self.dominates_on(a, b, envs, elo, first_block, epsilon):
-                dom_counts[a] += 1
-                
-        return dom_counts
-    
-    def find_subset_winner(
-        self,
-        env_subset: Tuple[str, ...],
-        pool: Set[str],
-        elo: Dict[str, Dict[str, float]],
-        first_block: Dict[str, int],
-        epsilon: Dict[str, float]
-    ) -> Optional[str]:
-        """
-        Find winner on environment subset via ELO-based epsilon-Pareto dominance.
-        Falls back to earliest version start block if no dominance edges.
-        
-        Args:
-            env_subset: Environment subset to find winner for
-            pool: Set of hotkeys to compare
-            elo: ELO scores per hotkey per env
-            first_block: First block seen for each hotkey
-            epsilon: Per-environment tolerance for dominance comparison
-            
-        Returns:
-            Winning hotkey or None
-        """
-        if not pool:
-            return None
-            
-        dom_local = defaultdict(int)
-        for x, y in itertools.permutations(pool, 2):
-            if self.dominates_on(x, y, env_subset, elo, first_block, epsilon):
-                dom_local[x] += 1
-        
-        def timestamp(hk: str) -> int:
-            return int(first_block[hk]) if hk in first_block else float('inf')
-        
-        return max(pool, key=lambda hk: (dom_local.get(hk, 0), -timestamp(hk)))
-    
-    def compute_layer_weights(self, n_envs: int, scale: float) -> Dict[int, float]:
-        """
-        Compute per-subset weights K_s.
-        K_1 = scale; K_s = scale * (2^s) for s >= 2.
-        """
-        K = {1: scale}
-        for s in range(2, n_envs + 1):
-            K[s] = scale * (2**s)
-        return K
     
     def calculate_combinatoric_scores(
         self,
@@ -299,36 +183,89 @@ class MinerSampler:
         scale: float
     ) -> Tuple[Dict[str, float], Dict[str, Dict[int, float]], Dict[str, str]]:
         """
-        Calculate combinatoric scores for all miners using ELO-based dominance.
-        
-        Args:
-            envs: Environment names
-            pool: Set of hotkeys to score
-            elo: ELO scores per hotkey per env
-            first_block: First block seen for each hotkey
-            epsilon: Per-environment tolerance for dominance comparison
-            scale: Scaling factor for layer weights
-            
-        Returns:
-            Tuple of (scores, layer_points, env_winners)
+        Compute signed Nash scores.
+
+        For each env e and miner h:
+          delta = elo[h,e] - max_other[e]
+          p = max(0, delta - epsilon[e])
+          n = max(0, -delta - epsilon[e])
+          contrib_e = log1p(p) - gamma * log1p(n)
+
+        The final score is the sum of contrib_e across environments.
+
+        Returns: (scores_by_hk, layer_points_by_hk, env_winners)
+          - layer_points exposes a simple per-miner aggregate of positive contributions (layer 1)
+          - env_winners marks the top positive-margin miner per env (if any)
         """
         n_envs = len(envs)
-        K = self.compute_layer_weights(n_envs, scale)
-        
-        scores = defaultdict(float)
-        layer_points = defaultdict(lambda: defaultdict(float))
-        env_winners = {}
-        
+        gamma = getattr(self.config, 'NASH_GAMMA', 1.0)
+        eps_scale = getattr(self.config, 'NASH_EPS_SCALE', 0.5)
+        eps_floor = getattr(self.config, 'NASH_EPS_FLOOR_ELO', 5.0)
+
+        scores: Dict[str, float] = defaultdict(float)
+        layer_points: Dict[str, Dict[int, float]] = defaultdict(lambda: defaultdict(float))
+        env_winners: Dict[str, str] = {}
+        debug_info: Dict[str, Tuple[float, int, List[float]]] = {}
+
+        pool_list = list(pool)
+
+        # Determine per-env winners by highest positive (delta - adjusted_epsilon)
         for e in envs:
-            env_winners[e] = self.find_subset_winner((e,), pool, elo, first_block, epsilon)
-        
-        for s in range(1, n_envs + 1):
-            for env_subset in itertools.combinations(envs, s):
-                winner = self.find_subset_winner(env_subset, pool, elo, first_block, epsilon)
-                if winner:
-                    scores[winner] += K[s]
-                    layer_points[winner][s] += K[s]
-        
+            best_hk = None
+            best_val = 0.0
+            adj_eps = max(eps_floor, epsilon.get(e, 0.0) * eps_scale)
+            for hk in pool_list:
+                if len(pool_list) > 1:
+                    max_other = max(elo[g][e] for g in pool_list if g != hk)
+                else:
+                    max_other = elo[hk][e]
+                delta = elo[hk][e] - max_other
+                p = max(0.0, delta - adj_eps)
+                if p > best_val:
+                    best_val = p
+                    best_hk = hk
+            if best_hk is not None and best_val > 0.0:
+                env_winners[e] = best_hk
+
+        # Compute signed Nash score per miner
+        for hk in pool_list:
+            pos_count = 0
+            s_val = 0.0
+            pos_sum = 0.0  # for layer 1 display only
+            per_env_pos: List[float] = []
+            for e in envs:
+                if len(pool_list) > 1:
+                    max_other = max(elo[g][e] for g in pool_list if g != hk)
+                else:
+                    max_other = elo[hk][e]
+                delta = elo[hk][e] - max_other
+                eps = max(eps_floor, epsilon.get(e, 0.0) * eps_scale)
+                p = max(0.0, delta - eps)
+                n = max(0.0, -delta - eps)
+                if p > 0.0:
+                    pos_count += 1
+                    pos_sum += math.log1p(p)
+                per_env_pos.append(p)
+                s_val += math.log1p(p) - gamma * math.log1p(n)
+            # avoid exact zero to keep a tiny positive signal
+            if s_val == 0.0:
+                s_val = 0.01
+            scores[hk] = s_val
+            if pos_sum > 0.0:
+                layer_points[hk][1] = pos_sum
+            debug_info[hk] = (s_val, pos_count, per_env_pos)
+
+        # Optional debug: print final scores and per-env positive margins
+        if os.getenv("AFFINE_NASH_DEBUG", "").lower() in ("1", "true", "yes"):
+            try:
+                print(f"Nash debug: gamma={gamma}")
+                print("Per-env epsilons:", {e: epsilon.get(e, 0.0) for e in envs})
+                for hk, (sv, pc, p_list) in debug_info.items():
+                    p_str = ", ".join(f"{v:.2f}" for v in p_list)
+                    print(f"  hk={hk} score={sv:.4f} pos_envs={pc} p=[{p_str}]")
+            except Exception:
+                pass
+
         return scores, layer_points, env_winners
     
     def apply_burn(
@@ -478,14 +415,17 @@ class SamplingOrchestrator:
         if not eligible:
             return {}, eligible
             
-        total_points = sum(scores.get(hk, 0.0) for hk in eligible)
-        
-        if total_points <= 0:
-            # Fall back to best miner
+        # Normalize weights by the sum of positive scores only
+        total_positive = sum(max(0.0, scores.get(hk, 0.0)) for hk in eligible)
+
+        if total_positive > 0.0:
+            weight_by_hk = {
+                hk: (max(0.0, scores.get(hk, 0.0)) / total_positive) for hk in eligible
+            }
+        else:
+            # Fallback: if no positive scores, pick the best by raw score
             best = max(eligible, key=lambda hk: scores.get(hk, 0.0))
             weight_by_hk = {hk: (1.0 if hk == best else 0.0) for hk in eligible}
-        else:
-            weight_by_hk = {hk: (scores.get(hk, 0.0) / total_points) for hk in eligible}
         
         # Apply burn if requested
         if burn > 0:

@@ -288,19 +288,26 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
     for env_name, eps_val in epsilon_per_env.items():
         logger.info(f"  {env_name}: {eps_val:.2f}")
     
-    dom_full = sampler.compute_dominance_counts(pool_for_dom, ENVS, elo, first_block, epsilon_per_env)
-    logger.info("Computed ELO-based ε-dominance counts (full env set).")
-
-    def ts(hk: str) -> int:
-        return int(first_block[hk]) if hk in first_block else float('inf')
-    
-    best_candidates = pool_for_dom if pool_for_dom else (queryable_hks if queryable_hks else active_hks[:1])
-    best = max(best_candidates, key=lambda hk: (dom_full.get(hk, 0), -ts(hk))) if best_candidates else active_hks[0]
-    best_uid = meta.hotkeys.index(best)
-
     score, layer_points, env_winners = sampler.calculate_combinatoric_scores(
         ENVS, pool_for_dom, elo, first_block, epsilon_per_env, scale
     )
+
+    # Select best miner based on Nash score (no dominance)
+    best_candidates = pool_for_dom if pool_for_dom else (queryable_hks if queryable_hks else active_hks[:1])
+    best = max(best_candidates, key=lambda hk: score.get(hk, 0.0)) if best_candidates else active_hks[0]
+    best_uid = meta.hotkeys.index(best)
+
+    # Print final per-miner scores (uid, score) before the table
+    try:
+        lines = ["Final scores (Nash):"]
+        for hk in active_hks:
+            if hk in prev:
+                uid = prev[hk].miner.uid
+                s = score.get(hk, 0.0)
+                lines.append(f"  uid={uid} score={s:.2f}")
+        print("\n".join(lines))
+    except Exception:
+        pass
 
     if not eligible:
         logger.warning(f"No eligible miners (queryable={len(queryable_hks)}); assigning weight 1.0 to uid 0.")
@@ -308,8 +315,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
         hdr = (
             ["UID", "Model", "Rev"]
             + [f"{e}" for e in ENVS]
-            + [f"L{s}" for s in range(1, N_envs + 1)]
-            + ["Pts", "Elig", "Wgt"]
+            + ["Score", "Elig", "Wgt"]
         )
         def row(hk: str):
             if hk not in prev:
@@ -327,7 +333,6 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
             return [
                 m.uid, model_name, str(m.revision)[:5],
                 *env_cols,
-                *[f"{layer_points[hk][s]:.1f}" for s in range(1, N_envs + 1)],
                 f"{score.get(hk, 0.0):.2f}",
                 "Y" if hk in eligible else "N",
                 f"{w:.4f}",
@@ -350,8 +355,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
     hdr = (
         ["UID", "Model", "Rev"]
         + [f"{e}" for e in ENVS]
-        + [f"L{s}" for s in range(1, N_envs + 1)]
-        + ["Pts", "Elig", "Wgt"]
+        + ["Score", "Elig", "Wgt"]
     )
     def row(hk: str):
         if hk not in prev:
@@ -369,7 +373,6 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
         return [
             m.uid, model_name[:30], str(m.revision)[:5],
             *env_cols,
-            *[f"{layer_points[hk][s]:.1f}" for s in range(1, N_envs + 1)],
             f"{score.get(hk, 0.0):.2f}",
             "Y" if hk in eligible else "N",
             f"{w:.4f}",
