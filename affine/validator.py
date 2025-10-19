@@ -206,7 +206,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
             ["UID", "Model", "Rev"]
             + [f"{e}" for e in ENVS]
             + [f"L{s}" for s in range(1, N_envs + 1)]
-            + ["Pts", "Elig", "Wgt"]
+            + ["Pts", "Elig", "FirstBlk", "Wgt"]
         )
         def row(hk: str):
             if hk not in prev:
@@ -228,9 +228,10 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
                 *[f"{layer_points[hk][s]:.1f}" for s in range(1, N_envs + 1)],
                 f"{score.get(hk, 0.0):.2f}",
                 "Y" if hk in eligible else "N",
+                f"{first_block.get(hk, 0)}",
                 f"{w:.4f}",
             ]
-        rows = sorted((r for r in (row(hk) for hk in active_hks) if r is not None), key=lambda r: (r[-3], r[0]), reverse=True)
+        rows = sorted((r for r in (row(hk) for hk in active_hks) if r is not None), key=lambda r: (r[-4], r[0]), reverse=True)
         print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
         return [0], [1.0]
 
@@ -240,7 +241,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
         ["UID", "Model", "Rev"]
         + [f"{e}" for e in ENVS]
         + [f"L{s}" for s in range(1, N_envs + 1)]
-        + ["Pts", "Elig", "Wgt"]
+        + ["Pts", "Elig", "FirstBlk", "Wgt"]
     )
     def row(hk: str):
         if hk not in prev:
@@ -262,10 +263,11 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
             *[f"{layer_points[hk][s]:.1f}" for s in range(1, N_envs + 1)],
             f"{score.get(hk, 0.0):.2f}",
             "Y" if hk in eligible else "N",
+            f"{first_block.get(hk, 0)}",
             f"{w:.4f}",
         ]
-    ranked_rows   = sorted((r for r in (row(hk) for hk in eligible) if r is not None), key=lambda r: float(r[-3]), reverse=True)
-    unranked_rows = sorted((r for r in (row(hk) for hk in active_hks if hk not in eligible) if r is not None), key=lambda r: float(r[-3]), reverse=True)
+    ranked_rows   = sorted((r for r in (row(hk) for hk in eligible) if r is not None), key=lambda r: float(r[-4]), reverse=True)
+    unranked_rows = sorted((r for r in (row(hk) for hk in active_hks if hk not in eligible) if r is not None), key=lambda r: float(r[-4]), reverse=True)
     rows = ranked_rows + unranked_rows
     print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
 
