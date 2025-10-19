@@ -16,7 +16,15 @@ class SamplingConfig:
     MIN_SAMPLES_PER_ENV = 200  # Increased from 100 to 200 for stronger confidence intervals
     MAX_SAMPLES_CAP = 5000  # Increased from 2000 to 5000
     ELIG = 0.10  # Eligibility threshold: 10% of max samples
-    
+    SCALE = 10
+
+    # Progressive weight balancing growth rate
+    # Controls how much higher-layer weights grow compared to lower layers
+    # - 0.0: All layers have equal total weight (fully egalitarian)
+    # - 1.0: L8 total weight is 2x L1 (moderate hierarchy)
+    # - 1.5: L8 total weight is 2.5x L1 (current value)
+    GROWTH_RATE = 1.5
+
     # Challenge algorithm parameters
     # Confidence level for Wilson score interval (can be adjusted easily)
     CONFIDENCE_LEVEL = 0.80  # confidence level
@@ -312,37 +320,57 @@ class MinerSampler:
         
         return tied_winners
     
-    def compute_layer_weights(self, n_envs: int, scale: float) -> Dict[int, float]:
+    def compute_layer_weights(self, n_envs: int) -> Dict[int, float]:
         """
-        Compute per-subset weights K_s.
-        K_1 = scale; K_s = scale * (2^s) for s >= 2.
+        Compute per-subset weights K_s using progressive weight balancing.
+
+        Progressive weight balancing ensures each layer's total weight grows
+        linearly rather than exponentially, preventing mid-layer weight inflation.
+
+        Formula: total_weight(s) = base_weight * (1 + growth_rate * (s-1)/(n-1))
+        - s=1: base_weight
+        - s=n: base_weight * (1 + growth_rate)
+
+        Uses SCALE and GROWTH_RATE from config:
+        - SCALE: base weight for all layers
+        - GROWTH_RATE: controls layer weight progression (0=equal, 1=2x difference)
+        - Each subset's weight = layer_total_weight / C(n_envs, s)
         """
-        K = {1: scale}
-        for s in range(2, n_envs + 1):
-            K[s] = scale * (2**s)
+        from math import comb
+
+        base_weight = self.config.SCALE
+        growth_rate = self.config.GROWTH_RATE
+
+        K = {}
+        for s in range(1, n_envs + 1):
+            # Calculate this layer's total weight
+            layer_total_weight = base_weight * (1 + growth_rate * (s - 1) / (n_envs - 1))
+            # Calculate number of subsets in this layer
+            num_subsets = comb(n_envs, s)
+            # Distribute layer weight evenly across all subsets
+            K[s] = layer_total_weight / num_subsets
+
         return K
 
     def calculate_combinatoric_scores(
         self,
         envs: Tuple[str, ...],
         pool: Set[str],
-        stats: Dict[str, Dict[str, Dict[str, Any]]],
-        scale: float
+        stats: Dict[str, Dict[str, Dict[str, Any]]]
     ) -> Tuple[Dict[str, float], Dict[str, Dict[int, float]], Dict[str, str]]:
         """
         Calculate combinatoric scores for all miners using challenge-based dominance.
-        
+
         Args:
             envs: Environment names
             pool: Set of hotkeys to score
             stats: {hotkey: {env: {'samples': int, 'total_score': float, 'first_block': int}}}
-            scale: Scaling factor for layer weights
             
         Returns:
             Tuple of (scores, layer_points, env_winners)
         """
         n_envs = len(envs)
-        K = self.compute_layer_weights(n_envs, scale)
+        K = self.compute_layer_weights(n_envs)
         
         scores = defaultdict(float)
         layer_points = defaultdict(lambda: defaultdict(float))

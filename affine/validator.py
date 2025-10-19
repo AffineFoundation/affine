@@ -110,7 +110,7 @@ async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[f
         logger.warning(f"Signer call timed out: {e}. Not falling back to local because validator has no wallet.")
         return
 
-async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: float = 0.0):
+async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0):
     burn = max(0.0, min(1.0, burn))
     if burn >= 1:
         logger.info(f"Burn all")
@@ -196,7 +196,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
     best_uid = meta.hotkeys.index(best)
 
     score, layer_points, env_winners = sampler.calculate_combinatoric_scores(
-        ENVS, pool_for_dom, stats, scale
+        ENVS, pool_for_dom, stats
     )
 
     if not eligible:

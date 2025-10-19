@@ -500,7 +500,7 @@ def validate():
                     continue
 
                 force_uid0 = 0.0
-                uids, weights = await get_weights(scale=0.5, burn=force_uid0)
+                uids, weights = await get_weights(burn=force_uid0)
                 logger.info("Setting weights ...")
                 await retry_set_weights(wallet, uids=uids, weights=weights, retry=3)
                 LAST = BLOCK
