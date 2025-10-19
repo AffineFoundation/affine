@@ -154,7 +154,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
         logger.warning("No results collected; defaulting to uid 0")
         return [0], [1.0]
     
-    cnt, succ, prev, v_id, first_block, pairs_by_time = orchestrator.process_sample_data(
+    cnt, succ, prev, v_id, first_block, stats = orchestrator.process_sample_data(
         results_list, meta.hotkeys, ENVS, BASE_HK
     )
     
@@ -164,34 +164,39 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
     
     acc = orchestrator.calculate_accuracies(cnt, succ, meta.hotkeys, ENVS)
     
+    # Calculate confidence intervals for all miners using Beta distribution
+    confidence_intervals = {}
+    for hk in meta.hotkeys:
+        confidence_intervals[hk] = {}
+        for e in ENVS:
+            if cnt[hk][e] > 0:
+                lower, upper = sampler.challenge_algo.beta_confidence_interval(
+                    succ[hk][e], cnt[hk][e]
+                )
+                confidence_intervals[hk][e] = (lower, upper)
+            else:
+                confidence_intervals[hk][e] = (0.0, 0.0)
+    
     active_hks = list(prev.keys())
-    logger.info("Computed accuracy & updated MAXENV.")
+    logger.info("Computed accuracy.")
 
     eligible, required = sampler.calculate_eligibility(cnt, active_hks, queryable_hks, ENVS)
     logger.info(f"Eligible miners: {len(eligible)} (from {len(active_hks)} active, {len(queryable_hks)} queryable)")
 
     pool_for_dom = eligible if eligible else (queryable_hks & set(active_hks))
-    
-    elo = sampler.compute_elo_scores(pairs_by_time, meta.hotkeys, ENVS)
-    logger.info(f"Computed ELO scores from {len(pairs_by_time)} pairwise comparisons.")
-    
-    epsilon_per_env = sampler.compute_epsilon_from_ranking_gap(elo, ENVS)
-    logger.info(f"Computed per-environment epsilon for dominance:")
-    for env_name, eps_val in epsilon_per_env.items():
-        logger.info(f"  {env_name}: {eps_val:.2f}")
-    
-    dom_full = sampler.compute_dominance_counts(pool_for_dom, ENVS, elo, first_block, epsilon_per_env)
-    logger.info("Computed ELO-based ε-dominance counts (full env set).")
+
+    dom_full = sampler.compute_dominance_counts(pool_for_dom, ENVS, stats, confidence_intervals)
+    logger.info("Computed challenge-based dominance counts (full env set).")
 
     def ts(hk: str) -> int:
         return int(first_block[hk]) if hk in first_block else float('inf')
-    
+
     best_candidates = pool_for_dom if pool_for_dom else (queryable_hks if queryable_hks else active_hks[:1])
     best = max(best_candidates, key=lambda hk: (dom_full.get(hk, 0), -ts(hk))) if best_candidates else active_hks[0]
     best_uid = meta.hotkeys.index(best)
 
     score, layer_points, env_winners = sampler.calculate_combinatoric_scores(
-        ENVS, pool_for_dom, elo, first_block, epsilon_per_env, scale
+        ENVS, pool_for_dom, stats, scale, confidence_intervals
     )
 
     if not eligible:
@@ -211,7 +216,8 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
             model_name = str(m.model)[:50]
             env_cols = []
             for e in ENVS:
-                base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}/{elo[hk][e]:.0f}"
+                lower, upper = confidence_intervals[hk][e]
+                base = f"{100 * acc[hk][e]:.2f}/[{100 * lower:.2f},{100 * upper:.2f}]/{cnt[hk][e]}"
                 if hk == env_winners.get(e):
                     env_cols.append(f"*{base}*")
                 else:
@@ -244,7 +250,8 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
         model_name = str(m.model)[:50]
         env_cols = []
         for e in ENVS:
-            base = f"{100 * acc[hk][e]:.2f}/{cnt[hk][e]}/{elo[hk][e]:.0f}"
+            lower, upper = confidence_intervals[hk][e]
+            base = f"{100 * acc[hk][e]:.2f}/[{100 * lower:.2f},{100 * upper:.2f}]/{cnt[hk][e]}"
             if hk == env_winners.get(e):
                 env_cols.append(f"*{base}*")
             else:
