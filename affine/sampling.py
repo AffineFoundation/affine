@@ -117,9 +117,9 @@ class ChallengeAlgorithm:
         
         Logic:
         1. Miners with insufficient samples (< MIN_SAMPLES_PER_ENV) auto-lose
-        2. Calculate confidence intervals for both (based on CONFIDENCE_LEVEL)
-        3. If B submitted later, B must satisfy: lower_b > upper_a to win
-        4. If A submitted later, A must satisfy: lower_a > upper_b to win
+        2. Calculate confidence intervals and averages for both
+        3. If B submitted later, B must satisfy: lower_b > avg_a to win
+        4. If A submitted later, A must satisfy: lower_a > avg_b to win
         5. Otherwise, earlier submitter wins (anti-plagiarism)
         """
         samples_a = stats_a['samples']
@@ -142,19 +142,23 @@ class ChallengeAlgorithm:
             stats_b['total_score'], samples_b
         )
         
+        # Calculate average scores
+        avg_a = stats_a['total_score'] / samples_a if samples_a > 0 else 0.0
+        avg_b = stats_b['total_score'] / samples_b if samples_b > 0 else 0.0
+        
         first_block_a = stats_a['first_block']
         first_block_b = stats_b['first_block']
         
-        # Anti-plagiarism: later submitter must significantly outperform
+        # Anti-plagiarism: later submitter must outperform average
         if first_block_a < first_block_b:
-            # B is later, B needs lower_b > upper_a to win
-            if lower_b > upper_a:
+            # B is later, B needs lower_b > avg_a to win
+            if lower_b > avg_a:
                 return 'b'
             else:
                 return 'a'  # A wins (earlier submission, anti-plagiarism)
         elif first_block_b < first_block_a:
-            # A is later, A needs lower_a > upper_b to win
-            if lower_a > upper_b:
+            # A is later, A needs lower_a > avg_b to win
+            if lower_a > avg_b:
                 return 'a'
             else:
                 return 'b'  # B wins (earlier submission, anti-plagiarism)
