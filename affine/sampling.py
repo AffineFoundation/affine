@@ -335,16 +335,6 @@ class MinerSampler:
             if not is_dominated:
                 pareto_frontier.append(candidate)
 
-        # Debug logging for single environment case
-        if len(env_subset) == 1 and len(pareto_frontier) > 1:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Multiple winners on single env {env_subset[0]}: {len(pareto_frontier)} miners tied")
-            for hk in pareto_frontier[:5]:  # Log first 5
-                env_stats = stats.get(hk, {}).get(env_subset[0], {})
-                ci = confidence_intervals.get(hk, {}).get(env_subset[0], (0, 0)) if confidence_intervals else (0, 0)
-                logger.warning(f"  {hk[:8]}: samples={env_stats.get('samples', 0)}, CI={ci}, first_block={env_stats.get('first_block', 'inf')}")
-
         return pareto_frontier if pareto_frontier else list(pool)
     
     def compute_layer_weights(self, n_envs: int, scale: float) -> Dict[int, float]:
