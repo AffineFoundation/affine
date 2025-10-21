@@ -218,10 +218,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
             for e in ENVS:
                 lower, upper = confidence_intervals[hk][e]
                 base = f"{100 * acc[hk][e]:.2f}/[{100 * lower:.2f},{100 * upper:.2f}]/{cnt[hk][e]}"
-                if hk == env_winners.get(e):
-                    env_cols.append(f"*{base}*")
-                else:
-                    env_cols.append(base)
+                env_cols.append(base)
             return [
                 m.uid, model_name, str(m.revision)[:5],
                 *env_cols,
@@ -253,10 +250,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
         for e in ENVS:
             lower, upper = confidence_intervals[hk][e]
             base = f"{100 * acc[hk][e]:.2f}/[{100 * lower:.2f},{100 * upper:.2f}]/{cnt[hk][e]}"
-            if hk == env_winners.get(e):
-                env_cols.append(f"*{base}*")
-            else:
-                env_cols.append(base)
+            env_cols.append(base)
         return [
             m.uid, model_name[:30], str(m.revision)[:5],
             *env_cols,
