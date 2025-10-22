@@ -391,6 +391,7 @@ class ELR(AffineSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:alfworld")
 class ALFWORLD(AgentGymSDKEnv):
     """ALFWORLD environment for SDK"""
+    DEFAULT_DATA_LEN = 2500
 
     @property
     def env_name(self) -> str:
@@ -412,6 +413,7 @@ class WEBSHOP(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:babyai")
 class BABYAI(AgentGymSDKEnv):
     """BABYAI environment for SDK"""
+    DEFAULT_DATA_LEN = 4000 # 40
 
     @property
     def env_name(self) -> str:
@@ -421,6 +423,7 @@ class BABYAI(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:sciworld")
 class SCIWORLD(AgentGymSDKEnv):
     """SCIWORLD environment for SDK"""
+    DEFAULT_DATA_LEN = 4639
 
     @property
     def env_name(self) -> str:
@@ -430,6 +433,7 @@ class SCIWORLD(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:textcraft")
 class TEXTCRAFT(AgentGymSDKEnv):
     """TEXTCRAFT environment for SDK"""
+    DEFAULT_DATA_LEN = 582
 
     @property
     def env_name(self) -> str:
