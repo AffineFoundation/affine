@@ -110,7 +110,7 @@ async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[f
         logger.warning(f"Signer call timed out: {e}. Not falling back to local because validator has no wallet.")
         return
 
-async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: float = 0.0):
+async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0):
     burn = max(0.0, min(1.0, burn))
     if burn >= 1:
         logger.info(f"Burn all")
@@ -185,18 +185,8 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
 
     pool_for_dom = eligible if eligible else (queryable_hks & set(active_hks))
 
-    dom_full = sampler.compute_dominance_counts(pool_for_dom, ENVS, stats, confidence_intervals)
-    logger.info("Computed challenge-based dominance counts (full env set).")
-
-    def ts(hk: str) -> int:
-        return int(first_block[hk]) if hk in first_block else float('inf')
-
-    best_candidates = pool_for_dom if pool_for_dom else (queryable_hks if queryable_hks else active_hks[:1])
-    best = max(best_candidates, key=lambda hk: (dom_full.get(hk, 0), -ts(hk))) if best_candidates else active_hks[0]
-    best_uid = meta.hotkeys.index(best)
-
     score, layer_points, env_winners = sampler.calculate_combinatoric_scores(
-        ENVS, pool_for_dom, stats, scale, confidence_intervals
+        ENVS, pool_for_dom, stats, confidence_intervals
     )
 
     if not eligible:
@@ -212,7 +202,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
             if hk not in prev:
                 return None
             m = prev[hk].miner
-            w = 1.0 if hk == best else 0.0
+            w = 0.0
             model_name = str(m.model)[:50]
             env_cols = []
             for e in ENVS:
@@ -271,7 +261,6 @@ async def get_weights(tail: int = SamplingConfig.TAIL, scale: float = 1, burn: f
     rows = ranked_rows + unranked_rows
     print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
 
-    eligible_uids = [meta.hotkeys.index(hk) for hk in eligible]
-    uids = [u for u in eligible_uids if u != best_uid] + [best_uid]
+    uids = [meta.hotkeys.index(hk) for hk in eligible]
     weights = [weight_by_hk.get(meta.hotkeys[u], 0.0) for u in uids]
     return uids, weights
