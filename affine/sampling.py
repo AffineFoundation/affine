@@ -276,33 +276,6 @@ class MinerSampler:
         # A dominates B only if: A >= B on all envs AND A > B on at least one
         return at_least_one_strict_win
     
-    def compute_dominance_counts(
-        self,
-        pool: Set[str],
-        envs: Tuple[str, ...],
-        stats: Dict[str, Dict[str, Dict[str, Any]]],
-        confidence_intervals: Optional[Dict[str, Dict[str, Tuple[float, float]]]] = None
-    ) -> Dict[str, int]:
-        """
-        Compute dominance counts for the given miner pool using challenge algorithm.
-
-        Args:
-            pool: Set of hotkeys to compare
-            envs: Environment names
-            stats: {hotkey: {env: {'samples': int, 'total_score': float, 'first_block': int}}}
-            confidence_intervals: Pre-computed {hotkey: {env: (lower, upper)}}, optional
-
-        Returns:
-            Dict mapping hotkey -> dominance count
-        """
-        dom_counts = defaultdict(int)
-
-        for a, b in itertools.permutations(pool, 2):
-            if self.dominates_on(a, b, envs, stats, confidence_intervals):
-                dom_counts[a] += 1
-
-        return dom_counts
-    
     def calculate_comprehensive_score(
         self,
         hotkey: str,
