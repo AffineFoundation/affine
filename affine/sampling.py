@@ -16,6 +16,7 @@ class SamplingConfig:
     MIN_SAMPLES_PER_ENV = 200  # Increased from 100 to 200 for stronger confidence intervals
     MAX_SAMPLES_CAP = 5000  # Increased from 2000 to 5000
     ELIG = 0.10  # Eligibility threshold: 10% of max samples
+    SCALE = 1.0  # Scaling factor for layer weights
     
     # Challenge algorithm parameters
     # Confidence level for Beta distribution interval (can be adjusted easily)
@@ -29,7 +30,7 @@ class SamplingConfig:
     # Gamma controls the steepness of reward distribution within Pareto frontier
     # Higher gamma = stronger penalty for specialization, more reward for balanced performance
     # Range: 2.0 (mild) to 4.0 (aggressive), recommended: 3.0
-    GEOMETRIC_MEAN_GAMMA = 3.0
+    GEOMETRIC_MEAN_GAMMA = 4.0
     
     # Environment-specific score ranges for normalization
     # Most environments use 0-1 range, but sciworld uses -100 to 100
@@ -421,14 +422,14 @@ class MinerSampler:
             for hk, score in comprehensive_scores.items()
         }
     
-    def compute_layer_weights(self, n_envs: int, scale: float) -> Dict[int, float]:
+    def compute_layer_weights(self, n_envs: int) -> Dict[int, float]:
         """
         Compute per-subset weights K_s.
         K_1 = scale; K_s = scale * (2^s) for s >= 2.
         """
-        K = {1: scale}
+        K = {1: self.config.SCALE}
         for s in range(2, n_envs + 1):
-            K[s] = scale * (2**s)
+            K[s] = self.config.SCALE * (2**s)
         return K
 
     def calculate_combinatoric_scores(
@@ -436,7 +437,6 @@ class MinerSampler:
         envs: Tuple[str, ...],
         pool: Set[str],
         stats: Dict[str, Dict[str, Dict[str, Any]]],
-        scale: float,
         confidence_intervals: Optional[Dict[str, Dict[str, Tuple[float, float]]]] = None
     ) -> Tuple[Dict[str, float], Dict[str, Dict[int, float]], Dict[str, str]]:
         """
@@ -447,14 +447,13 @@ class MinerSampler:
             envs: Environment names
             pool: Set of hotkeys to score
             stats: {hotkey: {env: {'samples': int, 'total_score': float, 'first_block': int}}}
-            scale: Scaling factor for layer weights
             confidence_intervals: Pre-computed {hotkey: {env: (lower, upper)}}, optional
 
         Returns:
             Tuple of (scores, layer_points, env_winners)
         """
         n_envs = len(envs)
-        K = self.compute_layer_weights(n_envs, scale)
+        K = self.compute_layer_weights(n_envs)
 
         scores = defaultdict(float)
         layer_points = defaultdict(lambda: defaultdict(float))
