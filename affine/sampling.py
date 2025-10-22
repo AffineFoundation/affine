@@ -25,6 +25,12 @@ class SamplingConfig:
     BETA_PRIOR_ALPHA = 0.5
     BETA_PRIOR_BETA = 0.5
     
+    # Comprehensive ability evaluation parameters
+    # Gamma controls the steepness of reward distribution within Pareto frontier
+    # Higher gamma = stronger penalty for specialization, more reward for balanced performance
+    # Range: 2.0 (mild) to 4.0 (aggressive), recommended: 3.0
+    GEOMETRIC_MEAN_GAMMA = 3.0
+    
     # Environment-specific score ranges for normalization
     # Most environments use 0-1 range, but sciworld uses -100 to 100
     ENV_SCORE_RANGES = {
@@ -296,16 +302,67 @@ class MinerSampler:
 
         return dom_counts
     
+    def calculate_comprehensive_score(
+        self,
+        hotkey: str,
+        env_subset: Tuple[str, ...],
+        stats: Dict[str, Dict[str, Dict[str, Any]]]
+    ) -> float:
+        """
+        Calculate comprehensive ability score for a miner on given environment subset.
+        
+        Uses geometric mean raised to power gamma to naturally penalize specialization
+        while rewarding balanced performance across all environments.
+        
+        Formula: score = (geometric_mean(normalized_scores))^gamma
+        
+        Args:
+            hotkey: Miner's hotkey
+            env_subset: Environment subset to evaluate on
+            stats: {hotkey: {env: {'samples': int, 'total_score': float, ...}}}
+        
+        Returns:
+            Comprehensive ability score (0.0 if any environment has zero performance)
+        """
+        scores = []
+        
+        for env in env_subset:
+            env_stats = stats.get(hotkey, {}).get(env, {})
+            samples = env_stats.get('samples', 0)
+            total_score = env_stats.get('total_score', 0.0)
+            
+            # Calculate normalized score (average performance in [0, 1])
+            if samples > 0:
+                normalized_score = total_score / samples
+                # Clamp to valid range as a safety measure
+                normalized_score = max(0.0, min(1.0, normalized_score))
+            else:
+                normalized_score = 0.0
+            
+            scores.append(normalized_score)
+        
+        # Return 0 if any score is zero or negative (geometric mean would be 0)
+        if not scores or any(s <= 0.0 for s in scores):
+            return 0.0
+        
+        # Calculate geometric mean
+        geometric_mean = math.prod(scores) ** (1.0 / len(scores))
+        
+        # Apply gamma power to amplify differences
+        comprehensive_score = geometric_mean ** self.config.GEOMETRIC_MEAN_GAMMA
+        
+        return comprehensive_score
+    
     def find_subset_winner(
         self,
         env_subset: Tuple[str, ...],
         pool: Set[str],
         stats: Dict[str, Dict[str, Dict[str, Any]]],
         confidence_intervals: Optional[Dict[str, Dict[str, Tuple[float, float]]]] = None
-    ) -> List[str]:
+    ) -> Dict[str, float]:
         """
-        Find winner(s) on environment subset via Pareto dominance.
-        Returns miners on Pareto frontier (not dominated by anyone).
+        Find winner(s) on environment subset via Pareto dominance,
+        then distribute rewards proportionally based on comprehensive ability.
 
         Args:
             env_subset: Environment subset to find winner for
@@ -314,12 +371,13 @@ class MinerSampler:
             confidence_intervals: Pre-computed {hotkey: {env: (lower, upper)}}, optional
 
         Returns:
-            List of winning hotkeys on Pareto frontier (split rewards equally)
+            Dict mapping hotkey -> proportional weight (sums to 1.0)
+            Empty dict if no miners in pool
         """
         if not pool:
-            return []
+            return {}
 
-        # Find Pareto frontier: miners that are NOT dominated by anyone
+        # Step 1: Find Pareto frontier (miners not dominated by anyone)
         pareto_frontier = []
 
         for candidate in pool:
@@ -335,7 +393,33 @@ class MinerSampler:
             if not is_dominated:
                 pareto_frontier.append(candidate)
 
-        return pareto_frontier if pareto_frontier else list(pool)
+        # Fallback: if no one is on frontier, include everyone
+        if not pareto_frontier:
+            pareto_frontier = list(pool)
+        
+        # Step 2: Single winner takes all
+        if len(pareto_frontier) == 1:
+            return {pareto_frontier[0]: 1.0}
+        
+        # Step 3: Multiple winners - distribute based on comprehensive ability
+        comprehensive_scores = {}
+        for hk in pareto_frontier:
+            comprehensive_scores[hk] = self.calculate_comprehensive_score(
+                hk, env_subset, stats
+            )
+        
+        total_score = sum(comprehensive_scores.values())
+        
+        # Fallback to equal split if all scores are zero
+        if total_score <= 0.0:
+            equal_weight = 1.0 / len(pareto_frontier)
+            return {hk: equal_weight for hk in pareto_frontier}
+        
+        # Proportional distribution based on comprehensive scores
+        return {
+            hk: score / total_score
+            for hk, score in comprehensive_scores.items()
+        }
     
     def compute_layer_weights(self, n_envs: int, scale: float) -> Dict[int, float]:
         """
@@ -356,7 +440,8 @@ class MinerSampler:
         confidence_intervals: Optional[Dict[str, Dict[str, Tuple[float, float]]]] = None
     ) -> Tuple[Dict[str, float], Dict[str, Dict[int, float]], Dict[str, str]]:
         """
-        Calculate combinatoric scores for all miners using challenge-based dominance.
+        Calculate combinatoric scores for all miners using challenge-based dominance
+        with comprehensive ability-based reward distribution.
 
         Args:
             envs: Environment names
@@ -377,25 +462,30 @@ class MinerSampler:
 
         # Calculate env_winners (pick earliest for display purposes)
         for e in envs:
-            winners = self.find_subset_winner((e,), pool, stats, confidence_intervals)
-            if winners:
-                # For display, pick the earliest submitter among tied winners
-                def get_first_block(hk: str) -> int:
-                    return stats.get(hk, {}).get(e, {}).get('first_block', float('inf'))
-                env_winners[e] = min(winners, key=get_first_block)
+            winner_weights = self.find_subset_winner((e,), pool, stats, confidence_intervals)
+            if winner_weights:
+                # For display, pick the winner with highest weight (or earliest if tied)
+                def sort_key(hk: str) -> Tuple[float, int]:
+                    weight = winner_weights.get(hk, 0.0)
+                    first_block = stats.get(hk, {}).get(e, {}).get('first_block', float('inf'))
+                    return (-weight, first_block)  # Negative weight for descending order
+                env_winners[e] = min(winner_weights.keys(), key=sort_key)
             else:
                 env_winners[e] = None
 
-        # Calculate scores with tie-splitting
+        # Calculate scores with proportional distribution based on comprehensive ability
         for s in range(1, n_envs + 1):
             for env_subset in itertools.combinations(envs, s):
-                winners = self.find_subset_winner(env_subset, pool, stats, confidence_intervals)
-                if winners:
-                    # Split reward equally among all tied winners
-                    reward_per_winner = K[s] / len(winners)
-                    for winner in winners:
-                        scores[winner] += reward_per_winner
-                        layer_points[winner][s] += reward_per_winner
+                # Get proportional weights for winners on this subset
+                winner_weights = self.find_subset_winner(env_subset, pool, stats, confidence_intervals)
+                
+                if winner_weights:
+                    # Distribute base reward proportionally according to comprehensive ability
+                    base_reward = K[s]
+                    for hotkey, weight in winner_weights.items():
+                        reward = base_reward * weight
+                        scores[hotkey] += reward
+                        layer_points[hotkey][s] += reward
 
         return scores, layer_points, env_winners
     
