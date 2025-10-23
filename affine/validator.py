@@ -128,7 +128,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0):
     BASE_HK = meta.hotkeys[0]
     N_envs = len(ENVS)
     
-    queryable_miners = await miners(meta=meta, netuid=NETUID, check_validity=False)
+    queryable_miners = await miners(meta=meta, netuid=NETUID, check_validity=True)
     queryable_hks = {m.hotkey for m in queryable_miners.values()}
     logger.info(f"Found {len(queryable_hks)} queryable miners (hot, valid chute, not gated)")
 
