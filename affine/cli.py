@@ -233,8 +233,11 @@ def runner():
 
             async def execute_with_semaphore(env, miner, task_id):
                 """Wrapper to execute task with semaphore control."""
+                # Create a deep copy of miner to prevent data inconsistency issues
+                # when miners_map is refreshed during long-running evaluations
+                miner_snapshot = miner.model_copy(deep=True)
                 async with semaphore:
-                    return await query_miner(env, miner, task_id=task_id)
+                    return await query_miner(env, miner_snapshot, task_id=task_id)
 
             # Track all inflight tasks: {(env_name, miner_uid): Task}
             inflight_tasks: Dict[Tuple[str, int], asyncio.Task] = {}
