@@ -111,18 +111,30 @@ class Result(BaseModel):
     response: Response
     evaluation: Evaluation
     
+    def _get_signable_data(self) -> str:
+        """Get canonical string representation of all result data for signing."""
+        data = self.model_dump(
+            mode="json",
+            exclude={"signature", "hotkey"},
+            exclude_none=False
+        )
+        return json.dumps(data, sort_keys=True, separators=(',', ':'))
+    
     def sign(self, wallet):
         """Sign the result with wallet."""
         self.hotkey = wallet.hotkey.ss58_address
-        challenge_str = str(self.challenge)
-        self.signature = wallet.hotkey.sign(data=challenge_str).hex()
+        signable_data = self._get_signable_data()
+        self.signature = wallet.hotkey.sign(data=signable_data).hex()
     
     def verify(self) -> bool:
         """Verify the result signature."""
-        keypair = bt.Keypair(ss58_address=self.hotkey)
-        challenge_str = str(self.challenge)
-        signature_bytes = bytes.fromhex(self.signature)
-        return keypair.verify(data=challenge_str, signature=signature_bytes)
+        try:
+            keypair = bt.Keypair(ss58_address=self.hotkey)
+            signable_data = self._get_signable_data()
+            signature_bytes = bytes.fromhex(self.signature)
+            return keypair.verify(data=signable_data, signature=signature_bytes)
+        except Exception:
+            return False
     
     class Config:
         arbitrary_types_allowed = True

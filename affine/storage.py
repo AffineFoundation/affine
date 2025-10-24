@@ -168,7 +168,7 @@ async def sign_results( wallet, results ):
         signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
         timeout = aiohttp.ClientTimeout(connect=2, total=30)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            payloads = [str(r.challenge) for r in results]
+            payloads = [r._get_signable_data() for r in results]
             resp = await session.post(f"{signer_url}/sign", json={"payloads": payloads})
             if resp.status == 200:
                 data = await resp.json()
@@ -180,7 +180,7 @@ async def sign_results( wallet, results ):
     except Exception as e:
         logger.info(f"sink: signer unavailable, using local signing: {type(e).__name__}: {e}")
         hotkey = wallet.hotkey.ss58_address
-        for r in results: 
+        for r in results:
             r.sign(wallet)
     finally:
         return hotkey, results
