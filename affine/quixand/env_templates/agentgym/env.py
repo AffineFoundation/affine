@@ -239,6 +239,12 @@ def inject_evaluator_endpoint(app: FastAPI):
 
 
 def create_app():
+    qs_eval_only = os.getenv("QS_EVALUATOR_ONLY", "0").strip().lower() in ("1","true","yes","on")
+    if qs_eval_only:
+        app = FastAPI()
+        inject_health_endpoint(app)
+        inject_evaluator_endpoint(app)
+        return app
     logger.info(f"Loading {ENV_NAME} environment server")
     if ENV_NAME == "tool":
         module_name = f"agentenv_{TOOL_NAME}.{TOOL_NAME}_server"
