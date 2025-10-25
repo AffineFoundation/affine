@@ -499,7 +499,7 @@ def validate():
                     await subtensor.wait_for_block()
                     continue
 
-                force_uid0 = 0.0
+                force_uid0 = 1
                 uids, weights = await get_weights(burn=force_uid0)
                 logger.info("Setting weights ...")
                 await retry_set_weights(wallet, uids=uids, weights=weights, retry=3)
