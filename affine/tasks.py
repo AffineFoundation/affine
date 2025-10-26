@@ -10,9 +10,21 @@ from typing import Dict, Any, List, Optional, Union, TYPE_CHECKING, Type
 from dataclasses import dataclass
 from enum import Enum
 from pydantic import BaseModel, Field, validator, ValidationError
+from concurrent.futures import ThreadPoolExecutor
 
 from affine.quixand.core.sandbox_manager import get_sandbox
 from affine.setup import logger
+
+# Global thread pool for sandbox blocking calls
+_EXECUTOR = None
+
+def get_executor() -> ThreadPoolExecutor:
+    """Get or create global thread pool executor."""
+    global _EXECUTOR
+    if _EXECUTOR is None:
+        max_workers = int(os.getenv("AFFINE_MAX_CONCURRENCY", "20")) * 2
+        _EXECUTOR = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="sandbox_")
+    return _EXECUTOR
 
 
 # ========================= Configuration =========================
@@ -85,7 +97,7 @@ class BaseSDKEnv(ABC):
     def __init__(self):
         super().__init__()
         self._sandbox = self.get_sandbox()
-        self._sandbox_lock = None
+        self._sandbox_lock = asyncio.Lock()
 
     @property
     def sandbox_config(self) -> SandboxConfig:
@@ -141,7 +153,7 @@ class BaseSDKEnv(ABC):
         if payload_extra:
             payload.update(payload_extra)
 
-        # Execute evaluation
+        # Execute evaluation with async executor
         try:
             proxy_timeout = (
                 self.sandbox_config.proxy_timeout
@@ -149,7 +161,9 @@ class BaseSDKEnv(ABC):
                 else self.sandbox_config.proxy_timeout + 600
             )
 
-            result = await asyncio.to_thread(
+            # Use dedicated thread pool for blocking sandbox calls
+            result = await asyncio.get_event_loop().run_in_executor(
+                get_executor(),
                 lambda: self._sandbox.proxy.evaluator(_timeout=proxy_timeout, **payload)
             )
 
