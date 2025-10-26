@@ -93,7 +93,7 @@ async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[f
             logger.info(f"Signer DNS: host={parsed.hostname} -> {addrs}")
         except Exception as e:
             logger.warning(f"DNS resolve failed for {parsed.hostname}: {e}")
-        timeout = aiohttp.ClientTimeout(connect=2, total=120)
+        timeout = aiohttp.ClientTimeout(connect=2, total=600)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             start = time.monotonic()
             resp = await session.post(
