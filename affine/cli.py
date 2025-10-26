@@ -16,7 +16,7 @@ from pathlib import Path
 from huggingface_hub import HfApi
 from bittensor.core.errors import MetadataError
 from huggingface_hub import snapshot_download
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 from affine.utils.subtensor import get_subtensor
 from affine.storage import sink_enqueue, CACHE_DIR
 from affine.query import query_miner
@@ -71,7 +71,7 @@ def runner():
         SINK_BATCH_SIZE = 300
         SINK_MAX_WAIT = 300
         STATUS_LOG_INTERVAL = 30
-        MAX_CONCURRENCY = int(os.getenv("AFFINE_MAX_CONCURRENCY", "20"))
+        MAX_CONCURRENCY = int(os.getenv("AFFINE_MAX_CONCURRENCY", "30"))
 
         # Shared state
         miners_map: Dict[int, any] = {}
@@ -236,8 +236,10 @@ def runner():
                 async with semaphore:
                     return await query_miner(env, miner, task_id=task_id)
 
-            # Track all inflight tasks: {(env_name, miner_uid): Task}
+            # Track inflight tasks and pending work
             inflight_tasks: Dict[Tuple[str, int], asyncio.Task] = {}
+            pending_queue: List[Tuple[Any, Any, int]] = []
+            queue_index = 0
             
             while True:
                 HEARTBEAT = current_time = time.monotonic()
@@ -264,29 +266,44 @@ def runner():
                     last_status_log_time = current_time
                     requests_since_last_status = 0
 
-                # Submit new tasks for any env-miner pair not currently running
-                for env in envs:
-                    data_len = getattr(env, "data_len", 1)
-                    
+                # Build pending work queue if empty (round-robin distribution)
+                if not pending_queue:
                     for miner in miners_map.values():
                         if not getattr(miner, "model", None):
                             continue
+                        for env in envs:
+                            task_key = (env.env_name, miner.uid)
+                            if task_key not in inflight_tasks:
+                                data_len = getattr(env, "data_len", 1)
+                                task_id = random.randint(0, data_len - 1) % data_len
+                                pending_queue.append((env, miner, task_id))
+                    
+                    # Shuffle to randomize which miner-env pairs get submitted first
+                    random.shuffle(pending_queue)
+                    queue_index = 0
 
-                        task_key = (env.env_name, miner.uid)
-
-                        # Skip if this env-miner pair already has a task running
-                        if task_key in inflight_tasks:
-                            continue
-
-                        task_id = random.randint(0, data_len - 1) % data_len
-
-                        # Create task with semaphore control
+                # Submit tasks from pending queue up to concurrency limit
+                slots_available = MAX_CONCURRENCY - len(inflight_tasks)
+                while queue_index < len(pending_queue) and slots_available > 0:
+                    env, miner, task_id = pending_queue[queue_index]
+                    task_key = (env.env_name, miner.uid)
+                    
+                    # Double-check not already running (defensive)
+                    if task_key not in inflight_tasks:
                         task = asyncio.create_task(
                             execute_with_semaphore(env, miner, task_id)
                         )
                         inflight_tasks[task_key] = task
                         total_requests_submitted += 1
                         requests_since_last_status += 1
+                        slots_available -= 1
+                    
+                    queue_index += 1
+                
+                # Clear queue if fully processed
+                if queue_index >= len(pending_queue):
+                    pending_queue.clear()
+                    queue_index = 0
 
                 # Wait for at least one task to complete
                 if not inflight_tasks:
