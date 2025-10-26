@@ -24,36 +24,60 @@ async def _set_weights_with_confirmation(
     uids: list[int],
     weights: list[float],
     wait_for_inclusion: bool = False,
-    retries: int = 10,
+    retries: int = 15,
     delay_s: float = 2.0,
     log_prefix: str = "",
+    confirmation_blocks: int = 3,
 ) -> bool:
     for attempt in range(retries):
         try:
             st = await get_subtensor()
-            ref = await st.get_current_block()
             logger.info(f"{log_prefix} set_weights attempt {attempt+1}/{retries}: netuid={netuid} uids={uids} weights={weights}")
+
+            # Get block state before submission for debugging
+            pre_block = await st.get_current_block()
+            logger.info(f"{log_prefix} current block before submission: {pre_block}")
+
+            # Submit weights using sync subtensor
             start = time.monotonic()
-            bt.subtensor(get_conf('SUBTENSOR_ENDPOINT', default='finney')).set_weights(
+            sync_st = bt.subtensor(get_conf('SUBTENSOR_ENDPOINT', default='finney'))
+            sync_st.set_weights(
                 wallet=wallet, netuid=netuid, weights=weights, uids=uids,
                 wait_for_inclusion=wait_for_inclusion,
             )
-            logger.info(f"{log_prefix} extrinsic submitted in {(time.monotonic()-start)*1000:.1f}ms; waiting next block … (ref_block={ref})")
-            await st.wait_for_block()
+            submit_duration = (time.monotonic() - start) * 1000
+
+            # Get reference block immediately after submission
+            ref = await st.get_current_block()
+            logger.info(f"{log_prefix} extrinsic submitted in {submit_duration:.1f}ms; ref_block={ref} (pre_block={pre_block})")
+
+            # Wait for multiple blocks to ensure transaction inclusion
+            for i in range(confirmation_blocks):
+                await st.wait_for_block()
+                current_block = await st.get_current_block()
+                logger.info(f"{log_prefix} waited block {i+1}/{confirmation_blocks}, current_block={current_block}")
+
+            # Verify weights have been updated
             meta = await st.metagraph(netuid)
             try:
                 idx = meta.hotkeys.index(wallet.hotkey.ss58_address)
                 lu = meta.last_update[idx]
-                logger.info(f"{log_prefix} last_update={lu}, ref_block={ref}")
+                final_block = await st.get_current_block()
+                logger.info(f"{log_prefix} last_update={lu}, ref_block={ref}, final_block={final_block}")
+
+                # Check if last_update was updated within reasonable range
                 if lu >= ref:
-                    logger.info(f"{log_prefix} confirmation OK (last_update >= ref)")
+                    logger.info(f"{log_prefix} confirmation OK (last_update={lu} >= ref={ref})")
                     return True
-                logger.warning(f"{log_prefix} confirmation not yet included (last_update < ref), retrying …")
+                else:
+                    logger.warning(f"{log_prefix} confirmation not yet included (last_update={lu} < ref={ref}), retrying …")
             except ValueError:
                 logger.warning(f"{log_prefix} wallet hotkey not found in metagraph hotkeys; retrying …")
         except Exception as e:
             logger.warning(f"{log_prefix} set_weights attempt {attempt+1}/{retries} error: {type(e).__name__}: {e}")
+
         await asyncio.sleep(delay_s)
+    logger.error(f"{log_prefix} failed to confirm set_weights after {retries} attempts")
     return False
 
 
@@ -101,6 +125,7 @@ async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[f
             wallet, NETUID, uids, weights, False,
             retries=int(os.getenv("SIGNER_RETRIES", "10")),
             delay_s=float(os.getenv("SIGNER_RETRY_DELAY", "2")),
+            confirmation_blocks=int(os.getenv("CONFIRMATION_BLOCKS", "3")),
             log_prefix="[validator-fallback]",
         )
         if not ok:
@@ -259,7 +284,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0):
     ranked_rows   = sorted((r for r in (row(hk) for hk in eligible) if r is not None), key=lambda r: float(r[-4]), reverse=True)
     unranked_rows = sorted((r for r in (row(hk) for hk in active_hks if hk not in eligible) if r is not None), key=lambda r: float(r[-4]), reverse=True)
     rows = ranked_rows + unranked_rows
-    print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
+    print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"), flush=True)
 
     uids = [meta.hotkeys.index(hk) for hk in eligible]
     weights = [weight_by_hk.get(meta.hotkeys[u], 0.0) for u in uids]
