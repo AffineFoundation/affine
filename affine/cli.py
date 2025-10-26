@@ -447,6 +447,7 @@ def signer(host: str, port: int):
                     wait_for_inclusion,
                     retries=int(os.getenv("SIGNER_RETRIES", "10")),
                     delay_s=float(os.getenv("SIGNER_RETRY_DELAY", "2")),
+                    confirmation_blocks=int(os.getenv("CONFIRMATION_BLOCKS", "3")),
                     log_prefix="[signer]",
                 )
                 logger.info(
