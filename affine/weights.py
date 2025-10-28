@@ -87,7 +87,7 @@ async def _display_weights_summary(block: int = None):
     "-r", "--recompute",
     is_flag=True,
     default=False,
-    help="Recompute weights from scratch instead of reading cached summary"
+    help="Recompute weights from scratch without uploading to S3"
 )
 @click.option(
     "-b", "--block",
@@ -95,25 +95,17 @@ async def _display_weights_summary(block: int = None):
     default=None,
     help="Load summary from specific block (only works without -r)"
 )
-@click.option(
-    "--no-save",
-    is_flag=True,
-    default=False,
-    help="Don't save computed weights to S3 (only works with -r)"
-)
-def weights(recompute: bool, block: int, no_save: bool):
+def weights(recompute: bool, block: int):
     """Display validator weights summary.
 
     By default, reads the latest computed summary from S3.
-    Use -r to recompute weights from scratch.
+    Use -r to recompute weights from scratch (without saving to S3).
     Use -b BLOCK to load summary from a specific block.
     """
     async def run():
         if recompute:
-            logger.info("Recomputing weights from scratch...")
-            await get_weights(save_to_s3=not no_save)
-            if no_save:
-                logger.info("Weights computed but not saved to S3 (--no-save flag used)")
+            logger.info("Recomputing weights from scratch (not saving to S3)...")
+            await get_weights(save_to_s3=False)
         else:
             try:
                 await _display_weights_summary(block)
