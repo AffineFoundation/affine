@@ -19,12 +19,7 @@ from affine.models import Result
 from affine.query import _get_client
 from affine.setup import logger
 
-# Try to import numpy for type conversion support
-try:
-    import numpy as np
-    HAS_NUMPY = True
-except ImportError:
-    HAS_NUMPY = False
+import numpy as np
 
 WINDOW        = int(os.getenv("AFFINE_WINDOW", 20))
 RESULT_PREFIX = "affine/results/"
@@ -254,9 +249,6 @@ def _convert_numpy_types(obj):
     Returns:
         Object with all numpy types converted to native Python types
     """
-    if not HAS_NUMPY:
-        return obj
-
     if isinstance(obj, np.integer):
         return int(obj)
     elif isinstance(obj, np.floating):
