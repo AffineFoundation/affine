@@ -27,11 +27,20 @@ af
 ```
 
 ## Validating
+Set env vars, chutes api key, R2 write keys
 
-Set env vars, chutes api key.
 ```bash
 # Copy .env and fill out validator items
 cp .env.example .env
+```
+
+```bash
+CHUTES_API_KEY=
+.
+.
+.
+R2_WRITE_ACCESS_KEY_ID=
+R2_WRITE_SECRET_ACCESS_KEY=
 ```
 
 (Recommended): Run the validator with docker and watchtower autoupdate.
@@ -39,7 +48,10 @@ cp .env.example .env
 # Run the validator with watchtower.
 docker-compose down && docker-compose pull && docker-compose up -d && docker-compose logs -f
 ```
-
+Recreate docker in case of OOM
+```bash
+docker compose up -d --force-recreate
+```
 Run the validator using the local override (build local image) + base compose
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.local.yml down --remove-orphans
@@ -47,7 +59,7 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build -
 docker compose -f docker-compose.yml -f docker-compose.local.yml logs -f
 ```
 
-Run the validator locally
+Run the validator locally(without docker)
 ```bash
 # Start the validator with debug.
 af -vv validate
