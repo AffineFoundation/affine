@@ -19,6 +19,13 @@ from affine.models import Result
 from affine.query import _get_client
 from affine.setup import logger
 
+# Try to import numpy for type conversion support
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+
 WINDOW        = int(os.getenv("AFFINE_WINDOW", 20))
 RESULT_PREFIX = "affine/results/"
 INDEX_KEY     = "affine/index.json"
@@ -158,8 +165,9 @@ async def dataset(
                     if r.verify():
                         bar.update(1)
                         yield r
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Skip invalid results but log for debugging
+                    logger.debug(f"Skipping invalid result: {type(e).__name__}: {e}")
     finally:
         bar.close()
 
@@ -214,9 +222,140 @@ async def sink(wallet, results: list["Result"], block: int = None):
         await _update_index(key)
 
 async def prune(tail: int):
-    sub = await get_subtensor(); cur = await sub.get_current_block()
+    """Prune old cache files that are older than the tail window.
+
+    Args:
+        tail: Number of blocks to keep in cache
+    """
+    sub = await get_subtensor()
+    cur = await sub.get_current_block()
     for f in CACHE_DIR.glob("*.jsonl"):
         b = f.name.split("-", 1)[0]
         if b.isdigit() and int(b) < cur - tail:
-            try: f.unlink()
-            except OSError: pass
+            try:
+                f.unlink()
+            except OSError as e:
+                logger.debug(f"Failed to delete cache file {f.name}: {e}")
+
+WEIGHTS_PREFIX = "affine/weights/"
+WEIGHTS_LATEST_KEY = "affine/weights/latest.json"
+SUMMARY_SCHEMA_VERSION = "1.0.0"
+
+
+def _convert_numpy_types(obj):
+    """Recursively convert numpy types to native Python types.
+
+    Handles numpy integers, floats, arrays, and special values (NaN, Inf).
+    Also handles nested dictionaries and lists.
+
+    Args:
+        obj: Object to convert (can be numpy type, dict, list, or primitive)
+
+    Returns:
+        Object with all numpy types converted to native Python types
+    """
+    if not HAS_NUMPY:
+        return obj
+
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        val = float(obj)
+        # Handle special float values
+        if np.isnan(val) or np.isinf(val):
+            return None  # Convert NaN/Inf to None for JSON compatibility
+        return val
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {key: _convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_convert_numpy_types(item) for item in obj]
+    else:
+        return obj
+
+async def save_summary(block: int, summary_data: dict):
+    """Save validator summary to S3 weights folder with flexible schema.
+
+    Saves the summary to both a block-specific key and a latest.json key for fast access.
+
+    Args:
+        block: Current block number
+        summary_data: Dictionary containing summary information with the following keys:
+            - header: List of column names
+            - rows: List of row data (can be list or dict)
+            - miners: Optional dict mapping hotkey -> miner details
+            - stats: Optional additional statistics
+            - Any other custom fields
+    """
+    # Convert any numpy types to native Python types
+    clean_data = _convert_numpy_types(summary_data)
+
+    # Build flexible schema wrapper
+    output = {
+        "schema_version": SUMMARY_SCHEMA_VERSION,
+        "timestamp": int(time.time()),
+        "block": int(block),  # Ensure block is also a native int
+        "data": clean_data
+    }
+
+    key = f"{WEIGHTS_PREFIX}summary-{block}.json"
+    body = orjson.dumps(output, option=orjson.OPT_INDENT_2)
+
+    async with get_client_ctx() as c:
+        # Upload to both block-specific and latest keys in parallel
+        await asyncio.gather(
+            c.put_object(
+                Bucket=FOLDER,
+                Key=key,
+                Body=body,
+                ContentType="application/json"
+            ),
+            c.put_object(
+                Bucket=FOLDER,
+                Key=WEIGHTS_LATEST_KEY,
+                Body=body,
+                ContentType="application/json"
+            )
+        )
+
+    logger.info(f"Saved summary to S3: {key} and {WEIGHTS_LATEST_KEY} (schema v{SUMMARY_SCHEMA_VERSION})")
+
+async def load_summary(block: int = None) -> dict:
+    """Load validator summary from S3 weights folder.
+
+    Args:
+        block: Block number to load. If None, loads the latest available summary.
+
+    Returns:
+        Dictionary containing the summary data
+
+    Raises:
+        Exception: If summary file not found or cannot be loaded
+    """
+    if block is None:
+        # Fast path: Read from latest.json (O(1) access, no listing needed)
+        key = WEIGHTS_LATEST_KEY
+        logger.info(f"Loading latest summary from {key}")
+    else:
+        # Specific block requested
+        key = f"{WEIGHTS_PREFIX}summary-{block}.json"
+        logger.info(f"Loading summary for block {block}")
+
+    # Load the summary
+    if PUBLIC_READ:
+        sess = await _get_client()
+        url = f"{R2_PUBLIC_BASE}/{key}"
+        async with sess.get(url, timeout=aiohttp.ClientTimeout(total=30)) as r:
+            r.raise_for_status()
+            data = json.loads(await r.text())
+    else:
+        async with get_client_ctx() as c:
+            try:
+                r = await c.get_object(Bucket=FOLDER, Key=key)
+                data = json.loads(await r["Body"].read())
+            except c.exceptions.NoSuchKey:
+                raise FileNotFoundError(f"Summary not found: {key}")
+
+    logger.info(f"Loaded summary from S3: {key}")
+    return data
