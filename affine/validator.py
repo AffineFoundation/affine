@@ -333,7 +333,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0):
         logger.warning(f"Failed to get revealed commitments, using empty initial_first_block: {type(e).__name__}: {e}")
 
     logger.info(f"Loading data from {blk - tail} to {blk}")
-    async for c in dataset(tail=tail):
+    async for c in dataset(tail=tail, compact=True):
         results_list.append(c)
 
     logger.info("Collected results.")
