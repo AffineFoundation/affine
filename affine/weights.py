@@ -99,13 +99,13 @@ def weights(recompute: bool, block: int):
     """Display validator weights summary.
 
     By default, reads the latest computed summary from S3.
-    Use -r to recompute weights from scratch.
+    Use -r to recompute weights from scratch (without saving to S3).
     Use -b BLOCK to load summary from a specific block.
     """
     async def run():
         if recompute:
-            logger.info("Recomputing weights from scratch...")
-            await get_weights()
+            logger.info("Recomputing weights from scratch (not saving to S3)...")
+            await get_weights(save_to_s3=False)
         else:
             try:
                 await _display_weights_summary(block)

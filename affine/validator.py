@@ -298,7 +298,7 @@ def _build_summary_data(ctx: SummaryContext) -> dict:
 
     return summary
 
-async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0):
+async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_to_s3: bool = True):
     burn = max(0.0, min(1.0, burn))
     if burn >= 1:
         logger.info(f"Burn all")
@@ -482,7 +482,10 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0):
         previous_miners=prev
     )
     summary_data = _build_summary_data(ctx)
-    await save_summary(blk, summary_data)
+    if save_to_s3:
+        await save_summary(blk, summary_data)
+    else:
+        logger.info("Skipping save to S3 (save_to_s3=False)")
 
     uids = [meta.hotkeys.index(hk) for hk in eligible]
     weights = [weight_by_hk.get(meta.hotkeys[u], 0.0) for u in uids]
