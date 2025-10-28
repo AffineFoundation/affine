@@ -15,7 +15,7 @@ from botocore.config import Config
 
 from affine.config import get_conf
 from affine.utils.subtensor import get_subtensor
-from affine.models import Result
+from affine.models import Result, CompactResult
 from affine.query import _get_client
 from affine.setup import logger
 
@@ -125,7 +125,18 @@ async def dataset(
     tail: int,
     *,
     max_concurrency: int = 10,
-) -> AsyncIterator["Result"]:
+    compact: bool = True,
+) -> AsyncIterator["Result | CompactResult"]:
+    """Load dataset from R2 storage.
+    
+    Args:
+        tail: Number of blocks to look back
+        max_concurrency: Maximum concurrent downloads
+        compact: If True, return CompactResult (memory-efficient). If False, return full Result.
+    
+    Yields:
+        CompactResult or Result objects depending on compact flag
+    """
     sub = await get_subtensor()
     cur = await sub.get_current_block()
     need = {w for w in range(_w(cur - tail), _w(cur) + WINDOW, WINDOW)}
@@ -156,10 +167,24 @@ async def dataset(
 
             async for raw in _jsonl(path):
                 try:
-                    r = Result.model_validate(orjson.loads(raw))
-                    if r.verify():
-                        bar.update(1)
-                        yield r
+                    if compact:
+                        # Parse only the fields needed for weight calculation
+                        data = orjson.loads(raw)
+                        
+                        # Verify signature before converting to compact format
+                        r = Result.model_validate(data)
+                        if r.verify():
+                            compact_result = CompactResult.from_result(r)
+                            bar.update(1)
+                            yield compact_result
+                            # Explicitly delete full result to free memory immediately
+                            del r
+                    else:
+                        # Return full Result object (legacy mode)
+                        r = Result.model_validate(orjson.loads(raw))
+                        if r.verify():
+                            bar.update(1)
+                            yield r
                 except Exception as e:
                     # Skip invalid results but log for debugging
                     logger.debug(f"Skipping invalid result: {type(e).__name__}: {e}")

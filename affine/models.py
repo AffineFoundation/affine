@@ -138,3 +138,66 @@ class Result(BaseModel):
         )
     
     __str__ = __repr__
+
+
+class CompactResult(BaseModel):
+    """Lightweight result containing only fields needed for weight calculation.
+    
+    This model significantly reduces memory usage by excluding large text fields
+    like prompts, responses, and error messages that are not used in scoring.
+    
+    Provides a compatible interface with Result by exposing nested attributes
+    through properties (miner.*, challenge.*, evaluation.*).
+    """
+    
+    hotkey: str
+    uid: int
+    model: Optional[str] = None
+    revision: Optional[str] = None
+    block: Optional[int] = None
+    env: str
+    score: float
+    
+    @classmethod
+    def from_result(cls, result: "Result") -> "CompactResult":
+        """Create CompactResult from full Result object."""
+        return cls(
+            hotkey=result.miner.hotkey,
+            uid=result.miner.uid,
+            model=result.miner.model,
+            revision=result.miner.revision,
+            block=result.miner.block,
+            env=result.challenge.env,
+            score=result.evaluation.score
+        )
+    
+    @property
+    def miner(self):
+        """Provide miner-like interface for compatibility."""
+        class _Miner:
+            def __init__(self, parent):
+                self.hotkey = parent.hotkey
+                self.uid = parent.uid
+                self.model = parent.model
+                self.revision = parent.revision
+                self.block = parent.block
+        return _Miner(self)
+    
+    @property
+    def challenge(self):
+        """Provide challenge-like interface for compatibility."""
+        class _Challenge:
+            def __init__(self, parent):
+                self.env = parent.env
+        return _Challenge(self)
+    
+    @property
+    def evaluation(self):
+        """Provide evaluation-like interface for compatibility."""
+        class _Evaluation:
+            def __init__(self, parent):
+                self.score = parent.score
+        return _Evaluation(self)
+    
+    class Config:
+        arbitrary_types_allowed = True
