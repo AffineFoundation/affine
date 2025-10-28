@@ -5,17 +5,109 @@ import asyncio
 import logging
 import aiohttp
 import bittensor as bt
-from typing import List, Tuple
+from typing import List, Tuple, Optional, Dict, Set, Any
+from dataclasses import dataclass
 from urllib.parse import urlparse
 from aiohttp import ClientConnectorError
 from tabulate import tabulate
-from affine.storage import prune, dataset
+from affine.storage import prune, dataset, save_summary
 from affine.config import get_conf
 from affine.setup import NETUID
 from affine.utils.subtensor import get_subtensor
 from affine.sampling import MinerSampler, SamplingOrchestrator, SamplingConfig
 from affine.miners import miners
 from affine.setup import ENVS, logger
+
+# Table structure constants
+BASE_COLUMNS = ["UID", "Model", "Rev"]
+ENV_START_INDEX = len(BASE_COLUMNS)
+
+
+@dataclass
+class SummaryContext:
+    """Context data for building validator summary."""
+    block: int
+    header: list
+    rows: list
+    eligible: Set[str]
+    active_hotkeys: Set[str]
+    queryable_hotkeys: Set[str]
+    env_winners: Dict[str, str]
+    accuracies: Dict[str, Dict[str, float]]
+    counts: Dict[str, Dict[str, int]]
+    confidence_intervals: Dict[str, Dict[str, Tuple[float, float]]]
+    scores: Dict[str, float]
+    layer_points: Dict[str, Dict[int, float]]
+    first_blocks: Dict[str, int]
+    metagraph: Any
+    previous_miners: Dict[str, Any]
+    note: Optional[str] = None
+
+
+def _create_miner_row(
+    hotkey: str,
+    prev: Dict,
+    weight_by_hk: Dict[str, float],
+    acc: Dict,
+    cnt: Dict,
+    confidence_intervals: Dict,
+    env_winners: Dict,
+    layer_points: Dict,
+    score: Dict,
+    eligible: Set[str],
+    first_block: Dict,
+    envs: list,
+    n_envs: int,
+    model_name_max_len: int = 50
+) -> Optional[list]:
+    """Create a single row for miner display table.
+
+    Args:
+        hotkey: Miner's hotkey
+        prev: Previous miners data
+        weight_by_hk: Weight mapping by hotkey
+        acc: Accuracy data by hotkey and environment
+        cnt: Count data by hotkey and environment
+        confidence_intervals: Confidence interval data
+        env_winners: Environment winners mapping
+        layer_points: Layer points by hotkey
+        score: Score mapping by hotkey
+        eligible: Set of eligible hotkeys
+        first_block: First block mapping by hotkey
+        envs: List of environment names
+        n_envs: Number of environments
+        model_name_max_len: Maximum length for model name display
+
+    Returns:
+        List representing a table row, or None if hotkey not in prev
+    """
+    if hotkey not in prev:
+        return None
+
+    miner = prev[hotkey].miner
+    weight = weight_by_hk.get(hotkey, 0.0)
+    model_name = str(miner.model)[:model_name_max_len]
+
+    env_cols = []
+    for e in envs:
+        lower, upper = confidence_intervals[hotkey][e]
+        base = f"{100 * acc[hotkey][e]:.2f}/[{100 * lower:.2f},{100 * upper:.2f}]/{cnt[hotkey][e]}"
+        if hotkey == env_winners.get(e):
+            env_cols.append(f"*{base}*")
+        else:
+            env_cols.append(base)
+
+    return [
+        miner.uid,
+        model_name,
+        str(miner.revision)[:5],
+        *env_cols,
+        *[f"{layer_points[hotkey][s]:.1f}" for s in range(1, n_envs + 1)],
+        f"{score.get(hotkey, 0.0):.2f}",
+        "Y" if hotkey in eligible else "N",
+        f"{first_block.get(hotkey, 0)}",
+        f"{weight:.4f}",
+    ]
 
 
 async def _set_weights_with_confirmation(
@@ -135,6 +227,77 @@ async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[f
         logger.warning(f"Signer call timed out: {e}. Not falling back to local because validator has no wallet.")
         return
 
+def _build_summary_data(ctx: SummaryContext) -> dict:
+    """Build flexible summary data structure.
+
+    Args:
+        ctx: SummaryContext containing all necessary data
+
+    Returns:
+        Dictionary with both legacy format (for printing) and structured format (for S3).
+    """
+    # Build structured miners data
+    miners_data = {}
+    for row in ctx.rows:
+        if not row:
+            continue
+        uid = row[0]
+        try:
+            hotkey = ctx.metagraph.hotkeys[uid]
+            if hotkey not in ctx.previous_miners:
+                continue
+            miner = ctx.previous_miners[hotkey].miner
+
+            # Parse environment results from row
+            env_results = {}
+            for i, e in enumerate(ENVS):
+                env_col_idx = ENV_START_INDEX + i
+                env_results[e] = {
+                    "accuracy": ctx.accuracies[hotkey][e],
+                    "count": ctx.counts[hotkey][e],
+                    "confidence_interval": {
+                        "lower": ctx.confidence_intervals[hotkey][e][0],
+                        "upper": ctx.confidence_intervals[hotkey][e][1]
+                    },
+                    "is_winner": (hotkey == ctx.env_winners.get(e))
+                }
+
+            miners_data[hotkey] = {
+                "uid": uid,
+                "hotkey": hotkey,
+                "model": str(miner.model),
+                "revision": str(miner.revision),
+                "environments": env_results,
+                "layer_points": {f"L{s}": ctx.layer_points[hotkey][s] for s in range(1, len(ENVS) + 1)},
+                "total_score": ctx.scores.get(hotkey, 0.0),
+                "eligible": hotkey in ctx.eligible,
+                "first_block": ctx.first_blocks.get(hotkey, 0),
+                "weight": float(row[-1]) if len(row) > 0 else 0.0
+            }
+        except (IndexError, KeyError, ValueError) as e:
+            logger.debug(f"Skipping row for UID {uid} due to error: {e}")
+            continue
+
+    # Build summary structure
+    summary = {
+        "header": ctx.header,
+        "rows": ctx.rows,  # Keep legacy format for compatibility
+        "miners": miners_data,  # New structured format
+        "stats": {
+            "eligible_count": len(ctx.eligible),
+            "active_count": len(ctx.active_hotkeys),
+            "queryable_count": len(ctx.queryable_hotkeys),
+            "total_miners": len(ctx.metagraph.hotkeys)
+        },
+        "env_winners": {e: ctx.env_winners.get(e) for e in ENVS},
+        "environments": list(ENVS)
+    }
+
+    if ctx.note:
+        summary["note"] = ctx.note
+
+    return summary
+
 async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0):
     burn = max(0.0, min(1.0, burn))
     if burn >= 1:
@@ -166,8 +329,8 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0):
             if hk in commits:
                 blk_commit, _ = commits[hk][-1]
                 initial_first_block[hk] = 0 if uid == 0 else int(blk_commit)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to get revealed commitments, using empty initial_first_block: {type(e).__name__}: {e}")
 
     logger.info(f"Loading data from {blk - tail} to {blk}")
     async for c in dataset(tail=tail):
@@ -216,38 +379,51 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0):
 
     if not eligible:
         logger.warning(f"No eligible miners (queryable={len(queryable_hks)}); assigning weight 1.0 to uid 0.")
-        
+
         hdr = (
             ["UID", "Model", "Rev"]
             + [f"{e}" for e in ENVS]
             + [f"L{s}" for s in range(1, N_envs + 1)]
             + ["Pts", "Elig", "FirstBlk", "Wgt"]
         )
-        def row(hk: str):
-            if hk not in prev:
-                return None
-            m = prev[hk].miner
-            w = 0.0
-            model_name = str(m.model)[:50]
-            env_cols = []
-            for e in ENVS:
-                lower, upper = confidence_intervals[hk][e]
-                base = f"{100 * acc[hk][e]:.2f}/[{100 * lower:.2f},{100 * upper:.2f}]/{cnt[hk][e]}"
-                if hk == env_winners.get(e):
-                    env_cols.append(f"*{base}*")
-                else:
-                    env_cols.append(base)
-            return [
-                m.uid, model_name, str(m.revision)[:5],
-                *env_cols,
-                *[f"{layer_points[hk][s]:.1f}" for s in range(1, N_envs + 1)],
-                f"{score.get(hk, 0.0):.2f}",
-                "Y" if hk in eligible else "N",
-                f"{first_block.get(hk, 0)}",
-                f"{w:.4f}",
-            ]
-        rows = sorted((r for r in (row(hk) for hk in active_hks) if r is not None), key=lambda r: (r[-4], r[0]), reverse=True)
+
+        # Use shared row creation function
+        weight_by_hk = {}  # Empty weights for no eligible case
+        rows = sorted(
+            (r for r in (
+                _create_miner_row(
+                    hk, prev, weight_by_hk, acc, cnt, confidence_intervals,
+                    env_winners, layer_points, score, eligible, first_block,
+                    ENVS, N_envs, model_name_max_len=50
+                ) for hk in active_hks
+            ) if r is not None),
+            key=lambda r: (r[-4], r[0]),
+            reverse=True
+        )
         print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
+
+        # Save summary to S3 (no eligible miners case)
+        ctx = SummaryContext(
+            block=blk,
+            header=hdr,
+            rows=rows,
+            eligible=set(),
+            active_hotkeys=active_hks,
+            queryable_hotkeys=queryable_hks,
+            env_winners=env_winners,
+            accuracies=acc,
+            counts=cnt,
+            confidence_intervals=confidence_intervals,
+            scores=score,
+            layer_points=layer_points,
+            first_blocks=first_block,
+            metagraph=meta,
+            previous_miners=prev,
+            note="No eligible miners, defaulting to uid 0"
+        )
+        summary_data = _build_summary_data(ctx)
+        await save_summary(blk, summary_data)
+
         return [0], [1.0]
 
     weight_by_hk, eligible = orchestrator.calculate_weights(eligible, score, burn, BASE_HK)
@@ -258,33 +434,55 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0):
         + [f"L{s}" for s in range(1, N_envs + 1)]
         + ["Pts", "Elig", "FirstBlk", "Wgt"]
     )
-    def row(hk: str):
-        if hk not in prev:
-            return None
-        m = prev[hk].miner
-        w = weight_by_hk.get(hk, 0.0)
-        model_name = str(m.model)[:50]
-        env_cols = []
-        for e in ENVS:
-            lower, upper = confidence_intervals[hk][e]
-            base = f"{100 * acc[hk][e]:.2f}/[{100 * lower:.2f},{100 * upper:.2f}]/{cnt[hk][e]}"
-            if hk == env_winners.get(e):
-                env_cols.append(f"*{base}*")
-            else:
-                env_cols.append(base)
-        return [
-            m.uid, model_name[:30], str(m.revision)[:5],
-            *env_cols,
-            *[f"{layer_points[hk][s]:.1f}" for s in range(1, N_envs + 1)],
-            f"{score.get(hk, 0.0):.2f}",
-            "Y" if hk in eligible else "N",
-            f"{first_block.get(hk, 0)}",
-            f"{w:.4f}",
-        ]
-    ranked_rows   = sorted((r for r in (row(hk) for hk in eligible) if r is not None), key=lambda r: float(r[-4]), reverse=True)
-    unranked_rows = sorted((r for r in (row(hk) for hk in active_hks if hk not in eligible) if r is not None), key=lambda r: float(r[-4]), reverse=True)
+
+    # Use shared row creation function (note: model_name_max_len=30 for this case)
+    ranked_rows = sorted(
+        (r for r in (
+            _create_miner_row(
+                hk, prev, weight_by_hk, acc, cnt, confidence_intervals,
+                env_winners, layer_points, score, eligible, first_block,
+                ENVS, N_envs, model_name_max_len=30
+            ) for hk in eligible
+        ) if r is not None),
+        key=lambda r: float(r[-4]),
+        reverse=True
+    )
+
+    unranked_rows = sorted(
+        (r for r in (
+            _create_miner_row(
+                hk, prev, weight_by_hk, acc, cnt, confidence_intervals,
+                env_winners, layer_points, score, eligible, first_block,
+                ENVS, N_envs, model_name_max_len=30
+            ) for hk in active_hks if hk not in eligible
+        ) if r is not None),
+        key=lambda r: float(r[-4]),
+        reverse=True
+    )
+
     rows = ranked_rows + unranked_rows
     print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"), flush=True)
+
+    # Save summary to S3
+    ctx = SummaryContext(
+        block=blk,
+        header=hdr,
+        rows=rows,
+        eligible=eligible,
+        active_hotkeys=active_hks,
+        queryable_hotkeys=queryable_hks,
+        env_winners=env_winners,
+        accuracies=acc,
+        counts=cnt,
+        confidence_intervals=confidence_intervals,
+        scores=score,
+        layer_points=layer_points,
+        first_blocks=first_block,
+        metagraph=meta,
+        previous_miners=prev
+    )
+    summary_data = _build_summary_data(ctx)
+    await save_summary(blk, summary_data)
 
     uids = [meta.hotkeys.index(hk) for hk in eligible]
     weights = [weight_by_hk.get(meta.hotkeys[u], 0.0) for u in uids]
