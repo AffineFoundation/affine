@@ -31,7 +31,7 @@ logger = logging.getLogger("affine")
 
 def setup_logging(verbosity: int):
     level = TRACE if verbosity >= 3 else logging.DEBUG if verbosity == 2 else logging.INFO if verbosity == 1 else logging.CRITICAL + 1
-    for noisy in ["websockets", "bittensor", "bittensor-cli", "btdecode", "asyncio", "aiobotocore.regions", "botocore"]:
+    for noisy in ["websockets", "bittensor", "bittensor-cli", "btdecode", "asyncio", "aiobotocore.regions", "botocore", "httpx", "httpcore"]:
         logging.getLogger(noisy).setLevel(logging.WARNING)
     logging.basicConfig(level=level,
                         format="%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
