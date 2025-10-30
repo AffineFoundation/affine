@@ -19,7 +19,7 @@ from affine.miners import miners
 from affine.setup import ENVS, logger
 
 # Table structure constants
-BASE_COLUMNS = ["UID", "Model", "Rev"]
+BASE_COLUMNS = ["UID", "Hotkey", "Model", "Rev"]
 ENV_START_INDEX = len(BASE_COLUMNS)
 
 
@@ -99,6 +99,7 @@ def _create_miner_row(
 
     return [
         miner.uid,
+        hotkey,
         model_name,
         str(miner.revision)[:5],
         *env_cols,
@@ -381,7 +382,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
         logger.warning(f"No eligible miners (queryable={len(queryable_hks)}); assigning weight 1.0 to uid 0.")
 
         hdr = (
-            ["UID", "Model", "Rev"]
+            ["UID", "Hotkey", "Model", "Rev"]
             + [f"{e}" for e in ENVS]
             + [f"L{s}" for s in range(1, N_envs + 1)]
             + ["Pts", "Elig", "FirstBlk", "Wgt"]
@@ -429,7 +430,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
     weight_by_hk, eligible = orchestrator.calculate_weights(eligible, score, burn, BASE_HK)
 
     hdr = (
-        ["UID", "Model", "Rev"]
+        ["UID", "Hotkey", "Model", "Rev"]
         + [f"{e}" for e in ENVS]
         + [f"L{s}" for s in range(1, N_envs + 1)]
         + ["Pts", "Elig", "FirstBlk", "Wgt"]
