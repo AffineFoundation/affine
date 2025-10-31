@@ -72,16 +72,26 @@ async def _update_index(k: str) -> None:
                                Body=orjson.dumps(sorted(idx)),
                                ContentType="application/json")
 
-async def _cache_shard(key: str, sem: asyncio.Semaphore) -> Path:
+async def _cache_shard(key: str, sem: asyncio.Semaphore, use_public: bool = None) -> Path:
+    """Cache a shard from R2 storage.
+    
+    Args:
+        key: S3 key to fetch
+        sem: Semaphore for concurrency control
+        use_public: If True, force public read. If False, force private read. If None, use PUBLIC_READ global.
+    """
     name, out = Path(key).name, None
     out = CACHE_DIR / f"{name}.jsonl"; mod = out.with_suffix(".modified")
     max_retries = 5
     base_delay = 2.0
     
+    # Determine which read mode to use
+    read_public = PUBLIC_READ if use_public is None else use_public
+    
     for attempt in range(max_retries):
         try:
             async with sem:
-                if PUBLIC_READ:
+                if read_public:
                     sess = await _get_client()
                     url = f"{R2_PUBLIC_BASE}/{key}"
                     async with sess.get(url, timeout=aiohttp.ClientTimeout(total=60)) as r:
@@ -126,13 +136,17 @@ async def dataset(
     *,
     max_concurrency: int = 10,
     compact: bool = True,
+    min_samples: int = 10000,
 ) -> AsyncIterator["Result | CompactResult"]:
     """Load dataset from R2 storage.
+    
+    Automatically falls back to public repository if own repository has insufficient samples.
     
     Args:
         tail: Number of blocks to look back
         max_concurrency: Maximum concurrent downloads
         compact: If True, return CompactResult (memory-efficient). If False, return full Result.
+        min_samples: Minimum samples required before falling back to public read
     
     Yields:
         CompactResult or Result objects depending on compact flag
@@ -140,16 +154,60 @@ async def dataset(
     sub = await get_subtensor()
     cur = await sub.get_current_block()
     need = {w for w in range(_w(cur - tail), _w(cur) + WINDOW, WINDOW)}
-    keys = [
-        k for k in await _index()
-        if (h := Path(k).name.split("-", 1)[0]).isdigit() and int(h) in need
-    ]
+    
+    use_public_fallback = False
+    keys = []
+    
+    # Try loading from own repository first (only if not already in public mode)
+    if not PUBLIC_READ:
+        try:
+            # Temporarily use private read to check own repository
+            async def _get_index_private():
+                async with get_client_ctx() as c:
+                    r = await c.get_object(Bucket=FOLDER, Key=INDEX_KEY)
+                    return json.loads(await r["Body"].read())
+            
+            own_index = await _get_index_private()
+            keys = [
+                k for k in own_index
+                if (h := Path(k).name.split("-", 1)[0]).isdigit() and int(h) in need
+            ]
+            logger.info(f"Found {len(keys)} keys in own repository")
+        except Exception as e:
+            logger.info(f"Failed to load from own repository: {e}")
+            keys = []
+    
+    # Check if we need to fall back to public repository
+    if len(keys) == 0 or (len(keys) * 100 < min_samples):
+        if len(keys) > 0:
+            logger.info(f"Insufficient keys in own repository ({len(keys)} keys, estimated {len(keys) * 100} samples < {min_samples})")
+        logger.info("Falling back to public repository")
+        use_public_fallback = True
+        
+        # Load from public repository
+        try:
+            sess = await _get_client()
+            url = f"{R2_PUBLIC_BASE}/{INDEX_KEY}"
+            async with sess.get(url, timeout=aiohttp.ClientTimeout(total=30)) as r:
+                r.raise_for_status()
+                public_index = json.loads(await r.text())
+            
+            keys = [
+                k for k in public_index
+                if (h := Path(k).name.split("-", 1)[0]).isdigit() and int(h) in need
+            ]
+            logger.info(f"Loaded {len(keys)} keys from public repository")
+        except Exception as e:
+            logger.error(f"Failed to load from public repository: {e}")
+            if not keys:
+                keys = []
+    
     keys.sort()
     sem = asyncio.Semaphore(max_concurrency)
     
-    async def _prefetch(key: str) -> Path | None:
+    async def _prefetch(key: str, use_public: bool) -> Path | None:
         try:
-            return await _cache_shard(key, sem)
+            return await _cache_shard(key, sem, use_public=use_public)
         except Exception:
             import traceback
             traceback.print_exc()
@@ -158,7 +216,7 @@ async def dataset(
     
     bar = tqdm(desc=f"Dataset=({cur}, {cur - tail})", unit="res", dynamic_ncols=True)
     try:
-        tasks = [asyncio.create_task(_prefetch(k)) for k in keys]
+        tasks = [asyncio.create_task(_prefetch(k, use_public_fallback)) for k in keys]
 
         for coro in asyncio.as_completed(tasks):
             path = await coro
@@ -171,16 +229,39 @@ async def dataset(
                         # Parse only the fields needed for weight calculation
                         data = orjson.loads(raw)
                         
-                        # Verify signature before converting to compact format
-                        r = Result.model_validate(data)
-                        if r.verify():
-                            compact_result = CompactResult.from_result(r)
-                            bar.update(1)
-                            yield compact_result
-                            # Explicitly delete full result to free memory immediately
-                            del r
+                        if use_public_fallback:
+                            # When using public fallback, skip signature validation
+                            # since data is not from current validator
+                            try:
+                                compact_result = CompactResult(
+                                    hotkey=data.get("miner", {}).get("hotkey", ""),
+                                    uid=data.get("miner", {}).get("uid", 0),
+                                    model=data.get("miner", {}).get("model"),
+                                    revision=data.get("miner", {}).get("revision"),
+                                    block=data.get("miner", {}).get("block"),
+                                    env=data.get("challenge", {}).get("env", ""),
+                                    score=data.get("evaluation", {}).get("score", 0.0)
+                                )
+                                bar.update(1)
+                                yield compact_result
+                            except Exception as e:
+                                logger.debug(f"Skipping invalid public data: {type(e).__name__}: {e}")
+                                continue
+                        else:
+                            # Normal path: verify signature before converting to compact format
+                            r = Result.model_validate(data)
+                            if r.verify():
+                                compact_result = CompactResult.from_result(r)
+                                bar.update(1)
+                                yield compact_result
+                                # Explicitly delete full result to free memory immediately
+                                del r
                     else:
                         # Return full Result object (legacy mode)
+                        if use_public_fallback:
+                            # When using public fallback, skip signature validation
+                            logger.warning("Public fallback mode does not support non-compact results")
+                            continue
                         r = Result.model_validate(orjson.loads(raw))
                         if r.verify():
                             bar.update(1)
