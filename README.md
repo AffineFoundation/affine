@@ -129,32 +129,6 @@ This prints a JSON payload including `chute_id`. Keep it for the next step.
 af -vvv commit --repo <user/repo> --revision <sha> --chute-id <chute_id> --coldkey <your cold> --hotkey <your hot>
 ```
 
-# SDK
-Affine is also an SDK you can use to generate and evaluate models envs.
-```python
-import affine as af
-
-# Optionally turn on logging 
-af.trace(); af.debug(); af.info()
-
-# Get all miner info or only for UID =5
-miners = await af.miners()
-miner = await af.miners( 5 )
-
-# Generate a SAT challenge
-chal = await af.SAT.generate() 
-
-# Generate a bunch.
-chals = await af.ABDUCTION().many( 10 )
-chals = await af.DEDUCTION().many( 10 )
-
-# Query the model directly.
-# NOTE: A CHUTES_API_KEY .env value is required for this command.
-response = await af.query( chal.prompt, model = miner.model )
-
-# Evaluate the response
-evaluation = chal.evaluate( response ) 
-print( evaluation.score )
 
 # Async generator of results from last 100 blocks.
 async for res in af.dataset(100):
