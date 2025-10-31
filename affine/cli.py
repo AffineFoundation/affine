@@ -72,7 +72,7 @@ def runner():
         SINK_BATCH_SIZE = 300
         SINK_MAX_WAIT = 300
         STATUS_LOG_INTERVAL = 30
-        MAX_CONCURRENCY = int(os.getenv("AFFINE_MAX_CONCURRENCY", "30"))
+        MAX_CONCURRENCY = int(os.getenv("AFFINE_MAX_CONCURRENCY", "20"))
 
         # Shared state
         miners_map: Dict[int, any] = {}
