@@ -398,11 +398,29 @@ class MinerSampler:
     def compute_layer_weights(self, n_envs: int) -> Dict[int, float]:
         """
         Compute per-subset weights K_s.
-        K_1 = scale; K_s = scale * (2^s) for s >= 2.
+        
+        Each layer gets exponentially increasing total weight: layer_s_total = scale * (2^s)
+        This total weight is then evenly distributed among all subsets in that layer.
+        
+        For layer s with C(n_envs, s) subsets, each subset gets:
+        K_s = (scale * 2^s) / C(n_envs, s)
+        
+        This ensures:
+        1. Higher layers (more environments) get exponentially more total weight
+        2. Within each layer, weight is fairly distributed across all subsets
+        3. Models are incentivized to perform well across more environments
         """
-        K = {1: self.config.SCALE}
-        for s in range(2, n_envs + 1):
-            K[s] = self.config.SCALE * (2**s)
+        K = {}
+        for s in range(1, n_envs + 1):
+            # Calculate number of subsets in this layer: C(n_envs, s)
+            num_subsets = math.comb(n_envs, s)
+            
+            # Total weight for this layer (exponential by layer size)
+            layer_total_weight = self.config.SCALE * (2 ** s)
+            
+            # Distribute evenly among all subsets in this layer
+            K[s] = layer_total_weight / num_subsets if num_subsets > 0 else layer_total_weight
+        
         return K
 
     def calculate_combinatoric_scores(
