@@ -97,13 +97,17 @@ def _create_miner_row(
         else:
             env_cols.append(base)
 
+    # Only show top 6 layers (dynamically: max(1, n_envs - 5) to n_envs)
+    min_layer = max(1, n_envs - 5)
+    layer_cols = [f"{layer_points[hotkey].get(s, 0.0):.1f}" for s in range(min_layer, n_envs + 1)]
+
     return [
         miner.uid,
         hotkey,
         model_name,
         str(miner.revision)[:5],
         *env_cols,
-        *[f"{layer_points[hotkey][s]:.1f}" for s in range(1, n_envs + 1)],
+        *layer_cols,
         f"{score.get(hotkey, 0.0):.2f}",
         "Y" if hotkey in eligible else "N",
         f"{first_block.get(hotkey, 0)}",
@@ -263,13 +267,15 @@ def _build_summary_data(ctx: SummaryContext) -> dict:
                     "is_winner": (hotkey == ctx.env_winners.get(e))
                 }
 
+            # Only include top 6 layers in structured data
+            min_layer = max(1, len(ENVS) - 5)
             miners_data[hotkey] = {
                 "uid": uid,
                 "hotkey": hotkey,
                 "model": str(miner.model),
                 "revision": str(miner.revision),
                 "environments": env_results,
-                "layer_points": {f"L{s}": ctx.layer_points[hotkey][s] for s in range(1, len(ENVS) + 1)},
+                "layer_points": {f"L{s}": ctx.layer_points[hotkey].get(s, 0.0) for s in range(min_layer, len(ENVS) + 1)},
                 "total_score": ctx.scores.get(hotkey, 0.0),
                 "eligible": hotkey in ctx.eligible,
                 "first_block": ctx.first_blocks.get(hotkey, 0),
@@ -381,10 +387,12 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
     if not eligible:
         logger.warning(f"No eligible miners (queryable={len(queryable_hks)}); assigning weight 1.0 to uid 0.")
 
+        # Only show top 6 layers in header
+        min_layer = max(1, N_envs - 5)
         hdr = (
             ["UID", "Hotkey", "Model", "Rev"]
             + [f"{e}" for e in ENVS]
-            + [f"L{s}" for s in range(1, N_envs + 1)]
+            + [f"L{s}" for s in range(min_layer, N_envs + 1)]
             + ["Pts", "Elig", "FirstBlk", "Wgt"]
         )
 
@@ -429,10 +437,12 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
 
     weight_by_hk, eligible = orchestrator.calculate_weights(eligible, score, burn, BASE_HK)
 
+    # Only show top 6 layers in header
+    min_layer = max(1, N_envs - 5)
     hdr = (
         ["UID", "Hotkey", "Model", "Rev"]
         + [f"{e}" for e in ENVS]
-        + [f"L{s}" for s in range(1, N_envs + 1)]
+        + [f"L{s}" for s in range(min_layer, N_envs + 1)]
         + ["Pts", "Elig", "FirstBlk", "Wgt"]
     )
 

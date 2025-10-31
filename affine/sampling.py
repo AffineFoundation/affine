@@ -29,8 +29,7 @@ class SamplingConfig:
     # Comprehensive ability evaluation parameters
     # Gamma controls the steepness of reward distribution within Pareto frontier
     # Higher gamma = stronger penalty for specialization, more reward for balanced performance
-    # Range: 2.0 (mild) to 4.0 (aggressive), recommended: 3.0
-    GEOMETRIC_MEAN_GAMMA = 4.0
+    GEOMETRIC_MEAN_GAMMA = 8.0
     
     # Environment-specific score ranges for normalization
     # Most environments use 0-1 range, but sciworld uses -100 to 100
@@ -399,6 +398,7 @@ class MinerSampler:
         """
         Compute per-subset weights K_s.
         
+        Only evaluate the top 6 layers to focus on comprehensive performance.
         Each layer gets exponentially increasing total weight: layer_s_total = scale * (2^s)
         This total weight is then evenly distributed among all subsets in that layer.
         
@@ -409,9 +409,13 @@ class MinerSampler:
         1. Higher layers (more environments) get exponentially more total weight
         2. Within each layer, weight is fairly distributed across all subsets
         3. Models are incentivized to perform well across more environments
+        4. Low layers (L1, L2, etc.) are excluded as they contribute negligibly under exponential growth
         """
         K = {}
-        for s in range(1, n_envs + 1):
+        # Only evaluate top 6 layers (dynamically: max(1, n_envs - 5) to n_envs)
+        min_layer = max(1, n_envs - 5)
+        
+        for s in range(min_layer, n_envs + 1):
             # Calculate number of subsets in this layer: C(n_envs, s)
             num_subsets = math.comb(n_envs, s)
             
@@ -464,7 +468,9 @@ class MinerSampler:
                 env_winners[e] = None
 
         # Calculate scores with proportional distribution based on comprehensive ability
-        for s in range(1, n_envs + 1):
+        # Only evaluate top 6 layers (same range as compute_layer_weights)
+        min_layer = max(1, n_envs - 5)
+        for s in range(min_layer, n_envs + 1):
             for env_subset in itertools.combinations(envs, s):
                 # Get proportional weights for winners on this subset
                 winner_weights = self.find_subset_winner(env_subset, pool, stats, confidence_intervals)
