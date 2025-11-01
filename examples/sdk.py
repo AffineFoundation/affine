@@ -8,31 +8,32 @@ load_dotenv()
 
 
 async def main():
-    # Get all miner info or only for UID = 5
+    # Get miner info for UID = 160
     # NOTE: HF_USER and HF_TOKEN .env value is required for this command.
-    # miners = await af.miners()
     miner = await af.miners(160)
     assert miner, "Unable to obtain miner, please check if registered"
 
-    # Generate a DED challenge
-    chal = await af.DED()  # support SAT ABD DED ALFWORLD BABYAI SCIWORLD WEBSHOP
-
-    # Query the model directly.
-    # NOTE: A CHUTES_API_KEY .env value is required for this command.
-    evaluation = await chal.evaluate(miner)
+    # Generate and evaluate a DED challenge
+    # All environment logic is now encapsulated in Docker images via affinetes
+    ded_env = await af.DED()
+    evaluation = await ded_env.evaluate(miner)
     print("=" * 50)
-    print("chal:", chal.env_name)
-    print(evaluation)
+    print("Environment:", ded_env.env_name)
+    print("Score:", evaluation.score)
+    print("Details:", evaluation.extra)
 
-    chal_alfworld = await af.ALFWORLD()
-    # Generate a ALFWORLD challenge, For agentgym type tasks, the task ID can be specified, otherwise it will be randomly assigned
-    # evaluation = await chal_alfworld.evaluate(miner, task_id=[0,1,2])
-    # evaluation = await chal_alfworld.evaluate(miner, task_id=10)
-    evaluation = await chal_alfworld.evaluate(miner)
+    # Generate and evaluate an ALFWORLD challenge
+    # For AgentGym tasks, you can specify task IDs
+    alfworld_env = await af.ALFWORLD()
+    # evaluation = await alfworld_env.evaluate(miner, task_id=[0,1,2])  # Multiple tasks
+    # evaluation = await alfworld_env.evaluate(miner, task_id=10)        # Single task
+    evaluation = await alfworld_env.evaluate(miner)  # Random task
     print("=" * 50)
-    print("chal:", chal_alfworld.env_name)
-    print(evaluation)
+    print("Environment:", alfworld_env.env_name)
+    print("Score:", evaluation.score)
+    print("Details:", evaluation.extra)
 
+    # List all available environments
     print("=" * 50)
     print("\nAll Available Environments:")
     envs = af.tasks.list_available_environments()
