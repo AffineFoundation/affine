@@ -39,7 +39,8 @@ from affine.cli import cli
 #                               dataset                                       #
 # --------------------------------------------------------------------------- #
 from affine.storage import (
-    FOLDER, BUCKET, ACCESS, SECRET, ENDPOINT, PUBLIC_READ, R2_PUBLIC_BASE
+    FOLDER, BUCKET, ACCESS, SECRET, ENDPOINT, PUBLIC_READ, R2_PUBLIC_BASE,
+    CACHE_DIR, load_summary, save_summary, dataset, sink, prune, sign_results
 )
 
 
