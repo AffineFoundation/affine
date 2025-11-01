@@ -204,9 +204,9 @@ async def dataset(
             ]
             logger.info(f"Found {len(keys)} keys in private repository")
             
-            # Check if private repository has sufficient data (at least 300 keys)
+            # Check if private repository has sufficient data
             if len(keys) < 50:
-                logger.info(f"Insufficient keys in private repository ({len(keys)} keys < 300), falling back to public")
+                logger.info(f"Insufficient keys in private repository ({len(keys)} keys), falling back to public")
                 use_public_fallback = True
                 
                 # Fall back to public repository
@@ -256,40 +256,15 @@ async def dataset(
                     if compact:
                         # Parse only the fields needed for weight calculation
                         data = orjson.loads(raw)
-                        
-                        if use_public_fallback:
-                            # When using public fallback, skip signature validation
-                            # since data is not from current validator
-                            try:
-                                compact_result = CompactResult(
-                                    hotkey=data.get("miner", {}).get("hotkey", ""),
-                                    uid=data.get("miner", {}).get("uid", 0),
-                                    model=data.get("miner", {}).get("model"),
-                                    revision=data.get("miner", {}).get("revision"),
-                                    block=data.get("miner", {}).get("block"),
-                                    env=data.get("challenge", {}).get("env", ""),
-                                    score=data.get("evaluation", {}).get("score", 0.0)
-                                )
-                                bar.update(1)
-                                yield compact_result
-                            except Exception as e:
-                                logger.debug(f"Skipping invalid public data: {type(e).__name__}: {e}")
-                                continue
-                        else:
-                            # Normal path: verify signature before converting to compact format
-                            r = Result.model_validate(data)
-                            if r.verify():
-                                compact_result = CompactResult.from_result(r)
-                                bar.update(1)
-                                yield compact_result
-                                # Explicitly delete full result to free memory immediately
-                                del r
+                        r = Result.model_validate(data)
+                        if r.verify():
+                            compact_result = CompactResult.from_result(r)
+                            bar.update(1)
+                            yield compact_result
+                            # Explicitly delete full result to free memory immediately
+                            del r
                     else:
                         # Return full Result object (legacy mode)
-                        if use_public_fallback:
-                            # When using public fallback, skip signature validation
-                            logger.warning("Public fallback mode does not support non-compact results")
-                            continue
                         r = Result.model_validate(orjson.loads(raw))
                         if r.verify():
                             bar.update(1)
@@ -321,16 +296,6 @@ async def sign_results( wallet, results ):
             r.sign(wallet)
     finally:
         return hotkey, results
-
-SINK_BUFFER: list["Result"] = []
-SINK_BUFFER_SIZE = int(os.getenv("AFFINE_SINK_BUFFER", "100"))
-
-async def sink_enqueue(wallet, block, results, force: bool = False):
-    global SINK_BUFFER
-    SINK_BUFFER.extend(results)
-    if not force and len(SINK_BUFFER) < SINK_BUFFER_SIZE: return
-    buf, SINK_BUFFER = SINK_BUFFER, []
-    await sink(wallet=wallet, results=buf, block=block)
 
 async def sink(wallet, results: list["Result"], block: int = None):
     if not results: return

@@ -18,7 +18,7 @@ from bittensor.core.errors import MetadataError
 from huggingface_hub import snapshot_download
 from typing import Any, Dict, List, Tuple
 from affine.utils.subtensor import get_subtensor
-from affine.storage import sink_enqueue, CACHE_DIR, load_summary
+from affine.storage import sink, CACHE_DIR, load_summary
 from affine.query import query_miner
 from affine import tasks as affine_tasks
 from affine.miners import get_latest_chute_id, miners, get_chute
@@ -211,7 +211,7 @@ def runner():
                             f"Flushing batch: {len(batch)}/{SINK_BATCH_SIZE}, elapsed={elapsed:.1f}/{SINK_MAX_WAIT}, flattened: {len(flattened)}, results to storage"
                         )
                         try:
-                            await sink_enqueue(wallet, current_block, flattened)
+                            await sink(wallet, flattened, current_block)
                         except Exception as e:
                             logger.warning(f"Sink upload failed, will retry: {e!r}")
                             traceback.print_exc()
