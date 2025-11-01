@@ -131,12 +131,31 @@ async def _jsonl(path: Path) -> AsyncIterator[bytes]:
         async for line in f:
             yield line.rstrip(b"\n")
 
+async def _load_public_index(need: set[int]) -> list[str]:
+    """Load and filter keys from public repository index.
+    
+    Args:
+        need: Set of block numbers needed
+    
+    Returns:
+        List of keys matching the needed blocks
+    """
+    sess = await _get_client()
+    url = f"{R2_PUBLIC_BASE}/{INDEX_KEY}"
+    async with sess.get(url, timeout=aiohttp.ClientTimeout(total=30)) as r:
+        r.raise_for_status()
+        public_index = json.loads(await r.text())
+    
+    return [
+        k for k in public_index
+        if (h := Path(k).name.split("-", 1)[0]).isdigit() and int(h) in need
+    ]
+
 async def dataset(
     tail: int,
     *,
     max_concurrency: int = 10,
     compact: bool = True,
-    min_samples: int = 10000,
 ) -> AsyncIterator["Result | CompactResult"]:
     """Load dataset from R2 storage.
     
@@ -158,10 +177,21 @@ async def dataset(
     use_public_fallback = False
     keys = []
     
-    # Try loading from own repository first (only if not already in public mode)
-    if not PUBLIC_READ:
+    # Determine data source based on PUBLIC_READ setting
+    if PUBLIC_READ:
+        # Already in public mode, use public repository directly
+        logger.info("Using public repository (PUBLIC_READ=True)")
+        use_public_fallback = True
+        
         try:
-            # Temporarily use private read to check own repository
+            keys = await _load_public_index(need)
+            logger.info(f"Loaded {len(keys)} keys from public repository")
+        except Exception as e:
+            logger.error(f"Failed to load from public repository: {e}")
+            keys = []
+    else:
+        # PUBLIC_READ=False: try private repository first
+        try:
             async def _get_index_private():
                 async with get_client_ctx() as c:
                     r = await c.get_object(Bucket=FOLDER, Key=INDEX_KEY)
@@ -172,34 +202,32 @@ async def dataset(
                 k for k in own_index
                 if (h := Path(k).name.split("-", 1)[0]).isdigit() and int(h) in need
             ]
-            logger.info(f"Found {len(keys)} keys in own repository")
-        except Exception as e:
-            logger.info(f"Failed to load from own repository: {e}")
-            keys = []
-    
-    # Check if we need to fall back to public repository
-    if len(keys) == 0 or (len(keys) * 100 < min_samples):
-        if len(keys) > 0:
-            logger.info(f"Insufficient keys in own repository ({len(keys)} keys, estimated {len(keys) * 100} samples < {min_samples})")
-        logger.info("Falling back to public repository")
-        use_public_fallback = True
-        
-        # Load from public repository
-        try:
-            sess = await _get_client()
-            url = f"{R2_PUBLIC_BASE}/{INDEX_KEY}"
-            async with sess.get(url, timeout=aiohttp.ClientTimeout(total=30)) as r:
-                r.raise_for_status()
-                public_index = json.loads(await r.text())
+            logger.info(f"Found {len(keys)} keys in private repository")
             
-            keys = [
-                k for k in public_index
-                if (h := Path(k).name.split("-", 1)[0]).isdigit() and int(h) in need
-            ]
-            logger.info(f"Loaded {len(keys)} keys from public repository")
+            # Check if private repository has sufficient data (at least 300 keys)
+            if len(keys) < 50:
+                logger.info(f"Insufficient keys in private repository ({len(keys)} keys < 300), falling back to public")
+                use_public_fallback = True
+                
+                # Fall back to public repository
+                try:
+                    keys = await _load_public_index(need)
+                    logger.info(f"Loaded {len(keys)} keys from public repository (fallback)")
+                except Exception as e:
+                    logger.error(f"Failed to load from public repository during fallback: {e}")
+                    # Keep using private keys if public fallback fails
+                    use_public_fallback = False
+            
         except Exception as e:
-            logger.error(f"Failed to load from public repository: {e}")
-            if not keys:
+            logger.warning(f"Failed to load from private repository: {e}, falling back to public")
+            use_public_fallback = True
+            
+            # Fall back to public repository on private load failure
+            try:
+                keys = await _load_public_index(need)
+                logger.info(f"Loaded {len(keys)} keys from public repository (fallback after error)")
+            except Exception as e2:
+                logger.error(f"Failed to load from public repository during fallback: {e2}")
                 keys = []
     
     keys.sort()
