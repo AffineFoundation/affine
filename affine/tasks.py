@@ -87,6 +87,7 @@ class BaseSDKEnv(ABC):
     # Class-level configuration
     _sandbox_config: SandboxConfig = None
     _evaluator_config: EvaluatorConfig = None
+    DEFAULT_REPLICAS: int = 1
 
     def __init__(self):
         super().__init__()
@@ -147,12 +148,28 @@ class BaseSDKEnv(ABC):
                     logger.debug(f"Removing stale cached environment: {template}")
                     del _ENV_CACHE[template]
             
+            # Parse AFFINETES_HOSTS environment variable
+            hosts_env = os.getenv("AFFINETES_HOSTS", "").strip()
+            hosts = None
+            replicas = self.DEFAULT_REPLICAS
+            
+            if hosts_env:
+                # Parse comma-separated hosts
+                parsed_hosts = [h.strip() for h in hosts_env.split(",") if h.strip()]
+                if parsed_hosts:
+                    hosts = parsed_hosts
+                    # When using remote hosts, total replicas = DEFAULT_REPLICAS * number of hosts
+                    replicas = self.DEFAULT_REPLICAS * len(hosts)
+                    logger.info(f"Using remote hosts for deployment: {hosts} (total replicas: {replicas})")
+
             # Load environment using affinetes
-            logger.info(f"Loading environment: {template} (image={self.docker_image})")
+            logger.info(f"Loading environment: {template} (image={self.docker_image}, replicas={replicas})")
             environment = af_env.load_env(
                 image=self.docker_image,
                 mode="docker",
                 env_vars=self.env_vars,
+                hosts=hosts,
+                replicas=replicas,
                 pull=True,
                 force_recreate=True,
             )
@@ -429,6 +446,7 @@ def register_env(env_type: EnvType, env_name: str):
 @register_env(EnvType.AFFINE, "affine:sat")
 class SAT(AffineSDKEnv):
     """SAT environment for SDK"""
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -438,6 +456,7 @@ class SAT(AffineSDKEnv):
 @register_env(EnvType.AFFINE, "affine:abd")
 class ABD(AffineSDKEnv):
     """ABD environment for SDK"""
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -447,6 +466,7 @@ class ABD(AffineSDKEnv):
 @register_env(EnvType.AFFINE, "affine:ded")
 class DED(AffineSDKEnv):
     """DED environment for SDK"""
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -456,6 +476,7 @@ class DED(AffineSDKEnv):
 @register_env(EnvType.AFFINE, "affine:hvm")
 class HVM(AffineSDKEnv):
     """HVM environment for SDK"""
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -465,6 +486,7 @@ class HVM(AffineSDKEnv):
 @register_env(EnvType.AFFINE, "affine:elr")
 class ELR(AffineSDKEnv):
     """ELR environment for SDK"""
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -476,6 +498,7 @@ class ELR(AffineSDKEnv):
 class ALFWORLD(AgentGymSDKEnv):
     """ALFWORLD environment for SDK"""
     DEFAULT_DATA_LEN = 2500
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -485,9 +508,8 @@ class ALFWORLD(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:webshop")
 class WEBSHOP(AgentGymSDKEnv):
     """WEBSHOP environment for SDK"""
-
-    # Override default max_round for WEBSHOP
     DEFAULT_MAX_ROUND = 10
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -497,7 +519,8 @@ class WEBSHOP(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:babyai")
 class BABYAI(AgentGymSDKEnv):
     """BABYAI environment for SDK"""
-    DEFAULT_DATA_LEN = 4000 # 40
+    DEFAULT_DATA_LEN = 4000
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -508,6 +531,7 @@ class BABYAI(AgentGymSDKEnv):
 class SCIWORLD(AgentGymSDKEnv):
     """SCIWORLD environment for SDK"""
     DEFAULT_DATA_LEN = 4639
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -518,6 +542,7 @@ class SCIWORLD(AgentGymSDKEnv):
 class TEXTCRAFT(AgentGymSDKEnv):
     """TEXTCRAFT environment for SDK"""
     DEFAULT_DATA_LEN = 582
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:

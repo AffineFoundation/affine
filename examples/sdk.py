@@ -18,9 +18,7 @@ async def main():
     ded_env = af.DED()
     evaluation = await ded_env.evaluate(miner)
     print("=" * 50)
-    print("Environment:", ded_env.env_name)
-    print("Score:", evaluation.score)
-    print("Details:", evaluation.extra)
+    print("Environment:", evaluation)
 
     # Generate and evaluate an ALFWORLD challenge
     # For AgentGym tasks, you can specify task IDs
@@ -29,9 +27,7 @@ async def main():
     # evaluation = await alfworld_env.evaluate(miner, task_id=10)        # Single task
     evaluation = await alfworld_env.evaluate(miner)  # Random task
     print("=" * 50)
-    print("Environment:", alfworld_env.env_name)
-    print("Score:", evaluation.score)
-    print("Details:", evaluation.extra)
+    print("Environment:", evaluation)
 
     # List all available environments
     print("=" * 50)
