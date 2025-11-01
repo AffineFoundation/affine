@@ -9,22 +9,16 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, Union, TYPE_CHECKING, Type
 from dataclasses import dataclass
 from enum import Enum
+from threading import Lock
 from pydantic import BaseModel, Field, validator, ValidationError
-from concurrent.futures import ThreadPoolExecutor
 
-from affine.quixand.core.sandbox_manager import get_sandbox
+import affinetes as af_env
 from affine.setup import logger
 
-# Global thread pool for sandbox blocking calls
-_EXECUTOR = None
 
-def get_executor() -> ThreadPoolExecutor:
-    """Get or create global thread pool executor."""
-    global _EXECUTOR
-    if _EXECUTOR is None:
-        max_workers = int(os.getenv("AFFINE_MAX_CONCURRENCY", "20")) * 2
-        _EXECUTOR = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="sandbox_")
-    return _EXECUTOR
+# Global environment cache
+_ENV_CACHE: Dict[str, Any] = {}
+_ENV_LOCK = Lock()
 
 
 # ========================= Configuration =========================
@@ -96,8 +90,8 @@ class BaseSDKEnv(ABC):
 
     def __init__(self):
         super().__init__()
-        self._sandbox = self.get_sandbox()
-        self._sandbox_lock = asyncio.Lock()
+        self._env = self._load_environment()
+        self._env_lock = asyncio.Lock()
 
     @property
     def sandbox_config(self) -> SandboxConfig:
@@ -125,14 +119,49 @@ class BaseSDKEnv(ABC):
         """Return environment type"""
         pass
 
-    def get_sandbox(self) -> Any:
-        """Get or create sandbox instance"""
-        return get_sandbox(
-            template=self.env_name,
-            shared=True,
-            timeout=self.sandbox_config.timeout,
-            env=self.sandbox_config.env,
-        )
+    @property
+    def docker_image(self) -> str:
+        """Return Docker image for this environment"""
+        raise NotImplementedError("Subclass must implement docker_image property")
+
+    @property
+    def env_vars(self) -> Dict[str, str]:
+        """Return environment variables for this environment"""
+        api_key = os.getenv("CHUTES_API_KEY")
+        if not api_key:
+            raise ValueError("CHUTES_API_KEY environment variable is required")
+        return {"CHUTES_API_KEY": api_key}
+
+    def _load_environment(self) -> Any:
+        """Load or get cached environment instance"""
+        with _ENV_LOCK:
+            template = self.env_name
+            
+            # Check cache for shared instances
+            if template in _ENV_CACHE:
+                cached_env = _ENV_CACHE[template]
+                if cached_env.is_ready():
+                    logger.debug(f"Reusing cached environment: {template}")
+                    return cached_env
+                else:
+                    logger.debug(f"Removing stale cached environment: {template}")
+                    del _ENV_CACHE[template]
+            
+            # Load environment using affinetes
+            logger.info(f"Loading environment: {template} (image={self.docker_image})")
+            environment = af_env.load_env(
+                image=self.docker_image,
+                mode="docker",
+                env_vars=self.env_vars,
+                pull=True,
+                recreate=True,
+            )
+            
+            # Cache the environment
+            _ENV_CACHE[template] = environment
+            logger.debug(f"Cached environment: {template}")
+            
+            return environment
 
     async def _evaluate_single_miner(
         self, miner: "Miner", payload_extra: Dict[str, Any] = None
@@ -153,19 +182,16 @@ class BaseSDKEnv(ABC):
         if payload_extra:
             payload.update(payload_extra)
 
-        # Execute evaluation with async executor
+        # Execute evaluation
         try:
-            proxy_timeout = (
+            timeout = (
                 self.sandbox_config.proxy_timeout
                 if self.env_type == EnvType.AFFINE
                 else self.sandbox_config.proxy_timeout + 600
             )
 
-            # Use dedicated thread pool for blocking sandbox calls
-            result = await asyncio.get_event_loop().run_in_executor(
-                get_executor(),
-                lambda: self._sandbox.proxy.evaluator(_timeout=proxy_timeout, **payload)
-            )
+            # Call affinetes evaluate method directly
+            result = await self._env.evaluate(_timeout=timeout, **payload)
 
             return self._parse_evaluation_result(result, miner, payload_extra)
 
@@ -262,6 +288,20 @@ class AffineSDKEnv(BaseSDKEnv):
     def env_type(self) -> EnvType:
         return EnvType.AFFINE
 
+    @property
+    def docker_image(self) -> str:
+        """All Affine environments use the same image"""
+        return "bignickeye/affine:latest"
+
+    @property
+    def env_vars(self) -> Dict[str, str]:
+        """Affine environment variables"""
+        env_vars = super().env_vars
+        # Extract env name from template (e.g., "affine:sat" -> "sat")
+        env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
+        env_vars["ENV_NAME"] = env_name
+        return env_vars
+
     async def evaluate(
         self, miner: Union["Miner", Dict[str, Any]],
         task_id: Union[int, List[int], None] = None,
@@ -303,6 +343,23 @@ class AgentGymSDKEnv(BaseSDKEnv):
     @property
     def env_type(self) -> EnvType:
         return EnvType.AGENTGYM
+
+    @property
+    def docker_image(self) -> str:
+        """AgentGym environments have different images per task"""
+        # Extract env name from template (e.g., "agentgym:webshop" -> "webshop")
+        env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
+        return f"bignickeye/agentgym:{env_name}"
+
+    @property
+    def env_vars(self) -> Dict[str, str]:
+        """AgentGym environment variables"""
+        env_vars = super().env_vars
+        # Add AgentGym-specific variables
+        env_vars["TODO_KEY"] = os.getenv("AGENTGYM_TOOL_TODO_KEY", "")
+        env_vars["MOVIE_KEY"] = os.getenv("AGENTGYM_TOOL_MOVIE_KEY", "")
+        env_vars["SHEET_EMAIL"] = os.getenv("AGENTGYM_TOOL_SHEET_EMAIL", "")
+        return env_vars
 
     def _normalize_task_ids(self, task_id: Union[int, List[int], None]) -> List[int]:
         """Normalize task IDs to list format"""
@@ -519,3 +576,19 @@ def list_available_environments() -> Dict[str, List[str]]:
         result[env_type].sort()
 
     return result
+
+
+def cleanup_all_environments():
+    """Clean up all cached environments"""
+    with _ENV_LOCK:
+        logger.info("Cleaning up all cached environments")
+        for template, env in list(_ENV_CACHE.items()):
+            try:
+                loop = asyncio.get_event_loop()
+                if not loop.is_running():
+                    loop.run_until_complete(env.cleanup())
+                logger.debug(f"Cleaned up environment: {template}")
+            except Exception as e:
+                logger.warning(f"Error cleaning up environment {template}: {e}")
+        
+        _ENV_CACHE.clear()
