@@ -26,11 +26,13 @@ class SamplingConfig:
     BETA_PRIOR_ALPHA = 0.5
     BETA_PRIOR_BETA = 0.5
     
-    # Comprehensive ability evaluation parameters
-    # Gamma controls the steepness of reward distribution within Pareto frontier
-    # Higher gamma = stronger penalty for specialization, more reward for balanced performance
-    # Range: 2.0 (mild) to 4.0 (aggressive), recommended: 3.0
-    GEOMETRIC_MEAN_GAMMA = 4.0
+    # Winner-Takes-More distribution parameters
+    # SCORE_POWER: Exponent applied to comprehensive scores before distribution
+    #              Higher values (e.g., 2.0) amplify differences between top performers
+    # RANK_DECAY_RATE: Decay factor for subsequent ranks (0.0-1.0)
+    #                  0.0 = winner takes all, 1.0 = no decay (proportional to scores)
+    SCORE_POWER = 2.0
+    RANK_DECAY_RATE = 0.5
     
     # Environment-specific score ranges for normalization
     # Most environments use 0-1 range, but sciworld uses -100 to 100
@@ -285,10 +287,8 @@ class MinerSampler:
         """
         Calculate comprehensive ability score for a miner on given environment subset.
         
-        Uses geometric mean raised to power gamma to naturally penalize specialization
-        while rewarding balanced performance across all environments.
-        
-        Formula: score = (geometric_mean(normalized_scores))^gamma
+        Uses geometric mean to naturally penalize specialization while rewarding
+        balanced performance across all environments.
         
         Args:
             hotkey: Miner's hotkey
@@ -296,7 +296,7 @@ class MinerSampler:
             stats: {hotkey: {env: {'samples': int, 'total_score': float, ...}}}
         
         Returns:
-            Comprehensive ability score (0.0 if any environment has zero performance)
+            Comprehensive ability score (geometric mean in [0, 1])
         """
         scores = []
         
@@ -319,13 +319,58 @@ class MinerSampler:
         if not scores or any(s <= 0.0 for s in scores):
             return 0.0
         
-        # Calculate geometric mean
+        # Calculate geometric mean as comprehensive score
         geometric_mean = math.prod(scores) ** (1.0 / len(scores))
         
-        # Apply gamma power to amplify differences
-        comprehensive_score = geometric_mean ** self.config.GEOMETRIC_MEAN_GAMMA
+        return geometric_mean
+    
+    def calculate_decayed_scores(
+        self,
+        comprehensive_scores: Dict[str, float]
+    ) -> Dict[str, float]:
+        """
+        Apply score-based weighting with rank decay to comprehensive scores.
         
-        return comprehensive_score
+        Algorithm:
+        1. Rank miners by comprehensive score (descending)
+        2. Apply power function to amplify score differences: score^SCORE_POWER
+        3. Apply rank-based decay: rank_n gets RANK_DECAY_RATE^(n-1) multiplier
+        4. Final weight = (score^power) * (decay^rank)
+        
+        This ensures:
+        - Large performance gaps lead to large weight gaps (via SCORE_POWER)
+        - Later ranks get progressively less weight (via RANK_DECAY_RATE)
+        - Distribution automatically reflects actual performance differences
+        
+        Args:
+            comprehensive_scores: {hotkey: geometric_mean_score}
+        
+        Returns:
+            {hotkey: decayed_score} (not normalized, for proportional distribution)
+        """
+        if not comprehensive_scores:
+            return {}
+        
+        # Sort by comprehensive score (descending)
+        sorted_miners = sorted(
+            comprehensive_scores.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+        
+        # Calculate decayed scores
+        decayed_scores = {}
+        for rank, (hk, comp_score) in enumerate(sorted_miners):
+            # Apply power function to amplify differences
+            powered_score = comp_score ** self.config.SCORE_POWER
+            
+            # Apply rank-based decay (rank 0 gets 1.0, rank 1 gets DECAY, etc.)
+            rank_multiplier = self.config.RANK_DECAY_RATE ** rank
+            
+            # Combine both factors
+            decayed_scores[hk] = powered_score * rank_multiplier
+        
+        return decayed_scores
     
     def find_subset_winner(
         self,
@@ -336,7 +381,7 @@ class MinerSampler:
     ) -> Dict[str, float]:
         """
         Find winner(s) on environment subset via Pareto dominance,
-        then distribute rewards proportionally based on comprehensive ability.
+        then distribute rewards based on score-weighted rank decay.
 
         Args:
             env_subset: Environment subset to find winner for
@@ -375,7 +420,7 @@ class MinerSampler:
         if len(pareto_frontier) == 1:
             return {pareto_frontier[0]: 1.0}
         
-        # Step 3: Multiple winners - distribute based on comprehensive ability
+        # Step 3: Calculate comprehensive scores for all Pareto frontier members
         comprehensive_scores = {}
         for hk in pareto_frontier:
             comprehensive_scores[hk] = self.calculate_comprehensive_score(
@@ -389,20 +434,49 @@ class MinerSampler:
             equal_weight = 1.0 / len(pareto_frontier)
             return {hk: equal_weight for hk in pareto_frontier}
         
-        # Proportional distribution based on comprehensive scores
-        return {
-            hk: score / total_score
-            for hk, score in comprehensive_scores.items()
-        }
+        # Step 4: Apply score-based weighting with rank decay
+        decayed_scores = self.calculate_decayed_scores(comprehensive_scores)
+        
+        # Step 5: Normalize to sum to 1.0
+        total_decayed = sum(decayed_scores.values())
+        if total_decayed <= 0.0:
+            # Fallback to equal distribution
+            equal_weight = 1.0 / len(pareto_frontier)
+            return {hk: equal_weight for hk in pareto_frontier}
+        
+        return {hk: score / total_decayed for hk, score in decayed_scores.items()}
     
     def compute_layer_weights(self, n_envs: int) -> Dict[int, float]:
         """
         Compute per-subset weights K_s.
-        K_1 = scale; K_s = scale * (2^s) for s >= 2.
+        
+        Only evaluate the top 6 layers to focus on comprehensive performance.
+        Each layer gets exponentially increasing total weight: layer_s_total = scale * (2^s)
+        This total weight is then evenly distributed among all subsets in that layer.
+        
+        For layer s with C(n_envs, s) subsets, each subset gets:
+        K_s = (scale * 2^s) / C(n_envs, s)
+        
+        This ensures:
+        1. Higher layers (more environments) get exponentially more total weight
+        2. Within each layer, weight is fairly distributed across all subsets
+        3. Models are incentivized to perform well across more environments
+        4. Low layers (L1, L2, etc.) are excluded as they contribute negligibly under exponential growth
         """
-        K = {1: self.config.SCALE}
-        for s in range(2, n_envs + 1):
-            K[s] = self.config.SCALE * (2**s)
+        K = {}
+        # Only evaluate top 6 layers (dynamically: max(1, n_envs - 5) to n_envs)
+        min_layer = max(1, n_envs - 5)
+        
+        for s in range(min_layer, n_envs + 1):
+            # Calculate number of subsets in this layer: C(n_envs, s)
+            num_subsets = math.comb(n_envs, s)
+            
+            # Total weight for this layer (exponential by layer size)
+            layer_total_weight = self.config.SCALE * (2 ** s)
+            
+            # Distribute evenly among all subsets in this layer
+            K[s] = layer_total_weight / num_subsets if num_subsets > 0 else layer_total_weight
+        
         return K
 
     def calculate_combinatoric_scores(
@@ -446,7 +520,9 @@ class MinerSampler:
                 env_winners[e] = None
 
         # Calculate scores with proportional distribution based on comprehensive ability
-        for s in range(1, n_envs + 1):
+        # Only evaluate top 6 layers (same range as compute_layer_weights)
+        min_layer = max(1, n_envs - 5)
+        for s in range(min_layer, n_envs + 1):
             for env_subset in itertools.combinations(envs, s):
                 # Get proportional weights for winners on this subset
                 winner_weights = self.find_subset_winner(env_subset, pool, stats, confidence_intervals)
