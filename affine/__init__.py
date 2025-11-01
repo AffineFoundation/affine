@@ -40,7 +40,7 @@ from affine.cli import cli
 # --------------------------------------------------------------------------- #
 from affine.storage import (
     FOLDER, BUCKET, ACCESS, SECRET, ENDPOINT, PUBLIC_READ, R2_PUBLIC_BASE,
-    load_summary, save_summary, dataset, sink, sink_enqueue, prune
+    load_summary, save_summary, dataset, sink, prune
 )
 
 
