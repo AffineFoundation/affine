@@ -162,6 +162,9 @@ class BaseSDKEnv(ABC):
                     replicas = self.DEFAULT_REPLICAS * len(hosts)
                     logger.info(f"Using remote hosts for deployment: {hosts} (total replicas: {replicas})")
 
+            # Generate container name based on environment name
+            container_name = template.replace(":", "-")
+            
             # Load environment using affinetes
             logger.info(f"Loading environment: {template} (image={self.docker_image}, replicas={replicas})")
             environment = af_env.load_env(
@@ -170,6 +173,7 @@ class BaseSDKEnv(ABC):
                 env_vars=self.env_vars,
                 hosts=hosts,
                 replicas=replicas,
+                container_name=container_name,
                 pull=True,
                 force_recreate=True,
             )

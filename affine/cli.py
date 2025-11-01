@@ -235,7 +235,12 @@ def runner():
             async def execute_with_semaphore(env, miner, task_id):
                 """Wrapper to execute task with semaphore control."""
                 async with semaphore:
-                    return await query_miner(env, miner, task_id=task_id)
+                    try:
+                        return await query_miner(env, miner, task_id=task_id)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        return None
 
             # Track inflight tasks and pending work
             inflight_tasks: Dict[Tuple[str, int], asyncio.Task] = {}
@@ -366,25 +371,38 @@ def runner():
 
             try:
                 await producer_task
-            except asyncio.CancelledError:
-                pass
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                logger.info("Shutting down runner...")
+            except Exception as e:
+                logger.error(f"Runner error: {e}")
             finally:
+                # Cancel all background tasks
+                logger.debug("Cancelling background tasks...")
                 sink_task.cancel()
                 alive_task.cancel()
                 producer_task.cancel()
 
-                with contextlib.suppress(asyncio.CancelledError):
-                    await sink_task
-                    await alive_task
-                    await producer_task
+                # Wait for tasks to complete cancellation
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await asyncio.gather(sink_task, alive_task, producer_task, return_exceptions=True)
+                
+                logger.info("Cleanup completed")
 
         await main_loop()
 
     async def main():
         timeout = int(os.getenv("AFFINE_WATCHDOG_TIMEOUT", "900"))
-        await asyncio.gather(_run(), watchdog(timeout=timeout))
+        try:
+            await asyncio.gather(_run(), watchdog(timeout=timeout))
+        except KeyboardInterrupt:
+            logger.info("Received keyboard interrupt, exiting...")
+        except asyncio.CancelledError:
+            pass
 
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Runner stopped")
 
 
 @cli.command("signer")

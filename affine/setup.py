@@ -57,11 +57,21 @@ logger = logging.getLogger("affine")
 
 def setup_logging(verbosity: int):
     level = TRACE if verbosity >= 3 else logging.DEBUG if verbosity == 2 else logging.INFO if verbosity == 1 else logging.CRITICAL + 1
-    for noisy in ["websockets", "bittensor", "bittensor-cli", "btdecode", "asyncio", "aiobotocore.regions", "botocore", "httpx", "httpcore"]:
+
+    # Silence noisy loggers
+    for noisy in ["websockets", "bittensor", "bittensor-cli", "btdecode", "asyncio", "aiobotocore.regions", "botocore", "httpx", "httpcore", "docker", "urllib3"]:
         logging.getLogger(noisy).setLevel(logging.WARNING)
-    logging.basicConfig(level=level,
-                        format="%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
-                        datefmt="%Y-%m-%d %H:%M:%S")
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    # Set affinetes logger to WARNING to reduce noise
+    logging.getLogger("affinetes").setLevel(logging.WARNING)
+
+    # Set affine logger level
     logging.getLogger("affine").setLevel(level)
 
 def info():
