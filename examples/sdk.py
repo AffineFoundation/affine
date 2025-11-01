@@ -15,7 +15,7 @@ async def main():
 
     # Generate and evaluate a DED challenge
     # All environment logic is now encapsulated in Docker images via affinetes
-    ded_env = await af.DED()
+    ded_env = af.DED()
     evaluation = await ded_env.evaluate(miner)
     print("=" * 50)
     print("Environment:", ded_env.env_name)
@@ -24,7 +24,7 @@ async def main():
 
     # Generate and evaluate an ALFWORLD challenge
     # For AgentGym tasks, you can specify task IDs
-    alfworld_env = await af.ALFWORLD()
+    alfworld_env = af.ALFWORLD()
     # evaluation = await alfworld_env.evaluate(miner, task_id=[0,1,2])  # Multiple tasks
     # evaluation = await alfworld_env.evaluate(miner, task_id=10)        # Single task
     evaluation = await alfworld_env.evaluate(miner)  # Random task

@@ -28,7 +28,7 @@ from affine.validator import (
     _set_weights_with_confirmation,
 )
 from affine.config import get_conf
-from affine.setup import NETUID, ENVS, setup_logging, logger
+from affine.setup import NETUID, setup_logging, logger, get_enabled_envs
 from affine.weights import weights
 from aiohttp import web
 
@@ -81,18 +81,18 @@ def runner():
         # Global concurrency control
         semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
 
-        # Initialize SDK environments from ENVS constant
+        # Initialize SDK environments from enabled environment classes
         envs = []
-        for env_spec in ENVS:
+        for env_class in get_enabled_envs():
             try:
-                env = await affine_tasks.create_environment(env_spec)
+                env = env_class()
                 envs.append(env)
-                logger.debug(f"Initialized environment: {env_spec}")
-            except ValueError as e:
-                logger.warning(f"Failed to create environment '{env_spec}': {e}")
+                logger.debug(f"Initialized environment: {env.env_name}")
+            except Exception as e:
+                logger.warning(f"Failed to create environment '{env_class.__name__}': {e}")
 
         if not envs:
-            raise RuntimeError("No valid environments initialized from ENVS")
+            raise RuntimeError("No valid environments initialized")
 
         # Initialize subtensor
         subtensor = await get_subtensor()
@@ -275,8 +275,7 @@ def runner():
                         for env in envs:
                             task_key = (env.env_name, miner.uid)
                             if task_key not in inflight_tasks:
-                                data_len = getattr(env, "data_len", 1)
-                                task_id = random.randint(0, data_len - 1) % data_len
+                                task_id = env.generate_random_task_id()
                                 pending_queue.append((env, miner, task_id))
                     
                     # Shuffle to randomize which miner-env pairs get submitted first

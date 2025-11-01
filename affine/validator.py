@@ -16,7 +16,7 @@ from affine.setup import NETUID
 from affine.utils.subtensor import get_subtensor
 from affine.sampling import MinerSampler, SamplingOrchestrator, SamplingConfig
 from affine.miners import miners
-from affine.setup import ENVS, logger
+from affine.setup import get_env_names, logger
 
 # Table structure constants
 BASE_COLUMNS = ["UID", "Hotkey", "Model", "Rev"]
@@ -232,11 +232,12 @@ async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[f
         logger.warning(f"Signer call timed out: {e}. Not falling back to local because validator has no wallet.")
         return
 
-def _build_summary_data(ctx: SummaryContext) -> dict:
+def _build_summary_data(ctx: SummaryContext, envs: list) -> dict:
     """Build flexible summary data structure.
 
     Args:
         ctx: SummaryContext containing all necessary data
+        envs: List of environment names
 
     Returns:
         Dictionary with both legacy format (for printing) and structured format (for S3).
@@ -255,7 +256,7 @@ def _build_summary_data(ctx: SummaryContext) -> dict:
 
             # Parse environment results from row
             env_results = {}
-            for i, e in enumerate(ENVS):
+            for i, e in enumerate(envs):
                 env_col_idx = ENV_START_INDEX + i
                 env_results[e] = {
                     "accuracy": ctx.accuracies[hotkey][e],
@@ -268,14 +269,14 @@ def _build_summary_data(ctx: SummaryContext) -> dict:
                 }
 
             # Only include top 6 layers in structured data
-            min_layer = max(1, len(ENVS) - 5)
+            min_layer = max(1, len(envs) - 5)
             miners_data[hotkey] = {
                 "uid": uid,
                 "hotkey": hotkey,
                 "model": str(miner.model),
                 "revision": str(miner.revision),
                 "environments": env_results,
-                "layer_points": {f"L{s}": ctx.layer_points[hotkey].get(s, 0.0) for s in range(min_layer, len(ENVS) + 1)},
+                "layer_points": {f"L{s}": ctx.layer_points[hotkey].get(s, 0.0) for s in range(min_layer, len(envs) + 1)},
                 "total_score": ctx.scores.get(hotkey, 0.0),
                 "eligible": hotkey in ctx.eligible,
                 "first_block": ctx.first_blocks.get(hotkey, 0),
@@ -296,8 +297,8 @@ def _build_summary_data(ctx: SummaryContext) -> dict:
             "queryable_count": len(ctx.queryable_hotkeys),
             "total_miners": len(ctx.metagraph.hotkeys)
         },
-        "env_winners": {e: ctx.env_winners.get(e) for e in ENVS},
-        "environments": list(ENVS)
+        "env_winners": {e: ctx.env_winners.get(e) for e in envs},
+        "environments": list(envs)
     }
 
     if ctx.note:
@@ -320,6 +321,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
     await prune(tail=tail)
 
     meta = await st.metagraph(NETUID)
+    ENVS = get_env_names()
     BASE_HK = meta.hotkeys[0]
     N_envs = len(ENVS)
     
@@ -430,7 +432,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
             previous_miners=prev,
             note="No eligible miners, defaulting to uid 0"
         )
-        summary_data = _build_summary_data(ctx)
+        summary_data = _build_summary_data(ctx, ENVS)
         await save_summary(blk, summary_data)
 
         return [0], [1.0]
@@ -492,7 +494,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
         metagraph=meta,
         previous_miners=prev
     )
-    summary_data = _build_summary_data(ctx)
+    summary_data = _build_summary_data(ctx, ENVS)
     if save_to_s3:
         await save_summary(blk, summary_data)
     else:

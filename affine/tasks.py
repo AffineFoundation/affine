@@ -154,7 +154,7 @@ class BaseSDKEnv(ABC):
                 mode="docker",
                 env_vars=self.env_vars,
                 pull=True,
-                recreate=True,
+                force_recreate=True,
             )
             
             # Cache the environment
@@ -277,6 +277,11 @@ class BaseSDKEnv(ABC):
         tasks = [self.evaluate(m) for m in miners]
         return await asyncio.gather(*tasks)
 
+    def generate_random_task_id(self) -> int:
+        """Generate a random task ID for this environment"""
+        data_len = getattr(self, "data_len", 1)
+        return random.randint(0, data_len - 1) % data_len
+
 
 # ========================= Environment Implementations =========================
 
@@ -308,8 +313,14 @@ class AffineSDKEnv(BaseSDKEnv):
     ) -> Union["Evaluation", Dict[str, "Evaluation"]]:
         """Evaluate using Affine environment endpoint."""
 
-        # Use the IDs from config or default
-        payload_extra = {"ids": [0]}
+        # Extract env name from template (e.g., "affine:sat" -> "sat")
+        env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
+        
+        # Affine environments use task_type and num_samples
+        payload_extra = {
+            "task_type": env_name,
+            "num_samples": 1
+        }
 
         async def evaluate_single(m):
             return await self._evaluate_single_miner(m, payload_extra)
@@ -382,6 +393,8 @@ class AgentGymSDKEnv(BaseSDKEnv):
         """Evaluate using AgentGym environment endpoint."""
 
         task_ids = self._normalize_task_ids(task_id)
+        
+        # AgentGym environments use ids and max_round
         payload_extra = {
             "ids": task_ids,
             "max_round": self.max_round,
@@ -517,7 +530,7 @@ class TEXTCRAFT(AgentGymSDKEnv):
 def create_env_factory(env_class: Type[BaseSDKEnv], **default_kwargs):
     """Create a factory function for environment"""
 
-    async def factory(**kwargs):
+    def factory(**kwargs):
         merged_kwargs = {**default_kwargs, **kwargs}
         return env_class(**merged_kwargs)
 

@@ -39,15 +39,12 @@ def get_enabled_envs():
     
     return ENABLED_ENVS
 
-
-# For backward compatibility, provide env names as strings
 def get_env_names() -> Tuple[str, ...]:
     """Get enabled environment names as strings."""
     return tuple(env_class._env_name for env_class in get_enabled_envs())
 
 
-# Legacy support - can be removed once all code is migrated
-ENVS: Tuple[str, ...] = get_env_names()
+
 
 logging.addLevelName(TRACE, "TRACE")
 
