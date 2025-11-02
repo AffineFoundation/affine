@@ -148,7 +148,7 @@ from dotenv import load_dotenv
 # Optionally turn on logging
 af.trace()  # or af.debug() or af.info()
 
-load_dotenv()
+load_dotenv(override=True)
 
 async def main():
     # Get miner info for a specific UID
