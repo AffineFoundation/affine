@@ -9,22 +9,16 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, Union, TYPE_CHECKING, Type
 from dataclasses import dataclass
 from enum import Enum
+from threading import Lock
 from pydantic import BaseModel, Field, validator, ValidationError
-from concurrent.futures import ThreadPoolExecutor
 
-from affine.quixand.core.sandbox_manager import get_sandbox
+import affinetes as af_env
 from affine.setup import logger
 
-# Global thread pool for sandbox blocking calls
-_EXECUTOR = None
 
-def get_executor() -> ThreadPoolExecutor:
-    """Get or create global thread pool executor."""
-    global _EXECUTOR
-    if _EXECUTOR is None:
-        max_workers = int(os.getenv("AFFINE_MAX_CONCURRENCY", "20")) * 2
-        _EXECUTOR = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="sandbox_")
-    return _EXECUTOR
+# Global environment cache
+_ENV_CACHE: Dict[str, Any] = {}
+_ENV_LOCK = Lock()
 
 
 # ========================= Configuration =========================
@@ -93,11 +87,12 @@ class BaseSDKEnv(ABC):
     # Class-level configuration
     _sandbox_config: SandboxConfig = None
     _evaluator_config: EvaluatorConfig = None
+    DEFAULT_REPLICAS: int = 1
 
     def __init__(self):
         super().__init__()
-        self._sandbox = self.get_sandbox()
-        self._sandbox_lock = asyncio.Lock()
+        self._env = self._load_environment()
+        self._env_lock = asyncio.Lock()
 
     @property
     def sandbox_config(self) -> SandboxConfig:
@@ -125,14 +120,70 @@ class BaseSDKEnv(ABC):
         """Return environment type"""
         pass
 
-    def get_sandbox(self) -> Any:
-        """Get or create sandbox instance"""
-        return get_sandbox(
-            template=self.env_name,
-            shared=True,
-            timeout=self.sandbox_config.timeout,
-            env=self.sandbox_config.env,
-        )
+    @property
+    def docker_image(self) -> str:
+        """Return Docker image for this environment"""
+        raise NotImplementedError("Subclass must implement docker_image property")
+
+    @property
+    def env_vars(self) -> Dict[str, str]:
+        """Return environment variables for this environment"""
+        api_key = os.getenv("CHUTES_API_KEY")
+        if not api_key:
+            raise ValueError("CHUTES_API_KEY environment variable is required")
+        return {"CHUTES_API_KEY": api_key}
+
+    def _load_environment(self) -> Any:
+        """Load or get cached environment instance"""
+        with _ENV_LOCK:
+            template = self.env_name
+            
+            # Check cache for shared instances
+            if template in _ENV_CACHE:
+                cached_env = _ENV_CACHE[template]
+                if cached_env.is_ready():
+                    logger.debug(f"Reusing cached environment: {template}")
+                    return cached_env
+                else:
+                    logger.debug(f"Removing stale cached environment: {template}")
+                    del _ENV_CACHE[template]
+            
+            # Parse AFFINETES_HOSTS environment variable
+            hosts_env = os.getenv("AFFINETES_HOSTS", "").strip()
+            hosts = None
+            replicas = self.DEFAULT_REPLICAS
+            
+            if hosts_env:
+                # Parse comma-separated hosts
+                parsed_hosts = [h.strip() for h in hosts_env.split(",") if h.strip()]
+                if parsed_hosts:
+                    hosts = parsed_hosts
+                    # When using remote hosts, total replicas = DEFAULT_REPLICAS * number of hosts
+                    replicas = self.DEFAULT_REPLICAS * len(hosts)
+                    logger.info(f"Using remote hosts for deployment: {hosts} (total replicas: {replicas})")
+
+            # Generate container name based on environment name
+            container_name = template.replace(":", "-")
+            
+            # Load environment using affinetes
+            logger.info(f"Loading environment: {template} (image={self.docker_image}, replicas={replicas})")
+            environment = af_env.load_env(
+                image=self.docker_image,
+                mode="docker",
+                env_vars=self.env_vars,
+                hosts=hosts,
+                replicas=replicas,
+                container_name=container_name,
+                mem_limit="10g",
+                pull=True,
+                force_recreate=True,
+            )
+            
+            # Cache the environment
+            _ENV_CACHE[template] = environment
+            logger.debug(f"Cached environment: {template}")
+            
+            return environment
 
     async def _evaluate_single_miner(
         self, miner: "Miner", payload_extra: Dict[str, Any] = None
@@ -153,19 +204,16 @@ class BaseSDKEnv(ABC):
         if payload_extra:
             payload.update(payload_extra)
 
-        # Execute evaluation with async executor
+        # Execute evaluation
         try:
-            proxy_timeout = (
+            timeout = (
                 self.sandbox_config.proxy_timeout
                 if self.env_type == EnvType.AFFINE
                 else self.sandbox_config.proxy_timeout + 600
             )
 
-            # Use dedicated thread pool for blocking sandbox calls
-            result = await asyncio.get_event_loop().run_in_executor(
-                get_executor(),
-                lambda: self._sandbox.proxy.evaluator(_timeout=proxy_timeout, **payload)
-            )
+            # Call affinetes evaluate method directly
+            result = await self._env.evaluate(_timeout=timeout, **payload)
 
             return self._parse_evaluation_result(result, miner, payload_extra)
 
@@ -251,6 +299,11 @@ class BaseSDKEnv(ABC):
         tasks = [self.evaluate(m) for m in miners]
         return await asyncio.gather(*tasks)
 
+    def generate_random_task_id(self) -> int:
+        """Generate a random task ID for this environment"""
+        data_len = getattr(self, "data_len", 1)
+        return random.randint(0, data_len - 1) % data_len
+
 
 # ========================= Environment Implementations =========================
 
@@ -262,14 +315,34 @@ class AffineSDKEnv(BaseSDKEnv):
     def env_type(self) -> EnvType:
         return EnvType.AFFINE
 
+    @property
+    def docker_image(self) -> str:
+        """All Affine environments use the same image"""
+        return "bignickeye/affine:latest"
+
+    @property
+    def env_vars(self) -> Dict[str, str]:
+        """Affine environment variables"""
+        env_vars = super().env_vars
+        # Extract env name from template (e.g., "affine:sat" -> "sat")
+        env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
+        env_vars["ENV_NAME"] = env_name
+        return env_vars
+
     async def evaluate(
         self, miner: Union["Miner", Dict[str, Any]],
         task_id: Union[int, List[int], None] = None,
     ) -> Union["Evaluation", Dict[str, "Evaluation"]]:
         """Evaluate using Affine environment endpoint."""
 
-        # Use the IDs from config or default
-        payload_extra = {"ids": [0]}
+        # Extract env name from template (e.g., "affine:sat" -> "sat")
+        env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
+        
+        # Affine environments use task_type and num_samples
+        payload_extra = {
+            "task_type": env_name,
+            "num_samples": 1
+        }
 
         async def evaluate_single(m):
             return await self._evaluate_single_miner(m, payload_extra)
@@ -304,6 +377,23 @@ class AgentGymSDKEnv(BaseSDKEnv):
     def env_type(self) -> EnvType:
         return EnvType.AGENTGYM
 
+    @property
+    def docker_image(self) -> str:
+        """AgentGym environments have different images per task"""
+        # Extract env name from template (e.g., "agentgym:webshop" -> "webshop")
+        env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
+        return f"bignickeye/agentgym:{env_name}"
+
+    @property
+    def env_vars(self) -> Dict[str, str]:
+        """AgentGym environment variables"""
+        env_vars = super().env_vars
+        # Add AgentGym-specific variables
+        env_vars["TODO_KEY"] = os.getenv("AGENTGYM_TOOL_TODO_KEY", "")
+        env_vars["MOVIE_KEY"] = os.getenv("AGENTGYM_TOOL_MOVIE_KEY", "")
+        env_vars["SHEET_EMAIL"] = os.getenv("AGENTGYM_TOOL_SHEET_EMAIL", "")
+        return env_vars
+
     def _normalize_task_ids(self, task_id: Union[int, List[int], None]) -> List[int]:
         """Normalize task IDs to list format"""
         if task_id is None:
@@ -325,6 +415,8 @@ class AgentGymSDKEnv(BaseSDKEnv):
         """Evaluate using AgentGym environment endpoint."""
 
         task_ids = self._normalize_task_ids(task_id)
+        
+        # AgentGym environments use ids and max_round
         payload_extra = {
             "ids": task_ids,
             "max_round": self.max_round,
@@ -359,6 +451,7 @@ def register_env(env_type: EnvType, env_name: str):
 @register_env(EnvType.AFFINE, "affine:sat")
 class SAT(AffineSDKEnv):
     """SAT environment for SDK"""
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -368,6 +461,7 @@ class SAT(AffineSDKEnv):
 @register_env(EnvType.AFFINE, "affine:abd")
 class ABD(AffineSDKEnv):
     """ABD environment for SDK"""
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -377,6 +471,7 @@ class ABD(AffineSDKEnv):
 @register_env(EnvType.AFFINE, "affine:ded")
 class DED(AffineSDKEnv):
     """DED environment for SDK"""
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -386,6 +481,7 @@ class DED(AffineSDKEnv):
 @register_env(EnvType.AFFINE, "affine:hvm")
 class HVM(AffineSDKEnv):
     """HVM environment for SDK"""
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -395,6 +491,7 @@ class HVM(AffineSDKEnv):
 @register_env(EnvType.AFFINE, "affine:elr")
 class ELR(AffineSDKEnv):
     """ELR environment for SDK"""
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -406,6 +503,7 @@ class ELR(AffineSDKEnv):
 class ALFWORLD(AgentGymSDKEnv):
     """ALFWORLD environment for SDK"""
     DEFAULT_DATA_LEN = 2500
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -415,9 +513,8 @@ class ALFWORLD(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:webshop")
 class WEBSHOP(AgentGymSDKEnv):
     """WEBSHOP environment for SDK"""
-
-    # Override default max_round for WEBSHOP
     DEFAULT_MAX_ROUND = 10
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -427,7 +524,8 @@ class WEBSHOP(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:babyai")
 class BABYAI(AgentGymSDKEnv):
     """BABYAI environment for SDK"""
-    DEFAULT_DATA_LEN = 4000 # 40
+    DEFAULT_DATA_LEN = 4000
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -438,6 +536,7 @@ class BABYAI(AgentGymSDKEnv):
 class SCIWORLD(AgentGymSDKEnv):
     """SCIWORLD environment for SDK"""
     DEFAULT_DATA_LEN = 4639
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -448,6 +547,7 @@ class SCIWORLD(AgentGymSDKEnv):
 class TEXTCRAFT(AgentGymSDKEnv):
     """TEXTCRAFT environment for SDK"""
     DEFAULT_DATA_LEN = 582
+    DEFAULT_REPLICAS = 1
 
     @property
     def env_name(self) -> str:
@@ -460,7 +560,7 @@ class TEXTCRAFT(AgentGymSDKEnv):
 def create_env_factory(env_class: Type[BaseSDKEnv], **default_kwargs):
     """Create a factory function for environment"""
 
-    async def factory(**kwargs):
+    def factory(**kwargs):
         merged_kwargs = {**default_kwargs, **kwargs}
         return env_class(**merged_kwargs)
 
@@ -519,3 +619,19 @@ def list_available_environments() -> Dict[str, List[str]]:
         result[env_type].sort()
 
     return result
+
+
+def cleanup_all_environments():
+    """Clean up all cached environments"""
+    with _ENV_LOCK:
+        logger.info("Cleaning up all cached environments")
+        for template, env in list(_ENV_CACHE.items()):
+            try:
+                loop = asyncio.get_event_loop()
+                if not loop.is_running():
+                    loop.run_until_complete(env.cleanup())
+                logger.debug(f"Cleaned up environment: {template}")
+            except Exception as e:
+                logger.warning(f"Error cleaning up environment {template}: {e}")
+        
+        _ENV_CACHE.clear()
