@@ -5,7 +5,7 @@ FROM rust:1.79-slim-bookworm AS base
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip python3-dev \
-    build-essential curl pkg-config libssl-dev docker.io \
+    build-essential curl pkg-config libssl-dev docker.io git \
  && rm -rf /var/lib/apt/lists/*
 
 # 2) Create and activate venv
@@ -29,10 +29,7 @@ RUN uv venv --python python3 $VENV_DIR \
 ENV VIRTUAL_ENV=$VENV_DIR
 RUN uv pip install -e .
 
-# 6) Install affinetes from GitHub
-RUN uv pip install git+https://github.com/AffineFoundation/affinetes.git
-
-# 7) Copy your code & install it
+# 6) Copy your code & install it
 COPY . .
 ENV VIRTUAL_ENV=$VENV_DIR
 RUN uv pip install -e .
