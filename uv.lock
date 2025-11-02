@@ -76,7 +76,7 @@ requires-dist = [
 [[package]]
 name = "affinetes"
 version = "0.1.0"
-source = { git = "https://github.com/AffineFoundation/affinetes.git#898ce115c786c8b41deb978bb0bad8a5bbb0c7e3" }
+source = { git = "https://github.com/AffineFoundation/affinetes.git#06509cdbc7c1e737157cfca5e0ee1ed34e61117e" }
 dependencies = [
     { name = "docker" },
     { name = "httpx" },
