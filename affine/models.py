@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field, validator, root_validator
 import bittensor as bt
-from affine.setup import ENVS
+from affine.setup import get_env_names
 
 __version__ = "0.0.0"
 
@@ -29,7 +29,7 @@ class Challenge(BaseModel):
     @validator("env")
     def validate_env(cls, value):
         """Validate environment name."""
-        if value not in ENVS:
+        if value not in get_env_names():
             raise ValueError(f"Unknown environment: '{value}'")
         return value
     
@@ -52,7 +52,7 @@ class Evaluation(BaseModel):
     @validator("env")
     def validate_env(cls, value):
         """Validate environment name."""
-        if value not in ENVS:
+        if value not in get_env_names():
             raise ValueError(f"Unknown environment: '{value}'")
         return value
     

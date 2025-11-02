@@ -28,7 +28,7 @@ from affine.validator import (
     _set_weights_with_confirmation,
 )
 from affine.config import get_conf
-from affine.setup import NETUID, ENVS, setup_logging, logger
+from affine.setup import NETUID, setup_logging, logger, get_enabled_envs
 from affine.weights import weights
 from aiohttp import web
 
@@ -81,18 +81,18 @@ def runner():
         # Global concurrency control
         semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
 
-        # Initialize SDK environments from ENVS constant
+        # Initialize SDK environments from enabled environment classes
         envs = []
-        for env_spec in ENVS:
+        for env_class in get_enabled_envs():
             try:
-                env = await affine_tasks.create_environment(env_spec)
+                env = env_class()
                 envs.append(env)
-                logger.debug(f"Initialized environment: {env_spec}")
-            except ValueError as e:
-                logger.warning(f"Failed to create environment '{env_spec}': {e}")
+                logger.debug(f"Initialized environment: {env.env_name}")
+            except Exception as e:
+                logger.warning(f"Failed to create environment '{env_class.__name__}': {e}")
 
         if not envs:
-            raise RuntimeError("No valid environments initialized from ENVS")
+            raise RuntimeError("No valid environments initialized")
 
         # Initialize subtensor
         subtensor = await get_subtensor()
@@ -235,7 +235,12 @@ def runner():
             async def execute_with_semaphore(env, miner, task_id):
                 """Wrapper to execute task with semaphore control."""
                 async with semaphore:
-                    return await query_miner(env, miner, task_id=task_id)
+                    try:
+                        return await query_miner(env, miner, task_id=task_id)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        return None
 
             # Track inflight tasks and pending work
             inflight_tasks: Dict[Tuple[str, int], asyncio.Task] = {}
@@ -275,8 +280,7 @@ def runner():
                         for env in envs:
                             task_key = (env.env_name, miner.uid)
                             if task_key not in inflight_tasks:
-                                data_len = getattr(env, "data_len", 1)
-                                task_id = random.randint(0, data_len - 1) % data_len
+                                task_id = env.generate_random_task_id()
                                 pending_queue.append((env, miner, task_id))
                     
                     # Shuffle to randomize which miner-env pairs get submitted first
@@ -367,25 +371,38 @@ def runner():
 
             try:
                 await producer_task
-            except asyncio.CancelledError:
-                pass
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                logger.info("Shutting down runner...")
+            except Exception as e:
+                logger.error(f"Runner error: {e}")
             finally:
+                # Cancel all background tasks
+                logger.debug("Cancelling background tasks...")
                 sink_task.cancel()
                 alive_task.cancel()
                 producer_task.cancel()
 
-                with contextlib.suppress(asyncio.CancelledError):
-                    await sink_task
-                    await alive_task
-                    await producer_task
+                # Wait for tasks to complete cancellation
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await asyncio.gather(sink_task, alive_task, producer_task, return_exceptions=True)
+                
+                logger.info("Cleanup completed")
 
         await main_loop()
 
     async def main():
         timeout = int(os.getenv("AFFINE_WATCHDOG_TIMEOUT", "900"))
-        await asyncio.gather(_run(), watchdog(timeout=timeout))
+        try:
+            await asyncio.gather(_run(), watchdog(timeout=timeout))
+        except KeyboardInterrupt:
+            logger.info("Received keyboard interrupt, exiting...")
+        except asyncio.CancelledError:
+            pass
 
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Runner stopped")
 
 
 @cli.command("signer")

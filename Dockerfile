@@ -29,7 +29,10 @@ RUN uv venv --python python3 $VENV_DIR \
 ENV VIRTUAL_ENV=$VENV_DIR
 RUN uv pip install -e .
 
-# 6) Copy your code & install it
+# 6) Install affinetes from GitHub
+RUN uv pip install git+https://github.com/AffineFoundation/affinetes.git
+
+# 7) Copy your code & install it
 COPY . .
 ENV VIRTUAL_ENV=$VENV_DIR
 RUN uv pip install -e .

@@ -26,6 +26,16 @@ uv venv && source .venv/bin/activate && uv pip install -e .
 af
 ```
 
+### Architecture
+
+Affine now uses [Affinetes](https://github.com/AffineFoundation/affinetes) for container orchestration, providing:
+- Clean, lightweight container management
+- Support for local and remote Docker deployments
+- Environment caching for improved performance
+- Type-safe environment definitions
+
+All evaluation environments are packaged as pre-built Docker images, eliminating the need for complex sandbox management.
+
 ## Validating
 Set env vars, chutes api key, R2 write keys
 
@@ -34,13 +44,11 @@ Set env vars, chutes api key, R2 write keys
 cp .env.example .env
 ```
 
+Required environment variables:
 ```bash
-CHUTES_API_KEY=
-.
-.
-.
-R2_WRITE_ACCESS_KEY_ID=
-R2_WRITE_SECRET_ACCESS_KEY=
+CHUTES_API_KEY=                    # Required for model inference
+R2_WRITE_ACCESS_KEY_ID=            # Required for result storage
+R2_WRITE_SECRET_ACCESS_KEY=        # Required for result storage
 ```
 
 (Recommended): Run the validator with docker and watchtower autoupdate.
@@ -130,33 +138,55 @@ af -vvv commit --repo <user/repo> --revision <sha> --chute-id <chute_id> --coldk
 ```
 
 # SDK
-Affine is also an SDK you can use to generate and evaluate models envs.
+Affine is also an SDK you can use to evaluate models across different environments.
+
 ```python
+import asyncio
 import affine as af
+from dotenv import load_dotenv
 
-# Optionally turn on logging 
-af.trace(); af.debug(); af.info()
+# Optionally turn on logging
+af.trace()  # or af.debug() or af.info()
 
-# Get all miner info or only for UID =5
-miners = await af.miners()
-miner = await af.miners( 5 )
+load_dotenv()
 
-# Generate a SAT challenge
-chal = await af.SAT.generate() 
+async def main():
+    # Get miner info for a specific UID
+    # NOTE: CHUTES_API_KEY environment variable is required
+    miner = await af.miners(160)
+    assert miner, "Unable to obtain miner, please check if registered"
 
-# Generate a bunch.
-chals = await af.ABDUCTION().many( 10 )
-chals = await af.DEDUCTION().many( 10 )
+    # Evaluate on Affine environments
+    ded_env = af.DED()
+    evaluation = await ded_env.evaluate(miner)
+    print("Score:", evaluation.score)
+    print("Extra:", evaluation.extra)
 
-# Query the model directly.
-# NOTE: A CHUTES_API_KEY .env value is required for this command.
-response = await af.query( chal.prompt, model = miner.model )
+    # Evaluate on AgentGym environments
+    # You can specify task IDs in different ways:
+    alfworld_env = af.ALFWORLD()
+    
+    # Random task (default)
+    evaluation = await alfworld_env.evaluate(miner)
+    
+    # Specific single task
+    # evaluation = await alfworld_env.evaluate(miner, task_id=10)
+    
+    # Multiple tasks
+    # evaluation = await alfworld_env.evaluate(miner, task_id=[0, 1, 2])
 
-# Evaluate the response
-evaluation = chal.evaluate( response ) 
-print( evaluation.score )
+    # List all available environments
+    envs = af.tasks.list_available_environments()
+    for env_type, env_names in envs.items():
+        print(f"\n{env_type}:")
+        for name in env_names:
+            print(f"  - {name}")
 
-# Async generator of results from last 100 blocks.
-async for res in af.dataset(100):
-    print (res)          # Result objects
+    # Async generator of results from last 100 blocks
+    async for res in af.dataset(100):
+        print(res)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
 ```
