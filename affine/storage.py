@@ -83,7 +83,7 @@ async def _cache_shard(key: str, sem: asyncio.Semaphore, use_public: bool = None
     name, out = Path(key).name, None
     out = CACHE_DIR / f"{name}.jsonl"; mod = out.with_suffix(".modified")
     max_retries = 5
-    base_delay = 2.0
+    base_delay = 5.0
     
     # Determine which read mode to use
     read_public = PUBLIC_READ if use_public is None else use_public
@@ -94,7 +94,7 @@ async def _cache_shard(key: str, sem: asyncio.Semaphore, use_public: bool = None
                 if read_public:
                     sess = await _get_client()
                     url = f"{R2_PUBLIC_BASE}/{key}"
-                    async with sess.get(url, timeout=aiohttp.ClientTimeout(total=60)) as r:
+                    async with sess.get(url, timeout=aiohttp.ClientTimeout(total=300)) as r:
                         r.raise_for_status()
                         body = await r.read()
                         lm = r.headers.get("last-modified", str(time.time()))
@@ -154,7 +154,7 @@ async def _load_public_index(need: set[int]) -> list[str]:
 async def dataset(
     tail: int,
     *,
-    max_concurrency: int = 10,
+    max_concurrency: int = 5,
     compact: bool = True,
 ) -> AsyncIterator["Result | CompactResult"]:
     """Load dataset from R2 storage.
