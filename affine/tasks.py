@@ -48,17 +48,25 @@ class EvaluatorConfig:
     timeout: int = 600
     max_round: int = 10
 
-    def to_payload(self, miner: "Miner", task_ids: List[int] = None) -> Dict[str, Any]:
-        """Convert to evaluator payload"""
+    def to_payload(self, miner: Optional["Miner"] = None, **kwargs) -> Dict[str, Any]:
+        """Convert to evaluator payload with support for dynamic parameters
+        
+        Args:
+            miner: Optional Miner instance (can be None if model/base_url provided in kwargs)
+            **kwargs: Additional parameters to override defaults (model, base_url, temperature, timeout, ids, etc.)
+        """
         payload = {
-            "model": miner.model,
-            "base_url": f"https://{miner.slug}.chutes.ai/v1",
             "temperature": self.temperature,
             "timeout": self.timeout,
         }
+        
+        # Add miner-based defaults if miner is provided
+        if miner is not None:
+            payload["model"] = miner.model
+            payload["base_url"] = f"https://{miner.slug}.chutes.ai/v1"
 
-        if task_ids is not None:
-            payload["ids"] = task_ids
+        # Allow kwargs to override any default values
+        payload.update(kwargs)
 
         return payload
 
@@ -186,23 +194,21 @@ class BaseSDKEnv(ABC):
             return environment
 
     async def _evaluate_single_miner(
-        self, miner: "Miner", payload_extra: Dict[str, Any] = None
+        self, miner: Optional["Miner"] = None, **eval_kwargs
     ) -> Evaluation:
         """
         Common evaluation logic for a single miner
 
         Args:
-            miner: Miner instance
-            payload_extra: Additional payload parameters
+            miner: Optional Miner instance (can be None if model/base_url in eval_kwargs)
+            **eval_kwargs: Dynamic parameters (model, base_url, task_type, ids, etc.)
 
         Returns:
             Evaluation result
         """
 
-        # Build payload
-        payload = self.evaluator_config.to_payload(miner)
-        if payload_extra:
-            payload.update(payload_extra)
+        # Build payload with all dynamic parameters
+        payload = self.evaluator_config.to_payload(miner, **eval_kwargs)
 
         # Execute evaluation
         try:
@@ -215,11 +221,11 @@ class BaseSDKEnv(ABC):
             # Call affinetes evaluate method directly
             result = await self._env.evaluate(_timeout=timeout, **payload)
 
-            return self._parse_evaluation_result(result, miner, payload_extra)
+            return self._parse_evaluation_result(result, miner, eval_kwargs)
 
         except asyncio.TimeoutError as e:
             logger.error(f"Evaluation timeout for {self.env_name}: {e}, score set 0")
-            return self._create_error_evaluation(e, miner, payload_extra)
+            return self._create_error_evaluation(e, miner, eval_kwargs)
         except Exception as e:
             raise
 
@@ -330,22 +336,29 @@ class AffineSDKEnv(BaseSDKEnv):
         return env_vars
 
     async def evaluate(
-        self, miner: Union["Miner", Dict[str, Any]],
-        task_id: Union[int, List[int], None] = None,
+        self, miner: Optional[Union["Miner", Dict[str, Any]]] = None,
+        **eval_kwargs
     ) -> Union["Evaluation", Dict[str, "Evaluation"]]:
-        """Evaluate using Affine environment endpoint."""
+        """Evaluate using Affine environment endpoint.
+        
+        Args:
+            miner: Optional Miner instance or dict of miners (can be None if model/base_url in eval_kwargs)
+            **eval_kwargs: Dynamic parameters (model, base_url, temperature, task_type, num_samples, etc.)
+        """
 
         # Extract env name from template (e.g., "affine:sat" -> "sat")
         env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
         
-        # Affine environments use task_type and num_samples
-        payload_extra = {
-            "task_type": env_name,
-            "num_samples": 1
-        }
+        # Set default task_type and num_samples if not provided in eval_kwargs
+        eval_kwargs.setdefault("task_type", env_name)
+        eval_kwargs.setdefault("num_samples", 1)
+
+        # If miner is None, call directly with eval_kwargs
+        if miner is None:
+            return await self._evaluate_single_miner(None, **eval_kwargs)
 
         async def evaluate_single(m):
-            return await self._evaluate_single_miner(m, payload_extra)
+            return await self._evaluate_single_miner(m, **eval_kwargs)
 
         return await self._evaluate_miners_batch(miner, evaluate_single)
 
@@ -409,22 +422,32 @@ class AgentGymSDKEnv(BaseSDKEnv):
 
     async def evaluate(
         self,
-        miner: Union["Miner", Dict[str, Any]],
-        task_id: Union[int, List[int], None] = None,
+        miner: Optional[Union["Miner", Dict[str, Any]]] = None,
+        **eval_kwargs
     ) -> Union["Evaluation", Dict[str, "Evaluation"]]:
-        """Evaluate using AgentGym environment endpoint."""
-
-        task_ids = self._normalize_task_ids(task_id)
+        """Evaluate using AgentGym environment endpoint.
         
-        # AgentGym environments use ids and max_round
-        payload_extra = {
-            "ids": task_ids,
-            "max_round": self.max_round,
-            "task_id": task_ids,  # Keep for backward compatibility in extra
-        }
+        Args:
+            miner: Optional Miner instance or dict of miners (can be None if model/base_url in eval_kwargs)
+            **eval_kwargs: Dynamic parameters (model, base_url, temperature, ids, max_round, etc.)
+        """
+
+        # Handle task_id/ids parameter - set default if not provided
+        if "ids" not in eval_kwargs and "task_id" not in eval_kwargs:
+            eval_kwargs["ids"] = [random.randint(0, self.data_len - 1)]
+        elif "task_id" in eval_kwargs and "ids" not in eval_kwargs:
+            # Convert task_id to ids if needed
+            eval_kwargs["ids"] = self._normalize_task_ids(eval_kwargs.pop("task_id"))
+        
+        # Set default max_round if not provided
+        eval_kwargs.setdefault("max_round", self.max_round)
+
+        # If miner is None, call directly with eval_kwargs
+        if miner is None:
+            return await self._evaluate_single_miner(None, **eval_kwargs)
 
         async def evaluate_single(m):
-            return await self._evaluate_single_miner(m, payload_extra)
+            return await self._evaluate_single_miner(m, **eval_kwargs)
 
         return await self._evaluate_miners_batch(miner, evaluate_single)
 
