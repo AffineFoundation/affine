@@ -250,6 +250,9 @@ async def dataset(
             path = await coro
             if path is None:
                 continue
+            
+            # Extract block number from filename (format: {block}-{hotkey}.jsonl)
+            block_str = path.stem.split('-')[0] if path else 'unknown'
 
             async for raw in _jsonl(path):
                 try:
@@ -276,7 +279,7 @@ async def dataset(
                         readable_time = datetime.fromtimestamp(r.timestamp).strftime('%Y-%m-%d %H:%M:%S')
                         logger.warning(
                             f"Signature verification failed: "
-                            f"hotkey={r.hotkey}, uid={r.miner.uid}, "
+                            f"block={block_str}, hotkey={r.hotkey}, uid={r.miner.uid}, "
                             f"env={r.env}, score={r.score:.4f}, "
                             f"timestamp={r.timestamp} ({readable_time})"
                         )

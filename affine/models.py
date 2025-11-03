@@ -62,7 +62,7 @@ class Result(BaseModel):
         Returns canonical representation of essential fields:
         env:miner_json:score:latency_seconds:timestamp:extra_json
         """
-        miner_dict = self.miner.dict(exclude={'chute', 'weights_shas'})
+        miner_dict = self.miner.model_dump()
         miner_str = json.dumps(miner_dict, sort_keys=True)
         extra_str = json.dumps(self.extra, sort_keys=True)
         return f"{self.env}:{miner_str}:{self.score:.6f}:{self.latency_seconds:.6f}:{int(self.timestamp)}:{extra_str}"
