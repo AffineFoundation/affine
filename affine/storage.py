@@ -272,11 +272,13 @@ async def dataset(
                     # Verify signature (skip verification for legacy data)
                     if not is_legacy and not r.verify():
                         # New data with failed signature verification - skip it
+                        from datetime import datetime
+                        readable_time = datetime.fromtimestamp(r.timestamp).strftime('%Y-%m-%d %H:%M:%S')
                         logger.warning(
                             f"Signature verification failed: "
                             f"hotkey={r.hotkey}, uid={r.miner.uid}, "
                             f"env={r.env}, score={r.score:.4f}, "
-                            f"timestamp={r.timestamp}"
+                            f"timestamp={r.timestamp} ({readable_time})"
                         )
                         continue
                     
