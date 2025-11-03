@@ -16,7 +16,7 @@ from botocore.config import Config
 from affine.config import get_conf
 from affine.utils.subtensor import get_subtensor
 from affine.models import Result, CompactResult
-from affine.query import _get_client
+from affine.http_client import _get_client
 from affine.setup import logger
 
 import numpy as np

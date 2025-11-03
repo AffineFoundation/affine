@@ -6,7 +6,7 @@ import aiohttp
 import requests
 from typing import Dict, List, Optional, Union
 from huggingface_hub import HfApi
-from affine.query import _get_client
+from affine.http_client import _get_client
 from affine.models import Miner
 from affine.setup import NETUID
 from affine.utils.subtensor import get_subtensor

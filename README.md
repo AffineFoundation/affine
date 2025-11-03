@@ -153,7 +153,8 @@ load_dotenv(override=True)
 async def main():
     # Get miner info for a specific UID
     # NOTE: CHUTES_API_KEY environment variable is required
-    miner = await af.miners(160)
+    miner_dict = await af.miners(160)
+    miner = miner_dict.get(160)
     assert miner, "Unable to obtain miner, please check if registered"
 
     # Evaluate on Affine environments
@@ -162,18 +163,24 @@ async def main():
     print("Score:", evaluation.score)
     print("Extra:", evaluation.extra)
 
-    # Evaluate on AgentGym environments
-    # You can specify task IDs in different ways:
+    # Evaluate on AgentGym environments with task IDs
     alfworld_env = af.ALFWORLD()
     
     # Random task (default)
     evaluation = await alfworld_env.evaluate(miner)
     
     # Specific single task
-    # evaluation = await alfworld_env.evaluate(miner, task_id=10)
+    evaluation = await alfworld_env.evaluate(miner, task_id=10)
     
     # Multiple tasks
-    # evaluation = await alfworld_env.evaluate(miner, task_id=[0, 1, 2])
+    evaluation = await alfworld_env.evaluate(miner, task_id=[0, 1, 2])
+    
+    # You can also pass parameters directly without a miner object
+    evaluation = await ded_env.evaluate(
+        model="deepseek-ai/DeepSeek-V3",
+        base_url="https://llm.chutes.ai/v1",
+        temperature=0.7
+    )
 
     # List all available environments
     envs = af.tasks.list_available_environments()
@@ -188,5 +195,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-```
 ```

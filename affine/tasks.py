@@ -310,6 +310,84 @@ class BaseSDKEnv(ABC):
         data_len = getattr(self, "data_len", 1)
         return random.randint(0, data_len - 1) % data_len
 
+    async def evaluate_and_build_result(self, miner: "Miner") -> "Result":
+        """
+        Evaluate a miner and build a complete Result object.
+        This method encapsulates all complexity for runner usage.
+        
+        Args:
+            miner: Miner instance to evaluate
+            
+        Returns:
+            Result object containing challenge, response, and evaluation
+        """
+        import time
+        from affine.models import Response, Challenge, Evaluation, Result
+        
+        start = time.monotonic()
+        try:
+            evaluation_result = await self.evaluate(miner)
+
+            # Build response
+            response = Response(
+                response=None,
+                latency_seconds=time.monotonic() - start,
+                model=miner.model,
+                error=None,
+                success=evaluation_result.extra.get("success", False)
+            )
+
+            challenge = Challenge(
+                env=self.env_name,
+                prompt=f"{self.env_name} placeholder",
+                extra={},
+            )
+            task_id = evaluation_result.extra.get("ids")
+            if task_id:
+                challenge.extra = {"task_id": task_id}
+            
+            # Build evaluation
+            evaluation = Evaluation(
+                env=self.env_name,
+                score=evaluation_result.score,
+                extra=evaluation_result.extra
+            )
+
+            return Result(
+                miner=miner,
+                challenge=challenge,
+                response=response,
+                evaluation=evaluation
+            )
+            
+        except Exception as e:
+            # Build error result
+            response = Response(
+                response=None,
+                latency_seconds=time.monotonic() - start,
+                model=miner.model or "",
+                error=str(e),
+                success=False
+            )
+            
+            challenge = Challenge(
+                env=self.env_name,
+                prompt=f"{self.env_name} placeholder",
+            )
+            
+            evaluation = Evaluation(
+                env=self.env_name,
+                score=0.0,
+                extra={"error": str(e), "evaluation_failed": True}
+            )
+            
+            return Result(
+                miner=miner,
+                challenge=challenge,
+                response=response,
+                evaluation=evaluation
+            )
+
 
 # ========================= Environment Implementations =========================
 
@@ -352,10 +430,6 @@ class AffineSDKEnv(BaseSDKEnv):
         # Set default task_type and num_samples if not provided in eval_kwargs
         eval_kwargs.setdefault("task_type", env_name)
         eval_kwargs.setdefault("num_samples", 1)
-
-        # If miner is None, call directly with eval_kwargs
-        if miner is None:
-            return await self._evaluate_single_miner(None, **eval_kwargs)
 
         async def evaluate_single(m):
             return await self._evaluate_single_miner(m, **eval_kwargs)
@@ -441,10 +515,6 @@ class AgentGymSDKEnv(BaseSDKEnv):
         
         # Set default max_round if not provided
         eval_kwargs.setdefault("max_round", self.max_round)
-
-        # If miner is None, call directly with eval_kwargs
-        if miner is None:
-            return await self._evaluate_single_miner(None, **eval_kwargs)
 
         async def evaluate_single(m):
             return await self._evaluate_single_miner(m, **eval_kwargs)

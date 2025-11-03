@@ -19,7 +19,6 @@ from huggingface_hub import snapshot_download
 from typing import Any, Dict, List, Tuple
 from affine.utils.subtensor import get_subtensor
 from affine.storage import sink, CACHE_DIR, load_summary
-from affine.query import query_miner
 from affine import tasks as affine_tasks
 from affine.miners import get_latest_chute_id, miners, get_chute
 from affine.validator import (
@@ -232,15 +231,13 @@ def runner():
             global HEARTBEAT
             nonlocal total_requests_submitted, requests_since_last_status, last_status_log_time
 
-            async def execute_with_semaphore(env, miner, task_id):
+            async def execute_with_semaphore(env, miner):
                 """Wrapper to execute task with semaphore control."""
                 async with semaphore:
                     try:
-                        return await query_miner(env, miner, task_id=task_id)
+                        return await env.evaluate_and_build_result(miner)
                     except asyncio.CancelledError:
                         raise
-                    except Exception:
-                        return None
 
             # Track inflight tasks and pending work
             inflight_tasks: Dict[Tuple[str, int], asyncio.Task] = {}
@@ -280,8 +277,7 @@ def runner():
                         for env in envs:
                             task_key = (env.env_name, miner.uid)
                             if task_key not in inflight_tasks:
-                                task_id = env.generate_random_task_id()
-                                pending_queue.append((env, miner, task_id))
+                                pending_queue.append((env, miner))
                     
                     # Shuffle to randomize which miner-env pairs get submitted first
                     random.shuffle(pending_queue)
@@ -290,13 +286,13 @@ def runner():
                 # Submit tasks from pending queue up to concurrency limit
                 slots_available = MAX_CONCURRENCY - len(inflight_tasks)
                 while queue_index < len(pending_queue) and slots_available > 0:
-                    env, miner, task_id = pending_queue[queue_index]
+                    env, miner = pending_queue[queue_index]
                     task_key = (env.env_name, miner.uid)
                     
                     # Double-check not already running (defensive)
                     if task_key not in inflight_tasks:
                         task = asyncio.create_task(
-                            execute_with_semaphore(env, miner, task_id)
+                            execute_with_semaphore(env, miner)
                         )
                         inflight_tasks[task_key] = task
                         total_requests_submitted += 1

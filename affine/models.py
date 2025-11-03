@@ -23,7 +23,6 @@ class Challenge(BaseModel):
     env: str
     prompt: str
     extra: Dict[str, Any] = Field(default_factory=dict)
-    challenge_id: Optional[str] = None
     timestamp: Optional[float] = Field(default_factory=time.time)
     
     @validator("env")
@@ -37,7 +36,7 @@ class Challenge(BaseModel):
         return json.dumps(self.dict(**kwargs))
     
     def __repr__(self):
-        return f"<Challenge env={self.env!r} prompt={_truncate(self.prompt)!r}>"
+        return f"<Challenge env={self.env!r} prompt={_truncate(self.prompt)!r} extra={self.extra}>"
     
     __str__ = __repr__
 
@@ -71,7 +70,6 @@ class Response(BaseModel):
     
     response: Optional[str]
     latency_seconds: float
-    attempts: int
     model: str
     error: Optional[str]
     success: bool
