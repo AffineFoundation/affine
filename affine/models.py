@@ -60,10 +60,12 @@ class Result(BaseModel):
         """Get the data string to be signed/verified.
         
         Returns canonical representation of essential fields:
-        env:miner_uid:score:timestamp:extra_json
+        env:miner_json:score:latency_seconds:timestamp:extra_json
         """
+        miner_dict = self.miner.dict(exclude={'chute', 'weights_shas'})
+        miner_str = json.dumps(miner_dict, sort_keys=True)
         extra_str = json.dumps(self.extra, sort_keys=True)
-        return f"{self.env}:{self.miner.uid}:{self.score:.6f}:{int(self.timestamp)}:{extra_str}"
+        return f"{self.env}:{miner_str}:{self.score:.6f}:{self.latency_seconds:.6f}:{int(self.timestamp)}:{extra_str}"
     
     def sign(self, wallet):
         """Sign the result with wallet.
