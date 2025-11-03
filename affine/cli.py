@@ -342,21 +342,21 @@ def runner():
 
                     # Enqueue result for sink consumer (only successful responses)
                     if result:
-                        if result.response.error is None:
+                        if result.error is None:
                             result_queue.put_nowait(result)
                             logger.debug(
                                 f"[RESULT] U{result.miner.uid:>3d} │ "
                                 f"{(result.miner.model or '')[:50]:<50s} │ "
-                                f"{result.challenge.env:<20} │ "
+                                f"{result.env:<20} │ "
                                 f"{'RECV':^4s} │ "
-                                f"{result.evaluation.score:>6.4f} │ "
-                                f"{result.response.latency_seconds:>6.3f}s"
+                                f"{result.score:>6.4f} │ "
+                                f"{result.latency_seconds:>6.3f}s"
                             )
                         else:
                             logger.debug(
                                 f"[SKIP]   U{result.miner.uid:>3d} │ "
-                                f"{result.challenge.env:<20} │ "
-                                f"Failed response skipped: {result.response.error}"
+                                f"{result.env:<20} │ "
+                                f"Failed response skipped: {result.error}"
                             )
 
         async def main_loop():

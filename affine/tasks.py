@@ -319,73 +319,40 @@ class BaseSDKEnv(ABC):
             miner: Miner instance to evaluate
             
         Returns:
-            Result object containing challenge, response, and evaluation
+            Result object with evaluation results
         """
         import time
-        from affine.models import Response, Challenge, Evaluation, Result
+        from affine.models import Result
         
         start = time.monotonic()
+        
         try:
             evaluation_result = await self.evaluate(miner)
 
-            # Build response
-            response = Response(
-                response=None,
-                latency_seconds=time.monotonic() - start,
-                model=miner.model,
-                error=None,
-                success=evaluation_result.extra.get("success", False)
-            )
-
-            challenge = Challenge(
-                env=self.env_name,
-                prompt=f"{self.env_name} placeholder",
-                extra={},
-            )
-            task_id = evaluation_result.extra.get("ids")
-            if task_id:
-                challenge.extra = {"task_id": task_id}
-            
-            # Build evaluation
-            evaluation = Evaluation(
-                env=self.env_name,
-                score=evaluation_result.score,
-                extra=evaluation_result.extra
-            )
-
             return Result(
                 miner=miner,
-                challenge=challenge,
-                response=response,
-                evaluation=evaluation
+                env=self.env_name,
+                score=evaluation_result.score,
+                latency_seconds=time.monotonic() - start,
+                success=evaluation_result.extra.get("success", False),
+                error=None,
+                extra=evaluation_result.extra,
+                timestamp=time.time()
             )
             
         except Exception as e:
-            # Build error result
-            response = Response(
-                response=None,
-                latency_seconds=time.monotonic() - start,
-                model=miner.model or "",
-                error=str(e),
-                success=False
-            )
-            
-            challenge = Challenge(
-                env=self.env_name,
-                prompt=f"{self.env_name} placeholder",
-            )
-            
-            evaluation = Evaluation(
-                env=self.env_name,
-                score=0.0,
-                extra={"error": str(e), "evaluation_failed": True}
-            )
+            logger.error(f"Evaluation failed for {self.env_name} uid={miner.uid}: {e}")
+            traceback.print_exc()
             
             return Result(
                 miner=miner,
-                challenge=challenge,
-                response=response,
-                evaluation=evaluation
+                env=self.env_name,
+                score=0.0,
+                latency_seconds=time.monotonic() - start,
+                success=False,
+                error=str(e),
+                extra={"evaluation_failed": True},
+                timestamp=time.time()
             )
 
 

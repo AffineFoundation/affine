@@ -253,22 +253,45 @@ async def dataset(
 
             async for raw in _jsonl(path):
                 try:
-                    if compact:
-                        # Parse only the fields needed for weight calculation
-                        data = orjson.loads(raw)
-                        r = Result.model_validate(data)
-                        if r.verify():
-                            compact_result = CompactResult.from_result(r)
-                            bar.update(1)
-                            yield compact_result
-                            # Explicitly delete full result to free memory immediately
-                            del r
+                    data = orjson.loads(raw)
+                    is_legacy = False
+                    
+                    # Detect and convert legacy format
+                    if "challenge" in data and "response" in data and "evaluation" in data:
+                        # Legacy format detected - convert to new format
+                        try:
+                            r = Result.from_legacy(data)
+                            is_legacy = True
+                        except Exception as e:
+                            logger.debug(f"Failed to convert legacy result: {e}")
+                            continue
                     else:
-                        # Return full Result object (legacy mode)
-                        r = Result.model_validate(orjson.loads(raw))
-                        if r.verify():
-                            bar.update(1)
-                            yield r
+                        # New format - direct validation
+                        r = Result.model_validate(data)
+                    
+                    # Verify signature (skip verification for legacy data)
+                    if not is_legacy and not r.verify():
+                        # New data with failed signature verification - skip it
+                        logger.warning(
+                            f"Signature verification failed: "
+                            f"hotkey={r.hotkey}, uid={r.miner.uid}, "
+                            f"env={r.env}, score={r.score:.4f}, "
+                            f"timestamp={r.timestamp}"
+                        )
+                        continue
+                    
+                    # Data is valid (legacy data skips verification, new data passed verification)
+                    if compact:
+                        # Return compact result for memory efficiency
+                        compact_result = CompactResult.from_result(r)
+                        bar.update(1)
+                        yield compact_result
+                        # Explicitly delete full result to free memory immediately
+                        del r
+                    else:
+                        # Return full Result object
+                        bar.update(1)
+                        yield r
                 except Exception as e:
                     # Skip invalid results but log for debugging
                     logger.debug(f"Skipping invalid result: {type(e).__name__}: {e}")
@@ -280,7 +303,9 @@ async def sign_results( wallet, results ):
         signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
         timeout = aiohttp.ClientTimeout(connect=2, total=30)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            payloads = [str(r.challenge) for r in results]
+            # Build signing payloads using Result._get_sign_data()
+            payloads = [r._get_sign_data() for r in results]
+            
             resp = await session.post(f"{signer_url}/sign", json={"payloads": payloads})
             if resp.status == 200:
                 data = await resp.json()
@@ -292,7 +317,7 @@ async def sign_results( wallet, results ):
     except Exception as e:
         logger.info(f"sink: signer unavailable, using local signing: {type(e).__name__}: {e}")
         hotkey = wallet.hotkey.ss58_address
-        for r in results: 
+        for r in results:
             r.sign(wallet)
     finally:
         return hotkey, results
