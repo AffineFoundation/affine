@@ -481,7 +481,12 @@ def signer(host: str, port: int):
                     {"success": False, "error": str(e)}, status=500
                 )
 
-        app = web.Application(middlewares=[access_log])
+        # Increase max request size to handle large signing batches (default is 2MB)
+        # Set to 100MB to accommodate batches with large extra fields
+        app = web.Application(
+            middlewares=[access_log],
+            client_max_size=100 * 1024 * 1024  # 100MB
+        )
         app.add_routes(
             [
                 web.get("/healthz", health),
