@@ -334,6 +334,7 @@ async def sink(wallet, results: list["Result"], block: int = None):
         sub = await get_subtensor(); block = await sub.get_current_block()
     hotkey, signed = await sign_results( wallet, results )
     key = f"{RESULT_PREFIX}{_w(block):09d}-{hotkey}.json"
+    logger.debug(f"results key {key}")
     dumped = [ r.model_dump(mode="json") for r in signed ]
     async with get_client_ctx() as c:
         try:
