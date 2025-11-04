@@ -366,7 +366,7 @@ class AffineSDKEnv(BaseSDKEnv):
     @property
     def docker_image(self) -> str:
         """All Affine environments use the same image"""
-        return "bignickeye/affine:latest"
+        return "bignickeye/affine:v2"
 
     @property
     def env_vars(self) -> Dict[str, str]:
