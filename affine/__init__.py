@@ -21,9 +21,9 @@ from affine.models import (
     Challenge, Evaluation, Response, Miner, Result
 )
 # --------------------------------------------------------------------------- #
-#                   Query client (imported from query module)                 #
+#                   HTTP client (imported from http_client module)            #
 # --------------------------------------------------------------------------- #
-from affine.query import query, _get_client
+from affine.http_client import _get_client
 
 # --------------------------------------------------------------------------- #
 #                   Miners (imported from miners module)                      #

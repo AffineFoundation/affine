@@ -17,76 +17,6 @@ def _truncate(text: Optional[str], max_len: int = 80) -> str:
     return "" if not text else textwrap.shorten(text, width=max_len, placeholder="…")
 
 
-class Challenge(BaseModel):
-    """Challenge specification for evaluation."""
-    
-    env: str
-    prompt: str
-    extra: Dict[str, Any] = Field(default_factory=dict)
-    challenge_id: Optional[str] = None
-    timestamp: Optional[float] = Field(default_factory=time.time)
-    
-    @validator("env")
-    def validate_env(cls, value):
-        """Validate environment name."""
-        if value not in get_env_names():
-            raise ValueError(f"Unknown environment: '{value}'")
-        return value
-    
-    def json(self, **kwargs):
-        return json.dumps(self.dict(**kwargs))
-    
-    def __repr__(self):
-        return f"<Challenge env={self.env!r} prompt={_truncate(self.prompt)!r}>"
-    
-    __str__ = __repr__
-
-
-class Evaluation(BaseModel):
-    """Evaluation result from running a challenge."""
-    
-    env: str
-    score: float
-    extra: Dict[str, Any] = Field(default_factory=dict)
-    
-    @validator("env")
-    def validate_env(cls, value):
-        """Validate environment name."""
-        if value not in get_env_names():
-            raise ValueError(f"Unknown environment: '{value}'")
-        return value
-    
-    def json(self, **kwargs):
-        return json.dumps(self.dict(**kwargs))
-    
-    def __repr__(self):
-        truncated_extra = {k: _truncate(str(v)) for k, v in self.extra.items()}
-        return f"<Evaluation env={self.env!r} score={self.score:.4f} extra={truncated_extra!r}>"
-    
-    __str__ = __repr__
-
-
-class Response(BaseModel):
-    """Response from miner query."""
-    
-    response: Optional[str]
-    latency_seconds: float
-    attempts: int
-    model: str
-    error: Optional[str]
-    success: bool
-    timestamp: Optional[float] = Field(default_factory=time.time)
-    
-    def __repr__(self):
-        return (
-            f"<Response model={self.model!r} success={self.success} "
-            f"latency={self.latency_seconds:.3f}s attempts={self.attempts} "
-            f"response={_truncate(self.response)!r} error={_truncate(self.error)!r}>"
-        )
-    
-    __str__ = __repr__
-
-
 class Miner(BaseModel):
     """Miner information."""
     
@@ -101,28 +31,107 @@ class Miner(BaseModel):
 
 
 class Result(BaseModel):
-    """Complete evaluation result including miner, challenge, response, and evaluation."""
+    """Evaluation result for a miner on a specific environment."""
     
     version: str = __version__
     signature: str = ""
     hotkey: str = ""
+    
+    # Miner info
     miner: Miner
-    challenge: Challenge
-    response: Response
-    evaluation: Evaluation
+    
+    # Evaluation details
+    env: str
+    score: float
+    latency_seconds: float
+    success: bool
+    error: Optional[str] = None
+    extra: Dict[str, Any] = Field(default_factory=dict)
+    timestamp: float = Field(default_factory=time.time)
+    
+    @validator("env")
+    def validate_env(cls, value):
+        """Validate environment name."""
+        if value not in get_env_names():
+            raise ValueError(f"Unknown environment: '{value}'")
+        return value
+    
+    def _get_sign_data(self) -> str:
+        """Get the data string to be signed/verified.
+        
+        Returns canonical representation of essential fields:
+        env:miner_json:score:latency_seconds:timestamp:extra_json
+        """
+        miner_dict = self.miner.model_dump()
+        miner_str = json.dumps(miner_dict, sort_keys=True)
+        extra_str = json.dumps(self.extra, sort_keys=True)
+        return f"{self.env}:{miner_str}:{self.score:.6f}:{self.latency_seconds:.6f}:{int(self.timestamp)}:{extra_str}"
     
     def sign(self, wallet):
-        """Sign the result with wallet."""
+        """Sign the result with wallet.
+        
+        Signs the evaluation data including challenge details from extra field.
+        """
         self.hotkey = wallet.hotkey.ss58_address
-        challenge_str = str(self.challenge)
-        self.signature = wallet.hotkey.sign(data=challenge_str).hex()
+        sign_data = self._get_sign_data()
+        self.signature = wallet.hotkey.sign(data=sign_data).hex()
     
     def verify(self) -> bool:
         """Verify the result signature."""
-        keypair = bt.Keypair(ss58_address=self.hotkey)
-        challenge_str = str(self.challenge)
-        signature_bytes = bytes.fromhex(self.signature)
-        return keypair.verify(data=challenge_str, signature=signature_bytes)
+        try:
+            keypair = bt.Keypair(ss58_address=self.hotkey)
+            sign_data = self._get_sign_data()
+            signature_bytes = bytes.fromhex(self.signature)
+            return keypair.verify(data=sign_data, signature=signature_bytes)
+        except Exception:
+            return False
+    
+    @classmethod
+    def from_legacy(cls, legacy_data: Dict[str, Any]) -> "Result":
+        """Convert legacy Result format to new format.
+        
+        Legacy format had separate Challenge, Response, Evaluation objects.
+        This method extracts the relevant fields and creates a new Result.
+        """
+        # Extract miner info
+        miner_data = legacy_data.get("miner", {})
+        miner = Miner(**miner_data) if isinstance(miner_data, dict) else miner_data
+        
+        # Extract challenge info
+        challenge = legacy_data.get("challenge", {})
+        env = challenge.get("env", "unknown")
+        extra = challenge.get("extra", {})
+        
+        # Extract response info
+        response = legacy_data.get("response", {})
+        latency_seconds = response.get("latency_seconds", 0.0)
+        success = response.get("success", False)
+        error = response.get("error")
+        
+        # Extract evaluation info
+        evaluation = legacy_data.get("evaluation", {})
+        score = evaluation.get("score", 0.0)
+        eval_extra = evaluation.get("extra", {})
+        
+        # Merge extra fields
+        merged_extra = {**extra, **eval_extra}
+        
+        # Get timestamp (prefer response timestamp, fallback to challenge timestamp)
+        timestamp = response.get("timestamp") or challenge.get("timestamp") or time.time()
+        
+        return cls(
+            version=legacy_data.get("version", __version__),
+            signature=legacy_data.get("signature", ""),
+            hotkey=legacy_data.get("hotkey", ""),
+            miner=miner,
+            env=env,
+            score=score,
+            latency_seconds=latency_seconds,
+            success=success,
+            error=error,
+            extra=merged_extra,
+            timestamp=timestamp
+        )
     
     class Config:
         arbitrary_types_allowed = True
@@ -133,8 +142,9 @@ class Result(BaseModel):
     def __repr__(self):
         return (
             f"<Result miner.uid={self.miner.uid} "
-            f"env={self.challenge.env} "
-            f"score={self.evaluation.score:.4f}>"
+            f"env={self.env} "
+            f"score={self.score:.4f} "
+            f"success={self.success}>"
         )
     
     __str__ = __repr__
@@ -144,10 +154,10 @@ class CompactResult(BaseModel):
     """Lightweight result containing only fields needed for weight calculation.
     
     This model significantly reduces memory usage by excluding large text fields
-    like prompts, responses, and error messages that are not used in scoring.
+    and error messages that are not used in scoring.
     
     Provides a compatible interface with Result by exposing nested attributes
-    through properties (miner.*, challenge.*, evaluation.*).
+    through properties (miner.*, etc.).
     """
     
     hotkey: str
@@ -167,8 +177,8 @@ class CompactResult(BaseModel):
             model=result.miner.model,
             revision=result.miner.revision,
             block=result.miner.block,
-            env=result.challenge.env,
-            score=result.evaluation.score
+            env=result.env,
+            score=result.score
         )
     
     @property
@@ -201,3 +211,31 @@ class CompactResult(BaseModel):
     
     class Config:
         arbitrary_types_allowed = True
+
+
+# Legacy models for backward compatibility (kept minimal, deprecated)
+class Challenge(BaseModel):
+    """DEPRECATED: Legacy Challenge model. Use Result directly."""
+    env: str
+    prompt: str = ""
+    extra: Dict[str, Any] = Field(default_factory=dict)
+    challenge_id: Optional[str] = None
+    timestamp: Optional[float] = Field(default_factory=time.time)
+
+
+class Response(BaseModel):
+    """DEPRECATED: Legacy Response model. Use Result directly."""
+    response: Optional[str] = None
+    latency_seconds: float
+    attempts: int = 1
+    model: str
+    error: Optional[str] = None
+    success: bool
+    timestamp: Optional[float] = Field(default_factory=time.time)
+
+
+class Evaluation(BaseModel):
+    """DEPRECATED: Legacy Evaluation model. Use Result directly."""
+    env: str
+    score: float
+    extra: Dict[str, Any] = Field(default_factory=dict)

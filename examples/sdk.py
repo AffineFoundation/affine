@@ -1,6 +1,8 @@
 import asyncio
 import affine as af
 from dotenv import load_dotenv
+import sys
+import os
 
 af.trace()
 
@@ -8,9 +10,16 @@ load_dotenv()
 
 
 async def main():
+    api_key = os.getenv("CHUTES_API_KEY")
+    if not api_key:
+        print("\n   ❌ CHUTES_API_KEY environment variable not set")
+        print("   Please set: export CHUTES_API_KEY='your-key'")
+        print("   Or create .env file with: CHUTES_API_KEY=your-key")
+        sys.exit(1)
+
     # Get miner info for UID = 160
     # NOTE: HF_USER and HF_TOKEN .env value is required for this command.
-    miner = await af.miners(160)
+    miner = await af.miners(7)
     assert miner, "Unable to obtain miner, please check if registered"
 
     # Generate and evaluate a DED challenge
