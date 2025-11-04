@@ -341,9 +341,6 @@ class BaseSDKEnv(ABC):
             )
             
         except Exception as e:
-            logger.error(f"Evaluation failed for {self.env_name} uid={miner.uid}: {e}")
-            traceback.print_exc()
-            
             return Result(
                 miner=miner,
                 env=self.env_name,
