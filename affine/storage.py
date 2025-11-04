@@ -304,6 +304,7 @@ async def dataset(
         bar.close()
 
 async def sign_results( wallet, results ):
+    hotkey = None
     try:
         signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
         timeout = aiohttp.ClientTimeout(connect=2, total=30)
@@ -333,6 +334,7 @@ async def sink(wallet, results: list["Result"], block: int = None):
         sub = await get_subtensor(); block = await sub.get_current_block()
     hotkey, signed = await sign_results( wallet, results )
     key = f"{RESULT_PREFIX}{_w(block):09d}-{hotkey}.json"
+    logger.debug(f"results key {key}")
     dumped = [ r.model_dump(mode="json") for r in signed ]
     async with get_client_ctx() as c:
         try:
