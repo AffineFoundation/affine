@@ -277,7 +277,7 @@ async def dataset(
                         # New data with failed signature verification - skip it
                         from datetime import datetime
                         readable_time = datetime.fromtimestamp(r.timestamp).strftime('%Y-%m-%d %H:%M:%S')
-                        logger.warning(
+                        logger.trace(
                             f"Signature verification failed: "
                             f"block={block_str}, hotkey={r.hotkey}, uid={r.miner.uid}, "
                             f"env={r.env}, score={r.score:.4f}, "

@@ -27,7 +27,14 @@ class Miner(BaseModel):
     block: Optional[int] = None
     chute: Optional[Dict[str, Any]] = None
     slug: Optional[str] = None
-    weights_shas: Optional[set[str]] = None
+    weights_shas: Optional[list[str]] = None
+    
+    @validator('weights_shas', pre=True)
+    def convert_weights_shas(cls, v):
+        """Convert set to sorted list for JSON serialization."""
+        if isinstance(v, set):
+            return sorted(list(v))
+        return v
 
 
 class Result(BaseModel):
@@ -144,7 +151,7 @@ class Result(BaseModel):
             f"<Result miner.uid={self.miner.uid} "
             f"env={self.env} "
             f"score={self.score:.4f} "
-            f"success={self.success}>"
+            f"hotkey={self.hotkey}>"
         )
     
     __str__ = __repr__
