@@ -17,8 +17,8 @@ async def main():
         print("   Or create .env file with: CHUTES_API_KEY=your-key")
         sys.exit(1)
 
-    ded_env = af.ALFWORLD()
-    evaluation = await ded_env.evaluate(
+    alfworld_env = af.ALFWORLD()
+    evaluation = await alfworld_env.evaluate(
         model="deepseek-ai/DeepSeek-V3",
         base_url="https://llm.chutes.ai/v1",
         task_id=[2]
