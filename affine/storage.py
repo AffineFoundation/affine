@@ -304,6 +304,7 @@ async def dataset(
         bar.close()
 
 async def sign_results( wallet, results ):
+    hotkey = None
     try:
         signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
         timeout = aiohttp.ClientTimeout(connect=2, total=30)
