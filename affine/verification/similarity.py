@@ -17,6 +17,7 @@ class SimilarityMetric(Enum):
     COSINE = "cosine"
     EXACT_MATCH = "exact_match"
     TOKEN_OVERLAP = "token_overlap"
+    LLM_JUDGE = "llm_judge"  # Use LLM to judge semantic similarity
     # Can add more metrics like BLEU, ROUGE later
 
 
@@ -54,8 +55,9 @@ class SimilarityChecker:
         local_endpoint: str,
         model: str,
         prompts: List[str],
-        temperature: float = 0.7,
+        temperature: float = 0.0,
         max_tokens: int = 512,
+        seed: int = 42,
     ) -> List[ComparisonResult]:
         """Compare outputs from Chutes and local deployments.
 
@@ -64,8 +66,9 @@ class SimilarityChecker:
             local_endpoint: Local deployment endpoint (e.g., http://host:port/v1)
             model: Model name
             prompts: List of prompts to test
-            temperature: Sampling temperature
+            temperature: Sampling temperature (default 0.0 for deterministic output)
             max_tokens: Max tokens to generate
+            seed: Random seed for reproducibility
 
         Returns:
             List of comparison results
@@ -76,8 +79,8 @@ class SimilarityChecker:
             try:
                 # Get outputs from both endpoints
                 chutes_output, local_output = await asyncio.gather(
-                    self._get_model_output(chutes_endpoint, model, prompt, temperature, max_tokens),
-                    self._get_model_output(local_endpoint, model, prompt, temperature, max_tokens),
+                    self._get_model_output(chutes_endpoint, model, prompt, temperature, max_tokens, seed),
+                    self._get_model_output(local_endpoint, model, prompt, temperature, max_tokens, seed),
                 )
 
                 # Calculate similarity
@@ -121,6 +124,7 @@ class SimilarityChecker:
         prompt: str,
         temperature: float,
         max_tokens: int,
+        seed: int,
     ) -> str:
         """Get model output from an endpoint.
 
@@ -130,6 +134,7 @@ class SimilarityChecker:
             prompt: Input prompt
             temperature: Sampling temperature
             max_tokens: Max tokens to generate
+            seed: Random seed for reproducibility
 
         Returns:
             Model output text
@@ -141,6 +146,7 @@ class SimilarityChecker:
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens,
             "temperature": temperature,
+            "seed": seed,
         }
 
         # Add authorization for Chutes endpoint
