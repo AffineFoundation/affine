@@ -765,7 +765,8 @@ def verify_monitor(interval, once):
 @verify_group.command("worker")
 @click.option("--max-tasks", default=None, type=int, help="Maximum tasks to process")
 @click.option("--once", is_flag=True, help="Process one task and exit")
-def verify_worker(max_tasks, once):
+@click.option("--dry-run", is_flag=True, help="Don't upload results to R2 (local testing mode)")
+def verify_worker(max_tasks, once, dry_run):
     """Run verification worker."""
     from affine.verification import (
         VerificationQueue,
@@ -780,7 +781,10 @@ def verify_worker(max_tasks, once):
         blacklist = BlacklistManager()
         deployment = ModelDeployment()
         checker = SimilarityChecker()
-        worker = VerificationWorker(queue, blacklist, deployment, checker)
+        worker = VerificationWorker(queue, blacklist, deployment, checker, dry_run=dry_run)
+
+        if dry_run:
+            logger.info("[DRY-RUN MODE] Results will NOT be uploaded to R2")
 
         if once:
             success = await worker.run_once()
@@ -867,7 +871,8 @@ def verify_blacklist(show, add, remove):
 @verify_group.command("run")
 @click.option("--monitor-interval", default=300, type=int, help="Monitor check interval")
 @click.option("--num-workers", default=1, type=int, help="Number of worker processes")
-def verify_run(monitor_interval, num_workers):
+@click.option("--dry-run", is_flag=True, help="Don't upload results to R2 (local testing mode)")
+def verify_run(monitor_interval, num_workers, dry_run):
     """Run full verification service (monitor + workers)."""
     from affine.verification import (
         IncentiveMonitor,
@@ -879,9 +884,20 @@ def verify_run(monitor_interval, num_workers):
     )
 
     async def _run():
+        # Clean up GPU containers before starting
+        logger.info("Cleaning up GPU containers before starting...")
+        cleanup_deployment = ModelDeployment()
+        try:
+            await cleanup_deployment.cleanup_all_sglang_containers()
+        except Exception as e:
+            logger.warning(f"Failed to cleanup GPU containers: {e}")
+
         # Initialize shared components
         queue = VerificationQueue()
         blacklist = BlacklistManager()
+
+        if dry_run:
+            logger.info("[DRY-RUN MODE] Results will NOT be uploaded to R2")
 
         # Start monitor
         monitor = IncentiveMonitor(queue)
@@ -891,7 +907,7 @@ def verify_run(monitor_interval, num_workers):
         for i in range(num_workers):
             deployment = ModelDeployment()
             checker = SimilarityChecker()
-            worker = VerificationWorker(queue, blacklist, deployment, checker)
+            worker = VerificationWorker(queue, blacklist, deployment, checker, dry_run=dry_run)
             workers.append(worker)
 
         # Run all tasks concurrently
@@ -900,7 +916,7 @@ def verify_run(monitor_interval, num_workers):
             *[asyncio.create_task(w.run()) for w in workers],
         ]
 
-        logger.info(f"Started verification service with {num_workers} workers")
+        logger.info(f"Started verification service with {num_workers} workers{' [DRY-RUN]' if dry_run else ''}")
 
         # Wait for all tasks
         await asyncio.gather(*tasks)

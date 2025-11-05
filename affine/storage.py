@@ -74,7 +74,7 @@ async def _update_index(k: str) -> None:
 
 async def _cache_shard(key: str, sem: asyncio.Semaphore, use_public: bool = None) -> Path:
     """Cache a shard from R2 storage.
-    
+
     Args:
         key: S3 key to fetch
         sem: Semaphore for concurrency control
@@ -84,10 +84,15 @@ async def _cache_shard(key: str, sem: asyncio.Semaphore, use_public: bool = None
     out = CACHE_DIR / f"{name}.jsonl"; mod = out.with_suffix(".modified")
     max_retries = 5
     base_delay = 5.0
-    
+
     # Determine which read mode to use
     read_public = PUBLIC_READ if use_public is None else use_public
-    
+
+    # Check local cache first (for both public and private modes)
+    if out.exists():
+        logger.debug(f"Using cached file: {out.name}")
+        return out
+
     for attempt in range(max_retries):
         try:
             async with sem:
@@ -120,6 +125,13 @@ async def _cache_shard(key: str, sem: asyncio.Semaphore, use_public: bool = None
                 delay = base_delay * (2 ** attempt)
                 if attempt > 1:
                     logger.warning(f"Rate limited for key: {key}, retrying in {delay}s (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(delay)
+            else:
+                raise
+        except (asyncio.TimeoutError, TimeoutError) as e:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"Timeout fetching key: {key}, retrying in {delay}s (attempt {attempt + 1}/{max_retries})")
                 await asyncio.sleep(delay)
             else:
                 raise
@@ -250,56 +262,67 @@ async def dataset(
             path = await coro
             if path is None:
                 continue
-            
+
             # Extract block number from filename (format: {block}-{hotkey}.jsonl)
             block_str = path.stem.split('-')[0] if path else 'unknown'
 
-            async for raw in _jsonl(path):
-                try:
-                    data = orjson.loads(raw)
-                    is_legacy = False
-                    
-                    # Detect and convert legacy format
-                    if "challenge" in data and "response" in data and "evaluation" in data:
-                        # Legacy format detected - convert to new format
-                        try:
-                            r = Result.from_legacy(data)
-                            is_legacy = True
-                        except Exception as e:
-                            logger.debug(f"Failed to convert legacy result: {e}")
+            jsonl_gen = _jsonl(path)
+            try:
+                async for raw in jsonl_gen:
+                    try:
+                        data = orjson.loads(raw)
+                        is_legacy = False
+
+                        # Detect and convert legacy format
+                        if "challenge" in data and "response" in data and "evaluation" in data:
+                            # Legacy format detected - convert to new format
+                            try:
+                                r = Result.from_legacy(data)
+                                is_legacy = True
+                            except Exception as e:
+                                logger.debug(f"Failed to convert legacy result: {e}")
+                                continue
+                        else:
+                            # New format - direct validation
+                            r = Result.model_validate(data)
+
+                        # Verify signature (skip verification for legacy data)
+                        if not is_legacy and not r.verify():
+                            # New data with failed signature verification - skip it
+                            from datetime import datetime
+                            readable_time = datetime.fromtimestamp(r.timestamp).strftime('%Y-%m-%d %H:%M:%S')
+                            logger.trace(
+                                f"Signature verification failed: "
+                                f"block={block_str}, hotkey={r.hotkey}, uid={r.miner.uid}, "
+                                f"env={r.env}, score={r.score:.4f}, "
+                                f"timestamp={r.timestamp} ({readable_time})"
+                            )
                             continue
-                    else:
-                        # New format - direct validation
-                        r = Result.model_validate(data)
-                    
-                    # Verify signature (skip verification for legacy data)
-                    if not is_legacy and not r.verify():
-                        # New data with failed signature verification - skip it
-                        from datetime import datetime
-                        readable_time = datetime.fromtimestamp(r.timestamp).strftime('%Y-%m-%d %H:%M:%S')
-                        logger.trace(
-                            f"Signature verification failed: "
-                            f"block={block_str}, hotkey={r.hotkey}, uid={r.miner.uid}, "
-                            f"env={r.env}, score={r.score:.4f}, "
-                            f"timestamp={r.timestamp} ({readable_time})"
-                        )
-                        continue
-                    
-                    # Data is valid (legacy data skips verification, new data passed verification)
-                    if compact:
-                        # Return compact result for memory efficiency
-                        compact_result = CompactResult.from_result(r)
-                        bar.update(1)
-                        yield compact_result
-                        # Explicitly delete full result to free memory immediately
-                        del r
-                    else:
-                        # Return full Result object
-                        bar.update(1)
-                        yield r
-                except Exception as e:
-                    # Skip invalid results but log for debugging
-                    logger.debug(f"Skipping invalid result: {type(e).__name__}: {e}")
+
+                        # Data is valid (legacy data skips verification, new data passed verification)
+                        if compact:
+                            # Return compact result for memory efficiency
+                            compact_result = CompactResult.from_result(r)
+                            bar.update(1)
+                            yield compact_result
+                            # Explicitly delete full result to free memory immediately
+                            del r
+                        else:
+                            # Return full Result object
+                            bar.update(1)
+                            yield r
+                    except GeneratorExit:
+                        # Clean exit when consumer stops iteration
+                        raise
+                    except Exception as e:
+                        # Skip invalid results but log for debugging
+                        logger.debug(f"Skipping invalid result: {type(e).__name__}: {e}")
+            finally:
+                # Properly close the generator
+                await jsonl_gen.aclose()
+    except GeneratorExit:
+        # Propagate GeneratorExit to allow proper cleanup
+        raise
     finally:
         bar.close()
 

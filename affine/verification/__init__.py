@@ -9,6 +9,7 @@ load_verification_env()
 from .monitor import IncentiveMonitor
 from .queue import VerificationQueue, VerificationTask
 from .blacklist import BlacklistManager
+from .whitelist import WhitelistManager
 from .deployment import ModelDeployment
 from .similarity import SimilarityChecker
 from .worker import VerificationWorker
@@ -18,6 +19,7 @@ __all__ = [
     "VerificationQueue",
     "VerificationTask",
     "BlacklistManager",
+    "WhitelistManager",
     "ModelDeployment",
     "SimilarityChecker",
     "VerificationWorker",

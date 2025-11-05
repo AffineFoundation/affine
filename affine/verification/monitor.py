@@ -8,18 +8,21 @@ from pathlib import Path
 from affine.storage import load_summary
 from affine.setup import logger
 from .queue import VerificationQueue, VerificationTask
+from .whitelist import WhitelistManager
 
 
 class IncentiveMonitor:
     """Monitor R2 for new incentive models and enqueue them for verification."""
 
-    def __init__(self, queue: VerificationQueue):
+    def __init__(self, queue: VerificationQueue, whitelist_manager: Optional["WhitelistManager"] = None):
         """Initialize monitor.
 
         Args:
             queue: Verification queue to enqueue tasks
+            whitelist_manager: Whitelist manager (optional, will create if not provided)
         """
         self.queue = queue
+        self.whitelist_manager = whitelist_manager or WhitelistManager()
         self._processed_blocks: Set[int] = set()
         self._state_file = Path(
             os.getenv(
@@ -86,22 +89,31 @@ class IncentiveMonitor:
                 self._save_state()
                 return 0
 
-            # Get eligible miners (those who received incentives)
+            # Get miners with weight > 0 (those who received incentives)
             eligible_hotkeys = set()
             for hotkey, miner_info in miners_data.items():
-                if miner_info.get("eligible", False):
+                weight = miner_info.get("weight", 0.0)
+                if weight > 0:
                     eligible_hotkeys.add(hotkey)
 
             if not eligible_hotkeys:
-                logger.info(f"No eligible miners in block {block}")
+                logger.info(f"No miners with weight > 0 in block {block}")
                 self._processed_blocks.add(block)
                 self._save_state()
                 return 0
 
-            logger.info(f"Found {len(eligible_hotkeys)} eligible miners in block {block}")
+            logger.info(f"Found {len(eligible_hotkeys)} miners with weight > 0 in block {block}")
 
-            # Enqueue verification tasks for eligible miners
+            # Get online miners with valid slugs
+            from affine.miners import miners as get_miners
+            online_miners = await get_miners(check_validity=True)
+            logger.info(f"Found {len(online_miners)} online miners with valid slugs")
+
+            # Enqueue verification tasks for eligible online miners
             tasks_enqueued = 0
+            tasks_skipped_verified = 0
+            tasks_skipped_offline = 0
+
             for hotkey, miner_info in miners_data.items():
                 if hotkey not in eligible_hotkeys:
                     continue
@@ -112,6 +124,20 @@ class IncentiveMonitor:
 
                 if not model or not revision:
                     logger.debug(f"Skipping miner {hotkey}: missing model or revision")
+                    continue
+
+                # Check if miner is online (has slug)
+                miner_online = any(m.hotkey == hotkey and m.slug for m in online_miners.values())
+                if not miner_online:
+                    logger.debug(f"Skipping miner {hotkey}: not online or no slug")
+                    tasks_skipped_offline += 1
+                    continue
+
+                # Check if already verified (within 7 days)
+                is_verified = await self.whitelist_manager.is_verified(hotkey, model, revision)
+                if is_verified:
+                    logger.debug(f"Skipping miner {hotkey}: already verified within 7 days")
+                    tasks_skipped_verified += 1
                     continue
 
                 # Calculate priority based on total score (higher score = higher priority)
@@ -133,7 +159,10 @@ class IncentiveMonitor:
             self._processed_blocks.add(block)
             self._save_state()
 
-            logger.info(f"Enqueued {tasks_enqueued} verification tasks from block {block}")
+            logger.info(
+                f"Enqueued {tasks_enqueued} verification tasks from block {block} "
+                f"(skipped {tasks_skipped_verified} already verified, {tasks_skipped_offline} offline)"
+            )
             return tasks_enqueued
 
         except Exception as e:

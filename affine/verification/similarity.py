@@ -96,7 +96,11 @@ class SimilarityChecker:
                 logger.debug(f"Similarity for prompt '{prompt[:50]}...': {similarity_score:.4f}")
 
             except Exception as e:
-                logger.warning(f"Error comparing outputs for prompt '{prompt[:50]}...': {e}")
+                error_msg = f"{type(e).__name__}: {str(e)}" if str(e) else type(e).__name__
+                logger.warning(
+                    f"Error comparing outputs for prompt '{prompt[:50]}...': {error_msg}",
+                    exc_info=True if not str(e) else False  # Show traceback if error message is empty
+                )
                 results.append(
                     ComparisonResult(
                         prompt=prompt,
@@ -104,7 +108,7 @@ class SimilarityChecker:
                         local_output="",
                         similarity_score=0.0,
                         metric=self.metric,
-                        error=str(e),
+                        error=error_msg,
                     )
                 )
 
@@ -271,14 +275,20 @@ async def get_sample_prompts(
 
     # Load results for this miner around this block
     prompts = []
-    tail = int(os.getenv("VERIFICATION_SAMPLE_TAIL", "10000"))  # Look back this many blocks
+    tail = int(os.getenv("VERIFICATION_SAMPLE_TAIL", "1000"))  # Look back fewer blocks (was 10000)
 
     try:
         logger.info(f"Loading prompts for {hotkey} from last {tail} blocks (around block {block})")
         count_checked = 0
+        max_to_check = int(os.getenv("VERIFICATION_MAX_RESULTS_CHECK", "20000"))  # Configurable limit
 
         async for result in dataset(tail=tail, compact=False):
             count_checked += 1
+
+            # Stop early if we've checked too many results
+            if count_checked >= max_to_check:
+                logger.warning(f"Reached max check limit ({max_to_check}), stopping search")
+                break
 
             # Filter by hotkey and block proximity
             if result.miner.hotkey == hotkey and abs(result.miner.block - block) < 100:
@@ -333,32 +343,177 @@ async def get_sample_prompts(
 
     # If we don't have enough prompts, use default ones
     if len(prompts) < sample_size:
-        logger.warning(f"Only found {len(prompts)} prompts for {hotkey}, using defaults")
         default_prompts = _get_default_prompts()
+        num_defaults_needed = sample_size - len(prompts)
+        logger.warning(
+            f"Only found {len(prompts)} prompts for {hotkey}, "
+            f"adding {num_defaults_needed} from {len(default_prompts)} available defaults"
+        )
         prompts.extend(default_prompts)
 
     # Randomly sample
     if len(prompts) > sample_size:
         prompts = random.sample(prompts, sample_size)
 
+    logger.info(f"Got {len(prompts[:sample_size])} prompts for testing")
     return prompts[:sample_size]
 
 
 def _get_default_prompts() -> List[str]:
     """Get default prompts for testing.
 
+    Includes diverse prompts across different categories:
+    - General knowledge and facts
+    - Science and technology
+    - Programming and math
+    - Creative writing
+    - Reasoning and problem solving
+    - Explanations and tutorials
+
     Returns:
-        List of default prompts
+        List of default prompts (50+ prompts)
     """
     return [
+        # General knowledge (simple)
         "What is the capital of France?",
+        "Who wrote Romeo and Juliet?",
+        "What is the largest planet in our solar system?",
+        "When did World War II end?",
+        "What is the chemical symbol for gold?",
+
+        # Science explanations
         "Explain quantum computing in simple terms.",
-        "Write a Python function to reverse a string.",
         "What are the main causes of climate change?",
         "Describe the process of photosynthesis.",
+        "How do vaccines work?",
+        "Explain the theory of relativity.",
+        "What is DNA and how does it work?",
+        "Describe the water cycle.",
+        "How does electricity flow through a circuit?",
+        "What causes earthquakes?",
+        "Explain the greenhouse effect.",
+
+        # Programming tasks
+        "Write a Python function to reverse a string.",
+        "How do I sort a list in Python?",
+        "Write a function to check if a number is prime.",
+        "Explain what recursion is with an example.",
+        "How do you implement a binary search algorithm?",
+        "Write code to find the factorial of a number.",
+        "Explain the difference between a list and a tuple in Python.",
+        "How do you handle exceptions in Python?",
+        "Write a function to count vowels in a string.",
+        "What is the difference between '==' and 'is' in Python?",
+
+        # AI and Technology
         "How does a neural network work?",
         "What is the difference between AI and machine learning?",
-        "Explain the theory of relativity.",
+        "Explain what deep learning is.",
+        "What is natural language processing?",
+        "How do large language models work?",
+        "What is computer vision?",
+        "Explain reinforcement learning.",
+        "What is the difference between supervised and unsupervised learning?",
+
+        # Math problems
+        "Solve for x: 2x + 5 = 15",
+        "What is the Pythagorean theorem?",
+        "Calculate the area of a circle with radius 5.",
+        "What is a derivative in calculus?",
+        "Explain what a prime number is.",
+
+        # Creative and open-ended
+        "Write a short story about a robot learning to cook.",
+        "Describe a beautiful sunset in poetic language.",
+        "What would happen if gravity suddenly stopped working?",
+        "Imagine a world where everyone can read minds. What would it be like?",
+
+        # Reasoning and problem solving
+        "If you have 12 apples and give away 3, then buy 5 more, how many do you have?",
+        "A farmer has 17 sheep. All but 9 die. How many are left?",
+        "You have a 3-liter jug and a 5-liter jug. How can you measure exactly 4 liters?",
+        "What comes next in this sequence: 2, 4, 8, 16, ?",
+
+        # Tutorials and how-to
+        "How do I make a paper airplane?",
+        "Explain how to tie a tie step by step.",
+        "What are the steps to brew coffee?",
+        "How do you change a tire?",
+
+        # Health and lifestyle
+        "What are the benefits of regular exercise?",
         "What are the benefits of renewable energy?",
-        "How do vaccines work?",
+        "How much water should a person drink daily?",
+        "What is a balanced diet?",
+
+        # General explanations
+        "What is the difference between weather and climate?",
+        "How does the internet work?",
+        "What is blockchain technology?",
+        "Explain how a refrigerator keeps food cold.",
+
+        # History and geography
+        "What caused the fall of the Roman Empire?",
+        "Who was the first person to walk on the moon?",
+        "What is the Great Wall of China?",
+        "Describe the Renaissance period.",
+        "What were the main events of the American Revolution?",
+        "Who discovered America?",
+        "What is the Silk Road?",
+        "Explain the Industrial Revolution.",
+
+        # Language and communication
+        "What is the difference between 'affect' and 'effect'?",
+        "Explain what a metaphor is.",
+        "How many languages are spoken in the world?",
+        "What is grammar?",
+        "Explain the difference between 'their', 'there', and 'they're'.",
+
+        # Business and economics
+        "What is supply and demand?",
+        "Explain what inflation means.",
+        "What is a stock market?",
+        "How does compound interest work?",
+        "What is GDP?",
+
+        # More programming challenges
+        "Write a function to find the largest number in a list.",
+        "How do you remove duplicates from a list?",
+        "Write code to check if a string is a palindrome.",
+        "Explain what an API is.",
+        "What is the difference between GET and POST requests?",
+        "How do you reverse a linked list?",
+        "Write a function to merge two sorted arrays.",
+
+        # Philosophy and ethics
+        "What is the meaning of life?",
+        "Explain the trolley problem.",
+        "What is the difference between right and wrong?",
+        "Who was Socrates?",
+
+        # Space and astronomy
+        "How far is the sun from Earth?",
+        "What is a black hole?",
+        "How many planets are in our solar system?",
+        "What is the Big Bang theory?",
+        "Can humans live on Mars?",
+
+        # Animals and nature
+        "How do birds fly?",
+        "What is the largest animal on Earth?",
+        "How do bees make honey?",
+        "Why do cats purr?",
+        "What is photosynthesis in simple terms?",
+
+        # Food and cooking
+        "How do you make scrambled eggs?",
+        "What temperature should chicken be cooked to?",
+        "What is the difference between baking and roasting?",
+        "How do you boil an egg perfectly?",
+
+        # Sports and games
+        "What are the rules of chess?",
+        "How many players are on a soccer team?",
+        "What is a home run in baseball?",
+        "Explain the offside rule in soccer.",
     ]

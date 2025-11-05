@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  verification:
+    image: affine-verification:latest
+    container_name: affine-verification
+    restart: unless-stopped
+    env_file:
+      - .env
+      - ./affine/verification/.env
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./affine/verification/.env:/app/affine/verification/.env:ro
+      - ~/.cache/affine:/root/.cache/affine
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.ssh:/root/.ssh:ro
+    network_mode: host
+    entrypoint: ["/opt/venv/bin/af"]
+    command: ["-vv", "verify", "run", "--monitor-interval", "300", "--num-workers", "1"]
+
+volumes:
+  verification-cache:
+    name: affine-verification-cache

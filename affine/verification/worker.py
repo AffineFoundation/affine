@@ -7,6 +7,7 @@ from typing import Optional
 from affine.setup import logger
 from .queue import VerificationQueue, VerificationTask
 from .blacklist import BlacklistManager
+from .whitelist import WhitelistManager
 from .deployment import ModelDeployment, DeploymentInfo
 from .similarity import SimilarityChecker, get_sample_prompts
 
@@ -20,6 +21,8 @@ class VerificationWorker:
         blacklist_manager: BlacklistManager,
         deployment: ModelDeployment,
         similarity_checker: SimilarityChecker,
+        whitelist_manager: Optional[WhitelistManager] = None,
+        dry_run: bool = False,
     ):
         """Initialize worker.
 
@@ -28,11 +31,15 @@ class VerificationWorker:
             blacklist_manager: Blacklist manager
             deployment: Model deployment manager
             similarity_checker: Similarity checker
+            whitelist_manager: Whitelist manager (optional, will create if not provided)
+            dry_run: If True, don't upload results to R2
         """
         self.queue = queue
         self.blacklist_manager = blacklist_manager
+        self.whitelist_manager = whitelist_manager or WhitelistManager()
         self.deployment = deployment
         self.similarity_checker = similarity_checker
+        self.dry_run = dry_run
 
         # Configuration
         self.sample_size = int(os.getenv("VERIFICATION_SAMPLE_SIZE", "10"))
@@ -40,7 +47,7 @@ class VerificationWorker:
 
         logger.info(
             f"Initialized verification worker "
-            f"(sample_size={self.sample_size}, threshold={self.similarity_threshold})"
+            f"(sample_size={self.sample_size}, threshold={self.similarity_threshold}, dry_run={self.dry_run})"
         )
 
     async def process_task(self, task: VerificationTask) -> bool:
@@ -78,10 +85,10 @@ class VerificationWorker:
             logger.info(f"Got {len(prompts)} prompts for testing")
 
             # Step 3: Build Chutes endpoint
-            # Get slug from miner info
+            # Get slug from miner info (only check online miners with valid slugs)
             from affine.miners import miners as get_miners
 
-            miners_dict = await get_miners(check_validity=False)
+            miners_dict = await get_miners(check_validity=True)
             miner = None
 
             for m in miners_dict.values():
@@ -90,7 +97,7 @@ class VerificationWorker:
                     break
 
             if miner is None or not miner.slug:
-                raise ValueError(f"Miner slug not found for hotkey {task.hotkey}")
+                raise ValueError(f"Miner not online or slug not found for hotkey {task.hotkey}")
 
             chutes_endpoint = f"https://{miner.slug}.chutes.ai/v1"
             logger.info(f"Chutes endpoint: {chutes_endpoint}")
@@ -116,42 +123,61 @@ class VerificationWorker:
                 f"({len(valid_results)}/{len(comparison_results)} valid results)"
             )
 
-            # Step 6: Check threshold and update blacklist if needed
+            # Step 6: Check threshold and update blacklist/whitelist
+            # Collect details
+            details = {
+                "avg_similarity": avg_similarity,
+                "valid_results": len(valid_results),
+                "total_results": len(comparison_results),
+                "samples": [
+                    {
+                        "prompt": r.prompt[:100],
+                        "similarity": r.similarity_score,
+                        "chutes_output": r.chutes_output[:200],
+                        "local_output": r.local_output[:200],
+                    }
+                    for r in valid_results[:3]  # Keep first 3 samples
+                ],
+            }
+
             if avg_similarity < self.similarity_threshold:
                 logger.warning(
                     f"Similarity {avg_similarity:.4f} below threshold {self.similarity_threshold}, "
-                    f"adding to blacklist"
+                    f"{'[DRY-RUN] would add' if self.dry_run else 'adding'} to blacklist"
                 )
 
-                # Collect details
-                details = {
-                    "avg_similarity": avg_similarity,
-                    "valid_results": len(valid_results),
-                    "total_results": len(comparison_results),
-                    "samples": [
-                        {
-                            "prompt": r.prompt[:100],
-                            "similarity": r.similarity_score,
-                            "chutes_output": r.chutes_output[:200],
-                            "local_output": r.local_output[:200],
-                        }
-                        for r in valid_results[:3]  # Keep first 3 samples
-                    ],
-                }
-
-                await self.blacklist_manager.add_to_blacklist(
-                    hotkey=task.hotkey,
-                    model=task.model,
-                    reason="low_similarity",
-                    similarity_score=avg_similarity,
-                    block=task.block,
-                    samples_tested=len(valid_results),
-                    details=details,
-                )
-
-                logger.info(f"Added {task.hotkey} to blacklist")
+                if self.dry_run:
+                    logger.info(f"[DRY-RUN] Would add {task.hotkey} to blacklist with details: {details}")
+                else:
+                    await self.blacklist_manager.add_to_blacklist(
+                        hotkey=task.hotkey,
+                        model=task.model,
+                        reason="low_similarity",
+                        similarity_score=avg_similarity,
+                        block=task.block,
+                        samples_tested=len(valid_results),
+                        details=details,
+                    )
+                    logger.info(f"Added {task.hotkey} to blacklist")
             else:
-                logger.info(f"Similarity {avg_similarity:.4f} OK, no blacklist action needed")
+                logger.info(
+                    f"Similarity {avg_similarity:.4f} >= threshold {self.similarity_threshold}, "
+                    f"{'[DRY-RUN] would add' if self.dry_run else 'adding'} to whitelist"
+                )
+
+                if self.dry_run:
+                    logger.info(f"[DRY-RUN] Would add {task.hotkey} to whitelist with details: {details}")
+                else:
+                    await self.whitelist_manager.add_to_whitelist(
+                        hotkey=task.hotkey,
+                        model=task.model,
+                        revision=task.revision,
+                        similarity_score=avg_similarity,
+                        block=task.block,
+                        samples_tested=len(valid_results),
+                        details=details,
+                    )
+                    logger.info(f"Added {task.hotkey} to whitelist (valid for 7 days)")
 
             # Mark task as completed
             await self.queue.complete_task(task.task_id)
