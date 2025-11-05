@@ -450,7 +450,6 @@ def signer(host: str, port: int):
                     retries=int(os.getenv("SIGNER_RETRIES", "10")),
                     delay_s=float(os.getenv("SIGNER_RETRY_DELAY", "2")),
                     confirmation_blocks=int(os.getenv("CONFIRMATION_BLOCKS", "3")),
-                    log_prefix="[signer]",
                 )
                 logger.info(
                     f"[signer] /set_weights: confirmation={'ok' if ok else 'failed'}"
