@@ -21,11 +21,8 @@ from affine.utils.subtensor import get_subtensor
 from affine.storage import sink, CACHE_DIR, load_summary
 from affine import tasks as affine_tasks
 from affine.miners import get_latest_chute_id, miners, get_chute
-from affine.validator import (
-    get_weights,
-    retry_set_weights,
-    _set_weights_with_confirmation,
-)
+from affine.cal_weights import get_weights
+from affine.set_weights import retry_set_weights, set_weights_with_confirmation
 from affine.config import get_conf
 from affine.setup import NETUID, setup_logging, logger, get_enabled_envs
 from affine.weights import weights
@@ -101,7 +98,6 @@ def runner():
 
         # Metrics tracking
         total_requests_submitted = 0
-        requests_since_last_status = 0
         last_status_log_time = 0.0
 
         async def keep_subtensor_alive():
@@ -229,7 +225,7 @@ def runner():
             Uses semaphore to control global concurrency across all environments.
             """
             global HEARTBEAT
-            nonlocal total_requests_submitted, requests_since_last_status, last_status_log_time
+            nonlocal total_requests_submitted, last_status_log_time
 
             async def execute_with_semaphore(env, miner):
                 """Wrapper to execute task with semaphore control."""
@@ -255,19 +251,12 @@ def runner():
 
                 # Log status periodically
                 if current_time - last_status_log_time >= STATUS_LOG_INTERVAL:
-                    elapsed = (
-                        current_time - last_status_log_time
-                        if last_status_log_time > 0
-                        else STATUS_LOG_INTERVAL
-                    )
-                    rps = requests_since_last_status / elapsed
                     queue_size = result_queue.qsize()
                     logger.info(
                         f"[STATUS] miners={len(miners_map)} inflight={len(inflight_tasks)} "
-                        f"concurrency={MAX_CONCURRENCY} queue={queue_size} req/s={rps:.1f} total={total_requests_submitted}"
+                        f"concurrency={MAX_CONCURRENCY} queue={queue_size} total={total_requests_submitted}"
                     )
                     last_status_log_time = current_time
-                    requests_since_last_status = 0
 
                 # Build pending work queue if empty (round-robin distribution)
                 if not pending_queue:
@@ -296,7 +285,6 @@ def runner():
                         )
                         inflight_tasks[task_key] = task
                         total_requests_submitted += 1
-                        requests_since_last_status += 1
                         slots_available -= 1
                     
                     queue_index += 1
@@ -453,7 +441,7 @@ def signer(host: str, port: int):
                 uids = payload.get("uids") or []
                 weights = payload.get("weights") or []
                 wait_for_inclusion = bool(payload.get("wait_for_inclusion", False))
-                ok = await _set_weights_with_confirmation(
+                ok = await set_weights_with_confirmation(
                     wallet,
                     netuid,
                     uids,
@@ -462,7 +450,6 @@ def signer(host: str, port: int):
                     retries=int(os.getenv("SIGNER_RETRIES", "10")),
                     delay_s=float(os.getenv("SIGNER_RETRY_DELAY", "2")),
                     confirmation_blocks=int(os.getenv("CONFIRMATION_BLOCKS", "3")),
-                    log_prefix="[signer]",
                 )
                 logger.info(
                     f"[signer] /set_weights: confirmation={'ok' if ok else 'failed'}"
@@ -521,7 +508,7 @@ def validate():
 
     async def _run():
         LAST = 0
-        TEMPO = 100
+        TEMPO = 180
         subtensor = None
         while True:
             try:
