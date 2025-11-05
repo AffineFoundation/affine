@@ -303,30 +303,72 @@ async def dataset(
     finally:
         bar.close()
 
-async def sign_results( wallet, results ):
-    hotkey = None
+async def sign_results(wallet, results: list["Result"]) -> tuple[str, list["Result"]]:
+    signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
     try:
-        signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
-        timeout = aiohttp.ClientTimeout(connect=2, total=30)
+        logger.debug(f"Attempting remote signing via {signer_url} for {len(results)} results")
+        
+        timeout = aiohttp.ClientTimeout(connect=2, total=60)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            # Build signing payloads using Result._get_sign_data()
             payloads = [r._get_sign_data() for r in results]
-            
+
             resp = await session.post(f"{signer_url}/sign", json={"payloads": payloads})
-            if resp.status == 200:
-                data = await resp.json()
-                sigs = data.get("signatures") or []
-                hotkey = data.get("hotkey")
-                for r, s in zip(results, sigs):
-                    r.hotkey = hotkey
-                    r.signature = s
+            if resp.status != 200:
+                error_text = await resp.text()
+                logger.error(
+                    f"Signer service returned status {resp.status}: {error_text[:200]}"
+                )
+                raise RuntimeError(f"Signer returned status {resp.status}")
+
+            data = await resp.json()
+            signatures = data.get("signatures")
+            hotkey = data.get("hotkey")
+            
+            if not signatures:
+                logger.error("Signer response missing 'signatures' field")
+                raise ValueError("Invalid signer response: missing signatures")
+            
+            if len(signatures) != len(results):
+                logger.error(
+                    f"Signature count mismatch: expected {len(results)}, got {len(signatures)}"
+                )
+                raise ValueError("Signature count mismatch")
+            
+            if not hotkey:
+                logger.warning("Signer response missing 'hotkey' field, will use wallet fallback")
+            else:
+                # Apply signatures to results
+                for result, signature in zip(results, signatures):
+                    result.hotkey = hotkey
+                    result.signature = signature
+                
+                logger.info(f"Successfully signed {len(results)} results remotely with hotkey {hotkey}")
+                return hotkey, results
+                
+    except aiohttp.ClientConnectionError as e:
+        logger.warning(f"Failed to connect to signer service at {signer_url}: {e}")
+    except asyncio.TimeoutError:
+        logger.warning(f"Signer service timeout after 30s at {signer_url}")
+    except aiohttp.ClientResponseError as e:
+        logger.error(f"Signer service HTTP error: status={e.status}, message={e.message}")
+    except (ValueError, KeyError, TypeError) as e:
+        logger.error(f"Invalid signer response format: {type(e).__name__}: {e}")
     except Exception as e:
-        logger.info(f"sink: signer unavailable, using local signing: {type(e).__name__}: {e}")
-        hotkey = wallet.hotkey.ss58_address
-        for r in results:
-            r.sign(wallet)
-    finally:
-        return hotkey, results
+        logger.error(f"Unexpected error during remote signing: {type(e).__name__}: {e}")
+    
+    # Fallback to local wallet signing
+    logger.info(f"Using local wallet signing for {len(results)} results")
+    hotkey = wallet.hotkey.ss58_address
+    
+    for result in results:
+        try:
+            result.sign(wallet)
+        except Exception as e:
+            logger.error(f"Failed to sign result locally for miner {result.miner.uid}: {e}")
+            raise
+    
+    logger.debug(f"Successfully signed {len(results)} results locally with hotkey {hotkey}")
+    return hotkey, results
 
 async def sink(wallet, results: list["Result"], block: int = None):
     if not results: return
