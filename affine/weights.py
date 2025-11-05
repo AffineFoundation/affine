@@ -4,7 +4,7 @@ import time
 import click
 import asyncio
 import logging
-from affine.validator import get_weights
+from affine.cal_weights import get_weights
 from affine.storage import load_summary
 from affine.setup import logger
 

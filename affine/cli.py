@@ -21,11 +21,8 @@ from affine.utils.subtensor import get_subtensor
 from affine.storage import sink, CACHE_DIR, load_summary
 from affine import tasks as affine_tasks
 from affine.miners import get_latest_chute_id, miners, get_chute
-from affine.validator import (
-    get_weights,
-    retry_set_weights,
-    _set_weights_with_confirmation,
-)
+from affine.cal_weights import get_weights
+from affine.set_weights import retry_set_weights, set_weights_with_confirmation
 from affine.config import get_conf
 from affine.setup import NETUID, setup_logging, logger, get_enabled_envs
 from affine.weights import weights
@@ -444,7 +441,7 @@ def signer(host: str, port: int):
                 uids = payload.get("uids") or []
                 weights = payload.get("weights") or []
                 wait_for_inclusion = bool(payload.get("wait_for_inclusion", False))
-                ok = await _set_weights_with_confirmation(
+                ok = await set_weights_with_confirmation(
                     wallet,
                     netuid,
                     uids,
@@ -512,7 +509,7 @@ def validate():
 
     async def _run():
         LAST = 0
-        TEMPO = 100
+        TEMPO = 180
         subtensor = None
         while True:
             try:

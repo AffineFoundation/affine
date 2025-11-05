@@ -1,17 +1,7 @@
-import os
-import time
-import socket
-import asyncio
-import logging
-import aiohttp
-import bittensor as bt
-from typing import List, Tuple, Optional, Dict, Set, Any
+from typing import Tuple, Optional, Dict, Set, Any
 from dataclasses import dataclass
-from urllib.parse import urlparse
-from aiohttp import ClientConnectorError
 from tabulate import tabulate
 from affine.storage import prune, dataset, save_summary
-from affine.config import get_conf
 from affine.setup import NETUID
 from affine.utils.subtensor import get_subtensor
 from affine.sampling import MinerSampler, SamplingOrchestrator, SamplingConfig
@@ -114,123 +104,6 @@ def _create_miner_row(
         f"{weight:.4f}",
     ]
 
-
-async def _set_weights_with_confirmation(
-    wallet: "bt.wallet",
-    netuid: int,
-    uids: list[int],
-    weights: list[float],
-    wait_for_inclusion: bool = False,
-    retries: int = 15,
-    delay_s: float = 2.0,
-    log_prefix: str = "",
-    confirmation_blocks: int = 3,
-) -> bool:
-    for attempt in range(retries):
-        try:
-            st = await get_subtensor()
-            logger.info(f"{log_prefix} set_weights attempt {attempt+1}/{retries}: netuid={netuid} uids={uids} weights={weights}")
-
-            # Get block state before submission for debugging
-            pre_block = await st.get_current_block()
-            logger.info(f"{log_prefix} current block before submission: {pre_block}")
-
-            # Submit weights using sync subtensor
-            start = time.monotonic()
-            sync_st = bt.subtensor(get_conf('SUBTENSOR_ENDPOINT', default='finney'))
-            sync_st.set_weights(
-                wallet=wallet, netuid=netuid, weights=weights, uids=uids,
-                wait_for_inclusion=wait_for_inclusion,
-            )
-            submit_duration = (time.monotonic() - start) * 1000
-
-            # Get reference block immediately after submission
-            ref = await st.get_current_block()
-            logger.info(f"{log_prefix} extrinsic submitted in {submit_duration:.1f}ms; ref_block={ref} (pre_block={pre_block})")
-
-            # Wait for multiple blocks to ensure transaction inclusion
-            for i in range(confirmation_blocks):
-                await st.wait_for_block()
-                current_block = await st.get_current_block()
-                logger.info(f"{log_prefix} waited block {i+1}/{confirmation_blocks}, current_block={current_block}")
-
-            # Verify weights have been updated
-            meta = await st.metagraph(netuid)
-            try:
-                idx = meta.hotkeys.index(wallet.hotkey.ss58_address)
-                lu = meta.last_update[idx]
-                final_block = await st.get_current_block()
-                logger.info(f"{log_prefix} last_update={lu}, ref_block={ref}, final_block={final_block}")
-
-                # Check if last_update was updated within reasonable range
-                if lu >= ref:
-                    logger.info(f"{log_prefix} confirmation OK (last_update={lu} >= ref={ref})")
-                    return True
-                else:
-                    logger.warning(f"{log_prefix} confirmation not yet included (last_update={lu} < ref={ref}), retrying …")
-            except ValueError:
-                logger.warning(f"{log_prefix} wallet hotkey not found in metagraph hotkeys; retrying …")
-        except Exception as e:
-            logger.warning(f"{log_prefix} set_weights attempt {attempt+1}/{retries} error: {type(e).__name__}: {e}")
-
-        await asyncio.sleep(delay_s)
-    logger.error(f"{log_prefix} failed to confirm set_weights after {retries} attempts")
-    return False
-
-
-async def retry_set_weights( wallet: bt.Wallet, uids: List[int], weights: List[float], retry: int = 10 ):
-    # Delegate to signer; fallback to shared helper only if signer is unreachable
-    signer_url = get_conf('SIGNER_URL', default='http://signer:8080')
-    try:
-        logger.info(f"Calling signer at {signer_url} for set_weights uids={uids}, weights={weights}")
-        parsed = urlparse(signer_url)
-        try:
-            infos = socket.getaddrinfo(parsed.hostname, parsed.port or 80, proto=socket.IPPROTO_TCP)
-            addrs = ",".join(sorted({i[4][0] for i in infos}))
-            logger.info(f"Signer DNS: host={parsed.hostname} -> {addrs}")
-        except Exception as e:
-            logger.warning(f"DNS resolve failed for {parsed.hostname}: {e}")
-        timeout = aiohttp.ClientTimeout(connect=2, total=600)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            start = time.monotonic()
-            resp = await session.post(
-                f"{signer_url}/set_weights",
-                json={
-                    "netuid": NETUID,
-                    "weights": weights,
-                    "uids": uids,
-                    "wait_for_inclusion": False,
-                },
-            )
-            dur_ms = (time.monotonic() - start) * 1000
-            logger.info(f"Signer HTTP response status={resp.status} in {dur_ms:.1f}ms")
-            # Try to parse JSON, otherwise log text (trimmed)
-            try:
-                data = await resp.json()
-            except Exception:
-                txt = await resp.text()
-                data = {"raw": (txt[:500] + ('…' if len(txt) > 500 else ''))}
-            logger.info(f"Signer response body={data}")
-            if resp.status == 200 and data.get("success"):
-                return
-            # Do not fallback if signer exists but reports failure
-            logger.warning(f"Signer responded error: status={resp.status} body={data}")
-            return
-    except ClientConnectorError as e:
-        logger.info(f"Signer not reachable ({type(e).__name__}: {e}); falling back to local set_weights once")
-        ok = await _set_weights_with_confirmation(
-            wallet, NETUID, uids, weights, False,
-            retries=int(os.getenv("SIGNER_RETRIES", "10")),
-            delay_s=float(os.getenv("SIGNER_RETRY_DELAY", "2")),
-            confirmation_blocks=int(os.getenv("CONFIRMATION_BLOCKS", "3")),
-            log_prefix="[validator-fallback]",
-        )
-        if not ok:
-            logger.error("Local set_weights confirmation failed")
-        return
-    except asyncio.TimeoutError as e:
-        logger.warning(f"Signer call timed out: {e}. Not falling back to local because validator has no wallet.")
-        return
 
 def _build_summary_data(ctx: SummaryContext, envs: list) -> dict:
     """Build flexible summary data structure.
