@@ -101,7 +101,6 @@ def runner():
 
         # Metrics tracking
         total_requests_submitted = 0
-        requests_since_last_status = 0
         last_status_log_time = 0.0
 
         async def keep_subtensor_alive():
@@ -229,7 +228,7 @@ def runner():
             Uses semaphore to control global concurrency across all environments.
             """
             global HEARTBEAT
-            nonlocal total_requests_submitted, requests_since_last_status, last_status_log_time
+            nonlocal total_requests_submitted, last_status_log_time
 
             async def execute_with_semaphore(env, miner):
                 """Wrapper to execute task with semaphore control."""
@@ -255,19 +254,12 @@ def runner():
 
                 # Log status periodically
                 if current_time - last_status_log_time >= STATUS_LOG_INTERVAL:
-                    elapsed = (
-                        current_time - last_status_log_time
-                        if last_status_log_time > 0
-                        else STATUS_LOG_INTERVAL
-                    )
-                    rps = requests_since_last_status / elapsed
                     queue_size = result_queue.qsize()
                     logger.info(
                         f"[STATUS] miners={len(miners_map)} inflight={len(inflight_tasks)} "
-                        f"concurrency={MAX_CONCURRENCY} queue={queue_size} req/s={rps:.1f} total={total_requests_submitted}"
+                        f"concurrency={MAX_CONCURRENCY} queue={queue_size} total={total_requests_submitted}"
                     )
                     last_status_log_time = current_time
-                    requests_since_last_status = 0
 
                 # Build pending work queue if empty (round-robin distribution)
                 if not pending_queue:
@@ -296,7 +288,6 @@ def runner():
                         )
                         inflight_tasks[task_key] = task
                         total_requests_submitted += 1
-                        requests_since_last_status += 1
                         slots_available -= 1
                     
                     queue_index += 1
