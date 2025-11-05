@@ -297,7 +297,7 @@ async def miners(
             async with meta_sem:
                 chute = await get_chute(chute_id)
 
-            if not chute or not chute.get("hot", False):
+            if not chute:
                 return None
 
             chute_name = chute.get("name")
