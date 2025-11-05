@@ -732,3 +732,211 @@ def commit(repo: str, revision: str, chute_id: str, coldkey: str, hotkey: str):
         logger.error("Commit failed: %s", e)
         click.echo(json.dumps({"success": False, "error": str(e)}))
 
+
+# ========================= Verification Commands =========================
+
+
+@cli.group("verify")
+def verify_group():
+    """Model verification commands."""
+    pass
+
+
+@verify_group.command("monitor")
+@click.option("--interval", default=None, type=int, help="Check interval in seconds")
+@click.option("--once", is_flag=True, help="Run once and exit")
+def verify_monitor(interval, once):
+    """Monitor R2 for new incentive models."""
+    from affine.verification import IncentiveMonitor, VerificationQueue
+
+    async def _run():
+        queue = VerificationQueue()
+        monitor = IncentiveMonitor(queue)
+
+        if once:
+            count = await monitor.run_once()
+            logger.info(f"Enqueued {count} tasks")
+        else:
+            await monitor.run(interval_seconds=interval)
+
+    asyncio.run(_run())
+
+
+@verify_group.command("worker")
+@click.option("--max-tasks", default=None, type=int, help="Maximum tasks to process")
+@click.option("--once", is_flag=True, help="Process one task and exit")
+def verify_worker(max_tasks, once):
+    """Run verification worker."""
+    from affine.verification import (
+        VerificationQueue,
+        BlacklistManager,
+        ModelDeployment,
+        SimilarityChecker,
+        VerificationWorker,
+    )
+
+    async def _run():
+        queue = VerificationQueue()
+        blacklist = BlacklistManager()
+        deployment = ModelDeployment()
+        checker = SimilarityChecker()
+        worker = VerificationWorker(queue, blacklist, deployment, checker)
+
+        if once:
+            success = await worker.run_once()
+            if success:
+                logger.info("Processed task successfully")
+            else:
+                logger.info("No tasks available")
+        else:
+            await worker.run(max_tasks=max_tasks)
+
+    asyncio.run(_run())
+
+
+@verify_group.command("status")
+def verify_status():
+    """Show verification queue status."""
+    from affine.verification import VerificationQueue
+
+    async def _run():
+        queue = VerificationQueue()
+        stats = await queue.get_queue_stats()
+
+        click.echo("Verification Queue Status:")
+        click.echo(f"  Pending:    {stats['pending']}")
+        click.echo(f"  Processing: {stats['processing']}")
+        click.echo(f"  Completed:  {stats['completed']}")
+        click.echo(f"  Failed:     {stats['failed']}")
+
+    asyncio.run(_run())
+
+
+@verify_group.command("blacklist")
+@click.option("--show", is_flag=True, help="Show blacklist")
+@click.option("--add", type=str, help="Add hotkey to blacklist")
+@click.option("--remove", type=str, help="Remove hotkey from blacklist")
+def verify_blacklist(show, add, remove):
+    """Manage blacklist."""
+    from affine.verification import BlacklistManager
+
+    async def _run():
+        manager = BlacklistManager()
+
+        if show:
+            blacklist = await manager.load_blacklist(force_refresh=True)
+
+            if not blacklist:
+                click.echo("Blacklist is empty")
+                return
+
+            click.echo(f"Blacklist ({len(blacklist)} entries):")
+            for hotkey, entry in blacklist.items():
+                click.echo(f"\n  Hotkey: {hotkey}")
+                click.echo(f"  Model: {entry.model}")
+                click.echo(f"  Reason: {entry.reason}")
+                click.echo(f"  Similarity: {entry.similarity_score:.4f}")
+                click.echo(f"  Block: {entry.block}")
+                click.echo(f"  Samples: {entry.samples_tested}")
+
+        elif add:
+            # This is mainly for manual testing
+            await manager.add_to_blacklist(
+                hotkey=add,
+                model="manual",
+                reason="manual_add",
+                similarity_score=0.0,
+                block=0,
+                samples_tested=0,
+            )
+            click.echo(f"Added {add} to blacklist")
+
+        elif remove:
+            success = await manager.remove_from_blacklist(remove)
+            if success:
+                click.echo(f"Removed {remove} from blacklist")
+            else:
+                click.echo(f"Hotkey {remove} not found in blacklist")
+
+        else:
+            click.echo("Use --show, --add, or --remove")
+
+    asyncio.run(_run())
+
+
+@verify_group.command("run")
+@click.option("--monitor-interval", default=300, type=int, help="Monitor check interval")
+@click.option("--num-workers", default=1, type=int, help="Number of worker processes")
+def verify_run(monitor_interval, num_workers):
+    """Run full verification service (monitor + workers)."""
+    from affine.verification import (
+        IncentiveMonitor,
+        VerificationQueue,
+        BlacklistManager,
+        ModelDeployment,
+        SimilarityChecker,
+        VerificationWorker,
+    )
+
+    async def _run():
+        # Initialize shared components
+        queue = VerificationQueue()
+        blacklist = BlacklistManager()
+
+        # Start monitor
+        monitor = IncentiveMonitor(queue)
+
+        # Start workers
+        workers = []
+        for i in range(num_workers):
+            deployment = ModelDeployment()
+            checker = SimilarityChecker()
+            worker = VerificationWorker(queue, blacklist, deployment, checker)
+            workers.append(worker)
+
+        # Run all tasks concurrently
+        tasks = [
+            asyncio.create_task(monitor.run(interval_seconds=monitor_interval)),
+            *[asyncio.create_task(w.run()) for w in workers],
+        ]
+
+        logger.info(f"Started verification service with {num_workers} workers")
+
+        # Wait for all tasks
+        await asyncio.gather(*tasks)
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        logger.info("Verification service stopped")
+
+
+@verify_group.command("deployments")
+def verify_deployments():
+    """List active model deployments."""
+    from affine.verification import ModelDeployment
+
+    async def _run():
+        deployment = ModelDeployment()
+        deployments = await deployment.list_deployments()
+
+        if not deployments:
+            click.echo("No active deployments")
+            return
+
+        click.echo(f"Active Deployments ({len(deployments)}):")
+        for d in deployments:
+            click.echo(f"\n  Container: {d['container_id'][:12]}")
+            click.echo(f"  Name: {d['name']}")
+            click.echo(f"  Ports: {d['ports']}")
+
+    asyncio.run(_run())
+
+
+@verify_group.command("config")
+def verify_config():
+    """Show verification service configuration."""
+    from affine.verification import print_verification_config
+
+    print_verification_config()
+
