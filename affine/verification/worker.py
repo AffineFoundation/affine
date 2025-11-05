@@ -80,9 +80,19 @@ class VerificationWorker:
             )
 
             if not prompts:
-                raise ValueError("No prompts available for testing")
+                # Insufficient historical data - skip verification without retry
+                logger.warning(
+                    f"Skipping verification for {task.hotkey}: insufficient historical prompts. "
+                    f"Miner needs more historical data before verification can proceed."
+                )
+                await self.queue.fail_task(
+                    task.task_id,
+                    "Insufficient historical prompts for verification",
+                    retry=False  # Don't retry - data won't appear immediately
+                )
+                return False
 
-            logger.info(f"Got {len(prompts)} prompts for testing")
+            logger.info(f"Got {len(prompts)} prompts for testing from R2 historical data")
 
             # Step 3: Build Chutes endpoint
             # Get slug from miner info (only check online miners with valid slugs)

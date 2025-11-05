@@ -284,7 +284,7 @@ async def get_sample_prompts(
     tail = int(os.getenv("VERIFICATION_SAMPLE_TAIL", "1000"))  # Look back fewer blocks (was 10000)
 
     try:
-        logger.info(f"Loading prompts for {hotkey} from last {tail} blocks (around block {block})")
+        logger.info(f"Loading prompts from last {tail} blocks around block {block} (from all miners to prevent gaming)")
         count_checked = 0
         max_to_check = int(os.getenv("VERIFICATION_MAX_RESULTS_CHECK", "20000"))  # Configurable limit
 
@@ -296,8 +296,8 @@ async def get_sample_prompts(
                 logger.warning(f"Reached max check limit ({max_to_check}), stopping search")
                 break
 
-            # Filter by hotkey and block proximity
-            if result.miner.hotkey == hotkey and abs(result.miner.block - block) < 100:
+            # Filter by block proximity only (get prompts from any miner to prevent gaming)
+            if abs(result.miner.block - block) < 100:
                 # Try to extract prompt from various possible locations
                 prompt = None
 
@@ -342,26 +342,25 @@ async def get_sample_prompts(
                         logger.info(f"Collected {len(prompts)} prompts after checking {count_checked} results")
                         break
 
-        logger.info(f"Checked {count_checked} results, found {len(prompts)} prompts for {hotkey}")
+        logger.info(f"Checked {count_checked} results, found {len(prompts)} prompts from historical data")
 
     except Exception as e:
         logger.warning(f"Error loading prompts from R2: {e}", exc_info=True)
 
-    # If we don't have enough prompts, use default ones
+    # If we don't have enough prompts, fail verification
+    # New miners need sufficient historical data to get weight, so this is expected behavior
     if len(prompts) < sample_size:
-        default_prompts = _get_default_prompts()
-        num_defaults_needed = sample_size - len(prompts)
-        logger.warning(
-            f"Only found {len(prompts)} prompts for {hotkey}, "
-            f"adding {num_defaults_needed} from {len(default_prompts)} available defaults"
+        logger.error(
+            f"Insufficient historical prompts for verification: found {len(prompts)}, need {sample_size}. "
+            f"Miner {hotkey} needs more historical data before verification can proceed."
         )
-        prompts.extend(default_prompts)
+        return []  # Return empty list to indicate verification cannot proceed
 
     # Randomly sample
     if len(prompts) > sample_size:
         prompts = random.sample(prompts, sample_size)
 
-    logger.info(f"Got {len(prompts[:sample_size])} prompts for testing")
+    logger.info(f"Got {len(prompts[:sample_size])} prompts for testing from R2 historical data")
     return prompts[:sample_size]
 
 
