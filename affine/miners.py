@@ -205,26 +205,36 @@ def _load_blacklist() -> set:
 
 
 def _filter_by_earliest_sha(output: Dict[int, "Miner"]) -> Dict[int, "Miner"]:
-    earliest_by_sha: Dict[str, tuple] = {}
+    """Filter miners to keep only unique weight sets.
+
+    Two miners are considered to have the same weights only if ALL of their SHA hashes match.
+    If any file differs, they are considered different models and both are kept.
+    """
+    # Group miners by their weight SHA sets
+    sha_to_miners: Dict[frozenset, list] = {}
     for uid, m in output.items():
         if not m.weights_shas:
             continue
-        block = _normalize_block(m.block)
-        for sha in m.weights_shas:
-            prev = earliest_by_sha.get(sha)
-            if prev is None or block < prev[0]:
-                earliest_by_sha[sha] = (block, uid)
+        # Use frozenset of SHAs as the key
+        sha_key = frozenset(m.weights_shas)
+        if sha_key not in sha_to_miners:
+            sha_to_miners[sha_key] = []
+        sha_to_miners[sha_key].append((uid, m))
 
-    if not earliest_by_sha:
+    if not sha_to_miners:
         return output
 
+    # For each unique SHA set, keep only the earliest miner
     keep = set(output.keys())
-    for uid, m in output.items():
-        if m.weights_shas:
-            for sha in m.weights_shas:
-                if earliest_by_sha.get(sha, (None, uid))[1] != uid:
-                    keep.discard(uid)
-                    break
+    for sha_key, miners in sha_to_miners.items():
+        if len(miners) <= 1:
+            continue
+        # Sort by block number and keep the earliest
+        miners.sort(key=lambda x: _normalize_block(x[1].block))
+        earliest_uid = miners[0][0]
+        # Remove all others with the same SHA set
+        for uid, _ in miners[1:]:
+            keep.discard(uid)
 
     return {uid: m for uid, m in output.items() if uid in keep}
 
