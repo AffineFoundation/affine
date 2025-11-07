@@ -48,7 +48,7 @@ def _create_miner_row(
     first_block: Dict,
     envs: list,
     n_envs: int,
-    model_name_max_len: int = 50
+    model_name_max_len: int = None
 ) -> Optional[list]:
     """Create a single row for miner display table.
 
@@ -76,7 +76,7 @@ def _create_miner_row(
 
     miner = prev[hotkey].miner
     weight = weight_by_hk.get(hotkey, 0.0)
-    model_name = str(miner.model)[:model_name_max_len]
+    model_name = str(miner.model) if model_name_max_len is None else str(miner.model)[:model_name_max_len]
 
     env_cols = []
     for e in envs:
@@ -278,7 +278,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
                 _create_miner_row(
                     hk, prev, weight_by_hk, acc, cnt, confidence_intervals,
                     env_winners, layer_points, score, eligible, first_block,
-                    ENVS, N_envs, model_name_max_len=50
+                    ENVS, N_envs
                 ) for hk in active_hks
             ) if r is not None),
             key=lambda r: (r[-4], r[0]),
@@ -321,13 +321,13 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
         + ["Pts", "Elig", "FirstBlk", "Wgt"]
     )
 
-    # Use shared row creation function (note: model_name_max_len=30 for this case)
+    # Use shared row creation function
     ranked_rows = sorted(
         (r for r in (
             _create_miner_row(
                 hk, prev, weight_by_hk, acc, cnt, confidence_intervals,
                 env_winners, layer_points, score, eligible, first_block,
-                ENVS, N_envs, model_name_max_len=30
+                ENVS, N_envs
             ) for hk in eligible
         ) if r is not None),
         key=lambda r: float(r[-4]),
@@ -339,7 +339,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
             _create_miner_row(
                 hk, prev, weight_by_hk, acc, cnt, confidence_intervals,
                 env_winners, layer_points, score, eligible, first_block,
-                ENVS, N_envs, model_name_max_len=30
+                ENVS, N_envs
             ) for hk in active_hks if hk not in eligible
         ) if r is not None),
         key=lambda r: float(r[-4]),
