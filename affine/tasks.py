@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 
 import os
-import traceback
+import time
 import random
 import asyncio
-import logging
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional, Union, TYPE_CHECKING, Type
+from typing import Dict, Any, List, Optional, Union, Type
 from dataclasses import dataclass
 from enum import Enum
 from threading import Lock
-from pydantic import BaseModel, Field, validator, ValidationError
-
-import affinetes as af_env
+from affine.models import Result
 from affine.setup import logger
+import affinetes as af_env
 
 
 # Global environment cache
@@ -198,9 +196,6 @@ class BaseSDKEnv(ABC):
         Returns:
             Result object with evaluation results
         """
-        import time
-        from affine.models import Result
-        
         start = time.monotonic()
 
         # Generate random seed if not provided
@@ -221,74 +216,51 @@ class BaseSDKEnv(ABC):
             # Call affinetes evaluate method directly
             result = await self._env.evaluate(_timeout=timeout, **payload)
 
-            return self._parse_evaluation_result(result, miner, eval_kwargs, start)
+            return self._parse_evaluation_result(result, miner, payload, start)
 
         except asyncio.TimeoutError as e:
             logger.error(f"Evaluation timeout for {self.env_name}: {e}, score set 0")
-            return self._create_error_result(e, miner, eval_kwargs, start)
+            return self._create_error_result(e, miner, payload, start)
         except Exception as e:
-            return self._create_error_result(e, miner, eval_kwargs, start)
+            return self._create_error_result(e, miner, payload, start)
 
     def _parse_evaluation_result(
         self,
         result: Dict[str, Any],
-        miner: "Miner",
+        miner: Optional["Miner"],
         payload_extra: Dict[str, Any] = None,
         start_time: float = None,
     ) -> "Result":
-        """Parse evaluation result and validate seed, then construct Result"""
-        import time
-        from affine.models import Result
+        """Parse evaluation result and construct Result"""
         
-        total_score = float(result.get("total_score", 0.0))
-        success_rate = float(result.get("success_rate", 0.0))
-        details = result.get("details", [{}])[0]
+        # Extract top-level fields
+        score = float(result.get("score", 0.0))
+        success = bool(result.get("success", False))
+        error = result.get("error")
+        extra = result.get("extra", {}).copy()
         
-        # Validate seed if provided in payload
-        input_seed = payload_extra.get('seed') if payload_extra else None
-        returned_seed = result.get('seed')
-        
-        extra = {
-            "success": bool(success_rate > 0),
-            "details": details,
-        }
-        
-        # Add seed validation to extra
-        if input_seed is not None:
-            extra['returned_seed'] = returned_seed
-            extra['seed'] = input_seed
-
+        extra['image'] = self.docker_image
         if payload_extra:
-            # Add other payload_extra fields (excluding seed as it's already handled)
-            for key, value in payload_extra.items():
-                if key != 'seed':
-                    extra[key] = value
+            extra['request'] = payload_extra.copy()
 
         return Result(
             miner=miner,
             env=self.env_name,
-            score=total_score,
+            score=score,
             latency_seconds=time.monotonic() - start_time if start_time else 0.0,
-            success=extra.get("success", False),
-            error=None,
+            success=success,
+            error=error,
             extra=extra,
             timestamp=time.time()
         )
 
     def _create_error_result(
-        self, error: Exception, miner: "Miner", payload_extra: Dict[str, Any] = None, start_time: float = None
+        self, error: Exception, miner: Optional["Miner"], payload_extra: Dict[str, Any] = None, start_time: float = None
     ) -> "Result":
-        """Create error result"""
-        import time
-        from affine.models import Result
-        
         extra = {
-            "success": False,
-            "error": str(error),
+            "image": self.docker_image,
+            "request": payload_extra,
         }
-
-        if payload_extra:
-            extra.update(payload_extra)
 
         return Result(
             miner=miner,

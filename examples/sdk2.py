@@ -3,7 +3,7 @@ import affine as af
 from dotenv import load_dotenv
 import os
 import sys
-
+import json
 af.trace()
 
 load_dotenv()
@@ -21,19 +21,20 @@ async def main():
     evaluation = await alfworld_env.evaluate(
         model="deepseek-ai/DeepSeek-V3",
         base_url="https://llm.chutes.ai/v1",
-        task_id=[2]
+        task_id=2
     )
     print(f"\nALFWORLD Evaluation Result:")
-    print(f"{evaluation}")
+    print(evaluation)
+    print(json.dumps(evaluation.extra, indent=2, ensure_ascii=False))
 
     abd_env = af.ABD()
     evaluation_abd = await abd_env.evaluate(
         model="deepseek-ai/DeepSeek-V3",
         base_url="https://llm.chutes.ai/v1",
-        num_samples=2
     )
     print(f"\nABD Evaluation Result:")
     print(evaluation_abd)
+    print(json.dumps(evaluation_abd.extra, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
