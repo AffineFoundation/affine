@@ -53,7 +53,7 @@ class EvaluatorConfig:
         
         Args:
             miner: Optional Miner instance (can be None if model/base_url provided in kwargs)
-            **kwargs: Additional parameters to override defaults (model, base_url, temperature, timeout, ids, etc.)
+            **kwargs: Additional parameters to override defaults (model, base_url, temperature, timeout, task_id, etc.)
         """
         payload = {
             "temperature": self.temperature,
@@ -193,7 +193,7 @@ class BaseSDKEnv(ABC):
 
         Args:
             miner: Optional Miner instance (can be None if model/base_url in eval_kwargs)
-            **eval_kwargs: Dynamic parameters (model, base_url, task_type, ids, etc.)
+            **eval_kwargs: Dynamic parameters (model, base_url, task_type, task_id, etc.)
 
         Returns:
             Result object with evaluation results
@@ -380,15 +380,14 @@ class AffineSDKEnv(BaseSDKEnv):
         
         Args:
             miner: Optional Miner instance or dict of miners (can be None if model/base_url in eval_kwargs)
-            **eval_kwargs: Dynamic parameters (model, base_url, temperature, task_type, num_samples, etc.)
+            **eval_kwargs: Dynamic parameters (model, base_url, temperature, task_type, etc.)
         """
 
         # Extract env name from template (e.g., "affine:sat" -> "sat")
         env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
         
-        # Set default task_type and num_samples if not provided in eval_kwargs
+        # Set default task_type if not provided in eval_kwargs
         eval_kwargs.setdefault("task_type", env_name)
-        eval_kwargs.setdefault("num_samples", 1)
 
         async def evaluate_single(m):
             return await self._evaluate_single_miner(m, **eval_kwargs)
@@ -440,19 +439,6 @@ class AgentGymSDKEnv(BaseSDKEnv):
         env_vars["SHEET_EMAIL"] = os.getenv("AGENTGYM_TOOL_SHEET_EMAIL", "")
         return env_vars
 
-    def _normalize_task_ids(self, task_id: Union[int, List[int], None]) -> List[int]:
-        """Normalize task IDs to list format"""
-        if task_id is None:
-            return [random.randint(0, self.data_len - 1)]
-        elif isinstance(task_id, int):
-            return [task_id]
-        elif isinstance(task_id, list):
-            return task_id if task_id else [random.randint(0, self.data_len - 1)]
-        else:
-            raise TypeError(
-                f"task_id must be int, list[int], or None, got {type(task_id)}"
-            )
-
     async def evaluate(
         self,
         miner: Optional[Union["Miner", Dict[str, Any]]] = None,
@@ -462,15 +448,12 @@ class AgentGymSDKEnv(BaseSDKEnv):
         
         Args:
             miner: Optional Miner instance or dict of miners (can be None if model/base_url in eval_kwargs)
-            **eval_kwargs: Dynamic parameters (model, base_url, temperature, ids, max_round, etc.)
+            **eval_kwargs: Dynamic parameters (model, base_url, temperature, task_id, max_round, etc.)
         """
 
-        # Handle task_id/ids parameter - set default if not provided
-        if "ids" not in eval_kwargs and "task_id" not in eval_kwargs:
-            eval_kwargs["ids"] = [random.randint(0, self.data_len - 1)]
-        elif "task_id" in eval_kwargs and "ids" not in eval_kwargs:
-            # Convert task_id to ids if needed
-            eval_kwargs["ids"] = self._normalize_task_ids(eval_kwargs.pop("task_id"))
+        # Set default task_id if not provided
+        if "task_id" not in eval_kwargs:
+            eval_kwargs["task_id"] = random.randint(0, self.data_len - 1)
         
         # Set default max_round if not provided
         eval_kwargs.setdefault("max_round", self.max_round)
