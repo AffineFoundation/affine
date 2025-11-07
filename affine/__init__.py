@@ -18,7 +18,7 @@ from affine.setup import (
 #                   Data Models (imported from models module)                 #
 # --------------------------------------------------------------------------- #
 from affine.models import (
-    Challenge, Evaluation, Response, Miner, Result
+    Challenge, Response, Miner, Result
 )
 # --------------------------------------------------------------------------- #
 #                   HTTP client (imported from http_client module)            #

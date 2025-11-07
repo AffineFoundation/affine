@@ -3,6 +3,7 @@ import affine as af
 from dotenv import load_dotenv
 import sys
 import os
+import json
 
 af.trace()
 
@@ -19,7 +20,8 @@ async def main():
 
     # Get miner info for UID = 160
     # NOTE: HF_USER and HF_TOKEN .env value is required for this command.
-    miner = await af.miners(7)
+    uid = 7
+    miner = await af.miners(uid)
     assert miner, "Unable to obtain miner, please check if registered"
 
     # Generate and evaluate a DED challenge
@@ -27,16 +29,14 @@ async def main():
     ded_env = af.DED()
     evaluation = await ded_env.evaluate(miner)
     print("=" * 50)
-    print("Environment:", evaluation)
-
-    # Generate and evaluate an ALFWORLD challenge
-    # For AgentGym tasks, you can specify task IDs
+    print(evaluation[uid])
+    print(json.dumps(evaluation[uid].extra, indent=2, ensure_ascii=False))
+    
     alfworld_env = af.ALFWORLD()
-    # evaluation = await alfworld_env.evaluate(miner, task_id=[0,1,2])  # Multiple tasks
-    # evaluation = await alfworld_env.evaluate(miner, task_id=10)        # Single task
     evaluation = await alfworld_env.evaluate(miner)  # Random task
     print("=" * 50)
-    print("Environment:", evaluation)
+    print(evaluation[uid])
+    print(json.dumps(evaluation[uid].extra, indent=2, ensure_ascii=False))
 
     # List all available environments
     print("=" * 50)

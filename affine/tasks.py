@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 
 import os
-import traceback
+import time
 import random
 import asyncio
-import logging
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional, Union, TYPE_CHECKING, Type
+from typing import Dict, Any, List, Optional, Union, Type
 from dataclasses import dataclass
 from enum import Enum
 from threading import Lock
-from pydantic import BaseModel, Field, validator, ValidationError
-
-import affinetes as af_env
+from affine.models import Result
 from affine.setup import logger
+import affinetes as af_env
 
 
 # Global environment cache
@@ -53,7 +51,7 @@ class EvaluatorConfig:
         
         Args:
             miner: Optional Miner instance (can be None if model/base_url provided in kwargs)
-            **kwargs: Additional parameters to override defaults (model, base_url, temperature, timeout, ids, etc.)
+            **kwargs: Additional parameters to override defaults (model, base_url, temperature, timeout, task_id, etc.)
         """
         payload = {
             "temperature": self.temperature,
@@ -76,14 +74,6 @@ class EnvType(Enum):
 
     AFFINE = "affine"
     AGENTGYM = "agentgym"
-
-
-# ========================= Models =========================
-
-
-class Evaluation(BaseModel):
-    score: float
-    extra: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ========================= Base Classes =========================
@@ -195,19 +185,24 @@ class BaseSDKEnv(ABC):
 
     async def _evaluate_single_miner(
         self, miner: Optional["Miner"] = None, **eval_kwargs
-    ) -> Evaluation:
+    ) -> "Result":
         """
         Common evaluation logic for a single miner
 
         Args:
             miner: Optional Miner instance (can be None if model/base_url in eval_kwargs)
-            **eval_kwargs: Dynamic parameters (model, base_url, task_type, ids, etc.)
+            **eval_kwargs: Dynamic parameters (model, base_url, task_type, task_id, etc.)
 
         Returns:
-            Evaluation result
+            Result object with evaluation results
         """
+        start = time.monotonic()
 
-        # Build payload with all dynamic parameters
+        # Generate random seed if not provided
+        if 'seed' not in eval_kwargs:
+            eval_kwargs['seed'] = random.randint(0, 2**32 - 1)
+        
+        # Build payload with all dynamic parameters (including seed)
         payload = self.evaluator_config.to_payload(miner, **eval_kwargs)
 
         # Execute evaluation
@@ -221,53 +216,66 @@ class BaseSDKEnv(ABC):
             # Call affinetes evaluate method directly
             result = await self._env.evaluate(_timeout=timeout, **payload)
 
-            return self._parse_evaluation_result(result, miner, eval_kwargs)
+            return self._parse_evaluation_result(result, miner, payload, start)
 
         except asyncio.TimeoutError as e:
             logger.error(f"Evaluation timeout for {self.env_name}: {e}, score set 0")
-            return self._create_error_evaluation(e, miner, eval_kwargs)
+            return self._create_error_result(e, miner, payload, start)
         except Exception as e:
-            raise
+            return self._create_error_result(e, miner, payload, start)
 
     def _parse_evaluation_result(
         self,
         result: Dict[str, Any],
-        miner: "Miner",
+        miner: Optional["Miner"],
         payload_extra: Dict[str, Any] = None,
-    ) -> Evaluation:
-        """Parse evaluation result"""
-        total_score = float(result.get("total_score", 0.0))
-        success_rate = float(result.get("success_rate", 0.0))
-        details = result.get("details", [{}])[0]
+        start_time: float = None,
+    ) -> "Result":
+        """Parse evaluation result and construct Result"""
+        
+        # Extract top-level fields
+        score = float(result.get("score", 0.0))
+        success = bool(result.get("success", False))
+        error = result.get("error")
+        extra = result.get("extra", {}).copy()
+        
+        extra['image'] = self.docker_image
+        if payload_extra:
+            extra['request'] = payload_extra.copy()
 
+        return Result(
+            miner=miner,
+            env=self.env_name,
+            score=score,
+            latency_seconds=time.monotonic() - start_time if start_time else 0.0,
+            success=success,
+            error=error,
+            extra=extra,
+            timestamp=time.time()
+        )
+
+    def _create_error_result(
+        self, error: Exception, miner: Optional["Miner"], payload_extra: Dict[str, Any] = None, start_time: float = None
+    ) -> "Result":
         extra = {
-            "success": bool(success_rate > 0),
-            "details": details,
+            "image": self.docker_image,
+            "request": payload_extra,
         }
 
-        if payload_extra:
-            extra.update(payload_extra)
-
-        return Evaluation(score=total_score, extra=extra)
-
-    def _create_error_evaluation(
-        self, error: Exception, miner: "Miner", payload_extra: Dict[str, Any] = None
-    ) -> Evaluation:
-        """Create error evaluation"""
-        extra = {
-            "success": False,
-            "error": str(error),
-            "miner": miner,
-        }
-
-        if payload_extra:
-            extra.update(payload_extra)
-
-        return Evaluation(score=0.0, extra=extra)
+        return Result(
+            miner=miner,
+            env=self.env_name,
+            score=0.0,
+            latency_seconds=time.monotonic() - start_time if start_time else 0.0,
+            success=False,
+            error=str(error),
+            extra=extra,
+            timestamp=time.time()
+        )
 
     async def _evaluate_miners_batch(
         self, miners: Union["Miner", Dict[str, "Miner"]], evaluate_func
-    ) -> Union[Evaluation, Dict[str, Evaluation]]:
+    ) -> Union["Result", Dict[str, "Result"]]:
         """
         Common batch evaluation logic
 
@@ -276,7 +284,7 @@ class BaseSDKEnv(ABC):
             evaluate_func: Function to evaluate single miner
 
         Returns:
-            Evaluation or dict of evaluations
+            Result or dict of results
         """
         if isinstance(miners, dict):
             results = {}
@@ -294,13 +302,13 @@ class BaseSDKEnv(ABC):
         return hasattr(miner, "model") and hasattr(miner, "slug")
 
     @abstractmethod
-    async def evaluate(self, miner: Union["Miner", Dict[str, Any]]) -> "Evaluation":
+    async def evaluate(self, miner: Union["Miner", Dict[str, Any]]) -> "Result":
         """Evaluate a single miner"""
         pass
 
     async def evaluate_batch(
         self, miners: List[Union["Miner", Dict[str, Any]]]
-    ) -> List["Evaluation"]:
+    ) -> List["Result"]:
         """Evaluate multiple miners in parallel"""
         tasks = [self.evaluate(m) for m in miners]
         return await asyncio.gather(*tasks)
@@ -310,47 +318,6 @@ class BaseSDKEnv(ABC):
         data_len = getattr(self, "data_len", 1)
         return random.randint(0, data_len - 1) % data_len
 
-    async def evaluate_and_build_result(self, miner: "Miner") -> "Result":
-        """
-        Evaluate a miner and build a complete Result object.
-        This method encapsulates all complexity for runner usage.
-        
-        Args:
-            miner: Miner instance to evaluate
-            
-        Returns:
-            Result object with evaluation results
-        """
-        import time
-        from affine.models import Result
-        
-        start = time.monotonic()
-        
-        try:
-            evaluation_result = await self.evaluate(miner)
-
-            return Result(
-                miner=miner,
-                env=self.env_name,
-                score=evaluation_result.score,
-                latency_seconds=time.monotonic() - start,
-                success=evaluation_result.extra.get("success", False),
-                error=None,
-                extra=evaluation_result.extra,
-                timestamp=time.time()
-            )
-            
-        except Exception as e:
-            return Result(
-                miner=miner,
-                env=self.env_name,
-                score=0.0,
-                latency_seconds=time.monotonic() - start,
-                success=False,
-                error=str(e),
-                extra={"evaluation_failed": True},
-                timestamp=time.time()
-            )
 
 
 # ========================= Environment Implementations =========================
@@ -380,20 +347,19 @@ class AffineSDKEnv(BaseSDKEnv):
     async def evaluate(
         self, miner: Optional[Union["Miner", Dict[str, Any]]] = None,
         **eval_kwargs
-    ) -> Union["Evaluation", Dict[str, "Evaluation"]]:
+    ) -> Union["Result", Dict[str, "Result"]]:
         """Evaluate using Affine environment endpoint.
         
         Args:
             miner: Optional Miner instance or dict of miners (can be None if model/base_url in eval_kwargs)
-            **eval_kwargs: Dynamic parameters (model, base_url, temperature, task_type, num_samples, etc.)
+            **eval_kwargs: Dynamic parameters (model, base_url, temperature, task_type, etc.)
         """
 
         # Extract env name from template (e.g., "affine:sat" -> "sat")
         env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
         
-        # Set default task_type and num_samples if not provided in eval_kwargs
+        # Set default task_type if not provided in eval_kwargs
         eval_kwargs.setdefault("task_type", env_name)
-        eval_kwargs.setdefault("num_samples", 1)
 
         async def evaluate_single(m):
             return await self._evaluate_single_miner(m, **eval_kwargs)
@@ -433,7 +399,7 @@ class AgentGymSDKEnv(BaseSDKEnv):
         """AgentGym environments have different images per task"""
         # Extract env name from template (e.g., "agentgym:webshop" -> "webshop")
         env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
-        return f"bignickeye/agentgym:{env_name}"
+        return f"bignickeye/agentgym:{env_name}-v2"
 
     @property
     def env_vars(self) -> Dict[str, str]:
@@ -445,37 +411,21 @@ class AgentGymSDKEnv(BaseSDKEnv):
         env_vars["SHEET_EMAIL"] = os.getenv("AGENTGYM_TOOL_SHEET_EMAIL", "")
         return env_vars
 
-    def _normalize_task_ids(self, task_id: Union[int, List[int], None]) -> List[int]:
-        """Normalize task IDs to list format"""
-        if task_id is None:
-            return [random.randint(0, self.data_len - 1)]
-        elif isinstance(task_id, int):
-            return [task_id]
-        elif isinstance(task_id, list):
-            return task_id if task_id else [random.randint(0, self.data_len - 1)]
-        else:
-            raise TypeError(
-                f"task_id must be int, list[int], or None, got {type(task_id)}"
-            )
-
     async def evaluate(
         self,
         miner: Optional[Union["Miner", Dict[str, Any]]] = None,
         **eval_kwargs
-    ) -> Union["Evaluation", Dict[str, "Evaluation"]]:
+    ) -> Union["Result", Dict[str, "Result"]]:
         """Evaluate using AgentGym environment endpoint.
         
         Args:
             miner: Optional Miner instance or dict of miners (can be None if model/base_url in eval_kwargs)
-            **eval_kwargs: Dynamic parameters (model, base_url, temperature, ids, max_round, etc.)
+            **eval_kwargs: Dynamic parameters (model, base_url, temperature, task_id, max_round, etc.)
         """
 
-        # Handle task_id/ids parameter - set default if not provided
-        if "ids" not in eval_kwargs and "task_id" not in eval_kwargs:
-            eval_kwargs["ids"] = [random.randint(0, self.data_len - 1)]
-        elif "task_id" in eval_kwargs and "ids" not in eval_kwargs:
-            # Convert task_id to ids if needed
-            eval_kwargs["ids"] = self._normalize_task_ids(eval_kwargs.pop("task_id"))
+        # Set default task_id if not provided
+        if "task_id" not in eval_kwargs:
+            eval_kwargs["task_id"] = random.randint(0, self.data_len - 1)
         
         # Set default max_round if not provided
         eval_kwargs.setdefault("max_round", self.max_round)

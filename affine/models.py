@@ -45,7 +45,7 @@ class Result(BaseModel):
     hotkey: str = ""
     
     # Miner info
-    miner: Miner
+    miner: Optional[Miner] = None
     
     # Evaluation details
     env: str
@@ -147,12 +147,19 @@ class Result(BaseModel):
         return json.dumps(self.dict(**kwargs))
     
     def __repr__(self):
-        return (
-            f"<Result miner.uid={self.miner.uid} "
-            f"env={self.env} "
-            f"score={self.score:.4f} "
-            f"hotkey={self.hotkey}>"
-        )
+        if self.miner:
+            return (
+                f"<Result miner.uid={self.miner.uid} "
+                f"env={self.env} "
+                f"score={self.score:.4f} "
+                f"hotkey={self.hotkey}>"
+            )
+        else:
+            return (
+                f"<Result "
+                f"env={self.env} "
+                f"score={self.score:.4f}>"
+            )
     
     __str__ = __repr__
 
