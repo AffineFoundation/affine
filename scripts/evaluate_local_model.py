@@ -1,161 +1,291 @@
 #!/usr/bin/env python3
 """
-Universal test script for evaluating local sglang models on affine environments
-Based on examples/sdk2.py
+Universal evaluation script for affine environments
+
+Supports two evaluation modes:
+1. Using Chutes service via --uid
+2. Using local model via --base-url
 
 Usage:
-    ./evaluate_local_model.py [model_name] [environment] [num_samples]
-
-Examples:
-    ./evaluate_local_model.py your-model BABYAI 500
-    ./evaluate_local_model.py your-model WEBSHOP 100
-    ./evaluate_local_model.py your-model ABD 50 --base-url http://172.17.0.1:30001/v1
+    ./evaluate_local_model.py --env ABD --uid 7
+    ./evaluate_local_model.py --env ABD --model your-model --base-url http://172.17.0.1:30000/v1 --samples 10
+    ./evaluate_local_model.py --env ALFWORLD --samples 10 --model deepseek-ai/DeepSeek-V3 --base-url https://llm.chutes.ai/v1 --output ./eval.json
 """
 import asyncio
-import affine as af
+import argparse
 import sys
 import os
-import argparse
+import json
+from typing import Optional
+from dotenv import load_dotenv
 
-# Check and set CHUTES_API_KEY if not set
-if not os.getenv("CHUTES_API_KEY"):
-    os.environ["CHUTES_API_KEY"] = "fake-test-key-for-local-testing"
-    print("⚠️  CHUTES_API_KEY not set, using temporary test key")
+# Load environment variables
+load_dotenv()
 
-# Enable affine tracing
-af.trace()
+# Supported environment names (will be mapped to actual classes after argparse)
+ENVIRONMENT_NAMES = ['SAT', 'ABD', 'DED', 'HVM', 'ELR', 'ALFWORLD', 'WEBSHOP', 'BABYAI', 'SCIWORLD', 'TEXTCRAFT']
 
-
-# Supported environments
-SUPPORTED_ENVS = {
-    'SAT': af.SAT,
-    'ABD': af.ABD,
-    'DED': af.DED,
-    'ALFWORLD': af.ALFWORLD,
-    'WEBSHOP': af.WEBSHOP,
-    'BABYAI': af.BABYAI,
-    'SCIWORLD': af.SCIWORLD,
-    'TEXTCRAFT': af.TEXTCRAFT,
-}
+# AgentGym environments (require task_id)
+AGENTGYM_ENVS = {'ALFWORLD', 'WEBSHOP', 'BABYAI', 'SCIWORLD', 'TEXTCRAFT'}
 
 
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description='Test local sglang models on affine environments',
+        description='Evaluate models on affine environments',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s your-model BABYAI 500
-  %(prog)s your-model WEBSHOP 100
-  %(prog)s your-model ABD 50 --base-url http://172.17.0.1:30001/v1
+  # Evaluate using Chutes service (requires CHUTES_API_KEY)
+  %(prog)s --env ABD --uid 7
+  
+  # Evaluate using local model
+  %(prog)s --env ABD --model your-model --base-url http://172.17.0.1:30000/v1
+  
+  # Evaluate AgentGym environment with specific task
+  %(prog)s --env ALFWORLD --task-id 2 --model deepseek-ai/DeepSeek-V3 --base-url https://llm.chutes.ai/v1 --samples 5
 
-Supported environments: """ + ', '.join(SUPPORTED_ENVS.keys())
+Supported environments: """ + ', '.join(ENVIRONMENT_NAMES)
     )
 
-    parser.add_argument('model',
-                        help='Model name (required)')
-    parser.add_argument('env',
-                        choices=SUPPORTED_ENVS.keys(),
-                        help='Environment name (required)')
-    parser.add_argument('num_samples', type=int,
-                        help='Number of test samples (required)')
-    parser.add_argument('--base-url', default='http://172.17.0.1:30000/v1',
-                        help='Model service URL (default: http://172.17.0.1:30000/v1)')
+    parser.add_argument('--env', required=True, choices=ENVIRONMENT_NAMES,
+                        help='Environment name')
+    
+    # Mode selection: either uid or (model + base-url)
+    mode_group = parser.add_mutually_exclusive_group(required=True)
+    mode_group.add_argument('--uid', type=int,
+                           help='Miner UID (use Chutes service)')
+    mode_group.add_argument('--model',
+                           help='Model name (use with --base-url)')
+    
+    parser.add_argument('--base-url',
+                       help='Model service URL (required with --model)')
+    parser.add_argument('--task-id', type=int,
+                       help='Task ID for AgentGym environments')
+    parser.add_argument('--samples', type=int, default=1,
+                       help='Number of evaluation samples (default: 1)')
+    parser.add_argument('--temperature', type=float, default=0.7,
+                       help='Sampling temperature (default: 0.7)')
+    parser.add_argument('--output', '-o',
+                       help='Output file path for JSON results (optional)')
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    # Validation
+    if args.model and not args.base_url:
+        parser.error('--base-url is required when using --model')
+    
+    if args.task_id is not None and args.env not in AGENTGYM_ENVS:
+        parser.error(f'--task-id is only applicable for AgentGym environments: {", ".join(AGENTGYM_ENVS)}')
+
+    return args
+
+
+async def evaluate_with_uid(env_instance, uid: int, task_id: Optional[int], samples: int, temperature: float, af):
+    """Evaluate using Chutes service via miner UID"""
+    print(f"\nFetching miner info for UID {uid}...")
+    miner = await af.miners(uid)
+    if not miner:
+        raise ValueError(f"Unable to get miner info for UID {uid}")
+    
+    print(f"Miner found: {miner.get(uid).model}")
+    
+    total_score = 0.0
+    total_time = 0.0
+    results = []
+
+    for i in range(samples):
+        print(f"\rProgress: {i+1}/{samples}", end="", flush=True)
+        
+        eval_kwargs = {'temperature': temperature}
+        if task_id is not None:
+            eval_kwargs['task_id'] = task_id
+        
+        result = await env_instance.evaluate(miner, **eval_kwargs)
+        
+        # Result is a dict with uid as key
+        eval_result = result[uid]
+        total_score += eval_result.score
+        total_time += eval_result.latency_seconds
+        
+        results.append({
+            'index': i,
+            'score': eval_result.score,
+            'success': eval_result.success,
+            'latency': eval_result.latency_seconds,
+            'error': eval_result.error
+        })
+    
+    print()  # New line after progress
+    return total_score, total_time, results
+
+
+async def evaluate_with_model(env_instance, model: str, base_url: str, task_id: Optional[int], samples: int, temperature: float):
+    """Evaluate using direct model endpoint"""
+    print(f"\nUsing model: {model}")
+    print(f"Service URL: {base_url}")
+    
+    total_score = 0.0
+    total_time = 0.0
+    results = []
+
+    for i in range(samples):
+        print(f"\rProgress: {i+1}/{samples}", end="", flush=True)
+        
+        eval_kwargs = {
+            'model': model,
+            'base_url': base_url,
+            'temperature': temperature
+        }
+        if task_id is not None:
+            eval_kwargs['task_id'] = task_id
+        
+        result = await env_instance.evaluate(**eval_kwargs)
+        
+        total_score += result.score
+        total_time += result.latency_seconds
+        
+        results.append(result.model_dump())
+    
+    print()  # New line after progress
+    return total_score, total_time, results
 
 
 async def main():
-    """
-    Test model using local sglang service
-    """
-    # Parse command line arguments
+    """Main evaluation function"""
     args = parse_args()
-
-    model = args.model
-    env_name = args.env
-    num_samples = args.num_samples
-    base_url = args.base_url
-
-    print(f"=" * 60)
-    print(f"Test Configuration:")
-    print(f"  Model: {model}")
-    print(f"  Environment: {env_name}")
-    print(f"  Num Samples: {num_samples}")
-    print(f"  Service URL: {base_url}")
-    print(f"  Note: Using 172.17.0.1 to access host sglang service")
-    print(f"=" * 60)
-
-    # Create Miner object for local testing (fixed uid and hotkey)
-    miner = af.Miner(
-        uid=0,
-        hotkey="local-test",
-        model=model,
-        slug="localhost:30000"
-    )
-
-    # Test specified environment
-    print(f"\nTesting {env_name} environment...")
-    print("Loading Docker image, please wait...")
+    
+    # Import affine AFTER argparse to avoid bittensor hijacking
+    import affine as af
+    af.trace()
+    
+    # Map environment names to actual classes
+    ENVIRONMENTS = {
+        'SAT': af.SAT,
+        'ABD': af.ABD,
+        'DED': af.DED,
+        'HVM': af.HVM,
+        'ELR': af.ELR,
+        'ALFWORLD': af.ALFWORLD,
+        'WEBSHOP': af.WEBSHOP,
+        'BABYAI': af.BABYAI,
+        'SCIWORLD': af.SCIWORLD,
+        'TEXTCRAFT': af.TEXTCRAFT,
+    }
+    
+    # Check API key for Chutes service
+    if args.uid and not os.getenv("CHUTES_API_KEY"):
+        print("\n❌ CHUTES_API_KEY environment variable not set")
+        print("   Please set: export CHUTES_API_KEY='your-key'")
+        print("   Or create .env file with: CHUTES_API_KEY=your-key")
+        sys.exit(1)
+    
+    # Set fake API key for local model testing (required by Docker env)
+    if args.model and not os.getenv("CHUTES_API_KEY"):
+        os.environ["CHUTES_API_KEY"] = "fake-test-key-for-local-testing"
+        print("⚠️  CHUTES_API_KEY not set, using temporary test key")
+    
+    print("=" * 60)
+    print("Evaluation Configuration:")
+    print(f"  Environment: {args.env}")
+    if args.uid:
+        print(f"  Mode: Chutes service (UID: {args.uid})")
+    else:
+        print(f"  Mode: Direct model")
+        print(f"  Model: {args.model}")
+        print(f"  Base URL: {args.base_url}")
+    if args.task_id is not None:
+        print(f"  Task ID: {args.task_id}")
+    print(f"  Samples: {args.samples}")
+    print(f"  Temperature: {args.temperature}")
+    print("=" * 60)
+    
     try:
-        # Dynamically create environment instance
-        env_class = SUPPORTED_ENVS[env_name]
+        # Create environment instance
+        print(f"\nLoading {args.env} environment...")
+        env_class = ENVIRONMENTS[args.env]
         env_instance = env_class()
-        print("✓ Environment loaded, starting evaluation...")
-        print(f"Evaluating {num_samples} times (1 sample per iteration), this may take a while...")
-
-        # Accumulate statistics
-        total_score = 0.0
-        total_time = 0.0
-        all_results = []
-
-        for i in range(num_samples):
-            print(f"\rProgress: {i+1}/{num_samples}", end="", flush=True)
-
-            evaluation = await env_instance.evaluate(
-                miner=miner,
-                model=model,
-                base_url=base_url
+        print("✓ Environment loaded")
+        
+        # Run evaluation
+        print(f"\nStarting evaluation ({args.samples} sample(s))...")
+        
+        # Use af.miners for UID mode
+        if args.uid:
+            total_score, total_time, results = await evaluate_with_uid(
+                env_instance, args.uid, args.task_id, args.samples, args.temperature, af
             )
-
-            # Accumulate results
-            total_score += evaluation.score
-            total_time += evaluation.latency_seconds
-
-            all_results.append({
-                'index': i,
-                'score': evaluation.score,
-                'success': evaluation.success,
-                'latency': evaluation.latency_seconds,
-                'extra': evaluation.extra
-            })
-
-        print(f"\n\n✓ {env_name} Evaluation Summary:")
-        print(f"  Model: {model}")
-        print(f"  Environment: {env_name}")
-        print(f"  Total Tests: {num_samples}")
+        else:
+            total_score, total_time, results = await evaluate_with_model(
+                env_instance, args.model, args.base_url, args.task_id, args.samples, args.temperature
+            )
+        
+        # Prepare summary data
+        summary = {
+            'environment': args.env,
+            'mode': 'chutes' if args.uid else 'direct',
+            'samples': args.samples,
+            'total_score': total_score,
+            'average_score': total_score / args.samples,
+            'total_time': total_time,
+            'average_time': total_time / args.samples,
+            'results': results
+        }
+        
+        # Add mode-specific info
+        if args.uid:
+            summary['uid'] = args.uid
+        else:
+            summary['model'] = args.model
+            summary['base_url'] = args.base_url
+        
+        if args.task_id is not None:
+            summary['task_id'] = args.task_id
+        
+        summary['temperature'] = args.temperature
+        
+        # Save to JSON file if specified
+        if args.output:
+            output_path = args.output
+            try:
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    json.dump(summary, f, indent=2, ensure_ascii=False)
+                print(f"\n✓ Results saved to: {output_path}")
+            except Exception as e:
+                print(f"\n✗ Failed to save results: {e}")
+        
+        # Print summary
+        print("\n" + "=" * 60)
+        print("Evaluation Summary:")
+        print(f"  Environment: {args.env}")
+        print(f"  Total Samples: {args.samples}")
         print(f"  Total Score: {total_score:.4f}")
-        print(f"  Average Score: {total_score/num_samples:.4f}")
+        print(f"  Average Score: {total_score/args.samples:.4f}")
         print(f"  Total Time: {total_time:.2f} seconds")
-        print(f"  Average Time: {total_time/num_samples:.2f} seconds/sample")
-
+        print(f"  Average Time: {total_time/args.samples:.2f} seconds/sample")
+        
+        # Show individual results if multiple samples
+        if args.samples > 1:
+            print(f"\nDetailed Results:")
+            for idx, r in enumerate(results):
+                status = "✓" if r.get('success', False) else "✗"
+                score = r.get('score', 0.0)
+                latency = r.get('latency_seconds', r.get('latency', 0.0))
+                print(f"  [{status}] Sample {idx}: score={score:.4f}, time={latency:.2f}s")
+                if r.get('error'):
+                    print(f"      Error: {r['error']}")
+        
+        print("=" * 60)
+        
+    except KeyboardInterrupt:
+        print("\n\nEvaluation interrupted by user")
+        sys.exit(0)
     except Exception as e:
-        print(f"\n✗ {env_name} test failed: {e}")
+        print(f"\n✗ Evaluation failed: {e}")
         import traceback
         traceback.print_exc()
-
-    print(f"\n" + "=" * 60)
-    print("Test completed!")
-    print(f"=" * 60)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n\nTest interrupted by user")
-        sys.exit(0)
-    except Exception as e:
-        print(f"\n\nTest failed: {e}")
-        sys.exit(1)
+    asyncio.run(main())
