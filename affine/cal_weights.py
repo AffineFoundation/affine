@@ -284,7 +284,20 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
             key=lambda r: (r[-4], r[0]),
             reverse=True
         )
-        print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
+
+        # Create truncated rows for display
+        display_rows = sorted(
+            (r for r in (
+                _create_miner_row(
+                    hk, prev, weight_by_hk, acc, cnt, confidence_intervals,
+                    env_winners, layer_points, score, eligible, first_block,
+                    ENVS, N_envs, model_name_max_len=30
+                ) for hk in active_hks
+            ) if r is not None),
+            key=lambda r: (r[-4], r[0]),
+            reverse=True
+        )
+        print("Validator Summary:\n" + tabulate(display_rows, hdr, tablefmt="plain"))
 
         # Save summary to S3 (no eligible miners case)
         ctx = SummaryContext(
@@ -321,7 +334,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
         + ["Pts", "Elig", "FirstBlk", "Wgt"]
     )
 
-    # Use shared row creation function
+    # Use shared row creation function (full model names for R2 storage)
     ranked_rows = sorted(
         (r for r in (
             _create_miner_row(
@@ -347,7 +360,34 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
     )
 
     rows = ranked_rows + unranked_rows
-    print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"), flush=True)
+
+    # Create truncated rows for display
+    display_ranked_rows = sorted(
+        (r for r in (
+            _create_miner_row(
+                hk, prev, weight_by_hk, acc, cnt, confidence_intervals,
+                env_winners, layer_points, score, eligible, first_block,
+                ENVS, N_envs, model_name_max_len=30
+            ) for hk in eligible
+        ) if r is not None),
+        key=lambda r: float(r[-4]),
+        reverse=True
+    )
+
+    display_unranked_rows = sorted(
+        (r for r in (
+            _create_miner_row(
+                hk, prev, weight_by_hk, acc, cnt, confidence_intervals,
+                env_winners, layer_points, score, eligible, first_block,
+                ENVS, N_envs, model_name_max_len=30
+            ) for hk in active_hks if hk not in eligible
+        ) if r is not None),
+        key=lambda r: float(r[-4]),
+        reverse=True
+    )
+
+    display_rows = display_ranked_rows + display_unranked_rows
+    print("Validator Summary:\n" + tabulate(display_rows, hdr, tablefmt="plain"), flush=True)
 
     # Save summary to S3
     ctx = SummaryContext(
