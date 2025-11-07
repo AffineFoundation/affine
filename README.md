@@ -2,7 +2,7 @@
 
 Mine open reasoning.
 
-[Affine Discord](https://discord.com/invite/3T9X4Yn23e)
+[Affine Discord](https://discord.com/invite/3T9X4Yn23e) | [FAQ](FAQ.md)
 
 ## Introduction
 
