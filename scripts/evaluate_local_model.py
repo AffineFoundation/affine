@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Supported environment names (will be mapped to actual classes after argparse)
-ENVIRONMENT_NAMES = ['SAT', 'ABD', 'DED', 'HVM', 'ELR', 'ALFWORLD', 'WEBSHOP', 'BABYAI', 'SCIWORLD', 'TEXTCRAFT']
+ENVIRONMENT_NAMES = ['SAT', 'ABD', 'DED', 'ALFWORLD', 'WEBSHOP', 'BABYAI', 'SCIWORLD', 'TEXTCRAFT']
 
 # AgentGym environments (require task_id)
 AGENTGYM_ENVS = {'ALFWORLD', 'WEBSHOP', 'BABYAI', 'SCIWORLD', 'TEXTCRAFT'}
@@ -164,8 +164,6 @@ async def main():
         'SAT': af.SAT,
         'ABD': af.ABD,
         'DED': af.DED,
-        'HVM': af.HVM,
-        'ELR': af.ELR,
         'ALFWORLD': af.ALFWORLD,
         'WEBSHOP': af.WEBSHOP,
         'BABYAI': af.BABYAI,
