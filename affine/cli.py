@@ -231,7 +231,8 @@ def runner():
                 """Wrapper to execute task with semaphore control."""
                 async with semaphore:
                     try:
-                        return await env.evaluate_and_build_result(miner)
+                        # evaluate() now directly returns Result object
+                        return await env.evaluate(miner)
                     except asyncio.CancelledError:
                         raise
 
