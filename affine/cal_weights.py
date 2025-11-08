@@ -34,6 +34,50 @@ class SummaryContext:
     note: Optional[str] = None
 
 
+def _create_rows_for_hotkeys(
+    hotkeys: list,
+    prev: Dict,
+    weight_by_hk: Dict[str, float],
+    acc: Dict,
+    cnt: Dict,
+    confidence_intervals: Dict,
+    env_winners: Dict,
+    layer_points: Dict,
+    score: Dict,
+    eligible: Set[str],
+    first_block: Dict,
+    envs: list,
+    n_envs: int,
+    model_name_max_len: int = None,
+    sort_key=None,
+    reverse: bool = True
+) -> list:
+    """Create and sort rows for a list of hotkeys.
+
+    Args:
+        hotkeys: List of hotkeys to create rows for
+        sort_key: Function to extract sort key from row, or None for no sorting
+        reverse: Sort in reverse order
+        ... (other args same as _create_miner_row)
+
+    Returns:
+        List of sorted rows
+    """
+    rows = [
+        _create_miner_row(
+            hk, prev, weight_by_hk, acc, cnt, confidence_intervals,
+            env_winners, layer_points, score, eligible, first_block,
+            envs, n_envs, model_name_max_len
+        ) for hk in hotkeys
+    ]
+    rows = [r for r in rows if r is not None]
+
+    if sort_key:
+        rows = sorted(rows, key=sort_key, reverse=reverse)
+
+    return rows
+
+
 def _create_miner_row(
     hotkey: str,
     prev: Dict,
@@ -48,7 +92,7 @@ def _create_miner_row(
     first_block: Dict,
     envs: list,
     n_envs: int,
-    model_name_max_len: int = 50
+    model_name_max_len: int = None
 ) -> Optional[list]:
     """Create a single row for miner display table.
 
@@ -76,7 +120,7 @@ def _create_miner_row(
 
     miner = prev[hotkey].miner
     weight = weight_by_hk.get(hotkey, 0.0)
-    model_name = str(miner.model)[:model_name_max_len]
+    model_name = str(miner.model) if model_name_max_len is None else str(miner.model)[:model_name_max_len]
 
     env_cols = []
     for e in envs:
@@ -273,18 +317,19 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
 
         # Use shared row creation function
         weight_by_hk = {}  # Empty weights for no eligible case
-        rows = sorted(
-            (r for r in (
-                _create_miner_row(
-                    hk, prev, weight_by_hk, acc, cnt, confidence_intervals,
-                    env_winners, layer_points, score, eligible, first_block,
-                    ENVS, N_envs, model_name_max_len=50
-                ) for hk in active_hks
-            ) if r is not None),
-            key=lambda r: (r[-4], r[0]),
-            reverse=True
+        rows = _create_rows_for_hotkeys(
+            active_hks, prev, weight_by_hk, acc, cnt, confidence_intervals,
+            env_winners, layer_points, score, eligible, first_block,
+            ENVS, N_envs, sort_key=lambda r: (r[-4], r[0])
         )
-        print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"))
+
+        # Create truncated rows for display
+        display_rows = _create_rows_for_hotkeys(
+            active_hks, prev, weight_by_hk, acc, cnt, confidence_intervals,
+            env_winners, layer_points, score, eligible, first_block,
+            ENVS, N_envs, model_name_max_len=30, sort_key=lambda r: (r[-4], r[0])
+        )
+        print("Validator Summary:\n" + tabulate(display_rows, hdr, tablefmt="plain"))
 
         # Save summary to S3 (no eligible miners case)
         ctx = SummaryContext(
@@ -321,33 +366,38 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
         + ["Pts", "Elig", "FirstBlk", "Wgt"]
     )
 
-    # Use shared row creation function (note: model_name_max_len=30 for this case)
-    ranked_rows = sorted(
-        (r for r in (
-            _create_miner_row(
-                hk, prev, weight_by_hk, acc, cnt, confidence_intervals,
-                env_winners, layer_points, score, eligible, first_block,
-                ENVS, N_envs, model_name_max_len=30
-            ) for hk in eligible
-        ) if r is not None),
-        key=lambda r: float(r[-4]),
-        reverse=True
+    # Use shared row creation function (full model names for R2 storage)
+    ranked_rows = _create_rows_for_hotkeys(
+        list(eligible), prev, weight_by_hk, acc, cnt, confidence_intervals,
+        env_winners, layer_points, score, eligible, first_block,
+        ENVS, N_envs, sort_key=lambda r: float(r[-4])
     )
 
-    unranked_rows = sorted(
-        (r for r in (
-            _create_miner_row(
-                hk, prev, weight_by_hk, acc, cnt, confidence_intervals,
-                env_winners, layer_points, score, eligible, first_block,
-                ENVS, N_envs, model_name_max_len=30
-            ) for hk in active_hks if hk not in eligible
-        ) if r is not None),
-        key=lambda r: float(r[-4]),
-        reverse=True
+    unranked_rows = _create_rows_for_hotkeys(
+        [hk for hk in active_hks if hk not in eligible],
+        prev, weight_by_hk, acc, cnt, confidence_intervals,
+        env_winners, layer_points, score, eligible, first_block,
+        ENVS, N_envs, sort_key=lambda r: float(r[-4])
     )
 
     rows = ranked_rows + unranked_rows
-    print("Validator Summary:\n" + tabulate(rows, hdr, tablefmt="plain"), flush=True)
+
+    # Create truncated rows for display
+    display_ranked_rows = _create_rows_for_hotkeys(
+        list(eligible), prev, weight_by_hk, acc, cnt, confidence_intervals,
+        env_winners, layer_points, score, eligible, first_block,
+        ENVS, N_envs, model_name_max_len=30, sort_key=lambda r: float(r[-4])
+    )
+
+    display_unranked_rows = _create_rows_for_hotkeys(
+        [hk for hk in active_hks if hk not in eligible],
+        prev, weight_by_hk, acc, cnt, confidence_intervals,
+        env_winners, layer_points, score, eligible, first_block,
+        ENVS, N_envs, model_name_max_len=30, sort_key=lambda r: float(r[-4])
+    )
+
+    display_rows = display_ranked_rows + display_unranked_rows
+    print("Validator Summary:\n" + tabulate(display_rows, hdr, tablefmt="plain"), flush=True)
 
     # Save summary to S3
     ctx = SummaryContext(
