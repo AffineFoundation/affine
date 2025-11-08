@@ -58,8 +58,8 @@ class EvaluatorConfig:
             "timeout": self.timeout,
         }
         
-        # Add miner-based defaults if miner is provided
-        if miner is not None:
+        # Add miner-based defaults if miner is provided and has valid slug
+        if miner is not None and hasattr(miner, 'slug') and miner.slug is not None:
             payload["model"] = miner.model
             payload["base_url"] = f"https://{miner.slug}.chutes.ai/v1"
 
@@ -86,11 +86,17 @@ class BaseSDKEnv(ABC):
     _sandbox_config: SandboxConfig = None
     _evaluator_config: EvaluatorConfig = None
     DEFAULT_REPLICAS: int = 1
+    DEFAULT_DAILY_RATE: int = 200  # Default daily sampling rate per environment
 
     def __init__(self):
         super().__init__()
         self._env = self._load_environment()
         self._env_lock = asyncio.Lock()
+    
+    @property
+    def daily_rate(self) -> int:
+        """Get daily sampling rate for this environment"""
+        return self.DEFAULT_DAILY_RATE
 
     @property
     def sandbox_config(self) -> SandboxConfig:
@@ -299,7 +305,12 @@ class BaseSDKEnv(ABC):
 
     def _validate_miner(self, miner: Any) -> bool:
         """Validate miner object"""
-        return hasattr(miner, "model") and hasattr(miner, "slug")
+        return (
+            hasattr(miner, "model")
+            and hasattr(miner, "slug")
+            and miner.model is not None
+            and miner.slug is not None
+        )
 
     @abstractmethod
     async def evaluate(self, miner: Union["Miner", Dict[str, Any]]) -> "Result":
@@ -459,6 +470,7 @@ def register_env(env_type: EnvType, env_name: str):
 class SAT(AffineSDKEnv):
     """SAT environment for SDK"""
     DEFAULT_REPLICAS = 1
+    DEFAULT_DAILY_RATE = 200  # 200 samples per day per miner
 
     @property
     def env_name(self) -> str:
@@ -469,6 +481,7 @@ class SAT(AffineSDKEnv):
 class ABD(AffineSDKEnv):
     """ABD environment for SDK"""
     DEFAULT_REPLICAS = 1
+    DEFAULT_DAILY_RATE = 200  # 200 samples per day per miner
 
     @property
     def env_name(self) -> str:
@@ -479,30 +492,11 @@ class ABD(AffineSDKEnv):
 class DED(AffineSDKEnv):
     """DED environment for SDK"""
     DEFAULT_REPLICAS = 1
+    DEFAULT_DAILY_RATE = 200  # 200 samples per day per miner
 
     @property
     def env_name(self) -> str:
         return "affine:ded"
-
-
-@register_env(EnvType.AFFINE, "affine:hvm")
-class HVM(AffineSDKEnv):
-    """HVM environment for SDK"""
-    DEFAULT_REPLICAS = 1
-
-    @property
-    def env_name(self) -> str:
-        return "affine:hvm"
-
-
-@register_env(EnvType.AFFINE, "affine:elr")
-class ELR(AffineSDKEnv):
-    """ELR environment for SDK"""
-    DEFAULT_REPLICAS = 1
-
-    @property
-    def env_name(self) -> str:
-        return "affine:elr"
 
 
 # AgentGym Environments
@@ -511,6 +505,7 @@ class ALFWORLD(AgentGymSDKEnv):
     """ALFWORLD environment for SDK"""
     DEFAULT_DATA_LEN = 2500
     DEFAULT_REPLICAS = 1
+    DEFAULT_DAILY_RATE = 200  # 200 samples per day per miner
 
     @property
     def env_name(self) -> str:
@@ -522,6 +517,7 @@ class WEBSHOP(AgentGymSDKEnv):
     """WEBSHOP environment for SDK"""
     DEFAULT_MAX_ROUND = 10
     DEFAULT_REPLICAS = 1
+    DEFAULT_DAILY_RATE = 200  # 200 samples per day per miner
 
     @property
     def env_name(self) -> str:
@@ -533,6 +529,7 @@ class BABYAI(AgentGymSDKEnv):
     """BABYAI environment for SDK"""
     DEFAULT_DATA_LEN = 4000
     DEFAULT_REPLICAS = 1
+    DEFAULT_DAILY_RATE = 200  # 200 samples per day per miner
 
     @property
     def env_name(self) -> str:
@@ -544,6 +541,7 @@ class SCIWORLD(AgentGymSDKEnv):
     """SCIWORLD environment for SDK"""
     DEFAULT_DATA_LEN = 4639
     DEFAULT_REPLICAS = 1
+    DEFAULT_DAILY_RATE = 200  # 200 samples per day per miner
 
     @property
     def env_name(self) -> str:
@@ -555,6 +553,7 @@ class TEXTCRAFT(AgentGymSDKEnv):
     """TEXTCRAFT environment for SDK"""
     DEFAULT_DATA_LEN = 582
     DEFAULT_REPLICAS = 1
+    DEFAULT_DAILY_RATE = 200  # 200 samples per day per miner
 
     @property
     def env_name(self) -> str:
@@ -580,8 +579,6 @@ def create_env_factory(env_class: Type[BaseSDKEnv], **default_kwargs):
 SAT_factory = create_env_factory(SAT)
 ABD_factory = create_env_factory(ABD)
 DED_factory = create_env_factory(DED)
-HVM_factory = create_env_factory(HVM)
-ELR_factory = create_env_factory(ELR)
 ALFWORLD_factory = create_env_factory(ALFWORLD)
 WEBSHOP_factory = create_env_factory(WEBSHOP)
 BABYAI_factory = create_env_factory(BABYAI)

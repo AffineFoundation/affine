@@ -53,8 +53,6 @@ from affine.tasks import (
     SAT_factory as SAT,
     ABD_factory as ABD,
     DED_factory as DED,
-    HVM_factory as HVM,
-    ELR_factory as ELR,
     ALFWORLD_factory as ALFWORLD,
     WEBSHOP_factory as WEBSHOP,
     BABYAI_factory as BABYAI,

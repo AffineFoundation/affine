@@ -63,21 +63,11 @@ def runner():
     wallet = bt.wallet(name=coldkey, hotkey=hotkey)
 
     async def _run():
-        # Configuration constants
-        MINER_REFRESH_INTERVAL = 600
-        SINK_BATCH_SIZE = 300
-        SINK_MAX_WAIT = 300
-        STATUS_LOG_INTERVAL = 30
-        MAX_CONCURRENCY = int(os.getenv("AFFINE_MAX_CONCURRENCY", "20"))
-
-        # Shared state
-        miners_map: Dict[int, any] = {}
-        last_miner_sync = 0.0
-
-        # Global concurrency control
-        semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
-
-        # Initialize SDK environments from enabled environment classes
+        """Sampling scheduler implementation"""
+        from affine.scheduler.scheduler import SamplingScheduler
+        from affine.scheduler.config import SamplingConfig
+        
+        # Initialize environments
         envs = []
         for env_class in get_enabled_envs():
             try:
@@ -86,294 +76,25 @@ def runner():
                 logger.debug(f"Initialized environment: {env.env_name}")
             except Exception as e:
                 logger.warning(f"Failed to create environment '{env_class.__name__}': {e}")
-
+        
         if not envs:
             raise RuntimeError("No valid environments initialized")
-
-        # Initialize subtensor
-        subtensor = await get_subtensor()
-
-        # Producer-consumer queue for storing evaluation results
-        result_queue: asyncio.Queue = asyncio.Queue()
-
-        # Metrics tracking
-        total_requests_submitted = 0
-        last_status_log_time = 0.0
-
-        async def keep_subtensor_alive():
-            """Background task to keep subtensor connection alive."""
+        
+        # Create config
+        config = SamplingConfig()
+        
+        # Create and start scheduler
+        scheduler = SamplingScheduler(config, wallet)
+        await scheduler.start(envs)
+        
+        # Wait indefinitely
+        try:
             while True:
-                try:
-                    await subtensor.get_current_block()
-                    await asyncio.sleep(30)
-                except Exception:
-                    pass
-
-        async def refresh_miners_if_needed(current_time: float):
-            """Refresh miner list if refresh interval has elapsed."""
-            nonlocal last_miner_sync, miners_map
-            if (
-                current_time - last_miner_sync
-            ) >= MINER_REFRESH_INTERVAL or last_miner_sync == 0:
-                meta = await subtensor.metagraph(NETUID)
-                miners_map = await miners(meta=meta)
-                last_miner_sync = current_time
-                logger.debug(f"Refreshed miners: count={len(miners_map)}")
-
-        async def result_sink_consumer():
-            """
-            Consumer: continuously drain result_queue and batch-upload to storage.
-            Flushes when batch size reached or max wait time exceeded.
-            """
-            batch = []
-            batch_start_time = None
-            last_debug_log_time = 0.0
-
-            while True:
-                try:
-                    # Wait for first item if batch is empty
-                    if batch_start_time is None:
-                        logger.debug(
-                            f"Sink consumer waiting, queue_size={result_queue.qsize()}"
-                        )
-                        item = await result_queue.get()
-                        batch_start_time = time.monotonic()
-                        batch.append(item)
-
-                        # Try to grab more items immediately
-                        while len(batch) < SINK_BATCH_SIZE:
-                            try:
-                                batch.append(result_queue.get_nowait())
-                            except asyncio.QueueEmpty:
-                                break
-                    else:
-                        # Wait for more items with timeout
-                        elapsed = time.monotonic() - batch_start_time
-                        remaining = SINK_MAX_WAIT - elapsed
-                        timeout = max(remaining, 0.05)
-
-                        try:
-                            item = await asyncio.wait_for(
-                                result_queue.get(), timeout=timeout
-                            )
-                            batch.append(item)
-
-                            # Try to grab more items
-                            while len(batch) < SINK_BATCH_SIZE:
-                                try:
-                                    batch.append(result_queue.get_nowait())
-                                except asyncio.QueueEmpty:
-                                    break
-                        except asyncio.TimeoutError:
-                            pass
-
-                    elapsed = (
-                        (time.monotonic() - batch_start_time)
-                        if batch_start_time
-                        else 0.0
-                    )
-
-                    # Log batch status every 30 seconds
-                    now = time.monotonic()
-                    if now - last_debug_log_time >= 30.0:
-                        logger.debug(
-                            f"Sink batch status: {len(batch)}/{SINK_BATCH_SIZE}, elapsed={elapsed:.1f}/{SINK_MAX_WAIT}"
-                        )
-                        last_debug_log_time = now
-
-                    # Flush batch if size or time threshold reached
-                    if len(batch) >= SINK_BATCH_SIZE or (
-                        batch and elapsed >= SINK_MAX_WAIT
-                    ):
-                        await asyncio.sleep(3)  # Rate limiting
-
-                        try:
-                            current_block = await subtensor.get_current_block()
-                        except BaseException as e:
-                            logger.warning(
-                                f"Failed to get current block, retry later: {e!r}"
-                            )
-                            continue
-
-                        # Flatten nested lists
-                        flattened = []
-                        for item in batch:
-                            if isinstance(item, list):
-                                flattened.extend(item)
-                            else:
-                                flattened.append(item)
-                        logger.debug(
-                            f"Flushing batch: {len(batch)}/{SINK_BATCH_SIZE}, elapsed={elapsed:.1f}/{SINK_MAX_WAIT}, flattened: {len(flattened)}, results to storage"
-                        )
-                        try:
-                            await sink(wallet, flattened, current_block)
-                        except Exception as e:
-                            logger.warning(f"Sink upload failed, will retry: {e!r}")
-                            traceback.print_exc()
-
-                        batch.clear()
-                        batch_start_time = None
-
-                except Exception:
-                    traceback.print_exc()
-                    logger.error("sink_worker: unexpected error, continuing loop")
-                    await asyncio.sleep(1)
-
-        async def task_producer():
-            """
-            Producer: continuously generate evaluation tasks for all env-miner pairs.
-            Uses semaphore to control global concurrency across all environments.
-            """
-            global HEARTBEAT
-            nonlocal total_requests_submitted, last_status_log_time
-
-            async def execute_with_semaphore(env, miner):
-                """Wrapper to execute task with semaphore control."""
-                async with semaphore:
-                    try:
-                        # evaluate() now directly returns Result object
-                        return await env.evaluate(miner)
-                    except asyncio.CancelledError:
-                        raise
-
-            # Track inflight tasks and pending work
-            inflight_tasks: Dict[Tuple[str, int], asyncio.Task] = {}
-            pending_queue: List[Tuple[Any, Any, int]] = []
-            queue_index = 0
-            
-            while True:
-                HEARTBEAT = current_time = time.monotonic()
-
-                # Refresh miner list periodically
-                await refresh_miners_if_needed(current_time)
-                if not miners_map:
-                    await asyncio.sleep(1)
-                    continue
-
-                # Log status periodically
-                if current_time - last_status_log_time >= STATUS_LOG_INTERVAL:
-                    queue_size = result_queue.qsize()
-                    logger.info(
-                        f"[STATUS] miners={len(miners_map)} inflight={len(inflight_tasks)} "
-                        f"concurrency={MAX_CONCURRENCY} queue={queue_size} total={total_requests_submitted}"
-                    )
-                    last_status_log_time = current_time
-
-                # Build pending work queue if empty (round-robin distribution)
-                if not pending_queue:
-                    for miner in miners_map.values():
-                        if not getattr(miner, "model", None):
-                            continue
-                        for env in envs:
-                            task_key = (env.env_name, miner.uid)
-                            if task_key not in inflight_tasks:
-                                pending_queue.append((env, miner))
-                    
-                    # Shuffle to randomize which miner-env pairs get submitted first
-                    random.shuffle(pending_queue)
-                    queue_index = 0
-
-                # Submit tasks from pending queue up to concurrency limit
-                slots_available = MAX_CONCURRENCY - len(inflight_tasks)
-                while queue_index < len(pending_queue) and slots_available > 0:
-                    env, miner = pending_queue[queue_index]
-                    task_key = (env.env_name, miner.uid)
-                    
-                    # Double-check not already running (defensive)
-                    if task_key not in inflight_tasks:
-                        task = asyncio.create_task(
-                            execute_with_semaphore(env, miner)
-                        )
-                        inflight_tasks[task_key] = task
-                        total_requests_submitted += 1
-                        slots_available -= 1
-                    
-                    queue_index += 1
-                
-                # Clear queue if fully processed
-                if queue_index >= len(pending_queue):
-                    pending_queue.clear()
-                    queue_index = 0
-
-                # Wait for at least one task to complete
-                if not inflight_tasks:
-                    await asyncio.sleep(0.2)
-                    continue
-
-                done, _ = await asyncio.wait(
-                    inflight_tasks.values(), return_when=asyncio.FIRST_COMPLETED, timeout=5.0
-                )
-                HEARTBEAT = time.monotonic()
-
-                # Process completed tasks
-                for completed_task in done:
-                    # Find the task key
-                    task_key = None
-                    for key, task in inflight_tasks.items():
-                        if task is completed_task:
-                            task_key = key
-                            break
-
-                    if task_key is None:
-                        continue
-
-                    # Remove from inflight
-                    inflight_tasks.pop(task_key, None)
-                    env_name, miner_uid = task_key
-
-                    # Retrieve result
-                    try:
-                        result = await completed_task
-                    except Exception as e:
-                        logger.debug(f"Task failed env={env_name} uid={miner_uid}: {e}")
-                        traceback.print_exc()
-                        result = None
-
-                    # Enqueue result for sink consumer (only successful responses)
-                    if result:
-                        if result.error is None:
-                            result_queue.put_nowait(result)
-                            logger.debug(
-                                f"[RESULT] U{result.miner.uid:>3d} │ "
-                                f"{(result.miner.model or '')[:50]:<50s} │ "
-                                f"{result.env:<20} │ "
-                                f"{'RECV':^4s} │ "
-                                f"{result.score:>6.4f} │ "
-                                f"{result.latency_seconds:>6.3f}s"
-                            )
-                        else:
-                            logger.debug(
-                                f"[SKIP]   U{result.miner.uid:>3d} │ "
-                                f"{result.env:<20} │ "
-                                f"Failed response skipped: {result.error}"
-                            )
-
-        async def main_loop():
-            """Main orchestration: run producer and consumer concurrently."""
-            alive_task = asyncio.create_task(keep_subtensor_alive())
-            sink_task = asyncio.create_task(result_sink_consumer())
-            producer_task = asyncio.create_task(task_producer())
-
-            try:
-                await producer_task
-            except (asyncio.CancelledError, KeyboardInterrupt):
-                logger.info("Shutting down runner...")
-            except Exception as e:
-                logger.error(f"Runner error: {e}")
-            finally:
-                # Cancel all background tasks
-                logger.debug("Cancelling background tasks...")
-                sink_task.cancel()
-                alive_task.cancel()
-                producer_task.cancel()
-
-                # Wait for tasks to complete cancellation
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await asyncio.gather(sink_task, alive_task, producer_task, return_exceptions=True)
-                
-                logger.info("Cleanup completed")
-
-        await main_loop()
+                await asyncio.sleep(3600)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            logger.info("Shutting down scheduler...")
+        finally:
+            await scheduler.stop()
 
     async def main():
         timeout = int(os.getenv("AFFINE_WATCHDOG_TIMEOUT", "900"))
