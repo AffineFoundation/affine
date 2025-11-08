@@ -1,7 +1,7 @@
 import time
 import asyncio
 import traceback
-from typing import Dict, List
+from typing import Dict, List, Optional
 import bittensor as bt
 from affine.models import Miner, Result
 from affine.tasks import BaseSDKEnv
@@ -14,14 +14,17 @@ from affine.scheduler.models import Task, SchedulerMetrics
 from affine.scheduler.queue import TaskQueue
 from affine.scheduler.sampler import MinerSampler
 from affine.scheduler.worker import EvaluationWorker
+from affine.scheduler.monitor import SchedulerMonitor
 
 
 class SamplingScheduler:
     """Main sampling scheduler that coordinates all components"""
     
-    def __init__(self, config: SamplingConfig, wallet: bt.wallet):
+    def __init__(self, config: SamplingConfig, wallet: bt.wallet, enable_monitoring: bool = False, monitor_port: int = 8765):
         self.config = config
         self.wallet = wallet
+        self.enable_monitoring = enable_monitoring
+        self.monitor_port = monitor_port
         
         self.task_queue = TaskQueue(
             max_size=config.queue_max_size,
@@ -41,9 +44,15 @@ class SamplingScheduler:
         self.batch_flusher = None
         self.monitor_task = None
         self.miner_refresh_task = None
+        self.api_server = None
         
         self.metrics = SchedulerMetrics()
         self.semaphore = asyncio.Semaphore(config.num_evaluation_workers)
+        
+        # Initialize monitoring
+        self.scheduler_monitor: Optional[SchedulerMonitor] = None
+        if enable_monitoring:
+            self.scheduler_monitor = SchedulerMonitor()
     
     async def start(self, envs: List[BaseSDKEnv]):
         """Start all scheduler components"""
@@ -57,6 +66,7 @@ class SamplingScheduler:
                 result_queue=self.result_queue,
                 envs=envs,
                 semaphore=self.semaphore,
+                monitor=self.scheduler_monitor,
             )
             task = asyncio.create_task(worker.run())
             self.evaluation_workers.append(task)
@@ -74,6 +84,10 @@ class SamplingScheduler:
         
         # Start miner refresh
         self.miner_refresh_task = asyncio.create_task(self._miner_refresh_loop(envs))
+        
+        # Start monitoring API if enabled
+        if self.enable_monitoring and self.scheduler_monitor:
+            self.api_server = asyncio.create_task(self._start_monitoring_api())
         
         logger.info("[Scheduler] All components started")
     
@@ -112,7 +126,7 @@ class SamplingScheduler:
     
     async def _start_sampler(self, uid: int, miner: Miner, envs: List[BaseSDKEnv]):
         """Start sampler for a single miner"""
-        sampler = MinerSampler(uid, miner, envs, self.config)
+        sampler = MinerSampler(uid, miner, envs, self.config, monitor=self.scheduler_monitor)
         self.samplers[uid] = sampler
         
         task = asyncio.create_task(sampler.run(self.task_queue))
@@ -218,6 +232,22 @@ class SamplingScheduler:
                 traceback.print_exc()
                 await asyncio.sleep(1)
     
+    async def _start_monitoring_api(self):
+        """Start monitoring API server"""
+        try:
+            from affine.scheduler.api import start_monitoring_server
+            
+            logger.info(f"[Scheduler] Starting monitoring API on port {self.monitor_port}")
+            await start_monitoring_server(
+                self.scheduler_monitor,
+                self.task_queue,
+                self.config.num_evaluation_workers,
+                port=self.monitor_port
+            )
+        except Exception as e:
+            logger.error(f"[Scheduler] Failed to start monitoring API: {e}")
+            traceback.print_exc()
+    
     async def _upload_batch(self, batch: List[Result]):
         """Upload batch of results to storage"""
         try:
@@ -254,6 +284,8 @@ class SamplingScheduler:
             self.monitor_task.cancel()
         if self.miner_refresh_task:
             self.miner_refresh_task.cancel()
+        if self.api_server:
+            self.api_server.cancel()
         
         # Wait for all to complete
         all_tasks = (
@@ -261,6 +293,8 @@ class SamplingScheduler:
             self.evaluation_workers +
             [self.upload_worker, self.batch_flusher, self.monitor_task, self.miner_refresh_task]
         )
+        if self.api_server:
+            all_tasks.append(self.api_server)
         
         await asyncio.gather(*all_tasks, return_exceptions=True)
         

@@ -57,7 +57,9 @@ def cli(verbose):
 
 
 @cli.command("runner")
-def runner():
+@click.option("--enable-monitoring", is_flag=True, default=False, help="Enable monitoring API server")
+@click.option("--monitor-port", type=int, default=8765, help="Port for monitoring API (default: 8765)")
+def runner(enable_monitoring: bool, monitor_port: int):
     coldkey = get_conf("BT_WALLET_COLD", "default")
     hotkey = get_conf("BT_WALLET_HOT", "default")
     wallet = bt.wallet(name=coldkey, hotkey=hotkey)
@@ -83,8 +85,17 @@ def runner():
         # Create config
         config = SamplingConfig()
         
-        # Create and start scheduler
-        scheduler = SamplingScheduler(config, wallet)
+        # Create and start scheduler with monitoring
+        scheduler = SamplingScheduler(
+            config,
+            wallet,
+            enable_monitoring=enable_monitoring,
+            monitor_port=monitor_port
+        )
+        
+        if enable_monitoring:
+            logger.info(f"Monitoring API will be available at http://0.0.0.0:{monitor_port}")
+        
         await scheduler.start(envs)
         
         # Wait indefinitely

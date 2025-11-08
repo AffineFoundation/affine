@@ -1,7 +1,7 @@
 import time
 import asyncio
 import traceback
-from typing import Dict
+from typing import Dict, Optional
 from affine.tasks import BaseSDKEnv
 from affine.models import Result
 from affine.scheduler.models import Task
@@ -35,12 +35,14 @@ class EvaluationWorker:
         result_queue: asyncio.Queue,
         envs: list[BaseSDKEnv],
         semaphore: asyncio.Semaphore,
+        monitor: Optional['SchedulerMonitor'] = None,
     ):
         self.worker_id = worker_id
         self.task_queue = task_queue
         self.result_queue = result_queue
         self.envs: Dict[str, BaseSDKEnv] = {env.env_name: env for env in envs}
         self.semaphore = semaphore
+        self.monitor = monitor
     
     async def run(self):
         """Main worker loop"""
@@ -51,20 +53,25 @@ class EvaluationWorker:
                 async with self.semaphore:
                     result = await self._execute_task(task)
                 
-                if result and result.error is None:
-                    await self.result_queue.put(result)
-                    logger.debug(
-                        f"[RESULT] U{result.miner.uid:>3d} │ "
-                        f"{result.env:<20} │ "
-                        f"{result.score:>6.4f} │ "
-                        f"{result.latency_seconds:>6.3f}s"
-                    )
-                elif result and result.error:
-                    logger.debug(
-                        f"[SKIP]   U{result.miner.uid:>3d} │ "
-                        f"{result.env:<20} │ "
-                        f"Failed: {result.error}"
-                    )
+                if result:
+                    # Record result to monitor
+                    if self.monitor and result.error:
+                        self.monitor.record_error(task.uid, result.error)
+                    
+                    if result.error is None:
+                        await self.result_queue.put(result)
+                        logger.debug(
+                            f"[RESULT] U{result.miner.uid:>3d} │ "
+                            f"{result.env:<20} │ "
+                            f"{result.score:>6.4f} │ "
+                            f"{result.latency_seconds:>6.3f}s"
+                        )
+                    else:
+                        logger.debug(
+                            f"[SKIP]   U{result.miner.uid:>3d} │ "
+                            f"{result.env:<20} │ "
+                            f"Failed: {result.error}"
+                        )
             
             except asyncio.CancelledError:
                 raise

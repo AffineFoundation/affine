@@ -1,7 +1,7 @@
 import time
 import random
 import asyncio
-from typing import List, Dict
+from typing import List, Dict, Optional
 from affine.models import Miner
 from affine.tasks import BaseSDKEnv
 from affine.scheduler.models import Task
@@ -35,11 +35,13 @@ class MinerSampler:
         miner: Miner,
         envs: List[BaseSDKEnv],
         config: SamplingConfig,
+        monitor: Optional['SchedulerMonitor'] = None,
     ):
         self.uid = uid
         self.miner = miner
         self.envs = envs
         self.config = config
+        self.monitor = monitor
         
         self.rate_multiplier = 1.0
         self.error_count = 0
@@ -66,6 +68,10 @@ class MinerSampler:
                         task = self._create_task(env)
                         await task_queue.put(task, sampler_id=self.uid)
                         self._update_sample_time(env)
+                        
+                        # Record sampling event to monitor
+                        if self.monitor:
+                            self.monitor.record_sample(self.uid, env.env_name)
                 
                 await asyncio.sleep(self._next_check_interval())
             
@@ -113,6 +119,10 @@ class MinerSampler:
     
     def handle_error(self, error: str):
         """Handle task execution error"""
+        # Record error to monitor
+        if self.monitor:
+            self.monitor.record_error(self.uid, error)
+        
         if self._is_chutes_error(error):
             self.consecutive_chutes_errors += 1
             
