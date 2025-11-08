@@ -59,6 +59,18 @@ class SamplingScheduler:
         """Start all scheduler components"""
         logger.info(f"[Scheduler] Starting with {len(envs)} environments")
         
+        # Load historical data for initialization
+        from affine.scheduler.initializer import SchedulerInitializer
+        subtensor = await get_subtensor()
+        current_block = await subtensor.get_current_block()
+        
+        initializer = SchedulerInitializer()
+        init_data = await initializer.load_init_data(current_block)
+        logger.info(f"[Scheduler] Loaded initialization data for {len(init_data)} miners")
+        
+        # Store init data for later use in miner refresh
+        self._init_data = init_data
+        
         # Start evaluation workers
         for i in range(self.config.num_evaluation_workers):
             worker = EvaluationWorker(
@@ -128,6 +140,11 @@ class SamplingScheduler:
     async def _start_sampler(self, uid: int, miner: Miner, envs: List[BaseSDKEnv]):
         """Start sampler for a single miner"""
         sampler = MinerSampler(uid, miner, envs, self.config, monitor=self.scheduler_monitor)
+        
+        # Initialize from historical data if available
+        if hasattr(self, '_init_data') and uid in self._init_data:
+            sampler.init_from_data(self._init_data[uid])
+        
         self.samplers[uid] = sampler
         
         task = asyncio.create_task(sampler.run(self.task_queue))

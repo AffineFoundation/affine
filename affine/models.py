@@ -181,6 +181,7 @@ class CompactResult(BaseModel):
     block: Optional[int] = None
     env: str
     score: float
+    timestamp: float = 0.0  # Added for scheduler initialization
     
     @classmethod
     def from_result(cls, result: "Result") -> "CompactResult":
@@ -192,7 +193,8 @@ class CompactResult(BaseModel):
             revision=result.miner.revision,
             block=result.miner.block,
             env=result.env,
-            score=result.score
+            score=result.score,
+            timestamp=result.timestamp
         )
     
     @property
