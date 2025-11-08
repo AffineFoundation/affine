@@ -116,8 +116,8 @@ class SchedulerStatus:
 class SchedulerMonitor:
     """Monitor and track scheduler statistics"""
     
-    def __init__(self, scheduler):
-        self.scheduler = scheduler
+    def __init__(self):
+        self.scheduler = None  # Will be set after scheduler is created
         self.start_time = time.time()
         
         # Time-windowed counters
@@ -132,6 +132,10 @@ class SchedulerMonitor:
         
         # Worker tracking
         self.task_completion_times = deque(maxlen=100)
+    
+    def set_scheduler(self, scheduler):
+        """Set scheduler reference after initialization"""
+        self.scheduler = scheduler
     
     def record_sample(self, uid: int, env_name: str):
         """Record a sample event"""
@@ -155,6 +159,9 @@ class SchedulerMonitor:
     
     def _get_miner_stats(self, uid: int) -> MinerSamplingStats:
         """Get statistics for a single miner"""
+        if not self.scheduler:
+            return None
+        
         sampler = self.scheduler.samplers.get(uid)
         if not sampler:
             return None
@@ -223,6 +230,15 @@ class SchedulerMonitor:
     
     def _get_queue_stats(self) -> QueueStats:
         """Get queue statistics"""
+        if not self.scheduler:
+            return QueueStats(
+                current_size=0,
+                max_size=0,
+                warning_threshold=0,
+                pause_threshold=0,
+                resume_threshold=0,
+            )
+        
         queue = self.scheduler.task_queue
         now = time.time()
         
@@ -246,14 +262,11 @@ class SchedulerMonitor:
         enqueue_rate = sum(e['count'] for e in self.enqueue_history) * 60 / len(self.enqueue_history) if self.enqueue_history else 0
         dequeue_rate = sum(d['count'] for d in self.dequeue_history) * 60 / len(self.dequeue_history) if self.dequeue_history else 0
         
-        # Per-environment breakdown (approximate from pending batches)
+        # Per-environment breakdown (approximate from batch buffer)
         env_breakdown = defaultdict(int)
-        for sampler_batches in queue.pending_batches.values():
-            for env_batch in sampler_batches.values():
-                if env_batch:
-                    # Assume tasks in batch are for this env
-                    env_name = env_batch[0].env_name if env_batch else "unknown"
-                    env_breakdown[env_name] += len(env_batch)
+        for sampler_id, tasks in queue.batch_buffer.items():
+            for task in tasks:
+                env_breakdown[task.env_name] += 1
         
         current_size = queue.qsize()
         
@@ -274,6 +287,13 @@ class SchedulerMonitor:
     
     def _get_worker_stats(self) -> WorkerStats:
         """Get worker statistics"""
+        if not self.scheduler:
+            return WorkerStats(
+                total_workers=0,
+                active_workers=0,
+                idle_workers=0,
+            )
+        
         total_workers = len(self.scheduler.evaluation_workers)
         
         # Approximate active workers by semaphore
@@ -317,10 +337,11 @@ class SchedulerMonitor:
         
         # Collect miner stats
         miner_stats = []
-        for uid in self.scheduler.samplers.keys():
-            stats = self._get_miner_stats(uid)
-            if stats:
-                miner_stats.append(stats)
+        if self.scheduler:
+            for uid in self.scheduler.samplers.keys():
+                stats = self._get_miner_stats(uid)
+                if stats:
+                    miner_stats.append(stats)
         
         # Sort by UID
         miner_stats.sort(key=lambda m: m.uid)

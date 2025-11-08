@@ -13,19 +13,21 @@ class EvaluationWorker:
     """Evaluation worker that executes sampling tasks"""
     
     CHUTES_ERROR_PATTERNS = [
-        "Invalid API key",
-        "No instances available",
-        "HTTP 503",
-        "HTTP 500",
-        "HTTP 429",
-        "Error code: 429",
-        "RateLimitError",
-        "Error code: 401",
-        "Error code: 503",
-        "Error code: 500",
-        "CHUTES_API_KEY",
-        "maximum capacity",
-        "try again later",
+        "Invalid API key",           # Miner API key misconfigured
+        "No instances available",    # Chutes instance not started or unavailable
+        "HTTP 503",                  # Chutes service unavailable
+        "HTTP 500",                  # Chutes internal server error
+        "HTTP 429",                  # Rate limit (too many requests)
+        "HTTP 402",                  # Chute creator has insufficient balance
+        "Error code: 429",           # OpenAI rate limit error
+        "Error code: 402",           # OpenAI insufficient balance
+        "Error code: 401",           # OpenAI auth failed (invalid API key)
+        "Error code: 503",           # OpenAI service unavailable
+        "Error code: 500",           # OpenAI internal error
+        "CHUTES_API_KEY",            # Chutes API key env var missing
+        "maximum capacity",          # Chutes reached max capacity
+        "try again later",           # Service busy, retry suggested
+        "zero balance",              # Chute creator has zero balance
     ]
     
     def __init__(

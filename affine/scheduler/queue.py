@@ -95,3 +95,13 @@ class TaskQueue:
     
     def qsize(self) -> int:
         return self.queue.qsize()
+    
+    @property
+    def max_size(self) -> int:
+        """Get max queue size"""
+        return self.queue.maxsize
+    
+    @property
+    def paused(self) -> bool:
+        """Check if queue is paused"""
+        return self.is_paused

@@ -53,6 +53,7 @@ class SamplingScheduler:
         self.scheduler_monitor: Optional[SchedulerMonitor] = None
         if enable_monitoring:
             self.scheduler_monitor = SchedulerMonitor()
+            self.scheduler_monitor.set_scheduler(self)
     
     async def start(self, envs: List[BaseSDKEnv]):
         """Start all scheduler components"""
