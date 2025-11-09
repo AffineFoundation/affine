@@ -136,6 +136,31 @@ This prints a JSON payload including `chute_id`. Keep it for the next step.
 af -vvv commit --repo <user/repo> --revision <sha> --chute-id <chute_id> --coldkey <your cold> --hotkey <your hot>
 ```
 
+## Sampling Scheduler
+
+Affine uses an advanced sampling scheduler that provides efficient, independent sampling for each miner with dynamic rate adjustment and comprehensive monitoring.
+
+**Key Features:**
+- Independent sampling coroutines per miner (95%+ concurrency utilization)
+- Dynamic rate adjustment (3x acceleration for miners with <200 samples)
+- Backpressure control with queue management
+- Intelligent Chutes error detection and auto-pause
+- Real-time monitoring API
+
+**Documentation:**
+- [Sampling Scheduler Guide](docs/SAMPLING_SCHEDULER.md) - Architecture, configuration, and usage
+- [Monitoring API Reference](docs/MONITORING_API.md) - HTTP endpoints for status monitoring
+- [Scheduler Initialization Design](docs/SCHEDULER_INITIALIZATION_DESIGN.md) - Historical data loading design
+
+**Quick Start:**
+```bash
+# Start the sampling scheduler
+af runner
+
+# Enable with monitoring API (recommended)
+af runner --enable-monitoring
+```
+
 # SDK
 Affine is also an SDK you can use to evaluate models across different environments.
 
