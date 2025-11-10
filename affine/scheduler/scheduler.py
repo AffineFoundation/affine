@@ -70,6 +70,7 @@ class SamplingScheduler:
                 result_queue=self.result_queue,
                 envs=envs,
                 semaphore=self.semaphore,
+                samplers=self.samplers,
                 monitor=self.scheduler_monitor,
             )
             task = asyncio.create_task(worker.run())

@@ -37,6 +37,7 @@ class EvaluationWorker:
         result_queue: asyncio.Queue,
         envs: list[BaseSDKEnv],
         semaphore: asyncio.Semaphore,
+        samplers: Dict[int, 'MinerSampler'],
         monitor: Optional['SchedulerMonitor'] = None,
     ):
         self.worker_id = worker_id
@@ -44,6 +45,7 @@ class EvaluationWorker:
         self.result_queue = result_queue
         self.envs: Dict[str, BaseSDKEnv] = {env.env_name: env for env in envs}
         self.semaphore = semaphore
+        self.samplers = samplers
         self.monitor = monitor
     
     async def run(self):
@@ -56,9 +58,16 @@ class EvaluationWorker:
                     result = await self._execute_task(task)
                 
                 if result:
-                    # Record result to monitor
-                    if self.monitor and result.error:
-                        self.monitor.record_error(task.uid, result.error)
+                    # Handle errors - notify sampler and monitor
+                    if result.error:
+                        # Notify sampler to handle error (for pause logic)
+                        sampler = self.samplers.get(task.uid)
+                        if sampler:
+                            sampler.handle_error(result.error)
+                        
+                        # Record error to monitor (for statistics)
+                        if self.monitor:
+                            self.monitor.record_error(task.uid, result.error)
                     
                     if result.error is None:
                         await self.result_queue.put(result)
