@@ -13,7 +13,7 @@ class SamplingConfig:
     """Configuration parameters for sampling."""
     
     TAIL = 50_000  # Increased from 20k to 50k blocks for better statistical stability
-    MIN_SAMPLES_PER_ENV = 200  # Increased from 100 to 200 for stronger confidence intervals
+    MIN_SAMPLES_PER_ENV = 400  # Increased from 200 to 400 for stronger confidence intervals
     MAX_SAMPLES_CAP = 5000  # Increased from 2000 to 5000
     ELIG = 0.10  # Eligibility threshold: 10% of max samples
     SCALE = 1.0  # Scaling factor for layer weights
