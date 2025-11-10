@@ -52,8 +52,12 @@ class MinerSampler:
         
         self.last_sample_time: Dict[str, float] = {}
     
-    async def run(self, task_queue: TaskQueue):
-        """Main sampling loop"""
+    async def run(self, env_queues: Dict[str, TaskQueue]):
+        """Main sampling loop
+        
+        Args:
+            env_queues: Dict mapping env_name to TaskQueue for that environment
+        """
         while True:
             try:
                 if time.time() < self.pause_until:
@@ -67,12 +71,16 @@ class MinerSampler:
                 for env in self.envs:
                     if self._should_sample(env):
                         task = self._create_task(env)
-                        await task_queue.put(task, sampler_id=self.uid)
-                        self._update_sample_time(env)
                         
-                        # Record sampling event to monitor
-                        if self.monitor:
-                            self.monitor.record_sample(self.uid, env.env_name)
+                        # Route task to the appropriate environment queue
+                        queue = env_queues.get(env.env_name)
+                        if queue:
+                            await queue.put(task, sampler_id=self.uid)
+                            self._update_sample_time(env)
+                            
+                            # Record sampling event to monitor
+                            if self.monitor:
+                                self.monitor.record_sample(self.uid, env.env_name)
                 
                 await asyncio.sleep(self._next_check_interval())
             

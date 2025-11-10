@@ -82,6 +82,15 @@ def create_monitor_app(scheduler_monitor) -> FastAPI:
                     "active": status.active_miners,
                     "paused": status.paused_miners,
                 },
+                "evaluation": {
+                    "total_samples_1h": status.evaluation_summary.total_samples_1h,
+                    "total_samples_24h": status.evaluation_summary.total_samples_24h,
+                    "avg_samples_per_hour": status.evaluation_summary.avg_samples_per_hour,
+                    "projected_daily_samples": status.evaluation_summary.projected_daily_samples,
+                    "active_sampling_miners": status.evaluation_summary.active_sampling_miners,
+                    "total_errors_1h": status.evaluation_summary.total_errors_1h,
+                    "miners_with_errors": status.evaluation_summary.miners_with_errors,
+                },
                 "queue": {
                     "current_size": status.queue.current_size,
                     "max_size": status.queue.max_size,
@@ -112,7 +121,7 @@ def create_monitor_app(scheduler_monitor) -> FastAPI:
             has_errors: Filter miners with errors (true) or without (false)
         
         Returns:
-            List of miner statistics sorted by UID
+            Overall evaluation summary plus list of miner statistics sorted by UID
         """
         try:
             status = scheduler_monitor.get_status()
@@ -129,6 +138,20 @@ def create_monitor_app(scheduler_monitor) -> FastAPI:
                     miners = [m for m in miners if m.error_count_1h == 0]
             
             return {
+                "evaluation_summary": {
+                    "total_samples_1h": status.evaluation_summary.total_samples_1h,
+                    "total_samples_24h": status.evaluation_summary.total_samples_24h,
+                    "avg_samples_per_hour": status.evaluation_summary.avg_samples_per_hour,
+                    "projected_daily_samples": status.evaluation_summary.projected_daily_samples,
+                    "samples_by_env_1h": status.evaluation_summary.samples_by_env_1h,
+                    "samples_by_env_24h": status.evaluation_summary.samples_by_env_24h,
+                    "total_participating_miners": status.evaluation_summary.total_participating_miners,
+                    "active_sampling_miners": status.evaluation_summary.active_sampling_miners,
+                    "total_errors_1h": status.evaluation_summary.total_errors_1h,
+                    "miners_with_errors": status.evaluation_summary.miners_with_errors,
+                    "avg_task_completion_time": status.evaluation_summary.avg_task_completion_time,
+                    "current_throughput_per_minute": status.evaluation_summary.current_throughput_per_minute,
+                },
                 "total": len(miners),
                 "miners": [
                     {
@@ -322,8 +345,6 @@ async def run_monitor_api(scheduler_monitor, host: str = "0.0.0.0", port: int = 
 
 async def start_monitoring_server(
     monitor,
-    task_queue,
-    num_workers: int,
     host: str = "0.0.0.0",
     port: int = 8765
 ):
@@ -331,8 +352,6 @@ async def start_monitoring_server(
     
     Args:
         monitor: SchedulerMonitor instance
-        task_queue: TaskQueue instance (not used currently, for future extension)
-        num_workers: Number of evaluation workers (not used currently, for future extension)
         host: Host to bind to
         port: Port to bind to
     """

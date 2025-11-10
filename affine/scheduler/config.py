@@ -8,15 +8,15 @@ class SamplingConfig:
     
     # Core parameters - affect system performance and resource consumption
     
-    num_evaluation_workers: int = field(
-        default_factory=lambda: int(os.getenv("AFFINE_NUM_EVALUATION_WORKERS", "40"))
+    workers_per_env: int = field(
+        default_factory=lambda: int(os.getenv("AFFINE_WORKERS_PER_ENV", "10"))
     )
-    """Number of concurrent evaluation worker threads"""
+    """Number of concurrent worker threads per environment"""
     
-    queue_max_size: int = field(
-        default_factory=lambda: int(os.getenv("AFFINE_QUEUE_MAX_SIZE", "6000"))
+    queue_max_size_per_env: int = field(
+        default_factory=lambda: int(os.getenv("AFFINE_QUEUE_MAX_SIZE_PER_ENV", "1000"))
     )
-    """Maximum task queue capacity"""
+    """Maximum task queue capacity per environment"""
     
     sink_batch_size: int = field(
         default_factory=lambda: int(os.getenv("AFFINE_SINK_BATCH_SIZE", "300"))
@@ -64,18 +64,18 @@ class SamplingConfig:
     
     @property
     def queue_warning_threshold(self) -> int:
-        """Queue size threshold for warning logs (auto: 50% of max_size)"""
-        return int(self.queue_max_size * 0.5)
+        """Queue size threshold for warning logs (auto: 50% of max_size_per_env)"""
+        return int(self.queue_max_size_per_env * 0.5)
     
     @property
     def queue_pause_threshold(self) -> int:
-        """Queue size threshold for pausing task production (auto: 83% of max_size)"""
-        return int(self.queue_max_size * 0.83)
+        """Queue size threshold for pausing task production (auto: 75% of max_size_per_env)"""
+        return int(self.queue_max_size_per_env * 0.75)
     
     @property
     def queue_resume_threshold(self) -> int:
-        """Queue size threshold for resuming task production (auto: 33% of max_size)"""
-        return int(self.queue_max_size * 0.33)
+        """Queue size threshold for resuming task production (auto: 25% of max_size_per_env)"""
+        return int(self.queue_max_size_per_env * 0.25)
     
     @property
     def batch_flush_interval(self) -> int:

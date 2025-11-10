@@ -32,19 +32,17 @@ class EvaluationWorker:
     
     def __init__(
         self,
-        worker_id: int,
+        worker_id: str,
         task_queue: TaskQueue,
         result_queue: asyncio.Queue,
-        envs: list[BaseSDKEnv],
-        semaphore: asyncio.Semaphore,
+        env: BaseSDKEnv,
         samplers: Dict[int, 'MinerSampler'],
         monitor: Optional['SchedulerMonitor'] = None,
     ):
         self.worker_id = worker_id
         self.task_queue = task_queue
         self.result_queue = result_queue
-        self.envs: Dict[str, BaseSDKEnv] = {env.env_name: env for env in envs}
-        self.semaphore = semaphore
+        self.env = env
         self.samplers = samplers
         self.monitor = monitor
     
@@ -53,9 +51,7 @@ class EvaluationWorker:
         while True:
             try:
                 task = await self.task_queue.get()
-                
-                async with self.semaphore:
-                    result = await self._execute_task(task)
+                result = await self._execute_task(task)
                 
                 if result:
                     # Handle errors - notify sampler and monitor
@@ -94,12 +90,7 @@ class EvaluationWorker:
     async def _execute_task(self, task: Task) -> Result:
         """Execute single evaluation task"""
         try:
-            env = self.envs.get(task.env_name)
-            if not env:
-                logger.warning(f"Unknown env: {task.env_name}")
-                return None
-            
-            result = await env.evaluate(task.miner, seed=task.seed)
+            result = await self.env.evaluate(task.miner, seed=task.seed)
             return result
         
         except Exception as e:

@@ -90,6 +90,34 @@ class WorkerStats:
 
 
 @dataclass
+class EvaluationSummary:
+    """Overall evaluation statistics summary"""
+    # Time windows
+    total_samples_1h: int = 0
+    total_samples_24h: int = 0
+    
+    # Sampling rates
+    avg_samples_per_hour: float = 0.0
+    projected_daily_samples: float = 0.0
+    
+    # Per-environment totals
+    samples_by_env_1h: Dict[str, int] = field(default_factory=dict)
+    samples_by_env_24h: Dict[str, int] = field(default_factory=dict)
+    
+    # Miner participation
+    total_participating_miners: int = 0
+    active_sampling_miners: int = 0
+    
+    # Error statistics
+    total_errors_1h: int = 0
+    miners_with_errors: int = 0
+    
+    # Throughput metrics
+    avg_task_completion_time: float = 0.0
+    current_throughput_per_minute: float = 0.0
+
+
+@dataclass
 class SchedulerStatus:
     """Complete scheduler status"""
     timestamp: float
@@ -99,6 +127,9 @@ class SchedulerStatus:
     total_miners: int
     active_miners: int
     paused_miners: int
+    
+    # Overall evaluation summary
+    evaluation_summary: EvaluationSummary
     
     # Queue
     queue: QueueStats
@@ -292,8 +323,8 @@ class SchedulerMonitor:
         )
     
     def _get_queue_stats(self) -> QueueStats:
-        """Get queue statistics"""
-        if not self.scheduler:
+        """Get queue statistics (aggregated across all environment queues)"""
+        if not self.scheduler or not self.scheduler.env_queues:
             return QueueStats(
                 current_size=0,
                 max_size=0,
@@ -302,50 +333,68 @@ class SchedulerMonitor:
                 resume_threshold=0,
             )
         
-        queue = self.scheduler.task_queue
         now = time.time()
         
-        # Update throughput
-        current_enqueued = queue.total_enqueued
-        current_dequeued = queue.total_dequeued
+        # Aggregate stats across all environment queues
+        total_current_size = 0
+        total_max_size = 0
+        total_enqueued = 0
+        total_dequeued = 0
+        any_paused = False
+        any_warning = False
+        env_breakdown = {}
         
+        # Use first queue for threshold values (all queues use same config)
+        first_queue = next(iter(self.scheduler.env_queues.values()))
+        warning_threshold = first_queue.warning_threshold
+        pause_threshold = first_queue.pause_threshold
+        resume_threshold = first_queue.resume_threshold
+        
+        for env_name, queue in self.scheduler.env_queues.items():
+            current_size = queue.qsize()
+            total_current_size += current_size
+            total_max_size += queue.max_size
+            total_enqueued += queue.total_enqueued
+            total_dequeued += queue.total_dequeued
+            
+            if queue.paused:
+                any_paused = True
+            if current_size >= queue.warning_threshold:
+                any_warning = True
+            
+            # Per-environment breakdown
+            env_breakdown[env_name] = current_size
+        
+        # Update throughput tracking
         self.enqueue_history.append({
             'time': now,
-            'count': current_enqueued - self.last_enqueue_count,
+            'count': total_enqueued - self.last_enqueue_count,
         })
         self.dequeue_history.append({
             'time': now,
-            'count': current_dequeued - self.last_dequeue_count,
+            'count': total_dequeued - self.last_dequeue_count,
         })
         
-        self.last_enqueue_count = current_enqueued
-        self.last_dequeue_count = current_dequeued
+        self.last_enqueue_count = total_enqueued
+        self.last_dequeue_count = total_dequeued
         
         # Calculate rates (per minute)
         enqueue_rate = sum(e['count'] for e in self.enqueue_history) * 60 / len(self.enqueue_history) if self.enqueue_history else 0
         dequeue_rate = sum(d['count'] for d in self.dequeue_history) * 60 / len(self.dequeue_history) if self.dequeue_history else 0
         
-        # Per-environment breakdown (approximate from batch buffer)
-        env_breakdown = defaultdict(int)
-        for sampler_id, tasks in queue.batch_buffer.items():
-            for task in tasks:
-                env_breakdown[task.env_name] += 1
-        
-        current_size = queue.qsize()
-        
         return QueueStats(
-            current_size=current_size,
-            max_size=queue.max_size,
-            warning_threshold=queue.warning_threshold,
-            pause_threshold=queue.pause_threshold,
-            resume_threshold=queue.resume_threshold,
-            is_paused=queue.paused,
-            is_warning=current_size >= queue.warning_threshold,
+            current_size=total_current_size,
+            max_size=total_max_size,
+            warning_threshold=warning_threshold,
+            pause_threshold=pause_threshold,
+            resume_threshold=resume_threshold,
+            is_paused=any_paused,
+            is_warning=any_warning,
             enqueue_rate=enqueue_rate,
             dequeue_rate=dequeue_rate,
-            total_enqueued=current_enqueued,
-            total_dequeued=current_dequeued,
-            env_breakdown=dict(env_breakdown),
+            total_enqueued=total_enqueued,
+            total_dequeued=total_dequeued,
+            env_breakdown=env_breakdown,
         )
     
     def _get_worker_stats(self) -> WorkerStats:
@@ -359,12 +408,6 @@ class SchedulerMonitor:
         
         total_workers = len(self.scheduler.evaluation_workers)
         
-        # Approximate active workers by semaphore
-        # (total - available locked count)
-        semaphore = self.scheduler.semaphore
-        # Note: asyncio.Semaphore doesn't expose internal counter directly
-        # We approximate based on task queue and completion times
-        
         # Calculate average task duration
         avg_duration = 0.0
         if self.task_completion_times:
@@ -376,7 +419,7 @@ class SchedulerMonitor:
             recent_dequeued = sum(d['count'] for d in list(self.dequeue_history)[-10:])
             tasks_per_minute = recent_dequeued * 6  # Last 10 seconds × 6 = per minute
         
-        # Estimate active workers
+        # Estimate active workers based on throughput and task duration
         active_workers = min(
             int(tasks_per_minute * avg_duration / 60) if avg_duration > 0 else 0,
             total_workers
@@ -425,17 +468,58 @@ class SchedulerMonitor:
             'active_miners': 0,
         })
         
+        # Calculate overall evaluation summary
+        total_samples_1h = 0
+        total_samples_24h = 0
+        samples_by_env_1h = defaultdict(int)
+        samples_by_env_24h = defaultdict(int)
+        total_errors_1h = 0
+        miners_with_errors = 0
+        active_sampling_miners = 0
+        
         for miner in miner_stats:
+            # Aggregate samples
+            total_samples_1h += miner.total_samples_1h
+            total_samples_24h += miner.total_samples_24h
+            
+            # Per-environment aggregation
             for env_name, count in miner.samples_1h.items():
                 env_stats[env_name]['total_samples_1h'] += count
+                samples_by_env_1h[env_name] += count
             for env_name, count in miner.samples_24h.items():
                 env_stats[env_name]['total_samples_24h'] += count
+                samples_by_env_24h[env_name] += count
+            
+            # Active miners per environment
             if miner.status == "active":
+                if miner.total_samples_1h > 0:
+                    active_sampling_miners += 1
                 for env_name in miner.samples_1h.keys():
                     env_stats[env_name]['active_miners'] += 1
+            
+            # Error tracking
+            total_errors_1h += miner.error_count_1h
+            if miner.error_count_1h > 0:
+                miners_with_errors += 1
         
         for env_name, count in queue_stats.env_breakdown.items():
             env_stats[env_name]['queue_size'] = count
+        
+        # Build evaluation summary
+        evaluation_summary = EvaluationSummary(
+            total_samples_1h=total_samples_1h,
+            total_samples_24h=total_samples_24h,
+            avg_samples_per_hour=total_samples_1h,
+            projected_daily_samples=total_samples_1h * 24,
+            samples_by_env_1h=dict(samples_by_env_1h),
+            samples_by_env_24h=dict(samples_by_env_24h),
+            total_participating_miners=len(miner_stats),
+            active_sampling_miners=active_sampling_miners,
+            total_errors_1h=total_errors_1h,
+            miners_with_errors=miners_with_errors,
+            avg_task_completion_time=worker_stats.avg_task_duration,
+            current_throughput_per_minute=worker_stats.tasks_per_minute,
+        )
         
         return SchedulerStatus(
             timestamp=now,
@@ -443,6 +527,7 @@ class SchedulerMonitor:
             total_miners=len(miner_stats),
             active_miners=active_miners,
             paused_miners=paused_miners,
+            evaluation_summary=evaluation_summary,
             queue=queue_stats,
             workers=worker_stats,
             miners=miner_stats,

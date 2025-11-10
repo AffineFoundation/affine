@@ -26,13 +26,8 @@ class SamplingScheduler:
         self.enable_monitoring = enable_monitoring
         self.monitor_port = monitor_port
         
-        self.task_queue = TaskQueue(
-            max_size=config.queue_max_size,
-            warning_threshold=config.queue_warning_threshold,
-            pause_threshold=config.queue_pause_threshold,
-            resume_threshold=config.queue_resume_threshold,
-            batch_size=config.batch_size,
-        )
+        # Per-environment queues (created in start())
+        self.env_queues: Dict[str, TaskQueue] = {}
         self.result_queue = asyncio.Queue()
         
         self.samplers: Dict[int, MinerSampler] = {}
@@ -46,7 +41,6 @@ class SamplingScheduler:
         self.api_server = None
         
         self.metrics = SchedulerMetrics()
-        self.semaphore = asyncio.Semaphore(config.num_evaluation_workers)
         
         # Initialize monitoring
         self.scheduler_monitor: Optional[SchedulerMonitor] = None
@@ -62,21 +56,35 @@ class SamplingScheduler:
         if self.scheduler_monitor:
             await self.scheduler_monitor.load_historical_samples(blocks=7200)
         
-        # Start evaluation workers
-        for i in range(self.config.num_evaluation_workers):
-            worker = EvaluationWorker(
-                worker_id=i,
-                task_queue=self.task_queue,
-                result_queue=self.result_queue,
-                envs=envs,
-                semaphore=self.semaphore,
-                samplers=self.samplers,
-                monitor=self.scheduler_monitor,
+        # Create per-environment queues
+        for env in envs:
+            self.env_queues[env.env_name] = TaskQueue(
+                max_size=self.config.queue_max_size_per_env,
+                warning_threshold=self.config.queue_warning_threshold,
+                pause_threshold=self.config.queue_pause_threshold,
+                resume_threshold=self.config.queue_resume_threshold,
+                batch_size=self.config.batch_size,
             )
-            task = asyncio.create_task(worker.run())
-            self.evaluation_workers.append(task)
+            logger.debug(f"[Scheduler] Created queue for {env.env_name} (max_size={self.config.queue_max_size_per_env})")
         
-        logger.info(f"[Scheduler] Started {len(self.evaluation_workers)} evaluation workers")
+        # Start per-environment workers
+        worker_count = 0
+        for env in envs:
+            env_queue = self.env_queues[env.env_name]
+            for i in range(self.config.workers_per_env):
+                worker = EvaluationWorker(
+                    worker_id=f"{env.env_name}-{i}",
+                    task_queue=env_queue,
+                    result_queue=self.result_queue,
+                    env=env,
+                    samplers=self.samplers,
+                    monitor=self.scheduler_monitor,
+                )
+                task = asyncio.create_task(worker.run())
+                self.evaluation_workers.append(task)
+                worker_count += 1
+        
+        logger.info(f"[Scheduler] Started {worker_count} evaluation workers ({self.config.workers_per_env} per environment)")
         
         # Start upload worker
         self.upload_worker = asyncio.create_task(self._upload_worker_loop())
@@ -134,7 +142,8 @@ class SamplingScheduler:
         sampler = MinerSampler(uid, miner, envs, self.config, monitor=self.scheduler_monitor)
         self.samplers[uid] = sampler
         
-        task = asyncio.create_task(sampler.run(self.task_queue))
+        # Pass env_queues dict to sampler for routing
+        task = asyncio.create_task(sampler.run(self.env_queues))
         self.sampler_tasks[uid] = task
         
         logger.info(f"[Scheduler] Started sampler for U{uid}")
@@ -204,7 +213,9 @@ class SamplingScheduler:
         while True:
             try:
                 await asyncio.sleep(self.config.batch_flush_interval)
-                await self.task_queue.flush_all_batches()
+                # Flush batches for all environment queues
+                for env_queue in self.env_queues.values():
+                    await env_queue.flush_all_batches()
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -216,15 +227,24 @@ class SamplingScheduler:
             try:
                 await asyncio.sleep(30)
                 
-                queue_size = self.task_queue.qsize()
+                # Aggregate queue stats across all environments
+                total_queue_size = sum(q.qsize() for q in self.env_queues.values())
+                total_enqueued = sum(q.total_enqueued for q in self.env_queues.values())
+                total_dequeued = sum(q.total_dequeued for q in self.env_queues.values())
                 result_queue_size = self.result_queue.qsize()
+                
+                # Per-environment breakdown
+                env_stats = " ".join([
+                    f"{name}={q.qsize()}"
+                    for name, q in self.env_queues.items()
+                ])
                 
                 logger.info(
                     f"[STATUS] samplers={self.metrics.active_miners} "
                     f"(paused={self.metrics.paused_miners}) "
-                    f"task_queue={queue_size} result_queue={result_queue_size} "
-                    f"enqueued={self.task_queue.total_enqueued} "
-                    f"dequeued={self.task_queue.total_dequeued}"
+                    f"total_queue={total_queue_size} ({env_stats}) "
+                    f"result_queue={result_queue_size} "
+                    f"enqueued={total_enqueued} dequeued={total_dequeued}"
                 )
             except asyncio.CancelledError:
                 raise
@@ -277,8 +297,6 @@ class SamplingScheduler:
             logger.info(f"[Scheduler] Starting monitoring API on port {self.monitor_port}")
             await start_monitoring_server(
                 self.scheduler_monitor,
-                self.task_queue,
-                self.config.num_evaluation_workers,
                 port=self.monitor_port
             )
         except Exception as e:
