@@ -7,29 +7,12 @@ from affine.tasks import BaseSDKEnv
 from affine.scheduler.models import Task
 from affine.scheduler.queue import TaskQueue
 from affine.scheduler.config import SamplingConfig
+from affine.scheduler.error_classifier import is_service_error
 from affine.setup import logger
 
 
 class MinerSampler:
     """Independent sampler for a single miner"""
-    
-    CHUTES_ERROR_PATTERNS = [
-        "Invalid API key",           # Miner API key misconfigured
-        "No instances available",    # Chutes instance not started or unavailable
-        "HTTP 503",                  # Chutes service unavailable
-        "HTTP 500",                  # Chutes internal server error
-        "HTTP 429",                  # Rate limit (too many requests)
-        "HTTP 402",                  # Chute creator has insufficient balance
-        "Error code: 429",           # OpenAI rate limit error
-        "Error code: 402",           # OpenAI insufficient balance
-        "Error code: 401",           # OpenAI auth failed (invalid API key)
-        "Error code: 503",           # OpenAI service unavailable
-        "Error code: 500",           # OpenAI internal error
-        "CHUTES_API_KEY",            # Chutes API key env var missing
-        "maximum capacity",          # Chutes reached max capacity
-        "try again later",           # Service busy, retry suggested
-        "zero balance",              # Chute creator has zero balance
-    ]
     
     def __init__(
         self,
@@ -126,24 +109,25 @@ class MinerSampler:
         return max(1.0, min(base_interval / 2, 60.0))
     
     def handle_error(self, error: str):
-        """Handle task execution error"""
+        """Handle task execution error
+        
+        Uses centralized error classifier to determine if this is a service error
+        that should trigger sampling pause.
+        """
         # Record error to monitor
         if self.monitor:
             self.monitor.record_error(self.uid, error)
         
-        if self._is_chutes_error(error):
+        # Use centralized error classifier
+        if is_service_error(error):
             self.consecutive_chutes_errors += 1
             
             if self.consecutive_chutes_errors >= self.config.max_consecutive_errors:
-                self.pause_until = time.time() + self.config.chutes_error_pause_seconds
+                pause_time = time.time() + self.config.chutes_error_pause_seconds
+                self.pause_until = pause_time
                 logger.warning(
                     f"[MinerSampler U{self.uid}] Paused for "
-                    f"{self.config.chutes_error_pause_seconds}s due to Chutes errors"
+                    f"{self.config.chutes_error_pause_seconds}s due to Chutes service errors"
                 )
         else:
             self.consecutive_chutes_errors = 0
-    
-    @classmethod
-    def _is_chutes_error(cls, error_msg: str) -> bool:
-        """Detect Chutes service errors"""
-        return any(pattern in error_msg for pattern in cls.CHUTES_ERROR_PATTERNS)
