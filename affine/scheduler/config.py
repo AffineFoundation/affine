@@ -6,54 +6,78 @@ from dataclasses import dataclass, field
 class SamplingConfig:
     """Sampling scheduler configuration"""
     
-    daily_rate_per_env: int = field(
-        default_factory=lambda: int(os.getenv("AFFINE_DAILY_RATE_PER_ENV", "200"))
-    )
-    low_sample_threshold: int = field(
-        default_factory=lambda: int(os.getenv("AFFINE_LOW_SAMPLE_THRESHOLD", "200"))
-    )
-    low_sample_multiplier: float = field(
-        default_factory=lambda: float(os.getenv("AFFINE_LOW_SAMPLE_MULTIPLIER", "3.0"))
-    )
-    
-    queue_max_size: int = field(
-        default_factory=lambda: int(os.getenv("AFFINE_QUEUE_MAX_SIZE", "10000"))
-    )
-    queue_warning_threshold: int = field(
-        default_factory=lambda: int(os.getenv("AFFINE_QUEUE_WARNING_THRESHOLD", "5000"))
-    )
-    queue_pause_threshold: int = field(
-        default_factory=lambda: int(os.getenv("AFFINE_QUEUE_PAUSE_THRESHOLD", "8000"))
-    )
-    queue_resume_threshold: int = field(
-        default_factory=lambda: int(os.getenv("AFFINE_QUEUE_RESUME_THRESHOLD", "3000"))
-    )
+    # Core parameters - affect system performance and resource consumption
     
     num_evaluation_workers: int = field(
-        default_factory=lambda: int(os.getenv("AFFINE_NUM_EVALUATION_WORKERS", "20"))
+        default_factory=lambda: int(os.getenv("AFFINE_NUM_EVALUATION_WORKERS", "40"))
     )
+    """Number of concurrent evaluation worker threads"""
     
-    chutes_error_pause_seconds: int = field(
-        default_factory=lambda: int(os.getenv("AFFINE_CHUTES_ERROR_PAUSE_SECONDS", "600"))
+    queue_max_size: int = field(
+        default_factory=lambda: int(os.getenv("AFFINE_QUEUE_MAX_SIZE", "6000"))
     )
-    max_consecutive_errors: int = field(
-        default_factory=lambda: int(os.getenv("AFFINE_MAX_CONSECUTIVE_ERRORS", "3"))
-    )
-    
-    miner_refresh_interval: int = field(
-        default_factory=lambda: int(os.getenv("AFFINE_MINER_REFRESH_INTERVAL", "1800"))
-    )
-    
-    batch_size: int = field(
-        default_factory=lambda: int(os.getenv("AFFINE_BATCH_SIZE", "50"))
-    )
-    batch_flush_interval: int = field(
-        default_factory=lambda: int(os.getenv("AFFINE_BATCH_FLUSH_INTERVAL", "30"))
-    )
+    """Maximum task queue capacity"""
     
     sink_batch_size: int = field(
         default_factory=lambda: int(os.getenv("AFFINE_SINK_BATCH_SIZE", "300"))
     )
+    """Batch size for uploading results to storage"""
+    
+    miner_refresh_interval: int = field(
+        default_factory=lambda: int(os.getenv("AFFINE_MINER_REFRESH_INTERVAL", "1800"))
+    )
+    """Interval (seconds) to refresh miner list and adjust sampling rates"""
+    
+    # Advanced parameters - fine-tuning for specific scenarios
+    
+    batch_size: int = field(
+        default_factory=lambda: int(os.getenv("AFFINE_BATCH_SIZE", "30"))
+    )
+    """Task batch size for fair scheduling between miners"""
+    
+    chutes_error_pause_seconds: int = field(
+        default_factory=lambda: int(os.getenv("AFFINE_CHUTES_ERROR_PAUSE_SECONDS", "600"))
+    )
+    """Pause duration (seconds) after consecutive Chutes service errors"""
+    
     sink_max_wait: int = field(
         default_factory=lambda: int(os.getenv("AFFINE_SINK_MAX_WAIT", "300"))
     )
+    """Maximum wait time (seconds) before uploading incomplete result batches"""
+    
+    low_sample_threshold: int = field(
+        default_factory=lambda: int(os.getenv("AFFINE_LOW_SAMPLE_THRESHOLD", "200"))
+    )
+    """Sample count threshold below which miners get accelerated sampling"""
+    
+    low_sample_multiplier: float = field(
+        default_factory=lambda: float(os.getenv("AFFINE_LOW_SAMPLE_MULTIPLIER", "3.0"))
+    )
+    """Sampling rate multiplier for low-sample miners"""
+    
+    max_consecutive_errors: int = field(
+        default_factory=lambda: int(os.getenv("AFFINE_MAX_CONSECUTIVE_ERRORS", "3"))
+    )
+    """Maximum consecutive Chutes errors before pausing miner"""
+    
+    # Auto-derived parameters - calculated from core configuration
+    
+    @property
+    def queue_warning_threshold(self) -> int:
+        """Queue size threshold for warning logs (auto: 50% of max_size)"""
+        return int(self.queue_max_size * 0.5)
+    
+    @property
+    def queue_pause_threshold(self) -> int:
+        """Queue size threshold for pausing task production (auto: 83% of max_size)"""
+        return int(self.queue_max_size * 0.83)
+    
+    @property
+    def queue_resume_threshold(self) -> int:
+        """Queue size threshold for resuming task production (auto: 33% of max_size)"""
+        return int(self.queue_max_size * 0.33)
+    
+    @property
+    def batch_flush_interval(self) -> int:
+        """Interval (seconds) to flush incomplete batches (auto: 1.5x batch_size)"""
+        return int(self.batch_size * 1.5)

@@ -259,7 +259,7 @@ class SchedulerMonitor:
         # Determine status
         if now < sampler.pause_until:
             status = "paused"
-            pause_reason = f"Chutes errors (until {time.strftime('%H:%M:%S', time.localtime(sampler.pause_until))})"
+            pause_reason = f"Chutes errors (until {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(sampler.pause_until))})"
         else:
             status = "active"
             pause_reason = None
@@ -267,6 +267,9 @@ class SchedulerMonitor:
         # Calculate effective sampling rate (samples per day based on last hour)
         total_1h = sum(samples_1h.values())
         effective_daily_rate = total_1h * 24 if total_1h > 0 else 0.0
+        
+        # Calculate configured daily rate from environment instances
+        configured_daily_rate = sum(env.daily_rate for env in sampler.envs) * sampler.rate_multiplier
         
         return MinerSamplingStats(
             uid=uid,
@@ -276,7 +279,7 @@ class SchedulerMonitor:
             pause_until=sampler.pause_until,
             pause_reason=pause_reason,
             rate_multiplier=sampler.rate_multiplier,
-            configured_daily_rate=sampler.config.daily_rate_per_env * len(sampler.envs),
+            configured_daily_rate=configured_daily_rate,
             effective_daily_rate=effective_daily_rate,
             samples_1h=dict(samples_1h),
             total_samples_1h=total_1h,
