@@ -41,7 +41,7 @@ class SamplingConfig:
     )
     
     miner_refresh_interval: int = field(
-        default_factory=lambda: int(os.getenv("AFFINE_MINER_REFRESH_INTERVAL", "600"))
+        default_factory=lambda: int(os.getenv("AFFINE_MINER_REFRESH_INTERVAL", "1800"))
     )
     
     batch_size: int = field(

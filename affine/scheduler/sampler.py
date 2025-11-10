@@ -51,27 +51,6 @@ class MinerSampler:
         self.consecutive_chutes_errors = 0
         
         self.last_sample_time: Dict[str, float] = {}
-        self.total_samples_today = 0
-    
-    def init_from_data(self, init_data: Dict[str, Any]):
-        """Initialize sampler from historical data.
-        
-        Args:
-            init_data: Dictionary containing:
-                - 'total_samples': int - Total samples from Summary (for rate multiplier)
-                - 'env_last_sample_time': Dict[str, float] - Last sample time per env
-        """
-        # Set total samples (used by scheduler to determine rate multiplier)
-        self.total_samples_today = init_data.get('total_samples', 0)
-        
-        # Set last sample times per environment (for state display)
-        self.last_sample_time = init_data.get('env_last_sample_time', {}).copy()
-        
-        logger.debug(
-            f"[MinerSampler U{self.uid}] Initialized from history: "
-            f"total_samples={self.total_samples_today}, "
-            f"envs_with_history={len(self.last_sample_time)}"
-        )
     
     async def run(self, task_queue: TaskQueue):
         """Main sampling loop"""
@@ -123,7 +102,6 @@ class MinerSampler:
     def _update_sample_time(self, env: BaseSDKEnv):
         """Record sample time"""
         self.last_sample_time[env.env_name] = time.time()
-        self.total_samples_today += 1
     
     def _check_miner_available(self) -> bool:
         """Check if miner is available"""

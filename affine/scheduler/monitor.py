@@ -15,7 +15,7 @@ from dataclasses import dataclass, field, asdict
 from collections import defaultdict, deque
 from affine.scheduler.models import Task
 from affine.models import Result
-
+from affine.setup import logger
 
 @dataclass
 class MinerSamplingStats:
@@ -132,10 +132,70 @@ class SchedulerMonitor:
         
         # Worker tracking
         self.task_completion_times = deque(maxlen=100)
+        
+        # Initialization flag
+        self._initialized = False
     
     def set_scheduler(self, scheduler):
         """Set scheduler reference after initialization"""
         self.scheduler = scheduler
+    
+    async def load_historical_samples(self, blocks: int = 7200):
+        """Load recent sample history to initialize counters after restart.
+        
+        This ensures the 1h/24h counters are accurate even after restart.
+        Called once during scheduler startup.
+        
+        Args:
+            blocks: Number of recent blocks to load (default: 7200 ≈ 1 day)
+        """
+        if self._initialized:
+            logger.warning("[Monitor] Already initialized, skipping historical load")
+            return
+        
+        try:
+            from affine.storage import dataset
+            
+            logger.info(f"[Monitor] Loading last {blocks} blocks to initialize sample counters")
+            
+            now = time.time()
+            one_hour_ago = now - 3600
+            one_day_ago = now - 86400
+            
+            count_1h = 0
+            count_24h = 0
+            total_count = 0
+            
+            async for result in dataset(tail=blocks, compact=True):
+                total_count += 1
+                uid = result.miner.uid
+                env = result.env
+                timestamp = result.timestamp
+                
+                # Add to history deques
+                if timestamp >= one_hour_ago:
+                    self.sample_history[uid].append({
+                        'time': timestamp,
+                        'env': env,
+                    })
+                    count_1h += 1
+                elif timestamp >= one_day_ago:
+                    self.sample_history[uid].append({
+                        'time': timestamp,
+                        'env': env,
+                    })
+                    count_24h += 1
+            
+            self._initialized = True
+            logger.info(
+                f"[Monitor] Loaded {total_count} samples: "
+                f"{count_1h} in last 1h, {count_24h} in last 24h"
+            )
+        
+        except Exception as e:
+            logger.error(f"[Monitor] Failed to load historical samples: {e}")
+            # Continue anyway, monitor will just start from 0
+            self._initialized = True
     
     def record_sample(self, uid: int, env_name: str):
         """Record a sample event"""

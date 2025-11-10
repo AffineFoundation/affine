@@ -6,7 +6,7 @@ import bittensor as bt
 from affine.models import Miner, Result
 from affine.tasks import BaseSDKEnv
 from affine.miners import miners as get_miners
-from affine.storage import sink
+from affine.storage import sink, load_summary
 from affine.utils.subtensor import get_subtensor
 from affine.setup import NETUID, logger
 from affine.scheduler.config import SamplingConfig
@@ -37,7 +37,6 @@ class SamplingScheduler:
         
         self.samplers: Dict[int, MinerSampler] = {}
         self.sampler_tasks: Dict[int, asyncio.Task] = {}
-        self.sample_counters: Dict[int, int] = {}
         
         self.evaluation_workers: List[asyncio.Task] = []
         self.upload_worker = None
@@ -59,17 +58,9 @@ class SamplingScheduler:
         """Start all scheduler components"""
         logger.info(f"[Scheduler] Starting with {len(envs)} environments")
         
-        # Load historical data for initialization
-        from affine.scheduler.initializer import SchedulerInitializer
-        subtensor = await get_subtensor()
-        current_block = await subtensor.get_current_block()
-        
-        initializer = SchedulerInitializer()
-        init_data = await initializer.load_init_data(current_block)
-        logger.info(f"[Scheduler] Loaded initialization data for {len(init_data)} miners")
-        
-        # Store init data for later use in miner refresh
-        self._init_data = init_data
+        # Initialize monitor with historical data (if monitoring enabled)
+        if self.scheduler_monitor:
+            await self.scheduler_monitor.load_historical_samples(blocks=7200)
         
         # Start evaluation workers
         for i in range(self.config.num_evaluation_workers):
@@ -140,11 +131,6 @@ class SamplingScheduler:
     async def _start_sampler(self, uid: int, miner: Miner, envs: List[BaseSDKEnv]):
         """Start sampler for a single miner"""
         sampler = MinerSampler(uid, miner, envs, self.config, monitor=self.scheduler_monitor)
-        
-        # Initialize from historical data if available
-        if hasattr(self, '_init_data') and uid in self._init_data:
-            sampler.init_from_data(self._init_data[uid])
-        
         self.samplers[uid] = sampler
         
         task = asyncio.create_task(sampler.run(self.task_queue))
@@ -162,14 +148,55 @@ class SamplingScheduler:
         logger.info(f"[Scheduler] Stopped sampler for U{uid}")
     
     async def _adjust_sampling_rates(self):
-        """Adjust sampling rates based on 24h sample counts"""
-        for uid, sampler in self.samplers.items():
-            total_samples = self.sample_counters.get(uid, 0)
+        """Adjust sampling rates by loading Summary data (50k blocks).
+        
+        This method loads the latest Summary file and checks total sample counts
+        for each miner. If a miner has less than the threshold (default 200),
+        it gets accelerated sampling (3x multiplier).
+        
+        Called every 30 minutes to dynamically adjust rates based on actual performance.
+        """
+        try:
+            # Load latest Summary (covers ~50k blocks)
+            summary = await load_summary()
+            miners_data = summary.get('data', {}).get('miners', {})
             
-            if total_samples < self.config.low_sample_threshold:
-                sampler.rate_multiplier = self.config.low_sample_multiplier
-            else:
-                sampler.rate_multiplier = 1.0
+            # Calculate total samples per UID
+            uid_to_total: Dict[int, int] = {}
+            for hotkey, miner_info in miners_data.items():
+                uid = miner_info.get('uid')
+                if uid is None:
+                    continue
+                
+                # Sum all environment counts
+                environments = miner_info.get('environments', {})
+                total_count = sum(
+                    env_data.get('count', 0)
+                    for env_data in environments.values()
+                )
+                uid_to_total[uid] = total_count
+            
+            # Adjust rate multiplier for each active sampler
+            adjusted_count = 0
+            accelerated_count = 0
+            for uid, sampler in self.samplers.items():
+                total_samples = uid_to_total.get(uid, 0)
+                
+                if total_samples < self.config.low_sample_threshold:
+                    sampler.rate_multiplier = self.config.low_sample_multiplier
+                    accelerated_count += 1
+                else:
+                    sampler.rate_multiplier = 1.0
+                adjusted_count += 1
+            
+            logger.info(
+                f"[Scheduler] Adjusted sampling rates: {adjusted_count} miners, "
+                f"{accelerated_count} accelerated ({self.config.low_sample_multiplier}x)"
+            )
+        
+        except Exception as e:
+            logger.error(f"[Scheduler] Failed to adjust sampling rates: {e}")
+            traceback.print_exc()
     
     async def _batch_flusher_loop(self):
         """Periodically flush incomplete batches"""
@@ -214,11 +241,6 @@ class SamplingScheduler:
                     result = await self.result_queue.get()
                     batch.append(result)
                     batch_start_time = time.monotonic()
-                    
-                    # Update sample counter
-                    if result.miner and result.miner.uid:
-                        self.sample_counters[result.miner.uid] = \
-                            self.sample_counters.get(result.miner.uid, 0) + 1
                 else:
                     try:
                         result = await asyncio.wait_for(
@@ -226,10 +248,6 @@ class SamplingScheduler:
                             timeout=5.0
                         )
                         batch.append(result)
-                        
-                        if result.miner and result.miner.uid:
-                            self.sample_counters[result.miner.uid] = \
-                                self.sample_counters.get(result.miner.uid, 0) + 1
                     except asyncio.TimeoutError:
                         pass
                 

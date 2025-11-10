@@ -103,14 +103,12 @@ def create_monitor_app(scheduler_monitor) -> FastAPI:
     @app.get("/status/miners")
     async def get_miners_status(
         status_filter: Optional[str] = None,
-        min_samples_1h: Optional[int] = None,
         has_errors: Optional[bool] = None,
     ):
         """Get per-miner statistics with optional filters
         
         Args:
             status_filter: Filter by status ("active", "paused")
-            min_samples_1h: Filter miners with at least N samples in last hour
             has_errors: Filter miners with errors (true) or without (false)
         
         Returns:
@@ -123,9 +121,6 @@ def create_monitor_app(scheduler_monitor) -> FastAPI:
             # Apply filters
             if status_filter:
                 miners = [m for m in miners if m.status == status_filter]
-            
-            if min_samples_1h is not None:
-                miners = [m for m in miners if m.total_samples_1h >= min_samples_1h]
             
             if has_errors is not None:
                 if has_errors:
@@ -147,6 +142,7 @@ def create_monitor_app(scheduler_monitor) -> FastAPI:
                         "effective_daily_rate": m.effective_daily_rate,
                         "samples_1h": m.samples_1h,
                         "total_samples_1h": m.total_samples_1h,
+                        "samples_24h": m.samples_24h,
                         "total_samples_24h": m.total_samples_24h,
                         "consecutive_errors": m.consecutive_errors,
                         "last_error": m.last_error,
