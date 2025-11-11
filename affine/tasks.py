@@ -86,7 +86,7 @@ class BaseSDKEnv(ABC):
     _sandbox_config: SandboxConfig = None
     _evaluator_config: EvaluatorConfig = None
     DEFAULT_REPLICAS: int = 1
-    DEFAULT_DAILY_RATE: int = 100  # Default daily sampling rate per environment
+    DEFAULT_DAILY_RATE: int = int(os.getenv("DEFAULT_DAILY_RATE", "100"))  # Default daily sampling rate per environment
 
     def __init__(self):
         super().__init__()
@@ -470,7 +470,6 @@ def register_env(env_type: EnvType, env_name: str):
 class SAT(AffineSDKEnv):
     """SAT environment for SDK"""
     DEFAULT_REPLICAS = 1
-    DEFAULT_DAILY_RATE = 200  # 200 samples per day per miner
 
     @property
     def env_name(self) -> str:
@@ -481,7 +480,6 @@ class SAT(AffineSDKEnv):
 class ABD(AffineSDKEnv):
     """ABD environment for SDK"""
     DEFAULT_REPLICAS = 1
-    DEFAULT_DAILY_RATE = 200  # 200 samples per day per miner
 
     @property
     def env_name(self) -> str:
@@ -492,7 +490,6 @@ class ABD(AffineSDKEnv):
 class DED(AffineSDKEnv):
     """DED environment for SDK"""
     DEFAULT_REPLICAS = 1
-    DEFAULT_DAILY_RATE = 200  # 200 samples per day per miner
 
     @property
     def env_name(self) -> str:
@@ -505,7 +502,6 @@ class ALFWORLD(AgentGymSDKEnv):
     """ALFWORLD environment for SDK"""
     DEFAULT_DATA_LEN = 2500
     DEFAULT_REPLICAS = 1
-    DEFAULT_DAILY_RATE = 200  # 200 samples per day per miner
 
     @property
     def env_name(self) -> str:
@@ -517,7 +513,6 @@ class WEBSHOP(AgentGymSDKEnv):
     """WEBSHOP environment for SDK"""
     DEFAULT_MAX_ROUND = 10
     DEFAULT_REPLICAS = 1
-    DEFAULT_DAILY_RATE = 200  # 200 samples per day per miner
 
     @property
     def env_name(self) -> str:
@@ -529,7 +524,6 @@ class BABYAI(AgentGymSDKEnv):
     """BABYAI environment for SDK"""
     DEFAULT_DATA_LEN = 4000
     DEFAULT_REPLICAS = 1
-    DEFAULT_DAILY_RATE = 200  # 200 samples per day per miner
 
     @property
     def env_name(self) -> str:
@@ -541,7 +535,6 @@ class SCIWORLD(AgentGymSDKEnv):
     """SCIWORLD environment for SDK"""
     DEFAULT_DATA_LEN = 4639
     DEFAULT_REPLICAS = 1
-    DEFAULT_DAILY_RATE = 200  # 200 samples per day per miner
 
     @property
     def env_name(self) -> str:
@@ -553,7 +546,6 @@ class TEXTCRAFT(AgentGymSDKEnv):
     """TEXTCRAFT environment for SDK"""
     DEFAULT_DATA_LEN = 582
     DEFAULT_REPLICAS = 1
-    DEFAULT_DAILY_RATE = 200  # 200 samples per day per miner
 
     @property
     def env_name(self) -> str:

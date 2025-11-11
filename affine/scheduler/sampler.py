@@ -75,12 +75,19 @@ class MinerSampler:
     
     def _should_sample(self, env: BaseSDKEnv) -> bool:
         """Check if should sample this env based on its configured rate"""
-        # Use environment-specific daily rate
         env_daily_rate = env.daily_rate
         interval = 86400 / (env_daily_rate * self.rate_multiplier)
-        last_time = self.last_sample_time.get(env.env_name, 0)
-        return (time.time() - last_time) >= interval
-    
+
+        current_time = time.time()
+        last_time = self.last_sample_time.get(env.env_name)
+
+        if last_time is None:
+            random_offset = random.uniform(0, interval)
+            self.last_sample_time[env.env_name] = current_time - random_offset
+            last_time = self.last_sample_time[env.env_name]
+
+        return (current_time - last_time) >= interval
+
     def _create_task(self, env: BaseSDKEnv) -> Task:
         """Create sampling task for env"""
         return Task(
