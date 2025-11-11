@@ -42,6 +42,13 @@ class SamplingScheduler:
         
         self.metrics = SchedulerMetrics()
         
+        # Rate tracking for monitor loop
+        self.last_monitor_time: Optional[float] = None
+        self.last_total_enqueued: int = 0
+        self.last_total_dequeued: int = 0
+        self.last_env_enqueued: Dict[str, int] = {}
+        self.last_env_dequeued: Dict[str, int] = {}
+        
         # Initialize monitoring
         self.scheduler_monitor: Optional[SchedulerMonitor] = None
         if enable_monitoring:
@@ -157,6 +164,53 @@ class SamplingScheduler:
             del self.samplers[uid]
         logger.info(f"[Scheduler] Stopped sampler for U{uid}")
     
+    def _calculate_deltas(self, current_time: float) -> tuple[Dict[str, int], Dict[str, int], int, int, float]:
+        """Calculate enqueue/dequeue deltas since last check.
+        
+        Args:
+            current_time: Current timestamp
+            
+        Returns:
+            Tuple of (env_enqueue_deltas, env_dequeue_deltas, total_enqueue_delta, total_dequeue_delta, elapsed_seconds)
+        """
+        env_enqueue_deltas = {}
+        env_dequeue_deltas = {}
+        
+        if self.last_monitor_time is None:
+            return env_enqueue_deltas, env_dequeue_deltas, 0, 0, 0.0
+        
+        elapsed_seconds = current_time - self.last_monitor_time
+        if elapsed_seconds <= 0:
+            return env_enqueue_deltas, env_dequeue_deltas, 0, 0, 0.0
+        
+        # Calculate deltas
+        total_enqueue_delta = 0
+        total_dequeue_delta = 0
+        
+        for name, q in self.env_queues.items():
+            env_enqueue = q.total_enqueued - self.last_env_enqueued.get(name, 0)
+            env_dequeue = q.total_dequeued - self.last_env_dequeued.get(name, 0)
+            
+            env_enqueue_deltas[name] = env_enqueue
+            env_dequeue_deltas[name] = env_dequeue
+            
+            total_enqueue_delta += env_enqueue
+            total_dequeue_delta += env_dequeue
+        
+        return env_enqueue_deltas, env_dequeue_deltas, total_enqueue_delta, total_dequeue_delta, elapsed_seconds
+    
+    def _update_rate_tracking(self, current_time: float):
+        """Update tracking variables for delta calculation.
+        
+        Args:
+            current_time: Current timestamp
+        """
+        self.last_monitor_time = current_time
+        
+        for name, q in self.env_queues.items():
+            self.last_env_enqueued[name] = q.total_enqueued
+            self.last_env_dequeued[name] = q.total_dequeued
+    
     async def _adjust_sampling_rates(self):
         """Adjust sampling rates by loading Summary data (50k blocks).
         
@@ -227,22 +281,45 @@ class SamplingScheduler:
             try:
                 await asyncio.sleep(30)
                 
+                current_time = time.time()
+                
                 # Aggregate queue stats across all environments
                 total_queue_size = sum(q.qsize() for q in self.env_queues.values())
                 total_enqueued = sum(q.total_enqueued for q in self.env_queues.values())
                 total_dequeued = sum(q.total_dequeued for q in self.env_queues.values())
                 result_queue_size = self.result_queue.qsize()
                 
-                # Per-environment breakdown
+                # Initialize tracking on first run
+                if self.last_monitor_time is None:
+                    self._update_rate_tracking(current_time)
+                    logger.info(
+                        f"[STATUS] samplers={self.metrics.active_miners} "
+                        f"(paused={self.metrics.paused_miners}) "
+                        f"total_queue={total_queue_size} "
+                        f"result_queue={result_queue_size} "
+                        f"enqueued={total_enqueued} dequeued={total_dequeued} "
+                        f"(tracking initialized)"
+                    )
+                    continue
+                
+                # Calculate deltas using helper method
+                env_enqueue_deltas, env_dequeue_deltas, total_enqueue_delta, total_dequeue_delta, elapsed_seconds = \
+                    self._calculate_deltas(current_time)
+                
+                # Update tracking for next iteration
+                self._update_rate_tracking(current_time)
+                
+                # Format per-environment breakdown: queue_size (↓input_delta ↑output_delta)
                 env_stats = " ".join([
-                    f"{name}={q.qsize()}"
+                    f"{name}={q.qsize()}(↓{env_enqueue_deltas.get(name, 0)} ↑{env_dequeue_deltas.get(name, 0)})"
                     for name, q in self.env_queues.items()
                 ])
                 
                 logger.info(
                     f"[STATUS] samplers={self.metrics.active_miners} "
                     f"(paused={self.metrics.paused_miners}) "
-                    f"total_queue={total_queue_size} ({env_stats}) "
+                    f"total_queue={total_queue_size}(↓{total_enqueue_delta} ↑{total_dequeue_delta} in {elapsed_seconds:.0f}s) "
+                    f"({env_stats}) "
                     f"result_queue={result_queue_size} "
                     f"enqueued={total_enqueued} dequeued={total_dequeued}"
                 )

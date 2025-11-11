@@ -99,14 +99,24 @@ class MinerSampler:
         return self.miner.slug is not None
     
     def _next_check_interval(self) -> float:
-        """Calculate next check interval based on fastest environment"""
+        """Calculate next check interval based on fastest environment
+        
+        Returns the interval at which to check if any environment needs sampling.
+        This should be significantly shorter than the fastest sampling interval
+        to ensure timely sampling, but not so short as to waste CPU.
+        """
         if not self.envs:
             return 60.0
         
-        # Use the highest daily rate among all environments to determine check frequency
+        # Find the minimum sampling interval across all environments
+        # (highest daily rate = shortest interval)
         max_daily_rate = max(env.daily_rate for env in self.envs)
-        base_interval = 86400 / (max_daily_rate * self.rate_multiplier * len(self.envs))
-        return max(1.0, min(base_interval / 2, 60.0))
+        min_sampling_interval = 86400 / (max_daily_rate * self.rate_multiplier)
+        
+        # Check at half the minimum interval to ensure timely sampling
+        # But cap at reasonable bounds: min 1s, max 60s
+        check_interval = min_sampling_interval / 2
+        return max(1.0, min(check_interval, 60.0))
     
     def handle_error(self, error: str):
         """Handle task execution error
