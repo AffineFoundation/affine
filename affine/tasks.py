@@ -86,7 +86,7 @@ class BaseSDKEnv(ABC):
     _sandbox_config: SandboxConfig = None
     _evaluator_config: EvaluatorConfig = None
     DEFAULT_REPLICAS: int = 1
-    DEFAULT_DAILY_RATE: int = 200  # Default daily sampling rate per environment
+    DEFAULT_DAILY_RATE: int = 100  # Default daily sampling rate per environment
 
     def __init__(self):
         super().__init__()

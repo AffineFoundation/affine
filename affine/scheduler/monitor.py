@@ -83,7 +83,6 @@ class WorkerStats:
     
     # Throughput
     tasks_per_minute: float = 0.0
-    avg_task_duration: float = 0.0
     
     # Utilization (0-1)
     utilization: float = 0.0
@@ -104,6 +103,10 @@ class EvaluationSummary:
     samples_by_env_1h: Dict[str, int] = field(default_factory=dict)
     samples_by_env_24h: Dict[str, int] = field(default_factory=dict)
     
+    # Per-environment averages
+    avg_samples_per_env_1h: Dict[str, float] = field(default_factory=dict)
+    avg_samples_per_env_24h: Dict[str, float] = field(default_factory=dict)
+    
     # Miner participation
     total_participating_miners: int = 0
     active_sampling_miners: int = 0
@@ -113,7 +116,6 @@ class EvaluationSummary:
     miners_with_errors: int = 0
     
     # Throughput metrics
-    avg_task_completion_time: float = 0.0
     current_throughput_per_minute: float = 0.0
 
 
@@ -160,9 +162,6 @@ class SchedulerMonitor:
         self.dequeue_history = deque(maxlen=60)
         self.last_enqueue_count = 0
         self.last_dequeue_count = 0
-        
-        # Worker tracking
-        self.task_completion_times = deque(maxlen=100)
         
         # Initialization flag
         self._initialized = False
@@ -243,10 +242,6 @@ class SchedulerMonitor:
             'time': now,
             'error': error,
         })
-    
-    def record_task_completion(self, duration: float):
-        """Record task completion time"""
-        self.task_completion_times.append(duration)
     
     def _get_miner_stats(self, uid: int) -> MinerSamplingStats:
         """Get statistics for a single miner"""
@@ -408,32 +403,24 @@ class SchedulerMonitor:
         
         total_workers = len(self.scheduler.evaluation_workers)
         
-        # Calculate average task duration
-        avg_duration = 0.0
-        if self.task_completion_times:
-            avg_duration = sum(self.task_completion_times) / len(self.task_completion_times)
-        
         # Calculate throughput (tasks per minute)
         tasks_per_minute = 0.0
         if self.dequeue_history:
             recent_dequeued = sum(d['count'] for d in list(self.dequeue_history)[-10:])
             tasks_per_minute = recent_dequeued * 6  # Last 10 seconds × 6 = per minute
         
-        # Estimate active workers based on throughput and task duration
-        active_workers = min(
-            int(tasks_per_minute * avg_duration / 60) if avg_duration > 0 else 0,
-            total_workers
-        )
+        # Estimate active workers (assume 50% utilization as baseline)
+        # This is a rough estimate since we don't track individual worker states
+        active_workers = max(1, total_workers // 2) if tasks_per_minute > 0 else 0
         
-        # Calculate utilization
-        utilization = active_workers / total_workers if total_workers > 0 else 0.0
+        # Calculate utilization based on queue depth
+        utilization = min(1.0, tasks_per_minute / (total_workers * 2)) if total_workers > 0 else 0.0
         
         return WorkerStats(
             total_workers=total_workers,
             active_workers=active_workers,
             idle_workers=total_workers - active_workers,
             tasks_per_minute=tasks_per_minute,
-            avg_task_duration=avg_duration,
             utilization=utilization,
         )
     
@@ -505,6 +492,24 @@ class SchedulerMonitor:
         for env_name, count in queue_stats.env_breakdown.items():
             env_stats[env_name]['queue_size'] = count
         
+        # Calculate per-environment averages
+        avg_samples_per_env_1h = {}
+        avg_samples_per_env_24h = {}
+        
+        # Count participating miners per environment for averaging
+        env_miner_counts = defaultdict(int)
+        for miner in miner_stats:
+            for env_name in miner.samples_1h.keys():
+                env_miner_counts[env_name] += 1
+        
+        for env_name, total_count in samples_by_env_1h.items():
+            miner_count = env_miner_counts.get(env_name, 0)
+            avg_samples_per_env_1h[env_name] = total_count / miner_count if miner_count > 0 else 0.0
+        
+        for env_name, total_count in samples_by_env_24h.items():
+            miner_count = env_miner_counts.get(env_name, 0)
+            avg_samples_per_env_24h[env_name] = total_count / miner_count if miner_count > 0 else 0.0
+        
         # Build evaluation summary
         evaluation_summary = EvaluationSummary(
             total_samples_1h=total_samples_1h,
@@ -513,11 +518,12 @@ class SchedulerMonitor:
             projected_daily_samples=total_samples_1h * 24,
             samples_by_env_1h=dict(samples_by_env_1h),
             samples_by_env_24h=dict(samples_by_env_24h),
+            avg_samples_per_env_1h=avg_samples_per_env_1h,
+            avg_samples_per_env_24h=avg_samples_per_env_24h,
             total_participating_miners=len(miner_stats),
             active_sampling_miners=active_sampling_miners,
             total_errors_1h=total_errors_1h,
             miners_with_errors=miners_with_errors,
-            avg_task_completion_time=worker_stats.avg_task_duration,
             current_throughput_per_minute=worker_stats.tasks_per_minute,
         )
         

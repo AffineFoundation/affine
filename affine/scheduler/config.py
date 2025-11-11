@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass, field
+from affine.sampling import SamplingConfig as GlobalSamplingConfig
 
 
 @dataclass
@@ -45,10 +46,10 @@ class SamplingConfig:
     )
     """Maximum wait time (seconds) before uploading incomplete result batches"""
     
-    low_sample_threshold: int = field(
-        default_factory=lambda: int(os.getenv("AFFINE_LOW_SAMPLE_THRESHOLD", "200"))
-    )
-    """Sample count threshold below which miners get accelerated sampling"""
+    @property
+    def low_sample_threshold(self) -> int:
+        """Sample count threshold below which miners get accelerated sampling (references MIN_SAMPLES_PER_ENV)"""
+        return GlobalSamplingConfig.MIN_SAMPLES_PER_ENV
     
     low_sample_multiplier: float = field(
         default_factory=lambda: float(os.getenv("AFFINE_LOW_SAMPLE_MULTIPLIER", "3.0"))

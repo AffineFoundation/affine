@@ -26,13 +26,13 @@ CHUTES_SERVICE_ERROR_PATTERNS = [
     "maximum capacity",          # Chutes reached max capacity
     "try again later",           # Service busy, retry suggested
     "zero balance",              # Chute creator has zero balance
+    "HTTP 400",                  # Bad request (model capability issue)
+    "400 Bad Request",           # Bad request (model capability issue)
 ]
 
 # Model capability errors that should be recorded as valid results
 # These indicate the model failed the task, which is valid evaluation data
 MODEL_ERROR_PATTERNS = [
-    "HTTP 400",                  # Bad request (model capability issue)
-    "400 Bad Request",           # Bad request (model capability issue)
 ]
 
 

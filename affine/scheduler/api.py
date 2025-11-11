@@ -149,7 +149,6 @@ def create_monitor_app(scheduler_monitor) -> FastAPI:
                     "active_sampling_miners": status.evaluation_summary.active_sampling_miners,
                     "total_errors_1h": status.evaluation_summary.total_errors_1h,
                     "miners_with_errors": status.evaluation_summary.miners_with_errors,
-                    "avg_task_completion_time": status.evaluation_summary.avg_task_completion_time,
                     "current_throughput_per_minute": status.evaluation_summary.current_throughput_per_minute,
                 },
                 "total": len(miners),
@@ -261,7 +260,6 @@ def create_monitor_app(scheduler_monitor) -> FastAPI:
                 "idle_workers": workers.idle_workers,
                 "utilization": workers.utilization,
                 "tasks_per_minute": workers.tasks_per_minute,
-                "avg_task_duration": workers.avg_task_duration,
                 "efficiency": {
                     "is_saturated": workers.utilization > 0.9,
                     "has_capacity": workers.utilization < 0.7,
