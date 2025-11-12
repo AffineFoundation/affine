@@ -109,17 +109,19 @@ Choose appropriate sampling rates based on environment characteristics:
 - High compute resource consumption
 - Example: ALFWORLD, SCIWORLD
 
-### Dynamic Rate Multiplier
+### Dynamic Rate Multiplier (Per-Environment)
 
-Regardless of the environment's base sampling rate, when a miner's 24-hour total sample count is below the threshold, rate multiplication is triggered:
+The system monitors sample counts **per environment for each miner** independently. When a specific environment's 24-hour sample count is below the threshold, only that environment gets accelerated:
 
-- **Trigger Condition**: 24h total samples < `LOW_SAMPLE_THRESHOLD` (default 200)
+- **Trigger Condition**: Environment 24h samples < `LOW_SAMPLE_THRESHOLD` (default 200)
 - **Multiplier**: `LOW_SAMPLE_MULTIPLIER` (default 3)
-- **Formula**: `Actual Rate = DEFAULT_DAILY_RATE × Multiplier`
+- **Formula**: `Actual Rate = DEFAULT_DAILY_RATE × Multiplier` (applied per environment)
+- **Granularity**: Each miner-environment combination is evaluated independently
 
 Examples:
-- BABYAI base rate 120/day → 360/day after acceleration
-- SCIWORLD base rate 80/day → 240/day after acceleration
+- Miner A has BABYAI with 150 samples → BABYAI accelerated to 360/day (120×3)
+- Miner A has SCIWORLD with 250 samples → SCIWORLD stays at 80/day (1×)
+- Different miners can have different environments accelerated based on their individual performance
 
 ## Core Features
 
@@ -130,11 +132,12 @@ Each miner runs an independent sampling coroutine:
 - Maximize concurrency utilization
 - Avoid batch synchronization waits
 
-### 2. Dynamic Rate Adjustment
+### 2. Dynamic Rate Adjustment (Per-Environment)
 
-Automatically adjust based on 24-hour sample count:
-- Total samples < 200: sampling rate × 3
-- Total samples ≥ 200: normal sampling rate
+Automatically adjust based on each environment's 24-hour sample count:
+- Environment samples < 200: that environment's sampling rate × 3
+- Environment samples ≥ 200: that environment's normal sampling rate
+- Each miner-environment combination is independently monitored and adjusted
 
 ### 3. Backpressure Control
 

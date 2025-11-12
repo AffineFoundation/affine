@@ -28,7 +28,8 @@ class MinerSampler:
         self.config = config
         self.monitor = monitor
         
-        self.rate_multiplier = 1.0
+        # Per-environment rate multipliers (env_name -> multiplier)
+        self.env_rate_multipliers: Dict[str, float] = {env.env_name: 1.0 for env in envs}
         self.error_count = 0
         self.pause_until = 0
         self.consecutive_chutes_errors = 0
@@ -76,7 +77,9 @@ class MinerSampler:
     def _should_sample(self, env: BaseSDKEnv) -> bool:
         """Check if should sample this env based on its configured rate"""
         env_daily_rate = env.daily_rate
-        interval = 86400 / (env_daily_rate * self.rate_multiplier)
+        # Use per-environment multiplier
+        multiplier = self.env_rate_multipliers.get(env.env_name, 1.0)
+        interval = 86400 / (env_daily_rate * multiplier)
 
         current_time = time.time()
         last_time = self.last_sample_time.get(env.env_name)
@@ -116,13 +119,16 @@ class MinerSampler:
             return 60.0
         
         # Find the minimum sampling interval across all environments
-        # (highest daily rate = shortest interval)
-        max_daily_rate = max(env.daily_rate for env in self.envs)
-        min_sampling_interval = 86400 / (max_daily_rate * self.rate_multiplier)
+        # (highest daily rate with multiplier = shortest interval)
+        min_interval = float('inf')
+        for env in self.envs:
+            multiplier = self.env_rate_multipliers.get(env.env_name, 1.0)
+            interval = 86400 / (env.daily_rate * multiplier)
+            min_interval = min(min_interval, interval)
         
         # Check at half the minimum interval to ensure timely sampling
         # But cap at reasonable bounds: min 1s, max 60s
-        check_interval = min_sampling_interval / 2
+        check_interval = min_interval / 2
         return max(1.0, min(check_interval, 60.0))
     
     def handle_error(self, error: str):

@@ -214,9 +214,10 @@ class SamplingScheduler:
     async def _adjust_sampling_rates(self):
         """Adjust sampling rates by loading Summary data (50k blocks).
         
-        This method loads the latest Summary file and checks total sample counts
-        for each miner. If a miner has less than the threshold (default 200),
-        it gets accelerated sampling (3x multiplier).
+        This method loads the latest Summary file and checks sample counts
+        for each miner's environment. If a miner's specific environment has less
+        than the threshold (default 200), that environment gets accelerated
+        sampling (3x multiplier).
         
         Called every 30 minutes to dynamically adjust rates based on actual performance.
         """
@@ -225,37 +226,50 @@ class SamplingScheduler:
             summary = await load_summary()
             miners_data = summary.get('data', {}).get('miners', {})
             
-            # Calculate total samples per UID
-            uid_to_total: Dict[int, int] = {}
+            # Build per-UID per-environment sample counts
+            uid_env_counts: Dict[int, Dict[str, int]] = {}
             for hotkey, miner_info in miners_data.items():
                 uid = miner_info.get('uid')
                 if uid is None:
                     continue
                 
-                # Sum all environment counts
                 environments = miner_info.get('environments', {})
-                total_count = sum(
-                    env_data.get('count', 0)
-                    for env_data in environments.values()
-                )
-                uid_to_total[uid] = total_count
+                uid_env_counts[uid] = {
+                    env_name: env_data.get('count', 0)
+                    for env_name, env_data in environments.items()
+                }
             
-            # Adjust rate multiplier for each active sampler
-            adjusted_count = 0
-            accelerated_count = 0
+            # Adjust rate multiplier per environment for each active sampler
+            adjusted_miners = 0
+            total_accelerated_envs = 0
+            
             for uid, sampler in self.samplers.items():
-                total_samples = uid_to_total.get(uid, 0)
+                env_counts = uid_env_counts.get(uid, {})
+                accelerated_envs = []
                 
-                if total_samples < self.config.low_sample_threshold:
-                    sampler.rate_multiplier = self.config.low_sample_multiplier
-                    accelerated_count += 1
-                else:
-                    sampler.rate_multiplier = 1.0
-                adjusted_count += 1
+                # Check each environment independently
+                for env in sampler.envs:
+                    env_name = env.env_name
+                    sample_count = env_counts.get(env_name, 0)
+                    
+                    if sample_count < self.config.low_sample_threshold:
+                        sampler.env_rate_multipliers[env_name] = self.config.low_sample_multiplier
+                        accelerated_envs.append(env_name)
+                    else:
+                        sampler.env_rate_multipliers[env_name] = 1.0
+                
+                if accelerated_envs:
+                    total_accelerated_envs += len(accelerated_envs)
+                    logger.debug(
+                        f"[Scheduler] U{uid} accelerated envs: {', '.join(accelerated_envs)} "
+                        f"({self.config.low_sample_multiplier}x)"
+                    )
+                
+                adjusted_miners += 1
             
             logger.info(
-                f"[Scheduler] Adjusted sampling rates: {adjusted_count} miners, "
-                f"{accelerated_count} accelerated ({self.config.low_sample_multiplier}x)"
+                f"[Scheduler] Adjusted sampling rates: {adjusted_miners} miners, "
+                f"{total_accelerated_envs} environment instances accelerated ({self.config.low_sample_multiplier}x)"
             )
         
         except Exception as e:
