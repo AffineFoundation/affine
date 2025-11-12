@@ -305,21 +305,27 @@ async def miners(
                 )
 
             async with meta_sem:
-                chute = await get_chute(chute_id)
+                if os.getenv("AFFINE_USE_LIUM") == "1":
+                    chute = {"name": model, "slug": "lium-local", "revision": miner_revision}
+                else:
+                    chute = await get_chute(chute_id)
 
             if not chute:
                 return None
 
             chute_name = chute.get("name")
-            if model != chute_name:
-                return None
+            if os.getenv("AFFINE_USE_LIUM") != "1":
+                if model != chute_name:
+                    return None
 
-            if uid != 0 and chute_name.split("/")[1].lower()[:6] != "affine":
-                return None
+            if os.getenv("AFFINE_USE_LIUM") != "1":
+                if uid != 0 and chute_name.split("/")[1].lower()[:6] != "affine":
+                    return None
 
             chute_revision = chute.get("revision")
-            if chute_revision is not None and miner_revision != chute_revision:
-                return None
+            if os.getenv("AFFINE_USE_LIUM") != "1":
+                if chute_revision is not None and miner_revision != chute_revision:
+                    return None
 
             return Miner(
                 uid=uid,
