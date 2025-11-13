@@ -20,7 +20,7 @@ class SamplingConfig:
     
     # Challenge algorithm parameters
     # Confidence level for Beta distribution interval (can be adjusted easily)
-    CONFIDENCE_LEVEL = 0.80  # confidence level
+    CONFIDENCE_LEVEL = 0.9  # confidence level
 
     # Beta distribution prior parameters (Jeffrey's prior for binomial proportion)
     BETA_PRIOR_ALPHA = 0.5
@@ -243,11 +243,26 @@ class MinerSampler:
         Returns:
             True if A Pareto-dominates B on this subset
 
-        Pareto Dominance:
-        - A must be >= B on ALL environments (no environment where B wins)
-        - A must be > B on AT LEAST ONE environment (at least one where A wins)
+        Pareto Dominance (with half-environment threshold):
+        - Determine who submitted first (old model) vs later (new model)
+        - New model must win on MORE THAN HALF of the total environments to dominate old model
+        - Old model can dominate new model using standard Pareto rules (no loss + at least one win)
+        - If both submitted at same time, use standard Pareto dominance
         """
-        at_least_one_strict_win = False
+        # Determine submission order based on first_block across all environments in subset
+        first_block_a = float('inf')
+        first_block_b = float('inf')
+
+        for e in subset:
+            stats_a = stats.get(a, {}).get(e, {'samples': 0, 'total_score': 0.0, 'first_block': float('inf')})
+            stats_b = stats.get(b, {}).get(e, {'samples': 0, 'total_score': 0.0, 'first_block': float('inf')})
+            first_block_a = min(first_block_a, stats_a.get('first_block', float('inf')))
+            first_block_b = min(first_block_b, stats_b.get('first_block', float('inf')))
+
+        # Count wins for each miner
+        a_wins = 0
+        b_wins = 0
+        ties = 0
 
         for e in subset:
             stats_a = stats.get(a, {}).get(e, {'samples': 0, 'total_score': 0.0, 'first_block': float('inf')})
@@ -267,16 +282,35 @@ class MinerSampler:
                 confidence_interval_b=ci_b
             )
 
-            if winner == 'b':
-                # B wins on this environment, so A does NOT dominate B
-                return False
-            elif winner == 'a':
-                # A wins on this environment
-                at_least_one_strict_win = True
-            # winner == None is a tie (A >= B satisfied, but not strict)
+            if winner == 'a':
+                a_wins += 1
+            elif winner == 'b':
+                b_wins += 1
+            else:
+                ties += 1
 
-        # A dominates B only if: A >= B on all envs AND A > B on at least one
-        return at_least_one_strict_win
+        total_envs = len(subset)
+        half_threshold = total_envs / 2.0
+
+        # Determine who is "old" and who is "new" based on first_block
+        if first_block_a < first_block_b:
+            # A is old model, B is new model
+            # For A (old) to dominate B (new): standard Pareto (no losses + at least one win)
+            if b_wins == 0 and a_wins > 0:
+                return True
+            else:
+                return False
+        elif first_block_b < first_block_a:
+            # B is old model, A is new model
+            # For A (new) to dominate B (old): A must win MORE THAN HALF of environments
+            if a_wins > half_threshold:
+                return True
+            else:
+                return False
+        else:
+            # Same submission time (or both inf), use standard Pareto dominance
+            # A dominates B if: no environment where B wins AND at least one where A wins
+            return b_wins == 0 and a_wins > 0
     
     def calculate_comprehensive_score(
         self,
