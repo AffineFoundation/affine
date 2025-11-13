@@ -39,7 +39,12 @@ class SamplingConfig:
     chutes_error_pause_seconds: int = field(
         default_factory=lambda: int(os.getenv("AFFINE_CHUTES_ERROR_PAUSE_SECONDS", "600"))
     )
-    """Pause duration (seconds) after consecutive Chutes service errors"""
+    """Initial pause duration (seconds) after consecutive Chutes service errors"""
+    
+    max_pause_seconds: int = field(
+        default_factory=lambda: int(os.getenv("AFFINE_MAX_PAUSE_SECONDS", "86400"))
+    )
+    """Maximum pause duration (seconds) for exponential backoff (default: 24 hours)"""
     
     sink_max_wait: int = field(
         default_factory=lambda: int(os.getenv("AFFINE_SINK_MAX_WAIT", "300"))

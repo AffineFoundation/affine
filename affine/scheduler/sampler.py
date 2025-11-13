@@ -132,25 +132,52 @@ class MinerSampler:
         return max(1.0, min(check_interval, 60.0))
     
     def handle_error(self, error: str):
-        """Handle task execution error
+        """Handle task execution error with exponential backoff
         
         Uses centralized error classifier to determine if this is a service error
-        that should trigger sampling pause.
-        """
-        # Record error to monitor
-        if self.monitor:
-            self.monitor.record_error(self.uid, error)
+        that should trigger sampling pause. Implements exponential backoff:
+        - 3 errors (level 0): 10 minutes (600s)
+        - 6 errors (level 1): 20 minutes (1200s)
+        - 9 errors (level 2): 40 minutes (2400s)
+        - Max pause: 24 hours (86400s)
         
+        Pause level is calculated as: consecutive_chutes_errors // 3
+        """
         # Use centralized error classifier
         if is_service_error(error):
             self.consecutive_chutes_errors += 1
             
-            if self.consecutive_chutes_errors >= self.config.max_consecutive_errors:
-                pause_time = time.time() + self.config.chutes_error_pause_seconds
-                self.pause_until = pause_time
+            # Trigger pause every 3 errors
+            if self.consecutive_chutes_errors % self.config.max_consecutive_errors == 0:
+                # Calculate pause level and duration
+                pause_level = (self.consecutive_chutes_errors // self.config.max_consecutive_errors) - 1
+                base_pause = self.config.chutes_error_pause_seconds
+                pause_duration = min(
+                    base_pause * (2 ** pause_level),
+                    self.config.max_pause_seconds
+                )
+                
+                self.pause_until = time.time() + pause_duration
+                
                 logger.warning(
-                    f"[MinerSampler U{self.uid}] Paused for "
-                    f"{self.config.chutes_error_pause_seconds}s due to Chutes service errors"
+                    f"[MinerSampler U{self.uid}] Paused for {pause_duration}s "
+                    f"(level {pause_level}, total errors: {self.consecutive_chutes_errors}) due to Chutes service errors"
                 )
         else:
+            # Non-service error - reset counter
             self.consecutive_chutes_errors = 0
+    
+    def reset_error_state(self):
+        """Reset error counters after successful sampling
+        
+        Should be called when a sample completes successfully (not a service error).
+        This allows miners to recover from temporary service issues.
+        """
+        if self.consecutive_chutes_errors > 0:
+            pause_level = max(0, (self.consecutive_chutes_errors // self.config.max_consecutive_errors) - 1)
+            logger.info(
+                f"[MinerSampler U{self.uid}] Successful sample - resetting error state "
+                f"(had {self.consecutive_chutes_errors} errors, was at level {pause_level})"
+            )
+        self.consecutive_chutes_errors = 0
+        self.pause_until = 0

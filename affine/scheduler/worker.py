@@ -74,6 +74,11 @@ class EvaluationWorker:
                                 f"Model error (recorded): {result.error[:50]}"
                             )
                         else:
+                            # Successful sample - reset error state
+                            sampler = self.samplers.get(task.uid)
+                            if sampler:
+                                sampler.reset_error_state()
+                            
                             logger.debug(
                                 f"[RESULT] U{result.miner.uid:>3d} │ "
                                 f"{result.env:<20} │ "

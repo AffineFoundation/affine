@@ -285,7 +285,22 @@ class SchedulerMonitor:
         # Determine status
         if now < sampler.pause_until:
             status = "paused"
-            pause_reason = f"Chutes errors (until {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(sampler.pause_until))})"
+            # Calculate current pause level from consecutive errors
+            # Level = (consecutive_errors // 3) - 1 (since we're already paused)
+            pause_level = max(0, (sampler.consecutive_chutes_errors // 3) - 1) if sampler.consecutive_chutes_errors >= 3 else 0
+            
+            # Calculate remaining pause duration
+            remaining_seconds = int(sampler.pause_until - now)
+            remaining_minutes = remaining_seconds // 60
+            remaining_hours = remaining_minutes // 60
+            remaining_mins = remaining_minutes % 60
+            
+            if remaining_hours > 0:
+                duration_str = f"{remaining_hours}h{remaining_mins}m"
+            else:
+                duration_str = f"{remaining_minutes}m"
+            
+            pause_reason = f"Chutes errors (level {pause_level}, wait {duration_str}, until {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(sampler.pause_until))})"
         else:
             status = "active"
             pause_reason = None
