@@ -119,11 +119,32 @@ class SamplingScheduler:
                 meta = await subtensor.metagraph(NETUID)
                 miners_map = await get_miners(meta=meta)
                 
-                # Start new samplers
+                # Start new samplers or update existing ones if miner info changed
                 for uid, miner in miners_map.items():
                     if uid not in self.samplers:
+                        # New miner - start sampler
                         await self._start_sampler(uid, miner, envs)
-                
+                    else:
+                        # Existing miner - check if model/revision changed
+                        existing_sampler = self.samplers[uid]
+                        existing_miner = existing_sampler.miner
+                        
+                        # Check if critical miner attributes changed
+                        if (existing_miner.model != miner.model or
+                            existing_miner.revision != miner.revision or
+                            existing_miner.slug != miner.slug):
+                            
+                            logger.info(
+                                f"[Scheduler] U{uid} miner info changed: "
+                                f"model={existing_miner.model}->{miner.model}, "
+                                f"revision={existing_miner.revision}->{miner.revision}, "
+                                f"slug={existing_miner.slug}->{miner.slug} - restarting sampler"
+                            )
+                            
+                            # Stop old sampler and start new one with updated info
+                            await self._stop_sampler(uid)
+                            await self._start_sampler(uid, miner, envs)
+
                 # Stop removed samplers
                 for uid in list(self.samplers.keys()):
                     if uid not in miners_map:
@@ -134,7 +155,7 @@ class SamplingScheduler:
                 
                 self.metrics.active_miners = len(self.samplers)
                 self.metrics.paused_miners = sum(
-                    1 for s in self.samplers.values() 
+                    1 for s in self.samplers.values()
                     if time.time() < s.pause_until
                 )
             
