@@ -125,14 +125,23 @@ class SamplingScheduler:
                         # New miner - start sampler
                         await self._start_sampler(uid, miner, envs)
                     else:
-                        # Existing miner - check if model/revision changed
+                        # Existing miner - check if critical attributes changed
                         existing_sampler = self.samplers[uid]
                         existing_miner = existing_sampler.miner
                         
-                        # Check if critical miner attributes changed
-                        if (existing_miner.model != miner.model or
-                            existing_miner.revision != miner.revision or
-                            existing_miner.slug != miner.slug):
+                        # Check if hotkey changed
+                        if existing_miner.hotkey != miner.hotkey:
+                            logger.info(
+                                f"[Scheduler] U{uid} hotkey changed: "
+                                f"{existing_miner.hotkey} -> {miner.hotkey} - restarting sampler"
+                            )
+                            await self._stop_sampler(uid)
+                            await self._start_sampler(uid, miner, envs)
+                        
+                        # Check if model/revision/slug changed
+                        elif (existing_miner.model != miner.model or
+                              existing_miner.revision != miner.revision or
+                              existing_miner.slug != miner.slug):
                             
                             logger.info(
                                 f"[Scheduler] U{uid} miner info changed: "
