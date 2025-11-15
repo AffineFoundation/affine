@@ -90,7 +90,6 @@ async def init_tables():
         EXECUTION_LOGS_SCHEMA, EXECUTION_LOGS_TTL,
         SCORES_SCHEMA, SCORES_TTL,
         SYSTEM_CONFIG_SCHEMA,
-        MINER_METADATA_SCHEMA,
         DATA_RETENTION_SCHEMA,
     )
     
@@ -103,7 +102,6 @@ async def init_tables():
         create_table(EXECUTION_LOGS_SCHEMA, ttl_attribute=EXECUTION_LOGS_TTL["AttributeName"]),
         create_table(SCORES_SCHEMA, ttl_attribute=SCORES_TTL["AttributeName"]),
         create_table(SYSTEM_CONFIG_SCHEMA),
-        create_table(MINER_METADATA_SCHEMA),
         create_table(DATA_RETENTION_SCHEMA),
     )
     

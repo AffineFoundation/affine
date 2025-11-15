@@ -206,3 +206,105 @@ class ScoresDAO(BaseDAO):
                 history.append(score)
         
         return history
+    
+    async def save_weight_snapshot(
+        self,
+        block_number: int,
+        weights: Dict[str, float],
+        calculation_details: Dict[str, Any],
+        scorer_hotkey: str = "scorer_service"
+    ) -> Dict[str, Any]:
+        """Save a complete weight snapshot for all miners.
+        
+        This is a convenience method that saves weights for all miners at once.
+        
+        Args:
+            block_number: Current block number
+            weights: Dict mapping hotkey -> weight (0.0 to 1.0)
+            calculation_details: Details about the calculation (method, params, etc.)
+            scorer_hotkey: Service identifier
+            
+        Returns:
+            Summary of saved snapshot
+        """
+        import uuid
+        snapshot_id = str(uuid.uuid4())
+        created_at = int(time.time())
+        
+        # Save each miner's weight
+        saved_count = 0
+        for hotkey, weight in weights.items():
+            # Get additional info from calculation_details if available
+            miner_details = calculation_details.get('miners', {}).get(hotkey, {})
+            
+            item = {
+                'pk': self._make_pk(block_number),
+                'sk': self._make_sk(hotkey),
+                'block_number': block_number,
+                'miner_hotkey': hotkey,
+                'uid': miner_details.get('uid', -1),
+                'model_revision': miner_details.get('model_revision', ''),
+                'calculated_at': created_at,
+                'overall_score': weight,
+                'confidence_interval_lower': miner_details.get('ci_lower', weight),
+                'confidence_interval_upper': miner_details.get('ci_upper', weight),
+                'average_score': miner_details.get('average_score', weight),
+                'scores_by_layer': miner_details.get('scores_by_layer', {}),
+                'scores_by_env': miner_details.get('scores_by_env', {}),
+                'total_samples': miner_details.get('total_samples', 0),
+                'is_eligible': miner_details.get('is_eligible', True),
+                'meets_criteria': miner_details.get('meets_criteria', True),
+                'latest_marker': 'LATEST',
+                'ttl': self.get_ttl(30),
+                'snapshot_id': snapshot_id,
+            }
+            
+            await self.put(item)
+            saved_count += 1
+        
+        return {
+            'snapshot_id': snapshot_id,
+            'block_number': block_number,
+            'created_at': created_at,
+            'miners_count': saved_count,
+            'calculation_details': calculation_details
+        }
+    
+    async def get_weights_for_setting(self) -> Dict[str, Any]:
+        """Get the latest weights in a format suitable for chain setting.
+        
+        Returns:
+            Dict with:
+                - block_number: Block at which weights were calculated
+                - weights: Dict mapping hotkey -> weight
+                - uids: Dict mapping uid -> weight (for chain setting)
+        """
+        latest = await self.get_latest_scores()
+        
+        if not latest['block_number']:
+            return {
+                'block_number': None,
+                'weights': {},
+                'uids': {}
+            }
+        
+        weights_by_hotkey = {}
+        weights_by_uid = {}
+        
+        for score in latest['scores']:
+            hotkey = score.get('miner_hotkey')
+            uid = score.get('uid', -1)
+            weight = score.get('overall_score', 0.0)
+            
+            if hotkey:
+                weights_by_hotkey[hotkey] = weight
+            
+            if uid >= 0:
+                weights_by_uid[uid] = weight
+        
+        return {
+            'block_number': latest['block_number'],
+            'calculated_at': latest.get('calculated_at'),
+            'weights': weights_by_hotkey,
+            'uids': weights_by_uid
+        }
