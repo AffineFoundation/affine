@@ -35,7 +35,7 @@ class MinerMetadataDAO(BaseDAO):
         miner_hotkey: str,
         uid: int,
         current_revision: str,
-        model_hash: str,
+        model: str,
         model_name: str,
         chutes_slug: Optional[str] = None,
         chutes_status: str = "unknown",
@@ -48,7 +48,7 @@ class MinerMetadataDAO(BaseDAO):
             miner_hotkey: Miner's hotkey
             uid: Miner UID
             current_revision: Current model revision
-            model_hash: Current model hash
+            model: Current model repo/name
             model_name: Model name
             chutes_slug: Chutes slug if available
             chutes_status: Chutes status (hot/cold/unknown)
@@ -69,7 +69,7 @@ class MinerMetadataDAO(BaseDAO):
             'miner_hotkey': miner_hotkey,
             'uid': uid,
             'current_revision': current_revision,
-            'model_hash': model_hash,
+            'model': model,
             'model_name': model_name,
             'chutes_slug': chutes_slug,
             'chutes_status': chutes_status,

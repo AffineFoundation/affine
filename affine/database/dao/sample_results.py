@@ -15,9 +15,14 @@ from affine.database.schema import get_table_name
 class SampleResultsDAO(BaseDAO):
     """DAO for sample_results table.
     
-    Stores sampling results with compressed conversation data.
+    Stores sampling results with compressed extra data.
     PK: MINER#{hotkey}#REV#{revision}
-    SK: ENV#{env}#TIME#{timestamp}#ID#{uuid}
+    SK: ENV#{env}#TIME#{timestamp}#SIG#{signature_hash}
+    
+    The signature_hash (first 16 chars of signature) provides natural deduplication
+    since hotkey + timestamp + signature uniquely identifies a sample.
+    
+    The extra field contains conversation and request data, compressed for storage efficiency.
     """
     
     def __init__(self):
@@ -28,24 +33,26 @@ class SampleResultsDAO(BaseDAO):
         """Generate partition key."""
         return f"MINER#{miner_hotkey}#REV#{model_revision}"
     
-    def _make_sk(self, env: str, timestamp: int, sample_id: str) -> str:
-        """Generate sort key."""
-        return f"ENV#{env}#TIME#{timestamp:016d}#ID#{sample_id}"
+    def _make_sk(self, env: str, timestamp: int, signature: str) -> str:
+        """Generate sort key.
+        
+        Uses first 16 chars of signature for uniqueness.
+        This provides natural deduplication without extra fields.
+        """
+        sig_hash = signature[:16] if signature else "0" * 16
+        return f"ENV#{env}#TIME#{timestamp:016d}#SIG#{sig_hash}"
     
     async def save_sample(
         self,
         miner_hotkey: str,
         model_revision: str,
-        model_hash: str,
+        model: str,
         uid: int,
         env: str,
-        subset: str,
-        dataset_index: int,
         task_id: str,
         score: float,
-        success: bool,
         latency_ms: int,
-        conversation: Dict[str, Any],
+        extra: Dict[str, Any],
         validator_hotkey: str,
         block_number: int,
         signature: str,
@@ -56,19 +63,16 @@ class SampleResultsDAO(BaseDAO):
         Args:
             miner_hotkey: Miner's hotkey
             model_revision: Model revision
-            model_hash: Model hash for validation
+            model: Model repo/name
             uid: Miner UID
             env: Environment name (L3-L8)
-            subset: Dataset subset
-            dataset_index: Index in dataset
             task_id: Task ID
             score: Score achieved
-            success: Whether sampling succeeded
             latency_ms: Latency in milliseconds
-            conversation: Conversation data (will be compressed)
+            extra: Extra data containing conversation and request (will be compressed)
             validator_hotkey: Validator's hotkey
             block_number: Current block number
-            signature: Cryptographic signature
+            signature: Cryptographic signature (used in SK for uniqueness)
             timestamp: Optional timestamp (defaults to now)
             
         Returns:
@@ -77,29 +81,23 @@ class SampleResultsDAO(BaseDAO):
         if timestamp is None:
             timestamp = int(time.time() * 1000)  # milliseconds
         
-        sample_id = str(uuid.uuid4())
-        
-        # Compress conversation data
-        conversation_json = json.dumps(conversation, separators=(',', ':'))
-        conversation_compressed = self.compress_data(conversation_json)
+        # Compress extra data (contains conversation + request)
+        extra_json = json.dumps(extra, separators=(',', ':'))
+        extra_compressed = self.compress_data(extra_json)
         
         item = {
             'pk': self._make_pk(miner_hotkey, model_revision),
-            'sk': self._make_sk(env, timestamp, sample_id),
-            'sample_id': sample_id,
+            'sk': self._make_sk(env, timestamp, signature),
             'miner_hotkey': miner_hotkey,
             'model_revision': model_revision,
-            'model_hash': model_hash,
+            'model': model,
             'uid': uid,
             'env': env,
-            'subset': subset,
-            'dataset_index': dataset_index,
             'task_id': task_id,
             'score': score,
-            'success': success,
             'latency_ms': latency_ms,
             'timestamp': timestamp,
-            'conversation_compressed': conversation_compressed,
+            'extra_compressed': extra_compressed,
             'validator_hotkey': validator_hotkey,
             'block_number': block_number,
             'signature': signature,
@@ -137,13 +135,13 @@ class SampleResultsDAO(BaseDAO):
             reverse=reverse
         )
         
-        # Decompress conversation data
+        # Decompress extra data
         for item in items:
-            if 'conversation_compressed' in item:
-                compressed = item['conversation_compressed']
-                conversation_json = self.decompress_data(compressed)
-                item['conversation'] = json.loads(conversation_json)
-                del item['conversation_compressed']
+            if 'extra_compressed' in item:
+                compressed = item['extra_compressed']
+                extra_json = self.decompress_data(compressed)
+                item['extra'] = json.loads(extra_json)
+                del item['extra_compressed']
         
         return items
     
@@ -167,7 +165,8 @@ class SampleResultsDAO(BaseDAO):
         Returns:
             List of samples
         """
-        client = self.get_client()
+        from affine.database.client import get_client
+        client = get_client()
         
         params = {
             'TableName': self.table_name,
@@ -187,13 +186,13 @@ class SampleResultsDAO(BaseDAO):
         response = await client.query(**params)
         items = [self._deserialize(item) for item in response.get('Items', [])]
         
-        # Decompress conversation data
+        # Decompress extra data
         for item in items:
-            if 'conversation_compressed' in item:
-                compressed = item['conversation_compressed']
-                conversation_json = self.decompress_data(compressed)
-                item['conversation'] = json.loads(conversation_json)
-                del item['conversation_compressed']
+            if 'extra_compressed' in item:
+                compressed = item['extra_compressed']
+                extra_json = self.decompress_data(compressed)
+                item['extra'] = json.loads(extra_json)
+                del item['extra_compressed']
         
         return items
     
