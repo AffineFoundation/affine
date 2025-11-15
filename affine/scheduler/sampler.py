@@ -1,6 +1,9 @@
 import time
 import random
 import asyncio
+import json
+import os
+from pathlib import Path
 from typing import List, Dict, Optional, Any
 from affine.models import Miner
 from affine.tasks import BaseSDKEnv
@@ -9,6 +12,9 @@ from affine.scheduler.queue import TaskQueue
 from affine.scheduler.config import SamplingConfig
 from affine.scheduler.error_classifier import is_service_error
 from affine.setup import logger
+
+# Global lock for cache file access to prevent concurrent write conflicts
+_cache_file_lock = asyncio.Lock()
 
 
 class MinerSampler:
@@ -35,6 +41,50 @@ class MinerSampler:
         self.consecutive_chutes_errors = 0
         
         self.last_sample_time: Dict[str, float] = {}
+        
+        # Sequential sampling state (env_name -> current_task_id)
+        self.task_id_state: Dict[str, int] = {}
+        self._cache_file = Path.home() / ".cache" / "affine" / "sampling_cache.json"
+        self._load_task_id_cache()
+    
+    def _load_task_id_cache(self):
+        """Load task_id cache from local file"""
+        try:
+            if self._cache_file.exists():
+                with open(self._cache_file, 'r') as f:
+                    cache_data = json.load(f)
+                    # Use hotkey_model_revision as key
+                    cache_key = f"{self.miner.hotkey}_{self.miner.model}_{self.miner.revision}"
+                    if cache_key in cache_data:
+                        self.task_id_state = cache_data[cache_key]
+                        logger.debug(f"[MinerSampler U{self.uid}] Loaded task_id cache: {self.task_id_state}")
+        except Exception as e:
+            logger.warning(f"[MinerSampler U{self.uid}] Failed to load task_id cache: {e}")
+    
+    async def _save_task_id_cache(self):
+        """Save task_id cache to local file with global lock protection"""
+        global _cache_file_lock
+        
+        try:
+            # Acquire global lock to prevent concurrent writes from multiple samplers
+            async with _cache_file_lock:
+                self._cache_file.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Load existing cache
+                cache_data = {}
+                if self._cache_file.exists():
+                    with open(self._cache_file, 'r') as f:
+                        cache_data = json.load(f)
+                
+                # Update with current state
+                cache_key = f"{self.miner.hotkey}_{self.miner.model}_{self.miner.revision}"
+                cache_data[cache_key] = self.task_id_state
+                
+                # Save back to file
+                with open(self._cache_file, 'w') as f:
+                    json.dump(cache_data, f, indent=2)
+        except Exception as e:
+            logger.warning(f"[MinerSampler U{self.uid}] Failed to save task_id cache: {e}")
     
     async def run(self, env_queues: Dict[str, TaskQueue]):
         """Main sampling loop
@@ -54,7 +104,7 @@ class MinerSampler:
                 
                 for env in self.envs:
                     if self._should_sample(env):
-                        task = self._create_task(env)
+                        task = await self._create_task(env)
                         
                         # Route task to the appropriate environment queue
                         queue = env_queues.get(env.env_name)
@@ -91,13 +141,38 @@ class MinerSampler:
 
         return (current_time - last_time) >= interval
 
-    def _create_task(self, env: BaseSDKEnv) -> Task:
-        """Create sampling task for env"""
+    async def _create_task(self, env: BaseSDKEnv) -> Task:
+        """Create sampling task for env with sequential task_id"""
+        # Get or initialize task_id for this environment
+        if env.env_name not in self.task_id_state:
+            self.task_id_state[env.env_name] = 0
+        
+        current_task_id = self.task_id_state[env.env_name]
+        
+        # Get environment data length
+        data_len = getattr(env, 'data_len', None)
+        
+        # Use sequential sampling with task_id for both Affine and AgentGym
+        if data_len is not None:
+            # Use sequential task_id
+            task_id = current_task_id % data_len
+            seed = random.randint(0, 2**32 - 1)  # Random seed for execution
+            
+            # Increment task_id for next sampling
+            self.task_id_state[env.env_name] = (current_task_id + 1) % data_len
+            
+            await self._save_task_id_cache()
+        else:
+            # No data_len specified - use random seed only
+            task_id = None
+            seed = random.randint(0, 2**32 - 1)
+        
         return Task(
             uid=self.uid,
             miner=self.miner,
             env_name=env.env_name,
-            seed=random.randint(0, 2**32 - 1),
+            task_id=task_id,
+            seed=seed,
         )
     
     def _update_sample_time(self, env: BaseSDKEnv):

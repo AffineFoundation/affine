@@ -83,6 +83,7 @@ class EvaluationWorker:
                                 f"[RESULT] U{result.miner.uid:>3d} │ "
                                 f"{result.env:<20} │ "
                                 f"{result.score:>6.4f} │ "
+                                f"task_id={result.task_id} │ "
                                 f"{result.latency_seconds:>6.3f}s"
                             )
             
@@ -96,7 +97,7 @@ class EvaluationWorker:
     async def _execute_task(self, task: Task) -> Result:
         """Execute single evaluation task"""
         try:
-            result = await self.env.evaluate(task.miner, seed=task.seed)
+            result = await self.env.evaluate(task.miner, seed=task.seed, task_id=task.task_id)
             return result
         
         except Exception as e:
@@ -107,6 +108,7 @@ class EvaluationWorker:
                 latency_seconds=0.0,
                 success=False,
                 error=str(e),
+                task_id=task.task_id,
                 extra={},
                 timestamp=time.time()
             )

@@ -248,6 +248,11 @@ class BaseSDKEnv(ABC):
         extra['image'] = self.docker_image
         if payload_extra:
             extra['request'] = payload_extra.copy()
+        
+        # Extract task_id from payload if available (for sequential sampling tracking)
+        task_id = None
+        if payload_extra and 'task_id' in payload_extra:
+            task_id = payload_extra['task_id']
 
         return Result(
             miner=miner,
@@ -256,6 +261,7 @@ class BaseSDKEnv(ABC):
             latency_seconds=time.monotonic() - start_time if start_time else 0.0,
             success=success,
             error=error,
+            task_id=task_id,
             extra=extra,
             timestamp=time.time()
         )
@@ -267,6 +273,11 @@ class BaseSDKEnv(ABC):
             "image": self.docker_image,
             "request": payload_extra,
         }
+        
+        # Extract task_id from payload if available
+        task_id = None
+        if payload_extra and 'task_id' in payload_extra:
+            task_id = payload_extra['task_id']
 
         return Result(
             miner=miner,
@@ -275,6 +286,7 @@ class BaseSDKEnv(ABC):
             latency_seconds=time.monotonic() - start_time if start_time else 0.0,
             success=False,
             error=str(error),
+            task_id=task_id,
             extra=extra,
             timestamp=time.time()
         )
@@ -337,6 +349,14 @@ class BaseSDKEnv(ABC):
 class AffineSDKEnv(BaseSDKEnv):
     """Base class for Affine environments (SAT, ABD, DED, HVM, ELR)"""
 
+    # Default configuration for Affine environments
+    DEFAULT_DATA_LEN = 240  # Affine test set size
+
+    def __init__(self, data_len: int = None):
+        super().__init__()
+        # Use environment-specific defaults if not provided
+        self.data_len = data_len if data_len is not None else self.DEFAULT_DATA_LEN
+
     @property
     def env_type(self) -> EnvType:
         return EnvType.AFFINE
@@ -344,7 +364,7 @@ class AffineSDKEnv(BaseSDKEnv):
     @property
     def docker_image(self) -> str:
         """All Affine environments use the same image"""
-        return "bignickeye/affine:v2"
+        return "bignickeye/affine:v3"
 
     @property
     def env_vars(self) -> Dict[str, str]:
@@ -363,7 +383,7 @@ class AffineSDKEnv(BaseSDKEnv):
         
         Args:
             miner: Optional Miner instance or dict of miners (can be None if model/base_url in eval_kwargs)
-            **eval_kwargs: Dynamic parameters (model, base_url, temperature, task_type, etc.)
+            **eval_kwargs: Dynamic parameters (model, base_url, temperature, task_type, task_id, etc.)
         """
 
         # Extract env name from template (e.g., "affine:sat" -> "sat")
@@ -371,6 +391,10 @@ class AffineSDKEnv(BaseSDKEnv):
         
         # Set default task_type if not provided in eval_kwargs
         eval_kwargs.setdefault("task_type", env_name)
+        
+        # Set default task_id if not provided (for sequential sampling support)
+        if "task_id" not in eval_kwargs:
+            eval_kwargs["task_id"] = random.randint(0, self.data_len - 1)
 
         async def evaluate_single(m):
             return await self._evaluate_single_miner(m, **eval_kwargs)
@@ -470,6 +494,7 @@ def register_env(env_type: EnvType, env_name: str):
 class SAT(AffineSDKEnv):
     """SAT environment for SDK"""
     DEFAULT_REPLICAS = 1
+    DEFAULT_DATA_LEN = 500
 
     @property
     def env_name(self) -> str:
@@ -513,6 +538,7 @@ class WEBSHOP(AgentGymSDKEnv):
     """WEBSHOP environment for SDK"""
     DEFAULT_MAX_ROUND = 10
     DEFAULT_REPLICAS = 1
+    DEFAULT_DATA_LEN = 500 # 1
 
     @property
     def env_name(self) -> str:
@@ -522,7 +548,7 @@ class WEBSHOP(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:babyai")
 class BABYAI(AgentGymSDKEnv):
     """BABYAI environment for SDK"""
-    DEFAULT_DATA_LEN = 4000
+    DEFAULT_DATA_LEN = 500 # 40
     DEFAULT_REPLICAS = 1
 
     @property
@@ -533,7 +559,7 @@ class BABYAI(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:sciworld")
 class SCIWORLD(AgentGymSDKEnv):
     """SCIWORLD environment for SDK"""
-    DEFAULT_DATA_LEN = 4639
+    DEFAULT_DATA_LEN = 2000 # 4639
     DEFAULT_REPLICAS = 1
 
     @property
