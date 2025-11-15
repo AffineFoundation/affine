@@ -123,7 +123,8 @@ class SampleResultsDAO(BaseDAO):
         model_revision: str,
         env: str,
         limit: Optional[int] = None,
-        reverse: bool = True
+        reverse: bool = True,
+        include_extra: bool = True
     ) -> List[Dict[str, Any]]:
         """Get samples for a specific miner, revision, and environment.
         
@@ -133,25 +134,45 @@ class SampleResultsDAO(BaseDAO):
             env: Environment name (required, part of PK)
             limit: Maximum number of results
             reverse: If True, return newest first (by task_id)
+            include_extra: If True, include and decompress extra field (default: True)
             
         Returns:
-            List of samples (extra data decompressed)
+            List of samples (extra data decompressed if include_extra=True)
         """
         pk = self._make_pk(miner_hotkey, model_revision, env)
         
-        items = await self.query(
-            pk=pk,
-            limit=limit,
-            reverse=reverse
-        )
+        # Build projection expression to exclude extra_compressed if not needed
+        from affine.database.client import get_client
+        client = get_client()
         
-        # Decompress extra data
-        for item in items:
-            if 'extra_compressed' in item:
-                compressed = item['extra_compressed']
-                extra_json = self.decompress_data(compressed)
-                item['extra'] = json.loads(extra_json)
-                del item['extra_compressed']
+        # Build query parameters
+        params = {
+            'TableName': self.table_name,
+            'KeyConditionExpression': 'pk = :pk',
+            'ExpressionAttributeValues': {':pk': {'S': pk}},
+            'ScanIndexForward': not reverse
+        }
+        
+        if limit:
+            params['Limit'] = limit
+        
+        # Exclude extra_compressed field if not needed (saves bandwidth and decompression cost)
+        if not include_extra:
+            params['ProjectionExpression'] = 'pk,sk,miner_hotkey,model_revision,#m,env,task_id,score,latency_ms,#ts,validator_hotkey,block_number,signature'
+            params['ExpressionAttributeNames'] = {'#m': 'model', '#ts': 'timestamp'}
+        
+        # Execute query
+        response = await client.query(**params)
+        items = [self._deserialize(item) for item in response.get('Items', [])]
+        
+        # Decompress extra data if included
+        if include_extra:
+            for item in items:
+                if 'extra_compressed' in item:
+                    compressed = item['extra_compressed']
+                    extra_json = self.decompress_data(compressed)
+                    item['extra'] = json.loads(extra_json)
+                    del item['extra_compressed']
         
         return items
     
@@ -160,7 +181,8 @@ class SampleResultsDAO(BaseDAO):
         miner_hotkey: str,
         model_revision: str,
         envs: List[str],
-        limit_per_env: Optional[int] = None
+        limit_per_env: Optional[int] = None,
+        include_extra: bool = True
     ) -> Dict[str, List[Dict[str, Any]]]:
         """Get samples for a miner across multiple environments.
         
@@ -169,6 +191,7 @@ class SampleResultsDAO(BaseDAO):
             model_revision: Model revision hash
             envs: List of environment names to query
             limit_per_env: Maximum number of results per environment
+            include_extra: If True, include and decompress extra field (default: True)
             
         Returns:
             Dict mapping env -> list of samples
@@ -179,7 +202,8 @@ class SampleResultsDAO(BaseDAO):
                 miner_hotkey=miner_hotkey,
                 model_revision=model_revision,
                 env=env,
-                limit=limit_per_env
+                limit=limit_per_env,
+                include_extra=include_extra
             )
             results[env] = samples
         
