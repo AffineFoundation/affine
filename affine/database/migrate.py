@@ -14,7 +14,7 @@ from pathlib import Path
 from affine.storage import dataset
 from affine.models import Result
 from affine.database import init_client, close_client
-from affine.database.dao import SampleResultsDAO, MinerMetadataDAO
+from affine.database.dao import SampleResultsDAO
 
 
 class R2ToDynamoMigration:
@@ -22,7 +22,6 @@ class R2ToDynamoMigration:
     
     def __init__(self):
         self.sample_dao = SampleResultsDAO()
-        self.miner_dao = MinerMetadataDAO()
         
         self.stats = {
             'total_processed': 0,
@@ -60,25 +59,24 @@ class R2ToDynamoMigration:
             
             timestamp = int(result.timestamp * 1000)
             
-            # Check if already exists (deduplication via PK/SK)
+            # Check if already exists (deduplication via PK/SK + timestamp)
             if deduplicate:
                 existing = await self._check_sample_exists(
                     miner_hotkey=result.miner.hotkey,
                     model_revision=result.miner.revision or 'unknown',
                     env=result.env,
-                    timestamp=timestamp,
-                    signature=result.signature
+                    task_id=task_id,
+                    timestamp=timestamp
                 )
                 if existing:
                     self.stats['total_skipped'] += 1
                     return False
             
-            # Save sample result (signature naturally provides uniqueness)
+            # Save sample result (task_id provides uniqueness within partition)
             await self.sample_dao.save_sample(
                 miner_hotkey=result.miner.hotkey,
                 model_revision=result.miner.revision or 'unknown',
                 model=result.miner.model or 'unknown',
-                uid=result.miner.uid,
                 env=result.env,
                 task_id=task_id,
                 score=result.score,
@@ -90,20 +88,8 @@ class R2ToDynamoMigration:
                 timestamp=timestamp
             )
             
-            # Update miner metadata
+            # Track miners updated (metadata now queried from bittensor, not stored)
             self.stats['miners_updated'].add(result.miner.hotkey)
-            
-            # Update miner metadata if not exists
-            existing_metadata = await self.miner_dao.get_metadata(result.miner.hotkey)
-            if not existing_metadata:
-                await self.miner_dao.save_metadata(
-                    miner_hotkey=result.miner.hotkey,
-                    uid=result.miner.uid,
-                    current_revision=result.miner.revision or 'unknown',
-                    model=result.miner.model or 'unknown',
-                    model_name=result.miner.model or 'unknown',
-                    last_commit_block=result.miner.block
-                )
             
             self.stats['total_migrated'] += 1
             return True
@@ -118,19 +104,28 @@ class R2ToDynamoMigration:
         miner_hotkey: str,
         model_revision: str,
         env: str,
-        timestamp: int,
-        signature: str
+        task_id: str,
+        timestamp: int
     ) -> bool:
         """Check if a sample already exists in DynamoDB.
         
-        Uses natural PK/SK based on signature.
+        Uses PK/SK to find the item, then verifies timestamp matches.
+        This prevents false positives when the same task_id is executed
+        multiple times (e.g., retries).
+        
+        Args:
+            miner_hotkey: Miner's hotkey
+            model_revision: Model revision
+            env: Environment name
+            task_id: Task identifier
+            timestamp: Sample timestamp in milliseconds
         
         Returns:
-            True if sample exists
+            True if sample exists with matching timestamp
         """
         try:
-            pk = self.sample_dao._make_pk(miner_hotkey, model_revision)
-            sk = self.sample_dao._make_sk(env, timestamp, signature)
+            pk = self.sample_dao._make_pk(miner_hotkey, model_revision, env)
+            sk = self.sample_dao._make_sk(task_id)
             
             from affine.database.client import get_client
             client = get_client()
@@ -143,7 +138,20 @@ class R2ToDynamoMigration:
                 }
             )
             
-            return 'Item' in response
+            if 'Item' not in response:
+                return False
+            
+            # Verify timestamp matches to handle task retries
+            item = self.sample_dao._deserialize(response['Item'])
+            existing_timestamp = item.get('timestamp')
+            
+            # Consider it a duplicate if timestamps are within 1 second (1000ms)
+            # This handles minor timestamp variations from the same execution
+            if existing_timestamp and abs(existing_timestamp - timestamp) < 1000:
+                return True
+            
+            return False
+            
         except Exception:
             # On error, assume doesn't exist (will try to insert)
             return False

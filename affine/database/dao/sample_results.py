@@ -16,11 +16,15 @@ class SampleResultsDAO(BaseDAO):
     """DAO for sample_results table.
     
     Stores sampling results with compressed extra data.
-    PK: MINER#{hotkey}#REV#{revision}
-    SK: ENV#{env}#TIME#{timestamp}#SIG#{signature_hash}
     
-    The signature_hash (first 16 chars of signature) provides natural deduplication
-    since hotkey + timestamp + signature uniquely identifies a sample.
+    Schema Design Philosophy:
+    - PK combines the 3 most frequent query dimensions: hotkey + revision + env
+    - SK uses task_id for natural ordering
+    - uid removed (mutable, should query via bittensor metadata -> hotkey first)
+    - GSI for timestamp range queries only
+    
+    PK: MINER#{hotkey}#REV#{revision}#ENV#{env}
+    SK: TASK#{task_id}
     
     The extra field contains conversation and request data, compressed for storage efficiency.
     """
@@ -29,25 +33,35 @@ class SampleResultsDAO(BaseDAO):
         self.table_name = get_table_name("sample_results")
         super().__init__()
     
-    def _make_pk(self, miner_hotkey: str, model_revision: str) -> str:
-        """Generate partition key."""
-        return f"MINER#{miner_hotkey}#REV#{model_revision}"
+    def _make_pk(self, miner_hotkey: str, model_revision: str, env: str) -> str:
+        """Generate partition key.
+        
+        Args:
+            miner_hotkey: Miner's hotkey
+            model_revision: Model revision hash
+            env: Environment name (e.g., affine:sat, agentgym:webshop)
+        
+        Returns:
+            PK string combining hotkey, revision, and env
+        """
+        return f"MINER#{miner_hotkey}#REV#{model_revision}#ENV#{env}"
     
-    def _make_sk(self, env: str, timestamp: int, signature: str) -> str:
+    def _make_sk(self, task_id: str) -> str:
         """Generate sort key.
         
-        Uses first 16 chars of signature for uniqueness.
-        This provides natural deduplication without extra fields.
+        Args:
+            task_id: Task identifier
+        
+        Returns:
+            SK string with task_id for natural ordering
         """
-        sig_hash = signature[:16] if signature else "0" * 16
-        return f"ENV#{env}#TIME#{timestamp:016d}#SIG#{sig_hash}"
+        return f"TASK#{task_id}"
     
     async def save_sample(
         self,
         miner_hotkey: str,
         model_revision: str,
         model: str,
-        uid: int,
         env: str,
         task_id: str,
         score: float,
@@ -62,17 +76,16 @@ class SampleResultsDAO(BaseDAO):
         
         Args:
             miner_hotkey: Miner's hotkey
-            model_revision: Model revision
+            model_revision: Model revision hash
             model: Model repo/name
-            uid: Miner UID
-            env: Environment name (L3-L8)
-            task_id: Task ID
+            env: Environment name (e.g., affine:sat, agentgym:webshop)
+            task_id: Task identifier
             score: Score achieved
             latency_ms: Latency in milliseconds
             extra: Extra data containing conversation and request (will be compressed)
             validator_hotkey: Validator's hotkey
             block_number: Current block number
-            signature: Cryptographic signature (used in SK for uniqueness)
+            signature: Cryptographic signature for verification
             timestamp: Optional timestamp (defaults to now)
             
         Returns:
@@ -86,12 +99,11 @@ class SampleResultsDAO(BaseDAO):
         extra_compressed = self.compress_data(extra_json)
         
         item = {
-            'pk': self._make_pk(miner_hotkey, model_revision),
-            'sk': self._make_sk(env, timestamp, signature),
+            'pk': self._make_pk(miner_hotkey, model_revision, env),
+            'sk': self._make_sk(task_id),
             'miner_hotkey': miner_hotkey,
             'model_revision': model_revision,
             'model': model,
-            'uid': uid,
             'env': env,
             'task_id': task_id,
             'score': score,
@@ -109,28 +121,26 @@ class SampleResultsDAO(BaseDAO):
         self,
         miner_hotkey: str,
         model_revision: str,
-        env: Optional[str] = None,
+        env: str,
         limit: Optional[int] = None,
         reverse: bool = True
     ) -> List[Dict[str, Any]]:
-        """Get samples for a specific miner.
+        """Get samples for a specific miner, revision, and environment.
         
         Args:
             miner_hotkey: Miner's hotkey
-            model_revision: Model revision
-            env: Optional environment filter
+            model_revision: Model revision hash
+            env: Environment name (required, part of PK)
             limit: Maximum number of results
-            reverse: If True, return newest first
+            reverse: If True, return newest first (by task_id)
             
         Returns:
-            List of samples (conversation data decompressed)
+            List of samples (extra data decompressed)
         """
-        pk = self._make_pk(miner_hotkey, model_revision)
-        sk_prefix = f"ENV#{env}#" if env else None
+        pk = self._make_pk(miner_hotkey, model_revision, env)
         
         items = await self.query(
             pk=pk,
-            sk_prefix=sk_prefix,
             limit=limit,
             reverse=reverse
         )
@@ -145,21 +155,49 @@ class SampleResultsDAO(BaseDAO):
         
         return items
     
-    async def get_samples_by_env(
+    async def get_samples_by_miner_all_envs(
         self,
-        env: str,
+        miner_hotkey: str,
+        model_revision: str,
+        envs: List[str],
+        limit_per_env: Optional[int] = None
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Get samples for a miner across multiple environments.
+        
+        Args:
+            miner_hotkey: Miner's hotkey
+            model_revision: Model revision hash
+            envs: List of environment names to query
+            limit_per_env: Maximum number of results per environment
+            
+        Returns:
+            Dict mapping env -> list of samples
+        """
+        results = {}
+        for env in envs:
+            samples = await self.get_samples_by_miner(
+                miner_hotkey=miner_hotkey,
+                model_revision=model_revision,
+                env=env,
+                limit=limit_per_env
+            )
+            results[env] = samples
+        
+        return results
+    
+    async def get_samples_by_timestamp_range(
+        self,
         start_timestamp: int,
         end_timestamp: int,
         limit: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        """Get samples by environment and time range.
+        """Get samples by timestamp range.
         
-        Uses env-timestamp-index GSI.
+        Uses timestamp-index GSI for time-based queries.
         
         Args:
-            env: Environment name
-            start_timestamp: Start timestamp (inclusive)
-            end_timestamp: End timestamp (inclusive)
+            start_timestamp: Start timestamp in milliseconds (inclusive)
+            end_timestamp: End timestamp in milliseconds (inclusive)
             limit: Maximum number of results
             
         Returns:
@@ -170,11 +208,10 @@ class SampleResultsDAO(BaseDAO):
         
         params = {
             'TableName': self.table_name,
-            'IndexName': 'env-timestamp-index',
-            'KeyConditionExpression': 'env = :env AND #ts BETWEEN :start AND :end',
+            'IndexName': 'timestamp-index',
+            'KeyConditionExpression': '#ts BETWEEN :start AND :end',
             'ExpressionAttributeNames': {'#ts': 'timestamp'},
             'ExpressionAttributeValues': {
-                ':env': {'S': env},
                 ':start': {'N': str(start_timestamp)},
                 ':end': {'N': str(end_timestamp)}
             }
@@ -200,6 +237,7 @@ class SampleResultsDAO(BaseDAO):
         self,
         miner_hotkey: str,
         model_revision: str,
+        env: str,
         cutoff_timestamp: int
     ) -> int:
         """Delete samples older than cutoff timestamp.
@@ -208,15 +246,16 @@ class SampleResultsDAO(BaseDAO):
         
         Args:
             miner_hotkey: Miner's hotkey
-            model_revision: Model revision
-            cutoff_timestamp: Delete samples before this timestamp
+            model_revision: Model revision hash
+            env: Environment name
+            cutoff_timestamp: Delete samples before this timestamp (milliseconds)
             
         Returns:
             Number of samples deleted
         """
-        pk = self._make_pk(miner_hotkey, model_revision)
+        pk = self._make_pk(miner_hotkey, model_revision, env)
         
-        # Query samples before cutoff
+        # Query all samples for this PK
         items = await self.query(pk=pk, reverse=False)
         
         deleted_count = 0
@@ -224,8 +263,5 @@ class SampleResultsDAO(BaseDAO):
             if item['timestamp'] < cutoff_timestamp:
                 await self.delete(item['pk'], item['sk'])
                 deleted_count += 1
-            else:
-                # Items are ordered by timestamp, so we can stop
-                break
         
         return deleted_count
