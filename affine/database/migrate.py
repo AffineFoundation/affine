@@ -7,6 +7,7 @@ Handles incremental migration of historical sampling results.
 import asyncio
 import json
 import time
+import hashlib
 from typing import List, Dict, Any
 from pathlib import Path
 
@@ -32,37 +33,61 @@ class R2ToDynamoMigration:
             'start_time': time.time()
         }
     
-    async def migrate_result(self, result: Result) -> bool:
+    async def migrate_result(self, result: Result, deduplicate: bool = True) -> bool:
         """Migrate a single result to DynamoDB.
         
         Args:
             result: Result object from R2
+            deduplicate: If True, skip if already exists
             
         Returns:
-            True if migrated successfully
+            True if migrated successfully, False if skipped/error
         """
         try:
-            # Extract conversation data from extra field
-            conversation = result.extra.get('conversation', {})
+            # Extract task_id from extra.request.task_id
+            task_id = result.task_id
+            if task_id is None and result.extra:
+                request = result.extra.get('request', {})
+                if isinstance(request, dict):
+                    task_id = request.get('task_id')
             
-            # Save sample result
+            # Fallback to 'legacy' if still None
+            if task_id is None:
+                task_id = 'legacy'
+            
+            # Use entire extra field (contains conversation + request)
+            extra = result.extra if result.extra else {}
+            
+            timestamp = int(result.timestamp * 1000)
+            
+            # Check if already exists (deduplication via PK/SK)
+            if deduplicate:
+                existing = await self._check_sample_exists(
+                    miner_hotkey=result.miner.hotkey,
+                    model_revision=result.miner.revision or 'unknown',
+                    env=result.env,
+                    timestamp=timestamp,
+                    signature=result.signature
+                )
+                if existing:
+                    self.stats['total_skipped'] += 1
+                    return False
+            
+            # Save sample result (signature naturally provides uniqueness)
             await self.sample_dao.save_sample(
                 miner_hotkey=result.miner.hotkey,
                 model_revision=result.miner.revision or 'unknown',
-                model_hash=result.miner.model or 'unknown',
+                model=result.miner.model or 'unknown',
                 uid=result.miner.uid,
                 env=result.env,
-                subset=result.extra.get('subset', 'unknown'),
-                dataset_index=result.extra.get('dataset_index', 0),
-                task_id=result.extra.get('task_id', 'legacy'),
+                task_id=task_id,
                 score=result.score,
-                success=result.success,
                 latency_ms=int(result.latency_seconds * 1000),
-                conversation=conversation,
+                extra=extra,
                 validator_hotkey=result.hotkey,
                 block_number=result.miner.block or 0,
                 signature=result.signature,
-                timestamp=int(result.timestamp * 1000)
+                timestamp=timestamp
             )
             
             # Update miner metadata
@@ -75,7 +100,7 @@ class R2ToDynamoMigration:
                     miner_hotkey=result.miner.hotkey,
                     uid=result.miner.uid,
                     current_revision=result.miner.revision or 'unknown',
-                    model_hash=result.miner.model or 'unknown',
+                    model=result.miner.model or 'unknown',
                     model_name=result.miner.model or 'unknown',
                     last_commit_block=result.miner.block
                 )
@@ -86,6 +111,41 @@ class R2ToDynamoMigration:
         except Exception as e:
             print(f"Error migrating result: {e}")
             self.stats['total_errors'] += 1
+            return False
+    
+    async def _check_sample_exists(
+        self,
+        miner_hotkey: str,
+        model_revision: str,
+        env: str,
+        timestamp: int,
+        signature: str
+    ) -> bool:
+        """Check if a sample already exists in DynamoDB.
+        
+        Uses natural PK/SK based on signature.
+        
+        Returns:
+            True if sample exists
+        """
+        try:
+            pk = self.sample_dao._make_pk(miner_hotkey, model_revision)
+            sk = self.sample_dao._make_sk(env, timestamp, signature)
+            
+            from affine.database.client import get_client
+            client = get_client()
+            
+            response = await client.get_item(
+                TableName=self.sample_dao.table_name,
+                Key={
+                    'pk': {'S': pk},
+                    'sk': {'S': sk}
+                }
+            )
+            
+            return 'Item' in response
+        except Exception:
+            # On error, assume doesn't exist (will try to insert)
             return False
     
     async def migrate_batch(self, results: List[Result], batch_size: int = 100):

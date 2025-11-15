@@ -35,7 +35,7 @@ class TaskQueueDAO(BaseDAO):
         self,
         miner_hotkey: str,
         model_revision: str,
-        model_hash: str,
+        model: str,
         env: str,
         validator_hotkey: str,
         priority: int = 0,
@@ -46,7 +46,7 @@ class TaskQueueDAO(BaseDAO):
         Args:
             miner_hotkey: Miner's hotkey
             model_revision: Model revision
-            model_hash: Model hash for pre-execution validation
+            model: Model repo/name for pre-execution validation
             env: Environment name (L3-L8)
             validator_hotkey: Validator's hotkey (currently owner_hotkey)
             priority: Task priority (higher = more urgent)
@@ -66,7 +66,7 @@ class TaskQueueDAO(BaseDAO):
             'task_id': task_id,
             'miner_hotkey': miner_hotkey,
             'model_revision': model_revision,
-            'model_hash': model_hash,
+            'model': model,
             'env': env,
             'status': 'pending',
             'priority': priority,
@@ -113,7 +113,8 @@ class TaskQueueDAO(BaseDAO):
         Returns:
             List of pending tasks
         """
-        client = self.get_client()
+        from affine.database.client import get_client
+        client = get_client()
         
         params = {
             'TableName': self.table_name,
