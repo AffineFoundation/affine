@@ -61,7 +61,12 @@ class EvaluatorConfig:
         # Add miner-based defaults if miner is provided
         if miner is not None:
             payload["model"] = miner.model
-            payload["base_url"] = f"https://{miner.slug}.chutes.ai/v1"
+            if os.getenv("AFFINE_USE_LIUM") == "1":
+                from affine.lium_backend import ensure_model_server
+                srv = ensure_model_server(miner.model)
+                payload["base_url"] = srv.base_url
+            else:
+                payload["base_url"] = f"https://{miner.slug}.chutes.ai/v1"
 
         # Allow kwargs to override any default values
         payload.update(kwargs)
@@ -126,6 +131,8 @@ class BaseSDKEnv(ABC):
     @property
     def env_vars(self) -> Dict[str, str]:
         """Return environment variables for this environment"""
+        if os.getenv("AFFINE_USE_LIUM") == "1":
+            return {}
         api_key = os.getenv("CHUTES_API_KEY")
         if not api_key:
             raise ValueError("CHUTES_API_KEY environment variable is required")
