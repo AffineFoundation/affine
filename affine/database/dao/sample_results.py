@@ -16,11 +16,15 @@ class SampleResultsDAO(BaseDAO):
     """DAO for sample_results table.
     
     Stores sampling results with compressed extra data.
-    PK: MINER#{hotkey}#REV#{revision}
-    SK: ENV#{env}#TIME#{timestamp}#SIG#{signature_hash}
     
-    The signature_hash (first 16 chars of signature) provides natural deduplication
-    since hotkey + timestamp + signature uniquely identifies a sample.
+    Schema Design Philosophy:
+    - PK combines the 3 most frequent query dimensions: hotkey + revision + env
+    - SK uses task_id for natural ordering
+    - uid removed (mutable, should query via bittensor metadata -> hotkey first)
+    - GSI for timestamp range queries only
+    
+    PK: MINER#{hotkey}#REV#{revision}#ENV#{env}
+    SK: TASK#{task_id}
     
     The extra field contains conversation and request data, compressed for storage efficiency.
     """
@@ -29,25 +33,35 @@ class SampleResultsDAO(BaseDAO):
         self.table_name = get_table_name("sample_results")
         super().__init__()
     
-    def _make_pk(self, miner_hotkey: str, model_revision: str) -> str:
-        """Generate partition key."""
-        return f"MINER#{miner_hotkey}#REV#{model_revision}"
+    def _make_pk(self, miner_hotkey: str, model_revision: str, env: str) -> str:
+        """Generate partition key.
+        
+        Args:
+            miner_hotkey: Miner's hotkey
+            model_revision: Model revision hash
+            env: Environment name (e.g., affine:sat, agentgym:webshop)
+        
+        Returns:
+            PK string combining hotkey, revision, and env
+        """
+        return f"MINER#{miner_hotkey}#REV#{model_revision}#ENV#{env}"
     
-    def _make_sk(self, env: str, timestamp: int, signature: str) -> str:
+    def _make_sk(self, task_id: str) -> str:
         """Generate sort key.
         
-        Uses first 16 chars of signature for uniqueness.
-        This provides natural deduplication without extra fields.
+        Args:
+            task_id: Task identifier
+        
+        Returns:
+            SK string with task_id for natural ordering
         """
-        sig_hash = signature[:16] if signature else "0" * 16
-        return f"ENV#{env}#TIME#{timestamp:016d}#SIG#{sig_hash}"
+        return f"TASK#{task_id}"
     
     async def save_sample(
         self,
         miner_hotkey: str,
         model_revision: str,
         model: str,
-        uid: int,
         env: str,
         task_id: str,
         score: float,
@@ -62,17 +76,16 @@ class SampleResultsDAO(BaseDAO):
         
         Args:
             miner_hotkey: Miner's hotkey
-            model_revision: Model revision
+            model_revision: Model revision hash
             model: Model repo/name
-            uid: Miner UID
-            env: Environment name (L3-L8)
-            task_id: Task ID
+            env: Environment name (e.g., affine:sat, agentgym:webshop)
+            task_id: Task identifier
             score: Score achieved
             latency_ms: Latency in milliseconds
             extra: Extra data containing conversation and request (will be compressed)
             validator_hotkey: Validator's hotkey
             block_number: Current block number
-            signature: Cryptographic signature (used in SK for uniqueness)
+            signature: Cryptographic signature for verification
             timestamp: Optional timestamp (defaults to now)
             
         Returns:
@@ -86,12 +99,11 @@ class SampleResultsDAO(BaseDAO):
         extra_compressed = self.compress_data(extra_json)
         
         item = {
-            'pk': self._make_pk(miner_hotkey, model_revision),
-            'sk': self._make_sk(env, timestamp, signature),
+            'pk': self._make_pk(miner_hotkey, model_revision, env),
+            'sk': self._make_sk(task_id),
             'miner_hotkey': miner_hotkey,
             'model_revision': model_revision,
             'model': model,
-            'uid': uid,
             'env': env,
             'task_id': task_id,
             'score': score,
@@ -109,57 +121,107 @@ class SampleResultsDAO(BaseDAO):
         self,
         miner_hotkey: str,
         model_revision: str,
-        env: Optional[str] = None,
+        env: str,
         limit: Optional[int] = None,
-        reverse: bool = True
+        reverse: bool = True,
+        include_extra: bool = True
     ) -> List[Dict[str, Any]]:
-        """Get samples for a specific miner.
+        """Get samples for a specific miner, revision, and environment.
         
         Args:
             miner_hotkey: Miner's hotkey
-            model_revision: Model revision
-            env: Optional environment filter
+            model_revision: Model revision hash
+            env: Environment name (required, part of PK)
             limit: Maximum number of results
-            reverse: If True, return newest first
+            reverse: If True, return newest first (by task_id)
+            include_extra: If True, include and decompress extra field (default: True)
             
         Returns:
-            List of samples (conversation data decompressed)
+            List of samples (extra data decompressed if include_extra=True)
         """
-        pk = self._make_pk(miner_hotkey, model_revision)
-        sk_prefix = f"ENV#{env}#" if env else None
+        pk = self._make_pk(miner_hotkey, model_revision, env)
         
-        items = await self.query(
-            pk=pk,
-            sk_prefix=sk_prefix,
-            limit=limit,
-            reverse=reverse
-        )
+        # Build projection expression to exclude extra_compressed if not needed
+        from affine.database.client import get_client
+        client = get_client()
         
-        # Decompress extra data
-        for item in items:
-            if 'extra_compressed' in item:
-                compressed = item['extra_compressed']
-                extra_json = self.decompress_data(compressed)
-                item['extra'] = json.loads(extra_json)
-                del item['extra_compressed']
+        # Build query parameters
+        params = {
+            'TableName': self.table_name,
+            'KeyConditionExpression': 'pk = :pk',
+            'ExpressionAttributeValues': {':pk': {'S': pk}},
+            'ScanIndexForward': not reverse
+        }
+        
+        if limit:
+            params['Limit'] = limit
+        
+        # Exclude extra_compressed field if not needed (saves bandwidth and decompression cost)
+        if not include_extra:
+            params['ProjectionExpression'] = 'pk,sk,miner_hotkey,model_revision,#m,env,task_id,score,latency_ms,#ts,validator_hotkey,block_number,signature'
+            params['ExpressionAttributeNames'] = {'#m': 'model', '#ts': 'timestamp'}
+        
+        # Execute query
+        response = await client.query(**params)
+        items = [self._deserialize(item) for item in response.get('Items', [])]
+        
+        # Decompress extra data if included
+        if include_extra:
+            for item in items:
+                if 'extra_compressed' in item:
+                    compressed = item['extra_compressed']
+                    extra_json = self.decompress_data(compressed)
+                    item['extra'] = json.loads(extra_json)
+                    del item['extra_compressed']
         
         return items
     
-    async def get_samples_by_env(
+    async def get_samples_by_miner_all_envs(
         self,
-        env: str,
+        miner_hotkey: str,
+        model_revision: str,
+        envs: List[str],
+        limit_per_env: Optional[int] = None,
+        include_extra: bool = True
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Get samples for a miner across multiple environments.
+        
+        Args:
+            miner_hotkey: Miner's hotkey
+            model_revision: Model revision hash
+            envs: List of environment names to query
+            limit_per_env: Maximum number of results per environment
+            include_extra: If True, include and decompress extra field (default: True)
+            
+        Returns:
+            Dict mapping env -> list of samples
+        """
+        results = {}
+        for env in envs:
+            samples = await self.get_samples_by_miner(
+                miner_hotkey=miner_hotkey,
+                model_revision=model_revision,
+                env=env,
+                limit=limit_per_env,
+                include_extra=include_extra
+            )
+            results[env] = samples
+        
+        return results
+    
+    async def get_samples_by_timestamp_range(
+        self,
         start_timestamp: int,
         end_timestamp: int,
         limit: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        """Get samples by environment and time range.
+        """Get samples by timestamp range.
         
-        Uses env-timestamp-index GSI.
+        Uses timestamp-index GSI for time-based queries.
         
         Args:
-            env: Environment name
-            start_timestamp: Start timestamp (inclusive)
-            end_timestamp: End timestamp (inclusive)
+            start_timestamp: Start timestamp in milliseconds (inclusive)
+            end_timestamp: End timestamp in milliseconds (inclusive)
             limit: Maximum number of results
             
         Returns:
@@ -170,11 +232,10 @@ class SampleResultsDAO(BaseDAO):
         
         params = {
             'TableName': self.table_name,
-            'IndexName': 'env-timestamp-index',
-            'KeyConditionExpression': 'env = :env AND #ts BETWEEN :start AND :end',
+            'IndexName': 'timestamp-index',
+            'KeyConditionExpression': '#ts BETWEEN :start AND :end',
             'ExpressionAttributeNames': {'#ts': 'timestamp'},
             'ExpressionAttributeValues': {
-                ':env': {'S': env},
                 ':start': {'N': str(start_timestamp)},
                 ':end': {'N': str(end_timestamp)}
             }
@@ -200,6 +261,7 @@ class SampleResultsDAO(BaseDAO):
         self,
         miner_hotkey: str,
         model_revision: str,
+        env: str,
         cutoff_timestamp: int
     ) -> int:
         """Delete samples older than cutoff timestamp.
@@ -208,15 +270,16 @@ class SampleResultsDAO(BaseDAO):
         
         Args:
             miner_hotkey: Miner's hotkey
-            model_revision: Model revision
-            cutoff_timestamp: Delete samples before this timestamp
+            model_revision: Model revision hash
+            env: Environment name
+            cutoff_timestamp: Delete samples before this timestamp (milliseconds)
             
         Returns:
             Number of samples deleted
         """
-        pk = self._make_pk(miner_hotkey, model_revision)
+        pk = self._make_pk(miner_hotkey, model_revision, env)
         
-        # Query samples before cutoff
+        # Query all samples for this PK
         items = await self.query(pk=pk, reverse=False)
         
         deleted_count = 0
@@ -224,8 +287,154 @@ class SampleResultsDAO(BaseDAO):
             if item['timestamp'] < cutoff_timestamp:
                 await self.delete(item['pk'], item['sk'])
                 deleted_count += 1
-            else:
-                # Items are ordered by timestamp, so we can stop
-                break
         
         return deleted_count
+    
+    async def get_completed_task_ids(
+        self,
+        miner_hotkey: str,
+        model_revision: str,
+        env: str
+    ) -> set:
+        """Get set of completed task_ids for a miner's env.
+        
+        Used by task generator to determine which dataset indices are missing.
+        
+        Args:
+            miner_hotkey: Miner's hotkey
+            model_revision: Model revision hash
+            env: Environment name
+            
+        Returns:
+            Set of completed task_ids (integers representing dataset indices)
+        """
+        # Query all samples without decompressing extra data (for performance)
+        samples = await self.get_samples_by_miner(
+            miner_hotkey=miner_hotkey,
+            model_revision=model_revision,
+            env=env,
+            include_extra=False
+        )
+        
+        # Extract task_ids, converting from string format "42" to int 42
+        task_ids = set()
+        for sample in samples:
+            task_id = sample.get('task_id')
+            if task_id is not None:
+                # Handle both string and int formats
+                if isinstance(task_id, str):
+                    try:
+                        task_ids.add(int(task_id))
+                    except ValueError:
+                        # Skip non-integer task_ids (old format)
+                        pass
+                else:
+                    task_ids.add(int(task_id))
+        
+        return task_ids
+    
+    async def get_samples_with_completion_status(
+        self,
+        miner_hotkey: str,
+        model_revision: str,
+        env: str,
+        dataset_length: int,
+        deduplicate_by_task_id: bool = True,
+        include_extra: bool = False,
+        task_id_start: Optional[int] = None,
+        task_id_end: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Get samples with completion status for scoring.
+        
+        Args:
+            miner_hotkey: Miner's hotkey
+            model_revision: Model revision hash
+            env: Environment name
+            dataset_length: Total number of tasks in the dataset
+            deduplicate_by_task_id: If True, keep only latest sample per task_id
+            include_extra: If True, include and decompress extra field
+            task_id_start: Optional start of task ID range (inclusive, overrides dataset_length)
+            task_id_end: Optional end of task ID range (exclusive, overrides dataset_length)
+            
+        Returns:
+            Dict containing:
+                - samples: List of samples (optionally deduplicated)
+                - is_complete: Boolean indicating if all tasks are sampled
+                - completed_count: Number of unique task_ids completed
+                - total_count: Total number of tasks in dataset
+                - missing_task_ids: List of missing task_ids (if incomplete)
+        """
+        samples = await self.get_samples_by_miner(
+            miner_hotkey=miner_hotkey,
+            model_revision=model_revision,
+            env=env,
+            include_extra=include_extra
+        )
+        
+        # Determine expected task ID range
+        if task_id_start is not None and task_id_end is not None:
+            # Use explicit range (for dataset expansion transitions)
+            expected_task_ids = set(range(task_id_start, task_id_end))
+        else:
+            # Default: 0 to dataset_length
+            expected_task_ids = set(range(dataset_length))
+        
+        if deduplicate_by_task_id:
+            # Keep only the latest sample for each task_id (by timestamp)
+            task_id_samples = {}
+            for sample in samples:
+                task_id = sample.get('task_id')
+                if task_id is not None:
+                    # Convert to int for comparison
+                    if isinstance(task_id, str):
+                        try:
+                            task_id_int = int(task_id)
+                        except ValueError:
+                            continue
+                    else:
+                        task_id_int = int(task_id)
+                    
+                    # Only include task_ids within expected range
+                    if task_id_int not in expected_task_ids:
+                        continue
+                    
+                    # Keep the latest (newest) sample
+                    if task_id_int not in task_id_samples:
+                        task_id_samples[task_id_int] = sample
+                    else:
+                        existing_ts = task_id_samples[task_id_int].get('timestamp', 0)
+                        new_ts = sample.get('timestamp', 0)
+                        if new_ts > existing_ts:
+                            task_id_samples[task_id_int] = sample
+            
+            samples = list(task_id_samples.values())
+            completed_task_ids = set(task_id_samples.keys())
+        else:
+            # Extract all unique task_ids within expected range
+            completed_task_ids = set()
+            for sample in samples:
+                task_id = sample.get('task_id')
+                if task_id is not None:
+                    if isinstance(task_id, str):
+                        try:
+                            task_id_int = int(task_id)
+                        except ValueError:
+                            continue
+                    else:
+                        task_id_int = int(task_id)
+                    
+                    # Only count task_ids within expected range
+                    if task_id_int in expected_task_ids:
+                        completed_task_ids.add(task_id_int)
+        
+        # Calculate completion status
+        missing_task_ids = expected_task_ids - completed_task_ids
+        is_complete = len(missing_task_ids) == 0
+        
+        return {
+            'samples': samples,
+            'is_complete': is_complete,
+            'completed_count': len(completed_task_ids),
+            'total_count': len(expected_task_ids),
+            'missing_task_ids': sorted(list(missing_task_ids)) if not is_complete else []
+        }

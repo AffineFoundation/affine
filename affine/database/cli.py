@@ -16,7 +16,6 @@ from affine.database.dao import (
     ExecutionLogsDAO,
     ScoresDAO,
     SystemConfigDAO,
-    MinerMetadataDAO,
     DataRetentionDAO,
 )
 
@@ -179,26 +178,8 @@ async def cmd_test_basic():
         value = await config_dao.get_param_value("test_param")
         print(f"  ✓ Retrieved config value: {value}")
         
-        # Test MinerMetadataDAO
-        print("\n6. Testing MinerMetadataDAO...")
-        miner_dao = MinerMetadataDAO()
-        
-        metadata = await miner_dao.save_metadata(
-            miner_hotkey="test_hotkey_123",
-            uid=42,
-            current_revision="v1.0.0",
-            model="test-org/test-model",
-            model_name="test_model",
-            last_commit_block=1000000
-        )
-        print(f"  ✓ Saved miner metadata")
-        
-        # Update statistics
-        await miner_dao.update_statistics("test_hotkey_123", success=True)
-        print(f"  ✓ Updated miner statistics")
-        
         # Test DataRetentionDAO
-        print("\n7. Testing DataRetentionDAO...")
+        print("\n6. Testing DataRetentionDAO...")
         retention_dao = DataRetentionDAO()
         
         policy = await retention_dao.set_protected(

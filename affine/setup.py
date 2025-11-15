@@ -1,11 +1,45 @@
 import os
 import logging
 from dotenv import load_dotenv
-from typing import Tuple, Type
+from typing import Tuple, Type, Optional
 
 load_dotenv(override=True)
 
 NETUID = 120
+
+# Wallet initialization
+def get_wallet() -> Optional["bt.wallet"]:
+    """Get bittensor wallet from environment variables.
+    
+    Returns:
+        Bittensor wallet or None if not configured
+    """
+    try:
+        import bittensor as bt
+        
+        coldkey = os.getenv("BT_WALLET_COLD", "default")
+        hotkey = os.getenv("BT_WALLET_HOT", "default")
+        
+        return bt.wallet(name=coldkey, hotkey=hotkey)
+    
+    except Exception as e:
+        logging.getLogger("affine").warning(f"Failed to initialize wallet: {e}")
+        return None
+
+# Global wallet instance (lazy initialization)
+_wallet_instance: Optional["bt.wallet"] = None
+
+def get_wallet_instance() -> Optional["bt.wallet"]:
+    """Get or create global wallet instance."""
+    global _wallet_instance
+    
+    if _wallet_instance is None:
+        _wallet_instance = get_wallet()
+    
+    return _wallet_instance
+
+# Export wallet for backward compatibility
+wallet = get_wallet_instance()
 
 TRACE = 5
 
@@ -13,7 +47,7 @@ TRACE = 5
 # Note: This import must be after other imports to avoid circular dependencies
 def get_enabled_envs():
     """Get enabled environment classes. Imported here to avoid circular dependency."""
-    from affine.tasks import (
+    from affine.core.environments import (
         WEBSHOP,
         ALFWORLD,
         BABYAI,

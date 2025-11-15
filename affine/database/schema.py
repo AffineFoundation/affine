@@ -14,24 +14,36 @@ def get_table_name(base_name: str) -> str:
 
 
 # Sample Results Table
+#
+# Design Philosophy:
+# - PK combines the 3 most frequent query dimensions: hotkey + revision + env
+# - SK uses task_id for natural ordering
+# - uid removed (mutable, should query via bittensor metadata -> hotkey first)
+# - GSI for timestamp range queries only
+# - block_number stored but not indexed (no block query requirement)
+#
+# Query Patterns:
+# 1. Get samples by hotkey+revision+env -> Query by PK
+# 2. Get samples by hotkey+revision (all envs) -> Query with PK prefix + filter
+# 3. Get samples by hotkey (all revisions) -> Scan with hotkey prefix + filter
+# 4. Get samples by timestamp range -> Use timestamp-index GSI
+# 5. Get samples by uid -> Query bittensor metadata first to get hotkey+revision, then query here
 SAMPLE_RESULTS_SCHEMA = {
     "TableName": get_table_name("sample_results"),
     "KeySchema": [
-        {"AttributeName": "pk", "KeyType": "HASH"},   # Partition key
-        {"AttributeName": "sk", "KeyType": "RANGE"},  # Sort key
+        {"AttributeName": "pk", "KeyType": "HASH"},   # MINER#{hotkey}#REV#{revision}#ENV#{env}
+        {"AttributeName": "sk", "KeyType": "RANGE"},  # TASK#{task_id}
     ],
     "AttributeDefinitions": [
         {"AttributeName": "pk", "AttributeType": "S"},
         {"AttributeName": "sk", "AttributeType": "S"},
-        {"AttributeName": "env", "AttributeType": "S"},
         {"AttributeName": "timestamp", "AttributeType": "N"},
     ],
     "GlobalSecondaryIndexes": [
         {
-            "IndexName": "env-timestamp-index",
+            "IndexName": "timestamp-index",
             "KeySchema": [
-                {"AttributeName": "env", "KeyType": "HASH"},
-                {"AttributeName": "timestamp", "KeyType": "RANGE"},
+                {"AttributeName": "timestamp", "KeyType": "HASH"},
             ],
             "Projection": {"ProjectionType": "ALL"},
         },
@@ -41,6 +53,11 @@ SAMPLE_RESULTS_SCHEMA = {
 
 
 # Task Queue Table
+# New schema design:
+# - PK: ENV#{env} - partition by environment
+# - SK: STATUS#{status}#PRIORITY#{priority}#CREATED#{timestamp}#UUID#{uuid}
+# - GSI1: miner-revision-index for querying by miner+revision
+# - GSI2: task-uuid-index for reverse lookup by uuid
 TASK_QUEUE_SCHEMA = {
     "TableName": get_table_name("task_queue"),
     "KeySchema": [
@@ -50,15 +67,23 @@ TASK_QUEUE_SCHEMA = {
     "AttributeDefinitions": [
         {"AttributeName": "pk", "AttributeType": "S"},
         {"AttributeName": "sk", "AttributeType": "S"},
-        {"AttributeName": "status", "AttributeType": "S"},
-        {"AttributeName": "created_at", "AttributeType": "N"},
+        {"AttributeName": "gsi1_pk", "AttributeType": "S"},
+        {"AttributeName": "gsi1_sk", "AttributeType": "S"},
+        {"AttributeName": "task_uuid", "AttributeType": "S"},
     ],
     "GlobalSecondaryIndexes": [
         {
-            "IndexName": "status-created-index",
+            "IndexName": "miner-revision-index",
             "KeySchema": [
-                {"AttributeName": "status", "KeyType": "HASH"},
-                {"AttributeName": "created_at", "KeyType": "RANGE"},
+                {"AttributeName": "gsi1_pk", "KeyType": "HASH"},
+                {"AttributeName": "gsi1_sk", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+        },
+        {
+            "IndexName": "task-uuid-index",
+            "KeySchema": [
+                {"AttributeName": "task_uuid", "KeyType": "HASH"},
             ],
             "Projection": {"ProjectionType": "ALL"},
         },
@@ -134,21 +159,6 @@ SYSTEM_CONFIG_SCHEMA = {
 }
 
 
-# Miner Metadata Table
-MINER_METADATA_SCHEMA = {
-    "TableName": get_table_name("miner_metadata"),
-    "KeySchema": [
-        {"AttributeName": "pk", "KeyType": "HASH"},
-        {"AttributeName": "sk", "KeyType": "RANGE"},
-    ],
-    "AttributeDefinitions": [
-        {"AttributeName": "pk", "AttributeType": "S"},
-        {"AttributeName": "sk", "AttributeType": "S"},
-    ],
-    "BillingMode": "PAY_PER_REQUEST",
-}
-
-
 # Data Retention Policy Table
 DATA_RETENTION_SCHEMA = {
     "TableName": get_table_name("data_retention_policy"),
@@ -171,6 +181,5 @@ ALL_SCHEMAS = [
     EXECUTION_LOGS_SCHEMA,
     SCORES_SCHEMA,
     SYSTEM_CONFIG_SCHEMA,
-    MINER_METADATA_SCHEMA,
     DATA_RETENTION_SCHEMA,
 ]

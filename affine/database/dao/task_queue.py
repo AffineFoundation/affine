@@ -2,11 +2,17 @@
 Task Queue DAO
 
 Manages sampling tasks with status tracking and error handling.
+
+Design:
+- PK: ENV#{env} - partition by environment for load distribution
+- SK: STATUS#{status}#PRIORITY#{priority}#CREATED#{timestamp}#UUID#{uuid}
+- task_id is an integer representing the dataset index (0 to dataset_length-1)
+- Uses GSI for querying by miner+revision
 """
 
 import time
 import uuid
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 from affine.database.base_dao import BaseDAO
 from affine.database.schema import get_table_name
 
@@ -14,22 +20,45 @@ from affine.database.schema import get_table_name
 class TaskQueueDAO(BaseDAO):
     """DAO for task_queue table.
     
-    Manages sampling tasks for miners.
-    PK: MINER#{hotkey}#REV#{revision}
-    SK: TASK#{task_id}
+    Manages sampling tasks for miners with proper dataset index task_id.
+    
+    Schema Design:
+    - PK: ENV#{env} - partition by environment
+    - SK: STATUS#{status}#PRIORITY#{priority}#CREATED#{timestamp}#UUID#{uuid}
+    - GSI1: MINER#{hotkey}#REV#{revision} -> ENV#{env}#TASK_ID#{task_id}
+    
+    task_id is an INTEGER representing the dataset index (0 to dataset_length-1),
+    NOT a timestamp-uuid string.
     """
     
     def __init__(self):
         self.table_name = get_table_name("task_queue")
         super().__init__()
     
-    def _make_pk(self, miner_hotkey: str, model_revision: str) -> str:
-        """Generate partition key."""
+    def _make_pk(self, env: str) -> str:
+        """Generate partition key based on environment."""
+        return f"ENV#{env}"
+    
+    def _make_sk(self, status: str, priority: int, created_at: int, task_uuid: str) -> str:
+        """Generate sort key with status, priority, timestamp, and uuid.
+        
+        Format allows:
+        - Querying by status prefix
+        - Sorting by priority (padded for lexicographic order)
+        - Sorting by creation time within same priority
+        - Unique identification via uuid
+        """
+        # Pad priority to 10 digits for proper sorting (higher priority = higher number)
+        priority_padded = str(priority).zfill(10)
+        return f"STATUS#{status}#PRIORITY#{priority_padded}#CREATED#{created_at}#UUID#{task_uuid}"
+    
+    def _make_gsi1_pk(self, miner_hotkey: str, model_revision: str) -> str:
+        """Generate GSI1 partition key for miner+revision queries."""
         return f"MINER#{miner_hotkey}#REV#{model_revision}"
     
-    def _make_sk(self, task_id: str) -> str:
-        """Generate sort key."""
-        return f"TASK#{task_id}"
+    def _make_gsi1_sk(self, env: str, task_id: int) -> str:
+        """Generate GSI1 sort key for env+task_id queries."""
+        return f"ENV#{env}#TASK_ID#{task_id}"
     
     async def create_task(
         self,
@@ -37,8 +66,8 @@ class TaskQueueDAO(BaseDAO):
         model_revision: str,
         model: str,
         env: str,
-        validator_hotkey: str,
-        priority: int = 0,
+        task_id: int,  # Dataset index, NOT uuid
+        priority: int = 1000,
         ttl_days: int = 7
     ) -> Dict[str, Any]:
         """Create a new sampling task.
@@ -46,212 +75,419 @@ class TaskQueueDAO(BaseDAO):
         Args:
             miner_hotkey: Miner's hotkey
             model_revision: Model revision
-            model: Model repo/name for pre-execution validation
-            env: Environment name (L3-L8)
-            validator_hotkey: Validator's hotkey (currently owner_hotkey)
-            priority: Task priority (higher = more urgent)
+            model: Model repo/name
+            env: Environment name (e.g., affine:sat, agentgym:webshop)
+            task_id: Dataset index (0 to dataset_length-1)
+            priority: Task priority (higher = more urgent, default 1000)
             ttl_days: Days until task expires
             
         Returns:
             Created task
         """
-        # Generate time-based UUID for ordering
-        task_id = f"{int(time.time()*1000)}-{uuid.uuid4()}"
-        
+        task_uuid = str(uuid.uuid4())
         created_at = int(time.time())
+        status = 'pending'
         
         item = {
-            'pk': self._make_pk(miner_hotkey, model_revision),
-            'sk': self._make_sk(task_id),
-            'task_id': task_id,
+            'pk': self._make_pk(env),
+            'sk': self._make_sk(status, priority, created_at, task_uuid),
+            'task_uuid': task_uuid,
+            'task_id': task_id,  # Integer dataset index
             'miner_hotkey': miner_hotkey,
             'model_revision': model_revision,
             'model': model,
             'env': env,
-            'status': 'pending',
+            'status': status,
             'priority': priority,
             'created_at': created_at,
-            'started_at': None,
-            'completed_at': None,
-            'error_count': 0,
+            'assigned_to': None,
+            'assigned_at': None,
+            'retry_count': 0,
+            'max_retries': 3,
             'last_error': None,
-            'validator_hotkey': validator_hotkey,
+            'last_error_code': None,
+            'last_failed_at': None,
             'ttl': self.get_ttl(ttl_days),
+            # GSI1 keys for miner+revision queries
+            'gsi1_pk': self._make_gsi1_pk(miner_hotkey, model_revision),
+            'gsi1_sk': self._make_gsi1_sk(env, task_id),
         }
         
         return await self.put(item)
     
-    async def get_task(self, miner_hotkey: str, model_revision: str, task_id: str) -> Optional[Dict[str, Any]]:
-        """Get a specific task.
+    async def batch_create_tasks(
+        self,
+        tasks: List[Dict[str, Any]],
+        priority: int = 1000,
+        ttl_days: int = 7
+    ) -> int:
+        """Batch create multiple tasks.
         
         Args:
-            miner_hotkey: Miner's hotkey
-            model_revision: Model revision
-            task_id: Task ID
+            tasks: List of task dicts with keys:
+                - miner_hotkey
+                - model_revision
+                - model
+                - env
+                - task_id (integer)
+            priority: Default priority for all tasks
+            ttl_days: Days until tasks expire
+            
+        Returns:
+            Number of tasks created
+        """
+        items = []
+        for task_info in tasks:
+            task_uuid = str(uuid.uuid4())
+            created_at = int(time.time())
+            status = 'pending'
+            
+            item = {
+                'pk': self._make_pk(task_info['env']),
+                'sk': self._make_sk(status, priority, created_at, task_uuid),
+                'task_uuid': task_uuid,
+                'task_id': task_info['task_id'],
+                'miner_hotkey': task_info['miner_hotkey'],
+                'model_revision': task_info['model_revision'],
+                'model': task_info['model'],
+                'env': task_info['env'],
+                'status': status,
+                'priority': priority,
+                'created_at': created_at,
+                'assigned_to': None,
+                'assigned_at': None,
+                'retry_count': 0,
+                'max_retries': 3,
+                'last_error': None,
+                'last_error_code': None,
+                'last_failed_at': None,
+                'ttl': self.get_ttl(ttl_days),
+                'gsi1_pk': self._make_gsi1_pk(task_info['miner_hotkey'], task_info['model_revision']),
+                'gsi1_sk': self._make_gsi1_sk(task_info['env'], task_info['task_id']),
+            }
+            items.append(item)
+        
+        await self.batch_write(items)
+        return len(items)
+    
+    async def get_task_by_uuid(self, task_uuid: str) -> Optional[Dict[str, Any]]:
+        """Get a task by its UUID using GSI (reverse lookup).
+        
+        Args:
+            task_uuid: Task UUID
             
         Returns:
             Task if found, None otherwise
-        """
-        pk = self._make_pk(miner_hotkey, model_revision)
-        sk = self._make_sk(task_id)
-        
-        return await self.get(pk, sk)
-    
-    async def get_pending_tasks(
-        self,
-        limit: Optional[int] = None,
-        priority_order: bool = True
-    ) -> List[Dict[str, Any]]:
-        """Get pending tasks across all miners.
-        
-        Uses status-created-index GSI.
-        
-        Args:
-            limit: Maximum number of tasks to return
-            priority_order: If True, sort by priority (high to low)
-            
-        Returns:
-            List of pending tasks
         """
         from affine.database.client import get_client
         client = get_client()
         
         params = {
             'TableName': self.table_name,
-            'IndexName': 'status-created-index',
-            'KeyConditionExpression': '#status = :status',
-            'ExpressionAttributeNames': {'#status': 'status'},
-            'ExpressionAttributeValues': {':status': {'S': 'pending'}}
+            'IndexName': 'task-uuid-index',
+            'KeyConditionExpression': 'task_uuid = :task_uuid',
+            'ExpressionAttributeValues': {':task_uuid': {'S': task_uuid}},
+            'Limit': 1
         }
         
-        if limit:
-            params['Limit'] = limit
-        
         response = await client.query(**params)
-        tasks = [self._deserialize(item) for item in response.get('Items', [])]
+        items = response.get('Items', [])
         
-        # Sort by priority if requested
-        if priority_order:
-            tasks.sort(key=lambda t: t.get('priority', 0), reverse=True)
+        if not items:
+            return None
+        
+        return self._deserialize(items[0])
+    
+    async def get_pending_tasks_by_env(
+        self,
+        env: str,
+        limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get pending tasks for a specific environment.
+        
+        Tasks are sorted by priority (descending) then by creation time (ascending).
+        
+        Args:
+            env: Environment name
+            limit: Maximum number of tasks to return
+            
+        Returns:
+            List of pending tasks
+        """
+        pk = self._make_pk(env)
+        
+        # Query tasks with pending status prefix
+        # SK format: STATUS#pending#PRIORITY#...
+        tasks = await self.query(
+            pk=pk,
+            sk_prefix='STATUS#pending',
+            limit=limit,
+            reverse=True  # Higher priority first (lexicographic descending)
+        )
         
         return tasks
     
-    async def start_task(self, miner_hotkey: str, model_revision: str, task_id: str) -> bool:
-        """Mark task as started.
+    async def get_next_pending_task(self, env: str) -> Optional[Dict[str, Any]]:
+        """Get the next pending task for an environment.
+        
+        Returns the highest priority, oldest task.
         
         Args:
-            miner_hotkey: Miner's hotkey
-            model_revision: Model revision
-            task_id: Task ID
+            env: Environment name
             
         Returns:
-            True if updated successfully
+            Next task to execute, or None if no pending tasks
         """
-        pk = self._make_pk(miner_hotkey, model_revision)
-        sk = self._make_sk(task_id)
-        
-        task = await self.get(pk, sk)
-        if not task:
-            return False
-        
-        task['status'] = 'running'
-        task['started_at'] = int(time.time())
-        
-        await self.put(task)
-        return True
+        tasks = await self.get_pending_tasks_by_env(env, limit=1)
+        return tasks[0] if tasks else None
     
-    async def complete_task(self, miner_hotkey: str, model_revision: str, task_id: str) -> bool:
-        """Mark task as completed and delete it.
+    async def assign_task(
+        self,
+        task: Dict[str, Any],
+        executor_hotkey: str
+    ) -> Dict[str, Any]:
+        """Assign a task to an executor.
+        
+        This changes the task status from 'pending' to 'assigned',
+        which requires deleting the old item and creating a new one
+        (since status is part of the sort key).
         
         Args:
-            miner_hotkey: Miner's hotkey
-            model_revision: Model revision
-            task_id: Task ID
+            task: Task dict (from get_next_pending_task)
+            executor_hotkey: Executor's hotkey
+            
+        Returns:
+            Updated task
+        """
+        # Delete old task (with old SK)
+        await self.delete(task['pk'], task['sk'])
+        
+        # Create new task with updated status
+        new_status = 'assigned'
+        assigned_at = int(time.time())
+        
+        new_sk = self._make_sk(
+            new_status,
+            task['priority'],
+            task['created_at'],
+            task['task_uuid']
+        )
+        
+        task['sk'] = new_sk
+        task['status'] = new_status
+        task['assigned_to'] = executor_hotkey
+        task['assigned_at'] = assigned_at
+        
+        await self.put(task)
+        return task
+    
+    async def complete_task(self, task: Dict[str, Any]) -> bool:
+        """Mark task as completed and delete it from queue.
+        
+        Args:
+            task: Task dict
             
         Returns:
             True if deleted successfully
         """
-        pk = self._make_pk(miner_hotkey, model_revision)
-        sk = self._make_sk(task_id)
-        
-        return await self.delete(pk, sk)
+        return await self.delete(task['pk'], task['sk'])
     
     async def fail_task(
         self,
-        miner_hotkey: str,
-        model_revision: str,
-        task_id: str,
-        error_message: str
-    ) -> bool:
-        """Record task failure and increment error count.
+        task: Dict[str, Any],
+        error_message: str,
+        error_code: str = 'EXECUTION_ERROR'
+    ) -> Dict[str, Any]:
+        """Record task failure and handle retry logic.
+        
+        If retry_count < max_retries, reset status to 'pending'.
+        Otherwise, mark as 'failed' permanently.
         
         Args:
-            miner_hotkey: Miner's hotkey
-            model_revision: Model revision
-            task_id: Task ID
+            task: Task dict
             error_message: Error description
+            error_code: Error classification code
             
         Returns:
-            True if updated successfully
+            Updated task
         """
-        pk = self._make_pk(miner_hotkey, model_revision)
-        sk = self._make_sk(task_id)
+        # Delete old task
+        await self.delete(task['pk'], task['sk'])
         
-        task = await self.get(pk, sk)
-        if not task:
-            return False
+        retry_count = task.get('retry_count', 0) + 1
+        max_retries = task.get('max_retries', 3)
         
-        task['status'] = 'failed'
-        task['error_count'] = task.get('error_count', 0) + 1
+        if retry_count >= max_retries:
+            new_status = 'failed'
+        else:
+            new_status = 'pending'  # Back to pending for retry
+        
+        new_sk = self._make_sk(
+            new_status,
+            task['priority'],
+            task['created_at'],
+            task['task_uuid']
+        )
+        
+        task['sk'] = new_sk
+        task['status'] = new_status
+        task['retry_count'] = retry_count
         task['last_error'] = error_message
-        task['completed_at'] = int(time.time())
+        task['last_error_code'] = error_code
+        task['last_failed_at'] = int(time.time())
+        task['assigned_to'] = None
+        task['assigned_at'] = None
         
         await self.put(task)
-        return True
+        return task
     
     async def get_tasks_by_miner(
         self,
         miner_hotkey: str,
         model_revision: str,
-        status: Optional[str] = None,
-        limit: Optional[int] = None
+        env: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Get all tasks for a specific miner.
+        """Get all tasks for a specific miner+revision.
+        
+        Uses GSI1 for efficient querying.
         
         Args:
             miner_hotkey: Miner's hotkey
             model_revision: Model revision
-            status: Optional status filter
-            limit: Maximum number of results
+            env: Optional environment filter
             
         Returns:
             List of tasks
         """
-        pk = self._make_pk(miner_hotkey, model_revision)
+        from affine.database.client import get_client
+        client = get_client()
         
-        tasks = await self.query(pk=pk, limit=limit, reverse=True)
+        gsi1_pk = self._make_gsi1_pk(miner_hotkey, model_revision)
         
-        # Filter by status if specified
-        if status:
-            tasks = [t for t in tasks if t.get('status') == status]
+        params = {
+            'TableName': self.table_name,
+            'IndexName': 'miner-revision-index',
+            'KeyConditionExpression': 'gsi1_pk = :pk',
+            'ExpressionAttributeValues': {':pk': {'S': gsi1_pk}}
+        }
         
-        return tasks
+        if env:
+            params['KeyConditionExpression'] = 'gsi1_pk = :pk AND begins_with(gsi1_sk, :sk_prefix)'
+            params['ExpressionAttributeValues'][':sk_prefix'] = {'S': f'ENV#{env}'}
+        
+        response = await client.query(**params)
+        return [self._deserialize(item) for item in response.get('Items', [])]
     
-    async def delete_miner_tasks(self, miner_hotkey: str, model_revision: str) -> int:
-        """Delete all tasks for a miner (used when miner state changes).
+    async def get_pending_task_ids_for_miner(
+        self,
+        miner_hotkey: str,
+        model_revision: str,
+        env: str
+    ) -> Set[int]:
+        """Get set of task_ids that are already in queue for a miner's env.
+        
+        Used by task generator to avoid creating duplicate tasks.
         
         Args:
             miner_hotkey: Miner's hotkey
             model_revision: Model revision
+            env: Environment name
+            
+        Returns:
+            Set of task_ids (integers)
+        """
+        tasks = await self.get_tasks_by_miner(miner_hotkey, model_revision, env)
+        return {task['task_id'] for task in tasks if task.get('status') in ['pending', 'assigned']}
+    
+    async def delete_miner_tasks(
+        self,
+        miner_hotkey: str,
+        model_revision: str,
+        env: Optional[str] = None
+    ) -> int:
+        """Delete all tasks for a miner (used when miner is no longer valid).
+        
+        Args:
+            miner_hotkey: Miner's hotkey
+            model_revision: Model revision
+            env: Optional environment filter
             
         Returns:
             Number of tasks deleted
         """
-        pk = self._make_pk(miner_hotkey, model_revision)
-        
-        tasks = await self.query(pk=pk)
+        tasks = await self.get_tasks_by_miner(miner_hotkey, model_revision, env)
         
         for task in tasks:
             await self.delete(task['pk'], task['sk'])
         
         return len(tasks)
+    
+    async def cleanup_invalid_tasks(
+        self,
+        valid_miners: List[Dict[str, Any]]
+    ) -> int:
+        """Remove tasks for miners that are no longer valid.
+        
+        Args:
+            valid_miners: List of valid miner dicts with 'hotkey' and 'model_revision'
+            
+        Returns:
+            Number of tasks cleaned up
+        """
+        # Build set of valid (hotkey, revision) tuples
+        valid_set = {
+            (m['hotkey'], m['model_revision'])
+            for m in valid_miners
+        }
+        
+        # Scan all pending and assigned tasks
+        from affine.database.client import get_client
+        client = get_client()
+        
+        # This is a scan operation - use sparingly
+        params = {
+            'TableName': self.table_name,
+            'FilterExpression': '#status IN (:pending, :assigned)',
+            'ExpressionAttributeNames': {'#status': 'status'},
+            'ExpressionAttributeValues': {
+                ':pending': {'S': 'pending'},
+                ':assigned': {'S': 'assigned'}
+            }
+        }
+        
+        response = await client.scan(**params)
+        tasks = [self._deserialize(item) for item in response.get('Items', [])]
+        
+        # Delete invalid tasks
+        deleted_count = 0
+        for task in tasks:
+            key = (task.get('miner_hotkey'), task.get('model_revision'))
+            if key not in valid_set:
+                await self.delete(task['pk'], task['sk'])
+                deleted_count += 1
+        
+        return deleted_count
+    
+    async def get_queue_stats(self, env: str) -> Dict[str, int]:
+        """Get statistics about the task queue for an environment.
+        
+        Args:
+            env: Environment name
+            
+        Returns:
+            Dict with counts: pending, assigned, failed
+        """
+        pk = self._make_pk(env)
+        
+        # Count by status
+        stats = {
+            'pending': 0,
+            'assigned': 0,
+            'failed': 0
+        }
+        
+        for status in stats.keys():
+            tasks = await self.query(pk=pk, sk_prefix=f'STATUS#{status}')
+            stats[status] = len(tasks)
+        
+        return stats

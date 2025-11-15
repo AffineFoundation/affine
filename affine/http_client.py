@@ -54,3 +54,79 @@ async def _get_client() -> aiohttp.ClientSession:
         )
         _CLIENTS[key] = client
     return client
+
+
+class AsyncHTTPClient:
+    """Async HTTP Client with timeout and retry support."""
+    
+    def __init__(self, timeout: int = 30):
+        """Initialize async HTTP client.
+        
+        Args:
+            timeout: Request timeout in seconds
+        """
+        self.timeout = aiohttp.ClientTimeout(total=timeout)
+    
+    async def get(self, url: str, params: dict = None, headers: dict = None) -> dict:
+        """GET request.
+        
+        Args:
+            url: Request URL
+            params: Query parameters
+            headers: Request headers
+            
+        Returns:
+            Response JSON data
+        """
+        client = await _get_client()
+        async with client.get(url, params=params, headers=headers, timeout=self.timeout) as response:
+            response.raise_for_status()
+            return await response.json()
+    
+    async def post(self, url: str, json: dict = None, headers: dict = None, params: dict = None) -> dict:
+        """POST request.
+        
+        Args:
+            url: Request URL
+            json: JSON body
+            headers: Request headers
+            params: Query parameters
+            
+        Returns:
+            Response JSON data
+        """
+        client = await _get_client()
+        async with client.post(url, json=json, headers=headers, params=params, timeout=self.timeout) as response:
+            response.raise_for_status()
+            return await response.json()
+    
+    async def put(self, url: str, json: dict = None, headers: dict = None) -> dict:
+        """PUT request.
+        
+        Args:
+            url: Request URL
+            json: JSON body
+            headers: Request headers
+            
+        Returns:
+            Response JSON data
+        """
+        client = await _get_client()
+        async with client.put(url, json=json, headers=headers, timeout=self.timeout) as response:
+            response.raise_for_status()
+            return await response.json()
+    
+    async def delete(self, url: str, headers: dict = None) -> dict:
+        """DELETE request.
+        
+        Args:
+            url: Request URL
+            headers: Request headers
+            
+        Returns:
+            Response JSON data
+        """
+        client = await _get_client()
+        async with client.delete(url, headers=headers, timeout=self.timeout) as response:
+            response.raise_for_status()
+            return await response.json()
