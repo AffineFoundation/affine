@@ -76,7 +76,7 @@ async def cmd_test_basic():
         sample = await sample_dao.save_sample(
             miner_hotkey="test_hotkey_123",
             model_revision="v1.0.0",
-            model_hash="abc123",
+            model="test-org/test-model",
             uid=42,
             env="L3",
             subset="test",
@@ -107,7 +107,7 @@ async def cmd_test_basic():
         task = await task_dao.create_task(
             miner_hotkey="test_hotkey_123",
             model_revision="v1.0.0",
-            model_hash="abc123",
+            model="test-org/test-model",
             env="L3",
             validator_hotkey="validator_123"
         )
@@ -187,7 +187,7 @@ async def cmd_test_basic():
             miner_hotkey="test_hotkey_123",
             uid=42,
             current_revision="v1.0.0",
-            model_hash="abc123",
+            model="test-org/test-model",
             model_name="test_model",
             last_commit_block=1000000
         )
