@@ -26,6 +26,7 @@ from affine.set_weights import retry_set_weights, set_weights_with_confirmation
 from affine.config import get_conf
 from affine.setup import NETUID, setup_logging, logger, get_enabled_envs
 from affine.weights import weights
+from affine.validate_from_r2 import get_weights_from_r2
 from aiohttp import web
 
 HEARTBEAT = None
@@ -507,10 +508,24 @@ def validate():
     hotkey = get_conf("BT_WALLET_HOT", "default")
     wallet = bt.wallet(name=coldkey, hotkey=hotkey)
 
+    # Check if using R2 mode
+    use_r2_weights = get_conf("USE_R2_WEIGHTS", default="false").lower() in ("true", "1", "yes")
+
     async def _run():
         LAST = 0
         TEMPO = 180
         subtensor = None
+
+        logger.info("=" * 80)
+        if use_r2_weights:
+            logger.info("VALIDATOR MODE: R2 WEIGHTS")
+            logger.info(f"Wallet: {wallet.hotkey.ss58_address}")
+            logger.info(f"Weights Source: https://pub-bf429ea7a5694b99adaf3d444cbbe64d.r2.dev/affine/weights/latest.json")
+        else:
+            logger.info("VALIDATOR MODE: LOCAL COMPUTATION")
+            logger.info(f"Wallet: {wallet.hotkey.ss58_address}")
+        logger.info("=" * 80)
+
         while True:
             try:
                 HEARTBEAT = time.monotonic()
@@ -524,8 +539,14 @@ def validate():
                     await subtensor.wait_for_block()
                     continue
 
-                force_uid0 = 0.0
-                uids, weights = await get_weights(burn=force_uid0)
+                # Get weights based on mode
+                if use_r2_weights:
+                    logger.info(f"Block {BLOCK}: Downloading weights from R2...")
+                    uids, weights = await get_weights_from_r2()
+                else:
+                    force_uid0 = 0.0
+                    uids, weights = await get_weights(burn=force_uid0)
+
                 logger.info("Setting weights ...")
                 await retry_set_weights(wallet, uids=uids, weights=weights, retry=3)
                 LAST = BLOCK
