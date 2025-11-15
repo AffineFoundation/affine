@@ -15,12 +15,14 @@ from affine.database.schema import get_table_name
 class SampleResultsDAO(BaseDAO):
     """DAO for sample_results table.
     
-    Stores sampling results with compressed conversation data.
+    Stores sampling results with compressed extra data.
     PK: MINER#{hotkey}#REV#{revision}
     SK: ENV#{env}#TIME#{timestamp}#SIG#{signature_hash}
     
     The signature_hash (first 16 chars of signature) provides natural deduplication
     since hotkey + timestamp + signature uniquely identifies a sample.
+    
+    The extra field contains conversation and request data, compressed for storage efficiency.
     """
     
     def __init__(self):
@@ -50,7 +52,7 @@ class SampleResultsDAO(BaseDAO):
         task_id: str,
         score: float,
         latency_ms: int,
-        conversation: Dict[str, Any],
+        extra: Dict[str, Any],
         validator_hotkey: str,
         block_number: int,
         signature: str,
@@ -67,7 +69,7 @@ class SampleResultsDAO(BaseDAO):
             task_id: Task ID
             score: Score achieved
             latency_ms: Latency in milliseconds
-            conversation: Conversation data (will be compressed)
+            extra: Extra data containing conversation and request (will be compressed)
             validator_hotkey: Validator's hotkey
             block_number: Current block number
             signature: Cryptographic signature (used in SK for uniqueness)
@@ -79,9 +81,9 @@ class SampleResultsDAO(BaseDAO):
         if timestamp is None:
             timestamp = int(time.time() * 1000)  # milliseconds
         
-        # Compress conversation data
-        conversation_json = json.dumps(conversation, separators=(',', ':'))
-        conversation_compressed = self.compress_data(conversation_json)
+        # Compress extra data (contains conversation + request)
+        extra_json = json.dumps(extra, separators=(',', ':'))
+        extra_compressed = self.compress_data(extra_json)
         
         item = {
             'pk': self._make_pk(miner_hotkey, model_revision),
@@ -95,7 +97,7 @@ class SampleResultsDAO(BaseDAO):
             'score': score,
             'latency_ms': latency_ms,
             'timestamp': timestamp,
-            'conversation_compressed': conversation_compressed,
+            'extra_compressed': extra_compressed,
             'validator_hotkey': validator_hotkey,
             'block_number': block_number,
             'signature': signature,
@@ -133,13 +135,13 @@ class SampleResultsDAO(BaseDAO):
             reverse=reverse
         )
         
-        # Decompress conversation data
+        # Decompress extra data
         for item in items:
-            if 'conversation_compressed' in item:
-                compressed = item['conversation_compressed']
-                conversation_json = self.decompress_data(compressed)
-                item['conversation'] = json.loads(conversation_json)
-                del item['conversation_compressed']
+            if 'extra_compressed' in item:
+                compressed = item['extra_compressed']
+                extra_json = self.decompress_data(compressed)
+                item['extra'] = json.loads(extra_json)
+                del item['extra_compressed']
         
         return items
     
@@ -184,13 +186,13 @@ class SampleResultsDAO(BaseDAO):
         response = await client.query(**params)
         items = [self._deserialize(item) for item in response.get('Items', [])]
         
-        # Decompress conversation data
+        # Decompress extra data
         for item in items:
-            if 'conversation_compressed' in item:
-                compressed = item['conversation_compressed']
-                conversation_json = self.decompress_data(compressed)
-                item['conversation'] = json.loads(conversation_json)
-                del item['conversation_compressed']
+            if 'extra_compressed' in item:
+                compressed = item['extra_compressed']
+                extra_json = self.decompress_data(compressed)
+                item['extra'] = json.loads(extra_json)
+                del item['extra_compressed']
         
         return items
     
