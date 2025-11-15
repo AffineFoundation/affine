@@ -5,7 +5,7 @@ description = "Anima Machina"
 authors = [{ name = "affine", email = "affine@affine.io" }]
 dependencies = [
     "python-dotenv>=0.21.0",
-    "bittensor",
+    "bittensor<=10.0.0",
     "bittensor-cli",
     "aiohttp>=3.10.11",
     "ipykernel>=6.30.1",
