@@ -44,9 +44,6 @@ class R2ToDynamoMigration:
             True if migrated successfully, False if skipped/error
         """
         try:
-            # Extract conversation data from extra field
-            conversation = result.extra.get('conversation', {})
-            
             # Extract task_id from extra.request.task_id
             task_id = result.task_id
             if task_id is None and result.extra:
@@ -57,6 +54,9 @@ class R2ToDynamoMigration:
             # Fallback to 'legacy' if still None
             if task_id is None:
                 task_id = 'legacy'
+            
+            # Use entire extra field (contains conversation + request)
+            extra = result.extra if result.extra else {}
             
             timestamp = int(result.timestamp * 1000)
             
@@ -83,7 +83,7 @@ class R2ToDynamoMigration:
                 task_id=task_id,
                 score=result.score,
                 latency_ms=int(result.latency_seconds * 1000),
-                conversation=conversation,
+                extra=extra,
                 validator_hotkey=result.hotkey,
                 block_number=result.miner.block or 0,
                 signature=result.signature,
