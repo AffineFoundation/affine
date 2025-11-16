@@ -12,15 +12,15 @@ from typing import Dict, List, Tuple, Optional, Any, Set
 class SamplingConfig:
     """Configuration parameters for sampling."""
     
-    TAIL = 50_000  # Increased from 20k to 50k blocks for better statistical stability
-    MIN_SAMPLES_PER_ENV = 400  # Increased from 200 to 400 for stronger confidence intervals
-    MAX_SAMPLES_CAP = 5000  # Increased from 2000 to 5000
+    TAIL = 10_000  # Reduced to 10K blocks for collecting sequential samples
+    MIN_SAMPLES_PER_ENV = 200  # Adjust suitable window length for TAIL
+    MAX_SAMPLES_CAP = 250  # 
     ELIG = 0.10  # Eligibility threshold: 10% of max samples
     SCALE = 1.0  # Scaling factor for layer weights
     
     # Challenge algorithm parameters
     # Confidence level for Beta distribution interval (can be adjusted easily)
-    CONFIDENCE_LEVEL = 0.80  # confidence level
+    CONFIDENCE_LEVEL = 0.90  # confidence level
 
     # Beta distribution prior parameters (Jeffrey's prior for binomial proportion)
     BETA_PRIOR_ALPHA = 0.5
