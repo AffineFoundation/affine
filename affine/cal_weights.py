@@ -351,7 +351,10 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
             note="No eligible miners, defaulting to uid 0"
         )
         summary_data = _build_summary_data(ctx, ENVS)
-        await save_summary(blk, summary_data)
+        if save_to_s3:
+            await save_summary(blk, summary_data)
+        else:
+            logger.info("Skipping save to S3 (save_to_s3=False)")
 
         return [0], [1.0]
 
