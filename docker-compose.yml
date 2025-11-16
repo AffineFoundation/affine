@@ -36,7 +36,7 @@ services:
       # runner doesn’t need the cache—omit or give its own if desired
     environment:
       - SIGNER_URL=http://signer:8080
-    command: ["-vv", "runner"]
+    command: ["-vv", "runner", "--enable-monitoring"]
 
   signer:
     image: thebes1618/affine:latest

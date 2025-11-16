@@ -12,15 +12,15 @@ from typing import Dict, List, Tuple, Optional, Any, Set
 class SamplingConfig:
     """Configuration parameters for sampling."""
     
-    TAIL = 50_000  # Increased from 20k to 50k blocks for better statistical stability
-    MIN_SAMPLES_PER_ENV = 400  # Increased from 200 to 400 for stronger confidence intervals
-    MAX_SAMPLES_CAP = 5000  # Increased from 2000 to 5000
+    TAIL = 10_000  # Reduced to 10K blocks for collecting sequential samples
+    MIN_SAMPLES_PER_ENV = 200  # Adjust suitable window length for TAIL
+    MAX_SAMPLES_CAP = 250  # 
     ELIG = 0.10  # Eligibility threshold: 10% of max samples
     SCALE = 1.0  # Scaling factor for layer weights
     
     # Challenge algorithm parameters
     # Confidence level for Beta distribution interval (can be adjusted easily)
-    CONFIDENCE_LEVEL = 0.80  # confidence level
+    CONFIDENCE_LEVEL = 0.90  # confidence level
 
     # Beta distribution prior parameters (Jeffrey's prior for binomial proportion)
     BETA_PRIOR_ALPHA = 0.5
@@ -600,35 +600,38 @@ class SamplingOrchestrator:
         prev = {}
         v_id = {}
         first_block = {}
-        
+
         # Stats structure for challenge algorithm
         stats = {hk: {} for hk in meta_hotkeys}
         env_first_block = {hk: {e: float('inf') for e in envs} for hk in meta_hotkeys}
-        
+
+        # Collect samples per hotkey per environment (to get the latest MAX_SAMPLES_CAP)
+        from collections import deque
+        samples_queue = {hk: {e: deque(maxlen=SamplingConfig.MAX_SAMPLES_CAP) for e in envs} for hk in meta_hotkeys}
+
         for result in results:
             hk = result.miner.hotkey
             env = result.challenge.env
-            
+
             if hk not in cnt:
                 continue
-                
+
             try:
                 name = result.miner.model.split("/", 1)[1].lower()
             except Exception:
                 name = str(result.miner.model).lower()
-                
+
             if hk != base_hk and not name.startswith("affine"):
                 continue
-            
+
             cur_vid = (result.miner.model, result.miner.revision)
-            
+
             if v_id.get(hk) != cur_vid:
                 v_id[hk] = cur_vid
                 first_block[hk] = result.miner.block
                 for e in envs:
-                    cnt[hk][e] = 0
-                    succ[hk][e] = 0
-                    env_first_block[hk][e] = float('inf')
+                    # Clear the queue when version changes
+                    samples_queue[hk][e].clear()
             else:
                 try:
                     fb = int(first_block.get(hk, result.miner.block)) if first_block.get(hk) is not None else int(result.miner.block)
@@ -636,20 +639,27 @@ class SamplingOrchestrator:
                     first_block[hk] = fb if fb <= cb else cb
                 except Exception:
                     pass
-            
+
             prev[hk] = result
-            cnt[hk][env] += 1
-            # Normalize score to [0, 1] range based on environment-specific score range
+
+            # Add sample to queue (automatically keeps only latest MAX_SAMPLES_CAP)
             normalized_score = SamplingConfig.normalize_score(float(result.evaluation.score), env)
-            succ[hk][env] += normalized_score
-            
-            # Track first block per environment
             try:
                 block_num = int(result.miner.block)
-                if block_num < env_first_block[hk][env]:
-                    env_first_block[hk][env] = block_num
             except Exception:
-                pass
+                block_num = float('inf')
+            samples_queue[hk][env].append((normalized_score, block_num))
+
+        # Now compute cnt, succ, and env_first_block from the queues
+        for hk in meta_hotkeys:
+            for e in envs:
+                samples = samples_queue[hk][e]
+                cnt[hk][e] = len(samples)
+                succ[hk][e] = sum(score for score, _ in samples)
+                if samples:
+                    env_first_block[hk][e] = min(block for _, block in samples)
+                else:
+                    env_first_block[hk][e] = float('inf')
         
         # Build stats structure for challenge algorithm
         for hk in meta_hotkeys:

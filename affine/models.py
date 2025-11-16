@@ -53,6 +53,7 @@ class Result(BaseModel):
     latency_seconds: float
     success: bool
     error: Optional[str] = None
+    task_id: Optional[int] = None  # Task ID for sequential sampling tracking
     extra: Dict[str, Any] = Field(default_factory=dict)
     timestamp: float = Field(default_factory=time.time)
     
@@ -181,10 +182,18 @@ class CompactResult(BaseModel):
     block: Optional[int] = None
     env: str
     score: float
+    task_id: Optional[int] = None
+    timestamp: float = 0.0  # Added for scheduler initialization
     
     @classmethod
     def from_result(cls, result: "Result") -> "CompactResult":
         """Create CompactResult from full Result object."""
+        task_id = result.task_id
+        if task_id is None and result.extra:
+            request = result.extra.get('request', {})
+            if isinstance(request, dict):
+                task_id = request.get('task_id')
+
         return cls(
             hotkey=result.miner.hotkey,
             uid=result.miner.uid,
@@ -192,7 +201,9 @@ class CompactResult(BaseModel):
             revision=result.miner.revision,
             block=result.miner.block,
             env=result.env,
-            score=result.score
+            score=result.score,
+            task_id=task_id,
+            timestamp=result.timestamp
         )
     
     @property

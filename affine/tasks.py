@@ -58,8 +58,8 @@ class EvaluatorConfig:
             "timeout": self.timeout,
         }
         
-        # Add miner-based defaults if miner is provided
-        if miner is not None:
+        # Add miner-based defaults if miner is provided and has valid slug
+        if miner is not None and hasattr(miner, 'slug') and miner.slug is not None:
             payload["model"] = miner.model
             payload["base_url"] = f"https://{miner.slug}.chutes.ai/v1"
 
@@ -86,11 +86,17 @@ class BaseSDKEnv(ABC):
     _sandbox_config: SandboxConfig = None
     _evaluator_config: EvaluatorConfig = None
     DEFAULT_REPLICAS: int = 1
+    DEFAULT_DAILY_RATE: int = int(os.getenv("DEFAULT_DAILY_RATE", "100"))  # Default daily sampling rate per environment
 
     def __init__(self):
         super().__init__()
         self._env = self._load_environment()
         self._env_lock = asyncio.Lock()
+    
+    @property
+    def daily_rate(self) -> int:
+        """Get daily sampling rate for this environment"""
+        return self.DEFAULT_DAILY_RATE
 
     @property
     def sandbox_config(self) -> SandboxConfig:
@@ -242,6 +248,11 @@ class BaseSDKEnv(ABC):
         extra['image'] = self.docker_image
         if payload_extra:
             extra['request'] = payload_extra.copy()
+        
+        # Extract task_id from payload if available (for sequential sampling tracking)
+        task_id = None
+        if payload_extra and 'task_id' in payload_extra:
+            task_id = payload_extra['task_id']
 
         return Result(
             miner=miner,
@@ -250,6 +261,7 @@ class BaseSDKEnv(ABC):
             latency_seconds=time.monotonic() - start_time if start_time else 0.0,
             success=success,
             error=error,
+            task_id=task_id,
             extra=extra,
             timestamp=time.time()
         )
@@ -261,6 +273,11 @@ class BaseSDKEnv(ABC):
             "image": self.docker_image,
             "request": payload_extra,
         }
+        
+        # Extract task_id from payload if available
+        task_id = None
+        if payload_extra and 'task_id' in payload_extra:
+            task_id = payload_extra['task_id']
 
         return Result(
             miner=miner,
@@ -269,6 +286,7 @@ class BaseSDKEnv(ABC):
             latency_seconds=time.monotonic() - start_time if start_time else 0.0,
             success=False,
             error=str(error),
+            task_id=task_id,
             extra=extra,
             timestamp=time.time()
         )
@@ -299,7 +317,12 @@ class BaseSDKEnv(ABC):
 
     def _validate_miner(self, miner: Any) -> bool:
         """Validate miner object"""
-        return hasattr(miner, "model") and hasattr(miner, "slug")
+        return (
+            hasattr(miner, "model")
+            and hasattr(miner, "slug")
+            and miner.model is not None
+            and miner.slug is not None
+        )
 
     @abstractmethod
     async def evaluate(self, miner: Union["Miner", Dict[str, Any]]) -> "Result":
@@ -326,6 +349,14 @@ class BaseSDKEnv(ABC):
 class AffineSDKEnv(BaseSDKEnv):
     """Base class for Affine environments (SAT, ABD, DED, HVM, ELR)"""
 
+    # Default configuration for Affine environments
+    DEFAULT_DATA_LEN = 240  # Affine test set size
+
+    def __init__(self, data_len: int = None):
+        super().__init__()
+        # Use environment-specific defaults if not provided
+        self.data_len = data_len if data_len is not None else self.DEFAULT_DATA_LEN
+
     @property
     def env_type(self) -> EnvType:
         return EnvType.AFFINE
@@ -333,7 +364,7 @@ class AffineSDKEnv(BaseSDKEnv):
     @property
     def docker_image(self) -> str:
         """All Affine environments use the same image"""
-        return "bignickeye/affine:v2"
+        return "bignickeye/affine:v3"
 
     @property
     def env_vars(self) -> Dict[str, str]:
@@ -352,7 +383,7 @@ class AffineSDKEnv(BaseSDKEnv):
         
         Args:
             miner: Optional Miner instance or dict of miners (can be None if model/base_url in eval_kwargs)
-            **eval_kwargs: Dynamic parameters (model, base_url, temperature, task_type, etc.)
+            **eval_kwargs: Dynamic parameters (model, base_url, temperature, task_type, task_id, etc.)
         """
 
         # Extract env name from template (e.g., "affine:sat" -> "sat")
@@ -360,6 +391,10 @@ class AffineSDKEnv(BaseSDKEnv):
         
         # Set default task_type if not provided in eval_kwargs
         eval_kwargs.setdefault("task_type", env_name)
+        
+        # Set default task_id if not provided (for sequential sampling support)
+        if "task_id" not in eval_kwargs:
+            eval_kwargs["task_id"] = random.randint(0, self.data_len - 1)
 
         async def evaluate_single(m):
             return await self._evaluate_single_miner(m, **eval_kwargs)
@@ -459,6 +494,7 @@ def register_env(env_type: EnvType, env_name: str):
 class SAT(AffineSDKEnv):
     """SAT environment for SDK"""
     DEFAULT_REPLICAS = 1
+    DEFAULT_DATA_LEN = 500
 
     @property
     def env_name(self) -> str:
@@ -485,26 +521,6 @@ class DED(AffineSDKEnv):
         return "affine:ded"
 
 
-@register_env(EnvType.AFFINE, "affine:hvm")
-class HVM(AffineSDKEnv):
-    """HVM environment for SDK"""
-    DEFAULT_REPLICAS = 1
-
-    @property
-    def env_name(self) -> str:
-        return "affine:hvm"
-
-
-@register_env(EnvType.AFFINE, "affine:elr")
-class ELR(AffineSDKEnv):
-    """ELR environment for SDK"""
-    DEFAULT_REPLICAS = 1
-
-    @property
-    def env_name(self) -> str:
-        return "affine:elr"
-
-
 # AgentGym Environments
 @register_env(EnvType.AGENTGYM, "agentgym:alfworld")
 class ALFWORLD(AgentGymSDKEnv):
@@ -522,6 +538,7 @@ class WEBSHOP(AgentGymSDKEnv):
     """WEBSHOP environment for SDK"""
     DEFAULT_MAX_ROUND = 10
     DEFAULT_REPLICAS = 1
+    DEFAULT_DATA_LEN = 500 # 1
 
     @property
     def env_name(self) -> str:
@@ -531,7 +548,7 @@ class WEBSHOP(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:babyai")
 class BABYAI(AgentGymSDKEnv):
     """BABYAI environment for SDK"""
-    DEFAULT_DATA_LEN = 4000
+    DEFAULT_DATA_LEN = 500 # 40
     DEFAULT_REPLICAS = 1
 
     @property
@@ -542,7 +559,7 @@ class BABYAI(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:sciworld")
 class SCIWORLD(AgentGymSDKEnv):
     """SCIWORLD environment for SDK"""
-    DEFAULT_DATA_LEN = 4639
+    DEFAULT_DATA_LEN = 2000 # 4639
     DEFAULT_REPLICAS = 1
 
     @property
@@ -580,8 +597,6 @@ def create_env_factory(env_class: Type[BaseSDKEnv], **default_kwargs):
 SAT_factory = create_env_factory(SAT)
 ABD_factory = create_env_factory(ABD)
 DED_factory = create_env_factory(DED)
-HVM_factory = create_env_factory(HVM)
-ELR_factory = create_env_factory(ELR)
 ALFWORLD_factory = create_env_factory(ALFWORLD)
 WEBSHOP_factory = create_env_factory(WEBSHOP)
 BABYAI_factory = create_env_factory(BABYAI)

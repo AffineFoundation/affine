@@ -167,13 +167,14 @@ async def get_weights_shas(
             sib = getattr(info, "siblings", None) or []
 
             def _name(s):
-                return getattr(s, "rfilename", None) or getattr(s, "path", "")
+                return getattr(s, "rfilename", None) or getattr(s, "path", "") or ""
 
             shas = {
                 str(getattr(s, "lfs", {})["sha256"])
                 for s in sib
                 if (
                     isinstance(getattr(s, "lfs", None), dict)
+                    and _name(s) is not None
                     and _name(s).endswith(".safetensors")
                     and "sha256" in getattr(s, "lfs", {})
                 )
