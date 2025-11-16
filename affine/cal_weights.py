@@ -425,4 +425,29 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
 
     uids = [meta.hotkeys.index(hk) for hk in eligible]
     weights = [weight_by_hk.get(meta.hotkeys[u], 0.0) for u in uids]
-    return uids, weights
+
+    # If any weight is less than 0.01, assign it to uid 0
+    uid0_extra_weight = 0.0
+    for i, w in enumerate(weights):
+        if w < 0.01 and uids[i] != 0:
+            uid0_extra_weight += w
+            weights[i] = 0.0
+
+    # Add extra weight to uid 0
+    if uid0_extra_weight > 0:
+        if 0 in uids:
+            uid0_idx = uids.index(0)
+            weights[uid0_idx] += uid0_extra_weight
+        else:
+            uids.append(0)
+            weights.append(uid0_extra_weight)
+
+    # Remove entries with 0 weight (except uid 0)
+    filtered_uids = []
+    filtered_weights = []
+    for u, w in zip(uids, weights):
+        if w > 0 or u == 0:
+            filtered_uids.append(u)
+            filtered_weights.append(w)
+
+    return filtered_uids, filtered_weights
