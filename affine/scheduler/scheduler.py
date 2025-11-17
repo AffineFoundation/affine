@@ -1,12 +1,15 @@
 import time
+import json
 import asyncio
+import hashlib
 import traceback
+from pathlib import Path
 from typing import Dict, List, Optional
 import bittensor as bt
 from affine.models import Miner, Result
 from affine.tasks import BaseSDKEnv
 from affine.miners import miners as get_miners
-from affine.storage import sink, load_summary
+from affine.storage import sink
 from affine.utils.subtensor import get_subtensor
 from affine.setup import NETUID, logger
 from affine.scheduler.config import SamplingConfig
@@ -18,7 +21,13 @@ from affine.scheduler.monitor import SchedulerMonitor
 
 
 class SamplingScheduler:
-    """Main sampling scheduler that coordinates all components"""
+    """Main sampling scheduler that coordinates all components.
+    
+    Uses environment-based global sequential sampling where:
+    - Each environment is sampled at its daily_rate (default = dataset size)
+    - All miners receive the same task_id for each sampling event
+    - Task IDs progress sequentially through the dataset range
+    """
     
     def __init__(self, config: SamplingConfig, wallet: bt.wallet, enable_monitoring: bool = False, monitor_port: int = 8765):
         self.config = config
@@ -30,8 +39,8 @@ class SamplingScheduler:
         self.env_queues: Dict[str, TaskQueue] = {}
         self.result_queue = asyncio.Queue()
         
+        # Miner state (simplified - no longer runs independent sampling loops)
         self.samplers: Dict[int, MinerSampler] = {}
-        self.sampler_tasks: Dict[int, asyncio.Task] = {}
         
         self.evaluation_workers: List[asyncio.Task] = []
         self.upload_worker = None
@@ -39,13 +48,12 @@ class SamplingScheduler:
         self.monitor_task = None
         self.miner_refresh_task = None
         self.api_server = None
+        self.global_sampling_task = None
         
         self.metrics = SchedulerMetrics()
         
         # Rate tracking for monitor loop
         self.last_monitor_time: Optional[float] = None
-        self.last_total_enqueued: int = 0
-        self.last_total_dequeued: int = 0
         self.last_env_enqueued: Dict[str, int] = {}
         self.last_env_dequeued: Dict[str, int] = {}
         
@@ -54,14 +62,50 @@ class SamplingScheduler:
         if enable_monitoring:
             self.scheduler_monitor = SchedulerMonitor()
             self.scheduler_monitor.set_scheduler(self)
+        
+        # Environments list (set in start())
+        self.envs: List[BaseSDKEnv] = []
+        
+        # Global sampling state (per-environment)
+        self.env_task_counters: Dict[str, int] = {}  # Current task_id for each env
+        self.last_global_sample_time: Dict[str, float] = {}  # Last sample time for rate control
+        
+        # State persistence
+        self.state_file = Path.home() / ".cache" / "affine" / "sampling_state.json"
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
     
     async def start(self, envs: List[BaseSDKEnv]):
         """Start all scheduler components"""
         logger.info(f"[Scheduler] Starting with {len(envs)} environments")
         
+        # Store environments for global sampling
+        self.envs = envs
+        
         # Initialize monitor with historical data (if monitoring enabled)
         if self.scheduler_monitor:
             await self.scheduler_monitor.load_historical_samples(blocks=7200)
+        
+        # Load persisted state or initialize
+        self._load_state()
+        
+        # Initialize task counters for each environment
+        for env in envs:
+            env_name = env.env_name
+            start_index = env.start_index
+            end_index = env.end_index
+            
+            # Initialize counter if not already set
+            if env_name not in self.env_task_counters:
+                self.env_task_counters[env_name] = start_index
+            
+            # Ensure counter is within valid range
+            if self.env_task_counters[env_name] >= end_index:
+                self.env_task_counters[env_name] = start_index  # Wrap around
+            
+            logger.info(
+                f"[Scheduler] {env_name}: range=[{start_index}, {end_index}), "
+                f"daily_rate={env.daily_rate}, next_task_id={self.env_task_counters[env_name]}"
+            )
         
         # Create per-environment queues
         for env in envs:
@@ -105,67 +149,67 @@ class SamplingScheduler:
         # Start miner refresh
         self.miner_refresh_task = asyncio.create_task(self._miner_refresh_loop(envs))
         
+        # Start global sampling coordinator
+        self.global_sampling_task = asyncio.create_task(self._global_sampling_loop())
+        
         # Start monitoring API if enabled
         if self.enable_monitoring and self.scheduler_monitor:
             self.api_server = asyncio.create_task(self._start_monitoring_api())
         
         logger.info("[Scheduler] All components started")
     
+    def _load_state(self):
+        """Load persisted sampling state from file."""
+        if self.state_file.exists():
+            try:
+                with open(self.state_file, 'r') as f:
+                    state = json.load(f)
+                self.env_task_counters = state.get('env_task_counters', {})
+                logger.info(f"[Scheduler] Loaded state from {self.state_file}")
+            except Exception as e:
+                logger.warning(f"[Scheduler] Failed to load state: {e}")
+                self.env_task_counters = {}
+    
+    def _save_state(self):
+        """Save sampling state to file for persistence."""
+        try:
+            state = {'env_task_counters': self.env_task_counters}
+            with open(self.state_file, 'w') as f:
+                json.dump(state, f)
+        except Exception as e:
+            logger.error(f"[Scheduler] Failed to save state: {e}")
+    
     async def _miner_refresh_loop(self, envs: List[BaseSDKEnv]):
-        """Periodically refresh miner list and manage samplers"""
+        """Periodically refresh miner list"""
         while True:
             try:
                 subtensor = await get_subtensor()
                 meta = await subtensor.metagraph(NETUID)
                 miners_map = await get_miners(meta=meta)
                 
-                # Start new samplers or update existing ones if miner info changed
+                # Add new miners or update existing ones
                 for uid, miner in miners_map.items():
                     if uid not in self.samplers:
-                        # New miner - start sampler
-                        await self._start_sampler(uid, miner, envs)
+                        self.samplers[uid] = MinerSampler(uid, miner, self.config)
+                        logger.info(f"[Scheduler] Added miner U{uid}")
                     else:
-                        # Existing miner - check if critical attributes changed
-                        existing_sampler = self.samplers[uid]
-                        existing_miner = existing_sampler.miner
-                        
-                        # Check if hotkey changed
-                        if existing_miner.hotkey != miner.hotkey:
-                            logger.info(
-                                f"[Scheduler] U{uid} hotkey changed: "
-                                f"{existing_miner.hotkey} -> {miner.hotkey} - restarting sampler"
-                            )
-                            await self._stop_sampler(uid)
-                            await self._start_sampler(uid, miner, envs)
-                        
-                        # Check if model/revision/slug changed
-                        elif (existing_miner.model != miner.model or
-                              existing_miner.revision != miner.revision or
-                              existing_miner.slug != miner.slug):
-                            
-                            logger.info(
-                                f"[Scheduler] U{uid} miner info changed: "
-                                f"model={existing_miner.model}->{miner.model}, "
-                                f"revision={existing_miner.revision}->{miner.revision}, "
-                                f"slug={existing_miner.slug}->{miner.slug} - restarting sampler"
-                            )
-                            
-                            # Stop old sampler and start new one with updated info
-                            await self._stop_sampler(uid)
-                            await self._start_sampler(uid, miner, envs)
-
-                # Stop removed samplers
+                        # Update miner info if changed
+                        existing = self.samplers[uid].miner
+                        if (existing.hotkey != miner.hotkey or
+                            existing.model != miner.model or
+                            existing.slug != miner.slug):
+                            self.samplers[uid] = MinerSampler(uid, miner, self.config)
+                            logger.info(f"[Scheduler] Updated miner U{uid}")
+                
+                # Remove miners no longer in metagraph
                 for uid in list(self.samplers.keys()):
                     if uid not in miners_map:
-                        await self._stop_sampler(uid)
-                
-                # Adjust sampling rates based on 24h counts
-                await self._adjust_sampling_rates()
+                        del self.samplers[uid]
+                        logger.info(f"[Scheduler] Removed miner U{uid}")
                 
                 self.metrics.active_miners = len(self.samplers)
                 self.metrics.paused_miners = sum(
-                    1 for s in self.samplers.values()
-                    if time.time() < s.pause_until
+                    1 for s in self.samplers.values() if not s.is_available()
                 )
             
             except Exception as e:
@@ -174,25 +218,93 @@ class SamplingScheduler:
             
             await asyncio.sleep(self.config.miner_refresh_interval)
     
-    async def _start_sampler(self, uid: int, miner: Miner, envs: List[BaseSDKEnv]):
-        """Start sampler for a single miner"""
-        sampler = MinerSampler(uid, miner, envs, self.config, monitor=self.scheduler_monitor)
-        self.samplers[uid] = sampler
+    async def _global_sampling_loop(self):
+        """Global sampling coordinator - creates tasks for all miners with the same task_id.
         
-        # Pass env_queues dict to sampler for routing
-        task = asyncio.create_task(sampler.run(self.env_queues))
-        self.sampler_tasks[uid] = task
+        Rate-controlled by each environment's daily_rate:
+        - interval = 86400 / daily_rate seconds between samples
+        - All miners get the same task_id for consistent evaluation
+        """
+        logger.info("[Scheduler] Global sampling started")
         
-        logger.info(f"[Scheduler] Started sampler for U{uid}")
-    
-    async def _stop_sampler(self, uid: int):
-        """Stop sampler for a single miner"""
-        if uid in self.sampler_tasks:
-            self.sampler_tasks[uid].cancel()
-            del self.sampler_tasks[uid]
-        if uid in self.samplers:
-            del self.samplers[uid]
-        logger.info(f"[Scheduler] Stopped sampler for U{uid}")
+        # Initialize with staggered offsets
+        import random
+        for env in self.envs:
+            interval = 86400.0 / env.daily_rate
+            self.last_global_sample_time[env.env_name] = time.time() - random.uniform(0, interval)
+        
+        while True:
+            try:
+                if not self.samplers or not self.envs:
+                    await asyncio.sleep(5)
+                    continue
+                
+                current_time = time.time()
+                
+                # Find most overdue environment
+                best_env = None
+                max_overdue = 0.0
+                
+                for env in self.envs:
+                    interval = 86400.0 / env.daily_rate
+                    elapsed = current_time - self.last_global_sample_time.get(env.env_name, 0)
+                    overdue = elapsed / interval
+                    
+                    if overdue >= 1.0 and overdue > max_overdue:
+                        queue = self.env_queues.get(env.env_name)
+                        if queue and queue.qsize() < self.config.queue_max_size_per_env * 0.8:
+                            max_overdue = overdue
+                            best_env = env
+                
+                if best_env:
+                    env = best_env
+                    queue = self.env_queues[env.env_name]
+                    
+                    # Get next task_id and increment counter
+                    task_id = self.env_task_counters[env.env_name]
+                    self.env_task_counters[env.env_name] += 1
+                    
+                    # Wrap around if reached end
+                    if self.env_task_counters[env.env_name] >= env.end_index:
+                        self.env_task_counters[env.env_name] = env.start_index
+                    
+                    # Create tasks for all available miners
+                    tasks_created = 0
+                    for uid, sampler in self.samplers.items():
+                        if sampler.is_available():
+                            task = sampler.create_task(env, task_id)
+                            await queue.put(task, sampler_id=uid)
+                            tasks_created += 1
+                            
+                            if self.scheduler_monitor:
+                                self.scheduler_monitor.record_sample(uid, env.env_name)
+                    
+                    self.last_global_sample_time[env.env_name] = current_time
+                    
+                    if tasks_created > 0:
+                        logger.debug(f"[Sampling] {env.env_name}: task_id={task_id}, miners={tasks_created}")
+                    
+                    self._save_state()
+                    
+                    await asyncio.sleep(0.01)
+                else:
+                    # Calculate sleep until next sample
+                    min_sleep = 60.0
+                    for env in self.envs:
+                        interval = 86400.0 / env.daily_rate
+                        elapsed = current_time - self.last_global_sample_time.get(env.env_name, 0)
+                        time_until_next = max(0.1, interval - elapsed)
+                        min_sleep = min(min_sleep, time_until_next)
+                    
+                    await asyncio.sleep(min_sleep)
+            
+            except asyncio.CancelledError:
+                self._save_state()  # Save on shutdown
+                raise
+            except Exception as e:
+                logger.error(f"[Scheduler] Sampling error: {e}")
+                traceback.print_exc()
+                await asyncio.sleep(5)
     
     def _calculate_deltas(self, current_time: float) -> tuple[Dict[str, int], Dict[str, int], int, int, float]:
         """Calculate enqueue/dequeue deltas since last check.
@@ -241,70 +353,6 @@ class SamplingScheduler:
             self.last_env_enqueued[name] = q.total_enqueued
             self.last_env_dequeued[name] = q.total_dequeued
     
-    async def _adjust_sampling_rates(self):
-        """Adjust sampling rates by loading Summary data (50k blocks).
-        
-        This method loads the latest Summary file and checks sample counts
-        for each miner's environment. If a miner's specific environment has less
-        than the threshold (default 200), that environment gets accelerated
-        sampling (3x multiplier).
-        
-        Called every 30 minutes to dynamically adjust rates based on actual performance.
-        """
-        try:
-            # Load latest Summary (covers ~50k blocks)
-            summary = await load_summary()
-            miners_data = summary.get('data', {}).get('miners', {})
-            
-            # Build per-UID per-environment sample counts
-            uid_env_counts: Dict[int, Dict[str, int]] = {}
-            for hotkey, miner_info in miners_data.items():
-                uid = miner_info.get('uid')
-                if uid is None:
-                    continue
-                
-                environments = miner_info.get('environments', {})
-                uid_env_counts[uid] = {
-                    env_name: env_data.get('count', 0)
-                    for env_name, env_data in environments.items()
-                }
-            
-            # Adjust rate multiplier per environment for each active sampler
-            adjusted_miners = 0
-            total_accelerated_envs = 0
-            
-            for uid, sampler in self.samplers.items():
-                env_counts = uid_env_counts.get(uid, {})
-                accelerated_envs = []
-                
-                # Check each environment independently
-                for env in sampler.envs:
-                    env_name = env.env_name
-                    sample_count = env_counts.get(env_name, 0)
-                    
-                    if sample_count < self.config.low_sample_threshold:
-                        sampler.env_rate_multipliers[env_name] = self.config.low_sample_multiplier
-                        accelerated_envs.append(env_name)
-                    else:
-                        sampler.env_rate_multipliers[env_name] = 1.0
-                
-                if accelerated_envs:
-                    total_accelerated_envs += len(accelerated_envs)
-                    logger.debug(
-                        f"[Scheduler] U{uid} accelerated envs: {', '.join(accelerated_envs)} "
-                        f"({self.config.low_sample_multiplier}x)"
-                    )
-                
-                adjusted_miners += 1
-            
-            logger.info(
-                f"[Scheduler] Adjusted sampling rates: {adjusted_miners} miners, "
-                f"{total_accelerated_envs} environment instances accelerated ({self.config.low_sample_multiplier}x)"
-            )
-        
-        except Exception as e:
-            logger.error(f"[Scheduler] Failed to adjust sampling rates: {e}")
-            traceback.print_exc()
     
     async def _batch_flusher_loop(self):
         """Periodically flush incomplete batches"""
@@ -359,6 +407,18 @@ class SamplingScheduler:
                     for name, q in self.env_queues.items()
                 ])
                 
+                # Add global sampling progress
+                global_progress = ""
+                progress_info = []
+                for env in self.envs:
+                    task_id = self.env_task_counters.get(env.env_name, env.start_index)
+                    total = env.end_index - env.start_index
+                    done = task_id - env.start_index
+                    pct = (done / total * 100) if total > 0 else 0
+                    progress_info.append(f"{env.env_name.split(':')[-1]}@{task_id}({pct:.0f}%)")
+                if progress_info:
+                    global_progress = f" [{' '.join(progress_info)}]"
+                
                 logger.info(
                     f"[STATUS] samplers={self.metrics.active_miners} "
                     f"(paused={self.metrics.paused_miners}) "
@@ -366,6 +426,7 @@ class SamplingScheduler:
                     f"({env_stats}) "
                     f"result_queue={result_queue_size} "
                     f"enqueued={total_enqueued} dequeued={total_dequeued}"
+                    f"{global_progress}"
                 )
             except asyncio.CancelledError:
                 raise
@@ -443,9 +504,8 @@ class SamplingScheduler:
         """Stop all scheduler components"""
         logger.info("[Scheduler] Stopping...")
         
-        # Cancel all samplers
-        for task in self.sampler_tasks.values():
-            task.cancel()
+        # Save state before stopping
+        self._save_state()
         
         # Cancel workers
         for worker in self.evaluation_workers:
@@ -460,15 +520,18 @@ class SamplingScheduler:
             self.monitor_task.cancel()
         if self.miner_refresh_task:
             self.miner_refresh_task.cancel()
+        if self.global_sampling_task:
+            self.global_sampling_task.cancel()
         if self.api_server:
             self.api_server.cancel()
         
         # Wait for all to complete
-        all_tasks = (
-            list(self.sampler_tasks.values()) +
-            self.evaluation_workers +
-            [self.upload_worker, self.batch_flusher, self.monitor_task, self.miner_refresh_task]
-        )
+        all_tasks = self.evaluation_workers + [
+            self.upload_worker, self.batch_flusher,
+            self.monitor_task, self.miner_refresh_task
+        ]
+        if self.global_sampling_task:
+            all_tasks.append(self.global_sampling_task)
         if self.api_server:
             all_tasks.append(self.api_server)
         

@@ -205,7 +205,7 @@ class CompactResult(BaseModel):
             task_id=task_id,
             timestamp=result.timestamp
         )
-    
+
     @property
     def miner(self):
         """Provide miner-like interface for compatibility."""

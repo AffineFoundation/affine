@@ -251,11 +251,9 @@ def validate():
         logger.info("=" * 80)
         if use_r2_weights:
             logger.info("VALIDATOR MODE: R2 WEIGHTS")
-            logger.info(f"Wallet: {wallet.hotkey.ss58_address}")
             logger.info(f"Weights Source: https://pub-bf429ea7a5694b99adaf3d444cbbe64d.r2.dev/affine/weights/latest.json")
         else:
             logger.info("VALIDATOR MODE: LOCAL COMPUTATION")
-            logger.info(f"Wallet: {wallet.hotkey.ss58_address}")
         logger.info("=" * 80)
 
         while True:
