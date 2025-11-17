@@ -61,7 +61,7 @@ services:
     command: ["-v", "signer"]
 
   watchtower:
-    image: containrrr/watchtower
+    image: nickfedor/watchtower
     container_name: affine-watchtower
     restart: unless-stopped
     volumes:
