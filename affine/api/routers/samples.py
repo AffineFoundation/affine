@@ -26,7 +26,7 @@ from affine.api.dependencies import (
 )
 from affine.api.utils.pagination import get_pagination_params, create_pagination_info
 from affine.database.dao.sample_results import SampleResultsDAO
-from affine.miners import miners as get_miners
+from affine.core.miners import miners as get_miners
 
 router = APIRouter(prefix="/samples", tags=["Samples"])
 

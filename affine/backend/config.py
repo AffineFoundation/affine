@@ -9,7 +9,7 @@ import time
 import os
 from typing import Any, Dict, Optional
 from dataclasses import dataclass, field
-from affine.http_client import AsyncHTTPClient
+from affine.core.http_client import AsyncHTTPClient
 
 
 @dataclass
