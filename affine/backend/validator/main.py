@@ -20,7 +20,7 @@ from typing import Dict, List, Optional, Tuple
 
 from affine.backend.validator.weight_setter import WeightSetter
 from affine.backend.config import get_config
-from affine.http_client import AsyncHTTPClient
+from affine.core.http_client import AsyncHTTPClient
 
 logger = logging.getLogger(__name__)
 
@@ -276,7 +276,7 @@ class ValidatorService:
         # Load wallet if not provided
         if self.wallet is None:
             try:
-                from affine.setup import wallet
+                from affine.core.setup import wallet
                 self.wallet = wallet
                 self.weight_setter.wallet = wallet
                 
@@ -285,7 +285,7 @@ class ValidatorService:
                 else:
                     logger.warning("No wallet loaded")
             except ImportError:
-                logger.error("Failed to import wallet from affine.setup")
+                logger.error("Failed to import wallet from affine.core.setup")
         
         try:
             while self.running:

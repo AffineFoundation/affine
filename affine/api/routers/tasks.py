@@ -16,8 +16,6 @@ from affine.api.models import (
     TaskStatusResponse,
     TaskCompleteRequest,
     TaskFailRequest,
-    TaskNextIdRequest,
-    TaskNextIdResponse,
     TaskQueueStatsResponse,
     TaskFetchRequest,
 )
@@ -122,80 +120,6 @@ async def get_pending_tasks(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve tasks: {str(e)}"
-        )
-
-
-@router.get("/next-task-id", response_model=TaskNextIdResponse, dependencies=[Depends(rate_limit_read)])
-async def get_next_task_id(
-    miner_hotkey: str = Query(..., description="Miner's hotkey"),
-    model_revision: str = Query(..., description="Model revision"),
-    env: str = Query(..., description="Environment name"),
-    sample_dao: SampleResultsDAO = Depends(get_sample_results_dao),
-):
-    """
-    Get next task_id for sequential sampling.
-    
-    Returns the next task_id based on the max existing task_id in sample_results,
-    ensuring sequential sampling without gaps.
-    
-    Query parameters:
-    - miner_hotkey: Miner's hotkey
-    - model_revision: Model revision
-    - env: Environment name
-    """
-    try:
-        # Get all samples for this miner+env (no limit, just metadata)
-        samples = await sample_dao.get_samples_by_miner(
-            miner_hotkey=miner_hotkey,
-            model_revision=model_revision,
-            env=env,
-            include_extra=False  # Only need task_id
-        )
-        
-        # Extract task_ids (assuming task_id is numeric or can be converted)
-        task_ids = []
-        for sample in samples:
-            try:
-                # task_id might be like "1234567890-sat-123" or just "123"
-                # Extract the numeric dataset_index from task_id
-                tid = sample.get("task_id", "")
-                if "-" in tid:
-                    # Format: "timestamp-env-dataset_index"
-                    parts = tid.split("-")
-                    if len(parts) >= 3:
-                        task_ids.append(int(parts[-1]))
-                else:
-                    task_ids.append(int(tid))
-            except (ValueError, IndexError):
-                continue
-        
-        # Get dataset length from config (hardcoded for now, should be from DynamicConfig)
-        # TODO: Load from DynamicConfig
-        DATASET_LENGTHS = {
-            "affine:sat": 200,
-            "affine:abd": 200,
-            "affine:ded": 200,
-            "agentgym:webshop": 100,
-            "agentgym:wordarena": 100,
-        }
-        dataset_len = DATASET_LENGTHS.get(env, 200)
-        
-        # Calculate next task_id
-        if not task_ids:
-            next_task_id = 0
-        else:
-            max_task_id = max(task_ids)
-            next_task_id = (max_task_id + 1) % dataset_len
-        
-        return TaskNextIdResponse(
-            next_task_id=next_task_id,
-            dataset_length=dataset_len
-        )
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get next task_id: {str(e)}"
         )
 
 

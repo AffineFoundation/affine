@@ -94,7 +94,7 @@ class SchedulerService:
     
     async def _fetch_active_miners(self) -> list[MinerInfo]:
         """Fetch active miners from bittensor."""
-        from affine.miners import miners as fetch_miners
+        from affine.core.miners import miners as fetch_miners
         
         miner_dict = await fetch_miners()
         

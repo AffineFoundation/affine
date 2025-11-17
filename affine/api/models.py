@@ -186,21 +186,6 @@ class TaskFailRequest(BaseModel):
     error_message: str
 
 
-class TaskNextIdRequest(BaseModel):
-    """Request to get next task_id for sequential sampling."""
-
-    miner_hotkey: str
-    model_revision: str
-    env: str
-
-
-class TaskNextIdResponse(BaseModel):
-    """Response with next task_id."""
-
-    next_task_id: int
-    dataset_length: int
-
-
 class TaskQueueStatsResponse(BaseModel):
     """Task queue statistics response."""
 

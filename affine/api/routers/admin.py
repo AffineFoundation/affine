@@ -194,7 +194,7 @@ async def generate_tasks(
         logger.info(f"Task generation triggered by admin {admin_hotkey[:8]}...")
         
         # Fetch active miners from bittensor
-        from affine.miners import miners as fetch_miners
+        from affine.core.miners import miners as fetch_miners
         
         miner_dict = await fetch_miners()
         
@@ -254,7 +254,7 @@ async def cleanup_invalid_tasks(
         logger.info(f"Task cleanup triggered by admin {admin_hotkey[:8]}...")
         
         # Fetch active miners
-        from affine.miners import miners as fetch_miners
+        from affine.core.miners import miners as fetch_miners
         
         miner_dict = await fetch_miners()
         
@@ -305,7 +305,7 @@ async def get_active_miners(
     3. Model revision matches
     """
     try:
-        from affine.miners import miners as fetch_miners
+        from affine.core.miners import miners as fetch_miners
         
         miner_dict = await fetch_miners()
         
