@@ -12,9 +12,9 @@ from typing import Dict, List, Tuple, Optional, Any, Set
 class SamplingConfig:
     """Configuration parameters for sampling."""
     
-    TAIL = 10_000  # Reduced to 10K blocks for collecting sequential samples
-    MIN_SAMPLES_PER_ENV = 200  # Adjust suitable window length for TAIL
-    MAX_SAMPLES_CAP = 250  # 
+    TAIL = 15_000  # Reduced to 10K blocks for collecting sequential samples
+    MIN_SAMPLES_PER_ENV = 400  # Adjust suitable window length for TAIL
+    MAX_SAMPLES_CAP = 400  # 
     ELIG = 0.10  # Eligibility threshold: 10% of max samples
     SCALE = 1.0  # Scaling factor for layer weights
     
@@ -701,26 +701,41 @@ class SamplingOrchestrator:
     ) -> Tuple[Dict[str, float], Set[str]]:
         """
         Calculate normalized weights from scores.
-        
+
         Returns:
             Tuple of (weight_by_hk, updated_eligible)
         """
         if not eligible:
             return {}, eligible
-            
+
         total_points = sum(scores.get(hk, 0.0) for hk in eligible)
-        
+
         if total_points <= 0:
             # Fall back to best miner
             best = max(eligible, key=lambda hk: scores.get(hk, 0.0))
             weight_by_hk = {hk: (1.0 if hk == best else 0.0) for hk in eligible}
         else:
             weight_by_hk = {hk: (scores.get(hk, 0.0) / total_points) for hk in eligible}
-        
+
+        # Reassign weights below threshold (0.01) to base_hotkey to avoid low-value tail models
+        weight_threshold = 0.01
+        reassigned_weight = 0.0
+
+        for hk in list(weight_by_hk.keys()):
+            if hk != base_hotkey and weight_by_hk[hk] < weight_threshold:
+                reassigned_weight += weight_by_hk[hk]
+                weight_by_hk[hk] = 0.0
+
+        if reassigned_weight > 0:
+            if base_hotkey in weight_by_hk:
+                weight_by_hk[base_hotkey] += reassigned_weight
+            else:
+                weight_by_hk[base_hotkey] = reassigned_weight
+
         # Apply burn if requested
         if burn > 0:
             weight_by_hk, eligible = self.sampler.apply_burn(
                 weight_by_hk, burn, base_hotkey, eligible
             )
-            
+
         return weight_by_hk, eligible
