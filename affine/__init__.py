@@ -30,25 +30,12 @@ from affine.http_client import _get_client
 # --------------------------------------------------------------------------- #
 from affine.miners import miners
 
-# --------------------------------------------------------------------------- #
-#                   CLI (imported from cli module)                            #
-# --------------------------------------------------------------------------- #
-from affine.cli import cli
-
-# --------------------------------------------------------------------------- #
-#                               dataset                                       #
-# --------------------------------------------------------------------------- #
-from affine.storage import (
-    FOLDER, BUCKET, ACCESS, SECRET, ENDPOINT, PUBLIC_READ, R2_PUBLIC_BASE,
-    load_summary, save_summary, dataset, sink, prune
-)
-
 
 # --------------------------------------------------------------------------- #
 #                              SDK Exports                                    #
 # --------------------------------------------------------------------------- #
-# Import SDK functions for easy access
-from affine.tasks import (
+# Import SDK functions for easy access (migrated to core/environments.py)
+from affine.core.environments import (
     # Factory functions matching the expected API
     SAT_factory as SAT,
     ABD_factory as ABD,

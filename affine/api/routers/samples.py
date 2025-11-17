@@ -15,6 +15,8 @@ from affine.api.models import (
     SampleFullResponse,
     SampleDetail,
     PaginationInfo,
+    ScorerSampleData,
+    ScorerMinerSamplesResponse,
 )
 from affine.api.dependencies import (
     get_sample_results_dao,
@@ -363,6 +365,84 @@ async def get_samples_by_timestamp(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve samples: {str(e)}"
+        )
+
+
+@router.get("/scorer/{hotkey}", response_model=ScorerMinerSamplesResponse, dependencies=[Depends(rate_limit_read)])
+async def get_scorer_miner_samples(
+    hotkey: str,
+    model_revision: str = Query(..., description="Model revision (required)"),
+    env: str = Query(..., description="Environment name (required, e.g., affine:sat)"),
+    dataset_length: int = Query(..., description="Total number of tasks in dataset", ge=1),
+    task_id_start: Optional[int] = Query(None, description="Task ID range start (inclusive, for dataset expansion)"),
+    task_id_end: Optional[int] = Query(None, description="Task ID range end (exclusive, for dataset expansion)"),
+    deduplicate: bool = Query(True, description="Deduplicate by task_id, keeping latest sample"),
+    dao: SampleResultsDAO = Depends(get_sample_results_dao),
+):
+    """
+    Get samples for scorer with completion status.
+    
+    This endpoint is optimized for the scorer service:
+    - Returns samples without conversation data (saves bandwidth)
+    - Includes completion status (is_complete flag)
+    - Supports Task ID range for dataset expansion transitions
+    - Deduplicates by task_id by default (keeps latest sample)
+    
+    Required query parameters:
+    - model_revision: Model revision hash
+    - env: Environment name (e.g., affine:sat)
+    - dataset_length: Total number of tasks in the dataset
+    
+    Optional query parameters:
+    - task_id_start: Start of task ID range (inclusive), overrides dataset_length if both start and end provided
+    - task_id_end: End of task ID range (exclusive), overrides dataset_length if both start and end provided
+    - deduplicate: If True (default), keep only latest sample per task_id
+    
+    Example usage during dataset expansion:
+    - Old dataset: 0-99 (dataset_length=100)
+    - New dataset: 0-149 (dataset_length=150)
+    - Transition period: use task_id_start=0, task_id_end=150
+    """
+    try:
+        # Get samples with completion status
+        result = await dao.get_samples_with_completion_status(
+            miner_hotkey=hotkey,
+            model_revision=model_revision,
+            env=env,
+            dataset_length=dataset_length,
+            deduplicate_by_task_id=deduplicate,
+            include_extra=False,  # Scorer doesn't need conversation data
+            task_id_start=task_id_start,
+            task_id_end=task_id_end,
+        )
+        
+        # Convert to scorer-specific response format
+        scorer_samples = [
+            ScorerSampleData(
+                task_id=s["task_id"],
+                score=s["score"],
+                latency_ms=s["latency_ms"],
+                timestamp=s["timestamp"],
+                block_number=s["block_number"],
+            )
+            for s in result["samples"]
+        ]
+        
+        return ScorerMinerSamplesResponse(
+            miner_hotkey=hotkey,
+            model_revision=model_revision,
+            env=env,
+            samples=scorer_samples,
+            is_complete=result["is_complete"],
+            completed_count=result["completed_count"],
+            total_count=result["total_count"],
+            missing_task_ids=result["missing_task_ids"],
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve scorer samples: {str(e)}"
         )
 
 

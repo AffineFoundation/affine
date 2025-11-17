@@ -1,149 +1,258 @@
 """
-System Configuration Router
+Configuration Management Router
 
-Endpoints for managing dynamic system configuration.
+Provides REST API endpoints for dynamic configuration management.
 """
 
-import time
-from typing import Any
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from affine.api.models import (
-    ConfigListResponse,
-    ConfigParameter,
-    ConfigUpdateRequest,
-    ConfigUpdateResponse,
-)
-from affine.api.dependencies import (
-    get_system_config_dao,
-    verify_admin_access,
-    rate_limit_read,
-    rate_limit_admin,
-)
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import Any, Optional, List, Dict
 from affine.database.dao.system_config import SystemConfigDAO
 
-router = APIRouter(prefix="/config", tags=["Configuration"])
+router = APIRouter(prefix="/api/v1/config", tags=["config"])
+config_dao = SystemConfigDAO()
 
 
-@router.get("", response_model=ConfigListResponse, dependencies=[Depends(rate_limit_read)])
-async def get_all_config(
-    dao: SystemConfigDAO = Depends(get_system_config_dao),
-):
-    """
-    Get all configuration parameters.
+class ConfigSetRequest(BaseModel):
+    """Request model for setting configuration."""
+    param_value: Any
+    param_type: str  # str/int/float/bool/dict/list
+    description: str = ""
+    updated_by: str = "api"
+
+
+class ConfigBatchRequest(BaseModel):
+    """Request model for batch config retrieval."""
+    keys: List[str]
+
+
+class ConfigRefreshRequest(BaseModel):
+    """Request model for refreshing config cache."""
+    keys: Optional[List[str]] = None
+
+
+@router.get("")
+async def get_all_configs(prefix: Optional[str] = None):
+    """Get all configurations, optionally filtered by prefix.
     
-    Returns a list of all system configuration parameters with their current values.
+    Args:
+        prefix: Config key prefix filter (e.g., "scheduler.")
+        
+    Returns:
+        Dictionary of all matching configs
+        
+    Example:
+        GET /api/v1/config?prefix=scheduler
+        Returns all scheduler.* configs
     """
-    try:
-        params = await dao.list_all_configs()
-        
-        config_params = [
-            ConfigParameter(
-                name=p["param_name"],
-                value=p["param_value"],
-                description=p.get("description", ""),
-                version=p["version"],
-                updated_at=p["updated_at"],
-            )
-            for p in params
-        ]
-        
-        return ConfigListResponse(parameters=config_params)
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve configuration: {str(e)}"
-        )
-
-
-@router.get("/{param_name}", response_model=ConfigParameter, dependencies=[Depends(rate_limit_read)])
-async def get_config_param(
-    param_name: str,
-    dao: SystemConfigDAO = Depends(get_system_config_dao),
-):
-    """
-    Get a specific configuration parameter.
+    all_configs = await config_dao.get_all_params()
     
-    Returns the current value and metadata for the specified parameter.
-    """
-    try:
-        param = await dao.get_param(param_name)
-        
-        if not param:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Parameter '{param_name}' not found"
-            )
-        
-        return ConfigParameter(
-            name=param["param_name"],
-            value=param["param_value"],
-            description=param.get("description", ""),
-            version=param["version"],
-            updated_at=param["updated_at"],
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve parameter: {str(e)}"
-        )
+    if prefix:
+        filtered = {k: v for k, v in all_configs.items() if k.startswith(prefix)}
+        return {"configs": filtered}
+    
+    return {"configs": all_configs}
 
 
-@router.put(
-    "/{param_name}",
-    response_model=ConfigUpdateResponse,
-    dependencies=[Depends(rate_limit_admin)]
-)
-async def update_config_param(
-    param_name: str,
-    request: Request,
-    data: ConfigUpdateRequest,
-    dao: SystemConfigDAO = Depends(get_system_config_dao),
-    admin_hotkey: str = Depends(verify_admin_access),
-):
-    """
-    Update a configuration parameter (requires admin auth).
+@router.get("/{key}")
+async def get_config(key: str):
+    """Get a single configuration parameter.
     
-    Only administrators can modify system configuration.
-    
-    Request body:
-    - value: New value for the parameter (any JSON type)
-    - description: Description of the parameter
+    Args:
+        key: Configuration key
+        
+    Returns:
+        Full config item with metadata
+        
+    Raises:
+        404: Config not found
+        
+    Example:
+        GET /api/v1/config/scheduler.check_interval
     """
-    try:
-        # Get current version (if exists)
-        current = await dao.get_param(param_name)
-        new_version = (current["version"] + 1) if current else 1
+    config = await config_dao.get_param(key)
+    
+    if not config:
+        raise HTTPException(status_code=404, detail=f"Config '{key}' not found")
+    
+    return config
+
+
+@router.put("/{key}")
+async def set_config(key: str, request: ConfigSetRequest):
+    """Set or update a configuration parameter.
+    
+    Args:
+        key: Configuration key
+        request: Config value and metadata
         
-        # Determine parameter type
-        param_type = type(data.value).__name__
-        if isinstance(data.value, dict):
-            param_type = "dict"
-        elif isinstance(data.value, list):
-            param_type = "list"
+    Returns:
+        Updated config item
         
-        # Update parameter
-        await dao.set_param(
-            param_name=param_name,
-            param_value=data.value,
-            param_type=param_type,
-            description=data.description,
-            updated_by=admin_hotkey,
-        )
+    Example:
+        PUT /api/v1/config/scheduler.check_interval
+        Body: {
+            "param_value": 15,
+            "param_type": "int",
+            "description": "Adjusted to 15 seconds",
+            "updated_by": "admin"
+        }
+    """
+    result = await config_dao.set_param(
+        param_name=key,
+        param_value=request.param_value,
+        param_type=request.param_type,
+        description=request.description,
+        updated_by=request.updated_by
+    )
+    
+    return {"message": f"Config '{key}' updated", "config": result}
+
+
+@router.delete("/{key}")
+async def delete_config(key: str):
+    """Delete a configuration parameter (revert to default).
+    
+    Args:
+        key: Configuration key
         
-        return ConfigUpdateResponse(
-            name=param_name,
-            value=data.value,
-            version=new_version,
-            updated_at=int(time.time()),
-            message="Parameter updated successfully",
-        )
+    Returns:
+        Success message
         
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update parameter: {str(e)}"
-        )
+    Raises:
+        404: Config not found
+        
+    Example:
+        DELETE /api/v1/config/scheduler.check_interval
+        Will revert to code default value
+    """
+    success = await config_dao.delete_param(key)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Config '{key}' not found")
+    
+    return {"message": f"Config '{key}' deleted (will use default value)"}
+
+
+@router.post("/batch")
+async def get_configs_batch(request: ConfigBatchRequest):
+    """Batch retrieve multiple configuration parameters.
+    
+    Args:
+        request: List of config keys
+        
+    Returns:
+        Dictionary mapping keys to values
+        
+    Example:
+        POST /api/v1/config/batch
+        Body: {
+            "keys": [
+                "scheduler.check_interval",
+                "executor.workers_per_env"
+            ]
+        }
+    """
+    configs = {}
+    for key in request.keys:
+        value = await config_dao.get_param_value(key)
+        configs[key] = value
+    
+    return {"configs": configs}
+
+
+@router.post("/refresh")
+async def refresh_configs(request: Optional[ConfigRefreshRequest] = None):
+    """Refresh configuration cache (notification endpoint).
+    
+    This endpoint serves as a notification mechanism. Actual cache refresh
+    is handled by each service's DynamicConfig instance based on TTL.
+    
+    Args:
+        request: Optional list of specific keys to refresh
+        
+    Returns:
+        Confirmation message
+        
+    Example:
+        POST /api/v1/config/refresh
+        Body: {"keys": ["scheduler.check_interval"]}
+    """
+    keys = request.keys if request else None
+    
+    return {
+        "message": "Config refresh notification sent",
+        "keys": keys or "all",
+        "note": "Services will refresh based on cache TTL (60s)"
+    }
+
+
+@router.get("/list/all")
+async def list_all_configs_detailed():
+    """List all configuration parameters with full metadata.
+    
+    Returns:
+        List of config items with complete details including
+        version, updated_at, updated_by, etc.
+        
+    Example:
+        GET /api/v1/config/list/all
+    """
+    configs = await config_dao.list_all_configs()
+    
+    return {
+        "count": len(configs),
+        "configs": configs
+    }
+
+
+@router.get("/dataset/{env}")
+async def get_dataset_info(env: str):
+    """Get dataset information for a specific environment.
+    
+    Args:
+        env: Environment name (e.g., affine:sat, affine:abd)
+        
+    Returns:
+        Dataset configuration including length and task_id range
+        
+    Example:
+        GET /api/v1/config/dataset/affine:sat
+    """
+    # Default dataset lengths by environment
+    # These can be overridden in system_config table
+    default_lengths = {
+        "affine:sat": 100,
+        "affine:abd": 100,
+        "affine:ded": 100,
+        "agentgym:webshop": 50,
+    }
+    
+    # Try to get from config first
+    config_key = f"dataset.{env}.length"
+    dataset_length = await config_dao.get_param_value(config_key)
+    
+    if dataset_length is None:
+        # Use default
+        dataset_length = default_lengths.get(env, 100)
+    
+    # Check for task_id range override (for dataset expansion transitions)
+    task_id_start_key = f"dataset.{env}.task_id_start"
+    task_id_end_key = f"dataset.{env}.task_id_end"
+    
+    task_id_start = await config_dao.get_param_value(task_id_start_key)
+    task_id_end = await config_dao.get_param_value(task_id_end_key)
+    
+    # Default range is 0 to dataset_length
+    if task_id_start is None:
+        task_id_start = 0
+    if task_id_end is None:
+        task_id_end = dataset_length
+    
+    return {
+        "env": env,
+        "dataset_length": dataset_length,
+        "task_id_start": task_id_start,
+        "task_id_end": task_id_end,
+        "note": "task_id_start/end can be overridden for dataset expansion transitions"
+    }

@@ -132,6 +132,8 @@ class TaskCreateRequest(BaseModel):
     model_revision: str
     model: str
     env: str
+    validator_hotkey: str = ""  # Optional, defaults to empty (scheduler will set it)
+    priority: int = 0  # Task priority (higher = more urgent)
 
 
 class TaskCreateResponse(BaseModel):
@@ -145,13 +147,14 @@ class TaskCreateResponse(BaseModel):
 class TaskDetail(BaseModel):
     """Task details."""
 
-    task_id: str
+    task_id: str  # Dataset index as string for API compatibility
     miner_hotkey: str
     model_revision: str
-    model_hash: str
+    model: str
     env: str
     status: str
     created_at: int
+    task_uuid: Optional[str] = None  # UUID from queue for task completion
 
 
 class TaskListResponse(BaseModel):
@@ -181,6 +184,37 @@ class TaskFailRequest(BaseModel):
 
     error_type: str
     error_message: str
+
+
+class TaskNextIdRequest(BaseModel):
+    """Request to get next task_id for sequential sampling."""
+
+    miner_hotkey: str
+    model_revision: str
+    env: str
+
+
+class TaskNextIdResponse(BaseModel):
+    """Response with next task_id."""
+
+    next_task_id: int
+    dataset_length: int
+
+
+class TaskQueueStatsResponse(BaseModel):
+    """Task queue statistics response."""
+
+    pending_by_env: Dict[str, int]
+    total_pending: int
+    running_count: int
+
+
+class TaskFetchRequest(BaseModel):
+    """Request to fetch tasks atomically."""
+
+    env: Optional[str] = None
+    worker_id: str
+    limit: int = 1
 
 
 # Miner Metadata
@@ -381,6 +415,51 @@ class ConsecutiveErrorsResponse(BaseModel):
     recent_errors: List[RecentError]
 
 
+class MinerIsPausedResponse(BaseModel):
+    """Response for is-paused check."""
+
+    miner_hotkey: str
+    is_paused: bool
+    paused_until: Optional[int] = None
+    reason: Optional[str] = None
+
+
+class MinerStatsResponse(BaseModel):
+    """Response for miner statistics (used for completion round detection)."""
+
+    miner_hotkey: str
+    model_revision: str
+    env: str
+    total_samples: int
+    unique_task_ids: List[int]
+    dataset_length: int
+    completion_percentage: float
+
+
+# Scorer-specific models
+class ScorerSampleData(BaseModel):
+    """Sample data for scorer (without conversation data)."""
+
+    task_id: str
+    score: float
+    latency_ms: int
+    timestamp: int
+    block_number: int
+
+
+class ScorerMinerSamplesResponse(BaseModel):
+    """Response for scorer to get miner samples with completion status."""
+
+    miner_hotkey: str
+    model_revision: str
+    env: str
+    samples: List[ScorerSampleData]
+    is_complete: bool
+    completed_count: int
+    total_count: int
+    missing_task_ids: List[int]
+
+
 # Admin Operations
 class ProtectMinerRequest(BaseModel):
     """Request to protect a miner from retention cleanup."""
@@ -420,3 +499,55 @@ class CleanupResponse(BaseModel):
     protected_count: int
     dry_run: bool
     message: str
+
+
+# Task Generation Models
+class TaskGenerationRequest(BaseModel):
+    """Request to trigger task generation."""
+
+    envs: Optional[List[str]] = None  # If None, use all configured environments
+    max_tasks_per_miner_env: int = Field(
+        default=100,
+        description="Maximum tasks to create per miner/env combination"
+    )
+
+
+class MinerInfo(BaseModel):
+    """Miner information for task generation."""
+
+    hotkey: str
+    model_revision: str
+    model: str
+    uid: int = -1
+
+
+class TaskGenerationResponse(BaseModel):
+    """Response after task generation."""
+
+    total_tasks_created: int
+    tasks_by_env: Dict[str, int]
+    miners_processed: int
+    errors: List[str]
+    timestamp: int
+
+
+class TaskCleanupResponse(BaseModel):
+    """Response after cleaning up invalid tasks."""
+
+    removed_count: int
+    timestamp: int
+
+
+class MinerCompletionStatus(BaseModel):
+    """Completion status for a miner."""
+
+    hotkey: str
+    model_revision: str
+    environments: Dict[str, Dict[str, Any]]  # env -> status
+
+
+class ActiveMinersResponse(BaseModel):
+    """Response with list of active miners."""
+
+    miners: List[MinerInfo]
+    total: int

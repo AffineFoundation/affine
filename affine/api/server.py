@@ -19,6 +19,7 @@ from affine.api.routers import (
     config_router,
     logs_router,
     admin_router,
+    chain_router,
 )
 from affine.database import init_client, close_client
 
@@ -56,10 +57,39 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize database client: {e}")
         raise
     
+    # Optional: Start scheduler
+    scheduler = None
+    if config.SCHEDULER_ENABLED:
+        try:
+            from affine.api.dependencies import get_task_generator_service
+            from affine.api.services.scheduler import create_scheduler
+            
+            task_generator = get_task_generator_service()
+            scheduler = create_scheduler(
+                task_generator=task_generator,
+                task_generation_interval=config.SCHEDULER_TASK_GENERATION_INTERVAL,
+                cleanup_interval=config.SCHEDULER_CLEANUP_INTERVAL,
+                max_tasks_per_miner_env=config.SCHEDULER_MAX_TASKS_PER_MINER_ENV
+            )
+            await scheduler.start()
+            logger.info("Background scheduler started")
+        except Exception as e:
+            logger.error(f"Failed to start scheduler: {e}")
+            # Don't fail startup if scheduler fails
+    
     yield
     
     # Shutdown
     logger.info("Shutting down Affine API server...")
+    
+    # Stop scheduler if running
+    if scheduler and scheduler.is_running:
+        try:
+            await scheduler.stop()
+            logger.info("Background scheduler stopped")
+        except Exception as e:
+            logger.error(f"Error stopping scheduler: {e}")
+    
     try:
         await close_client()
         logger.info("Database client closed")
@@ -90,6 +120,7 @@ app.include_router(scores_router, prefix="/api/v1")
 app.include_router(config_router, prefix="/api/v1")
 app.include_router(logs_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
+app.include_router(chain_router, prefix="/api/v1")
 
 
 @app.exception_handler(Exception)

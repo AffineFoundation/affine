@@ -119,6 +119,52 @@ class BittensorClient:
 _bittensor_client: Optional[BittensorClient] = None
 
 
+class SubtensorClient:
+    """Client for querying bittensor subtensor.
+    
+    Provides access to blockchain data like current block height.
+    """
+    
+    def __init__(self):
+        """Initialize subtensor client."""
+        self._subtensor = None
+    
+    async def get_current_block(self) -> int:
+        """Get current block number from the blockchain.
+        
+        Returns:
+            Current block number
+        """
+        # TODO: Replace with actual bittensor SDK call
+        # In production:
+        # import bittensor as bt
+        # if self._subtensor is None:
+        #     self._subtensor = bt.subtensor()
+        # return self._subtensor.block
+        
+        # For now, return a mock block number (current timestamp as proxy)
+        import time
+        # Use current timestamp to simulate block progression
+        # Assuming ~12 second block time
+        return int(time.time() // 12)
+
+
+# Global subtensor instance
+_subtensor_client: Optional[SubtensorClient] = None
+
+
+async def get_subtensor() -> SubtensorClient:
+    """Get or create subtensor client singleton.
+    
+    Returns:
+        SubtensorClient instance
+    """
+    global _subtensor_client
+    if _subtensor_client is None:
+        _subtensor_client = SubtensorClient()
+    return _subtensor_client
+
+
 def get_bittensor_client(netuid: int = 1) -> BittensorClient:
     """Get or create bittensor client singleton.
     

@@ -53,6 +53,20 @@ class APIConfig:
     DEFAULT_PAGE_SIZE: int = int(os.getenv("API_DEFAULT_PAGE_SIZE", "100"))
     MAX_PAGE_SIZE: int = int(os.getenv("API_MAX_PAGE_SIZE", "1000"))
 
+    # Scheduler settings
+    SCHEDULER_ENABLED: bool = (
+        os.getenv("API_SCHEDULER_ENABLED", "false").lower() == "true"
+    )
+    SCHEDULER_TASK_GENERATION_INTERVAL: int = int(
+        os.getenv("API_SCHEDULER_TASK_GENERATION_INTERVAL", "300")  # 5 minutes
+    )
+    SCHEDULER_CLEANUP_INTERVAL: int = int(
+        os.getenv("API_SCHEDULER_CLEANUP_INTERVAL", "3600")  # 1 hour
+    )
+    SCHEDULER_MAX_TASKS_PER_MINER_ENV: int = int(
+        os.getenv("API_SCHEDULER_MAX_TASKS_PER_MINER_ENV", "100")
+    )
+
     # App metadata
     APP_NAME: str = "Affine API"
     APP_VERSION: str = "1.0.0"

@@ -34,12 +34,17 @@ class ExecutionLogsDAO(BaseDAO):
     async def log_execution(
         self,
         miner_hotkey: str,
-        uid: int,
-        task_id: str,
+        task_uuid: str,
+        dataset_task_id: int,
         status: str,
         env: str,
+        executor_hotkey: str,
+        action: str = 'complete',
+        score: Optional[float] = None,
+        latency_ms: Optional[int] = None,
         error_type: Optional[str] = None,
         error_message: Optional[str] = None,
+        error_code: Optional[str] = None,
         execution_time_ms: int = 0,
         timestamp: Optional[int] = None
     ) -> Dict[str, Any]:
@@ -47,13 +52,18 @@ class ExecutionLogsDAO(BaseDAO):
         
         Args:
             miner_hotkey: Miner's hotkey
-            uid: Miner UID
-            task_id: Task ID
-            status: Execution status (success/failed)
+            task_uuid: Task UUID (unique identifier)
+            dataset_task_id: Dataset index (0 to dataset_length-1)
+            status: Execution status (started/completed/failed)
             env: Environment name
+            executor_hotkey: Executor's hotkey
+            action: Action type (fetch/start/complete/fail)
+            score: Sample score if completed
+            latency_ms: Sample latency if completed
             error_type: Optional error type
             error_message: Optional error message
-            execution_time_ms: Execution time in milliseconds
+            error_code: Optional error code
+            execution_time_ms: Total execution time in milliseconds
             timestamp: Optional timestamp (defaults to now)
             
         Returns:
@@ -69,18 +79,134 @@ class ExecutionLogsDAO(BaseDAO):
             'sk': self._make_sk(timestamp, log_id),
             'log_id': log_id,
             'miner_hotkey': miner_hotkey,
-            'uid': uid,
-            'task_id': task_id,
+            'task_uuid': task_uuid,
+            'dataset_task_id': dataset_task_id,
             'status': status,
             'env': env,
+            'executor_hotkey': executor_hotkey,
+            'action': action,
+            'score': score,
+            'latency_ms': latency_ms,
             'error_type': error_type,
             'error_message': error_message,
+            'error_code': error_code,
             'execution_time_ms': execution_time_ms,
             'timestamp': timestamp,
-            'ttl': self.get_ttl(7),  # 7 days
+            'ttl': self.get_ttl(30),  # 30 days (increased from 7)
         }
         
         return await self.put(item)
+    
+    async def log_task_fetch(
+        self,
+        miner_hotkey: str,
+        task_uuid: str,
+        dataset_task_id: int,
+        env: str,
+        executor_hotkey: str
+    ) -> Dict[str, Any]:
+        """Log a task fetch event.
+        
+        Args:
+            miner_hotkey: Miner's hotkey
+            task_uuid: Task UUID
+            dataset_task_id: Dataset index
+            env: Environment name
+            executor_hotkey: Executor's hotkey
+            
+        Returns:
+            Created log entry
+        """
+        return await self.log_execution(
+            miner_hotkey=miner_hotkey,
+            task_uuid=task_uuid,
+            dataset_task_id=dataset_task_id,
+            status='started',
+            env=env,
+            executor_hotkey=executor_hotkey,
+            action='fetch'
+        )
+    
+    async def log_task_complete(
+        self,
+        miner_hotkey: str,
+        task_uuid: str,
+        dataset_task_id: int,
+        env: str,
+        executor_hotkey: str,
+        score: float,
+        latency_ms: int,
+        execution_time_ms: int
+    ) -> Dict[str, Any]:
+        """Log a task completion.
+        
+        Args:
+            miner_hotkey: Miner's hotkey
+            task_uuid: Task UUID
+            dataset_task_id: Dataset index
+            env: Environment name
+            executor_hotkey: Executor's hotkey
+            score: Sample score
+            latency_ms: Sample latency
+            execution_time_ms: Total execution time
+            
+        Returns:
+            Created log entry
+        """
+        return await self.log_execution(
+            miner_hotkey=miner_hotkey,
+            task_uuid=task_uuid,
+            dataset_task_id=dataset_task_id,
+            status='completed',
+            env=env,
+            executor_hotkey=executor_hotkey,
+            action='complete',
+            score=score,
+            latency_ms=latency_ms,
+            execution_time_ms=execution_time_ms
+        )
+    
+    async def log_task_failure(
+        self,
+        miner_hotkey: str,
+        task_uuid: str,
+        dataset_task_id: int,
+        env: str,
+        executor_hotkey: str,
+        error_message: str,
+        error_code: str = 'EXECUTION_ERROR',
+        error_type: str = 'execution',
+        execution_time_ms: int = 0
+    ) -> Dict[str, Any]:
+        """Log a task failure.
+        
+        Args:
+            miner_hotkey: Miner's hotkey
+            task_uuid: Task UUID
+            dataset_task_id: Dataset index
+            env: Environment name
+            executor_hotkey: Executor's hotkey
+            error_message: Error description
+            error_code: Error classification code
+            error_type: Error type (execution/timeout/network)
+            execution_time_ms: Time spent before failure
+            
+        Returns:
+            Created log entry
+        """
+        return await self.log_execution(
+            miner_hotkey=miner_hotkey,
+            task_uuid=task_uuid,
+            dataset_task_id=dataset_task_id,
+            status='failed',
+            env=env,
+            executor_hotkey=executor_hotkey,
+            action='fail',
+            error_type=error_type,
+            error_message=error_message,
+            error_code=error_code,
+            execution_time_ms=execution_time_ms
+        )
     
     async def get_recent_logs(
         self,
