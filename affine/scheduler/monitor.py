@@ -29,8 +29,7 @@ class MinerSamplingStats:
     pause_until: float = 0.0
     pause_reason: Optional[str] = None
     
-    # Sampling rates (per-environment multipliers)
-    env_rate_multipliers: Dict[str, float] = field(default_factory=dict)
+    # Sampling rates (global sampling - all miners get same rate)
     configured_daily_rate: int = 200
     effective_daily_rate: float = 0.0
     
@@ -309,11 +308,11 @@ class SchedulerMonitor:
         total_1h = sum(samples_1h.values())
         effective_daily_rate = total_1h * 24 if total_1h > 0 else 0.0
         
-        # Calculate configured daily rate from environment instances with their multipliers
-        configured_daily_rate = sum(
-            env.daily_rate * sampler.env_rate_multipliers.get(env.env_name, 1.0)
-            for env in sampler.envs
-        )
+        # Calculate configured daily rate from scheduler's global environments
+        # In global sampling mode, all miners have the same configured rate
+        configured_daily_rate = 0
+        if self.scheduler and self.scheduler.envs:
+            configured_daily_rate = sum(env.daily_rate for env in self.scheduler.envs)
         
         return MinerSamplingStats(
             uid=uid,
@@ -322,7 +321,6 @@ class SchedulerMonitor:
             status=status,
             pause_until=sampler.pause_until,
             pause_reason=pause_reason,
-            env_rate_multipliers=dict(sampler.env_rate_multipliers),
             configured_daily_rate=int(configured_daily_rate),
             effective_daily_rate=effective_daily_rate,
             samples_1h=dict(samples_1h),
