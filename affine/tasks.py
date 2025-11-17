@@ -5,7 +5,7 @@ import time
 import random
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional, Union, Type
+from typing import Dict, Any, List, Optional, Union, Type, Tuple
 from dataclasses import dataclass
 from enum import Enum
 from threading import Lock
@@ -87,6 +87,11 @@ class BaseSDKEnv(ABC):
     _evaluator_config: EvaluatorConfig = None
     DEFAULT_REPLICAS: int = 1
     DEFAULT_DAILY_RATE: int = int(os.getenv("DEFAULT_DAILY_RATE", "100"))  # Default daily sampling rate per environment
+    
+    # Dataset range configuration (start_index, end_index)
+    # If set, only sample from this range; otherwise use full dataset [0, data_len)
+    DEFAULT_START_INDEX: Optional[int] = None
+    DEFAULT_END_INDEX: Optional[int] = None
 
     def __init__(self):
         super().__init__()
@@ -95,8 +100,24 @@ class BaseSDKEnv(ABC):
     
     @property
     def daily_rate(self) -> int:
-        """Get daily sampling rate for this environment"""
-        return self.DEFAULT_DAILY_RATE
+        """Get daily sampling rate for this environment.
+        
+        Default: Use dataset range size (end_index - start_index) so that
+        the entire dataset is sampled once per day.
+        """
+        return self.end_index - self.start_index
+    
+    @property
+    def start_index(self) -> int:
+        """Get start index for dataset sampling (inclusive)"""
+        return self.DEFAULT_START_INDEX if self.DEFAULT_START_INDEX is not None else 0
+    
+    @property
+    def end_index(self) -> int:
+        """Get end index for dataset sampling (exclusive)"""
+        if self.DEFAULT_END_INDEX is not None:
+            return self.DEFAULT_END_INDEX
+        return getattr(self, 'data_len', 1)
 
     @property
     def sandbox_config(self) -> SandboxConfig:
@@ -527,6 +548,8 @@ class ALFWORLD(AgentGymSDKEnv):
     """ALFWORLD environment for SDK"""
     DEFAULT_DATA_LEN = 2500
     DEFAULT_REPLICAS = 1
+    DEFAULT_START_INDEX = 2000  # Sample from index 2000
+    DEFAULT_END_INDEX = 2500    # To index 2500 (exclusive)
 
     @property
     def env_name(self) -> str:
@@ -538,7 +561,7 @@ class WEBSHOP(AgentGymSDKEnv):
     """WEBSHOP environment for SDK"""
     DEFAULT_MAX_ROUND = 10
     DEFAULT_REPLICAS = 1
-    DEFAULT_DATA_LEN = 500 # 1
+    DEFAULT_DATA_LEN = 500
 
     @property
     def env_name(self) -> str:
@@ -548,7 +571,7 @@ class WEBSHOP(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:babyai")
 class BABYAI(AgentGymSDKEnv):
     """BABYAI environment for SDK"""
-    DEFAULT_DATA_LEN = 500 # 40
+    DEFAULT_DATA_LEN = 500
     DEFAULT_REPLICAS = 1
 
     @property
@@ -559,8 +582,10 @@ class BABYAI(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:sciworld")
 class SCIWORLD(AgentGymSDKEnv):
     """SCIWORLD environment for SDK"""
-    DEFAULT_DATA_LEN = 2000 # 4639
+    DEFAULT_DATA_LEN = 2500
     DEFAULT_REPLICAS = 1
+    DEFAULT_START_INDEX = 2000  # Sample from index 2000
+    DEFAULT_END_INDEX = 2500    # To index 2500 (exclusive)
 
     @property
     def env_name(self) -> str:
