@@ -12,11 +12,12 @@ from typing import Dict, List, Tuple, Optional, Any, Set
 class SamplingConfig:
     """Configuration parameters for sampling."""
     
-    TAIL = 10_000  # Reduced to 10K blocks for collecting sequential samples
-    MIN_SAMPLES_PER_ENV = 200  # Adjust suitable window length for TAIL
-    MAX_SAMPLES_CAP = 250  # 
-    ELIG = 0.10  # Eligibility threshold: 10% of max samples
+    TAIL = 20_000  # Reduced to 10K blocks for collecting sequential samples
     SCALE = 1.0  # Scaling factor for layer weights
+    
+    # Task ID deduplication threshold
+    # Small datasets (<400) allow 2 samples per task_id, large datasets allow 1
+    SMALL_DATASET_THRESHOLD = 400
     
     # Challenge algorithm parameters
     # Confidence level for Beta distribution interval (can be adjusted easily)
@@ -106,7 +107,8 @@ class ChallengeAlgorithm:
         stats_a: Dict[str, Any],
         stats_b: Dict[str, Any],
         confidence_interval_a: Optional[Tuple[float, float]] = None,
-        confidence_interval_b: Optional[Tuple[float, float]] = None
+        confidence_interval_b: Optional[Tuple[float, float]] = None,
+        min_samples: int = 0
     ) -> Optional[str]:
         """
         Determine winner between two miners in a single environment using Beta distribution.
@@ -121,12 +123,13 @@ class ChallengeAlgorithm:
             stats_b: Same structure as stats_a
             confidence_interval_a: Pre-computed confidence interval for A (lower, upper), optional
             confidence_interval_b: Pre-computed confidence interval for B (lower, upper), optional
+            min_samples: Minimum samples required for this environment (dataset size)
 
         Returns:
             'a' | 'b' | None (tie)
 
         Logic:
-        1. Miners with insufficient samples (< MIN_SAMPLES_PER_ENV) auto-lose
+        1. Miners with insufficient samples (< min_samples) auto-lose
         2. Use pre-computed Beta distribution confidence intervals (or calculate if not provided)
         3. If B submitted later, B must satisfy: lower_b > upper_a to win
         4. If A submitted later, A must satisfy: lower_a > upper_b to win
@@ -134,7 +137,6 @@ class ChallengeAlgorithm:
         """
         samples_a = stats_a['samples']
         samples_b = stats_b['samples']
-        min_samples = self.config.MIN_SAMPLES_PER_ENV
 
         # Sample count validation
         if samples_a < min_samples and samples_b < min_samples:
@@ -191,6 +193,32 @@ class MinerSampler:
     def __init__(self, config: Optional[SamplingConfig] = None):
         self.config = config or SamplingConfig()
         self.challenge_algo = ChallengeAlgorithm(config)
+        # Environment dataset sizes: {env_name: dataset_size}
+        # Automatically computed from environment classes
+        self.env_dataset_sizes: Dict[str, int] = self._compute_env_dataset_sizes()
+    
+    @staticmethod
+    def _compute_env_dataset_sizes() -> Dict[str, int]:
+        """Compute environment dataset sizes from environment class configurations.
+        
+        Returns:
+            {env_name: dataset_size} mapping computed from tasks.py classes
+        """
+        try:
+            from affine.setup import get_enabled_envs
+            
+            env_dataset_sizes = {}
+            for env_class in get_enabled_envs():
+                env_name = env_class._env_name
+                # Calculate dataset size from class attributes
+                start_idx = env_class.DEFAULT_START_INDEX if env_class.DEFAULT_START_INDEX is not None else 0
+                end_idx = env_class.DEFAULT_END_INDEX if env_class.DEFAULT_END_INDEX is not None else env_class.DEFAULT_DATA_LEN
+                env_dataset_sizes[env_name] = end_idx - start_idx
+            
+            return env_dataset_sizes
+        except ImportError:
+            # Fallback if imports fail (e.g., in tests)
+            return {}
     
     def calculate_eligibility(
         self,
@@ -202,21 +230,19 @@ class MinerSampler:
         """
         Determine eligible miners based on sample requirements.
         
+        Each environment requires samples >= dataset_size to be eligible.
+        
         Returns:
             Tuple of (eligible_hotkeys, required_samples_per_env)
         """
         required = {}
         
         for e in envs:
-            max_cnt = max((cnt[hk][e] for hk in active_hks), default=0)
-            max_cnt = min(max_cnt, self.config.MAX_SAMPLES_CAP)
-            required[e] = max(
-                self.config.MIN_SAMPLES_PER_ENV, 
-                10 + int(self.config.ELIG * max_cnt)
-            )
+            # Minimum samples = dataset size for that environment
+            required[e] = self.env_dataset_sizes.get(e, 0)
         
         eligible = {
-            hk for hk in active_hks 
+            hk for hk in active_hks
             if hk in queryable_hks and all(cnt[hk][e] >= required[e] for e in envs)
         }
         
@@ -260,11 +286,15 @@ class MinerSampler:
                 ci_a = confidence_intervals.get(a, {}).get(e)
                 ci_b = confidence_intervals.get(b, {}).get(e)
 
+            # Get minimum samples for this environment
+            min_samples = self.env_dataset_sizes.get(e, 0)
+            
             winner = self.challenge_algo.challenge_winner(
                 {'hotkey': a, **stats_a},
                 {'hotkey': b, **stats_b},
                 confidence_interval_a=ci_a,
-                confidence_interval_b=ci_b
+                confidence_interval_b=ci_b,
+                min_samples=min_samples
             )
 
             if winner == 'b':
@@ -574,12 +604,149 @@ class SamplingOrchestrator:
     def __init__(self, sampler: Optional[MinerSampler] = None):
         self.sampler = sampler or MinerSampler()
     
+    # ========== TEMPORARY FUNCTION - TO BE REMOVED ==========
+    # This function filters out task_ids that are outside the valid range
+    # for each environment. This is a temporary measure to ensure data consistency
+    # during the transition to global sequential sampling.
+    # TODO: Remove this function once all data is validated
+    @staticmethod
+    def _filter_out_of_range_task_ids(
+        raw_samples: Dict[str, Dict[str, List[Tuple[float, int, Any]]]],
+        envs: Tuple[str, ...],
+        env_ranges: Dict[str, Tuple[int, int]]
+    ) -> Dict[str, Dict[str, List[Tuple[float, int, Any]]]]:
+        """
+        [TEMPORARY] Filter out samples with task_ids outside the valid range.
+        
+        This is a temporary function to ensure task_ids are within the valid
+        range for each environment. It should be removed once all miners
+        are using the new global sequential sampling.
+        
+        Args:
+            raw_samples: {hotkey: {env: [(score, block_num, task_id), ...]}}
+            envs: Tuple of environment names
+            env_ranges: {env_name: (start_index, end_index)} valid range for each env
+        
+        Returns:
+            Filtered samples with only valid task_ids
+        """
+        filtered = {}
+        
+        for hk, env_samples in raw_samples.items():
+            filtered[hk] = {}
+            
+            for env in envs:
+                if env not in env_ranges:
+                    # No range specified, keep all samples
+                    filtered[hk][env] = env_samples.get(env, [])
+                    continue
+                
+                start_idx, end_idx = env_ranges[env]
+                valid_samples = []
+                
+                for score, block_num, task_id in env_samples.get(env, []):
+                    # Check if task_id is within valid range [start_idx, end_idx)
+                    if isinstance(task_id, int) and start_idx <= task_id < end_idx:
+                        valid_samples.append((score, block_num, task_id))
+                    # Skip samples with task_ids outside the range
+                
+                filtered[hk][env] = valid_samples
+        
+        return filtered
+    # ========== END TEMPORARY FUNCTION ==========
+    
+    # ========== TEMPORARY HELPER - TO BE REMOVED ==========
+    @staticmethod
+    def _get_env_ranges(envs: Tuple[str, ...]) -> Dict[str, Tuple[int, int]]:
+        """
+        [TEMPORARY] Get valid task_id ranges for each environment.
+        
+        Returns:
+            {env_name: (start_index, end_index)} for environments with defined ranges
+        """
+        try:
+            from affine.setup import get_enabled_envs
+            
+            env_ranges = {}
+            for env_class in get_enabled_envs():
+                env_name = env_class._env_name
+                if env_name in envs:
+                    start_idx = env_class.DEFAULT_START_INDEX if env_class.DEFAULT_START_INDEX is not None else 0
+                    end_idx = env_class.DEFAULT_END_INDEX if env_class.DEFAULT_END_INDEX is not None else env_class.DEFAULT_DATA_LEN
+                    env_ranges[env_name] = (start_idx, end_idx)
+            
+            return env_ranges
+        except ImportError:
+            return {}
+    # ========== END TEMPORARY HELPER ==========
+    
+    @staticmethod
+    def _deduplicate_samples_by_task_id(
+        raw_samples: Dict[str, Dict[str, List[Tuple[float, int, Any]]]],
+        envs: Tuple[str, ...],
+        env_dataset_sizes: Dict[str, int]
+    ) -> Dict[str, Dict[str, List[Tuple[float, int]]]]:
+        """
+        Deduplicate samples by task_id for each (hotkey, env) combination.
+        
+        For each unique task_id, keeps a limited number of samples:
+        - Large datasets (>= SMALL_DATASET_THRESHOLD): 1 sample per task_id
+        - Small datasets (< SMALL_DATASET_THRESHOLD): 2 samples per task_id
+        
+        This ensures consistent evaluation across all miners by preventing
+        multiple evaluations of the same task_id from skewing results.
+        
+        Args:
+            raw_samples: {hotkey: {env: [(score, block_num, task_id), ...]}}
+            envs: Tuple of environment names
+            env_dataset_sizes: {env_name: dataset_size}
+        
+        Returns:
+            {hotkey: {env: [(score, block_num), ...]}} - deduplicated samples
+        """
+        # Determine max samples per task_id for each environment
+        max_per_task_id = {}
+        for e in envs:
+            dataset_size = env_dataset_sizes.get(e, 0)
+            max_per_task_id[e] = 2 if dataset_size < SamplingConfig.SMALL_DATASET_THRESHOLD else 1
+        
+        deduplicated = {}
+        
+        for hk, env_samples in raw_samples.items():
+            deduplicated[hk] = {}
+            
+            for env in envs:
+                # Group samples by task_id
+                task_id_groups: Dict[Any, List[Tuple[float, int]]] = defaultdict(list)
+                
+                for score, block_num, task_id in env_samples.get(env, []):
+                    samples_for_task = task_id_groups[task_id]
+                    
+                    if len(samples_for_task) < max_per_task_id.get(env, 1):
+                        # Still room for more samples
+                        samples_for_task.append((score, block_num))
+                    else:
+                        # Replace oldest sample if this one is newer
+                        oldest_idx = min(range(len(samples_for_task)), key=lambda i: samples_for_task[i][1])
+                        if block_num > samples_for_task[oldest_idx][1]:
+                            samples_for_task[oldest_idx] = (score, block_num)
+                
+                # Flatten all task_id groups into a single list
+                all_samples = []
+                for task_samples in task_id_groups.values():
+                    all_samples.extend(task_samples)
+                
+                deduplicated[hk][env] = all_samples
+        
+        return deduplicated
+    
     def process_sample_data(
         self,
         results: List[Any],
         meta_hotkeys: List[str],
         envs: Tuple[str, ...],
-        base_hk: str
+        base_hk: str,
+        env_dataset_sizes: Optional[Dict[str, int]] = None
     ) -> Tuple[
         Dict[str, Dict[str, int]],
         Dict[str, Dict[str, int]],
@@ -591,10 +758,25 @@ class SamplingOrchestrator:
         """
         Process raw sample data into structured counts and metadata.
         
+        Implements task_id deduplication to ensure consistent evaluation:
+        - For each (hotkey, env, task_id), keep only unique samples
+        - Large datasets (>=400): keep 1 sample per task_id
+        - Small datasets (<400): keep up to 2 samples per task_id
+        
+        Args:
+            results: List of evaluation results
+            meta_hotkeys: All hotkeys in metagraph
+            envs: Environment names
+            base_hk: Base hotkey (validator)
+            env_dataset_sizes: {env_name: dataset_size} for determining dedup limit
+        
         Returns:
             Tuple of (cnt, succ, prev, v_id, first_block, stats)
             where stats = {hotkey: {env: {'samples': int, 'total_score': float, 'first_block': int}}}
         """
+        if env_dataset_sizes is None:
+            env_dataset_sizes = {}
+        
         cnt = {hk: defaultdict(int) for hk in meta_hotkeys}
         succ = {hk: defaultdict(int) for hk in meta_hotkeys}
         prev = {}
@@ -605,9 +787,9 @@ class SamplingOrchestrator:
         stats = {hk: {} for hk in meta_hotkeys}
         env_first_block = {hk: {e: float('inf') for e in envs} for hk in meta_hotkeys}
 
-        # Collect samples per hotkey per environment (to get the latest MAX_SAMPLES_CAP)
-        from collections import deque
-        samples_queue = {hk: {e: deque(maxlen=SamplingConfig.MAX_SAMPLES_CAP) for e in envs} for hk in meta_hotkeys}
+        # Collect raw samples with task_id information
+        # Structure: {hk: {env: [(score, block_num, task_id), ...]}}
+        raw_samples = {hk: {e: [] for e in envs} for hk in meta_hotkeys}
 
         for result in results:
             hk = result.miner.hotkey
@@ -630,8 +812,8 @@ class SamplingOrchestrator:
                 v_id[hk] = cur_vid
                 first_block[hk] = result.miner.block
                 for e in envs:
-                    # Clear the queue when version changes
-                    samples_queue[hk][e].clear()
+                    # Clear samples when version changes
+                    raw_samples[hk][e].clear()
             else:
                 try:
                     fb = int(first_block.get(hk, result.miner.block)) if first_block.get(hk) is not None else int(result.miner.block)
@@ -642,12 +824,10 @@ class SamplingOrchestrator:
 
             prev[hk] = result
 
-            # Add sample to queue (automatically keeps only latest MAX_SAMPLES_CAP)
             raw_score = float(result.evaluation.score)
 
             # Filter out invalid alfworld scores (should be 0 or 1, not other values)
             if "alfworld" in env and raw_score not in [0.0, 1.0]:
-                # Skip this invalid alfworld sample
                 continue
 
             normalized_score = SamplingConfig.normalize_score(raw_score, env)
@@ -655,16 +835,38 @@ class SamplingOrchestrator:
                 block_num = int(result.miner.block)
             except Exception:
                 block_num = float('inf')
-            samples_queue[hk][env].append((normalized_score, block_num))
+            
+            # Get task_id from result (may be None for legacy data)
+            task_id = getattr(result, 'task_id', None)
+            if task_id is None:
+                # For legacy data without task_id, use block_num as unique identifier
+                task_id = block_num
+            
+            # Add raw sample with task_id for later deduplication
+            raw_samples[hk][env].append((normalized_score, block_num, task_id))
 
-        # Now compute cnt, succ, and env_first_block from the queues
+        # ========== TEMPORARY: Filter out-of-range task_ids ==========
+        # TODO: Remove this block once all data is validated
+        # Get environment ranges from env classes
+        env_ranges = self._get_env_ranges(envs)
+        if env_ranges:
+            raw_samples = self._filter_out_of_range_task_ids(raw_samples, envs, env_ranges)
+        # ========== END TEMPORARY BLOCK ==========
+
+        # Apply task_id deduplication using dedicated function
+        deduplicated_samples = self._deduplicate_samples_by_task_id(
+            raw_samples, envs, env_dataset_sizes
+        )
+        
+        # Extract final counts and scores from deduplicated samples
         for hk in meta_hotkeys:
             for e in envs:
-                samples = samples_queue[hk][e]
-                cnt[hk][e] = len(samples)
-                succ[hk][e] = sum(score for score, _ in samples)
-                if samples:
-                    env_first_block[hk][e] = min(block for _, block in samples)
+                all_samples = deduplicated_samples.get(hk, {}).get(e, [])
+                
+                cnt[hk][e] = len(all_samples)
+                succ[hk][e] = sum(score for score, _ in all_samples)
+                if all_samples:
+                    env_first_block[hk][e] = min(block for _, block in all_samples)
                 else:
                     env_first_block[hk][e] = float('inf')
         
