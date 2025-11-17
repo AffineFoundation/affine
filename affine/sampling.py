@@ -643,7 +643,14 @@ class SamplingOrchestrator:
             prev[hk] = result
 
             # Add sample to queue (automatically keeps only latest MAX_SAMPLES_CAP)
-            normalized_score = SamplingConfig.normalize_score(float(result.evaluation.score), env)
+            raw_score = float(result.evaluation.score)
+
+            # Filter out invalid alfworld scores (should be 0 or 1, not other values)
+            if "alfworld" in env and raw_score not in [0.0, 1.0]:
+                # Skip this invalid alfworld sample
+                continue
+
+            normalized_score = SamplingConfig.normalize_score(raw_score, env)
             try:
                 block_num = int(result.miner.block)
             except Exception:
