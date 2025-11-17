@@ -723,11 +723,26 @@ class SamplingOrchestrator:
             weight_by_hk = {hk: (1.0 if hk == best else 0.0) for hk in eligible}
         else:
             weight_by_hk = {hk: (scores.get(hk, 0.0) / total_points) for hk in eligible}
-        
+
+        # Reassign weights below threshold (0.01) to base_hotkey to avoid low-value tail models
+        weight_threshold = 0.01
+        reassigned_weight = 0.0
+
+        for hk in list(weight_by_hk.keys()):
+            if hk != base_hotkey and weight_by_hk[hk] < weight_threshold:
+                reassigned_weight += weight_by_hk[hk]
+                weight_by_hk[hk] = 0.0
+
+        if reassigned_weight > 0:
+            if base_hotkey in weight_by_hk:
+                weight_by_hk[base_hotkey] += reassigned_weight
+            else:
+                weight_by_hk[base_hotkey] = reassigned_weight
+
         # Apply burn if requested
         if burn > 0:
             weight_by_hk, eligible = self.sampler.apply_burn(
                 weight_by_hk, burn, base_hotkey, eligible
             )
-            
+
         return weight_by_hk, eligible
