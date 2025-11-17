@@ -93,7 +93,7 @@ async def _cache_shard(key: str, sem: asyncio.Semaphore, use_public: bool = None
     if not force_refresh and out.exists() and mod.exists():
         # Verify cache file is not empty before trusting it
         if out.stat().st_size > 0:
-            logger.debug(f"Using cached shard: {name}")
+            logger.trace(f"Using cached shard: {name}")
             return out
         else:
             logger.warning(f"Cached shard {name} is empty, will re-download")
