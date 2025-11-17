@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field, validator, root_validator
 import bittensor as bt
-from affine.setup import get_env_names
+from affine.core.setup import get_env_names
 
 __version__ = "0.0.0"
 

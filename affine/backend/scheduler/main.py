@@ -10,8 +10,8 @@ from typing import Dict, Set, Optional
 from affine.backend.config import get_config
 from affine.backend.scheduler.miner_discovery import MinerDiscovery, MinerInfo
 from affine.backend.scheduler.task_generator import TaskGenerator
-from affine.http_client import AsyncHTTPClient
-from affine.setup import logger
+from affine.core.http_client import AsyncHTTPClient
+from affine.core.setup import logger
 
 
 class SchedulerService:

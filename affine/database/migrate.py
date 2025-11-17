@@ -12,7 +12,7 @@ from typing import List, Dict, Any
 from pathlib import Path
 
 from affine.storage import dataset
-from affine.models import Result
+from affine.core.models import Result
 from affine.database import init_client, close_client
 from affine.database.dao import SampleResultsDAO
 

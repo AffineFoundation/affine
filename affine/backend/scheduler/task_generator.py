@@ -9,8 +9,8 @@ import time
 from typing import Dict, Optional, List
 from affine.backend.config import get_config
 from affine.backend.scheduler.miner_discovery import MinerInfo
-from affine.http_client import AsyncHTTPClient
-from affine.setup import logger, get_env_names
+from affine.core.http_client import AsyncHTTPClient
+from affine.core.setup import logger, get_env_names
 
 
 class TaskGenerator:

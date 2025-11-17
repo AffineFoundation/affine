@@ -7,9 +7,9 @@ Discovers miners from Bittensor metagraph and manages miner state.
 import asyncio
 from typing import Dict, Set, Optional
 from dataclasses import dataclass
-from affine.miners import miners as get_miners
+from affine.core.miners import miners as get_miners
 from affine.utils.subtensor import get_subtensor
-from affine.setup import NETUID, logger
+from affine.core.setup import NETUID, logger
 
 
 @dataclass

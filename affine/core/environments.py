@@ -9,8 +9,8 @@ from typing import Dict, Any, List, Optional, Union, Type, Tuple
 from dataclasses import dataclass
 from enum import Enum
 from threading import Lock
-from affine.models import Result
-from affine.setup import logger
+from affine.core.models import Result
+from affine.core.setup import logger
 import affinetes as af_env
 
 

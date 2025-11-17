@@ -11,9 +11,9 @@ import traceback
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
-from affine.http_client import AsyncHTTPClient
-from affine.setup import logger, wallet
-from affine.models import Result
+from affine.core.http_client import AsyncHTTPClient
+from affine.core.setup import logger, wallet
+from affine.core.models import Result
 
 
 @dataclass
@@ -272,7 +272,7 @@ class ExecutorWorker:
             
             # Create a Miner object for the environment executor
             # Note: We don't have slug, so we'll pass model/base_url directly
-            from affine.models import Miner
+            from affine.core.models import Miner
             miner_obj = Miner(
                 uid=-1,  # UID not available in task queue
                 hotkey=miner_hotkey,
@@ -314,7 +314,7 @@ class ExecutorWorker:
             traceback.print_exc()
             
             # Return failed result
-            from affine.models import Miner
+            from affine.core.models import Miner
             return Result(
                 miner=Miner(
                     uid=-1,  # UID not available in new schema

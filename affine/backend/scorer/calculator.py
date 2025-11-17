@@ -10,8 +10,8 @@ from typing import Dict, List, Tuple, Set, Any, Optional
 from collections import defaultdict
 
 from affine.sampling import SamplingOrchestrator, MinerSampler, SamplingConfig
-from affine.setup import logger
-from affine.http_client import AsyncHTTPClient
+from affine.core.setup import logger
+from affine.core.http_client import AsyncHTTPClient
 
 
 class ScoreCalculator:

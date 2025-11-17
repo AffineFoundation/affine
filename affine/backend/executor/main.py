@@ -20,7 +20,7 @@ import os
 from typing import List, Optional
 
 from affine.backend.executor.worker import ExecutorWorker
-from affine.setup import wallet
+from affine.core.setup import wallet
 
 # Default environments to run if not specified
 DEFAULT_ENVS = [

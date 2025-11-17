@@ -5,30 +5,30 @@ __version__ = "0.0.0"
 # --------------------------------------------------------------------------- #
 #                       Constants & global singletons                         #
 # --------------------------------------------------------------------------- #
-from affine.config import singleton, get_conf
+from affine.core.config import singleton, get_conf
 
 # --------------------------------------------------------------------------- #
 #                                Logging                                      #
 # --------------------------------------------------------------------------- #
-from affine.setup import (
+from affine.core.setup import (
     logger, setup_logging, info, debug, trace
 )
 
 # --------------------------------------------------------------------------- #
 #                   Data Models (imported from models module)                 #
 # --------------------------------------------------------------------------- #
-from affine.models import (
+from affine.core.models import (
     Challenge, Response, Miner, Result
 )
 # --------------------------------------------------------------------------- #
 #                   HTTP client (imported from http_client module)            #
 # --------------------------------------------------------------------------- #
-from affine.http_client import _get_client
+from affine.core.http_client import _get_client
 
 # --------------------------------------------------------------------------- #
 #                   Miners (imported from miners module)                      #
 # --------------------------------------------------------------------------- #
-from affine.miners import miners
+from affine.core.miners import miners
 
 
 # --------------------------------------------------------------------------- #
