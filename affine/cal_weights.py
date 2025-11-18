@@ -242,6 +242,9 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
     BASE_HK = meta.hotkeys[0]
     N_envs = len(ENVS)
     
+    # Environment dataset sizes are automatically computed during MinerSampler initialization
+    logger.info(f"Environment dataset sizes: {sampler.env_dataset_sizes}")
+    
     queryable_miners = await miners(meta=meta, netuid=NETUID, check_validity=True)
     queryable_hks = {m.hotkey for m in queryable_miners.values()}
     logger.info(f"Found {len(queryable_hks)} queryable miners (hot, valid chute, not gated)")
@@ -269,7 +272,7 @@ async def get_weights(tail: int = SamplingConfig.TAIL, burn: float = 0.0, save_t
         return [0], [1.0]
     
     cnt, succ, prev, v_id, first_block, stats = orchestrator.process_sample_data(
-        results_list, meta.hotkeys, ENVS, BASE_HK
+        results_list, meta.hotkeys, ENVS, BASE_HK, sampler.env_dataset_sizes
     )
     
     for hk, blk_val in initial_first_block.items():
