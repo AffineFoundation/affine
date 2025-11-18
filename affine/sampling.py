@@ -293,8 +293,7 @@ class MinerSampler:
                 {'hotkey': a, **stats_a},
                 {'hotkey': b, **stats_b},
                 confidence_interval_a=ci_a,
-                confidence_interval_b=ci_b,
-                min_samples=min_samples
+                confidence_interval_b=ci_b
             )
 
             if winner == 'b':
