@@ -16,11 +16,11 @@ import logging
 import os
 import time
 import signal
+import aiohttp
 from typing import Dict, List, Optional, Tuple
 
 from affine.backend.validator.weight_setter import WeightSetter
 from affine.backend.config import get_config
-from affine.core.http_client import AsyncHTTPClient
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class ValidatorService:
         # Configuration
         self.config = get_config(api_base_url)
         self.api_base_url = api_base_url or self.config.api_base_url
-        self.http_client = AsyncHTTPClient(timeout=60)
+        self._session: Optional[aiohttp.ClientSession] = None
         
         # Wallet and blockchain
         self.wallet = wallet
@@ -77,6 +77,14 @@ class ValidatorService:
         
         logger.info(f"ValidatorService initialized (API: {self.api_base_url})")
     
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp session."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=60)
+            )
+        return self._session
+    
     async def fetch_latest_scores(self) -> Optional[Dict]:
         """
         Fetch latest scores from backend API.
@@ -86,23 +94,26 @@ class ValidatorService:
         """
         try:
             url = f"{self.api_base_url}/api/v1/scores/latest"
-            response = await self.http_client.get(url)
+            session = await self._get_session()
             
-            if not response:
-                logger.warning("No scores available from backend")
-                return None
-            
-            scores = response.get("scores", [])
-            if not scores:
-                logger.warning("Empty scores from backend")
-                return None
-            
-            logger.info(
-                f"Fetched {len(scores)} miner scores "
-                f"(block: {response.get('block_number', 'unknown')})"
-            )
-            
-            return response
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    logger.warning("No scores available from backend")
+                    return None
+                
+                response = await resp.json()
+                
+                scores = response.get("scores", [])
+                if not scores:
+                    logger.warning("Empty scores from backend")
+                    return None
+                
+                logger.info(
+                    f"Fetched {len(scores)} miner scores "
+                    f"(block: {response.get('block_number', 'unknown')})"
+                )
+                
+                return response
         
         except Exception as e:
             logger.error(f"Error fetching scores: {e}")
@@ -145,16 +156,20 @@ class ValidatorService:
         """
         try:
             url = f"{self.api_base_url}/api/v1/miners/active"
-            response = await self.http_client.get(url)
+            session = await self._get_session()
             
-            if response and isinstance(response, list):
-                hotkey_to_uid = {
-                    miner["hotkey"]: miner["uid"]
-                    for miner in response
-                    if "hotkey" in miner and "uid" in miner
-                }
-                logger.info(f"Loaded {len(hotkey_to_uid)} miners from API")
-                return hotkey_to_uid
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
+                    
+                    if response and isinstance(response, list):
+                        hotkey_to_uid = {
+                            miner["hotkey"]: miner["uid"]
+                            for miner in response
+                            if "hotkey" in miner and "uid" in miner
+                        }
+                        logger.info(f"Loaded {len(hotkey_to_uid)} miners from API")
+                        return hotkey_to_uid
             
             return {}
         

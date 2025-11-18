@@ -98,6 +98,7 @@ class SampleDetail(BaseModel):
 
     timestamp: int
     env: str
+    task_id: str
     score: float
     latency_ms: int
     signature: str
@@ -173,33 +174,44 @@ class TaskStatusResponse(BaseModel):
     failed_at: Optional[int] = None
 
 
+# TaskCompleteRequest moved above (line 207)
+# TaskFailRequest removed (deprecated)
+# TaskQueueStatsResponse removed (deprecated, use TaskPoolStatsResponse)
+
+
+class TaskFetchResponse(BaseModel):
+    """Response from task fetch endpoint."""
+
+    task: Optional[Dict[str, Any]] = None
+
+
 class TaskCompleteRequest(BaseModel):
-    """Request to mark task as completed."""
+    """Request to complete a task."""
 
-    sample_id: str
-
-
-class TaskFailRequest(BaseModel):
-    """Request to mark task as failed."""
-
-    error_type: str
-    error_message: str
+    task_uuid: str
+    success: bool
+    error_message: Optional[str] = None
+    error_code: Optional[str] = None
 
 
-class TaskQueueStatsResponse(BaseModel):
-    """Task queue statistics response."""
+class TaskCompleteResponse(BaseModel):
+    """Response from task completion."""
 
-    pending_by_env: Dict[str, int]
+    task_uuid: str
+    status: str  # 'completed', 'failed', 'not_found', 'error'
+    message: str
+    timestamp: int
+
+
+class TaskPoolStatsResponse(BaseModel):
+    """Task pool statistics."""
+
+    environments: Dict[str, Dict[str, int]]
     total_pending: int
-    running_count: int
-
-
-class TaskFetchRequest(BaseModel):
-    """Request to fetch tasks atomically."""
-
-    env: Optional[str] = None
-    worker_id: str
-    limit: int = 1
+    total_locked: int
+    total_assigned: int
+    total_failed: int
+    lock_details: Optional[List[Dict[str, Any]]] = None
 
 
 # Miner Metadata
@@ -419,30 +431,6 @@ class MinerStatsResponse(BaseModel):
     unique_task_ids: List[int]
     dataset_length: int
     completion_percentage: float
-
-
-# Scorer-specific models
-class ScorerSampleData(BaseModel):
-    """Sample data for scorer (without conversation data)."""
-
-    task_id: str
-    score: float
-    latency_ms: int
-    timestamp: int
-    block_number: int
-
-
-class ScorerMinerSamplesResponse(BaseModel):
-    """Response for scorer to get miner samples with completion status."""
-
-    miner_hotkey: str
-    model_revision: str
-    env: str
-    samples: List[ScorerSampleData]
-    is_complete: bool
-    completed_count: int
-    total_count: int
-    missing_task_ids: List[int]
 
 
 # Admin Operations

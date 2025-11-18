@@ -12,27 +12,9 @@ from dataclasses import dataclass
 
 from affine.database.dao.sample_results import SampleResultsDAO
 from affine.database.dao.task_queue import TaskQueueDAO
+from affine.database.dao.system_config import SystemConfigDAO
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class DatasetConfig:
-    """Configuration for a dataset/environment."""
-    name: str
-    length: int
-    priority: int = 1000
-
-
-# Default dataset configurations
-# TODO: Load from SystemConfigDAO or environment
-DEFAULT_DATASETS = {
-    "affine:sat": DatasetConfig("affine:sat", 200, 1000),
-    "affine:abd": DatasetConfig("affine:abd", 200, 1000),
-    "affine:ded": DatasetConfig("affine:ded", 200, 1000),
-    "agentgym:webshop": DatasetConfig("agentgym:webshop", 100, 900),
-    "agentgym:wordarena": DatasetConfig("agentgym:wordarena", 100, 900),
-}
 
 
 @dataclass
@@ -68,7 +50,7 @@ class TaskGeneratorService:
         self,
         sample_results_dao: SampleResultsDAO,
         task_queue_dao: TaskQueueDAO,
-        datasets: Optional[Dict[str, DatasetConfig]] = None
+        system_config_dao: Optional[SystemConfigDAO] = None
     ):
         """
         Initialize TaskGeneratorService.
@@ -76,41 +58,66 @@ class TaskGeneratorService:
         Args:
             sample_results_dao: DAO for sample results
             task_queue_dao: DAO for task queue
-            datasets: Dataset configurations (uses defaults if not provided)
+            system_config_dao: DAO for system config
         """
         self.sample_results_dao = sample_results_dao
         self.task_queue_dao = task_queue_dao
-        self.datasets = datasets or DEFAULT_DATASETS
+        self.system_config_dao = system_config_dao or SystemConfigDAO()
+        self._config_cache: Optional[Dict[str, Any]] = None
     
-    def get_dataset_length(self, env: str) -> int:
-        """Get dataset length for an environment.
+    async def _load_config_from_db(self):
+        """Load configuration from SystemConfig database."""
+        try:
+            sampling_envs = await self.system_config_dao.get_sampling_environments()
+            env_ranges = await self.system_config_dao.get_env_task_ranges()
+            
+            self._config_cache = {
+                'sampling_envs': sampling_envs,
+                'env_ranges': env_ranges
+            }
+            
+            logger.info(
+                f"Loaded config from database: {len(sampling_envs)} environments, "
+                f"{len(env_ranges)} range configs"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load config from database: {e}, using defaults")
+            self._config_cache = {
+                'sampling_envs': [],
+                'env_ranges': {}
+            }
+    
+    async def get_dataset_length(self, env: str) -> int:
+        """Get dataset length for an environment from SystemConfig.
         
         Args:
             env: Environment name
             
         Returns:
             Dataset length (number of tasks)
-        """
-        if env in self.datasets:
-            return self.datasets[env].length
-        
-        # Default fallback
-        logger.warning(f"Unknown environment {env}, using default length 200")
-        return 200
-    
-    def get_dataset_priority(self, env: str) -> int:
-        """Get priority for an environment.
-        
-        Args:
-            env: Environment name
             
-        Returns:
-            Priority value
+        Raises:
+            ValueError: If environment not found in SystemConfig
         """
-        if env in self.datasets:
-            return self.datasets[env].priority
+        # Load config from database if not cached
+        if self._config_cache is None:
+            await self._load_config_from_db()
         
-        return 1000  # Default priority
+        # Get from SystemConfig
+        env_ranges = self._config_cache.get('env_ranges', {})
+        if env in env_ranges:
+            sampling_range = env_ranges[env].get('sampling_range', [0, 0])
+            if len(sampling_range) == 2:
+                start, end = sampling_range
+                length = end - start
+                logger.debug(f"Using SystemConfig range for {env}: {start}-{end} (length={length})")
+                return length
+        
+        # Environment not configured
+        raise ValueError(
+            f"Environment '{env}' not found in SystemConfig. "
+            f"Please load configuration using 'python -m affine.database.cli load-config'"
+        )
     
     async def generate_tasks_for_miner_env(
         self,
@@ -129,8 +136,7 @@ class TaskGeneratorService:
         Returns:
             Number of tasks created
         """
-        dataset_length = self.get_dataset_length(env)
-        priority = self.get_dataset_priority(env)
+        dataset_length = await self.get_dataset_length(env)
         
         # Get expected task_ids (all indices in dataset)
         expected_task_ids = set(range(dataset_length))
@@ -179,10 +185,9 @@ class TaskGeneratorService:
             for task_id in tasks_to_create
         ]
         
-        # Batch create tasks
+        # Batch create tasks (no priority needed)
         created_count = await self.task_queue_dao.batch_create_tasks(
-            tasks=task_list,
-            priority=priority
+            tasks=task_list
         )
         
         logger.info(
@@ -202,14 +207,27 @@ class TaskGeneratorService:
         
         Args:
             miners: List of active miners
-            envs: List of environments (uses all configured if not provided)
+            envs: List of environments (uses SystemConfig if not provided)
             max_tasks_per_miner_env: Max tasks per miner/env combination
             
         Returns:
             TaskGenerationResult with summary
         """
         if envs is None:
-            envs = list(self.datasets.keys())
+            # Load config from database if not cached
+            if self._config_cache is None:
+                await self._load_config_from_db()
+            
+            # Get from SystemConfig
+            sampling_envs = self._config_cache.get('sampling_envs', [])
+            if not sampling_envs:
+                raise ValueError(
+                    "No sampling environments configured in SystemConfig. "
+                    "Please load configuration using 'python -m affine.database.cli load-config'"
+                )
+            
+            envs = sampling_envs
+            logger.info(f"Using SystemConfig sampling environments: {envs}")
         
         result = TaskGenerationResult(
             total_tasks_created=0,
@@ -315,7 +333,7 @@ class TaskGeneratorService:
         
         # Check retry count
         retry_count = task.get('retry_count', 0)
-        max_retries = task.get('max_retries', 3)
+        max_retries = task.get('max_retries', 5)
         
         if retry_count >= max_retries:
             logger.warning(
@@ -335,49 +353,52 @@ class TaskGeneratorService:
         
         Args:
             miner: Miner information
-            envs: List of environments (uses all configured if not provided)
+            envs: List of environments (uses SystemConfig if not provided)
             
         Returns:
             Dict mapping env -> completion status
         """
         if envs is None:
-            envs = list(self.datasets.keys())
+            # Load config from database if not cached
+            if self._config_cache is None:
+                await self._load_config_from_db()
+            
+            # Get from SystemConfig
+            sampling_envs = self._config_cache.get('sampling_envs', [])
+            if not sampling_envs:
+                raise ValueError(
+                    "No sampling environments configured in SystemConfig"
+                )
+            
+            envs = sampling_envs
         
         status = {}
         
         for env in envs:
-            dataset_length = self.get_dataset_length(env)
+            dataset_length = await self.get_dataset_length(env)
             
-            result = await self.sample_results_dao.get_samples_with_completion_status(
+            # Get completed task_ids
+            completed_task_ids = await self.sample_results_dao.get_completed_task_ids(
                 miner_hotkey=miner.hotkey,
                 model_revision=miner.model_revision,
-                env=env,
-                dataset_length=dataset_length,
-                deduplicate_by_task_id=True,
-                include_extra=False
+                env=env
             )
             
+            # Calculate completion status
+            expected_task_ids = set(range(dataset_length))
+            missing_task_ids = expected_task_ids - completed_task_ids
+            is_complete = len(missing_task_ids) == 0
+            
             status[env] = {
-                'is_complete': result['is_complete'],
-                'completed_count': result['completed_count'],
-                'total_count': result['total_count'],
+                'is_complete': is_complete,
+                'completed_count': len(completed_task_ids),
+                'total_count': dataset_length,
                 'completion_percentage': (
-                    result['completed_count'] / result['total_count'] * 100
-                    if result['total_count'] > 0 else 0
+                    len(completed_task_ids) / dataset_length * 100
+                    if dataset_length > 0 else 0
                 ),
-                'missing_count': len(result['missing_task_ids']),
+                'missing_count': len(missing_task_ids),
             }
         
         return status
     
-    def update_dataset_config(self, env: str, length: int, priority: int = 1000):
-        """
-        Update dataset configuration dynamically.
-        
-        Args:
-            env: Environment name
-            length: Dataset length
-            priority: Task priority
-        """
-        self.datasets[env] = DatasetConfig(env, length, priority)
-        logger.info(f"Updated dataset config: {env} -> length={length}, priority={priority}")

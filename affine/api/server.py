@@ -22,28 +22,7 @@ from affine.api.routers import (
     chain_router,
 )
 from affine.database import init_client, close_client
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,  # Global level: INFO
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    force=True,  # Override any existing logging configuration
-)
-
-# Set our own modules to DEBUG for detailed logging
-logging.getLogger("affine").setLevel(getattr(logging, config.LOG_LEVEL.upper()))
-
-# Set uvicorn to INFO (avoid too much noise)
-logging.getLogger("uvicorn").setLevel(logging.INFO)
-logging.getLogger("uvicorn.access").setLevel(logging.INFO)
-
-# Suppress noisy third-party loggers
-logging.getLogger("botocore").setLevel(logging.WARNING)
-logging.getLogger("aiobotocore").setLevel(logging.WARNING)
-logging.getLogger("boto3").setLevel(logging.WARNING)
-
-logger = logging.getLogger(__name__)
-
+from affine.core.setup import logger
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -55,6 +34,30 @@ async def lifespan(app: FastAPI):
         logger.info("Database client initialized")
     except Exception as e:
         logger.error(f"Failed to initialize database client: {e}")
+        raise
+    
+    # Initialize global services
+    miners_cache = None
+    task_pool = None
+    try:
+        from affine.api.services.miners_cache import MinersCacheManager
+        from affine.api.services.task_pool import TaskPoolManager
+        
+        # Initialize MinersCacheManager
+        miners_cache = await MinersCacheManager.initialize(
+            refresh_interval_seconds=300  # 5 minutes
+        )
+        logger.info("MinersCacheManager initialized")
+        
+        # Initialize TaskPoolManager
+        task_pool = await TaskPoolManager.initialize(
+            lock_timeout_seconds=300,  # 5 minutes
+            cleanup_interval_seconds=60  # 1 minute
+        )
+        logger.info("TaskPoolManager initialized with background tasks")
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize global services: {e}")
         raise
     
     # Optional: Start scheduler
@@ -81,6 +84,22 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down Affine API server...")
+    
+    # Stop TaskPoolManager background tasks
+    if task_pool:
+        try:
+            await task_pool.stop_background_tasks()
+            logger.info("TaskPoolManager background tasks stopped")
+        except Exception as e:
+            logger.error(f"Error stopping TaskPoolManager: {e}")
+    
+    # Stop MinersCacheManager background tasks
+    if miners_cache:
+        try:
+            await miners_cache.stop_background_tasks()
+            logger.info("MinersCacheManager background tasks stopped")
+        except Exception as e:
+            logger.error(f"Error stopping MinersCacheManager: {e}")
     
     # Stop scheduler if running
     if scheduler and scheduler.is_running:
@@ -163,10 +182,20 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
     
+    # IMPORTANT: Must use workers=1 because of global singleton services:
+    # - MinersCacheManager: global singleton with background refresh
+    # - TaskPoolManager: in-memory lock mechanism (not shared across workers)
+    # - Scheduler: background task generation (would duplicate if multi-worker)
+    # Using multiple workers would cause:
+    # - Locks only valid within single process
+    # - Background tasks duplicated across workers
+    # - Cache inconsistency between workers
+    
     uvicorn.run(
         "affine.api.server:app",
         host=config.HOST,
         port=config.PORT,
         reload=config.RELOAD,
         log_level=config.LOG_LEVEL.lower(),
+        workers=1,  # MUST be 1 - see comment above
     )

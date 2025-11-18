@@ -6,7 +6,7 @@ Endpoints for submitting and querying sample results.
 
 import time
 import uuid
-from typing import Optional
+from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, status
 from affine.api.models import (
     SampleSubmitRequest,
@@ -15,20 +15,137 @@ from affine.api.models import (
     SampleFullResponse,
     SampleDetail,
     PaginationInfo,
-    ScorerSampleData,
-    ScorerMinerSamplesResponse,
 )
 from affine.api.dependencies import (
     get_sample_results_dao,
+    get_task_queue_dao,
     verify_signature_dependency,
     rate_limit_read,
     rate_limit_write,
 )
+from affine.core.models import SampleSubmission
 from affine.api.utils.pagination import get_pagination_params, create_pagination_info
 from affine.database.dao.sample_results import SampleResultsDAO
 from affine.core.miners import miners as get_miners
 
 router = APIRouter(prefix="/samples", tags=["Samples"])
+
+
+@router.post("/submit", response_model=SampleSubmitResponse, dependencies=[Depends(rate_limit_write)])
+async def submit_sample_from_executor(
+    request: Request,
+    submission: Dict[str, Any],
+    sample_dao: SampleResultsDAO = Depends(get_sample_results_dao),
+    task_dao = Depends(get_task_queue_dao),
+):
+    """
+    Submit a sample result from executor (new signature mechanism).
+    
+    This endpoint:
+    1. Verifies executor authentication (X-Executor-Hotkey header + signature)
+    2. Validates submission signature against task_uuid data
+    3. Fetches task metadata (hotkey, revision, model, env, task_id) from task queue
+    4. Merges submission with task metadata
+    5. Saves complete sample to database
+    6. Marks task as completed in queue
+    
+    Request body (SampleSubmission):
+    - task_uuid: Task UUID from queue
+    - score: Evaluation score (0.0 to 1.0)
+    - latency_ms: Execution time in milliseconds
+    - extra: Evaluation details and metadata
+    - signature: Executor's signature of the above fields
+    """
+    from affine.api.services.auth import get_auth_service
+    from affine.database.dao.task_queue import TaskQueueDAO
+    
+    # Get authentication service
+    auth_service = get_auth_service()
+    
+    # Verify executor authentication from headers
+    executor_hotkey = request.headers.get("X-Executor-Hotkey", "")
+    if not executor_hotkey:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Executor-Hotkey header required"
+        )
+    
+    # Verify executor is authorized (optional in non-strict mode)
+    if not auth_service.is_authorized_validator(executor_hotkey):
+        if auth_service.strict_mode:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Executor not authorized"
+            )
+    
+    # Parse submission
+    try:
+        sample_sub = SampleSubmission(**submission)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid submission format: {str(e)}"
+        )
+    
+    # Verify submission signature
+    if not sample_sub.verify(executor_hotkey):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid submission signature"
+        )
+    
+    # Fetch task from queue by UUID
+    task = await task_dao.get_task_by_uuid(sample_sub.task_uuid)
+    
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task not found: {sample_sub.task_uuid}"
+        )
+    
+    # Extract task metadata
+    miner_hotkey = task["miner_hotkey"]
+    model_revision = task["model_revision"]
+    model = task["model"]
+    env = task["env"]
+    task_id = str(task["task_id"])
+    
+    # Get current block number (for score tracking)
+    try:
+        from affine.core.miners import get_current_block
+        block_number = await get_current_block()
+    except Exception:
+        block_number = 0
+    
+    # Save sample to database (merged data)
+    try:
+        await sample_dao.save_sample(
+            miner_hotkey=miner_hotkey,
+            model_revision=model_revision,
+            model=model,
+            env=env,
+            task_id=task_id,
+            score=sample_sub.score,
+            latency_ms=sample_sub.latency_ms,
+            extra=sample_sub.extra,
+            validator_hotkey=executor_hotkey,
+            block_number=block_number,
+            signature=sample_sub.signature,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save sample: {str(e)}"
+        )
+    
+    # Mark task as completed
+    await task_dao.complete_task(task)
+    
+    return SampleSubmitResponse(
+        sample_id=task_id,
+        created_at=int(time.time()),
+        message="Sample submitted successfully"
+    )
 
 
 @router.post("", response_model=SampleSubmitResponse, dependencies=[Depends(rate_limit_write)])
@@ -89,7 +206,10 @@ async def get_miner_samples(
     hotkey: str,
     model_revision: str = Query(..., description="Model revision (required)"),
     env: str = Query(..., description="Environment name (required, e.g., affine:sat)"),
-    limit: int = Query(100, description="Maximum number of results", ge=1, le=1000),
+    task_id_start: Optional[int] = Query(None, description="Task ID range start (inclusive)"),
+    task_id_end: Optional[int] = Query(None, description="Task ID range end (exclusive)"),
+    deduplicate: bool = Query(True, description="Deduplicate by task_id, keeping latest sample"),
+    limit: int = Query(1000, description="Maximum number of results", ge=1, le=10000),
     dao: SampleResultsDAO = Depends(get_sample_results_dao),
 ):
     """
@@ -100,10 +220,12 @@ async def get_miner_samples(
     - env: Environment name (e.g., affine:sat, agentgym:webshop)
     
     Optional query parameters:
-    - limit: Maximum results to return (default: 100, max: 1000)
+    - task_id_start: Start of task ID range (inclusive)
+    - task_id_end: End of task ID range (exclusive)
+    - deduplicate: If True (default), keep only latest sample per task_id
+    - limit: Maximum results to return (default: 1000, max: 10000)
     
     Note: env is required because it's part of the partition key.
-    To query multiple environments, use /miner/{hotkey}/multi endpoint.
     """
     try:
         # Get samples from DAO
@@ -111,14 +233,72 @@ async def get_miner_samples(
             miner_hotkey=hotkey,
             model_revision=model_revision,
             env=env,
-            limit=limit,
+            limit=None,  # Fetch all, then filter
+            include_extra=False,  # Don't include extra data for efficiency
         )
+        
+        # Filter by task_id range if specified
+        if task_id_start is not None or task_id_end is not None:
+            filtered_samples = []
+            for s in samples:
+                task_id = s.get('task_id')
+                if task_id is not None:
+                    # Convert to int
+                    if isinstance(task_id, str):
+                        try:
+                            task_id_int = int(task_id)
+                        except ValueError:
+                            continue
+                    else:
+                        task_id_int = int(task_id)
+                    
+                    # Check range
+                    if task_id_start is not None and task_id_int < task_id_start:
+                        continue
+                    if task_id_end is not None and task_id_int >= task_id_end:
+                        continue
+                    
+                    filtered_samples.append(s)
+            samples = filtered_samples
+        
+        # Deduplicate by task_id if requested
+        if deduplicate:
+            task_id_samples = {}
+            for sample in samples:
+                task_id = sample.get('task_id')
+                if task_id is not None:
+                    # Convert to int for comparison
+                    if isinstance(task_id, str):
+                        try:
+                            task_id_int = int(task_id)
+                        except ValueError:
+                            continue
+                    else:
+                        task_id_int = int(task_id)
+                    
+                    # Keep the latest (newest) sample
+                    if task_id_int not in task_id_samples:
+                        task_id_samples[task_id_int] = sample
+                    else:
+                        existing_ts = task_id_samples[task_id_int].get('timestamp', 0)
+                        new_ts = sample.get('timestamp', 0)
+                        if new_ts > existing_ts:
+                            task_id_samples[task_id_int] = sample
+            
+            samples = list(task_id_samples.values())
+        
+        # Apply limit
+        if len(samples) > limit:
+            # Sort by timestamp descending first, then apply limit
+            samples.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
+            samples = samples[:limit]
         
         # Convert to response models
         sample_details = [
             SampleDetail(
                 timestamp=s["timestamp"],
                 env=s["env"],
+                task_id=s.get("task_id"),
                 score=s["score"],
                 latency_ms=s["latency_ms"],
                 signature=s["signature"],
@@ -128,76 +308,8 @@ async def get_miner_samples(
         
         # Create pagination info
         pagination = PaginationInfo(
-            total=len(samples),
-            limit=limit,
-            next_cursor=None,
-        )
-        
-        return SampleListResponse(
-            samples=sample_details,
-            pagination=pagination
-        )
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve samples: {str(e)}"
-        )
-
-
-@router.get("/miner/{hotkey}/multi", response_model=SampleListResponse, dependencies=[Depends(rate_limit_read)])
-async def get_miner_samples_multi_env(
-    hotkey: str,
-    model_revision: str = Query(..., description="Model revision (required)"),
-    envs: str = Query(..., description="Comma-separated environment names"),
-    limit_per_env: int = Query(100, description="Maximum results per environment", ge=1, le=1000),
-    dao: SampleResultsDAO = Depends(get_sample_results_dao),
-):
-    """
-    Get samples for a miner across multiple environments.
-    
-    Required query parameters:
-    - model_revision: Model revision hash
-    - envs: Comma-separated environment names (e.g., "affine:sat,affine:abd,agentgym:webshop")
-    
-    Optional query parameters:
-    - limit_per_env: Maximum results per environment (default: 100, max: 1000)
-    """
-    try:
-        # Parse environments
-        env_list = [e.strip() for e in envs.split(",")]
-        
-        # Get samples across all environments
-        results_by_env = await dao.get_samples_by_miner_all_envs(
-            miner_hotkey=hotkey,
-            model_revision=model_revision,
-            envs=env_list,
-            limit_per_env=limit_per_env,
-        )
-        
-        # Flatten results
-        all_samples = []
-        for env_samples in results_by_env.values():
-            all_samples.extend(env_samples)
-        
-        # Convert to response models
-        sample_details = [
-            SampleDetail(
-                timestamp=s["timestamp"],
-                env=s["env"],
-                score=s["score"],
-                latency_ms=s["latency_ms"],
-                signature=s["signature"],
-            )
-            for s in all_samples
-        ]
-        
-        # Sort by timestamp descending
-        sample_details.sort(key=lambda x: x.timestamp, reverse=True)
-        
-        pagination = PaginationInfo(
             total=len(sample_details),
-            limit=limit_per_env * len(env_list),
+            limit=limit,
             next_cursor=None,
         )
         
@@ -217,7 +329,10 @@ async def get_miner_samples_multi_env(
 async def get_uid_samples(
     uid: int,
     envs: str = Query("affine:sat,affine:abd,affine:ded", description="Comma-separated environments"),
-    limit_per_env: int = Query(10, description="Maximum results per environment", ge=1, le=1000),
+    task_id_start: Optional[int] = Query(None, description="Task ID range start (inclusive)"),
+    task_id_end: Optional[int] = Query(None, description="Task ID range end (exclusive)"),
+    deduplicate: bool = Query(True, description="Deduplicate by task_id, keeping latest sample"),
+    limit_per_env: int = Query(1000, description="Maximum results per environment", ge=1, le=10000),
     include_extra: bool = Query(False, description="Include extra field (conversation data, requires decompression)"),
     dao: SampleResultsDAO = Depends(get_sample_results_dao),
 ):
@@ -227,13 +342,16 @@ async def get_uid_samples(
     This endpoint:
     1. Queries bittensor metagraph to get miner info (hotkey + model_revision)
     2. Queries samples across specified environments using hotkey+revision
-    3. Returns combined results
+    3. Returns combined results with optional filtering and deduplication
     
     If the UID is not currently assigned or has no valid commit, returns empty list.
     
     Query parameters:
     - envs: Comma-separated environment names (default: affine:sat,affine:abd,affine:ded)
-    - limit_per_env: Maximum results per environment (default: 10, max: 1000)
+    - task_id_start: Start of task ID range (inclusive)
+    - task_id_end: End of task ID range (exclusive)
+    - deduplicate: If True (default), keep only latest sample per task_id within each env
+    - limit_per_env: Maximum results per environment (default: 1000, max: 10000)
     - include_extra: Include extra field with conversation data (default: False)
       Setting to False saves bandwidth and decompression cost
     
@@ -270,13 +388,69 @@ async def get_uid_samples(
             miner_hotkey=hotkey,
             model_revision=model_revision,
             envs=env_list,
-            limit_per_env=limit_per_env,
+            limit_per_env=None,  # Fetch all, then filter
             include_extra=include_extra,
         )
         
-        # Flatten results
+        # Process each environment's samples
         all_samples = []
-        for env_samples in results_by_env.values():
+        for env_name, env_samples in results_by_env.items():
+            # Filter by task_id range if specified
+            if task_id_start is not None or task_id_end is not None:
+                filtered_samples = []
+                for s in env_samples:
+                    task_id = s.get('task_id')
+                    if task_id is not None:
+                        # Convert to int
+                        if isinstance(task_id, str):
+                            try:
+                                task_id_int = int(task_id)
+                            except ValueError:
+                                continue
+                        else:
+                            task_id_int = int(task_id)
+                        
+                        # Check range
+                        if task_id_start is not None and task_id_int < task_id_start:
+                            continue
+                        if task_id_end is not None and task_id_int >= task_id_end:
+                            continue
+                        
+                        filtered_samples.append(s)
+                env_samples = filtered_samples
+            
+            # Deduplicate by task_id within this env if requested
+            if deduplicate:
+                task_id_samples = {}
+                for sample in env_samples:
+                    task_id = sample.get('task_id')
+                    if task_id is not None:
+                        # Convert to int for comparison
+                        if isinstance(task_id, str):
+                            try:
+                                task_id_int = int(task_id)
+                            except ValueError:
+                                continue
+                        else:
+                            task_id_int = int(task_id)
+                        
+                        # Keep the latest (newest) sample
+                        if task_id_int not in task_id_samples:
+                            task_id_samples[task_id_int] = sample
+                        else:
+                            existing_ts = task_id_samples[task_id_int].get('timestamp', 0)
+                            new_ts = sample.get('timestamp', 0)
+                            if new_ts > existing_ts:
+                                task_id_samples[task_id_int] = sample
+                
+                env_samples = list(task_id_samples.values())
+            
+            # Apply limit per env
+            if len(env_samples) > limit_per_env:
+                # Sort by timestamp descending first, then apply limit
+                env_samples.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
+                env_samples = env_samples[:limit_per_env]
+            
             all_samples.extend(env_samples)
         
         # Convert to response models
@@ -284,6 +458,7 @@ async def get_uid_samples(
             SampleDetail(
                 timestamp=s["timestamp"],
                 env=s["env"],
+                task_id=s.get("task_id"),
                 score=s["score"],
                 latency_ms=s["latency_ms"],
                 signature=s["signature"],
@@ -365,84 +540,6 @@ async def get_samples_by_timestamp(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve samples: {str(e)}"
-        )
-
-
-@router.get("/scorer/{hotkey}", response_model=ScorerMinerSamplesResponse, dependencies=[Depends(rate_limit_read)])
-async def get_scorer_miner_samples(
-    hotkey: str,
-    model_revision: str = Query(..., description="Model revision (required)"),
-    env: str = Query(..., description="Environment name (required, e.g., affine:sat)"),
-    dataset_length: int = Query(..., description="Total number of tasks in dataset", ge=1),
-    task_id_start: Optional[int] = Query(None, description="Task ID range start (inclusive, for dataset expansion)"),
-    task_id_end: Optional[int] = Query(None, description="Task ID range end (exclusive, for dataset expansion)"),
-    deduplicate: bool = Query(True, description="Deduplicate by task_id, keeping latest sample"),
-    dao: SampleResultsDAO = Depends(get_sample_results_dao),
-):
-    """
-    Get samples for scorer with completion status.
-    
-    This endpoint is optimized for the scorer service:
-    - Returns samples without conversation data (saves bandwidth)
-    - Includes completion status (is_complete flag)
-    - Supports Task ID range for dataset expansion transitions
-    - Deduplicates by task_id by default (keeps latest sample)
-    
-    Required query parameters:
-    - model_revision: Model revision hash
-    - env: Environment name (e.g., affine:sat)
-    - dataset_length: Total number of tasks in the dataset
-    
-    Optional query parameters:
-    - task_id_start: Start of task ID range (inclusive), overrides dataset_length if both start and end provided
-    - task_id_end: End of task ID range (exclusive), overrides dataset_length if both start and end provided
-    - deduplicate: If True (default), keep only latest sample per task_id
-    
-    Example usage during dataset expansion:
-    - Old dataset: 0-99 (dataset_length=100)
-    - New dataset: 0-149 (dataset_length=150)
-    - Transition period: use task_id_start=0, task_id_end=150
-    """
-    try:
-        # Get samples with completion status
-        result = await dao.get_samples_with_completion_status(
-            miner_hotkey=hotkey,
-            model_revision=model_revision,
-            env=env,
-            dataset_length=dataset_length,
-            deduplicate_by_task_id=deduplicate,
-            include_extra=False,  # Scorer doesn't need conversation data
-            task_id_start=task_id_start,
-            task_id_end=task_id_end,
-        )
-        
-        # Convert to scorer-specific response format
-        scorer_samples = [
-            ScorerSampleData(
-                task_id=s["task_id"],
-                score=s["score"],
-                latency_ms=s["latency_ms"],
-                timestamp=s["timestamp"],
-                block_number=s["block_number"],
-            )
-            for s in result["samples"]
-        ]
-        
-        return ScorerMinerSamplesResponse(
-            miner_hotkey=hotkey,
-            model_revision=model_revision,
-            env=env,
-            samples=scorer_samples,
-            is_complete=result["is_complete"],
-            completed_count=result["completed_count"],
-            total_count=result["total_count"],
-            missing_task_ids=result["missing_task_ids"],
-        )
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve scorer samples: {str(e)}"
         )
 
 

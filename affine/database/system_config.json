@@ -1,0 +1,52 @@
+{
+  "environments": {
+    "affine:sat": {
+      "enabled_for_sampling": true,
+      "enabled_for_scoring": true,
+      "sampling_range": [0, 500],
+      "scoring_range": [0, 500]
+    },
+    "affine:abd": {
+      "enabled_for_sampling": true,
+      "enabled_for_scoring": true,
+      "sampling_range": [0, 240],
+      "scoring_range": [0, 240]
+    },
+    "affine:ded": {
+      "enabled_for_sampling": true,
+      "enabled_for_scoring": true,
+      "sampling_range": [0, 240],
+      "scoring_range": [0, 240]
+    },
+    "agentgym:alfworld": {
+      "enabled_for_sampling": true,
+      "enabled_for_scoring": true,
+      "sampling_range": [2000, 2500],
+      "scoring_range": [2000, 2500]
+    },
+    "agentgym:webshop": {
+      "enabled_for_sampling": true,
+      "enabled_for_scoring": true,
+      "sampling_range": [0, 500],
+      "scoring_range": [0, 500]
+    },
+    "agentgym:babyai": {
+      "enabled_for_sampling": true,
+      "enabled_for_scoring": true,
+      "sampling_range": [0, 500],
+      "scoring_range": [0, 500]
+    },
+    "agentgym:sciworld": {
+      "enabled_for_sampling": true,
+      "enabled_for_scoring": true,
+      "sampling_range": [2000, 2500],
+      "scoring_range": [2000, 2500]
+    },
+    "agentgym:textcraft": {
+      "enabled_for_sampling": true,
+      "enabled_for_scoring": true,
+      "sampling_range": [0, 582],
+      "scoring_range": [0, 582]
+    }
+  }
+}

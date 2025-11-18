@@ -52,12 +52,29 @@ SAMPLE_RESULTS_SCHEMA = {
 }
 
 
-# Task Queue Table
-# New schema design:
+# Task Queue Table (Task Pool)
+# Schema design:
 # - PK: ENV#{env} - partition by environment
-# - SK: STATUS#{status}#PRIORITY#{priority}#CREATED#{timestamp}#UUID#{uuid}
-# - GSI1: miner-revision-index for querying by miner+revision
-# - GSI2: task-uuid-index for reverse lookup by uuid
+# - SK: STATUS#{status}#CREATED#{timestamp}#UUID#{uuid} - ordered by creation time
+# - GSI1: miner-revision-index for querying pending tasks by miner+revision
+# - GSI2: task-uuid-index for reverse lookup by uuid (for task completion/removal)
+#
+# Query patterns:
+# 1. Weighted random task selection (by API Server TaskPoolManager):
+#    - Get valid miners from cache
+#    - Query pending task count per miner in this env
+#    - Weighted random select miner (higher task count = higher probability)
+#    - Fetch first task from selected miner (FIFO)
+#    - Apply lock to prevent concurrent assignment
+# 2. Task completion/removal: Query by task_uuid via GSI2, delete by pk+sk
+# 3. Check miner pending tasks: Query by miner+revision via GSI1
+# 4. Cleanup invalid tasks: Scan and delete tasks for miners not in valid list
+#
+# Design rationale:
+# - Task pool uses weighted random selection for fairness (not true randomness)
+# - Fairness = distribute sampling load proportionally across all miners
+# - Task locks managed in memory by API Server (single instance)
+# - Periodic cleanup removes tasks for miners with changed hotkey/revision
 TASK_QUEUE_SCHEMA = {
     "TableName": get_table_name("task_queue"),
     "KeySchema": [
