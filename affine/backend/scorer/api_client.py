@@ -86,7 +86,7 @@ class ScorerAPIClient:
         dedupe_by_task_id: bool = True
     ) -> Dict[str, Any]:
         """
-        获取 Miner 采样结果 (使用新的 Scorer 专用端点)
+        获取 Miner 采样结果 (使用 /miner/{hotkey} 端点)
         
         Args:
             hotkey: Miner hotkey
@@ -110,8 +110,8 @@ class ScorerAPIClient:
         params = {
             "model_revision": revision,
             "env": env,
-            "dataset_length": dataset_length,
-            "deduplicate": str(dedupe_by_task_id).lower()
+            "deduplicate": str(dedupe_by_task_id).lower(),
+            "limit": 10000  # Fetch all samples for scoring
         }
         
         # 添加 Task ID 范围参数
@@ -121,7 +121,7 @@ class ScorerAPIClient:
         
         try:
             async with session.get(
-                f"{self.base_url}/api/v1/samples/scorer/{hotkey}",
+                f"{self.base_url}/api/v1/samples/miner/{hotkey}",
                 params=params
             ) as resp:
                 if resp.status != 200:
@@ -133,13 +133,36 @@ class ScorerAPIClient:
                 
                 data = await resp.json()
                 
-                # 直接返回响应数据 (已经是正确格式)
+                # Transform response to include completion status
+                samples = data.get("samples", [])
+                
+                # Calculate completion status based on dataset_length and task_id_range
+                if task_id_range is not None and task_id_range.length > 0:
+                    expected_task_ids = set(range(task_id_range.start, task_id_range.end))
+                else:
+                    expected_task_ids = set(range(dataset_length))
+                
+                # Extract completed task_ids from samples
+                completed_task_ids = set()
+                for sample in samples:
+                    task_id = sample.get("task_id")
+                    if task_id is not None:
+                        try:
+                            task_id_int = int(task_id) if isinstance(task_id, str) else task_id
+                            if task_id_int in expected_task_ids:
+                                completed_task_ids.add(task_id_int)
+                        except (ValueError, TypeError):
+                            pass
+                
+                missing_task_ids = expected_task_ids - completed_task_ids
+                is_complete = len(missing_task_ids) == 0
+                
                 result = {
-                    "samples": data.get("samples", []),
-                    "is_complete": data.get("is_complete", False),
-                    "completed_count": data.get("completed_count", 0),
-                    "total_count": data.get("total_count", 0),
-                    "missing_task_ids": data.get("missing_task_ids", [])
+                    "samples": samples,
+                    "is_complete": is_complete,
+                    "completed_count": len(completed_task_ids),
+                    "total_count": len(expected_task_ids),
+                    "missing_task_ids": sorted(list(missing_task_ids)) if not is_complete else []
                 }
                 
                 return result

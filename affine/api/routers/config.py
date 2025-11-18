@@ -256,3 +256,199 @@ async def get_dataset_info(env: str):
         "task_id_end": task_id_end,
         "note": "task_id_start/end can be overridden for dataset expansion transitions"
     }
+
+
+# Environment Configuration Management
+
+
+class EnvironmentListRequest(BaseModel):
+    """Request model for environment list update."""
+    environments: List[str]
+    updated_by: str = "api"
+
+
+class EnvTaskRangesRequest(BaseModel):
+    """Request model for environment task ranges update."""
+    ranges: Dict[str, Dict[str, Any]]
+    updated_by: str = "api"
+
+
+@router.get("/sampling-environments")
+async def get_sampling_environments():
+    """Get list of environments for task generation (sampling).
+    
+    Returns:
+        List of environment names for sampling
+        
+    Example:
+        GET /api/v1/config/sampling-environments
+        Response: {"environments": ["affine:sat", "affine:abd"]}
+    """
+    envs = await config_dao.get_sampling_environments()
+    return {"environments": envs}
+
+
+@router.put("/sampling-environments")
+async def set_sampling_environments(request: EnvironmentListRequest):
+    """Set list of environments for task generation (sampling).
+    
+    Args:
+        request: List of environment names and updated_by
+        
+    Returns:
+        Updated config item
+        
+    Example:
+        PUT /api/v1/config/sampling-environments
+        Body: {
+            "environments": ["affine:sat", "affine:abd", "affine:ded"],
+            "updated_by": "admin"
+        }
+    """
+    result = await config_dao.set_sampling_environments(
+        envs=request.environments,
+        updated_by=request.updated_by
+    )
+    return {"message": "Sampling environments updated", "config": result}
+
+
+@router.get("/active-environments")
+async def get_active_environments():
+    """Get list of environments for score calculation (active).
+    
+    Allows transition period when adding new environments:
+    - New env added to sampling list first
+    - After sufficient sampling, added to active list
+    
+    Returns:
+        List of environment names for scoring
+        
+    Example:
+        GET /api/v1/config/active-environments
+        Response: {"environments": ["affine:sat", "affine:abd"]}
+    """
+    envs = await config_dao.get_active_environments()
+    return {"environments": envs}
+
+
+@router.put("/active-environments")
+async def set_active_environments(request: EnvironmentListRequest):
+    """Set list of environments for score calculation (active).
+    
+    Args:
+        request: List of environment names and updated_by
+        
+    Returns:
+        Updated config item
+        
+    Example:
+        PUT /api/v1/config/active-environments
+        Body: {
+            "environments": ["affine:sat", "affine:abd"],
+            "updated_by": "admin"
+        }
+    """
+    result = await config_dao.set_active_environments(
+        envs=request.environments,
+        updated_by=request.updated_by
+    )
+    return {"message": "Active environments updated", "config": result}
+
+
+@router.get("/env-task-ranges")
+async def get_env_task_ranges():
+    """Get task_id ranges for each environment.
+    
+    Returns:
+        Dictionary mapping env names to range configurations
+        
+    Example:
+        GET /api/v1/config/env-task-ranges
+        Response: {
+            "ranges": {
+                "affine:sat": {
+                    "sampling_range": [0, 1000],
+                    "active_range": [0, 1000]
+                },
+                "affine:abd": {
+                    "sampling_range": [0, 500],
+                    "active_range": [0, 300]
+                }
+            }
+        }
+    """
+    ranges = await config_dao.get_env_task_ranges()
+    return {"ranges": ranges}
+
+
+@router.put("/env-task-ranges")
+async def set_env_task_ranges(request: EnvTaskRangesRequest):
+    """Set task_id ranges for environments.
+    
+    Args:
+        request: Dictionary mapping env names to range configs
+        
+    Returns:
+        Updated config item
+        
+    Example:
+        PUT /api/v1/config/env-task-ranges
+        Body: {
+            "ranges": {
+                "affine:sat": {
+                    "sampling_range": [0, 1000],
+                    "active_range": [0, 1000]
+                }
+            },
+            "updated_by": "admin"
+        }
+    """
+    result = await config_dao.set_env_task_ranges(
+        ranges=request.ranges,
+        updated_by=request.updated_by
+    )
+    return {"message": "Environment task ranges updated", "config": result}
+
+
+@router.get("/env/{env}/sampling-range")
+async def get_env_sampling_range(env: str):
+    """Get sampling range for a specific environment.
+    
+    Args:
+        env: Environment name
+        
+    Returns:
+        Sampling range (start_id, end_id)
+        
+    Example:
+        GET /api/v1/config/env/affine:sat/sampling-range
+        Response: {"env": "affine:sat", "start_id": 0, "end_id": 1000}
+    """
+    start_id, end_id = await config_dao.get_env_sampling_range(env)
+    return {
+        "env": env,
+        "start_id": start_id,
+        "end_id": end_id
+    }
+
+
+@router.get("/env/{env}/active-range")
+async def get_env_active_range(env: str):
+    """Get active range for a specific environment.
+    
+    Args:
+        env: Environment name
+        
+    Returns:
+        Active range (start_id, end_id)
+        
+    Example:
+        GET /api/v1/config/env/affine:sat/active-range
+        Response: {"env": "affine:sat", "start_id": 0, "end_id": 1000}
+    """
+    start_id, end_id = await config_dao.get_env_active_range(env)
+    return {
+        "env": env,
+        "start_id": start_id,
+        "end_id": end_id
+    }

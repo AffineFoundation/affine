@@ -7,6 +7,7 @@ Provides commands for initializing, testing, and managing DynamoDB tables.
 import asyncio
 import sys
 from typing import Optional
+import os
 
 from affine.database import init_client, close_client, init_tables
 from affine.database.tables import list_tables, reset_tables, delete_table
@@ -210,6 +211,67 @@ async def cmd_migrate(tail: int, max_results: Optional[int]):
     await run_migration(tail_blocks=tail, max_results=max_results)
 
 
+async def cmd_load_config(json_file: str):
+    """Load system configuration from JSON file."""
+    import json
+    import os
+    
+    print(f"Loading configuration from {json_file}...")
+    
+    # Check file exists
+    if not os.path.exists(json_file):
+        print(f"Error: File '{json_file}' not found")
+        sys.exit(1)
+    
+    # Load JSON
+    try:
+        with open(json_file, 'r') as f:
+            config = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON format: {e}")
+        sys.exit(1)
+    
+    await init_client()
+    
+    try:
+        config_dao = SystemConfigDAO()
+        
+        # Load new unified environments structure
+        if 'environments' in config:
+            environments = config['environments']
+            
+            # Save to database
+            await config_dao.set_param(
+                param_name='environments',
+                param_value=environments,
+                param_type='dict',
+                description='Environment configurations (sampling, scoring, ranges)',
+                updated_by='cli_load_config'
+            )
+            
+            print(f"✓ Loaded configuration for {len(environments)} environments:")
+            
+            for env_name, env_config in environments.items():
+                enabled_sampling = env_config.get('enabled_for_sampling', False)
+                enabled_scoring = env_config.get('enabled_for_scoring', False)
+                sampling_range = env_config.get('sampling_range', [0, 0])
+                scoring_range = env_config.get('scoring_range', [0, 0])
+                
+                status = []
+                if enabled_sampling:
+                    status.append(f"sampling: {sampling_range}")
+                if enabled_scoring:
+                    status.append(f"scoring: {scoring_range}")
+                
+                status_str = ", ".join(status) if status else "disabled"
+                print(f"  {env_name}: {status_str}")
+        
+        print("\n✓ Configuration loaded successfully!")
+        
+    finally:
+        await close_client()
+
+
 def main():
     """Main CLI entry point."""
     import argparse
@@ -244,6 +306,14 @@ def main():
         help="Maximum results to migrate"
     )
     
+    # Load-config command
+    loadconfig_parser = subparsers.add_parser("load-config", help="Load system configuration from JSON file")
+    loadconfig_parser.add_argument(
+        "--json_file",
+        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "system_config.json"),
+        help="Path to JSON configuration file"
+    )
+
     args = parser.parse_args()
     
     if not args.command:
@@ -261,6 +331,8 @@ def main():
         asyncio.run(cmd_test_basic())
     elif args.command == "migrate":
         asyncio.run(cmd_migrate(args.tail, args.max_results))
+    elif args.command == "load-config":
+        asyncio.run(cmd_load_config(args.json_file))
     else:
         print(f"Unknown command: {args.command}")
         sys.exit(1)

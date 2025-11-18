@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from affine.database.dao.sample_results import SampleResultsDAO
 from affine.database.dao.task_queue import TaskQueueDAO
+from affine.database.dao.system_config import SystemConfigDAO
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +25,16 @@ class DatasetConfig:
     priority: int = 1000
 
 
-# Default dataset configurations
-# TODO: Load from SystemConfigDAO or environment
+# Default dataset configurations (fallback only)
 DEFAULT_DATASETS = {
-    "affine:sat": DatasetConfig("affine:sat", 200, 1000),
-    "affine:abd": DatasetConfig("affine:abd", 200, 1000),
-    "affine:ded": DatasetConfig("affine:ded", 200, 1000),
-    "agentgym:webshop": DatasetConfig("agentgym:webshop", 100, 900),
-    "agentgym:wordarena": DatasetConfig("agentgym:wordarena", 100, 900),
+    "affine:sat": DatasetConfig("affine:sat", 500, 1000),
+    "affine:abd": DatasetConfig("affine:abd", 500, 1000),
+    "affine:ded": DatasetConfig("affine:ded", 500, 1000),
+    "agentgym:alfworld": DatasetConfig("agentgym:alfworld", 500, 900),
+    "agentgym:webshop": DatasetConfig("agentgym:webshop", 500, 900),
+    "agentgym:babyai": DatasetConfig("agentgym:babyai", 500, 900),
+    "agentgym:sciworld": DatasetConfig("agentgym:sciworld", 500, 900),
+    "agentgym:textcraft": DatasetConfig("agentgym:textcraft", 500, 900),
 }
 
 
@@ -68,6 +71,7 @@ class TaskGeneratorService:
         self,
         sample_results_dao: SampleResultsDAO,
         task_queue_dao: TaskQueueDAO,
+        system_config_dao: Optional[SystemConfigDAO] = None,
         datasets: Optional[Dict[str, DatasetConfig]] = None
     ):
         """
@@ -76,14 +80,44 @@ class TaskGeneratorService:
         Args:
             sample_results_dao: DAO for sample results
             task_queue_dao: DAO for task queue
+            system_config_dao: DAO for system config (optional)
             datasets: Dataset configurations (uses defaults if not provided)
         """
         self.sample_results_dao = sample_results_dao
         self.task_queue_dao = task_queue_dao
+        self.system_config_dao = system_config_dao or SystemConfigDAO()
         self.datasets = datasets or DEFAULT_DATASETS
+        self._config_cache: Optional[Dict[str, Any]] = None
     
-    def get_dataset_length(self, env: str) -> int:
+    async def _load_config_from_db(self):
+        """Load configuration from SystemConfig database."""
+        try:
+            sampling_envs = await self.system_config_dao.get_sampling_environments()
+            env_ranges = await self.system_config_dao.get_env_task_ranges()
+            
+            self._config_cache = {
+                'sampling_envs': sampling_envs,
+                'env_ranges': env_ranges
+            }
+            
+            logger.info(
+                f"Loaded config from database: {len(sampling_envs)} environments, "
+                f"{len(env_ranges)} range configs"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load config from database: {e}, using defaults")
+            self._config_cache = {
+                'sampling_envs': [],
+                'env_ranges': {}
+            }
+    
+    async def get_dataset_length(self, env: str) -> int:
         """Get dataset length for an environment.
+        
+        Priority:
+        1. SystemConfig database (sampling_range)
+        2. Hardcoded datasets
+        3. Default fallback (500)
         
         Args:
             env: Environment name
@@ -91,12 +125,27 @@ class TaskGeneratorService:
         Returns:
             Dataset length (number of tasks)
         """
+        # Load config from database if not cached
+        if self._config_cache is None:
+            await self._load_config_from_db()
+        
+        # Try SystemConfig first
+        env_ranges = self._config_cache.get('env_ranges', {})
+        if env in env_ranges:
+            sampling_range = env_ranges[env].get('sampling_range', [0, 0])
+            if len(sampling_range) == 2:
+                start, end = sampling_range
+                length = end - start
+                logger.debug(f"Using SystemConfig range for {env}: {start}-{end} (length={length})")
+                return length
+        
+        # Fallback to hardcoded datasets
         if env in self.datasets:
             return self.datasets[env].length
         
         # Default fallback
-        logger.warning(f"Unknown environment {env}, using default length 200")
-        return 200
+        logger.warning(f"Unknown environment {env}, using default length 500")
+        return 500
     
     def get_dataset_priority(self, env: str) -> int:
         """Get priority for an environment.
@@ -129,7 +178,7 @@ class TaskGeneratorService:
         Returns:
             Number of tasks created
         """
-        dataset_length = self.get_dataset_length(env)
+        dataset_length = await self.get_dataset_length(env)
         priority = self.get_dataset_priority(env)
         
         # Get expected task_ids (all indices in dataset)
@@ -200,6 +249,11 @@ class TaskGeneratorService:
         """
         Generate tasks for all miners across all environments.
         
+        Priority for environment list:
+        1. Explicit envs parameter
+        2. SystemConfig sampling_environments
+        3. Hardcoded datasets keys
+        
         Args:
             miners: List of active miners
             envs: List of environments (uses all configured if not provided)
@@ -209,7 +263,19 @@ class TaskGeneratorService:
             TaskGenerationResult with summary
         """
         if envs is None:
-            envs = list(self.datasets.keys())
+            # Load config from database if not cached
+            if self._config_cache is None:
+                await self._load_config_from_db()
+            
+            # Try SystemConfig first
+            sampling_envs = self._config_cache.get('sampling_envs', [])
+            if sampling_envs:
+                envs = sampling_envs
+                logger.info(f"Using SystemConfig sampling environments: {envs}")
+            else:
+                # Fallback to hardcoded datasets
+                envs = list(self.datasets.keys())
+                logger.info(f"Using hardcoded dataset environments: {envs}")
         
         result = TaskGenerationResult(
             total_tasks_created=0,
@@ -341,31 +407,44 @@ class TaskGeneratorService:
             Dict mapping env -> completion status
         """
         if envs is None:
-            envs = list(self.datasets.keys())
+            # Load config from database if not cached
+            if self._config_cache is None:
+                await self._load_config_from_db()
+            
+            # Try SystemConfig first
+            sampling_envs = self._config_cache.get('sampling_envs', [])
+            if sampling_envs:
+                envs = sampling_envs
+            else:
+                # Fallback to hardcoded datasets
+                envs = list(self.datasets.keys())
         
         status = {}
         
         for env in envs:
-            dataset_length = self.get_dataset_length(env)
+            dataset_length = await self.get_dataset_length(env)
             
-            result = await self.sample_results_dao.get_samples_with_completion_status(
+            # Get completed task_ids
+            completed_task_ids = await self.sample_results_dao.get_completed_task_ids(
                 miner_hotkey=miner.hotkey,
                 model_revision=miner.model_revision,
-                env=env,
-                dataset_length=dataset_length,
-                deduplicate_by_task_id=True,
-                include_extra=False
+                env=env
             )
             
+            # Calculate completion status
+            expected_task_ids = set(range(dataset_length))
+            missing_task_ids = expected_task_ids - completed_task_ids
+            is_complete = len(missing_task_ids) == 0
+            
             status[env] = {
-                'is_complete': result['is_complete'],
-                'completed_count': result['completed_count'],
-                'total_count': result['total_count'],
+                'is_complete': is_complete,
+                'completed_count': len(completed_task_ids),
+                'total_count': dataset_length,
                 'completion_percentage': (
-                    result['completed_count'] / result['total_count'] * 100
-                    if result['total_count'] > 0 else 0
+                    len(completed_task_ids) / dataset_length * 100
+                    if dataset_length > 0 else 0
                 ),
-                'missing_count': len(result['missing_task_ids']),
+                'missing_count': len(missing_task_ids),
             }
         
         return status

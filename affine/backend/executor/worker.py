@@ -8,10 +8,10 @@ Uses authenticated API endpoints with wallet signature verification.
 import asyncio
 import time
 import traceback
+import aiohttp
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
-from affine.core.http_client import AsyncHTTPClient
 from affine.core.setup import logger, wallet
 from affine.core.models import Result
 
@@ -52,9 +52,9 @@ class ExecutorWorker:
         self.api_base_url = api_base_url
         self.poll_interval = poll_interval
         
-        self.http_client = AsyncHTTPClient(timeout=300)  # 5 min timeout for sampling
         self.running = False
         self.metrics = WorkerMetrics()
+        self._session: Optional[aiohttp.ClientSession] = None
         
         # Environment executor (will be initialized lazily)
         self.env_executor = None
@@ -64,6 +64,14 @@ class ExecutorWorker:
             self.hotkey = wallet.hotkey.ss58_address
         else:
             self.hotkey = None
+    
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp session."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=300)  # 5 min timeout
+            )
+        return self._session
     
     async def _init_env_executor(self):
         """Initialize environment executor lazily."""
@@ -151,29 +159,32 @@ class ExecutorWorker:
     async def _fetch_task(self) -> Optional[Dict]:
         """Fetch a pending task from API with authentication.
         
-        Uses the authenticated endpoint that verifies executor signature.
+        Uses weighted random selection via TaskPoolManager.
         
         Returns:
             Task dictionary or None if no task available
         """
         try:
-            url = f"{self.api_base_url}/api/v1/tasks/fetch-authenticated"
+            url = f"{self.api_base_url}/api/v1/tasks/fetch"
             params = {"env": self.env}
             
             # Get authentication headers
             headers = self._get_auth_headers()
             
-            response = await self.http_client.post(url, params=params, headers=headers)
-            
-            if response and "tasks" in response and len(response["tasks"]) > 0:
-                task = response["tasks"][0]
-                logger.info(
-                    f"[Worker-{self.worker_id}] Fetched task: "
-                    f"uuid={task.get('task_uuid', 'N/A')[:8]}... "
-                    f"task_id={task.get('task_id')} "
-                    f"miner={task.get('miner_hotkey', '')[:12]}..."
-                )
-                return task
+            session = await self._get_session()
+            async with session.post(url, params=params, headers=headers) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
+                    
+                    if response and "task" in response and response["task"] is not None:
+                        task = response["task"]
+                        logger.info(
+                            f"[Worker-{self.worker_id}] Fetched task: "
+                            f"uuid={task.get('task_uuid', 'N/A')[:8]}... "
+                            f"task_id={task.get('task_id')} "
+                            f"miner={task.get('miner_hotkey', '')[:12]}..."
+                        )
+                        return task
             
             return None
         
@@ -192,10 +203,12 @@ class ExecutorWorker:
         """
         try:
             url = f"{self.api_base_url}/api/v1/miners/{miner_hotkey}/consecutive-errors"
-            response = await self.http_client.get(url)
+            session = await self._get_session()
             
-            if response:
-                return response.get("consecutive_errors", 0)
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
+                    return response.get("consecutive_errors", 0)
             
             return 0
         
@@ -225,14 +238,14 @@ class ExecutorWorker:
                 "reason": f"Consecutive errors: {consecutive_errors}"
             }
             
-            response = await self.http_client.put(url, json=data)
-            
-            if response:
-                logger.warning(
-                    f"[Worker-{self.worker_id}] Paused miner {miner_hotkey[:8]}... "
-                    f"for {duration}s due to {consecutive_errors} consecutive errors"
-                )
-                return True
+            session = await self._get_session()
+            async with session.put(url, json=data) as resp:
+                if resp.status == 200:
+                    logger.warning(
+                        f"[Worker-{self.worker_id}] Paused miner {miner_hotkey[:8]}... "
+                        f"for {duration}s due to {consecutive_errors} consecutive errors"
+                    )
+                    return True
             
             return False
         
@@ -341,69 +354,66 @@ class ExecutorWorker:
             True if successful
         """
         try:
-            # Get task identifiers (new schema)
+            # Get task identifiers
             task_uuid = task.get("task_uuid", "")
-            task_id = int(task.get("task_id", 0))  # Dataset index
+            task_id = int(task.get("task_id", 0))
             miner_hotkey = task.get("miner_hotkey", "")
             
             # Get authentication headers
             headers = self._get_auth_headers()
+            
+            session = await self._get_session()
             
             if result.success:
                 # First submit sample result
                 url = f"{self.api_base_url}/api/v1/samples"
                 sample_data = result.dict()
                 
-                response = await self.http_client.post(url, json=sample_data, headers=headers)
-                
-                if response:
-                    sample_id = response.get("sample_id", "")
-                    
-                    # Mark task completed using authenticated endpoint
-                    complete_url = f"{self.api_base_url}/api/v1/tasks/complete-authenticated"
-                    complete_params = {
-                        "task_uuid": task_uuid,
-                        "dataset_task_id": task_id,
-                        "success": True,
-                    }
-                    
-                    await self.http_client.post(
-                        complete_url,
-                        params=complete_params,
-                        headers=headers
-                    )
-                    
-                    logger.info(
-                        f"[Worker-{self.worker_id}] Submitted result: "
-                        f"sample_id={sample_id} task_uuid={task_uuid[:8]}..."
-                    )
-                    
-                    self.metrics.tasks_completed += 1
-                    return True
-                else:
-                    logger.warning(f"[Worker-{self.worker_id}] Failed to submit sample")
-                    self.metrics.tasks_failed += 1
-                    return False
+                async with session.post(url, json=sample_data, headers=headers) as resp:
+                    if resp.status == 200:
+                        response = await resp.json()
+                        sample_id = response.get("sample_id", "")
+                        
+                        # Mark task completed using new endpoint
+                        complete_url = f"{self.api_base_url}/api/v1/tasks/complete"
+                        complete_body = {
+                            "task_uuid": task_uuid,
+                            "success": True,
+                            "error_message": None,
+                            "error_code": None,
+                        }
+                        
+                        async with session.post(complete_url, json=complete_body, headers=headers) as complete_resp:
+                            pass
+                        
+                        logger.info(
+                            f"[Worker-{self.worker_id}] Submitted result: "
+                            f"sample_id={sample_id} task_uuid={task_uuid[:8]}..."
+                        )
+                        
+                        self.metrics.tasks_completed += 1
+                        return True
+                    else:
+                        logger.warning(f"[Worker-{self.worker_id}] Failed to submit sample")
+                        self.metrics.tasks_failed += 1
+                        return False
             
             else:
                 # Task failed - report error
                 error_type = self._classify_error(result.error or "Unknown error")
                 error_message = result.error or "Unknown error"
                 
-                # Mark task failed using authenticated endpoint
-                complete_url = f"{self.api_base_url}/api/v1/tasks/complete-authenticated"
-                complete_params = {
+                # Mark task failed using new endpoint
+                complete_url = f"{self.api_base_url}/api/v1/tasks/complete"
+                complete_body = {
                     "task_uuid": task_uuid,
-                    "dataset_task_id": task_id,
                     "success": False,
                     "error_message": f"{error_type}: {error_message}",
+                    "error_code": error_type,
                 }
                 
-                await self.http_client.post(
-                    complete_url,
-                    params=complete_params,
-                    headers=headers
-                )
+                async with session.post(complete_url, json=complete_body, headers=headers) as complete_resp:
+                    pass
                 
                 logger.warning(
                     f"[Worker-{self.worker_id}] Task failed: "

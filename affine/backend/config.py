@@ -7,9 +7,9 @@ Follows Occam's Razor principle - simple, efficient, no unnecessary complexity.
 
 import time
 import os
+import aiohttp
 from typing import Any, Dict, Optional
 from dataclasses import dataclass, field
-from affine.core.http_client import AsyncHTTPClient
 
 
 @dataclass
@@ -76,9 +76,17 @@ class DynamicConfig:
         """
         # Support both API_URL (Docker Compose) and API_BASE_URL (legacy)
         self.api_base_url = api_base_url or os.getenv("API_URL") or os.getenv("API_BASE_URL", "http://localhost:8000")
-        self.http_client = AsyncHTTPClient(timeout=10)
         self.defaults = ConfigDefaults()
         self._cache: Dict[str, tuple[Any, float]] = {}  # key -> (value, timestamp)
+        self._session: Optional[aiohttp.ClientSession] = None
+    
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp session."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=10)
+            )
+        return self._session
     
     async def get(self, key: str, force_refresh: bool = False) -> Any:
         """Get configuration value.
@@ -99,14 +107,18 @@ class DynamicConfig:
         # Step 2: Fetch from API
         try:
             url = f"{self.api_base_url}/api/v1/config/{key}"
-            response = await self.http_client.get(url)
+            session = await self._get_session()
             
-            if response and "param_value" in response:
-                value = response["param_value"]
-                
-                # Update cache
-                self._cache[key] = (value, time.time())
-                return value
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
+                    
+                    if response and "param_value" in response:
+                        value = response["param_value"]
+                        
+                        # Update cache
+                        self._cache[key] = (value, time.time())
+                        return value
         
         except Exception:
             # API call failed, fall back to default
@@ -145,10 +157,13 @@ class DynamicConfig:
         try:
             url = f"{self.api_base_url}/api/v1/config"
             params = {"prefix": prefix} if prefix else {}
-            response = await self.http_client.get(url, params=params)
+            session = await self._get_session()
             
-            if response and "configs" in response:
-                return response["configs"]
+            async with session.get(url, params=params) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
+                    if response and "configs" in response:
+                        return response["configs"]
         
         except Exception:
             # API failed, return defaults
@@ -226,12 +241,12 @@ class DynamicConfig:
                 "updated_by": updated_by
             }
             
-            response = await self.http_client.put(url, json=payload)
-            
-            # Invalidate cache for this key
-            self.invalidate_cache(key)
-            
-            return response is not None
+            session = await self._get_session()
+            async with session.put(url, json=payload) as resp:
+                # Invalidate cache for this key
+                self.invalidate_cache(key)
+                
+                return resp.status == 200
         
         except Exception:
             return False
@@ -247,12 +262,13 @@ class DynamicConfig:
         """
         try:
             url = f"{self.api_base_url}/api/v1/config/{key}"
-            response = await self.http_client.delete(url)
+            session = await self._get_session()
             
-            # Invalidate cache
-            self.invalidate_cache(key)
-            
-            return response is not None
+            async with session.delete(url) as resp:
+                # Invalidate cache
+                self.invalidate_cache(key)
+                
+                return resp.status == 200
         
         except Exception:
             return False

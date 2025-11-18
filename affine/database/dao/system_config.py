@@ -131,3 +131,184 @@ class SystemConfigDAO(BaseDAO):
         pk = self._make_pk()
         
         return await self.query(pk=pk)
+    
+    # Environment Configuration Management
+    
+    async def get_sampling_environments(self) -> List[str]:
+        """Get list of environments for task generation (sampling).
+        
+        Returns:
+            List of environment names where enabled_for_sampling=true
+        """
+        environments = await self.get_param_value('environments', default={})
+        return [
+            env_name
+            for env_name, env_config in environments.items()
+            if env_config.get('enabled_for_sampling', False)
+        ]
+    
+    async def set_sampling_environments(
+        self, envs: List[str], updated_by: str = "system"
+    ) -> Dict[str, Any]:
+        """Set sampling environments list.
+        
+        This method updates the enabled_for_sampling flag for environments.
+        
+        Args:
+            envs: List of environment names to enable for sampling
+            updated_by: Who updated the parameter
+            
+        Returns:
+            Saved config item
+        """
+        environments = await self.get_param_value('environments', default={})
+        
+        # Update enabled_for_sampling for all environments
+        for env_name in environments:
+            environments[env_name]['enabled_for_sampling'] = env_name in envs
+        
+        return await self.set_param(
+            param_name='environments',
+            param_value=environments,
+            param_type='dict',
+            description='Environment configurations (sampling, scoring, ranges)',
+            updated_by=updated_by
+        )
+    
+    async def get_active_environments(self) -> List[str]:
+        """Get list of environments for score calculation (active).
+        
+        Allows transition period when adding new environments:
+        - New env added to sampling list first (enabled_for_sampling=true)
+        - After sufficient sampling, added to active list (enabled_for_scoring=true)
+        
+        Returns:
+            List of environment names where enabled_for_scoring=true
+        """
+        environments = await self.get_param_value('environments', default={})
+        return [
+            env_name
+            for env_name, env_config in environments.items()
+            if env_config.get('enabled_for_scoring', False)
+        ]
+    
+    async def set_active_environments(
+        self, envs: List[str], updated_by: str = "system"
+    ) -> Dict[str, Any]:
+        """Set active environments list for scoring.
+        
+        This method updates the enabled_for_scoring flag for environments.
+        
+        Args:
+            envs: List of environment names to enable for scoring
+            updated_by: Who updated the parameter
+            
+        Returns:
+            Saved config item
+        """
+        environments = await self.get_param_value('environments', default={})
+        
+        # Update enabled_for_scoring for all environments
+        for env_name in environments:
+            environments[env_name]['enabled_for_scoring'] = env_name in envs
+        
+        return await self.set_param(
+            param_name='environments',
+            param_value=environments,
+            param_type='dict',
+            description='Environment configurations (sampling, scoring, ranges)',
+            updated_by=updated_by
+        )
+    
+    async def get_env_task_ranges(self) -> Dict[str, Dict[str, Any]]:
+        """Get task_id ranges for each environment.
+        
+        Extracts range information from environments config.
+        
+        Format:
+        {
+            "affine:sat": {
+                "sampling_range": [0, 1000],  # Range for task generation
+                "scoring_range": [0, 1000]     # Range for scoring (can differ)
+            },
+            "affine:abd": {
+                "sampling_range": [0, 500],
+                "scoring_range": [0, 300]      # Smaller range during transition
+            }
+        }
+        
+        Returns:
+            Dictionary mapping env names to range configurations
+        """
+        environments = await self.get_param_value('environments', default={})
+        
+        # Extract range information from environments
+        ranges = {}
+        for env_name, env_config in environments.items():
+            ranges[env_name] = {
+                'sampling_range': env_config.get('sampling_range', [0, 0]),
+                'scoring_range': env_config.get('scoring_range', [0, 0])
+            }
+        
+        return ranges
+    
+    async def set_env_task_ranges(
+        self, ranges: Dict[str, Dict[str, Any]], updated_by: str = "system"
+    ) -> Dict[str, Any]:
+        """Set task_id ranges for environments.
+        
+        This method updates the sampling_range and scoring_range for environments.
+        
+        Args:
+            ranges: Dictionary mapping env names to range configs with
+                   'sampling_range' and 'scoring_range' keys
+            updated_by: Who updated the parameter
+            
+        Returns:
+            Saved config item
+        """
+        environments = await self.get_param_value('environments', default={})
+        
+        # Update ranges for specified environments
+        for env_name, range_config in ranges.items():
+            if env_name in environments:
+                if 'sampling_range' in range_config:
+                    environments[env_name]['sampling_range'] = range_config['sampling_range']
+                if 'scoring_range' in range_config:
+                    environments[env_name]['scoring_range'] = range_config['scoring_range']
+        
+        return await self.set_param(
+            param_name='environments',
+            param_value=environments,
+            param_type='dict',
+            description='Environment configurations (sampling, scoring, ranges)',
+            updated_by=updated_by
+        )
+    
+    async def get_env_sampling_range(self, env: str) -> tuple[int, int]:
+        """Get sampling range for a specific environment.
+        
+        Args:
+            env: Environment name
+            
+        Returns:
+            Tuple of (start_id, end_id) for sampling
+        """
+        ranges = await self.get_env_task_ranges()
+        env_config = ranges.get(env, {})
+        sampling_range = env_config.get('sampling_range', [0, 0])
+        return tuple(sampling_range) if len(sampling_range) == 2 else (0, 0)
+    
+    async def get_env_scoring_range(self, env: str) -> tuple[int, int]:
+        """Get scoring range for a specific environment.
+        
+        Args:
+            env: Environment name
+            
+        Returns:
+            Tuple of (start_id, end_id) for scoring
+        """
+        ranges = await self.get_env_task_ranges()
+        env_config = ranges.get(env, {})
+        scoring_range = env_config.get('scoring_range', [0, 0])
+        return tuple(scoring_range) if len(scoring_range) == 2 else (0, 0)
