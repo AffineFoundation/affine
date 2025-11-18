@@ -239,7 +239,7 @@ class MinerSampler:
         
         for e in envs:
             # Minimum samples = dataset size for that environment
-            required[e] = self.env_dataset_sizes.get(e, 0)
+            required[e] = SamplingConfig.SMALL_DATASET_THRESHOLD
         
         eligible = {
             hk for hk in active_hks
