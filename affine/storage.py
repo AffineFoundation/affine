@@ -177,7 +177,7 @@ async def dataset(
     *,
     max_concurrency: int = 5,
     compact: bool = True,
-    refresh_window: int = 800,
+    refresh_window: int = 5000,
 ) -> AsyncIterator["Result | CompactResult"]:
     """Load dataset from R2 storage.
     
