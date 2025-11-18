@@ -64,16 +64,16 @@ async def check_model_gated(
                 is_gated = r.json().get("gated", False)
                 if revision:
                     try:
-                        ok = await asyncio.to_thread(
-                            lambda: bool(
-                                HfApi(token=os.getenv("HF_TOKEN")).repo_info(
-                                    repo_id=model_id,
-                                    revision=revision,
-                                    repo_type="model",
-                                )
+                        # Get HuggingFace repo info to compare revisions
+                        hf_info = await asyncio.to_thread(
+                            lambda: HfApi(token=os.getenv("HF_TOKEN")).repo_info(
+                                repo_id=model_id,
+                                repo_type="model",
                             )
                         )
-                        if not ok:
+                        hf_revision = getattr(hf_info, "sha", None)
+                        # If miner revision doesn't match HF revision, treat as gated
+                        if hf_revision and hf_revision != revision:
                             is_gated = True
                     except:
                         pass
@@ -316,10 +316,6 @@ async def miners(
                 return None
 
             if uid != 0 and chute_name.split("/")[1].lower()[:6] != "affine":
-                return None
-
-            chute_revision = chute.get("revision")
-            if chute_revision is not None and miner_revision != chute_revision:
                 return None
 
             return Miner(
