@@ -21,7 +21,7 @@ class SamplingConfig:
     
     # Challenge algorithm parameters
     # Confidence level for Beta distribution interval (can be adjusted easily)
-    CONFIDENCE_LEVEL = 0.85  # confidence level
+    CONFIDENCE_LEVEL = 0.9  # confidence level
 
     # Beta distribution prior parameters (Jeffrey's prior for binomial proportion)
     BETA_PRIOR_ALPHA = 0.5
