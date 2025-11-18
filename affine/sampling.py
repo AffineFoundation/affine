@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple, Optional, Any, Set
 class SamplingConfig:
     """Configuration parameters for sampling."""
     
-    TAIL = 20_000  # Reduced to 10K blocks for collecting sequential samples
+    TAIL = 20_000  # Ensure all the dataset evaluation result is included in the window
     SCALE = 1.0  # Scaling factor for layer weights
     
     # Task ID deduplication threshold
@@ -21,7 +21,7 @@ class SamplingConfig:
     
     # Challenge algorithm parameters
     # Confidence level for Beta distribution interval (can be adjusted easily)
-    CONFIDENCE_LEVEL = 0.90  # confidence level
+    CONFIDENCE_LEVEL = 0.85  # confidence level
 
     # Beta distribution prior parameters (Jeffrey's prior for binomial proportion)
     BETA_PRIOR_ALPHA = 0.5
