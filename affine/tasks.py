@@ -42,7 +42,7 @@ class SandboxConfig:
 class EvaluatorConfig:
     """Evaluator configuration"""
 
-    temperature: float = 0.7
+    temperature: float = 0
     timeout: int = 600
     max_round: int = 10
 
