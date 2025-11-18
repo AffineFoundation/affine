@@ -86,38 +86,11 @@ class BaseSDKEnv(ABC):
     _sandbox_config: SandboxConfig = None
     _evaluator_config: EvaluatorConfig = None
     DEFAULT_REPLICAS: int = 1
-    DEFAULT_DAILY_RATE: int = int(os.getenv("DEFAULT_DAILY_RATE", "100"))  # Default daily sampling rate per environment
-    
-    # Dataset range configuration (start_index, end_index)
-    # If set, only sample from this range; otherwise use full dataset [0, data_len)
-    DEFAULT_START_INDEX: Optional[int] = None
-    DEFAULT_END_INDEX: Optional[int] = None
 
     def __init__(self):
         super().__init__()
         self._env = self._load_environment()
         self._env_lock = asyncio.Lock()
-    
-    @property
-    def daily_rate(self) -> int:
-        """Get daily sampling rate for this environment.
-        
-        Default: Use dataset range size (end_index - start_index) so that
-        the entire dataset is sampled once per day.
-        """
-        return self.end_index - self.start_index
-    
-    @property
-    def start_index(self) -> int:
-        """Get start index for dataset sampling (inclusive)"""
-        return self.DEFAULT_START_INDEX if self.DEFAULT_START_INDEX is not None else 0
-    
-    @property
-    def end_index(self) -> int:
-        """Get end index for dataset sampling (exclusive)"""
-        if self.DEFAULT_END_INDEX is not None:
-            return self.DEFAULT_END_INDEX
-        return getattr(self, 'data_len', 1)
 
     @property
     def sandbox_config(self) -> SandboxConfig:
@@ -274,9 +247,17 @@ class BaseSDKEnv(ABC):
         task_id = None
         if payload_extra and 'task_id' in payload_extra:
             task_id = payload_extra['task_id']
+        
+        # Extract miner info (hotkey + revision)
+        miner_hotkey = ""
+        model_revision = ""
+        if miner:
+            miner_hotkey = miner.hotkey
+            model_revision = miner.revision or ""
 
         return Result(
-            miner=miner,
+            miner_hotkey=miner_hotkey,
+            model_revision=model_revision,
             env=self.env_name,
             score=score,
             latency_seconds=time.monotonic() - start_time if start_time else 0.0,
@@ -299,9 +280,17 @@ class BaseSDKEnv(ABC):
         task_id = None
         if payload_extra and 'task_id' in payload_extra:
             task_id = payload_extra['task_id']
+        
+        # Extract miner info (hotkey + revision)
+        miner_hotkey = ""
+        model_revision = ""
+        if miner:
+            miner_hotkey = miner.hotkey
+            model_revision = miner.revision or ""
 
         return Result(
-            miner=miner,
+            miner_hotkey=miner_hotkey,
+            model_revision=model_revision,
             env=self.env_name,
             score=0.0,
             latency_seconds=time.monotonic() - start_time if start_time else 0.0,
@@ -357,11 +346,6 @@ class BaseSDKEnv(ABC):
         tasks = [self.evaluate(m) for m in miners]
         return await asyncio.gather(*tasks)
 
-    def generate_random_task_id(self) -> int:
-        """Generate a random task ID for this environment"""
-        data_len = getattr(self, "data_len", 1)
-        return random.randint(0, data_len - 1) % data_len
-
 
 
 # ========================= Environment Implementations =========================
@@ -370,13 +354,8 @@ class BaseSDKEnv(ABC):
 class AffineSDKEnv(BaseSDKEnv):
     """Base class for Affine environments (SAT, ABD, DED, HVM, ELR)"""
 
-    # Default configuration for Affine environments
-    DEFAULT_DATA_LEN = 240  # Affine test set size
-
-    def __init__(self, data_len: int = None):
+    def __init__(self):
         super().__init__()
-        # Use environment-specific defaults if not provided
-        self.data_len = data_len if data_len is not None else self.DEFAULT_DATA_LEN
 
     @property
     def env_type(self) -> EnvType:
@@ -413,9 +392,9 @@ class AffineSDKEnv(BaseSDKEnv):
         # Set default task_type if not provided in eval_kwargs
         eval_kwargs.setdefault("task_type", env_name)
         
-        # Set default task_id if not provided (for sequential sampling support)
+        # task_id must be provided by caller (from API server task queue)
         if "task_id" not in eval_kwargs:
-            eval_kwargs["task_id"] = random.randint(0, self.data_len - 1)
+            raise ValueError("task_id is required for evaluation")
 
         async def evaluate_single(m):
             return await self._evaluate_single_miner(m, **eval_kwargs)
@@ -426,15 +405,11 @@ class AffineSDKEnv(BaseSDKEnv):
 class AgentGymSDKEnv(BaseSDKEnv):
     """Base class for AgentGym environments"""
 
-    # Default configuration for each environment - can be overridden in subclasses
-    DEFAULT_DATA_LEN = 200
     DEFAULT_MAX_ROUND = 10
     DEFAULT_TIMEOUT = 1200
 
-    def __init__(self, data_len: int = None, max_round: int = None):
+    def __init__(self, max_round: int = None):
         super().__init__()
-        # Use environment-specific defaults if not provided
-        self.data_len = data_len if data_len is not None else self.DEFAULT_DATA_LEN
         self.max_round = max_round if max_round is not None else self.DEFAULT_MAX_ROUND
 
         # Update evaluator config
@@ -479,9 +454,9 @@ class AgentGymSDKEnv(BaseSDKEnv):
             **eval_kwargs: Dynamic parameters (model, base_url, temperature, task_id, max_round, etc.)
         """
 
-        # Set default task_id if not provided
+        # task_id must be provided by caller (from API server task queue)
         if "task_id" not in eval_kwargs:
-            eval_kwargs["task_id"] = random.randint(0, self.data_len - 1)
+            raise ValueError("task_id is required for evaluation")
         
         # Set default max_round if not provided
         eval_kwargs.setdefault("max_round", self.max_round)
@@ -515,7 +490,6 @@ def register_env(env_type: EnvType, env_name: str):
 class SAT(AffineSDKEnv):
     """SAT environment for SDK"""
     DEFAULT_REPLICAS = 1
-    DEFAULT_DATA_LEN = 500
 
     @property
     def env_name(self) -> str:
@@ -546,10 +520,7 @@ class DED(AffineSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:alfworld")
 class ALFWORLD(AgentGymSDKEnv):
     """ALFWORLD environment for SDK"""
-    DEFAULT_DATA_LEN = 2500
     DEFAULT_REPLICAS = 1
-    DEFAULT_START_INDEX = 2000  # Sample from index 2000
-    DEFAULT_END_INDEX = 2500    # To index 2500 (exclusive)
 
     @property
     def env_name(self) -> str:
@@ -561,7 +532,6 @@ class WEBSHOP(AgentGymSDKEnv):
     """WEBSHOP environment for SDK"""
     DEFAULT_MAX_ROUND = 10
     DEFAULT_REPLICAS = 1
-    DEFAULT_DATA_LEN = 500
 
     @property
     def env_name(self) -> str:
@@ -571,7 +541,6 @@ class WEBSHOP(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:babyai")
 class BABYAI(AgentGymSDKEnv):
     """BABYAI environment for SDK"""
-    DEFAULT_DATA_LEN = 500
     DEFAULT_REPLICAS = 1
 
     @property
@@ -582,10 +551,7 @@ class BABYAI(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:sciworld")
 class SCIWORLD(AgentGymSDKEnv):
     """SCIWORLD environment for SDK"""
-    DEFAULT_DATA_LEN = 2500
     DEFAULT_REPLICAS = 1
-    DEFAULT_START_INDEX = 2000  # Sample from index 2000
-    DEFAULT_END_INDEX = 2500    # To index 2500 (exclusive)
 
     @property
     def env_name(self) -> str:
@@ -595,7 +561,6 @@ class SCIWORLD(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:textcraft")
 class TEXTCRAFT(AgentGymSDKEnv):
     """TEXTCRAFT environment for SDK"""
-    DEFAULT_DATA_LEN = 582
     DEFAULT_REPLICAS = 1
 
     @property

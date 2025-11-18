@@ -6,7 +6,6 @@ import aiohttp
 import requests
 from typing import Dict, List, Optional, Union
 from huggingface_hub import HfApi
-from affine.core.http_client import _get_client
 from affine.core.models import Miner
 from affine.core.setup import NETUID
 from affine.utils.subtensor import get_subtensor
@@ -91,18 +90,19 @@ async def get_chute(chutes_id: str) -> Dict:
     url = f"https://api.chutes.ai/chutes/{chutes_id}"
     token = os.getenv("CHUTES_API_KEY", "")
     headers = {"Authorization": token}
-    sess = await _get_client()
-    async with sess.get(
-        url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
-    ) as r:
-        text = await r.text(errors="ignore")
-        if r.status != 200:
-            return None
-        info = await r.json()
-        for k in ("readme", "cords", "tagline", "instances"):
-            info.pop(k, None)
-        info.get("image", {}).pop("readme", None)
-        return info
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
+        ) as r:
+            text = await r.text(errors="ignore")
+            if r.status != 200:
+                return None
+            info = await r.json()
+            for k in ("readme", "cords", "tagline", "instances"):
+                info.pop(k, None)
+            info.get("image", {}).pop("readme", None)
+            return info
 
 
 async def get_chute_code(identifier: str) -> Optional[str]:

@@ -6,12 +6,12 @@ Reuses existing sampling.py logic to calculate miner weights from all historical
 
 import time
 import traceback
+import aiohttp
 from typing import Dict, List, Tuple, Set, Any, Optional
 from collections import defaultdict
 
 from affine.sampling import SamplingOrchestrator, MinerSampler, SamplingConfig
 from affine.core.setup import logger
-from affine.core.http_client import AsyncHTTPClient
 
 
 class ScoreCalculator:
@@ -24,11 +24,19 @@ class ScoreCalculator:
             api_base_url: API server URL
         """
         self.api_base_url = api_base_url
-        self.http_client = AsyncHTTPClient(timeout=60)
+        self._session: Optional[aiohttp.ClientSession] = None
         
         # Reuse existing sampling logic
         self.orchestrator = SamplingOrchestrator()
         self.sampler = MinerSampler()
+    
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp session."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=60)
+            )
+        return self._session
     
     async def fetch_all_samples(
         self,
@@ -49,11 +57,15 @@ class ScoreCalculator:
             if environments:
                 params["env"] = ",".join(environments)
             
-            response = await self.http_client.get(url, params=params)
+            session = await self._get_session()
             
-            if response and isinstance(response, list):
-                logger.info(f"[ScoreCalculator] Fetched {len(response)} samples")
-                return response
+            async with session.get(url, params=params) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
+                    
+                    if response and isinstance(response, list):
+                        logger.info(f"[ScoreCalculator] Fetched {len(response)} samples")
+                        return response
             
             logger.warning("[ScoreCalculator] No samples fetched")
             return []
@@ -71,15 +83,19 @@ class ScoreCalculator:
         """
         try:
             url = f"{self.api_base_url}/api/v1/miners/active"
-            response = await self.http_client.get(url)
+            session = await self._get_session()
             
-            if response and isinstance(response, list):
-                uid_to_hotkey = {
-                    miner["uid"]: miner["hotkey"]
-                    for miner in response
-                }
-                logger.info(f"[ScoreCalculator] Fetched {len(uid_to_hotkey)} active miners")
-                return uid_to_hotkey
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
+                    
+                    if response and isinstance(response, list):
+                        uid_to_hotkey = {
+                            miner["uid"]: miner["hotkey"]
+                            for miner in response
+                        }
+                        logger.info(f"[ScoreCalculator] Fetched {len(uid_to_hotkey)} active miners")
+                        return uid_to_hotkey
             
             logger.warning("[ScoreCalculator] No active miners fetched")
             return {}

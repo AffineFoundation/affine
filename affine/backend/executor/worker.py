@@ -8,12 +8,12 @@ Uses authenticated API endpoints with wallet signature verification.
 import asyncio
 import time
 import traceback
+import aiohttp
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
-from affine.core.http_client import AsyncHTTPClient
 from affine.core.setup import logger, wallet
-from affine.core.models import Result
+from affine.core.models import SampleSubmission
 
 
 @dataclass
@@ -52,9 +52,9 @@ class ExecutorWorker:
         self.api_base_url = api_base_url
         self.poll_interval = poll_interval
         
-        self.http_client = AsyncHTTPClient(timeout=300)  # 5 min timeout for sampling
         self.running = False
         self.metrics = WorkerMetrics()
+        self._session: Optional[aiohttp.ClientSession] = None
         
         # Environment executor (will be initialized lazily)
         self.env_executor = None
@@ -65,28 +65,28 @@ class ExecutorWorker:
         else:
             self.hotkey = None
     
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp session."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=300)  # 5 min timeout
+            )
+        return self._session
+    
     async def _init_env_executor(self):
         """Initialize environment executor lazily."""
         if self.env_executor is not None:
             return
-        
+
         try:
-            # Parse environment name
-            parts = self.env.split(":")
-            if len(parts) != 2:
-                raise ValueError(f"Invalid environment format: {self.env}")
-            
-            env_type, env_name = parts
-            
-            # Import and initialize environment executor
-            if env_type == "affine":
-                from affinetes.environments.affine.executor import AffineExecutor
-                self.env_executor = AffineExecutor(env_name.upper())
-            else:
-                raise ValueError(f"Unsupported environment type: {env_type}")
-            
+            # Use affine's environment wrapper (not affinetes directly)
+            from affine.core.environments import create_environment
+
+            # create_environment returns the SDK environment instance
+            self.env_executor = await create_environment(self.env)
+
             logger.info(f"[Worker-{self.worker_id}] Initialized {self.env} executor")
-        
+
         except Exception as e:
             logger.error(f"[Worker-{self.worker_id}] Failed to initialize executor: {e}")
             raise
@@ -94,7 +94,7 @@ class ExecutorWorker:
     async def start(self):
         """Start the worker."""
         logger.info(f"[Worker-{self.worker_id}] Starting worker for {self.env}...")
-        
+
         # Validate wallet
         if not wallet or not self.hotkey:
             raise RuntimeError("Wallet not configured for worker")
@@ -151,29 +151,32 @@ class ExecutorWorker:
     async def _fetch_task(self) -> Optional[Dict]:
         """Fetch a pending task from API with authentication.
         
-        Uses the authenticated endpoint that verifies executor signature.
+        Uses weighted random selection via TaskPoolManager.
         
         Returns:
             Task dictionary or None if no task available
         """
         try:
-            url = f"{self.api_base_url}/api/v1/tasks/fetch-authenticated"
+            url = f"{self.api_base_url}/api/v1/tasks/fetch"
             params = {"env": self.env}
             
             # Get authentication headers
             headers = self._get_auth_headers()
             
-            response = await self.http_client.post(url, params=params, headers=headers)
-            
-            if response and "tasks" in response and len(response["tasks"]) > 0:
-                task = response["tasks"][0]
-                logger.info(
-                    f"[Worker-{self.worker_id}] Fetched task: "
-                    f"uuid={task.get('task_uuid', 'N/A')[:8]}... "
-                    f"task_id={task.get('task_id')} "
-                    f"miner={task.get('miner_hotkey', '')[:12]}..."
-                )
-                return task
+            session = await self._get_session()
+            async with session.post(url, params=params, headers=headers) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
+                    
+                    if response and "task" in response and response["task"] is not None:
+                        task = response["task"]
+                        logger.info(
+                            f"[Worker-{self.worker_id}] Fetched task: "
+                            f"uuid={task.get('task_uuid', 'N/A')[:8]}... "
+                            f"task_id={task.get('task_id')} "
+                            f"miner={task.get('miner_hotkey', '')[:12]}..."
+                        )
+                        return task
             
             return None
         
@@ -192,10 +195,12 @@ class ExecutorWorker:
         """
         try:
             url = f"{self.api_base_url}/api/v1/miners/{miner_hotkey}/consecutive-errors"
-            response = await self.http_client.get(url)
+            session = await self._get_session()
             
-            if response:
-                return response.get("consecutive_errors", 0)
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
+                    return response.get("consecutive_errors", 0)
             
             return 0
         
@@ -225,14 +230,14 @@ class ExecutorWorker:
                 "reason": f"Consecutive errors: {consecutive_errors}"
             }
             
-            response = await self.http_client.put(url, json=data)
-            
-            if response:
-                logger.warning(
-                    f"[Worker-{self.worker_id}] Paused miner {miner_hotkey[:8]}... "
-                    f"for {duration}s due to {consecutive_errors} consecutive errors"
-                )
-                return True
+            session = await self._get_session()
+            async with session.put(url, json=data) as resp:
+                if resp.status == 200:
+                    logger.warning(
+                        f"[Worker-{self.worker_id}] Paused miner {miner_hotkey[:8]}... "
+                        f"for {duration}s due to {consecutive_errors} consecutive errors"
+                    )
+                    return True
             
             return False
         
@@ -240,7 +245,7 @@ class ExecutorWorker:
             logger.error(f"[Worker-{self.worker_id}] Error pausing miner: {e}")
             return False
     
-    async def _execute_task(self, task: Dict) -> Result:
+    async def _execute_task(self, task: Dict) -> tuple[SampleSubmission, bool]:
         """Execute a sampling task.
         
         Args:
@@ -253,178 +258,169 @@ class ExecutorWorker:
                 - env: Environment
         
         Returns:
-            Evaluation result
+            Tuple of (SampleSubmission, is_http_error)
+            - SampleSubmission: Signed submission with score, latency, extra
+            - is_http_error: True if error is HTTP-related (report to API), False if executor error (retry)
         """
         start_time = time.time()
         
         try:
-            # Extract task parameters (new schema)
-            miner_hotkey = task["miner_hotkey"]
-            model_revision = task["model_revision"]
+            # Extract task parameters
             model = task["model"]
             task_id = int(task["task_id"])  # Dataset index as integer
             task_uuid = task.get("task_uuid", "")
+            miner_hotkey = task["miner_hotkey"]
             
             logger.info(
                 f"[Worker-{self.worker_id}] Executing task: "
-                f"miner={miner_hotkey[:12]}... model={model} task_id={task_id}"
+                f"uuid={task_uuid[:8]}... miner={miner_hotkey[:12]}... model={model} task_id={task_id}"
             )
             
-            # Create a Miner object for the environment executor
-            # Note: We don't have slug, so we'll pass model/base_url directly
-            from affine.core.models import Miner
-            miner_obj = Miner(
-                uid=-1,  # UID not available in task queue
-                hotkey=miner_hotkey,
-                model=model,
-                revision=model_revision,
-                slug=None,  # No slug available
-            )
-            
-            # Execute sampling using environment executor
-            # Since we don't have slug, pass model and base_url directly in eval_kwargs
-            # The environment executor will use these to override miner defaults
+            # Execute sampling using affine's environment wrapper
+            # env_executor.evaluate() accepts miner=None and dynamic kwargs
             result = await self.env_executor.evaluate(
-                miner=miner_obj,
+                miner=None,
                 model=model,
-                base_url=f"https://llm.chutes.ai/v1",  # Default Chutes API
+                base_url="https://llm.chutes.ai/v1",
                 task_id=task_id,
             )
-            
-            # Sign result
-            if wallet:
-                result.sign(wallet)
             
             execution_time = time.time() - start_time
             self.metrics.total_execution_time += execution_time
             
-            logger.info(
-                f"[Worker-{self.worker_id}] Task completed: "
-                f"miner={miner_hotkey[:12]}... task_id={task_id} "
-                f"success={result.success} time={execution_time:.2f}s"
+            # Build SampleSubmission (only contains task_uuid, score, latency, extra)
+            submission = SampleSubmission(
+                task_uuid=task_uuid,
+                score=float(result.score),
+                latency_ms=int(result.latency_seconds * 1000),
+                extra=result.extra or {},
+                signature="",  # Will be signed below
             )
             
-            return result
+            # Sign submission using wallet
+            if wallet:
+                sign_data = submission.get_sign_data()
+                signature_bytes = wallet.hotkey.sign(sign_data.encode())
+                submission.signature = signature_bytes.hex()
+            
+            logger.info(
+                f"[Worker-{self.worker_id}] Task completed: "
+                f"uuid={task_uuid[:8]}... score={submission.score:.4f} "
+                f"latency={submission.latency_ms}ms time={execution_time:.2f}s"
+            )
+            
+            return submission, False  # Success, not HTTP error
         
         except Exception as e:
             execution_time = time.time() - start_time
             self.metrics.total_execution_time += execution_time
             
-            logger.error(f"[Worker-{self.worker_id}] Task execution failed: {e}")
+            error_str = str(e)
+            logger.error(f"[Worker-{self.worker_id}] Task execution failed: {error_str}")
             traceback.print_exc()
             
-            # Return failed result
-            from affine.core.models import Miner
-            return Result(
-                miner=Miner(
-                    uid=-1,  # UID not available in new schema
-                    hotkey=task.get("miner_hotkey", ""),
-                    revision=task.get("model_revision", ""),
-                    model=task.get("model", ""),
-                ),
-                env=self.env,
-                score=0.0,
-                latency_seconds=0.0,
-                success=False,
-                error=str(e),
-                task_id=int(task.get("task_id", 0)),
-            )
+            # Classify error type
+            is_http_error = self._is_http_error(error_str)
+            
+            if is_http_error:
+                # HTTP error: report to API with zero score
+                submission = SampleSubmission(
+                    task_uuid=task.get("task_uuid", ""),
+                    score=0.0,
+                    latency_ms=int(execution_time * 1000),
+                    extra={"error": error_str, "error_type": self._classify_error(error_str)},
+                    signature="",
+                )
+                
+                # Sign the failed submission
+                if wallet:
+                    sign_data = submission.get_sign_data()
+                    signature_bytes = wallet.hotkey.sign(sign_data.encode())
+                    submission.signature = signature_bytes.hex()
+                
+                return submission, True  # HTTP error, report to API
+            else:
+                # Executor error: don't report, let task retry
+                logger.warning(f"[Worker-{self.worker_id}] Executor error (will retry): {error_str}")
+                raise  # Re-raise to trigger retry in execution loop
     
-    async def _submit_result(self, task: Dict, result: Result) -> bool:
+    async def _submit_result(self, task: Dict, submission: SampleSubmission) -> bool:
         """Submit task result to API with authentication.
         
         Args:
-            task: Original task from API (includes task_uuid and task_id)
-            result: Evaluation result
+            task: Original task from API (includes miner metadata)
+            submission: Signed sample submission (only contains task_uuid, score, latency, extra, signature)
         
         Returns:
             True if successful
         """
         try:
-            # Get task identifiers (new schema)
-            task_uuid = task.get("task_uuid", "")
-            task_id = int(task.get("task_id", 0))  # Dataset index
-            miner_hotkey = task.get("miner_hotkey", "")
-            
             # Get authentication headers
             headers = self._get_auth_headers()
             
-            if result.success:
-                # First submit sample result
-                url = f"{self.api_base_url}/api/v1/samples"
-                sample_data = result.dict()
-                
-                response = await self.http_client.post(url, json=sample_data, headers=headers)
-                
-                if response:
-                    sample_id = response.get("sample_id", "")
-                    
-                    # Mark task completed using authenticated endpoint
-                    complete_url = f"{self.api_base_url}/api/v1/tasks/complete-authenticated"
-                    complete_params = {
-                        "task_uuid": task_uuid,
-                        "dataset_task_id": task_id,
-                        "success": True,
-                    }
-                    
-                    await self.http_client.post(
-                        complete_url,
-                        params=complete_params,
-                        headers=headers
-                    )
-                    
+            session = await self._get_session()
+            
+            # Submit to new /api/v1/samples/submit endpoint
+            # API will merge miner metadata from task queue
+            url = f"{self.api_base_url}/api/v1/samples/submit"
+            submit_data = {
+                "task_uuid": submission.task_uuid,
+                "score": submission.score,
+                "latency_ms": submission.latency_ms,
+                "extra": submission.extra,
+                "signature": submission.signature,
+            }
+            
+            async with session.post(url, json=submit_data, headers=headers) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
                     logger.info(
                         f"[Worker-{self.worker_id}] Submitted result: "
-                        f"sample_id={sample_id} task_uuid={task_uuid[:8]}..."
+                        f"task_uuid={submission.task_uuid[:8]}... "
+                        f"score={submission.score:.4f}"
                     )
                     
                     self.metrics.tasks_completed += 1
                     return True
-                else:
-                    logger.warning(f"[Worker-{self.worker_id}] Failed to submit sample")
+                elif resp.status == 400:
+                    # Bad request (e.g., invalid signature, task not found)
+                    error_detail = await resp.text()
+                    logger.error(
+                        f"[Worker-{self.worker_id}] Failed to submit (400): {error_detail}"
+                    )
                     self.metrics.tasks_failed += 1
                     return False
-            
-            else:
-                # Task failed - report error
-                error_type = self._classify_error(result.error or "Unknown error")
-                error_message = result.error or "Unknown error"
-                
-                # Mark task failed using authenticated endpoint
-                complete_url = f"{self.api_base_url}/api/v1/tasks/complete-authenticated"
-                complete_params = {
-                    "task_uuid": task_uuid,
-                    "dataset_task_id": task_id,
-                    "success": False,
-                    "error_message": f"{error_type}: {error_message}",
-                }
-                
-                await self.http_client.post(
-                    complete_url,
-                    params=complete_params,
-                    headers=headers
-                )
-                
-                logger.warning(
-                    f"[Worker-{self.worker_id}] Task failed: "
-                    f"task_uuid={task_uuid[:8]}... error={error_type}"
-                )
-                
-                # Check if we need to pause miner due to consecutive errors
-                consecutive_errors = await self._check_consecutive_errors(miner_hotkey)
-                
-                # Default threshold is 3 (will be configurable via API)
-                error_threshold = 3
-                if consecutive_errors >= error_threshold:
-                    await self._pause_miner(miner_hotkey, consecutive_errors)
-                
-                self.metrics.tasks_failed += 1
-                return True
+                else:
+                    logger.warning(
+                        f"[Worker-{self.worker_id}] Failed to submit (status={resp.status})"
+                    )
+                    self.metrics.tasks_failed += 1
+                    return False
         
         except Exception as e:
             logger.error(f"[Worker-{self.worker_id}] Error submitting result: {e}")
             self.metrics.tasks_failed += 1
             return False
+    
+    def _is_http_error(self, error_message: str) -> bool:
+        """Check if error is HTTP-related (should be reported to API).
+        
+        Args:
+            error_message: Error message
+        
+        Returns:
+            True if HTTP error, False if executor error (should retry)
+        """
+        error_lower = error_message.lower()
+        
+        # HTTP errors that should be reported to API
+        http_keywords = [
+            "chute", "cold", "timeout", "connect", "network",
+            "hash", "mismatch", "model", "404", "503", "502",
+            "unavailable", "connection", "refused"
+        ]
+        
+        return any(keyword in error_lower for keyword in http_keywords)
     
     def _classify_error(self, error_message: str) -> str:
         """Classify error type from error message.
@@ -462,14 +458,20 @@ class ExecutorWorker:
                     await asyncio.sleep(self.poll_interval)
                     continue
                 
-                # Task is already assigned when fetched from authenticated endpoint
-                # No need to mark started separately
-                
                 # Execute task
-                result = await self._execute_task(task)
-                
-                # Submit result
-                await self._submit_result(task, result)
+                try:
+                    submission, is_http_error = await self._execute_task(task)
+                    
+                    # Submit result (both success and HTTP errors)
+                    await self._submit_result(task, submission)
+                    
+                except Exception as e:
+                    # Executor error (not HTTP): don't submit, task will be retried
+                    logger.warning(
+                        f"[Worker-{self.worker_id}] Executor error, task will be retried: {e}"
+                    )
+                    # Task lock will timeout and be released automatically
+                    continue
                 
                 # Update metrics
                 self.metrics.last_task_at = time.time()

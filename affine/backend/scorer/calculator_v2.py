@@ -9,15 +9,17 @@ Score Calculator V2 - Weight Calculation with Dynamic Threshold
 
 import logging
 import traceback
+import os
 from typing import Dict, List, Any, Optional
 
+from affine.database.dao.system_config import SystemConfigDAO
 from .api_client import ScorerAPIClient
 from .comparator import MinerComparator
 from .threshold import DynamicThreshold, ThresholdConfig
 from .models import (
-    MinerScore, 
-    MinerInfo, 
-    CalculationReport, 
+    MinerScore,
+    MinerInfo,
+    CalculationReport,
     TaskIdRange
 )
 from .config import ScorerConfig
@@ -38,16 +40,22 @@ class ScoreCalculatorV2:
     6. 分配最终权重
     """
     
-    def __init__(self, config: ScorerConfig):
+    def __init__(
+        self,
+        config: ScorerConfig,
+        system_config_dao: Optional[SystemConfigDAO] = None
+    ):
         """
         初始化计算器
         
         Args:
             config: Scorer 配置
+            system_config_dao: SystemConfig DAO (optional)
         """
         self.config = config
+        self.system_config_dao = system_config_dao or SystemConfigDAO()
         self.api_client = ScorerAPIClient(
-            config.api_base_url, 
+            config.api_base_url,
             config.api_timeout_seconds
         )
         
@@ -58,12 +66,72 @@ class ScoreCalculatorV2:
         )
         self.threshold = DynamicThreshold(threshold_config)
         self.comparator = MinerComparator(self.threshold)
+        
+        # 配置缓存
+        self._config_cache: Optional[Dict[str, Any]] = None
+    
+    async def _load_config_from_db(self):
+        """Load configuration from SystemConfig database."""
+        try:
+            active_envs = await self.system_config_dao.get_active_environments()
+            env_ranges = await self.system_config_dao.get_env_task_ranges()
+            
+            self._config_cache = {
+                'active_envs': active_envs,
+                'env_ranges': env_ranges
+            }
+            
+            logger.info(
+                f"Loaded config from database: {len(active_envs)} active environments, "
+                f"{len(env_ranges)} range configs"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load config from database: {e}, using defaults")
+            self._config_cache = {
+                'active_envs': [],
+                'env_ranges': {}
+            }
+    
+    async def get_active_environments(self) -> List[str]:
+        """
+        Get active environments for score calculation.
+        
+        Priority:
+        1. Environment variable AFFINE_SCORER_ACTIVE_ENVIRONMENTS
+        2. SystemConfig database
+        3. Config default_environments
+        
+        Returns:
+            List of environment names
+        """
+        # Priority 1: Environment variable
+        env_var = os.getenv('AFFINE_SCORER_ACTIVE_ENVIRONMENTS')
+        if env_var:
+            envs = [e.strip() for e in env_var.split(',') if e.strip()]
+            logger.info(f"Using active environments from env var: {envs}")
+            return envs
+        
+        # Priority 2: SystemConfig database
+        if self._config_cache is None:
+            await self._load_config_from_db()
+        
+        active_envs = self._config_cache.get('active_envs', [])
+        if active_envs:
+            logger.info(f"Using active environments from SystemConfig: {active_envs}")
+            return active_envs
+        
+        # Priority 3: Config default
+        logger.info(f"Using default environments from config: {self.config.default_environments}")
+        return self.config.default_environments
     
     async def get_task_id_range_for_env(self, env: str) -> TaskIdRange:
         """
         获取环境的 Task ID 范围
         
-        优先使用配置覆盖，否则从 API 获取
+        优先级:
+        1. Config task_id_ranges_override (环境变量配置)
+        2. SystemConfig database active_range
+        3. API 获取
         
         Args:
             env: 环境名称
@@ -71,11 +139,26 @@ class ScoreCalculatorV2:
         Returns:
             TaskIdRange
         """
-        # 优先使用覆盖配置
+        # Priority 1: Config override (from env vars)
         if self.config.has_task_id_range_override(env):
-            return self.config.get_task_id_range(env)
+            range_obj = self.config.get_task_id_range(env)
+            logger.debug(f"Using task_id range from config override for {env}: {range_obj.to_dict()}")
+            return range_obj
         
-        # 从 API 获取
+        # Priority 2: SystemConfig database
+        if self._config_cache is None:
+            await self._load_config_from_db()
+        
+        env_ranges = self._config_cache.get('env_ranges', {})
+        if env in env_ranges:
+            scoring_range = env_ranges[env].get('scoring_range', [0, 0])
+            if len(scoring_range) == 2:
+                start, end = scoring_range
+                range_obj = TaskIdRange(start=start, end=end)
+                logger.debug(f"Using task_id range from SystemConfig for {env}: {range_obj.to_dict()}")
+                return range_obj
+        
+        # Priority 3: API 获取
         try:
             dataset_info = await self.api_client.get_dataset_info(env)
             return TaskIdRange(
@@ -94,7 +177,7 @@ class ScoreCalculatorV2:
         计算所有 Miner 的权重
         
         Args:
-            environments: 环境列表，None 表示使用配置中的默认值
+            environments: 环境列表,None 表示自动获取 (优先级: 环境变量 > SystemConfig > 默认配置)
         
         Returns:
             {
@@ -103,7 +186,7 @@ class ScoreCalculatorV2:
             }
         """
         if environments is None:
-            environments = self.config.default_environments
+            environments = await self.get_active_environments()
         
         report = CalculationReport()
         

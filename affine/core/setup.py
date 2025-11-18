@@ -78,9 +78,20 @@ def get_env_names() -> Tuple[str, ...]:
     return tuple(env_class._env_name for env_class in get_enabled_envs())
 
 
+for noisy in ["websockets", "bittensor", "bittensor-cli", "btdecode", "asyncio", "aiobotocore.regions", "botocore", "httpx", "httpcore", "docker", "urllib3"]:
+    logging.getLogger(noisy).setLevel(logging.WARNING)
 
+# Configure affinetes logger to prevent duplicate logs
+# affinetes has its own handler, so disable propagation to root logger
+affinetes_logger = logging.getLogger("affinetes")
+affinetes_logger.setLevel(logging.WARNING)
+affinetes_logger.propagate = False
+
+logging.getLogger("uvicorn").setLevel(logging.INFO)
+logging.getLogger("uvicorn.access").setLevel(logging.INFO)
 
 logging.addLevelName(TRACE, "TRACE")
+
 
 def _trace(self, msg, *args, **kwargs):
     if self.isEnabledFor(TRACE):
@@ -103,7 +114,10 @@ def setup_logging(verbosity: int):
     )
 
     # Set affinetes logger to WARNING to reduce noise
-    logging.getLogger("affinetes").setLevel(logging.WARNING)
+    # Disable propagate to prevent duplicate logs (affinetes has its own handler)
+    affinetes_logger = logging.getLogger("affinetes")
+    affinetes_logger.setLevel(logging.WARNING)
+    affinetes_logger.propagate = False
 
     # Set affine logger level
     logging.getLogger("affine").setLevel(level)

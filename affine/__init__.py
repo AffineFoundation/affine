@@ -3,11 +3,6 @@ from __future__ import annotations
 __version__ = "0.0.0"
 
 # --------------------------------------------------------------------------- #
-#                       Constants & global singletons                         #
-# --------------------------------------------------------------------------- #
-from affine.core.config import singleton, get_conf
-
-# --------------------------------------------------------------------------- #
 #                                Logging                                      #
 # --------------------------------------------------------------------------- #
 from affine.core.setup import (
@@ -18,12 +13,8 @@ from affine.core.setup import (
 #                   Data Models (imported from models module)                 #
 # --------------------------------------------------------------------------- #
 from affine.core.models import (
-    Challenge, Response, Miner, Result
+    Miner, Result
 )
-# --------------------------------------------------------------------------- #
-#                   HTTP client (imported from http_client module)            #
-# --------------------------------------------------------------------------- #
-from affine.core.http_client import _get_client
 
 # --------------------------------------------------------------------------- #
 #                   Miners (imported from miners module)                      #

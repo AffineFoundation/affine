@@ -12,6 +12,7 @@ Design:
 
 import time
 import uuid
+import logging
 from typing import Dict, Any, List, Optional, Set
 from affine.database.base_dao import BaseDAO
 from affine.database.schema import get_table_name
@@ -39,18 +40,15 @@ class TaskQueueDAO(BaseDAO):
         """Generate partition key based on environment."""
         return f"ENV#{env}"
     
-    def _make_sk(self, status: str, priority: int, created_at: int, task_uuid: str) -> str:
-        """Generate sort key with status, priority, timestamp, and uuid.
+    def _make_sk(self, status: str, created_at: int, task_uuid: str) -> str:
+        """Generate sort key with status, timestamp, and uuid.
         
         Format allows:
         - Querying by status prefix
-        - Sorting by priority (padded for lexicographic order)
-        - Sorting by creation time within same priority
+        - FIFO ordering by creation time (no priority concept)
         - Unique identification via uuid
         """
-        # Pad priority to 10 digits for proper sorting (higher priority = higher number)
-        priority_padded = str(priority).zfill(10)
-        return f"STATUS#{status}#PRIORITY#{priority_padded}#CREATED#{created_at}#UUID#{task_uuid}"
+        return f"STATUS#{status}#CREATED#{created_at}#UUID#{task_uuid}"
     
     def _make_gsi1_pk(self, miner_hotkey: str, model_revision: str) -> str:
         """Generate GSI1 partition key for miner+revision queries."""
@@ -67,7 +65,6 @@ class TaskQueueDAO(BaseDAO):
         model: str,
         env: str,
         task_id: int,  # Dataset index, NOT uuid
-        priority: int = 1000,
         ttl_days: int = 7
     ) -> Dict[str, Any]:
         """Create a new sampling task.
@@ -78,7 +75,6 @@ class TaskQueueDAO(BaseDAO):
             model: Model repo/name
             env: Environment name (e.g., affine:sat, agentgym:webshop)
             task_id: Dataset index (0 to dataset_length-1)
-            priority: Task priority (higher = more urgent, default 1000)
             ttl_days: Days until task expires
             
         Returns:
@@ -90,7 +86,7 @@ class TaskQueueDAO(BaseDAO):
         
         item = {
             'pk': self._make_pk(env),
-            'sk': self._make_sk(status, priority, created_at, task_uuid),
+            'sk': self._make_sk(status, created_at, task_uuid),
             'task_uuid': task_uuid,
             'task_id': task_id,  # Integer dataset index
             'miner_hotkey': miner_hotkey,
@@ -98,7 +94,6 @@ class TaskQueueDAO(BaseDAO):
             'model': model,
             'env': env,
             'status': status,
-            'priority': priority,
             'created_at': created_at,
             'assigned_to': None,
             'assigned_at': None,
@@ -118,7 +113,6 @@ class TaskQueueDAO(BaseDAO):
     async def batch_create_tasks(
         self,
         tasks: List[Dict[str, Any]],
-        priority: int = 1000,
         ttl_days: int = 7
     ) -> int:
         """Batch create multiple tasks.
@@ -130,7 +124,6 @@ class TaskQueueDAO(BaseDAO):
                 - model
                 - env
                 - task_id (integer)
-            priority: Default priority for all tasks
             ttl_days: Days until tasks expire
             
         Returns:
@@ -144,7 +137,7 @@ class TaskQueueDAO(BaseDAO):
             
             item = {
                 'pk': self._make_pk(task_info['env']),
-                'sk': self._make_sk(status, priority, created_at, task_uuid),
+                'sk': self._make_sk(status, created_at, task_uuid),
                 'task_uuid': task_uuid,
                 'task_id': task_info['task_id'],
                 'miner_hotkey': task_info['miner_hotkey'],
@@ -152,7 +145,6 @@ class TaskQueueDAO(BaseDAO):
                 'model': task_info['model'],
                 'env': task_info['env'],
                 'status': status,
-                'priority': priority,
                 'created_at': created_at,
                 'assigned_to': None,
                 'assigned_at': None,
@@ -217,12 +209,12 @@ class TaskQueueDAO(BaseDAO):
         pk = self._make_pk(env)
         
         # Query tasks with pending status prefix
-        # SK format: STATUS#pending#PRIORITY#...
+        # SK format: STATUS#pending#CREATED#...
         tasks = await self.query(
             pk=pk,
             sk_prefix='STATUS#pending',
             limit=limit,
-            reverse=True  # Higher priority first (lexicographic descending)
+            reverse=False  # FIFO: oldest tasks first (created_at ascending)
         )
         
         return tasks
@@ -268,7 +260,6 @@ class TaskQueueDAO(BaseDAO):
         
         new_sk = self._make_sk(
             new_status,
-            task['priority'],
             task['created_at'],
             task['task_uuid']
         )
@@ -301,7 +292,7 @@ class TaskQueueDAO(BaseDAO):
         """Record task failure and handle retry logic.
         
         If retry_count < max_retries, reset status to 'pending'.
-        Otherwise, mark as 'failed' permanently.
+        Otherwise, mark as 'failed' permanently and create a zero-score sample result.
         
         Args:
             task: Task dict
@@ -319,12 +310,14 @@ class TaskQueueDAO(BaseDAO):
         
         if retry_count >= max_retries:
             new_status = 'failed'
+            
+            # Create zero-score sample result when task permanently fails
+            await self._create_zero_score_sample(task, error_message, error_code)
         else:
             new_status = 'pending'  # Back to pending for retry
         
         new_sk = self._make_sk(
             new_status,
-            task['priority'],
             task['created_at'],
             task['task_uuid']
         )
@@ -340,6 +333,61 @@ class TaskQueueDAO(BaseDAO):
         
         await self.put(task)
         return task
+    
+    async def _create_zero_score_sample(
+        self,
+        task: Dict[str, Any],
+        error_message: str,
+        error_code: str
+    ):
+        """Create a zero-score sample result for permanently failed task.
+        
+        Args:
+            task: Failed task dict
+            error_message: Error description
+            error_code: Error classification code
+        """
+        from affine.database.dao.sample_results import SampleResultsDAO
+        
+        try:
+            sample_dao = SampleResultsDAO()
+            
+            # Create extra field with error information
+            extra = {
+                "error": error_message,
+                "error_code": error_code,
+                "retry_count": task.get('retry_count', 0),
+                "task_uuid": task.get('task_uuid'),
+                "failed_at": int(time.time()),
+                "reason": "Task permanently failed after maximum retries"
+            }
+            
+            # Save zero-score sample
+            await sample_dao.save_sample(
+                miner_hotkey=task['miner_hotkey'],
+                model_revision=task['model_revision'],
+                model=task['model'],
+                env=task['env'],
+                task_id=str(task['task_id']),
+                score=0.0,
+                latency_ms=0,
+                extra=extra,
+                validator_hotkey="system",  # System-generated result
+                block_number=0,
+                signature="",  # No signature for system-generated results
+                timestamp=int(time.time() * 1000)
+            )
+            
+            logger = logging.getLogger(__name__)
+            logger.info(
+                f"Created zero-score sample for permanently failed task: "
+                f"miner={task['miner_hotkey'][:12]}... env={task['env']} "
+                f"task_id={task['task_id']}"
+            )
+            
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to create zero-score sample: {e}", exc_info=True)
     
     async def get_tasks_by_miner(
         self,
