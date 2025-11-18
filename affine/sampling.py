@@ -688,56 +688,51 @@ class SamplingOrchestrator:
     ) -> Dict[str, Dict[str, List[Tuple[float, int]]]]:
         """
         Deduplicate samples by task_id for each (hotkey, env) combination.
-        
-        For each unique task_id, keeps a limited number of samples:
+
+        For each unique task_id, keeps 1 sample per task_id for all datasets:
         - Large datasets (>= SMALL_DATASET_THRESHOLD): 1 sample per task_id
-        - Small datasets (< SMALL_DATASET_THRESHOLD): 2 samples per task_id
-        
+        - Small datasets (< SMALL_DATASET_THRESHOLD): 1 sample per task_id, then duplicate each result (x2)
+
         This ensures consistent evaluation across all miners by preventing
         multiple evaluations of the same task_id from skewing results.
-        
+
         Args:
             raw_samples: {hotkey: {env: [(score, block_num, task_id), ...]}}
             envs: Tuple of environment names
             env_dataset_sizes: {env_name: dataset_size}
-        
+
         Returns:
             {hotkey: {env: [(score, block_num), ...]}} - deduplicated samples
         """
-        # Determine max samples per task_id for each environment
-        max_per_task_id = {}
-        for e in envs:
-            dataset_size = env_dataset_sizes.get(e, 0)
-            max_per_task_id[e] = 2 if dataset_size < SamplingConfig.SMALL_DATASET_THRESHOLD else 1
-        
         deduplicated = {}
-        
+
         for hk, env_samples in raw_samples.items():
             deduplicated[hk] = {}
-            
+
             for env in envs:
-                # Group samples by task_id
-                task_id_groups: Dict[Any, List[Tuple[float, int]]] = defaultdict(list)
-                
+                # Group samples by task_id (keep only 1 per task_id)
+                task_id_groups: Dict[Any, Tuple[float, int]] = {}
+
                 for score, block_num, task_id in env_samples.get(env, []):
-                    samples_for_task = task_id_groups[task_id]
-                    
-                    if len(samples_for_task) < max_per_task_id.get(env, 1):
-                        # Still room for more samples
-                        samples_for_task.append((score, block_num))
+                    if task_id not in task_id_groups:
+                        # First sample for this task_id
+                        task_id_groups[task_id] = (score, block_num)
                     else:
-                        # Replace oldest sample if this one is newer
-                        oldest_idx = min(range(len(samples_for_task)), key=lambda i: samples_for_task[i][1])
-                        if block_num > samples_for_task[oldest_idx][1]:
-                            samples_for_task[oldest_idx] = (score, block_num)
-                
+                        # Replace with newer sample
+                        _, existing_block = task_id_groups[task_id]
+                        if block_num > existing_block:
+                            task_id_groups[task_id] = (score, block_num)
+
                 # Flatten all task_id groups into a single list
-                all_samples = []
-                for task_samples in task_id_groups.values():
-                    all_samples.extend(task_samples)
-                
+                all_samples = list(task_id_groups.values())
+
+                # For small datasets, duplicate each result (x2)
+                dataset_size = env_dataset_sizes.get(env, 0)
+                if dataset_size < SamplingConfig.SMALL_DATASET_THRESHOLD:
+                    all_samples = all_samples * 2
+
                 deduplicated[hk][env] = all_samples
-        
+
         return deduplicated
     
     def process_sample_data(
