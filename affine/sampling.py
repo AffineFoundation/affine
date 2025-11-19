@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple, Optional, Any, Set
 class SamplingConfig:
     """Configuration parameters for sampling."""
     
-    TAIL = 20_000  # Ensure all the dataset evaluation result is included in the window
+    TAIL = 40_000  # Ensure all the dataset evaluation result is included in the window
     SCALE = 1.0  # Scaling factor for layer weights
     
     # Task ID deduplication threshold
