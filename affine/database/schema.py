@@ -55,7 +55,7 @@ SAMPLE_RESULTS_SCHEMA = {
 # Task Queue Table (Task Pool)
 # Schema design:
 # - PK: ENV#{env} - partition by environment
-# - SK: STATUS#{status}#CREATED#{timestamp}#UUID#{uuid} - ordered by creation time
+# - SK: STATUS#{status}#UUID#{uuid} - status and unique identifier only
 # - GSI1: miner-revision-index for querying pending tasks by miner+revision
 # - GSI2: task-uuid-index for reverse lookup by uuid (for task completion/removal)
 #

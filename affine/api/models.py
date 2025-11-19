@@ -88,7 +88,7 @@ class SampleSubmitRequest(BaseModel):
 class SampleSubmitResponse(BaseModel):
     """Response after submitting a sample."""
 
-    sample_id: str
+    task_id: str
     created_at: int
     message: str
 

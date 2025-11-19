@@ -4,6 +4,7 @@ Affine API Server
 FastAPI application entry point.
 """
 
+import os
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
@@ -19,10 +20,24 @@ from affine.api.routers import (
     config_router,
     logs_router,
     admin_router,
-    chain_router,
 )
 from affine.database import init_client, close_client
-from affine.core.setup import logger
+
+# Configure logging using setup_logging
+from affine.core.setup import setup_logging, logger
+
+# Map LOG_LEVEL string to verbosity
+log_level = os.getenv("API_LOG_LEVEL", config.LOG_LEVEL).upper()
+verbosity_map = {
+    "CRITICAL": 0,
+    "ERROR": 0,
+    "WARNING": 0,
+    "INFO": 1,
+    "DEBUG": 2,
+    "TRACE": 3,
+}
+verbosity = verbosity_map.get(log_level, 1)
+setup_logging(verbosity)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -139,7 +154,6 @@ app.include_router(scores_router, prefix="/api/v1")
 app.include_router(config_router, prefix="/api/v1")
 app.include_router(logs_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
-app.include_router(chain_router, prefix="/api/v1")
 
 
 @app.exception_handler(Exception)

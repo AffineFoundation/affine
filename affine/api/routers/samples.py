@@ -28,6 +28,7 @@ from affine.core.models import SampleSubmission
 from affine.api.utils.pagination import get_pagination_params, create_pagination_info
 from affine.database.dao.sample_results import SampleResultsDAO
 from affine.core.miners import miners as get_miners
+from affine.api.utils.bittensor import get_subtensor
 
 router = APIRouter(prefix="/samples", tags=["Samples"])
 
@@ -51,9 +52,9 @@ async def submit_sample_from_executor(
     6. Marks task as completed in queue
     
     Headers (validated by verify_executor_auth dependency):
-    - X-Executor-Hotkey: Executor's SS58 hotkey
-    - X-Executor-Signature: Hex-encoded signature of timestamp
-    - X-Executor-Message: Unix timestamp (must be within 60 seconds)
+    - X-Hotkey: Executor's SS58 hotkey
+    - X-Signature: Hex-encoded signature of timestamp
+    - X-Message: Unix timestamp (must be within 60 seconds)
     
     Request body (SampleSubmission):
     - task_uuid: Task UUID from queue
@@ -107,7 +108,9 @@ async def submit_sample_from_executor(
     # Success = task completed (no error in extra), regardless of score
     # Failure = task failed (error in extra), needs retry
     has_error = "error" in sample_sub.extra
-    
+    subtensor = await get_subtensor()    
+    block_number = await subtensor.get_current_block()
+
     if not has_error:
         # Task succeeded: save sample and complete task (score can be any value)
         try:
@@ -147,7 +150,7 @@ async def submit_sample_from_executor(
         )
     
     # Build response message based on task outcome
-    if is_success:
+    if not has_error:
         message = f"Sample submitted successfully (score={sample_sub.score:.4f})"
     else:  # is_failure
         retry_count = task.get('retry_count') + 1
@@ -158,7 +161,7 @@ async def submit_sample_from_executor(
             message = f"Task failed (retry {retry_count}/{max_retries}), re-queued for retry"
     
     return SampleSubmitResponse(
-        sample_id=task_id,
+        task_id=task_id,
         created_at=int(time.time()),
         message=message
     )
@@ -211,7 +214,7 @@ async def submit_sample(
         )
     
     return SampleSubmitResponse(
-        sample_id=sample.task_id,  # Return task_id as identifier
+        task_id=sample.task_id,  # Return task_id as identifier
         created_at=int(time.time()),
         message="Sample saved successfully"
     )

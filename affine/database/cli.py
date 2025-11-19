@@ -120,7 +120,7 @@ async def cmd_test_basic():
             block_number=1000000,
             signature="sig_123"
         )
-        print(f"  ✓ Saved sample: {sample['sample_id']}")
+        print(f"  ✓ Saved sample: {sample['task_id']}")
         
         # Retrieve samples
         samples = await sample_dao.get_samples_by_miner(

@@ -105,9 +105,9 @@ def get_auth_service() -> AuthService:
 
 
 async def verify_executor_auth(
-    executor_hotkey: str = Header(..., alias="X-Executor-Hotkey"),
-    executor_signature: str = Header(..., alias="X-Executor-Signature"),
-    executor_message: str = Header(..., alias="X-Executor-Message"),
+    executor_hotkey: str = Header(..., alias="X-Hotkey"),
+    executor_signature: str = Header(..., alias="X-Signature"),
+    executor_message: str = Header(..., alias="X-Message"),
     auth_service: AuthService = Depends(get_auth_service),
 ) -> str:
     """

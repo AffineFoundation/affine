@@ -46,9 +46,9 @@ async def fetch_task(
     6. Acquire in-memory lock for selected task
     
     Headers (validated by verify_executor_auth dependency):
-    - X-Executor-Hotkey: Executor's SS58 hotkey
-    - X-Executor-Signature: Hex-encoded signature of timestamp
-    - X-Executor-Message: Unix timestamp (must be within 60 seconds)
+    - X-Hotkey: Executor's SS58 hotkey
+    - X-Signature: Hex-encoded signature of timestamp
+    - X-Message: Unix timestamp (must be within 60 seconds)
     
     Query Parameters:
     - env: Optional environment filter
