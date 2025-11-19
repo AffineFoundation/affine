@@ -33,6 +33,7 @@ services:
       - ~/.bittensor/wallets:/root/.bittensor/wallets:ro
       - ~/.ssh:/root/.ssh
       - /var/run/docker.sock:/var/run/docker.sock
+      - runner-cache:/root/.cache/affine
       # runner doesn’t need the cache—omit or give its own if desired
     environment:
       - SIGNER_URL=http://signer:8080
@@ -72,3 +73,5 @@ volumes:
   grafana-storage:
   validator-cache:
     name: affine-validator-cache
+  runner-cache:
+    name: affine-runner-cache
