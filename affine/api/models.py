@@ -487,11 +487,12 @@ class TaskGenerationRequest(BaseModel):
 
 class MinerInfo(BaseModel):
     """Miner information for task generation."""
-
+    
     hotkey: str
     model_revision: str
     model: str
     uid: int = -1
+    chute_id: str
 
 
 class TaskGenerationResponse(BaseModel):

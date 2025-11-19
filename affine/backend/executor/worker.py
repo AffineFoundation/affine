@@ -91,21 +91,25 @@ class ExecutorWorker:
             logger.error(f"[Worker-{self.worker_id}] Failed to initialize executor: {e}")
             raise
     
-    async def start(self):
-        """Start the worker."""
-        logger.info(f"[Worker-{self.worker_id}] Starting worker for {self.env}...")
+    async def initialize(self):
+        """Initialize the worker (must be called serially)."""
+        logger.info(f"[Worker-{self.worker_id}] Initializing worker for {self.env}...")
 
         # Validate wallet
         if not wallet or not self.hotkey:
             raise RuntimeError("Wallet not configured for worker")
         
-        self.running = True
-        
         # Initialize environment executor
         await self._init_env_executor()
         
-        # Start execution loop
-        await self._execution_loop()
+        logger.info(f"[Worker-{self.worker_id}] Worker initialized for {self.env}")
+    
+    def start(self):
+        """Start the worker execution loop (returns immediately, loop runs in background)."""
+        logger.info(f"[Worker-{self.worker_id}] Starting execution loop for {self.env}...")
+        self.running = True
+        # Create background task for execution loop
+        asyncio.create_task(self._execution_loop())
     
     async def stop(self):
         """Stop the worker."""
@@ -132,13 +136,13 @@ class ExecutorWorker:
         """Get authentication headers for API requests.
         
         Args:
-            message: Message to sign (defaults to timestamp-based message)
+            message: Message to sign (defaults to current timestamp)
             
         Returns:
             Headers dict with hotkey, signature, and message
         """
         if message is None:
-            message = f"executor:{self.hotkey}:{int(time.time())}"
+            message = str(int(time.time()))
         
         signature = self._sign_message(message)
         
@@ -245,6 +249,60 @@ class ExecutorWorker:
             logger.error(f"[Worker-{self.worker_id}] Error pausing miner: {e}")
             return False
     
+    async def _get_chute_slug(self, chute_id: str) -> Optional[str]:
+        """Get chute slug from chute ID.
+        
+        Args:
+            chute_id: Chute deployment ID (required)
+        
+        Returns:
+            Chute slug or None if not found
+        
+        Raises:
+            ValueError: If chute_id is empty or invalid
+        """
+        if not chute_id or not chute_id.strip():
+            raise ValueError("chute_id cannot be empty")
+        
+        try:
+            import os
+            url = f"https://api.chutes.ai/chutes/{chute_id}"
+            token = os.getenv("CHUTES_API_KEY", "")
+            
+            if not token:
+                raise ValueError("CHUTES_API_KEY not configured")
+            
+            headers = {"Authorization": token}
+            
+            session = await self._get_session()
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status != 200:
+                    logger.error(
+                        f"[Worker-{self.worker_id}] Failed to get chute info for {chute_id}: "
+                        f"status={resp.status}"
+                    )
+                    return None
+                
+                chute_info = await resp.json()
+                slug = chute_info.get("slug")
+                
+                if not slug:
+                    logger.error(
+                        f"[Worker-{self.worker_id}] No slug found in chute info for {chute_id}"
+                    )
+                    return None
+                
+                logger.debug(
+                    f"[Worker-{self.worker_id}] Resolved chute_id={chute_id} to slug={slug}"
+                )
+                return slug
+        
+        except Exception as e:
+            logger.error(
+                f"[Worker-{self.worker_id}] Error fetching chute slug for {chute_id}: {e}"
+            )
+            return None
+    
     async def _execute_task(self, task: Dict) -> tuple[SampleSubmission, bool]:
         """Execute a sampling task.
         
@@ -256,6 +314,7 @@ class ExecutorWorker:
                 - model_revision: Model revision
                 - model: Model repo/name
                 - env: Environment
+                - chute_id: Chute deployment ID
         
         Returns:
             Tuple of (SampleSubmission, is_http_error)
@@ -270,18 +329,39 @@ class ExecutorWorker:
             task_id = int(task["task_id"])  # Dataset index as integer
             task_uuid = task.get("task_uuid", "")
             miner_hotkey = task["miner_hotkey"]
+            chute_id = task["chute_id"]
             
             logger.info(
                 f"[Worker-{self.worker_id}] Executing task: "
                 f"uuid={task_uuid[:8]}... miner={miner_hotkey[:12]}... model={model} task_id={task_id}"
             )
             
+            # Validate chute_id (required)
+            if not chute_id:
+                raise ValueError(
+                    f"chute_id is required but missing for task {task_uuid[:8]}... "
+                    f"miner={miner_hotkey[:12]}..."
+                )
+            
+            # Resolve slug from chute_id
+            slug = await self._get_chute_slug(chute_id)
+            if not slug:
+                raise ValueError(
+                    f"Failed to resolve slug for chute_id={chute_id} "
+                    f"(task_uuid={task_uuid[:8]}..., miner={miner_hotkey[:12]}...)"
+                )
+            
+            # Build dynamic URL
+            base_url = f"https://{slug}.chutes.ai/v1"
+            logger.info(
+                f"[Worker-{self.worker_id}] Using dynamic URL: {base_url} "
+                f"(chute_id={chute_id}, slug={slug})"
+            )
+            
             # Execute sampling using affine's environment wrapper
-            # env_executor.evaluate() accepts miner=None and dynamic kwargs
             result = await self.env_executor.evaluate(
-                miner=None,
                 model=model,
-                base_url="https://llm.chutes.ai/v1",
+                base_url=base_url,
                 task_id=task_id,
             )
             

@@ -65,6 +65,7 @@ class TaskQueueDAO(BaseDAO):
         model: str,
         env: str,
         task_id: int,  # Dataset index, NOT uuid
+        chute_id: str,
         ttl_days: int = 7
     ) -> Dict[str, Any]:
         """Create a new sampling task.
@@ -75,6 +76,7 @@ class TaskQueueDAO(BaseDAO):
             model: Model repo/name
             env: Environment name (e.g., affine:sat, agentgym:webshop)
             task_id: Dataset index (0 to dataset_length-1)
+            chute_id: Chute deployment ID for model URL construction
             ttl_days: Days until task expires
             
         Returns:
@@ -93,6 +95,7 @@ class TaskQueueDAO(BaseDAO):
             'model_revision': model_revision,
             'model': model,
             'env': env,
+            'chute_id': chute_id,
             'status': status,
             'created_at': created_at,
             'assigned_to': None,
@@ -124,6 +127,7 @@ class TaskQueueDAO(BaseDAO):
                 - model
                 - env
                 - task_id (integer)
+                - chute_id
             ttl_days: Days until tasks expire
             
         Returns:
@@ -144,6 +148,7 @@ class TaskQueueDAO(BaseDAO):
                 'model_revision': task_info['model_revision'],
                 'model': task_info['model'],
                 'env': task_info['env'],
+                'chute_id': task_info['chute_id'],
                 'status': status,
                 'created_at': created_at,
                 'assigned_to': None,

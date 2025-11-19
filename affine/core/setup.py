@@ -113,10 +113,12 @@ def setup_logging(verbosity: int):
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # Set affinetes logger to WARNING to reduce noise
+    # Set affinetes logger level based on verbosity
     # Disable propagate to prevent duplicate logs (affinetes has its own handler)
     affinetes_logger = logging.getLogger("affinetes")
-    affinetes_logger.setLevel(logging.WARNING)
+    # affinetes uses same level as affine logger, but minimum WARNING
+    affinetes_level = max(level, logging.WARNING)
+    affinetes_logger.setLevel(affinetes_level)
     affinetes_logger.propagate = False
 
     # Set affine logger level
