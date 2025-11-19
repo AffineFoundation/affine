@@ -98,15 +98,28 @@ class SchedulerService:
         
         miner_dict = await fetch_miners()
         
-        return [
-            MinerInfo(
+        result = []
+        for m in miner_dict.values():
+            chute_data = m.chute or {}
+            chute_id = chute_data.get("id") or chute_data.get("chute_id")
+            
+            # Skip miners without valid chute_id
+            if not chute_id:
+                logger.warning(
+                    f"Skipping miner {m.hotkey[:12]}... (uid={m.uid}): "
+                    f"no chute_id found in chute data"
+                )
+                continue
+            
+            result.append(MinerInfo(
                 hotkey=m.hotkey,
                 model_revision=m.revision,
                 model=m.model,
-                uid=m.uid
-            )
-            for m in miner_dict.values()
-        ]
+                uid=m.uid,
+                chute_id=chute_id
+            ))
+        
+        return result
     
     async def _task_generation_loop(self):
         """Background loop for task generation."""

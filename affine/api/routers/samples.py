@@ -20,6 +20,7 @@ from affine.api.dependencies import (
     get_sample_results_dao,
     get_task_queue_dao,
     verify_signature_dependency,
+    verify_executor_auth,
     rate_limit_read,
     rate_limit_write,
 )
@@ -27,27 +28,33 @@ from affine.core.models import SampleSubmission
 from affine.api.utils.pagination import get_pagination_params, create_pagination_info
 from affine.database.dao.sample_results import SampleResultsDAO
 from affine.core.miners import miners as get_miners
+from affine.api.utils.bittensor import get_subtensor
 
 router = APIRouter(prefix="/samples", tags=["Samples"])
 
 
 @router.post("/submit", response_model=SampleSubmitResponse, dependencies=[Depends(rate_limit_write)])
 async def submit_sample_from_executor(
-    request: Request,
     submission: Dict[str, Any],
+    executor_hotkey: str = Depends(verify_executor_auth),
     sample_dao: SampleResultsDAO = Depends(get_sample_results_dao),
     task_dao = Depends(get_task_queue_dao),
 ):
     """
-    Submit a sample result from executor (new signature mechanism).
+    Submit a sample result from executor.
     
     This endpoint:
-    1. Verifies executor authentication (X-Executor-Hotkey header + signature)
+    1. Verifies executor authentication via dependency (timestamp-based)
     2. Validates submission signature against task_uuid data
-    3. Fetches task metadata (hotkey, revision, model, env, task_id) from task queue
-    4. Merges submission with task metadata
+    3. Fetches task metadata from task queue
+    4. Verifies executor matches task assignment
     5. Saves complete sample to database
     6. Marks task as completed in queue
+    
+    Headers (validated by verify_executor_auth dependency):
+    - X-Hotkey: Executor's SS58 hotkey
+    - X-Signature: Hex-encoded signature of timestamp
+    - X-Message: Unix timestamp (must be within 60 seconds)
     
     Request body (SampleSubmission):
     - task_uuid: Task UUID from queue
@@ -56,27 +63,6 @@ async def submit_sample_from_executor(
     - extra: Evaluation details and metadata
     - signature: Executor's signature of the above fields
     """
-    from affine.api.services.auth import get_auth_service
-    from affine.database.dao.task_queue import TaskQueueDAO
-    
-    # Get authentication service
-    auth_service = get_auth_service()
-    
-    # Verify executor authentication from headers
-    executor_hotkey = request.headers.get("X-Executor-Hotkey", "")
-    if not executor_hotkey:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="X-Executor-Hotkey header required"
-        )
-    
-    # Verify executor is authorized (optional in non-strict mode)
-    if not auth_service.is_authorized_validator(executor_hotkey):
-        if auth_service.strict_mode:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Executor not authorized"
-            )
     
     # Parse submission
     try:
@@ -103,6 +89,14 @@ async def submit_sample_from_executor(
             detail=f"Task not found: {sample_sub.task_uuid}"
         )
     
+    # Verify executor matches task assignment
+    assigned_executor = task.get("assigned_to")
+    if assigned_executor and assigned_executor != executor_hotkey:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Task was assigned to different executor: {assigned_executor}"
+        )
+    
     # Extract task metadata
     miner_hotkey = task["miner_hotkey"]
     model_revision = task["model_revision"]
@@ -110,41 +104,66 @@ async def submit_sample_from_executor(
     env = task["env"]
     task_id = str(task["task_id"])
     
-    # Get current block number (for score tracking)
-    try:
-        from affine.core.miners import get_current_block
-        block_number = await get_current_block()
-    except Exception:
-        block_number = 0
-    
-    # Save sample to database (merged data)
-    try:
-        await sample_dao.save_sample(
-            miner_hotkey=miner_hotkey,
-            model_revision=model_revision,
-            model=model,
-            env=env,
-            task_id=task_id,
-            score=sample_sub.score,
-            latency_ms=sample_sub.latency_ms,
-            extra=sample_sub.extra,
-            validator_hotkey=executor_hotkey,
-            block_number=block_number,
-            signature=sample_sub.signature,
+    # Determine if task succeeded or failed based on error presence
+    # Success = task completed (no error in extra), regardless of score
+    # Failure = task failed (error in extra), needs retry
+    has_error = "error" in sample_sub.extra
+    subtensor = await get_subtensor()    
+    block_number = await subtensor.get_current_block()
+
+    if not has_error:
+        # Task succeeded: save sample and complete task (score can be any value)
+        try:
+            await sample_dao.save_sample(
+                miner_hotkey=miner_hotkey,
+                model_revision=model_revision,
+                model=model,
+                env=env,
+                task_id=task_id,
+                score=sample_sub.score,
+                latency_ms=sample_sub.latency_ms,
+                extra=sample_sub.extra,
+                validator_hotkey=executor_hotkey,
+                block_number=block_number,
+                signature=sample_sub.signature,
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to save sample: {str(e)}"
+            )
+        
+        # Mark task as completed
+        await task_dao.complete_task(task)
+    else:
+        # Task failed: handle retry logic
+        error_message = sample_sub.extra.get("error", "Unknown error")
+        
+        # Call fail_task to increment retry_count and handle retry/permanent failure
+        # fail_task will:
+        # - If retry_count < max_retries: reset to pending (no sample saved)
+        # - If retry_count >= max_retries: create zero-score sample and mark as failed
+        await task_dao.fail_task(
+            task=task,
+            error_message=error_message,
+            error_code="EXECUTION_ERROR"
         )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save sample: {str(e)}"
-        )
     
-    # Mark task as completed
-    await task_dao.complete_task(task)
+    # Build response message based on task outcome
+    if not has_error:
+        message = f"Sample submitted successfully (score={sample_sub.score:.4f})"
+    else:  # is_failure
+        retry_count = task.get('retry_count') + 1
+        max_retries = task.get('max_retries')
+        if retry_count >= max_retries:
+            message = f"Task permanently failed after {retry_count} retries, zero-score sample saved"
+        else:
+            message = f"Task failed (retry {retry_count}/{max_retries}), re-queued for retry"
     
     return SampleSubmitResponse(
-        sample_id=task_id,
+        task_id=task_id,
         created_at=int(time.time()),
-        message="Sample submitted successfully"
+        message=message
     )
 
 
@@ -195,7 +214,7 @@ async def submit_sample(
         )
     
     return SampleSubmitResponse(
-        sample_id=sample.task_id,  # Return task_id as identifier
+        task_id=sample.task_id,  # Return task_id as identifier
         created_at=int(time.time()),
         message="Sample saved successfully"
     )

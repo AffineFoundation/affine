@@ -12,7 +12,6 @@ from affine.api.routers.scores import router as scores_router
 from affine.api.routers.config import router as config_router
 from affine.api.routers.logs import router as logs_router
 from affine.api.routers.admin import router as admin_router
-from affine.api.routers.chain import router as chain_router
 
 __all__ = [
     "health_router",

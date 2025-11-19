@@ -54,7 +54,6 @@ class ExecutorManager:
         self.poll_interval = poll_interval
         
         self.workers: List[ExecutorWorker] = []
-        self.worker_tasks: List[asyncio.Task] = []
         self.running = False
         
         logger.info(f"ExecutorManager initialized for {len(envs)} environments")
@@ -88,14 +87,18 @@ class ExecutorManager:
         
         logger.info(f"Using wallet hotkey: {wallet.hotkey.ss58_address[:16]}...")
         
-        self.running = True
+        # Create workers first
         self._create_workers()
         
-        # Start all workers as async tasks
-        self.worker_tasks = []
+        # Initialize all workers serially (initialization must be serial)
         for worker in self.workers:
-            task = asyncio.create_task(worker.start())
-            self.worker_tasks.append(task)
+            await worker.initialize()
+        
+        # Start all workers (start() just kicks off background loops, returns immediately)
+        for worker in self.workers:
+            worker.start()
+
+        self.running = True
         
         logger.info(f"Started {len(self.workers)} workers")
     
@@ -111,23 +114,12 @@ class ExecutorManager:
         for worker in self.workers:
             await worker.stop()
         
-        # Cancel all worker tasks
-        for task in self.worker_tasks:
-            task.cancel()
-        
-        # Wait for tasks to complete
-        if self.worker_tasks:
-            await asyncio.gather(*self.worker_tasks, return_exceptions=True)
-        
         logger.info("ExecutorManager stopped")
     
     async def wait(self):
-        """Wait for all workers to complete."""
-        if self.worker_tasks:
-            try:
-                await asyncio.gather(*self.worker_tasks)
-            except asyncio.CancelledError:
-                pass
+        """Wait for shutdown signal (workers run in their own loops)."""
+        while self.running:
+            await asyncio.sleep(1)
     
     def get_all_metrics(self):
         """Get metrics from all workers."""

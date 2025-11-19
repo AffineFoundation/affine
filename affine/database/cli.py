@@ -63,6 +63,36 @@ async def cmd_reset():
         await close_client()
 
 
+async def cmd_reset_table(table_name: str):
+    """Reset a single table (delete and recreate)."""
+    from affine.database.schema import get_table_name
+    
+    # Get full table name with environment prefix
+    full_table_name = get_table_name(table_name)
+    
+    confirm = input(f"WARNING: This will delete all data in '{full_table_name}'. Type 'yes' to confirm: ")
+    
+    if confirm.lower() != 'yes':
+        print("Aborted")
+        return
+    
+    await init_client()
+    
+    try:
+        print(f"Deleting table '{full_table_name}'...")
+        await delete_table(full_table_name)
+        
+        print(f"Recreating table '{full_table_name}'...")
+        await init_tables()
+        
+        print(f"✓ Table '{full_table_name}' reset successfully")
+    except Exception as e:
+        print(f"✗ Failed to reset table: {e}")
+        sys.exit(1)
+    finally:
+        await close_client()
+
+
 async def cmd_test_basic():
     """Run basic CRUD tests on all DAOs."""
     print("Running basic DAO tests...")
@@ -90,7 +120,7 @@ async def cmd_test_basic():
             block_number=1000000,
             signature="sig_123"
         )
-        print(f"  ✓ Saved sample: {sample['sample_id']}")
+        print(f"  ✓ Saved sample: {sample['task_id']}")
         
         # Retrieve samples
         samples = await sample_dao.get_samples_by_miner(
@@ -288,6 +318,14 @@ def main():
     # Reset command
     subparsers.add_parser("reset", help="Reset all tables (delete and recreate)")
     
+    # Reset-table command
+    reset_table_parser = subparsers.add_parser("reset-table", help="Reset a single table (delete and recreate)")
+    reset_table_parser.add_argument(
+        "--table",
+        required=True,
+        help="Table name to reset (e.g., task_queue, sample_results)"
+    )
+    
     # Test command
     subparsers.add_parser("test", help="Run basic CRUD tests")
     
@@ -327,6 +365,8 @@ def main():
         asyncio.run(cmd_list())
     elif args.command == "reset":
         asyncio.run(cmd_reset())
+    elif args.command == "reset-table":
+        asyncio.run(cmd_reset_table(args.table))
     elif args.command == "test":
         asyncio.run(cmd_test_basic())
     elif args.command == "migrate":

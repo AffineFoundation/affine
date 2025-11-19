@@ -5,7 +5,7 @@ Manages sampling tasks with status tracking and error handling.
 
 Design:
 - PK: ENV#{env} - partition by environment for load distribution
-- SK: STATUS#{status}#PRIORITY#{priority}#CREATED#{timestamp}#UUID#{uuid}
+- SK: STATUS#{status}#UUID#{uuid}
 - task_id is an integer representing the dataset index (0 to dataset_length-1)
 - Uses GSI for querying by miner+revision
 """
@@ -25,7 +25,7 @@ class TaskQueueDAO(BaseDAO):
     
     Schema Design:
     - PK: ENV#{env} - partition by environment
-    - SK: STATUS#{status}#PRIORITY#{priority}#CREATED#{timestamp}#UUID#{uuid}
+    - SK: STATUS#{status}#UUID#{uuid}
     - GSI1: MINER#{hotkey}#REV#{revision} -> ENV#{env}#TASK_ID#{task_id}
     
     task_id is an INTEGER representing the dataset index (0 to dataset_length-1),
@@ -40,15 +40,16 @@ class TaskQueueDAO(BaseDAO):
         """Generate partition key based on environment."""
         return f"ENV#{env}"
     
-    def _make_sk(self, status: str, created_at: int, task_uuid: str) -> str:
-        """Generate sort key with status, timestamp, and uuid.
+    def _make_sk(self, status: str, task_uuid: str) -> str:
+        """Generate sort key with status and uuid.
         
         Format allows:
         - Querying by status prefix
-        - FIFO ordering by creation time (no priority concept)
         - Unique identification via uuid
+        
+        Note: created_at is stored as a separate field for filtering/sorting
         """
-        return f"STATUS#{status}#CREATED#{created_at}#UUID#{task_uuid}"
+        return f"STATUS#{status}#UUID#{task_uuid}"
     
     def _make_gsi1_pk(self, miner_hotkey: str, model_revision: str) -> str:
         """Generate GSI1 partition key for miner+revision queries."""
@@ -65,6 +66,8 @@ class TaskQueueDAO(BaseDAO):
         model: str,
         env: str,
         task_id: int,  # Dataset index, NOT uuid
+        chute_id: str,
+        max_retries: int = 5,
         ttl_days: int = 7
     ) -> Dict[str, Any]:
         """Create a new sampling task.
@@ -75,6 +78,7 @@ class TaskQueueDAO(BaseDAO):
             model: Model repo/name
             env: Environment name (e.g., affine:sat, agentgym:webshop)
             task_id: Dataset index (0 to dataset_length-1)
+            chute_id: Chute deployment ID for model URL construction
             ttl_days: Days until task expires
             
         Returns:
@@ -86,19 +90,20 @@ class TaskQueueDAO(BaseDAO):
         
         item = {
             'pk': self._make_pk(env),
-            'sk': self._make_sk(status, created_at, task_uuid),
+            'sk': self._make_sk(status, task_uuid),
             'task_uuid': task_uuid,
             'task_id': task_id,  # Integer dataset index
             'miner_hotkey': miner_hotkey,
             'model_revision': model_revision,
             'model': model,
             'env': env,
+            'chute_id': chute_id,
             'status': status,
             'created_at': created_at,
             'assigned_to': None,
             'assigned_at': None,
             'retry_count': 0,
-            'max_retries': 3,
+            'max_retries': max_retries,
             'last_error': None,
             'last_error_code': None,
             'last_failed_at': None,
@@ -124,6 +129,7 @@ class TaskQueueDAO(BaseDAO):
                 - model
                 - env
                 - task_id (integer)
+                - chute_id
             ttl_days: Days until tasks expire
             
         Returns:
@@ -137,13 +143,14 @@ class TaskQueueDAO(BaseDAO):
             
             item = {
                 'pk': self._make_pk(task_info['env']),
-                'sk': self._make_sk(status, created_at, task_uuid),
+                'sk': self._make_sk(status, task_uuid),
                 'task_uuid': task_uuid,
                 'task_id': task_info['task_id'],
                 'miner_hotkey': task_info['miner_hotkey'],
                 'model_revision': task_info['model_revision'],
                 'model': task_info['model'],
                 'env': task_info['env'],
+                'chute_id': task_info['chute_id'],
                 'status': status,
                 'created_at': created_at,
                 'assigned_to': None,
@@ -197,7 +204,8 @@ class TaskQueueDAO(BaseDAO):
     ) -> List[Dict[str, Any]]:
         """Get pending tasks for a specific environment.
         
-        Tasks are sorted by priority (descending) then by creation time (ascending).
+        Tasks are returned in natural order (by SK).
+        For FIFO ordering, sort by created_at field after retrieval.
         
         Args:
             env: Environment name
@@ -209,13 +217,16 @@ class TaskQueueDAO(BaseDAO):
         pk = self._make_pk(env)
         
         # Query tasks with pending status prefix
-        # SK format: STATUS#pending#CREATED#...
+        # SK format: STATUS#pending#UUID#...
         tasks = await self.query(
             pk=pk,
             sk_prefix='STATUS#pending',
             limit=limit,
-            reverse=False  # FIFO: oldest tasks first (created_at ascending)
+            reverse=False
         )
+        
+        # Sort by created_at for FIFO ordering
+        tasks.sort(key=lambda t: t.get('created_at', 0))
         
         return tasks
     
@@ -260,7 +271,6 @@ class TaskQueueDAO(BaseDAO):
         
         new_sk = self._make_sk(
             new_status,
-            task['created_at'],
             task['task_uuid']
         )
         
@@ -318,7 +328,6 @@ class TaskQueueDAO(BaseDAO):
         
         new_sk = self._make_sk(
             new_status,
-            task['created_at'],
             task['task_uuid']
         )
         

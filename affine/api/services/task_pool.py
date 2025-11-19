@@ -330,12 +330,15 @@ class TaskPoolManager:
                 )
                 self.locks[selected_task['task_uuid']] = lock
             
+            # Persist assignment to database
+            assigned_task = await self.dao.assign_task(selected_task, executor_hotkey)
+            
             logger.info(
-                f"Task {selected_task['task_uuid']} assigned to {executor_hotkey} "
-                f"(miner={hotkey}, env={selected_task['env']}, task_id={selected_task['task_id']})"
+                f"Task {assigned_task['task_uuid']} assigned to {executor_hotkey} "
+                f"(miner={hotkey}, env={assigned_task['env']}, task_id={assigned_task['task_id']})"
             )
             
-            return selected_task
+            return assigned_task
             
         except Exception as e:
             logger.error(f"Error fetching task: {e}", exc_info=True)

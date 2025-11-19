@@ -158,7 +158,7 @@ class BaseSDKEnv(ABC):
                     hosts = parsed_hosts
                     # When using remote hosts, total replicas = DEFAULT_REPLICAS * number of hosts
                     replicas = self.DEFAULT_REPLICAS * len(hosts)
-                    logger.info(f"Using remote hosts for deployment: {hosts} (total replicas: {replicas})")
+                    logger.debug(f"Using remote hosts for deployment: {hosts} (total replicas: {replicas})")
 
             # Generate container name based on environment name
             container_name = template.replace(":", "-")

@@ -23,6 +23,7 @@ class MinerInfo:
     hotkey: str
     model_revision: str
     model: str
+    chute_id: str
     uid: int = -1
 
 
@@ -181,6 +182,7 @@ class TaskGeneratorService:
                 'model': miner.model,
                 'env': env,
                 'task_id': task_id,
+                'chute_id': miner.chute_id,
             }
             for task_id in tasks_to_create
         ]
@@ -332,8 +334,8 @@ class TaskGeneratorService:
             return False
         
         # Check retry count
-        retry_count = task.get('retry_count', 0)
-        max_retries = task.get('max_retries', 5)
+        retry_count = task.get('retry_count')
+        max_retries = task.get('max_retries')
         
         if retry_count >= max_retries:
             logger.warning(
