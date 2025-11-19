@@ -72,14 +72,13 @@ async def _update_index(k: str) -> None:
                                Body=orjson.dumps(sorted(idx)),
                                ContentType="application/json")
 
-async def _cache_shard(key: str, sem: asyncio.Semaphore, use_public: bool = None, force_refresh: bool = False) -> Path:
+async def _cache_shard(key: str, sem: asyncio.Semaphore, use_public: bool = None) -> Path:
     """Cache a shard from R2 storage.
     
     Args:
         key: S3 key to fetch
         sem: Semaphore for concurrency control
         use_public: If True, force public read. If False, force private read. If None, use PUBLIC_READ global.
-        force_refresh: If True, always download fresh copy. If False, use cached version if available.
     """
     name, out = Path(key).name, None
     out = CACHE_DIR / f"{name}.jsonl"; mod = out.with_suffix(".modified")
@@ -88,15 +87,6 @@ async def _cache_shard(key: str, sem: asyncio.Semaphore, use_public: bool = None
     
     # Determine which read mode to use
     read_public = PUBLIC_READ if use_public is None else use_public
-    
-    # Check if we can use cached version (skip download if cache exists and not forcing refresh)
-    if not force_refresh and out.exists() and mod.exists():
-        # Verify cache file is not empty before trusting it
-        if out.stat().st_size > 0:
-            logger.trace(f"Using cached shard: {name}")
-            return out
-        else:
-            logger.warning(f"Cached shard {name} is empty, will re-download")
     
     for attempt in range(max_retries):
         try:
@@ -177,18 +167,16 @@ async def dataset(
     *,
     max_concurrency: int = 5,
     compact: bool = True,
-    refresh_window: int = 5000,
 ) -> AsyncIterator["Result | CompactResult"]:
     """Load dataset from R2 storage.
     
     Automatically falls back to public repository if own repository has insufficient samples.
-    Uses intelligent caching: only refreshes recent blocks (within refresh_window), reuses older cached data.
+    Always downloads fresh data without using cache.
     
     Args:
         tail: Number of blocks to look back
         max_concurrency: Maximum concurrent downloads
         compact: If True, return CompactResult (memory-efficient). If False, return full Result.
-        refresh_window: Number of recent blocks to force refresh (default 1000). Older blocks use cache.
     
     Yields:
         CompactResult or Result objects depending on compact flag
@@ -196,7 +184,6 @@ async def dataset(
     sub = await get_subtensor()
     cur = await sub.get_current_block()
     need = {w for w in range(_w(cur - tail), _w(cur) + WINDOW, WINDOW)}
-    refresh_threshold = cur - refresh_window
     
     use_public_fallback = False
     keys = []
@@ -259,15 +246,7 @@ async def dataset(
     
     async def _prefetch(key: str, use_public: bool) -> Path | None:
         try:
-            # Determine if this block needs refresh
-            block_num_str = Path(key).name.split("-", 1)[0]
-            if block_num_str.isdigit():
-                block_num = int(block_num_str)
-                force_refresh = block_num >= refresh_threshold
-            else:
-                force_refresh = True  # Unknown block format, refresh to be safe
-            
-            return await _cache_shard(key, sem, use_public=use_public, force_refresh=force_refresh)
+            return await _cache_shard(key, sem, use_public=use_public)
         except Exception:
             import traceback
             traceback.print_exc()
