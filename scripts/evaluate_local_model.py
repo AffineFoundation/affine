@@ -87,36 +87,89 @@ async def evaluate_with_uid(env_instance, uid: int, task_id: Optional[int], samp
     miner = await af.miners(uid)
     if not miner:
         raise ValueError(f"Unable to get miner info for UID {uid}")
-    
-    print(f"Miner found: {miner.get(uid).model}")
-    
-    total_score = 0.0
-    total_time = 0.0
-    results = []
 
-    for i in range(samples):
-        print(f"\rProgress: {i+1}/{samples}", end="", flush=True)
-        
-        eval_kwargs = {'temperature': temperature}
-        if task_id is not None:
-            eval_kwargs['task_id'] = task_id
-        
-        result = await env_instance.evaluate(miner, **eval_kwargs)
-        
-        # Result is a dict with uid as key
-        eval_result = result[uid]
-        total_score += eval_result.score
-        total_time += eval_result.latency_seconds
-        
-        results.append({
-            'index': i,
-            'score': eval_result.score,
-            'success': eval_result.success,
-            'latency': eval_result.latency_seconds,
-            'error': eval_result.error
-        })
-    
-    print()  # New line after progress
+    miner_info = miner.get(uid)
+    print(f"Miner found:")
+    print(f"  UID: {uid}")
+    print(f"  Model: {miner_info.model}")
+    if hasattr(miner_info, 'chute') and miner_info.chute:
+        print(f"  Chute: {miner_info.chute}")
+    if hasattr(miner_info, 'slug') and miner_info.slug:
+        print(f"  Slug: {miner_info.slug}")
+    if hasattr(miner_info, 'hotkey') and miner_info.hotkey:
+        print(f"  Hotkey: {miner_info.hotkey[:16]}...")
+    if hasattr(miner_info, 'revision') and miner_info.revision:
+        print(f"  Revision: {miner_info.revision}")
+    if hasattr(miner_info, 'block') and miner_info.block:
+        print(f"  Block: {miner_info.block}")
+
+    results = []
+    # Use semaphore to limit concurrency to 3
+    semaphore = asyncio.Semaphore(16)
+
+    async def run_single_evaluation(i):
+        """Run a single evaluation with semaphore control"""
+        async with semaphore:
+            print(f"\n[Sample {i+1}/{samples}] Running (UID: {uid})...", flush=True)
+
+            eval_kwargs = {'temperature': temperature}
+            if task_id is not None:
+                eval_kwargs['task_id'] = 29
+
+            try:
+                result = await env_instance.evaluate(miner, **eval_kwargs)
+
+                # Result is a dict with uid as key
+                eval_result = result[uid]
+
+                result_data = {
+                    'index': i,
+                    'uid': uid,
+                    'score': eval_result.score,
+                    'success': eval_result.success,
+                    'latency': eval_result.latency_seconds,
+                    'error': eval_result.error
+                }
+
+                # Stream output for this sample
+                status = "✓" if eval_result.success else "✗"
+                print(f"[{status}] Sample {i+1} (UID: {uid}): score={eval_result.score:.4f}, time={eval_result.latency_seconds:.2f}s", flush=True)
+                if eval_result.error:
+                    print(f"    Error: {eval_result.error}", flush=True)
+                if not eval_result.success:
+                    # Print more detailed error info for failed tests
+                    print(f"    Success: False", flush=True)
+                    if hasattr(eval_result, 'traceback') and eval_result.traceback:
+                        print(f"    Traceback: {eval_result.traceback}", flush=True)
+                    if hasattr(eval_result, 'output') and eval_result.output:
+                        print(f"    Output: {eval_result.output[:200]}...", flush=True)
+
+                return result_data
+            except Exception as e:
+                print(f"[✗] Sample {i+1} (UID: {uid}): FAILED", flush=True)
+                print(f"    Exception: {type(e).__name__}: {str(e)}", flush=True)
+                import traceback
+                print(f"    Traceback:", flush=True)
+                traceback.print_exc()
+
+                result_data = {
+                    'index': i,
+                    'uid': uid,
+                    'score': 0.0,
+                    'success': False,
+                    'latency': 0.0,
+                    'error': f"{type(e).__name__}: {str(e)}"
+                }
+                return result_data
+
+    # Run all evaluations concurrently with max 3 concurrent tasks
+    tasks = [run_single_evaluation(i) for i in range(samples)]
+    results = await asyncio.gather(*tasks)
+
+    # Calculate totals
+    total_score = sum(r['score'] for r in results)
+    total_time = sum(r['latency'] for r in results)
+
     return total_score, total_time, results
 
 
@@ -124,30 +177,68 @@ async def evaluate_with_model(env_instance, model: str, base_url: str, task_id: 
     """Evaluate using direct model endpoint"""
     print(f"\nUsing model: {model}")
     print(f"Service URL: {base_url}")
-    
-    total_score = 0.0
-    total_time = 0.0
-    results = []
 
-    for i in range(samples):
-        print(f"\rProgress: {i+1}/{samples}", end="", flush=True)
-        
-        eval_kwargs = {
-            'model': model,
-            'base_url': base_url,
-            'temperature': temperature
-        }
-        if task_id is not None:
-            eval_kwargs['task_id'] = task_id
-        
-        result = await env_instance.evaluate(**eval_kwargs)
-        
-        total_score += result.score
-        total_time += result.latency_seconds
-        
-        results.append(result.model_dump())
-    
-    print()  # New line after progress
+    results = []
+    # Use semaphore to limit concurrency to 3
+    semaphore = asyncio.Semaphore(3)
+
+    async def run_single_evaluation(i):
+        """Run a single evaluation with semaphore control"""
+        async with semaphore:
+            print(f"\n[Sample {i+1}/{samples}] Running...", flush=True)
+
+            eval_kwargs = {
+                'model': model,
+                'base_url': base_url,
+                'temperature': temperature
+            }
+            if task_id is not None:
+                eval_kwargs['task_id'] = task_id
+
+            try:
+                result = await env_instance.evaluate(**eval_kwargs)
+
+                result_data = result.model_dump()
+                result_data['index'] = i
+
+                # Stream output for this sample
+                status = "✓" if result.success else "✗"
+                print(f"[{status}] Sample {i+1}: score={result.score:.4f}, time={result.latency_seconds:.2f}s", flush=True)
+                if result.error:
+                    print(f"    Error: {result.error}", flush=True)
+                if not result.success:
+                    # Print more detailed error info for failed tests
+                    print(f"    Success: False", flush=True)
+                    if hasattr(result, 'traceback') and result.traceback:
+                        print(f"    Traceback: {result.traceback}", flush=True)
+                    if hasattr(result, 'output') and result.output:
+                        print(f"    Output: {result.output[:200]}...", flush=True)
+
+                return result_data
+            except Exception as e:
+                print(f"[✗] Sample {i+1}: FAILED", flush=True)
+                print(f"    Exception: {type(e).__name__}: {str(e)}", flush=True)
+                import traceback
+                print(f"    Traceback:", flush=True)
+                traceback.print_exc()
+
+                result_data = {
+                    'index': i,
+                    'score': 0.0,
+                    'success': False,
+                    'latency_seconds': 0.0,
+                    'error': f"{type(e).__name__}: {str(e)}"
+                }
+                return result_data
+
+    # Run all evaluations concurrently with max 3 concurrent tasks
+    tasks = [run_single_evaluation(i) for i in range(samples)]
+    results = await asyncio.gather(*tasks)
+
+    # Calculate totals
+    total_score = sum(r['score'] for r in results)
+    total_time = sum(r.get('latency_seconds', 0.0) for r in results)
+
     return total_score, total_time, results
 
 
@@ -262,14 +353,14 @@ async def main():
         print(f"  Total Time: {total_time:.2f} seconds")
         print(f"  Average Time: {total_time/args.samples:.2f} seconds/sample")
         
-        # Show individual results if multiple samples
+        # Show all results recap
         if args.samples > 1:
-            print(f"\nDetailed Results:")
+            print(f"\nAll Results Recap:")
             for idx, r in enumerate(results):
                 status = "✓" if r.get('success', False) else "✗"
                 score = r.get('score', 0.0)
                 latency = r.get('latency_seconds', r.get('latency', 0.0))
-                print(f"  [{status}] Sample {idx}: score={score:.4f}, time={latency:.2f}s")
+                print(f"  [{status}] Sample {idx+1}: score={score:.4f}, time={latency:.2f}s")
                 if r.get('error'):
                     print(f"      Error: {r['error']}")
         

@@ -603,7 +603,6 @@ class SamplingOrchestrator:
 
         # Stats structure for challenge algorithm
         stats = {hk: {} for hk in meta_hotkeys}
-        env_first_block = {hk: {e: float('inf') for e in envs} for hk in meta_hotkeys}
 
         # Collect samples per hotkey per environment (to get the latest MAX_SAMPLES_CAP)
         from collections import deque
@@ -657,16 +656,12 @@ class SamplingOrchestrator:
                 block_num = float('inf')
             samples_queue[hk][env].append((normalized_score, block_num))
 
-        # Now compute cnt, succ, and env_first_block from the queues
+        # Now compute cnt and succ from the queues
         for hk in meta_hotkeys:
             for e in envs:
                 samples = samples_queue[hk][e]
                 cnt[hk][e] = len(samples)
                 succ[hk][e] = sum(score for score, _ in samples)
-                if samples:
-                    env_first_block[hk][e] = min(block for _, block in samples)
-                else:
-                    env_first_block[hk][e] = float('inf')
         
         # Build stats structure for challenge algorithm
         for hk in meta_hotkeys:
@@ -674,7 +669,7 @@ class SamplingOrchestrator:
                 stats[hk][e] = {
                     'samples': cnt[hk][e],
                     'total_score': succ[hk][e],
-                    'first_block': env_first_block[hk][e] if env_first_block[hk][e] != float('inf') else first_block.get(hk, float('inf'))
+                    'first_block': first_block.get(hk, float('inf'))
                 }
 
         return cnt, succ, prev, v_id, first_block, stats
