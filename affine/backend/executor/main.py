@@ -20,17 +20,13 @@ import os
 from typing import List, Optional
 
 from affine.backend.executor.worker import ExecutorWorker
-from affine.core.setup import wallet
+from affine.core.setup import wallet, logger, setup_logging
 
-# Default environments to run if not specified
 DEFAULT_ENVS = [
     "affine:sat",
     "affine:abd",
     "affine:ded",
 ]
-
-logger = logging.getLogger(__name__)
-
 
 class ExecutorManager:
     """
@@ -162,13 +158,15 @@ class ExecutorManager:
 
 async def main(args):
     """Main entry point."""
-    # Setup logging
-    log_level = logging.DEBUG if args.debug else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        force=True,
-    )
+    # Setup logging using unified configuration
+    # verbosity: 0=CRITICAL+, 1=INFO, 2=DEBUG, 3=TRACE
+    if args.verbosity is not None:
+        verbosity = args.verbosity
+    elif args.debug:
+        verbosity = 2
+    else:
+        verbosity = 1
+    setup_logging(verbosity)
     
     # Determine which environments to run
     if args.all_envs:
@@ -272,7 +270,15 @@ def parse_args():
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Enable debug logging"
+        help="Enable debug logging (equivalent to --verbosity 2)"
+    )
+    
+    parser.add_argument(
+        "-v", "--verbosity",
+        type=int,
+        choices=[0, 1, 2, 3],
+        default=None,
+        help="Logging verbosity: 0=CRITICAL, 1=INFO (default), 2=DEBUG, 3=TRACE"
     )
     
     parser.add_argument(

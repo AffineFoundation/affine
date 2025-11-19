@@ -12,6 +12,7 @@ Design:
 
 import time
 import uuid
+import logging
 from typing import Dict, Any, List, Optional, Set
 from affine.database.base_dao import BaseDAO
 from affine.database.schema import get_table_name
@@ -291,7 +292,7 @@ class TaskQueueDAO(BaseDAO):
         """Record task failure and handle retry logic.
         
         If retry_count < max_retries, reset status to 'pending'.
-        Otherwise, mark as 'failed' permanently.
+        Otherwise, mark as 'failed' permanently and create a zero-score sample result.
         
         Args:
             task: Task dict
@@ -309,6 +310,9 @@ class TaskQueueDAO(BaseDAO):
         
         if retry_count >= max_retries:
             new_status = 'failed'
+            
+            # Create zero-score sample result when task permanently fails
+            await self._create_zero_score_sample(task, error_message, error_code)
         else:
             new_status = 'pending'  # Back to pending for retry
         
@@ -329,6 +333,61 @@ class TaskQueueDAO(BaseDAO):
         
         await self.put(task)
         return task
+    
+    async def _create_zero_score_sample(
+        self,
+        task: Dict[str, Any],
+        error_message: str,
+        error_code: str
+    ):
+        """Create a zero-score sample result for permanently failed task.
+        
+        Args:
+            task: Failed task dict
+            error_message: Error description
+            error_code: Error classification code
+        """
+        from affine.database.dao.sample_results import SampleResultsDAO
+        
+        try:
+            sample_dao = SampleResultsDAO()
+            
+            # Create extra field with error information
+            extra = {
+                "error": error_message,
+                "error_code": error_code,
+                "retry_count": task.get('retry_count', 0),
+                "task_uuid": task.get('task_uuid'),
+                "failed_at": int(time.time()),
+                "reason": "Task permanently failed after maximum retries"
+            }
+            
+            # Save zero-score sample
+            await sample_dao.save_sample(
+                miner_hotkey=task['miner_hotkey'],
+                model_revision=task['model_revision'],
+                model=task['model'],
+                env=task['env'],
+                task_id=str(task['task_id']),
+                score=0.0,
+                latency_ms=0,
+                extra=extra,
+                validator_hotkey="system",  # System-generated result
+                block_number=0,
+                signature="",  # No signature for system-generated results
+                timestamp=int(time.time() * 1000)
+            )
+            
+            logger = logging.getLogger(__name__)
+            logger.info(
+                f"Created zero-score sample for permanently failed task: "
+                f"miner={task['miner_hotkey'][:12]}... env={task['env']} "
+                f"task_id={task['task_id']}"
+            )
+            
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to create zero-score sample: {e}", exc_info=True)
     
     async def get_tasks_by_miner(
         self,

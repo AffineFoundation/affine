@@ -6,7 +6,7 @@ Endpoints for submitting and querying sample results.
 
 import time
 import uuid
-from typing import Optional
+from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, status
 from affine.api.models import (
     SampleSubmitRequest,
@@ -18,15 +18,134 @@ from affine.api.models import (
 )
 from affine.api.dependencies import (
     get_sample_results_dao,
+    get_task_queue_dao,
     verify_signature_dependency,
     rate_limit_read,
     rate_limit_write,
 )
+from affine.core.models import SampleSubmission
 from affine.api.utils.pagination import get_pagination_params, create_pagination_info
 from affine.database.dao.sample_results import SampleResultsDAO
 from affine.core.miners import miners as get_miners
 
 router = APIRouter(prefix="/samples", tags=["Samples"])
+
+
+@router.post("/submit", response_model=SampleSubmitResponse, dependencies=[Depends(rate_limit_write)])
+async def submit_sample_from_executor(
+    request: Request,
+    submission: Dict[str, Any],
+    sample_dao: SampleResultsDAO = Depends(get_sample_results_dao),
+    task_dao = Depends(get_task_queue_dao),
+):
+    """
+    Submit a sample result from executor (new signature mechanism).
+    
+    This endpoint:
+    1. Verifies executor authentication (X-Executor-Hotkey header + signature)
+    2. Validates submission signature against task_uuid data
+    3. Fetches task metadata (hotkey, revision, model, env, task_id) from task queue
+    4. Merges submission with task metadata
+    5. Saves complete sample to database
+    6. Marks task as completed in queue
+    
+    Request body (SampleSubmission):
+    - task_uuid: Task UUID from queue
+    - score: Evaluation score (0.0 to 1.0)
+    - latency_ms: Execution time in milliseconds
+    - extra: Evaluation details and metadata
+    - signature: Executor's signature of the above fields
+    """
+    from affine.api.services.auth import get_auth_service
+    from affine.database.dao.task_queue import TaskQueueDAO
+    
+    # Get authentication service
+    auth_service = get_auth_service()
+    
+    # Verify executor authentication from headers
+    executor_hotkey = request.headers.get("X-Executor-Hotkey", "")
+    if not executor_hotkey:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Executor-Hotkey header required"
+        )
+    
+    # Verify executor is authorized (optional in non-strict mode)
+    if not auth_service.is_authorized_validator(executor_hotkey):
+        if auth_service.strict_mode:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Executor not authorized"
+            )
+    
+    # Parse submission
+    try:
+        sample_sub = SampleSubmission(**submission)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid submission format: {str(e)}"
+        )
+    
+    # Verify submission signature
+    if not sample_sub.verify(executor_hotkey):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid submission signature"
+        )
+    
+    # Fetch task from queue by UUID
+    task = await task_dao.get_task_by_uuid(sample_sub.task_uuid)
+    
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task not found: {sample_sub.task_uuid}"
+        )
+    
+    # Extract task metadata
+    miner_hotkey = task["miner_hotkey"]
+    model_revision = task["model_revision"]
+    model = task["model"]
+    env = task["env"]
+    task_id = str(task["task_id"])
+    
+    # Get current block number (for score tracking)
+    try:
+        from affine.core.miners import get_current_block
+        block_number = await get_current_block()
+    except Exception:
+        block_number = 0
+    
+    # Save sample to database (merged data)
+    try:
+        await sample_dao.save_sample(
+            miner_hotkey=miner_hotkey,
+            model_revision=model_revision,
+            model=model,
+            env=env,
+            task_id=task_id,
+            score=sample_sub.score,
+            latency_ms=sample_sub.latency_ms,
+            extra=sample_sub.extra,
+            validator_hotkey=executor_hotkey,
+            block_number=block_number,
+            signature=sample_sub.signature,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save sample: {str(e)}"
+        )
+    
+    # Mark task as completed
+    await task_dao.complete_task(task)
+    
+    return SampleSubmitResponse(
+        sample_id=task_id,
+        created_at=int(time.time()),
+        message="Sample submitted successfully"
+    )
 
 
 @router.post("", response_model=SampleSubmitResponse, dependencies=[Depends(rate_limit_write)])

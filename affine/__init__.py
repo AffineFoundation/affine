@@ -13,7 +13,7 @@ from affine.core.setup import (
 #                   Data Models (imported from models module)                 #
 # --------------------------------------------------------------------------- #
 from affine.core.models import (
-    Challenge, Response, Miner, Result
+    Miner, Result
 )
 
 # --------------------------------------------------------------------------- #

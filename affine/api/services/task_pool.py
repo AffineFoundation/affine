@@ -176,15 +176,24 @@ class TaskPoolManager:
             Number of tasks cleaned up
         """
         try:
-            # Get valid miners from cache
-            valid_miners = await self.miners_cache.get_valid_miners()
+            # Get valid miners from cache (returns Dict[str, MinerInfo])
+            valid_miners_dict = await self.miners_cache.get_valid_miners()
             
-            if not valid_miners:
+            if not valid_miners_dict:
                 logger.warning("No valid miners found, skipping cleanup")
                 return 0
-            
+
+            # Convert to list of dicts for DAO
+            valid_miners_list = [
+                {
+                    'hotkey': info.hotkey,
+                    'model_revision': info.revision
+                }
+                for info in valid_miners_dict.values()
+            ]
+
             # Call DAO cleanup method
-            cleaned_count = await self.dao.cleanup_invalid_tasks(valid_miners)
+            cleaned_count = await self.dao.cleanup_invalid_tasks(valid_miners_list)
             
             # Also release locks for cleaned tasks
             if cleaned_count > 0:

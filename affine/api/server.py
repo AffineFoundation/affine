@@ -22,26 +22,7 @@ from affine.api.routers import (
     chain_router,
 )
 from affine.database import init_client, close_client
-
-for noisy in ["websockets", "bittensor", "bittensor-cli", "btdecode", "asyncio", "aiobotocore.regions", "botocore", "httpx", "httpcore", "docker", "urllib3"]:
-    logging.getLogger(noisy).setLevel(logging.WARNING)
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,  # Global level: INFO
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    force=True,  # Override any existing logging configuration
-)
-
-# Set our own modules to DEBUG for detailed logging
-logging.getLogger("affine").setLevel(getattr(logging, config.LOG_LEVEL.upper()))
-
-# Set uvicorn to INFO (avoid too much noise)
-logging.getLogger("uvicorn").setLevel(logging.INFO)
-logging.getLogger("uvicorn.access").setLevel(logging.INFO)
-
-logger = logging.getLogger(__name__)
-
+from affine.core.setup import logger
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
