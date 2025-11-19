@@ -6,7 +6,7 @@ Reusable dependencies for authentication, database access, etc.
 
 import time
 from typing import Optional
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Header, status
 from affine.api.config import config
 from affine.api.utils.auth import get_hotkey_from_request, verify_request_signature
 from affine.database.dao.sample_results import SampleResultsDAO
@@ -98,10 +98,79 @@ def get_auth_service() -> AuthService:
         # In production, use create_auth_service_from_chain()
         _auth_service = AuthService(
             authorized_validators=set(),
-            signature_expiry_seconds=300,
+            signature_expiry_seconds=60,  # 1 minute timeout
             strict_mode=False  # Non-strict for development
         )
     return _auth_service
+
+
+async def verify_executor_auth(
+    executor_hotkey: str = Header(..., alias="X-Hotkey"),
+    executor_signature: str = Header(..., alias="X-Signature"),
+    executor_message: str = Header(..., alias="X-Message"),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> str:
+    """
+    Verify executor authentication with timestamp-based message.
+    
+    This dependency validates:
+    1. Message format is a valid timestamp (integer string)
+    2. Timestamp is within 60 seconds (prevents replay attacks)
+    3. Signature is valid for the message
+    
+    Args:
+        executor_hotkey: Executor's hotkey from header
+        executor_signature: Signature from header
+        executor_message: Timestamp string from header
+        auth_service: Auth service instance
+    
+    Returns:
+        Validated executor hotkey
+        
+    Raises:
+        HTTPException: If validation fails
+    """
+    # Validate message format (should be timestamp)
+    try:
+        timestamp = int(executor_message)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid message format: expected timestamp"
+        )
+    
+    # Check timestamp is within 60 seconds
+    current_time = int(time.time())
+    time_diff = abs(current_time - timestamp)
+    
+    if time_diff > 60:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Message expired (timestamp diff: {time_diff}s, max: 60s)"
+        )
+    
+    # Verify signature
+    is_valid = auth_service.verify_signature(
+        hotkey=executor_hotkey,
+        message=executor_message,
+        signature=executor_signature
+    )
+    
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid executor signature"
+        )
+    
+    # Check if authorized validator (optional in non-strict mode)
+    if not auth_service.is_authorized_validator(executor_hotkey):
+        if auth_service.strict_mode:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Executor not authorized"
+            )
+    
+    return executor_hotkey
 
 
 async def verify_signature_dependency(request: Request) -> str:
@@ -233,3 +302,9 @@ async def rate_limit_admin(request: Request):
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Rate limit exceeded"
         )
+
+
+async def get_system_config():
+    """Get system configuration."""
+    dao = get_system_config_dao()
+    return await dao.get_config()

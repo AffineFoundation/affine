@@ -12,13 +12,11 @@ from affine.api.models import (
     TaskCreateRequest,
     TaskCreateResponse,
     TaskFetchResponse,
-    TaskCompleteRequest,
-    TaskCompleteResponse,
     TaskPoolStatsResponse,
 )
 from affine.api.dependencies import (
     get_task_queue_dao,
-    get_auth_service,
+    verify_executor_auth,
     rate_limit_read,
     rate_limit_write,
 )
@@ -34,26 +32,23 @@ router = APIRouter(prefix="/tasks", tags=["Tasks"])
 @router.post("/fetch", response_model=TaskFetchResponse, dependencies=[Depends(rate_limit_read)])
 async def fetch_task(
     env: Optional[str] = Query(None, description="Environment filter (optional)"),
-    executor_hotkey: str = Header(..., alias="X-Executor-Hotkey", description="Executor's hotkey"),
-    executor_signature: str = Header(..., alias="X-Executor-Signature", description="Signed message"),
-    executor_message: str = Header(..., alias="X-Executor-Message", description="Original message"),
-    auth_service: AuthService = Depends(get_auth_service),
+    executor_hotkey: str = Depends(verify_executor_auth),
 ):
     """
     Fetch a task using weighted random selection.
     
     Algorithm:
-    1. Verify executor signature and validator status
+    1. Verify executor signature and validator status (via dependency)
     2. Get all pending tasks (excluding locked ones)
     3. Group by (miner_hotkey, model_revision), count tasks per miner
     4. Select miner with probability proportional to task count
     5. Randomly select one task from chosen miner
     6. Acquire in-memory lock for selected task
     
-    Headers:
-    - X-Executor-Hotkey: Executor's SS58 hotkey
-    - X-Executor-Signature: Hex-encoded signature of message
-    - X-Executor-Message: Original message that was signed
+    Headers (validated by verify_executor_auth dependency):
+    - X-Hotkey: Executor's SS58 hotkey
+    - X-Signature: Hex-encoded signature of timestamp
+    - X-Message: Unix timestamp (must be within 60 seconds)
     
     Query Parameters:
     - env: Optional environment filter
@@ -62,24 +57,9 @@ async def fetch_task(
     - Task details if available, or null if no tasks
     """
     try:
-        # Step 1: Verify signature
-        is_valid = auth_service.verify_signature(
-            hotkey=executor_hotkey,
-            message=executor_message,
-            signature=executor_signature
-        )
-        
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid executor signature"
-            )
-        
-        # Step 2: Verify executor is a validator (TODO: Check metagraph)
-        # For now, trust any valid signature
         logger.info(f"Task fetch requested by executor {executor_hotkey[:16]}... for env {env or 'any'}")
         
-        # Step 3: Fetch task using TaskPoolManager
+        # Fetch task using TaskPoolManager
         pool_manager = TaskPoolManager.get_instance()
         task = await pool_manager.fetch_task(
             executor_hotkey=executor_hotkey,
@@ -90,7 +70,7 @@ async def fetch_task(
             logger.debug(f"No available tasks for executor {executor_hotkey[:16]}...")
             return TaskFetchResponse(task=None)
         
-        # Step 4: Return task details
+        # Return task details
         logger.info(
             f"Assigned task {task['task_uuid']} to executor {executor_hotkey[:16]}... "
             f"(miner={task['miner_hotkey'][:16]}..., env={task['env']}, task_id={task['task_id']})"
@@ -104,6 +84,7 @@ async def fetch_task(
                 "model_revision": task["model_revision"],
                 "model": task["model"],
                 "env": task["env"],
+                "chute_id": task["chute_id"],
                 "created_at": task["created_at"],
             }
         )
@@ -117,81 +98,6 @@ async def fetch_task(
             detail=f"Failed to fetch task: {str(e)}"
         )
 
-
-@router.post("/complete", response_model=TaskCompleteResponse, dependencies=[Depends(rate_limit_write)])
-async def complete_task(
-    request: TaskCompleteRequest,
-    executor_hotkey: str = Header(..., alias="X-Executor-Hotkey", description="Executor's hotkey"),
-    executor_signature: str = Header(..., alias="X-Executor-Signature", description="Signed message"),
-    executor_message: str = Header(..., alias="X-Executor-Message", description="Original message"),
-    auth_service: AuthService = Depends(get_auth_service),
-):
-    """
-    Complete a task (success or failure).
-    
-    Idempotent: if task already completed/deleted, returns success status.
-    
-    Headers:
-    - X-Executor-Hotkey: Executor's SS58 hotkey
-    - X-Executor-Signature: Hex-encoded signature
-    - X-Executor-Message: Original message
-    
-    Request Body:
-    - task_uuid: Task UUID from fetch response
-    - success: Whether task succeeded
-    - error_message: Error message if failed (optional)
-    - error_code: Error classification code (optional)
-    
-    Returns:
-    - Status of completion (completed/failed/not_found/error)
-    """
-    try:
-        # Step 1: Verify signature
-        is_valid = auth_service.verify_signature(
-            hotkey=executor_hotkey,
-            message=executor_message,
-            signature=executor_signature
-        )
-        
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid executor signature"
-            )
-        
-        # Step 2: Complete task using TaskPoolManager
-        pool_manager = TaskPoolManager.get_instance()
-        result = await pool_manager.complete_task(
-            task_uuid=request.task_uuid,
-            executor_hotkey=executor_hotkey,
-            success=request.success,
-            error_message=request.error_message,
-            error_code=request.error_code,
-        )
-        
-        # Step 3: Return result
-        status_code = status.HTTP_200_OK
-        if result['status'] == 'error':
-            if 'Lock owned by different executor' in result['message']:
-                status_code = status.HTTP_403_FORBIDDEN
-            else:
-                status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-        
-        return TaskCompleteResponse(
-            task_uuid=request.task_uuid,
-            status=result['status'],
-            message=result['message'],
-            timestamp=int(time.time())
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error completing task: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to complete task: {str(e)}"
-        )
 
 
 @router.post("/batch", dependencies=[Depends(rate_limit_write)])

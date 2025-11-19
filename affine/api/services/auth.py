@@ -73,6 +73,18 @@ class AuthService:
         
         return hotkey in self.config.authorized_validators
     
+    def is_authorized_validator(self, hotkey: str) -> bool:
+        """
+        Check if a hotkey is an authorized validator (alias for is_validator).
+        
+        Args:
+            hotkey: Hotkey to check
+            
+        Returns:
+            True if hotkey is an authorized validator
+        """
+        return self.is_validator(hotkey)
+    
     def verify_signature(
         self,
         message: str,

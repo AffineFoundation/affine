@@ -88,7 +88,7 @@ class SampleSubmitRequest(BaseModel):
 class SampleSubmitResponse(BaseModel):
     """Response after submitting a sample."""
 
-    sample_id: str
+    task_id: str
     created_at: int
     message: str
 
@@ -487,11 +487,12 @@ class TaskGenerationRequest(BaseModel):
 
 class MinerInfo(BaseModel):
     """Miner information for task generation."""
-
+    
     hotkey: str
     model_revision: str
     model: str
     uid: int = -1
+    chute_id: str
 
 
 class TaskGenerationResponse(BaseModel):
