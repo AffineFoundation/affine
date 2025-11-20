@@ -610,10 +610,10 @@ class SamplingOrchestrator:
     # TODO: Remove this function once all data is validated
     @staticmethod
     def _filter_out_of_range_task_ids(
-        raw_samples: Dict[str, Dict[str, List[Tuple[float, int, Any]]]],
+        raw_samples: Dict[str, Dict[str, List[Tuple[float, int, Any, float]]]],
         envs: Tuple[str, ...],
         env_ranges: Dict[str, Tuple[int, int]]
-    ) -> Dict[str, Dict[str, List[Tuple[float, int, Any]]]]:
+    ) -> Dict[str, Dict[str, List[Tuple[float, int, Any, float]]]]:
         """
         [TEMPORARY] Filter out samples with task_ids outside the valid range.
         
@@ -622,7 +622,7 @@ class SamplingOrchestrator:
         are using the new global sequential sampling.
         
         Args:
-            raw_samples: {hotkey: {env: [(score, block_num, task_id), ...]}}
+            raw_samples: {hotkey: {env: [(score, block_num, task_id, timestamp), ...]}}
             envs: Tuple of environment names
             env_ranges: {env_name: (start_index, end_index)} valid range for each env
         
@@ -643,10 +643,10 @@ class SamplingOrchestrator:
                 start_idx, end_idx = env_ranges[env]
                 valid_samples = []
                 
-                for score, block_num, task_id in env_samples.get(env, []):
+                for score, block_num, task_id, timestamp in env_samples.get(env, []):
                     # Check if task_id is within valid range [start_idx, end_idx)
                     if isinstance(task_id, int) and start_idx <= task_id < end_idx:
-                        valid_samples.append((score, block_num, task_id))
+                        valid_samples.append((score, block_num, task_id, timestamp))
                     # Skip samples with task_ids outside the range
                 
                 filtered[hk][env] = valid_samples
@@ -681,7 +681,7 @@ class SamplingOrchestrator:
     
     @staticmethod
     def _deduplicate_samples_by_task_id(
-        raw_samples: Dict[str, Dict[str, List[Tuple[float, int, Any]]]],
+        raw_samples: Dict[str, Dict[str, List[Tuple[float, int, Any, float]]]],
         envs: Tuple[str, ...],
         env_dataset_sizes: Dict[str, int]
     ) -> Dict[str, Dict[str, List[Tuple[float, int]]]]:
@@ -692,11 +692,13 @@ class SamplingOrchestrator:
         - Large datasets (>= SMALL_DATASET_THRESHOLD): 1 sample per task_id
         - Small datasets (< SMALL_DATASET_THRESHOLD): 1 sample per task_id, then duplicate each result (x2)
 
+        When multiple samples exist for the same task_id, keeps the one with the latest timestamp.
+
         This ensures consistent evaluation across all miners by preventing
         multiple evaluations of the same task_id from skewing results.
 
         Args:
-            raw_samples: {hotkey: {env: [(score, block_num, task_id), ...]}}
+            raw_samples: {hotkey: {env: [(score, block_num, task_id, timestamp), ...]}}
             envs: Tuple of environment names
             env_dataset_sizes: {env_name: dataset_size}
 
@@ -709,21 +711,21 @@ class SamplingOrchestrator:
             deduplicated[hk] = {}
 
             for env in envs:
-                # Group samples by task_id (keep only 1 per task_id)
-                task_id_groups: Dict[Any, Tuple[float, int]] = {}
+                # Group samples by task_id (keep only the one with latest timestamp)
+                task_id_groups: Dict[Any, Tuple[float, int, float]] = {}
 
-                for score, block_num, task_id in env_samples.get(env, []):
+                for score, block_num, task_id, timestamp in env_samples.get(env, []):
                     if task_id not in task_id_groups:
                         # First sample for this task_id
-                        task_id_groups[task_id] = (score, block_num)
+                        task_id_groups[task_id] = (score, block_num, timestamp)
                     else:
-                        # Replace with newer sample
-                        _, existing_block = task_id_groups[task_id]
-                        if block_num > existing_block:
-                            task_id_groups[task_id] = (score, block_num)
+                        # Compare timestamps and keep the newer one
+                        existing_score, existing_block, existing_timestamp = task_id_groups[task_id]
+                        if timestamp > existing_timestamp:
+                            task_id_groups[task_id] = (score, block_num, timestamp)
 
-                # Flatten all task_id groups into a single list
-                all_samples = list(task_id_groups.values())
+                # Flatten all task_id groups into a single list (drop timestamp)
+                all_samples = [(score, block_num) for score, block_num, _ in task_id_groups.values()]
 
                 # For small datasets, duplicate each result (x2)
                 dataset_size = env_dataset_sizes.get(env, 0)
@@ -780,8 +782,8 @@ class SamplingOrchestrator:
         # Stats structure for challenge algorithm
         stats = {hk: {} for hk in meta_hotkeys}
 
-        # Collect raw samples with task_id information
-        # Structure: {hk: {env: [(score, block_num, task_id), ...]}}
+        # Collect raw samples with task_id and timestamp information
+        # Structure: {hk: {env: [(score, block_num, task_id, timestamp), ...]}}
         raw_samples = {hk: {e: [] for e in envs} for hk in meta_hotkeys}
 
         for result in results:
@@ -829,14 +831,9 @@ class SamplingOrchestrator:
             except Exception:
                 block_num = float('inf')
             
-            # Get task_id from result (may be None for legacy data)
-            task_id = getattr(result, 'task_id', None)
-            if task_id is None:
-                # For legacy data without task_id, use block_num as unique identifier
-                task_id = block_num
             
-            # Add raw sample with task_id for later deduplication
-            raw_samples[hk][env].append((normalized_score, block_num, task_id))
+            # Add raw sample with task_id and timestamp for later deduplication
+            raw_samples[hk][env].append((normalized_score, block_num, result.task_id, result.timestamp))
 
         # ========== TEMPORARY: Filter out-of-range task_ids ==========
         # TODO: Remove this block once all data is validated
