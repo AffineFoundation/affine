@@ -51,49 +51,59 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize database client: {e}")
         raise
     
-    # Initialize global services
-    miners_cache = None
+    # Initialize global services (controlled by SERVICES_ENABLED)
+    miners_monitor = None
     task_pool = None
-    try:
-        from affine.api.services.miners_cache import MinersCacheManager
-        from affine.api.services.task_pool import TaskPoolManager
-        
-        # Initialize MinersCacheManager
-        miners_cache = await MinersCacheManager.initialize(
-            refresh_interval_seconds=300  # 5 minutes
-        )
-        logger.info("MinersCacheManager initialized")
-        
-        # Initialize TaskPoolManager
-        task_pool = await TaskPoolManager.initialize(
-            lock_timeout_seconds=300,  # 5 minutes
-            cleanup_interval_seconds=60  # 1 minute
-        )
-        logger.info("TaskPoolManager initialized with background tasks")
-        
-    except Exception as e:
-        logger.error(f"Failed to initialize global services: {e}")
-        raise
-    
-    # Optional: Start scheduler
     scheduler = None
-    if config.SCHEDULER_ENABLED:
+    
+    if config.SERVICES_ENABLED:
+        logger.info("Services mode enabled (SERVICES_ENABLED=true)")
+        
         try:
-            from affine.api.dependencies import get_task_generator_service
-            from affine.api.services.scheduler import create_scheduler
+            from affine.api.services.miners_monitor import MinersMonitor
+            from affine.api.services.task_pool import TaskPoolManager
             
-            task_generator = get_task_generator_service()
-            scheduler = create_scheduler(
-                task_generator=task_generator,
-                task_generation_interval=config.SCHEDULER_TASK_GENERATION_INTERVAL,
-                cleanup_interval=config.SCHEDULER_CLEANUP_INTERVAL,
-                max_tasks_per_miner_env=config.SCHEDULER_MAX_TASKS_PER_MINER_ENV
+            # Initialize MinersMonitor
+            miners_monitor = await MinersMonitor.initialize(
+                refresh_interval_seconds=300  # 5 minutes
             )
-            await scheduler.start()
-            logger.info("Background scheduler started")
+            logger.info("MinersMonitor initialized")
+            
+            # Initialize TaskPoolManager
+            task_pool = await TaskPoolManager.initialize(
+                lock_timeout_seconds=300,  # 5 minutes
+                cleanup_interval_seconds=60  # 1 minute
+            )
+            logger.info("TaskPoolManager initialized with background tasks")
+            
         except Exception as e:
-            logger.error(f"Failed to start scheduler: {e}")
-            # Don't fail startup if scheduler fails
+            logger.error(f"Failed to initialize global services: {e}")
+            raise
+        
+        # Optional: Start scheduler
+        if config.SCHEDULER_ENABLED:
+            try:
+                from affine.api.dependencies import get_task_generator_service
+                from affine.api.services.scheduler import create_scheduler
+                
+                task_generator = get_task_generator_service()
+                scheduler = create_scheduler(
+                    task_generator=task_generator,
+                    task_generation_interval=config.SCHEDULER_TASK_GENERATION_INTERVAL,
+                    cleanup_interval=config.SCHEDULER_CLEANUP_INTERVAL,
+                    max_tasks_per_miner_env=config.SCHEDULER_MAX_TASKS_PER_MINER_ENV
+                )
+                await scheduler.start()
+                logger.info("Background scheduler started")
+            except Exception as e:
+                logger.error(f"Failed to start scheduler: {e}")
+                # Don't fail startup if scheduler fails
+    else:
+        logger.warning(
+            "Services mode disabled (SERVICES_ENABLED=false). "
+            "MinersMonitor, TaskPoolManager, and Scheduler will not start. "
+            "/fetch and /submit endpoints will return 503 Service Unavailable."
+        )
     
     yield
     
@@ -108,13 +118,13 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Error stopping TaskPoolManager: {e}")
     
-    # Stop MinersCacheManager background tasks
-    if miners_cache:
+    # Stop MinersMonitor background tasks
+    if miners_monitor:
         try:
-            await miners_cache.stop_background_tasks()
-            logger.info("MinersCacheManager background tasks stopped")
+            await miners_monitor.stop_background_tasks()
+            logger.info("MinersMonitor background tasks stopped")
         except Exception as e:
-            logger.error(f"Error stopping MinersCacheManager: {e}")
+            logger.error(f"Error stopping MinersMonitor: {e}")
     
     # Stop scheduler if running
     if scheduler and scheduler.is_running:
@@ -197,7 +207,7 @@ if __name__ == "__main__":
     import uvicorn
     
     # IMPORTANT: Must use workers=1 because of global singleton services:
-    # - MinersCacheManager: global singleton with background refresh
+    # - MinersMonitor: global singleton with background refresh
     # - TaskPoolManager: in-memory lock mechanism (not shared across workers)
     # - Scheduler: background task generation (would duplicate if multi-worker)
     # Using multiple workers would cause:

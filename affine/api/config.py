@@ -53,7 +53,12 @@ class APIConfig:
     DEFAULT_PAGE_SIZE: int = int(os.getenv("API_DEFAULT_PAGE_SIZE", "100"))
     MAX_PAGE_SIZE: int = int(os.getenv("API_MAX_PAGE_SIZE", "1000"))
 
-    # Scheduler settings
+    # Services settings
+    SERVICES_ENABLED: bool = (
+        os.getenv("API_SERVICES_ENABLED", "true").lower() == "true"
+    )
+    
+    # Scheduler settings (only used if SERVICES_ENABLED=true)
     SCHEDULER_ENABLED: bool = (
         os.getenv("API_SCHEDULER_ENABLED", "false").lower() == "true"
     )

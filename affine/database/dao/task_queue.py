@@ -156,7 +156,7 @@ class TaskQueueDAO(BaseDAO):
                 'assigned_to': None,
                 'assigned_at': None,
                 'retry_count': 0,
-                'max_retries': 3,
+                'max_retries': 5,
                 'last_error': None,
                 'last_error_code': None,
                 'last_failed_at': None,

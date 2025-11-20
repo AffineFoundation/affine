@@ -476,7 +476,6 @@ class ExecutorWorker:
         while self.running:
             try:
                 # Fetch task (already assigned to this executor via authenticated endpoint)
-                print("!!!!!!!!!!")
                 task = await self._fetch_task()
                 
                 if task is None:

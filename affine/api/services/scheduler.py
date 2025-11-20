@@ -9,6 +9,7 @@ import logging
 from typing import Optional
 
 from affine.api.services.task_generator import TaskGeneratorService, MinerInfo
+from affine.api.services.miners_monitor import MinersMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -93,31 +94,23 @@ class SchedulerService:
         logger.info("Scheduler stopped")
     
     async def _fetch_active_miners(self) -> list[MinerInfo]:
-        """Fetch active miners from bittensor."""
-        from affine.core.miners import miners as fetch_miners
+        """Fetch active miners from monitor service."""
+        monitor = MinersMonitor.get_instance()
         
-        miner_dict = await fetch_miners()
-        
-        result = []
-        for m in miner_dict.values():
-            chute_data = m.chute or {}
-            chute_id = chute_data.get("id") or chute_data.get("chute_id")
-            
-            # Skip miners without valid chute_id
-            if not chute_id:
-                logger.warning(
-                    f"Skipping miner {m.hotkey[:12]}... (uid={m.uid}): "
-                    f"no chute_id found in chute data"
-                )
-                continue
-            
-            result.append(MinerInfo(
-                hotkey=m.hotkey,
-                model_revision=m.revision,
-                model=m.model,
-                uid=m.uid,
-                chute_id=chute_id
-            ))
+        # Get valid miners from monitor
+        miners_dict = await monitor.get_valid_miners()
+
+        # Convert to MinerInfo list
+        result = [
+            MinerInfo(
+                hotkey=info.hotkey,
+                model_revision=info.revision,
+                model=info.model,
+                uid=info.uid,
+                chute_id=info.chute_id
+            )
+            for info in miners_dict.values()
+        ]
         
         return result
     

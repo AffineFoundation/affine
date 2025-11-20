@@ -17,6 +17,8 @@ from affine.database.dao.system_config import SystemConfigDAO
 from affine.database.dao.data_retention import DataRetentionDAO
 from affine.api.services.task_generator import TaskGeneratorService
 from affine.api.services.auth import AuthService
+from affine.api.config import config
+from affine.api.services.task_pool import TaskPoolManager
 
 
 # Database DAOs (singleton instances)
@@ -28,6 +30,7 @@ _system_config_dao: Optional[SystemConfigDAO] = None
 _data_retention_dao: Optional[DataRetentionDAO] = None
 _task_generator_service: Optional[TaskGeneratorService] = None
 _auth_service: Optional[AuthService] = None
+_task_pool_manager: Optional[TaskPoolManager] = None
 
 
 def get_sample_results_dao() -> SampleResultsDAO:
@@ -102,6 +105,14 @@ def get_auth_service() -> AuthService:
             strict_mode=False  # Non-strict for development
         )
     return _auth_service
+
+
+def get_task_pool_manager() -> TaskPoolManager:
+    """Get TaskPoolManager singleton instance."""
+    global _task_pool_manager
+    if _task_pool_manager is None:
+        _task_pool_manager = TaskPoolManager.get_instance()
+    return _task_pool_manager
 
 
 async def verify_executor_auth(

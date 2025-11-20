@@ -12,11 +12,11 @@ from affine.api.models import (
     TaskCreateRequest,
     TaskCreateResponse,
     TaskFetchResponse,
-    TaskPoolStatsResponse,
 )
 from affine.api.dependencies import (
     get_task_queue_dao,
     verify_executor_auth,
+    check_services_enabled,
     rate_limit_read,
     rate_limit_write,
 )
@@ -174,28 +174,4 @@ async def get_queued_task_ids(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get queued task IDs: {str(e)}"
-        )
-
-
-@router.get("/pool-stats", response_model=TaskPoolStatsResponse, dependencies=[Depends(rate_limit_read)])
-async def get_pool_stats():
-    """
-    Get task pool statistics.
-    
-    Returns:
-    - Statistics by environment
-    - Total pending/locked/assigned/failed counts
-    - Lock details (task UUID, executor, lock time, expiration)
-    """
-    try:
-        pool_manager = TaskPoolManager.get_instance()
-        stats = await pool_manager.get_pool_stats()
-        
-        return TaskPoolStatsResponse(**stats)
-        
-    except Exception as e:
-        logger.error(f"Error getting pool stats: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get pool stats: {str(e)}"
         )

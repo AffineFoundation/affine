@@ -191,6 +191,48 @@ DATA_RETENTION_SCHEMA = {
 }
 
 
+# Miners Table
+# Schema design:
+# - PK: UID#{uid} - partition by UID for fast lookups
+# - SK: BLOCK#{block_number}#HOTKEY#{hotkey} - track state changes over time
+# - GSI1: is-valid-index for querying valid/invalid miners
+#
+# Query patterns:
+# 1. Get miner by UID: Query by PK, get latest (highest block_number)
+# 2. Get all valid miners: Query GSI1 with is_valid=true
+# 3. Get miners by model hash: Scan with filter (for anti-plagiarism)
+# 4. Cleanup old records: Query by PK, delete all except latest N
+MINERS_SCHEMA = {
+    "TableName": get_table_name("miners"),
+    "KeySchema": [
+        {"AttributeName": "pk", "KeyType": "HASH"},
+        {"AttributeName": "sk", "KeyType": "RANGE"},
+    ],
+    "AttributeDefinitions": [
+        {"AttributeName": "pk", "AttributeType": "S"},
+        {"AttributeName": "sk", "AttributeType": "S"},
+        {"AttributeName": "is_valid", "AttributeType": "S"},
+        {"AttributeName": "block_number", "AttributeType": "N"},
+    ],
+    "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "is-valid-index",
+            "KeySchema": [
+                {"AttributeName": "is_valid", "KeyType": "HASH"},
+                {"AttributeName": "block_number", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+        },
+    ],
+    "BillingMode": "PAY_PER_REQUEST",
+}
+
+# TTL settings (applied after table creation)
+MINERS_TTL = {
+    "AttributeName": "ttl",
+}
+
+
 # All table schemas
 ALL_SCHEMAS = [
     SAMPLE_RESULTS_SCHEMA,
@@ -199,4 +241,5 @@ ALL_SCHEMAS = [
     SCORES_SCHEMA,
     SYSTEM_CONFIG_SCHEMA,
     DATA_RETENTION_SCHEMA,
+    MINERS_SCHEMA,
 ]

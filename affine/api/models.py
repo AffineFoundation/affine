@@ -174,10 +174,6 @@ class TaskStatusResponse(BaseModel):
     failed_at: Optional[int] = None
 
 
-# TaskCompleteRequest moved above (line 207)
-# TaskFailRequest removed (deprecated)
-# TaskQueueStatsResponse removed (deprecated, use TaskPoolStatsResponse)
-
 
 class TaskFetchResponse(BaseModel):
     """Response from task fetch endpoint."""
@@ -201,17 +197,6 @@ class TaskCompleteResponse(BaseModel):
     status: str  # 'completed', 'failed', 'not_found', 'error'
     message: str
     timestamp: int
-
-
-class TaskPoolStatsResponse(BaseModel):
-    """Task pool statistics."""
-
-    environments: Dict[str, Dict[str, int]]
-    total_pending: int
-    total_locked: int
-    total_assigned: int
-    total_failed: int
-    lock_details: Optional[List[Dict[str, Any]]] = None
 
 
 # Miner Metadata
