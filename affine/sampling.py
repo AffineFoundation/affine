@@ -779,7 +779,6 @@ class SamplingOrchestrator:
 
         # Stats structure for challenge algorithm
         stats = {hk: {} for hk in meta_hotkeys}
-        env_first_block = {hk: {e: float('inf') for e in envs} for hk in meta_hotkeys}
 
         # Collect raw samples with task_id information
         # Structure: {hk: {env: [(score, block_num, task_id), ...]}}
@@ -859,10 +858,6 @@ class SamplingOrchestrator:
                 
                 cnt[hk][e] = len(all_samples)
                 succ[hk][e] = sum(score for score, _ in all_samples)
-                if all_samples:
-                    env_first_block[hk][e] = min(block for _, block in all_samples)
-                else:
-                    env_first_block[hk][e] = float('inf')
         
         # Build stats structure for challenge algorithm
         for hk in meta_hotkeys:
@@ -870,7 +865,7 @@ class SamplingOrchestrator:
                 stats[hk][e] = {
                     'samples': cnt[hk][e],
                     'total_score': succ[hk][e],
-                    'first_block': env_first_block[hk][e] if env_first_block[hk][e] != float('inf') else first_block.get(hk, float('inf'))
+                    'first_block': first_block.get(hk, float('inf'))
                 }
 
         return cnt, succ, prev, v_id, first_block, stats
