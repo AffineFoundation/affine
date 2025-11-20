@@ -27,9 +27,9 @@ class SchedulerService:
     def __init__(
         self,
         task_generator: TaskGeneratorService,
-        task_generation_interval: int = 300,  # 5 minutes
-        cleanup_interval: int = 3600,  # 1 hour
-        max_tasks_per_miner_env: int = 100
+        task_generation_interval: int = 300,
+        cleanup_interval: int = 300,
+        max_tasks_per_miner_env: int = 10
     ):
         """
         Initialize SchedulerService.

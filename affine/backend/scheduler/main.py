@@ -15,8 +15,8 @@ from affine.core.setup import setup_logging, logger
 from affine.database import init_client, close_client
 from affine.database.dao.sample_results import SampleResultsDAO
 from affine.database.dao.task_queue import TaskQueueDAO
-from affine.backend.scheduler.task_generator import TaskGeneratorService
-from affine.affine.backend.scheduler.scheduler import SchedulerService
+from task_generator import TaskGeneratorService
+from scheduler import SchedulerService
 
 shutdown_event = asyncio.Event()
 
@@ -42,9 +42,9 @@ async def main():
         return 1
     
     # Get configuration from environment
-    task_generation_interval = int(os.getenv("SCHEDULER_TASK_GENERATION_INTERVAL", "300"))  # 5 minutes
-    cleanup_interval = int(os.getenv("SCHEDULER_CLEANUP_INTERVAL", "3600"))  # 1 hour
-    max_tasks_per_miner_env = int(os.getenv("SCHEDULER_MAX_TASKS_PER_MINER_ENV", "100"))
+    task_generation_interval = int(os.getenv("SCHEDULER_TASK_GENERATION_INTERVAL", "60"))
+    cleanup_interval = int(os.getenv("SCHEDULER_CLEANUP_INTERVAL", "300"))
+    max_tasks_per_miner_env = int(os.getenv("SCHEDULER_MAX_TASKS_PER_MINER_ENV", "10"))
     
     # Initialize task generator and scheduler
     scheduler = None
