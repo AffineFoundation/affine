@@ -19,6 +19,7 @@ from affine.api.models import (
 from affine.api.dependencies import (
     get_sample_results_dao,
     get_task_queue_dao,
+    get_task_pool_manager,
     verify_signature_dependency,
     verify_executor_auth,
     rate_limit_read,
@@ -27,7 +28,7 @@ from affine.api.dependencies import (
 from affine.core.models import SampleSubmission
 from affine.api.utils.pagination import get_pagination_params, create_pagination_info
 from affine.database.dao.sample_results import SampleResultsDAO
-from affine.core.miners import miners as get_miners
+from affine.api.services.task_pool import TaskPoolManager
 from affine.api.utils.bittensor import get_subtensor
 
 router = APIRouter(prefix="/samples", tags=["Samples"])
@@ -38,7 +39,7 @@ async def submit_sample_from_executor(
     submission: Dict[str, Any],
     executor_hotkey: str = Depends(verify_executor_auth),
     sample_dao: SampleResultsDAO = Depends(get_sample_results_dao),
-    task_dao = Depends(get_task_queue_dao),
+    task_pool: TaskPoolManager = Depends(get_task_pool_manager),
 ):
     """
     Submit a sample result from executor.
@@ -46,10 +47,8 @@ async def submit_sample_from_executor(
     This endpoint:
     1. Verifies executor authentication via dependency (timestamp-based)
     2. Validates submission signature against task_uuid data
-    3. Fetches task metadata from task queue
-    4. Verifies executor matches task assignment
-    5. Saves complete sample to database
-    6. Marks task as completed in queue
+    3. Saves sample to database (if successful)
+    4. Completes task via TaskPoolManager (releases lock, logs execution, deletes task)
     
     Headers (validated by verify_executor_auth dependency):
     - X-Hotkey: Executor's SS58 hotkey
@@ -80,46 +79,33 @@ async def submit_sample_from_executor(
             detail="Invalid submission signature"
         )
     
-    # Fetch task from queue by UUID
-    task = await task_dao.get_task_by_uuid(sample_sub.task_uuid)
+    # Determine task outcome based on error presence
+    error_message = sample_sub.extra.get("error")
+    is_success = error_message is None
     
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Task not found: {sample_sub.task_uuid}"
-        )
-    
-    # Verify executor matches task assignment
-    assigned_executor = task.get("assigned_to")
-    if assigned_executor and assigned_executor != executor_hotkey:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Task was assigned to different executor: {assigned_executor}"
-        )
-    
-    # Extract task metadata
-    miner_hotkey = task["miner_hotkey"]
-    model_revision = task["model_revision"]
-    model = task["model"]
-    env = task["env"]
-    task_id = str(task["task_id"])
-    
-    # Determine if task succeeded or failed based on error presence
-    # Success = task completed (no error in extra), regardless of score
-    # Failure = task failed (error in extra), needs retry
-    has_error = "error" in sample_sub.extra
-    subtensor = await get_subtensor()    
-    block_number = await subtensor.get_current_block()
-
-    if not has_error:
-        # Task succeeded: save sample and complete task (score can be any value)
+    # Save sample if task succeeded
+    if is_success:
+        # Get task to extract metadata
+        task = await task_pool.dao.get_task_by_uuid(sample_sub.task_uuid)
+        
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task not found: {sample_sub.task_uuid}"
+            )
+        
+        # Get current block number
+        subtensor = await get_subtensor()
+        block_number = await subtensor.get_current_block()
+        
+        # Save sample
         try:
             await sample_dao.save_sample(
-                miner_hotkey=miner_hotkey,
-                model_revision=model_revision,
-                model=model,
-                env=env,
-                task_id=task_id,
+                miner_hotkey=task["miner_hotkey"],
+                model_revision=task["model_revision"],
+                model=task["model"],
+                env=task["env"],
+                task_id=str(task["task_id"]),
                 score=sample_sub.score,
                 latency_ms=sample_sub.latency_ms,
                 extra=sample_sub.extra,
@@ -132,91 +118,30 @@ async def submit_sample_from_executor(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to save sample: {str(e)}"
             )
-        
-        # Mark task as completed
-        await task_dao.complete_task(task)
-    else:
-        # Task failed: handle retry logic
-        error_message = sample_sub.extra.get("error", "Unknown error")
-        
-        # Call fail_task to increment retry_count and handle retry/permanent failure
-        # fail_task will:
-        # - If retry_count < max_retries: reset to pending (no sample saved)
-        # - If retry_count >= max_retries: create zero-score sample and mark as failed
-        await task_dao.fail_task(
-            task=task,
-            error_message=error_message,
-            error_code="EXECUTION_ERROR"
-        )
     
-    # Build response message based on task outcome
-    if not has_error:
+    # Complete task via TaskPoolManager (handles lock release, logging, and deletion/retry)
+    result = await task_pool.complete_task(
+        task_uuid=sample_sub.task_uuid,
+        executor_hotkey=executor_hotkey,
+        success=is_success,
+        error_message=error_message,
+        error_code="EXECUTION_ERROR" if error_message else None
+    )
+    
+    # Build response message
+    if result['status'] == 'completed':
         message = f"Sample submitted successfully (score={sample_sub.score:.4f})"
-    else:  # is_failure
-        retry_count = task.get('retry_count') + 1
-        max_retries = task.get('max_retries')
-        if retry_count >= max_retries:
-            message = f"Task permanently failed after {retry_count} retries, zero-score sample saved"
-        else:
-            message = f"Task failed (retry {retry_count}/{max_retries}), re-queued for retry"
+    elif result['status'] == 'not_found':
+        message = "Task already completed or removed"
+    elif result['status'] == 'failed':
+        message = result.get('message', 'Task failed')
+    else:
+        message = result.get('message', 'Task processing completed')
     
     return SampleSubmitResponse(
-        task_id=task_id,
+        task_id=sample_sub.task_uuid,
         created_at=int(time.time()),
         message=message
-    )
-
-
-@router.post("", response_model=SampleSubmitResponse, dependencies=[Depends(rate_limit_write)])
-async def submit_sample(
-    request: Request,
-    sample: SampleSubmitRequest,
-    dao: SampleResultsDAO = Depends(get_sample_results_dao),
-):
-    """
-    Submit a sample result (requires signature verification).
-    
-    The request must include:
-    - X-Hotkey header: Miner's hotkey
-    - X-Signature header: Signature of the request body
-    
-    The signature should be generated by signing the JSON payload with the miner's private key.
-    """
-    # Verify signature
-    hotkey = await verify_signature_dependency(request)
-    
-    # Verify hotkey matches the sample
-    if hotkey != sample.miner_hotkey:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Hotkey in signature does not match miner_hotkey in payload"
-        )
-    
-    # Save sample to database
-    try:
-        await dao.save_sample(
-            miner_hotkey=sample.miner_hotkey,
-            model_revision=sample.model_revision,
-            model=sample.model,
-            env=sample.env,
-            task_id=sample.task_id,
-            score=sample.score,
-            latency_ms=sample.latency_ms,
-            extra=sample.extra.model_dump(),
-            validator_hotkey=sample.validator_hotkey,
-            block_number=sample.block_number,
-            signature=request.headers.get("X-Signature", ""),
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save sample: {str(e)}"
-        )
-    
-    return SampleSubmitResponse(
-        task_id=sample.task_id,  # Return task_id as identifier
-        created_at=int(time.time()),
-        message="Sample saved successfully"
     )
 
 
@@ -377,27 +302,28 @@ async def get_uid_samples(
     Note: model_revision is queried from bittensor commits, not provided by user.
     """
     try:
-        # Query bittensor metagraph to get miner info (including model_revision)
-        # Reference: affine.miners.miners() implementation
-        miners_dict = await get_miners(uids=uid, check_validity=False)
+        # Query from miners monitor (fast, no slow queries)
+        from affine.api.services.miners_monitor import MinersMonitor
         
-        if not miners_dict or uid not in miners_dict:
-            # UID not currently assigned or no valid commit
+        miners_monitor = MinersMonitor.get_instance()
+        miners_dict = await miners_monitor.get_valid_miners()
+        
+        # Find miner by uid
+        miner_info = None
+        for info in miners_dict.values():
+            if info.uid == uid:
+                miner_info = info
+                break
+        
+        if not miner_info:
+            # UID not found in cache
             return SampleListResponse(
                 samples=[],
                 pagination=PaginationInfo(total=0, limit=limit_per_env, next_cursor=None)
             )
         
-        miner = miners_dict[uid]
-        hotkey = miner.hotkey
-        model_revision = miner.revision
-        
-        if not model_revision:
-            # No revision in commit, cannot query samples
-            return SampleListResponse(
-                samples=[],
-                pagination=PaginationInfo(total=0, limit=limit_per_env, next_cursor=None)
-            )
+        hotkey = miner_info.hotkey
+        model_revision = miner_info.revision
         
         # Parse environments
         env_list = [e.strip() for e in envs.split(",")]

@@ -15,8 +15,9 @@ from affine.database.dao.execution_logs import ExecutionLogsDAO
 from affine.database.dao.scores import ScoresDAO
 from affine.database.dao.system_config import SystemConfigDAO
 from affine.database.dao.data_retention import DataRetentionDAO
-from affine.api.services.task_generator import TaskGeneratorService
 from affine.api.services.auth import AuthService
+from affine.api.config import config
+from affine.api.services.task_pool import TaskPoolManager
 
 
 # Database DAOs (singleton instances)
@@ -26,8 +27,8 @@ _execution_logs_dao: Optional[ExecutionLogsDAO] = None
 _scores_dao: Optional[ScoresDAO] = None
 _system_config_dao: Optional[SystemConfigDAO] = None
 _data_retention_dao: Optional[DataRetentionDAO] = None
-_task_generator_service: Optional[TaskGeneratorService] = None
 _auth_service: Optional[AuthService] = None
+_task_pool_manager: Optional[TaskPoolManager] = None
 
 
 def get_sample_results_dao() -> SampleResultsDAO:
@@ -79,17 +80,6 @@ def get_data_retention_dao() -> DataRetentionDAO:
     return _data_retention_dao
 
 
-def get_task_generator_service() -> TaskGeneratorService:
-    """Get TaskGeneratorService instance."""
-    global _task_generator_service
-    if _task_generator_service is None:
-        _task_generator_service = TaskGeneratorService(
-            sample_results_dao=get_sample_results_dao(),
-            task_queue_dao=get_task_queue_dao()
-        )
-    return _task_generator_service
-
-
 def get_auth_service() -> AuthService:
     """Get AuthService instance for executor authentication."""
     global _auth_service
@@ -102,6 +92,14 @@ def get_auth_service() -> AuthService:
             strict_mode=False  # Non-strict for development
         )
     return _auth_service
+
+
+def get_task_pool_manager() -> TaskPoolManager:
+    """Get TaskPoolManager singleton instance."""
+    global _task_pool_manager
+    if _task_pool_manager is None:
+        _task_pool_manager = TaskPoolManager.get_instance()
+    return _task_pool_manager
 
 
 async def verify_executor_auth(
