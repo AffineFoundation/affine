@@ -3,35 +3,23 @@ Task Scheduler Service - Main Entry Point
 
 Runs the TaskScheduler as an independent background service.
 This service generates sampling tasks for all miners periodically.
-
-Usage:
-    python -m affine.backend.task_scheduler.main
 """
 
 import os
 import asyncio
 import signal
+import click
 from affine.core.setup import setup_logging, logger
 from affine.database import init_client, close_client
 from affine.database.dao.sample_results import SampleResultsDAO
 from affine.database.dao.task_queue import TaskQueueDAO
-from affine.backend.scheduler.task_generator import TaskGeneratorService
-from affine.affine.backend.scheduler.scheduler import SchedulerService
-
-shutdown_event = asyncio.Event()
-
-def signal_handler(signum, frame):
-    logger.info(f"Received signal {signum}, initiating shutdown...")
-    shutdown_event.set()
+from .task_generator import TaskGeneratorService
+from .scheduler import SchedulerService
 
 
-async def main():
-    setup_logging(1)
+async def run_service(task_interval: int, cleanup_interval: int, max_tasks: int):
+    """Run the task scheduler service."""
     logger.info("Starting Task Scheduler Service")
-
-    # Register signal handlers
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
     
     # Initialize database
     try:
@@ -39,12 +27,18 @@ async def main():
         logger.info("Database client initialized")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
-        return 1
+        raise
     
-    # Get configuration from environment
-    task_generation_interval = int(os.getenv("SCHEDULER_TASK_GENERATION_INTERVAL", "300"))  # 5 minutes
-    cleanup_interval = int(os.getenv("SCHEDULER_CLEANUP_INTERVAL", "3600"))  # 1 hour
-    max_tasks_per_miner_env = int(os.getenv("SCHEDULER_MAX_TASKS_PER_MINER_ENV", "100"))
+    # Setup signal handlers
+    shutdown_event = asyncio.Event()
+    
+    def handle_shutdown(sig):
+        logger.info(f"Received signal {sig}, initiating shutdown...")
+        shutdown_event.set()
+    
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, lambda s=sig: handle_shutdown(s))
     
     # Initialize task generator and scheduler
     scheduler = None
@@ -62,15 +56,15 @@ async def main():
         # Create and start SchedulerService
         scheduler = SchedulerService(
             task_generator=task_generator,
-            task_generation_interval=task_generation_interval,
+            task_generation_interval=task_interval,
             cleanup_interval=cleanup_interval,
-            max_tasks_per_miner_env=max_tasks_per_miner_env
+            max_tasks_per_miner_env=max_tasks
         )
         
         await scheduler.start()
         logger.info(
-            f"TaskScheduler started (task_generation_interval={task_generation_interval}s, "
-            f"cleanup_interval={cleanup_interval}s)"
+            f"TaskScheduler started (task_interval={task_interval}s, "
+            f"cleanup_interval={cleanup_interval}s, max_tasks={max_tasks})"
         )
         
         # Wait for shutdown signal
@@ -78,7 +72,7 @@ async def main():
         
     except Exception as e:
         logger.error(f"Error running TaskScheduler: {e}", exc_info=True)
-        return 1
+        raise
     finally:
         # Cleanup
         if scheduler:
@@ -95,9 +89,55 @@ async def main():
             logger.error(f"Error closing database: {e}")
     
     logger.info("Task Scheduler Service shut down successfully")
-    return 0
+
+
+@click.command()
+@click.option(
+    "--task-interval",
+    default=60,
+    type=int,
+    help="Task generation interval in seconds"
+)
+@click.option(
+    "--cleanup-interval",
+    default=300,
+    type=int,
+    help="Cleanup interval in seconds"
+)
+@click.option(
+    "--max-tasks",
+    default=30,
+    type=int,
+    help="Maximum tasks per miner per environment"
+)
+@click.option(
+    "-v", "--verbosity",
+    default="1",
+    type=click.Choice(["0", "1", "2", "3"]),
+    help="Logging verbosity: 0=CRITICAL, 1=INFO, 2=DEBUG, 3=TRACE"
+)
+def main(task_interval, cleanup_interval, max_tasks, verbosity):
+    """
+    Affine Task Scheduler - Generate sampling tasks for miners.
+    
+    This service periodically generates sampling tasks for all active miners
+    and performs cleanup of old tasks.
+    """
+    # Setup logging
+    setup_logging(int(verbosity))
+    
+    # Override with environment variables if present
+    task_interval = int(os.getenv("SCHEDULER_TASK_GENERATION_INTERVAL", str(task_interval)))
+    cleanup_interval = int(os.getenv("SCHEDULER_CLEANUP_INTERVAL", str(cleanup_interval)))
+    max_tasks = int(os.getenv("SCHEDULER_MAX_TASKS_PER_MINER_ENV", str(max_tasks)))
+    
+    # Run service
+    asyncio.run(run_service(
+        task_interval=task_interval,
+        cleanup_interval=cleanup_interval,
+        max_tasks=max_tasks
+    ))
 
 
 if __name__ == "__main__":
-    exit_code = asyncio.run(main())
-    exit(exit_code)
+    main()

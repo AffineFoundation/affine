@@ -9,7 +9,6 @@ import uuid
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, status
 from affine.api.models import (
-    SampleSubmitRequest,
     SampleSubmitResponse,
     SampleListResponse,
     SampleFullResponse,
@@ -18,13 +17,12 @@ from affine.api.models import (
 )
 from affine.api.dependencies import (
     get_sample_results_dao,
-    get_task_queue_dao,
     get_task_pool_manager,
-    verify_signature_dependency,
     verify_executor_auth,
     rate_limit_read,
     rate_limit_write,
 )
+from affine.api.config import config
 from affine.core.models import SampleSubmission
 from affine.api.utils.pagination import get_pagination_params, create_pagination_info
 from affine.database.dao.sample_results import SampleResultsDAO
@@ -62,6 +60,12 @@ async def submit_sample_from_executor(
     - extra: Evaluation details and metadata
     - signature: Executor's signature of the above fields
     """
+    # Check if services are enabled
+    if not config.SERVICES_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Sample submit service is disabled (SERVICES_ENABLED=false)"
+        )
     
     # Parse submission
     try:
@@ -303,7 +307,7 @@ async def get_uid_samples(
     """
     try:
         # Query from miners monitor (fast, no slow queries)
-        from affine.api.services.miners_monitor import MinersMonitor
+        from affine.affine.backend.miners.miners_monitor import MinersMonitor
         
         miners_monitor = MinersMonitor.get_instance()
         miners_dict = await miners_monitor.get_valid_miners()

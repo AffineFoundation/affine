@@ -1,41 +1,34 @@
 """
 Scorer Service Main Entry
 
-分数计算器服务主入口
-- 支持定时服务模式
-- 支持单次执行模式（调试）
-- 支持命令行参数配置
+Score calculator service main entry point.
+- Supports scheduled service mode
+- Supports single execution mode (debugging)
+- Supports command line parameter configuration
 """
 
 import asyncio
-import logging
 import click
 from typing import Optional
 
+from affine.core.setup import setup_logging, logger
 from .calculator_v2 import ScoreCalculatorV2
 from .config import ScorerConfig
-
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 
 class ScorerService:
     """
-    计分器服务
+    Scorer Service
     
-    定时运行权重计算
+    Runs weight calculation periodically.
     """
     
     def __init__(self, config: ScorerConfig):
         """
-        初始化服务
+        Initialize service.
         
         Args:
-            config: Scorer 配置
+            config: Scorer configuration
         """
         self.config = config
         self.calculator = ScoreCalculatorV2(config)
@@ -43,7 +36,7 @@ class ScorerService:
         self._task: Optional[asyncio.Task] = None
     
     async def start(self):
-        """启动服务"""
+        """Start service"""
         self.running = True
         
         logger.info("Starting Scorer Service")
@@ -54,12 +47,12 @@ class ScorerService:
         logger.info(f"  Environments: {self.config.default_environments}")
         
         try:
-            # 立即执行一次
+            # Execute immediately once
             await self._run_calculation()
             
-            # 进入循环
+            # Enter loop
             while self.running:
-                # 等待下次计算
+                # Wait for next calculation
                 await asyncio.sleep(self.config.calculation_interval_minutes * 60)
                 
                 if self.running:
@@ -73,16 +66,16 @@ class ScorerService:
             await self.stop()
     
     async def stop(self):
-        """停止服务"""
+        """Stop service"""
         self.running = False
         
-        # 关闭资源
+        # Close resources
         await self.calculator.close()
         
         logger.info("Scorer Service stopped")
     
     async def _run_calculation(self):
-        """执行一次计算"""
+        """Execute one calculation"""
         logger.info("=" * 60)
         logger.info("Starting weight calculation")
         
@@ -96,10 +89,10 @@ class ScorerService:
     
     async def run_once(self) -> dict:
         """
-        单次执行模式 (调试)
+        Single execution mode (debugging)
         
         Returns:
-            计算结果
+            Calculation result
         """
         try:
             result = await self.calculator.calculate_weights()
@@ -109,7 +102,7 @@ class ScorerService:
 
 
 def print_result(result: dict):
-    """打印计算结果"""
+    """Print calculation result"""
     report = result["report"]
     weights = result["weights"]
     
@@ -143,9 +136,9 @@ def print_result(result: dict):
     
     if weights:
         print(f"\nFinal Weights:")
-        # 按权重排序
+        # Sort by weight
         sorted_weights = sorted(weights.items(), key=lambda x: x[1], reverse=True)
-        for hotkey, weight in sorted_weights[:10]:  # 只显示前10
+        for hotkey, weight in sorted_weights[:10]:  # Only show top 10
             print(f"  {hotkey[:16]}... : {weight:.6f}")
         if len(sorted_weights) > 10:
             print(f"  ... and {len(sorted_weights) - 10} more")
@@ -158,30 +151,30 @@ def print_result(result: dict):
 
 @click.command()
 @click.option(
-    '--api-url', 
-    default='http://localhost:8000', 
+    '--api-url',
+    default='http://localhost:8000',
     help='API base URL'
 )
 @click.option(
-    '--interval', 
-    default=30, 
-    type=int, 
+    '--interval',
+    default=30,
+    type=int,
     help='Calculation interval in minutes'
 )
 @click.option(
-    '--base-threshold', 
-    default=0.05, 
-    type=float, 
-    help='Base threshold percentage (e.g., 0.05 for 5%)'
+    '--base-threshold',
+    default=0.05,
+    type=float,
+    help='Base threshold percentage (e.g., 0.05 for 5%%)'
 )
 @click.option(
-    '--decay-alpha', 
-    default=1.0, 
-    type=float, 
+    '--decay-alpha',
+    default=1.0,
+    type=float,
     help='Exponential decay alpha parameter'
 )
 @click.option(
-    '--weight-method', 
+    '--weight-method',
     default='score_proportional',
     type=click.Choice(['score_proportional', 'rank_based', 'equal']),
     help='Weight distribution method'
@@ -192,29 +185,29 @@ def print_result(result: dict):
     help='Comma-separated list of environments'
 )
 @click.option(
-    '--once', 
-    is_flag=True, 
+    '--once',
+    is_flag=True,
     help='Run one calculation and exit (debug mode)'
 )
 @click.option(
-    '--log-level',
-    default='INFO',
-    type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']),
-    help='Logging level'
+    '-v', '--verbosity',
+    default='1',
+    type=click.Choice(['0', '1', '2', '3']),
+    help='Logging verbosity: 0=CRITICAL, 1=INFO, 2=DEBUG, 3=TRACE'
 )
-def main(api_url, interval, base_threshold, decay_alpha, weight_method, envs, once, log_level):
+def main(api_url, interval, base_threshold, decay_alpha, weight_method, envs, once, verbosity):
     """
     Affine Scorer - Weight calculation service
     
     Calculates miner weights based on sampling results using dynamic threshold algorithm.
     """
-    # 设置日志级别
-    logging.getLogger().setLevel(getattr(logging, log_level))
+    # Setup logging
+    setup_logging(int(verbosity))
     
-    # 解析环境列表
+    # Parse environment list
     environments = [e.strip() for e in envs.split(',') if e.strip()]
     
-    # 创建配置
+    # Create configuration
     config = ScorerConfig(
         api_base_url=api_url,
         calculation_interval_minutes=interval,
@@ -224,16 +217,16 @@ def main(api_url, interval, base_threshold, decay_alpha, weight_method, envs, on
         default_environments=environments
     )
     
-    # 创建服务
+    # Create service
     service = ScorerService(config)
     
     if once:
-        # 单次执行模式
+        # Single execution mode
         logger.info("Running in single calculation mode")
         result = asyncio.run(service.run_once())
         print_result(result)
     else:
-        # 服务模式
+        # Service mode
         logger.info("Running in service mode")
         try:
             asyncio.run(service.start())

@@ -4,28 +4,21 @@ Executor Main Entry Point
 
 Runs executor workers for multiple environments concurrently.
 Each environment gets its own thread/worker.
-
-Usage:
-    python -m affine.backend.executor.main --envs affine:sat affine:abd
-    python -m affine.backend.executor.main --all-envs
-    python -m affine.backend.executor.main --debug --envs affine:sat
 """
 
-import asyncio
-import argparse
-import logging
 import signal
-import sys
+import asyncio
 import os
-from typing import List, Optional
+import click
+from typing import List
 
 from affine.backend.executor.worker import ExecutorWorker
 from affine.core.setup import wallet, logger, setup_logging
 
 DEFAULT_ENVS = [
     "affine:sat",
-    "affine:abd",
-    "affine:ded",
+    # "affine:abd",
+    # "affine:ded",
 ]
 
 class ExecutorManager:
@@ -148,34 +141,15 @@ class ExecutorManager:
         print("=" * 60)
 
 
-async def main(args):
-    """Main entry point."""
-    # Setup logging using unified configuration
-    # verbosity: 0=CRITICAL+, 1=INFO, 2=DEBUG, 3=TRACE
-    if args.verbosity is not None:
-        verbosity = args.verbosity
-    elif args.debug:
-        verbosity = 2
-    else:
-        verbosity = 1
-    setup_logging(verbosity)
-    
-    # Determine which environments to run
-    if args.all_envs:
-        envs = DEFAULT_ENVS
-    else:
-        envs = args.envs or DEFAULT_ENVS
-    
+async def run_service(envs: List[str], api_url: str, poll_interval: int, single_run: bool, show_status: bool):
+    """Run the executor service."""
     logger.info(f"Starting executor for environments: {envs}")
-    
-    # Get API URL from args or environment
-    api_url = args.api_url or os.getenv("AFFINE_API_URL", "http://localhost:8000")
     
     # Create manager
     manager = ExecutorManager(
         envs=envs,
         api_base_url=api_url,
-        poll_interval=args.poll_interval,
+        poll_interval=poll_interval,
     )
     
     # Setup signal handlers for graceful shutdown
@@ -194,17 +168,15 @@ async def main(args):
         await manager.start()
         
         # Print initial status
-        if args.debug:
+        if show_status:
             manager.print_status()
         
         # Wait for shutdown signal
-        if args.single_run:
-            # For debugging: run once and exit
+        if single_run:
             logger.info("Single-run mode: waiting for one cycle...")
-            await asyncio.sleep(args.poll_interval * 2)
+            await asyncio.sleep(poll_interval * 2)
             manager.print_status()
         else:
-            # Normal mode: run until shutdown
             logger.info("Running in continuous mode. Press Ctrl+C to stop.")
             
             # Periodically print status
@@ -212,76 +184,84 @@ async def main(args):
                 try:
                     await asyncio.wait_for(shutdown_event.wait(), timeout=60)
                 except asyncio.TimeoutError:
-                    if args.debug:
+                    if show_status:
                         manager.print_status()
         
         # Print final status
         manager.print_status()
         
     except Exception as e:
-        logger.error(f"Error running executor: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error running executor: {e}", exc_info=True)
+        raise
     finally:
         await manager.stop()
 
 
-def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Affine Executor - Run sampling tasks for multiple environments"
-    )
+@click.command()
+@click.option(
+    "--envs",
+    multiple=True,
+    help="Environments to execute tasks for (e.g., affine:sat)"
+)
+@click.option(
+    "--all-envs",
+    is_flag=True,
+    help="Run all default environments"
+)
+@click.option(
+    "--api-url",
+    default=None,
+    help="API server URL (default: from AFFINE_API_URL or http://localhost:8000)"
+)
+@click.option(
+    "--poll-interval",
+    default=5,
+    type=int,
+    help="Seconds between polling for tasks"
+)
+@click.option(
+    "-v", "--verbosity",
+    default="1",
+    type=click.Choice(["0", "1", "2", "3"]),
+    help="Logging verbosity: 0=CRITICAL, 1=INFO, 2=DEBUG, 3=TRACE"
+)
+@click.option(
+    "--single-run",
+    is_flag=True,
+    help="Run once and exit (for debugging)"
+)
+def main(envs, all_envs, api_url, poll_interval, verbosity, single_run):
+    """
+    Affine Executor - Execute sampling tasks for multiple environments.
     
-    parser.add_argument(
-        "--envs",
-        nargs="+",
-        default=None,
-        help="Environments to run (e.g., affine:sat affine:abd)"
-    )
+    Each environment runs in its own async worker, polling for tasks and executing them.
+    """
+    # Setup logging
+    setup_logging(int(verbosity))
     
-    parser.add_argument(
-        "--all-envs",
-        action="store_true",
-        help="Run all default environments"
-    )
+    # Determine environments
+    if all_envs:
+        selected_envs = list(DEFAULT_ENVS)
+    elif envs:
+        selected_envs = list(envs)
+    else:
+        selected_envs = list(DEFAULT_ENVS)
     
-    parser.add_argument(
-        "--api-url",
-        type=str,
-        default=None,
-        help="API server URL (default: http://localhost:8000 or AFFINE_API_URL env)"
-    )
+    # Get API URL
+    api_base_url = api_url or os.getenv("AFFINE_API_URL", "http://localhost:8000")
     
-    parser.add_argument(
-        "--poll-interval",
-        type=int,
-        default=5,
-        help="Seconds between polling for tasks (default: 5)"
-    )
+    # Show status in debug mode
+    show_status = int(verbosity) >= 2
     
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug logging (equivalent to --verbosity 2)"
-    )
-    
-    parser.add_argument(
-        "-v", "--verbosity",
-        type=int,
-        choices=[0, 1, 2, 3],
-        default=None,
-        help="Logging verbosity: 0=CRITICAL, 1=INFO (default), 2=DEBUG, 3=TRACE"
-    )
-    
-    parser.add_argument(
-        "--single-run",
-        action="store_true",
-        help="Run once and exit (for debugging)"
-    )
-    
-    return parser.parse_args()
+    # Run service
+    asyncio.run(run_service(
+        envs=selected_envs,
+        api_url=api_base_url,
+        poll_interval=poll_interval,
+        single_run=single_run,
+        show_status=show_status
+    ))
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    asyncio.run(main(args))
+    main()
