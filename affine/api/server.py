@@ -75,12 +75,6 @@ async def lifespan(app: FastAPI):
             "/fetch and /submit endpoints will return 503 Service Unavailable."
         )
     
-    logger.info(
-        "NOTE: MinersMonitor and TaskScheduler should run as separate services:\n"
-        "  - MinersMonitor: python -m affine.backend.miners_monitor.main\n"
-        "  - TaskScheduler: python -m affine.backend.task_scheduler.main"
-    )
-    
     yield
     
     # Shutdown

@@ -9,8 +9,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from affine.api.models import (
     ExecutionLogsResponse,
     ExecutionLog,
-    ConsecutiveErrorsResponse,
-    RecentError,
 )
 from affine.api.dependencies import (
     get_execution_logs_dao,
@@ -70,66 +68,4 @@ async def get_miner_logs(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve logs: {str(e)}"
-        )
-
-
-@router.get("/miner/{hotkey}/consecutive-errors", response_model=ConsecutiveErrorsResponse, dependencies=[Depends(rate_limit_read)])
-async def check_consecutive_errors(
-    hotkey: str,
-    threshold: int = Query(10, description="Error threshold for pausing", ge=1),
-    dao: ExecutionLogsDAO = Depends(get_execution_logs_dao),
-):
-    """
-    Check consecutive errors for a miner.
-    
-    Returns information about consecutive errors and whether the miner should be paused.
-    
-    Query parameters:
-    - threshold: Number of consecutive errors before recommending pause (default: 10)
-    
-    Note: model_revision filtering not supported by DAO
-    """
-    try:
-        # DAO only accepts miner_hotkey and threshold
-        has_consecutive_errors = await dao.check_consecutive_errors(
-            miner_hotkey=hotkey,
-            threshold=threshold,
-        )
-        
-        # Get recent error details
-        recent_error_logs = await dao.get_recent_logs(
-            miner_hotkey=hotkey,
-            limit=threshold,
-            status='failed',
-        )
-        
-        # Count consecutive errors from most recent
-        consecutive_errors = 0
-        for log in recent_error_logs:
-            if log.get('status') == 'failed':
-                consecutive_errors += 1
-            else:
-                break
-        
-        recent_errors = [
-            RecentError(
-                timestamp=log["timestamp"],
-                error_type=log.get("error_type", "UNKNOWN"),
-                error_message=log.get("error_message", ""),
-            )
-            for log in recent_error_logs
-        ]
-        
-        return ConsecutiveErrorsResponse(
-            miner_hotkey=hotkey,
-            consecutive_errors=consecutive_errors,
-            threshold=threshold,
-            should_pause=(consecutive_errors >= threshold),
-            recent_errors=recent_errors,
-        )
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to check consecutive errors: {str(e)}"
         )
