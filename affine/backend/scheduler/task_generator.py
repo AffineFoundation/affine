@@ -161,13 +161,13 @@ class TaskGeneratorService:
         
         if not missing_task_ids:
             logger.debug(
-                f"No missing tasks for miner {miner.hotkey[:8]}... "
+                f"No missing tasks for miner {miner.uid}({miner.hotkey[:8]}...) "
                 f"env={env} completed={len(completed_task_ids)} pending={len(pending_task_ids)}"
             )
             return 0
         
         logger.info(
-            f"Found {len(missing_task_ids)} missing tasks for miner {miner.hotkey[:8]}... "
+            f"Found {len(missing_task_ids)} missing tasks for miner {miner.uid}({miner.hotkey[:8]}...) "
             f"env={env} (completed={len(completed_task_ids)}, pending={len(pending_task_ids)})"
         )
         
@@ -193,7 +193,7 @@ class TaskGeneratorService:
         )
         
         logger.info(
-            f"Created {created_count} tasks for miner {miner.hotkey[:8]}... env={env}"
+            f"Created {created_count} tasks for miner {miner.uid}({miner.hotkey[:8]}...) env={env}"
         )
         
         return created_count
@@ -202,7 +202,7 @@ class TaskGeneratorService:
         self,
         miners: List[MinerInfo],
         envs: Optional[List[str]] = None,
-        max_tasks_per_miner_env: int = 100
+        max_tasks_per_miner_env: int = 10
     ) -> TaskGenerationResult:
         """
         Generate tasks for all miners across all environments.

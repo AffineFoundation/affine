@@ -170,58 +170,6 @@ async def verify_executor_auth(
     
     return executor_hotkey
 
-
-async def verify_signature_dependency(request: Request) -> str:
-    """
-    Dependency to verify request signature.
-    
-    Returns:
-        Authenticated hotkey
-        
-    Raises:
-        HTTPException: If signature is invalid
-    """
-    try:
-        # Get body as dict
-        body = await request.json()
-        hotkey, is_valid = await verify_request_signature(request, body)
-        
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid signature"
-            )
-        
-        return hotkey
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid request body: {str(e)}"
-        )
-
-
-async def verify_admin_access(request: Request) -> str:
-    """
-    Dependency to verify admin access.
-    
-    Returns:
-        Authenticated admin hotkey
-        
-    Raises:
-        HTTPException: If not authorized as admin
-    """
-    hotkey = await verify_signature_dependency(request)
-    
-    if not config.is_admin(hotkey):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
-        )
-    
-    return hotkey
-
-
-# Rate limiting storage (in-memory for now, could use Redis in production)
 _rate_limit_store: dict = {}
 
 
@@ -266,7 +214,7 @@ async def rate_limit_read(request: Request):
     """Dependency for read endpoint rate limiting."""
     if not config.RATE_LIMIT_ENABLED:
         return
-    
+
     identifier = request.client.host
     if not check_rate_limit(identifier, config.RATE_LIMIT_READ):
         raise HTTPException(
@@ -283,19 +231,6 @@ async def rate_limit_write(request: Request):
     # Use hotkey as identifier for write operations
     hotkey = get_hotkey_from_request(request)
     if not check_rate_limit(hotkey, config.RATE_LIMIT_WRITE):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Rate limit exceeded"
-        )
-
-
-async def rate_limit_admin(request: Request):
-    """Dependency for admin endpoint rate limiting."""
-    if not config.RATE_LIMIT_ENABLED:
-        return
-    
-    hotkey = get_hotkey_from_request(request)
-    if not check_rate_limit(hotkey, config.RATE_LIMIT_ADMIN):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Rate limit exceeded"

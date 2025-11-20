@@ -17,20 +17,13 @@ class APIConfig:
     WORKERS: int = int(os.getenv("API_WORKERS", "4"))
     RELOAD: bool = os.getenv("API_RELOAD", "false").lower() == "true"
 
-    # Authentication
-    ADMIN_HOTKEYS: List[str] = [
-        hk.strip()
-        for hk in os.getenv("API_ADMIN_HOTKEYS", "").split(",")
-        if hk.strip()
-    ]
 
     # Rate limiting
     RATE_LIMIT_ENABLED: bool = (
         os.getenv("API_RATE_LIMIT_ENABLED", "true").lower() == "true"
     )
     RATE_LIMIT_READ: int = int(os.getenv("API_RATE_LIMIT_READ", "1000"))  # per hour
-    RATE_LIMIT_WRITE: int = int(os.getenv("API_RATE_LIMIT_WRITE", "100"))  # per hour
-    RATE_LIMIT_ADMIN: int = int(os.getenv("API_RATE_LIMIT_ADMIN", "50"))  # per hour
+    RATE_LIMIT_WRITE: int = int(os.getenv("API_RATE_LIMIT_WRITE", "1000"))  # per hour
 
     # CORS
     CORS_ORIGINS: List[str] = [
@@ -55,7 +48,7 @@ class APIConfig:
 
     # Services settings
     SERVICES_ENABLED: bool = (
-        os.getenv("API_SERVICES_ENABLED", "true").lower() == "true"
+        os.getenv("API_SERVICES_ENABLED", "false").lower() == "true"
     )
     
     # Scheduler settings (only used if SERVICES_ENABLED=true)
@@ -76,12 +69,6 @@ class APIConfig:
     APP_NAME: str = "Affine API"
     APP_VERSION: str = "1.0.0"
     APP_DESCRIPTION: str = "RESTful API for Affine validator infrastructure"
-
-    @classmethod
-    def is_admin(cls, hotkey: str) -> bool:
-        """Check if a hotkey has admin privileges."""
-        return hotkey in cls.ADMIN_HOTKEYS
-
 
 # Singleton instance
 config = APIConfig()

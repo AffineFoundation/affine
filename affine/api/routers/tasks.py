@@ -9,8 +9,6 @@ import logging
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, status
 from affine.api.models import (
-    TaskCreateRequest,
-    TaskCreateResponse,
     TaskFetchResponse,
 )
 from affine.api.dependencies import (
@@ -19,6 +17,7 @@ from affine.api.dependencies import (
     rate_limit_read,
     rate_limit_write,
 )
+from affine.api.config import config
 from affine.database.dao.task_queue import TaskQueueDAO
 from affine.api.services.task_pool import TaskPoolManager
 
@@ -54,6 +53,13 @@ async def fetch_task(
     Returns:
     - Task details if available, or null if no tasks
     """
+    # Check if services are enabled
+    if not config.SERVICES_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Task fetch service is disabled (SERVICES_ENABLED=false)"
+        )
+    
     try:
         logger.info(f"Task fetch requested by executor {executor_hotkey[:16]}... for env {env or 'any'}")
         
@@ -86,7 +92,7 @@ async def fetch_task(
                 "created_at": task["created_at"],
             }
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:

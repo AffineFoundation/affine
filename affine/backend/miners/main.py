@@ -3,33 +3,19 @@ Miners Monitor Service - Main Entry Point
 
 Runs the MinersMonitor as an independent background service.
 This service monitors miners from the metagraph and updates the database.
-
-Usage:
-    python -m affine.backend.miners_monitor.main
 """
 
 import asyncio
 import signal
+import click
 from affine.core.setup import logger, setup_logging
 from affine.database import init_client, close_client
-from miners_monitor import MinersMonitor
-
-shutdown_event = asyncio.Event()
+from .miners_monitor import MinersMonitor
 
 
-def signal_handler(signum, frame):
-    """Handle shutdown signals."""
-    logger.info(f"Received signal {signum}, initiating shutdown...")
-    shutdown_event.set()
-
-
-async def main():
-    setup_logging(1)
+async def run_service():
+    """Run the miners monitor service."""
     logger.info("Starting Miners Monitor Service")
-
-    # Register signal handlers
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
     
     # Initialize database
     try:
@@ -37,20 +23,31 @@ async def main():
         logger.info("Database client initialized")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
-        return 1
+        raise
+    
+    # Setup signal handlers
+    shutdown_event = asyncio.Event()
+    
+    def handle_shutdown(sig):
+        logger.info(f"Received signal {sig}, initiating shutdown...")
+        shutdown_event.set()
+    
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, lambda s=sig: handle_shutdown(s))
     
     # Initialize and start MinersMonitor
     monitor = None
     try:
         monitor = await MinersMonitor.initialize()
-        logger.info(f"MinersMonitor started")
-
+        logger.info("MinersMonitor started")
+        
         # Wait for shutdown signal
         await shutdown_event.wait()
         
     except Exception as e:
         logger.error(f"Error running MinersMonitor: {e}", exc_info=True)
-        return 1
+        raise
     finally:
         # Cleanup
         if monitor:
@@ -67,9 +64,28 @@ async def main():
             logger.error(f"Error closing database: {e}")
     
     logger.info("Miners Monitor Service shut down successfully")
-    return 0
+
+
+@click.command()
+@click.option(
+    "-v", "--verbosity",
+    default="1",
+    type=click.Choice(["0", "1", "2", "3"]),
+    help="Logging verbosity: 0=CRITICAL, 1=INFO, 2=DEBUG, 3=TRACE"
+)
+def main(verbosity):
+    """
+    Affine Miners Monitor - Monitor miners from metagraph and update database.
+    
+    This service continuously monitors the Bittensor metagraph for miner information
+    and keeps the database synchronized.
+    """
+    # Setup logging
+    setup_logging(int(verbosity))
+    
+    # Run service
+    asyncio.run(run_service())
 
 
 if __name__ == "__main__":
-    exit_code = asyncio.run(main())
-    exit(exit_code)
+    main()
