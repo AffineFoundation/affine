@@ -45,21 +45,25 @@ class BaseDAO:
         
         return item
     
-    async def get(self, pk: str, sk: str) -> Optional[Dict[str, Any]]:
+    async def get(self, pk: str, sk: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get an item by primary key.
         
         Args:
             pk: Partition key value
-            sk: Sort key value
+            sk: Sort key value (optional, for tables with composite keys)
             
         Returns:
             Item if found, None otherwise
         """
         client = get_client()
         
+        key = {'pk': {'S': pk}}
+        if sk is not None:
+            key['sk'] = {'S': sk}
+        
         response = await client.get_item(
             TableName=self.table_name,
-            Key={'pk': {'S': pk}, 'sk': {'S': sk}}
+            Key=key
         )
         
         item = response.get('Item')
@@ -126,12 +130,12 @@ class BaseDAO:
         
         return items[:limit] if limit else items
     
-    async def delete(self, pk: str, sk: str) -> bool:
+    async def delete(self, pk: str, sk: Optional[str] = None) -> bool:
         """Delete an item by primary key.
         
         Args:
             pk: Partition key value
-            sk: Sort key value
+            sk: Sort key value (optional, for tables with composite keys)
             
         Returns:
             True if item was deleted, False if not found
@@ -139,9 +143,13 @@ class BaseDAO:
         client = get_client()
         
         try:
+            key = {'pk': {'S': pk}}
+            if sk is not None:
+                key['sk'] = {'S': sk}
+            
             await client.delete_item(
                 TableName=self.table_name,
-                Key={'pk': {'S': pk}, 'sk': {'S': sk}}
+                Key=key
             )
             return True
         except Exception:

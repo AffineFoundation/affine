@@ -15,19 +15,18 @@ import asyncio
 import time
 import random
 import logging
-from typing import Dict, Any, Optional, List, Set
+from typing import Dict, Any, Optional, List
 from collections import defaultdict
-from datetime import datetime, timedelta
 
 from affine.database.dao.task_queue import TaskQueueDAO
 from affine.database.dao.execution_logs import ExecutionLogsDAO
-from affine.api.services.miners_cache import MinersCacheManager
+from affine.database.dao.miners import MinersDAO
 
 logger = logging.getLogger(__name__)
 
 
 class TaskLock:
-    """Represents a task lock held by an executor."""
+    """Represents a task lock for preventing concurrent fetch of same task."""
     
     def __init__(self, task_uuid: str, executor_hotkey: str, timeout_seconds: int = 300):
         self.task_uuid = task_uuid
@@ -44,6 +43,20 @@ class TaskLock:
         return self.executor_hotkey == hotkey
 
 
+class AssignedTask:
+    """Tracks assigned tasks with timeout for auto-reset."""
+    
+    def __init__(self, task_uuid: str, assigned_to: str, assigned_at: int, timeout_seconds: int = 600):
+        self.task_uuid = task_uuid
+        self.assigned_to = assigned_to
+        self.assigned_at = assigned_at
+        self.timeout_seconds = timeout_seconds
+    
+    def is_expired(self) -> bool:
+        """Check if assignment has expired (10 minutes)."""
+        return time.time() - self.assigned_at > self.timeout_seconds
+
+
 class TaskPoolManager:
     """
     Manages task pool with weighted random selection and distributed locking.
@@ -57,6 +70,7 @@ class TaskPoolManager:
     def __init__(
         self,
         lock_timeout_seconds: int = 300,  # 5 minutes
+        assigned_timeout_seconds: int = 600,  # 10 minutes
         cleanup_interval_seconds: int = 60,  # 1 minute
     ):
         """
@@ -64,17 +78,23 @@ class TaskPoolManager:
         
         Args:
             lock_timeout_seconds: Lock timeout in seconds (default: 300 = 5 min)
+            assigned_timeout_seconds: Assigned task timeout (default: 600 = 10 min)
             cleanup_interval_seconds: Interval for cleanup tasks (default: 60s)
         """
         self.dao = TaskQueueDAO()
         self.logs_dao = ExecutionLogsDAO()
-        self.miners_cache = MinersCacheManager.get_instance()
+        self.miners_dao = MinersDAO()
         
-        # In-memory lock storage: {task_uuid: TaskLock}
+        # In-memory lock storage for fetch concurrency control: {task_uuid: TaskLock}
         self.locks: Dict[str, TaskLock] = {}
-        self.locks_lock = asyncio.Lock()  # Protect locks dict
+        self.locks_lock = asyncio.Lock()
+        
+        # In-memory tracking of assigned tasks for timeout detection: {task_uuid: AssignedTask}
+        self.assigned_tasks: Dict[str, AssignedTask] = {}
+        self.assigned_tasks_lock = asyncio.Lock()
         
         self.lock_timeout_seconds = lock_timeout_seconds
+        self.assigned_timeout_seconds = assigned_timeout_seconds
         self.cleanup_interval_seconds = cleanup_interval_seconds
         
         # Background task handles
@@ -83,7 +103,7 @@ class TaskPoolManager:
         
         logger.info(
             f"TaskPoolManager initialized (lock_timeout={lock_timeout_seconds}s, "
-            f"cleanup_interval={cleanup_interval_seconds}s)"
+            f"assigned_timeout={assigned_timeout_seconds}s, cleanup_interval={cleanup_interval_seconds}s)"
         )
     
     @classmethod
@@ -107,14 +127,48 @@ class TaskPoolManager:
         return cls._instance
     
     async def start_background_tasks(self):
-        """Start background cleanup tasks."""
+        """Start background cleanup tasks and load assigned tasks from database."""
         if self._running:
             logger.warning("Background tasks already running")
             return
         
+        # Load assigned tasks from database on startup
+        await self._load_assigned_tasks_from_db()
+        
         self._running = True
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info("TaskPoolManager background tasks started")
+    
+    async def _load_assigned_tasks_from_db(self):
+        """Load all assigned tasks from database on startup/restart."""
+        try:
+            from affine.database.client import get_client
+            client = get_client()
+            
+            # Scan for all assigned tasks across all environments
+            params = {
+                'TableName': self.dao.table_name,
+                'FilterExpression': '#status = :assigned',
+                'ExpressionAttributeNames': {'#status': 'status'},
+                'ExpressionAttributeValues': {':assigned': {'S': 'assigned'}}
+            }
+            
+            response = await client.scan(**params)
+            tasks = [self.dao._deserialize(item) for item in response.get('Items', [])]
+            
+            async with self.assigned_tasks_lock:
+                for task in tasks:
+                    self.assigned_tasks[task['task_uuid']] = AssignedTask(
+                        task_uuid=task['task_uuid'],
+                        assigned_to=task.get('assigned_to', ''),
+                        assigned_at=task.get('assigned_at', int(time.time())),
+                        timeout_seconds=self.assigned_timeout_seconds
+                    )
+            
+            logger.info(f"Loaded {len(tasks)} assigned tasks from database on startup")
+            
+        except Exception as e:
+            logger.error(f"Error loading assigned tasks from database: {e}", exc_info=True)
     
     async def stop_background_tasks(self):
         """Stop background cleanup tasks."""
@@ -133,10 +187,15 @@ class TaskPoolManager:
             try:
                 await asyncio.sleep(self.cleanup_interval_seconds)
                 
-                # Release expired locks
+                # Release expired fetch locks
                 released_count = await self.release_expired_locks()
                 if released_count > 0:
-                    logger.info(f"Released {released_count} expired locks")
+                    logger.info(f"Released {released_count} expired fetch locks")
+                
+                # Reset expired assigned tasks to pending
+                reset_count = await self.reset_expired_assigned_tasks()
+                if reset_count > 0:
+                    logger.info(f"Reset {reset_count} expired assigned tasks to pending")
                 
                 # Cleanup invalid tasks (every 5 minutes)
                 if int(time.time()) % 300 < self.cleanup_interval_seconds:
@@ -149,7 +208,7 @@ class TaskPoolManager:
     
     async def release_expired_locks(self) -> int:
         """
-        Release all expired locks.
+        Release all expired fetch locks (concurrency control).
         
         Returns:
             Number of locks released
@@ -162,75 +221,104 @@ class TaskPoolManager:
             
             for uuid in expired_uuids:
                 del self.locks[uuid]
-                logger.debug(f"Released expired lock for task {uuid}")
+                logger.debug(f"Released expired fetch lock for task {uuid}")
             
             return len(expired_uuids)
+    
+    async def reset_expired_assigned_tasks(self) -> int:
+        """
+        Reset expired assigned tasks to pending status.
+        
+        This prevents tasks from being permanently stuck in assigned state
+        if executor crashes or takes too long (> 10 minutes).
+        
+        Returns:
+            Number of tasks reset
+        """
+        reset_count = 0
+        
+        async with self.assigned_tasks_lock:
+            expired_uuids = [
+                uuid for uuid, assigned in self.assigned_tasks.items()
+                if assigned.is_expired()
+            ]
+        
+        for task_uuid in expired_uuids:
+            try:
+                # Get task from database
+                task = await self.dao.get_task_by_uuid(task_uuid)
+                
+                if not task:
+                    # Task no longer exists (already completed), remove from tracking
+                    async with self.assigned_tasks_lock:
+                        del self.assigned_tasks[task_uuid]
+                    continue
+                
+                if task.get('status') != 'assigned':
+                    # Task status changed, remove from tracking
+                    async with self.assigned_tasks_lock:
+                        del self.assigned_tasks[task_uuid]
+                    continue
+                
+                # Reset task to pending status
+                await self.dao.delete(task['pk'], task['sk'])
+                
+                task['sk'] = self.dao._make_sk('pending', task['task_uuid'])
+                task['status'] = 'pending'
+                task['assigned_to'] = None
+                task['assigned_at'] = None
+                
+                await self.dao.put(task)
+                
+                # Remove from assigned tasks tracking
+                async with self.assigned_tasks_lock:
+                    del self.assigned_tasks[task_uuid]
+                
+                reset_count += 1
+                logger.warning(
+                    f"Reset expired assigned task {task_uuid} to pending "
+                    f"(was assigned to {task.get('assigned_to')}, "
+                    f"env={task.get('env')}, task_id={task.get('task_id')})"
+                )
+                
+            except Exception as e:
+                logger.error(f"Error resetting expired task {task_uuid}: {e}", exc_info=True)
+        
+        return reset_count
     
     async def cleanup_invalid_tasks(self) -> int:
         """
         Remove tasks for miners that are no longer valid.
         
-        Uses global miners cache to determine validity.
+        Directly queries MinersDAO to determine validity.
         
         Returns:
             Number of tasks cleaned up
         """
         try:
-            # Get valid miners from cache (returns Dict[str, MinerInfo])
-            valid_miners_dict = await self.miners_cache.get_valid_miners()
+            # Get valid miners from DAO directly
+            valid_miners_data = await self.miners_dao.get_valid_miners()
             
-            if not valid_miners_dict:
+            if not valid_miners_data:
                 logger.warning("No valid miners found, skipping cleanup")
                 return 0
 
-            # Convert to list of dicts for DAO
+            # Convert to format expected by TaskQueueDAO
             valid_miners_list = [
                 {
-                    'hotkey': info.hotkey,
-                    'model_revision': info.revision
+                    'hotkey': miner['hotkey'],
+                    'model_revision': miner['revision']
                 }
-                for info in valid_miners_dict.values()
+                for miner in valid_miners_data
             ]
 
             # Call DAO cleanup method
             cleaned_count = await self.dao.cleanup_invalid_tasks(valid_miners_list)
-            
-            # Also release locks for cleaned tasks
-            if cleaned_count > 0:
-                async with self.locks_lock:
-                    # We don't know which specific tasks were cleaned, so just log
-                    logger.info(f"Cleaned up {cleaned_count} invalid tasks")
-            
             return cleaned_count
             
         except Exception as e:
             logger.error(f"Error cleaning up invalid tasks: {e}", exc_info=True)
             return 0
-    
-    async def _get_miner_pending_counts(self, env: str) -> Dict[str, int]:
-        """
-        Get pending task count for each miner in the given environment.
-        
-        Args:
-            env: Environment name
-            
-        Returns:
-            Dict mapping (hotkey, revision) tuple to pending count
-        """
-        # Get all pending tasks for this environment
-        pending_tasks = await self.dao.get_pending_tasks_by_env(env, limit=None)
-        
-        # Count by (hotkey, revision)
-        counts: Dict[str, int] = defaultdict(int)
-        for task in pending_tasks:
-            # Skip locked tasks
-            if task['task_uuid'] in self.locks:
-                continue
-            
-            key = f"{task['miner_hotkey']}#{task['model_revision']}"
-            counts[key] += 1
-        
-        return counts
     
     async def fetch_task(
         self,
@@ -333,6 +421,15 @@ class TaskPoolManager:
             # Persist assignment to database
             assigned_task = await self.dao.assign_task(selected_task, executor_hotkey)
             
+            # Track assigned task for timeout detection
+            async with self.assigned_tasks_lock:
+                self.assigned_tasks[assigned_task['task_uuid']] = AssignedTask(
+                    task_uuid=assigned_task['task_uuid'],
+                    assigned_to=executor_hotkey,
+                    assigned_at=assigned_task['assigned_at'],
+                    timeout_seconds=self.assigned_timeout_seconds
+                )
+            
             logger.info(
                 f"Task {assigned_task['task_uuid']} assigned to {executor_hotkey} "
                 f"(miner={hotkey}, env={assigned_task['env']}, task_id={assigned_task['task_id']})"
@@ -426,6 +523,11 @@ class TaskPoolManager:
                 # Delete task from queue
                 await self.dao.complete_task(task)
                 
+                # Remove from assigned tasks tracking
+                async with self.assigned_tasks_lock:
+                    if task_uuid in self.assigned_tasks:
+                        del self.assigned_tasks[task_uuid]
+                
                 logger.info(
                     f"Task {task_uuid} completed successfully by {executor_hotkey} "
                     f"(miner={task['miner_hotkey']}, env={task['env']}, task_id={task['task_id']})"
@@ -442,6 +544,17 @@ class TaskPoolManager:
                     error_message or 'Unknown error',
                     error_code or 'EXECUTION_ERROR'
                 )
+                
+                # Update assigned tasks tracking
+                async with self.assigned_tasks_lock:
+                    if updated_task['status'] == 'pending':
+                        # Reset to pending for retry, remove from tracking (will be reassigned)
+                        if task_uuid in self.assigned_tasks:
+                            del self.assigned_tasks[task_uuid]
+                    elif updated_task['status'] == 'failed':
+                        # Permanently failed, remove from tracking
+                        if task_uuid in self.assigned_tasks:
+                            del self.assigned_tasks[task_uuid]
                 
                 if updated_task['status'] == 'failed':
                     logger.warning(
@@ -465,49 +578,3 @@ class TaskPoolManager:
                 'status': 'error',
                 'message': f'Internal error: {str(e)}'
             }
-    
-    async def get_pool_stats(self) -> Dict[str, Any]:
-        """
-        Get statistics about the task pool.
-        
-        Returns:
-            Dict with pool statistics
-        """
-        try:
-            from affine.api.dependencies import get_system_config
-            config = await get_system_config()
-            envs = config.get('sampling_environments', ['affine:sat'])
-            
-            stats = {
-                'environments': {},
-                'total_pending': 0,
-                'total_locked': 0,
-                'total_assigned': 0,
-                'total_failed': 0,
-            }
-            
-            for env in envs:
-                env_stats = await self.dao.get_queue_stats(env)
-                stats['environments'][env] = env_stats
-                stats['total_pending'] += env_stats.get('pending', 0)
-                stats['total_assigned'] += env_stats.get('assigned', 0)
-                stats['total_failed'] += env_stats.get('failed', 0)
-            
-            # Count locked tasks
-            async with self.locks_lock:
-                stats['total_locked'] = len(self.locks)
-                stats['lock_details'] = [
-                    {
-                        'task_uuid': uuid,
-                        'executor': lock.executor_hotkey,
-                        'locked_at': lock.locked_at,
-                        'expires_in': max(0, lock.timeout_seconds - (time.time() - lock.locked_at))
-                    }
-                    for uuid, lock in self.locks.items()
-                ]
-            
-            return stats
-            
-        except Exception as e:
-            logger.error(f"Error getting pool stats: {e}", exc_info=True)
-            return {'error': str(e)}
