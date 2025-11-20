@@ -95,8 +95,8 @@ class MinersMonitor:
         """Background refresh loop"""
         while self._running:
             try:
-                await asyncio.sleep(self.refresh_interval_seconds)
                 await self.refresh_miners()
+                await asyncio.sleep(self.refresh_interval_seconds)
             except Exception as e:
                 logger.error(f"[MinersMonitor] Error in refresh loop: {e}", exc_info=True)
     

@@ -20,7 +20,7 @@ from collections import defaultdict
 
 from affine.database.dao.task_queue import TaskQueueDAO
 from affine.database.dao.execution_logs import ExecutionLogsDAO
-from affine.api.services.miners_monitor import MinersMonitor
+from affine.database.dao.miners import MinersDAO
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ class TaskPoolManager:
         """
         self.dao = TaskQueueDAO()
         self.logs_dao = ExecutionLogsDAO()
-        self.miners_monitor = MinersMonitor.get_instance()
+        self.miners_dao = MinersDAO()
         
         # In-memory lock storage for fetch concurrency control: {task_uuid: TaskLock}
         self.locks: Dict[str, TaskLock] = {}
@@ -290,26 +290,26 @@ class TaskPoolManager:
         """
         Remove tasks for miners that are no longer valid.
         
-        Uses global miners cache to determine validity.
+        Directly queries MinersDAO to determine validity.
         
         Returns:
             Number of tasks cleaned up
         """
         try:
-            # Get valid miners from monitor (returns Dict[str, MinerInfo])
-            valid_miners_dict = await self.miners_monitor.get_valid_miners()
+            # Get valid miners from DAO directly
+            valid_miners_data = await self.miners_dao.get_valid_miners()
             
-            if not valid_miners_dict:
+            if not valid_miners_data:
                 logger.warning("No valid miners found, skipping cleanup")
                 return 0
 
-            # Convert to list of dicts for DAO
+            # Convert to format expected by TaskQueueDAO
             valid_miners_list = [
                 {
-                    'hotkey': info.hotkey,
-                    'model_revision': info.revision
+                    'hotkey': miner['hotkey'],
+                    'model_revision': miner['revision']
                 }
-                for info in valid_miners_dict.values()
+                for miner in valid_miners_data
             ]
 
             # Call DAO cleanup method

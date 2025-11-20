@@ -91,7 +91,7 @@ async def init_tables():
         SCORES_SCHEMA, SCORES_TTL,
         SYSTEM_CONFIG_SCHEMA,
         DATA_RETENTION_SCHEMA,
-        MINERS_SCHEMA, MINERS_TTL,
+        MINERS_SCHEMA,
     )
     
     print("Initializing DynamoDB tables...")
@@ -104,7 +104,7 @@ async def init_tables():
         create_table(SCORES_SCHEMA, ttl_attribute=SCORES_TTL["AttributeName"]),
         create_table(SYSTEM_CONFIG_SCHEMA),
         create_table(DATA_RETENTION_SCHEMA),
-        create_table(MINERS_SCHEMA, ttl_attribute=MINERS_TTL["AttributeName"]),
+        create_table(MINERS_SCHEMA),
     )
     
     print("All tables initialized successfully")

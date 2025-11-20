@@ -8,8 +8,8 @@ import asyncio
 import logging
 from typing import Optional
 
-from affine.api.services.task_generator import TaskGeneratorService, MinerInfo
-from affine.api.services.miners_monitor import MinersMonitor
+from task_generator import TaskGeneratorService, MinerInfo
+from affine.database.dao.miners import MinersDAO
 
 logger = logging.getLogger(__name__)
 
@@ -94,22 +94,22 @@ class SchedulerService:
         logger.info("Scheduler stopped")
     
     async def _fetch_active_miners(self) -> list[MinerInfo]:
-        """Fetch active miners from monitor service."""
-        monitor = MinersMonitor.get_instance()
+        """Fetch active miners from database."""
+        dao = MinersDAO()
         
-        # Get valid miners from monitor
-        miners_dict = await monitor.get_valid_miners()
+        # Get valid miners from database
+        miners_data = await dao.get_valid_miners()
 
         # Convert to MinerInfo list
         result = [
             MinerInfo(
-                hotkey=info.hotkey,
-                model_revision=info.revision,
-                model=info.model,
-                uid=info.uid,
-                chute_id=info.chute_id
+                hotkey=miner['hotkey'],
+                model_revision=miner['revision'],
+                model=miner['model'],
+                uid=miner['uid'],
+                chute_id=miner['chute_id']
             )
-            for info in miners_dict.values()
+            for miner in miners_data
         ]
         
         return result

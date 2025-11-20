@@ -12,14 +12,12 @@ from fastapi.responses import JSONResponse
 from affine.api.config import config
 from affine.api.middleware import setup_middleware
 from affine.api.routers import (
-    health_router,
     samples_router,
     tasks_router,
     miners_router,
     scores_router,
     config_router,
     logs_router,
-    admin_router,
 )
 from affine.database import init_client, close_client
 
@@ -51,23 +49,14 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize database client: {e}")
         raise
     
-    # Initialize global services (controlled by SERVICES_ENABLED)
-    miners_monitor = None
+    # Initialize TaskPoolManager (required for /fetch and /submit endpoints)
     task_pool = None
-    scheduler = None
     
     if config.SERVICES_ENABLED:
         logger.info("Services mode enabled (SERVICES_ENABLED=true)")
         
         try:
-            from affine.api.services.miners_monitor import MinersMonitor
             from affine.api.services.task_pool import TaskPoolManager
-            
-            # Initialize MinersMonitor
-            miners_monitor = await MinersMonitor.initialize(
-                refresh_interval_seconds=300  # 5 minutes
-            )
-            logger.info("MinersMonitor initialized")
             
             # Initialize TaskPoolManager
             task_pool = await TaskPoolManager.initialize(
@@ -77,33 +66,20 @@ async def lifespan(app: FastAPI):
             logger.info("TaskPoolManager initialized with background tasks")
             
         except Exception as e:
-            logger.error(f"Failed to initialize global services: {e}")
+            logger.error(f"Failed to initialize TaskPoolManager: {e}")
             raise
-        
-        # Optional: Start scheduler
-        if config.SCHEDULER_ENABLED:
-            try:
-                from affine.api.dependencies import get_task_generator_service
-                from affine.api.services.scheduler import create_scheduler
-                
-                task_generator = get_task_generator_service()
-                scheduler = create_scheduler(
-                    task_generator=task_generator,
-                    task_generation_interval=config.SCHEDULER_TASK_GENERATION_INTERVAL,
-                    cleanup_interval=config.SCHEDULER_CLEANUP_INTERVAL,
-                    max_tasks_per_miner_env=config.SCHEDULER_MAX_TASKS_PER_MINER_ENV
-                )
-                await scheduler.start()
-                logger.info("Background scheduler started")
-            except Exception as e:
-                logger.error(f"Failed to start scheduler: {e}")
-                # Don't fail startup if scheduler fails
     else:
         logger.warning(
             "Services mode disabled (SERVICES_ENABLED=false). "
-            "MinersMonitor, TaskPoolManager, and Scheduler will not start. "
+            "TaskPoolManager will not start. "
             "/fetch and /submit endpoints will return 503 Service Unavailable."
         )
+    
+    logger.info(
+        "NOTE: MinersMonitor and TaskScheduler should run as separate services:\n"
+        "  - MinersMonitor: python -m affine.backend.miners_monitor.main\n"
+        "  - TaskScheduler: python -m affine.backend.task_scheduler.main"
+    )
     
     yield
     
@@ -117,22 +93,6 @@ async def lifespan(app: FastAPI):
             logger.info("TaskPoolManager background tasks stopped")
         except Exception as e:
             logger.error(f"Error stopping TaskPoolManager: {e}")
-    
-    # Stop MinersMonitor background tasks
-    if miners_monitor:
-        try:
-            await miners_monitor.stop_background_tasks()
-            logger.info("MinersMonitor background tasks stopped")
-        except Exception as e:
-            logger.error(f"Error stopping MinersMonitor: {e}")
-    
-    # Stop scheduler if running
-    if scheduler and scheduler.is_running:
-        try:
-            await scheduler.stop()
-            logger.info("Background scheduler stopped")
-        except Exception as e:
-            logger.error(f"Error stopping scheduler: {e}")
     
     try:
         await close_client()
@@ -156,14 +116,12 @@ app = FastAPI(
 setup_middleware(app)
 
 # Include routers with /api/v1 prefix
-app.include_router(health_router, prefix="/api/v1")
 app.include_router(samples_router, prefix="/api/v1")
 app.include_router(tasks_router, prefix="/api/v1")
 app.include_router(miners_router, prefix="/api/v1")
 app.include_router(scores_router, prefix="/api/v1")
 app.include_router(config_router, prefix="/api/v1")
 app.include_router(logs_router, prefix="/api/v1")
-app.include_router(admin_router, prefix="/api/v1")
 
 
 @app.exception_handler(Exception)
@@ -206,14 +164,11 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
     
-    # IMPORTANT: Must use workers=1 because of global singleton services:
-    # - MinersMonitor: global singleton with background refresh
+    # IMPORTANT: Must use workers=1 because of TaskPoolManager:
     # - TaskPoolManager: in-memory lock mechanism (not shared across workers)
-    # - Scheduler: background task generation (would duplicate if multi-worker)
     # Using multiple workers would cause:
     # - Locks only valid within single process
-    # - Background tasks duplicated across workers
-    # - Cache inconsistency between workers
+    # - Inconsistency between workers
     
     uvicorn.run(
         "affine.api.server:app",

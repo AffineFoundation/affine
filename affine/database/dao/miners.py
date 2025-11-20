@@ -18,8 +18,8 @@ class MinersDAO(BaseDAO):
     """DAO for miners table.
     
     Schema Design:
-    - PK: UID#{uid} - partition by UID for fast lookups
-    - SK: BLOCK#{block_number}#HOTKEY#{hotkey} - track state changes over time
+    - PK: UID#{uid} - unique primary key, each UID has only one record
+    - No SK needed - single record per UID
     - GSI1: is-valid-index for querying valid/invalid miners
     """
     
@@ -30,10 +30,6 @@ class MinersDAO(BaseDAO):
     def _make_pk(self, uid: int) -> str:
         """Generate partition key based on UID."""
         return f"UID#{uid}"
-    
-    def _make_sk(self, block_number: int, hotkey: str) -> str:
-        """Generate sort key with block number and hotkey."""
-        return f"BLOCK#{block_number}#HOTKEY#{hotkey}"
     
     async def save_miner(
         self,
@@ -49,9 +45,10 @@ class MinersDAO(BaseDAO):
         invalid_reason: Optional[str],
         block_number: int,
         first_block: int,
-        ttl_days: int = 30
     ) -> Dict[str, Any]:
         """Save or update miner validation state.
+        
+        Directly updates the record for this UID (no history tracking).
         
         Args:
             uid: Miner UID (0-255)
@@ -64,16 +61,14 @@ class MinersDAO(BaseDAO):
             chute_status: "hot" or "cold"
             is_valid: Overall validation result (boolean)
             invalid_reason: Reason if invalid (null if valid)
-            block_number: Block when this record was created
+            block_number: Current block when this record was updated
             first_block: Block when miner first committed
-            ttl_days: Days until record expires (default 30)
             
         Returns:
             Saved miner record
         """
         item = {
             'pk': self._make_pk(uid),
-            'sk': self._make_sk(block_number, hotkey),
             'uid': uid,
             'hotkey': hotkey,
             'model': model,
@@ -83,11 +78,9 @@ class MinersDAO(BaseDAO):
             'model_hash': model_hash,
             'chute_status': chute_status,
             'is_valid': 'true' if is_valid else 'false',  # Store as string for GSI
-            'is_valid_bool': is_valid,  # Also store as boolean for convenience
             'invalid_reason': invalid_reason,
             'block_number': block_number,
             'first_block': first_block,
-            'ttl': self.get_ttl(ttl_days),
         }
         
         return await self.put(item)
@@ -95,26 +88,45 @@ class MinersDAO(BaseDAO):
     async def get_miner_by_uid(
         self,
         uid: int,
-        latest_only: bool = True
     ) -> Optional[Dict[str, Any]]:
         """Get miner by UID.
         
         Args:
             uid: Miner UID
-            latest_only: If True, return only the latest record (highest block_number)
             
         Returns:
-            Latest miner record or None if not found
+            Miner record or None if not found
         """
         pk = self._make_pk(uid)
+        return await self.get(pk)
+    
+    async def get_miner_by_hotkey(
+        self,
+        hotkey: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Get miner by hotkey.
         
-        # Query all records for this UID, sorted by SK (block_number) descending
-        records = await self.query(pk=pk, reverse=True, limit=1 if latest_only else None)
+        Args:
+            hotkey: Miner's SS58 hotkey
+            
+        Returns:
+            Miner record or None if not found
+        """
+        from affine.database.client import get_client
+        client = get_client()
         
-        if not records:
-            return None
+        params = {
+            'TableName': self.table_name,
+            'IndexName': 'hotkey-index',
+            'KeyConditionExpression': 'hotkey = :hotkey',
+            'ExpressionAttributeValues': {':hotkey': {'S': hotkey}},
+            'Limit': 1
+        }
         
-        return records[0] if latest_only else records
+        response = await client.query(**params)
+        items = [self._deserialize(item) for item in response.get('Items', [])]
+        
+        return items[0] if items else None
     
     async def get_valid_miners(self) -> List[Dict[str, Any]]:
         """Get all valid miners using GSI.
@@ -130,20 +142,12 @@ class MinersDAO(BaseDAO):
             'IndexName': 'is-valid-index',
             'KeyConditionExpression': 'is_valid = :is_valid',
             'ExpressionAttributeValues': {':is_valid': {'S': 'true'}},
-            'ScanIndexForward': False  # Sort by block_number descending
         }
         
         response = await client.query(**params)
         items = [self._deserialize(item) for item in response.get('Items', [])]
         
-        # Group by UID and keep only the latest record for each UID
-        uid_to_miner = {}
-        for item in items:
-            uid = item['uid']
-            if uid not in uid_to_miner or item['block_number'] > uid_to_miner[uid]['block_number']:
-                uid_to_miner[uid] = item
-        
-        return list(uid_to_miner.values())
+        return items
     
     async def get_invalid_miners(self) -> List[Dict[str, Any]]:
         """Get all invalid miners using GSI.
@@ -159,20 +163,12 @@ class MinersDAO(BaseDAO):
             'IndexName': 'is-valid-index',
             'KeyConditionExpression': 'is_valid = :is_valid',
             'ExpressionAttributeValues': {':is_valid': {'S': 'false'}},
-            'ScanIndexForward': False
         }
         
         response = await client.query(**params)
         items = [self._deserialize(item) for item in response.get('Items', [])]
         
-        # Group by UID and keep only the latest
-        uid_to_miner = {}
-        for item in items:
-            uid = item['uid']
-            if uid not in uid_to_miner or item['block_number'] > uid_to_miner[uid]['block_number']:
-                uid_to_miner[uid] = item
-        
-        return list(uid_to_miner.values())
+        return items
     
     async def get_miners_by_model_hash(
         self,
@@ -186,7 +182,7 @@ class MinersDAO(BaseDAO):
             model_hash: Model weights SHA256 hash
             
         Returns:
-            List of miners with this hash
+            List of miners with this hash, sorted by first_block (earliest first)
         """
         from affine.database.client import get_client
         client = get_client()
@@ -201,43 +197,7 @@ class MinersDAO(BaseDAO):
         response = await client.scan(**params)
         items = [self._deserialize(item) for item in response.get('Items', [])]
         
-        # Group by UID and keep latest
-        uid_to_miner = {}
-        for item in items:
-            uid = item['uid']
-            if uid not in uid_to_miner or item['block_number'] > uid_to_miner[uid]['block_number']:
-                uid_to_miner[uid] = item
-        
         # Sort by first_block (earliest miner first)
-        result = sorted(uid_to_miner.values(), key=lambda x: x.get('first_block', float('inf')))
+        result = sorted(items, key=lambda x: x.get('first_block', float('inf')))
         
         return result
-    
-    async def delete_old_records(
-        self,
-        uid: int,
-        keep_latest_n: int = 10
-    ) -> int:
-        """Delete old records for a UID, keeping only the latest N.
-        
-        Args:
-            uid: Miner UID
-            keep_latest_n: Number of latest records to keep
-            
-        Returns:
-            Number of records deleted
-        """
-        pk = self._make_pk(uid)
-        
-        # Get all records for this UID
-        records = await self.query(pk=pk, reverse=True)
-        
-        if len(records) <= keep_latest_n:
-            return 0
-        
-        # Delete old records
-        to_delete = records[keep_latest_n:]
-        for record in to_delete:
-            await self.delete(record['pk'], record['sk'])
-        
-        return len(to_delete)

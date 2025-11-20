@@ -16,12 +16,10 @@ from affine.api.models import (
 from affine.api.dependencies import (
     get_task_queue_dao,
     verify_executor_auth,
-    check_services_enabled,
     rate_limit_read,
     rate_limit_write,
 )
 from affine.database.dao.task_queue import TaskQueueDAO
-from affine.api.services.auth import AuthService
 from affine.api.services.task_pool import TaskPoolManager
 
 logger = logging.getLogger(__name__)

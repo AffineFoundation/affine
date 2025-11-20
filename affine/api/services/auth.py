@@ -45,7 +45,7 @@ class AuthService:
     ):
         """
         Initialize AuthService.
-        
+
         Args:
             authorized_validators: Set of authorized validator hotkeys
             signature_expiry_seconds: How long signatures are valid

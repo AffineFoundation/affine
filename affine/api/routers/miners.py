@@ -31,7 +31,7 @@ async def get_miner_by_uid(
     - chute_id: Chute deployment ID
     - block_number: Block number when discovered
     - is_valid: Validation status
-    - validation_reason: Reason for validation failure (if any)
+    - invalid_reason: Reason for validation failure (if any)
     - model_hash: Hash of model weights for plagiarism detection
     - discovered_at: Timestamp when first discovered
     - last_updated: Timestamp of last update
@@ -58,7 +58,7 @@ async def get_miner_by_uid(
             "chute_id": miner.get("chute_id"),
             "block_number": miner.get("block_number"),
             "is_valid": miner.get("is_valid") == "true",  # Convert string to bool
-            "validation_reason": miner.get("validation_reason"),
+            "invalid_reason": miner.get("invalid_reason"),
             "model_hash": miner.get("model_hash"),
             "discovered_at": miner.get("discovered_at"),
             "last_updated": miner.get("last_updated"),
