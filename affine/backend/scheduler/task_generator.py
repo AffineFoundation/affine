@@ -14,7 +14,7 @@ from affine.database.dao.sample_results import SampleResultsDAO
 from affine.database.dao.task_queue import TaskQueueDAO
 from affine.database.dao.system_config import SystemConfigDAO
 
-logger = logging.getLogger(__name__)
+from affine.core.setup import logger
 
 
 @dataclass

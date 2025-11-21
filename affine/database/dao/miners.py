@@ -11,7 +11,7 @@ from affine.database.base_dao import BaseDAO
 from affine.database.schema import get_table_name
 
 
-logger = logging.getLogger(__name__)
+from affine.core.setup import logger
 
 
 class MinersDAO(BaseDAO):

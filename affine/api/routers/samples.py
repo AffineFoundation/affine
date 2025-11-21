@@ -6,6 +6,7 @@ Endpoints for submitting and querying sample results.
 
 import time
 import uuid
+import asyncio
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, status
 from affine.api.models import (
@@ -570,6 +571,7 @@ async def get_sample(
 # Cache for scoring endpoint (30-minute TTL)
 _scoring_cache: Dict[str, Any] = {}
 _scoring_cache_time: int = 0
+_scoring_cache_lock: asyncio.Lock = asyncio.Lock()
 SCORING_CACHE_TTL = 1800  # 30 minutes in seconds
 
 
@@ -588,14 +590,22 @@ async def get_scoring_data(
     
     Response format matches design document specification.
     
-    Cache: 30-minute TTL to reduce load on repeated score calculations.
+    Cache: 30-minute TTL with async lock to prevent concurrent recalculation.
     """
     global _scoring_cache, _scoring_cache_time
     
-    # Check cache validity
+    # Fast path: Check cache without lock
     current_time = int(time.time())
     if _scoring_cache and (current_time - _scoring_cache_time) < SCORING_CACHE_TTL:
         return _scoring_cache
+    
+    # Slow path: Acquire lock and regenerate cache
+    async with _scoring_cache_lock:
+        # Double-check cache validity after acquiring lock
+        # (another request might have updated it while we were waiting)
+        current_time = int(time.time())
+        if _scoring_cache and (current_time - _scoring_cache_time) < SCORING_CACHE_TTL:
+            return _scoring_cache
     
     try:
         # Import dependencies
