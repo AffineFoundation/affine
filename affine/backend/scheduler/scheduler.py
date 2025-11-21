@@ -11,7 +11,7 @@ from typing import Optional
 from task_generator import TaskGeneratorService, MinerInfo
 from affine.database.dao.miners import MinersDAO
 
-logger = logging.getLogger(__name__)
+from affine.core.setup import logger
 
 
 class SchedulerService:

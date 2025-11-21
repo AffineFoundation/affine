@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Tuple
 from affine.backend.validator.weight_setter import WeightSetter
 from affine.backend.config import get_config
 
-logger = logging.getLogger(__name__)
+from affine.core.setup import logger
 
 
 class ValidatorService:
