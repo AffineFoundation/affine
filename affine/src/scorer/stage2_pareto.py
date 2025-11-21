@@ -7,13 +7,13 @@ plagiarized models using multi-environment performance analysis.
 
 import logging
 from typing import Dict, List, Any
-from models import (
+from affine.src.scorer.models import (
     MinerData,
     ParetoComparison,
     Stage2Output,
 )
-from config import ScorerConfig
-from utils import (
+from affine.src.scorer.config import ScorerConfig
+from affine.src.scorer.utils import (
     calculate_required_score,
     round_score,
 )
@@ -44,7 +44,6 @@ class Stage2ParetoFilter:
         self.config = config
         self.error_rate_reduction = config.ERROR_RATE_REDUCTION
         self.score_precision = config.SCORE_PRECISION
-        self.log_filtering = config.LOG_PARETO_FILTERING
     
     def filter(
         self,
@@ -115,18 +114,14 @@ class Stage2ParetoFilter:
                     # Track dominated miners
                     if comparison.a_dominates_b:
                         dominated_in_subset.add(miner_b.uid)
-                        if self.log_filtering:
-                            logger.debug(
-                                f"Subset {subset_key}: UID {miner_a.uid} dominates "
-                                f"UID {miner_b.uid}"
-                            )
+                        logger.debug(
+                            f"Subset {subset_key}: UID {miner_a.uid} dominates UID {miner_b.uid}"
+                        )
                     elif comparison.b_dominates_a:
                         dominated_in_subset.add(miner_a.uid)
-                        if self.log_filtering:
-                            logger.debug(
-                                f"Subset {subset_key}: UID {miner_b.uid} dominates "
-                                f"UID {miner_a.uid}"
-                            )
+                        logger.debug(
+                            f"Subset {subset_key}: UID {miner_b.uid} dominates UID {miner_a.uid}"
+                        )
             
             # Update miners with filtering results
             for miner_uid in dominated_in_subset:
@@ -135,11 +130,9 @@ class Stage2ParetoFilter:
                     miners[miner_uid].filter_reasons[subset_key] = "dominated"
                     filtered_count += 1
                     
-                    if self.log_filtering:
-                        logger.info(
-                            f"UID {miner_uid} filtered from {subset_key} "
-                            f"(Pareto dominated)"
-                        )
+                    logger.debug(
+                        f"UID {miner_uid} filtered from {subset_key} (Pareto dominated)"
+                    )
         
         logger.info(
             f"Stage 2: Completed Pareto filtering - "
@@ -219,41 +212,3 @@ class Stage2ParetoFilter:
             env_comparisons=env_comparisons
         )
     
-    def print_summary(self, output: Stage2Output):
-        """Print Stage 2 summary for debugging.
-        
-        Args:
-            output: Stage 2 output data
-        """
-        logger.info("=" * 80)
-        logger.info("STAGE 2 SUMMARY: Pareto Filtering")
-        logger.info("=" * 80)
-        logger.info(f"Total Comparisons: {len(output.comparisons)}")
-        logger.info(f"Filtered Participations: {output.filtered_count}")
-        logger.info("")
-        
-        # Count dominance relationships
-        dominance_count = sum(
-            1 for c in output.comparisons
-            if c.a_dominates_b or c.b_dominates_a
-        )
-        logger.info(f"Dominance Relationships Found: {dominance_count}")
-        logger.info("")
-        
-        # Miners with most filtered subsets
-        filtered_miners = [
-            (uid, len(miner.filtered_subsets))
-            for uid, miner in output.miners.items()
-            if miner.filtered_subsets
-        ]
-        filtered_miners.sort(key=lambda x: x[1], reverse=True)
-        
-        if filtered_miners:
-            logger.info("Top 10 Most Filtered Miners:")
-            for uid, count in filtered_miners[:10]:
-                hotkey = output.miners[uid].hotkey[:8]
-                logger.info(f"  UID {uid} ({hotkey}...): {count} subsets filtered")
-        else:
-            logger.info("No miners filtered (all passed Pareto test)")
-        
-        logger.info("=" * 80)

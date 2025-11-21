@@ -7,13 +7,13 @@ distributes weights proportionally based on performance.
 
 import logging
 from typing import Dict, List, Any
-from models import (
+from affine.src.scorer.models import (
     MinerData,
     SubsetInfo,
     Stage3Output,
 )
-from config import ScorerConfig
-from utils import (
+from affine.src.scorer.config import ScorerConfig
+from affine.src.scorer.utils import (
     generate_all_subsets,
     calculate_layer_weights,
     calculate_subset_weights,
@@ -44,7 +44,6 @@ class Stage3SubsetScorer:
             config: Scorer configuration (defaults to global config)
         """
         self.config = config
-        self.use_geometric_mean = config.USE_GEOMETRIC_MEAN
         self.apply_rank_decay = config.APPLY_RANK_DECAY
         self.decay_factor = config.DECAY_FACTOR
         self.score_precision = config.SCORE_PRECISION
@@ -63,14 +62,24 @@ class Stage3SubsetScorer:
         Returns:
             Stage3Output with subset scores and weights
         """
-        logger.info(f"Stage 3: Starting subset scoring for {len(environments)} environments")
+        n_envs = len(environments)
+        logger.info(f"Stage 3: Processing {n_envs} environments")
         
-        # Generate all subsets
-        subsets_meta = generate_all_subsets(environments)
-        logger.info(f"Generated {len(subsets_meta)} subsets across {len(environments)} layers")
+        # Generate subsets: evaluate only top MAX_LAYERS
+        # e.g., 8 envs with MAX_LAYERS=6 -> evaluate L3-L8, skip L1-L2
+        subsets_meta = generate_all_subsets(environments, max_layers=self.config.MAX_LAYERS)
         
-        # Calculate layer and subset weights
-        layer_weights = calculate_layer_weights(len(environments), self.config.SUBSET_WEIGHT_EXPONENT)
+        # Calculate starting layer
+        start_layer = max(1, n_envs - self.config.MAX_LAYERS + 1) if n_envs > self.config.MAX_LAYERS else 1
+        actual_layers = n_envs - start_layer + 1
+        
+        logger.debug(
+            f"Generated {len(subsets_meta)} subsets across layers L{start_layer}-L{n_envs} "
+            f"({actual_layers} layers, max_layers={self.config.MAX_LAYERS})"
+        )
+        
+        # Calculate layer and subset weights (starting from the actual start_layer)
+        layer_weights = calculate_layer_weights(n_envs, self.config.SUBSET_WEIGHT_EXPONENT, start_layer)
         subset_weights = calculate_subset_weights(subsets_meta, layer_weights)
         
         # Create SubsetInfo objects
@@ -99,7 +108,7 @@ class Stage3SubsetScorer:
                 layer_totals[layer] = layer_totals.get(layer, 0.0) + weight
             miner.layer_weights = layer_totals
         
-        logger.info(f"Stage 3: Completed subset scoring for {len(subsets)} subsets")
+        logger.info(f"Stage 3: Scored {len(subsets)} subsets")
         
         return Stage3Output(
             miners=miners,
@@ -143,7 +152,7 @@ class Stage3SubsetScorer:
         if not eligible_miners:
             return
         
-        # Calculate geometric mean scores
+        # Calculate geometric mean scores (always use geometric mean)
         miner_scores = []
         for miner in eligible_miners:
             env_scores = [
@@ -151,12 +160,8 @@ class Stage3SubsetScorer:
                 for env in envs
             ]
             
-            if self.use_geometric_mean:
-                score = geometric_mean(env_scores)
-            else:
-                # Fallback to arithmetic mean
-                score = sum(env_scores) / len(env_scores)
-            
+            # Always use geometric mean to penalize poor performance in any environment
+            score = geometric_mean(env_scores)
             score = round_score(score, self.score_precision)
             miner_scores.append((miner.uid, score))
             miner.subset_scores[subset_key] = score
@@ -191,60 +196,3 @@ class Stage3SubsetScorer:
             for uid, _ in adjusted_scores:
                 miners[uid].subset_weights[subset_key] = equal_weight
     
-    def print_summary(self, output: Stage3Output):
-        """Print Stage 3 summary for debugging.
-        
-        Args:
-            output: Stage 3 output data
-        """
-        logger.info("=" * 80)
-        logger.info("STAGE 3 SUMMARY: Subset Scoring")
-        logger.info("=" * 80)
-        logger.info(f"Total Subsets: {len(output.subsets)}")
-        logger.info("")
-        
-        # Layer statistics
-        layer_stats = {}
-        for subset in output.subsets.values():
-            layer = subset.layer
-            if layer not in layer_stats:
-                layer_stats[layer] = {
-                    'count': 0,
-                    'total_weight': 0.0,
-                    'avg_miners': []
-                }
-            layer_stats[layer]['count'] += 1
-            layer_stats[layer]['total_weight'] += subset.subset_weight
-            layer_stats[layer]['avg_miners'].append(len(subset.valid_miners))
-        
-        logger.info("Per-Layer Statistics:")
-        for layer in sorted(layer_stats.keys()):
-            stats = layer_stats[layer]
-            avg_miners = sum(stats['avg_miners']) / len(stats['avg_miners']) if stats['avg_miners'] else 0
-            logger.info(
-                f"  L{layer}: "
-                f"Subsets={stats['count']}, "
-                f"TotalWeight={stats['total_weight']:.2f}, "
-                f"AvgMiners={avg_miners:.1f}"
-            )
-        
-        logger.info("")
-        
-        # Top miners by cumulative weight
-        miner_weights = []
-        for uid, miner in output.miners.items():
-            cumulative = sum(miner.subset_weights.values())
-            miner_weights.append((uid, cumulative, len(miner.subset_weights)))
-        
-        miner_weights.sort(key=lambda x: x[1], reverse=True)
-        
-        logger.info("Top 10 Miners by Cumulative Weight:")
-        for uid, weight, subset_count in miner_weights[:10]:
-            hotkey = output.miners[uid].hotkey[:8]
-            logger.info(
-                f"  UID {uid} ({hotkey}...): "
-                f"Weight={weight:.6f}, "
-                f"Subsets={subset_count}"
-            )
-        
-        logger.info("=" * 80)

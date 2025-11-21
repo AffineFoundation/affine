@@ -1,0 +1,25 @@
+# This file is an override for local development; do not run alone.
+# Use together with docker-compose.backend.yml:
+#   docker compose -f docker-compose.backend.yml -f docker-compose.backend.local.yml up --build
+version: "3.8"
+
+x-affine-image: &affine_image
+  image: affine:local
+  build:
+    context: .
+    dockerfile: Dockerfile
+
+services:
+  api:
+    <<: *affine_image
+  scheduler:
+    <<: *affine_image
+  
+  executor:
+    <<: *affine_image
+  
+  miners:
+    <<: *affine_image
+  
+  scorer:
+    <<: *affine_image

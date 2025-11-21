@@ -1,0 +1,108 @@
+version: "3.8"
+
+services:
+  # API Server - Central API service
+  api:
+    image: thebes1618/affine:latest
+    container_name: affine-api
+    restart: unless-stopped
+    mem_reservation: "2g"
+    mem_limit: "4g"
+    env_file:
+      - .env
+    volumes:
+      - ./.env:/app/.env:ro
+    ports:
+      - "8000:8000"
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - SERVICES_ENABLED=true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    command: ["af", "-vv", "api"]
+
+  # Scheduler - Task generation service
+  scheduler:
+    image: thebes1618/affine:latest
+    container_name: affine-scheduler
+    restart: unless-stopped
+    mem_reservation: "1g"
+    mem_limit: "2g"
+    env_file:
+      - .env
+    volumes:
+      - ./.env:/app/.env:ro
+    environment:
+      - SCHEDULER_TASK_GENERATION_INTERVAL=60
+      - SCHEDULER_CLEANUP_INTERVAL=300
+      - SCHEDULER_MAX_TASKS_PER_MINER_ENV=30
+    depends_on:
+      api:
+        condition: service_healthy
+    command: ["af", "-vv", "scheduler"]
+
+  # Executor - Task execution service
+  executor:
+    image: thebes1618/affine:latest
+    container_name: affine-executor
+    restart: unless-stopped
+    mem_reservation: "4g"
+    mem_limit: "8g"
+    env_file:
+      - .env
+    volumes:
+      - ./.env:/app/.env:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - AFFINE_API_URL=http://api:8000
+      - EXECUTOR_POLL_INTERVAL=5
+      - SERVICE_MODE=true
+    depends_on:
+      api:
+        condition: service_healthy
+    command: ["af", "-vv", "executor"]
+
+  # Miners Monitor - Miner synchronization service
+  miners:
+    image: thebes1618/affine:latest
+    container_name: affine-miners
+    restart: unless-stopped
+    mem_reservation: "1g"
+    mem_limit: "2g"
+    env_file:
+      - .env
+    volumes:
+      - ./.env:/app/.env:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    command: ["af", "-vv", "monitor"]
+
+  # Scorer - Weight calculation service
+  scorer:
+    image: thebes1618/affine:latest
+    container_name: affine-scorer
+    restart: unless-stopped
+    mem_reservation: "1g"
+    mem_limit: "2g"
+    env_file:
+      - .env
+    volumes:
+      - ./.env:/app/.env:ro
+    environment:
+      - AFFINE_API_URL=http://api:8000
+      - SCORER_SAVE_TO_DB=true
+      - SERVICE_MODE=true
+    depends_on:
+      api:
+        condition: service_healthy
+    command: ["af", "-vv", "scorer"]
+
+networks:
+  default:
+    name: affine-backend

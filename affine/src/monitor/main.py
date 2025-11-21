@@ -12,7 +12,6 @@ from affine.core.setup import logger, setup_logging
 from affine.database import init_client, close_client
 from .miners_monitor import MinersMonitor
 
-
 async def run_service():
     """Run the miners monitor service."""
     logger.info("Starting Miners Monitor Service")
