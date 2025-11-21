@@ -4,7 +4,7 @@ Scores Router
 Endpoints for querying score calculations.
 """
 
-from typing import Optional
+from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from affine.api.models import (
     ScoresResponse,
@@ -14,9 +14,11 @@ from affine.api.models import (
 )
 from affine.api.dependencies import (
     get_scores_dao,
+    get_score_snapshots_dao,
     rate_limit_read,
 )
 from affine.database.dao.scores import ScoresDAO
+from affine.database.dao.score_snapshots import ScoreSnapshotsDAO
 
 router = APIRouter(prefix="/scores", tags=["Scores"])
 
@@ -177,4 +179,67 @@ async def get_miner_score_history(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve score history: {str(e)}"
+        )
+
+
+@router.get("/weights/latest", dependencies=[Depends(rate_limit_read)])
+async def get_latest_weights(
+    snapshots_dao: ScoreSnapshotsDAO = Depends(get_score_snapshots_dao),
+):
+    """
+    Get the latest normalized weights from scoring calculation.
+    
+    Returns the most recent score snapshot with normalized weights
+    for all miners, suitable for setting on-chain weights.
+    
+    Response format:
+    {
+        "block_number": 12345,
+        "weights": {
+            "0": {"hotkey": "5...", "weight": 0.15},
+            "1": {"hotkey": "5...", "weight": 0.12},
+            ...
+        }
+    }
+    """
+    try:
+        # Get latest snapshot
+        snapshot = await snapshots_dao.get_latest_snapshot()
+        
+        if not snapshot:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No score snapshots found"
+            )
+        
+        # Extract weights from statistics
+        statistics = snapshot.get('statistics', {})
+        miner_weights = statistics.get('miner_final_scores', {})
+        
+        if not miner_weights:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No weights found in latest snapshot"
+            )
+        
+        # Format response according to design document
+        weights_response = {}
+        for uid_str, weight in miner_weights.items():
+            # Get hotkey from snapshot metadata if available
+            # For now, use uid as key
+            weights_response[uid_str] = {
+                "weight": weight
+            }
+        
+        return {
+            "block_number": snapshot.get('block_number'),
+            "weights": weights_response
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve latest weights: {str(e)}"
         )

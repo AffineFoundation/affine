@@ -1,167 +1,199 @@
 """
 Scorer Data Models
 
-数据模型用于分数计算器的内部数据表示
+Data structures for the four-stage scoring algorithm.
 """
 
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional
-import time
 
 
 @dataclass
-class MinerScore:
-    """单个 Miner 在单个环境的分数"""
-    hotkey: str
+class EnvScore:
+    """Score data for a single environment."""
+    
+    avg_score: float
+    sample_count: int
+    completeness: float
+    is_valid: bool
+    
+    def __repr__(self) -> str:
+        return f"EnvScore(avg={self.avg_score:.3f}, samples={self.sample_count}, complete={self.completeness:.2%})"
+
+
+@dataclass
+class MinerData:
+    """Complete data for a single miner across all environments."""
+    
     uid: int
+    hotkey: str
     model_revision: str
-    env: str
-    average_score: float
+    first_block: int
+    
+    # Stage 1: Environment scores
+    env_scores: Dict[str, EnvScore] = field(default_factory=dict)
+    
+    # Stage 2: Pareto filtering results
+    filtered_subsets: List[str] = field(default_factory=list)
+    filter_reasons: Dict[str, str] = field(default_factory=dict)
+    
+    # Stage 3: Subset scores
+    subset_scores: Dict[str, float] = field(default_factory=dict)
+    subset_ranks: Dict[str, int] = field(default_factory=dict)
+    subset_weights: Dict[str, float] = field(default_factory=dict)
+    
+    # Stage 4: Final weights
+    layer_weights: Dict[str, float] = field(default_factory=dict)
+    cumulative_weight: float = 0.0
+    normalized_weight: float = 0.0
+    
+    def is_valid_for_scoring(self) -> bool:
+        """Check if miner has sufficient valid environment scores."""
+        return any(env.is_valid for env in self.env_scores.values())
+    
+    def get_valid_envs(self) -> List[str]:
+        """Get list of environments where miner has valid scores."""
+        return [env for env, score in self.env_scores.items() if score.is_valid]
+    
+    def __repr__(self) -> str:
+        valid_envs = len(self.get_valid_envs())
+        return f"MinerData(uid={self.uid}, hotkey={self.hotkey[:8]}..., valid_envs={valid_envs})"
+
+
+@dataclass
+class SubsetInfo:
+    """Information about a subset (environment combination)."""
+    
+    key: str  # e.g., "L3_sat_abd_ded"
+    layer: int
+    envs: List[str]
+    layer_weight: float
+    subset_weight: float
+    
+    # Miners participating in this subset
+    valid_miners: List[int] = field(default_factory=list)
+    filtered_miners: List[int] = field(default_factory=list)
+    
+    def __repr__(self) -> str:
+        return f"SubsetInfo(key={self.key}, layer=L{self.layer}, envs={len(self.envs)}, weight={self.subset_weight:.3f})"
+
+
+@dataclass
+class ParetoComparison:
+    """Result of Pareto dominance comparison between two miners."""
+    
+    miner_a_uid: int
+    miner_b_uid: int
+    subset_key: str
+    
+    # Comparison results
+    a_dominates_b: bool
+    b_dominates_a: bool
+    
+    # Details for logging
+    env_comparisons: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    # Format: {env: {"a_score": 0.9, "b_score": 0.85, "threshold": 0.88}}
+    
+    def __repr__(self) -> str:
+        if self.a_dominates_b:
+            return f"Pareto({self.miner_a_uid} dominates {self.miner_b_uid})"
+        elif self.b_dominates_a:
+            return f"Pareto({self.miner_b_uid} dominates {self.miner_a_uid})"
+        else:
+            return f"Pareto({self.miner_a_uid} ≈ {self.miner_b_uid} - no dominance)"
+
+
+@dataclass
+class ScoringResult:
+    """Complete result from the four-stage scoring algorithm."""
+    
+    # Metadata
     block_number: int
-    is_superior: bool = False
-    superiority_reason: str = ""
-
-
-@dataclass
-class TaskIdRange:
-    """
-    Task ID 范围定义
+    calculated_at: int
+    environments: List[str]
     
-    用于支持数据集扩展：
-    - 采样可以使用新范围
-    - 权重计算可以指定旧范围，等大部分 Miner 完成后再切换
-    """
-    start: int = 0  # 起始 task_id (包含)
-    end: int = 0    # 结束 task_id (不包含)
+    # Configuration snapshot
+    config: Dict[str, Any] = field(default_factory=dict)
     
-    @property
-    def length(self) -> int:
-        """范围内的 task 数量"""
-        return max(0, self.end - self.start)
+    # Stage 1: All miner data
+    miners: Dict[int, MinerData] = field(default_factory=dict)
     
-    def contains(self, task_id: int) -> bool:
-        """检查 task_id 是否在范围内"""
-        return self.start <= task_id < self.end
+    # Stage 2: Pareto filtering
+    pareto_comparisons: List[ParetoComparison] = field(default_factory=list)
     
-    def get_all_task_ids(self) -> List[int]:
-        """获取范围内所有 task_id"""
-        return list(range(self.start, self.end))
+    # Stage 3: Subset information
+    subsets: Dict[str, SubsetInfo] = field(default_factory=dict)
     
-    def to_dict(self) -> Dict[str, int]:
-        return {
-            "start": self.start,
-            "end": self.end,
-            "length": self.length
-        }
-
-
-@dataclass
-class CalculationReport:
-    """权重计算报告"""
-    # Miner 统计
+    # Stage 4: Final weights
+    final_weights: Dict[int, float] = field(default_factory=dict)
+    
+    # Statistics
     total_miners: int = 0
     valid_miners: int = 0
     invalid_miners: int = 0
-    incomplete_miners: List[Dict] = field(default_factory=list)
+    burn_weight: float = 0.0
     
-    # 环境比较结果
-    env_comparisons: Dict[str, Any] = field(default_factory=dict)
+    def get_weights_for_chain(self) -> Dict[int, float]:
+        """Get normalized weights suitable for setting on-chain.
+        
+        Returns:
+            Dict mapping UID to normalized weight (0.0 to 1.0)
+        """
+        return self.final_weights.copy()
     
-    # 最终权重
-    final_weights: Dict[str, float] = field(default_factory=dict)
-    
-    # 计算时间
-    calculation_time_ms: int = 0
-    
-    # Task ID 范围 (用于记录本次计算使用的范围)
-    task_id_ranges: Dict[str, TaskIdRange] = field(default_factory=dict)
-    
-    # 计时
-    _start_time: float = field(default_factory=time.time)
-    
-    def end_timing(self) -> int:
-        """结束计时，返回毫秒数"""
-        return int((time.time() - self._start_time) * 1000)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """转换为字典，便于 JSON 序列化"""
+    def get_summary(self) -> Dict[str, Any]:
+        """Get summary statistics for logging/display."""
         return {
-            "total_miners": self.total_miners,
-            "valid_miners": self.valid_miners,
-            "invalid_miners": self.invalid_miners,
-            "incomplete_miners": self.incomplete_miners,
-            "env_comparisons": self.env_comparisons,
-            "final_weights": self.final_weights,
-            "calculation_time_ms": self.calculation_time_ms,
-            "task_id_ranges": {
-                env: range_obj.to_dict() 
-                for env, range_obj in self.task_id_ranges.items()
-            }
+            'block_number': self.block_number,
+            'total_miners': self.total_miners,
+            'valid_miners': self.valid_miners,
+            'invalid_miners': self.invalid_miners,
+            'environments': len(self.environments),
+            'subsets': len(self.subsets),
+            'burn_weight': self.burn_weight,
+            'non_zero_weights': sum(1 for w in self.final_weights.values() if w > 0),
         }
-
-
-@dataclass
-class MinerInfo:
-    """从 API 获取的 Miner 信息"""
-    hotkey: str
-    uid: int
-    model_revision: str
-    block_number: int  # 提交模型时的区块号
     
-    @classmethod
-    def from_dict(cls, data: Dict) -> "MinerInfo":
-        return cls(
-            hotkey=data["hotkey"],
-            uid=data["uid"],
-            model_revision=data.get("model_revision", data.get("revision", "main")),
-            block_number=data.get("block_number", 0)
+    def __repr__(self) -> str:
+        return (
+            f"ScoringResult(block={self.block_number}, "
+            f"miners={self.total_miners}, "
+            f"valid={self.valid_miners}, "
+            f"envs={len(self.environments)})"
         )
 
 
 @dataclass
-class SampleStatistics:
-    """采样统计信息"""
-    total_samples: int = 0
-    average_score: float = 0.0
-    min_score: float = 0.0
-    max_score: float = 0.0
-    success_rate: float = 0.0
+class Stage1Output:
+    """Output from Stage 1: Data Collection."""
     
-    @classmethod
-    def from_dict(cls, data: Dict) -> "SampleStatistics":
-        if not data:
-            return cls()
-        return cls(
-            total_samples=data.get("total_samples", 0),
-            average_score=data.get("average_score", 0.0),
-            min_score=data.get("min_score", 0.0),
-            max_score=data.get("max_score", 0.0),
-            success_rate=data.get("success_rate", 0.0)
-        )
+    miners: Dict[int, MinerData]
+    environments: List[str]
+    valid_count: int
+    invalid_count: int
 
 
-@dataclass 
-class CompletionStatus:
-    """采样完成状态"""
-    is_complete: bool = False
-    total_required: int = 0
-    total_completed: int = 0
-    missing_task_ids: List[int] = field(default_factory=list)
+@dataclass
+class Stage2Output:
+    """Output from Stage 2: Pareto Filtering."""
     
-    @classmethod
-    def from_dict(cls, data: Dict) -> "CompletionStatus":
-        if not data:
-            return cls()
-        return cls(
-            is_complete=data.get("is_complete", False),
-            total_required=data.get("total_required", 0),
-            total_completed=data.get("total_completed", 0),
-            missing_task_ids=data.get("missing_task_ids", [])
-        )
+    miners: Dict[int, MinerData]
+    comparisons: List[ParetoComparison]
+    filtered_count: int
+
+
+@dataclass
+class Stage3Output:
+    """Output from Stage 3: Subset Scoring."""
     
-    @property
-    def completion_percentage(self) -> float:
-        """完成百分比"""
-        if self.total_required == 0:
-            return 0.0
-        return (self.total_completed / self.total_required) * 100
+    miners: Dict[int, MinerData]
+    subsets: Dict[str, SubsetInfo]
+
+
+@dataclass
+class Stage4Output:
+    """Output from Stage 4: Weight Normalization."""
+    
+    final_weights: Dict[int, float]
+    burn_weight: float
+    below_threshold_count: int

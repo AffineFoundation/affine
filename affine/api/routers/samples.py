@@ -6,7 +6,7 @@ Endpoints for submitting and querying sample results.
 
 import time
 import uuid
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, status
 from affine.api.models import (
     SampleSubmitResponse,
@@ -564,4 +564,168 @@ async def get_sample(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve sample: {str(e)}"
+        )
+
+
+# Cache for scoring endpoint (30-minute TTL)
+_scoring_cache: Dict[str, Any] = {}
+_scoring_cache_time: int = 0
+SCORING_CACHE_TTL = 1800  # 30 minutes in seconds
+
+
+@router.get("/scoring", dependencies=[Depends(rate_limit_read)])
+async def get_scoring_data(
+    dao: SampleResultsDAO = Depends(get_sample_results_dao),
+):
+    """
+    Get compressed and deduplicated scoring data for all valid miners.
+    
+    This endpoint:
+    1. Queries system_config for scoring environments and ranges
+    2. Gets all valid miners from miners table
+    3. Fetches and deduplicates samples for each miner in each environment
+    4. Returns compressed data structure for score calculation
+    
+    Response format matches design document specification.
+    
+    Cache: 30-minute TTL to reduce load on repeated score calculations.
+    """
+    global _scoring_cache, _scoring_cache_time
+    
+    # Check cache validity
+    current_time = int(time.time())
+    if _scoring_cache and (current_time - _scoring_cache_time) < SCORING_CACHE_TTL:
+        return _scoring_cache
+    
+    try:
+        # Import dependencies
+        from affine.database.dao.system_config import SystemConfigDAO
+        from affine.database.dao.miners import MinersDAO
+        
+        system_config_dao = SystemConfigDAO()
+        miners_dao = MinersDAO()
+        
+        # Get scoring configuration
+        scoring_envs = await system_config_dao.get_active_environments()
+        if not scoring_envs:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No scoring environments configured"
+            )
+        
+        env_ranges = await system_config_dao.get_env_task_ranges()
+        
+        # Get all valid miners
+        valid_miners = await miners_dao.get_valid_miners()
+        if not valid_miners:
+            # Return empty result if no valid miners
+            return {}
+        
+        # Build result structure
+        result = {}
+        
+        for miner in valid_miners:
+            uid = miner.get('uid')
+            hotkey = miner.get('hotkey')
+            model_revision = miner.get('revision')
+            
+            if not all([uid is not None, hotkey, model_revision]):
+                continue
+            
+            # Initialize miner entry
+            miner_entry = {
+                'hotkey': hotkey,
+                'model_revision': model_revision,
+                'env': {}
+            }
+            
+            # Fetch samples for each environment
+            for env_name in scoring_envs:
+                # Get scoring range for this environment
+                scoring_range = env_ranges.get(env_name, {}).get('scoring_range', [0, 0])
+                start_id, end_id = scoring_range
+                
+                if start_id >= end_id:
+                    continue
+                
+                # Fetch samples for this env
+                samples = await dao.get_samples_by_miner(
+                    miner_hotkey=hotkey,
+                    model_revision=model_revision,
+                    env=env_name,
+                    limit=None,
+                    include_extra=False,  # Don't include extra for scoring
+                )
+                
+                # Filter by scoring range and deduplicate
+                task_id_samples = {}
+                for sample in samples:
+                    task_id_str = sample.get('task_id')
+                    if not task_id_str:
+                        continue
+                    
+                    # Convert to int
+                    try:
+                        task_id_int = int(task_id_str)
+                    except (ValueError, TypeError):
+                        continue
+                    
+                    # Check if in scoring range
+                    if task_id_int < start_id or task_id_int >= end_id:
+                        continue
+                    
+                    # Deduplicate: keep latest sample per task_id
+                    if task_id_int not in task_id_samples:
+                        task_id_samples[task_id_int] = sample
+                    else:
+                        existing_ts = task_id_samples[task_id_int].get('timestamp', 0)
+                        new_ts = sample.get('timestamp', 0)
+                        if new_ts > existing_ts:
+                            task_id_samples[task_id_int] = sample
+                
+                # Build samples list for this env
+                env_samples = []
+                for task_id_int in sorted(task_id_samples.keys()):
+                    sample = task_id_samples[task_id_int]
+                    env_samples.append({
+                        'task_id': task_id_int,
+                        'score': sample.get('score', 0.0),
+                        'task_uuid': sample.get('timestamp'),  # Use timestamp as task_uuid
+                        'timestamp': sample.get('timestamp'),
+                    })
+                
+                # Calculate completeness
+                expected_count = end_id - start_id
+                completed_count = len(env_samples)
+                completeness = completed_count / expected_count if expected_count > 0 else 0.0
+                
+                # Find missing task IDs
+                completed_task_ids = set(task_id_samples.keys())
+                all_task_ids = set(range(start_id, end_id))
+                missing_task_ids = sorted(list(all_task_ids - completed_task_ids))
+                
+                # Add environment data
+                miner_entry['env'][env_name] = {
+                    'samples': env_samples,
+                    'total_count': expected_count,
+                    'completed_count': completed_count,
+                    'missing_task_ids': missing_task_ids[:100],  # Limit to first 100
+                    'completeness': round(completeness, 4)
+                }
+            
+            # Add miner to result
+            result[str(uid)] = miner_entry
+        
+        # Update cache
+        _scoring_cache = result
+        _scoring_cache_time = current_time
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate scoring data: {str(e)}"
         )
