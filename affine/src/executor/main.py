@@ -12,14 +12,9 @@ import os
 import click
 from typing import List
 
-from affine.backend.executor.worker import ExecutorWorker
+from affine.src.executor.worker import ExecutorWorker
 from affine.core.setup import wallet, logger, setup_logging
 
-DEFAULT_ENVS = [
-    "affine:sat",
-    # "affine:abd",
-    # "affine:ded",
-]
 
 class ExecutorManager:
     """
@@ -141,9 +136,62 @@ class ExecutorManager:
         print("=" * 60)
 
 
-async def run_service(envs: List[str], api_url: str, poll_interval: int, single_run: bool, show_status: bool):
-    """Run the executor service."""
-    logger.info(f"Starting executor for environments: {envs}")
+async def fetch_system_config(api_url: str) -> dict:
+    """Fetch system configuration from API.
+    
+    Returns:
+        System config dict with 'environments' key
+    """
+    import aiohttp
+    
+    url = f"{api_url}/api/v1/config/environments"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    logger.warning(f"Failed to fetch environments config from API: HTTP {response.status}")
+                    return {"environments": ["affine:sat"]}  # Fallback default
+                
+                config = await response.json()
+
+                if isinstance(config, dict):
+                    value = config.get("param_value")
+                    if isinstance(value, dict):
+                        # Filter environments where enabled_for_scoring=true
+                        enabled_envs = [
+                            env_name for env_name, env_config in value.items()
+                            if isinstance(env_config, dict) and env_config.get("enabled_for_scoring", False)
+                        ]
+                        
+                        if enabled_envs:
+                            logger.info(f"Fetched environments from API: {enabled_envs}")
+                            return {"environments": enabled_envs}
+
+                logger.exception("Failed to parse environments config")
+                
+    except Exception as e:
+        logger.error(f"Error fetching system config: {e}")
+        raise
+
+
+async def run_service_with_mode(envs: List[str] | None, api_url: str, poll_interval: int, service_mode: bool):
+    """Run the executor service.
+    
+    Args:
+        envs: List of environments to execute (None to fetch from API)
+        api_url: API base URL
+        poll_interval: Polling interval in seconds
+        service_mode: If True, run continuously; if False, run once and exit
+    """
+    
+    # Fetch environments from API if not specified
+    if not envs:
+        logger.info("No environments specified, fetching from API system config...")
+        system_config = await fetch_system_config(api_url)
+        envs = system_config.get("environments")
+    else:
+        logger.info(f"Using specified environments: {envs}")
     
     # Create manager
     manager = ExecutorManager(
@@ -167,25 +215,22 @@ async def run_service(envs: List[str], api_url: str, poll_interval: int, single_
         # Start manager
         await manager.start()
         
-        # Print initial status
-        if show_status:
-            manager.print_status()
-        
         # Wait for shutdown signal
-        if single_run:
-            logger.info("Single-run mode: waiting for one cycle...")
+        if not service_mode:
+            # One-time execution (DEFAULT)
+            logger.info("Running in one-time mode (default): processing available tasks...")
             await asyncio.sleep(poll_interval * 2)
             manager.print_status()
         else:
-            logger.info("Running in continuous mode. Press Ctrl+C to stop.")
+            # Continuous service mode (SERVICE_MODE=true)
+            logger.info("Running in service mode (continuous). Press Ctrl+C to stop.")
             
             # Periodically print status
             while not shutdown_event.is_set():
                 try:
                     await asyncio.wait_for(shutdown_event.wait(), timeout=60)
                 except asyncio.TimeoutError:
-                    if show_status:
-                        manager.print_status()
+                    manager.print_status()
         
         # Print final status
         manager.print_status()
@@ -201,23 +246,13 @@ async def run_service(envs: List[str], api_url: str, poll_interval: int, single_
 @click.option(
     "--envs",
     multiple=True,
-    help="Environments to execute tasks for (e.g., affine:sat)"
-)
-@click.option(
-    "--all-envs",
-    is_flag=True,
-    help="Run all default environments"
-)
-@click.option(
-    "--api-url",
-    default=None,
-    help="API server URL (default: from AFFINE_API_URL or http://localhost:8000)"
+    help="Environments to execute tasks for (e.g., affine:sat). If not specified, fetches from API system config"
 )
 @click.option(
     "--poll-interval",
-    default=5,
+    default=None,
     type=int,
-    help="Seconds between polling for tasks"
+    help="Seconds between polling for tasks (default: from EXECUTOR_POLL_INTERVAL or 5)"
 )
 @click.option(
     "-v", "--verbosity",
@@ -225,41 +260,48 @@ async def run_service(envs: List[str], api_url: str, poll_interval: int, single_
     type=click.Choice(["0", "1", "2", "3"]),
     help="Logging verbosity: 0=CRITICAL, 1=INFO, 2=DEBUG, 3=TRACE"
 )
-@click.option(
-    "--single-run",
-    is_flag=True,
-    help="Run once and exit (for debugging)"
-)
-def main(envs, all_envs, api_url, poll_interval, verbosity, single_run):
+def main(envs, poll_interval, verbosity):
     """
     Affine Executor - Execute sampling tasks for multiple environments.
     
     Each environment runs in its own async worker, polling for tasks and executing them.
+    
+    Run Mode:
+    - Default: One-time execution (processes available tasks once)
+    - SERVICE_MODE=true: Continuous service mode (keeps running)
+    
+    Configuration:
+    - AFFINE_API_URL: API server URL (default: http://localhost:8000)
+    - EXECUTOR_POLL_INTERVAL: Polling interval in seconds (default: 5)
+    - SERVICE_MODE: Run as continuous service (default: false)
+    
+    If --envs not specified, environments are fetched from API /api/v1/config/environments endpoint.
     """
     # Setup logging
     setup_logging(int(verbosity))
     
-    # Determine environments
-    if all_envs:
-        selected_envs = list(DEFAULT_ENVS)
-    elif envs:
-        selected_envs = list(envs)
-    else:
-        selected_envs = list(DEFAULT_ENVS)
+    # Get environments from CLI (or None to fetch from API)
+    selected_envs = list(envs) if envs else None
     
-    # Get API URL
-    api_base_url = api_url or os.getenv("AFFINE_API_URL", "http://localhost:8000")
+    # Get API URL from environment variable
+    api_base_url = os.getenv("AFFINE_API_URL", "http://localhost:8000")
+    
+    # Get poll interval (priority: CLI arg > env var > default)
+    poll_interval_val = poll_interval if poll_interval is not None else int(os.getenv("EXECUTOR_POLL_INTERVAL", "5"))
 
-    # Show status in debug mode
-    show_status = int(verbosity) >= 2
+    # Check service mode (default: false = one-time execution)
+    service_mode = os.getenv("SERVICE_MODE", "false").lower() in ("true", "1", "yes")
+    
+    logger.info(f"API URL: {api_base_url}")
+    logger.info(f"Poll interval: {poll_interval_val}s")
+    logger.info(f"Service mode: {service_mode}")
     
     # Run service
-    asyncio.run(run_service(
+    asyncio.run(run_service_with_mode(
         envs=selected_envs,
         api_url=api_base_url,
-        poll_interval=poll_interval,
-        single_run=single_run,
-        show_status=show_status
+        poll_interval=poll_interval_val,
+        service_mode=service_mode
     ))
 
 
