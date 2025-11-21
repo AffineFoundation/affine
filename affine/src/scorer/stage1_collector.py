@@ -121,9 +121,16 @@ class Stage1Collector:
                 # Calculate average score
                 if samples:
                     scores = [s.get('score', 0.0) for s in samples]
-                    avg_score = sum(scores) / len(scores)
+                    raw_avg_score = sum(scores) / len(scores)
                 else:
-                    avg_score = 0.0
+                    raw_avg_score = 0.0
+                
+                # Apply environment-specific normalization if configured
+                if env_name in self.config.ENV_SCORE_RANGES:
+                    min_score, max_score = self.config.ENV_SCORE_RANGES[env_name]
+                    avg_score = (raw_avg_score - min_score) / (max_score - min_score)
+                else:
+                    avg_score = raw_avg_score
                 
                 # Validate completeness
                 is_valid = completeness >= self.min_completeness

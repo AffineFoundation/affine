@@ -177,17 +177,18 @@ class Stage4WeightNormalizer:
                 f"{miner.first_block:10d}"  # First block
             ]
             
-            # Environment scores - show "score/count" format
+            # Environment scores - show "score/count" format (score × 100, 2 decimals)
             for env in sorted(environments):
                 if env in miner.env_scores:
                     score = miner.env_scores[env]
+                    score_percent = score.avg_score * 100  # Convert to percentage
                     if score.is_valid:
-                        # Valid: show as "0.923/500"
-                        score_str = f"{score.avg_score:.3f}/{score.sample_count}"
+                        # Valid: show as "92.30/500" (4 digits + 2 decimal places)
+                        score_str = f"{score_percent:.2f}/{score.sample_count}"
                         row_parts.append(f"{score_str:>11}")
                     else:
-                        # Invalid (below threshold): show as "-0.923/50" to indicate it's below threshold
-                        score_str = f"{score.avg_score:.3f}/{score.sample_count}!"
+                        # Invalid (below threshold): show as "92.30/50!" with ! suffix
+                        score_str = f"{score_percent:.2f}/{score.sample_count}!"
                         row_parts.append(f"{score_str:>11}")
                 else:
                     row_parts.append(f"{'  -  ':>11}")

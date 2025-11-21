@@ -38,16 +38,16 @@ class ScorerConfig:
     
     DECAY_FACTOR: float = 0.5
     """
-    Optional rank-based decay factor for score_proportional weighting.
+    Rank-based decay factor for score_proportional weighting.
     
     Applied as: adjusted_score = score × decay_factor^(rank - 1)
     - Rank 1: score × 1.0
-    - Rank 2: score × 0.5
-    - Rank 3: score × 0.25
-    """
+    - Rank 2: score × decay_factor^1
+    - Rank 3: score × decay_factor^2
     
-    APPLY_RANK_DECAY: bool = False
-    """Whether to apply rank-based decay to subset scores."""
+    Set to 1.0 to disable decay (all ranks weighted equally).
+    Set to 0.5 for exponential decay (each rank gets 50% of previous).
+    """
     
     # Stage 4: Weight Normalization
     MIN_WEIGHT_THRESHOLD: float = 0.01
@@ -62,8 +62,15 @@ class ScorerConfig:
     """
     
     # Stage 1: Data Collection
-    MIN_COMPLETENESS: float = 0.90
+    MIN_COMPLETENESS: float = 0.9
     """Minimum sample completeness required."""
+    
+    # Environment Score Normalization
+    # Format: env_name -> (min_score, max_score)
+    # Scores will be normalized to [0, 1] range: (score - min) / (max - min)
+    ENV_SCORE_RANGES: Dict[str, tuple] = {
+        'agentgym:sciworld': (-100, 100.0)  # sciworld 分数范围 0-100
+    }
     
     # Database & Storage
     SCORE_RECORD_TTL_DAYS: int = 30
@@ -79,7 +86,6 @@ class ScorerConfig:
             'subset_weight_base': cls.SUBSET_WEIGHT_BASE,
             'subset_weight_exponent': cls.SUBSET_WEIGHT_EXPONENT,
             'decay_factor': cls.DECAY_FACTOR,
-            'apply_rank_decay': cls.APPLY_RANK_DECAY,
             'min_weight_threshold': cls.MIN_WEIGHT_THRESHOLD,
             'burn_percentage': cls.BURN_PERCENTAGE,
             'min_completeness': cls.MIN_COMPLETENESS,

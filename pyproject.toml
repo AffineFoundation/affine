@@ -36,7 +36,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 
 [project.scripts]
-af = "affine:cli"
+af = "affine.cli.main:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]

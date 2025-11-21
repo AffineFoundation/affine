@@ -144,19 +144,6 @@ def geometric_mean(values: List[float]) -> float:
     return product ** (1.0 / n)
 
 
-def round_score(score: float, precision: int = 3) -> float:
-    """Round score to specified decimal places.
-    
-    Args:
-        score: Score value
-        precision: Number of decimal places
-        
-    Returns:
-        Rounded score
-    """
-    return round(score, precision)
-
-
 def calculate_required_score(prior_score: float, error_rate_reduction: float = 0.2) -> float:
     """Calculate required score to beat prior based on error rate reduction.
     
