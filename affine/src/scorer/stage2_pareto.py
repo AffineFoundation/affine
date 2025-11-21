@@ -183,7 +183,9 @@ class Stage2ParetoFilter:
             # Calculate required score for B to beat A (A came first)
             required_score = calculate_required_score(
                 score_a,
-                self.error_rate_reduction
+                self.error_rate_reduction,
+                self.config.HIGH_SCORE_THRESHOLD,
+                self.config.HIGH_SCORE_BONUS
             )
             
             # Determine winner: B wins if it beats A's threshold
