@@ -19,7 +19,8 @@ from affine.database import init_client, close_client
 from affine.database.dao import SampleResultsDAO
 
 # Setup logging
-from affine.core.setup import logger
+from affine.core.setup import setup_logging, logger
+setup_logging(2)
 
 # ============================================================================
 # R2 Storage Configuration
@@ -29,11 +30,6 @@ from affine.core.setup import logger
 R2_PUBLIC_BASE = "https://pub-bf429ea7a5694b99adaf3d444cbbe64d.r2.dev"
 INDEX_KEY = "affine/index.json"
 WINDOW = 20  # Block window size
-
-# Cache configuration
-CACHE_DIR = Path(os.getenv("AFFINE_CACHE_DIR",
-                 Path.home() / ".cache" / "affine" / "blocks"))
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ============================================================================
@@ -89,32 +85,20 @@ async def _load_public_index(need_blocks: set[int]) -> List[str]:
     return filtered_keys
 
 
-async def _cache_shard(
+async def _download_shard(
     key: str,
-    sem: asyncio.Semaphore,
-    force_refresh: bool = False
-) -> Path:
-    """Download and cache a shard from R2 public storage.
+    sem: asyncio.Semaphore
+) -> bytes:
+    """Download a shard from R2 public storage.
     
     Args:
         key: S3 key to fetch
         sem: Semaphore for concurrency control
-        force_refresh: If True, always download fresh copy
     
     Returns:
-        Path to cached JSONL file
+        Raw bytes of the JSON array
     """
     filename = Path(key).name
-    cache_file = CACHE_DIR / f"{filename}.jsonl"
-    mod_file = cache_file.with_suffix(".modified")
-    
-    # Check if cached version is valid
-    if not force_refresh and cache_file.exists() and mod_file.exists():
-        if cache_file.stat().st_size > 0:
-            logger.debug(f"Using cached shard: {filename}")
-            return cache_file
-        else:
-            logger.warning(f"Cached shard {filename} is empty, re-downloading")
     
     # Download with retry logic
     max_retries = 5
@@ -129,23 +113,9 @@ async def _cache_shard(
                 async with session.get(url) as resp:
                     resp.raise_for_status()
                     body = await resp.read()
-                    last_modified = resp.headers.get("last-modified", str(time.time()))
                 
-                # Parse JSON array and convert to JSONL format
-                data_array = orjson.loads(body)
-                
-                # Write to temporary file first
-                tmp_file = cache_file.with_suffix(".tmp")
-                with tmp_file.open("wb") as f:
-                    for item in data_array:
-                        f.write(orjson.dumps(item) + b"\n")
-                
-                # Atomic replace
-                os.replace(tmp_file, cache_file)
-                mod_file.write_text(last_modified)
-                
-                logger.debug(f"Downloaded shard: {filename} ({len(data_array)} records)")
-                return cache_file
+                logger.debug(f"Downloaded shard: {filename}")
+                return body
                 
         except aiohttp.ClientResponseError as e:
             if e.status == 429 and attempt < max_retries - 1:
@@ -163,31 +133,34 @@ async def _cache_shard(
                 raise
 
 
-def _jsonl_reader(path: Path):
-    """Synchronous JSONL reader for maximum performance.
+def _parse_json_array(data: bytes):
+    """Parse JSON array and yield individual records.
     
-    Uses standard file I/O for better throughput with large files.
+    Args:
+        data: Raw JSON array bytes
+    
+    Yields:
+        Individual record dictionaries
     """
-    with open(path, "rb") as f:
-        for line in f:
-            line = line.rstrip(b"\n")
-            if line:  # Skip empty lines
-                yield line
+    try:
+        data_array = orjson.loads(data)
+        for item in data_array:
+            yield item
+    except Exception as e:
+        logger.error(f"Failed to parse JSON array: {e}")
 
 
 async def load_r2_dataset(
     tail_blocks: int,
     current_block: int,
-    max_concurrency: int = 5,
-    refresh_window: int = 800
+    max_concurrency: int = 5
 ) -> AsyncIterator[Dict[str, Any]]:
-    """Load dataset from R2 public storage.
+    """Load dataset from R2 public storage (no caching).
     
     Args:
         tail_blocks: Number of blocks to look back
         current_block: Current blockchain block number
         max_concurrency: Maximum concurrent downloads
-        refresh_window: Number of recent blocks to force refresh
     
     Yields:
         Dict representing each result record
@@ -209,54 +182,39 @@ async def load_r2_dataset(
         logger.warning("No data found in R2 public storage")
         return
     
-    # Determine refresh threshold
-    refresh_threshold = current_block - refresh_window
     sem = asyncio.Semaphore(max_concurrency)
     
-    # Prefetch shards
-    async def _prefetch_shard(key: str) -> Path | None:
+    # Download shards
+    async def _fetch_shard(key: str) -> bytes | None:
         try:
-            # Check if this block needs refresh
-            block_str = Path(key).name.split("-", 1)[0]
-            if block_str.isdigit():
-                block_num = int(block_str)
-                force_refresh = block_num >= refresh_threshold
-            else:
-                force_refresh = True
-            
-            return await _cache_shard(key, sem, force_refresh=force_refresh)
+            return await _download_shard(key, sem)
         except Exception as e:
             logger.warning(f"Failed to fetch shard {key}: {e}")
             return None
     
-    # Create prefetch tasks
-    tasks = [asyncio.create_task(_prefetch_shard(k)) for k in keys]
+    # Create download tasks
+    tasks = [asyncio.create_task(_fetch_shard(k)) for k in keys]
     
     # Process shards as they complete
     total_records = 0
     for coro in asyncio.as_completed(tasks):
-        shard_path = await coro
-        if shard_path is None:
+        shard_data = await coro
+        if shard_data is None:
             continue
         
-        # Read JSONL file synchronously for performance
+        # Parse JSON array and yield records
         shard_records = 0
-        for raw_line in _jsonl_reader(shard_path):
-            try:
-                record = orjson.loads(raw_line)
-                total_records += 1
-                shard_records += 1
-                
-                # Log progress
-                if total_records % 10000 == 0:
-                    logger.info(f"Loaded {total_records} records from R2")
-                
-                yield record
-                
-            except Exception as e:
-                logger.debug(f"Skipping invalid record: {e}")
+        for record in _parse_json_array(shard_data):
+            total_records += 1
+            shard_records += 1
+            
+            # Log progress
+            if total_records % 10000 == 0:
+                logger.info(f"Loaded {total_records} records from R2")
+            
+            yield record
         
-        logger.debug(f"Processed shard {shard_path.name}: {shard_records} records")
+        logger.debug(f"Processed shard: {shard_records} records")
     
     logger.info(f"R2 dataset loading complete: {total_records} total records")
 

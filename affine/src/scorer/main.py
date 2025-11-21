@@ -63,7 +63,7 @@ async def run_scoring_once(
     system_config = await fetch_system_config(api_base_url)
     
     # Extract environments
-    environments = system_config.get("environments", ["affine:sat", "affine:abd", "affine:ded"])
+    environments = system_config.get("environments")
     
     # Use current timestamp as block number
     block_number = int(time.time())
@@ -100,8 +100,14 @@ async def run_scoring_once(
     return result
 
 
-async def run_service(api_base_url: str, save_to_db: bool, run_once: bool):
-    """Run the scorer service."""
+async def run_service_with_mode(api_base_url: str, save_to_db: bool, service_mode: bool):
+    """Run the scorer service.
+    
+    Args:
+        api_base_url: API base URL
+        save_to_db: Whether to save results to database
+        service_mode: If True, run continuously; if False, run once and exit
+    """
     logger.info("Starting Scorer Service")
     
     # Initialize database if saving results
@@ -114,13 +120,13 @@ async def run_service(api_base_url: str, save_to_db: bool, run_once: bool):
             raise
     
     try:
-        if run_once:
-            # Run once and exit
-            logger.info("Running in one-time mode")
+        if not service_mode:
+            # Run once and exit (DEFAULT)
+            logger.info("Running in one-time mode (default)")
             await run_scoring_once(api_base_url, save_to_db)
         else:
-            # Run continuously every 30 minutes
-            logger.info("Running in continuous mode (every 30 minutes)")
+            # Run continuously every 30 minutes (SERVICE_MODE=true)
+            logger.info("Running in service mode (continuous, every 30 minutes)")
             while True:
                 try:
                     await run_scoring_once(api_base_url, save_to_db)
@@ -150,48 +156,50 @@ async def run_service(api_base_url: str, save_to_db: bool, run_once: bool):
 
 @click.command()
 @click.option(
-    "--api-url",
-    default="http://localhost:8000",
-    help="API base URL"
-)
-@click.option(
-    "--once",
-    is_flag=True,
-    help="Run once and exit (default: run continuously every 30 minutes)"
-)
-@click.option(
     "-v", "--verbosity",
     default="1",
     type=click.Choice(["0", "1", "2", "3"]),
     help="Logging verbosity: 0=CRITICAL, 1=INFO, 2=DEBUG, 3=TRACE"
 )
-def main(api_url, once, verbosity):
+def main(verbosity):
     """
     Affine Scorer - Calculate miner weights using four-stage algorithm.
     
     This service fetches scoring data from the API and calculates normalized
     weights for miners using a four-stage algorithm with Pareto filtering.
     
-    By default, runs continuously and executes scoring every 30 minutes.
-    Use --once flag to run a single scoring cycle and exit.
+    Run Mode:
+    - Default: One-time execution (calculates scores once and exits)
+    - SERVICE_MODE=true: Continuous service mode (runs every 30 minutes)
     
-    Configuration is managed through constants in config.py.
-    Use SCORER_SAVE_TO_DB environment variable to enable database saving.
+    Configuration:
+    - AFFINE_API_URL: API base URL (default: http://localhost:8000)
+    - SCORER_SAVE_TO_DB: Enable database saving (default: false)
+    - SERVICE_MODE: Run as continuous service (default: false)
+    - All scoring parameters are constants in config.py
     """
     # Setup logging
     setup_logging(int(verbosity))
     
-    # Check if should save to database (from environment variable)
+    # Get API URL from environment variable
+    api_base_url = os.getenv("AFFINE_API_URL", "http://localhost:8000")
+    
+    # Check if should save to database
     save_to_db = os.getenv("SCORER_SAVE_TO_DB", "false").lower() in ("true", "1", "yes")
     
+    # Check service mode (default: false = one-time execution)
+    service_mode = os.getenv("SERVICE_MODE", "false").lower() in ("true", "1", "yes")
+    
+    logger.info(f"API URL: {api_base_url}")
     if save_to_db:
         logger.info("Database saving enabled (SCORER_SAVE_TO_DB=true)")
+    logger.info(f"Service mode: {service_mode}")
     
     # Run service
-    asyncio.run(run_service(
-        api_base_url=api_url,
+    asyncio.run(run_service_with_mode(
+        api_base_url=api_base_url,
         save_to_db=save_to_db,
-        run_once=once
+        service_mode=service_mode
     ))
 
 

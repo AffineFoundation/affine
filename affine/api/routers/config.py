@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from typing import Optional
 from affine.database.dao.system_config import SystemConfigDAO
 
-router = APIRouter(prefix="/api/v1/config", tags=["config"])
+router = APIRouter(prefix="/config", tags=["config"])
 config_dao = SystemConfigDAO()
 
 
@@ -57,19 +57,3 @@ async def get_config(key: str):
         raise HTTPException(status_code=404, detail=f"Config '{key}' not found")
     
     return config
-
-    """List all configuration parameters with full metadata.
-    
-    Returns:
-        List of config items with complete details including
-        version, updated_at, updated_by, etc.
-        
-    Example:
-        GET /api/v1/config/list/all
-    """
-    configs = await config_dao.list_all_configs()
-    
-    return {
-        "count": len(configs),
-        "configs": configs
-    }
