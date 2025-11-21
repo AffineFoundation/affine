@@ -15,6 +15,8 @@ from affine.database.dao.execution_logs import ExecutionLogsDAO
 from affine.database.dao.scores import ScoresDAO
 from affine.database.dao.system_config import SystemConfigDAO
 from affine.database.dao.data_retention import DataRetentionDAO
+from affine.database.dao.miner_scores import MinerScoresDAO
+from affine.database.dao.score_snapshots import ScoreSnapshotsDAO
 from affine.api.services.auth import AuthService
 from affine.api.config import config
 from affine.api.services.task_pool import TaskPoolManager
@@ -27,6 +29,8 @@ _execution_logs_dao: Optional[ExecutionLogsDAO] = None
 _scores_dao: Optional[ScoresDAO] = None
 _system_config_dao: Optional[SystemConfigDAO] = None
 _data_retention_dao: Optional[DataRetentionDAO] = None
+_miner_scores_dao: Optional[MinerScoresDAO] = None
+_score_snapshots_dao: Optional[ScoreSnapshotsDAO] = None
 _auth_service: Optional[AuthService] = None
 _task_pool_manager: Optional[TaskPoolManager] = None
 
@@ -78,6 +82,22 @@ def get_data_retention_dao() -> DataRetentionDAO:
     if _data_retention_dao is None:
         _data_retention_dao = DataRetentionDAO()
     return _data_retention_dao
+
+
+def get_miner_scores_dao() -> MinerScoresDAO:
+    """Get MinerScoresDAO instance."""
+    global _miner_scores_dao
+    if _miner_scores_dao is None:
+        _miner_scores_dao = MinerScoresDAO()
+    return _miner_scores_dao
+
+
+def get_score_snapshots_dao() -> ScoreSnapshotsDAO:
+    """Get ScoreSnapshotsDAO instance."""
+    global _score_snapshots_dao
+    if _score_snapshots_dao is None:
+        _score_snapshots_dao = ScoreSnapshotsDAO()
+    return _score_snapshots_dao
 
 
 def get_auth_service() -> AuthService:

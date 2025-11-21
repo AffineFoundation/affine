@@ -1,65 +1,109 @@
 """
 Scorer Configuration
 
-分数计算器配置，支持环境变量覆盖
+Central configuration for the scoring algorithm.
+All parameters are defined as constants for clarity and maintainability.
 """
 
-from pydantic_settings import BaseSettings
-from typing import Dict
-from .models import TaskIdRange
+from typing import Dict, Any
 
 
-class ScorerConfig(BaseSettings):
-    """Scorer 配置"""
+class ScorerConfig:
+    """Configuration for the four-stage scoring algorithm."""
     
-    # API 配置
-    api_base_url: str = "http://localhost:8000"
-    api_timeout_seconds: int = 60
+    # Stage 2: Pareto Frontier Anti-Plagiarism
+    ERROR_RATE_REDUCTION: float = 0.2  # 20% error rate reduction threshold
+    """
+    Error rate reduction threshold for Pareto dominance.
     
-    # 计算间隔
-    calculation_interval_minutes: int = 30
+    Formula: required_score = 0.2 + 0.8 * prior_score
     
-    # 动态阈值配置 (指数衰减算法)
-    # threshold = base_threshold * (1 - current_score)^decay_alpha
-    base_threshold: float = 0.05  # 基础阈值 5%
-    decay_alpha: float = 1.0      # 指数衰减参数
+    Examples:
+    - prior_score=0.5 → error_rate=0.5 → required=0.6 (need 20% error reduction)
+    - prior_score=0.9 → error_rate=0.1 → required=0.92 (need 20% error reduction)
+    """
     
-    # 权重分配方法: score_proportional, rank_based, equal
-    weight_method: str = "score_proportional"
+    SCORE_PRECISION: int = 3
+    """Number of decimal places for score comparison (avoid floating point issues)."""
     
-    # 默认环境列表
-    default_environments: list = [
-        "affine:sat", 
-        "affine:abd", 
-        "affine:ded"
-    ]
+    # Stage 3: Subset Scoring
+    SUBSET_WEIGHT_BASE: int = 1
+    """Base weight multiplier for subset layers (N for L1, N*2 for L2, N*4 for L3, etc.)."""
     
-    # 每个环境的 Task ID 范围 (用于支持数据集扩展过渡)
-    # 如果未指定，将从 API 获取当前数据集长度
-    # 格式: {"affine:sat": {"start": 0, "end": 100}, ...}
-    task_id_ranges_override: Dict[str, Dict[str, int]] = {}
+    SUBSET_WEIGHT_EXPONENT: int = 2
+    """Exponent base for layer weights (layer_weight = N * base^(layer-1))."""
     
-    # 日志级别
-    log_level: str = "INFO"
+    USE_GEOMETRIC_MEAN: bool = True
+    """Use geometric mean for subset scoring (penalizes poor performance in any env)."""
     
-    class Config:
-        env_prefix = "AFFINE_SCORER_"
-        extra = "ignore"
+    DECAY_FACTOR: float = 0.5
+    """
+    Optional rank-based decay factor for score_proportional weighting.
     
-    def get_task_id_range(self, env: str) -> TaskIdRange:
-        """
-        获取指定环境的 Task ID 范围
-        
-        如果有覆盖配置则使用覆盖，否则返回空范围（需要从 API 获取）
-        """
-        if env in self.task_id_ranges_override:
-            range_dict = self.task_id_ranges_override[env]
-            return TaskIdRange(
-                start=range_dict.get("start", 0),
-                end=range_dict.get("end", 0)
-            )
-        return TaskIdRange(start=0, end=0)
+    Applied as: adjusted_score = score × decay_factor^(rank - 1)
+    - Rank 1: score × 1.0
+    - Rank 2: score × 0.5
+    - Rank 3: score × 0.25
+    """
     
-    def has_task_id_range_override(self, env: str) -> bool:
-        """检查是否有 Task ID 范围覆盖"""
-        return env in self.task_id_ranges_override
+    APPLY_RANK_DECAY: bool = False
+    """Whether to apply rank-based decay to subset scores."""
+    
+    # Stage 4: Weight Normalization
+    MIN_WEIGHT_THRESHOLD: float = 0.01
+    """Minimum weight threshold (1%). Miners below this are set to 0."""
+    
+    BURN_PERCENTAGE: float = 0.0
+    """
+    Percentage of total weight to burn (allocated to UID 0).
+    
+    Set to 0.0 to disable burning.
+    Range: [0.0, 1.0]
+    """
+    
+    # Stage 1: Data Collection
+    MIN_COMPLETENESS: float = 0.95
+    """Minimum sample completeness required (95% of scoring range)."""
+    
+    # Database & Storage
+    SCORE_RECORD_TTL_DAYS: int = 30
+    """TTL for miner_scores and score_snapshots tables (in days)."""
+    
+    # Logging & Output
+    PRINT_DETAILED_SUMMARY: bool = True
+    """Print detailed score summary with all environments and layers."""
+    
+    LOG_PARETO_FILTERING: bool = True
+    """Log Pareto filtering decisions for debugging."""
+    
+    @classmethod
+    def to_dict(cls) -> Dict[str, Any]:
+        """Export configuration as dictionary for storage in snapshots."""
+        return {
+            'error_rate_reduction': cls.ERROR_RATE_REDUCTION,
+            'score_precision': cls.SCORE_PRECISION,
+            'subset_weight_base': cls.SUBSET_WEIGHT_BASE,
+            'subset_weight_exponent': cls.SUBSET_WEIGHT_EXPONENT,
+            'use_geometric_mean': cls.USE_GEOMETRIC_MEAN,
+            'decay_factor': cls.DECAY_FACTOR,
+            'apply_rank_decay': cls.APPLY_RANK_DECAY,
+            'min_weight_threshold': cls.MIN_WEIGHT_THRESHOLD,
+            'burn_percentage': cls.BURN_PERCENTAGE,
+            'min_completeness': cls.MIN_COMPLETENESS,
+        }
+    
+    @classmethod
+    def validate(cls):
+        """Validate configuration parameters."""
+        assert 0.0 <= cls.ERROR_RATE_REDUCTION <= 1.0, "ERROR_RATE_REDUCTION must be in [0, 1]"
+        assert cls.SCORE_PRECISION >= 0, "SCORE_PRECISION must be non-negative"
+        assert cls.SUBSET_WEIGHT_BASE > 0, "SUBSET_WEIGHT_BASE must be positive"
+        assert cls.SUBSET_WEIGHT_EXPONENT >= 2, "SUBSET_WEIGHT_EXPONENT must be >= 2"
+        assert 0.0 <= cls.DECAY_FACTOR <= 1.0, "DECAY_FACTOR must be in [0, 1]"
+        assert 0.0 <= cls.MIN_WEIGHT_THRESHOLD <= 1.0, "MIN_WEIGHT_THRESHOLD must be in [0, 1]"
+        assert 0.0 <= cls.BURN_PERCENTAGE <= 1.0, "BURN_PERCENTAGE must be in [0, 1]"
+        assert 0.0 <= cls.MIN_COMPLETENESS <= 1.0, "MIN_COMPLETENESS must be in [0, 1]"
+
+
+# Validate configuration on import
+ScorerConfig.validate()
