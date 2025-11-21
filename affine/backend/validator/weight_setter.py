@@ -10,7 +10,7 @@ import time
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 
-logger = logging.getLogger(__name__)
+from affine.core.setup import logger
 
 
 @dataclass

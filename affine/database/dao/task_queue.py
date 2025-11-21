@@ -12,10 +12,11 @@ Design:
 
 import time
 import uuid
-import logging
 from typing import Dict, Any, List, Optional, Set
 from affine.database.base_dao import BaseDAO
 from affine.database.schema import get_table_name
+
+from affine.core.setup import logger
 
 
 class TaskQueueDAO(BaseDAO):
@@ -387,7 +388,6 @@ class TaskQueueDAO(BaseDAO):
                 timestamp=int(time.time() * 1000)
             )
             
-            logger = logging.getLogger(__name__)
             logger.info(
                 f"Created zero-score sample for permanently failed task: "
                 f"miner={task['miner_hotkey'][:12]}... env={task['env']} "
@@ -395,7 +395,6 @@ class TaskQueueDAO(BaseDAO):
             )
             
         except Exception as e:
-            logger = logging.getLogger(__name__)
             logger.error(f"Failed to create zero-score sample: {e}", exc_info=True)
     
     async def get_tasks_by_miner(

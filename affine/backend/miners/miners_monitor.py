@@ -20,7 +20,7 @@ from affine.core.setup import NETUID
 from affine.database.dao.miners import MinersDAO
 
 
-logger = logging.getLogger(__name__)
+from affine.core.setup import logger
 
 
 @dataclass

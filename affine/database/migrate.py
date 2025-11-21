@@ -19,7 +19,7 @@ from affine.database import init_client, close_client
 from affine.database.dao import SampleResultsDAO
 
 # Setup logging
-logger = logging.getLogger(__name__)
+from affine.core.setup import logger
 
 # ============================================================================
 # R2 Storage Configuration

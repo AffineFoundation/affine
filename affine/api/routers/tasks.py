@@ -21,7 +21,7 @@ from affine.api.config import config
 from affine.database.dao.task_queue import TaskQueueDAO
 from affine.api.services.task_pool import TaskPoolManager
 
-logger = logging.getLogger(__name__)
+from affine.core.setup import logger
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 

@@ -147,12 +147,17 @@ def round_score(score: float, precision: int = 3) -> float:
 def calculate_required_score(prior_score: float, error_rate_reduction: float = 0.2) -> float:
     """Calculate required score to beat prior based on error rate reduction.
     
-    Formula: required_score = 0.2 + 0.8 × prior_score
+    Formula: required_score = error_rate_reduction + (1 - error_rate_reduction) × prior_score
     
     This is derived from:
     - error_rate_old = 1 - prior_score
-    - error_rate_required = error_rate_old × (1 - reduction)
+    - error_rate_required = error_rate_old × (1 - error_rate_reduction)
     - required_score = 1 - error_rate_required
+    
+    Simplified:
+    - required_score = 1 - [(1 - prior_score) × (1 - error_rate_reduction)]
+    - required_score = 1 - (1 - prior_score - error_rate_reduction + prior_score × error_rate_reduction)
+    - required_score = error_rate_reduction + prior_score × (1 - error_rate_reduction)
     
     Args:
         prior_score: Score of the earlier miner
@@ -161,8 +166,8 @@ def calculate_required_score(prior_score: float, error_rate_reduction: float = 0
     Returns:
         Required score to dominate the prior miner
     """
-    # Simplified formula
-    return (1 - error_rate_reduction) * (1 - prior_score) + prior_score
+    # Correct formula: error_rate_reduction + (1 - error_rate_reduction) × prior_score
+    return error_rate_reduction + (1 - error_rate_reduction) * prior_score
 
 
 def normalize_weights(weights: Dict[int, float]) -> Dict[int, float]:

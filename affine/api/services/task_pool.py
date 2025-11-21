@@ -22,7 +22,7 @@ from affine.database.dao.task_queue import TaskQueueDAO
 from affine.database.dao.execution_logs import ExecutionLogsDAO
 from affine.database.dao.miners import MinersDAO
 
-logger = logging.getLogger(__name__)
+from affine.core.setup import logger
 
 
 class TaskLock:

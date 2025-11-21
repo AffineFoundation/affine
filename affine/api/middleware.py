@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from affine.api.config import config
 
-logger = logging.getLogger(__name__)
+from affine.core.setup import logger
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
