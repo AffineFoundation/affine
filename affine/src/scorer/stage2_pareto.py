@@ -15,7 +15,6 @@ from affine.src.scorer.models import (
 from affine.src.scorer.config import ScorerConfig
 from affine.src.scorer.utils import (
     calculate_required_score,
-    round_score,
 )
 
 from affine.core.setup import logger
@@ -114,9 +113,6 @@ class Stage2ParetoFilter:
                     # Track dominated miners
                     if comparison.a_dominates_b:
                         dominated_in_subset.add(miner_b.uid)
-                        logger.debug(
-                            f"Subset {subset_key}: UID {miner_a.uid} dominates UID {miner_b.uid}"
-                        )
                     elif comparison.b_dominates_a:
                         dominated_in_subset.add(miner_a.uid)
                         logger.debug(
@@ -154,6 +150,16 @@ class Stage2ParetoFilter:
     ) -> ParetoComparison:
         """Compare two miners using Pareto dominance test.
         
+        Dominance Rule:
+        - First determine winner in each environment using threshold
+        - A dominates B only if A wins in ALL environments
+        - B dominates A only if B wins in ALL environments
+        - Otherwise they are non-dominated
+        
+        Winner Determination:
+        - If A came first: B wins if B > threshold(A), else A wins
+        - If B came first: A wins if A > threshold(B), else B wins
+        
         Args:
             miner_a: Earlier miner (lower first_block)
             miner_b: Later miner (higher first_block)
@@ -165,43 +171,46 @@ class Stage2ParetoFilter:
         """
         env_comparisons = {}
         
-        # A dominates B if B cannot beat A's threshold in ALL environments
-        b_beats_a_threshold_in_all = True
+        # Track who wins in each environment
+        a_wins_count = 0
+        b_wins_count = 0
         
         for env in envs:
             # Get scores (already validated in filter())
             score_a = miner_a.env_scores[env].avg_score
             score_b = miner_b.env_scores[env].avg_score
             
-            # Round scores for comparison
-            score_a = round_score(score_a, self.score_precision)
-            score_b = round_score(score_b, self.score_precision)
-            
-            # Calculate required score for B to beat A
+            # Calculate required score for B to beat A (A came first)
             required_score = calculate_required_score(
                 score_a,
-                self.error_rate_reduction
+                self.error_rate_reduction,
+                self.config.HIGH_SCORE_THRESHOLD,
+                self.config.HIGH_SCORE_BONUS
             )
-            required_score = round_score(required_score, self.score_precision)
+            
+            # Determine winner: B wins if it beats A's threshold
+            b_wins_env = score_b > required_score
+            
+            if b_wins_env:
+                b_wins_count += 1
+            else:
+                a_wins_count += 1
             
             # Store comparison details
             env_comparisons[env] = {
                 "a_score": score_a,
                 "b_score": score_b,
                 "threshold": required_score,
-                "b_beats_threshold": score_b > required_score
+                "b_beats_threshold": b_wins_env,
+                "winner": "B" if b_wins_env else "A"
             }
-            
-            # Check if B beats threshold
-            if score_b <= required_score:
-                b_beats_a_threshold_in_all = False
         
-        # Determine dominance
-        # A dominates B if B fails to beat A's threshold in at least one env
-        a_dominates_b = not b_beats_a_threshold_in_all
+        # Determine dominance based on winning all environments
+        # A dominates B only if A wins in ALL environments
+        a_dominates_b = (a_wins_count == len(envs))
         
-        # B can never dominate A in this algorithm (A came first)
-        b_dominates_a = False
+        # B dominates A only if B wins in ALL environments
+        b_dominates_a = (b_wins_count == len(envs))
         
         return ParetoComparison(
             miner_a_uid=miner_a.uid,

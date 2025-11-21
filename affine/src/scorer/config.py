@@ -23,6 +23,25 @@ class ScorerConfig:
     - prior_score=0.9 → error_rate=0.1 → required=0.92 (need 20% error reduction)
     """
     
+    HIGH_SCORE_THRESHOLD: float = 0.96
+    """
+    High score threshold for stricter requirements.
+    
+    When prior_score >= this threshold, apply HIGH_SCORE_BONUS to prevent
+    random fluctuations from allowing plagiarism to beat originals.
+    """
+    
+    HIGH_SCORE_BONUS: float = 0.01
+    """
+    Additional improvement required in high score region.
+    
+    When prior_score >= HIGH_SCORE_THRESHOLD, the required score is:
+    max(base_required, prior_score + HIGH_SCORE_BONUS)
+    
+    Example: If prior=0.9979, required=max(0.9983, 0.9979+0.01)=1.0079→1.0
+    This means only perfect score (1.0) can beat near-perfect scores.
+    """
+    
     SCORE_PRECISION: int = 3
     """Number of decimal places for score comparison (avoid floating point issues)."""
     
@@ -38,19 +57,19 @@ class ScorerConfig:
     
     DECAY_FACTOR: float = 0.5
     """
-    Optional rank-based decay factor for score_proportional weighting.
+    Rank-based decay factor for score_proportional weighting.
     
     Applied as: adjusted_score = score × decay_factor^(rank - 1)
     - Rank 1: score × 1.0
-    - Rank 2: score × 0.5
-    - Rank 3: score × 0.25
+    - Rank 2: score × decay_factor^1
+    - Rank 3: score × decay_factor^2
+    
+    Set to 1.0 to disable decay (all ranks weighted equally).
+    Set to 0.5 for exponential decay (each rank gets 50% of previous).
     """
     
-    APPLY_RANK_DECAY: bool = False
-    """Whether to apply rank-based decay to subset scores."""
-    
     # Stage 4: Weight Normalization
-    MIN_WEIGHT_THRESHOLD: float = 0.01
+    MIN_WEIGHT_THRESHOLD: float = 0.5
     """Minimum weight threshold (1%). Miners below this are set to 0."""
     
     BURN_PERCENTAGE: float = 0.0
@@ -62,8 +81,15 @@ class ScorerConfig:
     """
     
     # Stage 1: Data Collection
-    MIN_COMPLETENESS: float = 0.90
+    MIN_COMPLETENESS: float = 0.9
     """Minimum sample completeness required."""
+    
+    # Environment Score Normalization
+    # Format: env_name -> (min_score, max_score)
+    # Scores will be normalized to [0, 1] range: (score - min) / (max - min)
+    ENV_SCORE_RANGES: Dict[str, tuple] = {
+        'agentgym:sciworld': (-100, 100.0)  # sciworld 分数范围 0-100
+    }
     
     # Database & Storage
     SCORE_RECORD_TTL_DAYS: int = 30
@@ -74,12 +100,13 @@ class ScorerConfig:
         """Export configuration as dictionary for storage in snapshots."""
         return {
             'error_rate_reduction': cls.ERROR_RATE_REDUCTION,
+            'high_score_threshold': cls.HIGH_SCORE_THRESHOLD,
+            'high_score_bonus': cls.HIGH_SCORE_BONUS,
             'score_precision': cls.SCORE_PRECISION,
             'max_layers': cls.MAX_LAYERS,
             'subset_weight_base': cls.SUBSET_WEIGHT_BASE,
             'subset_weight_exponent': cls.SUBSET_WEIGHT_EXPONENT,
             'decay_factor': cls.DECAY_FACTOR,
-            'apply_rank_decay': cls.APPLY_RANK_DECAY,
             'min_weight_threshold': cls.MIN_WEIGHT_THRESHOLD,
             'burn_percentage': cls.BURN_PERCENTAGE,
             'min_completeness': cls.MIN_COMPLETENESS,
@@ -89,6 +116,8 @@ class ScorerConfig:
     def validate(cls):
         """Validate configuration parameters."""
         assert 0.0 <= cls.ERROR_RATE_REDUCTION <= 1.0, "ERROR_RATE_REDUCTION must be in [0, 1]"
+        assert 0.0 <= cls.HIGH_SCORE_THRESHOLD <= 1.0, "HIGH_SCORE_THRESHOLD must be in [0, 1]"
+        assert 0.0 <= cls.HIGH_SCORE_BONUS <= 0.1, "HIGH_SCORE_BONUS must be in [0, 0.1]"
         assert cls.SCORE_PRECISION >= 0, "SCORE_PRECISION must be non-negative"
         assert cls.SUBSET_WEIGHT_BASE > 0, "SUBSET_WEIGHT_BASE must be positive"
         assert cls.SUBSET_WEIGHT_EXPONENT >= 2, "SUBSET_WEIGHT_EXPONENT must be >= 2"

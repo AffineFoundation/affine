@@ -18,7 +18,6 @@ from affine.src.scorer.utils import (
     calculate_layer_weights,
     calculate_subset_weights,
     geometric_mean,
-    round_score,
 )
 
 from affine.core.setup import logger
@@ -44,7 +43,6 @@ class Stage3SubsetScorer:
             config: Scorer configuration (defaults to global config)
         """
         self.config = config
-        self.apply_rank_decay = config.APPLY_RANK_DECAY
         self.decay_factor = config.DECAY_FACTOR
         self.score_precision = config.SCORE_PRECISION
     
@@ -162,25 +160,18 @@ class Stage3SubsetScorer:
             
             # Always use geometric mean to penalize poor performance in any environment
             score = geometric_mean(env_scores)
-            score = round_score(score, self.score_precision)
             miner_scores.append((miner.uid, score))
             miner.subset_scores[subset_key] = score
         
         # Sort by score (descending)
         miner_scores.sort(key=lambda x: x[1], reverse=True)
         
-        # Assign ranks
+        # Assign ranks and apply decay
+        adjusted_scores = []
         for rank, (uid, score) in enumerate(miner_scores, start=1):
             miners[uid].subset_ranks[subset_key] = rank
-        
-        # Apply rank-based decay if enabled
-        if self.apply_rank_decay:
-            adjusted_scores = []
-            for rank, (uid, score) in enumerate(miner_scores, start=1):
-                adjusted = score * (self.decay_factor ** (rank - 1))
-                adjusted_scores.append((uid, adjusted))
-        else:
-            adjusted_scores = miner_scores
+            adjusted = score * (self.decay_factor ** (rank - 1))
+            adjusted_scores.append((uid, adjusted))
         
         # Calculate proportional weights
         total_score = sum(score for _, score in adjusted_scores)
