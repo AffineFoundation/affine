@@ -249,7 +249,7 @@ def main(envs, all_envs, api_url, poll_interval, verbosity, single_run):
     
     # Get API URL
     api_base_url = api_url or os.getenv("AFFINE_API_URL", "http://localhost:8000")
-    
+
     # Show status in debug mode
     show_status = int(verbosity) >= 2
     
