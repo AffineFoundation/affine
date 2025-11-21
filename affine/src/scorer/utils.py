@@ -9,11 +9,14 @@ from itertools import combinations
 import math
 
 
-def generate_all_subsets(envs: List[str]) -> Dict[str, Dict[str, any]]:
+def generate_all_subsets(envs: List[str], max_layers: int = None) -> Dict[str, Dict[str, any]]:
     """Generate all possible subsets (environment combinations) with layer information.
     
     Args:
         envs: List of environment names
+        max_layers: Maximum number of layers to evaluate. If total envs > max_layers,
+                   only the top max_layers will be evaluated (e.g., if 8 envs and max_layers=6,
+                   evaluate L3-L8, skipping L1-L2)
         
     Returns:
         Dict mapping subset_key to subset metadata:
@@ -34,8 +37,14 @@ def generate_all_subsets(envs: List[str]) -> Dict[str, Dict[str, any]]:
     subsets = {}
     n = len(envs)
     
+    # Calculate starting layer (skip lower layers if total > max_layers)
+    if max_layers is not None and n > max_layers:
+        start_layer = n - max_layers + 1  # e.g., 8 envs, max 6 layers: start from L3
+    else:
+        start_layer = 1
+    
     # Generate all combinations for each layer
-    for layer in range(1, n + 1):
+    for layer in range(start_layer, n + 1):
         for env_combo in combinations(envs, layer):
             # Sort environments alphabetically for consistent keys
             sorted_envs = sorted(env_combo)
@@ -52,22 +61,26 @@ def generate_all_subsets(envs: List[str]) -> Dict[str, Dict[str, any]]:
     return subsets
 
 
-def calculate_layer_weights(n_envs: int, base: int = 2) -> Dict[int, float]:
+def calculate_layer_weights(n_envs: int, base: int = 2, start_layer: int = 1) -> Dict[int, float]:
     """Calculate weight for each layer based on exponential growth.
     
-    Layer weight = N × base^(layer-1)
+    Layer weight = N × base^(layer_index)
+    where layer_index = layer - start_layer (starts from 0)
     
     Args:
         n_envs: Number of environments
         base: Exponent base (default: 2)
+        start_layer: Starting layer number (default: 1)
         
     Returns:
         Dict mapping layer number to total layer weight:
-        {1: N, 2: N*2, 3: N*4, 4: N*8, ...}
+        If start_layer=1: {1: N, 2: N*2, 3: N*4, 4: N*8, ...}
+        If start_layer=3: {3: N, 4: N*2, 5: N*4, 6: N*8, ...}
     """
     layer_weights = {}
-    for layer in range(1, n_envs + 1):
-        layer_weights[layer] = n_envs * (base ** (layer - 1))
+    for layer in range(start_layer, n_envs + 1):
+        layer_index = layer - start_layer  # Relative index from start
+        layer_weights[layer] = n_envs * (base ** layer_index)
     return layer_weights
 
 

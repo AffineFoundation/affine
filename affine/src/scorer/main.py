@@ -15,15 +15,19 @@ from affine.core.setup import setup_logging, logger
 from affine.database import init_client, close_client
 from affine.database.dao.miner_scores import MinerScoresDAO
 from affine.database.dao.score_snapshots import ScoreSnapshotsDAO
-from scorer import Scorer
-from config import ScorerConfig
+from affine.src.scorer.scorer import Scorer
+from affine.src.scorer.config import ScorerConfig
+from affine.utils.subtensor import get_subtensor
 
 
 async def fetch_scoring_data(api_base_url: str) -> dict:
-    """Fetch scoring data from API."""
+    """Fetch scoring data from API with 10 minute timeout."""
     url = f"{api_base_url}/api/v1/samples/scoring"
     
-    async with aiohttp.ClientSession() as session:
+    # Set timeout to 10 minutes
+    timeout = aiohttp.ClientTimeout(total=600)
+    
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.get(url) as response:
             if response.status != 200:
                 raise RuntimeError(f"Failed to fetch scoring data: HTTP {response.status}")
@@ -32,18 +36,42 @@ async def fetch_scoring_data(api_base_url: str) -> dict:
             logger.info(f"Fetched scoring data for {len(data)} miners")
             return data
 
-
-async def fetch_system_config(api_base_url: str) -> dict:
-    """Fetch system configuration from API."""
-    url = f"{api_base_url}/api/v1/config/scoring"
+async def fetch_system_config(api_url: str) -> dict:
+    """Fetch system configuration from API.
     
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            if response.status != 200:
-                logger.warning("Failed to fetch system config, using defaults")
-                return {"environments": ["affine:sat", "affine:abd", "affine:ded"]}
-            
-            return await response.json()
+    Returns:
+        System config dict with 'environments' key
+    """
+    url = f"{api_url}/api/v1/config/environments"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    logger.warning(f"Failed to fetch environments config from API: HTTP {response.status}")
+                    return {"environments": ["affine:sat"]}  # Fallback default
+                
+                config = await response.json()
+
+                if isinstance(config, dict):
+                    value = config.get("param_value")
+                    if isinstance(value, dict):
+                        # Filter environments where enabled_for_scoring=true
+                        enabled_envs = [
+                            env_name for env_name, env_config in value.items()
+                            if isinstance(env_config, dict) and env_config.get("enabled_for_scoring", False)
+                        ]
+                        
+                        if enabled_envs:
+                            logger.info(f"Fetched environments from API: {enabled_envs}")
+                            return {"environments": enabled_envs}
+
+                logger.exception("Failed to parse environments config")
+                
+    except Exception as e:
+        logger.error(f"Error fetching system config: {e}")
+        raise
+
 
 
 async def run_scoring_once(
@@ -64,9 +92,13 @@ async def run_scoring_once(
     
     # Extract environments
     environments = system_config.get("environments")
+    logger.info(f"environments: {environments}")
     
-    # Use current timestamp as block number
-    block_number = int(time.time())
+    # Get current block number from Bittensor
+    logger.info("Fetching current block number from Bittensor...")
+    subtensor = await get_subtensor()
+    block_number = await subtensor.get_current_block()
+    logger.info(f"Current block number: {block_number}")
     
     # Calculate scores
     logger.info("Starting scoring calculation...")

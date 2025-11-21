@@ -7,13 +7,13 @@ Coordinates the four-stage scoring algorithm and manages result persistence.
 import time
 import logging
 from typing import Dict, Any, Optional
-from config import ScorerConfig
-from models import ScoringResult
-from stage1_collector import Stage1Collector
-from stage2_pareto import Stage2ParetoFilter
-from stage3_subset import Stage3SubsetScorer
-from stage4_weights import Stage4WeightNormalizer
-from utils import generate_all_subsets
+from .config import ScorerConfig
+from .models import ScoringResult
+from .stage1_collector import Stage1Collector
+from .stage2_pareto import Stage2ParetoFilter
+from .stage3_subset import Stage3SubsetScorer
+from .stage4_weights import Stage4WeightNormalizer
+from .utils import generate_all_subsets
 
 from affine.core.setup import logger
 
@@ -63,40 +63,21 @@ class Scorer:
             ScoringResult with complete scoring data
         """
         start_time = time.time()
-        logger.info("=" * 80)
-        logger.info("STARTING FOUR-STAGE SCORING ALGORITHM")
-        logger.info("=" * 80)
-        logger.info(f"Block Number: {block_number}")
-        logger.info(f"Environments: {len(environments)} ({', '.join(environments)})")
         logger.info(f"Total Miners: {len(scoring_data)}")
-        logger.info("")
         
         # Stage 1: Data Collection
-        logger.info("Stage 1: Data Collection")
         stage1_output = self.stage1.collect(scoring_data, environments)
-        if print_summary:
-            self.stage1.print_summary(stage1_output)
         
         # Stage 2: Pareto Filtering
-        logger.info("Stage 2: Pareto Filtering")
-        subsets_meta = generate_all_subsets(environments)
+        # Apply MAX_LAYERS limit: only evaluate top layers (e.g., L3-L8 if 8 envs and MAX_LAYERS=6)
+        subsets_meta = generate_all_subsets(environments, max_layers=self.config.MAX_LAYERS)
         stage2_output = self.stage2.filter(stage1_output.miners, subsets_meta)
-        if print_summary:
-            self.stage2.print_summary(stage2_output)
         
         # Stage 3: Subset Scoring
-        logger.info("Stage 3: Subset Scoring")
         stage3_output = self.stage3.score(stage2_output.miners, environments)
-        if print_summary:
-            self.stage3.print_summary(stage3_output)
         
         # Stage 4: Weight Normalization
-        logger.info("Stage 4: Weight Normalization")
         stage4_output = self.stage4.normalize(stage3_output.miners)
-        if print_summary:
-            self.stage4.print_summary(stage4_output, stage3_output.miners)
-            if self.config.PRINT_DETAILED_SUMMARY:
-                self.stage4.print_detailed_table(stage3_output.miners, environments)
         
         # Build final result
         result = ScoringResult(
@@ -115,12 +96,14 @@ class Scorer:
         )
         
         elapsed_time = time.time() - start_time
+        non_zero = len([w for w in result.final_weights.values() if w > 0])
         logger.info("=" * 80)
-        logger.info("SCORING COMPLETED")
+        logger.info(f"SCORING COMPLETED - Time: {elapsed_time:.2f}s, Active: {non_zero}/{len(scoring_data)}")
         logger.info("=" * 80)
-        logger.info(f"Elapsed Time: {elapsed_time:.2f}s")
-        logger.info(f"Final Non-Zero Weights: {len([w for w in result.final_weights.values() if w > 0])}")
-        logger.info("=" * 80)
+        
+        # Print detailed summary table
+        if print_summary:
+            self.stage4.print_detailed_table(stage3_output.miners, environments)
         
         return result
     

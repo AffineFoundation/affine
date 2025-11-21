@@ -28,6 +28,7 @@ class MinerData:
     uid: int
     hotkey: str
     model_revision: str
+    model_repo: str
     first_block: int
     
     # Stage 1: Environment scores

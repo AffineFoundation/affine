@@ -642,10 +642,16 @@ async def get_scoring_data(
             if not all([uid is not None, hotkey, model_revision]):
                 continue
             
+            # Get first_block and model from miner data
+            first_block = miner.get('first_block')
+            model = miner.get('model')
+            
             # Initialize miner entry
             miner_entry = {
                 'hotkey': hotkey,
                 'model_revision': model_revision,
+                'model_repo': model,
+                'first_block': first_block,
                 'env': {}
             }
             

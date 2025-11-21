@@ -24,7 +24,7 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
-    command: ["python", "-m", "uvicorn", "affine.api.server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    command: ["af", "-vv", "api"]
 
   # Scheduler - Task generation service
   scheduler:
@@ -44,7 +44,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
-    command: ["python", "-m", "affine.backend.scheduler.main"]
+    command: ["af", "-vv", "scheduler"]
 
   # Executor - Task execution service
   executor:
@@ -61,10 +61,11 @@ services:
     environment:
       - AFFINE_API_URL=http://api:8000
       - EXECUTOR_POLL_INTERVAL=5
+      - SERVICE_MODE=true
     depends_on:
       api:
         condition: service_healthy
-    command: ["python", "-m", "affine.backend.executor.main"]
+    command: ["af", "-vv", "executor"]
 
   # Miners Monitor - Miner synchronization service
   miners:
@@ -80,7 +81,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
-    command: ["python", "-m", "affine.backend.miners.main"]
+    command: ["af", "-vv", "monitor"]
 
   # Scorer - Weight calculation service
   scorer:
@@ -96,10 +97,11 @@ services:
     environment:
       - AFFINE_API_URL=http://api:8000
       - SCORER_SAVE_TO_DB=true
+      - SERVICE_MODE=true
     depends_on:
       api:
         condition: service_healthy
-    command: ["python", "-m", "affine.backend.scorer.main"]
+    command: ["af", "-vv", "scorer"]
 
 networks:
   default:

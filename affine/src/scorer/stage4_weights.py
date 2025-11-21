@@ -7,12 +7,12 @@ implements burning mechanism, and normalizes final weights.
 
 import logging
 from typing import Dict
-from models import (
+from affine.src.scorer.models import (
     MinerData,
     Stage4Output,
 )
-from config import ScorerConfig
-from utils import (
+from affine.src.scorer.config import ScorerConfig
+from affine.src.scorer.utils import (
     normalize_weights,
     apply_min_threshold,
     apply_burn_mechanism,
@@ -54,7 +54,7 @@ class Stage4WeightNormalizer:
         Returns:
             Stage4Output with final normalized weights
         """
-        logger.info(f"Stage 4: Starting weight normalization for {len(miners)} miners")
+        logger.info(f"Stage 4: Normalizing weights for {len(miners)} miners")
         
         # Step 1: Accumulate cumulative weights
         raw_weights: Dict[int, float] = {}
@@ -63,7 +63,7 @@ class Stage4WeightNormalizer:
             miner.cumulative_weight = cumulative
             raw_weights[uid] = cumulative
         
-        logger.info(f"Accumulated cumulative weights from subset contributions")
+        logger.debug(f"Accumulated cumulative weights from subset contributions")
         
         # Step 2: Apply minimum threshold
         weights_after_threshold = apply_min_threshold(
@@ -77,7 +77,7 @@ class Stage4WeightNormalizer:
         )
         
         if below_threshold_count > 0:
-            logger.info(
+            logger.debug(
                 f"Removed {below_threshold_count} miners below threshold "
                 f"({self.min_threshold:.1%})"
             )
@@ -93,7 +93,7 @@ class Stage4WeightNormalizer:
                 self.burn_percentage,
                 burn_uid=0
             )
-            logger.info(
+            logger.debug(
                 f"Applied burning: {self.burn_percentage:.1%} → "
                 f"{burn_weight:.6f} allocated to UID 0"
             )
@@ -106,10 +106,8 @@ class Stage4WeightNormalizer:
             if uid in miners:
                 miners[uid].normalized_weight = weight
         
-        logger.info(
-            f"Stage 4: Completed normalization - "
-            f"{len([w for w in final_weights.values() if w > 0])} miners with non-zero weights"
-        )
+        non_zero_count = len([w for w in final_weights.values() if w > 0])
+        logger.info(f"Stage 4: Non-zero weights={non_zero_count}")
         
         return Stage4Output(
             final_weights=final_weights,
@@ -117,52 +115,6 @@ class Stage4WeightNormalizer:
             below_threshold_count=below_threshold_count
         )
     
-    def print_summary(self, output: Stage4Output, miners: Dict[int, MinerData]):
-        """Print Stage 4 summary for debugging.
-        
-        Args:
-            output: Stage 4 output data
-            miners: Dict of all miners
-        """
-        logger.info("=" * 80)
-        logger.info("STAGE 4 SUMMARY: Weight Normalization")
-        logger.info("=" * 80)
-        logger.info(f"Total Miners: {len(miners)}")
-        logger.info(f"Non-Zero Weights: {len([w for w in output.final_weights.values() if w > 0])}")
-        logger.info(f"Below Threshold: {output.below_threshold_count}")
-        logger.info(f"Burn Weight: {output.burn_weight:.6f} ({self.burn_percentage:.1%})")
-        logger.info("")
-        
-        # Weight distribution statistics
-        non_zero_weights = [w for w in output.final_weights.values() if w > 0]
-        if non_zero_weights:
-            logger.info("Weight Distribution:")
-            logger.info(f"  Max Weight: {max(non_zero_weights):.6f}")
-            logger.info(f"  Min Weight: {min(non_zero_weights):.6f}")
-            logger.info(f"  Avg Weight: {sum(non_zero_weights) / len(non_zero_weights):.6f}")
-            logger.info(f"  Total Weight: {sum(output.final_weights.values()):.6f}")
-        
-        logger.info("")
-        
-        # Top 10 miners by final weight
-        sorted_weights = sorted(
-            output.final_weights.items(),
-            key=lambda x: x[1],
-            reverse=True
-        )
-        
-        logger.info("Top 10 Miners by Final Weight:")
-        for uid, weight in sorted_weights[:10]:
-            if uid in miners:
-                hotkey = miners[uid].hotkey[:8]
-                cumulative = miners[uid].cumulative_weight
-                logger.info(
-                    f"  UID {uid} ({hotkey}...): "
-                    f"Final={weight:.6f}, "
-                    f"Cumulative={cumulative:.6f}"
-                )
-        
-        logger.info("=" * 80)
     
     def print_detailed_table(self, miners: Dict[int, MinerData], environments: list):
         """Print detailed scoring table with all metrics.
@@ -171,27 +123,40 @@ class Stage4WeightNormalizer:
             miners: Dict of all miners
             environments: List of environment names
         """
-        logger.info("=" * 120)
-        logger.info("DETAILED SCORING TABLE")
-        logger.info("=" * 120)
+        print("=" * 180)
+        print("DETAILED SCORING TABLE")
+        print("=" * 180)
         
-        # Build header
-        header_parts = ["UID", "Hotkey"]
+        # Build header - Hotkey first, then UID, then Model, then First Block, then environments
+        header_parts = ["Hotkey  ", "UID", "Model               ", " FirstBlk "]
+        
+        # Format environment names - keep everything after ':'
         for env in sorted(environments):
-            header_parts.append(f"{env[:6]}")
+            if ':' in env:
+                env_display = env.split(':', 1)[1]  # Keep everything after ':'
+            else:
+                env_display = env
+            # Adjust width to accommodate "score/count" format (e.g., "0.923/500")
+            header_parts.append(f"{env_display:>11}")
         
-        # Add layer columns
-        max_layer = max(
-            (max(m.layer_weights.keys()) if m.layer_weights else 0)
-            for m in miners.values()
-        )
-        for layer in range(1, max_layer + 1):
-            header_parts.append(f"L{layer}")
+        # Add layer columns with fixed width - only non-zero layers
+        # Find all layers that have non-zero weights for any miner
+        all_layers = set()
+        for miner in miners.values():
+            for layer, weight in miner.layer_weights.items():
+                if weight > 0:
+                    all_layers.add(layer)
         
-        header_parts.extend(["Total", "Valid"])
+        # Sort layers
+        active_layers = sorted(all_layers)
         
-        logger.info(" | ".join(header_parts))
-        logger.info("-" * 120)
+        for layer in active_layers:
+            header_parts.append(f"{'L'+str(layer):>8}")
+        
+        header_parts.extend(["   Total ", "  Weight ", "V"])
+        
+        print(" | ".join(header_parts))
+        print("-" * 180)
         
         # Sort miners by final weight
         sorted_miners = sorted(
@@ -202,31 +167,41 @@ class Stage4WeightNormalizer:
         
         # Print each miner row
         for miner in sorted_miners:
+            # Use model_repo if available, otherwise use model_revision
+            model_display = miner.model_repo[:20]
+
             row_parts = [
-                f"{miner.uid:3d}",
-                f"{miner.hotkey[:8]:8s}"
+                f"{miner.hotkey[:8]:8s}",  # Hotkey first
+                f"{miner.uid:3d}",          # UID second
+                f"{model_display:20s}",     # Model repo name (20 chars)
+                f"{miner.first_block:10d}"  # First block
             ]
             
-            # Environment scores
+            # Environment scores - show "score/count" format
             for env in sorted(environments):
                 if env in miner.env_scores:
                     score = miner.env_scores[env]
                     if score.is_valid:
-                        row_parts.append(f"{score.avg_score:.3f}")
+                        # Valid: show as "0.923/500"
+                        score_str = f"{score.avg_score:.3f}/{score.sample_count}"
+                        row_parts.append(f"{score_str:>11}")
                     else:
-                        row_parts.append("  -  ")
+                        # Invalid (below threshold): show as "-0.923/50" to indicate it's below threshold
+                        score_str = f"{score.avg_score:.3f}/{score.sample_count}!"
+                        row_parts.append(f"{score_str:>11}")
                 else:
-                    row_parts.append("  -  ")
+                    row_parts.append(f"{'  -  ':>11}")
             
-            # Layer weights
-            for layer in range(1, max_layer + 1):
+            # Layer weights - only for active layers
+            for layer in active_layers:
                 weight = miner.layer_weights.get(layer, 0.0)
-                row_parts.append(f"{weight:.4f}")
+                row_parts.append(f"{weight:>8.4f}")
             
-            # Total weight and validity
-            row_parts.append(f"{miner.normalized_weight:.6f}")
+            # Total (cumulative weight sum) and Weight (normalized)
+            row_parts.append(f"{miner.cumulative_weight:>9.4f}")  # Total: raw sum
+            row_parts.append(f"{miner.normalized_weight:>9.6f}")  # Weight: normalized
             row_parts.append("✓" if miner.is_valid_for_scoring() else "✗")
             
-            logger.info(" | ".join(row_parts))
+            print(" | ".join(row_parts))
         
-        logger.info("=" * 120)
+        print("=" * 180)

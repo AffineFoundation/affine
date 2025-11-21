@@ -27,14 +27,14 @@ class ScorerConfig:
     """Number of decimal places for score comparison (avoid floating point issues)."""
     
     # Stage 3: Subset Scoring
+    MAX_LAYERS: int = 6
+    """Maximum number of layers to evaluate. Due to exponential growth, 6 layers provide sufficient differentiation (2^5 = 32x difference between L1 and L6)."""
+    
     SUBSET_WEIGHT_BASE: int = 1
     """Base weight multiplier for subset layers (N for L1, N*2 for L2, N*4 for L3, etc.)."""
     
     SUBSET_WEIGHT_EXPONENT: int = 2
     """Exponent base for layer weights (layer_weight = N * base^(layer-1))."""
-    
-    USE_GEOMETRIC_MEAN: bool = True
-    """Use geometric mean for subset scoring (penalizes poor performance in any env)."""
     
     DECAY_FACTOR: float = 0.5
     """
@@ -62,19 +62,12 @@ class ScorerConfig:
     """
     
     # Stage 1: Data Collection
-    MIN_COMPLETENESS: float = 0.95
-    """Minimum sample completeness required (95% of scoring range)."""
+    MIN_COMPLETENESS: float = 0.90
+    """Minimum sample completeness required."""
     
     # Database & Storage
     SCORE_RECORD_TTL_DAYS: int = 30
     """TTL for miner_scores and score_snapshots tables (in days)."""
-    
-    # Logging & Output
-    PRINT_DETAILED_SUMMARY: bool = True
-    """Print detailed score summary with all environments and layers."""
-    
-    LOG_PARETO_FILTERING: bool = True
-    """Log Pareto filtering decisions for debugging."""
     
     @classmethod
     def to_dict(cls) -> Dict[str, Any]:
@@ -82,9 +75,9 @@ class ScorerConfig:
         return {
             'error_rate_reduction': cls.ERROR_RATE_REDUCTION,
             'score_precision': cls.SCORE_PRECISION,
+            'max_layers': cls.MAX_LAYERS,
             'subset_weight_base': cls.SUBSET_WEIGHT_BASE,
             'subset_weight_exponent': cls.SUBSET_WEIGHT_EXPONENT,
-            'use_geometric_mean': cls.USE_GEOMETRIC_MEAN,
             'decay_factor': cls.DECAY_FACTOR,
             'apply_rank_decay': cls.APPLY_RANK_DECAY,
             'min_weight_threshold': cls.MIN_WEIGHT_THRESHOLD,
