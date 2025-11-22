@@ -19,15 +19,20 @@ def get_table_name(base_name: str) -> str:
 # - PK combines the 3 most frequent query dimensions: hotkey + revision + env
 # - SK uses task_id for natural ordering
 # - uid removed (mutable, should query via bittensor metadata -> hotkey first)
-# - GSI for timestamp range queries only
+# - GSI for efficient timestamp range queries (incremental updates)
 # - block_number stored but not indexed (no block query requirement)
 #
 # Query Patterns:
 # 1. Get samples by hotkey+revision+env -> Query by PK
 # 2. Get samples by hotkey+revision (all envs) -> Query with PK prefix + filter
 # 3. Get samples by hotkey (all revisions) -> Scan with hotkey prefix + filter
-# 4. Get samples by timestamp range -> Use timestamp-index GSI
+# 4. Get samples by timestamp range -> Use timestamp-index GSI (gsi_partition='SAMPLE' AND timestamp > :since)
 # 5. Get samples by uid -> Query bittensor metadata first to get hotkey+revision, then query here
+#
+# GSI Design:
+# - gsi_partition: Fixed value "SAMPLE" for all records (partition key)
+# - timestamp: Milliseconds since epoch (range key, supports > < BETWEEN)
+# - This design enables efficient Query operations for incremental updates
 SAMPLE_RESULTS_SCHEMA = {
     "TableName": get_table_name("sample_results"),
     "KeySchema": [
@@ -37,13 +42,15 @@ SAMPLE_RESULTS_SCHEMA = {
     "AttributeDefinitions": [
         {"AttributeName": "pk", "AttributeType": "S"},
         {"AttributeName": "sk", "AttributeType": "S"},
+        {"AttributeName": "gsi_partition", "AttributeType": "S"},
         {"AttributeName": "timestamp", "AttributeType": "N"},
     ],
     "GlobalSecondaryIndexes": [
         {
             "IndexName": "timestamp-index",
             "KeySchema": [
-                {"AttributeName": "timestamp", "KeyType": "HASH"},
+                {"AttributeName": "gsi_partition", "KeyType": "HASH"},   # Fixed "SAMPLE"
+                {"AttributeName": "timestamp", "KeyType": "RANGE"},      # Sortable timestamp
             ],
             "Projection": {"ProjectionType": "ALL"},
         },
