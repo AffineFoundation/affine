@@ -9,334 +9,92 @@ Provides command-line interface for miner operations:
 - get-miner: Query miner status by UID
 """
 
-import os
-import sys
-import json
-import asyncio
-import textwrap
 import click
-import bittensor as bt
-from pathlib import Path
-from bittensor.core.errors import MetadataError
-from huggingface_hub import snapshot_download
+import asyncio
 
-from affine.core.setup import logger, NETUID
 from affine.src.miner.commands import (
-    get_conf,
-    get_miners,
-    get_subtensor,
-    get_latest_chute_id,
-    get_chute,
     pull_command,
     chutes_push_command,
     commit_command,
+    get_sample_command,
+    get_miner_command,
 )
 
 
-@click.group()
-def cli():
-    """Miner command-line interface."""
-    pass
-
-@cli.command("pull")
+@click.command()
 @click.argument("uid", type=int)
-@click.option(
-    "--model_path",
-    "-p",
-    default="./model_path",
-    required=True,
-    type=click.Path(),
-    help="Local directory to save the model",
-)
-@click.option(
-    "--hf-token", default=None, help="Hugging Face API token (env HF_TOKEN if unset)"
-)
-def pull(uid: int, model_path: str, hf_token: str):
-    hf_token = hf_token or get_conf("HF_TOKEN")
-
-    miner_map = asyncio.run(get_miners(uids=uid))
-    miner = miner_map.get(uid)
-
-    if miner is None:
-        click.echo(f"No miner found for UID {uid}", err=True)
-        sys.exit(1)
-    repo_name = miner.model
-    logger.info("Pulling model %s for UID %d into %s", repo_name, uid, model_path)
-
-    try:
-        snapshot_download(
-            repo_id=repo_name,
-            repo_type="model",
-            local_dir=model_path,
-            token=hf_token,
-            resume_download=True,
-            revision=miner.revision,
-        )
-        click.echo(f"Model {repo_name} pulled to {model_path}")
-    except Exception as e:
-        logger.error("Failed to download %s: %s", repo_name, e)
-        click.echo(f"Error pulling model: {e}", err=True)
-        sys.exit(1)
+@click.option("--model-path", "-p", default="./model_path", type=click.Path(), help="Local directory to save the model")
+@click.option("--hf-token", help="Hugging Face API token")
+def pull(uid, model_path, hf_token):
+    """Pull model from Hugging Face."""
+    asyncio.run(pull_command(
+        uid=uid,
+        model_path=model_path,
+        hf_token=hf_token
+    ))
 
 
-@cli.command("chutes_push")
-@click.option("--repo", required=True, help="Existing HF repo id (e.g. <user>/<repo>)")
-@click.option("--revision", required=True, help="HF commit SHA to deploy")
-@click.option(
-    "--chutes-api-key",
-    default=None,
-    help="Chutes API key (env CHUTES_API_KEY if unset)",
-)
-def push(repo: str, revision: str, chutes_api_key: str, chute_user: str):
-    """Deploy an existing HF repo+revision to Chutes and print the chute info."""
-    chutes_api_key = chutes_api_key or get_conf("CHUTES_API_KEY")
-    chute_user = chute_user or get_conf("CHUTE_USER")
-
-    async def deploy_to_chutes():
-        logger.debug("Building Chute config for repo=%s revision=%s", repo, revision)
-        chutes_config = textwrap.dedent(
-            f"""
-import os
-from chutes.chute import NodeSelector
-from chutes.chute.template.sglang import build_sglang_chute
-os.environ["NO_PROXY"] = "localhost,127.0.0.1"
-
-chute = build_sglang_chute(
-    username="{chute_user}",
-    readme="{repo}",
-    model_name="{repo}",
-    image="chutes/sglang:nightly-2025081600",
-    concurrency=20,
-    revision="{revision}",
-    node_selector=NodeSelector(
-        gpu_count=1,
-        include=["a100", "h100"],
-    ),
-    max_instances=1,
-    scale_threshold=0.5,
-    shutdown_after_seconds=3600,
-)
-"""
-        )
-        tmp_file = Path("tmp_chute.py")
-        tmp_file.write_text(chutes_config)
-        logger.debug("Wrote Chute config to %s", tmp_file)
-
-        cmd = ["chutes", "deploy", f"{tmp_file.stem}:chute", "--accept-fee"]
-        env = {**os.environ, "CHUTES_API_KEY": chutes_api_key}
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            stdin=asyncio.subprocess.PIPE,
-        )
-        if proc.stdin:
-            proc.stdin.write(b"y\n")
-            await proc.stdin.drain()
-            proc.stdin.close()
-        stdout, _ = await proc.communicate()
-        output = stdout.decode(errors="ignore")
-        logger.trace(output)
-        import re
-
-        match = re.search(
-            r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+\|\s+(\w+)", output
-        )
-        if match and match.group(2) == "ERROR":
-            logger.debug("Chutes deploy failed with the above error log")
-            raise RuntimeError("Chutes deploy failed")
-        if proc.returncode != 0:
-            logger.debug("Chutes deploy failed with code %d", proc.returncode)
-            raise RuntimeError("Chutes deploy failed")
-        tmp_file.unlink(missing_ok=True)
-        logger.debug("Chute deployment successful")
-
-    asyncio.run(deploy_to_chutes())
-
-    chute_id = asyncio.run(get_latest_chute_id(repo, api_key=chutes_api_key))
-    chute_info = asyncio.run(get_chute(chute_id)) if chute_id else None
-    payload = {
-        "success": bool(chute_id),
-        "chute_id": chute_id,
-        "chute": chute_info,
-        "repo": repo,
-        "revision": revision,
-    }
-    click.echo(json.dumps(payload))
+@click.command()
+@click.option("--repo", required=True, help="HF repo id")
+@click.option("--revision", required=True, help="HF commit SHA")
+@click.option("--chutes-api-key", help="Chutes API key")
+@click.option("--chute-user", help="Chutes username")
+def chutes_push(repo, revision, chutes_api_key, chute_user):
+    """Deploy model to Chutes."""
+    asyncio.run(chutes_push_command(
+        repo=repo,
+        revision=revision,
+        chutes_api_key=chutes_api_key,
+        chute_user=chute_user
+    ))
 
 
-@cli.command("commit")
-@click.option("--repo", required=True, help="HF repo id (e.g. <user>/<repo>)")
+@click.command()
+@click.option("--repo", required=True, help="HF repo id")
 @click.option("--revision", required=True, help="HF commit SHA")
 @click.option("--chute-id", required=True, help="Chutes deployment id")
-@click.option("--coldkey", default=None, help="Name of the cold wallet to use.")
-@click.option("--hotkey", default=None, help="Name of the hot wallet to use.")
-def commit(repo: str, revision: str, chute_id: str, coldkey: str, hotkey: str):
-    """Commit repo+revision+chute_id on-chain (separate from deployment)."""
-    cold = coldkey or get_conf("BT_WALLET_COLD", "default")
-    hot = hotkey or get_conf("BT_WALLET_HOT", "default")
-    wallet = bt.wallet(name=cold, hotkey=hot)
-
-    async def _commit():
-        sub = await get_subtensor()
-        data = json.dumps({"model": repo, "revision": revision, "chute_id": chute_id})
-        while True:
-            try:
-                await sub.set_reveal_commitment(
-                    wallet=wallet, netuid=NETUID, data=data, blocks_until_reveal=1
-                )
-                break
-            except MetadataError as e:
-                if "SpaceLimitExceeded" in str(e):
-                    await sub.wait_for_block()
-                else:
-                    raise
-
-    try:
-        asyncio.run(_commit())
-        click.echo(
-            json.dumps(
-                {
-                    "success": True,
-                    "repo": repo,
-                    "revision": revision,
-                    "chute_id": chute_id,
-                }
-            )
-        )
-    except Exception as e:
-        logger.error("Commit failed: %s", e)
-        click.echo(json.dumps({"success": False, "error": str(e)}))
+@click.option("--coldkey", help="Coldkey name")
+@click.option("--hotkey", help="Hotkey name")
+def commit(repo, revision, chute_id, coldkey, hotkey):
+    """Commit model to blockchain."""
+    asyncio.run(commit_command(
+        repo=repo,
+        revision=revision,
+        chute_id=chute_id,
+        coldkey=coldkey,
+        hotkey=hotkey
+    ))
 
 
-@cli.command("get-sample")
+@click.command("get-sample")
 @click.argument("uid", type=int)
 @click.argument("env", type=str)
 @click.argument("task_id", type=str)
-@click.option(
-    "--api-url",
-    default=None,
-    help="API base URL (env API_URL if unset, default: http://localhost:8000)",
-)
-def get_sample(uid: int, env: str, task_id: str, api_url: str):
+def get_sample(uid, env, task_id):
     """Query sample result by UID, environment, and task ID.
     
     Example:
-        affine-miner get-sample 42 affine task_123
+        af get-sample 42 affine task_123
     """
-    api_url = api_url or get_conf("API_URL", "http://localhost:8000")
-    
-    async def _query_sample():
-        try:
-            import aiohttp
-            
-            url = f"{api_url}/samples/uid/{uid}/{env}/{task_id}"
-            logger.info(f"Querying sample: {url}")
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        result = {
-                            "success": True,
-                            "uid": uid,
-                            "env": env,
-                            "task_id": task_id,
-                            "sample": data
-                        }
-                        print(json.dumps(result, indent=2))
-                        logger.info("Sample query successful")
-                    elif response.status == 404:
-                        error_detail = await response.json()
-                        result = {
-                            "success": False,
-                            "error": error_detail.get("detail", "Sample not found")
-                        }
-                        print(json.dumps(result, indent=2))
-                        logger.warning(f"Sample not found: {error_detail}")
-                        sys.exit(1)
-                    else:
-                        error_text = await response.text()
-                        result = {
-                            "success": False,
-                            "error": f"HTTP {response.status}: {error_text}"
-                        }
-                        print(json.dumps(result, indent=2))
-                        logger.error(f"Query failed with status {response.status}")
-                        sys.exit(1)
-        
-        except Exception as e:
-            logger.error(f"Failed to query sample: {e}")
-            print(json.dumps({"success": False, "error": str(e)}, indent=2))
-            sys.exit(1)
-    
-    asyncio.run(_query_sample())
+    asyncio.run(get_sample_command(
+        uid=uid,
+        env=env,
+        task_id=task_id,
+    ))
 
 
-@cli.command("get-miner")
+@click.command("get-miner")
 @click.argument("uid", type=int)
-@click.option(
-    "--api-url",
-    default=None,
-    help="API base URL (env API_URL if unset, default: http://localhost:8000)",
-)
-def get_miner(uid: int, api_url: str):
+def get_miner(uid):
     """Query miner status and information by UID.
     
     Returns complete miner info including hotkey, model, revision,
     chute_id, validation status, and timestamps.
     
     Example:
-        affine-miner get-miner 42
+        af get-miner 42
     """
-    api_url = api_url or get_conf("API_URL", "http://localhost:8000")
-    
-    async def _query_miner():
-        try:
-            import aiohttp
-            
-            url = f"{api_url}/miners/uid/{uid}"
-            logger.info(f"Querying miner: {url}")
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        result = {
-                            "success": True,
-                            "uid": uid,
-                            "miner": data
-                        }
-                        print(json.dumps(result, indent=2))
-                        logger.info("Miner query successful")
-                    elif response.status == 404:
-                        error_detail = await response.json()
-                        result = {
-                            "success": False,
-                            "error": error_detail.get("detail", "Miner not found")
-                        }
-                        print(json.dumps(result, indent=2))
-                        logger.warning(f"Miner not found: {error_detail}")
-                        sys.exit(1)
-                    else:
-                        error_text = await response.text()
-                        result = {
-                            "success": False,
-                            "error": f"HTTP {response.status}: {error_text}"
-                        }
-                        print(json.dumps(result, indent=2))
-                        logger.error(f"Query failed with status {response.status}")
-                        sys.exit(1)
-        
-        except Exception as e:
-            logger.error(f"Failed to query miner: {e}")
-            print(json.dumps({"success": False, "error": str(e)}, indent=2))
-            sys.exit(1)
-    
-    asyncio.run(_query_miner())
-
-
-if __name__ == "__main__":
-    cli()
+    asyncio.run(get_miner_command(
+        uid=uid,
+    ))
 
