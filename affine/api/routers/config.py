@@ -4,15 +4,16 @@ Configuration Management Router
 Provides REST API endpoints for dynamic configuration management.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
 from affine.database.dao.system_config import SystemConfigDAO
+from affine.api.dependencies import rate_limit_read
 
 router = APIRouter(prefix="/config", tags=["config"])
 config_dao = SystemConfigDAO()
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(rate_limit_read)])
 async def get_all_configs(prefix: Optional[str] = None):
     """Get all configurations, optionally filtered by prefix.
     
@@ -35,7 +36,7 @@ async def get_all_configs(prefix: Optional[str] = None):
     return {"configs": all_configs}
 
 
-@router.get("/{key}")
+@router.get("/{key}", dependencies=[Depends(rate_limit_read)])
 async def get_config(key: str):
     """Get a single configuration parameter.
     
@@ -49,7 +50,8 @@ async def get_config(key: str):
         404: Config not found
         
     Example:
-        GET /api/v1/config/scheduler.check_interval
+        GET /api/v1/config/environments
+        GET /api/v1/config/miner_blacklist
     """
     config = await config_dao.get_param(key)
     

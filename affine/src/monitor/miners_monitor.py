@@ -18,6 +18,7 @@ from huggingface_hub import HfApi
 from affine.utils.subtensor import get_subtensor
 from affine.core.setup import NETUID
 from affine.database.dao.miners import MinersDAO
+from affine.database.dao.system_config import SystemConfigDAO
 
 
 from affine.core.setup import logger
@@ -61,6 +62,7 @@ class MinersMonitor:
             refresh_interval_seconds: Auto-refresh interval in seconds
         """
         self.dao = MinersDAO()
+        self.config_dao = SystemConfigDAO()
         self.refresh_interval_seconds = refresh_interval_seconds
         self.last_update: int = 0
         
@@ -121,12 +123,32 @@ class MinersMonitor:
                 pass
         logger.info("[MinersMonitor] Background tasks stopped")
     
-    def _load_blacklist(self) -> set:
-        """Load blacklisted hotkeys from environment"""
-        blacklist_str = os.getenv("AFFINE_MINER_BLACKLIST", "").strip()
-        if not blacklist_str:
-            return set()
-        return {hk.strip() for hk in blacklist_str.split(",") if hk.strip()}
+    async def _load_blacklist(self) -> set:
+        """Load blacklisted hotkeys from database and environment, then merge them.
+        
+        Returns:
+            Set of unique blacklisted hotkeys from both sources
+        """
+        # Load from environment variable
+        env_blacklist_str = os.getenv("AFFINE_MINER_BLACKLIST", "").strip()
+        env_blacklist = set()
+        if env_blacklist_str:
+            env_blacklist = {hk.strip() for hk in env_blacklist_str.split(",") if hk.strip()}
+        
+        # Load from database
+        db_blacklist = set(await self.config_dao.get_blacklist())
+        
+        # Merge and deduplicate
+        merged_blacklist = env_blacklist | db_blacklist
+        
+        if merged_blacklist:
+            logger.debug(
+                f"[MinersMonitor] Loaded blacklist: "
+                f"{len(env_blacklist)} from env, {len(db_blacklist)} from db, "
+                f"{len(merged_blacklist)} total after merge"
+            )
+        
+        return merged_blacklist
     
     async def _get_weights_shas(self, model_id: str, revision: Optional[str] = None) -> Optional[Set[str]]:
         """Get model weights SHA256 hashes from HuggingFace
@@ -355,7 +377,7 @@ class MinersMonitor:
             current_block = await subtensor.get_current_block()
             
             # Load blacklist
-            blacklist = self._load_blacklist()
+            blacklist = await self._load_blacklist()
             
             # Discover and validate miners
             miners = []

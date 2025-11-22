@@ -16,10 +16,8 @@ Provides a single entry point for all Affine components:
 - af get-miner  : Query miner status by UID
 """
 
-import os
 import sys
 import click
-import asyncio
 from affine.core.setup import setup_logging, logger
 
 
@@ -119,79 +117,53 @@ def validator(ctx):
 # Miner Commands
 # ============================================================================
 
-@cli.command()
-@click.option("--repo", required=True, help="HF repo id")
-@click.option("--revision", required=True, help="HF commit SHA")
-@click.option("--chute-id", required=True, help="Chutes deployment id")
-@click.option("--coldkey", help="Coldkey name")
-@click.option("--hotkey", help="Hotkey name")
-def commit(repo, revision, chute_id, coldkey, hotkey):
+@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.pass_context
+def commit(ctx):
     """Commit model to blockchain."""
-    from affine.src.miner.commands import commit_command
+    from affine.src.miner.main import commit as miner_commit
     
-    asyncio.run(commit_command(
-        repo=repo,
-        revision=revision,
-        chute_id=chute_id,
-        coldkey=coldkey,
-        hotkey=hotkey
-    ))
+    sys.argv = ["commit"] + ctx.args
+    miner_commit.main(standalone_mode=False)
 
 
-@cli.command()
-@click.argument("uid", type=int)
-@click.option("--model-path", "-p", default="./model_path", type=click.Path())
-@click.option("--hf-token", help="Hugging Face API token")
-def pull(uid, model_path, hf_token):
+@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.pass_context
+def pull(ctx):
     """Pull model from Hugging Face."""
-    from affine.src.miner.commands import pull_command
+    from affine.src.miner.main import pull as miner_pull
     
-    asyncio.run(pull_command(
-        uid=uid,
-        model_path=model_path,
-        hf_token=hf_token
-    ))
+    sys.argv = ["pull"] + ctx.args
+    miner_pull.main(standalone_mode=False)
 
 
-@cli.command()
-@click.option("--repo", required=True, help="HF repo id")
-@click.option("--revision", required=True, help="HF commit SHA")
-@click.option("--chutes-api-key", help="Chutes API key")
-@click.option("--chute-user", help="Chutes username")
-def chutes_push(repo, revision, chutes_api_key, chute_user):
+@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.pass_context
+def chutes_push(ctx):
     """Deploy model to Chutes."""
-    from affine.src.miner.commands import chutes_push_command
+    from affine.src.miner.main import chutes_push as miner_chutes_push
     
-    asyncio.run(chutes_push_command(
-        repo=repo,
-        revision=revision,
-        chutes_api_key=chutes_api_key,
-        chute_user=chute_user
-    ))
+    sys.argv = ["chutes_push"] + ctx.args
+    miner_chutes_push.main(standalone_mode=False)
 
 
-@cli.command("get-sample")
-@click.argument("uid", type=int)
-@click.argument("env", type=str)
-@click.argument("task_id", type=str)
-def get_sample(uid, env, task_id):
+@cli.command("get-sample", context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.pass_context
+def get_sample(ctx):
     """Query sample result by UID, environment, and task ID.
     
     Example:
         af get-sample 42 affine task_123
     """
-    from affine.src.miner.commands import get_sample_command
+    from affine.src.miner.main import get_sample as miner_get_sample
     
-    asyncio.run(get_sample_command(
-        uid=uid,
-        env=env,
-        task_id=task_id,
-    ))
+    sys.argv = ["get-sample"] + ctx.args
+    miner_get_sample.main(standalone_mode=False)
 
 
-@cli.command("get-miner")
-@click.argument("uid", type=int)
-def get_miner(uid):
+@cli.command("get-miner", context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.pass_context
+def get_miner(ctx):
     """Query miner status and information by UID.
     
     Returns complete miner info including hotkey, model, revision,
@@ -200,11 +172,10 @@ def get_miner(uid):
     Example:
         af get-miner 42
     """
-    from affine.src.miner.commands import get_miner_command
+    from affine.src.miner.main import get_miner as miner_get_miner
     
-    asyncio.run(get_miner_command(
-        uid=uid,
-    ))
+    sys.argv = ["get-miner"] + ctx.args
+    miner_get_miner.main(standalone_mode=False)
 
 
 def main():
