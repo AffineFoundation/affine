@@ -180,16 +180,15 @@ class Stage2ParetoFilter:
             score_a = miner_a.env_scores[env].avg_score
             score_b = miner_b.env_scores[env].avg_score
             
-            # Calculate required score for B to beat A (A came first)
-            required_score = calculate_required_score(
+            # Calculate required threshold (considers both error rate and min improvement)
+            threshold = calculate_required_score(
                 score_a,
                 self.error_rate_reduction,
-                self.config.HIGH_SCORE_THRESHOLD,
-                self.config.HIGH_SCORE_BONUS
+                self.config.MIN_IMPROVEMENT
             )
             
-            # Determine winner: B wins if it beats A's threshold
-            b_wins_env = score_b > required_score
+            # B wins if it beats the threshold
+            b_wins_env = score_b > threshold
             
             if b_wins_env:
                 b_wins_count += 1
@@ -200,7 +199,7 @@ class Stage2ParetoFilter:
             env_comparisons[env] = {
                 "a_score": score_a,
                 "b_score": score_b,
-                "threshold": required_score,
+                "threshold": threshold,
                 "b_beats_threshold": b_wins_env,
                 "winner": "B" if b_wins_env else "A"
             }
