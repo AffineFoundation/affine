@@ -27,15 +27,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         # Log request
         start_time = time.time()
-        logger.debug(
-            f"Request started: {request.method} {request.url.path}",
-            extra={
-                "request_id": request_id,
-                "method": request.method,
-                "path": request.url.path,
-                "client_ip": request.client.host if request.client else None,
-            }
-        )
 
         # Process request
         try:
@@ -52,19 +43,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 exc_info=True,
             )
             raise
-
-        # Log response
-        duration_ms = (time.time() - start_time) * 1000
-        logger.debug(
-            f"Request completed: {request.method} {request.url.path}",
-            extra={
-                "request_id": request_id,
-                "method": request.method,
-                "path": request.url.path,
-                "status_code": response.status_code,
-                "duration_ms": duration_ms,
-            }
-        )
 
         # Add request ID to response headers
         response.headers["X-Request-ID"] = request_id

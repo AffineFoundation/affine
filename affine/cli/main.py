@@ -12,6 +12,8 @@ Provides a single entry point for all Affine components:
 - af commit     : Commit model to blockchain (miner)
 - af pull       : Pull model from Hugging Face (miner)
 - af chutes_push: Deploy model to Chutes (miner)
+- af get-sample : Query sample by UID, env, and task ID
+- af get-miner  : Query miner status by UID
 """
 
 import os
@@ -165,6 +167,43 @@ def chutes_push(repo, revision, chutes_api_key, chute_user):
         revision=revision,
         chutes_api_key=chutes_api_key,
         chute_user=chute_user
+    ))
+
+
+@cli.command("get-sample")
+@click.argument("uid", type=int)
+@click.argument("env", type=str)
+@click.argument("task_id", type=str)
+def get_sample(uid, env, task_id):
+    """Query sample result by UID, environment, and task ID.
+    
+    Example:
+        af get-sample 42 affine task_123
+    """
+    from affine.src.miner.commands import get_sample_command
+    
+    asyncio.run(get_sample_command(
+        uid=uid,
+        env=env,
+        task_id=task_id,
+    ))
+
+
+@cli.command("get-miner")
+@click.argument("uid", type=int)
+def get_miner(uid):
+    """Query miner status and information by UID.
+    
+    Returns complete miner info including hotkey, model, revision,
+    chute_id, validation status, and timestamps.
+    
+    Example:
+        af get-miner 42
+    """
+    from affine.src.miner.commands import get_miner_command
+    
+    asyncio.run(get_miner_command(
+        uid=uid,
     ))
 
 

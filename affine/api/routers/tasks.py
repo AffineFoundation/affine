@@ -26,7 +26,7 @@ from affine.core.setup import logger
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
 
-@router.post("/fetch", response_model=TaskFetchResponse, dependencies=[Depends(rate_limit_read)])
+@router.post("/fetch", response_model=TaskFetchResponse)
 async def fetch_task(
     env: Optional[str] = Query(None, description="Environment filter (optional)"),
     executor_hotkey: str = Depends(verify_executor_auth),
