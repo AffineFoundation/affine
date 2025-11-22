@@ -23,23 +23,19 @@ class ScorerConfig:
     - prior_score=0.9 → error_rate=0.1 → required=0.92 (need 20% error reduction)
     """
     
-    HIGH_SCORE_THRESHOLD: float = 0.96
+    MIN_IMPROVEMENT: float = 0.25
     """
-    High score threshold for stricter requirements.
+    Minimum improvement required for later miner to beat earlier miner.
     
-    When prior_score >= this threshold, apply HIGH_SCORE_BONUS to prevent
-    random fluctuations from allowing plagiarism to beat originals.
-    """
+    Later miner must achieve: score_later > score_earlier + MIN_IMPROVEMENT
+    This prevents random fluctuations in high-score regions from allowing
+    plagiarism to beat originals.
     
-    HIGH_SCORE_BONUS: float = 0.01
-    """
-    Additional improvement required in high score region.
+    Example: If prior=0.9979 and MIN_IMPROVEMENT=0.25,
+    later miner needs 0.9979 + 0.25 = 1.2479 (impossible) to win.
+    This effectively means scores >= 0.75 cannot be beaten.
     
-    When prior_score >= HIGH_SCORE_THRESHOLD, the required score is:
-    max(base_required, prior_score + HIGH_SCORE_BONUS)
-    
-    Example: If prior=0.9979, required=max(0.9983, 0.9979+0.01)=1.0079→1.0
-    This means only perfect score (1.0) can beat near-perfect scores.
+    Recommended value: 0.25 (equivalent to ~99.75% being unbeatable)
     """
     
     SCORE_PRECISION: int = 3
@@ -100,8 +96,7 @@ class ScorerConfig:
         """Export configuration as dictionary for storage in snapshots."""
         return {
             'error_rate_reduction': cls.ERROR_RATE_REDUCTION,
-            'high_score_threshold': cls.HIGH_SCORE_THRESHOLD,
-            'high_score_bonus': cls.HIGH_SCORE_BONUS,
+            'min_improvement': cls.MIN_IMPROVEMENT,
             'score_precision': cls.SCORE_PRECISION,
             'max_layers': cls.MAX_LAYERS,
             'subset_weight_base': cls.SUBSET_WEIGHT_BASE,
@@ -116,8 +111,7 @@ class ScorerConfig:
     def validate(cls):
         """Validate configuration parameters."""
         assert 0.0 <= cls.ERROR_RATE_REDUCTION <= 1.0, "ERROR_RATE_REDUCTION must be in [0, 1]"
-        assert 0.0 <= cls.HIGH_SCORE_THRESHOLD <= 1.0, "HIGH_SCORE_THRESHOLD must be in [0, 1]"
-        assert 0.0 <= cls.HIGH_SCORE_BONUS <= 0.1, "HIGH_SCORE_BONUS must be in [0, 0.1]"
+        assert 0.0 <= cls.MIN_IMPROVEMENT <= 1.0, "MIN_IMPROVEMENT must be in [0, 1]"
         assert cls.SCORE_PRECISION >= 0, "SCORE_PRECISION must be non-negative"
         assert cls.SUBSET_WEIGHT_BASE > 0, "SUBSET_WEIGHT_BASE must be positive"
         assert cls.SUBSET_WEIGHT_EXPONENT >= 2, "SUBSET_WEIGHT_EXPONENT must be >= 2"

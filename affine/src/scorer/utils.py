@@ -147,46 +147,30 @@ def geometric_mean(values: List[float]) -> float:
 def calculate_required_score(
     prior_score: float,
     error_rate_reduction: float = 0.2,
-    high_score_threshold: float = 0.95,
-    high_score_bonus: float = 0.01
+    min_improvement: float = 0.25
 ) -> float:
-    """Calculate required score to beat prior based on error rate reduction.
+    """Calculate required score to beat prior.
     
-    Formula:
-    - Base: required_score = error_rate_reduction + (1 - error_rate_reduction) × prior_score
-    - High score penalty: if prior_score >= high_score_threshold,
-      required_score = max(base_required, prior_score + high_score_bonus)
-    
-    This prevents plagiarism from beating originals due to random fluctuations
-    in high-score regions (>95%).
-    
-    Examples:
-    - prior=0.5: required=0.2+0.8×0.5=0.6 (normal 20% error reduction)
-    - prior=0.9: required=0.2+0.8×0.9=0.92 (normal 20% error reduction)
-    - prior=0.96: required=max(0.968, 0.96+0.01)=0.97 (high score penalty)
-    - prior=0.9979: required=max(0.9983, 1.0079)=1.0 (capped at 1.0)
+    Uses the maximum of two thresholds:
+    1. Error rate reduction: error_rate_reduction + (1 - error_rate_reduction) × prior_score
+    2. Minimum improvement: prior_score + min_improvement
     
     Args:
         prior_score: Score of the earlier miner
         error_rate_reduction: Required error rate reduction (default: 0.2 for 20%)
-        high_score_threshold: Threshold for applying high score penalty (default: 0.95)
-        high_score_bonus: Additional improvement required in high score region (default: 0.01)
+        min_improvement: Minimum absolute improvement required (default: 0.25)
         
     Returns:
-        Required score to dominate the prior miner (capped at 1.0)
+        Required score to dominate the prior miner
     """
-    # Base threshold using error rate reduction formula
-    base_required = error_rate_reduction + (1 - error_rate_reduction) * prior_score
+    # Threshold 1: Error rate reduction
+    threshold_err = error_rate_reduction + (1 - error_rate_reduction) * prior_score
     
-    # Apply high score penalty if in high score region
-    if prior_score >= high_score_threshold:
-        high_score_required = prior_score + high_score_bonus
-        required = max(base_required, high_score_required)
-    else:
-        required = base_required
+    # Threshold 2: Minimum improvement
+    threshold_min = prior_score + min_improvement
     
-    # Cap at 1.0 (cannot exceed perfect score)
-    return min(1.0, required)
+    # Use the more stringent threshold
+    return max(threshold_err, threshold_min)
 
 
 def normalize_weights(weights: Dict[int, float]) -> Dict[int, float]:

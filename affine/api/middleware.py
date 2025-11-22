@@ -27,7 +27,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         # Log request
         start_time = time.time()
-        logger.info(
+        logger.debug(
             f"Request started: {request.method} {request.url.path}",
             extra={
                 "request_id": request_id,
@@ -55,7 +55,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         # Log response
         duration_ms = (time.time() - start_time) * 1000
-        logger.info(
+        logger.debug(
             f"Request completed: {request.method} {request.url.path}",
             extra={
                 "request_id": request_id,

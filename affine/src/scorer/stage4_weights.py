@@ -123,9 +123,9 @@ class Stage4WeightNormalizer:
             miners: Dict of all miners
             environments: List of environment names
         """
-        print("=" * 180)
-        print("DETAILED SCORING TABLE")
-        print("=" * 180)
+        print("=" * 180, flush=True)
+        print("DETAILED SCORING TABLE", flush=True)
+        print("=" * 180, flush=True)
         
         # Build header - Hotkey first, then UID, then Model, then First Block, then environments
         header_parts = ["Hotkey  ", "UID", "Model               ", " FirstBlk "]
@@ -155,8 +155,8 @@ class Stage4WeightNormalizer:
         
         header_parts.extend(["   Total ", "  Weight ", "V"])
         
-        print(" | ".join(header_parts))
-        print("-" * 180)
+        print(" | ".join(header_parts), flush=True)
+        print("-" * 180, flush=True)
         
         # Sort miners by final weight
         sorted_miners = sorted(
@@ -203,6 +203,6 @@ class Stage4WeightNormalizer:
             row_parts.append(f"{miner.normalized_weight:>9.6f}")  # Weight: normalized
             row_parts.append("✓" if miner.is_valid_for_scoring() else "✗")
             
-            print(" | ".join(row_parts))
+            print(" | ".join(row_parts), flush=True)
         
-        print("=" * 180)
+        print("=" * 180, flush=True)

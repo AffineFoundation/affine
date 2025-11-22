@@ -6,6 +6,7 @@ FastAPI application entry point.
 
 import os
 import logging
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
@@ -75,10 +76,36 @@ async def lifespan(app: FastAPI):
             "/fetch and /submit endpoints will return 503 Service Unavailable."
         )
     
+    # Initialize scoring cache
+    scoring_refresh_task = None
+    try:
+        from affine.api.services.scoring_cache import warmup_cache, refresh_cache_loop
+        
+        # Warmup cache on startup
+        await warmup_cache()
+        
+        # Start background refresh task
+        scoring_refresh_task = asyncio.create_task(refresh_cache_loop())
+        logger.info("Scoring cache initialized with background refresh")
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize scoring cache: {e}")
+        # Non-fatal: continue startup, cache will compute on first request
+    
     yield
     
     # Shutdown
     logger.info("Shutting down Affine API server...")
+    
+    # Stop scoring cache refresh task
+    if scoring_refresh_task:
+        try:
+            scoring_refresh_task.cancel()
+            await scoring_refresh_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Error stopping scoring cache refresh: {e}")
     
     # Stop TaskPoolManager background tasks
     if task_pool:
