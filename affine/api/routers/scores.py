@@ -86,61 +86,6 @@ async def get_latest_scores(
         )
 
 
-@router.get("/block/{block_number}", response_model=ScoresResponse, dependencies=[Depends(rate_limit_read)])
-async def get_scores_at_block(
-    block_number: int,
-    dao: ScoresDAO = Depends(get_scores_dao),
-):
-    """
-    Get scores at a specific block.
-    
-    Returns the score snapshot calculated for the specified block number.
-    """
-    try:
-        scores_list = await dao.get_scores_at_block(block_number)
-        
-        if not scores_list:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No scores found for block {block_number}"
-            )
-        
-        # Get calculated_at from first score
-        calculated_at = scores_list[0].get("calculated_at") if scores_list else None
-        
-        # Convert to response models with safe field access
-        miner_scores = [
-            MinerScore(
-                miner_hotkey=s.get("miner_hotkey", ""),
-                uid=s.get("uid", 0),
-                model_revision=s.get("model_revision", "unknown"),
-                overall_score=s.get("overall_score", 0.0),
-                average_score=s.get("average_score", 0.0),
-                confidence_interval=s.get("confidence_interval", [0.0, 0.0]),
-                scores_by_layer=s.get("scores_by_layer", {}),
-                scores_by_env=s.get("scores_by_env", {}),
-                total_samples=s.get("total_samples", 0),
-                is_eligible=s.get("is_eligible", False),
-                meets_criteria=s.get("meets_criteria", False),
-            )
-            for s in scores_list
-        ]
-        
-        return ScoresResponse(
-            block_number=block_number,
-            calculated_at=calculated_at,
-            scores=miner_scores,
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve scores for block {block_number}: {str(e)}"
-        )
-
-
 @router.get("/miner/{hotkey}", response_model=MinerScoreHistoryResponse, dependencies=[Depends(rate_limit_read)])
 async def get_miner_score_history(
     hotkey: str,
