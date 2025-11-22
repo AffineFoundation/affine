@@ -22,8 +22,8 @@ class APIConfig:
     RATE_LIMIT_ENABLED: bool = (
         os.getenv("API_RATE_LIMIT_ENABLED", "true").lower() == "true"
     )
-    RATE_LIMIT_READ: int = int(os.getenv("API_RATE_LIMIT_READ", "1000"))  # per hour
-    RATE_LIMIT_WRITE: int = int(os.getenv("API_RATE_LIMIT_WRITE", "1000"))  # per hour
+    RATE_LIMIT_READ: int = int(os.getenv("API_RATE_LIMIT_READ", "10"))  # per min
+    RATE_LIMIT_WRITE: int = int(os.getenv("API_RATE_LIMIT_WRITE", "10"))  # per min
 
     # CORS
     CORS_ORIGINS: List[str] = [

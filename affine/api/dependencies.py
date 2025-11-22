@@ -17,6 +17,7 @@ from affine.database.dao.system_config import SystemConfigDAO
 from affine.database.dao.data_retention import DataRetentionDAO
 from affine.database.dao.miner_scores import MinerScoresDAO
 from affine.database.dao.score_snapshots import ScoreSnapshotsDAO
+from affine.database.dao.miners import MinersDAO
 from affine.api.services.auth import AuthService
 from affine.api.config import config
 from affine.api.services.task_pool import TaskPoolManager
@@ -31,6 +32,7 @@ _system_config_dao: Optional[SystemConfigDAO] = None
 _data_retention_dao: Optional[DataRetentionDAO] = None
 _miner_scores_dao: Optional[MinerScoresDAO] = None
 _score_snapshots_dao: Optional[ScoreSnapshotsDAO] = None
+_miners_dao: Optional[MinersDAO] = None
 _auth_service: Optional[AuthService] = None
 _task_pool_manager: Optional[TaskPoolManager] = None
 
@@ -98,6 +100,14 @@ def get_score_snapshots_dao() -> ScoreSnapshotsDAO:
     if _score_snapshots_dao is None:
         _score_snapshots_dao = ScoreSnapshotsDAO()
     return _score_snapshots_dao
+
+
+def get_miners_dao() -> MinersDAO:
+    """Get MinersDAO instance."""
+    global _miners_dao
+    if _miners_dao is None:
+        _miners_dao = MinersDAO()
+    return _miners_dao
 
 
 def get_auth_service() -> AuthService:
@@ -196,7 +206,7 @@ _rate_limit_store: dict = {}
 def check_rate_limit(
     identifier: str,
     limit: int,
-    window_seconds: int = 3600,
+    window_seconds: int = 60,
 ) -> bool:
     """
     Check if rate limit is exceeded.
@@ -254,6 +264,20 @@ async def rate_limit_write(request: Request):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Rate limit exceeded"
+        )
+
+
+async def rate_limit_scoring(request: Request):
+    """Dependency for /scoring endpoint - strict rate limiting (1/min)."""
+    if not config.RATE_LIMIT_ENABLED:
+        return
+
+    identifier = request.client.host
+    # Hardcoded: 1 request per 60 seconds for scoring endpoint
+    if not check_rate_limit(identifier, limit=1, window_seconds=60):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded for scoring endpoint (1 request per minute)"
         )
 
 
