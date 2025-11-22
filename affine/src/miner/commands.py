@@ -14,53 +14,14 @@ import asyncio
 import textwrap
 from pathlib import Path
 from typing import Optional
+from affine.utils import create_api_client
 
 from affine.core.setup import logger, NETUID
-from affine.core.miners import get_miner_info
 
 
 def get_conf(key: str, default: Optional[str] = None) -> Optional[str]:
     """Get configuration value from environment variable."""
     return os.getenv(key, default)
-
-
-async def get_miners(uids: Optional[int] = None) -> dict:
-    """Get miner information from metagraph.
-    
-    Args:
-        uids: Optional UID to filter (single miner)
-    
-    Returns:
-        Dictionary mapping UID to miner info
-    """
-    try:
-        import bittensor as bt
-        
-        subtensor = bt.subtensor()
-        metagraph = subtensor.metagraph(NETUID)
-        
-        miners = {}
-        
-        if uids is not None:
-            # Single miner
-            if uids < len(metagraph.hotkeys):
-                hotkey = metagraph.hotkeys[uids]
-                miner_info = await get_miner_info(hotkey, subtensor, NETUID)
-                if miner_info:
-                    miners[uids] = miner_info
-        else:
-            # All miners
-            for uid in range(len(metagraph.hotkeys)):
-                hotkey = metagraph.hotkeys[uid]
-                miner_info = await get_miner_info(hotkey, subtensor, NETUID)
-                if miner_info:
-                    miners[uid] = miner_info
-        
-        return miners
-    
-    except Exception as e:
-        logger.error(f"Failed to get miners: {e}")
-        return {}
 
 
 async def get_subtensor():
@@ -359,3 +320,40 @@ async def commit_command(
         logger.error(f"Commit failed: {e}")
         print(json.dumps({"success": False, "error": str(e)}))
         sys.exit(1)
+
+
+async def get_sample_command(
+    uid: int,
+    env: str,
+    task_id: str,
+):
+    """Query sample result by UID, environment, and task ID.
+    
+    Args:
+        uid: Miner UID
+        env: Environment name
+        task_id: Task ID
+    """
+    
+    client = create_api_client()
+    
+    endpoint = f"/samples/uid/{uid}/{env}/{task_id}"
+    data = await client.get(endpoint)
+    
+    if data:
+      print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+async def get_miner_command(uid: int):
+    """Query miner status and information by UID.
+    
+    Args:
+        uid: Miner UID
+    """
+    client = create_api_client()
+
+    endpoint = f"/miners/uid/{uid}"
+    data = await client.get(endpoint)
+    
+    if data:
+      print(json.dumps(data, indent=2, ensure_ascii=False))

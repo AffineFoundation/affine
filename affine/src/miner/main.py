@@ -1,5 +1,42 @@
+"""
+Miner CLI Commands
+
+Provides command-line interface for miner operations:
+- pull: Pull model from Hugging Face
+- chutes_push: Deploy model to Chutes
+- commit: Commit model to blockchain
+- get-sample: Query sample by UID, environment, and task ID
+- get-miner: Query miner status by UID
+"""
+
+import os
+import sys
+import json
+import asyncio
+import textwrap
+import click
+import bittensor as bt
+from pathlib import Path
+from bittensor.core.errors import MetadataError
 from huggingface_hub import snapshot_download
-from affine.setup import logger
+
+from affine.core.setup import logger, NETUID
+from affine.src.miner.commands import (
+    get_conf,
+    get_miners,
+    get_subtensor,
+    get_latest_chute_id,
+    get_chute,
+    pull_command,
+    chutes_push_command,
+    commit_command,
+)
+
+
+@click.group()
+def cli():
+    """Miner command-line interface."""
+    pass
 
 @cli.command("pull")
 @click.argument("uid", type=int)
@@ -17,7 +54,7 @@ from affine.setup import logger
 def pull(uid: int, model_path: str, hf_token: str):
     hf_token = hf_token or get_conf("HF_TOKEN")
 
-    miner_map = asyncio.run(miners(uids=uid))
+    miner_map = asyncio.run(get_miners(uids=uid))
     miner = miner_map.get(uid)
 
     if miner is None:
@@ -171,4 +208,135 @@ def commit(repo: str, revision: str, chute_id: str, coldkey: str, hotkey: str):
     except Exception as e:
         logger.error("Commit failed: %s", e)
         click.echo(json.dumps({"success": False, "error": str(e)}))
+
+
+@cli.command("get-sample")
+@click.argument("uid", type=int)
+@click.argument("env", type=str)
+@click.argument("task_id", type=str)
+@click.option(
+    "--api-url",
+    default=None,
+    help="API base URL (env API_URL if unset, default: http://localhost:8000)",
+)
+def get_sample(uid: int, env: str, task_id: str, api_url: str):
+    """Query sample result by UID, environment, and task ID.
+    
+    Example:
+        affine-miner get-sample 42 affine task_123
+    """
+    api_url = api_url or get_conf("API_URL", "http://localhost:8000")
+    
+    async def _query_sample():
+        try:
+            import aiohttp
+            
+            url = f"{api_url}/samples/uid/{uid}/{env}/{task_id}"
+            logger.info(f"Querying sample: {url}")
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        result = {
+                            "success": True,
+                            "uid": uid,
+                            "env": env,
+                            "task_id": task_id,
+                            "sample": data
+                        }
+                        print(json.dumps(result, indent=2))
+                        logger.info("Sample query successful")
+                    elif response.status == 404:
+                        error_detail = await response.json()
+                        result = {
+                            "success": False,
+                            "error": error_detail.get("detail", "Sample not found")
+                        }
+                        print(json.dumps(result, indent=2))
+                        logger.warning(f"Sample not found: {error_detail}")
+                        sys.exit(1)
+                    else:
+                        error_text = await response.text()
+                        result = {
+                            "success": False,
+                            "error": f"HTTP {response.status}: {error_text}"
+                        }
+                        print(json.dumps(result, indent=2))
+                        logger.error(f"Query failed with status {response.status}")
+                        sys.exit(1)
+        
+        except Exception as e:
+            logger.error(f"Failed to query sample: {e}")
+            print(json.dumps({"success": False, "error": str(e)}, indent=2))
+            sys.exit(1)
+    
+    asyncio.run(_query_sample())
+
+
+@cli.command("get-miner")
+@click.argument("uid", type=int)
+@click.option(
+    "--api-url",
+    default=None,
+    help="API base URL (env API_URL if unset, default: http://localhost:8000)",
+)
+def get_miner(uid: int, api_url: str):
+    """Query miner status and information by UID.
+    
+    Returns complete miner info including hotkey, model, revision,
+    chute_id, validation status, and timestamps.
+    
+    Example:
+        affine-miner get-miner 42
+    """
+    api_url = api_url or get_conf("API_URL", "http://localhost:8000")
+    
+    async def _query_miner():
+        try:
+            import aiohttp
+            
+            url = f"{api_url}/miners/uid/{uid}"
+            logger.info(f"Querying miner: {url}")
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        result = {
+                            "success": True,
+                            "uid": uid,
+                            "miner": data
+                        }
+                        print(json.dumps(result, indent=2))
+                        logger.info("Miner query successful")
+                    elif response.status == 404:
+                        error_detail = await response.json()
+                        result = {
+                            "success": False,
+                            "error": error_detail.get("detail", "Miner not found")
+                        }
+                        print(json.dumps(result, indent=2))
+                        logger.warning(f"Miner not found: {error_detail}")
+                        sys.exit(1)
+                    else:
+                        error_text = await response.text()
+                        result = {
+                            "success": False,
+                            "error": f"HTTP {response.status}: {error_text}"
+                        }
+                        print(json.dumps(result, indent=2))
+                        logger.error(f"Query failed with status {response.status}")
+                        sys.exit(1)
+        
+        except Exception as e:
+            logger.error(f"Failed to query miner: {e}")
+            print(json.dumps({"success": False, "error": str(e)}, indent=2))
+            sys.exit(1)
+    
+    asyncio.run(_query_miner())
+
+
+if __name__ == "__main__":
+    cli()
 
