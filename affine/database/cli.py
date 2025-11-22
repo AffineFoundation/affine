@@ -302,6 +302,103 @@ async def cmd_load_config(json_file: str):
         await close_client()
 
 
+async def cmd_blacklist_list():
+    """List all blacklisted hotkeys."""
+    print("Fetching blacklist...")
+    await init_client()
+    
+    try:
+        config_dao = SystemConfigDAO()
+        blacklist = await config_dao.get_blacklist()
+        
+        if not blacklist:
+            print("Blacklist is empty")
+        else:
+            print(f"Blacklist contains {len(blacklist)} hotkey(s):")
+            for i, hotkey in enumerate(blacklist, 1):
+                print(f"  {i}. {hotkey}")
+    
+    finally:
+        await close_client()
+
+
+async def cmd_blacklist_add(hotkeys: list):
+    """Add hotkeys to blacklist."""
+    print(f"Adding {len(hotkeys)} hotkey(s) to blacklist...")
+    await init_client()
+    
+    try:
+        config_dao = SystemConfigDAO()
+        
+        # Get current blacklist
+        current = await config_dao.get_blacklist()
+        print(f"Current blacklist size: {len(current)}")
+        
+        # Add new hotkeys
+        result = await config_dao.add_to_blacklist(
+            hotkeys=hotkeys,
+            updated_by='cli_blacklist_add'
+        )
+        
+        new_blacklist = result.get('param_value', [])
+        print(f"✓ Updated blacklist size: {len(new_blacklist)}")
+        print(f"  Added: {len(new_blacklist) - len(current)} new hotkey(s)")
+        
+    finally:
+        await close_client()
+
+
+async def cmd_blacklist_remove(hotkeys: list):
+    """Remove hotkeys from blacklist."""
+    print(f"Removing {len(hotkeys)} hotkey(s) from blacklist...")
+    await init_client()
+    
+    try:
+        config_dao = SystemConfigDAO()
+        
+        # Get current blacklist
+        current = await config_dao.get_blacklist()
+        print(f"Current blacklist size: {len(current)}")
+        
+        # Remove hotkeys
+        result = await config_dao.remove_from_blacklist(
+            hotkeys=hotkeys,
+            updated_by='cli_blacklist_remove'
+        )
+        
+        new_blacklist = result.get('param_value', [])
+        print(f"✓ Updated blacklist size: {len(new_blacklist)}")
+        print(f"  Removed: {len(current) - len(new_blacklist)} hotkey(s)")
+        
+    finally:
+        await close_client()
+
+
+async def cmd_blacklist_clear():
+    """Clear all hotkeys from blacklist."""
+    confirm = input("WARNING: This will clear the entire blacklist. Type 'yes' to confirm: ")
+    
+    if confirm.lower() != 'yes':
+        print("Aborted")
+        return
+    
+    print("Clearing blacklist...")
+    await init_client()
+    
+    try:
+        config_dao = SystemConfigDAO()
+        
+        result = await config_dao.set_blacklist(
+            hotkeys=[],
+            updated_by='cli_blacklist_clear'
+        )
+        
+        print("✓ Blacklist cleared successfully")
+        
+    finally:
+        await close_client()
+
+
 def main():
     """Main CLI entry point."""
     import argparse
@@ -351,6 +448,32 @@ def main():
         default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "system_config.json"),
         help="Path to JSON configuration file"
     )
+    
+    # Blacklist command
+    blacklist_parser = subparsers.add_parser("blacklist", help="Manage miner blacklist")
+    blacklist_subparsers = blacklist_parser.add_subparsers(dest="blacklist_command", help="Blacklist operations")
+    
+    # blacklist list
+    blacklist_subparsers.add_parser("list", help="List all blacklisted hotkeys")
+    
+    # blacklist add
+    blacklist_add_parser = blacklist_subparsers.add_parser("add", help="Add hotkeys to blacklist")
+    blacklist_add_parser.add_argument(
+        "hotkeys",
+        nargs="+",
+        help="Hotkey(s) to add to blacklist"
+    )
+    
+    # blacklist remove
+    blacklist_remove_parser = blacklist_subparsers.add_parser("remove", help="Remove hotkeys from blacklist")
+    blacklist_remove_parser.add_argument(
+        "hotkeys",
+        nargs="+",
+        help="Hotkey(s) to remove from blacklist"
+    )
+    
+    # blacklist clear
+    blacklist_subparsers.add_parser("clear", help="Clear all hotkeys from blacklist")
 
     args = parser.parse_args()
     
@@ -373,6 +496,22 @@ def main():
         asyncio.run(cmd_migrate(args.tail, args.max_results))
     elif args.command == "load-config":
         asyncio.run(cmd_load_config(args.json_file))
+    elif args.command == "blacklist":
+        if not args.blacklist_command:
+            blacklist_parser.print_help()
+            sys.exit(1)
+        
+        if args.blacklist_command == "list":
+            asyncio.run(cmd_blacklist_list())
+        elif args.blacklist_command == "add":
+            asyncio.run(cmd_blacklist_add(args.hotkeys))
+        elif args.blacklist_command == "remove":
+            asyncio.run(cmd_blacklist_remove(args.hotkeys))
+        elif args.blacklist_command == "clear":
+            asyncio.run(cmd_blacklist_clear())
+        else:
+            print(f"Unknown blacklist command: {args.blacklist_command}")
+            sys.exit(1)
     else:
         print(f"Unknown command: {args.command}")
         sys.exit(1)
