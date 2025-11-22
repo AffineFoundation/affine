@@ -10,7 +10,7 @@ import copy
 from datetime import datetime
 from typing import Dict, Any, Optional
 from enum import Enum
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from affine.core.setup import logger
 
@@ -38,7 +38,6 @@ class CacheState(Enum):
 class CacheConfig:
     """Cache configuration."""
     refresh_interval: int = 300  # 5 minutes (incremental check)
-    ttl: int = 1800  # 30 minutes
     miner_count_diff_threshold: int = 5
 
 
@@ -59,7 +58,6 @@ class ScoringCacheManager:
         
         # Metadata for change detection
         self._cached_envs = []
-        self._cached_miner_count = 0
         
         # Background task
         self._refresh_task: Optional[asyncio.Task] = None
@@ -85,13 +83,10 @@ class ScoringCacheManager:
     
     async def get_data(self) -> Dict[str, Any]:
         """Get cached scoring data with fallback logic."""
-        current_time = int(time.time())
-        
-        # Fast path: hot cache
+        # Fast path: return cache if ready or refreshing
+        # Note: Background refresh ensures data freshness, no need for TTL check
         if self._state in [CacheState.READY, CacheState.REFRESHING]:
-            # Check if cache is fresh or accept during refresh
-            if current_time - self._updated_at < self.config.ttl or self._state == CacheState.REFRESHING:
-                return self._data
+            return self._data
         
         # Slow path: cache empty or warming
         if self._state == CacheState.EMPTY:
@@ -142,22 +137,51 @@ class ScoringCacheManager:
             except asyncio.CancelledError:
                 pass
     
+    async def _fetch_current_config(self):
+        """Fetch current system configuration.
+        
+        Returns:
+            Tuple of (envs, env_ranges, valid_miners, current_miners)
+        """
+        from affine.database.dao.system_config import SystemConfigDAO
+        from affine.database.dao.miners import MinersDAO
+        
+        system_config_dao = SystemConfigDAO()
+        miners_dao = MinersDAO()
+        
+        current_envs = await system_config_dao.get_active_environments()
+        env_ranges_dict = await system_config_dao.get_env_task_ranges()
+        current_env_ranges = {
+            env: tuple(env_ranges_dict[env]['scoring_range'])
+            for env in current_envs
+            if env in env_ranges_dict
+        }
+        valid_miners = await miners_dao.get_valid_miners()
+        current_miners = {str(m['uid']): {'hotkey': m['hotkey'], 'revision': m['revision']} for m in valid_miners}
+        
+        return current_envs, current_env_ranges, valid_miners, current_miners
+    
     async def _refresh_loop(self) -> None:
         """Background refresh loop with incremental strategy."""
         while True:
             try:
                 await asyncio.sleep(self.config.refresh_interval)
                 
+                # Fetch current configuration once
+                current_envs, current_env_ranges, valid_miners, current_miners = await self._fetch_current_config()
+                
                 # Set refreshing state
                 async with self._lock:
                     if self._state == CacheState.READY:
                         self._state = CacheState.REFRESHING
                 
-                # Choose strategy
-                if await self._should_full_refresh():
+                # Choose strategy based on config
+                if self._should_full_refresh_sync(current_miners, current_envs, current_env_ranges):
                     await self._full_refresh()
                 else:
-                    await self._incremental_refresh()
+                    await self._incremental_refresh_with_config(
+                        current_envs, current_env_ranges, valid_miners, current_miners
+                    )
                 
                 # Mark ready
                 async with self._lock:
@@ -173,32 +197,46 @@ class ScoringCacheManager:
                     if self._state == CacheState.REFRESHING:
                         self._state = CacheState.READY
     
-    async def _should_full_refresh(self) -> bool:
-        """Determine if full refresh is needed.
+    def _should_full_refresh_sync(
+        self,
+        current_miners: dict,
+        current_envs: list,
+        current_env_ranges: dict
+    ) -> bool:
+        """Determine if full refresh is needed (synchronous).
         
         Strategy: Detect major configuration changes requiring full rebuild.
+        
+        Args:
+            current_miners: Current miner dict from config
+            current_envs: Current active environments
+            current_env_ranges: Current env task ranges
+        
+        Returns:
+            True if full refresh needed
         """
-        from affine.database.dao.system_config import SystemConfigDAO
-        from affine.database.dao.miners import MinersDAO
-        
-        system_config_dao = SystemConfigDAO()
-        miners_dao = MinersDAO()
-        
-        # Get current state
-        current_envs = await system_config_dao.get_active_environments()
-        current_env_ranges_dict = await system_config_dao.get_env_task_ranges()
-        current_env_ranges = {
-            env: tuple(current_env_ranges_dict[env]['scoring_range'])
-            for env in current_envs
-            if env in current_env_ranges_dict
-        }
-        valid_miners = await miners_dao.get_valid_miners()
-        current_miners = {str(m['uid']): {'hotkey': m['hotkey'], 'revision': m['revision']} for m in valid_miners}
-        
-        # Check if too many changes - easier to do full refresh
-        if not self._cached_miners or abs(len(current_miners) - len(self._cached_miners)) > self.config.miner_count_diff_threshold:
-            logger.info(f"Full refresh: miner count changed significantly")
+        # First run - always full refresh
+        if not self._cached_miners:
+            logger.info("Full refresh: first run")
             return True
+        
+        # Check if too many miner changes
+        if abs(len(current_miners) - len(self._cached_miners)) > self.config.miner_count_diff_threshold:
+            logger.info(f"Full refresh: miner count changed significantly ({len(self._cached_miners)} → {len(current_miners)})")
+            return True
+        
+        # Check if environment list changed
+        if set(current_envs) != set(self._cached_envs):
+            logger.info(f"Full refresh: environment list changed ({self._cached_envs} → {current_envs})")
+            return True
+        
+        # Check if any task range changed
+        for env in current_envs:
+            old_range = self._cached_env_ranges.get(env)
+            new_range = current_env_ranges.get(env)
+            if old_range != new_range:
+                logger.info(f"Full refresh: task range changed for {env} ({old_range} → {new_range})")
+                return True
         
         return False
     
@@ -271,8 +309,14 @@ class ScoringCacheManager:
         combo_count = len(valid_miners) * len(scoring_envs)
         logger.info(f"Full refresh completed: {len(result)} miners, {combo_count} miner×env combinations, {total_samples} total samples")
     
-    async def _incremental_refresh(self) -> None:
-        """Execute fine-grained incremental refresh.
+    async def _incremental_refresh_with_config(
+        self,
+        current_envs: list,
+        current_env_ranges: dict,
+        valid_miners: list,
+        current_miners: dict
+    ) -> None:
+        """Execute fine-grained incremental refresh with pre-fetched config.
         
         Strategy:
         1. Detect config changes (new miners, new envs, range changes, removed envs)
@@ -282,33 +326,19 @@ class ScoringCacheManager:
            - Miner changed → full scan for that miner
            - Otherwise → incremental scan since last_scanned_ts
         3. Remove deleted envs from cache
+        
+        Args:
+            current_envs: Current active environments
+            current_env_ranges: Current env task ranges
+            valid_miners: Current valid miners list
+            current_miners: Current miners dict
         """
         logger.info("Fine-grained incremental refresh started")
         
         from affine.database.dao.sample_results import SampleResultsDAO
-        from affine.database.dao.system_config import SystemConfigDAO
-        from affine.database.dao.miners import MinersDAO
-        
         sample_dao = SampleResultsDAO()
-        system_config_dao = SystemConfigDAO()
-        miners_dao = MinersDAO()
         
-        # Get current configuration
-        current_envs = await system_config_dao.get_active_environments()
-        env_ranges_dict = await system_config_dao.get_env_task_ranges()
-        current_env_ranges = {
-            env: tuple(env_ranges_dict[env]['scoring_range'])
-            for env in current_envs
-            if env in env_ranges_dict
-        }
-        valid_miners = await miners_dao.get_valid_miners()
-        current_miners = {str(m['uid']): {'hotkey': m['hotkey'], 'revision': m['revision']} for m in valid_miners}
-        
-        # Detect changes
-        added_envs = set(current_envs) - set(self._cached_envs)
-        removed_envs = set(self._cached_envs) - set(current_envs)
-        changed_env_ranges = {env for env in current_env_ranges if current_env_ranges.get(env) != self._cached_env_ranges.get(env)}
-        
+        # Detect miner changes
         added_miners = {uid: info for uid, info in current_miners.items() if uid not in self._cached_miners}
         changed_miners = {
             uid: info for uid, info in current_miners.items()
@@ -317,14 +347,11 @@ class ScoringCacheManager:
                 info['revision'] != self._cached_miners[uid]['revision']
             )
         }
+        removed_miners = {uid for uid in self._cached_miners if uid not in current_miners}
         
-        logger.info(f"Changes: +{len(added_envs)} envs, -{len(removed_envs)} envs, Δ{len(changed_env_ranges)} ranges, +{len(added_miners)} miners, Δ{len(changed_miners)} miners")
+        logger.info(f"Changes: +{len(added_miners)} miners, Δ{len(changed_miners)} miners, -{len(removed_miners)} miners")
         
-        # Step 1: Remove deleted envs from cache
-        if removed_envs:
-            self._remove_envs_from_cache(removed_envs)
-        
-        # Step 2: Build scan plan
+        # Build scan plan
         full_scan_combos = []  # (hotkey, revision, env) requiring full scan
         incr_scan_combos = []  # (hotkey, revision, env, since_ts) requiring incremental scan
         
@@ -336,12 +363,8 @@ class ScoringCacheManager:
             is_changed_miner = uid in changed_miners
             
             for env in current_envs:
-                key = f"{hotkey}#{revision}#{env}"
-                is_new_env = env in added_envs
-                is_changed_range = env in changed_env_ranges
-                
                 # Decision: full vs incremental
-                if is_new_miner or is_changed_miner or is_new_env or is_changed_range:
+                if is_new_miner or is_changed_miner:
                     # Full scan needed
                     full_scan_combos.append((hotkey, revision, env))
                 else:
@@ -505,16 +528,19 @@ class ScoringCacheManager:
         
         Rebuilds cache structure with current miner list to handle:
         - New miners added
+        - Removed miners deleted
         - New environments added
         - Updated samples for existing miners
         """
-        # Start with old data structure
-        updated_data = copy.deepcopy(old_data)
+        # Rebuild cache structure from current valid miners (automatically removes old miners)
+        updated_data = {}
         
-        # Add new miners if they don't exist
         for miner in valid_miners:
             uid = str(miner['uid'])
-            if uid not in updated_data:
+            # Restore from old cache if exists, otherwise initialize
+            if uid in old_data:
+                updated_data[uid] = old_data[uid]
+            else:
                 # New miner - initialize structure
                 updated_data[uid] = {
                     'hotkey': miner['hotkey'],
@@ -567,8 +593,11 @@ class ScoringCacheManager:
                 
                 merged_samples = list(old_samples_dict.values())
                 
-                # Recalculate stats
+                # Filter out samples outside the new range (handles range shrinkage)
                 start_id, end_id = env_ranges.get(env, (0, 0))
+                merged_samples = [s for s in merged_samples if start_id <= s['task_id'] < end_id]
+                
+                # Recalculate stats
                 expected_count = end_id - start_id
                 completed_count = len(merged_samples)
                 completeness = completed_count / expected_count if expected_count > 0 else 0.0
