@@ -9,64 +9,51 @@ import os
 import asyncio
 import click
 import time
-import aiohttp
 
 from affine.core.setup import setup_logging, logger
 from affine.database import init_client, close_client
 from affine.database.dao.miner_scores import MinerScoresDAO
 from affine.database.dao.score_snapshots import ScoreSnapshotsDAO
+from affine.database.dao.scores import ScoresDAO
 from affine.src.scorer.scorer import Scorer
 from affine.src.scorer.config import ScorerConfig
 from affine.utils.subtensor import get_subtensor
+from affine.utils.api_client import create_api_client
 
 
-async def fetch_scoring_data(api_base_url: str) -> dict:
-    """Fetch scoring data from API with 10 minute timeout."""
-    url = f"{api_base_url}/api/v1/samples/scoring"
+async def fetch_scoring_data() -> dict:
+    """Fetch scoring data from API with default timeout."""
+    api_client = create_api_client()
     
-    # Set timeout to 10 minutes
-    timeout = aiohttp.ClientTimeout(total=600)
-    
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(url) as response:
-            if response.status != 200:
-                raise RuntimeError(f"Failed to fetch scoring data: HTTP {response.status}")
-            
-            data = await response.json()
-            logger.info(f"Fetched scoring data for {len(data)} miners")
-            return data
+    logger.info("Fetching scoring data from API...")
+    return await api_client.get("/samples/scoring")
 
-async def fetch_system_config(api_url: str) -> dict:
+
+async def fetch_system_config() -> dict:
     """Fetch system configuration from API.
     
     Returns:
         System config dict with 'environments' key
     """
-    url = f"{api_url}/api/v1/config/environments"
+    api_client = create_api_client()
     
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status != 200:
-                    logger.warning(f"Failed to fetch environments config from API: HTTP {response.status}")
-                    return {"environments": ["affine:sat"]}  # Fallback default
+        config = await api_client.get("/config/environments")
+        
+        if isinstance(config, dict):
+            value = config.get("param_value")
+            if isinstance(value, dict):
+                # Filter environments where enabled_for_scoring=true
+                enabled_envs = [
+                    env_name for env_name, env_config in value.items()
+                    if isinstance(env_config, dict) and env_config.get("enabled_for_scoring", False)
+                ]
                 
-                config = await response.json()
+                if enabled_envs:
+                    logger.info(f"Fetched environments from API: {enabled_envs}")
+                    return {"environments": enabled_envs}
 
-                if isinstance(config, dict):
-                    value = config.get("param_value")
-                    if isinstance(value, dict):
-                        # Filter environments where enabled_for_scoring=true
-                        enabled_envs = [
-                            env_name for env_name, env_config in value.items()
-                            if isinstance(env_config, dict) and env_config.get("enabled_for_scoring", False)
-                        ]
-                        
-                        if enabled_envs:
-                            logger.info(f"Fetched environments from API: {enabled_envs}")
-                            return {"environments": enabled_envs}
-
-                logger.exception("Failed to parse environments config")
+        logger.exception("Failed to parse environments config")
                 
     except Exception as e:
         logger.error(f"Error fetching system config: {e}")
@@ -74,10 +61,7 @@ async def fetch_system_config(api_url: str) -> dict:
 
 
 
-async def run_scoring_once(
-    api_base_url: str,
-    save_to_db: bool
-):
+async def run_scoring_once(save_to_db: bool):
     """Run scoring calculation once."""
     start_time = time.time()
     
@@ -87,8 +71,8 @@ async def run_scoring_once(
     
     # Fetch data
     logger.info("Fetching data from API...")
-    scoring_data = await fetch_scoring_data(api_base_url)
-    system_config = await fetch_system_config(api_base_url)
+    scoring_data = await fetch_scoring_data()
+    system_config = await fetch_system_config()
     
     # Extract environments
     environments = system_config.get("environments")
@@ -114,11 +98,13 @@ async def run_scoring_once(
         logger.info("Saving results to database...")
         miner_scores_dao = MinerScoresDAO()
         score_snapshots_dao = ScoreSnapshotsDAO()
+        scores_dao = ScoresDAO()
         
         await scorer.save_results(
             result=result,
             miner_scores_dao=miner_scores_dao,
-            score_snapshots_dao=score_snapshots_dao
+            score_snapshots_dao=score_snapshots_dao,
+            scores_dao=scores_dao
         )
         logger.info("Results saved successfully")
     
@@ -132,11 +118,10 @@ async def run_scoring_once(
     return result
 
 
-async def run_service_with_mode(api_base_url: str, save_to_db: bool, service_mode: bool):
+async def run_service_with_mode(save_to_db: bool, service_mode: bool):
     """Run the scorer service.
     
     Args:
-        api_base_url: API base URL
         save_to_db: Whether to save results to database
         service_mode: If True, run continuously; if False, run once and exit
     """
@@ -155,13 +140,13 @@ async def run_service_with_mode(api_base_url: str, save_to_db: bool, service_mod
         if not service_mode:
             # Run once and exit (DEFAULT)
             logger.info("Running in one-time mode (default)")
-            await run_scoring_once(api_base_url, save_to_db)
+            await run_scoring_once(save_to_db)
         else:
             # Run continuously every 30 minutes (SERVICE_MODE=true)
             logger.info("Running in service mode (continuous, every 30 minutes)")
             while True:
                 try:
-                    await run_scoring_once(api_base_url, save_to_db)
+                    await run_scoring_once(save_to_db)
                     logger.info("Waiting 30 minutes until next run...")
                     await asyncio.sleep(30 * 60)  # 30 minutes
                 except Exception as e:
@@ -187,13 +172,7 @@ async def run_service_with_mode(api_base_url: str, save_to_db: bool, service_mod
 
 
 @click.command()
-@click.option(
-    "-v", "--verbosity",
-    default="1",
-    type=click.Choice(["0", "1", "2", "3"]),
-    help="Logging verbosity: 0=CRITICAL, 1=INFO, 2=DEBUG, 3=TRACE"
-)
-def main(verbosity):
+def main():
     """
     Affine Scorer - Calculate miner weights using four-stage algorithm.
     
@@ -205,31 +184,22 @@ def main(verbosity):
     - SERVICE_MODE=true: Continuous service mode (runs every 30 minutes)
     
     Configuration:
-    - AFFINE_API_URL: API base URL (default: http://localhost:8000)
     - SCORER_SAVE_TO_DB: Enable database saving (default: false)
     - SERVICE_MODE: Run as continuous service (default: false)
     - All scoring parameters are constants in config.py
     """
-    # Setup logging
-    setup_logging(int(verbosity))
-    
-    # Get API URL from environment variable
-    api_base_url = os.getenv("AFFINE_API_URL", "http://localhost:8000")
-    
     # Check if should save to database
     save_to_db = os.getenv("SCORER_SAVE_TO_DB", "false").lower() in ("true", "1", "yes")
     
     # Check service mode (default: false = one-time execution)
     service_mode = os.getenv("SERVICE_MODE", "false").lower() in ("true", "1", "yes")
     
-    logger.info(f"API URL: {api_base_url}")
     if save_to_db:
         logger.info("Database saving enabled (SCORER_SAVE_TO_DB=true)")
     logger.info(f"Service mode: {service_mode}")
     
     # Run service
     asyncio.run(run_service_with_mode(
-        api_base_url=api_base_url,
         save_to_db=save_to_db,
         service_mode=service_mode
     ))

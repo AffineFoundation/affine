@@ -25,7 +25,7 @@ router = APIRouter(prefix="/scores", tags=["Scores"])
 
 @router.get("/latest", response_model=ScoresResponse, dependencies=[Depends(rate_limit_read)])
 async def get_latest_scores(
-    limit: int = Query(256, description="Maximum miners to return", ge=1, le=512),
+    limit: int = Query(256, description="Maximum miners to return", ge=1, le=256),
     dao: ScoresDAO = Depends(get_scores_dao),
 ):
     """

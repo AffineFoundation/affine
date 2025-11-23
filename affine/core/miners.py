@@ -9,6 +9,7 @@ from huggingface_hub import HfApi
 from affine.core.models import Miner
 from affine.core.setup import NETUID
 from affine.utils.subtensor import get_subtensor
+from affine.utils.api_client import get_chute_info
 
 logger = __import__("logging").getLogger("affine")
 
@@ -84,61 +85,6 @@ async def check_model_gated(
             MODEL_GATING_CACHE[model_id] = (cached[0], now)
             return cached[0]
         return None
-
-
-async def get_chute(chutes_id: str) -> Dict:
-    url = f"https://api.chutes.ai/chutes/{chutes_id}"
-    token = os.getenv("CHUTES_API_KEY", "")
-    headers = {"Authorization": token}
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-            url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
-        ) as r:
-            text = await r.text(errors="ignore")
-            if r.status != 200:
-                return None
-            info = await r.json()
-            for k in ("readme", "cords", "tagline", "instances"):
-                info.pop(k, None)
-            info.get("image", {}).pop("readme", None)
-            return info
-
-
-async def get_chute_code(identifier: str) -> Optional[str]:
-    url = f"https://api.chutes.ai/chutes/code/{identifier}"
-    token = os.getenv("CHUTES_API_KEY", "")
-    headers = {"Authorization": token}
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as r:
-            if r.status != 200:
-                return None
-            return await r.text(errors="ignore")
-
-
-async def get_latest_chute_id(
-    model_name: str, api_key: Optional[str] = None
-) -> Optional[str]:
-    token = api_key or os.getenv("CHUTES_API_KEY", "")
-    if not token:
-        return None
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                "https://api.chutes.ai/chutes/", headers={"Authorization": token}
-            ) as r:
-                if r.status != 200:
-                    return None
-                data = await r.json()
-    except Exception:
-        return None
-    chutes = data.get("items", data) if isinstance(data, dict) else data
-    if not isinstance(chutes, list):
-        return None
-    for chute in reversed(chutes):
-        if any(chute.get(k) == model_name for k in ("model_name", "name", "readme")):
-            return chute.get("chute_id")
-    return None
 
 
 async def get_weights_shas(
@@ -306,7 +252,7 @@ async def miners(
                 )
 
             async with meta_sem:
-                chute = await get_chute(chute_id)
+                chute = await get_chute_info(chute_id)
 
             if not chute or not chute.get("hot", False):
                 return None

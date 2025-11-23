@@ -16,11 +16,10 @@ from dataclasses import dataclass
 from huggingface_hub import HfApi
 
 from affine.utils.subtensor import get_subtensor
+from affine.utils.api_client import get_chute_info
 from affine.core.setup import NETUID
 from affine.database.dao.miners import MinersDAO
 from affine.database.dao.system_config import SystemConfigDAO
-
-
 from affine.core.setup import logger
 
 
@@ -36,6 +35,8 @@ class MinerInfo:
     block: int = 0
     is_valid: bool = False
     invalid_reason: Optional[str] = None
+    model_hash: str = ""  # HuggingFace model hash (cached)
+    hf_revision: str = ""  # HuggingFace actual revision (cached)
     
     def key(self) -> str:
         """Generate unique key: hotkey#revision"""
@@ -150,15 +151,15 @@ class MinersMonitor:
         
         return merged_blacklist
     
-    async def _get_weights_shas(self, model_id: str, revision: Optional[str] = None) -> Optional[Set[str]]:
-        """Get model weights SHA256 hashes from HuggingFace
+    async def _get_model_info(self, model_id: str, revision: str) -> Optional[tuple[str, str]]:
+        """Get model hash and actual revision from HuggingFace
         
         Args:
             model_id: HuggingFace model repo
             revision: Git commit hash
             
         Returns:
-            Set of SHA256 hashes or None if failed
+            Tuple of (model_hash, actual_revision) or None if failed
         """
         key = (model_id, revision)
         now = time.time()
@@ -177,6 +178,11 @@ class MinersMonitor:
                 )
             
             info = await asyncio.to_thread(_repo_info)
+            
+            # Get actual revision (git SHA)
+            actual_revision = getattr(info, "sha", None)
+            
+            # Get model weight hashes
             siblings = getattr(info, "siblings", None) or []
             
             def _name(s):
@@ -193,54 +199,19 @@ class MinersMonitor:
                 )
             }
             
-            # Compute total hash (concatenate all SHAs and hash again)
+            # Compute total hash
+            model_hash = None
             if shas:
                 import hashlib
-                total_hash = hashlib.sha256("".join(sorted(shas)).encode()).hexdigest()
-                self.weights_cache[key] = (total_hash, now)
-                return total_hash
+                model_hash = hashlib.sha256("".join(sorted(shas)).encode()).hexdigest()
             
-            self.weights_cache[key] = (None, now)
-            return None
+            result = (model_hash, actual_revision) if model_hash and actual_revision else None
+            self.weights_cache[key] = (result, now)
+            return result
             
         except Exception as e:
-            logger.debug(f"Failed to fetch weights for {model_id}@{revision}: {e}")
+            logger.debug(f"Failed to fetch model info for {model_id}@{revision}: {e}")
             self.weights_cache[key] = (None, now)
-            return None
-    
-    async def _get_chute(self, chute_id: str) -> Optional[Dict]:
-        """Get chute info from Chutes API
-        
-        Args:
-            chute_id: Chute deployment ID
-            
-        Returns:
-            Chute info dict or None if failed
-        """
-        url = f"https://api.chutes.ai/chutes/{chute_id}"
-        token = os.getenv("CHUTES_API_KEY", "")
-        
-        if not token:
-            logger.warning("CHUTES_API_KEY not configured")
-            return None
-        
-        headers = {"Authorization": token}
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                    if resp.status != 200:
-                        return None
-                    
-                    info = await resp.json()
-                    # Remove unnecessary fields
-                    for k in ("readme", "cords", "tagline", "instances"):
-                        info.pop(k, None)
-                    info.get("image", {}).pop("readme", None)
-                    
-                    return info
-        except Exception as e:
-            logger.debug(f"Failed to fetch chute {chute_id}: {e}")
             return None
     
     async def _validate_miner(
@@ -254,17 +225,22 @@ class MinersMonitor:
     ) -> MinerInfo:
         """Validate a single miner
         
+        Validation steps:
+        1. Fetch and verify chute is hot
+        2. Verify model name matches between commit and chute
+        3. Verify revision matches between commit and chute
+        4. Fetch HuggingFace model info and verify revision
+        
         Args:
             uid: Miner UID
             hotkey: Miner hotkey
-            model: Model repo
-            revision: Git commit hash
+            model: Model repo from commit
+            revision: Git commit hash from commit
             chute_id: Chute deployment ID
             block: Block when miner committed
-            current_block: Current blockchain block
             
         Returns:
-            MinerInfo with validation result
+            MinerInfo with validation result and cached model_hash/hf_revision
         """
         info = MinerInfo(
             uid=uid,
@@ -275,86 +251,96 @@ class MinersMonitor:
             block=block,
         )
         
-        # Fetch chute info
-        chute = await self._get_chute(chute_id)
+        # Step 1: Fetch chute info
+        chute = await get_chute_info(chute_id)
         if not chute:
             info.is_valid = False
             info.invalid_reason = "chute_fetch_failed"
             return info
         
-        # Check chute status
-        chute_status = "hot" if chute.get("hot", False) else "cold"
-        if chute_status != "hot":
+        info.chute_slug = chute.get("slug", "")
+        
+        # Step 2: Check chute is hot
+        if not chute.get("hot", False):
             info.is_valid = False
             info.invalid_reason = "chute_not_hot"
-            info.chute_slug = chute.get("slug", "")
             return info
         
-        # Check model name matches
-        chute_name = chute.get("name")
-        if model != chute_name:
+        # Step 3: Verify model name matches chute
+        chute_model = chute.get("name", "")
+        if model != chute_model:
             info.is_valid = False
-            info.invalid_reason = f"model_mismatch:chute={chute_name}"
-            info.chute_slug = chute.get("slug", "")
+            info.invalid_reason = f"model_mismatch:chute={chute_model}"
             return info
         
-        # Check revision matches
-        chute_revision = chute.get("revision")
+        # Step 4: Verify revision matches chute
+        chute_revision = chute.get("revision", "")
         if chute_revision and revision != chute_revision:
             info.is_valid = False
             info.invalid_reason = f"revision_mismatch:chute={chute_revision}"
-            info.chute_slug = chute.get("slug", "")
+            return info
+        
+        # Step 5: Fetch HuggingFace model info and verify revision
+        model_info = await self._get_model_info(model, revision)
+        if not model_info:
+            info.is_valid = False
+            info.invalid_reason = "hf_model_fetch_failed"
+            return info
+        
+        model_hash, hf_revision = model_info
+        
+        # Cache model info in MinerInfo
+        info.model_hash = model_hash
+        info.hf_revision = hf_revision
+        
+        # Verify revision matches
+        if revision != hf_revision:
+            info.is_valid = False
+            info.invalid_reason = f"revision_mismatch:hf={hf_revision}"
             return info
         
         # All checks passed
         info.is_valid = True
-        info.chute_slug = chute.get("slug", "")
-        
         return info
     
     async def _detect_plagiarism(self, miners: list[MinerInfo]) -> list[MinerInfo]:
         """Detect plagiarism by checking duplicate model hashes
         
+        Only valid miners are checked. For each unique model hash,
+        only the miner with the earliest block is kept as valid.
+        
+        Note: model_hash is already cached in MinerInfo from _validate_miner()
+        
         Args:
-            miners: List of validated miners
+            miners: List of validated miners with cached model_hash
             
         Returns:
             Updated miners list with plagiarism detection
         """
-        # Fetch model hashes concurrently
-        tasks = []
-        for miner in miners:
-            if miner.is_valid:
-                tasks.append(self._get_weights_shas(miner.model, miner.revision))
-            else:
-                tasks.append(asyncio.sleep(0, result=None))
-        
-        hashes = await asyncio.gather(*tasks)
-        
-        # Map hash -> list of (block, uid, miner)
+        # Group valid miners by model hash (already cached in MinerInfo)
         hash_to_miners: Dict[str, list] = {}
-        for miner, model_hash in zip(miners, hashes):
-            if model_hash:
-                if model_hash not in hash_to_miners:
-                    hash_to_miners[model_hash] = []
-                hash_to_miners[model_hash].append((miner.block, miner.uid, miner))
+        for miner in miners:
+            if miner.is_valid and miner.model_hash:
+                if miner.model_hash not in hash_to_miners:
+                    hash_to_miners[miner.model_hash] = []
+                hash_to_miners[miner.model_hash].append((miner.block, miner.uid, miner))
         
-        # For each hash group, keep only the earliest miner
+        # Keep only earliest miner for each hash
         for model_hash, group in hash_to_miners.items():
             if len(group) <= 1:
                 continue
             
-            # Sort by block (earliest first)
-            group.sort(key=lambda x: x[0])
+            # Sort by block (earliest first), then by UID
+            group.sort(key=lambda x: (x[0], x[1]))
             earliest_block, earliest_uid, _ = group[0]
             
-            # Mark others as invalid
+            # Mark duplicates as invalid
             for block, uid, miner in group[1:]:
                 if miner.is_valid:
                     miner.is_valid = False
                     miner.invalid_reason = f"model_hash_duplicate:earliest_uid={earliest_uid}"
                     logger.info(
-                        f"Detected plagiarism: uid={uid} copied from uid={earliest_uid} "
+                        f"[MinersMonitor] Plagiarism detected: uid={uid} copied from uid={earliest_uid} "
                         f"(hash={model_hash[:16]}...)"
                     )
         
@@ -476,8 +462,6 @@ class MinersMonitor:
             
             # Persist to database
             for miner in miners:
-                model_hash = await self._get_weights_shas(miner.model, miner.revision) or ""
-                
                 await self.dao.save_miner(
                     uid=miner.uid,
                     hotkey=miner.hotkey,
@@ -485,7 +469,7 @@ class MinersMonitor:
                     revision=miner.revision,
                     chute_id=miner.chute_id,
                     chute_slug=miner.chute_slug,
-                    model_hash=model_hash,
+                    model_hash=miner.model_hash,
                     chute_status="hot" if miner.is_valid else "cold",
                     is_valid=miner.is_valid,
                     invalid_reason=miner.invalid_reason,
