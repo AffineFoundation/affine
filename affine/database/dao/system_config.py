@@ -312,3 +312,69 @@ class SystemConfigDAO(BaseDAO):
         env_config = ranges.get(env, {})
         scoring_range = env_config.get('scoring_range', [0, 0])
         return tuple(scoring_range) if len(scoring_range) == 2 else (0, 0)
+    
+    # Blacklist Configuration Management
+    
+    async def get_blacklist(self) -> List[str]:
+        """Get blacklisted hotkeys from database.
+        
+        Returns:
+            List of blacklisted hotkey strings
+        """
+        blacklist = await self.get_param_value('miner_blacklist', default=[])
+        return blacklist if isinstance(blacklist, list) else []
+    
+    async def set_blacklist(
+        self, hotkeys: List[str], updated_by: str = "system"
+    ) -> Dict[str, Any]:
+        """Set blacklisted hotkeys.
+        
+        Args:
+            hotkeys: List of hotkey strings to blacklist
+            updated_by: Who updated the parameter
+            
+        Returns:
+            Saved config item
+        """
+        # Remove duplicates and empty strings
+        unique_hotkeys = list(set(hk.strip() for hk in hotkeys if hk.strip()))
+        
+        return await self.set_param(
+            param_name='miner_blacklist',
+            param_value=unique_hotkeys,
+            param_type='list',
+            description='Blacklisted miner hotkeys',
+            updated_by=updated_by
+        )
+    
+    async def add_to_blacklist(
+        self, hotkeys: List[str], updated_by: str = "system"
+    ) -> Dict[str, Any]:
+        """Add hotkeys to blacklist.
+        
+        Args:
+            hotkeys: List of hotkey strings to add
+            updated_by: Who updated the parameter
+            
+        Returns:
+            Saved config item
+        """
+        current_blacklist = await self.get_blacklist()
+        updated_blacklist = list(set(current_blacklist + hotkeys))
+        return await self.set_blacklist(updated_blacklist, updated_by)
+    
+    async def remove_from_blacklist(
+        self, hotkeys: List[str], updated_by: str = "system"
+    ) -> Dict[str, Any]:
+        """Remove hotkeys from blacklist.
+        
+        Args:
+            hotkeys: List of hotkey strings to remove
+            updated_by: Who updated the parameter
+            
+        Returns:
+            Saved config item
+        """
+        current_blacklist = await self.get_blacklist()
+        updated_blacklist = [hk for hk in current_blacklist if hk not in hotkeys]
+        return await self.set_blacklist(updated_blacklist, updated_by)
