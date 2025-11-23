@@ -18,6 +18,8 @@ from affine.src.miner.commands import (
     commit_command,
     get_sample_command,
     get_miner_command,
+    get_weights_command,
+    get_scores_command,
 )
 
 
@@ -82,7 +84,6 @@ def get_sample(uid, env, task_id):
         task_id=task_id,
     ))
 
-
 @click.command("get-miner")
 @click.argument("uid", type=int)
 def get_miner(uid):
@@ -97,4 +98,32 @@ def get_miner(uid):
     asyncio.run(get_miner_command(
         uid=uid,
     ))
+
+
+@click.command("get-weights")
+def get_weights():
+    """Query latest normalized weights for on-chain weight setting.
+    
+    Returns the most recent score snapshot with normalized weights
+    for all miners, suitable for setting on-chain weights.
+    
+    Example:
+        af get-weights
+    """
+    asyncio.run(get_weights_command())
+
+
+@click.command("get-scores")
+@click.option("--limit", "-l", default=256, type=int, help="Maximum miners to return (default: 256)")
+def get_scores(limit):
+    """Query latest scores for all miners.
+    
+    Returns scores for all miners at the latest calculated block.
+    
+    Example:
+        af get-scores
+        af get-scores --limit 100
+    """
+    asyncio.run(get_scores_command(limit=limit))
+
 
