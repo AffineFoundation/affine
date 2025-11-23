@@ -56,7 +56,7 @@ async def get_miner_by_uid(
             "model": miner.get("model"),
             "revision": miner.get("revision"),
             "chute_id": miner.get("chute_id"),
-            "block_number": miner.get("block_number"),
+            "first_block": miner.get("first_block"),
             "is_valid": miner.get("is_valid") == "true",  # Convert string to bool
             "invalid_reason": miner.get("invalid_reason"),
             "model_hash": miner.get("model_hash"),

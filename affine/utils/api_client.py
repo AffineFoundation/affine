@@ -159,6 +159,42 @@ class APIClient:
             return None
 
 
+async def get_chute_info(chute_id: str) -> Optional[Dict]:
+    """Get chute info from Chutes API.
+    
+    Args:
+        chute_id: Chute deployment ID
+        
+    Returns:
+        Chute info dict or None if failed
+    """
+    url = f"https://api.chutes.ai/chutes/{chute_id}"
+    token = os.getenv("CHUTES_API_KEY", "")
+    
+    if not token:
+        logger.warning("CHUTES_API_KEY not configured")
+        return None
+    
+    headers = {"Authorization": token}
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status != 200:
+                    return None
+                
+                info = await resp.json()
+                # Remove unnecessary fields
+                for k in ("readme", "cords", "tagline", "instances"):
+                    info.pop(k, None)
+                info.get("image", {}).pop("readme", None)
+                
+                return info
+    except Exception as e:
+        logger.debug(f"Failed to fetch chute {chute_id}: {e}")
+        return None
+
+
 def create_api_client(base_url: Optional[str] = None) -> APIClient:
     """Create API client with default or custom base URL.
     
