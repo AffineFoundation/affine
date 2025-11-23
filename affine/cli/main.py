@@ -178,6 +178,40 @@ def get_miner(ctx):
     miner_get_miner.main(standalone_mode=False)
 
 
+@cli.command("get-weights", context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.pass_context
+def get_weights(ctx):
+    """Query latest normalized weights for on-chain weight setting.
+    
+    Returns the most recent score snapshot with normalized weights
+    for all miners, suitable for setting on-chain weights.
+    
+    Example:
+        af get-weights
+    """
+    from affine.src.miner.main import get_weights as miner_get_weights
+    
+    sys.argv = ["get-weights"] + ctx.args
+    miner_get_weights.main(standalone_mode=False)
+
+
+@cli.command("get-scores", context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.pass_context
+def get_scores(ctx):
+    """Query latest scores for all miners.
+    
+    Returns scores for all miners at the latest calculated block.
+    
+    Example:
+        af get-scores
+        af get-scores --limit 100
+    """
+    from affine.src.miner.main import get_scores as miner_get_scores
+    
+    sys.argv = ["get-scores"] + ctx.args
+    miner_get_scores.main(standalone_mode=False)
+
+
 def main():
     """Main entry point."""
     cli()

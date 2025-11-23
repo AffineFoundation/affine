@@ -14,8 +14,7 @@ import asyncio
 import textwrap
 from pathlib import Path
 from typing import Optional
-from affine.utils import create_api_client
-
+from affine.utils.api_client import create_api_client
 from affine.core.setup import logger, NETUID
 
 
@@ -34,48 +33,6 @@ async def get_subtensor():
         raise
 
 
-async def get_latest_chute_id(repo: str, api_key: str) -> Optional[str]:
-    """Get latest chute ID for a repository.
-    
-    Args:
-        repo: HF repository name
-        api_key: Chutes API key
-    
-    Returns:
-        Chute ID or None if not found
-    """
-    try:
-        import aiohttp
-        
-        # This is a placeholder - actual implementation would query Chutes API
-        # For now, return None to indicate not implemented
-        logger.warning("get_latest_chute_id not fully implemented")
-        return None
-    
-    except Exception as e:
-        logger.error(f"Failed to get chute ID: {e}")
-        return None
-
-
-async def get_chute(chute_id: str) -> Optional[dict]:
-    """Get chute information.
-    
-    Args:
-        chute_id: Chute deployment ID
-    
-    Returns:
-        Chute info dict or None if not found
-    """
-    try:
-        # Placeholder implementation
-        logger.warning("get_chute not fully implemented")
-        return {"chute_id": chute_id, "status": "unknown"}
-    
-    except Exception as e:
-        logger.error(f"Failed to get chute: {e}")
-        return None
-
-
 # ============================================================================
 # Command Implementations
 # ============================================================================
@@ -89,23 +46,41 @@ async def pull_command(uid: int, model_path: str, hf_token: Optional[str] = None
         hf_token: Hugging Face API token (optional, from env if not provided)
     """
     from huggingface_hub import snapshot_download
-    
+    from affine.utils.subtensor import get_subtensor
+
     hf_token = hf_token or get_conf("HF_TOKEN")
     
-    miner_map = await get_miners(uids=uid)
-    miner = miner_map.get(uid)
-    
-    if miner is None:
-        logger.error(f"No miner found for UID {uid}")
-        print(json.dumps({"success": False, "error": f"No miner found for UID {uid}"}))
-        sys.exit(1)
-    
-    repo_name = miner.get("model")
-    revision = miner.get("revision")
-    
-    if not repo_name:
-        logger.error(f"Miner {uid} has no model configured")
-        print(json.dumps({"success": False, "error": "No model configured"}))
+    # Get miner info directly from subtensor
+    try:
+        subtensor = await get_subtensor()
+        meta = await subtensor.metagraph(NETUID)
+        commits = await subtensor.get_all_revealed_commitments(NETUID)
+        
+        if uid >= len(meta.hotkeys):
+            logger.error(f"Invalid UID {uid}")
+            print(json.dumps({"success": False, "error": f"Invalid UID {uid}"}))
+            sys.exit(1)
+        
+        hotkey = meta.hotkeys[uid]
+        
+        if hotkey not in commits:
+            logger.error(f"No commit found for UID {uid}")
+            print(json.dumps({"success": False, "error": f"No commit found for UID {uid}"}))
+            sys.exit(1)
+        
+        _, commit_data = commits[hotkey][-1]
+        data = json.loads(commit_data)
+        
+        repo_name = data.get("model")
+        revision = data.get("revision")
+        
+        if not repo_name:
+            logger.error(f"Miner {uid} has no model configured")
+            print(json.dumps({"success": False, "error": "No model configured"}))
+            sys.exit(1)
+    except Exception as e:
+        logger.error(f"Failed to get miner info: {e}")
+        print(json.dumps({"success": False, "error": str(e)}))
         sys.exit(1)
     
     logger.info(f"Pulling model {repo_name}@{revision} for UID {uid} into {model_path}")
@@ -134,6 +109,42 @@ async def pull_command(uid: int, model_path: str, hf_token: Optional[str] = None
         logger.error(f"Failed to download {repo_name}: {e}")
         print(json.dumps({"success": False, "error": str(e)}))
         sys.exit(1)
+
+
+async def get_latest_chute_id(repo: str, api_key: str) -> Optional[str]:
+    """Get latest chute ID for a repository.
+    
+    Args:
+        repo: HF repository name
+        api_key: Chutes API key
+    
+    Returns:
+        Chute ID or None if not found
+    """
+    token = api_key or os.getenv("CHUTES_API_KEY", "")
+    if not token:
+        return None
+    
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://api.chutes.ai/chutes/", headers={"Authorization": token}
+            ) as r:
+                if r.status != 200:
+                    return None
+                data = await r.json()
+    except Exception:
+        return None
+    
+    chutes = data.get("items", data) if isinstance(data, dict) else data
+    if not isinstance(chutes, list):
+        return None
+    
+    for chute in reversed(chutes):
+        if any(chute.get(k) == repo for k in ("model_name", "name", "readme")):
+            return chute.get("chute_id")
+    return None
 
 
 async def chutes_push_command(
@@ -234,8 +245,9 @@ chute = build_sglang_chute(
         logger.debug("Chute deployment successful")
         
         # Get chute info
+        from affine.utils.api_client import get_chute_info
         chute_id = await get_latest_chute_id(repo, api_key=chutes_api_key)
-        chute_info = await get_chute(chute_id) if chute_id else None
+        chute_info = await get_chute_info(chute_id) if chute_id else None
         
         result = {
             "success": bool(chute_id),
@@ -355,5 +367,33 @@ async def get_miner_command(uid: int):
     endpoint = f"/miners/uid/{uid}"
     data = await client.get(endpoint)
     
+
+
+async def get_weights_command():
+    """Query latest normalized weights for on-chain weight setting.
+    
+    Returns the most recent score snapshot with normalized weights
+    for all miners.
+    """
+    client = create_api_client()
+
+    endpoint = "/scores/weights/latest"
+    data = await client.get(endpoint)
+    
     if data:
-      print(json.dumps(data, indent=2, ensure_ascii=False))
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+async def get_scores_command(limit: int = 256):
+    """Query latest scores for all miners.
+    
+    Args:
+        limit: Maximum number of miners to return (default: 256)
+    """
+    client = create_api_client()
+
+    endpoint = f"/scores/latest?limit={limit}"
+    data = await client.get(endpoint)
+    
+    if data:
+        print(json.dumps(data, indent=2, ensure_ascii=False))

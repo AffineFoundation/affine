@@ -111,7 +111,8 @@ class Scorer:
         self,
         result: ScoringResult,
         miner_scores_dao=None,
-        score_snapshots_dao=None
+        score_snapshots_dao=None,
+        scores_dao=None
     ):
         """Save scoring results to database.
         
@@ -119,14 +120,15 @@ class Scorer:
             result: ScoringResult to save
             miner_scores_dao: MinerScoresDAO instance (optional)
             score_snapshots_dao: ScoreSnapshotsDAO instance (optional)
+            scores_dao: ScoresDAO instance (optional)
         """
-        if not miner_scores_dao or not score_snapshots_dao:
+        if not miner_scores_dao or not score_snapshots_dao or not scores_dao:
             logger.warning("DAO instances not provided, skipping database save")
             return
         
         logger.info(f"Saving scoring results to database (block {result.block_number})")
         
-        # Save individual miner scores
+        # Save individual miner scores to miner_scores table (detailed)
         for uid, miner in result.miners.items():
             # Prepare environment scores
             env_scores = {
@@ -171,8 +173,7 @@ class Scorer:
                 subset_contributions=subset_contributions,
                 cumulative_weight=miner.cumulative_weight,
                 normalized_weight=miner.normalized_weight,
-                filter_info=filter_info,
-                calculated_at=result.calculated_at
+                filter_info=filter_info
             )
         
         # Save snapshot metadata
@@ -188,12 +189,62 @@ class Scorer:
         
         await score_snapshots_dao.save_snapshot(
             block_number=result.block_number,
+            scorer_hotkey="scorer_service",
             config=result.config,
-            statistics=statistics,
-            calculated_at=result.calculated_at
+            statistics=statistics
         )
         
-        logger.info(f"Successfully saved scoring results for {len(result.miners)} miners")
+        # Save to scores table (simplified, for API queries)
+        logger.info(f"Saving to scores table for API queries...")
+        for uid, miner in result.miners.items():
+            # Calculate total samples
+            total_samples = sum(
+                env_score.sample_count
+                for env_score in miner.env_scores.values()
+            )
+            
+            # Prepare scores by environment
+            scores_by_env = {
+                env: score.avg_score
+                for env, score in miner.env_scores.items()
+            }
+            
+            # Use normalized weight as overall score
+            overall_score = miner.normalized_weight
+            
+            # Simple CI estimation (±10% of score)
+            ci_lower = max(0.0, overall_score * 0.9)
+            ci_upper = min(1.0, overall_score * 1.1)
+            
+            # Calculate average score from environments
+            if scores_by_env:
+                average_score = sum(scores_by_env.values()) / len(scores_by_env)
+            else:
+                average_score = 0.0
+            
+            # Convert layer_weights keys from int to str for DynamoDB
+            scores_by_layer = {
+                f"L{layer}": weight
+                for layer, weight in miner.layer_weights.items()
+            }
+            
+            await scores_dao.save_score(
+                block_number=result.block_number,
+                miner_hotkey=miner.hotkey,
+                uid=uid,
+                model_revision=miner.model_revision,
+                overall_score=overall_score,
+                confidence_interval_lower=ci_lower,
+                confidence_interval_upper=ci_upper,
+                average_score=average_score,
+                scores_by_layer=scores_by_layer,
+                scores_by_env=scores_by_env,
+                total_samples=total_samples,
+                is_eligible=(overall_score > 0),
+                meets_criteria=(overall_score > 0)
+            )
+        
+        logger.info(f"Successfully saved scoring results for {len(result.miners)} miners to all tables")
 
 
 def create_scorer(config: Optional[ScorerConfig] = None) -> Scorer:
