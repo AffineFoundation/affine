@@ -20,7 +20,7 @@ from affine.api.config import config
 from affine.core.models import SampleSubmission
 from affine.database.dao.sample_results import SampleResultsDAO
 from affine.api.services.task_pool import TaskPoolManager
-from affine.api.utils.bittensor import get_subtensor
+from affine.utils.subtensor import get_subtensor
 
 from affine.core.setup import logger
 
@@ -62,8 +62,6 @@ async def fetch_task(
         )
     
     try:
-        logger.debug(f"Task fetch requested by executor {executor_hotkey[:16]}... for env {env or 'any'}")
-        
         # Fetch task using TaskPoolManager
         pool_manager = TaskPoolManager.get_instance()
         task = await pool_manager.fetch_task(
@@ -76,7 +74,7 @@ async def fetch_task(
             return TaskFetchResponse(task=None)
         
         # Return task details
-        logger.info(
+        logger.debug(
             f"Assigned task {task['task_uuid']} to executor {executor_hotkey[:16]}... "
             f"(miner={task['miner_hotkey'][:16]}..., env={task['env']}, task_id={task['task_id']})"
         )

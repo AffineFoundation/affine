@@ -110,27 +110,70 @@ class ExecutorManager:
         """Get metrics from all workers."""
         return [worker.get_metrics() for worker in self.workers]
     
-    def print_status(self):
-        """Print status of all workers."""
-        metrics = self.get_all_metrics()
+    async def print_status(self):
+        """Print status of all workers in compact format."""
+        import time
+        from datetime import datetime
+        from affine.utils.api_client import create_api_client
         
-        print("\n" + "=" * 60)
-        print("Executor Status")
-        print("=" * 60)
-        
-        for m in metrics:
-            print(f"Worker {m['worker_id']} ({m['env']}):")
-            print(f"  Running: {m['running']}")
-            print(f"  Tasks Completed: {m['tasks_completed']}")
-            print(f"  Tasks Failed: {m['tasks_failed']}")
-            print(f"  Avg Execution Time: {m['avg_execution_time']:.2f}s")
-            if m['last_task_at']:
-                import time
-                elapsed = time.time() - m['last_task_at']
-                print(f"  Last Task: {elapsed:.1f}s ago")
-            print()
-        
-        print("=" * 60)
+        try:
+            # Get worker metrics
+            metrics = self.get_all_metrics()
+            
+            # Fetch statistics from API
+            api_client = create_api_client()
+            
+            # Get miners count
+            try:
+                miners_response = await api_client.get("/miners/active")
+                total_miners = len(miners_response) if isinstance(miners_response, list) else 0
+            except:
+                total_miners = 0
+            
+            # Build environment stats from worker metrics
+            env_stats = {}
+            total_completed = 0
+            total_failed = 0
+            
+            for m in metrics:
+                env_name = m['env']
+                completed = m['tasks_completed']
+                failed = m['tasks_failed']
+                total = completed + failed
+                success_rate = int(completed * 100 / total) if total > 0 else 0
+                
+                env_stats[env_name] = {
+                    'completed': completed,
+                    'failed': failed,
+                    'success_rate': success_rate
+                }
+                
+                total_completed += completed
+                total_failed += failed
+            
+            # Format environment stats string
+            env_stats_str = " ".join([
+                f"{env.split(':')[-1]}@{stats['completed']}({stats['success_rate']}%)"
+                for env, stats in sorted(env_stats.items())
+            ])
+            
+            # Build compact status line
+            timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            status_line = (
+                f"{timestamp} INFO     [affine] [STATUS] "
+                f"samplers={total_miners} "
+                f"workers={len(metrics)} "
+                f"completed={total_completed} failed={total_failed} "
+                f"[{env_stats_str}]"
+            )
+            
+            logger.info(status_line)
+            
+        except Exception as e:
+            logger.error(f"Error printing status: {e}", exc_info=True)
+            # Fallback to simple metrics display
+            metrics = self.get_all_metrics()
+            logger.info(f"Executor status: {len(metrics)} workers, {sum(m['tasks_completed'] for m in metrics)} completed")
 
 
 async def fetch_system_config() -> dict:
@@ -204,7 +247,7 @@ async def run_service_with_mode(envs: List[str] | None, poll_interval: int, serv
             # One-time execution (DEFAULT)
             logger.info("Running in one-time mode (default): processing available tasks...")
             await asyncio.sleep(poll_interval * 2)
-            manager.print_status()
+            await manager.print_status()
         else:
             # Continuous service mode (SERVICE_MODE=true)
             logger.info("Running in service mode (continuous). Press Ctrl+C to stop.")
@@ -214,10 +257,10 @@ async def run_service_with_mode(envs: List[str] | None, poll_interval: int, serv
                 try:
                     await asyncio.wait_for(shutdown_event.wait(), timeout=60)
                 except asyncio.TimeoutError:
-                    manager.print_status()
+                    await manager.print_status()
         
         # Print final status
-        manager.print_status()
+        await manager.print_status()
         
     except Exception as e:
         logger.error(f"Error running executor: {e}", exc_info=True)
