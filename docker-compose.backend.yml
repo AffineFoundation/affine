@@ -17,7 +17,8 @@ services:
     environment:
       - API_HOST=0.0.0.0
       - API_PORT=8000
-      - SERVICES_ENABLED=true
+      - API_SERVICES_ENABLED=true
+      - API_RATE_LIMIT_ENABLED=false
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/"]
       interval: 10s
@@ -59,7 +60,7 @@ services:
       - ./.env:/app/.env:ro
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - AFFINE_API_URL=http://api:8000
+      - AFFINE_API_URL=http://api:8000/api/v1
       - EXECUTOR_POLL_INTERVAL=5
       - SERVICE_MODE=true
     depends_on:
@@ -95,7 +96,7 @@ services:
     volumes:
       - ./.env:/app/.env:ro
     environment:
-      - AFFINE_API_URL=http://api:8000
+      - AFFINE_API_URL=http://api:8000/api/v1
       - SCORER_SAVE_TO_DB=true
       - SERVICE_MODE=true
     depends_on:
