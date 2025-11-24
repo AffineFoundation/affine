@@ -207,6 +207,6 @@ def create_api_client(base_url: Optional[str] = None) -> APIClient:
     import os
     
     if base_url is None:
-        base_url = os.getenv("API_URL", "http://localhost:8000/api/v1")
+        base_url = os.getenv("API_URL", "http://api.affine.io/api/v1")
     
     return APIClient(base_url)

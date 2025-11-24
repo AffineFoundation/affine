@@ -112,7 +112,7 @@ async def run_service(task_interval: int, cleanup_interval: int, max_tasks: int)
 )
 @click.option(
     "-v", "--verbosity",
-    default="1",
+    default=None,
     type=click.Choice(["0", "1", "2", "3"]),
     help="Logging verbosity: 0=CRITICAL, 1=INFO, 2=DEBUG, 3=TRACE"
 )
@@ -123,8 +123,9 @@ def main(task_interval, cleanup_interval, max_tasks, verbosity):
     This service periodically generates sampling tasks for all active miners
     and performs cleanup of old tasks.
     """
-    # Setup logging
-    setup_logging(int(verbosity))
+    # Setup logging if verbosity specified
+    if verbosity is not None:
+        setup_logging(int(verbosity))
     
     # Override with environment variables if present
     task_interval = int(os.getenv("SCHEDULER_TASK_GENERATION_INTERVAL", str(task_interval)))

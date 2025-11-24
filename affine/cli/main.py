@@ -104,13 +104,10 @@ def scheduler(ctx):
 @click.pass_context
 def validator(ctx):
     """Start validator service."""
-    from affine.src.validator.main import main as validator_main, parse_args
+    from affine.src.validator.main import main as validator_main
     
-    # Parse args and run
     sys.argv = ["validator"] + ctx.args
-    args = parse_args()
-    exit_code = asyncio.run(validator_main(args))
-    sys.exit(exit_code)
+    validator_main.main(standalone_mode=False)
 
 
 # ============================================================================

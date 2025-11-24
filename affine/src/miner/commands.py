@@ -366,7 +366,9 @@ async def get_miner_command(uid: int):
 
     endpoint = f"/miners/uid/{uid}"
     data = await client.get(endpoint)
-    
+    if data:
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+
 
 
 async def get_weights_command():
