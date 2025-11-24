@@ -8,7 +8,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from task_generator import TaskGeneratorService, MinerInfo
+from .task_generator import TaskGeneratorService, MinerInfo
 from affine.database.dao.miners import MinersDAO
 
 from affine.core.setup import logger

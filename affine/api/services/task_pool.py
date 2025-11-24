@@ -504,19 +504,29 @@ class TaskPoolManager:
                 }
             
             # Step 3: Log completion attempt
-            log_entry = {
-                'miner_hotkey': task['miner_hotkey'],
-                'model_revision': task['model_revision'],
-                'env': task['env'],
-                'task_id': task['task_id'],
-                'task_uuid': task_uuid,
-                'executor_hotkey': executor_hotkey,
-                'success': success,
-                'error_message': error_message,
-                'error_code': error_code,
-            }
-            
-            await self.logs_dao.create_log(**log_entry)
+            if success:
+                await self.logs_dao.log_task_complete(
+                    miner_hotkey=task['miner_hotkey'],
+                    task_uuid=task_uuid,
+                    dataset_task_id=task['task_id'],
+                    env=task['env'],
+                    executor_hotkey=executor_hotkey,
+                    score=result.get('score', 0.0) if result else 0.0,
+                    latency_ms=result.get('latency_ms', 0) if result else 0,
+                    execution_time_ms=result.get('execution_time_ms', 0) if result else 0
+                )
+            else:
+                await self.logs_dao.log_task_failure(
+                    miner_hotkey=task['miner_hotkey'],
+                    task_uuid=task_uuid,
+                    dataset_task_id=task['task_id'],
+                    env=task['env'],
+                    executor_hotkey=executor_hotkey,
+                    error_message=error_message or 'Unknown error',
+                    error_code=error_code or 'EXECUTION_ERROR',
+                    error_type='execution',
+                    execution_time_ms=0
+                )
             
             # Step 4: Complete or fail task
             if success:

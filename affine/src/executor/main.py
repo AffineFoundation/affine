@@ -14,6 +14,7 @@ from typing import List
 
 from affine.src.executor.worker import ExecutorWorker
 from affine.core.setup import wallet, logger, setup_logging
+from affine.utils.api_client import create_api_client
 
 
 class ExecutorManager:
@@ -26,7 +27,6 @@ class ExecutorManager:
     def __init__(
         self,
         envs: List[str],
-        api_base_url: str = "http://localhost:8000",
         poll_interval: int = 5,
     ):
         """
@@ -34,11 +34,9 @@ class ExecutorManager:
         
         Args:
             envs: List of environments to execute tasks for
-            api_base_url: API server URL
             poll_interval: How often workers poll for tasks
         """
         self.envs = envs
-        self.api_base_url = api_base_url
         self.poll_interval = poll_interval
         
         self.workers: List[ExecutorWorker] = []
@@ -54,7 +52,6 @@ class ExecutorManager:
             worker = ExecutorWorker(
                 worker_id=idx,
                 env=env,
-                api_base_url=self.api_base_url,
                 poll_interval=self.poll_interval,
             )
             self.workers.append(worker)
@@ -136,51 +133,39 @@ class ExecutorManager:
         print("=" * 60)
 
 
-async def fetch_system_config(api_url: str) -> dict:
+async def fetch_system_config() -> dict:
     """Fetch system configuration from API.
     
     Returns:
         System config dict with 'environments' key
+        
+    Raises:
+        Exception: If failed to fetch config from API
     """
-    import aiohttp
-    
-    url = f"{api_url}/api/v1/config/environments"
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status != 200:
-                    logger.warning(f"Failed to fetch environments config from API: HTTP {response.status}")
-                    return {"environments": ["affine:sat"]}  # Fallback default
-                
-                config = await response.json()
+    api_client = create_api_client()
+    config = await api_client.get("/config/environments")
 
-                if isinstance(config, dict):
-                    value = config.get("param_value")
-                    if isinstance(value, dict):
-                        # Filter environments where enabled_for_scoring=true
-                        enabled_envs = [
-                            env_name for env_name, env_config in value.items()
-                            if isinstance(env_config, dict) and env_config.get("enabled_for_scoring", False)
-                        ]
-                        
-                        if enabled_envs:
-                            logger.info(f"Fetched environments from API: {enabled_envs}")
-                            return {"environments": enabled_envs}
+    if isinstance(config, dict):
+        value = config.get("param_value")
+        if isinstance(value, dict):
+            # Filter environments where enabled_for_scoring=true
+            enabled_envs = [
+                env_name for env_name, env_config in value.items()
+                if isinstance(env_config, dict) and env_config.get("enabled_for_scoring", False)
+            ]
+            
+            if enabled_envs:
+                logger.info(f"Fetched environments from API: {enabled_envs}")
+                return {"environments": enabled_envs}
 
-                logger.exception("Failed to parse environments config")
-                
-    except Exception as e:
-        logger.error(f"Error fetching system config: {e}")
-        raise
+    raise ValueError("Invalid or empty environments config from API")
 
 
-async def run_service_with_mode(envs: List[str] | None, api_url: str, poll_interval: int, service_mode: bool):
+async def run_service_with_mode(envs: List[str] | None, poll_interval: int, service_mode: bool):
     """Run the executor service.
     
     Args:
         envs: List of environments to execute (None to fetch from API)
-        api_url: API base URL
         poll_interval: Polling interval in seconds
         service_mode: If True, run continuously; if False, run once and exit
     """
@@ -188,7 +173,7 @@ async def run_service_with_mode(envs: List[str] | None, api_url: str, poll_inter
     # Fetch environments from API if not specified
     if not envs:
         logger.info("No environments specified, fetching from API system config...")
-        system_config = await fetch_system_config(api_url)
+        system_config = await fetch_system_config()
         envs = system_config.get("environments")
     else:
         logger.info(f"Using specified environments: {envs}")
@@ -196,7 +181,6 @@ async def run_service_with_mode(envs: List[str] | None, api_url: str, poll_inter
     # Create manager
     manager = ExecutorManager(
         envs=envs,
-        api_base_url=api_url,
         poll_interval=poll_interval,
     )
     
@@ -283,23 +267,18 @@ def main(envs, poll_interval, verbosity):
     # Get environments from CLI (or None to fetch from API)
     selected_envs = list(envs) if envs else None
     
-    # Get API URL from environment variable
-    api_base_url = os.getenv("AFFINE_API_URL", "http://localhost:8000")
-    
     # Get poll interval (priority: CLI arg > env var > default)
     poll_interval_val = poll_interval if poll_interval is not None else int(os.getenv("EXECUTOR_POLL_INTERVAL", "5"))
 
     # Check service mode (default: false = one-time execution)
     service_mode = os.getenv("SERVICE_MODE", "false").lower() in ("true", "1", "yes")
     
-    logger.info(f"API URL: {api_base_url}")
     logger.info(f"Poll interval: {poll_interval_val}s")
     logger.info(f"Service mode: {service_mode}")
     
     # Run service
     asyncio.run(run_service_with_mode(
         envs=selected_envs,
-        api_url=api_base_url,
         poll_interval=poll_interval_val,
         service_mode=service_mode
     ))
