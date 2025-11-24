@@ -114,16 +114,16 @@ def get_weights():
 
 
 @click.command("get-scores")
-@click.option("--limit", "-l", default=256, type=int, help="Maximum miners to return (default: 256)")
-def get_scores(limit):
-    """Query latest scores for all miners.
+@click.option("--top", "-t", default=32, type=int, help="Return top N miners by score (default: 256)")
+def get_scores(top):
+    """Query latest scores for top N miners.
     
-    Returns scores for all miners at the latest calculated block.
+    Returns top N miners by score at the latest calculated block.
     
     Example:
         af get-scores
-        af get-scores --limit 100
+        af get-scores --top 10
     """
-    asyncio.run(get_scores_command(limit=limit))
+    asyncio.run(get_scores_command(top=top))
 
 

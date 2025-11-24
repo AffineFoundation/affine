@@ -38,8 +38,6 @@ class ScoresDAO(BaseDAO):
         uid: int,
         model_revision: str,
         overall_score: float,
-        confidence_interval_lower: float,
-        confidence_interval_upper: float,
         average_score: float,
         scores_by_layer: Dict[str, float],
         scores_by_env: Dict[str, float],
@@ -55,8 +53,6 @@ class ScoresDAO(BaseDAO):
             uid: Miner UID
             model_revision: Model revision
             overall_score: Overall score
-            confidence_interval_lower: Lower bound of CI
-            confidence_interval_upper: Upper bound of CI
             average_score: Average score
             scores_by_layer: Scores breakdown by layer
             scores_by_env: Scores breakdown by environment
@@ -78,8 +74,6 @@ class ScoresDAO(BaseDAO):
             'model_revision': model_revision,
             'calculated_at': calculated_at,
             'overall_score': overall_score,
-            'confidence_interval_lower': confidence_interval_lower,
-            'confidence_interval_upper': confidence_interval_upper,
             'average_score': average_score,
             'scores_by_layer': scores_by_layer,
             'scores_by_env': scores_by_env,
@@ -246,8 +240,6 @@ class ScoresDAO(BaseDAO):
                 'model_revision': miner_details.get('model_revision', ''),
                 'calculated_at': created_at,
                 'overall_score': weight,
-                'confidence_interval_lower': miner_details.get('ci_lower', weight),
-                'confidence_interval_upper': miner_details.get('ci_upper', weight),
                 'average_score': miner_details.get('average_score', weight),
                 'scores_by_layer': miner_details.get('scores_by_layer', {}),
                 'scores_by_env': miner_details.get('scores_by_env', {}),

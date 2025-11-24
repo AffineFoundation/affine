@@ -1,16 +1,26 @@
 """
 Weight Setter - Blockchain Weight Management
 
-Handles setting weights on the Bittensor blockchain with retry logic and error handling.
+Handles setting weights on the Bittensor blockchain with proper normalization,
+max weight limits, and retry logic using fiber.
 """
 
 import asyncio
-import logging
 import time
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 
+import numpy as np
+from fiber import SubstrateInterface
+from fiber.chain import chain_utils, interface, weights
+from fiber.chain.fetch_nodes import get_nodes_for_netuid
+
 from affine.core.setup import logger
+
+
+# Constants from Bittensor chain
+U16_MAX = 65535
+U32_MAX = 4294967295
 
 
 @dataclass
@@ -27,84 +37,249 @@ class WeightSetResult:
 
 class WeightSetter:
     """
-    Handles setting weights on the Bittensor blockchain.
+    Handles setting weights on the Bittensor blockchain using fiber.
     
-    Provides:
-    - Retry logic for failed attempts
-    - Rate limiting to avoid spamming chain
-    - Error handling and logging
+    Features:
+    - Query chain parameters (min_allowed_weights, max_weight_limit)
+    - Normalize weights with max weight limit enforcement
+    - Convert to uint16 format for chain submission
+    - Retry logic with timeout
+    - Rate limiting
     """
     
     def __init__(
         self,
-        wallet=None,
-        netuid: int = 1,
+        wallet_name: str,
+        hotkey_name: str,
+        netuid: int,
+        subtensor_network: str = "finney",
+        subtensor_address: Optional[str] = None,
         max_retries: int = 3,
         retry_delay: float = 5.0,
-        min_interval: float = 300.0,  # 5 minutes between weight sets
+        min_interval: float = 300.0,
+        timeout: float = 120.0,
     ):
         """
         Initialize WeightSetter.
         
         Args:
-            wallet: Bittensor wallet instance
+            wallet_name: Wallet name for loading keypair
+            hotkey_name: Hotkey name for loading keypair
             netuid: Subnet UID
+            subtensor_network: Network name (finney, test, local)
+            subtensor_address: Optional custom subtensor address
             max_retries: Maximum retry attempts
             retry_delay: Delay between retries in seconds
             min_interval: Minimum interval between weight sets
+            timeout: Timeout for weight setting operation
         """
-        self.wallet = wallet
+        self.wallet_name = wallet_name
+        self.hotkey_name = hotkey_name
         self.netuid = netuid
+        self.subtensor_network = subtensor_network
+        self.subtensor_address = subtensor_address
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.min_interval = min_interval
+        self.timeout = timeout
         
         self.last_set_at: Optional[float] = None
         self.total_sets = 0
         self.failed_sets = 0
+        
+        # Load keypair once during initialization
+        try:
+            self.keypair = chain_utils.load_hotkey_keypair(
+                wallet_name=wallet_name,
+                hotkey_name=hotkey_name
+            )
+            logger.info(f"Loaded keypair for {wallet_name}/{hotkey_name}")
+        except Exception as e:
+            logger.error(f"Failed to load keypair: {e}")
+            raise
     
-    def _normalize_weights(self, weights: List[float]) -> List[float]:
+    def _get_substrate(self) -> SubstrateInterface:
+        """Get substrate interface connection."""
+        return interface.get_substrate(
+            self.subtensor_network,
+            self.subtensor_address
+        )
+    
+    def _normalize_max_weight(
+        self,
+        x: np.ndarray,
+        limit: float = 0.1
+    ) -> np.ndarray:
         """
-        Normalize weights to sum to 1.0.
+        Normalize array so sum(x) = 1 and max value <= limit.
+        
+        This is critical for chain acceptance - ensures no single weight
+        dominates beyond the subnet's max_weight_limit.
         
         Args:
-            weights: Raw weight values
+            x: Array to normalize
+            limit: Maximum allowed value after normalization
             
         Returns:
-            Normalized weights summing to 1.0
+            Normalized array
         """
-        total = sum(weights)
-        if total == 0:
-            return [0.0] * len(weights)
-        return [w / total for w in weights]
+        epsilon = 1e-7
+        weights = x.copy()
+        values = np.sort(weights)
+        
+        if x.sum() == 0 or len(x) * limit <= 1:
+            return np.ones_like(x) / x.size
+        
+        estimation = values / values.sum()
+        
+        if estimation.max() <= limit:
+            return weights / weights.sum()
+        
+        # Find cumulative sum
+        cumsum = np.cumsum(estimation, 0)
+        
+        # Determine cutoff index
+        estimation_sum = np.array(
+            [(len(values) - i - 1) * estimation[i] for i in range(len(values))]
+        )
+        n_values = (estimation / (estimation_sum + cumsum + epsilon) < limit).sum()
+        
+        # Calculate cutoff scale
+        cutoff_scale = (limit * cumsum[n_values - 1] - epsilon) / (
+            1 - (limit * (len(estimation) - n_values))
+        )
+        cutoff = cutoff_scale * values.sum()
+        
+        # Apply cutoff
+        weights[weights > cutoff] = cutoff
+        
+        return weights / weights.sum()
     
-    def _validate_inputs(self, uids: List[int], weights: List[float]) -> Tuple[bool, str]:
+    def _convert_weights_and_uids_for_emit(
+        self,
+        uids: np.ndarray,
+        weights: np.ndarray
+    ) -> Tuple[List[int], List[int]]:
         """
-        Validate UIDs and weights.
+        Convert weights to uint16 representation for chain submission.
         
         Args:
-            uids: List of UIDs
-            weights: List of weights
+            uids: Array of UIDs
+            weights: Array of normalized weights (sum to 1.0)
             
         Returns:
-            Tuple of (is_valid, error_message)
+            Tuple of (weight_uids, weight_vals) as lists of ints
         """
-        if not uids:
-            return False, "Empty UID list"
+        uids = np.asarray(uids)
+        weights = np.asarray(weights)
         
+        # Validation
+        if np.min(weights) < 0:
+            raise ValueError(f"Negative weight found: {weights}")
+        if np.min(uids) < 0:
+            raise ValueError(f"Negative UID found: {uids}")
         if len(uids) != len(weights):
-            return False, f"UID count ({len(uids)}) != weight count ({len(weights)})"
+            raise ValueError(f"UID/weight length mismatch: {len(uids)} vs {len(weights)}")
         
-        if any(uid < 0 for uid in uids):
-            return False, "Negative UID found"
+        if np.sum(weights) == 0:
+            logger.debug("All weights are zero, nothing to set")
+            return [], []
         
-        if any(w < 0 for w in weights):
-            return False, "Negative weight found"
+        # Normalize to sum to 1
+        weight_sum = float(np.sum(weights))
+        normalized_weights = [float(w) / weight_sum for w in weights]
         
-        if len(set(uids)) != len(uids):
-            return False, "Duplicate UIDs found"
+        logger.debug(f"Weight sum: {weight_sum}, normalized sum: {sum(normalized_weights)}")
         
-        return True, ""
+        # Convert to uint16
+        weight_vals = []
+        weight_uids = []
+        
+        for uid, weight in zip(uids, normalized_weights):
+            uint16_val = round(float(weight) * U16_MAX)
+            
+            # Filter zeros
+            if uint16_val != 0:
+                weight_vals.append(uint16_val)
+                weight_uids.append(int(uid))
+        
+        logger.debug(f"Final UIDs: {weight_uids}, vals: {weight_vals}")
+        
+        return weight_uids, weight_vals
+    
+    def _process_weights_for_netuid(
+        self,
+        uids: np.ndarray,
+        weights: np.ndarray,
+        substrate: SubstrateInterface
+    ) -> Tuple[List[int], List[float]]:
+        """
+        Process weights according to chain parameters.
+        
+        Queries chain for min_allowed_weights and max_weight_limit,
+        then normalizes and converts weights appropriately.
+        
+        Args:
+            uids: Array of UIDs
+            weights: Array of raw weights
+            substrate: Substrate interface
+            
+        Returns:
+            Tuple of (node_ids, node_weights) ready for chain submission
+        """
+        # Ensure float32
+        if not isinstance(weights, np.ndarray) or weights.dtype != np.float32:
+            weights = weights.astype(np.float32)
+        
+        # Query chain parameters
+        min_allowed_query = substrate.query("SubtensorModule", "MinAllowedWeights", [self.netuid])
+        max_weight_query = substrate.query("SubtensorModule", "MaxWeightsLimit", [self.netuid])
+        
+        min_allowed_weights = min_allowed_query.value if min_allowed_query else 8
+        max_weight_limit = max_weight_query.value / U16_MAX if max_weight_query else 0.1
+        
+        logger.debug(f"Chain params - min_allowed: {min_allowed_weights}, max_limit: {max_weight_limit}")
+        
+        # Get non-zero weights
+        non_zero_idx = np.argwhere(weights > 0).squeeze()
+        non_zero_idx = np.atleast_1d(non_zero_idx)
+        non_zero_weights = weights[non_zero_idx]
+        non_zero_uids = uids[non_zero_idx]
+        
+        logger.debug(f"Non-zero weights: {len(non_zero_weights)}/{len(weights)}")
+        
+        # Check if we have enough non-zero weights
+        if non_zero_weights.size == 0:
+            logger.warning("No non-zero weights, cannot set")
+            return [], []
+        
+        if non_zero_weights.size < min_allowed_weights:
+            logger.warning(
+                f"Only {non_zero_weights.size} non-zero weights, "
+                f"but chain requires {min_allowed_weights}"
+            )
+            return [], []
+        
+        # Normalize with max weight limit
+        processed_weights = self._normalize_max_weight(
+            non_zero_weights,
+            limit=max_weight_limit
+        )
+        processed_uids = non_zero_uids
+        
+        logger.debug(f"Processed weights sum: {processed_weights.sum()}")
+        
+        # Convert to uint16
+        uint_uids, uint_weights = self._convert_weights_and_uids_for_emit(
+            uids=processed_uids,
+            weights=processed_weights
+        )
+        
+        # Convert back to float for chain submission
+        node_weights = [float(w) / float(U16_MAX) for w in uint_weights]
+        node_ids = [int(uid) for uid in uint_uids]
+        
+        return node_ids, node_weights
     
     def can_set_weights(self) -> Tuple[bool, float]:
         """
@@ -128,16 +303,14 @@ class WeightSetter:
         self,
         uids: List[int],
         weights: List[float],
-        normalize: bool = True,
         force: bool = False,
     ) -> WeightSetResult:
         """
-        Set weights on blockchain.
+        Set weights on blockchain with full chain parameter processing.
         
         Args:
             uids: List of miner UIDs
-            weights: List of corresponding weights
-            normalize: Whether to normalize weights to sum to 1.0
+            weights: List of corresponding raw weights
             force: Force weight set even if within min_interval
             
         Returns:
@@ -147,7 +320,7 @@ class WeightSetter:
         if not force:
             can_set, remaining = self.can_set_weights()
             if not can_set:
-                logger.warning(f"Weight set rate limited. Wait {remaining:.1f}s")
+                logger.warning(f"Rate limited. Wait {remaining:.1f}s")
                 return WeightSetResult(
                     success=False,
                     uids=uids,
@@ -155,25 +328,7 @@ class WeightSetter:
                     error_message=f"Rate limited. Wait {remaining:.1f}s",
                 )
         
-        # Validate inputs
-        is_valid, error_msg = self._validate_inputs(uids, weights)
-        if not is_valid:
-            logger.error(f"Invalid weight inputs: {error_msg}")
-            return WeightSetResult(
-                success=False,
-                uids=uids,
-                weights=weights,
-                error_message=error_msg,
-            )
-        
-        # Normalize if requested
-        if normalize:
-            weights = self._normalize_weights(weights)
-        
-        logger.info(
-            f"Setting weights for {len(uids)} miners "
-            f"(total: {sum(weights):.4f})"
-        )
+        logger.info(f"Setting weights for {len(uids)} miners (raw sum: {sum(weights):.4f})")
         
         # Attempt to set weights with retries
         last_error = None
@@ -188,19 +343,17 @@ class WeightSetter:
                     result.timestamp = self.last_set_at
                     
                     logger.info(
-                        f"Weights set successfully on attempt {attempt}. "
-                        f"Block: {result.block_number}"
+                        f"Weights set successfully on attempt {attempt} "
+                        f"(total: {self.total_sets}, failed: {self.failed_sets})"
                     )
                     return result
                 else:
                     last_error = result.error_message
-                    logger.warning(
-                        f"Weight set attempt {attempt} failed: {last_error}"
-                    )
+                    logger.warning(f"Attempt {attempt}/{self.max_retries} failed: {last_error}")
             
             except Exception as e:
                 last_error = str(e)
-                logger.error(f"Weight set attempt {attempt} error: {e}")
+                logger.error(f"Attempt {attempt}/{self.max_retries} error: {e}")
             
             if attempt < self.max_retries:
                 logger.info(f"Retrying in {self.retry_delay}s...")
@@ -208,6 +361,7 @@ class WeightSetter:
         
         # All retries failed
         self.failed_sets += 1
+        logger.error(f"Failed after {self.max_retries} attempts: {last_error}")
         return WeightSetResult(
             success=False,
             uids=uids,
@@ -216,86 +370,151 @@ class WeightSetter:
             attempts=self.max_retries,
         )
     
+    async def _set_weights_with_timeout(
+        self,
+        substrate: SubstrateInterface,
+        node_ids: List[int],
+        node_weights: List[float],
+        validator_node_id: int,
+        version_key: int,
+    ) -> bool:
+        """
+        Set weights with timeout protection.
+        
+        Args:
+            substrate: Substrate interface
+            node_ids: List of node IDs
+            node_weights: List of node weights
+            validator_node_id: Validator's node ID
+            version_key: Version key from chain
+            
+        Returns:
+            Success boolean
+        """
+        try:
+            return await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    None,
+                    weights.set_node_weights,
+                    substrate,
+                    self.keypair,
+                    node_ids,
+                    node_weights,
+                    self.netuid,
+                    validator_node_id,
+                    version_key,
+                    True,  # wait_for_inclusion
+                    True,  # wait_for_finalization
+                ),
+                timeout=self.timeout
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"Weight setting timed out after {self.timeout}s")
+            return False
+        except Exception as e:
+            logger.error(f"Error in set_node_weights: {e}")
+            return False
+    
     async def _do_set_weights(
         self,
         uids: List[int],
         weights: List[float],
     ) -> WeightSetResult:
         """
-        Actually set weights on chain.
+        Process and set weights on chain using fiber.
         
         Args:
             uids: List of UIDs
-            weights: List of weights
+            weights: List of raw weights
             
         Returns:
             WeightSetResult
         """
-        if self.wallet is None:
-            logger.error("No wallet configured")
-            return WeightSetResult(
-                success=False,
-                uids=uids,
-                weights=weights,
-                error_message="No wallet configured",
-            )
-        
         try:
-            # Import bittensor
-            import bittensor as bt
+            # Get substrate connection
+            substrate = self._get_substrate()
             
-            # Get subtensor connection
-            subtensor = bt.subtensor()
+            # Query validator node ID
+            node_id_query = substrate.query(
+                "SubtensorModule",
+                "Uids",
+                [self.netuid, self.keypair.ss58_address]
+            )
             
-            # Convert to tensors
-            import torch
-            uid_tensor = torch.tensor(uids, dtype=torch.int64)
-            weight_tensor = torch.tensor(weights, dtype=torch.float32)
+            if not node_id_query:
+                return WeightSetResult(
+                    success=False,
+                    uids=uids,
+                    weights=weights,
+                    error_message="Failed to query validator node ID"
+                )
             
-            # Set weights on chain
-            success, msg = subtensor.set_weights(
-                wallet=self.wallet,
-                netuid=self.netuid,
-                uids=uid_tensor,
-                weights=weight_tensor,
-                wait_for_inclusion=True,
-                wait_for_finalization=False,
+            validator_node_id = node_id_query.value
+            logger.debug(f"Validator node ID: {validator_node_id}")
+            
+            # Query version key
+            version_key_query = substrate.query(
+                "SubtensorModule",
+                "WeightsVersionKey",
+                [self.netuid]
+            )
+            
+            version_key = version_key_query.value if version_key_query else 0
+            logger.debug(f"Version key: {version_key}")
+            
+            # Convert to numpy arrays
+            uids_array = np.array(uids, dtype=np.int64)
+            weights_array = np.array(weights, dtype=np.float32)
+            
+            # Process weights according to chain parameters
+            node_ids, node_weights = self._process_weights_for_netuid(
+                uids=uids_array,
+                weights=weights_array,
+                substrate=substrate
+            )
+            
+            if not node_ids:
+                return WeightSetResult(
+                    success=False,
+                    uids=uids,
+                    weights=weights,
+                    error_message="No valid weights after processing"
+                )
+            
+            logger.info(f"Submitting {len(node_ids)} weights to chain: {list(zip(node_ids, node_weights))[:5]}...")
+            
+            # Set weights with timeout
+            success = await self._set_weights_with_timeout(
+                substrate=substrate,
+                node_ids=node_ids,
+                node_weights=node_weights,
+                validator_node_id=validator_node_id,
+                version_key=version_key
             )
             
             if success:
-                # Get current block
-                block_number = subtensor.get_current_block()
-                
                 return WeightSetResult(
                     success=True,
-                    uids=uids,
-                    weights=weights,
-                    block_number=block_number,
+                    uids=node_ids,
+                    weights=node_weights,
                 )
             else:
                 return WeightSetResult(
                     success=False,
                     uids=uids,
                     weights=weights,
-                    error_message=str(msg),
+                    error_message="Chain weight setting failed"
                 )
         
-        except ImportError as e:
-            logger.error(f"bittensor not installed: {e}")
-            return WeightSetResult(
-                success=False,
-                uids=uids,
-                weights=weights,
-                error_message="bittensor not installed",
-            )
-        
         except Exception as e:
-            logger.error(f"Error setting weights on chain: {e}")
+            logger.error(f"Error in _do_set_weights: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
             return WeightSetResult(
                 success=False,
                 uids=uids,
                 weights=weights,
-                error_message=str(e),
+                error_message=str(e)
             )
     
     def get_metrics(self) -> Dict:
@@ -315,30 +534,5 @@ class WeightSetter:
             ),
             "last_set_at": self.last_set_at,
             "netuid": self.netuid,
+            "wallet": f"{self.wallet_name}/{self.hotkey_name}",
         }
-
-
-async def test_weight_setter():
-    """Test weight setter (without actually setting weights)."""
-    # Create weight setter without wallet
-    ws = WeightSetter(wallet=None, netuid=1)
-    
-    # Test validation
-    valid, msg = ws._validate_inputs([1, 2, 3], [0.3, 0.3, 0.4])
-    print(f"Validation: {valid}, {msg}")
-    
-    # Test normalization
-    normalized = ws._normalize_weights([1.0, 2.0, 3.0])
-    print(f"Normalized: {normalized}")
-    
-    # Test rate limiting
-    can_set, remaining = ws.can_set_weights()
-    print(f"Can set: {can_set}, remaining: {remaining}")
-    
-    # Test metrics
-    metrics = ws.get_metrics()
-    print(f"Metrics: {metrics}")
-
-
-if __name__ == "__main__":
-    asyncio.run(test_weight_setter())

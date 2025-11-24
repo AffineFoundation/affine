@@ -68,7 +68,7 @@ async def run_service():
 @click.command()
 @click.option(
     "-v", "--verbosity",
-    default="1",
+    default=None,
     type=click.Choice(["0", "1", "2", "3"]),
     help="Logging verbosity: 0=CRITICAL, 1=INFO, 2=DEBUG, 3=TRACE"
 )
@@ -79,8 +79,9 @@ def main(verbosity):
     This service continuously monitors the Bittensor metagraph for miner information
     and keeps the database synchronized.
     """
-    # Setup logging
-    setup_logging(int(verbosity))
+    # Setup logging if verbosity specified
+    if verbosity is not None:
+        setup_logging(int(verbosity))
     
     # Run service
     asyncio.run(run_service())

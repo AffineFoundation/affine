@@ -256,7 +256,7 @@ async def run_service_with_mode(envs: List[str] | None, api_url: str, poll_inter
 )
 @click.option(
     "-v", "--verbosity",
-    default="1",
+    default=None,
     type=click.Choice(["0", "1", "2", "3"]),
     help="Logging verbosity: 0=CRITICAL, 1=INFO, 2=DEBUG, 3=TRACE"
 )
@@ -271,14 +271,14 @@ def main(envs, poll_interval, verbosity):
     - SERVICE_MODE=true: Continuous service mode (keeps running)
     
     Configuration:
-    - AFFINE_API_URL: API server URL (default: http://localhost:8000)
     - EXECUTOR_POLL_INTERVAL: Polling interval in seconds (default: 5)
     - SERVICE_MODE: Run as continuous service (default: false)
     
     If --envs not specified, environments are fetched from API /api/v1/config/environments endpoint.
     """
-    # Setup logging
-    setup_logging(int(verbosity))
+    # Setup logging if verbosity specified
+    if verbosity is not None:
+        setup_logging(int(verbosity))
     
     # Get environments from CLI (or None to fetch from API)
     selected_envs = list(envs) if envs else None

@@ -366,7 +366,9 @@ async def get_miner_command(uid: int):
 
     endpoint = f"/miners/uid/{uid}"
     data = await client.get(endpoint)
-    
+    if data:
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+
 
 
 async def get_weights_command():
@@ -384,15 +386,15 @@ async def get_weights_command():
         print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
-async def get_scores_command(limit: int = 256):
-    """Query latest scores for all miners.
+async def get_scores_command(top: int = 32):
+    """Query latest scores for top N miners.
     
     Args:
-        limit: Maximum number of miners to return (default: 256)
+        top: Number of top miners to return (default: 256)
     """
     client = create_api_client()
 
-    endpoint = f"/scores/latest?limit={limit}"
+    endpoint = f"/scores/latest?top={top}"
     data = await client.get(endpoint)
     
     if data:
