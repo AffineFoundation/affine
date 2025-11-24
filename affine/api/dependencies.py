@@ -8,7 +8,6 @@ import time
 from typing import Optional
 from fastapi import Depends, HTTPException, Request, Header, status
 from affine.api.config import config
-from affine.api.utils.auth import get_hotkey_from_request, verify_request_signature
 from affine.database.dao.sample_results import SampleResultsDAO
 from affine.database.dao.task_queue import TaskQueueDAO
 from affine.database.dao.execution_logs import ExecutionLogsDAO
@@ -258,9 +257,7 @@ async def rate_limit_write(request: Request):
     if not config.RATE_LIMIT_ENABLED:
         return
     
-    # Use hotkey as identifier for write operations
-    hotkey = get_hotkey_from_request(request)
-    if not check_rate_limit(hotkey, config.RATE_LIMIT_WRITE):
+    if not check_rate_limit(request.client.host, config.RATE_LIMIT_WRITE):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Rate limit exceeded"

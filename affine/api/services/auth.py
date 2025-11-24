@@ -9,6 +9,7 @@ import logging
 import time
 from typing import Optional, Tuple, List, Set
 from dataclasses import dataclass
+from bittensor import Keypair
 
 from affine.core.setup import logger
 
@@ -96,35 +97,33 @@ class AuthService:
         
         Args:
             message: Original message that was signed
-            signature: Signature to verify
+            signature: Signature to verify (hex string or bytes)
             hotkey: Expected signer's hotkey
             
         Returns:
             True if signature is valid
         """
-        if not self.config.strict_mode:
-            # Skip signature verification in non-strict mode
-            logger.warning("Signature verification skipped (strict_mode=False)")
-            return True
-        
         try:
-            # Import Bittensor for signature verification
-            # This requires bittensor to be installed
-            from substrateinterface import Keypair
-            
             keypair = Keypair(ss58_address=hotkey)
-            is_valid = keypair.verify(message, signature)
+            
+            # Convert signature from hex if needed
+            if isinstance(signature, str):
+                # Remove 0x prefix if present
+                signature = signature.replace("0x", "")
+                # Convert hex string to bytes
+                signature_bytes = bytes.fromhex(signature)
+            else:
+                signature_bytes = signature
+            
+            # Verify signature
+            is_valid = keypair.verify(message.encode() if isinstance(message, str) else message, signature_bytes)
             
             if not is_valid:
                 logger.warning(f"Invalid signature for hotkey {hotkey[:8]}...")
             
             return is_valid
-            
-        except ImportError:
-            logger.error("substrateinterface not installed, cannot verify signatures")
-            return False
         except Exception as e:
-            logger.error(f"Error verifying signature: {e}")
+            logger.error(f"Error verifying signature: {signature}, error: {e}")
             return False
     
     def verify_request_signature(

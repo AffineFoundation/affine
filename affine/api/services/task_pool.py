@@ -383,7 +383,7 @@ class TaskPoolManager:
             weights = [all_miner_counts[m] for m in miners]
             selected_miner = random.choices(miners, weights=weights, k=1)[0]
             
-            logger.debug(f"Selected miner {selected_miner} (weights: {dict(zip(miners, weights))})")
+            # logger.debug(f"Selected miner {selected_miner} (weights: {dict(zip(miners, weights))})")
             
             # Extract hotkey and revision
             hotkey, revision = selected_miner.split('#', 1)
@@ -430,7 +430,7 @@ class TaskPoolManager:
                     timeout_seconds=self.assigned_timeout_seconds
                 )
             
-            logger.info(
+            logger.debug(
                 f"Task {assigned_task['task_uuid']} assigned to {executor_hotkey} "
                 f"(miner={hotkey}, env={assigned_task['env']}, task_id={assigned_task['task_id']})"
             )
@@ -538,7 +538,7 @@ class TaskPoolManager:
                     if task_uuid in self.assigned_tasks:
                         del self.assigned_tasks[task_uuid]
                 
-                logger.info(
+                logger.debug(
                     f"Task {task_uuid} completed successfully by {executor_hotkey} "
                     f"(miner={task['miner_hotkey']}, env={task['env']}, task_id={task['task_id']})"
                 )
