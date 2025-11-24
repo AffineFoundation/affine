@@ -119,6 +119,46 @@ class SampleResultsDAO(BaseDAO):
         
         return await self.put(item)
     
+    async def get_sample_by_task_id(
+        self,
+        miner_hotkey: str,
+        model_revision: str,
+        env: str,
+        task_id: str,
+        include_extra: bool = True
+    ) -> Optional[Dict[str, Any]]:
+        """Get a specific sample by its full key (PK + SK).
+        
+        This is the most efficient way to retrieve a single sample.
+        
+        Args:
+            miner_hotkey: Miner's hotkey
+            model_revision: Model revision hash
+            env: Environment name
+            task_id: Task identifier
+            include_extra: If True, include and decompress extra field
+            
+        Returns:
+            Sample dict or None if not found
+        """
+        pk = self._make_pk(miner_hotkey, model_revision, env)
+        sk = self._make_sk(task_id)
+        
+        # Use get_item for O(1) direct key access
+        item = await self.get(pk, sk)
+        
+        if not item:
+            return None
+        
+        # Decompress extra data if needed
+        if include_extra and 'extra_compressed' in item:
+            compressed = item['extra_compressed']
+            extra_json = self.decompress_data(compressed)
+            item['extra'] = json.loads(extra_json)
+            del item['extra_compressed']
+        
+        return item
+    
     async def get_samples_by_miner(
         self,
         miner_hotkey: str,
@@ -344,7 +384,7 @@ class SampleResultsDAO(BaseDAO):
             batch_results = await asyncio.gather(*batch, return_exceptions=True)
             all_results.extend(batch_results)
         
-        # Process results and deduplicate
+        # Process results (no deduplication needed - task_id is part of SK)
         output = {}
         for (hotkey, revision, env), result in zip(task_metadata, all_results):
             if isinstance(result, Exception):
@@ -352,18 +392,11 @@ class SampleResultsDAO(BaseDAO):
             
             items = [self._deserialize(item) for item in result.get('Items', [])]
             
-            # Deduplicate: keep latest sample per task_id
-            task_samples = {}
-            for item in items:
-                task_id = int(item['task_id'])
-                if task_id not in task_samples or item['timestamp'] > task_samples[task_id]['timestamp']:
-                    task_samples[task_id] = item
-            
             # Store in output structure
             key = f"{hotkey}#{revision}"
             if key not in output:
                 output[key] = {}
-            output[key][env] = list(task_samples.values())
+            output[key][env] = items
         
         return output
     
@@ -487,27 +520,19 @@ class SampleResultsDAO(BaseDAO):
             batch_results = await asyncio.gather(*batch, return_exceptions=True)
             all_results.extend(batch_results)
         
-        # Process results
+        # Process results (no deduplication needed - task_id is part of SK)
         output = {}
         for (hotkey, revision, env), result in zip(task_metadata, all_results):
             if isinstance(result, Exception):
-                logger.warning(f"[DAO] Query failed for {hotkey[:8]}...#{env}: {result}")
                 continue
             
             items = [self._deserialize(item) for item in result.get('Items', [])]
-            
-            # Deduplicate by task_id
-            task_samples = {}
-            for item in items:
-                task_id = int(item['task_id'])
-                if task_id not in task_samples or item['timestamp'] > task_samples[task_id]['timestamp']:
-                    task_samples[task_id] = item
             
             # Store in output
             key = f"{hotkey}#{revision}"
             if key not in output:
                 output[key] = {}
-            output[key][env] = list(task_samples.values())
+            output[key][env] = items
         
         return output
     

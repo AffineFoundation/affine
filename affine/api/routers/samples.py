@@ -174,27 +174,20 @@ async def get_sample(
     If multiple submissions exist for the same task_id, returns the latest one by timestamp.
     """
     try:
-        # Query all samples for this miner+revision+env and filter by task_id
-        # Use reverse=True to get newest first, then filter for matching task_id
-        samples = await dao.get_samples_by_miner(
+        # Direct key lookup - O(1) operation
+        item = await dao.get_sample_by_task_id(
             miner_hotkey=hotkey,
             model_revision=model_revision,
             env=env,
-            reverse=True,
+            task_id=task_id,
             include_extra=True
         )
         
-        # Filter for matching task_id and get the latest one
-        matching_samples = [s for s in samples if str(s.get('task_id')) == str(task_id)]
-        
-        if not matching_samples:
+        if not item:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Sample not found for hotkey={hotkey}, env={env}, task_id={task_id}"
             )
-        
-        # Get the latest sample (first in filtered list due to reverse=True sort)
-        item = matching_samples[0]
         
         return SampleFullResponse(
             miner_hotkey=item["miner_hotkey"],
@@ -250,26 +243,20 @@ async def get_sample_by_uid(
         hotkey = miner['hotkey']
         model_revision = miner['revision']
         
-        # Query all samples for this miner+revision+env and filter by task_id
-        samples = await sample_dao.get_samples_by_miner(
+        # Direct key lookup - O(1) operation
+        item = await sample_dao.get_sample_by_task_id(
             miner_hotkey=hotkey,
             model_revision=model_revision,
             env=env,
-            reverse=True,
+            task_id=task_id,
             include_extra=True
         )
         
-        # Filter for matching task_id and get the latest one
-        matching_samples = [s for s in samples if str(s.get('task_id')) == str(task_id)]
-        
-        if not matching_samples:
+        if not item:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Sample not found for UID={uid}, env={env}, task_id={task_id}"
             )
-        
-        # Get the latest sample (first in filtered list due to reverse=True sort)
-        item = matching_samples[0]
         
         return SampleFullResponse(
             miner_hotkey=item["miner_hotkey"],
