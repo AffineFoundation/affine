@@ -7,9 +7,14 @@ Supports two evaluation modes:
 2. Using local model via --base-url
 
 Usage:
+    # Single task evaluation
     ./evaluate_local_model.py --env ABD --uid 7
     ./evaluate_local_model.py --env ABD --model your-model --base-url http://172.17.0.1:30000/v1 --samples 10
-    ./evaluate_local_model.py --env ALFWORLD --samples 10 --model deepseek-ai/DeepSeek-V3 --base-url https://llm.chutes.ai/v1 --output ./eval.json
+    ./evaluate_local_model.py --env ALFWORLD --task-id 2 --samples 10 --model deepseek-ai/DeepSeek-V3 --base-url https://llm.chutes.ai/v1 --output ./eval.json
+
+    # Task range evaluation (one sample per task)
+    ./evaluate_local_model.py --env ALFWORLD --task-id-range 0 9 --model your-model --base-url http://172.17.0.1:30000/v1
+    ./evaluate_local_model.py --env ABD --task-id-range 0 4 --uid 7 --output ./results.json
 """
 import asyncio
 import argparse
@@ -38,12 +43,16 @@ def parse_args():
 Examples:
   # Evaluate using Chutes service (requires CHUTES_API_KEY)
   %(prog)s --env ABD --uid 7
-  
+
   # Evaluate using local model
   %(prog)s --env ABD --model your-model --base-url http://172.17.0.1:30000/v1
-  
-  # Evaluate AgentGym environment with specific task
+
+  # Evaluate with specific task ID
   %(prog)s --env ALFWORLD --task-id 2 --model deepseek-ai/DeepSeek-V3 --base-url https://llm.chutes.ai/v1 --samples 5
+
+  # Evaluate across a range of task IDs (one sample per task)
+  %(prog)s --env ALFWORLD --task-id-range 0 9 --model your-model --base-url http://172.17.0.1:30000/v1
+  %(prog)s --env ABD --task-id-range 0 4 --uid 7 --output results.json
 
 Supported environments: """ + ', '.join(ENVIRONMENT_NAMES)
     )
@@ -60,8 +69,14 @@ Supported environments: """ + ', '.join(ENVIRONMENT_NAMES)
     
     parser.add_argument('--base-url',
                        help='Model service URL (required with --model)')
-    parser.add_argument('--task-id', type=int,
-                       help='Task ID for AgentGym environments')
+
+    # Task ID options: either single task or range
+    task_group = parser.add_mutually_exclusive_group()
+    task_group.add_argument('--task-id', type=int,
+                           help='Task ID for AgentGym environments')
+    task_group.add_argument('--task-id-range', nargs=2, type=int, metavar=('START', 'END'),
+                           help='Task ID range for AgentGym environments (e.g., --task-id-range 0 9)')
+
     parser.add_argument('--samples', type=int, default=1,
                        help='Number of evaluation samples (default: 1)')
     parser.add_argument('--temperature', type=float, default=0.7,
@@ -74,9 +89,12 @@ Supported environments: """ + ', '.join(ENVIRONMENT_NAMES)
     # Validation
     if args.model and not args.base_url:
         parser.error('--base-url is required when using --model')
-    
-    if args.task_id is not None and args.env not in AGENTGYM_ENVS:
-        parser.error(f'--task-id is only applicable for AgentGym environments: {", ".join(AGENTGYM_ENVS)}')
+
+    if args.task_id_range is not None:
+        if args.task_id_range[0] > args.task_id_range[1]:
+            parser.error(f'Invalid task ID range: start ({args.task_id_range[0]}) must be <= end ({args.task_id_range[1]})')
+        if args.samples != 1:
+            parser.error('--samples cannot be used with --task-id-range (each task is evaluated once)')
 
     return args
 
@@ -87,27 +105,27 @@ async def evaluate_with_uid(env_instance, uid: int, task_id: Optional[int], samp
     miner = await af.miners(uid)
     if not miner:
         raise ValueError(f"Unable to get miner info for UID {uid}")
-    
+
     print(f"Miner found: {miner.get(uid).model}")
-    
+
     total_score = 0.0
     total_time = 0.0
     results = []
 
     for i in range(samples):
         print(f"\rProgress: {i+1}/{samples}", end="", flush=True)
-        
+
         eval_kwargs = {'temperature': temperature}
         if task_id is not None:
             eval_kwargs['task_id'] = task_id
-        
+
         result = await env_instance.evaluate(miner, **eval_kwargs)
-        
+
         # Result is a dict with uid as key
         eval_result = result[uid]
         total_score += eval_result.score
         total_time += eval_result.latency_seconds
-        
+
         results.append({
             'index': i,
             'score': eval_result.score,
@@ -115,23 +133,72 @@ async def evaluate_with_uid(env_instance, uid: int, task_id: Optional[int], samp
             'latency': eval_result.latency_seconds,
             'error': eval_result.error
         })
-    
+
     print()  # New line after progress
     return total_score, total_time, results
+
+
+async def evaluate_with_uid_range(env_instance, uid: int, task_id_start: int, task_id_end: int, temperature: float, af):
+    """Evaluate using Chutes service via miner UID across a range of task IDs (one sample per task)"""
+    print(f"\nFetching miner info for UID {uid}...")
+    miner = await af.miners(uid)
+    if not miner:
+        raise ValueError(f"Unable to get miner info for UID {uid}")
+
+    print(f"Miner found: {miner.get(uid).model}")
+
+    total_score = 0.0
+    total_time = 0.0
+    all_results = []
+    task_results = {}
+
+    task_count = task_id_end - task_id_start + 1
+    eval_counter = 0
+
+    for task_id in range(task_id_start, task_id_end + 1):
+        eval_counter += 1
+        print(f"\rProgress: {eval_counter}/{task_count} (Task {task_id})", end="", flush=True)
+
+        eval_kwargs = {'temperature': temperature, 'task_id': task_id}
+        result = await env_instance.evaluate(miner, **eval_kwargs)
+
+        # Result is a dict with uid as key
+        eval_result = result[uid]
+        total_score += eval_result.score
+        total_time += eval_result.latency_seconds
+
+        sample_result = {
+            'task_id': task_id,
+            'score': eval_result.score,
+            'success': eval_result.success,
+            'latency': eval_result.latency_seconds,
+            'error': eval_result.error
+        }
+        all_results.append(sample_result)
+
+        task_results[task_id] = {
+            'score': eval_result.score,
+            'success': eval_result.success,
+            'time': eval_result.latency_seconds,
+            'error': eval_result.error
+        }
+
+    print()  # New line after progress
+    return total_score, total_time, all_results, task_results
 
 
 async def evaluate_with_model(env_instance, model: str, base_url: str, task_id: Optional[int], samples: int, temperature: float):
     """Evaluate using direct model endpoint"""
     print(f"\nUsing model: {model}")
     print(f"Service URL: {base_url}")
-    
+
     total_score = 0.0
     total_time = 0.0
     results = []
 
     for i in range(samples):
         print(f"\rProgress: {i+1}/{samples}", end="", flush=True)
-        
+
         eval_kwargs = {
             'model': model,
             'base_url': base_url,
@@ -139,16 +206,60 @@ async def evaluate_with_model(env_instance, model: str, base_url: str, task_id: 
         }
         if task_id is not None:
             eval_kwargs['task_id'] = task_id
-        
+
         result = await env_instance.evaluate(**eval_kwargs)
-        
+
         total_score += result.score
         total_time += result.latency_seconds
-        
+
         results.append(result.model_dump())
-    
+
     print()  # New line after progress
     return total_score, total_time, results
+
+
+async def evaluate_with_model_range(env_instance, model: str, base_url: str, task_id_start: int, task_id_end: int, temperature: float):
+    """Evaluate using direct model endpoint across a range of task IDs (one sample per task)"""
+    print(f"\nUsing model: {model}")
+    print(f"Service URL: {base_url}")
+
+    total_score = 0.0
+    total_time = 0.0
+    all_results = []
+    task_results = {}
+
+    task_count = task_id_end - task_id_start + 1
+    eval_counter = 0
+
+    for task_id in range(task_id_start, task_id_end + 1):
+        eval_counter += 1
+        print(f"\rProgress: {eval_counter}/{task_count} (Task {task_id})", end="", flush=True)
+
+        eval_kwargs = {
+            'model': model,
+            'base_url': base_url,
+            'temperature': temperature,
+            'task_id': task_id
+        }
+
+        result = await env_instance.evaluate(**eval_kwargs)
+
+        total_score += result.score
+        total_time += result.latency_seconds
+
+        sample_result = result.model_dump()
+        sample_result['task_id'] = task_id
+        all_results.append(sample_result)
+
+        task_results[task_id] = {
+            'score': result.score,
+            'success': result.success,
+            'time': result.latency_seconds,
+            'error': result.error
+        }
+
+    print()  # New line after progress
+    return total_score, total_time, all_results, task_results
 
 
 async def main():
@@ -194,6 +305,8 @@ async def main():
         print(f"  Base URL: {args.base_url}")
     if args.task_id is not None:
         print(f"  Task ID: {args.task_id}")
+    if args.task_id_range is not None:
+        print(f"  Task ID Range: {args.task_id_range[0]} - {args.task_id_range[1]}")
     print(f"  Samples: {args.samples}")
     print(f"  Temperature: {args.temperature}")
     print("=" * 60)
@@ -206,40 +319,69 @@ async def main():
         print("✓ Environment loaded")
         
         # Run evaluation
-        print(f"\nStarting evaluation ({args.samples} sample(s))...")
-        
-        # Use af.miners for UID mode
-        if args.uid:
-            total_score, total_time, results = await evaluate_with_uid(
-                env_instance, args.uid, args.task_id, args.samples, args.temperature, af
-            )
+        task_results = None
+        if args.task_id_range is not None:
+            # Range evaluation mode (one sample per task)
+            task_count = args.task_id_range[1] - args.task_id_range[0] + 1
+            print(f"\nStarting evaluation ({task_count} task(s), 1 sample each)...")
+
+            if args.uid:
+                total_score, total_time, results, task_results = await evaluate_with_uid_range(
+                    env_instance, args.uid, args.task_id_range[0], args.task_id_range[1],
+                    args.temperature, af
+                )
+            else:
+                total_score, total_time, results, task_results = await evaluate_with_model_range(
+                    env_instance, args.model, args.base_url, args.task_id_range[0], args.task_id_range[1],
+                    args.temperature
+                )
         else:
-            total_score, total_time, results = await evaluate_with_model(
-                env_instance, args.model, args.base_url, args.task_id, args.samples, args.temperature
-            )
+            # Single task evaluation mode
+            print(f"\nStarting evaluation ({args.samples} sample(s))...")
+
+            if args.uid:
+                total_score, total_time, results = await evaluate_with_uid(
+                    env_instance, args.uid, args.task_id, args.samples, args.temperature, af
+                )
+            else:
+                total_score, total_time, results = await evaluate_with_model(
+                    env_instance, args.model, args.base_url, args.task_id, args.samples, args.temperature
+                )
         
         # Prepare summary data
+        if args.task_id_range is not None:
+            # Range mode: total_samples = task_count (one sample per task)
+            task_count = args.task_id_range[1] - args.task_id_range[0] + 1
+            total_samples = task_count
+        else:
+            # Single mode: total_samples = samples
+            total_samples = args.samples
+
         summary = {
             'environment': args.env,
             'mode': 'chutes' if args.uid else 'direct',
             'samples': args.samples,
             'total_score': total_score,
-            'average_score': total_score / args.samples,
+            'average_score': total_score / total_samples,
             'total_time': total_time,
-            'average_time': total_time / args.samples,
+            'average_time': total_time / total_samples,
             'results': results
         }
-        
+
         # Add mode-specific info
         if args.uid:
             summary['uid'] = args.uid
         else:
             summary['model'] = args.model
             summary['base_url'] = args.base_url
-        
+
         if args.task_id is not None:
             summary['task_id'] = args.task_id
-        
+
+        if args.task_id_range is not None:
+            summary['task_id_range'] = {'start': args.task_id_range[0], 'end': args.task_id_range[1]}
+            summary['task_results'] = task_results
+
         summary['temperature'] = args.temperature
         
         # Save to JSON file if specified
@@ -256,14 +398,34 @@ async def main():
         print("\n" + "=" * 60)
         print("Evaluation Summary:")
         print(f"  Environment: {args.env}")
-        print(f"  Total Samples: {args.samples}")
+
+        if args.task_id_range is not None:
+            task_count = args.task_id_range[1] - args.task_id_range[0] + 1
+            print(f"  Task Range: {args.task_id_range[0]} - {args.task_id_range[1]} ({task_count} tasks)")
+            print(f"  Total Evaluations: {task_count}")
+        else:
+            total_samples = args.samples
+            print(f"  Total Samples: {args.samples}")
+
         print(f"  Total Score: {total_score:.4f}")
-        print(f"  Average Score: {total_score/args.samples:.4f}")
+        print(f"  Average Score: {total_score/total_samples:.4f}")
         print(f"  Total Time: {total_time:.2f} seconds")
-        print(f"  Average Time: {total_time/args.samples:.2f} seconds/sample")
-        
-        # Show individual results if multiple samples
-        if args.samples > 1:
+        print(f"  Average Time: {total_time/total_samples:.2f} seconds/sample")
+
+        # Show task-by-task results for range mode
+        if args.task_id_range is not None and task_results:
+            print(f"\nResults by Task ID:")
+            for task_id in sorted(task_results.keys()):
+                task_info = task_results[task_id]
+                status = "✓" if task_info.get('success', False) else "✗"
+                score = task_info.get('score', 0.0)
+                time = task_info.get('time', 0.0)
+                print(f"  [{status}] Task {task_id}: score={score:.4f}, time={time:.2f}s")
+                if task_info.get('error'):
+                    print(f"      Error: {task_info['error']}")
+
+        # Show individual results for single task mode with multiple samples
+        elif args.samples > 1 and not args.task_id_range:
             print(f"\nDetailed Results:")
             for idx, r in enumerate(results):
                 status = "✓" if r.get('success', False) else "✗"
@@ -272,7 +434,7 @@ async def main():
                 print(f"  [{status}] Sample {idx}: score={score:.4f}, time={latency:.2f}s")
                 if r.get('error'):
                     print(f"      Error: {r['error']}")
-        
+
         print("=" * 60)
         
     except KeyboardInterrupt:
