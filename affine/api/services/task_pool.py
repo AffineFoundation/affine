@@ -430,7 +430,7 @@ class TaskPoolManager:
                     timeout_seconds=self.assigned_timeout_seconds
                 )
             
-            logger.info(
+            logger.debug(
                 f"Task {assigned_task['task_uuid']} assigned to {executor_hotkey} "
                 f"(miner={hotkey}, env={assigned_task['env']}, task_id={assigned_task['task_id']})"
             )

@@ -102,11 +102,6 @@ class AuthService:
         Returns:
             True if signature is valid
         """
-        if not self.config.strict_mode:
-            # Skip signature verification in non-strict mode
-            logger.warning("Signature verification skipped (strict_mode=False)")
-            return True
-        
         try:
             # Import Bittensor for signature verification
             # This requires bittensor to be installed

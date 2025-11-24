@@ -20,6 +20,7 @@ from affine.src.miner.commands import (
     get_miner_command,
     get_weights_command,
     get_scores_command,
+    get_pool_command,
 )
 
 
@@ -112,7 +113,6 @@ def get_weights():
     """
     asyncio.run(get_weights_command())
 
-
 @click.command("get-scores")
 @click.option("--top", "-t", default=32, type=int, help="Return top N miners by score (default: 256)")
 def get_scores(top):
@@ -125,5 +125,21 @@ def get_scores(top):
         af get-scores --top 10
     """
     asyncio.run(get_scores_command(top=top))
+
+
+@click.command("get-pool")
+@click.argument("uid", type=int)
+@click.argument("env", type=str)
+def get_pool(uid, env):
+    """Query pending task IDs for a miner in an environment.
+    
+    Returns the list of task IDs currently in the sampling queue
+    for the specified miner and environment.
+    
+    Example:
+        af get-pool 100 agentgym:webshop
+    """
+    asyncio.run(get_pool_command(uid=uid, env=env))
+
 
 

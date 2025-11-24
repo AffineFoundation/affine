@@ -399,3 +399,19 @@ async def get_scores_command(top: int = 32):
     
     if data:
         print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+async def get_pool_command(uid: int, env: str):
+    """Query pending task IDs for a miner in an environment.
+    
+    Args:
+        uid: Miner UID
+        env: Environment name (e.g., agentgym:webshop)
+    """
+    client = create_api_client()
+
+    endpoint = f"/samples/pool/uid/{uid}/{env}"
+    data = await client.get(endpoint)
+    
+    if data:
+        print(json.dumps(data, indent=2, ensure_ascii=False))

@@ -41,7 +41,7 @@ class APIClient:
         """
         
         url = f"{self.base_url}{endpoint}"
-        logger.info(f"GET {url}")
+        logger.debug(f"GET {url}")
         
         try:
             async with aiohttp.ClientSession() as session:
@@ -100,7 +100,7 @@ class APIClient:
         """
         
         url = f"{self.base_url}{endpoint}"
-        logger.info(f"POST {url}")
+        logger.debug(f"POST {url}")
         
         try:
             async with aiohttp.ClientSession() as session:
@@ -113,7 +113,6 @@ class APIClient:
                         }
                         if output_json:
                             print(json.dumps(result, indent=2, ensure_ascii=False))
-                        logger.info(f"Request successful: {endpoint}")
                         return response_data
                     
                     else:
@@ -188,7 +187,7 @@ class APIClient:
         """
         
         url = f"{self.base_url}{endpoint}"
-        logger.info(f"PUT {url}")
+        logger.debug(f"PUT {url}")
         
         try:
             async with aiohttp.ClientSession() as session:

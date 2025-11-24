@@ -320,13 +320,7 @@ class ExecutorWorker:
                     f"(task_uuid={task_uuid[:8]}..., miner={miner_hotkey[:12]}...)"
                 )
             
-            # Build dynamic URL
             base_url = f"https://{slug}.chutes.ai/v1"
-            logger.info(
-                f"[{self.env}] Using dynamic URL: {base_url} "
-                f"(chute_id={chute_id}, slug={slug})"
-            )
-            
             # Execute sampling using affine's environment wrapper
             result = await self.env_executor.evaluate(
                 model=model,
@@ -389,7 +383,7 @@ class ExecutorWorker:
             }
             
             response = await self.api_client.post(
-                "/samples/submit",
+                "/tasks/submit",
                 json=submit_data,
                 headers=headers
             )
