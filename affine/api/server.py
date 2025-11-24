@@ -22,21 +22,7 @@ from affine.api.routers import (
 )
 from affine.database import init_client, close_client
 
-# Configure logging using setup_logging
-from affine.core.setup import setup_logging, logger
-
-# Map LOG_LEVEL string to verbosity
-log_level = os.getenv("API_LOG_LEVEL", config.LOG_LEVEL).upper()
-verbosity_map = {
-    "CRITICAL": 0,
-    "ERROR": 0,
-    "WARNING": 0,
-    "INFO": 1,
-    "DEBUG": 2,
-    "TRACE": 3,
-}
-verbosity = verbosity_map.get(log_level, 1)
-setup_logging(verbosity)
+from affine.core.setup import logger
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
