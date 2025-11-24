@@ -25,9 +25,6 @@ load_dotenv()
 # Supported environment names (will be mapped to actual classes after argparse)
 ENVIRONMENT_NAMES = ['SAT', 'ABD', 'DED', 'ALFWORLD', 'WEBSHOP', 'BABYAI', 'SCIWORLD', 'TEXTCRAFT']
 
-# AgentGym environments (require task_id)
-AGENTGYM_ENVS = {'ALFWORLD', 'WEBSHOP', 'BABYAI', 'SCIWORLD', 'TEXTCRAFT'}
-
 
 def parse_args():
     """Parse command line arguments"""
@@ -42,8 +39,8 @@ Examples:
   # Evaluate using local model
   %(prog)s --env ABD --model your-model --base-url http://172.17.0.1:30000/v1
   
-  # Evaluate AgentGym environment with specific task
-  %(prog)s --env ALFWORLD --task-id 2 --model deepseek-ai/DeepSeek-V3 --base-url https://llm.chutes.ai/v1 --samples 5
+  # Evaluate with specific task and seed
+  %(prog)s --env ALFWORLD --task-id 2 --seed 42 --model deepseek-ai/DeepSeek-V3 --base-url https://llm.chutes.ai/v1 --samples 5
 
 Supported environments: """ + ', '.join(ENVIRONMENT_NAMES)
     )
@@ -61,7 +58,9 @@ Supported environments: """ + ', '.join(ENVIRONMENT_NAMES)
     parser.add_argument('--base-url',
                        help='Model service URL (required with --model)')
     parser.add_argument('--task-id', type=int,
-                       help='Task ID for AgentGym environments')
+                       help='Task ID for environment')
+    parser.add_argument('--seed', type=int,
+                       help='Random seed for evaluation')
     parser.add_argument('--samples', type=int, default=1,
                        help='Number of evaluation samples (default: 1)')
     parser.add_argument('--temperature', type=float, default=0.7,
@@ -74,14 +73,11 @@ Supported environments: """ + ', '.join(ENVIRONMENT_NAMES)
     # Validation
     if args.model and not args.base_url:
         parser.error('--base-url is required when using --model')
-    
-    if args.task_id is not None and args.env not in AGENTGYM_ENVS:
-        parser.error(f'--task-id is only applicable for AgentGym environments: {", ".join(AGENTGYM_ENVS)}')
 
     return args
 
 
-async def evaluate_with_uid(env_instance, uid: int, task_id: Optional[int], samples: int, temperature: float, af):
+async def evaluate_with_uid(env_instance, uid: int, task_id: Optional[int], seed: Optional[int], samples: int, temperature: float, af):
     """Evaluate using Chutes service via miner UID"""
     print(f"\nFetching miner info for UID {uid}...")
     miner = await af.miners(uid)
@@ -100,6 +96,8 @@ async def evaluate_with_uid(env_instance, uid: int, task_id: Optional[int], samp
         eval_kwargs = {'temperature': temperature}
         if task_id is not None:
             eval_kwargs['task_id'] = task_id
+        if seed is not None:
+            eval_kwargs['seed'] = seed
         
         result = await env_instance.evaluate(miner, **eval_kwargs)
         
@@ -108,19 +106,13 @@ async def evaluate_with_uid(env_instance, uid: int, task_id: Optional[int], samp
         total_score += eval_result.score
         total_time += eval_result.latency_seconds
         
-        results.append({
-            'index': i,
-            'score': eval_result.score,
-            'success': eval_result.success,
-            'latency': eval_result.latency_seconds,
-            'error': eval_result.error
-        })
-    
+        results.append(result[uid].model_dump())
+
     print()  # New line after progress
     return total_score, total_time, results
 
 
-async def evaluate_with_model(env_instance, model: str, base_url: str, task_id: Optional[int], samples: int, temperature: float):
+async def evaluate_with_model(env_instance, model: str, base_url: str, task_id: Optional[int], seed: Optional[int], samples: int, temperature: float):
     """Evaluate using direct model endpoint"""
     print(f"\nUsing model: {model}")
     print(f"Service URL: {base_url}")
@@ -139,6 +131,8 @@ async def evaluate_with_model(env_instance, model: str, base_url: str, task_id: 
         }
         if task_id is not None:
             eval_kwargs['task_id'] = task_id
+        if seed is not None:
+            eval_kwargs['seed'] = seed
         
         result = await env_instance.evaluate(**eval_kwargs)
         
@@ -194,6 +188,8 @@ async def main():
         print(f"  Base URL: {args.base_url}")
     if args.task_id is not None:
         print(f"  Task ID: {args.task_id}")
+    if args.seed is not None:
+        print(f"  Seed: {args.seed}")
     print(f"  Samples: {args.samples}")
     print(f"  Temperature: {args.temperature}")
     print("=" * 60)
@@ -211,11 +207,11 @@ async def main():
         # Use af.miners for UID mode
         if args.uid:
             total_score, total_time, results = await evaluate_with_uid(
-                env_instance, args.uid, args.task_id, args.samples, args.temperature, af
+                env_instance, args.uid, args.task_id, args.seed, args.samples, args.temperature, af
             )
         else:
             total_score, total_time, results = await evaluate_with_model(
-                env_instance, args.model, args.base_url, args.task_id, args.samples, args.temperature
+                env_instance, args.model, args.base_url, args.task_id, args.seed, args.samples, args.temperature
             )
         
         # Prepare summary data
@@ -239,6 +235,8 @@ async def main():
         
         if args.task_id is not None:
             summary['task_id'] = args.task_id
+        if args.seed is not None:
+            summary['seed'] = args.seed
         
         summary['temperature'] = args.temperature
         

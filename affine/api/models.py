@@ -187,7 +187,6 @@ class MinerScore(BaseModel):
     model_revision: str
     overall_score: float
     average_score: float
-    confidence_interval: List[float]
     scores_by_layer: Dict[str, float]
     scores_by_env: Dict[str, float]
     total_samples: int
@@ -210,7 +209,6 @@ class MinerScoreHistory(BaseModel):
     calculated_at: int
     overall_score: float
     average_score: float
-    confidence_interval: List[float]
 
 
 class MinerScoreHistoryResponse(BaseModel):

@@ -198,13 +198,13 @@ def get_weights(ctx):
 @cli.command("get-scores", context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
 @click.pass_context
 def get_scores(ctx):
-    """Query latest scores for all miners.
+    """Query latest scores for top N miners.
     
-    Returns scores for all miners at the latest calculated block.
+    Returns top N miners by score at the latest calculated block.
     
     Example:
         af get-scores
-        af get-scores --limit 100
+        af get-scores --top 10
     """
     from affine.src.miner.main import get_scores as miner_get_scores
     

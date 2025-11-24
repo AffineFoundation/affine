@@ -25,19 +25,19 @@ router = APIRouter(prefix="/scores", tags=["Scores"])
 
 @router.get("/latest", response_model=ScoresResponse, dependencies=[Depends(rate_limit_read)])
 async def get_latest_scores(
-    limit: int = Query(256, description="Maximum miners to return", ge=1, le=256),
+    top: int = Query(32, description="Return top N miners by score", ge=1, le=256),
     dao: ScoresDAO = Depends(get_scores_dao),
 ):
     """
     Get the most recent score snapshot.
     
-    Returns scores for all miners at the latest calculated block.
+    Returns top N miners by score at the latest calculated block.
     
     Query parameters:
-    - limit: Maximum number of miners to return (default: 256, max: 512)
+    - top: Number of top miners to return (default: 256, max: 256)
     """
     try:
-        scores_data = await dao.get_latest_scores(limit=limit)
+        scores_data = await dao.get_latest_scores(limit=None)
         
         if not scores_data or not scores_data.get('block_number'):
             raise HTTPException(
@@ -50,8 +50,9 @@ async def get_latest_scores(
         calculated_at = scores_data.get("calculated_at")
         scores_list = scores_data.get("scores", [])
         
-        # Limit results
-        scores_list = scores_list[:limit]
+        # Sort by overall_score descending and take top N
+        scores_list.sort(key=lambda x: x.get("overall_score", 0.0), reverse=True)
+        scores_list = scores_list[:top]
         
         # Convert to response models with safe field access
         miner_scores = [
@@ -61,7 +62,6 @@ async def get_latest_scores(
                 model_revision=s.get("model_revision", "unknown"),
                 overall_score=s.get("overall_score", 0.0),
                 average_score=s.get("average_score", 0.0),
-                confidence_interval=s.get("confidence_interval", [0.0, 0.0]),
                 scores_by_layer=s.get("scores_by_layer", {}),
                 scores_by_env=s.get("scores_by_env", {}),
                 total_samples=s.get("total_samples", 0),
@@ -110,7 +110,6 @@ async def get_miner_score_history(
                 calculated_at=h.get("calculated_at", 0),
                 overall_score=h.get("overall_score", 0.0),
                 average_score=h.get("average_score", 0.0),
-                confidence_interval=h.get("confidence_interval", [0.0, 0.0]),
             )
             for h in history_data
         ]

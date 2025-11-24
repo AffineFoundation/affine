@@ -63,7 +63,30 @@ class Stage1Collector:
             
         Returns:
             Stage1Output containing processed miner data
+            
+        Raises:
+            RuntimeError: If scoring_data is invalid or contains API error response
         """
+        # Validate scoring_data is not an error response
+        if not isinstance(scoring_data, dict):
+            raise RuntimeError(f"Invalid scoring_data type: {type(scoring_data)}")
+        
+        # Check for API error response format
+        if "success" in scoring_data and scoring_data.get("success") is False:
+            error_msg = scoring_data.get("error", "Unknown error")
+            status_code = scoring_data.get("status_code", "unknown")
+            logger.error(f"Received API error response: {error_msg} (status: {status_code})")
+            raise RuntimeError(f"Cannot process scoring data: API returned error: {error_msg}")
+        
+        if not scoring_data:
+            logger.warning("Received empty scoring_data")
+            return Stage1Output(
+                miners={},
+                environments=environments,
+                valid_count=0,
+                invalid_count=0
+            )
+        
         logger.info(f"Stage 1: Starting data collection for {len(scoring_data)} miners")
         
         miners: Dict[int, MinerData] = {}

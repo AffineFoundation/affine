@@ -26,7 +26,16 @@ async def fetch_scoring_data() -> dict:
     api_client = create_api_client()
     
     logger.info("Fetching scoring data from API...")
-    return await api_client.get("/samples/scoring")
+    data = await api_client.get("/samples/scoring")
+    
+    # Check for API error response
+    if isinstance(data, dict) and "success" in data and data.get("success") is False:
+        error_msg = data.get("error", "Unknown API error")
+        status_code = data.get("status_code", "unknown")
+        logger.error(f"API returned error response: {error_msg} (status: {status_code})")
+        raise RuntimeError(f"Failed to fetch scoring data: {error_msg}")
+    
+    return data
 
 
 async def fetch_system_config() -> dict:
