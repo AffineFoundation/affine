@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from affine.core.setup import logger, wallet
 from affine.core.models import SampleSubmission
+from affine.utils.api_client import create_api_client, APIClient
 
 
 @dataclass
@@ -36,7 +37,6 @@ class ExecutorWorker:
         self,
         worker_id: int,
         env: str,
-        api_base_url: str,
         poll_interval: int = 5,
     ):
         """Initialize executor worker.
@@ -44,17 +44,18 @@ class ExecutorWorker:
         Args:
             worker_id: Unique worker ID
             env: Environment to execute tasks for (e.g., "affine:sat")
-            api_base_url: API server URL
             poll_interval: How often to poll for tasks (seconds)
         """
         self.worker_id = worker_id
         self.env = env
-        self.api_base_url = api_base_url
         self.poll_interval = poll_interval
         
         self.running = False
         self.metrics = WorkerMetrics()
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._chutes_session: Optional[aiohttp.ClientSession] = None  # Separate session for Chutes API
+        
+        # API client for affine backend
+        self.api_client: Optional[APIClient] = None
         
         # Environment executor (will be initialized lazily)
         self.env_executor = None
@@ -65,13 +66,13 @@ class ExecutorWorker:
         else:
             self.hotkey = None
     
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create aiohttp session."""
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(
+    async def _get_chutes_session(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp session for Chutes API calls."""
+        if self._chutes_session is None or self._chutes_session.closed:
+            self._chutes_session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=300)  # 5 min timeout
             )
-        return self._session
+        return self._chutes_session
     
     async def _init_env_executor(self):
         """Initialize environment executor lazily."""
@@ -98,6 +99,9 @@ class ExecutorWorker:
         # Validate wallet
         if not wallet or not self.hotkey:
             raise RuntimeError("Wallet not configured for worker")
+        
+        # Initialize API client
+        self.api_client = create_api_client()
         
         # Initialize environment executor
         await self._init_env_executor()
@@ -153,39 +157,27 @@ class ExecutorWorker:
         }
     
     async def _fetch_task(self) -> Optional[Dict]:
-        url = f"{self.api_base_url}/api/v1/tasks/fetch"
-        params = {"env": self.env}
-        headers = self._get_auth_headers()
-
+        """Fetch next task from API."""
         try:
-            session = await self._get_session()
-            async with session.post(url, params=params, headers=headers) as resp:
-                data = None
-                try:
-                    data = await resp.json()
-                except Exception:
-                    data = await resp.text()
+            headers = self._get_auth_headers()
+            response = await self.api_client.post(
+                "/tasks/fetch",
+                params={"env": self.env},
+                headers=headers
+            )
 
-                if resp.status != 200:
-                    detail = data.get("detail") if isinstance(data, dict) else None
-                    logger.error(
-                        f"[{self.env}] Task fetch failed: status={resp.status}, "
-                        f"detail={detail}, response={data}"
-                    )
-                    return None
+            task = response.get("task") if isinstance(response, dict) else None
+            if not task:
+                logger.info(f"[{self.env}] No task available")
+                return None
 
-                task = isinstance(data, dict) and data.get("task")
-                if not task:
-                    logger.info(f"[{self.env}] No task available. response={data}")
-                    return None
-
-                logger.info(
-                    f"[{self.env}] Fetched task: "
-                    f"uuid={str(task.get('task_uuid','N/A'))[:8]}... "
-                    f"task_id={task.get('task_id')} "
-                    f"miner={(task.get('miner_hotkey',''))[:12]}..."
-                )
-                return task
+            logger.info(
+                f"[{self.env}] Fetched task: "
+                f"uuid={str(task.get('task_uuid','N/A'))[:8]}... "
+                f"task_id={task.get('task_id')} "
+                f"miner={(task.get('miner_hotkey',''))[:12]}..."
+            )
+            return task
 
         except Exception:
             logger.exception(f"[{self.env}] Error fetching task")
@@ -204,8 +196,6 @@ class ExecutorWorker:
             True if successful
         """
         try:
-            url = f"{self.api_base_url}/api/v1/miners/{miner_hotkey}/pause"
-            
             # Exponential backoff: 10 minutes * 2^(errors-1), max 2 hours
             base_duration = 600  # 10 minutes
             duration = min(base_duration * (2 ** (consecutive_errors - 1)), 7200)
@@ -215,16 +205,13 @@ class ExecutorWorker:
                 "reason": f"Consecutive errors: {consecutive_errors}"
             }
             
-            session = await self._get_session()
-            async with session.put(url, json=data) as resp:
-                if resp.status == 200:
-                    logger.warning(
-                        f"[{self.env}] Paused miner {miner_hotkey[:8]}... "
-                        f"for {duration}s due to {consecutive_errors} consecutive errors"
-                    )
-                    return True
+            await self.api_client.put(f"/miners/{miner_hotkey}/pause", json=data)
             
-            return False
+            logger.warning(
+                f"[{self.env}] Paused miner {miner_hotkey[:8]}... "
+                f"for {duration}s due to {consecutive_errors} consecutive errors"
+            )
+            return True
         
         except Exception as e:
             logger.error(f"[{self.env}] Error pausing miner: {e}")
@@ -255,7 +242,8 @@ class ExecutorWorker:
             
             headers = {"Authorization": token}
             
-            session = await self._get_session()
+            # Use separate session for Chutes API
+            session = await self._get_chutes_session()
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 if resp.status != 200:
                     logger.error(
@@ -390,11 +378,8 @@ class ExecutorWorker:
             # Get authentication headers
             headers = self._get_auth_headers()
             
-            session = await self._get_session()
-            
-            # Submit to new /api/v1/samples/submit endpoint
+            # Submit to /samples/submit endpoint
             # API will merge miner metadata from task queue
-            url = f"{self.api_base_url}/api/v1/samples/submit"
             submit_data = {
                 "task_uuid": submission.task_uuid,
                 "score": submission.score,
@@ -403,24 +388,19 @@ class ExecutorWorker:
                 "signature": submission.signature,
             }
             
-            async with session.post(url, json=submit_data, headers=headers) as resp:
-                if resp.status == 200:
-                    response = await resp.json()
-                    logger.info(
-                        f"[{self.env}] Submitted result: "
-                        f"task_uuid={submission.task_uuid[:8]}... "
-                        f"score={submission.score:.4f} {response}"
-                    )
-                    self.metrics.tasks_completed += 1
-                    return True
-                else:
-                    # Bad request (e.g., invalid signature, task not found)
-                    error_detail = await resp.text()
-                    logger.error(
-                        f"[{self.env}] Failed to submit: {error_detail}"
-                    )
-                    self.metrics.tasks_failed += 1
-                    return False
+            response = await self.api_client.post(
+                "/samples/submit",
+                json=submit_data,
+                headers=headers
+            )
+            
+            logger.info(
+                f"[{self.env}] Submitted result: "
+                f"task_uuid={submission.task_uuid[:8]}... "
+                f"score={submission.score:.4f} {response}"
+            )
+            self.metrics.tasks_completed += 1
+            return True
         
         except Exception as e:
             logger.error(f"[{self.env}] Error submitting result: {e}")
