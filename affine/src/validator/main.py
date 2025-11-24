@@ -3,26 +3,18 @@
 Validator Service Main Entry Point
 
 Fetches scores from backend API and sets weights on blockchain.
-
-Usage:
-    python -m affine.backend.validator.main
-    python -m affine.backend.validator.main --single-run
-    python -m affine.backend.validator.main --debug
 """
 
 import asyncio
-import argparse
-import logging
 import os
 import time
 import signal
-import aiohttp
+import click
 from typing import Dict, List, Optional, Tuple
 
-from affine.backend.validator.weight_setter import WeightSetter
-from affine.backend.config import get_config
-
-from affine.core.setup import logger
+from affine.src.validator.weight_setter import WeightSetter
+from affine.core.setup import logger, setup_logging
+from affine.utils.api_client import create_api_client
 
 
 class ValidatorService:
@@ -38,7 +30,6 @@ class ValidatorService:
     
     def __init__(
         self,
-        api_base_url: Optional[str] = None,
         wallet=None,
         netuid: int = 120,
     ):
@@ -46,14 +37,11 @@ class ValidatorService:
         Initialize ValidatorService.
         
         Args:
-            api_base_url: Backend API URL
             wallet: Bittensor wallet (if None, loads from environment)
             netuid: Subnet UID
         """
-        # Configuration
-        self.config = get_config(api_base_url)
-        self.api_base_url = api_base_url or self.config.api_base_url
-        self._session: Optional[aiohttp.ClientSession] = None
+        # API client
+        self.api_client = create_api_client()
         
         # Wallet and blockchain
         self.wallet = wallet
@@ -75,15 +63,7 @@ class ValidatorService:
         self.successful_runs = 0
         self.failed_runs = 0
         
-        logger.info(f"ValidatorService initialized (API: {self.api_base_url})")
-    
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create aiohttp session."""
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=60)
-            )
-        return self._session
+        logger.info(f"ValidatorService initialized")
     
     async def fetch_latest_scores(self) -> Optional[Dict]:
         """
@@ -93,27 +73,24 @@ class ValidatorService:
             Dictionary with scores data or None if failed
         """
         try:
-            url = f"{self.api_base_url}/api/v1/scores/latest"
-            session = await self._get_session()
+            response = await self.api_client.get("/scores/latest")
             
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    logger.warning("No scores available from backend")
-                    return None
-                
-                response = await resp.json()
-                
-                scores = response.get("scores", [])
-                if not scores:
-                    logger.warning("Empty scores from backend")
-                    return None
-                
-                logger.info(
-                    f"Fetched {len(scores)} miner scores "
-                    f"(block: {response.get('block_number', 'unknown')})"
-                )
-                
-                return response
+            # Check for API error response
+            if isinstance(response, dict) and "success" in response and response.get("success") is False:
+                logger.warning("No scores available from backend")
+                return None
+            
+            scores = response.get("scores", [])
+            if not scores:
+                logger.warning("Empty scores from backend")
+                return None
+            
+            logger.info(
+                f"Fetched {len(scores)} miner scores "
+                f"(block: {response.get('block_number', 'unknown')})"
+            )
+            
+            return response
         
         except Exception as e:
             logger.error(f"Error fetching scores: {e}")
@@ -155,21 +132,20 @@ class ValidatorService:
             Dictionary mapping hotkey -> uid
         """
         try:
-            url = f"{self.api_base_url}/api/v1/miners/active"
-            session = await self._get_session()
+            response = await self.api_client.get("/miners/active")
             
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    response = await resp.json()
-                    
-                    if response and isinstance(response, list):
-                        hotkey_to_uid = {
-                            miner["hotkey"]: miner["uid"]
-                            for miner in response
-                            if "hotkey" in miner and "uid" in miner
-                        }
-                        logger.info(f"Loaded {len(hotkey_to_uid)} miners from API")
-                        return hotkey_to_uid
+            # Check for API error response
+            if isinstance(response, dict) and "success" in response and response.get("success") is False:
+                return {}
+            
+            if response and isinstance(response, list):
+                hotkey_to_uid = {
+                    miner["hotkey"]: miner["uid"]
+                    for miner in response
+                    if "hotkey" in miner and "uid" in miner
+                }
+                logger.info(f"Loaded {len(hotkey_to_uid)} miners from API")
+                return hotkey_to_uid
             
             return {}
         
@@ -185,35 +161,49 @@ class ValidatorService:
         """
         Convert hotkey-based scores to UID-based weights.
         
+        IMPORTANT: Returns weights for ALL UIDs in metagraph, with 0 for miners
+        without scores. This ensures that miners not in the top scores explicitly
+        get their weights reset to 0 on chain.
+        
         Args:
-            scores: List of score dictionaries
-            hotkey_to_uid: Mapping from hotkey to UID
+            scores: List of score dictionaries (may be top N only)
+            hotkey_to_uid: Mapping from hotkey to UID (all miners in metagraph)
             
         Returns:
-            Tuple of (uids, weights)
+            Tuple of (uids, weights) - includes ALL UIDs from metagraph
         """
-        uids = []
-        weights = []
+        # Get total number of UIDs
+        max_uid = max(hotkey_to_uid.values()) if hotkey_to_uid else 0
+        total_uids = max_uid + 1
         
+        # Initialize weights array with zeros for all UIDs
+        weights_array = [0.0] * total_uids
+        
+        # Create hotkey to score mapping
+        hotkey_to_score = {}
         for score in scores:
             hotkey = score.get("miner_hotkey")
-            if not hotkey:
-                continue
-            
-            uid = hotkey_to_uid.get(hotkey)
-            if uid is None:
-                logger.debug(f"Hotkey {hotkey[:16]}... not in metagraph")
-                continue
-            
-            # Get overall score as weight
-            weight = score.get("overall_score", 0.0)
-            
-            # Only include positive weights
-            if weight > 0:
-                uids.append(uid)
-                weights.append(weight)
+            if hotkey:
+                hotkey_to_score[hotkey] = score.get("overall_score", 0.0)
         
-        logger.info(f"Converted {len(scores)} scores to {len(uids)} UID weights")
+        # Set weights for miners with scores
+        miners_with_scores = 0
+        for hotkey, uid in hotkey_to_uid.items():
+            if hotkey in hotkey_to_score:
+                weight = hotkey_to_score[hotkey]
+                if weight > 0:
+                    weights_array[uid] = weight
+                    miners_with_scores += 1
+        
+        # Create full UID list
+        uids = list(range(total_uids))
+        weights = weights_array
+        
+        logger.info(
+            f"Converted {len(scores)} scores to {total_uids} UID weights "
+            f"({miners_with_scores} non-zero, {total_uids - miners_with_scores} zeros)"
+        )
+        
         return uids, weights
     
     async def run_once(self) -> bool:
@@ -303,21 +293,21 @@ class ValidatorService:
                 logger.error("Failed to import wallet from affine.core.setup")
         
         try:
+            # Get interval from environment variable
+            interval = int(os.getenv("VALIDATOR_WEIGHT_SET_INTERVAL", "1800"))  # Default 30 minutes
+            
             while self.running:
                 # Run one iteration
                 success = await self.run_once()
-                
-                # Get interval from config
-                interval = await self.config.get("validator.weight_set_interval")
-                if interval is None:
-                    interval = 1800  # Default 30 minutes
                 
                 if success:
                     logger.info(f"Next weight set in {interval}s")
                 else:
                     # Use shorter interval on failure
-                    interval = min(interval, 300)
-                    logger.info(f"Retry in {interval}s after failure")
+                    retry_interval = min(interval, 300)
+                    logger.info(f"Retry in {retry_interval}s after failure")
+                    await asyncio.sleep(retry_interval)
+                    continue
                 
                 # Wait for next run
                 await asyncio.sleep(interval)
@@ -377,27 +367,17 @@ class ValidatorService:
         print("=" * 60)
 
 
-async def main(args):
-    """Main entry point."""
-    # Setup logging
-    log_level = logging.DEBUG if args.debug else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        force=True,
-    )
+async def run_service_with_mode(netuid: int, service_mode: bool):
+    """Run the validator service.
     
-    # Get API URL
-    api_url = args.api_url or os.getenv("API_URL") or os.getenv("API_BASE_URL", "http://localhost:8000")
-    
-    # Get netuid
-    netuid = args.netuid or int(os.getenv("NETUID", "120"))
-    
-    logger.info(f"Starting validator service (API: {api_url}, netuid: {netuid})")
+    Args:
+        netuid: Subnet UID
+        service_mode: If True, run continuously; if False, run once and exit
+    """
+    logger.info(f"Starting validator service (netuid: {netuid})")
     
     # Create validator service
     service = ValidatorService(
-        api_base_url=api_url,
         netuid=netuid,
     )
     
@@ -413,24 +393,24 @@ async def main(args):
         loop.add_signal_handler(sig, lambda s=sig: handle_shutdown(s))
     
     try:
-        if args.single_run:
-            # Single run mode (for debugging)
-            logger.info("Running single iteration...")
+        if not service_mode:
+            # Single run mode (DEFAULT)
+            logger.info("Running in one-time mode (default)")
             success = await service.run_once()
             service.print_status()
-            return 0 if success else 1
         else:
+            # Continuous service mode (SERVICE_MODE=true)
+            logger.info("Running in service mode (continuous). Press Ctrl+C to stop.")
+            
             # Start service
             service_task = asyncio.create_task(service.start())
             
             # Wait for shutdown
-            logger.info("Running in continuous mode. Press Ctrl+C to stop.")
             while not shutdown_event.is_set():
                 try:
                     await asyncio.wait_for(shutdown_event.wait(), timeout=60)
                 except asyncio.TimeoutError:
-                    if args.debug:
-                        service.print_status()
+                    service.print_status()
             
             # Shutdown
             await service.stop()
@@ -444,50 +424,57 @@ async def main(args):
             service.print_status()
     
     except Exception as e:
-        logger.error(f"Error running validator: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
-    
-    return 0
+        logger.error(f"Error running validator: {e}", exc_info=True)
+        raise
 
 
-def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Affine Validator - Set weights on blockchain"
-    )
+@click.command()
+@click.option(
+    "--netuid",
+    default=None,
+    type=int,
+    help="Subnet UID (default: from NETUID or 120)"
+)
+@click.option(
+    "-v", "--verbosity",
+    default=None,
+    type=click.Choice(["0", "1", "2", "3"]),
+    help="Logging verbosity: 0=CRITICAL, 1=INFO, 2=DEBUG, 3=TRACE"
+)
+def main(netuid, verbosity):
+    """
+    Affine Validator - Set weights on blockchain based on miner scores.
     
-    parser.add_argument(
-        "--api-url",
-        type=str,
-        default=None,
-        help="API server URL (default: from environment)"
-    )
+    This service fetches the latest scores from the API and sets weights
+    on the Bittensor blockchain for subnet miners.
     
-    parser.add_argument(
-        "--netuid",
-        type=int,
-        default=None,
-        help="Subnet UID (default: 1 or from environment)"
-    )
+    Run Mode:
+    - Default: One-time execution (sets weights once and exits)
+    - SERVICE_MODE=true: Continuous service mode (runs every 30 minutes)
     
-    parser.add_argument(
-        "--single-run",
-        action="store_true",
-        help="Run once and exit (for debugging)"
-    )
+    Configuration:
+    - NETUID: Subnet UID (default: 120)
+    - SERVICE_MODE: Run as continuous service (default: false)
+    """
+    # Setup logging if verbosity specified
+    if verbosity is not None:
+        setup_logging(int(verbosity))
     
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug logging"
-    )
+    # Get netuid
+    netuid_val = netuid if netuid is not None else int(os.getenv("NETUID", "120"))
     
-    return parser.parse_args()
+    # Check service mode (default: false = one-time execution)
+    service_mode = os.getenv("SERVICE_MODE", "false").lower() in ("true", "1", "yes")
+    
+    logger.info(f"Netuid: {netuid_val}")
+    logger.info(f"Service mode: {service_mode}")
+    
+    # Run service
+    asyncio.run(run_service_with_mode(
+        netuid=netuid_val,
+        service_mode=service_mode
+    ))
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    exit_code = asyncio.run(main(args))
-    exit(exit_code)
+    main()

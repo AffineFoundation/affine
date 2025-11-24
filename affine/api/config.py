@@ -12,10 +12,10 @@ class APIConfig:
     """API configuration from environment variables."""
 
     # Server settings
-    HOST: str = os.getenv("API_HOST", "0.0.0.0")
+    HOST: str = os.getenv("API_HOST", "127.0.0.1")
     PORT: int = int(os.getenv("API_PORT", "8000"))
-    WORKERS: int = int(os.getenv("API_WORKERS", "4"))
-    RELOAD: bool = os.getenv("API_RELOAD", "false").lower() == "true"
+    WORKERS: int = int(os.getenv("API_WORKERS", "1"))
+    RELOAD: bool = os.getenv("API_RELOAD", "true").lower() == "true"
 
 
     # Rate limiting

@@ -212,10 +212,6 @@ class Scorer:
             # Use normalized weight as overall score
             overall_score = miner.normalized_weight
             
-            # Simple CI estimation (±10% of score)
-            ci_lower = max(0.0, overall_score * 0.9)
-            ci_upper = min(1.0, overall_score * 1.1)
-            
             # Calculate average score from environments
             if scores_by_env:
                 average_score = sum(scores_by_env.values()) / len(scores_by_env)
@@ -234,8 +230,6 @@ class Scorer:
                 uid=uid,
                 model_revision=miner.model_revision,
                 overall_score=overall_score,
-                confidence_interval_lower=ci_lower,
-                confidence_interval_upper=ci_upper,
                 average_score=average_score,
                 scores_by_layer=scores_by_layer,
                 scores_by_env=scores_by_env,
