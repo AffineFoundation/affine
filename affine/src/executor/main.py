@@ -11,9 +11,10 @@ import asyncio
 import os
 import click
 from typing import List
+import bittensor as bt
 
 from affine.src.executor.worker import ExecutorWorker
-from affine.core.setup import wallet, logger, setup_logging
+from affine.core.setup import logger, setup_logging
 from affine.utils.api_client import create_api_client
 
 
@@ -52,6 +53,7 @@ class ExecutorManager:
             worker = ExecutorWorker(
                 worker_id=idx,
                 env=env,
+                wallet=self.wallet,
                 poll_interval=self.poll_interval,
             )
             self.workers.append(worker)
@@ -64,13 +66,17 @@ class ExecutorManager:
             return
         
         logger.info("Starting ExecutorManager...")
-        
+
+        coldkey = os.getenv("BT_WALLET_COLD", "default")
+        hotkey = os.getenv("BT_WALLET_HOT", "default")
+        self.wallet = bt.wallet(name=coldkey, hotkey=hotkey)
+
         # Validate wallet
-        if not wallet:
+        if not self.wallet:
             logger.error("No wallet configured. Set WALLET_NAME and WALLET_HOTKEY environment variables.")
             raise RuntimeError("Wallet not configured")
         
-        logger.info(f"Using wallet hotkey: {wallet.hotkey.ss58_address[:16]}...")
+        logger.info(f"Using wallet hotkey: {self.wallet.hotkey.ss58_address[:16]}...")
         
         # Create workers first
         self._create_workers()

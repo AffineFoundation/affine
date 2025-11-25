@@ -5,14 +5,15 @@ Each worker fetches tasks for a specific environment and executes them.
 Uses authenticated API endpoints with wallet signature verification.
 """
 
+import os
 import asyncio
 import time
 import traceback
 import aiohttp
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
-
-from affine.core.setup import logger, wallet
+import bittensor as bt
+from affine.core.setup import logger
 from affine.core.models import SampleSubmission
 from affine.utils.api_client import create_api_client, APIClient
 
@@ -37,6 +38,7 @@ class ExecutorWorker:
         self,
         worker_id: int,
         env: str,
+        wallet: bt.wallet,
         poll_interval: int = 5,
     ):
         """Initialize executor worker.
@@ -44,10 +46,13 @@ class ExecutorWorker:
         Args:
             worker_id: Unique worker ID
             env: Environment to execute tasks for (e.g., "affine:sat")
+            wallet: Bittensor wallet for signing
             poll_interval: How often to poll for tasks (seconds)
         """
         self.worker_id = worker_id
         self.env = env
+        self.wallet = wallet
+        self.hotkey = wallet.hotkey.ss58_address
         self.poll_interval = poll_interval
         
         self.running = False
@@ -59,13 +64,7 @@ class ExecutorWorker:
         
         # Environment executor (will be initialized lazily)
         self.env_executor = None
-        
-        # Executor identity (from wallet)
-        if wallet:
-            self.hotkey = wallet.hotkey.ss58_address
-        else:
-            self.hotkey = None
-    
+
     async def _get_chutes_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session for Chutes API calls."""
         if self._chutes_session is None or self._chutes_session.closed:
@@ -97,7 +96,7 @@ class ExecutorWorker:
         logger.info(f"[{self.env}] Initializing worker for {self.env}...")
 
         # Validate wallet
-        if not wallet or not self.hotkey:
+        if not self.wallet or not self.hotkey:
             raise RuntimeError("Wallet not configured for worker")
         
         # Initialize API client
@@ -129,11 +128,11 @@ class ExecutorWorker:
         Returns:
             Hex-encoded signature
         """
-        if not wallet:
+        if not self.wallet:
             raise RuntimeError("Wallet not configured")
         
         # Sign the message
-        signature = wallet.hotkey.sign(message.encode())
+        signature = self.wallet.hotkey.sign(message.encode())
         return signature.hex()
     
     def _get_auth_headers(self, message: Optional[str] = None) -> Dict[str, str]:
@@ -341,10 +340,9 @@ class ExecutorWorker:
             )
             
             # Sign submission using wallet
-            if wallet:
-                sign_data = submission.get_sign_data()
-                signature_bytes = wallet.hotkey.sign(sign_data.encode())
-                submission.signature = signature_bytes.hex()
+            sign_data = submission.get_sign_data()
+            signature_bytes = self.wallet.hotkey.sign(sign_data.encode())
+            submission.signature = signature_bytes.hex()
             
             logger.info(
                 f"[{self.env}] Task completed: "

@@ -328,12 +328,14 @@ class R2ToDynamoMigration:
     ) -> bool:
         """Check if a sample already exists in DynamoDB.
         
-        Uses PK/SK to find the item, then verifies timestamp matches.
-        This prevents false positives when the same task_id is executed
-        multiple times (e.g., retries).
+        Compares timestamps to determine if update is needed:
+        - If existing timestamp >= new timestamp: skip (return True)
+        - If existing timestamp < new timestamp: update (return False)
+        - If not exists: insert (return False)
         
         Returns:
-            True if sample exists with matching timestamp
+            True if should skip (existing data is newer or equal)
+            False if should insert/update (new data is newer or not exists)
         """
         try:
             pk = self.sample_dao._make_pk(miner_hotkey, model_revision, env)
@@ -353,14 +355,15 @@ class R2ToDynamoMigration:
             if 'Item' not in response:
                 return False
             
-            # Verify timestamp matches to handle task retries
+            # Compare timestamps
             item = self.sample_dao._deserialize(response['Item'])
-            existing_timestamp = item.get('timestamp')
+            existing_timestamp = item.get('timestamp', 0)
             
-            # Consider it a duplicate if timestamps are within 1 second (1000ms)
-            if existing_timestamp and abs(existing_timestamp - timestamp) < 1000:
+            # Skip if existing data is newer or equal
+            if existing_timestamp >= timestamp:
                 return True
             
+            # Allow update if new data is newer
             return False
             
         except Exception:

@@ -14,9 +14,13 @@ Provides a single entry point for all Affine components:
 - af chutes_push: Deploy model to Chutes (miner)
 - af get-sample : Query sample by UID, env, and task ID
 - af get-miner  : Query miner status by UID
+- af deploy     : Deploy docker containers (validator/backend)
+- af down       : Stop docker containers (validator/backend)
 """
 
 import sys
+import os
+import subprocess
 import click
 from affine.core.setup import setup_logging, logger
 
@@ -223,6 +227,115 @@ def get_pool(ctx):
     
     sys.argv = ["get-pool"] + ctx.args
     miner_get_pool.main(standalone_mode=False)
+
+
+# ============================================================================
+# Docker Deployment Commands
+# ============================================================================
+
+@cli.command()
+@click.argument("service", type=click.Choice(["validator", "backend"]))
+@click.option("--local", is_flag=True, help="Use local build mode")
+@click.option("--recreate", is_flag=True, help="Recreate containers")
+def deploy(service, local, recreate):
+    """Deploy docker containers for validator or backend services.
+    
+    SERVICE: Either 'validator' or 'backend'
+    
+    Examples:
+        af deploy validator --recreate --local
+        af deploy backend --local
+        af deploy validator
+        af deploy backend --recreate
+    """
+    # Get the affine directory (where docker-compose files are located)
+    affine_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    
+    # Build docker-compose command based on service type
+    if service == "validator":
+        compose_files = ["-f", "docker-compose.yml"]
+        if local:
+            compose_files.extend(["-f", "docker-compose.local.yml"])
+    else:  # backend
+        compose_files = ["-f", "docker-compose.backend.yml"]
+        if local:
+            compose_files.extend(["-f", "docker-compose.backend.local.yml"])
+    
+    # Build the command
+    cmd = ["docker", "compose"] + compose_files + ["up", "-d"]
+    
+    if recreate:
+        cmd.append("--force-recreate")
+    
+    if local:
+        cmd.append("--build")
+    
+    # Execute the command
+    logger.info(f"Deploying {service} services...")
+    logger.info(f"Running: {' '.join(cmd)}")
+    
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=affine_dir,
+            check=True,
+            capture_output=False
+        )
+        logger.info(f"✓ {service.capitalize()} services deployed successfully")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"✗ Failed to deploy {service} services")
+        sys.exit(e.returncode)
+
+
+@cli.command()
+@click.argument("service", type=click.Choice(["validator", "backend"]))
+@click.option("--local", is_flag=True, help="Use local build mode")
+@click.option("--volumes", "-v", is_flag=True, help="Remove volumes as well")
+def down(service, local, volumes):
+    """Stop and remove docker containers for validator or backend services.
+    
+    SERVICE: Either 'validator' or 'backend'
+    
+    Examples:
+        af down validator --local
+        af down backend --local --volumes
+        af down validator
+        af down backend -v
+    """
+    # Get the affine directory (where docker-compose files are located)
+    affine_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    
+    # Build docker-compose command based on service type
+    if service == "validator":
+        compose_files = ["-f", "docker-compose.yml"]
+        if local:
+            compose_files.extend(["-f", "docker-compose.local.yml"])
+    else:  # backend
+        compose_files = ["-f", "docker-compose.backend.yml"]
+        if local:
+            compose_files.extend(["-f", "docker-compose.backend.local.yml"])
+    
+    # Build the command
+    cmd = ["docker", "compose"] + compose_files + ["down"]
+    
+    if volumes:
+        cmd.append("--volumes")
+    
+    # Execute the command
+    logger.info(f"Stopping {service} services...")
+    logger.info(f"Running: {' '.join(cmd)}")
+    
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=affine_dir,
+            check=True,
+            capture_output=False
+        )
+        logger.info(f"✓ {service.capitalize()} services stopped successfully")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"✗ Failed to stop {service} services")
+        sys.exit(e.returncode)
 
 
 def main():

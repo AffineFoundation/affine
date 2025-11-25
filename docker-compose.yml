@@ -10,56 +10,9 @@ services:
     env_file:
       - .env
     volumes:
-      - ./.env:/app/.env:ro
-      - validator-cache:/app/data/blocks
-    environment:
-      - AFFINE_CACHE_DIR=/app/data/blocks
-      - SIGNER_URL=http://signer:8080
-    depends_on:
-      signer:
-        condition: service_healthy
-    command: ["-vv", "validate"]
-
-  runner:
-    image: thebes1618/affine:latest
-    container_name: affine-runner
-    restart: unless-stopped
-    mem_reservation: "6g"
-    mem_limit:       "8g"
-    env_file:
-      - .env
-    volumes:
-      - ./.env:/app/.env:ro
       - ~/.bittensor/wallets:/root/.bittensor/wallets:ro
-      - ~/.ssh:/root/.ssh
-      - /var/run/docker.sock:/var/run/docker.sock
-      - runner-cache:/root/.cache/affine
-      # runner doesn’t need the cache—omit or give its own if desired
-    environment:
-      - SIGNER_URL=http://signer:8080
-    command: ["-vv", "runner", "--enable-monitoring"]
-
-  signer:
-    image: thebes1618/affine:latest
-    container_name: affine-signer
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      - SIGNER_HOST=0.0.0.0
-      - SIGNER_PORT=8080
-    volumes:
-      - ./.env:/app/.env:ro
-      - ~/.bittensor/wallets:/root/.bittensor/wallets:ro
-    ports:
-      - "8080:8080"
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
-      start_period: 5s
-    command: ["-v", "signer"]
+      - /var/log/affine/validator:/var/log/affine/validator
+    command: ["-vv", "validator"]
 
   watchtower:
     image: nickfedor/watchtower
@@ -67,11 +20,4 @@ services:
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    command: --interval 30 affine-validator affine-runner affine-signer
-
-volumes:
-  grafana-storage:
-  validator-cache:
-    name: affine-validator-cache
-  runner-cache:
-    name: affine-runner-cache
+    command: --interval 30 affine-validator
