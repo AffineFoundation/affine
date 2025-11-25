@@ -12,7 +12,3 @@ x-affine-image: &affine_image
 services:
   validator:
     <<: *affine_image
-  runner:
-    <<: *affine_image
-  signer:
-    <<: *affine_image 
