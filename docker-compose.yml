@@ -10,7 +10,6 @@ services:
     env_file:
       - .env
     volumes:
-      - ./.env:/app/.env:ro
       - ~/.bittensor/wallets:/root/.bittensor/wallets:ro
       - /var/log/affine/validator:/var/log/affine/validator
     command: ["-vv", "validator"]

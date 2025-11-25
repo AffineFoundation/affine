@@ -237,7 +237,7 @@ def get_pool(ctx):
 @click.argument("service", type=click.Choice(["validator", "backend"]))
 @click.option("--local", is_flag=True, help="Use local build mode")
 @click.option("--recreate", is_flag=True, help="Recreate containers")
-def deploy(service, local, recreate, build):
+def deploy(service, local, recreate):
     """Deploy docker containers for validator or backend services.
     
     SERVICE: Either 'validator' or 'backend'

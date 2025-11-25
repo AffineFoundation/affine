@@ -19,7 +19,7 @@ services:
   executor:
     <<: *affine_image
   
-  miners:
+  monitor:
     <<: *affine_image
   
   scorer:
