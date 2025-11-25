@@ -12,13 +12,14 @@ x-affine-image: &affine_image
 services:
   api:
     <<: *affine_image
+
   scheduler:
     <<: *affine_image
   
   executor:
     <<: *affine_image
   
-  miners:
+  monitor:
     <<: *affine_image
   
   scorer:

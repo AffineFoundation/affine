@@ -7,20 +7,17 @@ Key Features:
 - Weighted random selection: probability proportional to pending task count per miner
 - In-memory locks: prevent multiple executors from getting same task
 - Lock timeout: auto-release expired locks
-- Cleanup: remove tasks for invalid miners
 - Idempotent completion: gracefully handle already-completed/deleted tasks
 """
 
 import asyncio
 import time
 import random
-import logging
 from typing import Dict, Any, Optional, List
 from collections import defaultdict
 
 from affine.database.dao.task_queue import TaskQueueDAO
 from affine.database.dao.execution_logs import ExecutionLogsDAO
-from affine.database.dao.miners import MinersDAO
 
 from affine.core.setup import logger
 
@@ -83,7 +80,6 @@ class TaskPoolManager:
         """
         self.dao = TaskQueueDAO()
         self.logs_dao = ExecutionLogsDAO()
-        self.miners_dao = MinersDAO()
         
         # In-memory lock storage for fetch concurrency control: {task_uuid: TaskLock}
         self.locks: Dict[str, TaskLock] = {}
@@ -197,12 +193,6 @@ class TaskPoolManager:
                 if reset_count > 0:
                     logger.info(f"Reset {reset_count} expired assigned tasks to pending")
                 
-                # Cleanup invalid tasks (every 5 minutes)
-                if int(time.time()) % 300 < self.cleanup_interval_seconds:
-                    cleaned_count = await self.cleanup_invalid_tasks()
-                    if cleaned_count > 0:
-                        logger.info(f"Cleaned up {cleaned_count} invalid tasks")
-                        
             except Exception as e:
                 logger.error(f"Error in cleanup loop: {e}", exc_info=True)
     
@@ -285,40 +275,6 @@ class TaskPoolManager:
                 logger.error(f"Error resetting expired task {task_uuid}: {e}", exc_info=True)
         
         return reset_count
-    
-    async def cleanup_invalid_tasks(self) -> int:
-        """
-        Remove tasks for miners that are no longer valid.
-        
-        Directly queries MinersDAO to determine validity.
-        
-        Returns:
-            Number of tasks cleaned up
-        """
-        try:
-            # Get valid miners from DAO directly
-            valid_miners_data = await self.miners_dao.get_valid_miners()
-            
-            if not valid_miners_data:
-                logger.warning("No valid miners found, skipping cleanup")
-                return 0
-
-            # Convert to format expected by TaskQueueDAO
-            valid_miners_list = [
-                {
-                    'hotkey': miner['hotkey'],
-                    'model_revision': miner['revision']
-                }
-                for miner in valid_miners_data
-            ]
-
-            # Call DAO cleanup method
-            cleaned_count = await self.dao.cleanup_invalid_tasks(valid_miners_list)
-            return cleaned_count
-            
-        except Exception as e:
-            logger.error(f"Error cleaning up invalid tasks: {e}", exc_info=True)
-            return 0
     
     async def fetch_task(
         self,
