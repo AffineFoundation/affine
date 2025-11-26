@@ -130,16 +130,18 @@ def get_scores(top):
 @click.command("get-pool")
 @click.argument("uid", type=int)
 @click.argument("env", type=str)
-def get_pool(uid, env):
-    """Query pending task IDs for a miner in an environment.
+@click.option("--full", is_flag=True, help="Print full task_ids lists without truncation")
+def get_pool(uid, env, full):
+    """Query task pool status for a miner in an environment.
     
     Returns the list of task IDs currently in the sampling queue
     for the specified miner and environment.
     
     Example:
         af get-pool 100 agentgym:webshop
+        af get-pool 100 agentgym:webshop --full
     """
-    asyncio.run(get_pool_command(uid=uid, env=env))
+    asyncio.run(get_pool_command(uid=uid, env=env, full=full))
 
 
 

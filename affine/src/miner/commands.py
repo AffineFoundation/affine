@@ -401,12 +401,13 @@ async def get_scores_command(top: int = 32):
         print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
-async def get_pool_command(uid: int, env: str):
-    """Query pending task IDs for a miner in an environment.
+async def get_pool_command(uid: int, env: str, full: bool = False):
+    """Query task pool status for a miner in an environment.
     
     Args:
         uid: Miner UID
         env: Environment name (e.g., agentgym:webshop)
+        full: If True, print full task_ids lists without truncation
     """
     client = create_api_client()
 
@@ -414,4 +415,35 @@ async def get_pool_command(uid: int, env: str):
     data = await client.get(endpoint)
     
     if data:
-        print(json.dumps(data, indent=2, ensure_ascii=False))
+        if full:
+            # Print full data without truncation
+            print(json.dumps(data, indent=2, ensure_ascii=False))
+        else:
+            # Format output for better readability
+            # Show summary first, then task_ids ranges instead of full lists
+            summary = {
+                "uid": data.get("uid"),
+                "hotkey": data.get("hotkey"),
+                "model_revision": data.get("model_revision"),
+                "env": data.get("env"),
+                "sampling_range": data.get("sampling_range"),
+                "total_tasks": data.get("total_tasks"),
+                "sampled_count": data.get("sampled_count"),
+                "pool_count": data.get("pool_count"),
+                "missing_count": data.get("missing_count"),
+            }
+            
+            # Helper function to format task_id list as ranges
+            def format_task_ids(task_ids):
+                if not task_ids:
+                    return "[]"
+                if len(task_ids) <= 10:
+                    return str(task_ids)
+                # Show first 5 and last 5
+                return f"[{', '.join(map(str, task_ids[:5]))}, ..., {', '.join(map(str, task_ids[-5:]))}] (total: {len(task_ids)})"
+            
+            summary["sampled_task_ids"] = format_task_ids(data.get("sampled_task_ids", []))
+            summary["pool_task_ids"] = format_task_ids(data.get("pool_task_ids", []))
+            summary["missing_task_ids"] = format_task_ids(data.get("missing_task_ids", []))
+            
+            print(json.dumps(summary, indent=2, ensure_ascii=False))
