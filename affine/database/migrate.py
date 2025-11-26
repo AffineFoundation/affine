@@ -238,12 +238,14 @@ class R2ToDynamoMigration:
             'start_time': time.time()
         }
     
-    async def migrate_result(self, result_dict: Dict[str, Any], deduplicate: bool = True) -> bool:
+    async def migrate_result(self, result_dict: Dict[str, Any]) -> bool:
         """Migrate a single result to DynamoDB.
+        
+        Always checks if task_id exists and compares timestamps.
+        Only keeps the newest sample for each task_id.
         
         Args:
             result_dict: Result data as dictionary
-            deduplicate: If True, skip if already exists
             
         Returns:
             True if migrated successfully, False if skipped/error
@@ -271,26 +273,21 @@ class R2ToDynamoMigration:
                 if isinstance(request, dict):
                     task_id = request.get('task_id')
             
-            # Fallback to 'legacy' if still None
-            if task_id is None:
-                task_id = 'legacy'
-            
             timestamp_ms = int(timestamp_float * 1000)
             
-            # Check if already exists (deduplication)
-            if deduplicate:
-                existing = await self._check_sample_exists(
-                    miner_hotkey=hotkey,
-                    model_revision=revision,
-                    env=env,
-                    task_id=task_id,
-                    timestamp=timestamp_ms
-                )
-                if existing:
-                    self.stats['total_skipped'] += 1
-                    return False
+            # Check if task_id exists and compare timestamps
+            should_skip = await self._should_skip_sample(
+                miner_hotkey=hotkey,
+                model_revision=revision,
+                env=env,
+                task_id=task_id,
+                timestamp=timestamp_ms
+            )
+            if should_skip:
+                self.stats['total_skipped'] += 1
+                return False
             
-            # Save sample result
+            # Save sample result (will overwrite if newer)
             await self.sample_dao.save_sample(
                 miner_hotkey=hotkey,
                 model_revision=revision,
@@ -318,7 +315,7 @@ class R2ToDynamoMigration:
             self.stats['total_errors'] += 1
             return False
     
-    async def _check_sample_exists(
+    async def _should_skip_sample(
         self,
         miner_hotkey: str,
         model_revision: str,
@@ -326,16 +323,16 @@ class R2ToDynamoMigration:
         task_id: str,
         timestamp: int
     ) -> bool:
-        """Check if a sample already exists in DynamoDB.
+        """Check if should skip this sample based on existing data.
         
-        Compares timestamps to determine if update is needed:
-        - If existing timestamp >= new timestamp: skip (return True)
-        - If existing timestamp < new timestamp: update (return False)
-        - If not exists: insert (return False)
+        Always checks if task_id exists in DynamoDB:
+        - If task_id not exists: insert (return False)
+        - If task_id exists and new timestamp > existing: update (return False)
+        - If task_id exists and new timestamp <= existing: skip (return True)
         
         Returns:
-            True if should skip (existing data is newer or equal)
-            False if should insert/update (new data is newer or not exists)
+            True if should skip (existing is newer or equal)
+            False if should insert/update (new is newer or not exists)
         """
         try:
             pk = self.sample_dao._make_pk(miner_hotkey, model_revision, env)
@@ -352,19 +349,16 @@ class R2ToDynamoMigration:
                 }
             )
             
+            # Task doesn't exist, should insert
             if 'Item' not in response:
                 return False
             
-            # Compare timestamps
+            # Task exists, compare timestamps
             item = self.sample_dao._deserialize(response['Item'])
             existing_timestamp = item.get('timestamp', 0)
             
-            # Skip if existing data is newer or equal
-            if existing_timestamp >= timestamp:
-                return True
-            
-            # Allow update if new data is newer
-            return False
+            # Skip if existing is newer or equal (keep newest only)
+            return existing_timestamp >= timestamp
             
         except Exception:
             # On error, assume doesn't exist (will try to insert)

@@ -701,6 +701,56 @@ class TaskPoolDAO(BaseDAO):
         
         return [self._deserialize(item) for item in items]
     
+    async def get_tasks_by_miner(
+        self,
+        miner_hotkey: str,
+        model_revision: str,
+        env: str
+    ) -> List[Dict[str, Any]]:
+        """Get all tasks for a specific miner in an environment.
+        
+        Returns tasks regardless of status (pending, assigned, failed).
+        
+        Args:
+            miner_hotkey: Miner's hotkey
+            model_revision: Model revision
+            env: Environment name
+            
+        Returns:
+            List of all tasks for this miner in the environment
+        """
+        from affine.database.client import get_client
+        client = get_client()
+        
+        pk = self._make_pk(miner_hotkey, model_revision)
+        sk_prefix = f"ENV#{env}#STATUS#"
+        
+        params = {
+            'TableName': self.table_name,
+            'KeyConditionExpression': 'pk = :pk AND begins_with(sk, :sk_prefix)',
+            'ExpressionAttributeValues': {
+                ':pk': {'S': pk},
+                ':sk_prefix': {'S': sk_prefix}
+            }
+        }
+        
+        all_tasks = []
+        last_key = None
+        
+        while True:
+            if last_key:
+                params['ExclusiveStartKey'] = last_key
+            
+            response = await client.query(**params)
+            items = response.get('Items', [])
+            all_tasks.extend([self._deserialize(item) for item in items])
+            
+            last_key = response.get('LastEvaluatedKey')
+            if not last_key:
+                break
+        
+        return all_tasks
+
     async def get_pool_stats(self, env: str) -> Dict[str, int]:
         """Get statistics about the task pool for an environment.
         
