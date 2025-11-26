@@ -37,20 +37,15 @@ async def lifespan(app: FastAPI):
         raise
     
     # Initialize TaskPoolManager (required for /fetch and /submit endpoints)
-    task_pool = None
-    
     if config.SERVICES_ENABLED:
         logger.info("Services mode enabled (SERVICES_ENABLED=true)")
         
         try:
-            from affine.api.services.task_pool import TaskPoolManager
+            from affine.api.dependencies import get_task_pool_manager
             
-            # Initialize TaskPoolManager
-            task_pool = await TaskPoolManager.initialize(
-                lock_timeout_seconds=300,  # 5 minutes
-                cleanup_interval_seconds=60  # 1 minute
-            )
-            logger.info("TaskPoolManager initialized with background tasks")
+            # Initialize TaskPoolManager singleton via dependency injection
+            _ = get_task_pool_manager()
+            logger.info("TaskPoolManager initialized")
             
         except Exception as e:
             logger.error(f"Failed to initialize TaskPoolManager: {e}")
@@ -92,14 +87,6 @@ async def lifespan(app: FastAPI):
             pass
         except Exception as e:
             logger.error(f"Error stopping scoring cache refresh: {e}")
-    
-    # Stop TaskPoolManager background tasks
-    if task_pool:
-        try:
-            await task_pool.stop_background_tasks()
-            logger.info("TaskPoolManager background tasks stopped")
-        except Exception as e:
-            logger.error(f"Error stopping TaskPoolManager: {e}")
     
     try:
         await close_client()
@@ -171,11 +158,8 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
     
-    # IMPORTANT: Must use workers=1 because of TaskPoolManager:
-    # - TaskPoolManager: in-memory lock mechanism (not shared across workers)
-    # Using multiple workers would cause:
-    # - Locks only valid within single process
-    # - Inconsistency between workers
+    # Note: workers=1 for development
+    # In production, can use multiple workers (TaskPoolManager uses dependency injection)
     
     uvicorn.run(
         "affine.api.server:app",

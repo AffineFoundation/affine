@@ -43,6 +43,11 @@ class ExecutorManager:
         self.workers: List[ExecutorWorker] = []
         self.running = False
         
+        # Status tracking for incremental statistics
+        self.last_status_time = None
+        self.last_queue_stats = {}  # {env: queue_count}
+        self.last_completed_stats = {}  # {env: completed_count}
+        
         logger.info(f"ExecutorManager initialized for {len(envs)} environments")
     
     def _create_workers(self):
@@ -57,7 +62,7 @@ class ExecutorManager:
                 poll_interval=self.poll_interval,
             )
             self.workers.append(worker)
-            logger.info(f"Created worker {idx} for {env}")
+            logger.debug(f"Created worker {idx} for {env}")
     
     async def start(self):
         """Start all workers."""
@@ -117,24 +122,64 @@ class ExecutorManager:
         return [worker.get_metrics() for worker in self.workers]
     
     async def print_status(self):
-        """Print status of all workers in compact format."""
+        """Print status of all workers in compact format with incremental statistics."""
         import time
-        from datetime import datetime
         from affine.utils.api_client import create_api_client
         
         try:
+            current_time = time.time()
+            
             # Get worker metrics
             metrics = self.get_all_metrics()
             
             # Fetch statistics from API
             api_client = create_api_client()
             
-            # Get miners count
+            # Get task queue statistics from API
             try:
-                miners_response = await api_client.get("/miners/active")
-                total_miners = len(miners_response) if isinstance(miners_response, list) else 0
+                queue_stats = {}
+                
+                for m in metrics:
+                    env = m['env']
+                    try:
+                        # Use API endpoint to get queue stats
+                        stats_response = await api_client.get(f"/tasks/pool/stats?env={env}")
+                        if isinstance(stats_response, dict):
+                            queue_stats[env] = stats_response.get('pending_count', 0)
+                        else:
+                            queue_stats[env] = 0
+                    except:
+                        queue_stats[env] = 0
+                
+                total_queue = sum(queue_stats.values())
             except:
-                total_miners = 0
+                total_queue = 0
+                queue_stats = {}
+            
+            # Calculate incremental changes
+            time_delta = int(current_time - self.last_status_time) if self.last_status_time else 0
+            
+            # Queue changes (↓ dequeued, ↑ enqueued)
+            total_dequeued = 0
+            total_enqueued = 0
+            env_queue_changes = {}
+            
+            for env, current_queue in queue_stats.items():
+                last_queue = self.last_queue_stats.get(env, current_queue)
+                change = current_queue - last_queue
+                
+                if change < 0:
+                    # Queue decreased (dequeued)
+                    dequeued = abs(change)
+                    enqueued = 0
+                else:
+                    # Queue increased (enqueued)
+                    dequeued = 0
+                    enqueued = change
+                
+                env_queue_changes[env] = (dequeued, enqueued)
+                total_dequeued += dequeued
+                total_enqueued += enqueued
             
             # Build environment stats from worker metrics
             env_stats = {}
@@ -151,35 +196,49 @@ class ExecutorManager:
                 env_stats[env_name] = {
                     'completed': completed,
                     'failed': failed,
-                    'success_rate': success_rate
+                    'success_rate': success_rate,
+                    'queue': queue_stats.get(env_name, 0)
                 }
                 
                 total_completed += completed
                 total_failed += failed
             
-            # Format environment stats string
+            # Format queue details with incremental changes
+            # Format: env=current_queue(↓dequeued ↑enqueued)
+            queue_details_parts = []
+            for env, stats in sorted(env_stats.items()):
+                env_short = env.split(':')[-1]
+                current_q = stats['queue']
+                deq, enq = env_queue_changes.get(env, (0, 0))
+                queue_details_parts.append(f"{env_short}={current_q}(↓{deq} ↑{enq})")
+            
+            queue_details = " ".join(queue_details_parts)
+            
+            # Format environment completion stats: env@completed(success_rate%)
             env_stats_str = " ".join([
                 f"{env.split(':')[-1]}@{stats['completed']}({stats['success_rate']}%)"
                 for env, stats in sorted(env_stats.items())
             ])
             
             # Build compact status line
-            timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-            status_line = (
-                f"{timestamp} INFO     [affine] [STATUS] "
-                f"samplers={total_miners} "
-                f"workers={len(metrics)} "
-                f"completed={total_completed} failed={total_failed} "
+            # [STATUS] total_queue=N(↓X ↑Y in Zs) (env_queue_details) result_queue=0 enqueued=total dequeued=total [env@completed(rate%)]
+            logger.info(
+                f"[STATUS] total_queue={total_queue}(↓{total_dequeued} ↑{total_enqueued} in {time_delta}s) "
+                f"({queue_details}) "
+                f"result_queue=0 enqueued={total_enqueued} dequeued={total_dequeued} "
                 f"[{env_stats_str}]"
             )
             
-            logger.info(status_line)
+            # Update tracking for next iteration
+            self.last_status_time = current_time
+            self.last_queue_stats = queue_stats.copy()
+            self.last_completed_stats = {m['env']: m['tasks_completed'] for m in metrics}
             
         except Exception as e:
             logger.error(f"Error printing status: {e}", exc_info=True)
             # Fallback to simple metrics display
             metrics = self.get_all_metrics()
-            logger.info(f"Executor status: {len(metrics)} workers, {sum(m['tasks_completed'] for m in metrics)} completed")
+            logger.info(f"[STATUS] workers={len(metrics)} completed={sum(m['tasks_completed'] for m in metrics)}")
 
 
 async def fetch_system_config() -> dict:
