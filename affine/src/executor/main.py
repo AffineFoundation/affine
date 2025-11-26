@@ -51,17 +51,20 @@ class ExecutorManager:
     def __init__(
         self,
         envs: List[str],
-        poll_interval: int = 5,
+        fetch_rate_per_hour: int = 1800,
+        max_concurrent_tasks: int = 5,
     ):
         """
         Initialize ExecutorManager.
         
         Args:
             envs: List of environments to execute tasks for
-            poll_interval: How often workers poll for tasks
+            fetch_rate_per_hour: Number of tasks to fetch per hour per env (default: 1800)
+            max_concurrent_tasks: Maximum concurrent tasks per env (default: 5)
         """
         self.envs = envs
-        self.poll_interval = poll_interval
+        self.fetch_rate_per_hour = fetch_rate_per_hour
+        self.max_concurrent_tasks = max_concurrent_tasks
         
         self.workers: List[ExecutorWorker] = []
         self.running = False
@@ -71,7 +74,10 @@ class ExecutorManager:
         self.last_queue_stats = {}  # {env: queue_count}
         self.last_completed_stats = {}  # {env: completed_count}
         
-        logger.info(f"ExecutorManager initialized for {len(envs)} environments")
+        logger.info(
+            f"ExecutorManager initialized for {len(envs)} environments "
+            f"(fetch_rate: {fetch_rate_per_hour}/hour, max_concurrent: {max_concurrent_tasks})"
+        )
     
     def _create_workers(self):
         """Create worker instances for each environment."""
@@ -82,7 +88,8 @@ class ExecutorManager:
                 worker_id=idx,
                 env=env,
                 wallet=self.wallet,
-                poll_interval=self.poll_interval,
+                fetch_rate_per_hour=self.fetch_rate_per_hour,
+                max_concurrent_tasks=self.max_concurrent_tasks,
             )
             self.workers.append(worker)
             logger.debug(f"Created worker {idx} for {env}")
@@ -253,12 +260,18 @@ async def fetch_system_config() -> dict:
     raise ValueError("Invalid or empty environments config from API")
 
 
-async def run_service_with_mode(envs: List[str] | None, poll_interval: int, service_mode: bool):
+async def run_service_with_mode(
+    envs: List[str] | None,
+    fetch_rate_per_hour: int,
+    max_concurrent_tasks: int,
+    service_mode: bool
+):
     """Run the executor service.
     
     Args:
         envs: List of environments to execute (None to fetch from API)
-        poll_interval: Polling interval in seconds
+        fetch_rate_per_hour: Number of tasks to fetch per hour per env
+        max_concurrent_tasks: Maximum concurrent tasks per env
         service_mode: If True, run continuously; if False, run once and exit
     """
     
@@ -273,7 +286,8 @@ async def run_service_with_mode(envs: List[str] | None, poll_interval: int, serv
     # Create manager
     manager = ExecutorManager(
         envs=envs,
-        poll_interval=poll_interval,
+        fetch_rate_per_hour=fetch_rate_per_hour,
+        max_concurrent_tasks=max_concurrent_tasks,
     )
     
     # Setup signal handlers for graceful shutdown
@@ -295,7 +309,7 @@ async def run_service_with_mode(envs: List[str] | None, poll_interval: int, serv
         if not service_mode:
             # One-time execution (DEFAULT)
             logger.info("Running in one-time mode (default): processing available tasks...")
-            await asyncio.sleep(poll_interval * 2)
+            await asyncio.sleep(10)
             await manager.print_status()
         else:
             # Continuous service mode (SERVICE_MODE=true)
@@ -325,10 +339,16 @@ async def run_service_with_mode(envs: List[str] | None, poll_interval: int, serv
     help="Environments to execute tasks for (e.g., affine:sat). If not specified, fetches from API system config"
 )
 @click.option(
-    "--poll-interval",
+    "--fetch-rate",
     default=None,
     type=int,
-    help="Seconds between polling for tasks (default: from EXECUTOR_POLL_INTERVAL or 5)"
+    help="Tasks to fetch per hour per env (default: from EXECUTOR_FETCH_RATE or 1800)"
+)
+@click.option(
+    "--max-concurrent",
+    default=None,
+    type=int,
+    help="Max concurrent tasks per env (default: from EXECUTOR_MAX_CONCURRENT or 5)"
 )
 @click.option(
     "-v", "--verbosity",
@@ -336,18 +356,19 @@ async def run_service_with_mode(envs: List[str] | None, poll_interval: int, serv
     type=click.Choice(["0", "1", "2", "3"]),
     help="Logging verbosity: 0=CRITICAL, 1=INFO, 2=DEBUG, 3=TRACE"
 )
-def main(envs, poll_interval, verbosity):
+def main(envs, fetch_rate, max_concurrent, verbosity):
     """
     Affine Executor - Execute sampling tasks for multiple environments.
     
-    Each environment runs in its own async worker, polling for tasks and executing them.
+    Each environment runs with concurrent task execution using a task queue.
     
     Run Mode:
     - Default: One-time execution (processes available tasks once)
     - SERVICE_MODE=true: Continuous service mode (keeps running)
     
     Configuration:
-    - EXECUTOR_POLL_INTERVAL: Polling interval in seconds (default: 5)
+    - EXECUTOR_FETCH_RATE: Tasks to fetch per hour per env (default: 1800, i.e., 1 task per 2 seconds)
+    - EXECUTOR_MAX_CONCURRENT: Max concurrent tasks per env (default: 5)
     - SERVICE_MODE: Run as continuous service (default: false)
     
     If --envs not specified, environments are fetched from API /api/v1/config/environments endpoint.
@@ -359,19 +380,24 @@ def main(envs, poll_interval, verbosity):
     # Get environments from CLI (or None to fetch from API)
     selected_envs = list(envs) if envs else None
     
-    # Get poll interval (priority: CLI arg > env var > default)
-    poll_interval_val = poll_interval if poll_interval is not None else int(os.getenv("EXECUTOR_POLL_INTERVAL", "5"))
+    # Get fetch rate (priority: CLI arg > env var > default)
+    fetch_rate_val = fetch_rate if fetch_rate is not None else int(os.getenv("EXECUTOR_FETCH_RATE", "1800"))
+    
+    # Get max concurrent tasks (priority: CLI arg > env var > default)
+    max_concurrent_val = max_concurrent if max_concurrent is not None else int(os.getenv("EXECUTOR_MAX_CONCURRENT", "20"))
 
     # Check service mode (default: false = one-time execution)
     service_mode = os.getenv("SERVICE_MODE", "false").lower() in ("true", "1", "yes")
     
-    logger.info(f"Poll interval: {poll_interval_val}s")
+    logger.info(f"Fetch rate: {fetch_rate_val} tasks/hour per env ({3600/fetch_rate_val:.2f}s interval)")
+    logger.info(f"Max concurrent tasks: {max_concurrent_val} per env")
     logger.info(f"Service mode: {service_mode}")
     
     # Run service
     asyncio.run(run_service_with_mode(
         envs=selected_envs,
-        poll_interval=poll_interval_val,
+        fetch_rate_per_hour=fetch_rate_val,
+        max_concurrent_tasks=max_concurrent_val,
         service_mode=service_mode
     ))
 
