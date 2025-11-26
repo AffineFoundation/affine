@@ -59,61 +59,60 @@ SAMPLE_RESULTS_SCHEMA = {
 }
 
 
-# Task Queue Table (Task Pool)
-# Schema design:
-# - PK: ENV#{env} - partition by environment
-# - SK: STATUS#{status}#UUID#{uuid} - status and unique identifier only
-# - GSI1: miner-revision-index for querying pending tasks by miner+revision
-# - GSI2: task-uuid-index for reverse lookup by uuid (for task completion/removal)
+# Task Pool Table
 #
-# Query patterns:
-# 1. Weighted random task selection (by API Server TaskPoolManager):
-#    - Get valid miners from cache
-#    - Query pending task count per miner in this env
-#    - Weighted random select miner (higher task count = higher probability)
-#    - Fetch first task from selected miner (FIFO)
-#    - Apply lock to prevent concurrent assignment
-# 2. Task completion/removal: Query by task_uuid via GSI2, delete by pk+sk
-# 3. Check miner pending tasks: Query by miner+revision via GSI1
-# 4. Cleanup invalid tasks: Scan and delete tasks for miners not in valid list
+# Design Philosophy:
+# - PK: MINER#{hotkey}#REV#{revision} - partition by miner for efficient cleanup
+# - SK: ENV#{env}#STATUS#{status}#TASK_ID#{task_id} - composite sort key with business semantics
+# - GSI1: env-status-index for weighted random task selection
 #
-# Design rationale:
-# - Task pool uses weighted random selection for fairness (not true randomness)
-# - Fairness = distribute sampling load proportionally across all miners
-# - Task locks managed in memory by API Server (single instance)
-# - Periodic cleanup removes tasks for miners with changed hotkey/revision
-TASK_QUEUE_SCHEMA = {
-    "TableName": get_table_name("task_queue"),
+# Query Patterns:
+# 1. Weighted random task selection (by TaskPoolManager):
+#    - Query GSI1 by ENV#{env}#STATUS#pending
+#    - SK sorted by MINER, enabling efficient grouping and counting
+#    - Weighted random select miner (probability ∝ task count)
+#    - Randomly select one task from chosen miner
+# 2. Miner task cleanup (by Scheduler):
+#    - Query main table by PK=MINER#{hotkey}#REV#{revision}
+#    - Batch delete all tasks for invalid miners (36x faster)
+# 3. Check miner pending tasks (by Scheduler):
+#    - Query main table by PK with env filter
+#    - Direct query, no GSI needed
+# 4. Pool statistics:
+#    - Query GSI1 by ENV#{env}#STATUS#{status} with Select=COUNT
+#
+# Design Rationale:
+# - No UUID: task_id has business semantics, easier to debug
+# - MINER partition: enables O(m) cleanup instead of O(n) individual deletes
+# - GSI1 SK by MINER: supports efficient weighted counting
+# - Fairness: new miners don't wait for old miners (weighted random, not FIFO)
+TASK_POOL_SCHEMA = {
+    "TableName": get_table_name("task_pool"),
     "KeySchema": [
-        {"AttributeName": "pk", "KeyType": "HASH"},
-        {"AttributeName": "sk", "KeyType": "RANGE"},
+        {"AttributeName": "pk", "KeyType": "HASH"},   # MINER#{hotkey}#REV#{revision}
+        {"AttributeName": "sk", "KeyType": "RANGE"},  # ENV#{env}#STATUS#{status}#TASK_ID#{task_id}
     ],
     "AttributeDefinitions": [
         {"AttributeName": "pk", "AttributeType": "S"},
         {"AttributeName": "sk", "AttributeType": "S"},
         {"AttributeName": "gsi1_pk", "AttributeType": "S"},
         {"AttributeName": "gsi1_sk", "AttributeType": "S"},
-        {"AttributeName": "task_uuid", "AttributeType": "S"},
     ],
     "GlobalSecondaryIndexes": [
         {
-            "IndexName": "miner-revision-index",
+            "IndexName": "env-status-index",
             "KeySchema": [
-                {"AttributeName": "gsi1_pk", "KeyType": "HASH"},
-                {"AttributeName": "gsi1_sk", "KeyType": "RANGE"},
-            ],
-            "Projection": {"ProjectionType": "ALL"},
-        },
-        {
-            "IndexName": "task-uuid-index",
-            "KeySchema": [
-                {"AttributeName": "task_uuid", "KeyType": "HASH"},
+                {"AttributeName": "gsi1_pk", "KeyType": "HASH"},   # ENV#{env}#STATUS#{status}
+                {"AttributeName": "gsi1_sk", "KeyType": "RANGE"},  # MINER#{hotkey}#REV#{revision}#TASK_ID#{task_id}
             ],
             "Projection": {"ProjectionType": "ALL"},
         },
     ],
     "BillingMode": "PAY_PER_REQUEST",
 }
+
+# Legacy name for compatibility during transition
+TASK_QUEUE_SCHEMA = TASK_POOL_SCHEMA
 
 
 # Execution Logs Table
@@ -316,7 +315,7 @@ SCORE_SNAPSHOTS_TTL = {
 # All table schemas
 ALL_SCHEMAS = [
     SAMPLE_RESULTS_SCHEMA,
-    TASK_QUEUE_SCHEMA,
+    TASK_POOL_SCHEMA,
     EXECUTION_LOGS_SCHEMA,
     SCORES_SCHEMA,
     SYSTEM_CONFIG_SCHEMA,

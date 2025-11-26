@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import Depends, HTTPException, Request, Header, status
 from affine.api.config import config
 from affine.database.dao.sample_results import SampleResultsDAO
-from affine.database.dao.task_queue import TaskQueueDAO
+from affine.database.dao.task_pool import TaskPoolDAO
 from affine.database.dao.execution_logs import ExecutionLogsDAO
 from affine.database.dao.scores import ScoresDAO
 from affine.database.dao.system_config import SystemConfigDAO
@@ -24,7 +24,7 @@ from affine.api.services.task_pool import TaskPoolManager
 
 # Database DAOs (singleton instances)
 _sample_results_dao: Optional[SampleResultsDAO] = None
-_task_queue_dao: Optional[TaskQueueDAO] = None
+_task_pool_dao: Optional[TaskPoolDAO] = None
 _execution_logs_dao: Optional[ExecutionLogsDAO] = None
 _scores_dao: Optional[ScoresDAO] = None
 _system_config_dao: Optional[SystemConfigDAO] = None
@@ -44,12 +44,12 @@ def get_sample_results_dao() -> SampleResultsDAO:
     return _sample_results_dao
 
 
-def get_task_queue_dao() -> TaskQueueDAO:
-    """Get TaskQueueDAO instance."""
-    global _task_queue_dao
-    if _task_queue_dao is None:
-        _task_queue_dao = TaskQueueDAO()
-    return _task_queue_dao
+def get_task_pool_dao() -> TaskPoolDAO:
+    """Get TaskPoolDAO instance."""
+    global _task_pool_dao
+    if _task_pool_dao is None:
+        _task_pool_dao = TaskPoolDAO()
+    return _task_pool_dao
 
 
 def get_execution_logs_dao() -> ExecutionLogsDAO:
@@ -124,10 +124,10 @@ def get_auth_service() -> AuthService:
 
 
 def get_task_pool_manager() -> TaskPoolManager:
-    """Get TaskPoolManager singleton instance."""
+    """Get TaskPoolManager instance (lazy initialization)."""
     global _task_pool_manager
     if _task_pool_manager is None:
-        _task_pool_manager = TaskPoolManager.get_instance()
+        _task_pool_manager = TaskPoolManager()
     return _task_pool_manager
 
 

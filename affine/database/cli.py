@@ -13,7 +13,7 @@ from affine.database import init_client, close_client, init_tables
 from affine.database.tables import list_tables, reset_tables, delete_table
 from affine.database.dao import (
     SampleResultsDAO,
-    TaskQueueDAO,
+    TaskPoolDAO,
     ExecutionLogsDAO,
     ScoresDAO,
     SystemConfigDAO,
@@ -130,9 +130,9 @@ async def cmd_test_basic():
         )
         print(f"  ✓ Retrieved {len(samples)} samples")
         
-        # Test TaskQueueDAO
-        print("\n2. Testing TaskQueueDAO...")
-        task_dao = TaskQueueDAO()
+        # Test TaskPoolDAO
+        print("\n2. Testing TaskPoolDAO...")
+        task_dao = TaskPoolDAO()
         
         task = await task_dao.create_task(
             miner_hotkey="test_hotkey_123",
