@@ -132,14 +132,6 @@ class APIClient:
                         if output_json:
                             print(json.dumps(result, indent=2, ensure_ascii=False))
                         
-                        log_msg = f"HTTP {response.status}: {error_msg}"
-                        if response.status == 404:
-                            logger.warning(log_msg)
-                        elif response.status == 429:
-                            logger.warning(f"Rate limited: {error_msg}")
-                        else:
-                            logger.error(log_msg)
-                        
                         if exit_on_error:
                             # Use os._exit() to avoid asyncio exception handling
                             sys.stdout.flush()
