@@ -179,8 +179,9 @@ class ExecutorWorker:
             )
             return task
 
-        except Exception:
-            logger.exception(f"[{self.env}] Error fetching task")
+        except Exception as e:
+            # Silently ignore fetch errors and continue polling
+            logger.debug(f"[{self.env}] Failed to fetch task: {e}")
             return None
 
 
@@ -377,7 +378,7 @@ class ExecutorWorker:
                 
                 if task is None:
                     # No task available, wait before polling again
-                    await asyncio.sleep(self.poll_interval)
+                    await asyncio.sleep(self.poll_interval*3)
                     continue
                 
                 # Execute task

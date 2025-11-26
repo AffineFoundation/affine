@@ -18,6 +18,29 @@ from affine.core.setup import logger, setup_logging
 from affine.utils.api_client import create_api_client
 
 
+def _format_change(value: int) -> str:
+    """Format change value with +/- prefix, or empty string if zero."""
+    if value > 0:
+        return f"+{value}"
+    elif value < 0:
+        return str(value)
+    return ""
+
+
+def _format_env_queue(env_name: str, queue_count: int, change: int) -> str:
+    """Format environment queue with optional change indicator."""
+    env_short = env_name.split(':')[-1]
+    change_str = _format_change(change)
+    return f"{env_short}={queue_count}({change_str})" if change_str else f"{env_short}={queue_count}"
+
+
+def _format_env_stats(env_name: str, completed: int, success_rate: int, change: int) -> str:
+    """Format environment completion stats with optional change indicator."""
+    env_short = env_name.split(':')[-1]
+    change_str = f" {_format_change(change)}" if change else ""
+    return f"{env_short}@{completed}({success_rate}%{change_str})"
+
+
 class ExecutorManager:
     """
     Manages multiple executor workers.
@@ -121,122 +144,83 @@ class ExecutorManager:
         """Get metrics from all workers."""
         return [worker.get_metrics() for worker in self.workers]
     
+    async def _fetch_queue_stats(self, metrics):
+        """Fetch queue statistics from API for all environments."""
+        api_client = create_api_client()
+        queue_stats = {}
+        
+        for m in metrics:
+            env = m['env']
+            try:
+                stats_response = await api_client.get(f"/tasks/pool/stats?env={env}")
+                queue_stats[env] = stats_response.get('pending_count', 0) if isinstance(stats_response, dict) else 0
+            except:
+                queue_stats[env] = 0
+        
+        return queue_stats
+    
     async def print_status(self):
         """Print status of all workers in compact format with incremental statistics."""
         import time
-        from affine.utils.api_client import create_api_client
         
         try:
             current_time = time.time()
-            
-            # Get worker metrics
             metrics = self.get_all_metrics()
             
-            # Fetch statistics from API
-            api_client = create_api_client()
-            
-            # Get task queue statistics from API
-            try:
-                queue_stats = {}
-                
-                for m in metrics:
-                    env = m['env']
-                    try:
-                        # Use API endpoint to get queue stats
-                        stats_response = await api_client.get(f"/tasks/pool/stats?env={env}")
-                        if isinstance(stats_response, dict):
-                            queue_stats[env] = stats_response.get('pending_count', 0)
-                        else:
-                            queue_stats[env] = 0
-                    except:
-                        queue_stats[env] = 0
-                
-                total_queue = sum(queue_stats.values())
-            except:
-                total_queue = 0
-                queue_stats = {}
-            
-            # Calculate incremental changes
+            # Fetch queue statistics
+            queue_stats = await self._fetch_queue_stats(metrics)
+            total_queue = sum(queue_stats.values())
             time_delta = int(current_time - self.last_status_time) if self.last_status_time else 0
             
-            # Queue changes (↓ dequeued, ↑ enqueued)
-            total_dequeued = 0
-            total_enqueued = 0
-            env_queue_changes = {}
+            # Calculate queue changes
+            env_queue_changes = {
+                env: current - self.last_queue_stats.get(env, current)
+                for env, current in queue_stats.items()
+            }
+            total_queue_change = sum(env_queue_changes.values())
             
-            for env, current_queue in queue_stats.items():
-                last_queue = self.last_queue_stats.get(env, current_queue)
-                change = current_queue - last_queue
-                
-                if change < 0:
-                    # Queue decreased (dequeued)
-                    dequeued = abs(change)
-                    enqueued = 0
-                else:
-                    # Queue increased (enqueued)
-                    dequeued = 0
-                    enqueued = change
-                
-                env_queue_changes[env] = (dequeued, enqueued)
-                total_dequeued += dequeued
-                total_enqueued += enqueued
-            
-            # Build environment stats from worker metrics
+            # Build environment stats
             env_stats = {}
-            total_completed = 0
-            total_failed = 0
-            
             for m in metrics:
                 env_name = m['env']
-                completed = m['tasks_completed']
-                failed = m['tasks_failed']
+                completed, failed = m['tasks_completed'], m['tasks_failed']
                 total = completed + failed
                 success_rate = int(completed * 100 / total) if total > 0 else 0
+                completed_change = completed - self.last_completed_stats.get(env_name, completed)
                 
                 env_stats[env_name] = {
                     'completed': completed,
-                    'failed': failed,
                     'success_rate': success_rate,
-                    'queue': queue_stats.get(env_name, 0)
+                    'queue': queue_stats.get(env_name, 0),
+                    'queue_change': env_queue_changes.get(env_name, 0),
+                    'completed_change': completed_change
                 }
-                
-                total_completed += completed
-                total_failed += failed
             
-            # Format queue details with incremental changes
-            # Format: env=current_queue(↓dequeued ↑enqueued)
-            queue_details_parts = []
-            for env, stats in sorted(env_stats.items()):
-                env_short = env.split(':')[-1]
-                current_q = stats['queue']
-                deq, enq = env_queue_changes.get(env, (0, 0))
-                queue_details_parts.append(f"{env_short}={current_q}(↓{deq} ↑{enq})")
-            
-            queue_details = " ".join(queue_details_parts)
-            
-            # Format environment completion stats: env@completed(success_rate%)
-            env_stats_str = " ".join([
-                f"{env.split(':')[-1]}@{stats['completed']}({stats['success_rate']}%)"
+            # Format status strings
+            queue_details = " ".join(
+                _format_env_queue(env, stats['queue'], stats['queue_change'])
                 for env, stats in sorted(env_stats.items())
-            ])
-            
-            # Build compact status line
-            # [STATUS] total_queue=N(↓X ↑Y in Zs) (env_queue_details) result_queue=0 enqueued=total dequeued=total [env@completed(rate%)]
-            logger.info(
-                f"[STATUS] total_queue={total_queue}(↓{total_dequeued} ↑{total_enqueued} in {time_delta}s) "
-                f"({queue_details}) "
-                f"result_queue=0 enqueued={total_enqueued} dequeued={total_dequeued} "
-                f"[{env_stats_str}]"
             )
             
-            # Update tracking for next iteration
+            env_stats_str = " ".join(
+                _format_env_stats(env, stats['completed'], stats['success_rate'], stats['completed_change'])
+                for env, stats in sorted(env_stats.items())
+            )
+            
+            total_change_str = f"{_format_change(total_queue_change)}" if total_queue_change else ""
+            
+            logger.info(
+                f"[STATUS] total_queue={total_queue}({total_change_str} in {time_delta}s) "
+                f"({queue_details}) [{env_stats_str}]"
+            )
+            
+            # Update tracking
             self.last_status_time = current_time
             self.last_queue_stats = queue_stats.copy()
             self.last_completed_stats = {m['env']: m['tasks_completed'] for m in metrics}
             
         except Exception as e:
             logger.error(f"Error printing status: {e}", exc_info=True)
-            # Fallback to simple metrics display
             metrics = self.get_all_metrics()
             logger.info(f"[STATUS] workers={len(metrics)} completed={sum(m['tasks_completed'] for m in metrics)}")
 
