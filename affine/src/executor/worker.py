@@ -10,7 +10,7 @@ import asyncio
 import time
 import traceback
 import aiohttp
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 import bittensor as bt
 from affine.core.setup import logger
@@ -39,7 +39,8 @@ class ExecutorWorker:
         worker_id: int,
         env: str,
         wallet: bt.wallet,
-        poll_interval: int = 5,
+        fetch_rate_per_hour: int = 1800,
+        max_concurrent_tasks: int = 5,
     ):
         """Initialize executor worker.
         
@@ -47,13 +48,18 @@ class ExecutorWorker:
             worker_id: Unique worker ID
             env: Environment to execute tasks for (e.g., "affine:sat")
             wallet: Bittensor wallet for signing
-            poll_interval: How often to poll for tasks (seconds)
+            fetch_rate_per_hour: Number of tasks to fetch per hour (default: 1800, i.e., 1 task per 2 seconds)
+            max_concurrent_tasks: Maximum number of concurrent task executions (default: 5)
         """
         self.worker_id = worker_id
         self.env = env
         self.wallet = wallet
         self.hotkey = wallet.hotkey.ss58_address
-        self.poll_interval = poll_interval
+        self.fetch_rate_per_hour = fetch_rate_per_hour
+        self.max_concurrent_tasks = max_concurrent_tasks
+        
+        # Calculate fetch interval in seconds
+        self.fetch_interval = 3600 / fetch_rate_per_hour  # seconds between fetches
         
         self.running = False
         self.metrics = WorkerMetrics()
@@ -64,6 +70,11 @@ class ExecutorWorker:
         
         # Environment executor (will be initialized lazily)
         self.env_executor = None
+        
+        # Task queue and semaphore for concurrent execution
+        self.task_queue: asyncio.Queue = asyncio.Queue()
+        self.execution_semaphore: Optional[asyncio.Semaphore] = None
+        self.executor_tasks: List[asyncio.Task] = []
 
     async def _get_chutes_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session for Chutes API calls."""
@@ -108,16 +119,41 @@ class ExecutorWorker:
         logger.info(f"[{self.env}] Worker initialized for {self.env}")
     
     def start(self):
-        """Start the worker execution loop (returns immediately, loop runs in background)."""
-        logger.info(f"[{self.env}] Starting execution loop for {self.env}...")
+        """Start the worker fetch and execution loops (returns immediately, loops run in background)."""
+        logger.info(f"[{self.env}] Starting fetch and execution loops for {self.env}...")
         self.running = True
-        # Create background task for execution loop
-        asyncio.create_task(self._execution_loop())
+        
+        # Initialize semaphore for concurrent execution
+        self.execution_semaphore = asyncio.Semaphore(self.max_concurrent_tasks)
+        
+        # Create background task for fetch loop
+        asyncio.create_task(self._fetch_loop())
+        
+        # Create multiple executor tasks for concurrent execution
+        for i in range(self.max_concurrent_tasks):
+            task = asyncio.create_task(self._execution_worker(i))
+            self.executor_tasks.append(task)
+        
+        logger.info(
+            f"[{self.env}] Started fetch loop (rate: {self.fetch_rate_per_hour}/hour, "
+            f"interval: {self.fetch_interval:.2f}s) and {self.max_concurrent_tasks} executor workers"
+        )
     
     async def stop(self):
-        """Stop the worker."""
+        """Stop the worker and all executor tasks."""
         logger.info(f"[{self.env}] Stopping worker...")
         self.running = False
+        
+        # Cancel all executor tasks
+        for task in self.executor_tasks:
+            if not task.done():
+                task.cancel()
+        
+        # Wait for all tasks to complete
+        if self.executor_tasks:
+            await asyncio.gather(*self.executor_tasks, return_exceptions=True)
+        
+        logger.info(f"[{self.env}] Worker stopped, cancelled {len(self.executor_tasks)} executor tasks")
     
     def _sign_message(self, message: str) -> str:
         """Sign a message using the wallet.
@@ -315,8 +351,8 @@ class ExecutorWorker:
             
             # Format aligned RESULT log
             logger.info(
-                f"[RESULT] U{task.get('miner_uid'):<4} │ {self.env:<20} │ {submission.score:6.4f} │ "
-                f"task_id={task_id:<6} │ {execution_time:6.3f}s"
+                f"[RESULT] U{task.get('miner_uid'):<4} │ {self.env:<20} │ {submission.score:10.3f} │ "
+                f"task_id={task_id:<4} │ {execution_time:6.3f}s"
             )
             
             return submission
@@ -369,52 +405,104 @@ class ExecutorWorker:
             self.metrics.tasks_failed += 1
             return False
     
-    async def _execution_loop(self):
-        """Main execution loop."""
+    async def _fetch_loop(self):
+        """Fetch loop that continuously fetches tasks and puts them in queue."""
+        logger.info(f"[{self.env}] Fetch loop started")
+        
         while self.running:
             try:
-                # Fetch task (already assigned to this executor via authenticated endpoint)
+                # Check queue size before fetching
+                current_queue_size = self.task_queue.qsize()
+                if current_queue_size > 10:
+                    # Queue has too many pending tasks, sleep to let workers catch up
+                    logger.debug(f"[{self.env}] Queue size {current_queue_size} > 10, sleeping to let workers catch up")
+                    await asyncio.sleep(5)
+                    continue
+
+                # Fetch task from API
                 task = await self._fetch_task()
                 
                 if task is None:
-                    # No task available, wait before polling again
-                    await asyncio.sleep(self.poll_interval*3)
+                    # No task available, sleep for 5 seconds
+                    await asyncio.sleep(5)
                     continue
                 
-                # Execute task
-                try:
-                    submission = await self._execute_task(task)
-
-                    # Submit result (both success and HTTP errors)
-                    await self._submit_result(task, submission)
-                    
-                except Exception as e:
-                    # Executor error: log in aligned format with brief error
-                    # Extract task metadata for logging
-                    miner_hotkey = task.get('miner_hotkey', 'unknown')
-                    miner_uid = task.get('miner_uid')
-                    task_id = task.get('task_id', 'N/A')
-                    
-                    # Brief error message
-                    error_brief = str(e)[:200]
-                    
-                    logger.info(
-                        f"[RESULT] U{miner_uid:<4} │ {self.env:<20} │ FAILED │ "
-                        f"task_id={task_id:<6} │ {error_brief}"
-                    )
-                    # Task lock will timeout and be released automatically
-                    continue
+                # Put task in queue for execution
+                await self.task_queue.put(task)
+                logger.debug(f"[{self.env}] Task added to queue, queue size: {self.task_queue.qsize()}")
                 
-                # Update metrics
-                self.metrics.last_task_at = time.time()
+                # Wait for next fetch based on rate limit
+                await asyncio.sleep(self.fetch_interval)
             
             except asyncio.CancelledError:
                 break
             
             except Exception as e:
-                logger.error(f"[{self.env}] Error in execution loop: {e}")
+                logger.error(f"[{self.env}] Error in fetch loop: {e}")
                 traceback.print_exc()
-                await asyncio.sleep(self.poll_interval)
+                await asyncio.sleep(5)
+        
+        logger.info(f"[{self.env}] Fetch loop stopped")
+    
+    async def _execution_worker(self, worker_idx: int):
+        """Execution worker that processes tasks from queue concurrently.
+        
+        Args:
+            worker_idx: Index of this execution worker
+        """
+        logger.info(f"[{self.env}] Execution worker {worker_idx} started")
+        
+        while self.running:
+            try:
+                # Get task from queue (wait if empty)
+                try:
+                    task = await asyncio.wait_for(self.task_queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                
+                # Acquire semaphore for concurrent execution control
+                async with self.execution_semaphore:
+                    logger.debug(
+                        f"[{self.env}] Worker {worker_idx} executing task "
+                        f"uuid={task.get('task_uuid', 'unknown')[:8]}..."
+                    )
+                    
+                    # Execute task
+                    try:
+                        submission = await self._execute_task(task)
+                        # Submit result (both success and HTTP errors)
+                        await self._submit_result(task, submission)
+                        
+                    except Exception as e:
+                        # Executor error: log in aligned format with brief error
+                        miner_hotkey = task.get('miner_hotkey', 'unknown')
+                        miner_uid = task.get('miner_uid')
+                        task_id = task.get('task_id', 'N/A')
+                        
+                        # Brief error message
+                        error_brief = str(e)[:200]
+                        
+                        logger.info(
+                            f"[RESULT] U{miner_uid:<4} │ {self.env:<20} │ FAILED │ "
+                            f"task_id={task_id:<6} │ {error_brief}"
+                        )
+                        # Task lock will timeout and be released automatically
+                    
+                    finally:
+                        # Mark task as done in queue
+                        self.task_queue.task_done()
+                        # Update metrics
+                        self.metrics.last_task_at = time.time()
+            
+            except asyncio.CancelledError:
+                break
+            
+            except Exception as e:
+                logger.error(f"[{self.env}] Error in execution worker {worker_idx}: {e}")
+                traceback.print_exc()
+                await asyncio.sleep(1)
+        
+        logger.info(f"[{self.env}] Execution worker {worker_idx} stopped")
     
     def get_metrics(self) -> Dict[str, Any]:
         """Get worker metrics.

@@ -16,6 +16,7 @@ Provides a single entry point for all Affine components:
 - af get-miner  : Query miner status by UID
 - af deploy     : Deploy docker containers (validator/backend)
 - af down       : Stop docker containers (validator/backend)
+- af db         : Database management commands
 """
 
 import sys
@@ -227,6 +228,15 @@ def get_pool(ctx):
     
     sys.argv = ["get-pool"] + ctx.args
     miner_get_pool.main(standalone_mode=False)
+
+
+# ============================================================================
+# Database Management Commands
+# ============================================================================
+
+# Import and register the db group from database.cli
+from affine.database.cli import db
+cli.add_command(db)
 
 
 # ============================================================================
