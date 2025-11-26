@@ -22,6 +22,7 @@ from affine.src.miner.commands import (
     get_scores_command,
     get_pool_command,
 )
+from affine.src.miner.rank import get_rank_command
 
 
 @click.command()
@@ -126,7 +127,6 @@ def get_scores(top):
     """
     asyncio.run(get_scores_command(top=top))
 
-
 @click.command("get-pool")
 @click.argument("uid", type=int)
 @click.argument("env", type=str)
@@ -142,6 +142,20 @@ def get_pool(uid, env, full):
         af get-pool 100 agentgym:webshop --full
     """
     asyncio.run(get_pool_command(uid=uid, env=env, full=full))
+
+
+@click.command("get-rank")
+def get_rank():
+    """Query and display miner ranking table.
+    
+    Fetches the latest score snapshot from the API and displays
+    it in the same format as the scorer's detailed table output.
+    
+    Example:
+        af get-rank
+    """
+    asyncio.run(get_rank_command())
+
 
 
 

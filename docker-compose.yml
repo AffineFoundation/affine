@@ -12,7 +12,7 @@ services:
     volumes:
       - ~/.bittensor/wallets:/root/.bittensor/wallets:ro
       - /var/log/affine/validator:/var/log/affine/validator
-    command: ["-vv", "validator"]
+    command: ["-vv", "services", "validator"]
 
   watchtower:
     image: nickfedor/watchtower
