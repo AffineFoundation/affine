@@ -35,17 +35,18 @@ async def fetch_task(
     env: Optional[str] = Query(None, description="Environment filter (optional)"),
     executor_hotkey: str = Depends(verify_executor_auth),
     miners_dao: MinersDAO = Depends(get_miners_dao),
+    task_pool: TaskPoolManager = Depends(get_task_pool_manager),
 ):
     """
     Fetch a task using weighted random selection.
     
     Algorithm:
     1. Verify executor signature and validator status (via dependency)
-    2. Get all pending tasks (excluding locked ones)
+    2. Get all pending tasks
     3. Group by (miner_hotkey, model_revision), count tasks per miner
     4. Select miner with probability proportional to task count
     5. Randomly select one task from chosen miner
-    6. Acquire in-memory lock for selected task
+    6. Assign task (DynamoDB provides atomicity)
     
     Headers (validated by verify_executor_auth dependency):
     - X-Hotkey: Executor's SS58 hotkey
@@ -66,9 +67,8 @@ async def fetch_task(
         )
     
     try:
-        # Fetch task using TaskPoolManager
-        pool_manager = TaskPoolManager.get_instance()
-        task = await pool_manager.fetch_task(
+        # Fetch task using TaskPoolManager (injected via dependency)
+        task = await task_pool.fetch_task(
             executor_hotkey=executor_hotkey,
             env=env
         )

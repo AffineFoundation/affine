@@ -124,10 +124,10 @@ def get_auth_service() -> AuthService:
 
 
 def get_task_pool_manager() -> TaskPoolManager:
-    """Get TaskPoolManager singleton instance."""
+    """Get TaskPoolManager instance (lazy initialization)."""
     global _task_pool_manager
     if _task_pool_manager is None:
-        _task_pool_manager = TaskPoolManager.get_instance()
+        _task_pool_manager = TaskPoolManager()
     return _task_pool_manager
 
 

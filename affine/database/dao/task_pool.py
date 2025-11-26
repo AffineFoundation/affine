@@ -192,12 +192,40 @@ class TaskPoolDAO(BaseDAO):
         
         return None
     
+    async def get(self, pk: str, sk: str) -> Optional[Dict[str, Any]]:
+        """Get task by primary key (PK, SK).
+        
+        Direct GetItem query - O(1) lookup.
+        
+        Args:
+            pk: Partition key
+            sk: Sort key
+            
+        Returns:
+            Task dict if found, None otherwise
+        """
+        from affine.database.client import get_client
+        client = get_client()
+        
+        params = {
+            'TableName': self.table_name,
+            'Key': {
+                'pk': {'S': pk},
+                'sk': {'S': sk}
+            }
+        }
+        
+        response = await client.get_item(**params)
+        item = response.get('Item')
+        
+        return self._deserialize(item) if item else None
+    
     async def get_task_by_uuid(self, task_uuid: str) -> Optional[Dict[str, Any]]:
         """Get a task by UUID.
         
         Uses Scan + Filter since UUID is not indexed.
         This is acceptable because:
-        1. Only used during task completion (low frequency)
+        1. Only used during cache miss (low frequency after warmup)
         2. Task pool size is bounded (typically < 100k tasks)
         3. Alternative would be adding GSI2 (UUID index) which we want to avoid
         
@@ -571,6 +599,107 @@ class TaskPoolDAO(BaseDAO):
                 logger.error(f"Batch delete failed: {e}")
         
         return deleted_count
+    
+    async def get_miner_task_counts(
+        self,
+        env: str,
+        status: str = 'pending'
+    ) -> Dict[str, int]:
+        """Get task count per miner for an environment.
+        
+        Uses GSI1 to efficiently aggregate counts by miner.
+        
+        Algorithm:
+        1. Query GSI1 by env+status (all pending/assigned tasks)
+        2. Extract miner key from gsi1_sk
+        3. Count tasks per miner
+        
+        Args:
+            env: Environment name
+            status: Task status (default: pending)
+            
+        Returns:
+            Dict mapping "hotkey#revision" to task count
+            Example: {'hotkey1#rev1': 100, 'hotkey2#rev2': 50}
+        """
+        from affine.database.client import get_client
+        client = get_client()
+        
+        gsi1_pk = self._make_gsi1_pk(env, status)
+        
+        params = {
+            'TableName': self.table_name,
+            'IndexName': 'env-status-index',
+            'KeyConditionExpression': 'gsi1_pk = :pk',
+            'ExpressionAttributeValues': {':pk': {'S': gsi1_pk}},
+            'ProjectionExpression': 'gsi1_sk'  # Only fetch gsi1_sk
+        }
+        
+        miner_counts: Dict[str, int] = {}
+        last_key = None
+        
+        while True:
+            if last_key:
+                params['ExclusiveStartKey'] = last_key
+            
+            response = await client.query(**params)
+            items = response.get('Items', [])
+            
+            # Extract miner from gsi1_sk: MINER#{hotkey}#REV#{revision}#TASK_ID#{task_id}
+            for item in items:
+                gsi1_sk = item['gsi1_sk']['S']
+                # Parse: MINER#xxx#REV#yyy#TASK_ID#zzz
+                parts = gsi1_sk.split('#')
+                if len(parts) >= 4:
+                    miner_key = f"{parts[1]}#{parts[3]}"  # hotkey#revision
+                    miner_counts[miner_key] = miner_counts.get(miner_key, 0) + 1
+            
+            last_key = response.get('LastEvaluatedKey')
+            if not last_key:
+                break
+        
+        return miner_counts
+    
+    async def get_pending_tasks_for_miner(
+        self,
+        env: str,
+        miner_hotkey: str,
+        model_revision: str,
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Get pending tasks for a specific miner in an environment.
+        
+        Uses primary key query for efficiency.
+        
+        Args:
+            env: Environment name
+            miner_hotkey: Miner's hotkey
+            model_revision: Model revision
+            limit: Maximum number of tasks
+            
+        Returns:
+            List of pending tasks
+        """
+        from affine.database.client import get_client
+        client = get_client()
+        
+        pk = self._make_pk(miner_hotkey, model_revision)
+        sk_prefix = f"ENV#{env}#STATUS#pending#"
+        
+        params = {
+            'TableName': self.table_name,
+            'KeyConditionExpression': 'pk = :pk AND begins_with(sk, :sk_prefix)',
+            'ExpressionAttributeValues': {
+                ':pk': {'S': pk},
+                ':sk_prefix': {'S': sk_prefix}
+            },
+            'Limit': limit
+        }
+        
+        response = await client.query(**params)
+        items = response.get('Items', [])
+        
+        return [self._deserialize(item) for item in items]
     
     async def get_pool_stats(self, env: str) -> Dict[str, int]:
         """Get statistics about the task pool for an environment.
