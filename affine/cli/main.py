@@ -3,20 +3,31 @@
 Affine CLI - Unified Command Line Interface
 
 Provides a single entry point for all Affine components:
-- af api        : Start API server
-- af executor   : Start executor service
-- af monitor    : Start monitor service (miners monitoring)
-- af scorer     : Start scorer service
-- af scheduler  : Start scheduler service
-- af validator  : Start validator service
-- af commit     : Commit model to blockchain (miner)
-- af pull       : Pull model from Hugging Face (miner)
-- af chutes_push: Deploy model to Chutes (miner)
-- af get-sample : Query sample by UID, env, and task ID
-- af get-miner  : Query miner status by UID
-- af deploy     : Deploy docker containers (validator/backend)
-- af down       : Stop docker containers (validator/backend)
-- af db         : Database management commands
+
+Server Services (af servers):
+- af servers api       : Start API server
+- af servers executor  : Start executor service
+- af servers monitor   : Start monitor service (miners monitoring)
+- af servers scorer    : Start scorer service
+- af servers scheduler : Start scheduler service
+- af servers validator : Start validator service
+
+Miner Commands:
+- af commit      : Commit model to blockchain (miner)
+- af pull        : Pull model from Hugging Face (miner)
+- af chutes_push : Deploy model to Chutes (miner)
+- af get-sample  : Query sample by UID, env, and task ID
+- af get-miner   : Query miner status by UID
+- af get-weights : Query latest normalized weights
+- af get-scores  : Query latest scores for top N miners
+- af get-pool    : Query pending task IDs for a miner
+
+Docker Commands:
+- af deploy : Deploy docker containers (validator/backend)
+- af down   : Stop docker containers (validator/backend)
+
+Database Commands:
+- af db : Database management commands
 """
 
 import sys
@@ -45,10 +56,16 @@ def cli(verbosity):
 
 
 # ============================================================================
-# Backend Services
+# Server Services (Group)
 # ============================================================================
 
-@cli.command()
+@cli.group()
+def servers():
+    """Start various backend server services."""
+    pass
+
+
+@servers.command()
 def api():
     """Start API server."""
     from affine.api.server import app, config
@@ -64,7 +81,7 @@ def api():
     )
 
 
-@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@servers.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
 @click.pass_context
 def executor(ctx):
     """Start executor service."""
@@ -75,7 +92,7 @@ def executor(ctx):
     executor_main.main(standalone_mode=False)
 
 
-@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@servers.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
 @click.pass_context
 def monitor(ctx):
     """Start monitor service."""
@@ -85,7 +102,7 @@ def monitor(ctx):
     monitor_main.main(standalone_mode=False)
 
 
-@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@servers.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
 @click.pass_context
 def scorer(ctx):
     """Start scorer service."""
@@ -95,7 +112,7 @@ def scorer(ctx):
     scorer_main.main(standalone_mode=False)
 
 
-@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@servers.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
 @click.pass_context
 def scheduler(ctx):
     """Start scheduler service."""
@@ -105,7 +122,7 @@ def scheduler(ctx):
     scheduler_main.main(standalone_mode=False)
 
 
-@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@servers.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
 @click.pass_context
 def validator(ctx):
     """Start validator service."""

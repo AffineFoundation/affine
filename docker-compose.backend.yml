@@ -23,7 +23,7 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
-    command: ["-v", "api"]
+    command: ["-v", "servers", "api"]
 
   # Scheduler - Task generation service
   scheduler:
@@ -34,7 +34,7 @@ services:
     mem_limit: "4g"
     volumes:
       - /var/log/affine/scheduler:/var/log/affine/scheduler
-    command: ["-v", "scheduler"]
+    command: ["-v", "servers", "scheduler"]
 
   # Executor - Task execution service
   executor:
@@ -55,7 +55,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
-    command: ["-v", "executor"]
+    command: ["-v", "servers", "executor"]
 
   # Miners Monitor - Miner synchronization service
   monitor:
@@ -68,7 +68,7 @@ services:
       - .env
     volumes:
       - /var/log/affine/monitor:/var/log/affine/monitor
-    command: ["-v", "monitor"]
+    command: ["-v", "servers", "monitor"]
 
   # Scorer - Weight calculation service
   scorer:
@@ -83,10 +83,12 @@ services:
       - API_URL=http://api:8000/api/v1
       - SCORER_SAVE_TO_DB=true
       - SERVICE_MODE=true
+      - EXECUTOR_FETCH_RATE=1800
+      - EXECUTOR_MAX_CONCURRENT=20
     depends_on:
       api:
         condition: service_healthy
-    command: ["-v", "scorer"]
+    command: ["-v", "servers", "scorer"]
 
 networks:
   default:
