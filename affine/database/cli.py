@@ -8,6 +8,7 @@ import asyncio
 import sys
 from typing import Optional
 import os
+import click
 
 from affine.database import init_client, close_client, init_tables
 from affine.database.tables import list_tables, reset_tables, delete_table
@@ -88,146 +89,6 @@ async def cmd_reset_table(table_name: str):
         print(f"✓ Table '{full_table_name}' reset successfully")
     except Exception as e:
         print(f"✗ Failed to reset table: {e}")
-        sys.exit(1)
-    finally:
-        await close_client()
-
-
-async def cmd_test_basic():
-    """Run basic CRUD tests on all DAOs."""
-    print("Running basic DAO tests...")
-    await init_client()
-    
-    try:
-        # Test SampleResultsDAO
-        print("\n1. Testing SampleResultsDAO...")
-        sample_dao = SampleResultsDAO()
-        
-        sample = await sample_dao.save_sample(
-            miner_hotkey="test_hotkey_123",
-            model_revision="v1.0.0",
-            model="test-org/test-model",
-            uid=42,
-            env="L3",
-            subset="test",
-            dataset_index=0,
-            task_id="task_001",
-            score=0.95,
-            success=True,
-            latency_ms=150,
-            conversation={"messages": [{"role": "user", "content": "test"}]},
-            validator_hotkey="validator_123",
-            block_number=1000000,
-            signature="sig_123"
-        )
-        print(f"  ✓ Saved sample: {sample['task_id']}")
-        
-        # Retrieve samples
-        samples = await sample_dao.get_samples_by_miner(
-            "test_hotkey_123",
-            "v1.0.0",
-            limit=10
-        )
-        print(f"  ✓ Retrieved {len(samples)} samples")
-        
-        # Test TaskPoolDAO
-        print("\n2. Testing TaskPoolDAO...")
-        task_dao = TaskPoolDAO()
-        
-        task = await task_dao.create_task(
-            miner_hotkey="test_hotkey_123",
-            model_revision="v1.0.0",
-            model="test-org/test-model",
-            env="L3",
-            validator_hotkey="validator_123"
-        )
-        print(f"  ✓ Created task: {task['task_id']}")
-        
-        # Start task
-        await task_dao.start_task("test_hotkey_123", "v1.0.0", task['task_id'])
-        print(f"  ✓ Started task")
-        
-        # Complete task
-        await task_dao.complete_task("test_hotkey_123", "v1.0.0", task['task_id'])
-        print(f"  ✓ Completed task")
-        
-        # Test ExecutionLogsDAO
-        print("\n3. Testing ExecutionLogsDAO...")
-        log_dao = ExecutionLogsDAO()
-        
-        log = await log_dao.log_execution(
-            miner_hotkey="test_hotkey_123",
-            uid=42,
-            task_id="task_001",
-            status="success",
-            env="L3",
-            execution_time_ms=150
-        )
-        print(f"  ✓ Created log: {log['log_id']}")
-        
-        # Get recent logs
-        logs = await log_dao.get_recent_logs("test_hotkey_123", limit=10)
-        print(f"  ✓ Retrieved {len(logs)} logs")
-        
-        # Test ScoresDAO
-        print("\n4. Testing ScoresDAO...")
-        score_dao = ScoresDAO()
-        
-        score = await score_dao.save_score(
-            block_number=1000000,
-            miner_hotkey="test_hotkey_123",
-            uid=42,
-            model_revision="v1.0.0",
-            overall_score=0.95,
-            confidence_interval_lower=0.90,
-            confidence_interval_upper=0.98,
-            average_score=0.94,
-            scores_by_layer={"L3": 0.95, "L4": 0.93},
-            scores_by_env={"env1": 0.96, "env2": 0.94},
-            total_samples=100,
-            is_eligible=True,
-            meets_criteria=True
-        )
-        print(f"  ✓ Saved score at block {score['block_number']}")
-        
-        # Get latest scores
-        latest = await score_dao.get_latest_scores()
-        print(f"  ✓ Retrieved latest scores: block {latest.get('block_number')}")
-        
-        # Test SystemConfigDAO
-        print("\n5. Testing SystemConfigDAO...")
-        config_dao = SystemConfigDAO()
-        
-        await config_dao.set_param(
-            param_name="test_param",
-            param_value=123,
-            param_type="int",
-            description="Test parameter"
-        )
-        print(f"  ✓ Set config parameter")
-        
-        value = await config_dao.get_param_value("test_param")
-        print(f"  ✓ Retrieved config value: {value}")
-        
-        # Test DataRetentionDAO
-        print("\n6. Testing DataRetentionDAO...")
-        retention_dao = DataRetentionDAO()
-        
-        policy = await retention_dao.set_protected(
-            miner_hotkey="test_hotkey_123",
-            reason="Test protection"
-        )
-        print(f"  ✓ Set retention policy")
-        
-        is_protected = await retention_dao.is_protected("test_hotkey_123")
-        print(f"  ✓ Checked protection status: {is_protected}")
-        
-        print("\n✓ All basic tests passed!")
-        
-    except Exception as e:
-        print(f"\n✗ Test failed: {e}")
-        import traceback
-        traceback.print_exc()
         sys.exit(1)
     finally:
         await close_client()
@@ -399,122 +260,91 @@ async def cmd_blacklist_clear():
         await close_client()
 
 
+@click.group()
+def db():
+    """Database management commands."""
+    pass
+
+
+@db.command()
+def init():
+    """Initialize all DynamoDB tables."""
+    asyncio.run(cmd_init())
+
+
+@db.command("list")
+def list_cmd():
+    """List all tables."""
+    asyncio.run(cmd_list())
+
+
+@db.command()
+def reset():
+    """Reset all tables (delete and recreate)."""
+    asyncio.run(cmd_reset())
+
+
+@db.command("reset-table")
+@click.option("--table", required=True, help="Table name to reset (e.g., task_queue, sample_results)")
+def reset_table(table):
+    """Reset a single table (delete and recreate)."""
+    asyncio.run(cmd_reset_table(table))
+
+
+@db.command()
+@click.option("--tail", type=int, default=100000, help="Number of blocks to look back")
+@click.option("--max-results", type=int, default=None, help="Maximum results to migrate")
+def migrate(tail, max_results):
+    """Migrate data from R2."""
+    asyncio.run(cmd_migrate(tail, max_results))
+
+
+@db.command("load-config")
+@click.option(
+    "--json-file",
+    default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "system_config.json"),
+    help="Path to JSON configuration file"
+)
+def load_config(json_file):
+    """Load system configuration from JSON file."""
+    asyncio.run(cmd_load_config(json_file))
+
+
+@db.group()
+def blacklist():
+    """Manage miner blacklist."""
+    pass
+
+
+@blacklist.command("list")
+def blacklist_list():
+    """List all blacklisted hotkeys."""
+    asyncio.run(cmd_blacklist_list())
+
+
+@blacklist.command()
+@click.argument("hotkeys", nargs=-1, required=True)
+def add(hotkeys):
+    """Add hotkeys to blacklist."""
+    asyncio.run(cmd_blacklist_add(list(hotkeys)))
+
+
+@blacklist.command()
+@click.argument("hotkeys", nargs=-1, required=True)
+def remove(hotkeys):
+    """Remove hotkeys from blacklist."""
+    asyncio.run(cmd_blacklist_remove(list(hotkeys)))
+
+
+@blacklist.command()
+def clear():
+    """Clear all hotkeys from blacklist."""
+    asyncio.run(cmd_blacklist_clear())
+
+
 def main():
     """Main CLI entry point."""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="DynamoDB database management CLI")
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
-    
-    # Init command
-    subparsers.add_parser("init", help="Initialize all tables")
-    
-    # List command
-    subparsers.add_parser("list", help="List all tables")
-    
-    # Reset command
-    subparsers.add_parser("reset", help="Reset all tables (delete and recreate)")
-    
-    # Reset-table command
-    reset_table_parser = subparsers.add_parser("reset-table", help="Reset a single table (delete and recreate)")
-    reset_table_parser.add_argument(
-        "--table",
-        required=True,
-        help="Table name to reset (e.g., task_queue, sample_results)"
-    )
-    
-    # Test command
-    subparsers.add_parser("test", help="Run basic CRUD tests")
-    
-    # Migrate command
-    migrate_parser = subparsers.add_parser("migrate", help="Migrate data from R2")
-    migrate_parser.add_argument(
-        "--tail",
-        type=int,
-        default=100000,
-        help="Number of blocks to look back"
-    )
-    migrate_parser.add_argument(
-        "--max-results",
-        type=int,
-        default=None,
-        help="Maximum results to migrate"
-    )
-    
-    # Load-config command
-    loadconfig_parser = subparsers.add_parser("load-config", help="Load system configuration from JSON file")
-    loadconfig_parser.add_argument(
-        "--json_file",
-        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "system_config.json"),
-        help="Path to JSON configuration file"
-    )
-    
-    # Blacklist command
-    blacklist_parser = subparsers.add_parser("blacklist", help="Manage miner blacklist")
-    blacklist_subparsers = blacklist_parser.add_subparsers(dest="blacklist_command", help="Blacklist operations")
-    
-    # blacklist list
-    blacklist_subparsers.add_parser("list", help="List all blacklisted hotkeys")
-    
-    # blacklist add
-    blacklist_add_parser = blacklist_subparsers.add_parser("add", help="Add hotkeys to blacklist")
-    blacklist_add_parser.add_argument(
-        "hotkeys",
-        nargs="+",
-        help="Hotkey(s) to add to blacklist"
-    )
-    
-    # blacklist remove
-    blacklist_remove_parser = blacklist_subparsers.add_parser("remove", help="Remove hotkeys from blacklist")
-    blacklist_remove_parser.add_argument(
-        "hotkeys",
-        nargs="+",
-        help="Hotkey(s) to remove from blacklist"
-    )
-    
-    # blacklist clear
-    blacklist_subparsers.add_parser("clear", help="Clear all hotkeys from blacklist")
-
-    args = parser.parse_args()
-    
-    if not args.command:
-        parser.print_help()
-        sys.exit(1)
-    
-    # Execute command
-    if args.command == "init":
-        asyncio.run(cmd_init())
-    elif args.command == "list":
-        asyncio.run(cmd_list())
-    elif args.command == "reset":
-        asyncio.run(cmd_reset())
-    elif args.command == "reset-table":
-        asyncio.run(cmd_reset_table(args.table))
-    elif args.command == "test":
-        asyncio.run(cmd_test_basic())
-    elif args.command == "migrate":
-        asyncio.run(cmd_migrate(args.tail, args.max_results))
-    elif args.command == "load-config":
-        asyncio.run(cmd_load_config(args.json_file))
-    elif args.command == "blacklist":
-        if not args.blacklist_command:
-            blacklist_parser.print_help()
-            sys.exit(1)
-        
-        if args.blacklist_command == "list":
-            asyncio.run(cmd_blacklist_list())
-        elif args.blacklist_command == "add":
-            asyncio.run(cmd_blacklist_add(args.hotkeys))
-        elif args.blacklist_command == "remove":
-            asyncio.run(cmd_blacklist_remove(args.hotkeys))
-        elif args.blacklist_command == "clear":
-            asyncio.run(cmd_blacklist_clear())
-        else:
-            print(f"Unknown blacklist command: {args.blacklist_command}")
-            sys.exit(1)
-    else:
-        print(f"Unknown command: {args.command}")
-        sys.exit(1)
+    db()
 
 
 if __name__ == "__main__":
