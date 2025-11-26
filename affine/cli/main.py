@@ -21,6 +21,7 @@ Miner Commands:
 - af get-weights : Query latest normalized weights
 - af get-scores  : Query latest scores for top N miners
 - af get-pool    : Query pending task IDs for a miner
+- af get-rank    : Query and display miner ranking table
 
 Docker Commands:
 - af deploy : Deploy docker containers (validator/backend)
@@ -245,6 +246,23 @@ def get_pool(ctx):
     
     sys.argv = ["get-pool"] + ctx.args
     miner_get_pool.main(standalone_mode=False)
+
+
+@cli.command("get-rank", context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.pass_context
+def get_rank(ctx):
+    """Query and display miner ranking table.
+    
+    Fetches the latest score snapshot from the API and displays
+    it in the same format as the scorer's detailed table output.
+    
+    Example:
+        af get-rank
+    """
+    from affine.src.miner.main import get_rank as miner_get_rank
+    
+    sys.argv = ["get-rank"] + ctx.args
+    miner_get_rank.main(standalone_mode=False)
 
 
 # ============================================================================
