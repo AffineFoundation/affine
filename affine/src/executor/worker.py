@@ -167,13 +167,14 @@ class ExecutorWorker:
 
             task = response.get("task") if isinstance(response, dict) else None
             if not task:
-                logger.info(f"[{self.env}] No task available")
+                logger.debug(f"[{self.env}] No task available")
                 return None
 
-            logger.info(
+            logger.debug(
                 f"[{self.env}] Fetched task: "
-                f"uuid={str(task.get('task_uuid','N/A'))[:8]}... "
+                f"uuid={str(task.get('task_uuid'))[:8]}... "
                 f"task_id={task.get('task_id')} "
+                f"uid={task.get('miner_uid')} "
                 f"miner={(task.get('miner_hotkey',''))[:12]}..."
             )
             return task
@@ -183,38 +184,6 @@ class ExecutorWorker:
             return None
 
 
-    
-    async def _pause_miner(self, miner_hotkey: str, consecutive_errors: int) -> bool:
-        """Pause a miner due to consecutive errors.
-        
-        Args:
-            miner_hotkey: Miner hotkey
-            consecutive_errors: Number of consecutive errors
-        
-        Returns:
-            True if successful
-        """
-        try:
-            # Exponential backoff: 10 minutes * 2^(errors-1), max 2 hours
-            base_duration = 600  # 10 minutes
-            duration = min(base_duration * (2 ** (consecutive_errors - 1)), 7200)
-            
-            data = {
-                "duration_seconds": int(duration),
-                "reason": f"Consecutive errors: {consecutive_errors}"
-            }
-            
-            await self.api_client.put(f"/miners/{miner_hotkey}/pause", json=data)
-            
-            logger.warning(
-                f"[{self.env}] Paused miner {miner_hotkey[:8]}... "
-                f"for {duration}s due to {consecutive_errors} consecutive errors"
-            )
-            return True
-        
-        except Exception as e:
-            logger.error(f"[{self.env}] Error pausing miner: {e}")
-            return False
     
     async def _get_chute_slug(self, chute_id: str) -> Optional[str]:
         """Get chute slug from chute ID.
@@ -245,7 +214,7 @@ class ExecutorWorker:
             session = await self._get_chutes_session()
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 if resp.status != 200:
-                    logger.error(
+                    logger.debug(
                         f"[{self.env}] Failed to get chute info for {chute_id}: "
                         f"status={resp.status}"
                     )
@@ -255,7 +224,7 @@ class ExecutorWorker:
                 slug = chute_info.get("slug")
                 
                 if not slug:
-                    logger.error(
+                    logger.debug(
                         f"[{self.env}] No slug found in chute info for {chute_id}"
                     )
                     return None
@@ -266,12 +235,12 @@ class ExecutorWorker:
                 return slug
         
         except Exception as e:
-            logger.error(
+            logger.debug(
                 f"[{self.env}] Error fetching chute slug for {chute_id}: {e}"
             )
             return None
     
-    async def _execute_task(self, task: Dict) -> tuple[SampleSubmission, bool]:
+    async def _execute_task(self, task: Dict) -> SampleSubmission:
         """Execute a sampling task.
         
         Args:
@@ -285,9 +254,7 @@ class ExecutorWorker:
                 - chute_id: Chute deployment ID
         
         Returns:
-            Tuple of (SampleSubmission, is_http_error)
-            - SampleSubmission: Signed submission with score, latency, extra
-            - is_http_error: True if error is HTTP-related (report to API), False if executor error (retry)
+            SampleSubmission: Signed submission with score, latency, extra, signature
         """
         start_time = time.time()
         
@@ -299,7 +266,7 @@ class ExecutorWorker:
             miner_hotkey = task["miner_hotkey"]
             chute_id = task["chute_id"]
             
-            logger.info(
+            logger.debug(
                 f"[{self.env}] Executing task: "
                 f"uuid={task_uuid[:8]}... miner={miner_hotkey[:12]}... model={model} task_id={task_id}"
             )
@@ -331,6 +298,7 @@ class ExecutorWorker:
             self.metrics.total_execution_time += execution_time
             
             # Build SampleSubmission (only contains task_uuid, score, latency, extra)
+            # Pass through raw score from environment without normalization
             submission = SampleSubmission(
                 task_uuid=task_uuid,
                 score=float(result.score),
@@ -344,16 +312,17 @@ class ExecutorWorker:
             signature_bytes = self.wallet.hotkey.sign(sign_data.encode())
             submission.signature = signature_bytes.hex()
             
+            # Format aligned RESULT log
             logger.info(
-                f"[{self.env}] Task completed: "
-                f"uuid={task_uuid[:8]}... env={self.env} score={submission.score:.4f} "
-                f"latency={submission.latency_ms/1000}s time={execution_time:.2f}s"
+                f"[RESULT] U{task.get('miner_uid'):<4} │ {self.env:<20} │ {submission.score:6.4f} │ "
+                f"task_id={task_id:<6} │ {execution_time:6.3f}s"
             )
             
             return submission
         
         except Exception as e:
-            logger.warning(f"[{self.env}] Executor error (will retry): {e}")
+            # Re-raise to be handled by _execution_loop
+            # Don't log here - will be logged as [RESULT] FAILED
             raise
     
     async def _submit_result(self, task: Dict, submission: SampleSubmission) -> bool:
@@ -386,7 +355,7 @@ class ExecutorWorker:
                 headers=headers
             )
             
-            logger.info(
+            logger.debug(
                 f"[{self.env}] Submitted result: "
                 f"task_uuid={submission.task_uuid[:8]}... "
                 f"score={submission.score:.4f} {response}"
@@ -398,50 +367,6 @@ class ExecutorWorker:
             logger.error(f"[{self.env}] Error submitting result: {e}")
             self.metrics.tasks_failed += 1
             return False
-    
-    def _is_http_error(self, error_message: str) -> bool:
-        """Check if error is HTTP-related (should be reported to API).
-        
-        Args:
-            error_message: Error message
-        
-        Returns:
-            True if HTTP error, False if executor error (should retry)
-        """
-        error_lower = error_message.lower()
-        
-        # HTTP errors that should be reported to API
-        http_keywords = [
-            "chute", "cold", "timeout", "connect", "network",
-            "hash", "mismatch", "model", "404", "503", "502",
-            "unavailable", "connection", "refused"
-        ]
-        
-        return any(keyword in error_lower for keyword in http_keywords)
-    
-    def _classify_error(self, error_message: str) -> str:
-        """Classify error type from error message.
-        
-        Args:
-            error_message: Error message
-        
-        Returns:
-            Error type string
-        """
-        error_lower = error_message.lower()
-        
-        if "chute" in error_lower or "cold" in error_lower:
-            return "chutes_error"
-        elif "timeout" in error_lower:
-            return "timeout_error"
-        elif "connect" in error_lower or "network" in error_lower:
-            return "network_error"
-        elif "hash" in error_lower or "mismatch" in error_lower:
-            return "hash_mismatch"
-        elif "model" in error_lower:
-            return "model_error"
-        else:
-            return "unknown_error"
     
     async def _execution_loop(self):
         """Main execution loop."""
@@ -463,9 +388,18 @@ class ExecutorWorker:
                     await self._submit_result(task, submission)
                     
                 except Exception as e:
-                    # Executor error (not HTTP): don't submit, task will be retried
-                    logger.warning(
-                        f"[{self.env}] Executor error, task will be retried: {e}"
+                    # Executor error: log in aligned format with brief error
+                    # Extract task metadata for logging
+                    miner_hotkey = task.get('miner_hotkey', 'unknown')
+                    miner_uid = task.get('miner_uid')
+                    task_id = task.get('task_id', 'N/A')
+                    
+                    # Brief error message
+                    error_brief = str(e)[:200]
+                    
+                    logger.info(
+                        f"[RESULT] U{miner_uid:<4} │ {self.env:<20} │ FAILED │ "
+                        f"task_id={task_id:<6} │ {error_brief}"
                     )
                     # Task lock will timeout and be released automatically
                     continue

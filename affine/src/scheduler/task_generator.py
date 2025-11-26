@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional, Set
 from dataclasses import dataclass
 
 from affine.database.dao.sample_results import SampleResultsDAO
-from affine.database.dao.task_queue import TaskQueueDAO
+from affine.database.dao.task_pool import TaskPoolDAO
 from affine.database.dao.system_config import SystemConfigDAO
 
 from affine.core.setup import logger
@@ -50,7 +50,7 @@ class TaskGeneratorService:
     def __init__(
         self,
         sample_results_dao: SampleResultsDAO,
-        task_queue_dao: TaskQueueDAO,
+        task_pool_dao: TaskPoolDAO,
         system_config_dao: Optional[SystemConfigDAO] = None
     ):
         """
@@ -58,11 +58,11 @@ class TaskGeneratorService:
         
         Args:
             sample_results_dao: DAO for sample results
-            task_queue_dao: DAO for task queue
+            task_pool_dao: DAO for task pool
             system_config_dao: DAO for system config
         """
         self.sample_results_dao = sample_results_dao
-        self.task_queue_dao = task_queue_dao
+        self.task_pool_dao = task_pool_dao
         self.system_config_dao = system_config_dao or SystemConfigDAO()
         self._config_cache: Optional[Dict[str, Any]] = None
     
@@ -150,7 +150,7 @@ class TaskGeneratorService:
         )
         
         # Get pending task_ids already in queue
-        pending_task_ids = await self.task_queue_dao.get_pending_task_ids_for_miner(
+        pending_task_ids = await self.task_pool_dao.get_pending_task_ids_for_miner(
             miner_hotkey=miner.hotkey,
             model_revision=miner.model_revision,
             env=env
@@ -158,18 +158,16 @@ class TaskGeneratorService:
         
         # Calculate missing task_ids
         missing_task_ids = expected_task_ids - completed_task_ids - pending_task_ids
-        
-        if not missing_task_ids:
-            logger.debug(
-                f"No missing tasks for miner {miner.uid}({miner.hotkey[:8]}...) "
-                f"env={env} completed={len(completed_task_ids)} pending={len(pending_task_ids)}"
+        if len(pending_task_ids) != 0 and len(missing_task_ids) != 0:
+            logger.info(
+                f"[SCHEDULER] Checked miner U{miner.uid}({miner.hotkey[:8]}...) {env}: "
+                f"expected={len(expected_task_ids)} completed={len(completed_task_ids)} "
+                f"pending={len(pending_task_ids)} missing={len(missing_task_ids)}"
             )
+
+        if not missing_task_ids:
             return 0
-        
-        logger.info(
-            f"Found {len(missing_task_ids)} missing tasks for miner {miner.uid}({miner.hotkey[:8]}...) "
-            f"env={env} (completed={len(completed_task_ids)}, pending={len(pending_task_ids)})"
-        )
+
         
         # Limit batch size
         tasks_to_create = sorted(missing_task_ids)[:max_tasks_per_batch]
@@ -188,12 +186,13 @@ class TaskGeneratorService:
         ]
         
         # Batch create tasks (no priority needed)
-        created_count = await self.task_queue_dao.batch_create_tasks(
+        created_count = await self.task_pool_dao.batch_create_tasks(
             tasks=task_list
         )
         
         logger.info(
-            f"Created {created_count} tasks for miner {miner.uid}({miner.hotkey[:8]}...) env={env}"
+            f"[SCHEDULER] Created {created_count} tasks for miner U{miner.uid}({miner.hotkey[:8]}...) "
+            f"env={env} missing_task_ids={sorted(list(missing_task_ids))[:10]}{'...' if len(missing_task_ids) > 10 else ''} task_ids={tasks_to_create[:10]}{'...' if len(tasks_to_create) > 10 else ''}"
         )
         
         return created_count
@@ -291,7 +290,7 @@ class TaskGeneratorService:
             for m in valid_miners
         ]
         
-        removed_count = await self.task_queue_dao.cleanup_invalid_tasks(valid_miner_dicts)
+        removed_count = await self.task_pool_dao.cleanup_invalid_tasks(valid_miner_dicts)
         
         if removed_count > 0:
             logger.info(f"Cleaned up {removed_count} invalid tasks")

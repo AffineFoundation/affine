@@ -62,6 +62,8 @@ class SampleSubmitRequest(BaseModel):
     
     Note: uid field removed from storage schema.
     Validators should query uid via bittensor metadata using hotkey.
+    Score validation only requires non-negative values - different environments
+    may use different scales (0-1 or 0-100). Normalization happens during scoring.
     """
 
     miner_hotkey: str
@@ -69,7 +71,7 @@ class SampleSubmitRequest(BaseModel):
     model: str
     env: str
     task_id: str
-    score: float = Field(..., ge=0.0, le=1.0)
+    score: float = Field(..., ge=0.0)  # Only require non-negative, no upper limit
     latency_ms: int
     extra: ExtraData
     validator_hotkey: str

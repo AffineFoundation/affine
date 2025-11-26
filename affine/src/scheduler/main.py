@@ -12,7 +12,7 @@ import click
 from affine.core.setup import setup_logging, logger
 from affine.database import init_client, close_client
 from affine.database.dao.sample_results import SampleResultsDAO
-from affine.database.dao.task_queue import TaskQueueDAO
+from affine.database.dao.task_pool import TaskPoolDAO
 from .task_generator import TaskGeneratorService
 from .scheduler import SchedulerService
 
@@ -45,12 +45,12 @@ async def run_service(task_interval: int, cleanup_interval: int, max_tasks: int)
     try:
         # Create DAOs
         sample_results_dao = SampleResultsDAO()
-        task_queue_dao = TaskQueueDAO()
+        task_pool_dao = TaskPoolDAO()
         
         # Create TaskGeneratorService
         task_generator = TaskGeneratorService(
             sample_results_dao=sample_results_dao,
-            task_queue_dao=task_queue_dao
+            task_pool_dao=task_pool_dao
         )
         
         # Create and start SchedulerService

@@ -15,10 +15,13 @@ from affine.api.dependencies import (
     get_sample_results_dao,
     get_task_pool_manager,
     verify_executor_auth,
+    rate_limit_read,
+    get_miners_dao,
 )
 from affine.api.config import config
 from affine.core.models import SampleSubmission
 from affine.database.dao.sample_results import SampleResultsDAO
+from affine.database.dao.miners import MinersDAO
 from affine.api.services.task_pool import TaskPoolManager
 from affine.utils.subtensor import get_subtensor
 
@@ -31,6 +34,7 @@ router = APIRouter(prefix="/tasks", tags=["Tasks"])
 async def fetch_task(
     env: Optional[str] = Query(None, description="Environment filter (optional)"),
     executor_hotkey: str = Depends(verify_executor_auth),
+    miners_dao: MinersDAO = Depends(get_miners_dao),
 ):
     """
     Fetch a task using weighted random selection.
@@ -73,10 +77,24 @@ async def fetch_task(
             logger.debug(f"No available tasks for executor {executor_hotkey[:16]}...")
             return TaskFetchResponse(task=None)
         
+        miner_record = await miners_dao.get_miner_by_hotkey(task["miner_hotkey"])
+        if not miner_record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Miner record not found for hotkey {task['miner_hotkey'][:16]}..."
+            )
+        
+        miner_uid = miner_record.get("uid")
+        if miner_uid is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"UID not found for hotkey {task['miner_hotkey'][:16]}..."
+            )
+        
         # Return task details
         logger.debug(
             f"Assigned task {task['task_uuid']} to executor {executor_hotkey[:16]}... "
-            f"(miner={task['miner_hotkey'][:16]}..., env={task['env']}, task_id={task['task_id']})"
+            f"(miner={task['miner_hotkey'][:16]}..., uid={miner_uid}, env={task['env']}, task_id={task['task_id']})"
         )
         
         return TaskFetchResponse(
@@ -84,6 +102,7 @@ async def fetch_task(
                 "task_uuid": task["task_uuid"],
                 "task_id": task["task_id"],
                 "miner_hotkey": task["miner_hotkey"],
+                "miner_uid": miner_uid,
                 "model_revision": task["model_revision"],
                 "model": task["model"],
                 "env": task["env"],
@@ -217,3 +236,48 @@ async def submit_sample_from_executor(
         created_at=int(time.time()),
         message=message
     )
+
+@router.get("/pool/stats", dependencies=[Depends(rate_limit_read)])
+async def get_pool_stats(
+    env: Optional[str] = Query(None, description="Environment filter (optional)"),
+    task_pool: TaskPoolManager = Depends(get_task_pool_manager),
+):
+    """
+    Get task queue statistics for monitoring.
+    
+    Query Parameters:
+    - env: Optional environment filter (e.g., "agentgym:alfworld")
+    
+    Returns:
+    - pending_count: Number of pending tasks in the queue
+    - assigned_count: Number of assigned tasks
+    - env: Environment name (if filtered)
+    """
+    try:
+        if env:
+            # Get stats using efficient COUNT query
+            stats = await task_pool.dao.get_pool_stats(env)
+            
+            return {
+                "env": env,
+                "pending_count": stats.get('pending', 0),
+                "assigned_count": stats.get('assigned', 0),
+                "failed_count": stats.get('failed', 0),
+            }
+        else:
+            # Get total stats across all environments
+            # This would require querying all environments
+            # For now, return error asking for env parameter
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="env parameter is required"
+            )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting queue stats: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get queue stats: {str(e)}"
+        )

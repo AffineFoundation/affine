@@ -40,17 +40,20 @@ class SampleSubmission(BaseModel):
     
     Minimal data structure for executor-API communication:
     - task_uuid: Identifies which task this result belongs to
-    - score: Evaluation score (0.0 to 1.0)
+    - score: Evaluation score (non-negative, environment-specific scale)
     - latency_ms: Execution time in milliseconds
     - extra: Evaluation details and metadata
     - signature: Cryptographic signature by executor wallet
     
     API server merges this with task queue data (hotkey, revision, env, task_id)
     before saving to sample_results table.
+    
+    Note: Score validation only requires non-negative values. Different environments
+    may use different scales (0-1 or 0-100). Normalization happens during scoring.
     """
     
     task_uuid: str
-    score: float = Field(ge=0.0, le=1.0)
+    score: float = Field(ge=0.0)  # Only require non-negative, no upper limit
     latency_ms: int = Field(ge=0)
     extra: Dict[str, Any] = Field(default_factory=dict)
     signature: str = ""
