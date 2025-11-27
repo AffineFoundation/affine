@@ -68,14 +68,6 @@ class ScorerConfig:
     MIN_WEIGHT_THRESHOLD: float = 0.5
     """Minimum weight threshold (1%). Miners below this are set to 0."""
     
-    BURN_PERCENTAGE: float = 0.0
-    """
-    Percentage of total weight to burn (allocated to UID 0).
-    
-    Set to 0.0 to disable burning.
-    Range: [0.0, 1.0]
-    """
-    
     # Stage 1: Data Collection
     MIN_COMPLETENESS: float = 0.9
     """Minimum sample completeness required."""
@@ -103,7 +95,6 @@ class ScorerConfig:
             'subset_weight_exponent': cls.SUBSET_WEIGHT_EXPONENT,
             'decay_factor': cls.DECAY_FACTOR,
             'min_weight_threshold': cls.MIN_WEIGHT_THRESHOLD,
-            'burn_percentage': cls.BURN_PERCENTAGE,
             'min_completeness': cls.MIN_COMPLETENESS,
         }
     
@@ -117,7 +108,6 @@ class ScorerConfig:
         assert cls.SUBSET_WEIGHT_EXPONENT >= 2, "SUBSET_WEIGHT_EXPONENT must be >= 2"
         assert 0.0 <= cls.DECAY_FACTOR <= 1.0, "DECAY_FACTOR must be in [0, 1]"
         assert 0.0 <= cls.MIN_WEIGHT_THRESHOLD <= 1.0, "MIN_WEIGHT_THRESHOLD must be in [0, 1]"
-        assert 0.0 <= cls.BURN_PERCENTAGE <= 1.0, "BURN_PERCENTAGE must be in [0, 1]"
         assert 0.0 <= cls.MIN_COMPLETENESS <= 1.0, "MIN_COMPLETENESS must be in [0, 1]"
 
 

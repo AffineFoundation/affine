@@ -2,7 +2,7 @@
 Stage 4: Weight Normalization and Finalization
 
 Aggregates subset contributions, applies minimum threshold,
-implements burning mechanism, and normalizes final weights.
+and normalizes final weights.
 """
 
 import logging
@@ -15,7 +15,6 @@ from affine.src.scorer.config import ScorerConfig
 from affine.src.scorer.utils import (
     normalize_weights,
     apply_min_threshold,
-    apply_burn_mechanism,
 )
 
 from affine.core.setup import logger
@@ -27,9 +26,8 @@ class Stage4WeightNormalizer:
     Responsibilities:
     1. Accumulate subset weight contributions for each miner
     2. Apply minimum weight threshold (remove miners < 1%)
-    3. Apply burning mechanism (allocate percentage to UID 0)
-    4. Normalize weights to sum to 1.0
-    5. Generate final weight distribution for chain
+    3. Normalize weights to sum to 1.0
+    4. Generate final weight distribution for chain
     """
     
     def __init__(self, config: ScorerConfig = ScorerConfig):
@@ -40,7 +38,6 @@ class Stage4WeightNormalizer:
         """
         self.config = config
         self.min_threshold = config.MIN_WEIGHT_THRESHOLD
-        self.burn_percentage = config.BURN_PERCENTAGE
     
     def normalize(
         self,
@@ -82,24 +79,8 @@ class Stage4WeightNormalizer:
                 f"({self.min_threshold:.1%})"
             )
         
-        # Step 3: Normalize weights (before burning)
-        normalized_weights = normalize_weights(weights_after_threshold)
-        
-        # Step 4: Apply burning mechanism
-        burn_weight = 0.0
-        if self.burn_percentage > 0:
-            normalized_weights, burn_weight = apply_burn_mechanism(
-                normalized_weights,
-                self.burn_percentage,
-                burn_uid=0
-            )
-            logger.debug(
-                f"Applied burning: {self.burn_percentage:.1%} → "
-                f"{burn_weight:.6f} allocated to UID 0"
-            )
-        
-        # Step 5: Final normalization (ensure sum = 1.0)
-        final_weights = normalize_weights(normalized_weights)
+        # Step 3: Final normalization (ensure sum = 1.0)
+        final_weights = normalize_weights(weights_after_threshold)
         
         # Update miner objects with normalized weights
         for uid, weight in final_weights.items():
@@ -111,7 +92,6 @@ class Stage4WeightNormalizer:
         
         return Stage4Output(
             final_weights=final_weights,
-            burn_weight=burn_weight,
             below_threshold_count=below_threshold_count
         )
     
