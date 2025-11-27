@@ -115,7 +115,7 @@ def get_weights():
     asyncio.run(get_weights_command())
 
 @click.command("get-scores")
-@click.option("--top", "-t", default=32, type=int, help="Return top N miners by score (default: 256)")
+@click.option("--top", "-t", default=10, type=int, help="Return top N miners by score (default: 256)")
 def get_scores(top):
     """Query latest scores for top N miners.
     
