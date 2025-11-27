@@ -88,46 +88,6 @@ async def get_latest_scores(
         )
 
 
-@router.get("/miner/{hotkey}", response_model=MinerScoreHistoryResponse, dependencies=[Depends(rate_limit_read)])
-async def get_miner_score_history(
-    hotkey: str,
-    num_blocks: int = Query(10, description="Number of recent blocks", ge=1, le=100),
-    dao: ScoresDAO = Depends(get_scores_dao),
-):
-    """
-    Get score history for a miner.
-    
-    Returns the miner's scores across recent blocks.
-    
-    Query parameters:
-    - num_blocks: Number of recent blocks to retrieve (default: 10, max: 100)
-    """
-    try:
-        history_data = await dao.get_miner_score_history(hotkey, num_blocks)
-        
-        # Convert to response models with safe field access
-        history = [
-            MinerScoreHistory(
-                block_number=h.get("block_number", 0),
-                calculated_at=h.get("calculated_at", 0),
-                overall_score=h.get("overall_score", 0.0),
-                average_score=h.get("average_score", 0.0),
-            )
-            for h in history_data
-        ]
-        
-        return MinerScoreHistoryResponse(
-            miner_hotkey=hotkey,
-            history=history,
-        )
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve score history: {str(e)}"
-        )
-
-
 @router.get("/weights/latest", dependencies=[Depends(rate_limit_read)])
 async def get_latest_weights(
     snapshots_dao: ScoreSnapshotsDAO = Depends(get_score_snapshots_dao),

@@ -9,6 +9,8 @@ services:
     mem_limit:       "8g"
     env_file:
       - .env
+    environment:
+      - SERVICE_MODE=true
     volumes:
       - ~/.bittensor/wallets:/root/.bittensor/wallets:ro
       - /var/log/affine/validator:/var/log/affine/validator
