@@ -6,12 +6,12 @@ Handles storage and retrieval of sampling results with compression.
 
 import json
 import time
-import uuid
 import asyncio
 from typing import Dict, Any, List, Optional, Tuple
 from affine.database.base_dao import BaseDAO
 from affine.database.schema import get_table_name
 from affine.database.client import get_client
+from affine.core.setup import logger
 
 
 class SampleResultsDAO(BaseDAO):
@@ -96,18 +96,21 @@ class SampleResultsDAO(BaseDAO):
         if timestamp is None:
             timestamp = int(time.time() * 1000)  # milliseconds
         
+        # Ensure task_id is integer for proper range queries
+        task_id_int = int(task_id) if not isinstance(task_id, int) else task_id
+        
         # Compress extra data (contains conversation + request)
         extra_json = json.dumps(extra, separators=(',', ':'))
         extra_compressed = self.compress_data(extra_json)
         
         item = {
             'pk': self._make_pk(miner_hotkey, model_revision, env),
-            'sk': self._make_sk(task_id),
+            'sk': self._make_sk(str(task_id_int)),
             'miner_hotkey': miner_hotkey,
             'model_revision': model_revision,
             'model': model,
             'env': env,
-            'task_id': task_id,
+            'task_id': task_id_int,  # Store as integer
             'score': score,
             'latency_ms': latency_ms,
             'timestamp': timestamp,
@@ -161,6 +164,23 @@ class SampleResultsDAO(BaseDAO):
         return item
 
     
+    def _parse_task_id(self, task_id_field: Dict[str, Any]) -> Optional[int]:
+        """Parse task_id from DynamoDB field format.
+        
+        Args:
+            task_id_field: DynamoDB field dict with type indicators
+            
+        Returns:
+            Parsed integer or None if parsing fails
+        """
+        for type_key in ('N', 'S'):
+            if type_key in task_id_field:
+                try:
+                    return int(task_id_field[type_key])
+                except (ValueError, TypeError):
+                    pass
+        return None
+    
     async def get_completed_task_ids(
         self,
         miner_hotkey: str,
@@ -179,11 +199,7 @@ class SampleResultsDAO(BaseDAO):
         Returns:
             Set of completed task_ids (integers representing dataset indices)
         """
-        # Use BaseDAO's query method with custom projection
-        client = get_client()
         pk = self._make_pk(miner_hotkey, model_revision, env)
-        
-        # Query with projection to only fetch task_id field (performance optimization)
         params = {
             'TableName': self.table_name,
             'KeyConditionExpression': 'pk = :pk',
@@ -191,7 +207,31 @@ class SampleResultsDAO(BaseDAO):
             'ProjectionExpression': 'task_id'
         }
         
+        items = await self._query_all_pages(get_client(), params)
         task_ids = set()
+        
+        for item in items:
+            task_id = self._parse_task_id(item.get('task_id', {}))
+            if task_id is not None:
+                task_ids.add(task_id)
+        
+        return task_ids
+    
+    async def _query_all_pages(
+        self,
+        client,
+        params: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Query DynamoDB with automatic pagination handling.
+        
+        Args:
+            client: DynamoDB client
+            params: Query parameters
+            
+        Returns:
+            List of all items across all pages
+        """
+        all_items = []
         last_key = None
         
         while True:
@@ -200,29 +240,13 @@ class SampleResultsDAO(BaseDAO):
             
             response = await client.query(**params)
             items = response.get('Items', [])
-            
-            # Extract task_ids directly from DynamoDB response
-            # This avoids the overhead of full deserialization
-            for item in items:
-                task_id_field = item.get('task_id', {})
-                
-                # Handle both Number (N) and String (S) types from DynamoDB
-                if 'N' in task_id_field:
-                    try:
-                        task_ids.add(int(task_id_field['N']))
-                    except ValueError:
-                        pass
-                elif 'S' in task_id_field:
-                    try:
-                        task_ids.add(int(task_id_field['S']))
-                    except ValueError:
-                        pass
+            all_items.extend(items)
             
             last_key = response.get('LastEvaluatedKey')
             if not last_key:
                 break
         
-        return task_ids
+        return all_items
     
     async def get_scoring_samples_batch(
         self,
@@ -232,6 +256,8 @@ class SampleResultsDAO(BaseDAO):
     ) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
         """Batch query samples for all miners across all environments with concurrent execution.
         
+        Uses DynamoDB FilterExpression for efficient server-side filtering by task_id range.
+        
         Args:
             miners: List of miner info dicts with 'hotkey' and 'revision' keys
             env_ranges: Dict mapping env name to (start_id, end_id) tuple
@@ -240,12 +266,9 @@ class SampleResultsDAO(BaseDAO):
         Returns:
             Dict mapping 'hotkey#revision' to dict of env -> samples list
         """
-        from affine.database.client import get_client
         client = get_client()
-        
-        # Build all query tasks
-        tasks = []
-        task_metadata = []
+        query_coros = []
+        query_metadata = []
         
         for miner in miners:
             hotkey = miner['hotkey']
@@ -257,51 +280,46 @@ class SampleResultsDAO(BaseDAO):
                 
                 pk = self._make_pk(hotkey, revision, env)
                 
-                # Build query params without FilterExpression
-                # Note: task_id is stored as String but we need numeric range comparison
-                # So we fetch all records and filter in code
+                # Use FilterExpression for server-side task_id range filtering
                 params = {
                     'TableName': self.table_name,
                     'KeyConditionExpression': 'pk = :pk',
+                    'FilterExpression': 'task_id >= :start_id AND task_id < :end_id',
                     'ExpressionAttributeValues': {
-                        ':pk': {'S': pk}
+                        ':pk': {'S': pk},
+                        ':start_id': {'N': str(start_id)},
+                        ':end_id': {'N': str(end_id)}
                     },
                     'ProjectionExpression': 'task_id,score,#ts',
                     'ExpressionAttributeNames': {'#ts': 'timestamp'},
                     'ScanIndexForward': False
                 }
                 
-                tasks.append(client.query(**params))
-                task_metadata.append((hotkey, revision, env))
+                query_coros.append(self._query_all_pages(client, params))
+                query_metadata.append((hotkey, revision, env))
         
         # Execute queries in batches
         all_results = []
-        for i in range(0, len(tasks), batch_size):
-            batch = tasks[i:i+batch_size]
+        for i in range(0, len(query_coros), batch_size):
+            batch = query_coros[i:i+batch_size]
             batch_results = await asyncio.gather(*batch, return_exceptions=True)
             all_results.extend(batch_results)
         
-        # Process results and apply task_id range filter in code
+        # Process results (no need for client-side filtering now)
         output = {}
-        for (hotkey, revision, env), result in zip(task_metadata, all_results):
+        for metadata, result in zip(query_metadata, all_results):
+            hotkey, revision, env = metadata
+            
             if isinstance(result, Exception):
+                logger.error(f"Query failed for {hotkey[:8]}...#{env}: {result}")
                 continue
             
-            # Get range for this env
-            start_id, end_id = env_ranges.get(env, (0, 0))
+            items = [self._deserialize(item) for item in result]
             
-            # Deserialize and filter by task_id range
-            items = [self._deserialize(item) for item in result.get('Items', [])]
-            filtered_items = [
-                item for item in items
-                if start_id <= int(item['task_id']) < end_id
-            ]
-            
-            # Store in output structure
             key = f"{hotkey}#{revision}"
             if key not in output:
                 output[key] = {}
-            output[key][env] = filtered_items
+            output[key][env] = items
         
         return output
 
