@@ -25,7 +25,7 @@ class Scorer:
     1. Data Collection: Collect and validate sample data
     2. Pareto Filtering: Apply anti-plagiarism filtering
     3. Subset Scoring: Calculate geometric mean scores and distribute weights
-    4. Weight Normalization: Apply threshold, burning, and normalization
+    4. Weight Normalization: Apply threshold and normalization
     
     Optionally saves results to database.
     """
@@ -92,7 +92,6 @@ class Scorer:
             total_miners=len(scoring_data),
             valid_miners=stage1_output.valid_count,
             invalid_miners=stage1_output.invalid_count,
-            burn_weight=stage4_output.burn_weight
         )
         
         elapsed_time = time.time() - start_time

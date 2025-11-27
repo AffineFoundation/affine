@@ -209,35 +209,6 @@ def apply_min_threshold(
     }
 
 
-def apply_burn_mechanism(
-    weights: Dict[int, float],
-    burn_percentage: float = 0.0,
-    burn_uid: int = 0
-) -> Tuple[Dict[int, float], float]:
-    """Apply weight burning mechanism (allocate percentage to UID 0).
-    
-    Args:
-        weights: Dict mapping UID to normalized weight
-        burn_percentage: Percentage to burn (0.0 to 1.0)
-        burn_uid: UID to receive burned weight (default: 0)
-        
-    Returns:
-        Tuple of (updated_weights, burn_amount)
-    """
-    if burn_percentage <= 0:
-        return weights.copy(), 0.0
-    
-    # Calculate total weight to burn
-    total_weight = sum(weights.values())
-    burn_amount = total_weight * burn_percentage
-    
-    # Create updated weights
-    updated = weights.copy()
-    updated[burn_uid] = updated.get(burn_uid, 0.0) + burn_amount
-    
-    return updated, burn_amount
-
-
 def aggregate_by_layer(
     subset_weights: Dict[str, float]
 ) -> Dict[int, float]:
