@@ -165,14 +165,14 @@ async def print_rank_table():
         ]
         
         # Environment scores - show "score/count" format (score × 100, 2 decimals)
-        # Note: The API doesn't provide sample counts per environment, so we estimate
         for env in environments:
             if env in scores_by_env:
-                env_score = scores_by_env[env]
+                env_data = scores_by_env[env]
+                env_score = env_data.get("score", 0.0)
+                sample_count = env_data.get("sample_count", 0)
+                
                 score_percent = env_score * 100
-                # We don't have individual env sample counts, so show total/N
-                estimated_count = total_samples // len(scores_by_env) if scores_by_env else 0
-                score_str = f"{score_percent:.2f}/{estimated_count}"
+                score_str = f"{score_percent:.2f}/{sample_count}"
                 row_parts.append(f"{score_str:>11}")
             else:
                 row_parts.append(f"{'  -  ':>11}")

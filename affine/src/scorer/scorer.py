@@ -110,7 +110,6 @@ class Scorer:
     async def save_results(
         self,
         result: ScoringResult,
-        miner_scores_dao=None,
         score_snapshots_dao=None,
         scores_dao=None
     ):
@@ -118,63 +117,14 @@ class Scorer:
         
         Args:
             result: ScoringResult to save
-            miner_scores_dao: MinerScoresDAO instance (optional)
             score_snapshots_dao: ScoreSnapshotsDAO instance (optional)
             scores_dao: ScoresDAO instance (optional)
         """
-        if not miner_scores_dao or not score_snapshots_dao or not scores_dao:
+        if not score_snapshots_dao or not scores_dao:
             logger.warning("DAO instances not provided, skipping database save")
             return
         
         logger.info(f"Saving scoring results to database (block {result.block_number})")
-        
-        # Save individual miner scores to miner_scores table (detailed)
-        for uid, miner in result.miners.items():
-            # Prepare environment scores
-            env_scores = {
-                env: {
-                    "avg_score": score.avg_score,
-                    "sample_count": score.sample_count,
-                    "completeness": score.completeness
-                }
-                for env, score in miner.env_scores.items()
-            }
-            
-            # Prepare layer scores
-            layer_scores = {
-                f"L{layer}": weight
-                for layer, weight in miner.layer_weights.items()
-            }
-            
-            # Prepare subset contributions
-            subset_contributions = {
-                subset_key: {
-                    "score": miner.subset_scores.get(subset_key, 0.0),
-                    "rank": miner.subset_ranks.get(subset_key, 0),
-                    "weight": weight
-                }
-                for subset_key, weight in miner.subset_weights.items()
-            }
-            
-            # Prepare filter info
-            filter_info = {
-                "filtered_subsets": miner.filtered_subsets,
-                "filter_reasons": miner.filter_reasons
-            }
-            
-            # Save miner score
-            await miner_scores_dao.save_miner_score(
-                block_number=result.block_number,
-                hotkey=miner.hotkey,
-                uid=uid,
-                model_revision=miner.model_revision,
-                env_scores=env_scores,
-                layer_scores=layer_scores,
-                subset_contributions=subset_contributions,
-                cumulative_weight=miner.cumulative_weight,
-                normalized_weight=miner.normalized_weight,
-                filter_info=filter_info
-            )
         
         # Save snapshot metadata
         statistics = {
@@ -194,8 +144,8 @@ class Scorer:
             statistics=statistics
         )
         
-        # Save to scores table (simplified, for API queries)
-        logger.info(f"Saving to scores table for API queries...")
+        # Save to scores table (now contains all data - merged with miner_scores)
+        logger.info(f"Saving complete scoring data to scores table...")
         for uid, miner in result.miners.items():
             # Calculate total samples
             total_samples = sum(
@@ -203,9 +153,13 @@ class Scorer:
                 for env_score in miner.env_scores.values()
             )
             
-            # Prepare scores by environment
+            # Prepare detailed scores by environment (with completeness)
             scores_by_env = {
-                env: score.avg_score
+                env: {
+                    "score": score.avg_score,
+                    "sample_count": score.sample_count,
+                    "completeness": score.completeness
+                }
                 for env, score in miner.env_scores.items()
             }
             
@@ -214,7 +168,7 @@ class Scorer:
             
             # Calculate average score from environments
             if scores_by_env:
-                average_score = sum(scores_by_env.values()) / len(scores_by_env)
+                average_score = sum(env_data["score"] for env_data in scores_by_env.values()) / len(scores_by_env)
             else:
                 average_score = 0.0
             
@@ -224,6 +178,23 @@ class Scorer:
                 for layer, weight in miner.layer_weights.items()
             }
             
+            # Prepare subset contributions (detailed)
+            subset_contributions = {
+                subset_key: {
+                    "score": miner.subset_scores.get(subset_key, 0.0),
+                    "rank": miner.subset_ranks.get(subset_key, 0),
+                    "weight": weight
+                }
+                for subset_key, weight in miner.subset_weights.items()
+            }
+            
+            # Prepare filter info
+            filter_info = {
+                "filtered_subsets": miner.filtered_subsets,
+                "filter_reasons": miner.filter_reasons
+            }
+            
+            # Save complete data to scores table (merged with miner_scores data)
             await scores_dao.save_score(
                 block_number=result.block_number,
                 miner_hotkey=miner.hotkey,
@@ -237,10 +208,14 @@ class Scorer:
                 scores_by_env=scores_by_env,
                 total_samples=total_samples,
                 is_eligible=(overall_score > 0),
-                meets_criteria=(overall_score > 0)
+                meets_criteria=(overall_score > 0),
+                # Additional detailed fields (formerly in miner_scores)
+                subset_contributions=subset_contributions,
+                cumulative_weight=miner.cumulative_weight,
+                filter_info=filter_info
             )
         
-        logger.info(f"Successfully saved scoring results for {len(result.miners)} miners to all tables")
+        logger.info(f"Successfully saved complete scoring results for {len(result.miners)} miners to scores table")
 
 
 def create_scorer(config: Optional[ScorerConfig] = None) -> Scorer:
