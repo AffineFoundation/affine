@@ -98,7 +98,7 @@ async def run_service(task_interval: int, cleanup_interval: int, max_tasks: int)
     type=click.Choice(["0", "1", "2", "3"]),
     help="Logging verbosity: 0=CRITICAL, 1=INFO, 2=DEBUG, 3=TRACE"
 )
-def main(task_interval, cleanup_interval, max_tasks, verbosity):
+def main(verbosity):
     """
     Affine Task Scheduler - Generate sampling tasks for miners.
     
