@@ -93,24 +93,6 @@ async def run_service(task_interval: int, cleanup_interval: int, max_tasks: int)
 
 @click.command()
 @click.option(
-    "--task-interval",
-    default=60,
-    type=int,
-    help="Task generation interval in seconds"
-)
-@click.option(
-    "--cleanup-interval",
-    default=300,
-    type=int,
-    help="Cleanup interval in seconds"
-)
-@click.option(
-    "--max-tasks",
-    default=30,
-    type=int,
-    help="Maximum tasks per miner per environment"
-)
-@click.option(
     "-v", "--verbosity",
     default=None,
     type=click.Choice(["0", "1", "2", "3"]),
@@ -128,10 +110,10 @@ def main(task_interval, cleanup_interval, max_tasks, verbosity):
         setup_logging(int(verbosity))
     
     # Override with environment variables if present
-    task_interval = int(os.getenv("SCHEDULER_TASK_GENERATION_INTERVAL", str(task_interval)))
-    cleanup_interval = int(os.getenv("SCHEDULER_CLEANUP_INTERVAL", str(cleanup_interval)))
-    max_tasks = int(os.getenv("SCHEDULER_MAX_TASKS_PER_MINER_ENV", str(max_tasks)))
-    
+    task_interval = int(os.getenv("SCHEDULER_TASK_GENERATION_INTERVAL", "60"))
+    cleanup_interval = int(os.getenv("SCHEDULER_CLEANUP_INTERVAL", "300"))
+    max_tasks = int(os.getenv("SCHEDULER_MAX_TASKS_PER_MINER_ENV", "50"))
+
     # Run service
     asyncio.run(run_service(
         task_interval=task_interval,
