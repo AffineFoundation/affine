@@ -591,10 +591,6 @@ class TaskPoolDAO(BaseDAO):
             try:
                 await client.batch_write_item(**params)
                 deleted_count += len(batch)
-                
-                if (i // batch_size + 1) % 10 == 0:
-                    logger.info(f"Deleted {deleted_count}/{len(tasks)} tasks...")
-                    
             except Exception as e:
                 logger.error(f"Batch delete failed: {e}")
         
