@@ -11,6 +11,7 @@ import asyncio
 from typing import Dict, Any, List, Optional, Tuple
 from affine.database.base_dao import BaseDAO
 from affine.database.schema import get_table_name
+from affine.database.client import get_client
 
 
 class SampleResultsDAO(BaseDAO):
@@ -158,131 +159,7 @@ class SampleResultsDAO(BaseDAO):
             del item['extra_compressed']
         
         return item
-    
-    async def get_samples_by_miner(
-        self,
-        miner_hotkey: str,
-        model_revision: str,
-        env: str,
-        limit: Optional[int] = None,
-        reverse: bool = True,
-        include_extra: bool = True
-    ) -> List[Dict[str, Any]]:
-        """Get samples for a specific miner, revision, and environment.
-        
-        Args:
-            miner_hotkey: Miner's hotkey
-            model_revision: Model revision hash
-            env: Environment name (required, part of PK)
-            limit: Maximum number of results
-            reverse: If True, return newest first (by task_id)
-            include_extra: If True, include and decompress extra field (default: True)
-            
-        Returns:
-            List of samples (extra data decompressed if include_extra=True)
-        """
-        pk = self._make_pk(miner_hotkey, model_revision, env)
-        
-        # Build projection expression to exclude extra_compressed if not needed
-        from affine.database.client import get_client
-        client = get_client()
-        
-        # Build query parameters
-        params = {
-            'TableName': self.table_name,
-            'KeyConditionExpression': 'pk = :pk',
-            'ExpressionAttributeValues': {':pk': {'S': pk}},
-            'ScanIndexForward': not reverse
-        }
-        
-        if limit:
-            params['Limit'] = limit
-        
-        # Exclude extra_compressed field if not needed (saves bandwidth and decompression cost)
-        if not include_extra:
-            params['ProjectionExpression'] = 'pk,sk,miner_hotkey,model_revision,#m,env,task_id,score,latency_ms,#ts,validator_hotkey,block_number,signature'
-            params['ExpressionAttributeNames'] = {'#m': 'model', '#ts': 'timestamp'}
-        
-        # Execute query
-        response = await client.query(**params)
-        items = [self._deserialize(item) for item in response.get('Items', [])]
-        
-        # Decompress extra data if included
-        if include_extra:
-            for item in items:
-                if 'extra_compressed' in item:
-                    compressed = item['extra_compressed']
-                    extra_json = self.decompress_data(compressed)
-                    item['extra'] = json.loads(extra_json)
-                    del item['extra_compressed']
-        
-        return items
-    
-    async def get_samples_by_miner_all_envs(
-        self,
-        miner_hotkey: str,
-        model_revision: str,
-        envs: List[str],
-        limit_per_env: Optional[int] = None,
-        include_extra: bool = True
-    ) -> Dict[str, List[Dict[str, Any]]]:
-        """Get samples for a miner across multiple environments.
-        
-        Args:
-            miner_hotkey: Miner's hotkey
-            model_revision: Model revision hash
-            envs: List of environment names to query
-            limit_per_env: Maximum number of results per environment
-            include_extra: If True, include and decompress extra field (default: True)
-            
-        Returns:
-            Dict mapping env -> list of samples
-        """
-        results = {}
-        for env in envs:
-            samples = await self.get_samples_by_miner(
-                miner_hotkey=miner_hotkey,
-                model_revision=model_revision,
-                env=env,
-                limit=limit_per_env,
-                include_extra=include_extra
-            )
-            results[env] = samples
-        
-        return results
-    
-    async def delete_samples_before(
-        self,
-        miner_hotkey: str,
-        model_revision: str,
-        env: str,
-        cutoff_timestamp: int
-    ) -> int:
-        """Delete samples older than cutoff timestamp.
-        
-        Used by cleanup scripts for non-protected miners.
-        
-        Args:
-            miner_hotkey: Miner's hotkey
-            model_revision: Model revision hash
-            env: Environment name
-            cutoff_timestamp: Delete samples before this timestamp (milliseconds)
-            
-        Returns:
-            Number of samples deleted
-        """
-        pk = self._make_pk(miner_hotkey, model_revision, env)
-        
-        # Query all samples for this PK
-        items = await self.query(pk=pk, reverse=False)
-        
-        deleted_count = 0
-        for item in items:
-            if item['timestamp'] < cutoff_timestamp:
-                await self.delete(item['pk'], item['sk'])
-                deleted_count += 1
-        
-        return deleted_count
+
     
     async def get_completed_task_ids(
         self,
@@ -302,28 +179,49 @@ class SampleResultsDAO(BaseDAO):
         Returns:
             Set of completed task_ids (integers representing dataset indices)
         """
-        # Query all samples without decompressing extra data (for performance)
-        samples = await self.get_samples_by_miner(
-            miner_hotkey=miner_hotkey,
-            model_revision=model_revision,
-            env=env,
-            include_extra=False
-        )
+        # Use BaseDAO's query method with custom projection
+        client = get_client()
+        pk = self._make_pk(miner_hotkey, model_revision, env)
         
-        # Extract task_ids, converting from string format "42" to int 42
+        # Query with projection to only fetch task_id field (performance optimization)
+        params = {
+            'TableName': self.table_name,
+            'KeyConditionExpression': 'pk = :pk',
+            'ExpressionAttributeValues': {':pk': {'S': pk}},
+            'ProjectionExpression': 'task_id'
+        }
+        
         task_ids = set()
-        for sample in samples:
-            task_id = sample.get('task_id')
-            if task_id is not None:
-                # Handle both string and int formats
-                if isinstance(task_id, str):
+        last_key = None
+        
+        while True:
+            if last_key:
+                params['ExclusiveStartKey'] = last_key
+            
+            response = await client.query(**params)
+            items = response.get('Items', [])
+            
+            # Extract task_ids directly from DynamoDB response
+            # This avoids the overhead of full deserialization
+            for item in items:
+                task_id_field = item.get('task_id', {})
+                
+                # Handle both Number (N) and String (S) types from DynamoDB
+                if 'N' in task_id_field:
                     try:
-                        task_ids.add(int(task_id))
+                        task_ids.add(int(task_id_field['N']))
                     except ValueError:
-                        # Skip non-integer task_ids (old format)
                         pass
-                else:
-                    task_ids.add(int(task_id))
+                elif 'S' in task_id_field:
+                    try:
+                        task_ids.add(int(task_id_field['S']))
+                    except ValueError:
+                        pass
+            
+            last_key = response.get('LastEvaluatedKey')
+            if not last_key:
+                break
+        
         return task_ids
     
     async def get_scoring_samples_batch(
@@ -399,65 +297,7 @@ class SampleResultsDAO(BaseDAO):
             output[key][env] = items
         
         return output
-    
-    async def get_changed_miner_envs_since(
-        self,
-        since_timestamp: int
-    ) -> List[Tuple[str, str, str]]:
-        """Detect (hotkey, revision, env) combinations with new samples since timestamp.
-        
-        Uses timestamp-index GSI for efficient range queries.
-        GSI design: gsi_partition='SAMPLE' (HASH) + timestamp (RANGE)
-        
-        Args:
-            since_timestamp: Query samples newer than this timestamp (milliseconds)
-            
-        Returns:
-            List of (hotkey, revision, env) tuples with new samples
-        """
-        from affine.database.client import get_client
-        client = get_client()
-        
-        # Query timestamp-index GSI with range condition
-        params = {
-            'TableName': self.table_name,
-            'IndexName': 'timestamp-index',
-            'KeyConditionExpression': 'gsi_partition = :partition AND #ts > :since',
-            'ExpressionAttributeNames': {'#ts': 'timestamp'},
-            'ExpressionAttributeValues': {
-                ':partition': {'S': 'SAMPLE'},
-                ':since': {'N': str(since_timestamp)}
-            },
-            'ProjectionExpression': 'pk'
-        }
-        
-        # Handle pagination for large result sets
-        changed_pks = set()
-        
-        while True:
-            response = await client.query(**params)
-            
-            for item in response.get('Items', []):
-                pk_value = item['pk']['S']
-                changed_pks.add(pk_value)
-            
-            # Check for more pages
-            if 'LastEvaluatedKey' not in response:
-                break
-            params['ExclusiveStartKey'] = response['LastEvaluatedKey']
-        
-        # Parse PKs to extract (hotkey, revision, env)
-        result = []
-        for pk in changed_pks:
-            # PK format: MINER#{hotkey}#REV#{revision}#ENV#{env}
-            parts = pk.split('#')
-            if len(parts) >= 6:
-                hotkey = parts[1]
-                revision = parts[3]
-                env = parts[5]
-                result.append((hotkey, revision, env))
-        
-        return result
+
     
     async def get_scoring_samples_incremental(
         self,
