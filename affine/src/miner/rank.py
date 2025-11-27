@@ -106,11 +106,6 @@ async def print_rank_table():
         print(f"No miners scored at block {block_number}")
         return
     
-    # Fetch miner metadata from blockchain
-    logger.info("Fetching miner metadata from blockchain...")
-    uids = [s.get("uid") for s in scores_list if s.get("uid") is not None]
-    miner_data = await miners(uids=uids)
-    
     # Print header
     print("=" * 180, flush=True)
     print(f"MINER RANKING TABLE - Block {block_number}", flush=True)
@@ -149,23 +144,18 @@ async def print_rank_table():
     
     # Print each miner row
     for score in scores_list:
-        uid = score.get("uid", 0)
-        hotkey = score.get("miner_hotkey", "")
-        model_revision = score.get("model_revision", "unknown")
-        overall_score = score.get("overall_score", 0.0)
+        uid = score.get("uid")
+        hotkey = score.get("miner_hotkey")
+        model_revision = score.get("model_revision")
+        model = score.get("model")
+        first_block = score.get("first_block")
+        overall_score = score.get("overall_score")
         scores_by_env = score.get("scores_by_env", {})
         scores_by_layer = score.get("scores_by_layer", {})
-        total_samples = score.get("total_samples", 0)
-        is_eligible = score.get("is_eligible", False)
+        total_samples = score.get("total_samples")
+        is_eligible = score.get("is_eligible")
         
-        # Get miner metadata
-        miner_info = miner_data.get(uid)
-        if miner_info:
-            model_display = miner_info.model[:20] if miner_info.model else model_revision[:20]
-            first_block = miner_info.block
-        else:
-            model_display = model_revision[:20]
-            first_block = 0
+        model_display = model[:20]
         
         row_parts = [
             f"{hotkey[:8]:8s}",

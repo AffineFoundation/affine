@@ -37,6 +37,8 @@ class ScoresDAO(BaseDAO):
         miner_hotkey: str,
         uid: int,
         model_revision: str,
+        model: str,
+        first_block: int,
         overall_score: float,
         average_score: float,
         scores_by_layer: Dict[str, float],
@@ -52,6 +54,8 @@ class ScoresDAO(BaseDAO):
             miner_hotkey: Miner's hotkey
             uid: Miner UID
             model_revision: Model revision
+            model: Model repository identifier
+            first_block: Block number when miner first registered
             overall_score: Overall score
             average_score: Average score
             scores_by_layer: Scores breakdown by layer
@@ -72,6 +76,8 @@ class ScoresDAO(BaseDAO):
             'miner_hotkey': miner_hotkey,
             'uid': uid,
             'model_revision': model_revision,
+            'model': model,
+            'first_block': first_block,
             'calculated_at': calculated_at,
             'overall_score': overall_score,
             'average_score': average_score,

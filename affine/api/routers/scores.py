@@ -57,16 +57,18 @@ async def get_latest_scores(
         # Convert to response models with safe field access
         miner_scores = [
             MinerScore(
-                miner_hotkey=s.get("miner_hotkey", ""),
-                uid=s.get("uid", 0),
-                model_revision=s.get("model_revision", "unknown"),
-                overall_score=s.get("overall_score", 0.0),
-                average_score=s.get("average_score", 0.0),
-                scores_by_layer=s.get("scores_by_layer", {}),
-                scores_by_env=s.get("scores_by_env", {}),
-                total_samples=s.get("total_samples", 0),
-                is_eligible=s.get("is_eligible", False),
-                meets_criteria=s.get("meets_criteria", False),
+                miner_hotkey=s.get("miner_hotkey"),
+                uid=s.get("uid"),
+                model_revision=s.get("model_revision"),
+                model=s.get("model"),
+                first_block=s.get("first_block"),
+                overall_score=s.get("overall_score"),
+                average_score=s.get("average_score"),
+                scores_by_layer=s.get("scores_by_layer"),
+                scores_by_env=s.get("scores_by_env"),
+                total_samples=s.get("total_samples"),
+                is_eligible=s.get("is_eligible"),
+                meets_criteria=s.get("meets_criteria"),
             )
             for s in scores_list
         ]

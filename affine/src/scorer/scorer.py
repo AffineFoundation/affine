@@ -229,6 +229,8 @@ class Scorer:
                 miner_hotkey=miner.hotkey,
                 uid=uid,
                 model_revision=miner.model_revision,
+                model=miner.model_repo,
+                first_block=miner.first_block,
                 overall_score=overall_score,
                 average_score=average_score,
                 scores_by_layer=scores_by_layer,

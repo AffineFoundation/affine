@@ -187,6 +187,8 @@ class MinerScore(BaseModel):
     miner_hotkey: str
     uid: int
     model_revision: str
+    model: str
+    first_block: int
     overall_score: float
     average_score: float
     scores_by_layer: Dict[str, float]
