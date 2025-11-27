@@ -399,11 +399,10 @@ class ExecutorWorker:
             )
             self.metrics.tasks_completed += 1
             return True
-        
+
         except Exception as e:
-            logger.error(f"[{self.env}] Error submitting result: {e}")
             self.metrics.tasks_failed += 1
-            return False
+            raise
     
     async def _fetch_loop(self):
         """Fetch loop that continuously fetches tasks and puts them in queue."""
@@ -474,8 +473,6 @@ class ExecutorWorker:
                         await self._submit_result(task, submission)
                         
                     except Exception as e:
-                        # Executor error: log in aligned format with brief error
-                        miner_hotkey = task.get('miner_hotkey', 'unknown')
                         miner_uid = task.get('miner_uid')
                         task_id = task.get('task_id', 'N/A')
                         
