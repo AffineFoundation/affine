@@ -483,7 +483,7 @@ class ExecutorWorker:
                         error_brief = str(e)[:200]
                         
                         logger.info(
-                            f"[RESULT] U{miner_uid:<4} │ {self.env:<20} │ FAILED │ "
+                            f"[RESULT] U{miner_uid:<4} │ {self.env:<20} │ FAILED      │ "
                             f"task_id={task_id:<6} │ {error_brief}"
                         )
                         # Task lock will timeout and be released automatically
