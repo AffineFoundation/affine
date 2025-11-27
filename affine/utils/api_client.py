@@ -42,39 +42,31 @@ class APIClient:
         
         url = f"{self.base_url}{endpoint}"
         logger.debug(f"GET {url}")
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params, headers=headers) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        result = {
-                            "success": True,
-                            "data": data
-                        }
-                        return data
-                    
-                    else:
-                        try:
-                            error_detail = await response.json()
-                            error_msg = error_detail.get("detail", str(error_detail))
-                        except:
-                            error_msg = await response.text()
 
-                        result = {
-                            "success": False,
-                            "status_code": response.status,
-                            "error": error_msg
-                        }
-                        return result
-        
-        except Exception as e:
-            logger.error(f"Request exception: {e}")
-            result = {
-                "success": False,
-                "error": str(e)
-            }
-            return result
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    result = {
+                        "success": True,
+                        "data": data
+                    }
+                    return data
+                
+                else:
+                    try:
+                        error_detail = await response.json()
+                        error_msg = error_detail.get("detail", str(error_detail))
+                    except:
+                        error_msg = await response.text()
+
+                    result = {
+                        "success": False,
+                        "status_code": response.status,
+                        "error": error_msg
+                    }
+                    return result
+
     
     async def post(
         self,
@@ -83,7 +75,6 @@ class APIClient:
         params: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
         output_json: bool = False,
-        exit_on_error: bool = False
     ) -> Optional[Dict[str, Any]]:
         """Make POST request to API endpoint.
         
@@ -93,7 +84,6 @@ class APIClient:
             params: Optional query parameters
             headers: Optional request headers
             output_json: Whether to print JSON response to stdout
-            exit_on_error: Whether to exit on error responses
         
         Returns:
             Response data dict on success, raises exception on error
@@ -131,31 +121,17 @@ class APIClient:
                         }
                         if output_json:
                             print(json.dumps(result, indent=2, ensure_ascii=False))
-                        
-                        if exit_on_error:
-                            # Use os._exit() to avoid asyncio exception handling
-                            sys.stdout.flush()
-                            sys.stderr.flush()
-                            os._exit(1)
-                        
+
                         # Raise exception for error status
                         raise Exception(f"HTTP {response.status}: {error_msg}")
         
         except Exception as e:
-            logger.error(f"Request exception: {e}")
             result = {
                 "success": False,
                 "error": str(e)
             }
             if output_json:
                 print(json.dumps(result, indent=2, ensure_ascii=False))
-            if exit_on_error:
-                # Use os._exit() to avoid asyncio exception handling
-                sys.stdout.flush()
-                sys.stderr.flush()
-                os._exit(1)
-            
-            # Re-raise exception
             raise
 
 
@@ -180,28 +156,23 @@ class APIClient:
         
         url = f"{self.base_url}{endpoint}"
         logger.debug(f"PUT {url}")
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.put(url, json=json, params=params, headers=headers) as response:
-                    if response.status in (200, 201, 204):
-                        if response.status == 204:
-                            return {}
-                        response_data = await response.json()
-                        return response_data
-                    else:
-                        try:
-                            error_detail = await response.json()
-                            error_msg = error_detail.get("detail", str(error_detail))
-                        except:
-                            error_msg = await response.text()
-                        
-                        raise Exception(f"HTTP {response.status}: {error_msg}")
-        
-        except Exception as e:
-            logger.error(f"PUT request exception: {e}")
-            raise
 
+        async with aiohttp.ClientSession() as session:
+            async with session.put(url, json=json, params=params, headers=headers) as response:
+                if response.status in (200, 201, 204):
+                    if response.status == 204:
+                        return {}
+                    response_data = await response.json()
+                    return response_data
+                else:
+                    try:
+                        error_detail = await response.json()
+                        error_msg = error_detail.get("detail", str(error_detail))
+                    except:
+                        error_msg = await response.text()
+                    
+                    raise Exception(f"HTTP {response.status}: {error_msg}")
+        
 
 async def get_chute_info(chute_id: str) -> Optional[Dict]:
     """Get chute info from Chutes API.
