@@ -1,4 +1,5 @@
 {
+  "validator_burn_percentage": 0.0,
   "environments": {
     "affine:sat": {
       "enabled_for_sampling": true,

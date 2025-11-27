@@ -127,6 +127,20 @@ async def cmd_load_config(json_file: str):
     try:
         config_dao = SystemConfigDAO()
         
+        # Load validator burn percentage if present
+        if 'validator_burn_percentage' in config:
+            burn_percentage = float(config['validator_burn_percentage'])
+            
+            await config_dao.set_param(
+                param_name='validator_burn_percentage',
+                param_value=burn_percentage,
+                param_type='float',
+                description='Percentage of weight to burn (allocate to UID 0)',
+                updated_by='cli_load_config'
+            )
+            
+            print(f"✓ Loaded validator burn percentage: {burn_percentage:.1%}")
+        
         # Load new unified environments structure
         if 'environments' in config:
             environments = config['environments']
@@ -260,6 +274,53 @@ async def cmd_blacklist_clear():
         await close_client()
 
 
+async def cmd_set_burn_percentage(burn_percentage: float):
+    """Set validator burn percentage."""
+    if burn_percentage < 0 or burn_percentage > 1:
+        print(f"Error: Burn percentage must be between 0 and 1 (got {burn_percentage})")
+        sys.exit(1)
+    
+    print(f"Setting burn percentage to {burn_percentage:.1%}...")
+    await init_client()
+    
+    try:
+        config_dao = SystemConfigDAO()
+        
+        result = await config_dao.set_param(
+            param_name='validator_burn_percentage',
+            param_value=burn_percentage,
+            param_type='float',
+            description='Percentage of weight to burn (allocate to UID 0)',
+            updated_by='cli_set_burn_percentage'
+        )
+        
+        print(f"✓ Burn percentage set to {burn_percentage:.1%}")
+        
+    finally:
+        await close_client()
+
+
+async def cmd_get_burn_percentage():
+    """Get current validator burn percentage."""
+    print("Fetching burn percentage...")
+    await init_client()
+    
+    try:
+        config_dao = SystemConfigDAO()
+        config = await config_dao.get_param('validator_burn_percentage')
+        
+        if not config:
+            print("Burn percentage not set (default: 0.0)")
+        else:
+            burn_percentage = config.get('param_value', 0.0)
+            print(f"Current burn percentage: {burn_percentage:.1%}")
+            print(f"Last updated: {config.get('updated_at', 'unknown')}")
+            print(f"Updated by: {config.get('updated_by', 'unknown')}")
+    
+    finally:
+        await close_client()
+
+
 @click.group()
 def db():
     """Database management commands."""
@@ -340,6 +401,19 @@ def remove(hotkeys):
 def clear():
     """Clear all hotkeys from blacklist."""
     asyncio.run(cmd_blacklist_clear())
+
+
+@db.command("set-burn")
+@click.argument("percentage", type=float)
+def set_burn(percentage):
+    """Set validator burn percentage (0.0 to 1.0)."""
+    asyncio.run(cmd_set_burn_percentage(percentage))
+
+
+@db.command("get-burn")
+def get_burn():
+    """Get current validator burn percentage."""
+    asyncio.run(cmd_get_burn_percentage())
 
 
 def main():
