@@ -12,7 +12,6 @@ import time
 
 from affine.core.setup import setup_logging, logger
 from affine.database import init_client, close_client
-from affine.database.dao.miner_scores import MinerScoresDAO
 from affine.database.dao.score_snapshots import ScoreSnapshotsDAO
 from affine.database.dao.scores import ScoresDAO
 from affine.src.scorer.scorer import Scorer
@@ -105,13 +104,11 @@ async def run_scoring_once(save_to_db: bool):
     # Save to database if requested
     if save_to_db:
         logger.info("Saving results to database...")
-        miner_scores_dao = MinerScoresDAO()
         score_snapshots_dao = ScoreSnapshotsDAO()
         scores_dao = ScoresDAO()
         
         await scorer.save_results(
             result=result,
-            miner_scores_dao=miner_scores_dao,
             score_snapshots_dao=score_snapshots_dao,
             scores_dao=scores_dao
         )
