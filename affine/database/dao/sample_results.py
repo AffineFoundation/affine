@@ -257,16 +257,15 @@ class SampleResultsDAO(BaseDAO):
                 
                 pk = self._make_pk(hotkey, revision, env)
                 
-                # Build query params with FilterExpression for task_id range
+                # Build query params without FilterExpression
+                # Note: task_id is stored as String but we need numeric range comparison
+                # So we fetch all records and filter in code
                 params = {
                     'TableName': self.table_name,
                     'KeyConditionExpression': 'pk = :pk',
                     'ExpressionAttributeValues': {
-                        ':pk': {'S': pk},
-                        ':start': {'N': str(start_id)},
-                        ':end': {'N': str(end_id)}
+                        ':pk': {'S': pk}
                     },
-                    'FilterExpression': 'task_id >= :start AND task_id < :end',
                     'ProjectionExpression': 'task_id,score,#ts',
                     'ExpressionAttributeNames': {'#ts': 'timestamp'},
                     'ScanIndexForward': False
@@ -282,98 +281,27 @@ class SampleResultsDAO(BaseDAO):
             batch_results = await asyncio.gather(*batch, return_exceptions=True)
             all_results.extend(batch_results)
         
-        # Process results (no deduplication needed - task_id is part of SK)
+        # Process results and apply task_id range filter in code
         output = {}
         for (hotkey, revision, env), result in zip(task_metadata, all_results):
             if isinstance(result, Exception):
                 continue
             
+            # Get range for this env
+            start_id, end_id = env_ranges.get(env, (0, 0))
+            
+            # Deserialize and filter by task_id range
             items = [self._deserialize(item) for item in result.get('Items', [])]
+            filtered_items = [
+                item for item in items
+                if start_id <= int(item['task_id']) < end_id
+            ]
             
             # Store in output structure
             key = f"{hotkey}#{revision}"
             if key not in output:
                 output[key] = {}
-            output[key][env] = items
+            output[key][env] = filtered_items
         
         return output
 
-    
-    async def get_scoring_samples_incremental(
-        self,
-        changed_combos: List[Tuple[str, str, str]],
-        env_ranges: Dict[str, Tuple[int, int]],
-        since_timestamp: int,
-        batch_size: int = 30
-    ) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
-        """Incrementally query samples for changed miner×env combinations.
-        
-        Args:
-            changed_combos: List of (hotkey, revision, env) tuples with changes
-            env_ranges: Dict mapping env name to (start_id, end_id) tuple
-            since_timestamp: Only fetch samples newer than this timestamp
-            batch_size: Number of concurrent queries per batch
-            
-        Returns:
-            Dict mapping 'hotkey#revision' to dict of env -> samples list
-        """
-        from affine.database.client import get_client
-        client = get_client()
-        
-        # Build query tasks
-        tasks = []
-        task_metadata = []
-        
-        for hotkey, revision, env in changed_combos:
-            if env not in env_ranges:
-                continue
-            
-            start_id, end_id = env_ranges[env]
-            if start_id >= end_id:
-                continue
-            
-            pk = self._make_pk(hotkey, revision, env)
-            
-            # Query with both task_id range and timestamp filter
-            params = {
-                'TableName': self.table_name,
-                'KeyConditionExpression': 'pk = :pk',
-                'ExpressionAttributeValues': {
-                    ':pk': {'S': pk},
-                    ':start_id': {'N': str(start_id)},
-                    ':end_id': {'N': str(end_id)},
-                    ':since_ts': {'N': str(since_timestamp)}
-                },
-                'FilterExpression': 'task_id >= :start_id AND task_id < :end_id AND #ts > :since_ts',
-                'ProjectionExpression': 'task_id,score,#ts',
-                'ExpressionAttributeNames': {'#ts': 'timestamp'},
-                'ScanIndexForward': False
-            }
-            
-            tasks.append(client.query(**params))
-            task_metadata.append((hotkey, revision, env))
-        
-        # Execute in batches
-        all_results = []
-        for i in range(0, len(tasks), batch_size):
-            batch = tasks[i:i+batch_size]
-            batch_results = await asyncio.gather(*batch, return_exceptions=True)
-            all_results.extend(batch_results)
-        
-        # Process results (no deduplication needed - task_id is part of SK)
-        output = {}
-        for (hotkey, revision, env), result in zip(task_metadata, all_results):
-            if isinstance(result, Exception):
-                continue
-            
-            items = [self._deserialize(item) for item in result.get('Items', [])]
-            
-            # Store in output
-            key = f"{hotkey}#{revision}"
-            if key not in output:
-                output[key] = {}
-            output[key][env] = items
-        
-        return output
-    
-    

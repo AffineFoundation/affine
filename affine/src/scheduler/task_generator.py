@@ -88,14 +88,14 @@ class TaskGeneratorService:
                 'env_ranges': {}
             }
     
-    async def get_dataset_length(self, env: str) -> int:
-        """Get dataset length for an environment from SystemConfig.
+    async def get_sampling_range(self, env: str) -> tuple:
+        """Get sampling range for an environment from SystemConfig.
         
         Args:
             env: Environment name
             
         Returns:
-            Dataset length (number of tasks)
+            Tuple of (start_id, end_id)
             
         Raises:
             ValueError: If environment not found in SystemConfig
@@ -110,9 +110,8 @@ class TaskGeneratorService:
             sampling_range = env_ranges[env].get('sampling_range', [0, 0])
             if len(sampling_range) == 2:
                 start, end = sampling_range
-                length = end - start
-                logger.debug(f"Using SystemConfig range for {env}: {start}-{end} (length={length})")
-                return length
+                logger.debug(f"Using SystemConfig range for {env}: [{start}, {end})")
+                return (start, end)
         
         # Environment not configured
         raise ValueError(
@@ -137,10 +136,11 @@ class TaskGeneratorService:
         Returns:
             Number of tasks created
         """
-        dataset_length = await self.get_dataset_length(env)
+        # Get sampling range from config
+        start_id, end_id = await self.get_sampling_range(env)
         
-        # Get expected task_ids (all indices in dataset)
-        expected_task_ids = set(range(dataset_length))
+        # Get expected task_ids (all task_ids in sampling range)
+        expected_task_ids = set(range(start_id, end_id))
         
         # Get completed task_ids from sample results
         completed_task_ids = await self.sample_results_dao.get_completed_task_ids(
@@ -376,7 +376,7 @@ class TaskGeneratorService:
         status = {}
         
         for env in envs:
-            dataset_length = await self.get_dataset_length(env)
+            start_id, end_id = await self.get_sampling_range(env)
             
             # Get completed task_ids
             completed_task_ids = await self.sample_results_dao.get_completed_task_ids(
@@ -386,17 +386,18 @@ class TaskGeneratorService:
             )
             
             # Calculate completion status
-            expected_task_ids = set(range(dataset_length))
+            expected_task_ids = set(range(start_id, end_id))
             missing_task_ids = expected_task_ids - completed_task_ids
             is_complete = len(missing_task_ids) == 0
+            total_count = end_id - start_id
             
             status[env] = {
                 'is_complete': is_complete,
                 'completed_count': len(completed_task_ids),
-                'total_count': dataset_length,
+                'total_count': total_count,
                 'completion_percentage': (
-                    len(completed_task_ids) / dataset_length * 100
-                    if dataset_length > 0 else 0
+                    len(completed_task_ids) / total_count * 100
+                    if total_count > 0 else 0
                 ),
                 'missing_count': len(missing_task_ids),
             }
