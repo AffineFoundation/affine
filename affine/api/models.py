@@ -192,7 +192,7 @@ class MinerScore(BaseModel):
     overall_score: float
     average_score: float
     scores_by_layer: Dict[str, float]
-    scores_by_env: Dict[str, float]
+    scores_by_env: Dict[str, Dict[str, Any]]  # Changed to support {env: {score, sample_count}}
     total_samples: int
     is_eligible: bool
     meets_criteria: bool

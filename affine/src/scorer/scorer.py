@@ -203,9 +203,12 @@ class Scorer:
                 for env_score in miner.env_scores.values()
             )
             
-            # Prepare scores by environment
+            # Prepare scores by environment with sample counts
             scores_by_env = {
-                env: score.avg_score
+                env: {
+                    "score": score.avg_score,
+                    "sample_count": score.sample_count
+                }
                 for env, score in miner.env_scores.items()
             }
             
@@ -214,7 +217,7 @@ class Scorer:
             
             # Calculate average score from environments
             if scores_by_env:
-                average_score = sum(scores_by_env.values()) / len(scores_by_env)
+                average_score = sum(env_data["score"] for env_data in scores_by_env.values()) / len(scores_by_env)
             else:
                 average_score = 0.0
             
