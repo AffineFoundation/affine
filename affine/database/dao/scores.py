@@ -175,59 +175,7 @@ class ScoresDAO(BaseDAO):
             'calculated_at': latest_item['calculated_at'],
             'scores': scores
         }
-    
-    async def get_miner_score_at_block(
-        self,
-        block_number: int,
-        miner_hotkey: str
-    ) -> Optional[Dict[str, Any]]:
-        """Get a specific miner's score at a block.
-        
-        Args:
-            block_number: Block number
-            miner_hotkey: Miner's hotkey
-            
-        Returns:
-            Score entry if found, None otherwise
-        """
-        pk = self._make_pk(block_number)
-        sk = self._make_sk(miner_hotkey)
-        
-        return await self.get(pk, sk)
-    
-    async def get_miner_score_history(
-        self,
-        miner_hotkey: str,
-        num_blocks: int = 10
-    ) -> List[Dict[str, Any]]:
-        """Get score history for a miner across recent blocks.
-        
-        Note: This requires scanning multiple partitions.
-        For efficient queries, use get_latest_scores() instead.
-        
-        Args:
-            miner_hotkey: Miner's hotkey
-            num_blocks: Number of recent blocks to fetch
-            
-        Returns:
-            List of score entries
-        """
-        # Get latest block first
-        latest = await self.get_latest_scores(limit=1)
-        if not latest['block_number']:
-            return []
-        
-        latest_block = latest['block_number']
-        
-        # Fetch scores from recent blocks
-        history = []
-        for i in range(num_blocks):
-            block = latest_block - (i * 200)  # Approximate 30-minute intervals
-            score = await self.get_miner_score_at_block(block, miner_hotkey)
-            if score:
-                history.append(score)
-        
-        return history
+
     
     async def save_weight_snapshot(
         self,
