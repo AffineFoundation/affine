@@ -381,10 +381,10 @@ def main(envs, fetch_rate, max_concurrent, verbosity):
     selected_envs = list(envs) if envs else None
     
     # Get fetch rate (priority: CLI arg > env var > default)
-    fetch_rate_val = fetch_rate if fetch_rate is not None else int(os.getenv("EXECUTOR_FETCH_RATE", "1800"))
+    fetch_rate_val = fetch_rate if fetch_rate is not None else int(os.getenv("EXECUTOR_FETCH_RATE", "3600"))
     
     # Get max concurrent tasks (priority: CLI arg > env var > default)
-    max_concurrent_val = max_concurrent if max_concurrent is not None else int(os.getenv("EXECUTOR_MAX_CONCURRENT", "20"))
+    max_concurrent_val = max_concurrent if max_concurrent is not None else int(os.getenv("EXECUTOR_MAX_CONCURRENT", "30"))
 
     # Check service mode (default: false = one-time execution)
     service_mode = os.getenv("SERVICE_MODE", "false").lower() in ("true", "1", "yes")
