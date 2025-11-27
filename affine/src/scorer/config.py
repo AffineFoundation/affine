@@ -23,7 +23,7 @@ class ScorerConfig:
     - prior_score=0.9 → error_rate=0.1 → required=0.92 (need 20% error reduction)
     """
     
-    MIN_IMPROVEMENT: float = 0.25
+    MIN_IMPROVEMENT: float = 0.025
     """
     Minimum improvement required for later miner to beat earlier miner.
     
