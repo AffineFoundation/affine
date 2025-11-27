@@ -132,7 +132,6 @@ class ScoringResult:
     total_miners: int = 0
     valid_miners: int = 0
     invalid_miners: int = 0
-    burn_weight: float = 0.0
     
     def get_weights_for_chain(self) -> Dict[int, float]:
         """Get normalized weights suitable for setting on-chain.
@@ -151,7 +150,6 @@ class ScoringResult:
             'invalid_miners': self.invalid_miners,
             'environments': len(self.environments),
             'subsets': len(self.subsets),
-            'burn_weight': self.burn_weight,
             'non_zero_weights': sum(1 for w in self.final_weights.values() if w > 0),
         }
     
@@ -196,5 +194,4 @@ class Stage4Output:
     """Output from Stage 4: Weight Normalization."""
     
     final_weights: Dict[int, float]
-    burn_weight: float
     below_threshold_count: int
