@@ -239,45 +239,6 @@ MINERS_SCHEMA = {
 }
 
 
-# Miner Scores Table
-# Stores detailed scoring records for each miner at each block
-MINER_SCORES_SCHEMA = {
-    "TableName": get_table_name("miner_scores"),
-    "KeySchema": [
-        {"AttributeName": "pk", "KeyType": "HASH"},   # SNAPSHOT#{block_number}
-        {"AttributeName": "sk", "KeyType": "RANGE"},  # MINER#{hotkey}
-    ],
-    "AttributeDefinitions": [
-        {"AttributeName": "pk", "AttributeType": "S"},
-        {"AttributeName": "sk", "AttributeType": "S"},
-        {"AttributeName": "block_number", "AttributeType": "N"},
-        {"AttributeName": "hotkey", "AttributeType": "S"},
-    ],
-    "GlobalSecondaryIndexes": [
-        {
-            "IndexName": "block-number-index",
-            "KeySchema": [
-                {"AttributeName": "block_number", "KeyType": "HASH"},
-            ],
-            "Projection": {"ProjectionType": "ALL"},
-        },
-        {
-            "IndexName": "hotkey-index",
-            "KeySchema": [
-                {"AttributeName": "hotkey", "KeyType": "HASH"},
-                {"AttributeName": "block_number", "KeyType": "RANGE"},
-            ],
-            "Projection": {"ProjectionType": "ALL"},
-        },
-    ],
-    "BillingMode": "PAY_PER_REQUEST",
-}
-
-# TTL settings for miner_scores
-MINER_SCORES_TTL = {
-    "AttributeName": "ttl",
-}
-
 
 # Score Snapshots Table
 # Stores metadata for each scoring calculation
@@ -321,6 +282,5 @@ ALL_SCHEMAS = [
     SYSTEM_CONFIG_SCHEMA,
     DATA_RETENTION_SCHEMA,
     MINERS_SCHEMA,
-    MINER_SCORES_SCHEMA,
     SCORE_SNAPSHOTS_SCHEMA,
 ]

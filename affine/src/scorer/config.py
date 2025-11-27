@@ -89,7 +89,7 @@ class ScorerConfig:
     
     # Database & Storage
     SCORE_RECORD_TTL_DAYS: int = 30
-    """TTL for miner_scores and score_snapshots tables (in days)."""
+    """TTL for score_snapshots table (in days)."""
     
     @classmethod
     def to_dict(cls) -> Dict[str, Any]:

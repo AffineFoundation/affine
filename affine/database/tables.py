@@ -92,7 +92,6 @@ async def init_tables():
         SYSTEM_CONFIG_SCHEMA,
         DATA_RETENTION_SCHEMA,
         MINERS_SCHEMA,
-        MINER_SCORES_SCHEMA, MINER_SCORES_TTL,
         SCORE_SNAPSHOTS_SCHEMA, SCORE_SNAPSHOTS_TTL,
     )
     
@@ -107,7 +106,6 @@ async def init_tables():
         create_table(SYSTEM_CONFIG_SCHEMA),
         create_table(DATA_RETENTION_SCHEMA),
         create_table(MINERS_SCHEMA),
-        create_table(MINER_SCORES_SCHEMA, ttl_attribute=MINER_SCORES_TTL["AttributeName"]),
         create_table(SCORE_SNAPSHOTS_SCHEMA, ttl_attribute=SCORE_SNAPSHOTS_TTL["AttributeName"]),
     )
     

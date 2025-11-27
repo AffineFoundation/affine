@@ -42,12 +42,17 @@ class ScoresDAO(BaseDAO):
         overall_score: float,
         average_score: float,
         scores_by_layer: Dict[str, float],
-        scores_by_env: Dict[str, float],
+        scores_by_env: Dict[str, Any],
         total_samples: int,
         is_eligible: bool,
-        meets_criteria: bool
+        meets_criteria: bool,
+        subset_contributions: Optional[Dict[str, Dict[str, Any]]] = None,
+        cumulative_weight: Optional[float] = None,
+        filter_info: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Save a score snapshot for a miner at a specific block.
+        
+        Merged from miner_scores table - now contains both summary and detailed data.
         
         Args:
             block_number: Current block number
@@ -56,13 +61,16 @@ class ScoresDAO(BaseDAO):
             model_revision: Model revision
             model: Model repository identifier
             first_block: Block number when miner first registered
-            overall_score: Overall score
-            average_score: Average score
+            overall_score: Overall score (normalized weight)
+            average_score: Average score across environments
             scores_by_layer: Scores breakdown by layer
-            scores_by_env: Scores breakdown by environment
+            scores_by_env: Detailed scores by environment (with score, sample_count, completeness)
             total_samples: Total number of samples
             is_eligible: Whether miner is eligible for rewards
             meets_criteria: Whether miner meets all criteria
+            subset_contributions: Detailed subset contributions (optional, from miner_scores)
+            cumulative_weight: Cumulative weight before normalization (optional, from miner_scores)
+            filter_info: Filtering information (optional, from miner_scores)
             
         Returns:
             Saved score item
@@ -87,8 +95,22 @@ class ScoresDAO(BaseDAO):
             'is_eligible': is_eligible,
             'meets_criteria': meets_criteria,
             'latest_marker': 'LATEST',  # For GSI
-            'ttl': self.get_ttl(30),  # 30 days
         }
+        
+        # Add optional detailed fields (from miner_scores)
+        if subset_contributions is not None:
+            item['subset_contributions'] = subset_contributions
+        
+        if cumulative_weight is not None:
+            item['cumulative_weight'] = cumulative_weight
+        
+        if filter_info is not None:
+            item['filter_info'] = filter_info
+        
+        # Conditional TTL: only set TTL for miners with zero weight
+        if overall_score == 0:
+            item['ttl'] = self.get_ttl(30)  # 30 days for inactive miners
+        # Miners with non-zero weight: no TTL (permanent storage)
         
         return await self.put(item)
     
