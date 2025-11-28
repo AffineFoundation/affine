@@ -1,7 +1,7 @@
 import os
 import sys
 import logging
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -45,21 +45,29 @@ def _setup_file_handler(component: str, level: int) -> logging.Handler:
     
     Log directory structure: /var/log/affine/{component}/
     Log file: {component}.log
-    Rotation policy: max 10MB per file, keep 5 backups
+    Rotation policy: every 3 days at midnight, keep 10 backups
+    File suffix format: %Y-%m-%d
     """
     log_dir = Path(f"/var/log/affine/{component}")
     log_dir.mkdir(parents=True, exist_ok=True)
     
     log_file = log_dir / f"{component}.log"
     
-    # Create RotatingFileHandler
-    # maxBytes=10MB, backupCount=5
-    handler = RotatingFileHandler(
+    # Create TimedRotatingFileHandler
+    # when='midnight': rotate at midnight
+    # interval=3: every 3 days
+    # atTime=None: use midnight (00:00:00) as rotation time
+    handler = TimedRotatingFileHandler(
         log_file,
-        maxBytes=10 * 1024 * 1024,  # 10MB
-        backupCount=5,
-        encoding="utf-8"
+        when='midnight',
+        interval=3,
+        backupCount=20,
+        encoding="utf-8",
+        atTime=None  # Rotate at midnight (00:00:00)
     )
+    
+    # Set suffix format to date (YYYY-MM-DD)
+    handler.suffix = "%Y-%m-%d"
     
     handler.setLevel(level)
     formatter = logging.Formatter(
