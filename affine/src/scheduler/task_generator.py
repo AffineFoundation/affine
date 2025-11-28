@@ -78,8 +78,8 @@ class TaskGeneratorService:
             }
             
             logger.info(
-                f"Loaded config from database: {len(sampling_envs)} environments, "
-                f"{len(env_ranges)} range configs"
+                f"Loaded config from database, {len(sampling_envs)} environments: {sampling_envs}, "
+                f"range configs: {env_ranges}"
             )
         except Exception as e:
             logger.warning(f"Failed to load config from database: {e}, using defaults")
@@ -200,7 +200,6 @@ class TaskGeneratorService:
     async def generate_all_tasks(
         self,
         miners: List[MinerInfo],
-        envs: Optional[List[str]] = None,
         max_tasks_per_miner_env: int = 10
     ) -> TaskGenerationResult:
         """
@@ -214,22 +213,19 @@ class TaskGeneratorService:
         Returns:
             TaskGenerationResult with summary
         """
-        if envs is None:
-            # Load config from database if not cached
-            if self._config_cache is None:
-                await self._load_config_from_db()
-            
-            # Get from SystemConfig
-            sampling_envs = self._config_cache.get('sampling_envs', [])
-            if not sampling_envs:
-                raise ValueError(
-                    "No sampling environments configured in SystemConfig. "
-                    "Please load configuration using 'python -m affine.database.cli load-config'"
-                )
-            
-            envs = sampling_envs
-            logger.info(f"Using SystemConfig sampling environments: {envs}")
+        # Load config from database if not cached
+        await self._load_config_from_db()
         
+        # Get from SystemConfig
+        sampling_envs = self._config_cache.get('sampling_envs', [])
+        if not sampling_envs:
+            raise ValueError(
+                "No sampling environments configured in SystemConfig. "
+                "Please load configuration using 'python -m affine.database.cli load-config'"
+            )
+
+        envs = sampling_envs
+
         result = TaskGenerationResult(
             total_tasks_created=0,
             tasks_by_env={env: 0 for env in envs},

@@ -84,7 +84,7 @@ class ValidatorService:
     
     async def fetch_weights_from_api(self) -> Optional[Dict]:
         """
-        Fetch latest weights from backend API
+        Fetch latest weights from backend API with comprehensive validation
         
         Returns:
             Dictionary with weights data or None if failed
@@ -92,16 +92,86 @@ class ValidatorService:
         try:
             response = await self.api_client.get("/scores/weights/latest")
             
-            if isinstance(response, dict) and response.get("weights"):
-                weights_dict = response.get("weights", {})
-                block_number = response.get("block_number")
-                
-                logger.info(f"Fetched {len(weights_dict)} weights from API")
-                
-                return response
-            else:
+            # Validate response format
+            if not isinstance(response, dict):
+                logger.error(f"Invalid API response format: expected dict, got {type(response)}")
+                return None
+            
+            weights_dict = response.get("weights")
+            if not weights_dict:
                 logger.warning("No weights available from API")
                 return None
+            
+            if not isinstance(weights_dict, dict):
+                logger.error(f"Invalid weights format: expected dict, got {type(weights_dict)}")
+                return None
+            
+            # Validate weight count
+            if len(weights_dict) == 0:
+                logger.warning("Empty weights dictionary from API")
+                return None
+            
+            # Validate block_number exists
+            block_number = response.get("block_number")
+            if block_number is None:
+                logger.warning("No block_number in API response")
+            
+            # Validate weight values
+            total_weight = 0.0
+            valid_count = 0
+            for uid_str, weight_data in weights_dict.items():
+                try:
+                    # Validate UID format
+                    uid = int(uid_str)
+                    if uid < 0:
+                        logger.warning(f"Negative UID in API response: {uid_str}")
+                        continue
+                    
+                    # Validate weight data
+                    if not isinstance(weight_data, dict):
+                        logger.warning(f"Invalid weight data for UID {uid_str}: {type(weight_data)}")
+                        continue
+                    
+                    weight = weight_data.get("weight")
+                    if weight is None:
+                        logger.warning(f"Missing weight value for UID {uid_str}")
+                        continue
+                    
+                    try:
+                        weight_float = float(weight)
+                        if weight_float < 0:
+                            logger.warning(f"Negative weight for UID {uid_str}: {weight_float}")
+                            continue
+                        if weight_float > 1.0:
+                            logger.warning(f"Weight > 1.0 for UID {uid_str}: {weight_float}")
+                        
+                        total_weight += weight_float
+                        valid_count += 1
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Invalid weight value for UID {uid_str}: {weight} ({e})")
+                        continue
+                
+                except ValueError:
+                    logger.warning(f"Invalid UID format: {uid_str}")
+                    continue
+            
+            if valid_count == 0:
+                logger.error("No valid weights found in API response")
+                return None
+            
+            # Validate total weight sum (should be close to 1.0 if pre-normalized)
+            if abs(total_weight - 1.0) > 0.01:
+                logger.warning(
+                    f"Unexpected weight sum: {total_weight:.6f} "
+                    f"(expected ~1.0 for {valid_count} weights)"
+                )
+            
+            logger.info(
+                f"Fetched {len(weights_dict)} weights from API "
+                f"({valid_count} valid, sum={total_weight:.6f}, block={block_number})"
+            )
+            
+            return response
         
         except Exception as e:
             logger.error(f"Error fetching weights: {e}")
@@ -112,31 +182,68 @@ class ValidatorService:
         api_weights: Dict[str, Dict]
     ) -> tuple[List[int], List[float]]:
         """
-        Convert API weights (UID-based) to chain format
+        Convert API weights (UID-based dictionary) to chain format (lists).
+        
+        Filters out zero/negative weights and validates UIDs during conversion.
         
         Args:
-            api_weights: Weights from API {uid_str: {weight: float}}
+            api_weights: Weights from API {uid_str: {weight: float, ...}}
             
         Returns:
-            (uids, weights) lists
+            Tuple of (uids_list, weights_list) with only positive weights
         """
         uids = []
         weights = []
         
         for uid_str, weight_data in api_weights.items():
             try:
+                # Validate and parse UID
                 uid = int(uid_str)
-                weight = float(weight_data.get("weight", 0.0))
+                if uid < 0:
+                    logger.warning(f"Skipping negative UID: {uid_str}")
+                    continue
                 
+                # Validate weight data structure
+                if not isinstance(weight_data, dict):
+                    logger.warning(f"Skipping UID {uid_str}: invalid data type {type(weight_data)}")
+                    continue
+                
+                # Extract and validate weight value
+                weight_value = weight_data.get("weight")
+                if weight_value is None:
+                    logger.warning(f"Skipping UID {uid_str}: missing weight value")
+                    continue
+                
+                try:
+                    weight = float(weight_value)
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Skipping UID {uid_str}: invalid weight value {weight_value} ({e})")
+                    continue
+                
+                # Only include positive weights (filter out zero and negative)
                 if weight > 0:
                     uids.append(uid)
                     weights.append(weight)
+                elif weight < 0:
+                    logger.warning(f"Skipping UID {uid_str}: negative weight {weight}")
+                # weight == 0 is silently skipped (normal case)
             
-            except (ValueError, TypeError) as e:
-                logger.warning(f"Invalid weight data for UID {uid_str}: {e}")
+            except ValueError as e:
+                logger.warning(f"Skipping invalid UID format '{uid_str}': {e}")
+                continue
+            except Exception as e:
+                logger.error(f"Unexpected error processing UID {uid_str}: {e}")
                 continue
         
-        logger.debug(f"Converted {len(uids)} weights")
+        if len(uids) == 0:
+            logger.error("No valid positive weights found after conversion")
+        else:
+            weight_sum = sum(weights)
+            logger.info(
+                f"Converted {len(uids)} positive weights "
+                f"(sum: {weight_sum:.6f}, min: {min(weights):.6f}, max: {max(weights):.6f})"
+            )
+        
         return uids, weights
     
     async def run_once(self) -> bool:
@@ -159,14 +266,17 @@ class ValidatorService:
                 return False
             
             api_weights = weights_data.get("weights", {})
+            block_number = weights_data.get("block_number")
             
             # Convert weights (API already returns UID-based weights)
             uids, weights = await self.convert_api_weights_to_chain_format(api_weights)
             
             if not uids:
-                logger.warning("No valid weights")
+                logger.warning("No valid weights after conversion")
                 self.failed_runs += 1
                 return False
+            
+            logger.info(f"Converted {len(uids)} weights for block {block_number}")
             
             # Get burn percentage
             try:
