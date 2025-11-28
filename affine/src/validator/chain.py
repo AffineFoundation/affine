@@ -23,6 +23,7 @@ from affine.core.setup import logger
 U16_MAX = 65535
 U32_MAX = 4294967295
 
+
 # Network endpoint mapping
 NETWORK_ENDPOINTS = {
     "finney": "wss://entrypoint-finney.opentensor.ai:443",
@@ -123,67 +124,28 @@ def query_chain(
         raise
 
 
-def normalize_weights(weights: List[float], max_weight_limit: float = 0.1) -> List[float]:
+def normalize_weights(weights: List[float]) -> List[float]:
     """
-    Normalize weights to sum to 1 and max value not exceeding limit
+    Normalize weights to sum to 1.0.
     
     Args:
-        weights: Raw weight list
-        max_weight_limit: Maximum weight limit
+        weights: Raw weight list (any positive values)
         
     Returns:
-        Normalized weight list
+        Normalized weight list that sums to 1.0
     """
     import numpy as np
     
     weights_array = np.array(weights, dtype=np.float32)
     
-    # If all zeros, return uniform distribution
-    if weights_array.sum() == 0:
+    # Handle edge case: all zeros or empty
+    if weights_array.sum() == 0 or len(weights) == 0:
+        if len(weights) == 0:
+            return []
         return [1.0 / len(weights)] * len(weights)
     
-    # First normalize to sum to 1
+    # Normalize to sum = 1.0
     normalized = weights_array / weights_array.sum()
-    
-    # If max value doesn't exceed limit, return directly
-    if normalized.max() <= max_weight_limit:
-        return normalized.tolist()
-    
-    # Need to clip weights exceeding limit
-    # Sort to find weights that need clipping
-    sorted_indices = np.argsort(weights_array)[::-1]
-    sorted_weights = weights_array[sorted_indices]
-    
-    # Calculate clipping threshold
-    cumsum = 0.0
-    cutoff_idx = 0
-    for i, w in enumerate(sorted_weights):
-        if w / weights_array.sum() <= max_weight_limit:
-            cutoff_idx = i
-            break
-        cumsum += w
-    
-    # Calculate clipping value
-    if cutoff_idx > 0:
-        remaining_mass = 1.0 - (cutoff_idx * max_weight_limit)
-        remaining_weights_sum = weights_array.sum() - cumsum
-        
-        if remaining_weights_sum > 0:
-            scale = remaining_mass / remaining_weights_sum
-        else:
-            scale = 0.0
-        
-        # Apply clipping
-        result = np.zeros_like(weights_array)
-        for i in range(len(weights_array)):
-            if weights_array[i] / weights_array.sum() > max_weight_limit:
-                result[i] = max_weight_limit
-            else:
-                result[i] = weights_array[i] * scale
-        
-        # Re-normalize
-        result = result / result.sum()
-        return result.tolist()
     
     return normalized.tolist()
 
@@ -194,84 +156,128 @@ def apply_burn(
     burn_percentage: float
 ) -> Tuple[List[int], List[float]]:
     """
-    Apply burn mechanism - force allocate percentage of weight to UID 0
+    Apply burn mechanism - allocate a percentage of total weight to UID 0.
+    
+    This mechanism ensures UID 0 receives exactly burn_percentage of the total weight,
+    while all other UIDs have their weights proportionally reduced.
+    
+    Logic:
+        - UID 0 gets: burn_percentage (of total normalized weight)
+        - Other UIDs get: their_weight * (1 - burn_percentage)
+        - Result still sums to 1.0
     
     Args:
-        uids: UID list
-        weights: Weight list
-        burn_percentage: Burn percentage (0.0 - 1.0)
+        uids: List of miner UIDs
+        weights: List of weights (should sum to ~1.0 if normalized)
+        burn_percentage: Percentage to allocate to UID 0 (0.0 - 1.0)
         
     Returns:
-        (uids, weights) after applying burn
+        Tuple of (updated_uids, updated_weights) with UID 0 included
     """
     import numpy as np
     
     if burn_percentage <= 0:
         return uids, weights
     
-    burn_percentage = min(burn_percentage, 1.0)
+    burn_percentage = min(max(burn_percentage, 0.0), 1.0)
     
-    # Calculate amount to burn
+    # Convert to numpy for easier manipulation
     weights_array = np.array(weights, dtype=np.float32)
-    total_weight = weights_array.sum()
-    burn_amount = total_weight * burn_percentage
     
-    # Reduce all weights proportionally
-    remaining_weights = weights_array * (1.0 - burn_percentage)
+    # Normalize weights if not already normalized
+    total = weights_array.sum()
+    if abs(total - 1.0) > 0.01:
+        weights_array = weights_array / total
     
-    # Ensure UID 0 is in the list
+    # Remove UID 0 if it already exists (we'll add it back with correct weight)
     if 0 in uids:
-        idx = uids.index(0)
-        remaining_weights[idx] += burn_amount
+        uid_0_idx = uids.index(0)
+        uids_list = uids[:uid_0_idx] + uids[uid_0_idx + 1:]
+        weights_array = np.concatenate([
+            weights_array[:uid_0_idx],
+            weights_array[uid_0_idx + 1:]
+        ])
     else:
-        # UID 0 not in list, add it
-        uids = [0] + list(uids)
-        remaining_weights = np.concatenate([[burn_amount], remaining_weights])
+        uids_list = list(uids)
     
-    return uids, remaining_weights.tolist()
+    # Scale down all other weights
+    scaled_weights = weights_array * (1.0 - burn_percentage)
+    
+    # Add UID 0 at the beginning with burn amount
+    final_uids = [0] + uids_list
+    final_weights = np.concatenate([[burn_percentage], scaled_weights])
+    
+    logger.debug(
+        f"Applied burn: UID 0 gets {burn_percentage:.4f}, "
+        f"others scaled by {1.0 - burn_percentage:.4f}"
+    )
+    
+    return final_uids, final_weights.tolist()
 
 
 def convert_weights_to_u16(
     uids: List[int],
-    weights: List[float]
+    weights: List[float],
+    validate_normalization: bool = True
 ) -> Tuple[List[int], List[int]]:
     """
-    Convert weights to uint16 format for chain submission
+    Convert normalized weights to uint16 format for chain submission.
+    
+    This is the final step before chain submission. Input weights should already
+    be normalized (sum ≈ 1.0). This function only handles the conversion to uint16
+    and filtering of zero weights.
     
     Args:
-        uids: UID list
-        weights: Normalized weight list (sum to 1)
+        uids: List of miner UIDs
+        weights: Normalized weight list (should sum to ~1.0)
+        validate_normalization: Whether to validate and fix normalization
         
     Returns:
-        (valid uids, uint16 format weights)
+        Tuple of (valid_uids, uint16_weights) with zero weights filtered out
+        
+    Raises:
+        ValueError: If input validation fails
     """
-    if len(uids) != len(weights):
-        raise ValueError(f"UID and weight count mismatch: {len(uids)} vs {len(weights)}")
-    
-    # Normalize to ensure sum is 1
     import numpy as np
-    weights_array = np.array(weights, dtype=np.float32)
     
-    if weights_array.sum() == 0:
-        logger.warning("All weights are zero, cannot convert")
+    if len(uids) != len(weights):
+        raise ValueError(
+            f"UID count ({len(uids)}) doesn't match weight count ({len(weights)})"
+        )
+    
+    if len(uids) == 0:
+        logger.warning("Empty UID list, returning empty result")
         return [], []
     
-    normalized = weights_array / weights_array.sum()
+    weights_array = np.array(weights, dtype=np.float32)
     
-    # Convert to uint16
-    uint16_weights = []
-    valid_uids = []
+    # Check for zero sum
+    if weights_array.sum() == 0:
+        logger.error("All weights are zero, cannot convert to uint16")
+        return [], []
     
-    for uid, weight in zip(uids, normalized):
-        uint16_val = round(float(weight) * U16_MAX)
-        
-        # Filter out 0 values
-        if uint16_val > 0:
-            valid_uids.append(int(uid))
-            uint16_weights.append(uint16_val)
+    # Validate normalization if requested
+    if validate_normalization:
+        total = weights_array.sum()
+        if abs(total - 1.0) > 0.01:
+            weights_array = weights_array / total
     
-    logger.debug(f"Converted to uint16: {len(valid_uids)} valid weights")
-    return valid_uids, uint16_weights
+    # Convert to uint16 by scaling to U16_MAX
+    # Use round() to minimize rounding errors
+    uint16_weights_float = weights_array * U16_MAX
+    uint16_weights = np.round(uint16_weights_float).astype(np.uint16)
+    
+    # Filter out zero weights (can happen due to rounding)
+    nonzero_mask = uint16_weights > 0
+    valid_uids = [uid for uid, mask in zip(uids, nonzero_mask) if mask]
+    valid_weights = uint16_weights[nonzero_mask].tolist()
+    
+    logger.debug(
+        f"Converted to uint16: {len(valid_uids)}/{len(uids)} non-zero weights, "
+        f"sum={sum(valid_weights)}/{U16_MAX}"
+    )
+    
+    return valid_uids, valid_weights
 
 
 async def set_weights(
