@@ -14,11 +14,9 @@ from affine.src.validator.chain import (
     load_keypair,
     get_substrate,
     query_chain,
-    normalize_weights,
     apply_burn,
     convert_weights_to_u16,
     set_weights,
-    WeightSetResult as ChainWeightSetResult,
     U16_MAX,
 )
 
@@ -80,6 +78,10 @@ class WeightSetter:
         # Statistics
         self.total_sets = 0
         self.failed_sets = 0
+        self.last_set_at: Optional[float] = None
+        
+        # Cached substrate connection (reuse across calls)
+        self._substrate: Optional[object] = None
         
         # Load keypair
         try:
@@ -89,6 +91,28 @@ class WeightSetter:
             logger.error(f"Failed to load keypair: {e}")
             raise
     
+    def _get_substrate(self):
+        """Get or create substrate connection (connection reuse)."""
+        if self._substrate is None:
+            self._substrate = get_substrate(self.network, self.network_address)
+            logger.debug("Created new substrate connection")
+        return self._substrate
+    
+    def _close_substrate(self):
+        """Close substrate connection if open."""
+        if self._substrate is not None:
+            try:
+                self._substrate.close()
+                logger.debug("Closed substrate connection")
+            except Exception as e:
+                logger.warning(f"Error closing substrate: {e}")
+            finally:
+                self._substrate = None
+    
+    def __del__(self):
+        """Cleanup substrate connection on deletion."""
+        self._close_substrate()
+    
     async def process_weights(
         self,
         uids: List[int],
@@ -96,77 +120,71 @@ class WeightSetter:
         burn_percentage: float = 0.0,
     ) -> Tuple[List[int], List[int]]:
         """
-        Process weights: normalize + burn + convert to uint16
+        Process weights for chain submission.
+        
+        Simplified workflow:
+        1. Validate input weights (should already be normalized from API)
+        2. Apply burn mechanism (allocate to UID 0)
+        3. Convert to uint16 format
         
         Args:
-            uids: UID list
-            weights: Raw weight list
+            uids: List of miner UIDs
+            weights: Weight list (expected to be normalized, sum ≈ 1.0)
             burn_percentage: Burn percentage (0.0-1.0)
             
         Returns:
-            (processed uids, uint16 format weights)
+            Tuple of (processed_uids, uint16_weights) ready for chain submission
+            
+        Raises:
+            ValueError: If validation fails
         """
-        logger.debug(f"Processing {len(uids)} weights, burn: {burn_percentage:.1%}")
-        
-        # 1. Query chain parameters
-        substrate = get_substrate(self.network, self.network_address)
-        
-        try:
-            # Query max_weight_limit
-            max_weight_limit_raw = query_chain(
-                substrate,
-                "SubtensorModule",
-                "MaxWeightsLimit",
-                [self.netuid],
-                return_value=True
-            )
-            max_weight_limit = max_weight_limit_raw / U16_MAX if max_weight_limit_raw else 0.1
-            
-            # Query min_allowed_weights
-            min_allowed_weights = query_chain(
-                substrate,
-                "SubtensorModule",
-                "MinAllowedWeights",
-                [self.netuid],
-                return_value=True
-            ) or 8
-            
-            logger.debug(
-                f"Chain params: limit={max_weight_limit:.4f}, min={min_allowed_weights}"
-            )
-        
-        finally:
-            substrate.close()
-        
-        # 2. Normalize weights
-        normalized_weights = normalize_weights(weights, max_weight_limit)
-        logger.debug(f"Normalized weight sum: {sum(normalized_weights):.6f}")
-        
-        # 3. Apply burn mechanism
-        if burn_percentage > 0:
-            uids, normalized_weights = apply_burn(uids, normalized_weights, burn_percentage)
-            logger.debug(f"Burn applied, UID 0: {normalized_weights[uids.index(0)]:.4f}")
-        
-        # 4. Filter non-zero weights
         import numpy as np
-        weights_array = np.array(normalized_weights)
-        non_zero_mask = weights_array > 0
-        non_zero_uids = [uid for uid, mask in zip(uids, non_zero_mask) if mask]
-        non_zero_weights = weights_array[non_zero_mask].tolist()
         
-        logger.debug(f"Non-zero weights: {len(non_zero_uids)}/{len(uids)}")
+        logger.debug(f"Processing {len(uids)} weights, burn={burn_percentage:.1%}")
         
-        # 5. Check minimum weight count
-        if len(non_zero_uids) < min_allowed_weights:
-            raise ValueError(
-                f"Non-zero weight count ({len(non_zero_uids)}) "
-                f"less than minimum required ({min_allowed_weights})"
+        # Validate input
+        if len(uids) != len(weights):
+            raise ValueError(f"UID count {len(uids)} != weight count {len(weights)}")
+        
+        if len(uids) == 0:
+            raise ValueError("Empty UID list")
+        
+        weights_array = np.array(weights, dtype=np.float32)
+        
+        # Check if weights are already normalized (as expected from API)
+        total_weight = weights_array.sum()
+        if abs(total_weight - 1.0) > 0.01:
+            logger.warning(
+                f"Input weights sum to {total_weight:.6f}, not 1.0. "
+                "API should return normalized weights. Normalizing now."
             )
+            weights_array = weights_array / total_weight
         
-        # 6. Convert to uint16 format
-        final_uids, uint16_weights = convert_weights_to_u16(non_zero_uids, non_zero_weights)
+        # Apply burn mechanism (modifies UID list and weights)
+        if burn_percentage > 0:
+            uids_list, weights_list = apply_burn(
+                list(uids),
+                weights_array.tolist(),
+                burn_percentage
+            )
+        else:
+            uids_list = list(uids)
+            weights_list = weights_array.tolist()
         
-        logger.debug(f"Processed {len(final_uids)} weights")
+        # Convert to uint16 format
+        final_uids, uint16_weights = convert_weights_to_u16(
+            uids_list,
+            weights_list,
+            validate_normalization=True
+        )
+        
+        if len(final_uids) == 0:
+            raise ValueError("No valid weights after uint16 conversion")
+        
+        logger.info(
+            f"Processed {len(final_uids)} weights for chain "
+            f"(sum={sum(uint16_weights)}/{U16_MAX})"
+        )
         
         return final_uids, uint16_weights
     
@@ -187,80 +205,98 @@ class WeightSetter:
         Returns:
             WeightSetResult
         """
-        logger.info(f"Setting weights for {len(uids)} miners")
+        logger.info(f"Setting weights for {len(uids)} miners (burn={burn_percentage:.1%})")
         
-        # 1. Process weights once (outside retry loop)
+        # Process weights once (outside retry loop to avoid redundant computation)
         try:
             processed_uids, processed_weights = await self.process_weights(
                 uids, weights, burn_percentage
             )
             
             if not processed_uids:
+                self.failed_sets += 1
                 return WeightSetResult(
                     success=False,
                     uids=uids,
                     weights=weights,
                     error_message="No valid weights after processing",
+                    timestamp=time.time(),
                 )
             
-            # 2. Print weights before setting
+            # Print weights preview
             normalized_weights = [w / U16_MAX for w in processed_weights]
             
             logger.info("=" * 60)
-            logger.info("Weights to be set on chain:")
+            logger.info("Weights to set on chain:")
             logger.info("=" * 60)
             for uid, weight in zip(processed_uids, normalized_weights):
                 logger.info(f"  UID {uid:4d}: {weight:.6f}")
+            logger.info(f"Total: {sum(normalized_weights):.6f}")
             logger.info("=" * 60)
         
+        except ValueError as e:
+            # Parameter validation errors - don't retry
+            logger.error(f"Invalid parameters: {e}")
+            self.failed_sets += 1
+            return WeightSetResult(
+                success=False,
+                uids=uids,
+                weights=weights,
+                error_message=f"Invalid parameters: {e}",
+                timestamp=time.time(),
+            )
+        
         except Exception as e:
-            logger.error(f"Failed to process weights: {e}")
+            # Unexpected errors during processing
+            logger.error(f"Failed to process weights: {e}", exc_info=True)
+            self.failed_sets += 1
             return WeightSetResult(
                 success=False,
                 uids=uids,
                 weights=weights,
                 error_message=f"Weight processing failed: {e}",
+                timestamp=time.time(),
             )
         
-        # 3. Retry loop (only for chain submission)
+        # Retry loop for chain submission only
         last_error = None
         for attempt in range(1, self.max_retries + 1):
             try:
-                # Get chain connection
-                substrate = get_substrate(self.network, self.network_address)
+                # Use cached substrate connection
+                substrate = self._get_substrate()
                 
-                try:
-                    # Query version key
-                    version_key = query_chain(
-                        substrate,
-                        "SubtensorModule",
-                        "WeightsVersionKey",
-                        [self.netuid],
-                        return_value=True
-                    ) or 0
-                    
-                    logger.debug(f"Version key: {version_key}")
-                    
-                    # Submit to chain
-                    result = await set_weights(
-                        substrate=substrate,
-                        keypair=self.keypair,
-                        netuid=self.netuid,
-                        uids=processed_uids,
-                        weights=processed_weights,
-                        version_key=version_key,
-                        wait_for_inclusion=True,
-                        wait_for_finalization=True,
-                    )
+                # Query version key
+                version_key = query_chain(
+                    substrate,
+                    "SubtensorModule",
+                    "WeightsVersionKey",
+                    [self.netuid],
+                    return_value=True
+                ) or 0
                 
-                finally:
-                    substrate.close()
+                logger.debug(f"Attempt {attempt}/{self.max_retries}, version_key={version_key}")
+                
+                # Submit to chain
+                result = await set_weights(
+                    substrate=substrate,
+                    keypair=self.keypair,
+                    netuid=self.netuid,
+                    uids=processed_uids,
+                    weights=processed_weights,
+                    version_key=version_key,
+                    wait_for_inclusion=True,
+                    wait_for_finalization=True,
+                )
                 
                 # Check result
                 if result.success:
                     self.total_sets += 1
+                    self.last_set_at = time.time()
                     
-                    logger.info(f"✅ Weights set successfully at block {result.block_number}")
+                    logger.info(
+                        f"✅ Weights set successfully at block {result.block_number} "
+                        f"(attempt {attempt}/{self.max_retries})"
+                    )
                     
                     return WeightSetResult(
                         success=True,
@@ -272,22 +308,44 @@ class WeightSetter:
                     )
                 else:
                     last_error = result.error_message
-                    logger.warning(f"Attempt {attempt}/{self.max_retries} failed: {last_error}")
+                    logger.warning(
+                        f"Attempt {attempt}/{self.max_retries} failed: {last_error}"
+                    )
+            
+            except ConnectionError as e:
+                # Network errors - retry
+                last_error = str(e)
+                logger.warning(f"Connection error on attempt {attempt}: {e}")
+                # Reset connection on network error
+                self._close_substrate()
+            
+            except ValueError as e:
+                # Parameter errors - don't retry
+                last_error = str(e)
+                logger.error(f"Parameter error (won't retry): {e}")
+                self.failed_sets += 1
+                return WeightSetResult(
+                    success=False,
+                    uids=uids,
+                    weights=weights,
+                    error_message=f"Parameter error: {last_error}",
+                    attempts=attempt,
+                    timestamp=time.time(),
+                )
             
             except Exception as e:
+                # Other errors - retry
                 last_error = str(e)
-                logger.error(f"Attempt {attempt}/{self.max_retries} exception: {e}")
-                import traceback
-                logger.debug(traceback.format_exc())
+                logger.error(f"Attempt {attempt}/{self.max_retries} error: {e}", exc_info=True)
             
-            # Wait before retry
+            # Wait before retry (if not last attempt)
             if attempt < self.max_retries:
-                logger.info(f"Waiting {self.retry_delay}s before retry...")
+                logger.info(f"Retrying in {self.retry_delay}s...")
                 await asyncio.sleep(self.retry_delay)
         
-        # All retries failed
+        # All retries exhausted
         self.failed_sets += 1
-        logger.error(f"❌ Setting failed after {self.max_retries} retries: {last_error}")
+        logger.error(f"❌ Failed to set weights after {self.max_retries} attempts: {last_error}")
         
         return WeightSetResult(
             success=False,
@@ -295,18 +353,22 @@ class WeightSetter:
             weights=weights,
             error_message=f"Failed after {self.max_retries} retries: {last_error}",
             attempts=self.max_retries,
+            timestamp=time.time(),
         )
     
     def get_metrics(self) -> Dict:
         """Get statistics metrics"""
+        total_attempts = self.total_sets + self.failed_sets
         return {
             "total_sets": self.total_sets,
             "failed_sets": self.failed_sets,
+            "total_attempts": total_attempts,
             "success_rate": (
-                self.total_sets / (self.total_sets + self.failed_sets)
-                if (self.total_sets + self.failed_sets) > 0
+                self.total_sets / total_attempts
+                if total_attempts > 0
                 else 0.0
             ),
+            "last_set_at": self.last_set_at,
             "netuid": self.netuid,
             "wallet": f"{self.wallet_name}/{self.hotkey_name}",
         }
