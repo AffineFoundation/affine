@@ -90,6 +90,14 @@ services:
         condition: service_healthy
     command: ["-v", "servers", "scorer"]
 
+  watchtower:
+    image: nickfedor/watchtower
+    container_name: affine-backend-watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 30 affine-api affine-scheduler affine-executor affine-monitor affine-scorer
+
 networks:
   default:
     name: affine-backend

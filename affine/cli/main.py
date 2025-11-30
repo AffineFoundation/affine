@@ -295,19 +295,19 @@ cli.add_command(db)
 # ============================================================================
 
 @cli.command()
-@click.argument("service", type=click.Choice(["validator", "backend"]))
+@click.argument("service", type=click.Choice(["validator", "backend", "api"]))
 @click.option("--local", is_flag=True, help="Use local build mode")
 @click.option("--recreate", is_flag=True, help="Recreate containers")
 def deploy(service, local, recreate):
-    """Deploy docker containers for validator or backend services.
+    """Deploy docker containers for validator, backend, or api services.
     
-    SERVICE: Either 'validator' or 'backend'
+    SERVICE: Either 'validator', 'backend', or 'api'
     
     Examples:
         af deploy validator --recreate --local
         af deploy backend --local
+        af deploy api --local
         af deploy validator
-        af deploy backend --recreate
     """
     # Get the affine directory (where docker-compose files are located)
     affine_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -317,10 +317,14 @@ def deploy(service, local, recreate):
         compose_files = ["-f", "docker-compose.yml"]
         if local:
             compose_files.extend(["-f", "docker-compose.local.yml"])
-    else:  # backend
-        compose_files = ["-f", "docker-compose.backend.yml"]
+    elif service == "api":
+        compose_files = ["-f", "compose/docker-compose.api.yml"]
         if local:
-            compose_files.extend(["-f", "docker-compose.backend.local.yml"])
+            compose_files.extend(["-f", "compose/docker-compose.api.local.yml"])
+    else:  # backend
+        compose_files = ["-f", "compose/docker-compose.backend.yml"]
+        if local:
+            compose_files.extend(["-f", "compose/docker-compose.backend.local.yml"])
     
     # Build the command
     cmd = ["docker", "compose"] + compose_files + ["up", "-d"]
@@ -349,18 +353,18 @@ def deploy(service, local, recreate):
 
 
 @cli.command()
-@click.argument("service", type=click.Choice(["validator", "backend"]))
+@click.argument("service", type=click.Choice(["validator", "backend", "api"]))
 @click.option("--local", is_flag=True, help="Use local build mode")
 @click.option("--volumes", "-v", is_flag=True, help="Remove volumes as well")
 def down(service, local, volumes):
-    """Stop and remove docker containers for validator or backend services.
+    """Stop and remove docker containers for validator, backend, or api services.
     
-    SERVICE: Either 'validator' or 'backend'
+    SERVICE: Either 'validator', 'backend', or 'api'
     
     Examples:
         af down validator --local
         af down backend --local --volumes
-        af down validator
+        af down api
         af down backend -v
     """
     # Get the affine directory (where docker-compose files are located)
@@ -371,8 +375,12 @@ def down(service, local, volumes):
         compose_files = ["-f", "docker-compose.yml"]
         if local:
             compose_files.extend(["-f", "docker-compose.local.yml"])
+    elif service == "api":
+        compose_files = ["-f", "compose/docker-compose.api.yml"]
+        if local:
+            compose_files.extend(["-f", "compose/docker-compose.api.local.yml"])
     else:  # backend
-        compose_files = ["-f", "docker-compose.backend.yml"]
+        compose_files = ["-f", "compose/docker-compose.backend.yml"]
         if local:
             compose_files.extend(["-f", "docker-compose.backend.local.yml"])
     
