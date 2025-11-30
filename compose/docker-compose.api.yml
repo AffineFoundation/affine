@@ -1,0 +1,38 @@
+version: "3.8"
+
+services:
+  api:
+    image: thebes1618/affine:latest
+    container_name: affine-api
+    restart: unless-stopped
+    volumes:
+      - ..:/app
+      - /var/log/affine/api:/var/log/affine/api
+    ports:
+      - "8000:8000"
+    environment:
+      - API_HOST=0.0.0.0
+      - API_SERVICES_ENABLED=false
+      - API_RATE_LIMIT_ENABLED=true
+      - API_LOG_LEVEL=INFO
+      - API_RELOAD=true
+      - WATCHFILES_FORCE_POLLING=true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/"]
+      interval: 60s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    command: ["-v", "servers", "api"]
+
+  watchtower:
+    image: nickfedor/watchtower
+    container_name: affine-api-watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 30 affine-api
+
+networks:
+  default:
+    name: affine-api
