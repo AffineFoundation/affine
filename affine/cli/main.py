@@ -232,6 +232,22 @@ def get_scores(ctx):
     miner_get_scores.main(standalone_mode=False)
 
 
+@cli.command("get-score", context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.pass_context
+def get_score(ctx):
+    """Query score for a specific miner by UID.
+    
+    Returns the score details for the specified miner from the latest snapshot.
+    
+    Example:
+        af get-score 42
+    """
+    from affine.src.miner.main import get_score as miner_get_score
+    
+    sys.argv = ["get-score"] + ctx.args
+    miner_get_score.main(standalone_mode=False)
+
+
 @cli.command("get-pool", context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
 @click.pass_context
 def get_pool(ctx):

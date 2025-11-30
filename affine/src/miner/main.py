@@ -20,6 +20,7 @@ from affine.src.miner.commands import (
     get_miner_command,
     get_weights_command,
     get_scores_command,
+    get_score_command,
     get_pool_command,
 )
 from affine.src.miner.rank import get_rank_command
@@ -126,6 +127,18 @@ def get_scores(top):
         af get-scores --top 10
     """
     asyncio.run(get_scores_command(top=top))
+
+@click.command("get-score")
+@click.argument("uid", type=int)
+def get_score(uid):
+    """Query score for a specific miner by UID.
+    
+    Returns the score details for the specified miner from the latest snapshot.
+    
+    Example:
+        af get-score 42
+    """
+    asyncio.run(get_score_command(uid=uid))
 
 @click.command("get-pool")
 @click.argument("uid", type=int)
