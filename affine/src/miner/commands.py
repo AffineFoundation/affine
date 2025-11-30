@@ -401,6 +401,21 @@ async def get_scores_command(top: int = 32):
         print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
+async def get_score_command(uid: int):
+    """Query score for a specific miner by UID.
+    
+    Args:
+        uid: Miner UID
+    """
+    client = create_api_client()
+
+    endpoint = f"/scores/uid/{uid}"
+    data = await client.get(endpoint)
+    
+    if data:
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
 async def get_pool_command(uid: int, env: str, full: bool = False):
     """Query task pool status for a miner in an environment.
     

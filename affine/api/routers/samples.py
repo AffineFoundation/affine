@@ -166,7 +166,7 @@ async def get_task_pool(
     
     Path parameters:
     - uid: Miner UID (0-255)
-    - env: Environment (e.g., agentgym:webshop)
+    - env: Environment (e.g., agentgym:webshop or shorthand like webshop, sat)
     
     Returns:
     - sampled_task_ids: Tasks already completed and in sample_results
@@ -174,6 +174,28 @@ async def get_task_pool(
     - missing_task_ids: Tasks not yet sampled and not in pool (based on sampling_range)
     """
     try:
+        environments = await config_dao.get_param_value('environments', default={})
+        
+        if ':' not in env:
+            matching_envs = [e for e in environments.keys() if e.endswith(f':{env}')]
+            if len(matching_envs) == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Environment not found: {env}. Available: {', '.join(environments.keys())}"
+                )
+            elif len(matching_envs) > 1:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Ambiguous environment name: {env}. Matches: {', '.join(matching_envs)}"
+                )
+            env = matching_envs[0]
+        
+        if env not in environments:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Environment not found: {env}. Available: {', '.join(environments.keys())}"
+            )
+        
         # Get miner info by UID
         miner = await miners_dao.get_miner_by_uid(uid)
         
