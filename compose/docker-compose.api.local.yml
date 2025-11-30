@@ -1,0 +1,8 @@
+version: "3.8"
+
+services:
+  api:
+    image: affine:local
+    build:
+      context: .
+      dockerfile: Dockerfile
