@@ -430,6 +430,12 @@ async def get_pool_command(uid: int, env: str, full: bool = False):
     data = await client.get(endpoint)
     
     if data:
+        if data.get("success") is False:
+            print(json.dumps({
+                "error": data.get("error"),
+                "status_code": data.get("status_code")
+            }, indent=2, ensure_ascii=False))
+            return
         if full:
             # Print full data without truncation
             print(json.dumps(data, indent=2, ensure_ascii=False))
