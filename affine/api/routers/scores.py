@@ -15,10 +15,12 @@ from affine.api.models import (
 from affine.api.dependencies import (
     get_scores_dao,
     get_score_snapshots_dao,
+    get_miners_dao,
     rate_limit_read,
 )
 from affine.database.dao.scores import ScoresDAO
 from affine.database.dao.score_snapshots import ScoreSnapshotsDAO
+from affine.database.dao.miners import MinersDAO
 
 router = APIRouter(prefix="/scores", tags=["Scores"])
 
@@ -85,6 +87,76 @@ async def get_latest_scores(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve latest scores: {str(e)}"
+        )
+
+
+@router.get("/uid/{uid}", response_model=MinerScore, dependencies=[Depends(rate_limit_read)])
+async def get_score_by_uid(
+    uid: int,
+    dao: ScoresDAO = Depends(get_scores_dao),
+    miners_dao: MinersDAO = Depends(get_miners_dao),
+):
+    """
+    Get score for a specific miner by UID.
+    
+    Path parameters:
+    - uid: Miner UID (0-255)
+    
+    Returns the score details for the specified miner from the latest snapshot.
+    """
+    try:
+        miner = await miners_dao.get_miner_by_uid(uid)
+        
+        if not miner:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Miner not found for UID={uid}"
+            )
+        
+        hotkey = miner['hotkey']
+        
+        scores_data = await dao.get_latest_scores(limit=None)
+        
+        if not scores_data or not scores_data.get('block_number'):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No scores found"
+            )
+        
+        scores_list = scores_data.get("scores", [])
+        
+        miner_score = next(
+            (s for s in scores_list if s.get("miner_hotkey") == hotkey),
+            None
+        )
+        
+        if not miner_score:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Score not found for UID={uid}"
+            )
+        
+        return MinerScore(
+            miner_hotkey=miner_score.get("miner_hotkey"),
+            uid=miner_score.get("uid"),
+            model_revision=miner_score.get("model_revision"),
+            model=miner_score.get("model"),
+            first_block=miner_score.get("first_block"),
+            overall_score=miner_score.get("overall_score"),
+            average_score=miner_score.get("average_score"),
+            scores_by_layer=miner_score.get("scores_by_layer"),
+            scores_by_env=miner_score.get("scores_by_env"),
+            total_samples=miner_score.get("total_samples"),
+            is_eligible=miner_score.get("is_eligible"),
+            meets_criteria=miner_score.get("meets_criteria"),
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve score: {str(e)}"
         )
 
 
