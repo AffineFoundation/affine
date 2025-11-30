@@ -4,5 +4,9 @@ services:
   api:
     image: affine:local
     build:
-      context: .
+      context: ..
       dockerfile: Dockerfile
+
+  watchtower:
+    profiles:
+      - production

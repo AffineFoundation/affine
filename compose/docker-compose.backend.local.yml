@@ -6,7 +6,7 @@ version: "3.8"
 x-affine-image: &affine_image
   image: affine:local
   build:
-    context: .
+    context: ..
     dockerfile: Dockerfile
 
 services:
@@ -24,3 +24,7 @@ services:
   
   scorer:
     <<: *affine_image
+
+  watchtower:
+    profiles:
+      - production
