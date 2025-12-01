@@ -250,7 +250,7 @@ async def fetch_system_config() -> dict:
             # Filter environments where enabled_for_scoring=true
             enabled_envs = [
                 env_name for env_name, env_config in value.items()
-                if isinstance(env_config, dict) and env_config.get("enabled_for_scoring", False)
+                if isinstance(env_config, dict) and env_config.get("enabled_for_sampling", False)
             ]
             
             if enabled_envs:

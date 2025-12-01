@@ -3,6 +3,7 @@ import sys
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -39,35 +40,89 @@ def _get_component_name() -> str:
     return "affine"
 
 
+class AbsoluteDayRotatingFileHandler(TimedRotatingFileHandler):
+    """
+    Custom handler that rotates logs every N days based on absolute dates.
+    This ensures rotation happens at the same time regardless of service restarts.
+    """
+    def __init__(self, filename, interval_days=3, backupCount=20, encoding='utf-8', utc=True):
+        # Use 'D' (days) as the base unit, but we'll override shouldRollover
+        super().__init__(
+            filename,
+            when='D',
+            interval=interval_days,
+            backupCount=backupCount,
+            encoding=encoding,
+            utc=utc
+        )
+        self.interval_days = interval_days
+        self.suffix = "%Y-%m-%d"
+        # Prevent default .log extension in rotated files
+        self.namer = lambda default_name: default_name.replace('.log.', '.')
+        
+    def shouldRollover(self, record):
+        """
+        Determine if rollover should occur based on absolute day count.
+        Rotates every N days from epoch (1970-01-01), ensuring consistent rotation
+        regardless of when the service was started.
+        """
+        # Get current time
+        if self.utc:
+            current_time = datetime.now(timezone.utc)
+        else:
+            current_time = datetime.now()
+        
+        # Calculate days since epoch
+        if self.utc:
+            epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        else:
+            epoch = datetime(1970, 1, 1)
+        
+        days_since_epoch = (current_time - epoch).days
+        current_rotation_period = days_since_epoch // self.interval_days
+        
+        # Check if file exists and get its rotation period
+        if os.path.exists(self.baseFilename):
+            file_mtime = os.path.getmtime(self.baseFilename)
+            if self.utc:
+                file_time = datetime.fromtimestamp(file_mtime, tz=timezone.utc)
+            else:
+                file_time = datetime.fromtimestamp(file_mtime)
+            
+            file_days_since_epoch = (file_time - epoch).days
+            file_rotation_period = file_days_since_epoch // self.interval_days
+            
+            # Rotate if we're in a new rotation period
+            return current_rotation_period > file_rotation_period
+        
+        return False
+
+
 def _setup_file_handler(component: str, level: int) -> logging.Handler:
     """
     Setup log file handler with rotation for the specified component.
     
     Log directory structure: /var/log/affine/{component}/
     Log file: {component}.log
-    Rotation policy: every 3 days at midnight, keep 10 backups
+    Rotation policy: every 3 days based on absolute dates, keep 20 backups
     File suffix format: %Y-%m-%d
+    
+    The rotation is based on absolute date calculations (days since epoch),
+    ensuring logs rotate consistently every 3 days regardless of service restarts.
     """
     log_dir = Path(f"/var/log/affine/{component}")
     log_dir.mkdir(parents=True, exist_ok=True)
     
     log_file = log_dir / f"{component}.log"
     
-    # Create TimedRotatingFileHandler
-    # when='midnight': rotate at midnight
-    # interval=3: every 3 days
-    # atTime=None: use midnight (00:00:00) as rotation time
-    handler = TimedRotatingFileHandler(
+    # Create custom handler with absolute 3-day rotation
+    handler = AbsoluteDayRotatingFileHandler(
         log_file,
-        when='midnight',
-        interval=3,
+        interval_days=3,
         backupCount=20,
         encoding="utf-8",
-        atTime=None  # Rotate at midnight (00:00:00)
+        utc=True  # Use UTC time for consistent rotation across timezones
     )
-    
-    # Set suffix format to date (YYYY-MM-DD)
-    handler.suffix = "%Y-%m-%d"
     
     handler.setLevel(level)
     formatter = logging.Formatter(

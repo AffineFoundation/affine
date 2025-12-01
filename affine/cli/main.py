@@ -78,7 +78,7 @@ def api():
         port=config.PORT,
         reload=config.RELOAD,
         log_level=config.LOG_LEVEL.lower(),
-        workers=1,
+        workers=config.WORKERS,
     )
 
 
