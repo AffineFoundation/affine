@@ -445,7 +445,7 @@ class AffineSDKEnv(BaseSDKEnv):
 class AgentGymSDKEnv(BaseSDKEnv):
     """Base class for AgentGym environments"""
 
-    DEFAULT_MAX_ROUND = 10
+    DEFAULT_MAX_ROUND = 30
     DEFAULT_TIMEOUT = 1200
 
     def __init__(self, max_round: int = None):
@@ -585,7 +585,6 @@ class ALFWORLD(AgentGymSDKEnv):
 @register_env(EnvType.AGENTGYM, "agentgym:webshop")
 class WEBSHOP(AgentGymSDKEnv):
     """WEBSHOP environment for SDK"""
-    DEFAULT_MAX_ROUND = 10
     DEFAULT_REPLICAS = 1
 
     @property

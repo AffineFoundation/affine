@@ -217,8 +217,13 @@ async def submit_sample_from_executor(
         task_uuid=sample_sub.task_uuid,
         executor_hotkey=executor_hotkey,
         success=is_success,
+        result={
+            'score': sample_sub.score,
+            'latency_ms': sample_sub.latency_ms,
+            'execution_time_ms': sample_sub.extra.get('execution_time_ms', 0)
+        } if is_success else None,
         error_message=error_message,
-        error_code="EXECUTION_ERROR" if error_message else None
+        error_code="EXECUTION_ERROR"
     )
     
     # Build response message

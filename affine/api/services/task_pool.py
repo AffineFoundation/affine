@@ -264,25 +264,37 @@ class TaskPoolManager:
             
             # Step 3: Log completion attempt
             if success:
+                if not result:
+                    raise ValueError(
+                        f"Task {task_uuid} marked as success but result is None. "
+                        "This indicates a bug in the caller."
+                    )
+                
                 await self.logs_dao.log_task_complete(
                     miner_hotkey=task['miner_hotkey'],
                     task_uuid=task_uuid,
                     dataset_task_id=task['task_id'],
                     env=task['env'],
                     executor_hotkey=executor_hotkey,
-                    score=result.get('score', 0.0) if result else 0.0,
-                    latency_ms=result.get('latency_ms', 0) if result else 0,
-                    execution_time_ms=result.get('execution_time_ms', 0) if result else 0
+                    score=result['score'],
+                    latency_ms=result['latency_ms'],
+                    execution_time_ms=result.get('execution_time_ms', 0)
                 )
             else:
+                if not error_message:
+                    raise ValueError(
+                        f"Task {task_uuid} marked as failure but error_message is None. "
+                        "This indicates a bug in the caller."
+                    )
+                
                 await self.logs_dao.log_task_failure(
                     miner_hotkey=task['miner_hotkey'],
                     task_uuid=task_uuid,
                     dataset_task_id=task['task_id'],
                     env=task['env'],
                     executor_hotkey=executor_hotkey,
-                    error_message=error_message or 'Unknown error',
-                    error_code=error_code or 'EXECUTION_ERROR',
+                    error_message=error_message,
+                    error_code=error_code,
                     error_type='execution',
                     execution_time_ms=0
                 )
@@ -305,41 +317,41 @@ class TaskPoolManager:
                     'status': 'completed',
                     'message': 'Task completed successfully'
                 }
-            else:
-                # Record failure and retry logic
-                updated_task = await self.dao.fail_task(
-                    task,
-                    error_message or 'Unknown error',
-                    error_code or 'EXECUTION_ERROR'
-                )
-                
-                # Update cache with new SK (status changed)
+            
+            # Handle task failure
+            # error_message already validated above
+            updated_task = await self.dao.fail_task(
+                task,
+                error_message,
+                error_code
+            )
+
+            # fail_task() returns either 'deleted' or 'pending' status
+            if updated_task['status'] == 'deleted':
+                # Max retries reached, permanently deleted
                 async with self._cache_lock:
-                    if updated_task['status'] == 'failed':
-                        # Permanently failed, remove from cache
-                        self._uuid_cache.pop(task_uuid, None)
-                    else:
-                        # Retrying, update SK
-                        self._uuid_cache[task_uuid] = (
-                            updated_task['pk'],
-                            updated_task['sk']
-                        )
+                    self._uuid_cache.pop(task_uuid, None)
                 
-                if updated_task['status'] == 'failed':
-                    logger.warning(
-                        f"Task {task_uuid} permanently failed after "
-                        f"{updated_task['retry_count']} retries"
-                    )
-                else:
-                    logger.info(
-                        f"Task {task_uuid} failed, retry {updated_task['retry_count']} "
-                        f"(max {updated_task['max_retries']})"
-                    )
-                
+                logger.warning(
+                    f"Task {task_uuid} permanently deleted after "
+                    f"{updated_task['retry_count']} retries (max={updated_task['max_retries']})"
+                )
                 return {
-                    'status': 'failed',
-                    'message': f"Task failed (retry {updated_task['retry_count']})"
+                    'status': 'deleted',
+                    'message': f"Task permanently deleted after {updated_task['retry_count']} retries"
                 }
+            
+            # Status is 'pending', will retry
+            async with self._cache_lock:
+                self._uuid_cache[task_uuid] = (updated_task['pk'], updated_task['sk'])
+            
+            logger.info(
+                f"Task {task_uuid} will retry ({updated_task['retry_count']}/{updated_task['max_retries']})"
+            )
+            return {
+                'status': 'retry',
+                'message': f"Task will be retried ({updated_task['retry_count']}/{updated_task['max_retries']})"
+            }
                 
         except Exception as e:
             logger.error(f"Error completing task {task_uuid}: {e}", exc_info=True)
