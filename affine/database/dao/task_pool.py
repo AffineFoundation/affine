@@ -321,7 +321,7 @@ class TaskPoolDAO(BaseDAO):
         """Record task failure and handle retry logic.
         
         If retry_count < max_retries, reset status to 'pending'.
-        Otherwise, mark as 'failed' and create zero-score sample.
+        Otherwise, permanently delete task (no zero-score sample created).
         
         Args:
             task: Task dict
@@ -329,7 +329,7 @@ class TaskPoolDAO(BaseDAO):
             error_code: Error classification code
             
         Returns:
-            Updated task
+            Updated task (or task with status='deleted' if permanently failed)
         """
         await self.delete(task['pk'], task['sk'])
         
@@ -337,11 +337,23 @@ class TaskPoolDAO(BaseDAO):
         max_retries = task.get('max_retries')
         
         if retry_count >= max_retries:
-            new_status = 'failed'
-            await self._create_zero_score_sample(task, error_message, error_code)
-        else:
-            new_status = 'pending'
+            # Permanently delete task, do not create zero-score sample
+            logger.info(
+                f"Task permanently deleted after {retry_count} retries: "
+                f"miner={task['miner_hotkey'][:12]}... env={task['env']} "
+                f"task_id={task['task_id']} error={error_message[:100]}"
+            )
+            
+            # Return task with 'deleted' status to indicate permanent deletion
+            task['status'] = 'deleted'
+            task['retry_count'] = retry_count
+            task['last_error'] = error_message
+            task['last_error_code'] = error_code
+            task['last_failed_at'] = int(time.time())
+            return task
         
+        # Still have retries left, reset to pending
+        new_status = 'pending'
         new_sk = self._make_sk(task['env'], new_status, task['task_id'])
         new_gsi1_pk = self._make_gsi1_pk(task['env'], new_status)
         new_gsi1_sk = self._make_gsi1_sk(
@@ -364,49 +376,6 @@ class TaskPoolDAO(BaseDAO):
         await self.put(task)
         return task
     
-    async def _create_zero_score_sample(
-        self,
-        task: Dict[str, Any],
-        error_message: str,
-        error_code: str
-    ):
-        """Create a zero-score sample result for permanently failed task."""
-        from affine.database.dao.sample_results import SampleResultsDAO
-        
-        try:
-            sample_dao = SampleResultsDAO()
-            
-            extra = {
-                "error": error_message,
-                "error_code": error_code,
-                "retry_count": task.get('retry_count', 0),
-                "failed_at": int(time.time()),
-                "reason": "Task permanently failed after maximum retries"
-            }
-            
-            await sample_dao.save_sample(
-                miner_hotkey=task['miner_hotkey'],
-                model_revision=task['model_revision'],
-                model=task['model'],
-                env=task['env'],
-                task_id=str(task['task_id']),
-                score=0.0,
-                latency_ms=0,
-                extra=extra,
-                validator_hotkey="system",
-                block_number=0,
-                signature="",
-                timestamp=int(time.time() * 1000)
-            )
-            
-            logger.info(
-                f"Created zero-score sample for failed task: "
-                f"miner={task['miner_hotkey'][:12]}... env={task['env']} "
-                f"task_id={task['task_id']}"
-            )
-            
-        except Exception as e:
-            logger.error(f"Failed to create zero-score sample: {e}", exc_info=True)
     
     async def get_pending_task_ids_for_miner(
         self,
