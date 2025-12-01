@@ -382,7 +382,7 @@ def down(service, local, volumes):
     else:  # backend
         compose_files = ["-f", "compose/docker-compose.backend.yml"]
         if local:
-            compose_files.extend(["-f", "docker-compose.backend.local.yml"])
+            compose_files.extend(["-f", "compose/docker-compose.backend.local.yml"])
     
     # Build the command
     cmd = ["docker", "compose"] + compose_files + ["down"]

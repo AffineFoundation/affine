@@ -17,24 +17,25 @@ async def main():
         print("   Or create .env file with: CHUTES_API_KEY=your-key")
         sys.exit(1)
 
-    alfworld_env = af.ALFWORLD()
-    evaluation = await alfworld_env.evaluate(
+    ded_v2_env = af.DED_V2()
+    evaluation = await ded_v2_env.evaluate(
         model="deepseek-ai/DeepSeek-V3",
         base_url="https://llm.chutes.ai/v1",
-        task_id=2
+        task_id=20100
     )
-    print(f"\nALFWORLD Evaluation Result:")
+    print(f"\nDED-V2 Evaluation Result:")
     print(evaluation)
     print(json.dumps(evaluation.extra, indent=2, ensure_ascii=False))
 
-    abd_env = af.ABD()
-    evaluation_abd = await abd_env.evaluate(
+    abd_v2_env = af.ABD_V2()
+    evaluation_abd_v2 = await abd_v2_env.evaluate(
         model="deepseek-ai/DeepSeek-V3",
         base_url="https://llm.chutes.ai/v1",
+        task_id=20200,
     )
-    print(f"\nABD Evaluation Result:")
-    print(evaluation_abd)
-    print(json.dumps(evaluation_abd.extra, indent=2, ensure_ascii=False))
+    print(f"\nABD-V2 Evaluation Result:")
+    print(evaluation_abd_v2)
+    print(json.dumps(evaluation_abd_v2.extra, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":

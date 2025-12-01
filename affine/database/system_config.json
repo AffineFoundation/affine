@@ -19,10 +19,22 @@
       "sampling_range": [0, 240],
       "scoring_range": [0, 240]
     },
+    "affine:ded-v2": {
+      "enabled_for_sampling": true,
+      "enabled_for_scoring": false,
+      "sampling_range": [20000, 23302],
+      "scoring_range": [20000, 23302]
+    },
+    "affine:abd-v2": {
+      "enabled_for_sampling": true,
+      "enabled_for_scoring": false,
+      "sampling_range": [20000, 23302],
+      "scoring_range": [20000, 23302]
+    },
     "agentgym:alfworld": {
       "enabled_for_sampling": true,
       "enabled_for_scoring": true,
-      "sampling_range": [0, 2500],
+      "sampling_range": [2000, 2500],
       "scoring_range": [2000, 2500]
     },
     "agentgym:webshop": {
@@ -40,7 +52,7 @@
     "agentgym:sciworld": {
       "enabled_for_sampling": true,
       "enabled_for_scoring": true,
-      "sampling_range": [0, 2500],
+      "sampling_range": [2000, 2500],
       "scoring_range": [2000, 2500]
     },
     "agentgym:textcraft": {

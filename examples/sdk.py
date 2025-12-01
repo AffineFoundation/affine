@@ -20,20 +20,21 @@ async def main():
 
     # Get miner info for UID = 160
     # NOTE: HF_USER and HF_TOKEN .env value is required for this command.
-    uid = 7
+    uid = 113
     miner = await af.miners(uid)
     assert miner, "Unable to obtain miner, please check if registered"
 
-    # Generate and evaluate a DED challenge
+    # Generate and evaluate a DED-V2 challenge
     # All environment logic is now encapsulated in Docker images via affinetes
-    ded_env = af.DED()
-    evaluation = await ded_env.evaluate(miner)
+    ded_v2_env = af.DED_V2()
+    evaluation = await ded_v2_env.evaluate(miner, task_id=20100)
     print("=" * 50)
     print(evaluation[uid])
     print(json.dumps(evaluation[uid].extra, indent=2, ensure_ascii=False))
     
-    alfworld_env = af.ALFWORLD()
-    evaluation = await alfworld_env.evaluate(miner)  # Random task
+    # Generate and evaluate an ABD-V2 challenge
+    abd_v2_env = af.ABD_V2()
+    evaluation = await abd_v2_env.evaluate(miner, task_id=20200)
     print("=" * 50)
     print(evaluation[uid])
     print(json.dumps(evaluation[uid].extra, indent=2, ensure_ascii=False))
