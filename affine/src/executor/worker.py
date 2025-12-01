@@ -336,11 +336,16 @@ class ExecutorWorker:
             
             # Build SampleSubmission (only contains task_uuid, score, latency, extra)
             # Pass through raw score from environment without normalization
+            # IMPORTANT: Merge Result.error into extra if present
+            extra = result.extra or {}
+            if result.error:
+                extra["error"] = result.error
+            
             submission = SampleSubmission(
                 task_uuid=task_uuid,
                 score=float(result.score),
                 latency_ms=int(result.latency_seconds * 1000),
-                extra=result.extra or {},
+                extra=extra,
                 signature="",  # Will be signed below
             )
             
