@@ -4,7 +4,7 @@ services:
     container_name: affine-api
     restart: unless-stopped
     volumes:
-      - ..:/app
+      - .:/app
       - /var/log/affine/api:/var/log/affine/api
     ports:
       - "8000:8000"
