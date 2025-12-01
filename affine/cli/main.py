@@ -78,7 +78,7 @@ def api():
         port=config.PORT,
         reload=config.RELOAD,
         log_level=config.LOG_LEVEL.lower(),
-        workers=1,
+        workers=config.WORKERS,
     )
 
 
@@ -326,8 +326,8 @@ def deploy(service, local, recreate):
         if local:
             compose_files.extend(["-f", "compose/docker-compose.backend.local.yml"])
     
-    # Build the command
-    cmd = ["docker", "compose"] + compose_files + ["up", "-d"]
+    # Build the command with project directory
+    cmd = ["docker", "compose", "--project-directory", affine_dir] + compose_files + ["up", "-d"]
     
     if recreate:
         cmd.append("--force-recreate")
@@ -384,8 +384,8 @@ def down(service, local, volumes):
         if local:
             compose_files.extend(["-f", "compose/docker-compose.backend.local.yml"])
     
-    # Build the command
-    cmd = ["docker", "compose"] + compose_files + ["down"]
+    # Build the command with project directory
+    cmd = ["docker", "compose", "--project-directory", affine_dir] + compose_files + ["down"]
     
     if volumes:
         cmd.append("--volumes")
