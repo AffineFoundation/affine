@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Supported environment names (will be mapped to actual classes after argparse)
-ENVIRONMENT_NAMES = ['SAT', 'ABD-V2', 'DED-V2', 'ALFWORLD', 'WEBSHOP', 'BABYAI', 'SCIWORLD', 'TEXTCRAFT']
+ENVIRONMENT_NAMES = ['SAT', 'ABD', 'ABD-V2', 'DED', 'DED-V2', 'ALFWORLD', 'WEBSHOP', 'BABYAI', 'SCIWORLD', 'TEXTCRAFT']
 
 
 def parse_args():
@@ -45,8 +45,8 @@ Examples:
 Supported environments: """ + ', '.join(ENVIRONMENT_NAMES)
     )
 
-    parser.add_argument('--env', required=True, choices=ENVIRONMENT_NAMES,
-                        help='Environment name')
+    parser.add_argument('--env', required=True, type=str,
+                        help='Environment name (case-insensitive)')
     
     # Mode selection: either uid or (model + base-url)
     mode_group = parser.add_mutually_exclusive_group(required=True)
@@ -63,12 +63,19 @@ Supported environments: """ + ', '.join(ENVIRONMENT_NAMES)
                        help='Random seed for evaluation')
     parser.add_argument('--samples', type=int, default=1,
                        help='Number of evaluation samples (default: 1)')
-    parser.add_argument('--temperature', type=float, default=0.7,
-                       help='Sampling temperature (default: 0.7)')
+    parser.add_argument('--temperature', type=float, default=0.0,
+                       help='Sampling temperature (default: 0.0)')
     parser.add_argument('--output', '-o',
                        help='Output file path for JSON results (optional)')
 
     args = parser.parse_args()
+
+    # Normalize environment name to uppercase for case-insensitive matching
+    args.env = args.env.upper()
+    
+    # Validate environment name
+    if args.env not in ENVIRONMENT_NAMES:
+        parser.error(f'invalid environment: {args.env!r} (choose from {", ".join(ENVIRONMENT_NAMES)})')
 
     # Validation
     if args.model and not args.base_url:
@@ -155,14 +162,16 @@ async def main():
     
     # Map environment names to actual classes
     ENVIRONMENTS = {
-        'SAT': af.SAT,
-        'ABD': af.ABD,
-        'DED': af.DED,
-        'ALFWORLD': af.ALFWORLD,
-        'WEBSHOP': af.WEBSHOP,
-        'BABYAI': af.BABYAI,
-        'SCIWORLD': af.SCIWORLD,
-        'TEXTCRAFT': af.TEXTCRAFT,
+        'sat': af.SAT,
+        'abd': af.ABD,
+        'abd-v2': af.ABD_V2,
+        'ded': af.DED,
+        'ded-v2': af.DED_V2,
+        'alfworld': af.ALFWORLD,
+        'webshop': af.WEBSHOP,
+        'babyai': af.BABYAI,
+        'sciworld': af.SCIWORLD,
+        'textcraft': af.TEXTCRAFT,
     }
     
     # Check API key for Chutes service
@@ -197,7 +206,7 @@ async def main():
     try:
         # Create environment instance
         print(f"\nLoading {args.env} environment...")
-        env_class = ENVIRONMENTS[args.env]
+        env_class = ENVIRONMENTS[args.env.lower()]
         env_instance = env_class()
         print("✓ Environment loaded")
         
