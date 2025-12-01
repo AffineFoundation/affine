@@ -4,6 +4,7 @@ import os
 import time
 import random
 import asyncio
+import hashlib
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, Union, Type, Tuple
 from dataclasses import dataclass
@@ -42,7 +43,7 @@ class SandboxConfig:
 class EvaluatorConfig:
     """Evaluator configuration"""
 
-    temperature: float = 0
+    temperature: float = 0.0
     timeout: int = 600
     max_round: int = 10
 
@@ -183,6 +184,23 @@ class BaseSDKEnv(ABC):
             
             return environment
 
+    def _generate_deterministic_seed(self, task_id: int) -> int:
+        """Generate deterministic seed based on env_name and task_id.
+        
+        Args:
+            task_id: The task ID
+            
+        Returns:
+            A deterministic seed value
+        """
+        # Combine env_name and task_id to create a unique string
+        seed_string = f"{self.env_name}:{task_id}"
+        # Use SHA256 hash to generate deterministic seed
+        hash_object = hashlib.sha256(seed_string.encode())
+        # Convert first 8 bytes of hash to integer and modulo to fit in 32-bit range
+        seed = int.from_bytes(hash_object.digest()[:8], byteorder='big') % (2**32)
+        return seed
+
     async def _evaluate_single_miner(
         self, miner: Optional["Miner"] = None, **eval_kwargs
     ) -> "Result":
@@ -198,9 +216,14 @@ class BaseSDKEnv(ABC):
         """
         start = time.monotonic()
 
-        # Generate random seed if not provided
+        # Generate deterministic seed based on env_name and task_id if not provided
         if 'seed' not in eval_kwargs:
-            eval_kwargs['seed'] = random.randint(0, 2**32 - 1)
+            task_id = eval_kwargs.get('task_id')
+            if task_id is not None:
+                eval_kwargs['seed'] = self._generate_deterministic_seed(task_id)
+            else:
+                # Fallback to random if task_id is not available
+                eval_kwargs['seed'] = random.randint(0, 2**32 - 1)
         
         # Build payload with all dynamic parameters (including seed)
         payload = self.evaluator_config.to_payload(miner, **eval_kwargs)
@@ -354,6 +377,9 @@ class BaseSDKEnv(ABC):
 class AffineSDKEnv(BaseSDKEnv):
     """Base class for Affine environments (SAT, ABD, DED, HVM, ELR)"""
 
+    # Default Docker image for Affine environments
+    DOCKER_IMAGE = "bignickeye/affine:v3"
+
     def __init__(self):
         super().__init__()
 
@@ -364,15 +390,29 @@ class AffineSDKEnv(BaseSDKEnv):
     @property
     def docker_image(self) -> str:
         """All Affine environments use the same image"""
-        return "bignickeye/affine:v3"
+        return self.DOCKER_IMAGE
+
+    def _get_base_task_name(self) -> str:
+        """Extract and normalize task name, removing version suffixes.
+        
+        Examples:
+            "affine:sat" -> "sat"
+            "affine:ded-v2" -> "ded"
+            "affine:abd-v2" -> "abd"
+        """
+        # Extract env name from template (e.g., "affine:sat" -> "sat")
+        env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
+        # Remove version suffix if present (e.g., "ded-v2" -> "ded")
+        if "-v" in env_name:
+            env_name = env_name.rsplit("-v", 1)[0]
+        return env_name
 
     @property
     def env_vars(self) -> Dict[str, str]:
         """Affine environment variables"""
         env_vars = super().env_vars
-        # Extract env name from template (e.g., "affine:sat" -> "sat")
-        env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
-        env_vars["ENV_NAME"] = env_name
+        # Use base task name (without version suffix)
+        env_vars["ENV_NAME"] = self._get_base_task_name()
         return env_vars
 
     async def evaluate(
@@ -386,11 +426,11 @@ class AffineSDKEnv(BaseSDKEnv):
             **eval_kwargs: Dynamic parameters (model, base_url, temperature, task_type, task_id, etc.)
         """
 
-        # Extract env name from template (e.g., "affine:sat" -> "sat")
-        env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
+        # Use base task name (without version suffix)
+        base_task_name = self._get_base_task_name()
         
         # Set default task_type if not provided in eval_kwargs
-        eval_kwargs.setdefault("task_type", env_name)
+        eval_kwargs.setdefault("task_type", base_task_name)
         
         # task_id must be provided by caller (from API server task queue)
         if "task_id" not in eval_kwargs:
@@ -411,15 +451,8 @@ class AgentGymSDKEnv(BaseSDKEnv):
     def __init__(self, max_round: int = None):
         super().__init__()
         self.max_round = max_round if max_round is not None else self.DEFAULT_MAX_ROUND
-
-        # Update evaluator config
-        if self._evaluator_config is None:
-            self._evaluator_config = EvaluatorConfig(
-                temperature=0.0, timeout=self.DEFAULT_TIMEOUT, max_round=self.max_round
-            )
-        else:
-            self._evaluator_config.max_round = self.max_round
-            self._evaluator_config.timeout = self.DEFAULT_TIMEOUT
+        self._evaluator_config.max_round = self.max_round
+        self._evaluator_config.timeout = self.DEFAULT_TIMEOUT
 
     @property
     def env_type(self) -> EnvType:
@@ -516,6 +549,28 @@ class DED(AffineSDKEnv):
         return "affine:ded"
 
 
+@register_env(EnvType.AFFINE, "affine:ded-v2")
+class DED_V2(AffineSDKEnv):
+    """DED-V2 environment for SDK"""
+    DEFAULT_REPLICAS = 1
+    DOCKER_IMAGE = "bignickeye/affine:v4"
+
+    @property
+    def env_name(self) -> str:
+        return "affine:ded-v2"
+
+
+@register_env(EnvType.AFFINE, "affine:abd-v2")
+class ABD_V2(AffineSDKEnv):
+    """ABD-V2 environment for SDK"""
+    DEFAULT_REPLICAS = 1
+    DOCKER_IMAGE = "bignickeye/affine:v4"
+
+    @property
+    def env_name(self) -> str:
+        return "affine:abd-v2"
+
+
 # AgentGym Environments
 @register_env(EnvType.AGENTGYM, "agentgym:alfworld")
 class ALFWORLD(AgentGymSDKEnv):
@@ -587,6 +642,8 @@ def create_env_factory(env_class: Type[BaseSDKEnv], **default_kwargs):
 SAT_factory = create_env_factory(SAT)
 ABD_factory = create_env_factory(ABD)
 DED_factory = create_env_factory(DED)
+DED_V2_factory = create_env_factory(DED_V2)
+ABD_V2_factory = create_env_factory(ABD_V2)
 ALFWORLD_factory = create_env_factory(ALFWORLD)
 WEBSHOP_factory = create_env_factory(WEBSHOP)
 BABYAI_factory = create_env_factory(BABYAI)
