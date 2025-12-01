@@ -440,7 +440,7 @@ class AgentGymSDKEnv(BaseSDKEnv):
         # Update evaluator config
         if self._evaluator_config is None:
             self._evaluator_config = EvaluatorConfig(
-                temperature=0.7, timeout=self.DEFAULT_TIMEOUT, max_round=self.max_round
+                temperature=0.0, timeout=self.DEFAULT_TIMEOUT, max_round=self.max_round
             )
         else:
             self._evaluator_config.max_round = self.max_round

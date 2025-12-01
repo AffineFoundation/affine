@@ -91,25 +91,10 @@ class EvaluationWorker:
                 raise
             except Exception as e:
                 logger.error(f"[Worker-{self.worker_id}] Error: {e}")
-                traceback.print_exc()
                 await asyncio.sleep(1)
     
     async def _execute_task(self, task: Task) -> Result:
         """Execute single evaluation task"""
-        try:
-            result = await self.env.evaluate(task.miner, seed=task.seed, task_id=task.task_id)
-            return result
-        
-        except Exception as e:
-            return Result(
-                miner=task.miner,
-                env=task.env_name,
-                score=0.0,
-                latency_seconds=0.0,
-                success=False,
-                error=str(e),
-                task_id=task.task_id,
-                extra={},
-                timestamp=time.time()
-            )
+        result = await self.env.evaluate(task.miner, seed=task.seed, task_id=task.task_id)
+        return result
     
