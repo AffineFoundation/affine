@@ -85,7 +85,7 @@ class TaskPoolDAO(BaseDAO):
                 'assigned_to': None,
                 'assigned_at': None,
                 'retry_count': 0,
-                'max_retries': 5,
+                'max_retries': 10,
                 'last_error': None,
                 'last_error_code': None,
                 'last_failed_at': None,
@@ -334,7 +334,7 @@ class TaskPoolDAO(BaseDAO):
         await self.delete(task['pk'], task['sk'])
         
         retry_count = task.get('retry_count', 0) + 1
-        max_retries = task.get('max_retries', 3)
+        max_retries = task.get('max_retries')
         
         if retry_count >= max_retries:
             new_status = 'failed'
@@ -536,7 +536,12 @@ class TaskPoolDAO(BaseDAO):
                     
                     response = await client.query(**query_params)
                     items = response.get('Items', [])
-                    tasks_to_delete.extend([self._deserialize(item) for item in items])
+                    
+                    # Only delete tasks with 'pending' status, skip 'assigned' tasks
+                    for item in items:
+                        task = self._deserialize(item)
+                        if task.get('status') == 'pending':
+                            tasks_to_delete.append(task)
                     
                     last_key = response.get('LastEvaluatedKey')
                     if not last_key:
@@ -546,8 +551,8 @@ class TaskPoolDAO(BaseDAO):
                     deleted = await self._batch_delete_tasks(tasks_to_delete)
                     total_deleted += deleted
                     logger.info(
-                        f"Deleted {deleted} tasks for invalid miner "
-                        f"{hotkey[:12]}...#{revision}"
+                        f"Deleted {deleted} pending tasks for invalid miner "
+                        f"{hotkey[:12]}...#{revision} (skipped assigned tasks)"
                     )
             
             except Exception as e:

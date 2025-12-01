@@ -321,6 +321,76 @@ async def cmd_get_burn_percentage():
         await close_client()
 
 
+async def cmd_delete_samples_by_range(
+    hotkey: str,
+    revision: str,
+    env: str,
+    start_task_id: int,
+    end_task_id: int
+):
+    """Delete samples within a task_id range."""
+    print(f"Deleting samples for hotkey={hotkey[:12]}..., env={env}, task_id range=[{start_task_id}, {end_task_id})...")
+    
+    confirm = input(f"WARNING: This will delete samples in range [{start_task_id}, {end_task_id}). Type 'yes' to confirm: ")
+    
+    if confirm.lower() != 'yes':
+        print("Aborted")
+        return
+    
+    await init_client()
+    
+    try:
+        sample_dao = SampleResultsDAO()
+        deleted_count = await sample_dao.delete_samples_by_task_range(
+            miner_hotkey=hotkey,
+            model_revision=revision,
+            env=env,
+            start_task_id=start_task_id,
+            end_task_id=end_task_id
+        )
+        
+        print(f"✓ Deleted {deleted_count} samples")
+    
+    except Exception as e:
+        print(f"✗ Failed to delete samples: {e}")
+        sys.exit(1)
+    finally:
+        await close_client()
+
+
+async def cmd_delete_samples_empty_conversation(
+    hotkey: str,
+    revision: str,
+    env: str
+):
+    """Delete samples with empty conversation."""
+    print(f"Deleting samples with empty conversation for hotkey={hotkey[:12]}..., env={env}...")
+    
+    confirm = input(f"WARNING: This will delete all samples with empty conversation. Type 'yes' to confirm: ")
+    
+    if confirm.lower() != 'yes':
+        print("Aborted")
+        return
+    
+    await init_client()
+    
+    try:
+        sample_dao = SampleResultsDAO()
+        deleted_count = await sample_dao.delete_samples_with_empty_conversation(
+            miner_hotkey=hotkey,
+            model_revision=revision,
+            env=env
+        )
+        
+        print(f"✓ Deleted {deleted_count} samples with empty conversation")
+    
+    except Exception as e:
+        print(f"✗ Failed to delete samples: {e}")
+        sys.exit(1)
+    finally:
+        await close_client()
+
+
 @click.group()
 def db():
     """Database management commands."""
@@ -414,6 +484,34 @@ def set_burn(percentage):
 def get_burn():
     """Get current validator burn percentage."""
     asyncio.run(cmd_get_burn_percentage())
+
+
+@db.command("delete-samples-by-range")
+@click.option("--hotkey", required=True, help="Miner's hotkey")
+@click.option("--revision", required=True, help="Model revision hash")
+@click.option("--env", required=True, help="Environment name (e.g., agentgym:alfworld)")
+@click.option("--start-task-id", required=True, type=int, help="Start task_id (inclusive)")
+@click.option("--end-task-id", required=True, type=int, help="End task_id (exclusive)")
+def delete_samples_by_range(hotkey, revision, env, start_task_id, end_task_id):
+    """Delete samples within a task_id range for a specific miner and environment.
+    
+    Example:
+        af db delete-samples-by-range --hotkey 5C5... --revision abc123 --env agentgym:alfworld --start-task-id 0 --end-task-id 100
+    """
+    asyncio.run(cmd_delete_samples_by_range(hotkey, revision, env, start_task_id, end_task_id))
+
+
+@db.command("delete-samples-empty-conversation")
+@click.option("--hotkey", required=True, help="Miner's hotkey")
+@click.option("--revision", required=True, help="Model revision hash")
+@click.option("--env", required=True, help="Environment name (e.g., agentgym:alfworld)")
+def delete_samples_empty_conversation(hotkey, revision, env):
+    """Delete samples with empty conversation for a specific miner and environment.
+    
+    Example:
+        af db delete-samples-empty-conversation --hotkey 5C5... --revision abc123 --env agentgym:alfworld
+    """
+    asyncio.run(cmd_delete_samples_empty_conversation(hotkey, revision, env))
 
 
 def main():

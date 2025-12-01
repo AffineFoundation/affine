@@ -322,4 +322,171 @@ class SampleResultsDAO(BaseDAO):
             output[key][env] = items
         
         return output
+    
+    async def delete_samples_by_task_range(
+        self,
+        miner_hotkey: str,
+        model_revision: str,
+        env: str,
+        start_task_id: int,
+        end_task_id: int
+    ) -> int:
+        """Delete samples within a task_id range for a specific miner and environment.
+        
+        Args:
+            miner_hotkey: Miner's hotkey
+            model_revision: Model revision hash
+            env: Environment name
+            start_task_id: Start of task_id range (inclusive)
+            end_task_id: End of task_id range (exclusive)
+            
+        Returns:
+            Number of samples deleted
+        """
+        client = get_client()
+        pk = self._make_pk(miner_hotkey, model_revision, env)
+        
+        # Query all samples in the range
+        params = {
+            'TableName': self.table_name,
+            'KeyConditionExpression': 'pk = :pk',
+            'FilterExpression': 'task_id >= :start_id AND task_id < :end_id',
+            'ExpressionAttributeValues': {
+                ':pk': {'S': pk},
+                ':start_id': {'N': str(start_task_id)},
+                ':end_id': {'N': str(end_task_id)}
+            },
+            'ProjectionExpression': 'pk, sk'
+        }
+        
+        items = await self._query_all_pages(client, params)
+        
+        if not items:
+            logger.info(f"No samples found in range [{start_task_id}, {end_task_id})")
+            return 0
+        
+        # Batch delete items
+        deleted_count = 0
+        batch_size = 25
+        
+        for i in range(0, len(items), batch_size):
+            batch = items[i:i + batch_size]
+            
+            delete_requests = [
+                {
+                    'DeleteRequest': {
+                        'Key': {
+                            'pk': item['pk'],
+                            'sk': item['sk']
+                        }
+                    }
+                }
+                for item in batch
+            ]
+            
+            try:
+                await client.batch_write_item(
+                    RequestItems={
+                        self.table_name: delete_requests
+                    }
+                )
+                deleted_count += len(batch)
+            except Exception as e:
+                logger.error(f"Batch delete failed: {e}")
+        
+        logger.info(f"Deleted {deleted_count} samples in range [{start_task_id}, {end_task_id})")
+        return deleted_count
+    
+    async def delete_samples_with_empty_conversation(
+        self,
+        miner_hotkey: str,
+        model_revision: str,
+        env: str
+    ) -> int:
+        """Delete samples where extra.conversation is empty.
+        
+        Args:
+            miner_hotkey: Miner's hotkey
+            model_revision: Model revision hash
+            env: Environment name
+            
+        Returns:
+            Number of samples deleted
+        """
+        client = get_client()
+        pk = self._make_pk(miner_hotkey, model_revision, env)
+        
+        # Query all samples for this miner+env
+        params = {
+            'TableName': self.table_name,
+            'KeyConditionExpression': 'pk = :pk',
+            'ExpressionAttributeValues': {
+                ':pk': {'S': pk}
+            }
+        }
+        
+        all_items = await self._query_all_pages(client, params)
+        
+        if not all_items:
+            logger.info(f"No samples found for deletion")
+            return 0
+        
+        # Filter items with empty conversation
+        items_to_delete = []
+        for item_raw in all_items:
+            item = self._deserialize(item_raw)
+            
+            # Decompress and check extra.conversation
+            if 'extra_compressed' in item:
+                try:
+                    extra_json = self.decompress_data(item['extra_compressed'])
+                    extra = json.loads(extra_json)
+                    conversation = extra.get('conversation', [])
+                    
+                    # Delete if conversation is empty
+                    if not conversation or len(conversation) == 0:
+                        items_to_delete.append({
+                            'pk': item_raw['pk'],
+                            'sk': item_raw['sk']
+                        })
+                except Exception as e:
+                    logger.warning(f"Failed to parse extra for item {item.get('task_id')}: {e}")
+        
+        if not items_to_delete:
+            logger.info(f"No samples with empty conversation found")
+            return 0
+        
+        logger.info(f"Found {len(items_to_delete)} samples with empty conversation")
+        
+        # Batch delete items
+        deleted_count = 0
+        batch_size = 25
+        
+        for i in range(0, len(items_to_delete), batch_size):
+            batch = items_to_delete[i:i + batch_size]
+            
+            delete_requests = [
+                {
+                    'DeleteRequest': {
+                        'Key': {
+                            'pk': item['pk'],
+                            'sk': item['sk']
+                        }
+                    }
+                }
+                for item in batch
+            ]
+            
+            try:
+                await client.batch_write_item(
+                    RequestItems={
+                        self.table_name: delete_requests
+                    }
+                )
+                deleted_count += len(batch)
+            except Exception as e:
+                logger.error(f"Batch delete failed: {e}")
+        
+        logger.info(f"Deleted {deleted_count} samples with empty conversation")
+        return deleted_count
 

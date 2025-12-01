@@ -90,13 +90,14 @@ async def get_sample_by_uid(
     task_id: str,
     sample_dao: SampleResultsDAO = Depends(get_sample_results_dao),
     miners_dao: MinersDAO = Depends(get_miners_dao),
+    config_dao: SystemConfigDAO = Depends(get_system_config_dao),
 ):
     """
     Get a specific sample by UID, env, and task_id.
     
     Path parameters:
     - uid: Miner UID (0-255)
-    - env: Environment (e.g., affine:sat)
+    - env: Environment (e.g., affine:sat or shorthand like sat, alfworld)
     - task_id: Task identifier
     
     Returns full sample details including conversation data.
@@ -104,6 +105,29 @@ async def get_sample_by_uid(
     If multiple submissions exist for the same task_id, returns the latest one by timestamp.
     """
     try:
+        # Resolve env_name shorthand (e.g., 'alfworld' -> 'agentgym:alfworld')
+        environments = await config_dao.get_param_value('environments', default={})
+        
+        if ':' not in env:
+            matching_envs = [e for e in environments.keys() if e.endswith(f':{env}')]
+            if len(matching_envs) == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Environment not found: {env}. Available: {', '.join(environments.keys())}"
+                )
+            elif len(matching_envs) > 1:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Ambiguous environment name: {env}. Matches: {', '.join(matching_envs)}"
+                )
+            env = matching_envs[0]
+        
+        if env not in environments:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Environment not found: {env}. Available: {', '.join(environments.keys())}"
+            )
+        
         # Get miner info by UID
         miner = await miners_dao.get_miner_by_uid(uid)
         
