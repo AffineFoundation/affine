@@ -358,15 +358,11 @@ async def cmd_delete_samples_by_range(
         await close_client()
 
 
-async def cmd_delete_samples_empty_conversation(
-    hotkey: str,
-    revision: str,
-    env: str
-):
-    """Delete samples with empty conversation."""
-    print(f"Deleting samples with empty conversation for hotkey={hotkey[:12]}..., env={env}...")
+async def cmd_delete_samples_empty_conversation():
+    """Delete all samples with empty conversation across the entire database."""
+    print("Scanning entire sample database for invalid samples (empty conversation)...")
     
-    confirm = input(f"WARNING: This will delete all samples with empty conversation. Type 'yes' to confirm: ")
+    confirm = input("WARNING: This will scan and delete ALL samples with empty conversation in the database. Type 'yes' to confirm: ")
     
     if confirm.lower() != 'yes':
         print("Aborted")
@@ -376,16 +372,12 @@ async def cmd_delete_samples_empty_conversation(
     
     try:
         sample_dao = SampleResultsDAO()
-        deleted_count = await sample_dao.delete_samples_with_empty_conversation(
-            miner_hotkey=hotkey,
-            model_revision=revision,
-            env=env
-        )
+        deleted_count = await sample_dao.delete_all_samples_with_empty_conversation()
         
-        print(f"✓ Deleted {deleted_count} samples with empty conversation")
+        print(f"\n✓ Scan complete. Deleted {deleted_count} samples with empty conversation")
     
     except Exception as e:
-        print(f"✗ Failed to delete samples: {e}")
+        print(f"\n✗ Failed to delete samples: {e}")
         sys.exit(1)
     finally:
         await close_client()
@@ -502,16 +494,16 @@ def delete_samples_by_range(hotkey, revision, env, start_task_id, end_task_id):
 
 
 @db.command("delete-samples-empty-conversation")
-@click.option("--hotkey", required=True, help="Miner's hotkey")
-@click.option("--revision", required=True, help="Model revision hash")
-@click.option("--env", required=True, help="Environment name (e.g., agentgym:alfworld)")
-def delete_samples_empty_conversation(hotkey, revision, env):
-    """Delete samples with empty conversation for a specific miner and environment.
+def delete_samples_empty_conversation():
+    """Delete all samples with empty conversation across the entire database.
+    
+    This command will scan the entire sample_results table and delete any samples
+    where the conversation field is empty or null. Progress will be logged during execution.
     
     Example:
-        af db delete-samples-empty-conversation --hotkey 5C5... --revision abc123 --env agentgym:alfworld
+        af db delete-samples-empty-conversation
     """
-    asyncio.run(cmd_delete_samples_empty_conversation(hotkey, revision, env))
+    asyncio.run(cmd_delete_samples_empty_conversation())
 
 
 def main():
