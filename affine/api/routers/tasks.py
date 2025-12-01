@@ -218,7 +218,7 @@ async def submit_sample_from_executor(
         executor_hotkey=executor_hotkey,
         success=is_success,
         error_message=error_message,
-        error_code="EXECUTION_ERROR" if error_message else None
+        error_code="EXECUTION_ERROR"
     )
     
     # Build response message
