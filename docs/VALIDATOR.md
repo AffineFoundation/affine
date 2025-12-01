@@ -60,19 +60,11 @@ Edit `.env` file with required variables:
 BT_WALLET_COLD=your_coldkey_name
 BT_WALLET_HOT=your_hotkey_name
 
-# Chutes API key (validators need Read permission)
-CHUTES_API_KEY=cpk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-# Hugging Face token (Read permission sufficient)
-HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
 # Subtensor configuration
 SUBTENSOR_ENDPOINT=finney
 SUBTENSOR_FALLBACK=wss://lite.sub.latent.to:443
 
 # Validator configuration (optional)
-VALIDATOR_WEIGHT_SET_INTERVAL=1800  # Weight setting interval in seconds, default 30 minutes
-SERVICE_MODE=false                  # Whether to run in service mode (continuous)
 NETUID=120                          # Subnet ID
 ```
 
@@ -82,12 +74,8 @@ NETUID=120                          # Subnet ID
 |----------|-------------|---------|----------|
 | `BT_WALLET_COLD` | Coldkey name | - | Yes |
 | `BT_WALLET_HOT` | Hotkey name | - | Yes |
-| `CHUTES_API_KEY` | Chutes API key | - | Yes |
-| `HF_TOKEN` | Hugging Face token | - | No |
 | `SUBTENSOR_ENDPOINT` | Subtensor node address | `finney` | No |
 | `SUBTENSOR_FALLBACK` | Fallback Subtensor address | - | No |
-| `VALIDATOR_WEIGHT_SET_INTERVAL` | Weight setting interval (seconds) | `1800` | No |
-| `SERVICE_MODE` | Service mode toggle | `false` | No |
 | `NETUID` | Subnet ID | `120` | No |
 
 ## Running Methods
@@ -340,18 +328,6 @@ docker compose logs --tail=100
 
 # View specific service logs
 docker compose logs -f validator
-```
-
-### Weight Setting Interval
-
-By default, the validator sets weights every 30 minutes. Adjust via environment variable:
-
-```bash
-# Set to 15 minutes
-export VALIDATOR_WEIGHT_SET_INTERVAL=900
-
-# Set to 1 hour
-export VALIDATOR_WEIGHT_SET_INTERVAL=3600
 ```
 
 ## Troubleshooting

@@ -68,21 +68,19 @@ Learn how to:
 ### Additional Resources
 
 - 📚 **[FAQ](docs/FAQ.md)** - Frequently asked questions
-- 🔧 **[Sampling Scheduler](docs/SAMPLING_SCHEDULER.md)** - Scheduler architecture and configuration
-- 📊 **[Monitoring API](docs/MONITORING_API.md)** - HTTP endpoints for monitoring
 
 ## SDK Usage
 
 Affine can be used as an SDK for evaluating models across different environments.
 
 **Examples:**
-- [`examples/sdk.py`](examples/sdk.py) - Evaluate miners from the network on DED and ALFWORLD environments
+- [`examples/sdk.py`](examples/sdk.py) - Evaluate miners from the network on DED-V2 and ABD-V2 environments
 - [`examples/sdk2.py`](examples/sdk2.py) - Evaluate custom models by specifying model parameters directly
 
 **Key Features:**
 - Evaluate registered miners by UID
 - Evaluate custom models with direct parameters (model, base_url, temperature)
-- Support for multiple environments (DED, ABD, ALFWORLD, etc.)
+- Support for multiple environments (DED-V2, ABD-V2, etc.)
 - List all available environments
 - Async API for efficient batch evaluation
 
@@ -94,7 +92,3 @@ See the example files for complete usage patterns.
 - **Dashboard**: [https://www.affine.io/](https://www.affine.io/)
 - **GitHub**: [https://github.com/AffineFoundation/affine](https://github.com/AffineFoundation/affine)
 - **FAQ**: [docs/FAQ.md](docs/FAQ.md)
-
-## License
-
-See [LICENSE](LICENSE) for details.

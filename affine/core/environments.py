@@ -451,8 +451,8 @@ class AgentGymSDKEnv(BaseSDKEnv):
     def __init__(self, max_round: int = None):
         super().__init__()
         self.max_round = max_round if max_round is not None else self.DEFAULT_MAX_ROUND
-        self._evaluator_config.max_round = self.max_round
-        self._evaluator_config.timeout = self.DEFAULT_TIMEOUT
+        self.evaluator_config.max_round = self.max_round
+        self.evaluator_config.timeout = self.DEFAULT_TIMEOUT
 
     @property
     def env_type(self) -> EnvType:
