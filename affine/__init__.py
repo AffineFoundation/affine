@@ -58,4 +58,6 @@ from affine.tasks import (
     BABYAI_factory as BABYAI,
     SCIWORLD_factory as SCIWORLD,
     TEXTCRAFT_factory as TEXTCRAFT,
+    # Utility functions
+    list_available_environments,
 )
