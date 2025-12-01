@@ -262,6 +262,19 @@ class BaseSDKEnv(ABC):
         error = result.get("error")
         extra = result.get("extra", {}).copy()
         
+        # Validate conversation field - conversation should not be null for successful evaluations
+        # If conversation is null but no error is set, this indicates an abnormal execution
+        conversation = extra.get("conversation")
+        if conversation is None and error is None:
+            # Mark as error if conversation is null without explicit error message
+            error = "Evaluation returned null conversation without error message"
+            success = False
+            logger.warning(
+                f"[{self.env_name}] Detected null conversation without error for "
+                f"miner={miner.hotkey[:12] if miner else 'unknown'}..., "
+                f"marking as failed"
+            )
+        
         extra['image'] = self.docker_image
         if payload_extra:
             extra['request'] = payload_extra.copy()
