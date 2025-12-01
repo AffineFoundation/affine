@@ -7,8 +7,8 @@ Supports two evaluation modes:
 2. Using local model via --base-url
 
 Usage:
-    ./evaluate_local_model.py --env ABD --uid 7
-    ./evaluate_local_model.py --env ABD --model your-model --base-url http://172.17.0.1:30000/v1 --samples 10
+    ./evaluate_local_model.py --env ABD-V2 --uid 7
+    ./evaluate_local_model.py --env ABD-V2 --model your-model --base-url http://172.17.0.1:30000/v1 --samples 10
     ./evaluate_local_model.py --env ALFWORLD --samples 10 --model deepseek-ai/DeepSeek-V3 --base-url https://llm.chutes.ai/v1 --output ./eval.json
 """
 import asyncio
@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Supported environment names (will be mapped to actual classes after argparse)
-ENVIRONMENT_NAMES = ['SAT', 'ABD', 'DED', 'ALFWORLD', 'WEBSHOP', 'BABYAI', 'SCIWORLD', 'TEXTCRAFT']
+ENVIRONMENT_NAMES = ['SAT', 'ABD-V2', 'DED-V2', 'ALFWORLD', 'WEBSHOP', 'BABYAI', 'SCIWORLD', 'TEXTCRAFT']
 
 
 def parse_args():
@@ -34,10 +34,10 @@ def parse_args():
         epilog="""
 Examples:
   # Evaluate using Chutes service (requires CHUTES_API_KEY)
-  %(prog)s --env ABD --uid 7
+  %(prog)s --env ABD-V2 --uid 7
   
   # Evaluate using local model
-  %(prog)s --env ABD --model your-model --base-url http://172.17.0.1:30000/v1
+  %(prog)s --env ABD-V2 --model your-model --base-url http://172.17.0.1:30000/v1
   
   # Evaluate with specific task and seed
   %(prog)s --env ALFWORLD --task-id 2 --seed 42 --model deepseek-ai/DeepSeek-V3 --base-url https://llm.chutes.ai/v1 --samples 5

@@ -354,6 +354,9 @@ class BaseSDKEnv(ABC):
 class AffineSDKEnv(BaseSDKEnv):
     """Base class for Affine environments (SAT, ABD, DED, HVM, ELR)"""
 
+    # Default Docker image for Affine environments
+    DOCKER_IMAGE = "bignickeye/affine:v3"
+
     def __init__(self):
         super().__init__()
 
@@ -364,7 +367,7 @@ class AffineSDKEnv(BaseSDKEnv):
     @property
     def docker_image(self) -> str:
         """All Affine environments use the same image"""
-        return "bignickeye/affine:v3"
+        return self.DOCKER_IMAGE
 
     @property
     def env_vars(self) -> Dict[str, str]:
@@ -516,6 +519,28 @@ class DED(AffineSDKEnv):
         return "affine:ded"
 
 
+@register_env(EnvType.AFFINE, "affine:ded-v2")
+class DED_V2(AffineSDKEnv):
+    """DED-V2 environment for SDK"""
+    DEFAULT_REPLICAS = 1
+    DOCKER_IMAGE = "bignickeye/affine:v4"
+
+    @property
+    def env_name(self) -> str:
+        return "affine:ded-v2"
+
+
+@register_env(EnvType.AFFINE, "affine:abd-v2")
+class ABD_V2(AffineSDKEnv):
+    """ABD-V2 environment for SDK"""
+    DEFAULT_REPLICAS = 1
+    DOCKER_IMAGE = "bignickeye/affine:v4"
+
+    @property
+    def env_name(self) -> str:
+        return "affine:abd-v2"
+
+
 # AgentGym Environments
 @register_env(EnvType.AGENTGYM, "agentgym:alfworld")
 class ALFWORLD(AgentGymSDKEnv):
@@ -587,6 +612,8 @@ def create_env_factory(env_class: Type[BaseSDKEnv], **default_kwargs):
 SAT_factory = create_env_factory(SAT)
 ABD_factory = create_env_factory(ABD)
 DED_factory = create_env_factory(DED)
+DED_V2_factory = create_env_factory(DED_V2)
+ABD_V2_factory = create_env_factory(ABD_V2)
 ALFWORLD_factory = create_env_factory(ALFWORLD)
 WEBSHOP_factory = create_env_factory(WEBSHOP)
 BABYAI_factory = create_env_factory(BABYAI)

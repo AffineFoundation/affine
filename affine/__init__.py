@@ -31,9 +31,19 @@ from affine.core.environments import (
     SAT_factory as SAT,
     ABD_factory as ABD,
     DED_factory as DED,
+    DED_V2_factory as DED_V2,
+    ABD_V2_factory as ABD_V2,
     ALFWORLD_factory as ALFWORLD,
     WEBSHOP_factory as WEBSHOP,
     BABYAI_factory as BABYAI,
     SCIWORLD_factory as SCIWORLD,
     TEXTCRAFT_factory as TEXTCRAFT,
+    list_available_environments,
 )
+
+# Create tasks namespace for backward compatibility
+class _TasksNamespace:
+    """Namespace for task-related functions"""
+    list_available_environments = staticmethod(list_available_environments)
+
+tasks = _TasksNamespace()
