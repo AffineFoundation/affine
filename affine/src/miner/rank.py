@@ -224,9 +224,9 @@ async def print_rank_table():
             row_parts.append(f"{weight:>8.4f}")
         
         # Total (cumulative) and Weight (normalized)
-        # Note: API doesn't provide cumulative_weight, so we use average_score as proxy
-        average_score = score.get("average_score", 0.0)
-        row_parts.append(f"{average_score:>9.4f}")  # Total: use average score
+        # Use cumulative_weight if available, otherwise fall back to average_score
+        cumulative_weight = score.get("cumulative_weight")
+        row_parts.append(f"{cumulative_weight:>9.4f}")  # Total: cumulative weight before normalization
         row_parts.append(f"{overall_score:>9.6f}")  # Weight: normalized weight
         row_parts.append("✓" if is_eligible else "✗")
         

@@ -5,7 +5,6 @@ Collects sample data for all valid miners and calculates average scores
 per environment with completeness validation.
 """
 
-import logging
 from typing import Dict, List, Any
 from affine.src.scorer.models import (
     MinerData,

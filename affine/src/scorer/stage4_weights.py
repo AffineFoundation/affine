@@ -5,7 +5,6 @@ Aggregates subset contributions, applies minimum threshold,
 and normalizes final weights.
 """
 
-import logging
 from typing import Dict
 from affine.src.scorer.models import (
     MinerData,

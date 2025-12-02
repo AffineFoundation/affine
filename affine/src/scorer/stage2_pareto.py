@@ -5,7 +5,6 @@ Implements Pareto dominance-based filtering to detect and exclude
 plagiarized models using multi-environment performance analysis.
 """
 
-import logging
 from typing import Dict, List, Any
 from affine.src.scorer.models import (
     MinerData,
@@ -13,9 +12,6 @@ from affine.src.scorer.models import (
     Stage2Output,
 )
 from affine.src.scorer.config import ScorerConfig
-from affine.src.scorer.utils import (
-    calculate_required_score,
-)
 
 from affine.core.setup import logger
 

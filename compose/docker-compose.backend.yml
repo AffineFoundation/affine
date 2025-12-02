@@ -45,6 +45,7 @@ services:
       - .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.ssh:/root/.ssh
       - ~/.bittensor/wallets:/root/.bittensor/wallets:ro
       - /var/log/affine/executor:/var/log/affine/executor
     environment:
