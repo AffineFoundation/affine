@@ -19,7 +19,7 @@ class APIConfig:
 
     # Rate limiting
     RATE_LIMIT_ENABLED: bool = (
-        os.getenv("API_RATE_LIMIT_ENABLED", "true").lower() == "true"
+        os.getenv("API_RATE_LIMIT_ENABLED", "false").lower() == "true"
     )
     RATE_LIMIT_READ: int = int(os.getenv("API_RATE_LIMIT_READ", "10"))  # per min
     RATE_LIMIT_WRITE: int = int(os.getenv("API_RATE_LIMIT_WRITE", "10"))  # per min

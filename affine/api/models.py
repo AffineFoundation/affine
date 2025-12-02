@@ -16,14 +16,22 @@ class SampleSubmitResponse(BaseModel):
 
 
 class ExtraData(BaseModel):
-    """Extra data containing conversation and request.
+    """Extra data with dynamic fields.
     
-    Note: conversation is a list of message dicts, not a single dict.
-    Each message has structure: {"role": "user/assistant", "content": "..."}
+    Common fields:
+    - conversation: List of message dicts with {"role": "user/assistant", "content": "..."}
+    - request: Request parameters dict
+    - image: Docker image used for evaluation
+    
+    Note: This model accepts any additional fields dynamically.
     """
+
+    class Config:
+        extra = "allow"  # Allow additional fields beyond defined ones
 
     conversation: Optional[List[Dict[str, Any]]] = None
     request: Optional[Dict[str, Any]] = None
+    image: Optional[str] = None
 
 
 class SampleFullResponse(BaseModel):
