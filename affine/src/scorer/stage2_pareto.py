@@ -180,8 +180,9 @@ class Stage2ParetoFilter:
             # Use stored threshold instead of recalculating
             threshold = env_score_a.threshold
             
-            # B wins if it beats the threshold
-            b_wins_env = score_b > threshold
+            # B wins if it beats the threshold (with epsilon for floating point comparison)
+            eps = 1e-9
+            b_wins_env = score_b > (threshold + eps)
             
             if b_wins_env:
                 b_wins_count += 1
