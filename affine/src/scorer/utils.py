@@ -181,8 +181,8 @@ def calculate_required_score(
     # Choose improvement: max of error_delta and min_improvement, capped by max_improvement
     improvement = min(max(error_delta, min_improvement), max_improvement)
     
-    # Final threshold
-    return prior_score + improvement
+    # Final threshold, capped at 1.0
+    return min(prior_score + improvement, 1.0)
 
 
 def normalize_weights(weights: Dict[int, float]) -> Dict[int, float]:
