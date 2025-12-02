@@ -84,15 +84,41 @@ async def fetch_environments() -> List[str]:
         return []
 
 
+async def fetch_scorer_config() -> dict:
+    """Fetch scorer configuration from latest snapshot.
+    
+    Returns:
+        Dict with scoring configuration parameters
+    """
+    api_client = create_api_client()
+    
+    try:
+        weights_data = await api_client.get("/scores/weights/latest")
+        
+        if isinstance(weights_data, dict):
+            config = weights_data.get("config", {})
+            if config:
+                logger.debug(f"Fetched scorer config from API: {config}")
+                return config
+        
+        logger.warning("Failed to fetch scorer config, using defaults")
+        return {}
+                
+    except Exception as e:
+        logger.error(f"Error fetching scorer config: {e}")
+        return {}
+
+
 async def print_rank_table():
     """Fetch and print miner ranking table in scorer format.
     
     This function replicates the output format of scorer's print_detailed_table,
     but fetches data from the API instead of calculating from raw samples.
     """
-    # Fetch scores and environments
+    # Fetch scores, environments, and config
     scores_data = await fetch_latest_scores()
     environments = await fetch_environments()
+    scorer_config = await fetch_scorer_config()
     
     if not scores_data or not scores_data.get('block_number'):
         print("No scores found")
@@ -120,7 +146,8 @@ async def print_rank_table():
             env_display = env.split(':', 1)[1]
         else:
             env_display = env
-        header_parts.append(f"{env_display:>11}")
+        # Adjust width to accommodate "score[threshold]/count(!)" format
+        header_parts.append(f"{env_display:>20}")
     
     # Find all layers that have non-zero weights
     all_layers = set()
@@ -164,18 +191,31 @@ async def print_rank_table():
             f"{first_block:10d}"
         ]
         
-        # Environment scores - show "score/count" format (score × 100, 2 decimals)
+        # Environment scores - show "score[threshold]/count(!)" format (score × 100, 2 decimals)
+        # Get min_completeness from config (default: 0.99 if not available)
+        min_completeness = scorer_config.get("min_completeness", 0.99)
+        
         for env in environments:
             if env in scores_by_env:
                 env_data = scores_by_env[env]
                 env_score = env_data.get("score", 0.0)
                 sample_count = env_data.get("sample_count", 0)
+                completeness = env_data.get("completeness", 1.0)
+                threshold = env_data.get("threshold", 0.0)
                 
                 score_percent = env_score * 100
-                score_str = f"{score_percent:.2f}/{sample_count}"
-                row_parts.append(f"{score_str:>11}")
+                threshold_percent = threshold * 100
+                
+                # Check if sample count is insufficient using config parameter
+                is_insufficient = completeness < min_completeness
+                
+                if is_insufficient:
+                    score_str = f"{score_percent:.2f}[{threshold_percent:.2f}]/{sample_count}!"
+                else:
+                    score_str = f"{score_percent:.2f}[{threshold_percent:.2f}]/{sample_count}"
+                row_parts.append(f"{score_str:>20}")
             else:
-                row_parts.append(f"{'  -  ':>11}")
+                row_parts.append(f"{'  -  ':>20}")
         
         # Layer weights - only for active layers
         for layer in active_layers:
@@ -184,9 +224,9 @@ async def print_rank_table():
             row_parts.append(f"{weight:>8.4f}")
         
         # Total (cumulative) and Weight (normalized)
-        # Note: API doesn't provide cumulative_weight, so we use average_score as proxy
-        average_score = score.get("average_score", 0.0)
-        row_parts.append(f"{average_score:>9.4f}")  # Total: use average score
+        # Use cumulative_weight if available, otherwise fall back to average_score
+        cumulative_weight = score.get("cumulative_weight")
+        row_parts.append(f"{cumulative_weight:>9.4f}")  # Total: cumulative weight before normalization
         row_parts.append(f"{overall_score:>9.6f}")  # Weight: normalized weight
         row_parts.append("✓" if is_eligible else "✗")
         

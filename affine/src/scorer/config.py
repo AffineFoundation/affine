@@ -23,7 +23,7 @@ class ScorerConfig:
     - prior_score=0.9 → error_rate=0.1 → required=0.92 (need 20% error reduction)
     """
     
-    MIN_IMPROVEMENT: float = 0.025
+    MIN_IMPROVEMENT: float = 0.02
     """
     Minimum improvement required for later miner to beat earlier miner.
     
@@ -31,11 +31,22 @@ class ScorerConfig:
     This prevents random fluctuations in high-score regions from allowing
     plagiarism to beat originals.
     
-    Example: If prior=0.9979 and MIN_IMPROVEMENT=0.25,
-    later miner needs 0.9979 + 0.25 = 1.2479 (impossible) to win.
-    This effectively means scores >= 0.75 cannot be beaten.
+    Example: If prior=0.9979 and MIN_IMPROVEMENT=0.02,
+    later miner needs 0.9979 + 0.02 = 1.0179 (capped by MAX_IMPROVEMENT).
     
-    Recommended value: 0.25 (equivalent to ~99.75% being unbeatable)
+    Recommended value: 0.02
+    """
+    
+    MAX_IMPROVEMENT: float = 0.1
+    """
+    Maximum improvement threshold cap.
+    
+    Caps the required score threshold to prevent unreasonably high values.
+    The final threshold is clamped to: prior_score + MAX_IMPROVEMENT
+    
+    This ensures that even with low prior scores, the threshold remains reasonable.
+    
+    Recommended value: 0.1 (allows maximum 10% improvement)
     """
     
     SCORE_PRECISION: int = 3
@@ -69,7 +80,7 @@ class ScorerConfig:
     """Minimum weight threshold (1%). Miners below this are set to 0."""
     
     # Stage 1: Data Collection
-    MIN_COMPLETENESS: float = 0.9
+    MIN_COMPLETENESS: float = 0.95
     """Minimum sample completeness required."""
     
     # Environment Score Normalization
@@ -89,6 +100,7 @@ class ScorerConfig:
         return {
             'error_rate_reduction': cls.ERROR_RATE_REDUCTION,
             'min_improvement': cls.MIN_IMPROVEMENT,
+            'max_improvement': cls.MAX_IMPROVEMENT,
             'score_precision': cls.SCORE_PRECISION,
             'max_layers': cls.MAX_LAYERS,
             'subset_weight_base': cls.SUBSET_WEIGHT_BASE,
@@ -102,7 +114,8 @@ class ScorerConfig:
     def validate(cls):
         """Validate configuration parameters."""
         assert 0.0 <= cls.ERROR_RATE_REDUCTION <= 1.0, "ERROR_RATE_REDUCTION must be in [0, 1]"
-        assert 0.0 <= cls.MIN_IMPROVEMENT <= 1.0, "MIN_IMPROVEMENT must be in [0, 1]"
+        assert cls.MIN_IMPROVEMENT >= 0.0, "MIN_IMPROVEMENT must be non-negative"
+        assert cls.MAX_IMPROVEMENT >= cls.MIN_IMPROVEMENT, "MAX_IMPROVEMENT must be >= MIN_IMPROVEMENT"
         assert cls.SCORE_PRECISION >= 0, "SCORE_PRECISION must be non-negative"
         assert cls.SUBSET_WEIGHT_BASE > 0, "SUBSET_WEIGHT_BASE must be positive"
         assert cls.SUBSET_WEIGHT_EXPONENT >= 2, "SUBSET_WEIGHT_EXPONENT must be >= 2"

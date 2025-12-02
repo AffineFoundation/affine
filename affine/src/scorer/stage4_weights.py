@@ -5,7 +5,6 @@ Aggregates subset contributions, applies minimum threshold,
 and normalizes final weights.
 """
 
-import logging
 from typing import Dict
 from affine.src.scorer.models import (
     MinerData,
@@ -116,8 +115,8 @@ class Stage4WeightNormalizer:
                 env_display = env.split(':', 1)[1]  # Keep everything after ':'
             else:
                 env_display = env
-            # Adjust width to accommodate "score/count" format (e.g., "0.923/500")
-            header_parts.append(f"{env_display:>11}")
+            # Adjust width to accommodate "score[threshold]/count(!)" format
+            header_parts.append(f"{env_display:>20}")
         
         # Add layer columns with fixed width - only non-zero layers
         # Find all layers that have non-zero weights for any miner
@@ -157,21 +156,25 @@ class Stage4WeightNormalizer:
                 f"{miner.first_block:10d}"  # First block
             ]
             
-            # Environment scores - show "score/count" format (score × 100, 2 decimals)
+            # Environment scores - show "score[threshold]/count(!)" format (score × 100, 2 decimals)
             for env in sorted(environments):
                 if env in miner.env_scores:
                     score = miner.env_scores[env]
                     score_percent = score.avg_score * 100  # Convert to percentage
+                    
+                    # Use stored threshold instead of recalculating
+                    threshold_percent = score.threshold * 100
+                    
                     if score.is_valid:
-                        # Valid: show as "92.30/500" (4 digits + 2 decimal places)
-                        score_str = f"{score_percent:.2f}/{score.sample_count}"
-                        row_parts.append(f"{score_str:>11}")
+                        # Valid: show as "92.30[94.84]/500"
+                        score_str = f"{score_percent:.2f}[{threshold_percent:.2f}]/{score.sample_count}"
+                        row_parts.append(f"{score_str:>20}")
                     else:
-                        # Invalid (below threshold): show as "92.30/50!" with ! suffix
-                        score_str = f"{score_percent:.2f}/{score.sample_count}!"
-                        row_parts.append(f"{score_str:>11}")
+                        # Invalid (below threshold): show as "92.30[94.84]/50!" with ! suffix
+                        score_str = f"{score_percent:.2f}[{threshold_percent:.2f}]/{score.sample_count}!"
+                        row_parts.append(f"{score_str:>20}")
                 else:
-                    row_parts.append(f"{'  -  ':>11}")
+                    row_parts.append(f"{'  -  ':>20}")
             
             # Layer weights - only for active layers
             for layer in active_layers:
