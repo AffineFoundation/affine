@@ -5,7 +5,6 @@ Implements Pareto dominance-based filtering to detect and exclude
 plagiarized models using multi-environment performance analysis.
 """
 
-import logging
 from typing import Dict, List, Any
 from affine.src.scorer.models import (
     MinerData,
@@ -13,9 +12,6 @@ from affine.src.scorer.models import (
     Stage2Output,
 )
 from affine.src.scorer.config import ScorerConfig
-from affine.src.scorer.utils import (
-    calculate_required_score,
-)
 
 from affine.core.setup import logger
 
@@ -176,16 +172,13 @@ class Stage2ParetoFilter:
         b_wins_count = 0
         
         for env in envs:
-            # Get scores (already validated in filter())
-            score_a = miner_a.env_scores[env].avg_score
+            # Get scores and threshold (already validated in filter())
+            env_score_a = miner_a.env_scores[env]
+            score_a = env_score_a.avg_score
             score_b = miner_b.env_scores[env].avg_score
             
-            # Calculate required threshold (considers both error rate and min improvement)
-            threshold = calculate_required_score(
-                score_a,
-                self.error_rate_reduction,
-                self.config.MIN_IMPROVEMENT
-            )
+            # Use stored threshold instead of recalculating
+            threshold = env_score_a.threshold
             
             # B wins if it beats the threshold
             b_wins_env = score_b > threshold

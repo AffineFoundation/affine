@@ -4,7 +4,7 @@ Scorer Data Models
 Data structures for the four-stage scoring algorithm.
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
 from dataclasses import dataclass, field
 
 
@@ -16,6 +16,7 @@ class EnvScore:
     sample_count: int
     completeness: float
     is_valid: bool
+    threshold: float
     
     def __repr__(self) -> str:
         return f"EnvScore(avg={self.avg_score:.3f}, samples={self.sample_count}, complete={self.completeness:.2%})"

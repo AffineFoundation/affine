@@ -4,13 +4,10 @@ Scores Router
 Endpoints for querying score calculations.
 """
 
-from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from affine.api.models import (
     ScoresResponse,
-    MinerScoreHistoryResponse,
     MinerScore,
-    MinerScoreHistory,
 )
 from affine.api.dependencies import (
     get_scores_dao,
@@ -70,7 +67,7 @@ async def get_latest_scores(
                 scores_by_env=s.get("scores_by_env"),
                 total_samples=s.get("total_samples"),
                 is_eligible=s.get("is_eligible"),
-                meets_criteria=s.get("meets_criteria"),
+                cumulative_weight=s.get("cumulative_weight"),
             )
             for s in scores_list
         ]
@@ -148,7 +145,7 @@ async def get_score_by_uid(
             scores_by_env=miner_score.get("scores_by_env"),
             total_samples=miner_score.get("total_samples"),
             is_eligible=miner_score.get("is_eligible"),
-            meets_criteria=miner_score.get("meets_criteria"),
+            cumulative_weight=miner_score.get("cumulative_weight"),
         )
         
     except HTTPException:
@@ -173,6 +170,12 @@ async def get_latest_weights(
     Response format:
     {
         "block_number": 12345,
+        "config": {
+            "error_rate_reduction": 0.2,
+            "min_improvement": 0.02,
+            "min_completeness": 0.99,
+            ...
+        },
         "weights": {
             "0": {"hotkey": "5...", "weight": 0.15},
             "1": {"hotkey": "5...", "weight": 0.12},
@@ -211,6 +214,7 @@ async def get_latest_weights(
         
         return {
             "block_number": snapshot.get('block_number'),
+            "config": snapshot.get('config', {}),
             "weights": weights_response
         }
         

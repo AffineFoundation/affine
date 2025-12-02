@@ -10,7 +10,7 @@ import asyncio
 import click
 import time
 
-from affine.core.setup import setup_logging, logger
+from affine.core.setup import logger
 from affine.database import init_client, close_client
 from affine.database.dao.score_snapshots import ScoreSnapshotsDAO
 from affine.database.dao.scores import ScoresDAO

@@ -5,7 +5,6 @@ Calculates geometric mean scores for miners within each subset and
 distributes weights proportionally based on performance.
 """
 
-import logging
 from typing import Dict, List, Any
 from affine.src.scorer.models import (
     MinerData,

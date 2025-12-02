@@ -147,30 +147,42 @@ def geometric_mean(values: List[float]) -> float:
 def calculate_required_score(
     prior_score: float,
     error_rate_reduction: float = 0.2,
-    min_improvement: float = 0.25
+    min_improvement: float = 0.02,
+    max_improvement: float = 0.1
 ) -> float:
     """Calculate required score to beat prior.
     
-    Uses the maximum of two thresholds:
-    1. Error rate reduction: error_rate_reduction + (1 - error_rate_reduction) × prior_score
-    2. Minimum improvement: prior_score + min_improvement
+    The threshold is calculated as: prior_score + improvement_delta
+    where improvement_delta is determined by:
+    1. Error rate reduction: (1 - prior_score) × error_rate_reduction
+    2. Minimum improvement: min_improvement
+    3. Maximum improvement cap: max_improvement
+    
+    Final formula: prior_score + min(max(err_delta, min_improvement), max_improvement)
     
     Args:
-        prior_score: Score of the earlier miner
-        error_rate_reduction: Required error rate reduction (default: 0.2 for 20%)
-        min_improvement: Minimum absolute improvement required (default: 0.25)
+        prior_score: Score of the earlier miner (0.0 to 1.0)
+        error_rate_reduction: Required error rate reduction ratio (default: 0.2 for 20%)
+        min_improvement: Minimum absolute improvement required (default: 0.02)
+        max_improvement: Maximum improvement cap (default: 0.1 for 10%)
         
     Returns:
         Required score to dominate the prior miner
+        
+    Examples:
+        prior=0.09, err_red=0.2, min_imp=0.02, max_imp=0.1
+        -> err_delta = (1-0.09)*0.2 = 0.182
+        -> improvement = min(max(0.182, 0.02), 0.1) = 0.1
+        -> threshold = 0.09 + 0.1 = 0.19 (19%)
     """
-    # Threshold 1: Error rate reduction
-    threshold_err = error_rate_reduction + (1 - error_rate_reduction) * prior_score
+    # Calculate error rate reduction delta
+    error_delta = (1.0 - prior_score) * error_rate_reduction
     
-    # Threshold 2: Minimum improvement
-    threshold_min = prior_score + min_improvement
+    # Choose improvement: max of error_delta and min_improvement, capped by max_improvement
+    improvement = min(max(error_delta, min_improvement), max_improvement)
     
-    # Use the more stringent threshold
-    return max(threshold_err, threshold_min)
+    # Final threshold
+    return prior_score + improvement
 
 
 def normalize_weights(weights: Dict[int, float]) -> Dict[int, float]:

@@ -5,7 +5,6 @@ Collects sample data for all valid miners and calculates average scores
 per environment with completeness validation.
 """
 
-import logging
 from typing import Dict, List, Any
 from affine.src.scorer.models import (
     MinerData,
@@ -13,6 +12,7 @@ from affine.src.scorer.models import (
     Stage1Output,
 )
 from affine.src.scorer.config import ScorerConfig
+from affine.src.scorer.utils import calculate_required_score
 
 from affine.core.setup import logger
 
@@ -131,7 +131,8 @@ class Stage1Collector:
                         avg_score=0.0,
                         sample_count=0,
                         completeness=0.0,
-                        is_valid=False
+                        is_valid=False,
+                        threshold=0.0
                     )
                     continue
                 
@@ -158,12 +159,21 @@ class Stage1Collector:
                 # Validate completeness
                 is_valid = completeness >= self.min_completeness
                 
+                # Calculate required score threshold
+                threshold = calculate_required_score(
+                    avg_score,
+                    self.config.ERROR_RATE_REDUCTION,
+                    self.config.MIN_IMPROVEMENT,
+                    self.config.MAX_IMPROVEMENT
+                )
+                
                 # Store environment score
                 miner.env_scores[env_name] = EnvScore(
                     avg_score=avg_score,
                     sample_count=completed_count,
                     completeness=completeness,
-                    is_valid=is_valid
+                    is_valid=is_valid,
+                    threshold=threshold
                 )
                 
                 # Only log invalid environments in DEBUG mode
