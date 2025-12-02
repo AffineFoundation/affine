@@ -37,55 +37,23 @@ class EvaluationWorker:
                 result = await self._execute_task(task)
                 
                 if result:
-                    # Classify error type using centralized error classifier
-                    service_error = is_service_error(result.error)
-                    model_error = is_model_error(result.error)
-                    
-                    # Handle service errors - pause sampling and skip result
-                    if service_error:
-                        # Notify sampler to handle error (for pause logic)
-                        sampler = self.samplers.get(task.uid)
-                        if sampler:
-                            sampler.handle_error(result.error)
-                        
-                        # Record error to monitor (for statistics)
-                        if self.monitor:
-                            self.monitor.record_error(task.uid, result.error)
-                        
+                    # If error exists, skip the result
+                    if result.error:
                         logger.debug(
                             f"[SKIP]   U{result.miner.uid:>3d} │ "
                             f"{result.env:<20} │ "
-                            f"Service error (skipped): {result.error}"
+                            f"Error (skipped): {result.error}"
                         )
-                    
-                    # Handle model errors or successful results - keep result
+                    # If no error, put result in queue
                     else:
                         await self.result_queue.put(result)
-                        
-                        if model_error:
-                            # Record model error to monitor (for statistics)
-                            if self.monitor:
-                                self.monitor.record_error(task.uid, result.error)
-                            
-                            logger.debug(
-                                f"[MODEL]  U{result.miner.uid:>3d} │ "
-                                f"{result.env:<20} │ "
-                                f"{result.score:>6.4f} │ "
-                                f"Model error (recorded): {result.error[:50]}"
-                            )
-                        else:
-                            # Successful sample - reset error state
-                            sampler = self.samplers.get(task.uid)
-                            if sampler:
-                                sampler.reset_error_state()
-                            
-                            logger.debug(
-                                f"[RESULT] U{result.miner.uid:>3d} │ "
-                                f"{result.env:<20} │ "
-                                f"{result.score:>6.4f} │ "
-                                f"task_id={result.task_id} │ "
-                                f"{result.latency_seconds:>6.3f}s"
-                            )
+                        logger.debug(
+                            f"[RESULT] U{result.miner.uid:>3d} │ "
+                            f"{result.env:<20} │ "
+                            f"{result.score:>6.4f} │ "
+                            f"task_id={result.task_id} │ "
+                            f"{result.latency_seconds:>6.3f}s"
+                        )
             
             except asyncio.CancelledError:
                 raise
