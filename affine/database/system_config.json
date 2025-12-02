@@ -21,13 +21,13 @@
     },
     "affine:ded-v2": {
       "enabled_for_sampling": true,
-      "enabled_for_scoring": false,
+      "enabled_for_scoring": true,
       "sampling_range": [20000, 23302],
       "scoring_range": [20000, 23302]
     },
     "affine:abd-v2": {
       "enabled_for_sampling": true,
-      "enabled_for_scoring": false,
+      "enabled_for_scoring": true,
       "sampling_range": [20000, 23302],
       "scoring_range": [20000, 23302]
     },

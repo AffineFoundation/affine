@@ -5,7 +5,6 @@ Coordinates the four-stage scoring algorithm and manages result persistence.
 """
 
 import time
-import logging
 from typing import Dict, Any, Optional
 from .config import ScorerConfig
 from .models import ScoringResult
@@ -152,12 +151,13 @@ class Scorer:
                 for env_score in miner.env_scores.values()
             )
             
-            # Prepare detailed scores by environment (with completeness)
+            # Prepare detailed scores by environment (with completeness and threshold)
             scores_by_env = {
                 env: {
                     "score": score.avg_score,
                     "sample_count": score.sample_count,
-                    "completeness": score.completeness
+                    "completeness": score.completeness,
+                    "threshold": score.threshold
                 }
                 for env, score in miner.env_scores.items()
             }

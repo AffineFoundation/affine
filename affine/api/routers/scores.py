@@ -173,6 +173,12 @@ async def get_latest_weights(
     Response format:
     {
         "block_number": 12345,
+        "config": {
+            "error_rate_reduction": 0.2,
+            "min_improvement": 0.02,
+            "min_completeness": 0.99,
+            ...
+        },
         "weights": {
             "0": {"hotkey": "5...", "weight": 0.15},
             "1": {"hotkey": "5...", "weight": 0.12},
@@ -211,6 +217,7 @@ async def get_latest_weights(
         
         return {
             "block_number": snapshot.get('block_number'),
+            "config": snapshot.get('config', {}),
             "weights": weights_response
         }
         

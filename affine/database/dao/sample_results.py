@@ -436,15 +436,27 @@ class SampleResultsDAO(BaseDAO):
         for item_raw in all_items:
             item = self._deserialize(item_raw)
             
-            # Decompress and check extra.conversation
+            # Decompress and check extra.conversation and extra.request.max_round
             if 'extra_compressed' in item:
                 try:
                     extra_json = self.decompress_data(item['extra_compressed'])
                     extra = json.loads(extra_json)
                     conversation = extra.get('conversation', [])
                     
-                    # Delete if conversation is empty
+                    # Check deletion conditions
+                    should_delete = False
+                    
+                    # Condition 1: Empty conversation
                     if not conversation or len(conversation) == 0:
+                        should_delete = True
+                    
+                    # Condition 2: max_round = 10 (only if field exists)
+                    if 'request' in extra and isinstance(extra['request'], dict):
+                        max_round = extra['request'].get('max_round')
+                        if max_round is not None and max_round == 10:
+                            should_delete = True
+                    
+                    if should_delete:
                         items_to_delete.append({
                             'pk': item_raw['pk'],
                             'sk': item_raw['sk']
@@ -488,5 +500,124 @@ class SampleResultsDAO(BaseDAO):
                 logger.error(f"Batch delete failed: {e}")
         
         logger.info(f"Deleted {deleted_count} samples with empty conversation")
+        return deleted_count
+    
+    async def delete_all_samples_with_empty_conversation(self) -> int:
+        """Delete all samples with empty conversation across the entire database.
+        
+        Performs a full table scan using GSI and streams deletion with progress logging.
+        
+        Returns:
+            Number of samples deleted
+        """
+        client = get_client()
+        
+        # Use GSI timestamp-index for full table scan
+        params = {
+            'TableName': self.table_name,
+            'IndexName': 'timestamp-index',
+            'KeyConditionExpression': 'gsi_partition = :partition',
+            'ExpressionAttributeValues': {
+                ':partition': {'S': 'SAMPLE'}
+            }
+        }
+        
+        # Stream scan with pagination
+        scanned_count = 0
+        items_to_delete = []
+        last_key = None
+        
+        logger.info("Starting full table scan for samples with empty conversation...")
+        print("Scanning database...")
+        
+        while True:
+            if last_key:
+                params['ExclusiveStartKey'] = last_key
+            
+            response = await client.query(**params)
+            items = response.get('Items', [])
+            
+            # Process batch
+            for item_raw in items:
+                scanned_count += 1
+                item = self._deserialize(item_raw)
+                
+                # Decompress and check extra.conversation and extra.request.max_round
+                if 'extra_compressed' in item:
+                    try:
+                        extra_json = self.decompress_data(item['extra_compressed'])
+                        extra = json.loads(extra_json)
+                        conversation = extra.get('conversation', [])
+                        
+                        # Check deletion conditions
+                        should_delete = False
+                        
+                        # Condition 1: Empty conversation
+                        if not conversation or len(conversation) == 0:
+                            should_delete = True
+                        
+                        # Condition 2: max_round = 10 (only if field exists)
+                        if 'request' in extra and isinstance(extra['request'], dict):
+                            max_round = extra['request'].get('max_round')
+                            if max_round is not None and max_round == 10:
+                                should_delete = True
+                        
+                        if should_delete:
+                            items_to_delete.append({
+                                'pk': item_raw['pk'],
+                                'sk': item_raw['sk']
+                            })
+                    except Exception as e:
+                        logger.warning(f"Failed to parse extra for item {item.get('task_id')}: {e}")
+                
+                # Log progress every 1000 items scanned
+                if scanned_count % 1000 == 0:
+                    print(f"Scanned {scanned_count} samples, found {len(items_to_delete)} invalid samples...")
+            
+            last_key = response.get('LastEvaluatedKey')
+            if not last_key:
+                break
+        
+        print(f"\nScan complete: Scanned {scanned_count} samples, found {len(items_to_delete)} invalid samples")
+        
+        if not items_to_delete:
+            logger.info("No samples with empty conversation found")
+            return 0
+        
+        # Stream deletion with progress logging
+        deleted_count = 0
+        batch_size = 25
+        total_batches = (len(items_to_delete) + batch_size - 1) // batch_size
+        
+        print(f"Starting deletion in {total_batches} batches...")
+        
+        for i in range(0, len(items_to_delete), batch_size):
+            batch = items_to_delete[i:i + batch_size]
+            batch_num = (i // batch_size) + 1
+            
+            delete_requests = [
+                {
+                    'DeleteRequest': {
+                        'Key': {
+                            'pk': item['pk'],
+                            'sk': item['sk']
+                        }
+                    }
+                }
+                for item in batch
+            ]
+            
+            try:
+                await client.batch_write_item(
+                    RequestItems={
+                        self.table_name: delete_requests
+                    }
+                )
+                deleted_count += len(batch)
+                print(f"Batch {batch_num}/{total_batches}: Deleted {len(batch)} samples (total: {deleted_count})")
+            except Exception as e:
+                logger.error(f"Batch delete failed at batch {batch_num}: {e}")
+        
+        logger.info(f"Successfully deleted {deleted_count} samples with empty conversation")
         return deleted_count
 
