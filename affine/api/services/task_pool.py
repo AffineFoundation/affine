@@ -17,12 +17,93 @@ Optimizations:
 import asyncio
 import time
 import random
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Callable, TypeVar, Generic
 
 from affine.database.dao.task_pool import TaskPoolDAO
 from affine.database.dao.execution_logs import ExecutionLogsDAO
+from affine.database.dao.miners import MinersDAO
 
 from affine.core.setup import logger
+
+
+T = TypeVar('T')
+
+
+class AsyncCache(Generic[T]):
+    """Generic async cache with background refresh support.
+    
+    Features:
+    - TTL-based expiration
+    - Non-blocking background refresh
+    - Cold start handling (blocks only on first fetch)
+    """
+    
+    def __init__(self, ttl: int, name: str = "cache"):
+        """Initialize cache.
+        
+        Args:
+            ttl: Time-to-live in seconds
+            name: Cache name for logging
+        """
+        self.ttl = ttl
+        self.name = name
+        self._data: Optional[T] = None
+        self._timestamp: float = 0
+        self._refresh_task: Optional[asyncio.Task] = None
+        self._lock = asyncio.Lock()
+    
+    async def get(self, fetcher: Callable[[], T]) -> T:
+        """Get cached data with background refresh.
+        
+        Args:
+            fetcher: Async function to fetch fresh data
+            
+        Returns:
+            Cached or fresh data
+        """
+        # Fast path: return cached data if available
+        async with self._lock:
+            if self._data is not None:
+                age = time.time() - self._timestamp
+                
+                # Trigger background refresh if expired
+                if age > self.ttl:
+                    if self._refresh_task is None or self._refresh_task.done():
+                        logger.debug(f"{self.name} cache expired (age={age:.1f}s), triggering refresh")
+                        self._refresh_task = asyncio.create_task(
+                            self._background_refresh(fetcher)
+                        )
+                
+                # Return cached data (even if stale)
+                return self._data
+        
+        # Cold start: block on first fetch
+        logger.info(f"{self.name} cache cold start, fetching data")
+        data = await fetcher()
+        
+        async with self._lock:
+            self._data = data
+            self._timestamp = time.time()
+        
+        return data
+    
+    async def _background_refresh(self, fetcher: Callable[[], T]):
+        """Background task to refresh cache."""
+        try:
+            logger.debug(f"{self.name} cache background refresh started")
+            start_time = time.time()
+            
+            data = await fetcher()
+            
+            elapsed = time.time() - start_time
+            logger.debug(f"{self.name} cache refreshed in {elapsed:.2f}s")
+            
+            async with self._lock:
+                self._data = data
+                self._timestamp = time.time()
+                
+        except Exception as e:
+            logger.error(f"{self.name} cache refresh failed: {e}", exc_info=True)
 
 
 class TaskPoolManager:
@@ -32,87 +113,97 @@ class TaskPoolManager:
     Uses background refresh for miner counts to avoid blocking fetch requests.
     """
     
-    def __init__(self, count_cache_ttl: int = 20):
+    def __init__(self, count_cache_ttl: int = 30, miners_cache_ttl: int = 60):
         """Initialize TaskPoolManager with caches."""
         self.dao = TaskPoolDAO()
         self.logs_dao = ExecutionLogsDAO()
+        self.miners_dao = MinersDAO()
         
-        # Task count cache: {env: {miner_key: count}}
-        self._count_cache: Dict[str, Dict[str, int]] = {}
-        self._count_cache_ts: Dict[str, float] = {}
+        # Async caches with background refresh
+        self._count_caches: Dict[str, AsyncCache[Dict[str, int]]] = {}  # {env: cache}
         self._count_cache_ttl = count_cache_ttl
+        self._miners_cache = AsyncCache[Dict[str, Dict[str, Any]]](
+            ttl=miners_cache_ttl,
+            name="miners"
+        )
         
         # UUID location cache: task_uuid -> (pk, sk)
         self._uuid_cache: Dict[str, Tuple[str, str]] = {}
         self._cache_lock = asyncio.Lock()
         
-        # Background refresh control
-        self._refresh_tasks: Dict[str, asyncio.Task] = {}  # {env: refresh_task}
-        self._environments: set = set()  # Track known environments
-        
-        logger.info(f"TaskPoolManager initialized (count_cache_ttl={count_cache_ttl}s)")
+        logger.info(f"TaskPoolManager initialized (count_cache_ttl={count_cache_ttl}s, miners_cache_ttl={miners_cache_ttl}s)")
     
     async def _get_miner_counts(self, env: str) -> Dict[str, int]:
-        """Get task counts per miner with non-blocking cache refresh.
+        """Get task counts per miner with non-blocking cache refresh."""
+        # Create cache for this env if not exists
+        if env not in self._count_caches:
+            self._count_caches[env] = AsyncCache[Dict[str, int]](
+                ttl=self._count_cache_ttl,
+                name=f"count[{env}]"
+            )
         
-        Strategy:
-        1. Return cached data immediately if available (even if stale)
-        2. Trigger background refresh if cache is expired
-        3. Only block on first call (cold start)
-        
-        This ensures fetch_task() never waits for slow COUNT queries.
-        """
-        # Track this environment for future background refreshes
-        self._environments.add(env)
-        
-        # Fast path: return cached data if available
-        async with self._cache_lock:
-            if env in self._count_cache:
-                last_refresh = self._count_cache_ts.get(env, 0)
-                age = time.time() - last_refresh
-                
-                # Return stale cache immediately, trigger background refresh if needed
-                if age > self._count_cache_ttl:
-                    # Trigger background refresh without waiting
-                    if env not in self._refresh_tasks or self._refresh_tasks[env].done():
-                        logger.debug(f"Triggering background refresh for {env} (age={age:.1f}s)")
-                        self._refresh_tasks[env] = asyncio.create_task(
-                            self._background_refresh_counts(env)
-                        )
-
-                # Return cached data (even if stale)
-                return self._count_cache[env].copy()
-        
-        # Cold start: no cache available, must wait for first query
-        logger.info(f"Cold start: fetching miner counts for {env} (blocking)")
-        counts = await self.dao.get_miner_task_counts(env)
-        
-        async with self._cache_lock:
-            self._count_cache[env] = counts
-            self._count_cache_ts[env] = time.time()
-        
-        return counts.copy()
+        return await self._count_caches[env].get(
+            lambda: self.dao.get_miner_task_counts(env)
+        )
     
-    async def _background_refresh_counts(self, env: str):
-        """Background task to refresh miner counts for an environment.
+    async def _get_miners(self) -> Dict[str, Dict[str, Any]]:
+        """Get all miners with non-blocking cache refresh."""
+        async def fetch_miners():
+            miners_list = await self.miners_dao.get_all_miners()
+            return {miner['hotkey']: miner for miner in miners_list}
         
-        This runs asynchronously without blocking fetch_task() calls.
+        return await self._miners_cache.get(fetch_miners)
+    
+    def _select_miners_weighted(
+        self,
+        miner_counts: Dict[str, int],
+        count: int,
+        max_weight_ratio: float = 2.0
+    ) -> List[str]:
+        """Select miners using weighted random sampling without replacement.
+        
+        Anti-starvation: max probability ratio is capped at max_weight_ratio.
+        
+        Args:
+            miner_counts: Dict mapping miner_key -> pending task count
+            count: Number of miners to select
+            max_weight_ratio: Max ratio between highest and lowest weight (default: 2.0)
+        
+        Returns:
+            List of selected miner_keys (no duplicates, length <= count)
         """
-        try:
-            logger.debug(f"Background refresh started for {env}")
-            start_time = time.time()
+        if not miner_counts:
+            return []
+        
+        # Calculate base weight (handles min=0 case)
+        counts = list(miner_counts.values())
+        non_zero = [c for c in counts if c > 0]
+        base_weight = min(non_zero) if non_zero else 1
+        
+        # Cap all weights: weight = min(task_count, base_weight * max_ratio)
+        # Add base_weight to ensure min weight is not 0
+        weights = [
+            (key, min(count, base_weight * max_weight_ratio) + base_weight)
+            for key, count in miner_counts.items()
+        ]
+        
+        # Weighted sampling without replacement
+        selected = []
+        remaining = weights.copy()
+        
+        for _ in range(min(count, len(remaining))):
+            total = sum(w for _, w in remaining)
+            rand = random.uniform(0, total)
             
-            counts = await self.dao.get_miner_task_counts(env)
-            
-            elapsed = time.time() - start_time
-            logger.debug(f"Background refresh completed for {env} in {elapsed:.2f}s")
-            
-            async with self._cache_lock:
-                self._count_cache[env] = counts
-                self._count_cache_ts[env] = time.time()
-                
-        except Exception as e:
-            logger.error(f"Background refresh failed for {env}: {e}", exc_info=True)
+            cumulative = 0
+            for item in remaining:
+                cumulative += item[1]
+                if rand <= cumulative:
+                    selected.append(item[0])
+                    remaining.remove(item)
+                    break
+        
+        return selected
     
     async def _get_task_location(
         self, 
@@ -182,48 +273,43 @@ class TaskPoolManager:
                 logger.error("env parameter is required for fetch_task")
                 return []
             
-            # Phase 1: Get miner counts (cached)
+            # Get miner counts (cached)
             all_miner_counts = await self._get_miner_counts(env)
             
             if not all_miner_counts:
                 logger.debug(f"No available tasks found for env={env}")
                 return []
             
-            # Phase 2: Random selection of miners (without replacement)
-            miners = list(all_miner_counts.keys())
+            # Weighted random selection of miners (without replacement)
+            num_miners_to_query = min(int(batch_size * 1.5), len(all_miner_counts))
             
-            # Shuffle miners to randomize selection
-            random.shuffle(miners)
+            # Select miners using weighted random sampling (anti-starvation: max_ratio=2.0)
+            selected_miners = self._select_miners_weighted(
+                all_miner_counts,
+                num_miners_to_query,
+                max_weight_ratio=2.0
+            )
             
-            # Select first N miners (N = batch_size * 2 to handle miners with no tasks)
-            # Cap at total available miners
-            num_miners_to_query = min(batch_size * 2, len(miners))
-            selected_miners = miners[:num_miners_to_query]
-            
-            # Phase 3: Parallel query all selected miners
+            # Parallel query all selected miners
             query_tasks = []
-            miner_infos = []  # Track which miner each query corresponds to
-            
             for miner_key in selected_miners:
                 hotkey, revision = miner_key.split('#', 1)
                 query_tasks.append(
                     self.dao.get_pending_tasks_for_miner(env, hotkey, revision, limit=1)
                 )
-                miner_infos.append((miner_key, hotkey, revision))
             
-            # Execute all queries in parallel (100x speedup: 15s -> 150ms)
+            # Execute all queries in parallel
             results = await asyncio.gather(*query_tasks, return_exceptions=True)
             
-            # Phase 4: Collect valid tasks (filter out exceptions and empty results)
+            # Collect valid tasks (filter out exceptions and empty results)
             candidate_tasks = []
-            for result, (miner_key, hotkey, revision) in zip(results, miner_infos):
+            for result in results:
                 if isinstance(result, Exception):
-                    logger.debug(f"Error querying miner {hotkey[:12]}...: {result}")
                     continue
                 if isinstance(result, list) and result:
                     candidate_tasks.append(result[0])  # Take first task
             
-            # Phase 5: Take first batch_size tasks and assign in parallel
+            # Take first batch_size tasks and assign in parallel
             tasks_to_assign = candidate_tasks[:batch_size]
             
             if not tasks_to_assign:
@@ -237,7 +323,9 @@ class TaskPoolManager:
             ]
             assigned_results = await asyncio.gather(*assign_tasks, return_exceptions=True)
             
-            # Phase 6: Filter successful assignments and cache UUIDs
+            # Filter successful assignments, cache UUIDs, and enrich with miner data
+            miners_dict = await self._get_miners()
+            
             assigned_tasks = []
             for result in assigned_results:
                 if isinstance(result, Exception):
@@ -251,16 +339,41 @@ class TaskPoolManager:
                         result['sk']
                     )
                 
-                assigned_tasks.append(result)
+                # Enrich task with miner data from cache
+                miner_hotkey = result['miner_hotkey']
+                miner_record = miners_dict.get(miner_hotkey)
+                
+                if not miner_record:
+                    logger.warning(f"Miner record not found for hotkey {miner_hotkey[:16]}..., skipping task")
+                    continue
+                
+                miner_uid = miner_record.get('uid')
+                if miner_uid is None:
+                    logger.warning(f"UID not found for hotkey {miner_hotkey[:16]}..., skipping task")
+                    continue
+                
+                chute_slug = miner_record.get('chute_slug')
+                if not chute_slug:
+                    logger.warning(f"chute_slug not found for hotkey {miner_hotkey[:16]}..., skipping task")
+                    continue
+                
+                # Add miner_uid and chute_slug to task
+                enriched_task = {
+                    **result,
+                    'miner_uid': miner_uid,
+                    'chute_slug': chute_slug,
+                }
+                
+                assigned_tasks.append(enriched_task)
                 
                 logger.debug(
                     f"Task {result['task_uuid']} assigned to {executor_hotkey} "
-                    f"(miner={result['miner_hotkey'][:12]}..., env={env}, task_id={result['task_id']})"
+                    f"(miner={miner_hotkey[:12]}..., uid={miner_uid}, env={env}, task_id={result['task_id']})"
                 )
             
             logger.info(
-                f"Fetched {len(assigned_tasks)}/{batch_size} tasks for {env} "
-                f"(queried {num_miners_to_query} miners in parallel)"
+                f"TaskPoolManager.fetch_task({env}): "
+                f"queried {num_miners_to_query} miners, assigned {len(assigned_tasks)}/{batch_size} tasks"
             )
             
             # Always return list
