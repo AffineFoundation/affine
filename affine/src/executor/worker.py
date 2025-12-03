@@ -9,7 +9,6 @@ import os
 import asyncio
 import time
 import traceback
-import aiohttp
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 import bittensor as bt
@@ -26,6 +25,8 @@ class WorkerMetrics:
     tasks_failed: int = 0
     total_execution_time: float = 0.0
     last_task_at: Optional[float] = None
+    fetch_count: int = 0
+    total_fetch_time: float = 0.0
 
 
 class ExecutorWorker:
@@ -60,7 +61,6 @@ class ExecutorWorker:
         
         self.running = False
         self.metrics = WorkerMetrics()
-        self._chutes_session: Optional[aiohttp.ClientSession] = None  # Separate session for Chutes API
         
         # API client for affine backend
         self.api_client: Optional[APIClient] = None
@@ -73,14 +73,6 @@ class ExecutorWorker:
         self.execution_semaphore: Optional[asyncio.Semaphore] = None
         self.executor_tasks: List[asyncio.Task] = []
 
-    async def _get_chutes_session(self) -> aiohttp.ClientSession:
-        """Get or create aiohttp session for Chutes API calls."""
-        if self._chutes_session is None or self._chutes_session.closed:
-            self._chutes_session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=300)  # 5 min timeout
-            )
-        return self._chutes_session
-    
     async def _init_env_executor(self):
         """Initialize environment executor lazily."""
         if self.env_executor is not None:
@@ -188,11 +180,13 @@ class ExecutorWorker:
         }
     
     async def _fetch_tasks_batch(self) -> List[Dict]:
-        """Fetch batch of tasks from API.
+        """Fetch batch of tasks from API with latency tracking.
         
         Returns:
             List of task dicts (may be empty if no tasks available)
         """
+        start_time = time.time()
+        
         try:
             headers = self._get_auth_headers()
             response = await self.api_client.post(
@@ -221,63 +215,14 @@ class ExecutorWorker:
             # Silently ignore fetch errors and continue polling
             logger.debug(f"[{self.env}] Failed to fetch tasks: {e}")
             return []
+        
+        finally:
+            # Record fetch latency
+            fetch_time = (time.time() - start_time) * 1000  # Convert to ms
+            self.metrics.fetch_count += 1
+            self.metrics.total_fetch_time += fetch_time
 
 
-    
-    async def _get_chute_slug(self, chute_id: str) -> Optional[str]:
-        """Get chute slug from chute ID.
-        
-        Args:
-            chute_id: Chute deployment ID (required)
-        
-        Returns:
-            Chute slug or None if not found
-        
-        Raises:
-            ValueError: If chute_id is empty or invalid
-        """
-        if not chute_id or not chute_id.strip():
-            raise ValueError("chute_id cannot be empty")
-        
-        try:
-            import os
-            url = f"https://api.chutes.ai/chutes/{chute_id}"
-            token = os.getenv("CHUTES_API_KEY", "")
-            
-            if not token:
-                raise ValueError("CHUTES_API_KEY not configured")
-            
-            headers = {"Authorization": token}
-            
-            # Use separate session for Chutes API
-            session = await self._get_chutes_session()
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                if resp.status != 200:
-                    logger.debug(
-                        f"[{self.env}] Failed to get chute info for {chute_id}: "
-                        f"status={resp.status}"
-                    )
-                    return None
-                
-                chute_info = await resp.json()
-                slug = chute_info.get("slug")
-                
-                if not slug:
-                    logger.debug(
-                        f"[{self.env}] No slug found in chute info for {chute_id}"
-                    )
-                    return None
-                
-                logger.debug(
-                    f"[{self.env}] Resolved chute_id={chute_id} to slug={slug}"
-                )
-                return slug
-        
-        except Exception as e:
-            logger.debug(
-                f"[{self.env}] Error fetching chute slug for {chute_id}: {e}"
-            )
-            return None
     
     async def _execute_task(self, task: Dict) -> SampleSubmission:
         """Execute a sampling task.
@@ -290,7 +235,7 @@ class ExecutorWorker:
                 - model_revision: Model revision
                 - model: Model repo/name
                 - env: Environment
-                - chute_id: Chute deployment ID
+                - chute_slug: Chute URL slug (pre-resolved by API)
         
         Returns:
             SampleSubmission: Signed submission with score, latency, extra, signature
@@ -303,29 +248,21 @@ class ExecutorWorker:
             task_id = int(task["task_id"])  # Dataset index as integer
             task_uuid = task.get("task_uuid", "")
             miner_hotkey = task["miner_hotkey"]
-            chute_id = task["chute_id"]
+            chute_slug = task.get("chute_slug", "")
             
             logger.debug(
                 f"[{self.env}] Executing task: "
                 f"uuid={task_uuid[:8]}... miner={miner_hotkey[:12]}... model={model} task_id={task_id}"
             )
             
-            # Validate chute_id (required)
-            if not chute_id:
+            # Validate chute_slug (required, pre-resolved by API from miners table)
+            if not chute_slug:
                 raise ValueError(
-                    f"chute_id is required but missing for task {task_uuid[:8]}... "
+                    f"chute_slug is required but missing for task {task_uuid[:8]}... "
                     f"miner={miner_hotkey[:12]}..."
                 )
             
-            # Resolve slug from chute_id
-            slug = await self._get_chute_slug(chute_id)
-            if not slug:
-                raise ValueError(
-                    f"Failed to resolve slug for chute_id={chute_id} "
-                    f"(task_uuid={task_uuid[:8]}..., miner={miner_hotkey[:12]}...)"
-                )
-            
-            base_url = f"https://{slug}.chutes.ai/v1"
+            base_url = f"https://{chute_slug}.chutes.ai/v1"
             # Execute sampling using affine's environment wrapper
             result = await self.env_executor.evaluate(
                 model=model,
@@ -426,7 +363,7 @@ class ExecutorWorker:
                 
                 # If queue has enough tasks, wait a bit
                 if current_queue_size >= self.batch_size:
-                    logger.debug(f"[{self.env}] Queue size {current_queue_size} sufficient, waiting")
+                    logger.info(f"[{self.env}] Queue size {current_queue_size} sufficient, waiting")
                     await asyncio.sleep(1)
                     continue
 
@@ -518,10 +455,17 @@ class ExecutorWorker:
             Dictionary of metrics including:
             - running_tasks: Number of tasks currently being executed (held by semaphore)
             - pending_tasks: Number of tasks waiting in queue
+            - avg_fetch_time_ms: Average fetch latency in milliseconds
         """
         avg_time = (
             self.metrics.total_execution_time / self.metrics.tasks_completed
             if self.metrics.tasks_completed > 0
+            else 0
+        )
+        
+        avg_fetch_time = (
+            self.metrics.total_fetch_time / self.metrics.fetch_count
+            if self.metrics.fetch_count > 0
             else 0
         )
         
@@ -542,5 +486,6 @@ class ExecutorWorker:
             "running_tasks": running_tasks,
             "pending_tasks": pending_tasks,
             "avg_execution_time": avg_time,
+            "avg_fetch_time_ms": avg_fetch_time,
             "last_task_at": self.metrics.last_task_at,
         }

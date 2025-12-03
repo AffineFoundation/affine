@@ -88,6 +88,12 @@ async def fetch_task(
                 logger.warning(f"UID not found for hotkey {task['miner_hotkey'][:16]}..., skipping task")
                 continue
             
+            # Get chute_slug from miner record (pre-resolved by miners_monitor)
+            chute_slug = miner_record.get("chute_slug")
+            if not chute_slug:
+                logger.warning(f"chute_slug not found for hotkey {task['miner_hotkey'][:16]}..., skipping task")
+                continue
+
             enriched_tasks.append({
                 "task_uuid": task["task_uuid"],
                 "task_id": task["task_id"],
@@ -97,6 +103,7 @@ async def fetch_task(
                 "model": task["model"],
                 "env": task["env"],
                 "chute_id": task["chute_id"],
+                "chute_slug": chute_slug,
                 "created_at": task["created_at"],
             })
         

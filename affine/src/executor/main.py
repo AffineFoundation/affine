@@ -34,11 +34,11 @@ def _format_env_queue(env_name: str, queue_count: int, change: int) -> str:
     return f"{env_short}={queue_count}({change_str})" if change_str else f"{env_short}={queue_count}"
 
 
-def _format_env_stats(env_name: str, completed: int, success_rate: int, change: int, running: int, pending: int) -> str:
-    """Format environment completion stats with running and pending tasks."""
+def _format_env_stats(env_name: str, completed: int, success_rate: int, change: int, running: int, pending: int, fetch_avg_ms: float) -> str:
+    """Format environment completion stats with running, pending tasks, and fetch latency."""
     env_short = env_name.split(':')[-1]
     change_str = f" finished:{_format_change(change)}" if change else " finished:0"
-    return f"{env_short}@{completed}({success_rate}%{change_str} running:{running} pending:{pending})"
+    return f"{env_short}@{completed}({success_rate}%{change_str} running:{running} pending:{pending} fetch_avg:{fetch_avg_ms:.0f}ms)"
 
 
 class ExecutorManager:
@@ -200,6 +200,7 @@ class ExecutorManager:
                     'completed_change': completed_change,
                     'running_tasks': m.get('running_tasks', 0),
                     'pending_tasks': m.get('pending_tasks', 0),
+                    'fetch_avg_ms': m.get('avg_fetch_time_ms', 0),
                 }
             
             # Format status strings
@@ -215,7 +216,8 @@ class ExecutorManager:
                     stats['success_rate'],
                     stats['completed_change'],
                     stats['running_tasks'],
-                    stats['pending_tasks']
+                    stats['pending_tasks'],
+                    stats['fetch_avg_ms']
                 )
                 for env, stats in sorted(env_stats.items())
             )
