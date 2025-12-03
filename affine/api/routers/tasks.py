@@ -16,12 +16,10 @@ from affine.api.dependencies import (
     get_task_pool_manager,
     verify_executor_auth,
     rate_limit_read,
-    get_miners_dao,
 )
 from affine.api.config import config
 from affine.core.models import SampleSubmission
 from affine.database.dao.sample_results import SampleResultsDAO
-from affine.database.dao.miners import MinersDAO
 from affine.api.services.task_pool import TaskPoolManager
 from affine.utils.subtensor import get_subtensor
 
@@ -35,7 +33,6 @@ async def fetch_task(
     env: Optional[str] = Query(None, description="Environment filter (optional)"),
     batch_size: int = Query(1, ge=1, le=50, description="Number of tasks to fetch (1-50)"),
     executor_hotkey: str = Depends(verify_executor_auth),
-    miners_dao: MinersDAO = Depends(get_miners_dao),
     task_pool: TaskPoolManager = Depends(get_task_pool_manager),
 ):
     """
@@ -55,6 +52,10 @@ async def fetch_task(
     
     Returns:
     - TaskFetchResponse with tasks list (0 to batch_size elements)
+    
+    Note:
+    - Tasks are already enriched with miner_uid and chute_slug by TaskPoolManager
+    - TaskPoolManager uses cached miners data (refreshed every 30s) for fast lookup
     """
     # Check if services are enabled
     if not config.SERVICES_ENABLED:
@@ -64,7 +65,7 @@ async def fetch_task(
         )
     
     try:
-        # Fetch task(s) using TaskPoolManager (always returns list)
+        # Fetch task(s) using TaskPoolManager (returns enriched tasks with miner_uid and chute_slug)
         tasks = await task_pool.fetch_task(
             executor_hotkey=executor_hotkey,
             env=env,
@@ -75,37 +76,12 @@ async def fetch_task(
             logger.debug(f"No available tasks for executor {executor_hotkey[:16]}...")
             return TaskFetchResponse(tasks=[])
         
-        # Enrich tasks with miner UIDs
-        enriched_tasks = []
-        for task in tasks:
-            miner_record = await miners_dao.get_miner_by_hotkey(task["miner_hotkey"])
-            if not miner_record:
-                logger.warning(f"Miner record not found for hotkey {task['miner_hotkey'][:16]}..., skipping task")
-                continue
-            
-            miner_uid = miner_record.get("uid")
-            if miner_uid is None:
-                logger.warning(f"UID not found for hotkey {task['miner_hotkey'][:16]}..., skipping task")
-                continue
-            
-            enriched_tasks.append({
-                "task_uuid": task["task_uuid"],
-                "task_id": task["task_id"],
-                "miner_hotkey": task["miner_hotkey"],
-                "miner_uid": miner_uid,
-                "model_revision": task["model_revision"],
-                "model": task["model"],
-                "env": task["env"],
-                "chute_id": task["chute_id"],
-                "created_at": task["created_at"],
-            })
-        
         logger.debug(
-            f"Assigned {len(enriched_tasks)} tasks to executor {executor_hotkey[:16]}... "
+            f"Assigned {len(tasks)} tasks to executor {executor_hotkey[:16]}... "
             f"(requested {batch_size})"
         )
         
-        return TaskFetchResponse(tasks=enriched_tasks)
+        return TaskFetchResponse(tasks=tasks)
 
     except HTTPException:
         raise

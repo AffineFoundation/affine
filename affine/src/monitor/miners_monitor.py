@@ -260,27 +260,33 @@ class MinersMonitor:
         
         info.chute_slug = chute.get("slug", "")
         
-        # Step 2: Check chute is hot
+        # Step 2: Validate chute_slug is not empty
+        if not info.chute_slug:
+            info.is_valid = False
+            info.invalid_reason = "chute_slug_empty"
+            return info
+
+        # Step 3: Check chute is hot
         if not chute.get("hot", False):
             info.is_valid = False
             info.invalid_reason = "chute_not_hot"
             return info
         
-        # Step 3: Verify model name matches chute
+        # Step 4: Verify model name matches chute
         chute_model = chute.get("name", "")
         if model != chute_model:
             info.is_valid = False
             info.invalid_reason = f"model_mismatch:chute={chute_model}"
             return info
         
-        # Step 4: Verify revision matches chute
+        # Step 5: Verify revision matches chute
         chute_revision = chute.get("revision", "")
         if chute_revision and revision != chute_revision:
             info.is_valid = False
             info.invalid_reason = f"revision_mismatch:chute={chute_revision}"
             return info
         
-        # Step 5: Fetch HuggingFace model info and verify revision
+        # Step 6: Fetch HuggingFace model info and verify revision
         model_info = await self._get_model_info(model, revision)
         if not model_info:
             info.is_valid = False

@@ -201,3 +201,24 @@ class MinersDAO(BaseDAO):
         result = sorted(items, key=lambda x: x.get('first_block', float('inf')))
         
         return result
+    
+    async def get_all_miners(self) -> List[Dict[str, Any]]:
+        """Get all miners (full table scan).
+        
+        Efficient for small tables (256 miners max).
+        Returns all miners regardless of validation status.
+        
+        Returns:
+            List of all miner records
+        """
+        from affine.database.client import get_client
+        client = get_client()
+        
+        params = {
+            'TableName': self.table_name,
+        }
+        
+        response = await client.scan(**params)
+        items = [self._deserialize(item) for item in response.get('Items', [])]
+        
+        return items
