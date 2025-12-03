@@ -39,8 +39,8 @@ class ExecutorWorker:
         worker_id: int,
         env: str,
         wallet: bt.wallet,
-        fetch_rate_per_hour: int = 1800,
         max_concurrent_tasks: int = 5,
+        batch_size: int = 20,
     ):
         """Initialize executor worker.
         
@@ -48,18 +48,15 @@ class ExecutorWorker:
             worker_id: Unique worker ID
             env: Environment to execute tasks for (e.g., "affine:sat")
             wallet: Bittensor wallet for signing
-            fetch_rate_per_hour: Number of tasks to fetch per hour (default: 1800, i.e., 1 task per 2 seconds)
             max_concurrent_tasks: Maximum number of concurrent task executions (default: 5)
+            batch_size: Number of tasks to fetch per request (default: 20)
         """
         self.worker_id = worker_id
         self.env = env
         self.wallet = wallet
         self.hotkey = wallet.hotkey.ss58_address
-        self.fetch_rate_per_hour = fetch_rate_per_hour
         self.max_concurrent_tasks = max_concurrent_tasks
-        
-        # Calculate fetch interval in seconds
-        self.fetch_interval = 3600 / fetch_rate_per_hour  # seconds between fetches
+        self.batch_size = batch_size
         
         self.running = False
         self.metrics = WorkerMetrics()
@@ -120,7 +117,6 @@ class ExecutorWorker:
     
     def start(self):
         """Start the worker fetch and execution loops (returns immediately, loops run in background)."""
-        logger.info(f"[{self.env}] Starting fetch and execution loops for {self.env}...")
         self.running = True
         
         # Initialize semaphore for concurrent execution
@@ -135,8 +131,8 @@ class ExecutorWorker:
             self.executor_tasks.append(task)
         
         logger.info(
-            f"[{self.env}] Started fetch loop (rate: {self.fetch_rate_per_hour}/hour, "
-            f"interval: {self.fetch_interval:.2f}s) and {self.max_concurrent_tasks} executor workers"
+            f"[{self.env}] Started fetch loop (batch_size: {self.batch_size}) "
+            f"and {self.max_concurrent_tasks} executor workers"
         )
     
     async def stop(self):
@@ -191,34 +187,40 @@ class ExecutorWorker:
             "X-Message": message,
         }
     
-    async def _fetch_task(self) -> Optional[Dict]:
-        """Fetch next task from API."""
+    async def _fetch_tasks_batch(self) -> List[Dict]:
+        """Fetch batch of tasks from API.
+        
+        Returns:
+            List of task dicts (may be empty if no tasks available)
+        """
         try:
             headers = self._get_auth_headers()
             response = await self.api_client.post(
                 "/tasks/fetch",
-                params={"env": self.env},
+                params={"env": self.env, "batch_size": self.batch_size},
                 headers=headers
             )
 
-            task = response.get("task") if isinstance(response, dict) else None
-            if not task:
-                logger.debug(f"[{self.env}] No task available")
-                return None
+            if not isinstance(response, dict):
+                logger.debug(f"[{self.env}] Invalid response format")
+                return []
+            
+            # Handle batch response
+            tasks = response.get("tasks", [])
+            
+            if not tasks:
+                logger.debug(f"[{self.env}] No tasks available")
+                return []
 
             logger.debug(
-                f"[{self.env}] Fetched task: "
-                f"uuid={str(task.get('task_uuid'))[:8]}... "
-                f"task_id={task.get('task_id')} "
-                f"uid={task.get('miner_uid')} "
-                f"miner={(task.get('miner_hotkey',''))[:12]}..."
+                f"[{self.env}] Fetched {len(tasks)} tasks (requested {self.batch_size})"
             )
-            return task
+            return tasks
 
         except Exception as e:
             # Silently ignore fetch errors and continue polling
-            logger.debug(f"[{self.env}] Failed to fetch task: {e}")
-            return None
+            logger.debug(f"[{self.env}] Failed to fetch tasks: {e}")
+            return []
 
 
     
@@ -410,40 +412,37 @@ class ExecutorWorker:
             raise
     
     async def _fetch_loop(self):
-        """Fetch loop with time-based rate limiting.
+        """Fetch loop driven by queue size.
         
-        Maintains target fetch rate by tracking elapsed time since last fetch start,
-        rather than adding fixed delays after each fetch completion.
+        Continuously fetches tasks when queue is low, maintaining buffer of
+        max_concurrent_tasks * 2 tasks in queue.
         """
-        logger.info(f"[{self.env}] Fetch loop started")
-        
-        next_fetch_time = time.time()
+        logger.info(f"[{self.env}] Fetch loop started (batch_size={self.batch_size})")
         
         while self.running:
             try:
                 # Check queue size before fetching
                 current_queue_size = self.task_queue.qsize()
-                if current_queue_size > self.max_concurrent_tasks:
-                    logger.debug(f"[{self.env}] Queue size {current_queue_size} > {self.max_concurrent_tasks}, sleeping")
+                
+                # If queue has enough tasks, wait a bit
+                if current_queue_size >= self.batch_size:
+                    logger.debug(f"[{self.env}] Queue size {current_queue_size} sufficient, waiting")
                     await asyncio.sleep(1)
                     continue
 
-                # Calculate wait time to maintain target fetch rate
-                current_time = time.time()
-                wait_time = max(0, next_fetch_time - current_time)
-                if wait_time > 0:
-                    await asyncio.sleep(wait_time)
-                # Schedule next fetch
-                next_fetch_time = current_time + self.fetch_interval
-
-                # Fetch task from API
-                task = await self._fetch_task()
+                # Fetch batch of tasks from API
+                tasks = await self._fetch_tasks_batch()
                 
-                if task is None:
-                    continue
-                
-                # Put task in queue for execution
-                await self.task_queue.put(task)
+                num_tasks = len(tasks)
+                if num_tasks > 0:
+                    # Put all tasks in queue
+                    for task in tasks:
+                        await self.task_queue.put(task)
+                    
+                    logger.debug(f"[{self.env}] Queued {num_tasks} tasks (queue_size={self.task_queue.qsize()})")
+                else:
+                    # No tasks available, wait before retry
+                    await asyncio.sleep(1)
             
             except asyncio.CancelledError:
                 break
@@ -461,7 +460,7 @@ class ExecutorWorker:
         Args:
             worker_idx: Index of this execution worker
         """
-        logger.info(f"[{self.env}] Execution worker {worker_idx} started")
+        logger.debug(f"[{self.env}] Execution worker {worker_idx} started")
         
         while self.running:
             try:
@@ -510,7 +509,7 @@ class ExecutorWorker:
                 traceback.print_exc()
                 await asyncio.sleep(1)
         
-        logger.info(f"[{self.env}] Execution worker {worker_idx} stopped")
+        logger.debug(f"[{self.env}] Execution worker {worker_idx} stopped")
     
     def get_metrics(self) -> Dict[str, Any]:
         """Get worker metrics.
