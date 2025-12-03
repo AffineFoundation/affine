@@ -37,6 +37,9 @@ import subprocess
 import click
 from affine.core.setup import setup_logging, logger
 
+# Check if admin commands should be visible
+SHOW_ADMIN_COMMANDS = os.getenv("AFFINE_SHOW_ADMIN_COMMANDS", "").lower() in ("1", "true", "yes")
+
 
 @click.group()
 @click.option(
@@ -60,7 +63,7 @@ def cli(verbosity):
 # Server Services (Group)
 # ============================================================================
 
-@cli.group()
+@cli.group(hidden=not SHOW_ADMIN_COMMANDS)
 def servers():
     """Start various backend server services."""
     pass
@@ -287,6 +290,7 @@ def get_rank(ctx):
 
 # Import and register the db group from database.cli
 from affine.database.cli import db
+db.hidden = not SHOW_ADMIN_COMMANDS
 cli.add_command(db)
 
 
@@ -294,7 +298,7 @@ cli.add_command(db)
 # Docker Deployment Commands
 # ============================================================================
 
-@cli.command()
+@cli.command(hidden=not SHOW_ADMIN_COMMANDS)
 @click.argument("service", type=click.Choice(["validator", "backend", "api"]))
 @click.option("--local", is_flag=True, help="Use local build mode")
 @click.option("--recreate", is_flag=True, help="Recreate containers")
@@ -352,7 +356,7 @@ def deploy(service, local, recreate):
         sys.exit(e.returncode)
 
 
-@cli.command()
+@cli.command(hidden=not SHOW_ADMIN_COMMANDS)
 @click.argument("service", type=click.Choice(["validator", "backend", "api"]))
 @click.option("--local", is_flag=True, help="Use local build mode")
 @click.option("--volumes", "-v", is_flag=True, help="Remove volumes as well")

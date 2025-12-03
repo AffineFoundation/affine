@@ -107,24 +107,6 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build -
 docker compose -f docker-compose.yml -f docker-compose.local.yml logs -f
 ```
 
-Or use CLI convenience commands:
-
-```bash
-# Deploy validator
-af deploy validator
-
-# Use local build
-af deploy validator --local
-
-# Force recreate containers
-af deploy validator --recreate
-
-# Stop validator
-af down validator
-
-# Stop and remove volumes
-af down validator --volumes
-```
 
 ### Method 2: Local Execution
 
