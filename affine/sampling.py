@@ -239,7 +239,7 @@ class MinerSampler:
         
         for e in envs:
             # Minimum samples = dataset size for that environment
-            required[e] = SamplingConfig.SMALL_DATASET_THRESHOLD
+            required[e] = self.env_dataset_sizes.get(e, 0)
         
         eligible = {
             hk for hk in active_hks
@@ -293,7 +293,8 @@ class MinerSampler:
                 {'hotkey': a, **stats_a},
                 {'hotkey': b, **stats_b},
                 confidence_interval_a=ci_a,
-                confidence_interval_b=ci_b
+                confidence_interval_b=ci_b,
+                min_samples=min_samples
             )
 
             if winner == 'b':
