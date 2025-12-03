@@ -50,7 +50,7 @@ class SampleFullResponse(BaseModel):
 class TaskFetchResponse(BaseModel):
     """Response from task fetch endpoint."""
 
-    task: Optional[Dict[str, Any]] = None
+    tasks: List[Dict[str, Any]] = []
 
 
 class MinerScore(BaseModel):

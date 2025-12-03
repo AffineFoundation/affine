@@ -34,11 +34,11 @@ def _format_env_queue(env_name: str, queue_count: int, change: int) -> str:
     return f"{env_short}={queue_count}({change_str})" if change_str else f"{env_short}={queue_count}"
 
 
-def _format_env_stats(env_name: str, completed: int, success_rate: int, change: int) -> str:
-    """Format environment completion stats with optional change indicator."""
+def _format_env_stats(env_name: str, completed: int, success_rate: int, change: int, running: int, pending: int) -> str:
+    """Format environment completion stats with running and pending tasks."""
     env_short = env_name.split(':')[-1]
-    change_str = f" {_format_change(change)}" if change else ""
-    return f"{env_short}@{completed}({success_rate}%{change_str})"
+    change_str = f" finished:{_format_change(change)}" if change else " finished:0"
+    return f"{env_short}@{completed}({success_rate}%{change_str} running:{running} pending:{pending})"
 
 
 class ExecutorManager:
@@ -51,7 +51,6 @@ class ExecutorManager:
     def __init__(
         self,
         envs: List[str],
-        fetch_rate_per_hour: int = 1800,
         max_concurrent_tasks: int = 5,
     ):
         """
@@ -59,11 +58,9 @@ class ExecutorManager:
         
         Args:
             envs: List of environments to execute tasks for
-            fetch_rate_per_hour: Number of tasks to fetch per hour per env (default: 1800)
             max_concurrent_tasks: Maximum concurrent tasks per env (default: 5)
         """
         self.envs = envs
-        self.fetch_rate_per_hour = fetch_rate_per_hour
         self.max_concurrent_tasks = max_concurrent_tasks
         
         self.workers: List[ExecutorWorker] = []
@@ -76,7 +73,7 @@ class ExecutorManager:
         
         logger.info(
             f"ExecutorManager initialized for {len(envs)} environments "
-            f"(fetch_rate: {fetch_rate_per_hour}/hour, max_concurrent: {max_concurrent_tasks})"
+            f"(max_concurrent: {max_concurrent_tasks})"
         )
     
     def _create_workers(self):
@@ -88,8 +85,8 @@ class ExecutorManager:
                 worker_id=idx,
                 env=env,
                 wallet=self.wallet,
-                fetch_rate_per_hour=self.fetch_rate_per_hour,
                 max_concurrent_tasks=self.max_concurrent_tasks,
+                batch_size=20,  # Fetch 20 tasks per request
             )
             self.workers.append(worker)
             logger.debug(f"Created worker {idx} for {env}")
@@ -200,7 +197,9 @@ class ExecutorManager:
                     'success_rate': success_rate,
                     'queue': queue_stats.get(env_name, 0),
                     'queue_change': env_queue_changes.get(env_name, 0),
-                    'completed_change': completed_change
+                    'completed_change': completed_change,
+                    'running_tasks': m.get('running_tasks', 0),
+                    'pending_tasks': m.get('pending_tasks', 0),
                 }
             
             # Format status strings
@@ -210,7 +209,14 @@ class ExecutorManager:
             )
             
             env_stats_str = " ".join(
-                _format_env_stats(env, stats['completed'], stats['success_rate'], stats['completed_change'])
+                _format_env_stats(
+                    env,
+                    stats['completed'],
+                    stats['success_rate'],
+                    stats['completed_change'],
+                    stats['running_tasks'],
+                    stats['pending_tasks']
+                )
                 for env, stats in sorted(env_stats.items())
             )
             
@@ -262,7 +268,6 @@ async def fetch_system_config() -> dict:
 
 async def run_service_with_mode(
     envs: List[str] | None,
-    fetch_rate_per_hour: int,
     max_concurrent_tasks: int,
     service_mode: bool
 ):
@@ -270,7 +275,6 @@ async def run_service_with_mode(
     
     Args:
         envs: List of environments to execute (None to fetch from API)
-        fetch_rate_per_hour: Number of tasks to fetch per hour per env
         max_concurrent_tasks: Maximum concurrent tasks per env
         service_mode: If True, run continuously; if False, run once and exit
     """
@@ -286,7 +290,6 @@ async def run_service_with_mode(
     # Create manager
     manager = ExecutorManager(
         envs=envs,
-        fetch_rate_per_hour=fetch_rate_per_hour,
         max_concurrent_tasks=max_concurrent_tasks,
     )
     
@@ -339,16 +342,10 @@ async def run_service_with_mode(
     help="Environments to execute tasks for (e.g., affine:sat). If not specified, fetches from API system config"
 )
 @click.option(
-    "--fetch-rate",
-    default=None,
-    type=int,
-    help="Tasks to fetch per hour per env (default: from EXECUTOR_FETCH_RATE or 1800)"
-)
-@click.option(
     "--max-concurrent",
     default=None,
     type=int,
-    help="Max concurrent tasks per env (default: from EXECUTOR_MAX_CONCURRENT or 5)"
+    help="Max concurrent tasks per env (default: from EXECUTOR_MAX_CONCURRENT or 30)"
 )
 @click.option(
     "-v", "--verbosity",
@@ -356,19 +353,19 @@ async def run_service_with_mode(
     type=click.Choice(["0", "1", "2", "3"]),
     help="Logging verbosity: 0=CRITICAL, 1=INFO, 2=DEBUG, 3=TRACE"
 )
-def main(envs, fetch_rate, max_concurrent, verbosity):
+def main(envs, max_concurrent, verbosity):
     """
     Affine Executor - Execute sampling tasks for multiple environments.
     
-    Each environment runs with concurrent task execution using a task queue.
+    Each environment runs with concurrent task execution using a queue-driven model.
+    Tasks are fetched continuously to maintain a buffer in the queue.
     
     Run Mode:
     - Default: One-time execution (processes available tasks once)
     - SERVICE_MODE=true: Continuous service mode (keeps running)
     
     Configuration:
-    - EXECUTOR_FETCH_RATE: Tasks to fetch per hour per env (default: 1800, i.e., 1 task per 2 seconds)
-    - EXECUTOR_MAX_CONCURRENT: Max concurrent tasks per env (default: 5)
+    - EXECUTOR_MAX_CONCURRENT: Max concurrent tasks per env (default: 30)
     - SERVICE_MODE: Run as continuous service (default: false)
     
     If --envs not specified, environments are fetched from API /api/v1/config/environments endpoint.
@@ -380,23 +377,18 @@ def main(envs, fetch_rate, max_concurrent, verbosity):
     # Get environments from CLI (or None to fetch from API)
     selected_envs = list(envs) if envs else None
     
-    # Get fetch rate (priority: CLI arg > env var > default)
-    fetch_rate_val = fetch_rate if fetch_rate is not None else int(os.getenv("EXECUTOR_FETCH_RATE", "3600"))
-    
     # Get max concurrent tasks (priority: CLI arg > env var > default)
     max_concurrent_val = max_concurrent if max_concurrent is not None else int(os.getenv("EXECUTOR_MAX_CONCURRENT", "30"))
 
     # Check service mode (default: false = one-time execution)
     service_mode = os.getenv("SERVICE_MODE", "false").lower() in ("true", "1", "yes")
     
-    logger.info(f"Fetch rate: {fetch_rate_val} tasks/hour per env ({3600/fetch_rate_val:.2f}s interval)")
     logger.info(f"Max concurrent tasks: {max_concurrent_val} per env")
     logger.info(f"Service mode: {service_mode}")
     
     # Run service
     asyncio.run(run_service_with_mode(
         envs=selected_envs,
-        fetch_rate_per_hour=fetch_rate_val,
         max_concurrent_tasks=max_concurrent_val,
         service_mode=service_mode
     ))
