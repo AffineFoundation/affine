@@ -82,8 +82,6 @@ services:
       - API_URL=http://api:8000/api/v1
       - SCORER_SAVE_TO_DB=true
       - SERVICE_MODE=true
-      - EXECUTOR_FETCH_RATE=1800
-      - EXECUTOR_MAX_CONCURRENT=20
     depends_on:
       api:
         condition: service_healthy

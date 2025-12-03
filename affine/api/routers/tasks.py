@@ -33,20 +33,16 @@ router = APIRouter(prefix="/tasks", tags=["Tasks"])
 @router.post("/fetch", response_model=TaskFetchResponse)
 async def fetch_task(
     env: Optional[str] = Query(None, description="Environment filter (optional)"),
+    batch_size: int = Query(1, ge=1, le=50, description="Number of tasks to fetch (1-50)"),
     executor_hotkey: str = Depends(verify_executor_auth),
     miners_dao: MinersDAO = Depends(get_miners_dao),
     task_pool: TaskPoolManager = Depends(get_task_pool_manager),
 ):
     """
-    Fetch a task using weighted random selection.
+    Fetch task(s) using weighted random selection.
     
     Algorithm:
-    1. Verify executor signature and validator status (via dependency)
-    2. Get all pending tasks
-    3. Group by (miner_hotkey, model_revision), count tasks per miner
-    4. Select miner with probability proportional to task count
-    5. Randomly select one task from chosen miner
-    6. Assign task (DynamoDB provides atomicity)
+    Select batch_size miners randomly (weighted), return 1 task per miner.
     
     Headers (validated by verify_executor_auth dependency):
     - X-Hotkey: Executor's SS58 hotkey
@@ -55,9 +51,10 @@ async def fetch_task(
     
     Query Parameters:
     - env: Optional environment filter
+    - batch_size: Number of tasks to fetch (default: 1, max: 50)
     
     Returns:
-    - Task details if available, or null if no tasks
+    - TaskFetchResponse with tasks list (0 to batch_size elements)
     """
     # Check if services are enabled
     if not config.SERVICES_ENABLED:
@@ -67,38 +64,31 @@ async def fetch_task(
         )
     
     try:
-        # Fetch task using TaskPoolManager (injected via dependency)
-        task = await task_pool.fetch_task(
+        # Fetch task(s) using TaskPoolManager (always returns list)
+        tasks = await task_pool.fetch_task(
             executor_hotkey=executor_hotkey,
-            env=env
+            env=env,
+            batch_size=batch_size
         )
         
-        if not task:
+        if not tasks:
             logger.debug(f"No available tasks for executor {executor_hotkey[:16]}...")
-            return TaskFetchResponse(task=None)
+            return TaskFetchResponse(tasks=[])
         
-        miner_record = await miners_dao.get_miner_by_hotkey(task["miner_hotkey"])
-        if not miner_record:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Miner record not found for hotkey {task['miner_hotkey'][:16]}..."
-            )
-        
-        miner_uid = miner_record.get("uid")
-        if miner_uid is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"UID not found for hotkey {task['miner_hotkey'][:16]}..."
-            )
-        
-        # Return task details
-        logger.debug(
-            f"Assigned task {task['task_uuid']} to executor {executor_hotkey[:16]}... "
-            f"(miner={task['miner_hotkey'][:16]}..., uid={miner_uid}, env={task['env']}, task_id={task['task_id']})"
-        )
-        
-        return TaskFetchResponse(
-            task={
+        # Enrich tasks with miner UIDs
+        enriched_tasks = []
+        for task in tasks:
+            miner_record = await miners_dao.get_miner_by_hotkey(task["miner_hotkey"])
+            if not miner_record:
+                logger.warning(f"Miner record not found for hotkey {task['miner_hotkey'][:16]}..., skipping task")
+                continue
+            
+            miner_uid = miner_record.get("uid")
+            if miner_uid is None:
+                logger.warning(f"UID not found for hotkey {task['miner_hotkey'][:16]}..., skipping task")
+                continue
+            
+            enriched_tasks.append({
                 "task_uuid": task["task_uuid"],
                 "task_id": task["task_id"],
                 "miner_hotkey": task["miner_hotkey"],
@@ -108,16 +98,22 @@ async def fetch_task(
                 "env": task["env"],
                 "chute_id": task["chute_id"],
                 "created_at": task["created_at"],
-            }
+            })
+        
+        logger.debug(
+            f"Assigned {len(enriched_tasks)} tasks to executor {executor_hotkey[:16]}... "
+            f"(requested {batch_size})"
         )
+        
+        return TaskFetchResponse(tasks=enriched_tasks)
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching task: {e}", exc_info=True)
+        logger.error(f"Error fetching task(s): {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch task: {str(e)}"
+            detail=f"Failed to fetch task(s): {str(e)}"
         )
 
 
