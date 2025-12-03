@@ -48,21 +48,8 @@ async def get_miner_by_uid(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Miner with UID {uid} not found"
             )
-        
-        # Return miner info
-        return {
-            "hotkey": miner.get("hotkey"),
-            "uid": miner.get("uid"),
-            "model": miner.get("model"),
-            "revision": miner.get("revision"),
-            "chute_id": miner.get("chute_id"),
-            "first_block": miner.get("first_block"),
-            "is_valid": miner.get("is_valid") == "true",  # Convert string to bool
-            "invalid_reason": miner.get("invalid_reason"),
-            "model_hash": miner.get("model_hash"),
-            "discovered_at": miner.get("discovered_at"),
-            "last_updated": miner.get("last_updated"),
-        }
+
+        return dict(miner)
         
     except HTTPException:
         raise
