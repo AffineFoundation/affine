@@ -362,8 +362,7 @@ class ExecutorWorker:
                 current_queue_size = self.task_queue.qsize()
                 
                 # If queue has enough tasks, wait a bit
-                if current_queue_size >= self.batch_size:
-                    logger.info(f"[{self.env}] Queue size {current_queue_size} sufficient, waiting")
+                if current_queue_size >= self.max_concurrent_tasks:
                     await asyncio.sleep(1)
                     continue
 
