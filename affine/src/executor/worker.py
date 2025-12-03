@@ -410,33 +410,40 @@ class ExecutorWorker:
             raise
     
     async def _fetch_loop(self):
-        """Fetch loop that continuously fetches tasks and puts them in queue."""
+        """Fetch loop with time-based rate limiting.
+        
+        Maintains target fetch rate by tracking elapsed time since last fetch start,
+        rather than adding fixed delays after each fetch completion.
+        """
         logger.info(f"[{self.env}] Fetch loop started")
+        
+        next_fetch_time = time.time()
         
         while self.running:
             try:
                 # Check queue size before fetching
                 current_queue_size = self.task_queue.qsize()
-                if current_queue_size > 10:
-                    # Queue has too many pending tasks, sleep to let workers catch up
-                    logger.debug(f"[{self.env}] Queue size {current_queue_size} > 10, sleeping to let workers catch up")
-                    await asyncio.sleep(5)
+                if current_queue_size > self.max_concurrent_tasks:
+                    logger.debug(f"[{self.env}] Queue size {current_queue_size} > {self.max_concurrent_tasks}, sleeping")
+                    await asyncio.sleep(1)
                     continue
+
+                # Calculate wait time to maintain target fetch rate
+                current_time = time.time()
+                wait_time = max(0, next_fetch_time - current_time)
+                if wait_time > 0:
+                    await asyncio.sleep(wait_time)
+                # Schedule next fetch
+                next_fetch_time = current_time + self.fetch_interval
 
                 # Fetch task from API
                 task = await self._fetch_task()
                 
                 if task is None:
-                    # No task available, sleep for 5 seconds
-                    await asyncio.sleep(5)
                     continue
                 
                 # Put task in queue for execution
                 await self.task_queue.put(task)
-                logger.debug(f"[{self.env}] Task added to queue, queue size: {self.task_queue.qsize()}")
-                
-                # Wait for next fetch based on rate limit
-                await asyncio.sleep(self.fetch_interval)
             
             except asyncio.CancelledError:
                 break
@@ -444,7 +451,7 @@ class ExecutorWorker:
             except Exception as e:
                 logger.error(f"[{self.env}] Error in fetch loop: {e}")
                 traceback.print_exc()
-                await asyncio.sleep(5)
+                await asyncio.sleep(1)
         
         logger.info(f"[{self.env}] Fetch loop stopped")
     
@@ -491,7 +498,6 @@ class ExecutorWorker:
                         # Task lock will timeout and be released automatically
                     
                     finally:
-                        # Mark task as done in queue
                         self.task_queue.task_done()
                         # Update metrics
                         self.metrics.last_task_at = time.time()
@@ -510,7 +516,9 @@ class ExecutorWorker:
         """Get worker metrics.
         
         Returns:
-            Dictionary of metrics
+            Dictionary of metrics including:
+            - running_tasks: Number of tasks currently being executed (held by semaphore)
+            - pending_tasks: Number of tasks waiting in queue
         """
         avg_time = (
             self.metrics.total_execution_time / self.metrics.tasks_completed
@@ -518,12 +526,22 @@ class ExecutorWorker:
             else 0
         )
         
+        # Calculate running tasks: max_concurrent - available semaphore slots
+        running_tasks = 0
+        if self.execution_semaphore is not None:
+            running_tasks = self.max_concurrent_tasks - self.execution_semaphore._value
+        
+        # Get pending tasks from queue
+        pending_tasks = self.task_queue.qsize()
+        
         return {
             "worker_id": self.worker_id,
             "env": self.env,
             "running": self.running,
             "tasks_completed": self.metrics.tasks_completed,
             "tasks_failed": self.metrics.tasks_failed,
+            "running_tasks": running_tasks,
+            "pending_tasks": pending_tasks,
             "avg_execution_time": avg_time,
             "last_task_at": self.metrics.last_task_at,
         }

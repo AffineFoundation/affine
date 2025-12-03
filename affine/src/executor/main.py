@@ -34,11 +34,11 @@ def _format_env_queue(env_name: str, queue_count: int, change: int) -> str:
     return f"{env_short}={queue_count}({change_str})" if change_str else f"{env_short}={queue_count}"
 
 
-def _format_env_stats(env_name: str, completed: int, success_rate: int, change: int) -> str:
-    """Format environment completion stats with optional change indicator."""
+def _format_env_stats(env_name: str, completed: int, success_rate: int, change: int, running: int, pending: int) -> str:
+    """Format environment completion stats with running and pending tasks."""
     env_short = env_name.split(':')[-1]
-    change_str = f" {_format_change(change)}" if change else ""
-    return f"{env_short}@{completed}({success_rate}%{change_str})"
+    change_str = f" finished:{_format_change(change)}" if change else " finished:0"
+    return f"{env_short}@{completed}({success_rate}%{change_str} running:{running} pending:{pending})"
 
 
 class ExecutorManager:
@@ -200,7 +200,9 @@ class ExecutorManager:
                     'success_rate': success_rate,
                     'queue': queue_stats.get(env_name, 0),
                     'queue_change': env_queue_changes.get(env_name, 0),
-                    'completed_change': completed_change
+                    'completed_change': completed_change,
+                    'running_tasks': m.get('running_tasks', 0),
+                    'pending_tasks': m.get('pending_tasks', 0),
                 }
             
             # Format status strings
@@ -210,7 +212,14 @@ class ExecutorManager:
             )
             
             env_stats_str = " ".join(
-                _format_env_stats(env, stats['completed'], stats['success_rate'], stats['completed_change'])
+                _format_env_stats(
+                    env,
+                    stats['completed'],
+                    stats['success_rate'],
+                    stats['completed_change'],
+                    stats['running_tasks'],
+                    stats['pending_tasks']
+                )
                 for env, stats in sorted(env_stats.items())
             )
             
