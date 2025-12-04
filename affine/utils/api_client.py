@@ -94,18 +94,17 @@ class CLIAPIClient:
     
     async def __aenter__(self) -> 'APIClient':
         """Enter context: create independent session and client"""
-        # CLI doesn't need large connection pool
         connector = aiohttp.TCPConnector(
-            limit=10,  # CLI only needs few connections
+            limit=20,
             limit_per_host=0,
             force_close=False,
-            keepalive_timeout=2,  # Short timeout for CLI
+            keepalive_timeout=60,
             enable_cleanup_closed=True,
         )
         
         timeout = aiohttp.ClientTimeout(
             total=None,
-            connect=10,  # CLI doesn't need long connection timeout
+            connect=30,  # CLI doesn't need long connection timeout
             sock_read=None
         )
         

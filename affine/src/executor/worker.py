@@ -21,8 +21,9 @@ from affine.utils.api_client import create_api_client, APIClient
 class WorkerMetrics:
     """Metrics for a worker."""
     
-    tasks_completed: int = 0
-    tasks_failed: int = 0
+    tasks_succeeded: int = 0  # Tasks executed successfully (no error in extra)
+    tasks_failed: int = 0  # Tasks executed with error (error in extra)
+    submit_failed: int = 0  # Tasks that failed to submit to API
     total_execution_time: float = 0.0
     last_task_at: Optional[float] = None
     fetch_count: int = 0
@@ -295,10 +296,21 @@ class ExecutorWorker:
             submission.signature = signature_bytes.hex()
             
             # Format aligned RESULT log
-            logger.info(
-                f"[RESULT] U{task.get('miner_uid'):<4} │ {self.env:<20} │ {submission.score:10.3f} │ "
-                f"task_id={task_id:<4} │ {execution_time:6.3f}s"
-            )
+            # Check if task has error and format accordingly
+            has_error = extra.get("error")
+            if has_error:
+                # Task failed - print error message
+                error_brief = str(has_error)[:150]  # Limit error message length
+                logger.info(
+                    f"[FAILED] U{task.get('miner_uid'):<4} │ {self.env:<20} │ {submission.score:10.3f} │ "
+                    f"task_id={task_id:<6} │ {execution_time:6.3f}s │ error={error_brief}"
+                )
+            else:
+                # Task succeeded
+                logger.info(
+                    f"[RESULT] U{task.get('miner_uid'):<4} │ {self.env:<20} │ {submission.score:10.3f} │ "
+                    f"task_id={task_id:<6} │ {execution_time:6.3f}s"
+                )
             
             return submission
         
@@ -337,16 +349,23 @@ class ExecutorWorker:
                 headers=headers
             )
             
-            logger.debug(
-                f"[{self.env}] Submitted result: "
-                f"task_uuid={submission.task_uuid[:8]}... "
-                f"score={submission.score:.4f} {response}"
-            )
-            self.metrics.tasks_completed += 1
+            # Check if task execution succeeded or failed based on error field
+            has_error = submission.extra.get("error") if submission.extra else None
+            if has_error:
+                self.metrics.tasks_failed += 1
+                logger.debug(
+                    f"[{self.env}] Submitted FAILED task: "
+                    f"task_uuid={submission.task_uuid[:8]}... "
+                    f"score={submission.score:.4f} error={has_error}"
+                )
+            else:
+                self.metrics.tasks_succeeded += 1
+
             return True
 
         except Exception as e:
-            self.metrics.tasks_failed += 1
+            # This is a submit failure (API server issue)
+            self.metrics.submit_failed += 1
             raise
     
     async def _fetch_loop(self):
@@ -426,11 +445,10 @@ class ExecutorWorker:
                         error_brief = str(e)[:200]
                         
                         logger.info(
-                            f"[RESULT] U{miner_uid:<4} │ {self.env:<20} │ FAILED     │ "
+                            f"[FAILED] U{miner_uid:<4} │ {self.env:<20} │ FAILED     │ "
                             f"task_id={task_id:<6} │ {error_brief}"
                         )
                         # Task lock will timeout and be released automatically
-                    
                     finally:
                         self.task_queue.task_done()
                         # Update metrics
@@ -455,9 +473,10 @@ class ExecutorWorker:
             - pending_tasks: Number of tasks waiting in queue
             - avg_fetch_time_ms: Average fetch latency in milliseconds
         """
+        total_tasks = self.metrics.tasks_succeeded + self.metrics.tasks_failed
         avg_time = (
-            self.metrics.total_execution_time / self.metrics.tasks_completed
-            if self.metrics.tasks_completed > 0
+            self.metrics.total_execution_time / total_tasks
+            if total_tasks > 0
             else 0
         )
         
@@ -479,8 +498,9 @@ class ExecutorWorker:
             "worker_id": self.worker_id,
             "env": self.env,
             "running": self.running,
-            "tasks_completed": self.metrics.tasks_completed,
+            "tasks_succeeded": self.metrics.tasks_succeeded,
             "tasks_failed": self.metrics.tasks_failed,
+            "submit_failed": self.metrics.submit_failed,
             "running_tasks": running_tasks,
             "pending_tasks": pending_tasks,
             "avg_execution_time": avg_time,

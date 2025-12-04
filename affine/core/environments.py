@@ -229,23 +229,16 @@ class BaseSDKEnv(ABC):
         payload = self.evaluator_config.to_payload(miner, **eval_kwargs)
 
         # Execute evaluation
-        try:
-            timeout = (
-                self.sandbox_config.proxy_timeout
-                if self.env_type == EnvType.AFFINE
-                else self.sandbox_config.proxy_timeout + 600
-            )
+        timeout = (
+            self.sandbox_config.proxy_timeout
+            if self.env_type == EnvType.AFFINE
+            else self.sandbox_config.proxy_timeout + 600
+        )
 
-            # Call affinetes evaluate method directly
-            result = await self._env.evaluate(_timeout=timeout, **payload)
+        # Call affinetes evaluate method directly
+        result = await self._env.evaluate(_timeout=timeout, **payload)
 
-            return self._parse_evaluation_result(result, miner, payload, start)
-
-        except asyncio.TimeoutError as e:
-            logger.error(f"Evaluation timeout for {self.env_name}: {e}, score set 0")
-            return self._create_error_result(e, miner, payload, start)
-        except Exception as e:
-            return self._create_error_result(e, miner, payload, start)
+        return self._parse_evaluation_result(result, miner, payload, start)
 
     def _parse_evaluation_result(
         self,
