@@ -22,6 +22,8 @@ from typing import Dict, Any, Optional, List, Tuple, Callable, TypeVar, Generic
 from affine.database.dao.task_pool import TaskPoolDAO
 from affine.database.dao.execution_logs import ExecutionLogsDAO
 from affine.database.dao.miners import MinersDAO
+from affine.database.dao.sample_results import SampleResultsDAO
+from affine.utils.subtensor import get_subtensor
 
 from affine.core.setup import logger
 
@@ -113,11 +115,12 @@ class TaskPoolManager:
     Uses background refresh for miner counts to avoid blocking fetch requests.
     """
     
-    def __init__(self, count_cache_ttl: int = 30, miners_cache_ttl: int = 60):
+    def __init__(self, count_cache_ttl: int = 30, miners_cache_ttl: int = 60, stats_cache_ttl: int = 60, block_cache_ttl: int = 10):
         """Initialize TaskPoolManager with caches."""
         self.dao = TaskPoolDAO()
         self.logs_dao = ExecutionLogsDAO()
         self.miners_dao = MinersDAO()
+        self.sample_dao = SampleResultsDAO()
         
         # Async caches with background refresh
         self._count_caches: Dict[str, AsyncCache[Dict[str, int]]] = {}  # {env: cache}
@@ -127,11 +130,21 @@ class TaskPoolManager:
             name="miners"
         )
         
+        # Pool stats cache: {env: stats_dict}
+        self._pool_stats_caches: Dict[str, AsyncCache[Dict[str, int]]] = {}
+        self._stats_cache_ttl = stats_cache_ttl
+        
+        # Block number cache (10s TTL)
+        self._block_cache = AsyncCache[int](
+            ttl=block_cache_ttl,
+            name="block_number"
+        )
+        
         # UUID location cache: task_uuid -> (pk, sk)
         self._uuid_cache: Dict[str, Tuple[str, str]] = {}
         self._cache_lock = asyncio.Lock()
         
-        logger.info(f"TaskPoolManager initialized (count_cache_ttl={count_cache_ttl}s, miners_cache_ttl={miners_cache_ttl}s)")
+        logger.info(f"TaskPoolManager initialized (count_cache_ttl={count_cache_ttl}s, miners_cache_ttl={miners_cache_ttl}s, stats_cache_ttl={stats_cache_ttl}s, block_cache_ttl={block_cache_ttl}s)")
     
     async def _get_miner_counts(self, env: str) -> Dict[str, int]:
         """Get task counts per miner with non-blocking cache refresh."""
@@ -153,6 +166,36 @@ class TaskPoolManager:
             return {miner['hotkey']: miner for miner in miners_list}
         
         return await self._miners_cache.get(fetch_miners)
+    
+    async def _get_current_block(self) -> int:
+        """Get current block number with caching."""
+        async def fetch_block():
+            subtensor = await get_subtensor()
+            return await subtensor.get_current_block()
+        
+        return await self._block_cache.get(fetch_block)
+    
+    async def get_pool_stats(self, env: str) -> Dict[str, int]:
+        """Get pool statistics for an environment with caching.
+        
+        Uses AsyncCache for automatic background refresh.
+        
+        Args:
+            env: Environment name
+            
+        Returns:
+            Dict with counts: pending, assigned, failed
+        """
+        # Create cache for this env if not exists
+        if env not in self._pool_stats_caches:
+            self._pool_stats_caches[env] = AsyncCache[Dict[str, int]](
+                ttl=self._stats_cache_ttl,
+                name=f"pool_stats[{env}]"
+            )
+        
+        return await self._pool_stats_caches[env].get(
+            lambda: self.dao.get_pool_stats(env)
+        )
     
     def _select_miners_weighted(
         self,
@@ -317,21 +360,17 @@ class TaskPoolManager:
                 return []
             
             # Parallel assignment
-            assign_tasks = [
-                self.dao.assign_task(task, executor_hotkey)
-                for task in tasks_to_assign
-            ]
-            assigned_results = await asyncio.gather(*assign_tasks, return_exceptions=True)
+            try:
+                assigned_results = await self.dao.batch_assign_tasks(tasks_to_assign, executor_hotkey)
+            except Exception as e:
+                logger.error(f"Batch assign failed: {e}")
+                assigned_results = []
             
             # Filter successful assignments, cache UUIDs, and enrich with miner data
             miners_dict = await self._get_miners()
             
             assigned_tasks = []
             for result in assigned_results:
-                if isinstance(result, Exception):
-                    logger.warning(f"Failed to assign task: {result}")
-                    continue
-                
                 # Cache UUID location
                 async with self._cache_lock:
                     self._uuid_cache[result['task_uuid']] = (
@@ -390,20 +429,23 @@ class TaskPoolManager:
         success: bool,
         result: Optional[Dict[str, Any]] = None,
         error_message: Optional[str] = None,
-        error_code: Optional[str] = None
+        error_code: Optional[str] = None,
+        submission_signature: Optional[str] = None
     ) -> Dict[str, str]:
         """
         Complete a task (success or failure).
         
+        For successful tasks, also saves the sample to database.
         Idempotent: if task already completed/deleted, just log and return success.
         
         Args:
             task_uuid: Task UUID
             executor_hotkey: Executor's hotkey
             success: Whether task succeeded
-            result: Task result (for success case)
+            result: Task result (for success case, must include score, latency_ms, extra)
             error_message: Error message (for failure case)
             error_code: Error code (for failure case)
+            submission_signature: Signature of submission (for success case)
             
         Returns:
             Status dict with 'status' and 'message' keys
@@ -443,7 +485,7 @@ class TaskPoolManager:
                     'message': 'Task already completed or removed'
                 }
             
-            # Step 3: Log completion attempt
+            # Step 3: Handle successful completion
             if success:
                 if not result:
                     raise ValueError(
@@ -451,6 +493,29 @@ class TaskPoolManager:
                         "This indicates a bug in the caller."
                     )
                 
+                # Get current block number (cached)
+                block_number = await self._get_current_block()
+                
+                # Save sample to database
+                try:
+                    await self.sample_dao.save_sample(
+                        miner_hotkey=task["miner_hotkey"],
+                        model_revision=task["model_revision"],
+                        model=task["model"],
+                        env=task["env"],
+                        task_id=str(task["task_id"]),
+                        score=result['score'],
+                        latency_ms=result['latency_ms'],
+                        extra=result.get('extra', {}),
+                        validator_hotkey=executor_hotkey,
+                        block_number=block_number,
+                        signature=submission_signature or "",
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to save sample for task {task_uuid}: {e}", exc_info=True)
+                    # Continue to log and complete task even if sample save fails
+                
+                # Log task completion
                 await self.logs_dao.log_task_complete(
                     miner_hotkey=task['miner_hotkey'],
                     task_uuid=task_uuid,

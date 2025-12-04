@@ -66,6 +66,8 @@ class ExecutorManager:
         self.workers: List[ExecutorWorker] = []
         self.running = False
         
+        self.api_client = create_api_client()
+        
         # Status tracking for incremental statistics
         self.last_status_time = None
         self.last_queue_stats = {}  # {env: queue_count}
@@ -109,7 +111,7 @@ class ExecutorManager:
             raise RuntimeError("Wallet not configured")
         
         logger.info(f"Using wallet hotkey: {self.wallet.hotkey.ss58_address[:16]}...")
-        
+
         # Create workers first
         self._create_workers()
         
@@ -137,6 +139,10 @@ class ExecutorManager:
         for worker in self.workers:
             await worker.stop()
         
+        # Close shared API client
+        if self.api_client:
+            await self.api_client.close()
+        
         logger.info("ExecutorManager stopped")
     
     async def wait(self):
@@ -150,13 +156,12 @@ class ExecutorManager:
     
     async def _fetch_queue_stats(self, metrics):
         """Fetch queue statistics from API for all environments."""
-        api_client = create_api_client()
         queue_stats = {}
         
         for m in metrics:
             env = m['env']
             try:
-                stats_response = await api_client.get(f"/tasks/pool/stats?env={env}")
+                stats_response = await self.api_client.get(f"/tasks/pool/stats?env={env}")
                 queue_stats[env] = stats_response.get('pending_count', 0) if isinstance(stats_response, dict) else 0
             except:
                 queue_stats[env] = 0

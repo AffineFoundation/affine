@@ -12,16 +12,13 @@ from affine.api.models import (
     SampleSubmitResponse,
 )
 from affine.api.dependencies import (
-    get_sample_results_dao,
     get_task_pool_manager,
     verify_executor_auth,
     rate_limit_read,
 )
 from affine.api.config import config
 from affine.core.models import SampleSubmission
-from affine.database.dao.sample_results import SampleResultsDAO
 from affine.api.services.task_pool import TaskPoolManager
-from affine.utils.subtensor import get_subtensor
 
 from affine.core.setup import logger
 
@@ -97,7 +94,6 @@ async def fetch_task(
 async def submit_sample_from_executor(
     submission: Dict[str, Any],
     executor_hotkey: str = Depends(verify_executor_auth),
-    sample_dao: SampleResultsDAO = Depends(get_sample_results_dao),
     task_pool: TaskPoolManager = Depends(get_task_pool_manager),
 ):
     """
@@ -106,8 +102,7 @@ async def submit_sample_from_executor(
     This endpoint:
     1. Verifies executor authentication via dependency (timestamp-based)
     2. Validates submission signature against task_uuid data
-    3. Saves sample to database (if successful)
-    4. Completes task via TaskPoolManager (releases lock, logs execution, deletes task)
+    3. Completes task via TaskPoolManager (saves sample, logs execution, deletes task)
     
     Headers (validated by verify_executor_auth dependency):
     - X-Hotkey: Executor's SS58 hotkey
@@ -148,43 +143,7 @@ async def submit_sample_from_executor(
     error_message = sample_sub.extra.get("error")
     is_success = error_message is None
     
-    # Save sample if task succeeded
-    if is_success:
-        # Get task to extract metadata
-        task = await task_pool.dao.get_task_by_uuid(sample_sub.task_uuid)
-        
-        if not task:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Task not found: {sample_sub.task_uuid}"
-            )
-        
-        # Get current block number
-        subtensor = await get_subtensor()
-        block_number = await subtensor.get_current_block()
-        
-        # Save sample
-        try:
-            await sample_dao.save_sample(
-                miner_hotkey=task["miner_hotkey"],
-                model_revision=task["model_revision"],
-                model=task["model"],
-                env=task["env"],
-                task_id=str(task["task_id"]),
-                score=sample_sub.score,
-                latency_ms=sample_sub.latency_ms,
-                extra=sample_sub.extra,
-                validator_hotkey=executor_hotkey,
-                block_number=block_number,
-                signature=sample_sub.signature,
-            )
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to save sample: {str(e)}"
-            )
-    
-    # Complete task via TaskPoolManager (handles lock release, logging, and deletion/retry)
+    # Complete task via TaskPoolManager (handles sample save, logging, and deletion/retry)
     result = await task_pool.complete_task(
         task_uuid=sample_sub.task_uuid,
         executor_hotkey=executor_hotkey,
@@ -192,10 +151,12 @@ async def submit_sample_from_executor(
         result={
             'score': sample_sub.score,
             'latency_ms': sample_sub.latency_ms,
+            'extra': sample_sub.extra,
             'execution_time_ms': sample_sub.extra.get('execution_time_ms', 0)
         } if is_success else None,
         error_message=error_message,
-        error_code="EXECUTION_ERROR"
+        error_code="EXECUTION_ERROR",
+        submission_signature=sample_sub.signature
     )
     
     # Build response message
@@ -230,10 +191,17 @@ async def get_pool_stats(
     - assigned_count: Number of assigned tasks
     - env: Environment name (if filtered)
     """
+    # Check if services are enabled
+    if not config.SERVICES_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Pool stats service is disabled (SERVICES_ENABLED=false)"
+        )
+    
     try:
         if env:
-            # Get stats using efficient COUNT query
-            stats = await task_pool.dao.get_pool_stats(env)
+            # Get stats using cached data (background refresh every 10s)
+            stats = await task_pool.get_pool_stats(env)
             
             return {
                 "env": env,

@@ -301,6 +301,92 @@ class TaskPoolDAO(BaseDAO):
         await self.put(task)
         return task
     
+    async def batch_assign_tasks(
+        self,
+        tasks: List[Dict[str, Any]],
+        executor_hotkey: str
+    ) -> List[Dict[str, Any]]:
+        """Batch assign multiple tasks to an executor.
+        
+        Uses BatchWriteItem for efficient bulk operations (25 items per batch).
+        Each task requires 2 operations: delete old + put new = optimal batching.
+        
+        Args:
+            tasks: List of task dicts
+            executor_hotkey: Executor's hotkey
+            
+        Returns:
+            List of updated tasks
+        """
+        if not tasks:
+            return []
+        
+        from affine.database.client import get_client
+        client = get_client()
+        
+        new_status = 'assigned'
+        assigned_at = int(time.time())
+        
+        # Prepare updated tasks
+        updated_tasks = []
+        for task in tasks:
+            new_sk = self._make_sk(task['env'], new_status, task['task_id'])
+            new_gsi1_pk = self._make_gsi1_pk(task['env'], new_status)
+            new_gsi1_sk = self._make_gsi1_sk(
+                task['miner_hotkey'],
+                task['model_revision'],
+                task['task_id']
+            )
+            
+            updated_task = {
+                **task,
+                'sk': new_sk,
+                'status': new_status,
+                'assigned_to': executor_hotkey,
+                'assigned_at': assigned_at,
+                'gsi1_pk': new_gsi1_pk,
+                'gsi1_sk': new_gsi1_sk,
+            }
+            updated_tasks.append(updated_task)
+        
+        # Build batch requests (delete old + put new for each task)
+        all_requests = []
+        for original_task, updated_task in zip(tasks, updated_tasks):
+            # Delete old record
+            all_requests.append({
+                'DeleteRequest': {
+                    'Key': {
+                        'pk': {'S': original_task['pk']},
+                        'sk': {'S': original_task['sk']}
+                    }
+                }
+            })
+            # Put new record
+            all_requests.append({
+                'PutRequest': {
+                    'Item': self._serialize(updated_task)
+                }
+            })
+        
+        # Execute in batches of 25 (DynamoDB limit)
+        batch_size = 25
+        for i in range(0, len(all_requests), batch_size):
+            batch = all_requests[i:i + batch_size]
+            
+            params = {
+                'RequestItems': {
+                    self.table_name: batch
+                }
+            }
+            
+            try:
+                await client.batch_write_item(**params)
+            except Exception as e:
+                logger.error(f"Batch assign failed for batch starting at {i}: {e}")
+                raise
+        
+        return updated_tasks
+    
     async def complete_task(self, task: Dict[str, Any]) -> bool:
         """Mark task as completed and delete it from pool.
         
