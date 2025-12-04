@@ -59,8 +59,8 @@ class ValidatorService:
         self.network = network
         self.network_address = network_address
         
-        # API client
-        self.api_client = create_api_client()
+        # API client (lazy initialization)
+        self.api_client = None
         
         # Weight setter
         self.weight_setter = WeightSetter(
@@ -89,6 +89,10 @@ class ValidatorService:
         Returns:
             Dictionary with weights data or None if failed
         """
+        # Lazy initialization of API client
+        if self.api_client is None:
+            self.api_client = await create_api_client()
+        
         try:
             response = await self.api_client.get("/scores/weights/latest")
             
@@ -280,6 +284,10 @@ class ValidatorService:
             
             # Get burn percentage
             try:
+                # Ensure API client is initialized
+                if self.api_client is None:
+                    self.api_client = await create_api_client()
+                
                 burn_config = await self.api_client.get("/config/validator_burn_percentage")
                 burn_percentage = float(burn_config.get("param_value", 0.0))
                 if burn_percentage > 0:

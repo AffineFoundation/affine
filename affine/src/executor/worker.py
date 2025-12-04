@@ -62,7 +62,7 @@ class ExecutorWorker:
         self.running = False
         self.metrics = WorkerMetrics()
         
-        # API client for affine backend
+        # API client for affine backend (will be created with GlobalSessionManager)
         self.api_client: Optional[APIClient] = None
         
         # Environment executor (will be initialized lazily)
@@ -100,7 +100,7 @@ class ExecutorWorker:
             raise RuntimeError("Wallet not configured for worker")
         
         # Initialize API client
-        self.api_client = create_api_client()
+        self.api_client = await create_api_client()
         
         # Initialize environment executor
         await self._init_env_executor()
@@ -140,6 +140,7 @@ class ExecutorWorker:
         # Wait for all tasks to complete
         if self.executor_tasks:
             await asyncio.gather(*self.executor_tasks, return_exceptions=True)
+        
         
         logger.info(f"[{self.env}] Worker stopped, cancelled {len(self.executor_tasks)} executor tasks")
     
@@ -354,8 +355,6 @@ class ExecutorWorker:
         Continuously fetches tasks when queue is low, maintaining buffer of
         max_concurrent_tasks * 2 tasks in queue.
         """
-        logger.info(f"[{self.env}] Fetch loop started (batch_size={self.batch_size})")
-        
         while self.running:
             try:
                 # Check queue size before fetching

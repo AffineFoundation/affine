@@ -347,7 +347,7 @@ async def get_sample_command(
         task_id: Task ID
     """
     
-    client = create_api_client()
+    client = await create_api_client()
     
     endpoint = f"/samples/uid/{uid}/{env}/{task_id}"
     data = await client.get(endpoint)
@@ -362,7 +362,7 @@ async def get_miner_command(uid: int):
     Args:
         uid: Miner UID
     """
-    client = create_api_client()
+    client = await create_api_client()
 
     endpoint = f"/miners/uid/{uid}"
     data = await client.get(endpoint)
@@ -377,7 +377,7 @@ async def get_weights_command():
     Returns the most recent score snapshot with normalized weights
     for all miners.
     """
-    client = create_api_client()
+    client = await create_api_client()
 
     endpoint = "/scores/weights/latest"
     data = await client.get(endpoint)
@@ -392,7 +392,7 @@ async def get_scores_command(top: int = 32):
     Args:
         top: Number of top miners to return (default: 256)
     """
-    client = create_api_client()
+    client = await create_api_client()
 
     endpoint = f"/scores/latest?top={top}"
     data = await client.get(endpoint)
@@ -407,7 +407,7 @@ async def get_score_command(uid: int):
     Args:
         uid: Miner UID
     """
-    client = create_api_client()
+    client = await create_api_client()
 
     endpoint = f"/scores/uid/{uid}"
     data = await client.get(endpoint)
@@ -424,7 +424,7 @@ async def get_pool_command(uid: int, env: str, full: bool = False):
         env: Environment name (e.g., agentgym:webshop)
         full: If True, print full task_ids lists without truncation
     """
-    client = create_api_client()
+    client = await create_api_client()
 
     endpoint = f"/samples/pool/uid/{uid}/{env}"
     data = await client.get(endpoint)

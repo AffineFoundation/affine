@@ -44,8 +44,11 @@ async def lifespan(app: FastAPI):
             from affine.api.dependencies import get_task_pool_manager
             
             # Initialize TaskPoolManager singleton via dependency injection
-            _ = get_task_pool_manager()
+            task_pool_manager = get_task_pool_manager()
             logger.info("TaskPoolManager initialized")
+            
+            # Warmup caches (preload assigned tasks into UUID cache)
+            await task_pool_manager.warmup_caches()
             
         except Exception as e:
             logger.error(f"Failed to initialize TaskPoolManager: {e}")
