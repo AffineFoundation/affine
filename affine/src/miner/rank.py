@@ -18,7 +18,7 @@ async def fetch_latest_scores() -> Dict[str, Any]:
     Returns:
         Dict with block_number, calculated_at, and scores list
     """
-    api_client = create_api_client()
+    api_client = await create_api_client()
     
     logger.debug("Fetching latest scores from API...")
     data = await api_client.get("/scores/latest?top=256")
@@ -41,7 +41,7 @@ async def fetch_miner_scores_at_block(block_number: int) -> Dict[int, Dict[str, 
     Returns:
         Dict mapping UID to detailed score data
     """
-    api_client = create_api_client()
+    api_client = await create_api_client()
     
     logger.debug(f"Fetching detailed scores for block {block_number}...")
     
@@ -58,7 +58,7 @@ async def fetch_environments() -> List[str]:
     Returns:
         List of environment names enabled for scoring
     """
-    api_client = create_api_client()
+    api_client = await create_api_client()
     
     try:
         config = await api_client.get("/config/environments")
@@ -90,7 +90,7 @@ async def fetch_scorer_config() -> dict:
     Returns:
         Dict with scoring configuration parameters
     """
-    api_client = create_api_client()
+    api_client = await create_api_client()
     
     try:
         weights_data = await api_client.get("/scores/weights/latest")
