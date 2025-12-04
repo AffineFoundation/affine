@@ -66,7 +66,7 @@ class ExecutorManager:
         self.workers: List[ExecutorWorker] = []
         self.running = False
         
-        self.api_client = create_api_client()
+        self.api_client = None
         
         # Status tracking for incremental statistics
         self.last_status_time = None
@@ -100,6 +100,8 @@ class ExecutorManager:
             return
         
         logger.info("Starting ExecutorManager...")
+
+        self.api_client = await create_api_client()
 
         coldkey = os.getenv("BT_WALLET_COLD", "default")
         hotkey = os.getenv("BT_WALLET_HOT", "default")
@@ -155,18 +157,23 @@ class ExecutorManager:
         return [worker.get_metrics() for worker in self.workers]
     
     async def _fetch_queue_stats(self, metrics):
-        """Fetch queue statistics from API for all environments."""
-        queue_stats = {}
-        
-        for m in metrics:
-            env = m['env']
+        """Fetch queue statistics from API for all environments (in parallel)."""
+        async def fetch_env_stats(env: str) -> tuple[str, int]:
+            """Fetch stats for a single env."""
             try:
                 stats_response = await self.api_client.get(f"/tasks/pool/stats?env={env}")
-                queue_stats[env] = stats_response.get('pending_count', 0) if isinstance(stats_response, dict) else 0
-            except:
-                queue_stats[env] = 0
+                count = stats_response.get('pending_count', 0) if isinstance(stats_response, dict) else 0
+                return (env, count)
+            except Exception as e:
+                logger.debug(f"Failed to fetch stats for {env}: {e}")
+                return (env, 0)
         
-        return queue_stats
+        # Parallel fetch all envs
+        tasks = [fetch_env_stats(m['env']) for m in metrics]
+        results = await asyncio.gather(*tasks)
+        
+        # Build dict from results
+        return {env: count for env, count in results}
     
     async def print_status(self):
         """Print status of all workers in compact format with incremental statistics."""
@@ -254,7 +261,7 @@ async def fetch_system_config() -> dict:
     Raises:
         Exception: If failed to fetch config from API
     """
-    api_client = create_api_client()
+    api_client = await create_api_client()
     config = await api_client.get("/config/environments")
 
     if isinstance(config, dict):

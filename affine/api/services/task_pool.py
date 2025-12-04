@@ -115,8 +115,16 @@ class TaskPoolManager:
     Uses background refresh for miner counts to avoid blocking fetch requests.
     """
     
-    def __init__(self, count_cache_ttl: int = 30, miners_cache_ttl: int = 60, stats_cache_ttl: int = 60, block_cache_ttl: int = 10):
-        """Initialize TaskPoolManager with caches."""
+    def __init__(self, count_cache_ttl: int = 30, miners_cache_ttl: int = 60, stats_cache_ttl: int = 60, block_cache_ttl: int = 10, warmup: bool = True):
+        """Initialize TaskPoolManager with caches.
+        
+        Args:
+            count_cache_ttl: TTL for miner count cache (seconds)
+            miners_cache_ttl: TTL for miners cache (seconds)
+            stats_cache_ttl: TTL for pool stats cache (seconds)
+            block_cache_ttl: TTL for block number cache (seconds)
+            warmup: Whether to warmup caches on startup (default: True)
+        """
         self.dao = TaskPoolDAO()
         self.logs_dao = ExecutionLogsDAO()
         self.miners_dao = MinersDAO()
@@ -144,7 +152,11 @@ class TaskPoolManager:
         self._uuid_cache: Dict[str, Tuple[str, str]] = {}
         self._cache_lock = asyncio.Lock()
         
-        logger.info(f"TaskPoolManager initialized (count_cache_ttl={count_cache_ttl}s, miners_cache_ttl={miners_cache_ttl}s, stats_cache_ttl={stats_cache_ttl}s, block_cache_ttl={block_cache_ttl}s)")
+        # Warmup flag
+        self._warmup_enabled = warmup
+        self._warmup_done = False
+        
+        logger.info(f"TaskPoolManager initialized (count_cache_ttl={count_cache_ttl}s, miners_cache_ttl={miners_cache_ttl}s, stats_cache_ttl={stats_cache_ttl}s, block_cache_ttl={block_cache_ttl}s, warmup={warmup})")
     
     async def _get_miner_counts(self, env: str) -> Dict[str, int]:
         """Get task counts per miner with non-blocking cache refresh."""
@@ -175,6 +187,43 @@ class TaskPoolManager:
         
         return await self._block_cache.get(fetch_block)
     
+    async def warmup_caches(self):
+        """Warmup caches on startup by preloading assigned tasks into UUID cache.
+        
+        Strategy:
+        - Load all assigned tasks via DAO
+        - Populate UUID cache with (uuid -> (pk, sk)) mappings
+        - This eliminates DB queries during submit for already-assigned tasks
+        
+        This is called automatically during server startup if warmup=True.
+        """
+        if not self._warmup_enabled or self._warmup_done:
+            return
+        
+        try:
+            logger.info("TaskPoolManager cache warmup started...")
+            start_time = time.time()
+            
+            # Preload all assigned tasks into UUID cache via DAO
+            assigned_tasks = await self.dao.get_all_assigned_tasks()
+            
+            # Populate UUID cache
+            async with self._cache_lock:
+                for task in assigned_tasks:
+                    self._uuid_cache[task['task_uuid']] = (task['pk'], task['sk'])
+            
+            elapsed = time.time() - start_time
+            logger.info(
+                f"TaskPoolManager cache warmup completed: "
+                f"preloaded {len(assigned_tasks)} assigned tasks in {elapsed:.2f}s"
+            )
+            
+            self._warmup_done = True
+            
+        except Exception as e:
+            logger.error(f"TaskPoolManager cache warmup failed: {e}", exc_info=True)
+            # Non-fatal: continue startup, cache will populate lazily
+    
     async def get_pool_stats(self, env: str) -> Dict[str, int]:
         """Get pool statistics for an environment with caching.
         
@@ -201,52 +250,24 @@ class TaskPoolManager:
         self,
         miner_counts: Dict[str, int],
         count: int,
-        max_weight_ratio: float = 2.0
     ) -> List[str]:
-        """Select miners using weighted random sampling without replacement.
+        """Select miners using uniform random sampling.
         
-        Anti-starvation: max probability ratio is capped at max_weight_ratio.
+        Simplified: randomly shuffle and take first `count` miners.
         
         Args:
             miner_counts: Dict mapping miner_key -> pending task count
             count: Number of miners to select
-            max_weight_ratio: Max ratio between highest and lowest weight (default: 2.0)
         
         Returns:
             List of selected miner_keys (no duplicates, length <= count)
         """
         if not miner_counts:
             return []
-        
-        # Calculate base weight (handles min=0 case)
-        counts = list(miner_counts.values())
-        non_zero = [c for c in counts if c > 0]
-        base_weight = min(non_zero) if non_zero else 1
-        
-        # Cap all weights: weight = min(task_count, base_weight * max_ratio)
-        # Add base_weight to ensure min weight is not 0
-        weights = [
-            (key, min(count, base_weight * max_weight_ratio) + base_weight)
-            for key, count in miner_counts.items()
-        ]
-        
-        # Weighted sampling without replacement
-        selected = []
-        remaining = weights.copy()
-        
-        for _ in range(min(count, len(remaining))):
-            total = sum(w for _, w in remaining)
-            rand = random.uniform(0, total)
-            
-            cumulative = 0
-            for item in remaining:
-                cumulative += item[1]
-                if rand <= cumulative:
-                    selected.append(item[0])
-                    remaining.remove(item)
-                    break
-        
-        return selected
+
+        miner_keys = list(miner_counts.keys())
+        random.shuffle(miner_keys)
+        return miner_keys[:count]
     
     async def _get_task_location(
         self, 
@@ -330,7 +351,6 @@ class TaskPoolManager:
             selected_miners = self._select_miners_weighted(
                 all_miner_counts,
                 num_miners_to_query,
-                max_weight_ratio=2.0
             )
             
             # Parallel query all selected miners

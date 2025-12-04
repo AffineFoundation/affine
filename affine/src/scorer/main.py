@@ -22,7 +22,7 @@ from affine.utils.api_client import create_api_client
 
 async def fetch_scoring_data() -> dict:
     """Fetch scoring data from API with default timeout."""
-    api_client = create_api_client()
+    api_client = await create_api_client()
     
     logger.info("Fetching scoring data from API...")
     data = await api_client.get("/samples/scoring")
@@ -43,7 +43,7 @@ async def fetch_system_config() -> dict:
     Returns:
         System config dict with 'environments' key
     """
-    api_client = create_api_client()
+    api_client = await create_api_client()
     
     try:
         config = await api_client.get("/config/environments")

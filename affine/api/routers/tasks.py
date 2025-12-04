@@ -5,6 +5,7 @@ Endpoints for managing sampling tasks with weighted random selection.
 """
 
 import time
+import asyncio
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, status
 from affine.api.models import (
@@ -143,36 +144,43 @@ async def submit_sample_from_executor(
     error_message = sample_sub.extra.get("error")
     is_success = error_message is None
     
-    # Complete task via TaskPoolManager (handles sample save, logging, and deletion/retry)
-    result = await task_pool.complete_task(
-        task_uuid=sample_sub.task_uuid,
-        executor_hotkey=executor_hotkey,
-        success=is_success,
-        result={
-            'score': sample_sub.score,
-            'latency_ms': sample_sub.latency_ms,
-            'extra': sample_sub.extra,
-            'execution_time_ms': sample_sub.extra.get('execution_time_ms', 0)
-        } if is_success else None,
-        error_message=error_message,
-        error_code="EXECUTION_ERROR",
-        submission_signature=sample_sub.signature
-    )
+    # Process submission in background (do not await)
+    # This allows the HTTP response to return immediately
+    async def _background_submit():
+        """Background task to process submission asynchronously."""
+        try:
+            await task_pool.complete_task(
+                task_uuid=sample_sub.task_uuid,
+                executor_hotkey=executor_hotkey,
+                success=is_success,
+                result={
+                    'score': sample_sub.score,
+                    'latency_ms': sample_sub.latency_ms,
+                    'extra': sample_sub.extra,
+                    'execution_time_ms': sample_sub.extra.get('execution_time_ms', 0)
+                } if is_success else None,
+                error_message=error_message,
+                error_code="EXECUTION_ERROR",
+                submission_signature=sample_sub.signature
+            )
+            logger.debug(
+                f"Background submit completed: task_uuid={sample_sub.task_uuid[:8]}... "
+                f"score={sample_sub.score:.4f}"
+            )
+        except Exception as e:
+            logger.error(
+                f"Background submit failed: task_uuid={sample_sub.task_uuid[:8]}... "
+                f"error={e}", exc_info=True
+            )
     
-    # Build response message
-    if result['status'] == 'completed':
-        message = f"Sample submitted successfully (score={sample_sub.score:.4f})"
-    elif result['status'] == 'not_found':
-        message = "Task already completed or removed"
-    elif result['status'] == 'failed':
-        message = result.get('message', 'Task failed')
-    else:
-        message = result.get('message', 'Task processing completed')
+    # Schedule background task (fire-and-forget)
+    asyncio.create_task(_background_submit())
     
+    # Return immediately without waiting for database operations
     return SampleSubmitResponse(
         task_id=sample_sub.task_uuid,
         created_at=int(time.time()),
-        message=message
+        message=f"Sample accepted for processing (score={sample_sub.score:.4f})"
     )
 
 @router.get("/pool/stats", dependencies=[Depends(rate_limit_read)])

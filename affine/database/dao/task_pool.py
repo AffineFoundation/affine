@@ -85,7 +85,7 @@ class TaskPoolDAO(BaseDAO):
                 'assigned_to': None,
                 'assigned_at': None,
                 'retry_count': 0,
-                'max_retries': 10,
+                'max_retries': 5,
                 'last_error': None,
                 'last_error_code': None,
                 'last_failed_at': None,
@@ -855,3 +855,42 @@ class TaskPoolDAO(BaseDAO):
             stats[status] = total_count
         
         return stats
+    
+    async def get_all_assigned_tasks(self) -> List[Dict[str, Any]]:
+        """Get all assigned tasks across all environments for cache warmup.
+        
+        Uses FilterExpression to scan only assigned tasks.
+        This is a one-time startup operation, Scan is acceptable.
+        
+        Returns:
+            List of assigned tasks with pk, sk, task_uuid fields
+        """
+        from affine.database.client import get_client
+        client = get_client()
+        
+        params = {
+            'TableName': self.table_name,
+            'FilterExpression': '#status = :status',
+            'ExpressionAttributeNames': {'#status': 'status'},
+            'ExpressionAttributeValues': {':status': {'S': 'assigned'}},
+            'ProjectionExpression': 'pk, sk, task_uuid'
+        }
+        
+        all_tasks = []
+        last_key = None
+        
+        while True:
+            if last_key:
+                params['ExclusiveStartKey'] = last_key
+            
+            response = await client.scan(**params)
+            items = response.get('Items', [])
+            
+            for item in items:
+                all_tasks.append(self._deserialize(item))
+            
+            last_key = response.get('LastEvaluatedKey')
+            if not last_key:
+                break
+        
+        return all_tasks
