@@ -14,7 +14,7 @@ import asyncio
 import textwrap
 from pathlib import Path
 from typing import Optional
-from affine.utils.api_client import create_api_client
+from affine.utils.api_client import create_api_client, cli_api_client
 from affine.core.setup import logger, NETUID
 
 
@@ -347,13 +347,12 @@ async def get_sample_command(
         task_id: Task ID
     """
     
-    client = await create_api_client()
-    
-    endpoint = f"/samples/uid/{uid}/{env}/{task_id}"
-    data = await client.get(endpoint)
-    
-    if data:
-      print(json.dumps(data, indent=2, ensure_ascii=False))
+    async with cli_api_client() as client:
+        endpoint = f"/samples/uid/{uid}/{env}/{task_id}"
+        data = await client.get(endpoint)
+        
+        if data:
+            print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
 async def get_miner_command(uid: int):
@@ -362,12 +361,11 @@ async def get_miner_command(uid: int):
     Args:
         uid: Miner UID
     """
-    client = await create_api_client()
-
-    endpoint = f"/miners/uid/{uid}"
-    data = await client.get(endpoint)
-    if data:
-        print(json.dumps(data, indent=2, ensure_ascii=False))
+    async with cli_api_client() as client:
+        endpoint = f"/miners/uid/{uid}"
+        data = await client.get(endpoint)
+        if data:
+            print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
 
@@ -377,13 +375,12 @@ async def get_weights_command():
     Returns the most recent score snapshot with normalized weights
     for all miners.
     """
-    client = await create_api_client()
-
-    endpoint = "/scores/weights/latest"
-    data = await client.get(endpoint)
-    
-    if data:
-        print(json.dumps(data, indent=2, ensure_ascii=False))
+    async with cli_api_client() as client:
+        endpoint = "/scores/weights/latest"
+        data = await client.get(endpoint)
+        
+        if data:
+            print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
 async def get_scores_command(top: int = 32):
@@ -392,13 +389,12 @@ async def get_scores_command(top: int = 32):
     Args:
         top: Number of top miners to return (default: 256)
     """
-    client = await create_api_client()
-
-    endpoint = f"/scores/latest?top={top}"
-    data = await client.get(endpoint)
-    
-    if data:
-        print(json.dumps(data, indent=2, ensure_ascii=False))
+    async with cli_api_client() as client:
+        endpoint = f"/scores/latest?top={top}"
+        data = await client.get(endpoint)
+        
+        if data:
+            print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
 async def get_score_command(uid: int):
@@ -407,13 +403,12 @@ async def get_score_command(uid: int):
     Args:
         uid: Miner UID
     """
-    client = await create_api_client()
-
-    endpoint = f"/scores/uid/{uid}"
-    data = await client.get(endpoint)
-    
-    if data:
-        print(json.dumps(data, indent=2, ensure_ascii=False))
+    async with cli_api_client() as client:
+        endpoint = f"/scores/uid/{uid}"
+        data = await client.get(endpoint)
+        
+        if data:
+            print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
 async def get_pool_command(uid: int, env: str, full: bool = False):
@@ -424,47 +419,46 @@ async def get_pool_command(uid: int, env: str, full: bool = False):
         env: Environment name (e.g., agentgym:webshop)
         full: If True, print full task_ids lists without truncation
     """
-    client = await create_api_client()
-
-    endpoint = f"/samples/pool/uid/{uid}/{env}"
-    data = await client.get(endpoint)
-    
-    if data:
-        if data.get("success") is False:
-            print(json.dumps({
-                "error": data.get("error"),
-                "status_code": data.get("status_code")
-            }, indent=2, ensure_ascii=False))
-            return
-        if full:
-            # Print full data without truncation
-            print(json.dumps(data, indent=2, ensure_ascii=False))
-        else:
-            # Format output for better readability
-            # Show summary first, then task_ids ranges instead of full lists
-            summary = {
-                "uid": data.get("uid"),
-                "hotkey": data.get("hotkey"),
-                "model_revision": data.get("model_revision"),
-                "env": data.get("env"),
-                "sampling_range": data.get("sampling_range"),
-                "total_tasks": data.get("total_tasks"),
-                "sampled_count": data.get("sampled_count"),
-                "pool_count": data.get("pool_count"),
-                "missing_count": data.get("missing_count"),
-            }
-            
-            # Helper function to format task_id list as ranges
-            def format_task_ids(task_ids):
-                if not task_ids:
-                    return "[]"
-                if len(task_ids) <= 10:
-                    return str(task_ids)
-                # Show first 5 and last 5
-                return f"[{', '.join(map(str, task_ids[:5]))}, ..., {', '.join(map(str, task_ids[-5:]))}] (total: {len(task_ids)})"
-            
-            summary["sampled_task_ids"] = format_task_ids(data.get("sampled_task_ids", []))
-            summary["pool_task_ids"] = format_task_ids(data.get("pool_task_ids", []))
-            summary["missing_task_ids"] = format_task_ids(data.get("missing_task_ids", []))
-            
-            print(json.dumps(summary, indent=2, ensure_ascii=False))
+    async with cli_api_client() as client:
+        endpoint = f"/samples/pool/uid/{uid}/{env}"
+        data = await client.get(endpoint)
+        
+        if data:
+            if data.get("success") is False:
+                print(json.dumps({
+                    "error": data.get("error"),
+                    "status_code": data.get("status_code")
+                }, indent=2, ensure_ascii=False))
+                return
+            if full:
+                # Print full data without truncation
+                print(json.dumps(data, indent=2, ensure_ascii=False))
+            else:
+                # Format output for better readability
+                # Show summary first, then task_ids ranges instead of full lists
+                summary = {
+                    "uid": data.get("uid"),
+                    "hotkey": data.get("hotkey"),
+                    "model_revision": data.get("model_revision"),
+                    "env": data.get("env"),
+                    "sampling_range": data.get("sampling_range"),
+                    "total_tasks": data.get("total_tasks"),
+                    "sampled_count": data.get("sampled_count"),
+                    "pool_count": data.get("pool_count"),
+                    "missing_count": data.get("missing_count"),
+                }
+                
+                # Helper function to format task_id list as ranges
+                def format_task_ids(task_ids):
+                    if not task_ids:
+                        return "[]"
+                    if len(task_ids) <= 10:
+                        return str(task_ids)
+                    # Show first 5 and last 5
+                    return f"[{', '.join(map(str, task_ids[:5]))}, ..., {', '.join(map(str, task_ids[-5:]))}] (total: {len(task_ids)})"
+                
+                summary["sampled_task_ids"] = format_task_ids(data.get("sampled_task_ids", []))
+                summary["pool_task_ids"] = format_task_ids(data.get("pool_task_ids", []))
+                summary["missing_task_ids"] = format_task_ids(data.get("missing_task_ids", []))
+                
+                print(json.dumps(summary, indent=2, ensure_ascii=False))
