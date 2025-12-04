@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 """
-Executor Main Entry Point
+Executor Main Entry Point - Multiprocess Architecture
 
-Runs executor workers for multiple environments concurrently.
-Each environment gets its own thread/worker.
+Runs executor workers in separate subprocesses for better isolation and parallelism.
+Each environment gets its own subprocess with independent event loop and resources.
 """
 
 import signal
 import asyncio
 import os
 import click
-from typing import List
+import time
+import multiprocessing
+import queue
+from typing import List, Dict, Any, Optional
 import bittensor as bt
 
-from affine.src.executor.worker import ExecutorWorker
 from affine.core.setup import logger, setup_logging
 from affine.utils.api_client import create_api_client
+from affine.src.executor.worker_process import WorkerProcess
+from affine.src.executor.config import get_max_concurrent
 
 
 def _format_change(value: int) -> str:
@@ -34,8 +38,18 @@ def _format_env_queue(env_name: str, queue_count: int, change: int) -> str:
     return f"{env_short}={queue_count}({change_str})" if change_str else f"{env_short}={queue_count}"
 
 
-def _format_env_stats(env_name: str, completed: int, success_rate: int, change: int, running: int, pending: int, fetch_avg_ms: float, submit_failed_change: int = 0, rate_per_hour: float = 0.0) -> str:
-    """Format environment completion stats with running, pending tasks, fetch latency, submit failures, and sampling rate."""
+def _format_env_stats(
+    env_name: str,
+    completed: int,
+    success_rate: int,
+    change: int,
+    running: int,
+    pending: int,
+    fetch_avg_ms: float,
+    submit_failed_change: int = 0,
+    rate_per_hour: float = 0.0
+) -> str:
+    """Format environment completion stats."""
     env_short = env_name.split(':')[-1]
     change_str = f" finished:{_format_change(change)}" if change else " finished:0"
     submit_fail_str = f" submit_failed:{_format_change(submit_failed_change)}" if submit_failed_change else ""
@@ -44,125 +58,151 @@ def _format_env_stats(env_name: str, completed: int, success_rate: int, change: 
 
 
 class ExecutorManager:
-    """
-    Manages multiple executor workers.
-    
-    Each environment runs in its own async task/worker.
-    """
+    """Main process manager for executor workers."""
     
     def __init__(
         self,
         envs: List[str],
-        max_concurrent_tasks: int = 5,
+        verbosity: int = 1,
     ):
-        """
-        Initialize ExecutorManager.
-        
-        Args:
-            envs: List of environments to execute tasks for
-            max_concurrent_tasks: Maximum concurrent tasks per env (default: 5)
-        """
         self.envs = envs
-        self.max_concurrent_tasks = max_concurrent_tasks
+        self.verbosity = verbosity
         
-        self.workers: List[ExecutorWorker] = []
+        # IPC queue for stats
+        self.stats_queue = multiprocessing.Queue()
+        
+        # Worker processes
+        self.worker_processes: List[WorkerProcess] = []
         self.running = False
         
+        # Stats tracking
+        self.aggregated_stats: Dict[str, Dict] = {}
+        self.last_status_time = None
+        self.last_queue_stats = {}
+        self.last_completed_stats = {}
+        self.last_submit_failed_stats = {}
+        
+        # Wallet and API client (main process only)
+        self.wallet = None
         self.api_client = None
         
-        # Status tracking for incremental statistics
-        self.last_status_time = None
-        self.last_queue_stats = {}  # {env: queue_count}
-        self.last_completed_stats = {}  # {env: completed_count}
-        self.last_submit_failed_stats = {}  # {env: submit_failed_count}
-        
+        # Log environment concurrency configuration
+        env_config_str = ", ".join([f"{env}={get_max_concurrent(env)}" for env in envs])
         logger.info(
             f"ExecutorManager initialized for {len(envs)} environments "
-            f"(max_concurrent: {max_concurrent_tasks})"
+            f"({env_config_str})"
         )
     
-    def _create_workers(self):
-        """Create worker instances for each environment."""
-        self.workers = []
-        
-        for idx, env in enumerate(self.envs):
-            worker = ExecutorWorker(
-                worker_id=idx,
-                env=env,
-                wallet=self.wallet,
-                max_concurrent_tasks=self.max_concurrent_tasks,
-                batch_size=20,  # Fetch 20 tasks per request
-            )
-            self.workers.append(worker)
-            logger.debug(f"Created worker {idx} for {env}")
-    
     async def start(self):
-        """Start all workers."""
+        """Start all worker processes."""
         if self.running:
             logger.warning("ExecutorManager already running")
             return
         
         logger.info("Starting ExecutorManager...")
-
-        self.api_client = await create_api_client()
-
+        
+        # Load wallet
         coldkey = os.getenv("BT_WALLET_COLD", "default")
         hotkey = os.getenv("BT_WALLET_HOT", "default")
         self.wallet = bt.wallet(name=coldkey, hotkey=hotkey)
-
-        # Validate wallet
+        
         if not self.wallet:
-            logger.error("No wallet configured. Set WALLET_NAME and WALLET_HOTKEY environment variables.")
+            logger.error("No wallet configured. Set BT_WALLET_COLD and BT_WALLET_HOT environment variables.")
             raise RuntimeError("Wallet not configured")
         
         logger.info(f"Using wallet hotkey: {self.wallet.hotkey.ss58_address[:16]}...")
-
-        # Create workers first
-        self._create_workers()
         
-        # Initialize all workers serially (initialization must be serial)
-        for worker in self.workers:
-            await worker.initialize()
+        # Create API client
+        self.api_client = await create_api_client()
         
-        # Start all workers (start() just kicks off background loops, returns immediately)
-        for worker in self.workers:
-            worker.start()
-
+        # Create and start worker processes
+        for idx, env in enumerate(self.envs):
+            # Get max concurrent tasks for this specific environment
+            max_concurrent = get_max_concurrent(env)
+            worker_proc = WorkerProcess(
+                worker_id=idx,
+                env=env,
+                wallet_name=coldkey,
+                wallet_hotkey=hotkey,
+                max_concurrent_tasks=max_concurrent,
+                batch_size=20,
+                stats_queue=self.stats_queue,
+                verbosity=self.verbosity,
+            )
+            worker_proc.start()
+            self.worker_processes.append(worker_proc)
+        
         self.running = True
         
-        logger.info(f"Started {len(self.workers)} workers")
+        # Start background tasks
+        asyncio.create_task(self._stats_collector())
+        asyncio.create_task(self._health_checker())
+        
+        logger.info(f"Started {len(self.worker_processes)} worker processes")
+    
+    async def _stats_collector(self):
+        """Collect stats from worker processes."""
+        while self.running:
+            try:
+                try:
+                    stats = self.stats_queue.get_nowait()
+                    env = stats['env']
+                    self.aggregated_stats[env] = stats
+                except queue.Empty:
+                    pass
+                
+                await asyncio.sleep(0.1)
+                
+            except Exception as e:
+                logger.error(f"Stats collector error: {e}")
+                await asyncio.sleep(1)
+    
+    async def _health_checker(self):
+        """Check worker process health and restart if needed."""
+        while self.running:
+            try:
+                for worker_proc in self.worker_processes:
+                    if not worker_proc.is_alive():
+                        logger.warning(
+                            f"Worker {worker_proc.env} died (PID: {worker_proc.process.pid}), "
+                            "restarting..."
+                        )
+                        worker_proc.start()
+                
+                await asyncio.sleep(10)
+                
+            except Exception as e:
+                logger.error(f"Health checker error: {e}")
+                await asyncio.sleep(1)
     
     async def stop(self):
-        """Stop all workers gracefully."""
+        """Stop all worker processes."""
         if not self.running:
             return
         
         logger.info("Stopping ExecutorManager...")
         self.running = False
         
-        # Stop all workers
-        for worker in self.workers:
-            await worker.stop()
+        for worker_proc in self.worker_processes:
+            worker_proc.terminate()
         
-        # Close shared API client
         if self.api_client:
             await self.api_client.close()
         
         logger.info("ExecutorManager stopped")
     
     async def wait(self):
-        """Wait for shutdown signal (workers run in their own loops)."""
+        """Wait for shutdown signal."""
         while self.running:
             await asyncio.sleep(1)
     
     def get_all_metrics(self):
-        """Get metrics from all workers."""
-        return [worker.get_metrics() for worker in self.workers]
+        """Get aggregated metrics from all workers."""
+        return list(self.aggregated_stats.values())
     
     async def _fetch_queue_stats(self, metrics):
-        """Fetch queue statistics from API for all environments (in parallel)."""
-        async def fetch_env_stats(env: str) -> tuple[str, int]:
-            """Fetch stats for a single env."""
+        """Fetch queue statistics from API for all environments."""
+        async def fetch_env_stats(env: str):
             try:
                 stats_response = await self.api_client.get(f"/tasks/pool/stats?env={env}")
                 count = stats_response.get('pending_count', 0) if isinstance(stats_response, dict) else 0
@@ -171,34 +211,31 @@ class ExecutorManager:
                 logger.debug(f"Failed to fetch stats for {env}: {e}")
                 return (env, 0)
         
-        # Parallel fetch all envs
         tasks = [fetch_env_stats(m['env']) for m in metrics]
         results = await asyncio.gather(*tasks)
         
-        # Build dict from results
         return {env: count for env, count in results}
     
     async def print_status(self):
-        """Print status of all workers in compact format with incremental statistics."""
-        import time
-        
+        """Print status of all workers."""
         try:
             current_time = time.time()
             time_delta = int(current_time - self.last_status_time) if self.last_status_time else 0
             metrics = self.get_all_metrics()
-
-            # Fetch queue statistics
+            
+            if not metrics:
+                logger.info("[STATUS] No worker metrics available yet")
+                return
+            
             queue_stats = await self._fetch_queue_stats(metrics)
             total_queue = sum(queue_stats.values())
             
-            # Calculate queue changes
             env_queue_changes = {
                 env: current - self.last_queue_stats.get(env, current)
                 for env, current in queue_stats.items()
             }
             total_queue_change = sum(env_queue_changes.values())
             
-            # Build environment stats
             env_stats = {}
             for m in metrics:
                 env_name = m['env']
@@ -210,10 +247,9 @@ class ExecutorManager:
                 succeeded_change = succeeded - self.last_completed_stats.get(env_name, succeeded)
                 submit_failed_change = submit_failed - self.last_submit_failed_stats.get(env_name, submit_failed)
                 
-                # Calculate rate per hour (samples/hour)
                 rate_per_hour = 0.0
                 if time_delta > 0 and succeeded_change > 0:
-                    rate_per_hour = (succeeded_change / time_delta) * 3600  # Convert to per hour
+                    rate_per_hour = (succeeded_change / time_delta) * 3600
                 
                 env_stats[env_name] = {
                     'succeeded': succeeded,
@@ -230,7 +266,6 @@ class ExecutorManager:
                     'fetch_avg_ms': m.get('avg_fetch_time_ms', 0),
                 }
             
-            # Format status strings
             queue_details = " ".join(
                 _format_env_queue(env, stats['queue'], stats['queue_change'])
                 for env, stats in sorted(env_stats.items())
@@ -258,7 +293,6 @@ class ExecutorManager:
                 f"({queue_details}) [{env_stats_str}]"
             )
             
-            # Update tracking
             self.last_status_time = current_time
             self.last_queue_stats = queue_stats.copy()
             self.last_completed_stats = {m['env']: m['tasks_succeeded'] for m in metrics}
@@ -267,25 +301,22 @@ class ExecutorManager:
         except Exception as e:
             logger.error(f"Error printing status: {e}", exc_info=True)
             metrics = self.get_all_metrics()
-            logger.info(f"[STATUS] workers={len(metrics)} succeeded={sum(m['tasks_succeeded'] for m in metrics)} failed={sum(m['tasks_failed'] for m in metrics)} submit_failed={sum(m['submit_failed'] for m in metrics)}")
+            logger.info(
+                f"[STATUS] workers={len(metrics)} "
+                f"succeeded={sum(m['tasks_succeeded'] for m in metrics)} "
+                f"failed={sum(m['tasks_failed'] for m in metrics)} "
+                f"submit_failed={sum(m['submit_failed'] for m in metrics)}"
+            )
 
 
 async def fetch_system_config() -> dict:
-    """Fetch system configuration from API.
-    
-    Returns:
-        System config dict with 'environments' key
-        
-    Raises:
-        Exception: If failed to fetch config from API
-    """
+    """Fetch system configuration from API."""
     api_client = await create_api_client()
     config = await api_client.get("/config/environments")
 
     if isinstance(config, dict):
         value = config.get("param_value")
         if isinstance(value, dict):
-            # Filter environments where enabled_for_scoring=true
             enabled_envs = [
                 env_name for env_name, env_config in value.items()
                 if isinstance(env_config, dict) and env_config.get("enabled_for_sampling", False)
@@ -298,20 +329,12 @@ async def fetch_system_config() -> dict:
     raise ValueError("Invalid or empty environments config from API")
 
 
-async def run_service_with_mode(
+async def run_service(
     envs: List[str] | None,
-    max_concurrent_tasks: int,
-    service_mode: bool
+    verbosity: int,
 ):
-    """Run the executor service.
+    """Run the executor service in continuous mode."""
     
-    Args:
-        envs: List of environments to execute (None to fetch from API)
-        max_concurrent_tasks: Maximum concurrent tasks per env
-        service_mode: If True, run continuously; if False, run once and exit
-    """
-    
-    # Fetch environments from API if not specified
     if not envs:
         logger.info("No environments specified, fetching from API system config...")
         system_config = await fetch_system_config()
@@ -319,13 +342,11 @@ async def run_service_with_mode(
     else:
         logger.info(f"Using specified environments: {envs}")
     
-    # Create manager
     manager = ExecutorManager(
         envs=envs,
-        max_concurrent_tasks=max_concurrent_tasks,
+        verbosity=verbosity,
     )
     
-    # Setup signal handlers for graceful shutdown
     shutdown_event = asyncio.Event()
     
     def handle_shutdown(sig):
@@ -337,27 +358,16 @@ async def run_service_with_mode(
         loop.add_signal_handler(sig, lambda s=sig: handle_shutdown(s))
     
     try:
-        # Start manager
         await manager.start()
         
-        # Wait for shutdown signal
-        if not service_mode:
-            # One-time execution (DEFAULT)
-            logger.info("Running in one-time mode (default): processing available tasks...")
-            await asyncio.sleep(10)
-            await manager.print_status()
-        else:
-            # Continuous service mode (SERVICE_MODE=true)
-            logger.info("Running in service mode (continuous). Press Ctrl+C to stop.")
-            
-            # Periodically print status
-            while not shutdown_event.is_set():
-                try:
-                    await asyncio.wait_for(shutdown_event.wait(), timeout=60)
-                except asyncio.TimeoutError:
-                    await manager.print_status()
+        logger.info("Running in service mode (continuous). Press Ctrl+C to stop.")
         
-        # Print final status
+        while not shutdown_event.is_set():
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=60)
+            except asyncio.TimeoutError:
+                await manager.print_status()
+        
         await manager.print_status()
         
     except Exception as e:
@@ -374,55 +384,32 @@ async def run_service_with_mode(
     help="Environments to execute tasks for (e.g., affine:sat). If not specified, fetches from API system config"
 )
 @click.option(
-    "--max-concurrent",
-    default=None,
-    type=int,
-    help="Max concurrent tasks per env (default: from EXECUTOR_MAX_CONCURRENT or 30)"
-)
-@click.option(
     "-v", "--verbosity",
     default=None,
     type=click.Choice(["0", "1", "2", "3"]),
     help="Logging verbosity: 0=CRITICAL, 1=INFO, 2=DEBUG, 3=TRACE"
 )
-def main(envs, max_concurrent, verbosity):
+def main(envs, verbosity):
     """
     Affine Executor - Execute sampling tasks for multiple environments.
     
-    Each environment runs with concurrent task execution using a queue-driven model.
-    Tasks are fetched continuously to maintain a buffer in the queue.
-    
-    Run Mode:
-    - Default: One-time execution (processes available tasks once)
-    - SERVICE_MODE=true: Continuous service mode (keeps running)
-    
-    Configuration:
-    - EXECUTOR_MAX_CONCURRENT: Max concurrent tasks per env (default: 30)
-    - SERVICE_MODE: Run as continuous service (default: false)
+    Each environment runs in its own subprocess with independent resources.
+    Each environment has its own max concurrent tasks configuration (see affine/src/executor/config.py).
+    Runs continuously in service mode.
     
     If --envs not specified, environments are fetched from API /api/v1/config/environments endpoint.
     """
-    # Setup logging if verbosity specified
-    if verbosity is not None:
-        setup_logging(int(verbosity))
+    verbosity_val = int(verbosity) if verbosity is not None else 1
+    setup_logging(verbosity_val, component="executor")
     
-    # Get environments from CLI (or None to fetch from API)
     selected_envs = list(envs) if envs else None
     
-    # Get max concurrent tasks (priority: CLI arg > env var > default)
-    max_concurrent_val = max_concurrent if max_concurrent is not None else int(os.getenv("EXECUTOR_MAX_CONCURRENT", "30"))
-
-    # Check service mode (default: false = one-time execution)
-    service_mode = os.getenv("SERVICE_MODE", "false").lower() in ("true", "1", "yes")
+    # Set multiprocessing start method to 'spawn' for compatibility
+    multiprocessing.set_start_method('spawn', force=True)
     
-    logger.info(f"Max concurrent tasks: {max_concurrent_val} per env")
-    logger.info(f"Service mode: {service_mode}")
-    
-    # Run service
-    asyncio.run(run_service_with_mode(
+    asyncio.run(run_service(
         envs=selected_envs,
-        max_concurrent_tasks=max_concurrent_val,
-        service_mode=service_mode
+        verbosity=verbosity_val,
     ))
 
 
