@@ -34,11 +34,13 @@ def _format_env_queue(env_name: str, queue_count: int, change: int) -> str:
     return f"{env_short}={queue_count}({change_str})" if change_str else f"{env_short}={queue_count}"
 
 
-def _format_env_stats(env_name: str, completed: int, success_rate: int, change: int, running: int, pending: int, fetch_avg_ms: float) -> str:
-    """Format environment completion stats with running, pending tasks, and fetch latency."""
+def _format_env_stats(env_name: str, completed: int, success_rate: int, change: int, running: int, pending: int, fetch_avg_ms: float, submit_failed_change: int = 0, rate_per_hour: float = 0.0) -> str:
+    """Format environment completion stats with running, pending tasks, fetch latency, submit failures, and sampling rate."""
     env_short = env_name.split(':')[-1]
     change_str = f" finished:{_format_change(change)}" if change else " finished:0"
-    return f"{env_short}@{completed}({success_rate}%{change_str} running:{running} pending:{pending} fetch_avg:{fetch_avg_ms:.0f}ms)"
+    submit_fail_str = f" submit_failed:{_format_change(submit_failed_change)}" if submit_failed_change else ""
+    rate_str = f" rate:{rate_per_hour:.0f}/h" if rate_per_hour > 0 else ""
+    return f"{env_short}@{completed}({success_rate}%{change_str}{submit_fail_str}{rate_str} running:{running} pending:{pending} fetch_avg:{fetch_avg_ms:.0f}ms)"
 
 
 class ExecutorManager:
@@ -72,6 +74,7 @@ class ExecutorManager:
         self.last_status_time = None
         self.last_queue_stats = {}  # {env: queue_count}
         self.last_completed_stats = {}  # {env: completed_count}
+        self.last_submit_failed_stats = {}  # {env: submit_failed_count}
         
         logger.info(
             f"ExecutorManager initialized for {len(envs)} environments "
@@ -181,12 +184,12 @@ class ExecutorManager:
         
         try:
             current_time = time.time()
+            time_delta = int(current_time - self.last_status_time) if self.last_status_time else 0
             metrics = self.get_all_metrics()
-            
+
             # Fetch queue statistics
             queue_stats = await self._fetch_queue_stats(metrics)
             total_queue = sum(queue_stats.values())
-            time_delta = int(current_time - self.last_status_time) if self.last_status_time else 0
             
             # Calculate queue changes
             env_queue_changes = {
@@ -199,17 +202,29 @@ class ExecutorManager:
             env_stats = {}
             for m in metrics:
                 env_name = m['env']
-                completed, failed = m['tasks_completed'], m['tasks_failed']
-                total = completed + failed
-                success_rate = int(completed * 100 / total) if total > 0 else 0
-                completed_change = completed - self.last_completed_stats.get(env_name, completed)
+                succeeded = m['tasks_succeeded']
+                failed = m['tasks_failed']
+                submit_failed = m['submit_failed']
+                total = succeeded + failed
+                success_rate = int(succeeded * 100 / total) if total > 0 else 0
+                succeeded_change = succeeded - self.last_completed_stats.get(env_name, succeeded)
+                submit_failed_change = submit_failed - self.last_submit_failed_stats.get(env_name, submit_failed)
+                
+                # Calculate rate per hour (samples/hour)
+                rate_per_hour = 0.0
+                if time_delta > 0 and succeeded_change > 0:
+                    rate_per_hour = (succeeded_change / time_delta) * 3600  # Convert to per hour
                 
                 env_stats[env_name] = {
-                    'completed': completed,
+                    'succeeded': succeeded,
+                    'failed': failed,
+                    'submit_failed': submit_failed,
                     'success_rate': success_rate,
                     'queue': queue_stats.get(env_name, 0),
                     'queue_change': env_queue_changes.get(env_name, 0),
-                    'completed_change': completed_change,
+                    'succeeded_change': succeeded_change,
+                    'submit_failed_change': submit_failed_change,
+                    'rate_per_hour': rate_per_hour,
                     'running_tasks': m.get('running_tasks', 0),
                     'pending_tasks': m.get('pending_tasks', 0),
                     'fetch_avg_ms': m.get('avg_fetch_time_ms', 0),
@@ -224,12 +239,14 @@ class ExecutorManager:
             env_stats_str = " ".join(
                 _format_env_stats(
                     env,
-                    stats['completed'],
+                    stats['succeeded'],
                     stats['success_rate'],
-                    stats['completed_change'],
+                    stats['succeeded_change'],
                     stats['running_tasks'],
                     stats['pending_tasks'],
-                    stats['fetch_avg_ms']
+                    stats['fetch_avg_ms'],
+                    stats['submit_failed_change'],
+                    stats['rate_per_hour']
                 )
                 for env, stats in sorted(env_stats.items())
             )
@@ -244,12 +261,13 @@ class ExecutorManager:
             # Update tracking
             self.last_status_time = current_time
             self.last_queue_stats = queue_stats.copy()
-            self.last_completed_stats = {m['env']: m['tasks_completed'] for m in metrics}
+            self.last_completed_stats = {m['env']: m['tasks_succeeded'] for m in metrics}
+            self.last_submit_failed_stats = {m['env']: m['submit_failed'] for m in metrics}
             
         except Exception as e:
             logger.error(f"Error printing status: {e}", exc_info=True)
             metrics = self.get_all_metrics()
-            logger.info(f"[STATUS] workers={len(metrics)} completed={sum(m['tasks_completed'] for m in metrics)}")
+            logger.info(f"[STATUS] workers={len(metrics)} succeeded={sum(m['tasks_succeeded'] for m in metrics)} failed={sum(m['tasks_failed'] for m in metrics)} submit_failed={sum(m['submit_failed'] for m in metrics)}")
 
 
 async def fetch_system_config() -> dict:

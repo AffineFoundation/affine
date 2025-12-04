@@ -17,13 +17,15 @@ from affine.database.dao.scores import ScoresDAO
 from affine.src.scorer.scorer import Scorer
 from affine.src.scorer.config import ScorerConfig
 from affine.utils.subtensor import get_subtensor
-from affine.utils.api_client import create_api_client
+from affine.utils.api_client import cli_api_client
 
 
-async def fetch_scoring_data() -> dict:
-    """Fetch scoring data from API with default timeout."""
-    api_client = await create_api_client()
+async def fetch_scoring_data(api_client) -> dict:
+    """Fetch scoring data from API with default timeout.
     
+    Args:
+        api_client: APIClient instance
+    """
     logger.info("Fetching scoring data from API...")
     data = await api_client.get("/samples/scoring")
     
@@ -37,14 +39,15 @@ async def fetch_scoring_data() -> dict:
     return data
 
 
-async def fetch_system_config() -> dict:
+async def fetch_system_config(api_client) -> dict:
     """Fetch system configuration from API.
+    
+    Args:
+        api_client: APIClient instance
     
     Returns:
         System config dict with 'environments' key
     """
-    api_client = await create_api_client()
-    
     try:
         config = await api_client.get("/config/environments")
         
@@ -70,58 +73,64 @@ async def fetch_system_config() -> dict:
 
 
 async def run_scoring_once(save_to_db: bool):
-    """Run scoring calculation once."""
+    """Run scoring calculation once.
+    
+    Uses CLI context manager for automatic cleanup in both one-time
+    and service modes (performance is not critical for scorer).
+    """
     start_time = time.time()
     
     # Use default config (constants)
     config = ScorerConfig()
     scorer = Scorer(config)
     
-    # Fetch data
-    logger.info("Fetching data from API...")
-    scoring_data = await fetch_scoring_data()
-    system_config = await fetch_system_config()
-    
-    # Extract environments
-    environments = system_config.get("environments")
-    logger.info(f"environments: {environments}")
-    
-    # Get current block number from Bittensor
-    logger.info("Fetching current block number from Bittensor...")
-    subtensor = await get_subtensor()
-    block_number = await subtensor.get_current_block()
-    logger.info(f"Current block number: {block_number}")
-    
-    # Calculate scores
-    logger.info("Starting scoring calculation...")
-    result = scorer.calculate_scores(
-        scoring_data=scoring_data,
-        environments=environments,
-        block_number=block_number,
-        print_summary=True
-    )
-    
-    # Save to database if requested
-    if save_to_db:
-        logger.info("Saving results to database...")
-        score_snapshots_dao = ScoreSnapshotsDAO()
-        scores_dao = ScoresDAO()
+    # Always use CLI context manager for automatic cleanup
+    async with cli_api_client() as api_client:
+        # Fetch data
+        logger.info("Fetching data from API...")
+        scoring_data = await fetch_scoring_data(api_client)
+        system_config = await fetch_system_config(api_client)
         
-        await scorer.save_results(
-            result=result,
-            score_snapshots_dao=score_snapshots_dao,
-            scores_dao=scores_dao
+        # Extract environments
+        environments = system_config.get("environments")
+        logger.info(f"environments: {environments}")
+        
+        # Get current block number from Bittensor
+        logger.info("Fetching current block number from Bittensor...")
+        subtensor = await get_subtensor()
+        block_number = await subtensor.get_current_block()
+        logger.info(f"Current block number: {block_number}")
+        
+        # Calculate scores
+        logger.info("Starting scoring calculation...")
+        result = scorer.calculate_scores(
+            scoring_data=scoring_data,
+            environments=environments,
+            block_number=block_number,
+            print_summary=True
         )
-        logger.info("Results saved successfully")
-    
-    elapsed = time.time() - start_time
-    logger.info(f"Scoring completed in {elapsed:.2f}s")
-    
-    # Print summary
-    summary = result.get_summary()
-    logger.info(f"Summary: {summary}")
-    
-    return result
+        
+        # Save to database if requested
+        if save_to_db:
+            logger.info("Saving results to database...")
+            score_snapshots_dao = ScoreSnapshotsDAO()
+            scores_dao = ScoresDAO()
+            
+            await scorer.save_results(
+                result=result,
+                score_snapshots_dao=score_snapshots_dao,
+                scores_dao=scores_dao
+            )
+            logger.info("Results saved successfully")
+        
+        elapsed = time.time() - start_time
+        logger.info(f"Scoring completed in {elapsed:.2f}s")
+        
+        # Print summary
+        summary = result.get_summary()
+        logger.info(f"Summary: {summary}")
+        
+        return result
 
 
 async def run_service_with_mode(save_to_db: bool, service_mode: bool):

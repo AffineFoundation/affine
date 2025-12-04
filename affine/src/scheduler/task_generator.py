@@ -167,6 +167,14 @@ class TaskGeneratorService:
 
         if not missing_task_ids:
             return 0
+        
+        # Only add new tasks if pending count is below threshold
+        if len(pending_task_ids) >= max_tasks_per_batch:
+            logger.debug(
+                f"[SCHEDULER] Skip adding tasks for miner U{miner.uid}({miner.hotkey[:8]}...) {env}: "
+                f"pending={len(pending_task_ids)} >= batch_size={max_tasks_per_batch}"
+            )
+            return 0
 
         
         # Limit batch size
