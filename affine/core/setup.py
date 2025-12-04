@@ -160,12 +160,13 @@ def _silence_noisy_loggers():
     affinetes_logger.propagate = False
 
 
-def setup_logging(verbosity: int):
+def setup_logging(verbosity: int, component: str = None):
     """
     Setup logging system.
     
     Args:
         verbosity: Log level (0=SILENT, 1=INFO, 2=DEBUG, 3=TRACE)
+        component: Component name (optional, defaults to auto-detection from sys.argv)
     """
     # Determine log level
     level_map = {
@@ -176,8 +177,9 @@ def setup_logging(verbosity: int):
     }
     level = level_map.get(verbosity, logging.INFO)
     
-    # Get component name
-    component = _get_component_name()
+    # Get component name (use provided component or auto-detect)
+    if component is None:
+        component = _get_component_name()
     
     # Configure root logger (console output)
     logging.basicConfig(

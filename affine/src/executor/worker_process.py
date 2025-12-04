@@ -65,8 +65,8 @@ def run_worker_subprocess(
     from affine.src.executor.worker import ExecutorWorker
     from affine.core.setup import setup_logging
     
-    # Setup logging in subprocess
-    setup_logging(verbosity)
+    # Setup logging in subprocess with explicit component name
+    setup_logging(verbosity, component="executor")
     
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

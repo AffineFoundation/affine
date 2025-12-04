@@ -19,6 +19,7 @@ import bittensor as bt
 from affine.core.setup import logger, setup_logging
 from affine.utils.api_client import create_api_client
 from affine.src.executor.worker_process import WorkerProcess
+from affine.src.executor.config import get_max_concurrent
 
 
 def _format_change(value: int) -> str:
@@ -62,11 +63,9 @@ class ExecutorManager:
     def __init__(
         self,
         envs: List[str],
-        max_concurrent_tasks: int = 5,
         verbosity: int = 1,
     ):
         self.envs = envs
-        self.max_concurrent_tasks = max_concurrent_tasks
         self.verbosity = verbosity
         
         # IPC queue for stats
@@ -87,9 +86,11 @@ class ExecutorManager:
         self.wallet = None
         self.api_client = None
         
+        # Log environment concurrency configuration
+        env_config_str = ", ".join([f"{env}={get_max_concurrent(env)}" for env in envs])
         logger.info(
             f"ExecutorManager initialized for {len(envs)} environments "
-            f"(max_concurrent: {max_concurrent_tasks})"
+            f"({env_config_str})"
         )
     
     async def start(self):
@@ -116,12 +117,14 @@ class ExecutorManager:
         
         # Create and start worker processes
         for idx, env in enumerate(self.envs):
+            # Get max concurrent tasks for this specific environment
+            max_concurrent = get_max_concurrent(env)
             worker_proc = WorkerProcess(
                 worker_id=idx,
                 env=env,
                 wallet_name=coldkey,
                 wallet_hotkey=hotkey,
-                max_concurrent_tasks=self.max_concurrent_tasks,
+                max_concurrent_tasks=max_concurrent,
                 batch_size=20,
                 stats_queue=self.stats_queue,
                 verbosity=self.verbosity,
@@ -328,7 +331,6 @@ async def fetch_system_config() -> dict:
 
 async def run_service(
     envs: List[str] | None,
-    max_concurrent_tasks: int,
     verbosity: int,
 ):
     """Run the executor service in continuous mode."""
@@ -342,7 +344,6 @@ async def run_service(
     
     manager = ExecutorManager(
         envs=envs,
-        max_concurrent_tasks=max_concurrent_tasks,
         verbosity=verbosity,
     )
     
@@ -383,26 +384,18 @@ async def run_service(
     help="Environments to execute tasks for (e.g., affine:sat). If not specified, fetches from API system config"
 )
 @click.option(
-    "--max-concurrent",
-    default=None,
-    type=int,
-    help="Max concurrent tasks per env (default: from EXECUTOR_MAX_CONCURRENT or 30)"
-)
-@click.option(
     "-v", "--verbosity",
     default=None,
     type=click.Choice(["0", "1", "2", "3"]),
     help="Logging verbosity: 0=CRITICAL, 1=INFO, 2=DEBUG, 3=TRACE"
 )
-def main(envs, max_concurrent, verbosity):
+def main(envs, verbosity):
     """
     Affine Executor - Execute sampling tasks for multiple environments.
     
     Each environment runs in its own subprocess with independent resources.
+    Each environment has its own max concurrent tasks configuration (see affine/src/executor/config.py).
     Runs continuously in service mode.
-    
-    Configuration:
-    - EXECUTOR_MAX_CONCURRENT: Max concurrent tasks per env (default: 30)
     
     If --envs not specified, environments are fetched from API /api/v1/config/environments endpoint.
     """
@@ -411,16 +404,11 @@ def main(envs, max_concurrent, verbosity):
     
     selected_envs = list(envs) if envs else None
     
-    max_concurrent_val = max_concurrent if max_concurrent is not None else int(os.getenv("EXECUTOR_MAX_CONCURRENT", "30"))
-    
-    logger.info(f"Max concurrent tasks: {max_concurrent_val} per env")
-    
     # Set multiprocessing start method to 'spawn' for compatibility
     multiprocessing.set_start_method('spawn', force=True)
     
     asyncio.run(run_service(
         envs=selected_envs,
-        max_concurrent_tasks=max_concurrent_val,
         verbosity=verbosity_val,
     ))
 
