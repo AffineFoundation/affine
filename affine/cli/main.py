@@ -82,6 +82,7 @@ def api():
         reload=config.RELOAD,
         log_level=config.LOG_LEVEL.lower(),
         workers=config.WORKERS,
+        timeout_keep_alive=60,
     )
 
 

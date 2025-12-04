@@ -75,6 +75,56 @@ class GlobalSessionManager:
                 cls._session = None
                 logger.info("GlobalSessionManager: Closed shared session")
 
+class CLIAPIClient:
+    """CLI-specific API client context manager.
+    
+    Creates an independent session for one-time CLI commands,
+    automatically closing it when done. This is separate from
+    long-running services that use GlobalSessionManager.
+    
+    Usage:
+        async with cli_api_client() as client:
+            data = await client.get("/miners/uid/42")
+    """
+    
+    def __init__(self, base_url: Optional[str] = None):
+        self.base_url = base_url or os.getenv("API_URL", "https://api.affine.io/api/v1")
+        self._session: Optional[aiohttp.ClientSession] = None
+        self._client: Optional['APIClient'] = None
+    
+    async def __aenter__(self) -> 'APIClient':
+        """Enter context: create independent session and client"""
+        connector = aiohttp.TCPConnector(
+            limit=20,
+            limit_per_host=0,
+            force_close=False,
+            keepalive_timeout=60,
+            enable_cleanup_closed=True,
+        )
+        
+        timeout = aiohttp.ClientTimeout(
+            total=None,
+            connect=30,  # CLI doesn't need long connection timeout
+            sock_read=None
+        )
+        
+        self._session = aiohttp.ClientSession(
+            connector=connector,
+            timeout=timeout,
+            connector_owner=True
+        )
+        
+        self._client = APIClient(self.base_url, self._session)
+        return self._client
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Exit context: close session"""
+        if self._session and not self._session.closed:
+            await self._session.close()
+            logger.debug("CLIAPIClient: Closed independent session")
+        return False  # Don't suppress exceptions
+
+
 class APIClient:
     """HTTP client for Affine API requests.
     
@@ -278,16 +328,30 @@ class APIClient:
             return None
 
 
+def cli_api_client(base_url: Optional[str] = None) -> CLIAPIClient:
+    """Create CLI-specific API client context manager.
+    
+    Args:
+        base_url: Custom base URL (optional)
+    
+    Returns:
+        CLIAPIClient context manager
+        
+    Example:
+        async with cli_api_client() as client:
+            data = await client.get("/miners/uid/42")
+            print(json.dumps(data, indent=2))
+    """
+    return CLIAPIClient(base_url)
+
+
 async def get_chute_info(chute_id: str) -> Optional[Dict]:
     """Legacy function for backward compatibility.
     
     Creates a temporary APIClient to fetch chute info.
     """
-    client = await create_api_client()
-    try:
+    async with cli_api_client() as client:
         return await client.get_chute_info(chute_id)
-    finally:
-        await client.close()
 
 
 async def create_api_client(base_url: Optional[str] = None) -> APIClient:
