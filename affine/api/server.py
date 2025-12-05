@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
             
             # Warmup caches (preload assigned tasks into UUID cache)
             await task_pool_manager.warmup_caches()
-            
+            await task_pool_manager.start_timeout_cleanup_loop()
         except Exception as e:
             logger.error(f"Failed to initialize TaskPoolManager: {e}")
             raise
