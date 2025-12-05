@@ -36,7 +36,7 @@ from affine.miners import miners
 from affine.cli import cli
 
 # --------------------------------------------------------------------------- #
-#                               dataset                                       #
+#                               Dataset                                       #
 # --------------------------------------------------------------------------- #
 from affine.storage import (
     FOLDER, BUCKET, ACCESS, SECRET, ENDPOINT, PUBLIC_READ, R2_PUBLIC_BASE,
