@@ -319,19 +319,21 @@ class ExecutorWorker:
                         "DEBUG"
                     )
                     
+                    task_start_time = time.time()
                     try:
                         submission = await self._execute_task(task)
                         await self._submit_result(task, submission)
                         
                     except Exception as e:
+                        execution_time = time.time() - task_start_time
                         miner_uid = task.get('miner_uid')
                         task_id = task.get('task_id', 'N/A')
                         
                         error_brief = str(e).replace('\n', ' ').replace('\r', ' ')[:200]
                         
                         safe_log(
-                            f"[FAILED] U{miner_uid:<4} │ {self.env:<20} │ FAILED     │ "
-                            f"task_id={task_id:<6} │ {error_brief}",
+                            f"[FAILED] U{miner_uid:<4} │ {self.env:<20} │     FAILED │ "
+                            f"task_id={task_id:<6} │ {execution_time:6.3f}s │ {error_brief}",
                             "INFO"
                         )
                     finally:

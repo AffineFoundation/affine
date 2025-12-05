@@ -169,14 +169,6 @@ class SchedulerService:
                 else:
                     logger.warning("No active miners found for cleanup")
                 
-                # Reset timeout assigned tasks
-                dao = TaskPoolDAO()
-                reset_count = await dao.reset_timeout_assigned_tasks(
-                    timeout_seconds=self.assigned_task_timeout
-                )
-                
-                if reset_count > 0:
-                    logger.info(f"Reset {reset_count} timeout assigned tasks")
                 
             except Exception as e:
                 logger.error(f"Cleanup loop error: {e}", exc_info=True)

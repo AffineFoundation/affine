@@ -173,7 +173,7 @@ async def get_sample_by_uid(
         
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Sample not found in sample_results or task_pool for UID={uid}, env={env}, task_id={task_id}"
+            detail=f"Sample not found in sample results or task pool for UID={uid}, env={env}, task_id={task_id}"
         )
         
     except HTTPException:
@@ -295,9 +295,18 @@ async def get_task_pool(
 
 
 @router.get("/scoring", dependencies=[Depends(rate_limit_scoring)])
-async def get_scoring_data():
+async def get_scoring_data(
+    range_type: str = Query(
+        "scoring",
+        regex="^(scoring|sampling)$",
+        description="Range type: 'scoring' for scoring_range or 'sampling' for sampling_range"
+    )
+):
     """
     Get scoring data for all valid miners.
+    
+    Query Parameters:
+    - range_type: Type of range to use ('scoring' or 'sampling', default: 'scoring')
     
     Uses proactive cache with background refresh.
     - Startup: Cache prewarmed
@@ -307,7 +316,7 @@ async def get_scoring_data():
     from affine.api.services.scoring_cache import get_cached_data
     
     try:
-        return await get_cached_data()
+        return await get_cached_data(range_type=range_type)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
