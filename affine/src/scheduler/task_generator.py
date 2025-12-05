@@ -246,24 +246,46 @@ class TaskGeneratorService:
             f"across {len(envs)} environments"
         )
         
-        for miner in miners:
-            for env in envs:
-                try:
-                    created = await self.generate_tasks_for_miner_env(
-                        miner=miner,
-                        env=env,
-                        max_tasks_per_batch=max_tasks_per_miner_env
-                    )
-                    result.total_tasks_created += created
-                    result.tasks_by_env[env] += created
-                    
-                except Exception as e:
-                    error_msg = (
-                        f"Error generating tasks for miner {miner.hotkey[:8]}... "
-                        f"env={env}: {str(e)}"
-                    )
-                    logger.error(error_msg)
-                    result.errors.append(error_msg)
+        # Process all miner-env combinations concurrently
+        async def process_miner_env(miner: MinerInfo, env: str):
+            """Process single miner-env combination."""
+            try:
+                created = await self.generate_tasks_for_miner_env(
+                    miner=miner,
+                    env=env,
+                    max_tasks_per_batch=max_tasks_per_miner_env
+                )
+                return (env, created, None)
+            except Exception as e:
+                error_msg = (
+                    f"Error generating tasks for miner {miner.hotkey[:8]}... "
+                    f"env={env}: {str(e)}"
+                )
+                logger.error(error_msg)
+                return (env, 0, error_msg)
+        
+        # Create tasks for all miner-env combinations
+        tasks = [
+            process_miner_env(miner, env)
+            for miner in miners
+            for env in envs
+        ]
+        
+        # Execute all tasks concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Aggregate results
+        for res in results:
+            if isinstance(res, Exception):
+                error_msg = f"Unexpected error during task generation: {str(res)}"
+                logger.error(error_msg)
+                result.errors.append(error_msg)
+            else:
+                env, created, error = res
+                result.total_tasks_created += created
+                result.tasks_by_env[env] += created
+                if error:
+                    result.errors.append(error)
         
         logger.info(
             f"Task generation complete: created {result.total_tasks_created} tasks, "

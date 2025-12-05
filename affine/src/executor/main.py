@@ -400,7 +400,7 @@ def main(envs, verbosity):
     If --envs not specified, environments are fetched from API /api/v1/config/environments endpoint.
     """
     verbosity_val = int(verbosity) if verbosity is not None else 1
-    setup_logging(verbosity_val)
+    setup_logging(verbosity_val, component="executor")
     
     selected_envs = list(envs) if envs else None
     
