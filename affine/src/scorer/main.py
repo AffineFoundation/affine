@@ -133,12 +133,13 @@ async def run_scoring_once(save_to_db: bool):
         return result
 
 
-async def run_service_with_mode(save_to_db: bool, service_mode: bool):
+async def run_service_with_mode(save_to_db: bool, service_mode: bool, interval_minutes: int):
     """Run the scorer service.
     
     Args:
         save_to_db: Whether to save results to database
         service_mode: If True, run continuously; if False, run once and exit
+        interval_minutes: Minutes between scoring runs in service mode
     """
     logger.info("Starting Scorer Service")
     
@@ -157,17 +158,17 @@ async def run_service_with_mode(save_to_db: bool, service_mode: bool):
             logger.info("Running in one-time mode (default)")
             await run_scoring_once(save_to_db)
         else:
-            # Run continuously every 30 minutes (SERVICE_MODE=true)
-            logger.info("Running in service mode (continuous, every 30 minutes)")
+            # Run continuously with configured interval
+            logger.info(f"Running in service mode (continuous, every {interval_minutes} minutes)")
             while True:
                 try:
                     await run_scoring_once(save_to_db)
-                    logger.info("Waiting 30 minutes until next run...")
-                    await asyncio.sleep(30 * 60)  # 30 minutes
+                    logger.info(f"Waiting {interval_minutes} minutes until next run...")
+                    await asyncio.sleep(interval_minutes * 60)
                 except Exception as e:
                     logger.error(f"Error in scoring cycle: {e}", exc_info=True)
-                    logger.info("Waiting 30 minutes before retry...")
-                    await asyncio.sleep(30 * 60)
+                    logger.info(f"Waiting {interval_minutes} minutes before retry...")
+                    await asyncio.sleep(interval_minutes * 60)
         
     except KeyboardInterrupt:
         logger.info("Received shutdown signal")
@@ -196,11 +197,12 @@ def main():
     
     Run Mode:
     - Default: One-time execution (calculates scores once and exits)
-    - SERVICE_MODE=true: Continuous service mode (runs every 30 minutes)
+    - SERVICE_MODE=true: Continuous service mode (runs at configured interval)
     
     Configuration:
     - SCORER_SAVE_TO_DB: Enable database saving (default: false)
     - SERVICE_MODE: Run as continuous service (default: false)
+    - SCORER_INTERVAL_MINUTES: Minutes between runs in service mode (default: 5)
     - All scoring parameters are constants in config.py
     """
     # Check if should save to database
@@ -209,14 +211,27 @@ def main():
     # Check service mode (default: false = one-time execution)
     service_mode = os.getenv("SERVICE_MODE", "false").lower() in ("true", "1", "yes")
     
+    # Get interval in minutes (default: 5 minutes)
+    try:
+        interval_minutes = int(os.getenv("SCORER_INTERVAL_MINUTES", "5"))
+        if interval_minutes <= 0:
+            logger.warning(f"Invalid SCORER_INTERVAL_MINUTES={interval_minutes}, using default 5")
+            interval_minutes = 5
+    except ValueError:
+        logger.warning(f"Invalid SCORER_INTERVAL_MINUTES value, using default 5")
+        interval_minutes = 5
+    
     if save_to_db:
         logger.info("Database saving enabled (SCORER_SAVE_TO_DB=true)")
     logger.info(f"Service mode: {service_mode}")
+    if service_mode:
+        logger.info(f"Interval: {interval_minutes} minutes")
     
     # Run service
     asyncio.run(run_service_with_mode(
         save_to_db=save_to_db,
-        service_mode=service_mode
+        service_mode=service_mode,
+        interval_minutes=interval_minutes
     ))
 
 
