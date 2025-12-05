@@ -35,16 +35,40 @@ class ExtraData(BaseModel):
 
 
 class SampleFullResponse(BaseModel):
-    """Full sample details."""
+    """Full sample details from sample_results table."""
 
     miner_hotkey: str
     model_revision: str
+    model: str
     env: str
+    task_id: int
     score: float
-    signature: str
-    extra: ExtraData
     timestamp: int
     block_number: int
+    latency_ms: Optional[int] = None
+    extra: Optional[ExtraData] = None
+
+
+class TaskPoolResponse(BaseModel):
+    """Task pool entry details."""
+
+    task_uuid: str
+    task_id: int
+    miner_hotkey: str
+    model_revision: str
+    model: str
+    env: str
+    chute_id: str
+    status: str
+    created_at: int
+    assigned_to: Optional[str] = None
+    assigned_at: Optional[int] = None
+    retry_count: int
+    max_retries: int
+    last_error: Optional[str] = None
+    last_error_code: Optional[str] = None
+    last_failed_at: Optional[int] = None
+    ttl: int
 
 
 class TaskFetchResponse(BaseModel):

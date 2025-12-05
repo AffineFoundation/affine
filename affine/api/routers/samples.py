@@ -4,10 +4,11 @@ Sample Results Router
 Endpoints for querying sample results.
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, status
 from affine.api.models import (
     SampleFullResponse,
+    TaskPoolResponse,
 )
 from affine.api.dependencies import (
     get_sample_results_dao,
@@ -25,13 +26,14 @@ from affine.api.services.task_pool import TaskPoolManager
 router = APIRouter(prefix="/samples", tags=["Samples"])
 
 
-@router.get("/{hotkey}/{env}/{task_id}", response_model=SampleFullResponse, dependencies=[Depends(rate_limit_read)])
+@router.get("/{hotkey}/{env}/{task_id}", response_model=Union[SampleFullResponse, TaskPoolResponse], dependencies=[Depends(rate_limit_read)])
 async def get_sample(
     hotkey: str,
     env: str,
     task_id: str,
     model_revision: str = Query(..., description="Model revision"),
     dao: SampleResultsDAO = Depends(get_sample_results_dao),
+    task_pool: TaskPoolManager = Depends(get_task_pool_manager),
 ):
     """
     Get a specific sample by its natural key components.
@@ -45,10 +47,10 @@ async def get_sample(
     - model_revision: Model revision hash
     
     Returns full sample details including conversation data.
-    If multiple submissions exist for the same task_id, returns the latest one by timestamp.
+    If not found in sample_results, tries to query from task_pool.
     """
     try:
-        # Direct key lookup - O(1) operation
+        # First, try to get from sample_results
         item = await dao.get_sample_by_task_id(
             miner_hotkey=hotkey,
             model_revision=model_revision,
@@ -57,21 +59,24 @@ async def get_sample(
             include_extra=True
         )
         
-        if not item:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Sample not found for hotkey={hotkey}, env={env}, task_id={task_id}"
-            )
+        if item:
+            return SampleFullResponse(**item)
         
-        return SampleFullResponse(
-            miner_hotkey=item["miner_hotkey"],
-            model_revision=item["model_revision"],
-            env=item["env"],
-            score=item["score"],
-            signature=item["signature"],
-            extra=item.get("extra", {}),
-            timestamp=item["timestamp"],
-            block_number=item["block_number"],
+        # If not found in sample_results, try task_pool
+        task_id_int = int(task_id) if not isinstance(task_id, int) else task_id
+        pool_task = await task_pool.dao.get_task_by_composite_key(
+            miner_hotkey=hotkey,
+            model_revision=model_revision,
+            env=env,
+            task_id=task_id_int
+        )
+        
+        if pool_task:
+            return TaskPoolResponse(**pool_task)
+        
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sample not found in sample_results or task_pool for hotkey={hotkey}, env={env}, task_id={task_id}"
         )
         
     except HTTPException:
@@ -83,7 +88,7 @@ async def get_sample(
         )
 
 
-@router.get("/uid/{uid}/{env}/{task_id}", response_model=SampleFullResponse, dependencies=[Depends(rate_limit_read)])
+@router.get("/uid/{uid}/{env}/{task_id}", response_model=Union[SampleFullResponse, TaskPoolResponse], dependencies=[Depends(rate_limit_read)])
 async def get_sample_by_uid(
     uid: int,
     env: str,
@@ -91,6 +96,7 @@ async def get_sample_by_uid(
     sample_dao: SampleResultsDAO = Depends(get_sample_results_dao),
     miners_dao: MinersDAO = Depends(get_miners_dao),
     config_dao: SystemConfigDAO = Depends(get_system_config_dao),
+    task_pool: TaskPoolManager = Depends(get_task_pool_manager),
 ):
     """
     Get a specific sample by UID, env, and task_id.
@@ -102,7 +108,7 @@ async def get_sample_by_uid(
     
     Returns full sample details including conversation data.
     Automatically looks up the miner's current hotkey and revision.
-    If multiple submissions exist for the same task_id, returns the latest one by timestamp.
+    If not found in sample_results, tries to query from task_pool.
     """
     try:
         # Resolve env_name shorthand (e.g., 'alfworld' -> 'agentgym:alfworld')
@@ -141,7 +147,7 @@ async def get_sample_by_uid(
         hotkey = miner['hotkey']
         model_revision = miner['revision']
         
-        # Direct key lookup - O(1) operation
+        # First, try to get from sample_results
         item = await sample_dao.get_sample_by_task_id(
             miner_hotkey=hotkey,
             model_revision=model_revision,
@@ -150,21 +156,24 @@ async def get_sample_by_uid(
             include_extra=True
         )
         
-        if not item:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Sample not found for UID={uid}, env={env}, task_id={task_id}"
-            )
+        if item:
+            return SampleFullResponse(**item)
         
-        return SampleFullResponse(
-            miner_hotkey=item["miner_hotkey"],
-            model_revision=item["model_revision"],
-            env=item["env"],
-            score=item["score"],
-            signature=item["signature"],
-            extra=item.get("extra", {}),
-            timestamp=item["timestamp"],
-            block_number=item["block_number"],
+        # If not found in sample_results, try task_pool
+        task_id_int = int(task_id) if not isinstance(task_id, int) else task_id
+        pool_task = await task_pool.dao.get_task_by_composite_key(
+            miner_hotkey=hotkey,
+            model_revision=model_revision,
+            env=env,
+            task_id=task_id_int
+        )
+        
+        if pool_task:
+            return TaskPoolResponse(**pool_task)
+        
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sample not found in sample_results or task_pool for UID={uid}, env={env}, task_id={task_id}"
         )
         
     except HTTPException:

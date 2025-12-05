@@ -894,3 +894,94 @@ class TaskPoolDAO(BaseDAO):
                 break
         
         return all_tasks
+    
+    async def reset_timeout_assigned_tasks(self, timeout_seconds: int = 600) -> int:
+        """Reset assigned tasks that have exceeded timeout to pending status.
+        
+        Scans for assigned tasks where assigned_at < current_time - timeout_seconds,
+        and resets them to pending status for retry.
+        
+        Args:
+            timeout_seconds: Timeout threshold in seconds (default: 600 = 10 minutes)
+            
+        Returns:
+            Number of tasks reset
+        """
+        from affine.database.client import get_client
+        client = get_client()
+        
+        current_time = int(time.time())
+        timeout_threshold = current_time - timeout_seconds
+        
+        # Scan for assigned tasks with assigned_at < threshold
+        params = {
+            'TableName': self.table_name,
+            'FilterExpression': '#status = :status AND assigned_at < :threshold',
+            'ExpressionAttributeNames': {'#status': 'status'},
+            'ExpressionAttributeValues': {
+                ':status': {'S': 'assigned'},
+                ':threshold': {'N': str(timeout_threshold)}
+            }
+        }
+        
+        timeout_tasks = []
+        last_key = None
+        
+        while True:
+            if last_key:
+                params['ExclusiveStartKey'] = last_key
+            
+            response = await client.scan(**params)
+            items = response.get('Items', [])
+            
+            for item in items:
+                timeout_tasks.append(self._deserialize(item))
+            
+            last_key = response.get('LastEvaluatedKey')
+            if not last_key:
+                break
+        
+        if not timeout_tasks:
+            return 0
+        
+        # Reset each timeout task to pending
+        reset_count = 0
+        for task in timeout_tasks:
+            try:
+                # Delete old assigned record
+                await self.delete(task['pk'], task['sk'])
+                
+                # Create new pending record
+                new_status = 'pending'
+                new_sk = self._make_sk(task['env'], new_status, task['task_id'])
+                new_gsi1_pk = self._make_gsi1_pk(task['env'], new_status)
+                new_gsi1_sk = self._make_gsi1_sk(
+                    task['miner_hotkey'],
+                    task['model_revision'],
+                    task['task_id']
+                )
+                
+                task['sk'] = new_sk
+                task['status'] = new_status
+                task['assigned_to'] = None
+                task['assigned_at'] = None
+                task['gsi1_pk'] = new_gsi1_pk
+                task['gsi1_sk'] = new_gsi1_sk
+                
+                await self.put(task)
+                reset_count += 1
+                
+                logger.info(
+                    f"Reset timeout assigned task: "
+                    f"miner={task['miner_hotkey'][:12]}... "
+                    f"env={task['env']} task_id={task['task_id']} "
+                    f"timeout={current_time - task.get('assigned_at', current_time)}s"
+                )
+                
+            except Exception as e:
+                logger.error(
+                    f"Failed to reset timeout task {task.get('task_uuid')}: {e}",
+                    exc_info=True
+                )
+        
+        return reset_count
