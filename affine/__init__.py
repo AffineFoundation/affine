@@ -36,6 +36,15 @@ from affine.miners import miners
 from affine.cli import cli
 
 # --------------------------------------------------------------------------- #
+#                   Tasks module (for namespace access)                       #
+# --------------------------------------------------------------------------- #
+import sys
+from affine.tasks import list_available_environments
+
+# Create tasks namespace for backward compatibility
+tasks = sys.modules['affine.tasks']
+
+# --------------------------------------------------------------------------- #
 #                               dataset                                       #
 # --------------------------------------------------------------------------- #
 from affine.storage import (
