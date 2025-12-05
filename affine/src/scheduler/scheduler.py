@@ -29,7 +29,8 @@ class SchedulerService:
         task_generator: TaskGeneratorService,
         task_generation_interval: int = 300,
         cleanup_interval: int = 300,
-        max_tasks_per_miner_env: int = 10
+        max_tasks_per_miner_env: int = 10,
+        assigned_task_timeout: int = 600
     ):
         """
         Initialize SchedulerService.
@@ -37,13 +38,15 @@ class SchedulerService:
         Args:
             task_generator: TaskGeneratorService instance
             task_generation_interval: Seconds between task generation runs
-            cleanup_interval: Seconds between cleanup runs
+            cleanup_interval: Seconds between cleanup runs (includes timeout check)
             max_tasks_per_miner_env: Max tasks per miner/env per run
+            assigned_task_timeout: Timeout for assigned tasks in seconds (default: 600 = 10 minutes)
         """
         self.task_generator = task_generator
         self.task_generation_interval = task_generation_interval
         self.cleanup_interval = cleanup_interval
         self.max_tasks_per_miner_env = max_tasks_per_miner_env
+        self.assigned_task_timeout = assigned_task_timeout
         
         self._running = False
         self._task_generation_task: Optional[asyncio.Task] = None
@@ -60,7 +63,8 @@ class SchedulerService:
         logger.info(
             f"Starting scheduler: "
             f"task_generation_interval={self.task_generation_interval}s, "
-            f"cleanup_interval={self.cleanup_interval}s"
+            f"cleanup_interval={self.cleanup_interval}s, "
+            f"assigned_task_timeout={self.assigned_task_timeout}s"
         )
         
         self._task_generation_task = asyncio.create_task(
@@ -146,7 +150,9 @@ class SchedulerService:
             await asyncio.sleep(self.task_generation_interval)
     
     async def _cleanup_loop(self):
-        """Background loop for cleanup operations."""
+        """Background loop for cleanup operations and timeout check."""
+        from affine.database.dao.task_pool import TaskPoolDAO
+        
         logger.info("Cleanup loop started")
         
         while self._running:
@@ -163,8 +169,17 @@ class SchedulerService:
                 else:
                     logger.warning("No active miners found for cleanup")
                 
+                # Reset timeout assigned tasks
+                dao = TaskPoolDAO()
+                reset_count = await dao.reset_timeout_assigned_tasks(
+                    timeout_seconds=self.assigned_task_timeout
+                )
+                
+                if reset_count > 0:
+                    logger.info(f"Reset {reset_count} timeout assigned tasks")
+                
             except Exception as e:
-                logger.error(f"Cleanup loop error: {e}")
+                logger.error(f"Cleanup loop error: {e}", exc_info=True)
             
             # Wait for next interval
             await asyncio.sleep(self.cleanup_interval)
@@ -188,7 +203,8 @@ def create_scheduler(
     task_generator: TaskGeneratorService,
     task_generation_interval: int = 300,
     cleanup_interval: int = 3600,
-    max_tasks_per_miner_env: int = 100
+    max_tasks_per_miner_env: int = 100,
+    assigned_task_timeout: int = 600
 ) -> SchedulerService:
     """Create and set the global scheduler instance."""
     global _scheduler
@@ -197,7 +213,8 @@ def create_scheduler(
         task_generator=task_generator,
         task_generation_interval=task_generation_interval,
         cleanup_interval=cleanup_interval,
-        max_tasks_per_miner_env=max_tasks_per_miner_env
+        max_tasks_per_miner_env=max_tasks_per_miner_env,
+        assigned_task_timeout=assigned_task_timeout
     )
     
     return _scheduler
