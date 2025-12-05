@@ -7,23 +7,11 @@
       "sampling_range": [0, 500],
       "scoring_range": [0, 500]
     },
-    "affine:abd": {
-      "enabled_for_sampling": false,
-      "enabled_for_scoring": false,
-      "sampling_range": [0, 240],
-      "scoring_range": [0, 240]
-    },
-    "affine:ded": {
-      "enabled_for_sampling": false,
-      "enabled_for_scoring": false,
-      "sampling_range": [0, 240],
-      "scoring_range": [0, 240]
-    },
     "affine:ded-v2": {
       "enabled_for_sampling": true,
       "enabled_for_scoring": true,
       "sampling_range": [20000, 23302],
-      "scoring_range": [20000, 23302]
+      "scoring_range": [20000, 21000]
     },
     "affine:abd-v2": {
       "enabled_for_sampling": true,
@@ -34,8 +22,8 @@
     "agentgym:alfworld": {
       "enabled_for_sampling": true,
       "enabled_for_scoring": true,
-      "sampling_range": [0, 2500],
-      "scoring_range": [0, 2500]
+      "sampling_range": [0, 1000],
+      "scoring_range": [0, 1000]
     },
     "agentgym:webshop": {
       "enabled_for_sampling": true,
@@ -44,16 +32,16 @@
       "scoring_range": [0, 500]
     },
     "agentgym:babyai": {
-      "enabled_for_sampling": true,
-      "enabled_for_scoring": true,
+      "enabled_for_sampling": false,
+      "enabled_for_scoring": false,
       "sampling_range": [0, 500],
       "scoring_range": [0, 500]
     },
     "agentgym:sciworld": {
       "enabled_for_sampling": true,
       "enabled_for_scoring": true,
-      "sampling_range": [0, 2500],
-      "scoring_range": [0, 2500]
+      "sampling_range": [0, 1000],
+      "scoring_range": [0, 1000]
     },
     "agentgym:textcraft": {
       "enabled_for_sampling": true,

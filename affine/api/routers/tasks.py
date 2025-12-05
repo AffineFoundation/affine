@@ -132,25 +132,57 @@ if config.SERVICES_ENABLED:
         error_message = sample_sub.extra.get("error")
         is_success = error_message is None
         
+        # Error patterns that should be treated as valid zero-score samples
+        # These indicate model limitations rather than temporary failures
+        ZERO_SCORE_ERROR_PATTERNS = [
+            "is longer than the model",
+        ]
+        
+        # Check if error matches any zero-score patterns
+        should_record_zero_score = False
+        if error_message:
+            error_lower = error_message.lower()
+            for pattern in ZERO_SCORE_ERROR_PATTERNS:
+                if pattern in error_lower:
+                    should_record_zero_score = True
+                    break
+
         # Process submission in background (do not await)
         # This allows the HTTP response to return immediately
         async def _background_submit():
             """Background task to process submission asynchronously."""
             try:
-                await task_pool.complete_task(
-                    task_uuid=sample_sub.task_uuid,
-                    executor_hotkey=executor_hotkey,
-                    success=is_success,
-                    result={
-                        'score': sample_sub.score,
-                        'latency_ms': sample_sub.latency_ms,
-                        'extra': sample_sub.extra,
-                        'execution_time_ms': sample_sub.extra.get('execution_time_ms', 0)
-                    } if is_success else None,
-                    error_message=error_message,
-                    error_code="EXECUTION_ERROR",
-                    submission_signature=sample_sub.signature
-                )
+                # For zero-score errors, treat as successful sample with score=0
+                if should_record_zero_score:
+                    await task_pool.complete_task(
+                        task_uuid=sample_sub.task_uuid,
+                        executor_hotkey=executor_hotkey,
+                        success=True,
+                        result={
+                            'score': 0.0,
+                            'latency_ms': sample_sub.latency_ms,
+                            'extra': sample_sub.extra,
+                            'execution_time_ms': sample_sub.extra.get('execution_time_ms', 0)
+                        },
+                        error_message=None,
+                        error_code=None,
+                        submission_signature=sample_sub.signature
+                    )
+                else:
+                    await task_pool.complete_task(
+                        task_uuid=sample_sub.task_uuid,
+                        executor_hotkey=executor_hotkey,
+                        success=is_success,
+                        result={
+                            'score': sample_sub.score,
+                            'latency_ms': sample_sub.latency_ms,
+                            'extra': sample_sub.extra,
+                            'execution_time_ms': sample_sub.extra.get('execution_time_ms', 0)
+                        } if is_success else None,
+                        error_message=error_message,
+                        error_code="EXECUTION_ERROR",
+                        submission_signature=sample_sub.signature
+                    )
                 logger.debug(
                     f"Background submit completed: task_uuid={sample_sub.task_uuid[:8]}... "
                     f"score={sample_sub.score:.4f}"

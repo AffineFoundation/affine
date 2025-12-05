@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   validator:
-    image: thebes1618/affine:latest
+    image: affinefoundation/affine:latest
     container_name: affine-validator
     restart: unless-stopped
     mem_reservation: "6g"
@@ -14,7 +14,7 @@ services:
     volumes:
       - ~/.bittensor/wallets:/root/.bittensor/wallets:ro
       - /var/log/affine/validator:/var/log/affine/validator
-    command: ["-vv", "services", "validator"]
+    command: ["-v", "validate"]
 
   watchtower:
     image: nickfedor/watchtower

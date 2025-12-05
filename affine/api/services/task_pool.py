@@ -17,6 +17,7 @@ Optimizations:
 import asyncio
 import time
 import random
+import os
 from typing import Dict, Any, Optional, List, Tuple, Callable, TypeVar, Generic
 
 from affine.database.dao.task_pool import TaskPoolDAO
@@ -79,8 +80,6 @@ class AsyncCache(Generic[T]):
                 # Return cached data (even if stale)
                 return self._data
         
-        # Cold start: block on first fetch
-        logger.info(f"{self.name} cache cold start, fetching data")
         data = await fetcher()
         
         async with self._lock:
@@ -148,13 +147,17 @@ class TaskPoolManager:
             name="block_number"
         )
         
-        # UUID location cache: task_uuid -> (pk, sk)
-        self._uuid_cache: Dict[str, Tuple[str, str]] = {}
+        # UUID location cache: task_uuid -> (pk, sk, assigned_at)
+        # assigned_at is used for timeout detection without DB query
+        self._uuid_cache: Dict[str, Tuple[str, str, int]] = {}
         self._cache_lock = asyncio.Lock()
         
         # Warmup flag
         self._warmup_enabled = warmup
         self._warmup_done = False
+        
+        # Timeout cleanup task
+        self._timeout_cleanup_task: Optional[asyncio.Task] = None
         
         logger.info(f"TaskPoolManager initialized (count_cache_ttl={count_cache_ttl}s, miners_cache_ttl={miners_cache_ttl}s, stats_cache_ttl={stats_cache_ttl}s, block_cache_ttl={block_cache_ttl}s, warmup={warmup})")
     
@@ -207,10 +210,14 @@ class TaskPoolManager:
             # Preload all assigned tasks into UUID cache via DAO
             assigned_tasks = await self.dao.get_all_assigned_tasks()
             
-            # Populate UUID cache
+            # Populate UUID cache with (pk, sk, assigned_at)
             async with self._cache_lock:
                 for task in assigned_tasks:
-                    self._uuid_cache[task['task_uuid']] = (task['pk'], task['sk'])
+                    self._uuid_cache[task['task_uuid']] = (
+                        task['pk'],
+                        task['sk'],
+                        task.get('assigned_at', 0)
+                    )
             
             elapsed = time.time() - start_time
             logger.info(
@@ -245,6 +252,142 @@ class TaskPoolManager:
         return await self._pool_stats_caches[env].get(
             lambda: self.dao.get_pool_stats(env)
         )
+    
+    async def reset_timeout_tasks(self, timeout_seconds: int = 600) -> int:
+        """Reset timeout assigned tasks using in-memory cache.
+        
+        Uses UUID cache to detect timeout tasks without DB scan.
+        This is much more efficient than scanning the entire task_pool table.
+        
+        Args:
+            timeout_seconds: Timeout threshold in seconds
+            
+        Returns:
+            Number of tasks reset
+        """
+        current_time = int(time.time())
+        timeout_threshold = current_time - timeout_seconds
+        
+        # Find timeout tasks from cache
+        timeout_tasks = []
+        async with self._cache_lock:
+            for task_uuid, (pk, sk, assigned_at) in list(self._uuid_cache.items()):
+                if assigned_at < timeout_threshold:
+                    timeout_tasks.append((task_uuid, pk, sk))
+        
+        if not timeout_tasks:
+            return 0
+        
+        # Reset tasks in DB with parallel processing (max 25 concurrent)
+        from affine.database.client import get_client
+        client = get_client()
+        semaphore = asyncio.Semaphore(25)
+        
+        async def reset_single_task(task_uuid: str, pk: str, sk: str) -> bool:
+            """Reset a single task. Returns True if successful."""
+            async with semaphore:
+                try:
+                    # Get full task data
+                    task = await self.dao.get(pk, sk)
+                    if not task:
+                        # Task already deleted
+                        async with self._cache_lock:
+                            self._uuid_cache.pop(task_uuid, None)
+                        return False
+                    
+                    # Verify still assigned
+                    if task.get('status') != 'assigned':
+                        async with self._cache_lock:
+                            self._uuid_cache.pop(task_uuid, None)
+                        return False
+                    
+                    # Conditionally delete old assigned record
+                    try:
+                        await client.delete_item(
+                            TableName=self.dao.table_name,
+                            Key={
+                                'pk': {'S': task['pk']},
+                                'sk': {'S': task['sk']}
+                            },
+                            ConditionExpression='#status = :status',
+                            ExpressionAttributeNames={'#status': 'status'},
+                            ExpressionAttributeValues={':status': {'S': 'assigned'}}
+                        )
+                    except client.exceptions.ConditionalCheckFailedException:
+                        # Task already completed
+                        async with self._cache_lock:
+                            self._uuid_cache.pop(task_uuid, None)
+                        return False
+                    
+                    # Create new pending record
+                    new_status = 'pending'
+                    new_sk = self.dao._make_sk(task['env'], new_status, task['task_id'])
+                    new_gsi1_pk = self.dao._make_gsi1_pk(task['env'], new_status)
+                    new_gsi1_sk = self.dao._make_gsi1_sk(
+                        task['miner_hotkey'],
+                        task['model_revision'],
+                        task['task_id']
+                    )
+                    
+                    task['sk'] = new_sk
+                    task['status'] = new_status
+                    task['assigned_to'] = None
+                    task['assigned_at'] = None
+                    task['gsi1_pk'] = new_gsi1_pk
+                    task['gsi1_sk'] = new_gsi1_sk
+                    
+                    await self.dao.put(task)
+                    
+                    # Remove from cache
+                    async with self._cache_lock:
+                        self._uuid_cache.pop(task_uuid, None)
+                    
+                    return True
+                except Exception as e:
+                    logger.error(f"Failed to reset task {task_uuid}: {e}", exc_info=True)
+                    return False
+        
+        # Process all timeout tasks in parallel
+        reset_tasks = [
+            reset_single_task(task_uuid, pk, sk)
+            for task_uuid, pk, sk in timeout_tasks
+        ]
+        
+        results = await asyncio.gather(*reset_tasks, return_exceptions=True)
+        
+        # Count successful resets
+        reset_count = sum(1 for r in results if r is True)
+        
+        if reset_count > 0:
+            logger.info(f"Reset {reset_count}/{len(timeout_tasks)} timeout assigned tasks")
+        
+        return reset_count
+    
+    async def start_timeout_cleanup_loop(self):
+        """Start background timeout cleanup loop."""
+        if self._timeout_cleanup_task is not None:
+            logger.warning("Timeout cleanup loop already started")
+            return
+        
+        async def cleanup_loop():
+            """Background loop for timeout task cleanup."""
+            cleanup_interval = int(os.getenv('TASK_TIMEOUT_CLEANUP_INTERVAL', '300'))  # 5 minutes
+            task_timeout = int(os.getenv('TASK_TIMEOUT', '600'))  # 10 minutes
+            
+            logger.info(f"Timeout cleanup loop started (interval={cleanup_interval}s, timeout={task_timeout}s)")
+            
+            while True:
+                try:
+                    await self.reset_timeout_tasks(timeout_seconds=task_timeout)
+                    await asyncio.sleep(cleanup_interval)
+                except asyncio.CancelledError:
+                    logger.info("Timeout cleanup loop cancelled")
+                    break
+                except Exception as e:
+                    logger.error(f"Timeout cleanup error: {e}", exc_info=True)
+        
+        self._timeout_cleanup_task = asyncio.create_task(cleanup_loop())
+        logger.info("Timeout cleanup background task started")
     
     def _select_miners_weighted(
         self,
@@ -292,7 +435,7 @@ class TaskPoolManager:
             location = self._uuid_cache.get(task_uuid)
         
         if location:
-            return location
+            return location[:2]  # Return only (pk, sk)
         
         # Slow path: DB scan (cache miss)
         logger.debug(f"UUID cache miss for {task_uuid}, scanning DB")
@@ -301,13 +444,11 @@ class TaskPoolManager:
         if not task:
             return None
         
-        # Cache location for future lookups
-        pk_sk = (task['pk'], task['sk'])
+        # Cache location
         async with self._cache_lock:
-            self._uuid_cache[task_uuid] = pk_sk
-            logger.debug(f"Cached location for {task_uuid}: {pk_sk}")
+            self._uuid_cache[task_uuid] = (task['pk'], task['sk'], task.get('assigned_at', 0))
         
-        return pk_sk
+        return (task['pk'], task['sk'])
     
     async def fetch_task(
         self,
@@ -391,11 +532,12 @@ class TaskPoolManager:
             
             assigned_tasks = []
             for result in assigned_results:
-                # Cache UUID location
+                # Cache UUID location with assigned_at
                 async with self._cache_lock:
                     self._uuid_cache[result['task_uuid']] = (
                         result['pk'],
-                        result['sk']
+                        result['sk'],
+                        result.get('assigned_at', int(time.time()))
                     )
                 
                 # Enrich task with miner data from cache
@@ -607,9 +749,9 @@ class TaskPoolManager:
                     'message': f"Task permanently deleted after {updated_task['retry_count']} retries"
                 }
             
-            # Status is 'pending', will retry
+            # Status is 'pending', will retry (assigned_at is None for pending)
             async with self._cache_lock:
-                self._uuid_cache[task_uuid] = (updated_task['pk'], updated_task['sk'])
+                self._uuid_cache[task_uuid] = (updated_task['pk'], updated_task['sk'], 0)
             
             logger.info(
                 f"Task {task_uuid} will retry ({updated_task['retry_count']}/{updated_task['max_retries']})"

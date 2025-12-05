@@ -27,8 +27,8 @@ _ENV_LOCK = Lock()
 class SandboxConfig:
     """Sandbox configuration"""
 
-    timeout: int = 3600
-    proxy_timeout: int = 700
+    timeout: int = 1200
+    proxy_timeout: int = 600
     env: Dict[str, str] = None
 
     def __post_init__(self):
@@ -45,7 +45,6 @@ class EvaluatorConfig:
 
     temperature: float = 0.0
     timeout: int = 600
-    max_round: int = 10
 
     def to_payload(self, miner: Optional["Miner"] = None, **kwargs) -> Dict[str, Any]:
         """Convert to evaluator payload with support for dynamic parameters
@@ -228,15 +227,8 @@ class BaseSDKEnv(ABC):
         # Build payload with all dynamic parameters (including seed)
         payload = self.evaluator_config.to_payload(miner, **eval_kwargs)
 
-        # Execute evaluation
-        timeout = (
-            self.sandbox_config.proxy_timeout
-            if self.env_type == EnvType.AFFINE
-            else self.sandbox_config.proxy_timeout + 600
-        )
-
         # Call affinetes evaluate method directly
-        result = await self._env.evaluate(_timeout=timeout, **payload)
+        result = await self._env.evaluate(_timeout=self.sandbox_config.proxy_timeout, **payload)
 
         return self._parse_evaluation_result(result, miner, payload, start)
 
@@ -439,7 +431,7 @@ class AgentGymSDKEnv(BaseSDKEnv):
     """Base class for AgentGym environments"""
 
     DEFAULT_MAX_ROUND = 30
-    DEFAULT_TIMEOUT = 1200
+    DEFAULT_TIMEOUT = 600
 
     def __init__(self, max_round: int = None):
         super().__init__()
@@ -456,7 +448,7 @@ class AgentGymSDKEnv(BaseSDKEnv):
         """AgentGym environments have different images per task"""
         # Extract env name from template (e.g., "agentgym:webshop" -> "webshop")
         env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
-        return f"bignickeye/agentgym:{env_name}-v2"
+        return f"affinefoundation/agentgym:{env_name}"
 
     @property
     def env_vars(self) -> Dict[str, str]:
@@ -546,7 +538,7 @@ class DED(AffineSDKEnv):
 class DED_V2(AffineSDKEnv):
     """DED-V2 environment for SDK"""
     DEFAULT_REPLICAS = 1
-    DOCKER_IMAGE = "bignickeye/affine:v4"
+    DOCKER_IMAGE = "affinefoundation/affine-env:v4"
 
     @property
     def env_name(self) -> str:

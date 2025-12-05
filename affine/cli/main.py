@@ -137,6 +137,16 @@ def validator(ctx):
     validator_main.main(standalone_mode=False)
 
 
+@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.pass_context
+def validate(ctx):
+    """Start validator service."""
+    from affine.src.validator.main import main as validator_main
+    
+    sys.argv = ["validate"] + ctx.args
+    validator_main.main(standalone_mode=False)
+
+
 # ============================================================================
 # Miner Commands
 # ============================================================================
