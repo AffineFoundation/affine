@@ -278,75 +278,88 @@ class TaskPoolManager:
         if not timeout_tasks:
             return 0
         
-        # Reset tasks in DB
-        reset_count = 0
-        for task_uuid, pk, sk in timeout_tasks:
-            try:
-                # Get full task data
-                task = await self.dao.get(pk, sk)
-                if not task:
-                    # Task already deleted
-                    async with self._cache_lock:
-                        self._uuid_cache.pop(task_uuid, None)
-                    continue
-                
-                # Verify still assigned
-                if task.get('status') != 'assigned':
-                    async with self._cache_lock:
-                        self._uuid_cache.pop(task_uuid, None)
-                    continue
-                
-                # Reset to pending via DAO
-                from affine.database.client import get_client
-                client = get_client()
-                
-                # Conditionally delete old assigned record
+        # Reset tasks in DB with parallel processing (max 25 concurrent)
+        from affine.database.client import get_client
+        client = get_client()
+        semaphore = asyncio.Semaphore(25)
+        
+        async def reset_single_task(task_uuid: str, pk: str, sk: str) -> bool:
+            """Reset a single task. Returns True if successful."""
+            async with semaphore:
                 try:
-                    await client.delete_item(
-                        TableName=self.dao.table_name,
-                        Key={
-                            'pk': {'S': task['pk']},
-                            'sk': {'S': task['sk']}
-                        },
-                        ConditionExpression='#status = :status',
-                        ExpressionAttributeNames={'#status': 'status'},
-                        ExpressionAttributeValues={':status': {'S': 'assigned'}}
+                    # Get full task data
+                    task = await self.dao.get(pk, sk)
+                    if not task:
+                        # Task already deleted
+                        async with self._cache_lock:
+                            self._uuid_cache.pop(task_uuid, None)
+                        return False
+                    
+                    # Verify still assigned
+                    if task.get('status') != 'assigned':
+                        async with self._cache_lock:
+                            self._uuid_cache.pop(task_uuid, None)
+                        return False
+                    
+                    # Conditionally delete old assigned record
+                    try:
+                        await client.delete_item(
+                            TableName=self.dao.table_name,
+                            Key={
+                                'pk': {'S': task['pk']},
+                                'sk': {'S': task['sk']}
+                            },
+                            ConditionExpression='#status = :status',
+                            ExpressionAttributeNames={'#status': 'status'},
+                            ExpressionAttributeValues={':status': {'S': 'assigned'}}
+                        )
+                    except client.exceptions.ConditionalCheckFailedException:
+                        # Task already completed
+                        async with self._cache_lock:
+                            self._uuid_cache.pop(task_uuid, None)
+                        return False
+                    
+                    # Create new pending record
+                    new_status = 'pending'
+                    new_sk = self.dao._make_sk(task['env'], new_status, task['task_id'])
+                    new_gsi1_pk = self.dao._make_gsi1_pk(task['env'], new_status)
+                    new_gsi1_sk = self.dao._make_gsi1_sk(
+                        task['miner_hotkey'],
+                        task['model_revision'],
+                        task['task_id']
                     )
-                except client.exceptions.ConditionalCheckFailedException:
-                    # Task already completed
+                    
+                    task['sk'] = new_sk
+                    task['status'] = new_status
+                    task['assigned_to'] = None
+                    task['assigned_at'] = None
+                    task['gsi1_pk'] = new_gsi1_pk
+                    task['gsi1_sk'] = new_gsi1_sk
+                    
+                    await self.dao.put(task)
+                    
+                    # Remove from cache
                     async with self._cache_lock:
                         self._uuid_cache.pop(task_uuid, None)
-                    continue
-                
-                # Create new pending record
-                new_status = 'pending'
-                new_sk = self.dao._make_sk(task['env'], new_status, task['task_id'])
-                new_gsi1_pk = self.dao._make_gsi1_pk(task['env'], new_status)
-                new_gsi1_sk = self.dao._make_gsi1_sk(
-                    task['miner_hotkey'],
-                    task['model_revision'],
-                    task['task_id']
-                )
-                
-                task['sk'] = new_sk
-                task['status'] = new_status
-                task['assigned_to'] = None
-                task['assigned_at'] = None
-                task['gsi1_pk'] = new_gsi1_pk
-                task['gsi1_sk'] = new_gsi1_sk
-                
-                await self.dao.put(task)
-                
-                # Remove from cache
-                async with self._cache_lock:
-                    self._uuid_cache.pop(task_uuid, None)
-                logger.info(f"Found timeout task: {task_uuid}, delete, reset_count: {reset_count}")
-                reset_count += 1
-            except Exception as e:
-                logger.error(f"Failed to reset task {task_uuid}: {e}", exc_info=True)
+                    
+                    return True
+                except Exception as e:
+                    logger.error(f"Failed to reset task {task_uuid}: {e}", exc_info=True)
+                    return False
+        
+        # Process all timeout tasks in parallel
+        reset_tasks = [
+            reset_single_task(task_uuid, pk, sk)
+            for task_uuid, pk, sk in timeout_tasks
+        ]
+        
+        results = await asyncio.gather(*reset_tasks, return_exceptions=True)
+        
+        # Count successful resets
+        reset_count = sum(1 for r in results if r is True)
         
         if reset_count > 0:
-            logger.info(f"Reset {reset_count} timeout assigned tasks")
+            logger.info(f"Reset {reset_count}/{len(timeout_tasks)} timeout assigned tasks")
         
         return reset_count
     
