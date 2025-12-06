@@ -13,8 +13,6 @@ from affine.core.setup import logger
 from affine.src.validator.chain import (
     load_keypair,
     get_substrate,
-    query_chain,
-    apply_burn,
     convert_weights_to_u16,
     set_weights,
     U16_MAX,
@@ -118,13 +116,13 @@ class WeightSetter:
         Process weights for chain submission.
         
         Simplified workflow:
-        1. Validate input weights (should already be normalized from API)
-        2. Apply burn mechanism (allocate to UID 0)
-        3. Convert to uint16 format
+        1. Validate input
+        2. Apply burn if needed (allocate to UID 0)
+        3. Convert to uint16 using max-normalization
         
         Args:
             uids: List of miner UIDs
-            weights: Weight list (expected to be normalized, sum ≈ 1.0)
+            weights: Weight values (can be unnormalized)
             burn_percentage: Burn percentage (0.0-1.0)
             
         Returns:
@@ -137,48 +135,43 @@ class WeightSetter:
         
         logger.debug(f"Processing {len(uids)} weights, burn={burn_percentage:.1%}")
         
-        # Validate input
         if len(uids) != len(weights):
             raise ValueError(f"UID count {len(uids)} != weight count {len(weights)}")
         
         if len(uids) == 0:
             raise ValueError("Empty UID list")
         
-        weights_array = np.array(weights, dtype=np.float32)
+        weights_array = np.array(weights, dtype=np.float64)
         
-        # Check if weights are already normalized (as expected from API)
-        total_weight = weights_array.sum()
-        if abs(total_weight - 1.0) > 0.01:
-            logger.warning(
-                f"Input weights sum to {total_weight:.6f}, not 1.0. "
-                "API should return normalized weights. Normalizing now."
-            )
-            weights_array = weights_array / total_weight
+        # Apply burn if needed
+        if burn_percentage > 0 and burn_percentage <= 1.0:
+            # Calculate burn amount
+            burn_amount = weights_array.sum() * burn_percentage
+            
+            # Reduce all weights proportionally
+            weights_array = weights_array * (1.0 - burn_percentage)
+            
+            # Add UID 0 with burn amount if not already present
+            if 0 not in uids:
+                uids = [0] + list(uids)
+                weights_array = np.concatenate([[burn_amount], weights_array])
+            else:
+                # Add to existing UID 0
+                idx = uids.index(0)
+                weights_array[idx] += burn_amount
         
-        # Apply burn mechanism (modifies UID list and weights)
-        if burn_percentage > 0:
-            uids_list, weights_list = apply_burn(
-                list(uids),
-                weights_array.tolist(),
-                burn_percentage
-            )
-        else:
-            uids_list = list(uids)
-            weights_list = weights_array.tolist()
-        
-        # Convert to uint16 format
+        # Convert to uint16 using max-normalization
         final_uids, uint16_weights = convert_weights_to_u16(
-            uids_list,
-            weights_list,
-            validate_normalization=True
+            list(uids),
+            weights_array.tolist(),
         )
         
         if len(final_uids) == 0:
-            raise ValueError("No valid weights after uint16 conversion")
+            raise ValueError("No valid weights after conversion")
         
         logger.info(
             f"Processed {len(final_uids)} weights for chain "
-            f"(sum={sum(uint16_weights)}/{U16_MAX})"
+            f"(max={max(uint16_weights)}, sum={sum(uint16_weights)})"
         )
         
         return final_uids, uint16_weights
@@ -218,13 +211,13 @@ class WeightSetter:
                 )
             
             # Print weights preview
-            normalized_weights = [w / U16_MAX for w in processed_weights]
+            normalized_weights = [w / sum(processed_weights) for w in processed_weights]
             
             logger.info("=" * 60)
             logger.info("Weights to set on chain:")
             logger.info("=" * 60)
-            for uid, weight in zip(processed_uids, normalized_weights):
-                logger.info(f"  UID {uid:4d}: {weight:.6f}")
+            for uid, n_weight, weight in zip(processed_uids, normalized_weights, processed_weights):
+                logger.info(f"  UID {uid:4d}: {n_weight:.6f} {weight:.6f}")
             logger.info(f"Total: {sum(normalized_weights):.6f}")
             logger.info("=" * 60)
         
@@ -249,7 +242,6 @@ class WeightSetter:
                 error_message=f"Weight processing failed: {e}",
                 timestamp=time.time(),
             )
-        
         # Retry loop for chain submission only
         last_error = None
         for attempt in range(1, self.max_retries + 1):
@@ -257,14 +249,17 @@ class WeightSetter:
                 # Use cached substrate connection
                 substrate = self._get_substrate()
                 
-                # Query version key
-                version_key = query_chain(
-                    substrate,
-                    "SubtensorModule",
-                    "WeightsVersionKey",
-                    [self.netuid],
-                    return_value=True
-                ) or 0
+                # Query version key from chain
+                try:
+                    result = substrate.query(
+                        module="SubtensorModule",
+                        storage_function="WeightsVersionKey",
+                        params=[self.netuid],
+                    )
+                    version_key = result.value if result else 0
+                except Exception as e:
+                    logger.warning(f"Failed to query version key: {e}, using 0")
+                    version_key = 0
                 
                 logger.debug(f"Attempt {attempt}/{self.max_retries}, version_key={version_key}")
                 

@@ -1,30 +1,28 @@
 #!/usr/bin/env python3
 """
-Simplified chain interaction utilities - replacing fiber library
+Simplified chain interaction for Affine validator
 
-Provides basic functionality for interacting with Bittensor chain:
-- Load keypairs
+Minimal implementation based on fiber/fiber/chain, keeping only essentials:
+- Load keypairs from Bittensor wallet
 - Connect to Substrate
-- Query chain parameters
-- Set weights
+- Convert weights using max-normalization (Bittensor standard)
+- Submit weights to chain
 """
 
 import json
 import asyncio
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, List, Tuple
 from dataclasses import dataclass
 
 from substrateinterface import SubstrateInterface
 from bittensor import Keypair
 from affine.core.setup import logger
 
-# Chain constants
+# Bittensor constants
 U16_MAX = 65535
-U32_MAX = 4294967295
 
-
-# Network endpoint mapping
+# Network endpoints
 NETWORK_ENDPOINTS = {
     "finney": "wss://entrypoint-finney.opentensor.ai:443",
     "test": "wss://test.finney.opentensor.ai:443/",
@@ -38,12 +36,13 @@ class WeightSetResult:
     success: bool
     block_number: Optional[int] = None
     error_message: Optional[str] = None
-    attempts: int = 0
 
 
 def load_keypair(wallet_name: str, hotkey_name: str) -> Keypair:
     """
-    Load hotkey keypair
+    Load hotkey keypair from Bittensor wallet directory.
+    
+    Matches fiber implementation: fiber/fiber/chain/chain_utils.py:load_hotkey_keypair
     
     Args:
         wallet_name: Wallet name
@@ -51,6 +50,9 @@ def load_keypair(wallet_name: str, hotkey_name: str) -> Keypair:
         
     Returns:
         Keypair object
+        
+    Raises:
+        ValueError: If keypair cannot be loaded
     """
     file_path = Path.home() / ".bittensor" / "wallets" / wallet_name / "hotkeys" / hotkey_name
     
@@ -59,17 +61,18 @@ def load_keypair(wallet_name: str, hotkey_name: str) -> Keypair:
             keypair_data = json.load(f)
         
         keypair = Keypair.create_from_seed(keypair_data["secretSeed"])
-        logger.debug(f"Loaded keypair from {file_path}")
+        logger.info(f"Loaded keypair from {file_path}")
         return keypair
     
     except Exception as e:
-        logger.error(f"Failed to load keypair: {e}")
-        raise ValueError(f"Cannot load keypair {wallet_name}/{hotkey_name}: {e}")
+        raise ValueError(f"Failed to load keypair {wallet_name}/{hotkey_name}: {e}")
 
 
 def get_substrate(network: str = "finney", address: Optional[str] = None) -> SubstrateInterface:
     """
-    Create Substrate connection
+    Create Substrate connection.
+    
+    Matches fiber implementation: fiber/fiber/chain/interface.py:get_substrate
     
     Args:
         network: Network name (finney, test, local)
@@ -85,152 +88,30 @@ def get_substrate(network: str = "finney", address: Optional[str] = None) -> Sub
     else:
         raise ValueError(f"Unknown network: {network}")
     
-    logger.debug(f"Connecting to chain: {endpoint}")
+    logger.info(f"Connecting to chain: {endpoint}")
     
-    substrate = SubstrateInterface(
+    return SubstrateInterface(
         ss58_format=42,
         use_remote_preset=True,
         url=endpoint,
     )
-    
-    return substrate
-
-
-def query_chain(
-    substrate: SubstrateInterface,
-    module: str,
-    method: str,
-    params: List[Any],
-    return_value: bool = True
-) -> Any:
-    """
-    Query chain data
-    
-    Args:
-        substrate: Substrate interface
-        module: Module name
-        method: Method name
-        params: Parameter list
-        return_value: Whether to return .value
-        
-    Returns:
-        Query result
-    """
-    try:
-        result = substrate.query(module, method, params)
-        return result.value if return_value else result
-    except Exception as e:
-        logger.error(f"Chain query failed {module}.{method}: {e}")
-        raise
-
-
-def normalize_weights(weights: List[float]) -> List[float]:
-    """
-    Normalize weights to sum to 1.0.
-    
-    Args:
-        weights: Raw weight list (any positive values)
-        
-    Returns:
-        Normalized weight list that sums to 1.0
-    """
-    import numpy as np
-    
-    weights_array = np.array(weights, dtype=np.float32)
-    
-    # Handle edge case: all zeros or empty
-    if weights_array.sum() == 0 or len(weights) == 0:
-        if len(weights) == 0:
-            return []
-        return [1.0 / len(weights)] * len(weights)
-    
-    # Normalize to sum = 1.0
-    normalized = weights_array / weights_array.sum()
-    
-    return normalized.tolist()
-
-
-def apply_burn(
-    uids: List[int],
-    weights: List[float],
-    burn_percentage: float
-) -> Tuple[List[int], List[float]]:
-    """
-    Apply burn mechanism - allocate a percentage of total weight to UID 0.
-    
-    This mechanism ensures UID 0 receives exactly burn_percentage of the total weight,
-    while all other UIDs have their weights proportionally reduced.
-    
-    Logic:
-        - UID 0 gets: burn_percentage (of total normalized weight)
-        - Other UIDs get: their_weight * (1 - burn_percentage)
-        - Result still sums to 1.0
-    
-    Args:
-        uids: List of miner UIDs
-        weights: List of weights (should sum to ~1.0 if normalized)
-        burn_percentage: Percentage to allocate to UID 0 (0.0 - 1.0)
-        
-    Returns:
-        Tuple of (updated_uids, updated_weights) with UID 0 included
-    """
-    import numpy as np
-    
-    if burn_percentage <= 0:
-        return uids, weights
-    
-    burn_percentage = min(max(burn_percentage, 0.0), 1.0)
-    
-    # Convert to numpy for easier manipulation
-    weights_array = np.array(weights, dtype=np.float32)
-    
-    # Normalize weights if not already normalized
-    total = weights_array.sum()
-    if abs(total - 1.0) > 0.01:
-        weights_array = weights_array / total
-    
-    # Remove UID 0 if it already exists (we'll add it back with correct weight)
-    if 0 in uids:
-        uid_0_idx = uids.index(0)
-        uids_list = uids[:uid_0_idx] + uids[uid_0_idx + 1:]
-        weights_array = np.concatenate([
-            weights_array[:uid_0_idx],
-            weights_array[uid_0_idx + 1:]
-        ])
-    else:
-        uids_list = list(uids)
-    
-    # Scale down all other weights
-    scaled_weights = weights_array * (1.0 - burn_percentage)
-    
-    # Add UID 0 at the beginning with burn amount
-    final_uids = [0] + uids_list
-    final_weights = np.concatenate([[burn_percentage], scaled_weights])
-    
-    logger.debug(
-        f"Applied burn: UID 0 gets {burn_percentage:.4f}, "
-        f"others scaled by {1.0 - burn_percentage:.4f}"
-    )
-    
-    return final_uids, final_weights.tolist()
 
 
 def convert_weights_to_u16(
     uids: List[int],
     weights: List[float],
-    validate_normalization: bool = True
 ) -> Tuple[List[int], List[int]]:
     """
-    Convert normalized weights to uint16 format for chain submission.
+    Convert weights to uint16 format using max-normalization (Bittensor standard).
     
-    This is the final step before chain submission. Input weights should already
-    be normalized (sum ≈ 1.0). This function only handles the conversion to uint16
-    and filtering of zero weights.
+    Matches fiber implementation: fiber/fiber/chain/weights.py:_normalize_and_quantize_weights
+    
+    Uses max-normalization: scales maximum weight to U16_MAX, maintaining relative ratios.
+    This is the Bittensor standard and provides better precision than sum-normalization.
     
     Args:
         uids: List of miner UIDs
-        weights: Normalized weight list (should sum to ~1.0)
-        validate_normalization: Whether to validate and fix normalization
+        weights: Raw weight values (unnormalized)
         
     Returns:
         Tuple of (valid_uids, uint16_weights) with zero weights filtered out
@@ -249,35 +130,38 @@ def convert_weights_to_u16(
         logger.warning("Empty UID list, returning empty result")
         return [], []
     
-    weights_array = np.array(weights, dtype=np.float32)
+    weights_array = np.array(weights, dtype=np.float64)
     
-    # Check for zero sum
-    if weights_array.sum() == 0:
-        logger.error("All weights are zero, cannot convert to uint16")
+    # Filter out non-positive weights first
+    positive_mask = weights_array > 0
+    if not positive_mask.any():
+        logger.error("All weights are zero or negative")
         return [], []
     
-    # Validate normalization if requested
-    if validate_normalization:
-        total = weights_array.sum()
-        if abs(total - 1.0) > 0.01:
-            weights_array = weights_array / total
+    positive_uids = [uid for uid, mask in zip(uids, positive_mask) if mask]
+    positive_weights = weights_array[positive_mask]
     
-    # Convert to uint16 by scaling to U16_MAX
-    # Use round() to minimize rounding errors
-    uint16_weights_float = weights_array * U16_MAX
-    uint16_weights = np.round(uint16_weights_float).astype(np.uint16)
+    # Max-normalization: scale max weight to U16_MAX
+    max_weight = positive_weights.max()
+    if max_weight == 0:
+        logger.error("Max weight is zero")
+        return [], []
     
-    # Filter out zero weights (can happen due to rounding)
+    scaling_factor = U16_MAX / max_weight
+    uint16_weights = np.round(positive_weights * scaling_factor).astype(np.uint16)
+    
+    # Filter out any zeros that appeared due to rounding
     nonzero_mask = uint16_weights > 0
-    valid_uids = [uid for uid, mask in zip(uids, nonzero_mask) if mask]
-    valid_weights = uint16_weights[nonzero_mask].tolist()
+    final_uids = [uid for uid, mask in zip(positive_uids, nonzero_mask) if mask]
+    final_weights = uint16_weights[nonzero_mask].tolist()
     
     logger.debug(
-        f"Converted to uint16: {len(valid_uids)}/{len(uids)} non-zero weights, "
-        f"sum={sum(valid_weights)}/{U16_MAX}"
+        f"Converted to uint16 using max-normalization: "
+        f"{len(final_uids)}/{len(uids)} weights, "
+        f"max={max(final_weights)}, sum={sum(final_weights)}"
     )
     
-    return valid_uids, valid_weights
+    return final_uids, final_weights
 
 
 async def set_weights(

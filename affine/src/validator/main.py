@@ -16,7 +16,6 @@ from typing import Dict, List, Optional
 from affine.src.validator.weight_setter import WeightSetter
 from affine.core.setup import logger, setup_logging
 from affine.utils.api_client import create_api_client
-from affine.src.validator.chain import get_substrate, query_chain
 
 
 class ValidatorService:
@@ -80,97 +79,25 @@ class ValidatorService:
     
     async def fetch_weights_from_api(self) -> Optional[Dict]:
         """
-        Fetch latest weights from backend API with comprehensive validation
+        Fetch latest weights from backend API
         
         Returns:
             Dictionary with weights data or None if failed
         """
-        # Lazy initialization of API client
         if self.api_client is None:
             self.api_client = await create_api_client()
         
         try:
             response = await self.api_client.get("/scores/weights/latest")
             
-            # Validate response format
-            if not isinstance(response, dict):
-                logger.error(f"Invalid API response format: expected dict, got {type(response)}")
+            if not isinstance(response, dict) or not response.get("weights"):
+                logger.warning("Invalid or empty weights from API")
                 return None
             
-            weights_dict = response.get("weights")
-            if not weights_dict:
-                logger.warning("No weights available from API")
-                return None
+            weights_dict = response["weights"]
+            block_number = response.get("block_number", "unknown")
             
-            if not isinstance(weights_dict, dict):
-                logger.error(f"Invalid weights format: expected dict, got {type(weights_dict)}")
-                return None
-            
-            # Validate weight count
-            if len(weights_dict) == 0:
-                logger.warning("Empty weights dictionary from API")
-                return None
-            
-            # Validate block_number exists
-            block_number = response.get("block_number")
-            if block_number is None:
-                logger.warning("No block_number in API response")
-            
-            # Validate weight values
-            total_weight = 0.0
-            valid_count = 0
-            for uid_str, weight_data in weights_dict.items():
-                try:
-                    # Validate UID format
-                    uid = int(uid_str)
-                    if uid < 0:
-                        logger.warning(f"Negative UID in API response: {uid_str}")
-                        continue
-                    
-                    # Validate weight data
-                    if not isinstance(weight_data, dict):
-                        logger.warning(f"Invalid weight data for UID {uid_str}: {type(weight_data)}")
-                        continue
-                    
-                    weight = weight_data.get("weight")
-                    if weight is None:
-                        logger.warning(f"Missing weight value for UID {uid_str}")
-                        continue
-                    
-                    try:
-                        weight_float = float(weight)
-                        if weight_float < 0:
-                            logger.warning(f"Negative weight for UID {uid_str}: {weight_float}")
-                            continue
-                        if weight_float > 1.0:
-                            logger.warning(f"Weight > 1.0 for UID {uid_str}: {weight_float}")
-                        
-                        total_weight += weight_float
-                        valid_count += 1
-                    except (ValueError, TypeError) as e:
-                        logger.warning(f"Invalid weight value for UID {uid_str}: {weight} ({e})")
-                        continue
-                
-                except ValueError:
-                    logger.warning(f"Invalid UID format: {uid_str}")
-                    continue
-            
-            if valid_count == 0:
-                logger.error("No valid weights found in API response")
-                return None
-            
-            # Validate total weight sum (should be close to 1.0 if pre-normalized)
-            if abs(total_weight - 1.0) > 0.01:
-                logger.warning(
-                    f"Unexpected weight sum: {total_weight:.6f} "
-                    f"(expected ~1.0 for {valid_count} weights)"
-                )
-            
-            logger.info(
-                f"Fetched {len(weights_dict)} weights from API "
-                f"({valid_count} valid, sum={total_weight:.6f}, block={block_number})"
-            )
-            
+            logger.info(f"Fetched {len(weights_dict)} weights (block={block_number})")
             return response
         
         except Exception as e:
