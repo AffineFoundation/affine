@@ -1,7 +1,7 @@
 services:
   # API Server - Central API service
   api:
-    image: thebes1618/affine:latest
+    image: affinefoundation/affine:latest
     container_name: affine-api
     restart: unless-stopped
     mem_reservation: "2g"
@@ -25,7 +25,7 @@ services:
 
   # Scheduler - Task generation service
   scheduler:
-    image: thebes1618/affine:latest
+    image: affinefoundation/affine:latest
     container_name: affine-scheduler
     restart: unless-stopped
     mem_reservation: "2g"
@@ -36,7 +36,7 @@ services:
 
   # Executor - Task execution service
   executor:
-    image: thebes1618/affine:latest
+    image: affinefoundation/affine:latest
     container_name: affine-executor
     restart: unless-stopped
     mem_reservation: "4g"
@@ -61,7 +61,7 @@ services:
 
   # Miners Monitor - Miner synchronization service
   monitor:
-    image: thebes1618/affine:latest
+    image: affinefoundation/affine:latest
     container_name: affine-monitor
     restart: unless-stopped
     mem_reservation: "2g"
@@ -74,7 +74,7 @@ services:
 
   # Scorer - Weight calculation service
   scorer:
-    image: thebes1618/affine:latest
+    image: affinefoundation/affine:latest
     container_name: affine-scorer
     restart: unless-stopped
     mem_reservation: "4g"
