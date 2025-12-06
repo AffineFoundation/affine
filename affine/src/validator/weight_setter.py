@@ -75,11 +75,6 @@ class WeightSetter:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         
-        # Statistics
-        self.total_sets = 0
-        self.failed_sets = 0
-        self.last_set_at: Optional[float] = None
-        
         # Cached substrate connection (reuse across calls)
         self._substrate: Optional[object] = None
         
@@ -214,7 +209,6 @@ class WeightSetter:
             )
             
             if not processed_uids:
-                self.failed_sets += 1
                 return WeightSetResult(
                     success=False,
                     uids=uids,
@@ -237,7 +231,6 @@ class WeightSetter:
         except ValueError as e:
             # Parameter validation errors - don't retry
             logger.error(f"Invalid parameters: {e}")
-            self.failed_sets += 1
             return WeightSetResult(
                 success=False,
                 uids=uids,
@@ -249,7 +242,6 @@ class WeightSetter:
         except Exception as e:
             # Unexpected errors during processing
             logger.error(f"Failed to process weights: {e}", exc_info=True)
-            self.failed_sets += 1
             return WeightSetResult(
                 success=False,
                 uids=uids,
@@ -290,9 +282,6 @@ class WeightSetter:
                 
                 # Check result
                 if result.success:
-                    self.total_sets += 1
-                    self.last_set_at = time.time()
-                    
                     logger.info(
                         f"✅ Weights set successfully at block {result.block_number} "
                         f"(attempt {attempt}/{self.max_retries})"
@@ -323,7 +312,6 @@ class WeightSetter:
                 # Parameter errors - don't retry
                 last_error = str(e)
                 logger.error(f"Parameter error (won't retry): {e}")
-                self.failed_sets += 1
                 return WeightSetResult(
                     success=False,
                     uids=uids,
@@ -344,7 +332,6 @@ class WeightSetter:
                 await asyncio.sleep(self.retry_delay)
         
         # All retries exhausted
-        self.failed_sets += 1
         logger.error(f"❌ Failed to set weights after {self.max_retries} attempts: {last_error}")
         
         return WeightSetResult(
@@ -355,20 +342,3 @@ class WeightSetter:
             attempts=self.max_retries,
             timestamp=time.time(),
         )
-    
-    def get_metrics(self) -> Dict:
-        """Get statistics metrics"""
-        total_attempts = self.total_sets + self.failed_sets
-        return {
-            "total_sets": self.total_sets,
-            "failed_sets": self.failed_sets,
-            "total_attempts": total_attempts,
-            "success_rate": (
-                self.total_sets / total_attempts
-                if total_attempts > 0
-                else 0.0
-            ),
-            "last_set_at": self.last_set_at,
-            "netuid": self.netuid,
-            "wallet": f"{self.wallet_name}/{self.hotkey_name}",
-        }

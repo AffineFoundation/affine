@@ -75,10 +75,6 @@ class ValidatorService:
         
         # State
         self.running = False
-        self.last_run_at: Optional[float] = None
-        self.total_runs = 0
-        self.successful_runs = 0
-        self.failed_runs = 0
         
         logger.debug(f"ValidatorService initialized for {wallet_name}/{hotkey_name}")
     
@@ -250,104 +246,72 @@ class ValidatorService:
         
         return uids, weights
     
-    async def run_once(self) -> bool:
-        """
-        Run one iteration of weight setting
+    async def _run_iteration(self):
+        """Run one iteration of weight setting"""
+        # Fetch weights from API
+        weights_data = await self.fetch_weights_from_api()
         
-        Returns:
-            True if successful, False otherwise
-        """
-        self.total_runs += 1
-        self.last_run_at = time.time()
+        if not weights_data:
+            logger.warning("No weights available")
+            return
         
+        api_weights = weights_data.get("weights", {})
+        block_number = weights_data.get("block_number")
+        
+        # Convert weights (API already returns UID-based weights)
+        uids, weights = await self.convert_api_weights_to_chain_format(api_weights)
+        
+        if not uids:
+            logger.warning("No valid weights after conversion")
+            return
+        
+        logger.info(f"Converted {len(uids)} weights for block {block_number}")
+        
+        # Get burn percentage
         try:
-            # Fetch weights from API
-            weights_data = await self.fetch_weights_from_api()
+            # Ensure API client is initialized
+            if self.api_client is None:
+                self.api_client = await create_api_client()
             
-            if not weights_data:
-                logger.warning("No weights available")
-                self.failed_runs += 1
-                return False
-            
-            api_weights = weights_data.get("weights", {})
-            block_number = weights_data.get("block_number")
-            
-            # Convert weights (API already returns UID-based weights)
-            uids, weights = await self.convert_api_weights_to_chain_format(api_weights)
-            
-            if not uids:
-                logger.warning("No valid weights after conversion")
-                self.failed_runs += 1
-                return False
-            
-            logger.info(f"Converted {len(uids)} weights for block {block_number}")
-            
-            # Get burn percentage
-            try:
-                # Ensure API client is initialized
-                if self.api_client is None:
-                    self.api_client = await create_api_client()
-                
-                burn_config = await self.api_client.get("/config/validator_burn_percentage")
-                burn_percentage = float(burn_config.get("param_value", 0.0))
-                if burn_percentage > 0:
-                    logger.info(f"Burn: {burn_percentage:.1%}")
-            except Exception as e:
-                logger.debug(f"Using default burn 0.0: {e}")
-                burn_percentage = 0.0
-            
-            # Set weights on chain
-            result = await self.weight_setter.set_weights(
-                uids=uids,
-                weights=weights,
-                burn_percentage=burn_percentage,
-            )
-            
-            if result.success:
-                self.successful_runs += 1
-                return True
-            else:
-                logger.error(f"Failed: {result.error_message}")
-                self.failed_runs += 1
-                return False
-        
+            burn_config = await self.api_client.get("/config/validator_burn_percentage")
+            burn_percentage = float(burn_config.get("param_value", 0.0))
+            if burn_percentage > 0:
+                logger.info(f"Burn: {burn_percentage:.1%}")
         except Exception as e:
-            logger.error(f"Error in run_once: {e}")
-            import traceback
-            traceback.print_exc()
-            self.failed_runs += 1
-            return False
+            logger.debug(f"Using default burn 0.0: {e}")
+            burn_percentage = 0.0
+        
+        # Set weights on chain
+        await self.weight_setter.set_weights(
+            uids=uids,
+            weights=weights,
+            burn_percentage=burn_percentage,
+        )
     
     async def start(self):
         """Start the validator service loop"""
         logger.info("Starting ValidatorService...")
         self.running = True
         
+        # Get interval from environment
+        interval = int(os.getenv("VALIDATOR_WEIGHT_SET_INTERVAL", "1800"))  # Default 30 minutes
+        
         try:
-            # Get interval from environment
-            interval = int(os.getenv("VALIDATOR_WEIGHT_SET_INTERVAL", "1800"))  # Default 30 minutes
-            
             while self.running:
-                # Run one iteration
-                success = await self.run_once()
+                try:
+                    await self._run_iteration()
+                except Exception as e:
+                    logger.error(f"Error in iteration: {e}")
+                    import traceback
+                    traceback.print_exc()
                 
-                if success:
-                    logger.info(f"Next weight set in {interval}s")
-                    await asyncio.sleep(interval)
-                else:
-                    # Use shorter interval on failure
-                    retry_interval = min(interval, 300)
-                    logger.info(f"Retry in {retry_interval}s after failure")
-                    await asyncio.sleep(retry_interval)
+                logger.info(f"Next weight set in {interval}s")
+                await asyncio.sleep(interval)
         
         except asyncio.CancelledError:
             logger.info("ValidatorService cancelled")
         except KeyboardInterrupt:
             logger.info("ValidatorService interrupted")
-        except Exception as e:
-            logger.error(f"Fatal error in validator loop: {e}")
-            import traceback
-            traceback.print_exc()
         finally:
             self.running = False
             logger.info("ValidatorService stopped")
@@ -356,51 +320,13 @@ class ValidatorService:
         """Stop the validator service"""
         logger.info("Stopping ValidatorService...")
         self.running = False
-    
-    def get_metrics(self) -> Dict:
-        """Get validator service metrics"""
-        return {
-            "service": "validator",
-            "running": self.running,
-            "total_runs": self.total_runs,
-            "successful_runs": self.successful_runs,
-            "failed_runs": self.failed_runs,
-            "success_rate": (
-                self.successful_runs / self.total_runs
-                if self.total_runs > 0
-                else 0.0
-            ),
-            "last_run_at": self.last_run_at,
-            "weight_setter": self.weight_setter.get_metrics(),
-        }
-    
-    def print_status(self):
-        """Print current status"""
-        metrics = self.get_metrics()
-        
-        print("\n" + "=" * 60)
-        print("Validator Service Status")
-        print("=" * 60)
-        print(f"Running: {metrics['running']}")
-        print(f"Total Runs: {metrics['total_runs']}")
-        print(f"Successful: {metrics['successful_runs']}")
-        print(f"Failed: {metrics['failed_runs']}")
-        print(f"Success Rate: {metrics['success_rate']:.1%}")
-        
-        ws_metrics = metrics["weight_setter"]
-        print(f"\nWeight Setter:")
-        print(f"  Total Sets: {ws_metrics['total_sets']}")
-        print(f"  Failed Sets: {ws_metrics['failed_sets']}")
-        print(f"  Last Set: {ws_metrics['last_set_at']}")
-        print("=" * 60)
 
 
-async def run_service_with_mode(
+async def run_service(
     wallet_name: str,
     hotkey_name: str,
     netuid: int,
     network: str,
-    service_mode: bool
 ):
     """Run the validator service"""
     logger.info(f"Starting validator (netuid: {netuid}, network: {network})")
@@ -424,35 +350,20 @@ async def run_service_with_mode(
         loop.add_signal_handler(sig, lambda s=sig: handle_shutdown(s))
     
     try:
-        if not service_mode:
-            # Single run mode (DEFAULT)
-            logger.info("Running in one-time mode (default)")
-            success = await service.run_once()
-            service.print_status()
-        else:
-            # Continuous service mode
-            logger.info("Running in service mode (continuous). Press Ctrl+C to stop.")
-            
-            # Start service
-            service_task = asyncio.create_task(service.start())
-            
-            # Wait for shutdown
-            while not shutdown_event.is_set():
-                try:
-                    await asyncio.wait_for(shutdown_event.wait(), timeout=60)
-                except asyncio.TimeoutError:
-                    service.print_status()
-            
-            # Shutdown
-            await service.stop()
-            service_task.cancel()
-            
-            try:
-                await service_task
-            except asyncio.CancelledError:
-                pass
-            
-            service.print_status()
+        # Start service
+        service_task = asyncio.create_task(service.start())
+        
+        # Wait for shutdown
+        await shutdown_event.wait()
+        
+        # Shutdown
+        await service.stop()
+        service_task.cancel()
+        
+        try:
+            await service_task
+        except asyncio.CancelledError:
+            pass
     
     except Exception as e:
         logger.error(f"Error running validator: {e}", exc_info=True)
@@ -499,7 +410,6 @@ def main(netuid, wallet_name, hotkey_name, network, verbosity):
     hotkey_name_val = hotkey_name or os.getenv("BT_WALLET_HOT")
     netuid_val = netuid if netuid is not None else int(os.getenv("NETUID", "120"))
     network_val = network or os.getenv("SUBTENSOR_NETWORK", "finney")
-    service_mode = os.getenv("SERVICE_MODE", "false").lower() in ("true", "1", "yes")
     
     if not wallet_name_val:
         raise click.UsageError("Wallet name required (--wallet-name or BT_WALLET_COLD)")
@@ -509,14 +419,12 @@ def main(netuid, wallet_name, hotkey_name, network, verbosity):
     logger.info(f"Wallet: {wallet_name_val}/{hotkey_name_val}")
     logger.info(f"Network: {network_val}")
     logger.info(f"Netuid: {netuid_val}")
-    logger.info(f"Service mode: {service_mode}")
     
-    asyncio.run(run_service_with_mode(
+    asyncio.run(run_service(
         wallet_name=wallet_name_val,
         hotkey_name=hotkey_name_val,
         netuid=netuid_val,
         network=network_val,
-        service_mode=service_mode
     ))
 
 
