@@ -173,7 +173,7 @@ async def get_sample_by_uid(
         
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Sample not found in sample_results or task_pool for UID={uid}, env={env}, task_id={task_id}"
+            detail=f"Sample not found in sample results or task pool for UID={uid}, env={env}, task_id={task_id}"
         )
         
     except HTTPException:
