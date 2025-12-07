@@ -407,7 +407,9 @@ class TaskPoolDAO(BaseDAO):
         """Record task failure and handle retry logic.
         
         If retry_count < max_retries, reset status to 'pending'.
-        Otherwise, permanently delete task (no zero-score sample created).
+        Otherwise, set status to 'paused'.
+        
+        Strategy: Create new task first, then delete old task to avoid race condition.
         
         Args:
             task: Task dict
@@ -415,27 +417,46 @@ class TaskPoolDAO(BaseDAO):
             error_code: Error classification code
             
         Returns:
-            Updated task (or task with status='deleted' if permanently failed)
+            Updated task (or task with status='paused' if max retries reached)
         """
-        await self.delete(task['pk'], task['sk'])
+        # Save old PK/SK for deletion
+        old_pk = task['pk']
+        old_sk = task['sk']
         
         retry_count = task.get('retry_count', 0) + 1
         max_retries = task.get('max_retries')
         
         if retry_count >= max_retries:
-            # Permanently delete task, do not create zero-score sample
             logger.info(
-                f"Task permanently deleted after {retry_count} retries: "
+                f"Task paused after {retry_count} retries: "
                 f"miner={task['miner_hotkey'][:12]}... env={task['env']} "
                 f"task_id={task['task_id']} error={error_message[:100]}"
             )
             
-            # Return task with 'deleted' status to indicate permanent deletion
-            task['status'] = 'deleted'
+            new_status = 'paused'
+            new_sk = self._make_sk(task['env'], new_status, task['task_id'])
+            new_gsi1_pk = self._make_gsi1_pk(task['env'], new_status)
+            new_gsi1_sk = self._make_gsi1_sk(
+                task['miner_hotkey'],
+                task['model_revision'],
+                task['task_id']
+            )
+            
+            task['sk'] = new_sk
+            task['status'] = new_status
             task['retry_count'] = retry_count
             task['last_error'] = error_message
             task['last_error_code'] = error_code
             task['last_failed_at'] = int(time.time())
+            task['assigned_to'] = None
+            task['assigned_at'] = None
+            task['gsi1_pk'] = new_gsi1_pk
+            task['gsi1_sk'] = new_gsi1_sk
+            task['ttl'] = int(time.time()) + 7200
+            
+            await self.put(task)
+            await self.delete(old_pk, old_sk)
+            
             return task
         
         # Still have retries left, reset to pending
@@ -460,6 +481,8 @@ class TaskPoolDAO(BaseDAO):
         task['gsi1_sk'] = new_gsi1_sk
         
         await self.put(task)
+        await self.delete(old_pk, old_sk)
+        
         return task
     
     
@@ -514,7 +537,7 @@ class TaskPoolDAO(BaseDAO):
         
         return {
             item['task_id'] for item in all_items
-            if item.get('status') in ['pending', 'assigned']
+            if item.get('status') in ['pending', 'assigned', 'paused']
         }
     
     async def cleanup_invalid_tasks(

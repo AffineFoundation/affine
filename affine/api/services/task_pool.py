@@ -734,19 +734,19 @@ class TaskPoolManager:
                 error_code
             )
 
-            # fail_task() returns either 'deleted' or 'pending' status
-            if updated_task['status'] == 'deleted':
-                # Max retries reached, permanently deleted
+            # fail_task() returns either 'paused' or 'pending' status
+            if updated_task['status'] == 'paused':
+                # Max retries reached, paused
                 async with self._cache_lock:
                     self._uuid_cache.pop(task_uuid, None)
                 
                 logger.warning(
-                    f"Task {task_uuid} permanently deleted after "
+                    f"Task {task_uuid} paused"
                     f"{updated_task['retry_count']} retries (max={updated_task['max_retries']})"
                 )
                 return {
-                    'status': 'deleted',
-                    'message': f"Task permanently deleted after {updated_task['retry_count']} retries"
+                    'status': 'paused',
+                    'message': f"Task paused after {updated_task['retry_count']} retries"
                 }
             
             # Status is 'pending', will retry (assigned_at is None for pending)
