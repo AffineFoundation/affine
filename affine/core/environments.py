@@ -360,7 +360,7 @@ class BaseSDKEnv(ABC):
 
 
 class AffineSDKEnv(BaseSDKEnv):
-    """Base class for Affine environments (SAT, ABD, DED, HVM, ELR)"""
+    """Base class for Affine environments (SAT, ABD, DED, CDE, LGC, MTH, SCI)"""
 
     # Default Docker image for Affine environments
     DOCKER_IMAGE = "bignickeye/affine:v3"
@@ -495,7 +495,8 @@ def register_env(env_type: EnvType, env_name: str):
     """Decorator to register environment classes"""
 
     def decorator(cls):
-        ENV_REGISTRY[env_name] = cls
+        # Store with lowercase key for case-insensitive lookup
+        ENV_REGISTRY[env_name.lower()] = cls
         cls._env_type = env_type
         cls._env_name = env_name
         return cls
@@ -549,11 +550,55 @@ class DED_V2(AffineSDKEnv):
 class ABD_V2(AffineSDKEnv):
     """ABD-V2 environment for SDK"""
     DEFAULT_REPLICAS = 1
-    DOCKER_IMAGE = "bignickeye/affine:v4"
+    DOCKER_IMAGE = "affinefoundation/affine-env:v4"
 
     @property
     def env_name(self) -> str:
         return "affine:abd-v2"
+
+
+@register_env(EnvType.AFFINE, "CDE")
+class CDE(AffineSDKEnv):
+    """CDE environment for SDK"""
+    DEFAULT_REPLICAS = 1
+    DOCKER_IMAGE = "affinefoundation/cde:pi"
+
+    @property
+    def env_name(self) -> str:
+        return "CDE"
+
+
+@register_env(EnvType.AFFINE, "LGC")
+class LGC(AffineSDKEnv):
+    """LGC environment for SDK"""
+    DEFAULT_REPLICAS = 1
+    DOCKER_IMAGE = "affinefoundation/lgc:pi"
+
+    @property
+    def env_name(self) -> str:
+        return "LGC"
+
+
+@register_env(EnvType.AFFINE, "MTH")
+class MTH(AffineSDKEnv):
+    """MTH environment for SDK"""
+    DEFAULT_REPLICAS = 1
+    DOCKER_IMAGE = "affinefoundation/mth:pi"
+
+    @property
+    def env_name(self) -> str:
+        return "MTH"
+
+
+@register_env(EnvType.AFFINE, "SCI")
+class SCI(AffineSDKEnv):
+    """SCI environment for SDK"""
+    DEFAULT_REPLICAS = 1
+    DOCKER_IMAGE = "affinefoundation/sci:pi"
+
+    @property
+    def env_name(self) -> str:
+        return "SCI"
 
 
 # AgentGym Environments
@@ -628,6 +673,10 @@ ABD_factory = create_env_factory(ABD)
 DED_factory = create_env_factory(DED)
 DED_V2_factory = create_env_factory(DED_V2)
 ABD_V2_factory = create_env_factory(ABD_V2)
+CDE_factory = create_env_factory(CDE)
+LGC_factory = create_env_factory(LGC)
+MTH_factory = create_env_factory(MTH)
+SCI_factory = create_env_factory(SCI)
 ALFWORLD_factory = create_env_factory(ALFWORLD)
 WEBSHOP_factory = create_env_factory(WEBSHOP)
 BABYAI_factory = create_env_factory(BABYAI)
