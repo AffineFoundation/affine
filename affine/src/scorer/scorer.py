@@ -206,7 +206,6 @@ class Scorer:
                 scores_by_layer=scores_by_layer,
                 scores_by_env=scores_by_env,
                 total_samples=total_samples,
-                is_eligible=(overall_score > 0),
                 # Additional detailed fields (formerly in miner_scores)
                 subset_contributions=subset_contributions,
                 cumulative_weight=miner.cumulative_weight,

@@ -44,7 +44,6 @@ class ScoresDAO(BaseDAO):
         scores_by_layer: Dict[str, float],
         scores_by_env: Dict[str, Any],
         total_samples: int,
-        is_eligible: bool,
         subset_contributions: Optional[Dict[str, Dict[str, Any]]] = None,
         cumulative_weight: Optional[float] = None,
         filter_info: Optional[Dict[str, Any]] = None
@@ -65,7 +64,6 @@ class ScoresDAO(BaseDAO):
             scores_by_layer: Scores breakdown by layer
             scores_by_env: Detailed scores by environment (with score, sample_count, completeness)
             total_samples: Total number of samples
-            is_eligible: Whether miner is eligible for rewards
             subset_contributions: Detailed subset contributions (optional, from miner_scores)
             cumulative_weight: Cumulative weight before normalization (optional, from miner_scores)
             filter_info: Filtering information (optional, from miner_scores)
@@ -90,7 +88,6 @@ class ScoresDAO(BaseDAO):
             'scores_by_layer': scores_by_layer,
             'scores_by_env': scores_by_env,
             'total_samples': total_samples,
-            'is_eligible': is_eligible,
             'latest_marker': 'LATEST',  # For GSI
         }
         
@@ -217,7 +214,6 @@ class ScoresDAO(BaseDAO):
                 'scores_by_layer': miner_details.get('scores_by_layer', {}),
                 'scores_by_env': miner_details.get('scores_by_env', {}),
                 'total_samples': miner_details.get('total_samples', 0),
-                'is_eligible': miner_details.get('is_eligible', True),
                 'latest_marker': 'LATEST',
                 'ttl': self.get_ttl(30),
                 'snapshot_id': snapshot_id,
