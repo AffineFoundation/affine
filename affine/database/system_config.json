@@ -48,6 +48,30 @@
       "enabled_for_scoring": true,
       "sampling_range": [0, 582],
       "scoring_range": [0, 582]
+    },
+    "CDE": {
+      "enabled_for_sampling": true,
+      "enabled_for_scoring": false,
+      "sampling_range": [0, 100],
+      "scoring_range": [0, 100]
+    },
+    "LGC": {
+      "enabled_for_sampling": true,
+      "enabled_for_scoring": false,
+      "sampling_range": [0, 100],
+      "scoring_range": [0, 100]
+    },
+    "MTH": {
+      "enabled_for_sampling": true,
+      "enabled_for_scoring": false,
+      "sampling_range": [0, 100],
+      "scoring_range": [0, 100]
+    },
+    "SCI": {
+      "enabled_for_sampling": true,
+      "enabled_for_scoring": false,
+      "sampling_range": [0, 100],
+      "scoring_range": [0, 100]
     }
   }
 }
