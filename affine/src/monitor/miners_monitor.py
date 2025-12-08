@@ -37,6 +37,7 @@ class MinerInfo:
     invalid_reason: Optional[str] = None
     model_hash: str = ""  # HuggingFace model hash (cached)
     hf_revision: str = ""  # HuggingFace actual revision (cached)
+    chute_status: str = ""
     
     def key(self) -> str:
         """Generate unique key: hotkey#revision"""
@@ -194,7 +195,7 @@ class MinersMonitor:
                 if (
                     isinstance(getattr(s, "lfs", None), dict)
                     and _name(s) is not None
-                    and _name(s).endswith(".safetensors")
+                    and (_name(s).endswith(".safetensors") or _name(s).endswith(".bin"))
                     and "sha256" in getattr(s, "lfs", {})
                 )
             }
@@ -210,7 +211,10 @@ class MinersMonitor:
             return result
             
         except Exception as e:
-            logger.debug(f"Failed to fetch model info for {model_id}@{revision}: {e}")
+            logger.warning(
+                f"Failed to fetch model info for {model_id}@{revision}: {type(e).__name__}: {e}",
+                exc_info=True
+            )
             self.weights_cache[key] = (None, now)
             return None
     
@@ -259,6 +263,7 @@ class MinersMonitor:
             return info
         
         info.chute_slug = chute.get("slug", "")
+        info.chute_status = "hot" if chute.get("hot", False) else "cold"
         
         # Step 2: Validate chute_slug is not empty
         if not info.chute_slug:
@@ -476,7 +481,7 @@ class MinersMonitor:
                     chute_id=miner.chute_id,
                     chute_slug=miner.chute_slug,
                     model_hash=miner.model_hash,
-                    chute_status="hot" if miner.is_valid else "cold",
+                    chute_status=miner.chute_status,
                     is_valid=miner.is_valid,
                     invalid_reason=miner.invalid_reason,
                     block_number=current_block,

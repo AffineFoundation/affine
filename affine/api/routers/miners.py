@@ -12,11 +12,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from affine.api.dependencies import (
     rate_limit_read,
 )
-from typing import Dict, Any
+from affine.api.models import MinerResponse
 
 router = APIRouter(prefix="/miners", tags=["Miners"])
 
-@router.get("/uid/{uid}", response_model=Dict[str, Any], dependencies=[Depends(rate_limit_read)])
+@router.get("/uid/{uid}", response_model=MinerResponse, dependencies=[Depends(rate_limit_read)])
 async def get_miner_by_uid(
     uid: int,
 ):
@@ -30,11 +30,12 @@ async def get_miner_by_uid(
     - revision: Model revision hash
     - chute_id: Chute deployment ID
     - block_number: Block number when discovered
+    - first_block: First block number when discovered
     - is_valid: Validation status
     - invalid_reason: Reason for validation failure (if any)
     - model_hash: Hash of model weights for plagiarism detection
-    - discovered_at: Timestamp when first discovered
-    - last_updated: Timestamp of last update
+    - chute_slug: Chute slug identifier
+    - chute_status: Chute deployment status
     """
     try:
         # Query miner by UID from database
@@ -49,7 +50,8 @@ async def get_miner_by_uid(
                 detail=f"Miner with UID {uid} not found"
             )
 
-        return dict(miner)
+        # Build response using MinerResponse model (automatically excludes 'pk')
+        return MinerResponse(**miner)
         
     except HTTPException:
         raise

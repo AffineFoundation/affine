@@ -8,7 +8,7 @@ ENV_MAX_CONCURRENT = {
     "affine:abd": 30,
     "affine:ded": 30,
     "affine:ded-v2": 180,
-    "affine:abd-v2": 60,
+    "affine:abd-v2": 120,
     "agentgym:alfworld": 60,
     "agentgym:webshop": 60,
     "agentgym:babyai": 60,

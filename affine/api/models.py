@@ -120,3 +120,20 @@ class ExecutionLogsResponse(BaseModel):
     """List of execution logs."""
 
     logs: List[ExecutionLog]
+
+
+class MinerResponse(BaseModel):
+    """Miner information response."""
+
+    model: Optional[str] = None
+    chute_id: Optional[str] = None
+    hotkey: str
+    revision: Optional[str] = None
+    block_number: Optional[int] = None
+    first_block: Optional[int] = None
+    uid: int
+    invalid_reason: Optional[str] = None
+    model_hash: Optional[str] = None
+    chute_slug: Optional[str] = None
+    chute_status: Optional[str] = None
+    is_valid: Optional[str] = None
