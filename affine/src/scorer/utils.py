@@ -204,21 +204,42 @@ def normalize_weights(weights: Dict[int, float]) -> Dict[int, float]:
 
 def apply_min_threshold(
     weights: Dict[int, float],
-    threshold: float = 0.01
+    threshold: float = 0.01,
+    redistribute_to_uid_zero: bool = False
 ) -> Dict[int, float]:
-    """Set weights below threshold to 0.
-    
+    """Set weights below threshold to 0, optionally redistribute to uid 0.
+
     Args:
         weights: Dict mapping UID to weight
         threshold: Minimum weight threshold (default: 0.01 for 1%)
-        
+        redistribute_to_uid_zero: If True, add sub-threshold weights to uid 0
+
     Returns:
-        Dict with sub-threshold weights set to 0
+        Dict with sub-threshold weights set to 0 (and redistributed to uid 0 if enabled)
     """
-    return {
+    if not redistribute_to_uid_zero:
+        return {
+            uid: (w if w >= threshold else 0.0)
+            for uid, w in weights.items()
+        }
+
+    # Calculate total weight below threshold (excluding uid 0)
+    below_threshold_weight = sum(
+        w for uid, w in weights.items()
+        if uid != 0 and w > 0 and w < threshold
+    )
+
+    # Apply threshold and set below-threshold weights to 0
+    result = {
         uid: (w if w >= threshold else 0.0)
         for uid, w in weights.items()
     }
+
+    # Add redistributed weight to uid 0
+    if below_threshold_weight > 0:
+        result[0] = result.get(0, 0.0) + below_threshold_weight
+
+    return result
 
 
 def aggregate_by_layer(

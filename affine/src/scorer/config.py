@@ -76,7 +76,7 @@ class ScorerConfig:
     """
     
     # Stage 4: Weight Normalization
-    MIN_WEIGHT_THRESHOLD: float = 0.5
+    MIN_WEIGHT_THRESHOLD: float = 0.01
     """Minimum weight threshold (1%). Miners below this are set to 0."""
     
     # Stage 1: Data Collection

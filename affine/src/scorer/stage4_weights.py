@@ -80,7 +80,14 @@ class Stage4WeightNormalizer:
         
         # Step 3: Final normalization (ensure sum = 1.0)
         final_weights = normalize_weights(weights_after_threshold)
-        
+
+        # Step 4: Apply min threshold after normalization and redistribute to uid 0
+        final_weights = apply_min_threshold(
+            final_weights,
+            threshold=self.min_threshold,
+            redistribute_to_uid_zero=True
+        )
+
         # Update miner objects with normalized weights
         for uid, weight in final_weights.items():
             if uid in miners:
