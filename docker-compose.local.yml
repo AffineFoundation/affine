@@ -9,3 +9,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+
+  watchtower:
+    profiles:
+      - production

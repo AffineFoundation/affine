@@ -184,7 +184,6 @@ async def print_rank_table():
             scores_by_env = score.get("scores_by_env", {})
             scores_by_layer = score.get("scores_by_layer", {})
             total_samples = score.get("total_samples")
-            is_eligible = score.get("is_eligible")
             
             model_display = model[:25]
             
@@ -232,7 +231,7 @@ async def print_rank_table():
             cumulative_weight = score.get("cumulative_weight")
             row_parts.append(f"{cumulative_weight:>9.4f}")  # Total: cumulative weight before normalization
             row_parts.append(f"{overall_score:>9.6f}")  # Weight: normalized weight
-            row_parts.append("✓" if is_eligible else "✗")
+            row_parts.append("✓" if overall_score > 0 else "✗")
             
             print(" | ".join(row_parts), flush=True)
         

@@ -66,7 +66,6 @@ async def get_latest_scores(
                 scores_by_layer=s.get("scores_by_layer"),
                 scores_by_env=s.get("scores_by_env"),
                 total_samples=s.get("total_samples"),
-                is_eligible=s.get("is_eligible"),
                 cumulative_weight=s.get("cumulative_weight"),
             )
             for s in scores_list
@@ -144,7 +143,6 @@ async def get_score_by_uid(
             scores_by_layer=miner_score.get("scores_by_layer"),
             scores_by_env=miner_score.get("scores_by_env"),
             total_samples=miner_score.get("total_samples"),
-            is_eligible=miner_score.get("is_eligible"),
             cumulative_weight=miner_score.get("cumulative_weight"),
         )
         
