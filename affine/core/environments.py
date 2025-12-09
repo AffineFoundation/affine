@@ -2,12 +2,12 @@
 
 import os
 import time
-import random
 import asyncio
 import hashlib
-from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional, Union, Type, Tuple
-from dataclasses import dataclass
+import json
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Union
+from dataclasses import dataclass, field
 from enum import Enum
 from threading import Lock
 from affine.core.models import Result
@@ -15,711 +15,399 @@ from affine.core.setup import logger
 import affinetes as af_env
 
 
-# Global environment cache
+# ========================= Global Cache =========================
+
 _ENV_CACHE: Dict[str, Any] = {}
 _ENV_LOCK = Lock()
 
 
 # ========================= Configuration =========================
 
-
 @dataclass
 class SandboxConfig:
     """Sandbox configuration"""
-
     timeout: int = 1200
     proxy_timeout: int = 600
-    env: Dict[str, str] = None
-
-    def __post_init__(self):
-        if self.env is None:
-            self.env = {
-                "NO_PROXY": "localhost,127.0.0.1",
-                "PYTHONPATH": "/app",
-            }
+    env: Dict[str, str] = field(default_factory=lambda: {
+        "NO_PROXY": "localhost,127.0.0.1",
+        "PYTHONPATH": "/app",
+    })
 
 
 @dataclass
 class EvaluatorConfig:
     """Evaluator configuration"""
-
     temperature: float = 0.0
     timeout: int = 600
 
     def to_payload(self, miner: Optional["Miner"] = None, **kwargs) -> Dict[str, Any]:
-        """Convert to evaluator payload with support for dynamic parameters
+        """Convert to evaluator payload with support for dynamic parameters"""
+        payload = {"temperature": self.temperature, "timeout": self.timeout}
         
-        Args:
-            miner: Optional Miner instance (can be None if model/base_url provided in kwargs)
-            **kwargs: Additional parameters to override defaults (model, base_url, temperature, timeout, task_id, etc.)
-        """
-        payload = {
-            "temperature": self.temperature,
-            "timeout": self.timeout,
-        }
+        if miner and hasattr(miner, 'slug') and miner.slug:
+            payload.update({
+                "model": miner.model,
+                "base_url": f"https://{miner.slug}.chutes.ai/v1"
+            })
         
-        # Add miner-based defaults if miner is provided and has valid slug
-        if miner is not None and hasattr(miner, 'slug') and miner.slug is not None:
-            payload["model"] = miner.model
-            payload["base_url"] = f"https://{miner.slug}.chutes.ai/v1"
-
-        # Allow kwargs to override any default values
         payload.update(kwargs)
-
         return payload
 
 
-class EnvType(Enum):
-    """Environment types"""
+@dataclass
+class EnvConfig:
+    """Environment-specific configuration"""
+    name: str
+    docker_image: str
+    env_type: str = "affine"
+    env_vars: Dict[str, str] = field(default_factory=dict)
+    requires_task_type: bool = False
+    requires_max_round: bool = False
+    max_round: int = 30
 
-    AFFINE = "affine"
-    AGENTGYM = "agentgym"
+
+# ========================= Environment Configurations =========================
+
+# Canonical environment configurations
+_ENV_CONFIGS_CANONICAL = {
+    # Affine environments (require task_type)
+    "affine:sat": EnvConfig(
+        name="affine:sat",
+        docker_image="bignickeye/affine:v3",
+        requires_task_type=True,
+    ),
+    "affine:ded-v2": EnvConfig(
+        name="affine:ded-v2",
+        docker_image="affinefoundation/affine-env:v4",
+        requires_task_type=True,
+    ),
+    "affine:abd-v2": EnvConfig(
+        name="affine:abd-v2",
+        docker_image="affinefoundation/affine-env:v4",
+        requires_task_type=True,
+    ),
+    
+    # PrimeIntellect environments (no task_type)
+    "cde": EnvConfig(
+        name="cde",
+        docker_image="affinefoundation/cde:pi",
+    ),
+    "lgc": EnvConfig(
+        name="lgc",
+        docker_image="affinefoundation/lgc:pi",
+    ),
+    "mth": EnvConfig(
+        name="mth",
+        docker_image="affinefoundation/mth:pi",
+    ),
+    "sci": EnvConfig(
+        name="sci",
+        docker_image="affinefoundation/sci:pi",
+    ),
+    
+    # AgentGym environments (require max_round)
+    "agentgym:alfworld": EnvConfig(
+        name="agentgym:alfworld",
+        docker_image="affinefoundation/agentgym:alfworld",
+        env_type="agentgym",
+        requires_max_round=True,
+    ),
+    "agentgym:webshop": EnvConfig(
+        name="agentgym:webshop",
+        docker_image="affinefoundation/agentgym:webshop",
+        env_type="agentgym",
+        requires_max_round=True,
+    ),
+    "agentgym:babyai": EnvConfig(
+        name="agentgym:babyai",
+        docker_image="affinefoundation/agentgym:babyai",
+        env_type="agentgym",
+        requires_max_round=True,
+    ),
+    "agentgym:sciworld": EnvConfig(
+        name="agentgym:sciworld",
+        docker_image="affinefoundation/agentgym:sciworld",
+        env_type="agentgym",
+        requires_max_round=True,
+    ),
+    "agentgym:textcraft": EnvConfig(
+        name="agentgym:textcraft",
+        docker_image="affinefoundation/agentgym:textcraft",
+        env_type="agentgym",
+        requires_max_round=True,
+    ),
+}
+
+# Alias mappings (multiple names can map to the same canonical config)
+_ENV_ALIASES = {
+    # ABD aliases - all point to v2
+    "affine:abd": "affine:abd-v2",
+    "abd": "affine:abd-v2",
+    "abd-v2": "affine:abd-v2",
+    
+    # DED aliases - all point to v2
+    "affine:ded": "affine:ded-v2",
+    "ded": "affine:ded-v2",
+    "ded-v2": "affine:ded-v2",
+    
+    # SAT aliases
+    "sat": "affine:sat",
+    
+    # PrimeIntellect aliases (uppercase versions)
+    "CDE": "cde",
+    "LGC": "lgc",
+    "MTH": "mth",
+    "SCI": "sci",
+}
+
+# Build final ENV_CONFIGS with aliases
+ENV_CONFIGS = {}
+for canonical_name, config in _ENV_CONFIGS_CANONICAL.items():
+    ENV_CONFIGS[canonical_name] = config
+
+# Add all aliases
+for alias, canonical in _ENV_ALIASES.items():
+    if canonical in _ENV_CONFIGS_CANONICAL:
+        ENV_CONFIGS[alias] = _ENV_CONFIGS_CANONICAL[canonical]
 
 
-# ========================= Base Classes =========================
+# ========================= Base Environment =========================
 
-
-class BaseSDKEnv(ABC):
-    """Base class for all SDK environments"""
-
-    # Class-level configuration
-    _sandbox_config: SandboxConfig = None
-    _evaluator_config: EvaluatorConfig = None
-    DEFAULT_REPLICAS: int = 1
-
-    def __init__(self):
-        super().__init__()
+class SDKEnvironment:
+    """Unified SDK environment implementation"""
+    
+    def __init__(self, env_name: str):
+        if env_name not in ENV_CONFIGS:
+            raise ValueError(f"Unknown environment: {env_name}")
+        
+        self.config = ENV_CONFIGS[env_name]
+        self._sandbox_config = SandboxConfig()
+        self._evaluator_config = EvaluatorConfig()
         self._env = self._load_environment()
         self._env_lock = asyncio.Lock()
-
+    
     @property
-    def sandbox_config(self) -> SandboxConfig:
-        """Get sandbox configuration"""
-        if self._sandbox_config is None:
-            self._sandbox_config = SandboxConfig()
-        return self._sandbox_config
-
-    @property
-    def evaluator_config(self) -> EvaluatorConfig:
-        """Get evaluator configuration"""
-        if self._evaluator_config is None:
-            self._evaluator_config = EvaluatorConfig()
-        return self._evaluator_config
-
-    @property
-    @abstractmethod
     def env_name(self) -> str:
-        """Return environment name"""
-        pass
-
+        return self.config.name
+    
     @property
-    @abstractmethod
-    def env_type(self) -> EnvType:
-        """Return environment type"""
-        pass
-
+    def env_type(self) -> str:
+        return self.config.env_type
+    
     @property
     def docker_image(self) -> str:
-        """Return Docker image for this environment"""
-        raise NotImplementedError("Subclass must implement docker_image property")
-
-    @property
-    def env_vars(self) -> Dict[str, str]:
-        """Return environment variables for this environment"""
+        return self.config.docker_image
+    
+    def _get_env_vars(self) -> Dict[str, str]:
+        """Get environment variables for this environment"""
         api_key = os.getenv("CHUTES_API_KEY")
         if not api_key:
             raise ValueError("CHUTES_API_KEY environment variable is required")
-        return {"CHUTES_API_KEY": api_key}
-
+        
+        env_vars = {"CHUTES_API_KEY": api_key}
+        
+        # Add ENV_NAME for affine environments that require task_type
+        if self.config.requires_task_type:
+            task_name = self._extract_task_name()
+            env_vars["ENV_NAME"] = task_name
+        
+        # Add AgentGym-specific variables
+        if self.config.env_type == "agentgym":
+            env_vars.update({
+                "TODO_KEY": os.getenv("AGENTGYM_TOOL_TODO_KEY", ""),
+                "MOVIE_KEY": os.getenv("AGENTGYM_TOOL_MOVIE_KEY", ""),
+                "SHEET_EMAIL": os.getenv("AGENTGYM_TOOL_SHEET_EMAIL", ""),
+            })
+        
+        env_vars.update(self.config.env_vars)
+        return env_vars
+    
+    def _extract_task_name(self) -> str:
+        """Extract base task name (e.g., 'affine:sat' -> 'sat', 'affine:ded-v2' -> 'ded')"""
+        name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
+        return name.rsplit("-v", 1)[0] if "-v" in name else name
+    
+    def _load_hosts_config(self) -> Dict[str, Any]:
+        """Load hosts configuration from file"""
+        # Check for config file in multiple locations
+        config_paths = [
+            Path(os.getenv("AFFINETES_HOSTS_CONFIG", "")),
+            Path.cwd() / "affinetes_hosts.json",
+            Path.home() / ".affine" / "hosts.json",
+            Path("/etc/affine/hosts.json"),
+        ]
+        
+        for config_path in config_paths:
+            if config_path.exists() and config_path.is_file():
+                try:
+                    with open(config_path, 'r') as f:
+                        config = json.load(f)
+                    logger.debug(f"Loaded hosts config from: {config_path}")
+                    return config
+                except Exception as e:
+                    logger.warning(f"Failed to load hosts config from {config_path}: {e}")
+        
+        return {}
+    
+    def _get_hosts_for_env(self) -> Optional[List[str]]:
+        """Get hosts for this environment from config file or env var"""
+        # Try config file first
+        config = self._load_hosts_config()
+        
+        if config:
+            # Check for environment-specific hosts
+            if self.env_name in config:
+                hosts = config[self.env_name]
+                if isinstance(hosts, list) and hosts:
+                    logger.debug(f"Using config file hosts for {self.env_name}: {hosts}")
+                    return hosts
+            
+            # Fall back to default hosts in config
+            if "default" in config:
+                hosts = config["default"]
+                if isinstance(hosts, list) and hosts:
+                    logger.debug(f"Using default config hosts for {self.env_name}: {hosts}")
+                    return hosts
+        
+        # Fall back to environment variable (for backward compatibility)
+        hosts_env = os.getenv("AFFINETES_HOSTS", "").strip()
+        if hosts_env:
+            hosts = [h.strip() for h in hosts_env.split(",") if h.strip()]
+            if hosts:
+                logger.debug(f"Using env var hosts for {self.env_name}: {hosts}")
+                return hosts
+        
+        return None
+    
     def _load_environment(self) -> Any:
         """Load or get cached environment instance"""
         with _ENV_LOCK:
-            template = self.env_name
+            if self.env_name in _ENV_CACHE:
+                cached = _ENV_CACHE[self.env_name]
+                if cached.is_ready():
+                    logger.debug(f"Reusing cached environment: {self.env_name}")
+                    return cached
+                del _ENV_CACHE[self.env_name]
             
-            # Check cache for shared instances
-            if template in _ENV_CACHE:
-                cached_env = _ENV_CACHE[template]
-                if cached_env.is_ready():
-                    logger.debug(f"Reusing cached environment: {template}")
-                    return cached_env
-                else:
-                    logger.debug(f"Removing stale cached environment: {template}")
-                    del _ENV_CACHE[template]
+            # Get hosts for this environment
+            hosts = self._get_hosts_for_env()
             
-            # Parse AFFINETES_HOSTS environment variable
-            hosts_env = os.getenv("AFFINETES_HOSTS", "").strip()
-            hosts = None
-            replicas = self.DEFAULT_REPLICAS
-            
-            if hosts_env:
-                # Parse comma-separated hosts
-                parsed_hosts = [h.strip() for h in hosts_env.split(",") if h.strip()]
-                if parsed_hosts:
-                    hosts = parsed_hosts
-                    # When using remote hosts, total replicas = DEFAULT_REPLICAS * number of hosts
-                    replicas = self.DEFAULT_REPLICAS * len(hosts)
-                    logger.debug(f"Using remote hosts for deployment: {hosts} (total replicas: {replicas})")
-
-            # Generate container name based on environment name
-            container_name = template.replace(":", "-")
-            
-            # Load environment using affinetes
-            logger.info(f"Loading environment: {template} (image={self.docker_image}, replicas={replicas})")
-            environment = af_env.load_env(
+            # Load environment
+            logger.info(f"Loading environment: {self.env_name} (image={self.docker_image}, hosts={hosts or 'local'})")
+            env = af_env.load_env(
                 image=self.docker_image,
                 mode="docker",
-                env_vars=self.env_vars,
+                env_vars=self._get_env_vars(),
                 hosts=hosts,
-                replicas=replicas,
-                container_name=container_name,
+                container_name=self.env_name.replace(":", "-"),
                 mem_limit="10g",
                 pull=True,
                 force_recreate=True,
             )
             
-            # Cache the environment
-            _ENV_CACHE[template] = environment
-            logger.debug(f"Cached environment: {template}")
-            
-            return environment
-
-    def _generate_deterministic_seed(self, task_id: int) -> int:
-        """Generate deterministic seed based on env_name and task_id.
-        
-        Args:
-            task_id: The task ID
-            
-        Returns:
-            A deterministic seed value
-        """
-        # Combine env_name and task_id to create a unique string
+            _ENV_CACHE[self.env_name] = env
+            logger.debug(f"Cached environment: {self.env_name}")
+            return env
+    
+    def _generate_seed(self, task_id: int) -> int:
+        """Generate deterministic seed"""
         seed_string = f"{self.env_name}:{task_id}"
-        # Use SHA256 hash to generate deterministic seed
-        hash_object = hashlib.sha256(seed_string.encode())
-        # Convert first 8 bytes of hash to integer and modulo to fit in 32-bit range
-        seed = int.from_bytes(hash_object.digest()[:8], byteorder='big') % (2**32)
-        return seed
-
-    async def _evaluate_single_miner(
-        self, miner: Optional["Miner"] = None, **eval_kwargs
-    ) -> "Result":
-        """
-        Common evaluation logic for a single miner
-
-        Args:
-            miner: Optional Miner instance (can be None if model/base_url in eval_kwargs)
-            **eval_kwargs: Dynamic parameters (model, base_url, task_type, task_id, etc.)
-
-        Returns:
-            Result object with evaluation results
-        """
+        hash_bytes = hashlib.sha256(seed_string.encode()).digest()[:8]
+        return int.from_bytes(hash_bytes, byteorder='big') % (2**32)
+    
+    def _prepare_eval_kwargs(self, **kwargs) -> Dict[str, Any]:
+        """Prepare evaluation kwargs based on environment configuration"""
+        if "task_id" not in kwargs:
+            raise ValueError("task_id is required for evaluation")
+        
+        # Generate seed if not provided
+        if "seed" not in kwargs:
+            kwargs["seed"] = self._generate_seed(kwargs["task_id"])
+        
+        # Add task_type for affine environments
+        if self.config.requires_task_type:
+            kwargs.setdefault("task_type", self._extract_task_name())
+        
+        # Add max_round for agentgym environments
+        if self.config.requires_max_round:
+            kwargs.setdefault("max_round", self.config.max_round)
+        
+        return kwargs
+    
+    async def _evaluate_single(self, miner: Optional["Miner"], **kwargs) -> Result:
+        """Evaluate single miner"""
         start = time.monotonic()
-
-        # Generate deterministic seed based on env_name and task_id if not provided
-        if 'seed' not in eval_kwargs:
-            task_id = eval_kwargs.get('task_id')
-            if task_id is not None:
-                eval_kwargs['seed'] = self._generate_deterministic_seed(task_id)
-            else:
-                # Fallback to random if task_id is not available
-                eval_kwargs['seed'] = random.randint(0, 2**32 - 1)
+        kwargs = self._prepare_eval_kwargs(**kwargs)
+        payload = self._evaluator_config.to_payload(miner, **kwargs)
         
-        # Build payload with all dynamic parameters (including seed)
-        payload = self.evaluator_config.to_payload(miner, **eval_kwargs)
-
-        # Call affinetes evaluate method directly
-        result = await self._env.evaluate(_timeout=self.sandbox_config.proxy_timeout, **payload)
-
-        return self._parse_evaluation_result(result, miner, payload, start)
-
-    def _parse_evaluation_result(
-        self,
-        result: Dict[str, Any],
-        miner: Optional["Miner"],
-        payload_extra: Dict[str, Any] = None,
-        start_time: float = None,
-    ) -> "Result":
-        """Parse evaluation result and construct Result"""
+        result = await self._env.evaluate(_timeout=self._sandbox_config.proxy_timeout, **payload)
         
-        # Extract top-level fields
-        score = float(result.get("score", 0.0))
-        success = bool(result.get("success", False))
-        error = result.get("error")
+        return self._build_result(result, miner, payload, start)
+    
+    def _build_result(self, result: Dict[str, Any], miner: Optional["Miner"], 
+                     payload: Dict[str, Any], start_time: float) -> Result:
+        """Build Result object from evaluation result"""
         extra = result.get("extra", {}).copy()
+        extra["image"] = self.docker_image
+        extra["request"] = payload.copy()
         
-        extra['image'] = self.docker_image
-        if payload_extra:
-            extra['request'] = payload_extra.copy()
-        
-        # Extract task_id from payload if available (for sequential sampling tracking)
-        task_id = None
-        if payload_extra and 'task_id' in payload_extra:
-            task_id = payload_extra['task_id']
-        
-        # Extract miner info (hotkey + revision)
-        miner_hotkey = ""
-        model_revision = ""
-        if miner:
-            miner_hotkey = miner.hotkey
-            model_revision = miner.revision or ""
-
         return Result(
-            miner_hotkey=miner_hotkey,
-            model_revision=model_revision,
+            miner_hotkey=miner.hotkey if miner else "",
+            model_revision=miner.revision if miner else "",
             env=self.env_name,
-            score=score,
-            latency_seconds=time.monotonic() - start_time if start_time else 0.0,
-            success=success,
-            error=error,
-            task_id=task_id,
+            score=float(result.get("score", 0.0)),
+            latency_seconds=time.monotonic() - start_time,
+            success=bool(result.get("success", False)),
+            error=result.get("error"),
+            task_id=payload.get("task_id"),
             extra=extra,
             timestamp=time.time()
         )
-
-    def _create_error_result(
-        self, error: Exception, miner: Optional["Miner"], payload_extra: Dict[str, Any] = None, start_time: float = None
-    ) -> "Result":
-        extra = {
-            "image": self.docker_image,
-            "request": payload_extra,
-        }
-        
-        # Extract task_id from payload if available
-        task_id = None
-        if payload_extra and 'task_id' in payload_extra:
-            task_id = payload_extra['task_id']
-        
-        # Extract miner info (hotkey + revision)
-        miner_hotkey = ""
-        model_revision = ""
-        if miner:
-            miner_hotkey = miner.hotkey
-            model_revision = miner.revision or ""
-
-        return Result(
-            miner_hotkey=miner_hotkey,
-            model_revision=model_revision,
-            env=self.env_name,
-            score=0.0,
-            latency_seconds=time.monotonic() - start_time if start_time else 0.0,
-            success=False,
-            error=str(error),
-            task_id=task_id,
-            extra=extra,
-            timestamp=time.time()
-        )
-
-    async def _evaluate_miners_batch(
-        self, miners: Union["Miner", Dict[str, "Miner"]], evaluate_func
-    ) -> Union["Result", Dict[str, "Result"]]:
-        """
-        Common batch evaluation logic
-
-        Args:
-            miners: Single miner or dict of miners
-            evaluate_func: Function to evaluate single miner
-
-        Returns:
-            Result or dict of results
-        """
-        if isinstance(miners, dict):
+    
+    async def evaluate(self, miner: Optional[Union["Miner", Dict[str, "Miner"]]] = None, 
+                      **kwargs) -> Union[Result, Dict[str, Result]]:
+        """Evaluate miner(s)"""
+        if isinstance(miner, dict):
             results = {}
-            for key, miner in miners.items():
-                if not self._validate_miner(miner):
-                    logger.warning(f"Skipping invalid miner entry: {key}")
-                    continue
-                results[key] = await evaluate_func(miner)
+            for key, m in miner.items():
+                if self._validate_miner(m):
+                    results[key] = await self._evaluate_single(m, **kwargs)
+                else:
+                    logger.warning(f"Skipping invalid miner: {key}")
             return results
         else:
-            return await evaluate_func(miners)
-
-    def _validate_miner(self, miner: Any) -> bool:
-        """Validate miner object"""
-        return (
-            hasattr(miner, "model")
-            and hasattr(miner, "slug")
-            and miner.model is not None
-            and miner.slug is not None
-        )
-
-    @abstractmethod
-    async def evaluate(self, miner: Union["Miner", Dict[str, Any]]) -> "Result":
-        """Evaluate a single miner"""
-        pass
-
-    async def evaluate_batch(
-        self, miners: List[Union["Miner", Dict[str, Any]]]
-    ) -> List["Result"]:
+            return await self._evaluate_single(miner, **kwargs)
+    
+    async def evaluate_batch(self, miners: List[Union["Miner", Dict[str, Any]]], 
+                            **kwargs) -> List[Result]:
         """Evaluate multiple miners in parallel"""
-        tasks = [self.evaluate(m) for m in miners]
+        tasks = [self.evaluate(m, **kwargs) for m in miners]
         return await asyncio.gather(*tasks)
-
-
-
-# ========================= Environment Implementations =========================
-
-
-class AffineSDKEnv(BaseSDKEnv):
-    """Base class for Affine environments (SAT, ABD, DED, CDE, LGC, MTH, SCI)"""
-
-    # Default Docker image for Affine environments
-    DOCKER_IMAGE = "bignickeye/affine:v3"
-
-    def __init__(self):
-        super().__init__()
-
-    @property
-    def env_type(self) -> EnvType:
-        return EnvType.AFFINE
-
-    @property
-    def docker_image(self) -> str:
-        """All Affine environments use the same image"""
-        return self.DOCKER_IMAGE
-
-    def _get_base_task_name(self) -> str:
-        """Extract and normalize task name, removing version suffixes.
-        
-        Examples:
-            "affine:sat" -> "sat"
-            "affine:ded-v2" -> "ded"
-            "affine:abd-v2" -> "abd"
-        """
-        # Extract env name from template (e.g., "affine:sat" -> "sat")
-        env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
-        # Remove version suffix if present (e.g., "ded-v2" -> "ded")
-        if "-v" in env_name:
-            env_name = env_name.rsplit("-v", 1)[0]
-        return env_name
-
-    @property
-    def env_vars(self) -> Dict[str, str]:
-        """Affine environment variables"""
-        env_vars = super().env_vars
-        # Use base task name (without version suffix)
-        env_vars["ENV_NAME"] = self._get_base_task_name()
-        return env_vars
-
-    async def evaluate(
-        self, miner: Optional[Union["Miner", Dict[str, Any]]] = None,
-        **eval_kwargs
-    ) -> Union["Result", Dict[str, "Result"]]:
-        """Evaluate using Affine environment endpoint.
-        
-        Args:
-            miner: Optional Miner instance or dict of miners (can be None if model/base_url in eval_kwargs)
-            **eval_kwargs: Dynamic parameters (model, base_url, temperature, task_type, task_id, etc.)
-        """
-
-        # Use base task name (without version suffix)
-        base_task_name = self._get_base_task_name()
-        
-        # Set default task_type if not provided in eval_kwargs
-        eval_kwargs.setdefault("task_type", base_task_name)
-        
-        # task_id must be provided by caller (from API server task queue)
-        if "task_id" not in eval_kwargs:
-            raise ValueError("task_id is required for evaluation")
-
-        async def evaluate_single(m):
-            return await self._evaluate_single_miner(m, **eval_kwargs)
-
-        return await self._evaluate_miners_batch(miner, evaluate_single)
-
-
-class AgentGymSDKEnv(BaseSDKEnv):
-    """Base class for AgentGym environments"""
-
-    DEFAULT_MAX_ROUND = 30
-    DEFAULT_TIMEOUT = 600
-
-    def __init__(self, max_round: int = None):
-        super().__init__()
-        self.max_round = max_round if max_round is not None else self.DEFAULT_MAX_ROUND
-        self.evaluator_config.max_round = self.max_round
-        self.evaluator_config.timeout = self.DEFAULT_TIMEOUT
-
-    @property
-    def env_type(self) -> EnvType:
-        return EnvType.AGENTGYM
-
-    @property
-    def docker_image(self) -> str:
-        """AgentGym environments have different images per task"""
-        # Extract env name from template (e.g., "agentgym:webshop" -> "webshop")
-        env_name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
-        return f"affinefoundation/agentgym:{env_name}"
-
-    @property
-    def env_vars(self) -> Dict[str, str]:
-        """AgentGym environment variables"""
-        env_vars = super().env_vars
-        # Add AgentGym-specific variables
-        env_vars["TODO_KEY"] = os.getenv("AGENTGYM_TOOL_TODO_KEY", "")
-        env_vars["MOVIE_KEY"] = os.getenv("AGENTGYM_TOOL_MOVIE_KEY", "")
-        env_vars["SHEET_EMAIL"] = os.getenv("AGENTGYM_TOOL_SHEET_EMAIL", "")
-        return env_vars
-
-    async def evaluate(
-        self,
-        miner: Optional[Union["Miner", Dict[str, Any]]] = None,
-        **eval_kwargs
-    ) -> Union["Result", Dict[str, "Result"]]:
-        """Evaluate using AgentGym environment endpoint.
-        
-        Args:
-            miner: Optional Miner instance or dict of miners (can be None if model/base_url in eval_kwargs)
-            **eval_kwargs: Dynamic parameters (model, base_url, temperature, task_id, max_round, etc.)
-        """
-
-        # task_id must be provided by caller (from API server task queue)
-        if "task_id" not in eval_kwargs:
-            raise ValueError("task_id is required for evaluation")
-        
-        # Set default max_round if not provided
-        eval_kwargs.setdefault("max_round", self.max_round)
-
-        async def evaluate_single(m):
-            return await self._evaluate_single_miner(m, **eval_kwargs)
-
-        return await self._evaluate_miners_batch(miner, evaluate_single)
-
-
-# ========================= Concrete Environments =========================
-
-# Environment registry for dynamic creation
-ENV_REGISTRY = {}
-
-
-def register_env(env_type: EnvType, env_name: str):
-    """Decorator to register environment classes"""
-
-    def decorator(cls):
-        # Store with lowercase key for case-insensitive lookup
-        ENV_REGISTRY[env_name.lower()] = cls
-        cls._env_type = env_type
-        cls._env_name = env_name
-        return cls
-
-    return decorator
-
-
-# Affine Environments
-@register_env(EnvType.AFFINE, "affine:sat")
-class SAT(AffineSDKEnv):
-    """SAT environment for SDK"""
-    DEFAULT_REPLICAS = 1
-
-    @property
-    def env_name(self) -> str:
-        return "affine:sat"
-
-
-@register_env(EnvType.AFFINE, "affine:abd")
-class ABD(AffineSDKEnv):
-    """ABD environment for SDK"""
-    DEFAULT_REPLICAS = 1
-
-    @property
-    def env_name(self) -> str:
-        return "affine:abd"
-
-
-@register_env(EnvType.AFFINE, "affine:ded")
-class DED(AffineSDKEnv):
-    """DED environment for SDK"""
-    DEFAULT_REPLICAS = 1
-
-    @property
-    def env_name(self) -> str:
-        return "affine:ded"
-
-
-@register_env(EnvType.AFFINE, "affine:ded-v2")
-class DED_V2(AffineSDKEnv):
-    """DED-V2 environment for SDK"""
-    DEFAULT_REPLICAS = 1
-    DOCKER_IMAGE = "affinefoundation/affine-env:v4"
-
-    @property
-    def env_name(self) -> str:
-        return "affine:ded-v2"
-
-
-@register_env(EnvType.AFFINE, "affine:abd-v2")
-class ABD_V2(AffineSDKEnv):
-    """ABD-V2 environment for SDK"""
-    DEFAULT_REPLICAS = 1
-    DOCKER_IMAGE = "affinefoundation/affine-env:v4"
-
-    @property
-    def env_name(self) -> str:
-        return "affine:abd-v2"
-
-
-@register_env(EnvType.AFFINE, "CDE")
-class CDE(AffineSDKEnv):
-    """CDE environment for SDK"""
-    DEFAULT_REPLICAS = 1
-    DOCKER_IMAGE = "affinefoundation/cde:pi"
-
-    @property
-    def env_name(self) -> str:
-        return "CDE"
-
-
-@register_env(EnvType.AFFINE, "LGC")
-class LGC(AffineSDKEnv):
-    """LGC environment for SDK"""
-    DEFAULT_REPLICAS = 1
-    DOCKER_IMAGE = "affinefoundation/lgc:pi"
-
-    @property
-    def env_name(self) -> str:
-        return "LGC"
-
-
-@register_env(EnvType.AFFINE, "MTH")
-class MTH(AffineSDKEnv):
-    """MTH environment for SDK"""
-    DEFAULT_REPLICAS = 1
-    DOCKER_IMAGE = "affinefoundation/mth:pi"
-
-    @property
-    def env_name(self) -> str:
-        return "MTH"
-
-
-@register_env(EnvType.AFFINE, "SCI")
-class SCI(AffineSDKEnv):
-    """SCI environment for SDK"""
-    DEFAULT_REPLICAS = 1
-    DOCKER_IMAGE = "affinefoundation/sci:pi"
-
-    @property
-    def env_name(self) -> str:
-        return "SCI"
-
-
-# AgentGym Environments
-@register_env(EnvType.AGENTGYM, "agentgym:alfworld")
-class ALFWORLD(AgentGymSDKEnv):
-    """ALFWORLD environment for SDK"""
-    DEFAULT_REPLICAS = 1
-
-    @property
-    def env_name(self) -> str:
-        return "agentgym:alfworld"
-
-
-@register_env(EnvType.AGENTGYM, "agentgym:webshop")
-class WEBSHOP(AgentGymSDKEnv):
-    """WEBSHOP environment for SDK"""
-    DEFAULT_REPLICAS = 1
-
-    @property
-    def env_name(self) -> str:
-        return "agentgym:webshop"
-
-
-@register_env(EnvType.AGENTGYM, "agentgym:babyai")
-class BABYAI(AgentGymSDKEnv):
-    """BABYAI environment for SDK"""
-    DEFAULT_REPLICAS = 1
-
-    @property
-    def env_name(self) -> str:
-        return "agentgym:babyai"
-
-
-@register_env(EnvType.AGENTGYM, "agentgym:sciworld")
-class SCIWORLD(AgentGymSDKEnv):
-    """SCIWORLD environment for SDK"""
-    DEFAULT_REPLICAS = 1
-
-    @property
-    def env_name(self) -> str:
-        return "agentgym:sciworld"
-
-
-@register_env(EnvType.AGENTGYM, "agentgym:textcraft")
-class TEXTCRAFT(AgentGymSDKEnv):
-    """TEXTCRAFT environment for SDK"""
-    DEFAULT_REPLICAS = 1
-
-    @property
-    def env_name(self) -> str:
-        return "agentgym:textcraft"
+    
+    @staticmethod
+    def _validate_miner(miner: Any) -> bool:
+        """Validate miner object"""
+        return (hasattr(miner, "model") and hasattr(miner, "slug") and 
+                miner.model and miner.slug)
 
 
 # ========================= Factory Functions =========================
 
-
-def create_env_factory(env_class: Type[BaseSDKEnv], **default_kwargs):
-    """Create a factory function for environment"""
-
-    def factory(**kwargs):
-        merged_kwargs = {**default_kwargs, **kwargs}
-        return env_class(**merged_kwargs)
-
-    factory.__name__ = f"{env_class.__name__}_factory"
-    factory.__doc__ = f"Create {env_class.__name__} environment"
-    return factory
-
-
-# Generate factory functions dynamically
-SAT_factory = create_env_factory(SAT)
-ABD_factory = create_env_factory(ABD)
-DED_factory = create_env_factory(DED)
-DED_V2_factory = create_env_factory(DED_V2)
-ABD_V2_factory = create_env_factory(ABD_V2)
-CDE_factory = create_env_factory(CDE)
-LGC_factory = create_env_factory(LGC)
-MTH_factory = create_env_factory(MTH)
-SCI_factory = create_env_factory(SCI)
-ALFWORLD_factory = create_env_factory(ALFWORLD)
-WEBSHOP_factory = create_env_factory(WEBSHOP)
-BABYAI_factory = create_env_factory(BABYAI)
-SCIWORLD_factory = create_env_factory(SCIWORLD)
-TEXTCRAFT_factory = create_env_factory(TEXTCRAFT)
-
-
-# ========================= Utility Functions =========================
-
-
-async def create_environment(env_name: str, **kwargs) -> BaseSDKEnv:
-    """
-    Create environment by name
-
-    Args:
-        env_name: Environment name
-        **kwargs: Environment-specific parameters
-
-    Returns:
-        Environment instance
-
-    Raises:
-        ValueError: If environment name is unknown
-    """
-    env_class = ENV_REGISTRY.get(env_name.lower())
-    if not env_class:
-        raise ValueError(f"Unknown environment: {env_name}")
-
-    return env_class(**kwargs)
+def create_environment(env_name: str) -> SDKEnvironment:
+    """Create environment by name"""
+    return SDKEnvironment(env_name)
 
 
 def list_available_environments() -> Dict[str, List[str]]:
     """List all available environments grouped by type"""
     result = {}
-    for env_name, env_class in ENV_REGISTRY.items():
-        env_type = env_class._env_type.value
-        if env_type not in result:
-            result[env_type] = []
-        result[env_type].append(env_name)
-
+    for name, config in ENV_CONFIGS.items():
+        env_type = config.env_type
+        result.setdefault(env_type, []).append(name)
+    
     for env_type in result:
         result[env_type].sort()
-
+    
     return result
 
 
@@ -727,13 +415,48 @@ def cleanup_all_environments():
     """Clean up all cached environments"""
     with _ENV_LOCK:
         logger.info("Cleaning up all cached environments")
-        for template, env in list(_ENV_CACHE.items()):
+        for name, env in list(_ENV_CACHE.items()):
             try:
                 loop = asyncio.get_event_loop()
                 if not loop.is_running():
                     loop.run_until_complete(env.cleanup())
-                logger.debug(f"Cleaned up environment: {template}")
+                logger.debug(f"Cleaned up environment: {name}")
             except Exception as e:
-                logger.warning(f"Error cleaning up environment {template}: {e}")
+                logger.warning(f"Error cleaning up environment {name}: {e}")
         
         _ENV_CACHE.clear()
+
+
+# ========================= Backward Compatibility Aliases =========================
+
+# Factory functions for backward compatibility
+SAT_factory = lambda: create_environment("sat")
+ABD_factory = lambda: create_environment("abd")  # Points to abd-v2
+DED_factory = lambda: create_environment("ded")  # Points to ded-v2
+DED_V2_factory = lambda: create_environment("ded-v2")
+ABD_V2_factory = lambda: create_environment("abd-v2")
+CDE_factory = lambda: create_environment("cde")
+LGC_factory = lambda: create_environment("lgc")
+MTH_factory = lambda: create_environment("mth")
+SCI_factory = lambda: create_environment("sci")
+ALFWORLD_factory = lambda: create_environment("agentgym:alfworld")
+WEBSHOP_factory = lambda: create_environment("agentgym:webshop")
+BABYAI_factory = lambda: create_environment("agentgym:babyai")
+SCIWORLD_factory = lambda: create_environment("agentgym:sciworld")
+TEXTCRAFT_factory = lambda: create_environment("agentgym:textcraft")
+
+# Legacy class aliases
+SAT = SAT_factory
+ABD = ABD_factory
+DED = DED_factory
+DED_V2 = DED_V2_factory
+ABD_V2 = ABD_V2_factory
+CDE = CDE_factory
+LGC = LGC_factory
+MTH = MTH_factory
+SCI = SCI_factory
+ALFWORLD = ALFWORLD_factory
+WEBSHOP = WEBSHOP_factory
+BABYAI = BABYAI_factory
+SCIWORLD = SCIWORLD_factory
+TEXTCRAFT = TEXTCRAFT_factory

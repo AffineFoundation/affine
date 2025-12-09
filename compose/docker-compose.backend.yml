@@ -52,6 +52,7 @@ services:
       - ~/.ssh:/root/.ssh
       - ~/.bittensor/wallets:/root/.bittensor/wallets:ro
       - /var/log/affine/executor:/var/log/affine/executor
+      - ./affinetes_hosts.json:/app/affinetes_hosts.json
     environment:
       - API_URL=http://api:8000/api/v1
     depends_on:
