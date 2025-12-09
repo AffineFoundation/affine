@@ -62,7 +62,7 @@ class ExecutorWorker:
 
         try:
             from affine.core.environments import create_environment
-            self.env_executor = await create_environment(self.env)
+            self.env_executor = create_environment(self.env)
             safe_log(f"[{self.env}] Environment initialized in subprocess", "INFO")
         except Exception as e:
             safe_log(f"[{self.env}] Failed to initialize environment: {e}", "ERROR")
