@@ -114,25 +114,27 @@ async def get_sample_by_uid(
         # Resolve env_name shorthand (e.g., 'alfworld' -> 'agentgym:alfworld')
         environments = await config_dao.get_param_value('environments', default={})
         
-        if ':' not in env:
-            matching_envs = [e for e in environments.keys() if e.endswith(f':{env}')]
-            if len(matching_envs) == 0:
+        # Check if env is already a full environment name
+        if env not in environments:
+            # Try to resolve shorthand (e.g., 'alfworld' -> 'agentgym:alfworld')
+            if ':' not in env:
+                matching_envs = [e for e in environments.keys() if e.endswith(f':{env}')]
+                if len(matching_envs) == 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Environment not found: {env}. Available: {', '.join(environments.keys())}"
+                    )
+                elif len(matching_envs) > 1:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Ambiguous environment name: {env}. Matches: {', '.join(matching_envs)}"
+                    )
+                env = matching_envs[0]
+            else:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Environment not found: {env}. Available: {', '.join(environments.keys())}"
                 )
-            elif len(matching_envs) > 1:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Ambiguous environment name: {env}. Matches: {', '.join(matching_envs)}"
-                )
-            env = matching_envs[0]
-        
-        if env not in environments:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Environment not found: {env}. Available: {', '.join(environments.keys())}"
-            )
         
         # Get miner info by UID
         miner = await miners_dao.get_miner_by_uid(uid)
@@ -209,25 +211,27 @@ async def get_task_pool(
     try:
         environments = await config_dao.get_param_value('environments', default={})
         
-        if ':' not in env:
-            matching_envs = [e for e in environments.keys() if e.endswith(f':{env}')]
-            if len(matching_envs) == 0:
+        # Check if env is already a full environment name
+        if env not in environments:
+            # Try to resolve shorthand (e.g., 'alfworld' -> 'agentgym:alfworld')
+            if ':' not in env:
+                matching_envs = [e for e in environments.keys() if e.endswith(f':{env}')]
+                if len(matching_envs) == 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Environment not found: {env}. Available: {', '.join(environments.keys())}"
+                    )
+                elif len(matching_envs) > 1:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Ambiguous environment name: {env}. Matches: {', '.join(matching_envs)}"
+                    )
+                env = matching_envs[0]
+            else:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Environment not found: {env}. Available: {', '.join(environments.keys())}"
                 )
-            elif len(matching_envs) > 1:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Ambiguous environment name: {env}. Matches: {', '.join(matching_envs)}"
-                )
-            env = matching_envs[0]
-        
-        if env not in environments:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Environment not found: {env}. Available: {', '.join(environments.keys())}"
-            )
         
         # Get miner info by UID
         miner = await miners_dao.get_miner_by_uid(uid)
