@@ -13,7 +13,6 @@ from typing import Dict, Optional
 
 from affine.core.setup import logger, setup_logging
 from affine.utils.api_client import create_api_client
-from affine.src.config import get_config
 from affine.utils.subtensor import get_subtensor
 from affine.src.validator.weight_setter import WeightSetter
 
@@ -98,6 +97,49 @@ class ValidatorService:
         
         return None
 
+    async def fetch_config_from_api(self, max_retries: int = 12, retry_interval: int = 3) -> Optional[Dict]:
+        """Fetch configuration from backend API with retry logic
+        
+        Args:
+            max_retries: Maximum number of retry attempts (default: 12)
+            retry_interval: Seconds to wait between retries (default: 3)
+        
+        Returns:
+            Config data dict or None if all retries failed
+        """
+        if self.api_client is None:
+            self.api_client = await create_api_client()
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = await self.api_client.get("/config")
+                
+                if not isinstance(response, dict) or not response.get("configs"):
+                    logger.warning(f"Invalid or empty config from API (attempt {attempt}/{max_retries})")
+                    if attempt < max_retries:
+                        logger.info(f"Retrying in {retry_interval}s...")
+                        await asyncio.sleep(retry_interval)
+                        continue
+                    return None
+                
+                configs = response["configs"]
+                
+                if attempt > 1:
+                    logger.info(f"Successfully fetched config on attempt {attempt}/{max_retries}")
+                logger.info(f"Fetched {len(configs)} config parameters")
+                return configs
+            
+            except Exception as e:
+                logger.error(f"Error fetching config (attempt {attempt}/{max_retries}): {e}")
+                if attempt < max_retries:
+                    logger.info(f"Retrying in {retry_interval}s...")
+                    await asyncio.sleep(retry_interval)
+                else:
+                    logger.error(f"Failed to fetch config after {max_retries} attempts")
+                    return None
+        
+        return None
+
     async def wait_for_next_window(self, subtensor, interval_blocks: int):
         """Wait for the next weight submission window"""
         current_block = await subtensor.get_current_block()
@@ -133,10 +175,14 @@ class ValidatorService:
         if not weights_data:
             return
 
-        # 2. Get config
-        config = get_config()
-        burn_percentage = await config.get("validator_burn_percentage") or 0.0
-        burn_percentage = float(burn_percentage)
+        # 2. Get config from API
+        config = await self.fetch_config_from_api()
+        if not config:
+            logger.warning("Failed to fetch config, using default burn_percentage=0.0")
+            burn_percentage = 0.0
+        else:
+            burn_percentage = config.get("validator_burn_percentage", 0.0)
+            burn_percentage = float(burn_percentage)
 
         # 3. Set weights using WeightSetter
         await self.weight_setter.set_weights(
@@ -149,16 +195,9 @@ class ValidatorService:
         logger.info("Starting ValidatorService...")
         self.running = True
         
-        config = get_config()
-        
         while self.running:
             try:
-                interval_blocks = await config.get("weight_set_interval_blocks")
-                if interval_blocks is None:
-                    interval_blocks = int(os.getenv("WEIGHT_SET_INTERVAL_BLOCKS", "180"))
-                else:
-                    interval_blocks = int(interval_blocks)
-
+                interval_blocks = int(os.getenv("WEIGHT_SET_INTERVAL_BLOCKS", "180"))
                 subtensor = await get_subtensor()
                 await self.wait_for_next_window(subtensor, interval_blocks)
                 
