@@ -54,7 +54,7 @@ class ValidatorService:
         self.running = False
         self.weight_setter = WeightSetter(self.wallet, self.netuid)
         
-    async def fetch_weights_from_api(self, max_retries: int = 12, retry_interval: int = 5) -> Optional[Dict]:
+    async def fetch_weights_from_api(self, max_retries: int = 12, retry_interval: int = 3) -> Optional[Dict]:
         """Fetch latest weights from backend API with retry logic
         
         Args:
