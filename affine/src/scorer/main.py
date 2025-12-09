@@ -40,11 +40,12 @@ async def fetch_scoring_data(api_client, range_type: str = "scoring") -> dict:
     return data
 
 
-async def fetch_system_config(api_client) -> dict:
+async def fetch_system_config(api_client, range_type: str = "scoring") -> dict:
     """Fetch system configuration from API.
     
     Args:
         api_client: APIClient instance
+        range_type: Type of range to use ('scoring' or 'sampling')
     
     Returns:
         System config dict with 'environments' key
@@ -55,14 +56,15 @@ async def fetch_system_config(api_client) -> dict:
         if isinstance(config, dict):
             value = config.get("param_value")
             if isinstance(value, dict):
-                # Filter environments where enabled_for_scoring=true
+                # Filter environments based on range_type
+                filter_key = "enabled_for_sampling" if range_type == "sampling" else "enabled_for_scoring"
                 enabled_envs = [
                     env_name for env_name, env_config in value.items()
-                    if isinstance(env_config, dict) and env_config.get("enabled_for_scoring", False)
+                    if isinstance(env_config, dict) and env_config.get(filter_key, False)
                 ]
                 
                 if enabled_envs:
-                    logger.info(f"Fetched environments from API: {enabled_envs}")
+                    logger.info(f"Fetched environments from API using {filter_key}: {enabled_envs}")
                     return {"environments": enabled_envs}
 
         logger.exception("Failed to parse environments config")
@@ -94,7 +96,7 @@ async def run_scoring_once(save_to_db: bool, range_type: str = "scoring"):
         # Fetch data
         logger.info(f"Fetching data from API (range_type={range_type})...")
         scoring_data = await fetch_scoring_data(api_client, range_type=range_type)
-        system_config = await fetch_system_config(api_client)
+        system_config = await fetch_system_config(api_client, range_type=range_type)
         
         # Extract environments
         environments = system_config.get("environments")
