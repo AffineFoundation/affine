@@ -54,27 +54,49 @@ class ValidatorService:
         self.running = False
         self.weight_setter = WeightSetter(self.wallet, self.netuid)
         
-    async def fetch_weights_from_api(self) -> Optional[Dict]:
-        """Fetch latest weights from backend API"""
+    async def fetch_weights_from_api(self, max_retries: int = 12, retry_interval: int = 5) -> Optional[Dict]:
+        """Fetch latest weights from backend API with retry logic
+        
+        Args:
+            max_retries: Maximum number of retry attempts (default: 12)
+            retry_interval: Seconds to wait between retries (default: 5)
+        
+        Returns:
+            Weights data dict or None if all retries failed
+        """
         if self.api_client is None:
             self.api_client = await create_api_client()
         
-        try:
-            response = await self.api_client.get("/scores/weights/latest")
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = await self.api_client.get("/scores/weights/latest")
+                
+                if not isinstance(response, dict) or not response.get("weights"):
+                    logger.warning(f"Invalid or empty weights from API (attempt {attempt}/{max_retries})")
+                    if attempt < max_retries:
+                        logger.info(f"Retrying in {retry_interval}s...")
+                        await asyncio.sleep(retry_interval)
+                        continue
+                    return None
+                
+                weights_dict = response["weights"]
+                block_number = response.get("block_number", "unknown")
+                
+                if attempt > 1:
+                    logger.info(f"Successfully fetched weights on attempt {attempt}/{max_retries}")
+                logger.info(f"Fetched {len(weights_dict)} weights (block={block_number})")
+                return response
             
-            if not isinstance(response, dict) or not response.get("weights"):
-                logger.warning("Invalid or empty weights from API")
-                return None
-            
-            weights_dict = response["weights"]
-            block_number = response.get("block_number", "unknown")
-            
-            logger.info(f"Fetched {len(weights_dict)} weights (block={block_number})")
-            return response
+            except Exception as e:
+                logger.error(f"Error fetching weights (attempt {attempt}/{max_retries}): {e}")
+                if attempt < max_retries:
+                    logger.info(f"Retrying in {retry_interval}s...")
+                    await asyncio.sleep(retry_interval)
+                else:
+                    logger.error(f"Failed to fetch weights after {max_retries} attempts")
+                    return None
         
-        except Exception as e:
-            logger.error(f"Error fetching weights: {e}")
-            return None
+        return None
 
     async def wait_for_next_window(self, subtensor, interval_blocks: int):
         """Wait for the next weight submission window"""

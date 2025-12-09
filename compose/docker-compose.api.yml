@@ -1,6 +1,6 @@
 services:
   api:
-    image: thebes1618/affine:latest
+    image: affinefoundation/affine:latest
     container_name: affine-api
     restart: unless-stopped
     volumes:
