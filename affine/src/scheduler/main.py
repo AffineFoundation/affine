@@ -110,9 +110,9 @@ def main(verbosity):
         setup_logging(int(verbosity))
     
     # Override with environment variables if present
-    task_interval = int(os.getenv("SCHEDULER_TASK_GENERATION_INTERVAL", "60"))
+    task_interval = int(os.getenv("SCHEDULER_TASK_GENERATION_INTERVAL", "600"))
     cleanup_interval = int(os.getenv("SCHEDULER_CLEANUP_INTERVAL", "300"))
-    max_tasks = int(os.getenv("SCHEDULER_MAX_TASKS_PER_MINER_ENV", "200"))
+    max_tasks = int(os.getenv("SCHEDULER_MAX_TASKS_PER_MINER_ENV", "300"))
 
     # Run service
     asyncio.run(run_service(

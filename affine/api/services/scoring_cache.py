@@ -15,17 +15,6 @@ from dataclasses import dataclass
 from affine.core.setup import logger
 
 
-def _format_timestamp(ts_ms: int) -> str:
-    """Convert millisecond timestamp to human-readable format."""
-    if ts_ms == 0:
-        return "0 (epoch)"
-    try:
-        dt = datetime.fromtimestamp(ts_ms / 1000.0)
-        return f"{ts_ms} ({dt.strftime('%Y-%m-%d %H:%M:%S')})"
-    except (ValueError, OSError):
-        return f"{ts_ms} (invalid)"
-
-
 class CacheState(Enum):
     """Cache state machine."""
     EMPTY = "empty"
@@ -37,7 +26,7 @@ class CacheState(Enum):
 @dataclass
 class CacheConfig:
     """Cache configuration."""
-    refresh_interval: int = 300  # 5 minutes
+    refresh_interval: int = 600  # 5 minutes
 
 
 class ScoringCacheManager:
