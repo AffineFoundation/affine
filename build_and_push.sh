@@ -2,7 +2,7 @@
 set -e
 
 # Configuration
-DOCKER_USERNAME="thebes1618"
+DOCKER_USERNAME="affinefoundation"
 IMAGE_NAME="affine"
 DOCKERFILE="Dockerfile"
 
