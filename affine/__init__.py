@@ -29,8 +29,8 @@ from affine.core.miners import miners
 from affine.core.environments import (
     # Factory functions matching the expected API
     SAT_factory as SAT,
-    ABD_factory as ABD,
-    DED_factory as DED,
+    DED_V2_factory as DED,
+    ABD_V2_factory as ABD,
     DED_V2_factory as DED_V2,
     ABD_V2_factory as ABD_V2,
     ALFWORLD_factory as ALFWORLD,
@@ -38,6 +38,11 @@ from affine.core.environments import (
     BABYAI_factory as BABYAI,
     SCIWORLD_factory as SCIWORLD,
     TEXTCRAFT_factory as TEXTCRAFT,
+    TEXTCRAFT_factory as TEXTCRAFT,
+    CDE_factory as CDE,
+    LGC_factory as LGC,
+    MTH_factory as MTH,
+    SCI_factory as SCI,
     list_available_environments,
 )
 
