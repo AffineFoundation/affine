@@ -230,7 +230,7 @@ def main(sampling: bool):
     
     # Get interval in minutes (default: 5 minutes)
     try:
-        interval_minutes = int(os.getenv("SCORER_INTERVAL_MINUTES", "5"))
+        interval_minutes = int(os.getenv("SCORER_INTERVAL_MINUTES", "10"))
         if interval_minutes <= 0:
             logger.warning(f"Invalid SCORER_INTERVAL_MINUTES={interval_minutes}, using default 5")
             interval_minutes = 5
