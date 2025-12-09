@@ -200,15 +200,18 @@ class ScoringCacheManager:
         miners_dao = MinersDAO()
         sample_dao = SampleResultsDAO()
         
-        # Get config
-        scoring_envs = await system_config_dao.get_active_environments()
-        if not scoring_envs:
+        # Get config - fetch ALL environments, not just active ones
+        env_ranges_dict = await system_config_dao.get_env_task_ranges()
+        
+        # Get all environments from env_ranges_dict
+        all_envs = list(env_ranges_dict.keys())
+        
+        if not all_envs:
             self._data_scoring = {}
             self._data_sampling = {}
-            logger.info("Full refresh completed: no active environments")
+            logger.info("Full refresh completed: no environments configured")
             return
         
-        env_ranges_dict = await system_config_dao.get_env_task_ranges()
         valid_miners = await miners_dao.get_valid_miners()
         if not valid_miners:
             self._data_scoring = {}
@@ -221,16 +224,16 @@ class ScoringCacheManager:
             for m in valid_miners
         ]
         
-        # Build query params for both range types
+        # Build query params for both range types using ALL environments
         env_ranges_scoring = {
             env: tuple(env_ranges_dict[env]['scoring_range'])
-            for env in scoring_envs
+            for env in all_envs
             if env in env_ranges_dict
         }
         
         env_ranges_sampling = {
             env: tuple(env_ranges_dict[env]['sampling_range'])
-            for env in scoring_envs
+            for env in all_envs
             if env in env_ranges_dict
         }
         
@@ -246,19 +249,20 @@ class ScoringCacheManager:
             )
         )
         
-        # Assemble results for both types
+        # Assemble results for both types using ALL environments
         self._data_scoring = self._assemble_result(
-            valid_miners, scoring_envs, env_ranges_scoring, samples_data_scoring
+            valid_miners, all_envs, env_ranges_scoring, samples_data_scoring
         )
         self._data_sampling = self._assemble_result(
-            valid_miners, scoring_envs, env_ranges_sampling, samples_data_sampling
+            valid_miners, all_envs, env_ranges_sampling, samples_data_sampling
         )
         
         # Log statistics
         elapsed = time.time() - start_time
-        combo_count = len(valid_miners) * len(scoring_envs)
+        combo_count = len(valid_miners) * len(all_envs)
         logger.info(
             f"Full refresh completed: {len(valid_miners)} miners, "
+            f"{len(all_envs)} environments, "
             f"{combo_count} miner×env combinations, "
             f"scoring={len(self._data_scoring)} entries, "
             f"sampling={len(self._data_sampling)} entries, "
