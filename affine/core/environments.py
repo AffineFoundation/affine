@@ -73,7 +73,7 @@ _ENV_CONFIGS_CANONICAL = {
     # Affine environments (require task_type)
     "affine:sat": EnvConfig(
         name="affine:sat",
-        docker_image="bignickeye/affine:v3",
+        docker_image="affinefoundation/affine-env:v4",
         requires_task_type=True,
     ),
     "affine:ded-v2": EnvConfig(
