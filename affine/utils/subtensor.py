@@ -22,14 +22,14 @@ class SubtensorWrapper:
         self._fallback = fallback or os.getenv(
             "SUBTENSOR_FALLBACK", "wss://lite.sub.latent.to:443"
         )
-        self._subtensor: Optional[bt.async_subtensor] = None
+        self._subtensor: Optional[bt.AsyncSubtensor] = None
         self._lock = asyncio.Lock()
 
-    async def _create_connection(self) -> bt.async_subtensor:
+    async def _create_connection(self) -> bt.AsyncSubtensor:
         """Create and initialize a new subtensor connection."""
         try:
             logger.debug(f"Attempting to connect to primary endpoint: {self._endpoint}")
-            subtensor = bt.async_subtensor(self._endpoint)
+            subtensor = bt.AsyncSubtensor(self._endpoint)
             await subtensor.initialize()
             logger.info(f"Successfully connected to primary endpoint: {self._endpoint}")
             return subtensor
@@ -40,7 +40,7 @@ class SubtensorWrapper:
             if self._fallback:
                 logger.info(f"Attempting fallback connection to: {self._fallback}")
                 try:
-                    subtensor = bt.async_subtensor(self._fallback)
+                    subtensor = bt.AsyncSubtensor(self._fallback)
                     await subtensor.initialize()
                     logger.info(f"Successfully connected to fallback: {self._fallback}")
                     return subtensor
