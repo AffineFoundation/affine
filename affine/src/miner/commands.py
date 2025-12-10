@@ -180,15 +180,15 @@ chute = build_sglang_chute(
     readme="{repo}",
     model_name="{repo}",
     image="chutes/sglang:nightly-2025081600",
-    concurrency=20,
+    concurrency=40,
     revision="{revision}",
     node_selector=NodeSelector(
-        gpu_count=1,
-        include=["a100", "h100"],
+        gpu_count=4,
+        include=["h200"],
     ),
-    max_instances=1,
-    scale_threshold=0.5,
-    shutdown_after_seconds=3600,
+    scaling_threshold=0.5,
+    max_instances=2,
+    shutdown_after_seconds=28800,
 )
 """
     )
@@ -265,7 +265,7 @@ async def commit_command(
     hotkey: Optional[str] = None
 ):
     """Commit model to blockchain.
-    
+
     Args:
         repo: HF repository ID
         revision: HF commit SHA
@@ -275,14 +275,15 @@ async def commit_command(
     """
     import bittensor as bt
     from bittensor.core.errors import MetadataError
-    
+    from affine.utils.subtensor import get_subtensor
+
     cold = coldkey or get_conf("BT_WALLET_COLD", "default")
     hot = hotkey or get_conf("BT_WALLET_HOT", "default")
     wallet = bt.Wallet(name=cold, hotkey=hot)
     
     logger.info(f"Committing: {repo}@{revision} (chute: {chute_id})")
     logger.info(f"Using wallet: {wallet.hotkey.ss58_address[:16]}...")
-    
+
     async def _commit():
         sub = await get_subtensor()
         data = json.dumps({
