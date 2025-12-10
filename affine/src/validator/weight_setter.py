@@ -13,7 +13,7 @@ from affine.core.setup import logger
 from affine.utils.subtensor import get_subtensor
 
 class WeightSetter:
-    def __init__(self, wallet: bt.wallet, netuid: int):
+    def __init__(self, wallet: bt.Wallet, netuid: int):
         self.wallet = wallet
         self.netuid = netuid
 

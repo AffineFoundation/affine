@@ -287,7 +287,7 @@ async def commit_command(
     
     cold = coldkey or get_conf("BT_WALLET_COLD", "default")
     hot = hotkey or get_conf("BT_WALLET_HOT", "default")
-    wallet = bt.wallet(name=cold, hotkey=hot)
+    wallet = bt.Wallet(name=cold, hotkey=hot)
     
     logger.info(f"Committing: {repo}@{revision} (chute: {chute_id})")
     logger.info(f"Using wallet: {wallet.hotkey.ss58_address[:16]}...")

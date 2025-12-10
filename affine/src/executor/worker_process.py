@@ -74,7 +74,7 @@ def run_worker_subprocess(
     worker = None
     
     try:
-        wallet = bt.wallet(name=wallet_name, hotkey=wallet_hotkey)
+        wallet = bt.Wallet(name=wallet_name, hotkey=wallet_hotkey)
         
         worker = ExecutorWorker(
             worker_id=worker_id,
