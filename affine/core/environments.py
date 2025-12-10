@@ -297,6 +297,7 @@ class SDKEnvironment:
             env = af_env.load_env(
                 image=self.docker_image,
                 mode="docker",
+                replicas=len(hosts),
                 env_vars=self._get_env_vars(),
                 hosts=hosts,
                 container_name=self.env_name.replace(":", "-"),

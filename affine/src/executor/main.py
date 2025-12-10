@@ -104,7 +104,7 @@ class ExecutorManager:
         # Load wallet
         coldkey = os.getenv("BT_WALLET_COLD", "default")
         hotkey = os.getenv("BT_WALLET_HOT", "default")
-        self.wallet = bt.wallet(name=coldkey, hotkey=hotkey)
+        self.wallet = bt.Wallet(name=coldkey, hotkey=hotkey)
         
         if not self.wallet:
             logger.error("No wallet configured. Set BT_WALLET_COLD and BT_WALLET_HOT environment variables.")

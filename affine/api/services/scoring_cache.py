@@ -7,7 +7,6 @@ Simplified design: always performs full refresh every 5 minutes.
 
 import time
 import asyncio
-from datetime import datetime
 from typing import Dict, Any, Optional
 from enum import Enum
 from dataclasses import dataclass
@@ -41,9 +40,8 @@ class ScoringCacheManager:
         self._state = CacheState.EMPTY
         self._lock = asyncio.Lock()
         
-        # Timestamps for both caches
-        self._updated_at_scoring = 0
-        self._updated_at_sampling = 0
+        # Timestamp for cache (both updated together)
+        self._updated_at = 0
         
         # Background task
         self._refresh_task: Optional[asyncio.Task] = None
@@ -61,8 +59,7 @@ class ScoringCacheManager:
             try:
                 await self._full_refresh_both()
                 self._state = CacheState.READY
-                self._updated_at_scoring = int(time.time())
-                self._updated_at_sampling = int(time.time())
+                self._updated_at = int(time.time())
                 logger.info(
                     f"Cache warmed up: scoring={len(self._data_scoring)} miners, "
                     f"sampling={len(self._data_sampling)} miners"
@@ -86,23 +83,21 @@ class ScoringCacheManager:
         # Select cache based on range_type
         data = self._data_scoring if range_type == "scoring" else self._data_sampling
         
-        # Fast path: return cache if ready or refreshing
+        # Fast path: return cache if ready or refreshing (data can be empty dict)
         if self._state in [CacheState.READY, CacheState.REFRESHING]:
-            if data:
-                return data
+            return data
         
-        # Slow path: cache empty or warming
-        if self._state == CacheState.EMPTY or not data:
+        # Slow path: cache not initialized yet
+        if self._state == CacheState.EMPTY:
             async with self._lock:
                 # Double check after acquiring lock
-                if self._state == CacheState.EMPTY or not data:
+                if self._state == CacheState.EMPTY:
                     logger.warning(f"Cache miss for range_type={range_type} - computing synchronously")
                     self._state = CacheState.WARMING
                     try:
                         await self._full_refresh_both()
                         self._state = CacheState.READY
-                        self._updated_at_scoring = int(time.time())
-                        self._updated_at_sampling = int(time.time())
+                        self._updated_at = int(time.time())
                         return self._data_scoring if range_type == "scoring" else self._data_sampling
                     except Exception as e:
                         self._state = CacheState.EMPTY
@@ -114,21 +109,14 @@ class ScoringCacheManager:
                 await asyncio.sleep(1)
                 # Recheck state - may have changed to READY
                 if self._state == CacheState.READY:
-                    data = self._data_scoring if range_type == "scoring" else self._data_sampling
-                    if data:
-                        return data
-            # Timeout - but check if data exists
-            if data:
-                logger.warning(f"Cache warming timeout but returning existing data for range_type={range_type}")
-                return data
-            raise TimeoutError(f"Cache warming timeout for range_type={range_type}")
+                    return self._data_scoring if range_type == "scoring" else self._data_sampling
+            # Timeout - return whatever we have
+            logger.warning(f"Cache warming timeout, returning current data for range_type={range_type}")
+            return self._data_scoring if range_type == "scoring" else self._data_sampling
         
-        # Fallback: return any available data
-        if data:
-            logger.warning(f"Returning stale cache for range_type={range_type} (state={self._state})")
-            return data
-        
-        raise RuntimeError(f"No cache data available for range_type={range_type} (state={self._state})")
+        # Fallback: return any available data (should not reach here)
+        logger.warning(f"Returning cache in unexpected state for range_type={range_type} (state={self._state})")
+        return data
     
     async def start_refresh_loop(self) -> None:
         """Start background refresh loop."""
@@ -160,8 +148,7 @@ class ScoringCacheManager:
                 # Mark ready
                 async with self._lock:
                     self._state = CacheState.READY
-                    self._updated_at_scoring = int(time.time())
-                    self._updated_at_sampling = int(time.time())
+                    self._updated_at = int(time.time())
                 
             except asyncio.CancelledError:
                 logger.info("Cache refresh task cancelled")
@@ -177,9 +164,9 @@ class ScoringCacheManager:
         await self._full_refresh_both()
     
     async def _full_refresh_both(self) -> None:
-        """Execute full refresh for both scoring and sampling ranges."""
+        """Execute full refresh for both scoring and sampling ranges with optimized single query."""
         start_time = time.time()
-        logger.info("Full refresh started for both range types")
+        logger.info("Full refresh started (optimized single query)")
         
         from affine.database.dao.system_config import SystemConfigDAO
         from affine.database.dao.miners import MinersDAO
@@ -213,44 +200,54 @@ class ScoringCacheManager:
             for m in valid_miners
         ]
         
-        # Build query params for both range types using ALL environments
-        env_ranges_scoring = {
-            env: tuple(env_ranges_dict[env]['scoring_range'])
-            for env in all_envs
-            if env in env_ranges_dict
-        }
+        # Build ranges for scoring, sampling, and merged query
+        env_ranges_scoring = {}
+        env_ranges_sampling = {}
+        env_ranges_merged = {}
         
-        env_ranges_sampling = {
-            env: tuple(env_ranges_dict[env]['sampling_range'])
-            for env in all_envs
-            if env in env_ranges_dict
-        }
+        for env in all_envs:
+            scoring_range = env_ranges_dict[env]['scoring_range']
+            sampling_range = env_ranges_dict[env]['sampling_range']
+            
+            scoring_start, scoring_end = scoring_range
+            sampling_start, sampling_end = sampling_range
+            
+            env_ranges_scoring[env] = (scoring_start, scoring_end)
+            env_ranges_sampling[env] = (sampling_start, sampling_end)
+            
+            # Compute merged range [min(starts), max(ends))
+            # Skip if both ranges are empty
+            if scoring_start >= scoring_end and sampling_start >= sampling_end:
+                continue
+            
+            # Calculate union of the two ranges
+            valid_starts = [s for s, e in [(scoring_start, scoring_end), (sampling_start, sampling_end)] if s < e]
+            valid_ends = [e for s, e in [(scoring_start, scoring_end), (sampling_start, sampling_end)] if s < e]
+            
+            if valid_starts and valid_ends:
+                merged_start = min(valid_starts)
+                merged_end = max(valid_ends)
+                env_ranges_merged[env] = (merged_start, merged_end)
         
-        # Concurrent batch query for both range types
-        samples_data_scoring, samples_data_sampling = await asyncio.gather(
-            sample_dao.get_scoring_samples_batch(
-                miners=miners_list,
-                env_ranges=env_ranges_scoring
-            ),
-            sample_dao.get_scoring_samples_batch(
-                miners=miners_list,
-                env_ranges=env_ranges_sampling
-            )
+        # Single batch query with merged ranges
+        samples_data_merged = await sample_dao.get_scoring_samples_batch(
+            miners=miners_list,
+            env_ranges=env_ranges_merged
         )
         
-        # Assemble results for both types using ALL environments
+        # Assemble results for both types by filtering merged data
         self._data_scoring = self._assemble_result(
-            valid_miners, all_envs, env_ranges_scoring, samples_data_scoring
+            valid_miners, all_envs, env_ranges_scoring, samples_data_merged
         )
         self._data_sampling = self._assemble_result(
-            valid_miners, all_envs, env_ranges_sampling, samples_data_sampling
+            valid_miners, all_envs, env_ranges_sampling, samples_data_merged
         )
         
         # Log statistics
         elapsed = time.time() - start_time
         combo_count = len(valid_miners) * len(all_envs)
         logger.info(
-            f"Full refresh completed: {len(valid_miners)} miners, "
+            f"Full refresh completed (optimized): {len(valid_miners)} miners, "
             f"{len(all_envs)} environments, "
             f"{combo_count} miner×env combinations, "
             f"scoring={len(self._data_scoring)} entries, "
@@ -291,6 +288,7 @@ class ScoringCacheManager:
                 if start_id >= end_id:
                     continue
                 
+                # Filter samples to only include those within the specified range
                 samples_list = [
                     {
                         'task_id': int(s['task_id']),
@@ -299,6 +297,7 @@ class ScoringCacheManager:
                         'timestamp': s['timestamp'],
                     }
                     for s in env_samples
+                    if start_id <= int(s['task_id']) < end_id
                 ]
                 
                 expected_count = end_id - start_id

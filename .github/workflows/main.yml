@@ -24,4 +24,4 @@ jobs:
           context: .
           file: Dockerfile
           push: true
-          tags: thebes1618/affine:latest,thebes1618/affine:${{ github.sha }} 
+          tags: affinefoundation/affine:latest,affinefoundation/affine:${{ github.sha }} 

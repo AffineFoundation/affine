@@ -43,7 +43,7 @@ class ValidatorService:
         
         # Load wallet
         try:
-            self.wallet = bt.wallet(name=wallet_name, hotkey=hotkey_name)
+            self.wallet = bt.Wallet(name=wallet_name, hotkey=hotkey_name)
             logger.info(f"Wallet: {self.wallet}")
         except Exception as e:
             logger.error(f"Failed to load wallet: {e}")

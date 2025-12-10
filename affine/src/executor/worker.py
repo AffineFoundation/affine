@@ -22,7 +22,7 @@ class ExecutorWorker:
         self,
         worker_id: int,
         env: str,
-        wallet: bt.wallet,
+        wallet: bt.Wallet,
         max_concurrent_tasks: int = 5,
         batch_size: int = 20,
     ):

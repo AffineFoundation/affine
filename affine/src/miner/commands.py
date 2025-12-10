@@ -14,13 +14,15 @@ import asyncio
 import textwrap
 from pathlib import Path
 from typing import Optional
-from affine.utils.api_client import create_api_client, cli_api_client
+from affine.utils.api_client import cli_api_client
 from affine.core.setup import logger, NETUID
+from affine.utils.subtensor import get_subtensor
 
 
 def get_conf(key: str, default: Optional[str] = None) -> Optional[str]:
     """Get configuration value from environment variable."""
     return os.getenv(key, default)
+
 
 
 # ============================================================================
@@ -36,7 +38,6 @@ async def pull_command(uid: int, model_path: str, hf_token: Optional[str] = None
         hf_token: Hugging Face API token (optional, from env if not provided)
     """
     from huggingface_hub import snapshot_download
-    from affine.utils.subtensor import get_subtensor
 
     hf_token = hf_token or get_conf("HF_TOKEN")
     
@@ -278,8 +279,8 @@ async def commit_command(
 
     cold = coldkey or get_conf("BT_WALLET_COLD", "default")
     hot = hotkey or get_conf("BT_WALLET_HOT", "default")
-    wallet = bt.wallet(name=cold, hotkey=hot)
-
+    wallet = bt.Wallet(name=cold, hotkey=hot)
+    
     logger.info(f"Committing: {repo}@{revision} (chute: {chute_id})")
     logger.info(f"Using wallet: {wallet.hotkey.ss58_address[:16]}...")
 
