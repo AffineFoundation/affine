@@ -2,8 +2,8 @@
   "validator_burn_percentage": 0.0,
   "environments": {
     "affine:sat": {
-      "enabled_for_sampling": true,
-      "enabled_for_scoring": true,
+      "enabled_for_sampling": false,
+      "enabled_for_scoring": false,
       "sampling_range": [0, 500],
       "scoring_range": [0, 500]
     },
@@ -52,25 +52,25 @@
     "CDE": {
       "enabled_for_sampling": true,
       "enabled_for_scoring": false,
-      "sampling_range": [0, 100],
+      "sampling_range": [0, 500],
       "scoring_range": [0, 100]
     },
     "LGC": {
       "enabled_for_sampling": true,
-      "enabled_for_scoring": false,
-      "sampling_range": [0, 100],
+      "enabled_for_scoring": true,
+      "sampling_range": [0, 500],
       "scoring_range": [0, 100]
     },
     "MTH": {
       "enabled_for_sampling": true,
-      "enabled_for_scoring": false,
-      "sampling_range": [0, 100],
+      "enabled_for_scoring": true,
+      "sampling_range": [0, 500],
       "scoring_range": [0, 100]
     },
     "SCI": {
       "enabled_for_sampling": true,
-      "enabled_for_scoring": false,
-      "sampling_range": [0, 100],
+      "enabled_for_scoring": true,
+      "sampling_range": [0, 500],
       "scoring_range": [0, 100]
     }
   }
