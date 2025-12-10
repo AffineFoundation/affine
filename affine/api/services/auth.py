@@ -229,7 +229,7 @@ class AuthService:
         return message, timestamp
 
 
-def create_auth_service_from_chain(netuid: int = 1) -> AuthService:
+async def create_auth_service_from_chain(netuid: int = 1) -> AuthService:
     """
     Create an AuthService with validators fetched from chain.
     
@@ -240,10 +240,10 @@ def create_auth_service_from_chain(netuid: int = 1) -> AuthService:
         Configured AuthService
     """
     try:
-        import bittensor as bt
+        from affine.utils.subtensor import get_subtensor
         
-        subtensor = bt.subtensor()
-        metagraph = subtensor.metagraph(netuid)
+        subtensor = await get_subtensor()
+        metagraph = await subtensor.metagraph(netuid)
         
         # Get validators (nodes with validator_permit)
         validators = set()

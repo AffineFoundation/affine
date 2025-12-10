@@ -4,20 +4,12 @@ Executor configuration for different environments
 
 # Max concurrent tasks for each environment
 ENV_MAX_CONCURRENT = {
-    "affine:sat": 30,
-    "affine:abd": 30,
-    "affine:ded": 30,
     "affine:ded-v2": 180,
     "affine:abd-v2": 120,
-    "agentgym:alfworld": 60,
-    "agentgym:webshop": 60,
-    "agentgym:babyai": 60,
-    "agentgym:sciworld": 60,
-    "agentgym:textcraft": 60,
 }
 
 # Default max concurrent tasks if environment not found in config
-DEFAULT_MAX_CONCURRENT = 30
+DEFAULT_MAX_CONCURRENT = 60
 
 
 def get_max_concurrent(env: str) -> int:
