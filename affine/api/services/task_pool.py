@@ -657,6 +657,25 @@ class TaskPoolManager:
                 
                 # Get current block number (cached)
                 block_number = await self._get_current_block()
+
+                # Extract completion_tokens safely
+                extra_data = result.get('extra', {})
+                completion_tokens = 0
+                
+                # Try nested OpenAI style first: extra['usage']['completion_tokens']
+                usage = extra_data.get('usage')
+                if isinstance(usage, dict):
+                    completion_tokens = usage.get('completion_tokens', 0) or 0
+                
+                # Fallback to top-level: extra['completion_tokens']
+                if not completion_tokens:
+                    completion_tokens = extra_data.get('completion_tokens', 0) or 0
+                
+                # Ensure int type
+                try:
+                    completion_tokens = int(completion_tokens)
+                except (ValueError, TypeError):
+                    completion_tokens = 0
                 
                 # Save sample to database
                 try:
@@ -668,10 +687,11 @@ class TaskPoolManager:
                         task_id=str(task["task_id"]),
                         score=result['score'],
                         latency_ms=result['latency_ms'],
-                        extra=result.get('extra', {}),
+                        extra=extra_data,
                         validator_hotkey=executor_hotkey,
                         block_number=block_number,
                         signature=submission_signature or "",
+                        completion_tokens=completion_tokens,
                     )
                 except Exception as e:
                     logger.error(f"Failed to save sample for task {task_uuid}: {e}", exc_info=True)
