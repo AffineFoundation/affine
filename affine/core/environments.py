@@ -64,6 +64,7 @@ class EnvConfig:
     requires_task_type: bool = False
     requires_max_round: bool = False
     max_round: int = 30
+    mem_limit: str = "10g"
 
 
 # ========================= Environment Configurations =========================
@@ -91,6 +92,7 @@ _ENV_CONFIGS_CANONICAL = {
     "cde": EnvConfig(
         name="cde",
         docker_image="affinefoundation/cde:pi",
+        mem_limit="20g",
     ),
     "lgc": EnvConfig(
         name="lgc",
@@ -293,7 +295,7 @@ class SDKEnvironment:
             hosts = self._get_hosts_for_env()
             
             # Load environment
-            logger.info(f"Loading environment: {self.env_name} (image={self.docker_image}, hosts={hosts or 'local'})")
+            logger.info(f"Loading environment: {self.env_name} (image={self.docker_image}, hosts={hosts or 'local'}, mem_limit={self.config.mem_limit})")
             env = af_env.load_env(
                 image=self.docker_image,
                 mode="docker",
@@ -301,7 +303,7 @@ class SDKEnvironment:
                 env_vars=self._get_env_vars(),
                 hosts=hosts,
                 container_name=self.env_name.replace(":", "-"),
-                mem_limit="10g",
+                mem_limit=self.config.mem_limit,
                 pull=True,
                 force_recreate=True,
             )
