@@ -43,6 +43,7 @@ from affine.core.environments import (
     LGC_factory as LGC,
     MTH_factory as MTH,
     SCI_factory as SCI,
+    SWE_PRO_factory as SWEPRO,
     list_available_environments,
 )
 
