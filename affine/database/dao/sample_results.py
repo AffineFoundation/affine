@@ -72,7 +72,8 @@ class SampleResultsDAO(BaseDAO):
         validator_hotkey: str,
         block_number: int,
         signature: str,
-        timestamp: Optional[int] = None
+        timestamp: Optional[int] = None,
+        completion_tokens: int = 0
     ) -> Dict[str, Any]:
         """Save a sampling result.
         
@@ -89,6 +90,7 @@ class SampleResultsDAO(BaseDAO):
             block_number: Current block number
             signature: Cryptographic signature for verification
             timestamp: Optional timestamp (defaults to now)
+            completion_tokens: Number of completion tokens generated (default: 0)
             
         Returns:
             Saved item
@@ -113,6 +115,7 @@ class SampleResultsDAO(BaseDAO):
             'task_id': task_id_int,  # Store as integer
             'score': score,
             'latency_ms': latency_ms,
+            'completion_tokens': completion_tokens,
             'timestamp': timestamp,
             'gsi_partition': 'SAMPLE',  # Fixed partition key for timestamp-index GSI
             'extra_compressed': extra_compressed,
