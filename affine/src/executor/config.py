@@ -6,6 +6,7 @@ Executor configuration for different environments
 ENV_MAX_CONCURRENT = {
     "affine:ded-v2": 180,
     "affine:abd-v2": 120,
+    "SWE-PRO": 30,
 }
 
 # Default max concurrent tasks if environment not found in config

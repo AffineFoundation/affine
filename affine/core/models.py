@@ -124,6 +124,9 @@ class Result(BaseModel):
     extra: Dict[str, Any] = Field(default_factory=dict)
     timestamp: float = Field(default_factory=time.time)
     
+    def dict(self, *args, **kwargs):
+        return super().dict(*args, **kwargs)
+
     def json(self, **kwargs):
         return json.dumps(self.dict(**kwargs))
     

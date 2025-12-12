@@ -24,8 +24,7 @@ async def main():
         task_id=20100
     )
     print(f"\nDED Evaluation Result:")
-    print(evaluation)
-    print(json.dumps(evaluation.extra, indent=2, ensure_ascii=False))
+    print(json.dumps(evaluation.dict(), indent=2, ensure_ascii=False))
 
     abd_env = af.ABD()
     evaluation_abd = await abd_env.evaluate(
@@ -34,8 +33,7 @@ async def main():
         task_id=20200,
     )
     print(f"\nABD Evaluation Result:")
-    print(evaluation_abd)
-    print(json.dumps(evaluation_abd.extra, indent=2, ensure_ascii=False))
+    print(json.dumps(evaluation_abd.dict(), indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
