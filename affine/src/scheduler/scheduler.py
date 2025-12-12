@@ -169,6 +169,12 @@ class SchedulerService:
                 else:
                     logger.warning("No active miners found for cleanup")
                 
+                # Clean up expired paused tasks
+                task_pool_dao = TaskPoolDAO()
+                expired_count = await task_pool_dao.cleanup_expired_paused_tasks()
+                
+                if expired_count > 0:
+                    logger.info(f"Cleaned up {expired_count} expired paused tasks")
                 
             except Exception as e:
                 logger.error(f"Cleanup loop error: {e}", exc_info=True)
