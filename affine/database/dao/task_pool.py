@@ -917,3 +917,77 @@ class TaskPoolDAO(BaseDAO):
                 break
         
         return all_tasks
+    
+    async def get_all_paused_tasks(self) -> List[Dict[str, Any]]:
+        """Get all paused tasks across all environments.
+        
+        Uses FilterExpression to scan only paused tasks.
+        Used by cleanup loop to remove expired tasks.
+        
+        Returns:
+            List of paused tasks with full attributes including ttl
+        """
+        from affine.database.client import get_client
+        client = get_client()
+        
+        params = {
+            'TableName': self.table_name,
+            'FilterExpression': '#status = :status',
+            'ExpressionAttributeNames': {'#status': 'status'},
+            'ExpressionAttributeValues': {':status': {'S': 'paused'}}
+        }
+        
+        all_tasks = []
+        last_key = None
+        
+        while True:
+            if last_key:
+                params['ExclusiveStartKey'] = last_key
+            
+            response = await client.scan(**params)
+            items = response.get('Items', [])
+            
+            for item in items:
+                all_tasks.append(self._deserialize(item))
+            
+            last_key = response.get('LastEvaluatedKey')
+            if not last_key:
+                break
+        
+        return all_tasks
+    
+    async def cleanup_expired_paused_tasks(self) -> int:
+        """Clean up paused tasks that have exceeded their TTL.
+        
+        This handles cases where DynamoDB TTL deletion is delayed.
+        
+        Returns:
+            Number of expired tasks deleted
+        """
+        current_time = int(time.time())
+        
+        # Get all paused tasks
+        paused_tasks = await self.get_all_paused_tasks()
+        
+        if not paused_tasks:
+            return 0
+        
+        # Filter tasks that have exceeded TTL
+        expired_tasks = [
+            task for task in paused_tasks
+            if task.get('ttl', 0) > 0 and task['ttl'] <= current_time
+        ]
+        
+        if not expired_tasks:
+            logger.debug(f"Found {len(paused_tasks)} paused tasks, none expired")
+            return 0
+        
+        # Batch delete expired tasks
+        deleted_count = await self._batch_delete_tasks(expired_tasks)
+        
+        logger.info(
+            f"Cleaned up {deleted_count} expired paused tasks "
+            f"(out of {len(paused_tasks)} total paused tasks)"
+        )
+        
+        return deleted_count

@@ -24,85 +24,80 @@ _ENV_LOCK = Lock()
 # ========================= Configuration =========================
 
 @dataclass
-class SandboxConfig:
-    """Sandbox configuration"""
-    timeout: int = 1200
-    proxy_timeout: int = 600
-    env: Dict[str, str] = field(default_factory=lambda: {
-        "NO_PROXY": "localhost,127.0.0.1",
-        "PYTHONPATH": "/app",
-    })
-
-
-@dataclass
-class EvaluatorConfig:
-    """Evaluator configuration"""
-    temperature: float = 0.0
-    timeout: int = 600
-
-    def to_payload(self, miner: Optional["Miner"] = None, **kwargs) -> Dict[str, Any]:
-        """Convert to evaluator payload with support for dynamic parameters"""
-        payload = {"temperature": self.temperature, "timeout": self.timeout}
-        
-        if miner and hasattr(miner, 'slug') and miner.slug:
-            payload.update({
-                "model": miner.model,
-                "base_url": f"https://{miner.slug}.chutes.ai/v1"
-            })
-        
-        payload.update(kwargs)
-        return payload
-
-
-@dataclass
 class EnvConfig:
     """Environment-specific configuration"""
     name: str
     docker_image: str
     env_type: str = "affine"
     env_vars: Dict[str, str] = field(default_factory=dict)
-    requires_task_type: bool = False
-    requires_max_round: bool = False
-    max_round: int = 30
+    mem_limit: str = "10g"
+    volumes: Optional[Dict[str, Dict[str, str]]] = None
+    eval_params: Dict[str, Any] = field(default_factory=lambda: {
+        "temperature": 0.0,
+        "timeout": 600,
+    })
+    proxy_timeout: int = 600
 
 
 # ========================= Environment Configurations =========================
 
 # Canonical environment configurations
 _ENV_CONFIGS_CANONICAL = {
-    # Affine environments (require task_type)
-    "affine:sat": EnvConfig(
-        name="affine:sat",
-        docker_image="affinefoundation/affine-env:v4",
-        requires_task_type=True,
-    ),
     "affine:ded-v2": EnvConfig(
         name="affine:ded-v2",
         docker_image="affinefoundation/affine-env:v4",
-        requires_task_type=True,
+        env_vars={"UVICORN_WORKERS": "4"},
+        eval_params={
+            "task_type": "ded",
+            "temperature": 0.0,
+            "timeout": 600,
+        },
     ),
     "affine:abd-v2": EnvConfig(
         name="affine:abd-v2",
         docker_image="affinefoundation/affine-env:v4",
-        requires_task_type=True,
+        env_vars={"UVICORN_WORKERS": "4"},
+        eval_params={
+            "task_type": "abd",
+            "temperature": 0.0,
+            "timeout": 600,
+        },
     ),
     
     # PrimeIntellect environments (no task_type)
     "cde": EnvConfig(
         name="cde",
         docker_image="affinefoundation/cde:pi",
+        mem_limit="20g",
+        eval_params={
+            "temperature": 0.0,
+            "timeout": 600,
+        },
     ),
     "lgc": EnvConfig(
         name="lgc",
         docker_image="affinefoundation/lgc:pi",
+        env_vars={"UVICORN_WORKERS": "8"},
+        eval_params={
+            "temperature": 0.0,
+            "timeout": 600,
+        },
     ),
     "mth": EnvConfig(
         name="mth",
         docker_image="affinefoundation/mth:pi",
+        eval_params={
+            "temperature": 0.0,
+            "timeout": 600,
+        },
     ),
     "sci": EnvConfig(
         name="sci",
         docker_image="affinefoundation/sci:pi",
+        eval_params={
+            "temperature": 0.0,
+            "timeout": 600,
+        },
     ),
     
     # AgentGym environments (require max_round)
@@ -110,31 +105,72 @@ _ENV_CONFIGS_CANONICAL = {
         name="agentgym:alfworld",
         docker_image="affinefoundation/agentgym:alfworld",
         env_type="agentgym",
-        requires_max_round=True,
+        eval_params={
+            "max_round": 30,
+            "temperature": 0.0,
+            "timeout": 600,
+        },
     ),
     "agentgym:webshop": EnvConfig(
         name="agentgym:webshop",
         docker_image="affinefoundation/agentgym:webshop",
         env_type="agentgym",
-        requires_max_round=True,
+        eval_params={
+            "max_round": 30,
+            "temperature": 0.0,
+            "timeout": 600,
+        },
     ),
     "agentgym:babyai": EnvConfig(
         name="agentgym:babyai",
         docker_image="affinefoundation/agentgym:babyai",
         env_type="agentgym",
-        requires_max_round=True,
+        eval_params={
+            "max_round": 30,
+            "temperature": 0.0,
+            "timeout": 600,
+        },
     ),
     "agentgym:sciworld": EnvConfig(
         name="agentgym:sciworld",
         docker_image="affinefoundation/agentgym:sciworld",
         env_type="agentgym",
-        requires_max_round=True,
+        eval_params={
+            "max_round": 30,
+            "temperature": 0.0,
+            "timeout": 600,
+        },
     ),
     "agentgym:textcraft": EnvConfig(
         name="agentgym:textcraft",
         docker_image="affinefoundation/agentgym:textcraft",
         env_type="agentgym",
-        requires_max_round=True,
+        eval_params={
+            "max_round": 30,
+            "temperature": 0.0,
+            "timeout": 600,
+        },
+    ),
+    
+    # SWE-bench Pro environment (requires DOOD)
+    "swe-pro": EnvConfig(
+        name="swe-pro",
+        docker_image="affinefoundation/swebench:pro",
+        env_type="swebench",
+        env_vars={"UVICORN_WORKERS": "3"},
+        mem_limit="10g",
+        volumes={
+            "/var/run/docker.sock": {
+                "bind": "/var/run/docker.sock",
+                "mode": "rw"
+            }
+        },
+        eval_params={
+            "max_iterations": 50,
+            "temperature": 0.0,
+            "timeout": 1800,
+        },
+        proxy_timeout=1800,
     ),
 }
 
@@ -158,6 +194,9 @@ _ENV_ALIASES = {
     "LGC": "lgc",
     "MTH": "mth",
     "SCI": "sci",
+    
+    # SWE-bench aliases
+    "SWE-PRO": "swe-pro",
 }
 
 # Build final ENV_CONFIGS with aliases
@@ -181,8 +220,6 @@ class SDKEnvironment:
             raise ValueError(f"Unknown environment: {env_name}")
         
         self.config = ENV_CONFIGS[env_name]
-        self._sandbox_config = SandboxConfig()
-        self._evaluator_config = EvaluatorConfig()
         self._env = self._load_environment()
         self._env_lock = asyncio.Lock()
     
@@ -206,26 +243,12 @@ class SDKEnvironment:
         
         env_vars = {"CHUTES_API_KEY": api_key}
         
-        # Add ENV_NAME for affine environments that require task_type
-        if self.config.requires_task_type:
-            task_name = self._extract_task_name()
-            env_vars["ENV_NAME"] = task_name
-        
-        # Add AgentGym-specific variables
-        if self.config.env_type == "agentgym":
-            env_vars.update({
-                "TODO_KEY": os.getenv("AGENTGYM_TOOL_TODO_KEY", ""),
-                "MOVIE_KEY": os.getenv("AGENTGYM_TOOL_MOVIE_KEY", ""),
-                "SHEET_EMAIL": os.getenv("AGENTGYM_TOOL_SHEET_EMAIL", ""),
-            })
+        # Add ENV_NAME for affine environments (from task_type in eval_params)
+        if "task_type" in self.config.eval_params:
+            env_vars["ENV_NAME"] = self.config.eval_params["task_type"]
         
         env_vars.update(self.config.env_vars)
         return env_vars
-    
-    def _extract_task_name(self) -> str:
-        """Extract base task name (e.g., 'affine:sat' -> 'sat', 'affine:ded-v2' -> 'ded')"""
-        name = self.env_name.split(":", 1)[1] if ":" in self.env_name else self.env_name
-        return name.rsplit("-v", 1)[0] if "-v" in name else name
     
     def _load_hosts_config(self) -> Dict[str, Any]:
         """Load hosts configuration from file"""
@@ -277,7 +300,7 @@ class SDKEnvironment:
                 logger.debug(f"Using env var hosts for {self.env_name}: {hosts}")
                 return hosts
         
-        return None
+        return ["localhost"]
     
     def _load_environment(self) -> Any:
         """Load or get cached environment instance"""
@@ -293,18 +316,26 @@ class SDKEnvironment:
             hosts = self._get_hosts_for_env()
             
             # Load environment
-            logger.info(f"Loading environment: {self.env_name} (image={self.docker_image}, hosts={hosts or 'local'})")
-            env = af_env.load_env(
-                image=self.docker_image,
-                mode="docker",
-                replicas=len(hosts),
-                env_vars=self._get_env_vars(),
-                hosts=hosts,
-                container_name=self.env_name.replace(":", "-"),
-                mem_limit="10g",
-                pull=True,
-                force_recreate=True,
-            )
+            logger.info(f"Loading environment: {self.env_name} (image={self.docker_image}, hosts={hosts or 'local'}, mem_limit={self.config.mem_limit})")
+            
+            # Build load_env kwargs
+            load_kwargs = {
+                "image": self.docker_image,
+                "mode": "docker",
+                "replicas": len(hosts),
+                "env_vars": self._get_env_vars(),
+                "hosts": hosts,
+                "container_name": self.env_name.replace(":", "-"),
+                "mem_limit": self.config.mem_limit,
+                "pull": True,
+                "force_recreate": True,
+            }
+            
+            # Add volumes if configured
+            if self.config.volumes:
+                load_kwargs["volumes"] = self.config.volumes
+            
+            env = af_env.load_env(**load_kwargs)
             
             _ENV_CACHE[self.env_name] = env
             logger.debug(f"Cached environment: {self.env_name}")
@@ -325,13 +356,9 @@ class SDKEnvironment:
         if "seed" not in kwargs:
             kwargs["seed"] = self._generate_seed(kwargs["task_id"])
         
-        # Add task_type for affine environments
-        if self.config.requires_task_type:
-            kwargs.setdefault("task_type", self._extract_task_name())
-        
-        # Add max_round for agentgym environments
-        if self.config.requires_max_round:
-            kwargs.setdefault("max_round", self.config.max_round)
+        # Merge eval_params from config (user-provided kwargs take precedence)
+        for key, value in self.config.eval_params.items():
+            kwargs.setdefault(key, value)
         
         return kwargs
     
@@ -339,9 +366,16 @@ class SDKEnvironment:
         """Evaluate single miner"""
         start = time.monotonic()
         kwargs = self._prepare_eval_kwargs(**kwargs)
-        payload = self._evaluator_config.to_payload(miner, **kwargs)
         
-        result = await self._env.evaluate(_timeout=self._sandbox_config.proxy_timeout, **payload)
+        # Build payload with miner info
+        payload = kwargs.copy()
+        if miner and hasattr(miner, 'slug') and miner.slug:
+            payload.update({
+                "model": miner.model,
+                "base_url": f"https://{miner.slug}.chutes.ai/v1"
+            })
+        
+        result = await self._env.evaluate(_timeout=self.config.proxy_timeout, **payload)
         
         return self._build_result(result, miner, payload, start)
     
@@ -445,6 +479,7 @@ WEBSHOP_factory = lambda: create_environment("agentgym:webshop")
 BABYAI_factory = lambda: create_environment("agentgym:babyai")
 SCIWORLD_factory = lambda: create_environment("agentgym:sciworld")
 TEXTCRAFT_factory = lambda: create_environment("agentgym:textcraft")
+SWE_PRO_factory = lambda: create_environment("swe-pro")
 
 # Legacy class aliases
 SAT = SAT_factory
@@ -461,3 +496,6 @@ WEBSHOP = WEBSHOP_factory
 BABYAI = BABYAI_factory
 SCIWORLD = SCIWORLD_factory
 TEXTCRAFT = TEXTCRAFT_factory
+
+# SWE-bench factories
+SWE_PRO = SWE_PRO_factory

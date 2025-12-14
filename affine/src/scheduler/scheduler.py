@@ -162,14 +162,13 @@ class SchedulerService:
                 
                 if miners:
                     # Clean up invalid tasks
-                    removed = await self.task_generator.cleanup_invalid_tasks(miners)
-                    
-                    if removed > 0:
-                        logger.info(f"Cleaned up {removed} invalid tasks")
+                    await self.task_generator.cleanup_invalid_tasks(miners)
                 else:
                     logger.warning("No active miners found for cleanup")
                 
-                
+                # Clean up expired paused tasks
+                task_pool_dao = TaskPoolDAO()
+                await task_pool_dao.cleanup_expired_paused_tasks()
             except Exception as e:
                 logger.error(f"Cleanup loop error: {e}", exc_info=True)
             

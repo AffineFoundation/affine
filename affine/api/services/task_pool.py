@@ -372,7 +372,7 @@ class TaskPoolManager:
         async def cleanup_loop():
             """Background loop for timeout task cleanup."""
             cleanup_interval = int(os.getenv('TASK_TIMEOUT_CLEANUP_INTERVAL', '300'))  # 5 minutes
-            task_timeout = int(os.getenv('TASK_TIMEOUT', '600'))  # 10 minutes
+            task_timeout = int(os.getenv('TASK_TIMEOUT', '1800'))  # 10 minutes
             
             logger.info(f"Timeout cleanup loop started (interval={cleanup_interval}s, timeout={task_timeout}s)")
             
