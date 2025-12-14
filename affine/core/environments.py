@@ -43,19 +43,10 @@ class EnvConfig:
 
 # Canonical environment configurations
 _ENV_CONFIGS_CANONICAL = {
-    # Affine environments (require task_type)
-    "affine:sat": EnvConfig(
-        name="affine:sat",
-        docker_image="affinefoundation/affine-env:v4",
-        eval_params={
-            "task_type": "sat",
-            "temperature": 0.0,
-            "timeout": 600,
-        },
-    ),
     "affine:ded-v2": EnvConfig(
         name="affine:ded-v2",
         docker_image="affinefoundation/affine-env:v4",
+        env_vars={"UVICORN_WORKERS": "4"},
         eval_params={
             "task_type": "ded",
             "temperature": 0.0,
@@ -65,6 +56,7 @@ _ENV_CONFIGS_CANONICAL = {
     "affine:abd-v2": EnvConfig(
         name="affine:abd-v2",
         docker_image="affinefoundation/affine-env:v4",
+        env_vars={"UVICORN_WORKERS": "4"},
         eval_params={
             "task_type": "abd",
             "temperature": 0.0,
@@ -85,6 +77,7 @@ _ENV_CONFIGS_CANONICAL = {
     "lgc": EnvConfig(
         name="lgc",
         docker_image="affinefoundation/lgc:pi",
+        env_vars={"UVICORN_WORKERS": "8"},
         eval_params={
             "temperature": 0.0,
             "timeout": 600,
@@ -164,6 +157,7 @@ _ENV_CONFIGS_CANONICAL = {
         name="swe-pro",
         docker_image="affinefoundation/swebench:pro",
         env_type="swebench",
+        env_vars={"UVICORN_WORKERS": "3"},
         mem_limit="10g",
         volumes={
             "/var/run/docker.sock": {
