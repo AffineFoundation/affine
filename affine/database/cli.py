@@ -159,14 +159,14 @@ async def cmd_load_config(json_file: str):
             for env_name, env_config in environments.items():
                 enabled_sampling = env_config.get('enabled_for_sampling', False)
                 enabled_scoring = env_config.get('enabled_for_scoring', False)
-                sampling_range = env_config.get('sampling_range', [0, 0])
-                scoring_range = env_config.get('scoring_range', [0, 0])
+                sampling_ranges = env_config.get('sampling_range', [[0, 0]])
+                scoring_ranges = env_config.get('scoring_range', [[0, 0]])
                 
                 status = []
                 if enabled_sampling:
-                    status.append(f"sampling: {sampling_range}")
+                    status.append(f"sampling: {sampling_ranges}")
                 if enabled_scoring:
-                    status.append(f"scoring: {scoring_range}")
+                    status.append(f"scoring: {scoring_ranges}")
                 
                 status_str = ", ".join(status) if status else "disabled"
                 print(f"  {env_name}: {status_str}")

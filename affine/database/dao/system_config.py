@@ -4,9 +4,70 @@ System Config DAO
 Manages dynamic configuration parameters.
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 from affine.database.base_dao import BaseDAO
 from affine.database.schema import get_table_name
+
+
+def validate_ranges(ranges: List[List[int]]) -> None:
+    """Validate multi-range format.
+    
+    Args:
+        ranges: List of [start, end] pairs
+        
+    Raises:
+        ValueError: If validation fails
+    """
+    if not isinstance(ranges, list):
+        raise ValueError("Ranges must be a list")
+    
+    if len(ranges) == 0:
+        raise ValueError("Ranges cannot be empty")
+    
+    if len(ranges) > 5:
+        raise ValueError("Maximum 5 ranges allowed")
+    
+    # Validate each range
+    for i, r in enumerate(ranges):
+        if not isinstance(r, list) or len(r) != 2:
+            raise ValueError(f"Range {i} must be a list of [start, end]")
+        
+        start, end = r
+        if not isinstance(start, int) or not isinstance(end, int):
+            raise ValueError(f"Range {i} values must be integers")
+        
+        if start < 0 or end < 0:
+            raise ValueError(f"Range {i} values must be non-negative")
+        
+        if start >= end:
+            raise ValueError(f"Range {i}: start ({start}) must be less than end ({end})")
+    
+    # Check for overlaps
+    for i in range(len(ranges)):
+        for j in range(i + 1, len(ranges)):
+            start1, end1 = ranges[i]
+            start2, end2 = ranges[j]
+            
+            # Check if ranges overlap
+            if not (end1 <= start2 or end2 <= start1):
+                raise ValueError(
+                    f"Ranges {i} [{start1}, {end1}] and {j} [{start2}, {end2}] overlap"
+                )
+
+
+def ranges_to_task_id_set(ranges: List[List[int]]) -> Set[int]:
+    """Convert multi-range to a set of task IDs.
+
+    Args:
+        ranges: List of [start, end] pairs (end is exclusive)
+
+    Returns:
+        Set of all task IDs in the ranges
+    """
+    task_ids = set()
+    for start, end in ranges:
+        task_ids.update(range(start, end))
+    return task_ids
 
 
 class SystemConfigDAO(BaseDAO):
@@ -225,15 +286,15 @@ class SystemConfigDAO(BaseDAO):
         
         Extracts range information from environments config.
         
-        Format:
+        Format (multi-range 2D array):
         {
             "affine:sat": {
-                "sampling_range": [0, 1000],  # Range for task generation
-                "scoring_range": [0, 1000]     # Range for scoring (can differ)
+                "sampling_range": [[0, 1000]],  # Single range for task generation
+                "scoring_range": [[0, 1000]]     # Single range for scoring
             },
             "affine:abd": {
-                "sampling_range": [0, 500],
-                "scoring_range": [0, 300]      # Smaller range during transition
+                "sampling_range": [[0, 100], [200, 300]],  # Multiple discontinuous ranges
+                "scoring_range": [[0, 300]]                 # Smaller range during transition
             }
         }
         
@@ -246,8 +307,8 @@ class SystemConfigDAO(BaseDAO):
         ranges = {}
         for env_name, env_config in environments.items():
             ranges[env_name] = {
-                'sampling_range': env_config.get('sampling_range', [0, 0]),
-                'scoring_range': env_config.get('scoring_range', [0, 0])
+                'sampling_range': env_config.get('sampling_range', [[0, 0]]),
+                'scoring_range': env_config.get('scoring_range', [[0, 0]])
             }
         
         return ranges
@@ -258,23 +319,29 @@ class SystemConfigDAO(BaseDAO):
         """Set task_id ranges for environments.
         
         This method updates the sampling_range and scoring_range for environments.
+        All ranges must be in 2D array format: [[start1, end1], [start2, end2], ...]
         
         Args:
             ranges: Dictionary mapping env names to range configs with
-                   'sampling_range' and 'scoring_range' keys
+                   'sampling_range' and 'scoring_range' keys (both must be 2D arrays)
             updated_by: Who updated the parameter
             
         Returns:
             Saved config item
+            
+        Raises:
+            ValueError: If range validation fails
         """
         environments = await self.get_param_value('environments', default={})
         
-        # Update ranges for specified environments
+        # Update ranges for specified environments with validation
         for env_name, range_config in ranges.items():
             if env_name in environments:
                 if 'sampling_range' in range_config:
+                    validate_ranges(range_config['sampling_range'])
                     environments[env_name]['sampling_range'] = range_config['sampling_range']
                 if 'scoring_range' in range_config:
+                    validate_ranges(range_config['scoring_range'])
                     environments[env_name]['scoring_range'] = range_config['scoring_range']
         
         return await self.set_param(
@@ -285,33 +352,33 @@ class SystemConfigDAO(BaseDAO):
             updated_by=updated_by
         )
     
-    async def get_env_sampling_range(self, env: str) -> tuple[int, int]:
-        """Get sampling range for a specific environment.
+    async def get_env_sampling_ranges(self, env: str) -> List[List[int]]:
+        """Get sampling ranges for a specific environment (multi-range format).
         
         Args:
             env: Environment name
             
         Returns:
-            Tuple of (start_id, end_id) for sampling
+            List of [start, end] pairs for sampling (2D array)
         """
         ranges = await self.get_env_task_ranges()
         env_config = ranges.get(env, {})
-        sampling_range = env_config.get('sampling_range', [0, 0])
-        return tuple(sampling_range) if len(sampling_range) == 2 else (0, 0)
+        sampling_range = env_config.get('sampling_range', [[0, 0]])
+        return sampling_range if isinstance(sampling_range, list) and len(sampling_range) > 0 else [[0, 0]]
     
-    async def get_env_scoring_range(self, env: str) -> tuple[int, int]:
-        """Get scoring range for a specific environment.
+    async def get_env_scoring_ranges(self, env: str) -> List[List[int]]:
+        """Get scoring ranges for a specific environment (multi-range format).
         
         Args:
             env: Environment name
             
         Returns:
-            Tuple of (start_id, end_id) for scoring
+            List of [start, end] pairs for scoring (2D array)
         """
         ranges = await self.get_env_task_ranges()
         env_config = ranges.get(env, {})
-        scoring_range = env_config.get('scoring_range', [0, 0])
-        return tuple(scoring_range) if len(scoring_range) == 2 else (0, 0)
+        scoring_range = env_config.get('scoring_range', [[0, 0]])
+        return scoring_range if isinstance(scoring_range, list) and len(scoring_range) > 0 else [[0, 0]]
     
     # Blacklist Configuration Management
     

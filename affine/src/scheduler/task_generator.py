@@ -91,9 +91,9 @@ class TaskGeneratorService:
     async def get_task_id_set(self, env: str) -> Set[int]:
         """Get the complete set of task IDs needed for both sampling and scoring.
         
-        This method combines both sampling_range and scoring_range to ensure all tasks
-        needed for both operations are generated. The two ranges may be completely
-        disjoint (e.g., sampling=[100,200), scoring=[300,400)).
+        This method combines both sampling_range and scoring_range (multi-range format)
+        to ensure all tasks needed for both operations are generated. The ranges are
+        now in 2D array format: [[start1, end1], [start2, end2], ...]
         
         Args:
             env: Environment name
@@ -104,6 +104,8 @@ class TaskGeneratorService:
         Raises:
             ValueError: If environment not found in SystemConfig
         """
+        from affine.database.dao.system_config import ranges_to_task_id_set
+        
         # Load config from database if not cached
         if self._config_cache is None:
             await self._load_config_from_db()
@@ -111,23 +113,22 @@ class TaskGeneratorService:
         # Get from SystemConfig
         env_ranges = self._config_cache.get('env_ranges', {})
         if env in env_ranges:
-            sampling_range = env_ranges[env].get('sampling_range', [0, 0])
-            scoring_range = env_ranges[env].get('scoring_range', [0, 0])
+            sampling_ranges = env_ranges[env].get('sampling_range', [[0, 0]])
+            scoring_ranges = env_ranges[env].get('scoring_range', [[0, 0]])
             
-            if len(sampling_range) == 2 and len(scoring_range) == 2:
-                # Create sets for both ranges
-                sampling_ids = set(range(sampling_range[0], sampling_range[1]))
-                scoring_ids = set(range(scoring_range[0], scoring_range[1]))
-                
-                # Union of both sets
-                all_task_ids = sampling_ids | scoring_ids
-                
-                logger.debug(
-                    f"Task IDs for {env}: sampling=[{sampling_range[0]}, {sampling_range[1]}) ({len(sampling_ids)} tasks), "
-                    f"scoring=[{scoring_range[0]}, {scoring_range[1]}) ({len(scoring_ids)} tasks), "
-                    f"total={len(all_task_ids)} tasks"
-                )
-                return all_task_ids
+            # Convert multi-range to task ID sets
+            sampling_ids = ranges_to_task_id_set(sampling_ranges)
+            scoring_ids = ranges_to_task_id_set(scoring_ranges)
+            
+            # Union of both sets
+            all_task_ids = sampling_ids | scoring_ids
+            
+            logger.debug(
+                f"Task IDs for {env}: sampling={sampling_ranges} ({len(sampling_ids)} tasks), "
+                f"scoring={scoring_ranges} ({len(scoring_ids)} tasks), "
+                f"total={len(all_task_ids)} tasks"
+            )
+            return all_task_ids
         
         # Environment not configured
         raise ValueError(

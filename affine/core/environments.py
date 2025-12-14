@@ -86,6 +86,7 @@ _ENV_CONFIGS_CANONICAL = {
     "mth": EnvConfig(
         name="mth",
         docker_image="affinefoundation/mth:pi",
+        env_vars={"UVICORN_WORKERS": "4"},
         eval_params={
             "temperature": 0.0,
             "timeout": 600,
@@ -94,6 +95,7 @@ _ENV_CONFIGS_CANONICAL = {
     "sci": EnvConfig(
         name="sci",
         docker_image="affinefoundation/sci:pi",
+        env_vars={"UVICORN_WORKERS": "4"},
         eval_params={
             "temperature": 0.0,
             "timeout": 600,

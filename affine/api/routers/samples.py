@@ -246,9 +246,11 @@ async def get_task_pool(
         hotkey = miner['hotkey']
         model_revision = miner['revision']
         
-        # Get sampling range for this environment
-        start_id, end_id = await config_dao.get_env_sampling_range(env)
-        all_task_ids = set(range(start_id, end_id))
+        # Get sampling ranges for this environment (multi-range format)
+        from affine.database.dao.system_config import ranges_to_task_id_set
+        
+        sampling_ranges = await config_dao.get_env_sampling_ranges(env)
+        all_task_ids = ranges_to_task_id_set(sampling_ranges)
         
         # Get already sampled task_ids from sample_results
         sampled_task_ids = await sample_dao.get_completed_task_ids(
@@ -279,7 +281,7 @@ async def get_task_pool(
             "hotkey": hotkey,
             "model_revision": model_revision,
             "env": env,
-            "sampling_range": [start_id, end_id],
+            "sampling_range": sampling_ranges,
             "total_tasks": len(all_task_ids),
             "sampled_count": len(sampled_task_ids),
             "pool_count": len(pool_task_ids),

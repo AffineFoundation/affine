@@ -558,7 +558,7 @@ class TaskPoolDAO(BaseDAO):
         client = get_client()
         
         valid_set = {
-            (m['hotkey'], m.get('revision'))
+            (m['hotkey'], m.get('model_revision'))
             for m in valid_miners
         }
         
@@ -591,7 +591,7 @@ class TaskPoolDAO(BaseDAO):
             logger.info("No invalid miners found in task pool")
             return 0
         
-        logger.info(f"Found {len(invalid_keys)} invalid miners to clean up")
+        logger.info(f"Found {len(invalid_keys)} invalid miners to clean up, valid_set: {valid_set}, invalid_keys: {invalid_keys}")
         
         total_deleted = 0
         
