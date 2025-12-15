@@ -13,6 +13,7 @@ Server Services (af servers):
 - af servers validator : Start validator service
 
 Miner Commands:
+- af miner-deploy: One-command deployment (upload → deploy → commit)
 - af commit      : Commit model to blockchain (miner)
 - af pull        : Pull model from Hugging Face (miner)
 - af chutes_push : Deploy model to Chutes (miner)
@@ -293,6 +294,27 @@ def get_rank(ctx):
     
     sys.argv = ["get-rank"] + ctx.args
     miner_get_rank.main(standalone_mode=False)
+
+
+@cli.command("miner-deploy", context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.pass_context
+def miner_deploy(ctx):
+    """One-command deployment: Upload -> Deploy -> Commit.
+    
+    Combines the three-step miner deployment process into a single command:
+    1. Upload model to HuggingFace (skip with --skip-upload)
+    2. Deploy to Chutes (skip with --skip-chutes)
+    3. Commit on-chain (skip with --skip-commit)
+    
+    Examples:
+        af miner-deploy -r myuser/model -p ./my_model
+        af miner-deploy -r myuser/model --skip-upload --revision abc123
+        af miner-deploy -r myuser/model -p ./my_model --dry-run
+    """
+    from affine.src.miner.main import deploy as miner_deploy_cmd
+    
+    sys.argv = ["miner-deploy"] + ctx.args
+    miner_deploy_cmd.main(standalone_mode=False)
 
 
 # ============================================================================
