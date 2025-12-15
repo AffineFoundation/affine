@@ -16,6 +16,7 @@ from affine.src.miner.commands import (
     pull_command,
     chutes_push_command,
     commit_command,
+    deploy_command,
     get_sample_command,
     get_miner_command,
     get_weights_command,
@@ -168,6 +169,60 @@ def get_rank():
         af get-rank
     """
     asyncio.run(get_rank_command())
+
+
+@click.command("deploy")
+@click.option("--repo", "-r", required=True, help="HuggingFace repository ID (e.g., username/model-name)")
+@click.option("--model-path", "-p", type=click.Path(exists=True), help="Path to local model directory (required unless --skip-upload)")
+@click.option("--revision", help="HuggingFace revision SHA (required if --skip-upload)")
+@click.option("--chute-id", help="Chutes deployment ID (required if --skip-chutes)")
+@click.option("--message", "-m", default="Model update", help="Commit message for HuggingFace upload")
+@click.option("--dry-run", is_flag=True, help="Show what would be done without executing")
+@click.option("--skip-upload", is_flag=True, help="Skip HuggingFace upload (requires --revision)")
+@click.option("--skip-chutes", is_flag=True, help="Skip Chutes deployment (requires --chute-id)")
+@click.option("--skip-commit", is_flag=True, help="Skip on-chain commit")
+@click.option("--chutes-api-key", help="Chutes API key (optional, from env if not provided)")
+@click.option("--chute-user", help="Chutes username (optional, from env if not provided)")
+@click.option("--coldkey", help="Wallet coldkey name (optional, from env if not provided)")
+@click.option("--hotkey", help="Wallet hotkey name (optional, from env if not provided)")
+@click.option("--hf-token", help="HuggingFace token (optional, from env if not provided)")
+def deploy(repo, model_path, revision, chute_id, message, dry_run, skip_upload, skip_chutes, skip_commit, chutes_api_key, chute_user, coldkey, hotkey, hf_token):
+    """One-command deployment: Upload -> Deploy -> Commit.
+    
+    Combines the three-step deployment process into a single command:
+    1. Upload model to HuggingFace (skip with --skip-upload)
+    2. Deploy to Chutes (skip with --skip-chutes)
+    3. Commit on-chain (skip with --skip-commit)
+    
+    Examples:
+        # Full deployment
+        af miner-deploy -r myuser/model -p ./my_model
+        
+        # Skip upload (model already on HuggingFace)
+        af miner-deploy -r myuser/model --skip-upload --revision abc123
+        
+        # Skip Chutes (already deployed)
+        af miner-deploy -r myuser/model --skip-upload --revision abc123 --skip-chutes --chute-id xyz
+        
+        # Dry run
+        af miner-deploy -r myuser/model -p ./my_model --dry-run
+    """
+    asyncio.run(deploy_command(
+        repo=repo,
+        model_path=model_path,
+        revision=revision,
+        chute_id=chute_id,
+        message=message,
+        dry_run=dry_run,
+        skip_upload=skip_upload,
+        skip_chutes=skip_chutes,
+        skip_commit=skip_commit,
+        chutes_api_key=chutes_api_key,
+        chute_user=chute_user,
+        coldkey=coldkey,
+        hotkey=hotkey,
+        hf_token=hf_token,
+    ))
 
 
 

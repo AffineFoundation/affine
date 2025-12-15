@@ -5,6 +5,7 @@ Provides command functions for miners:
 - commit_command: Commit model to blockchain
 - pull_command: Pull model from Hugging Face
 - chutes_push_command: Deploy model to Chutes
+- deploy_command: One-command deployment (upload → deploy → commit)
 """
 
 import os
@@ -455,3 +456,324 @@ async def get_pool_command(uid: int, env: str, full: bool = False):
                 summary["missing_task_ids"] = format_task_ids(data.get("missing_task_ids", []))
                 
                 print(json.dumps(summary, indent=2, ensure_ascii=False))
+
+
+async def deploy_command(
+    repo: str,
+    model_path: Optional[str] = None,
+    revision: Optional[str] = None,
+    chute_id: Optional[str] = None,
+    message: str = "Model update",
+    dry_run: bool = False,
+    skip_upload: bool = False,
+    skip_chutes: bool = False,
+    skip_commit: bool = False,
+    chutes_api_key: Optional[str] = None,
+    chute_user: Optional[str] = None,
+    coldkey: Optional[str] = None,
+    hotkey: Optional[str] = None,
+    hf_token: Optional[str] = None,
+):
+    """One-command deployment: Upload to HuggingFace -> Deploy to Chutes -> Commit on-chain.
+    
+    This combines the three-step deployment process into a single command:
+    1. Upload model to HuggingFace (skip with --skip-upload if already uploaded)
+    2. Deploy to Chutes (skip with --skip-chutes if already deployed)
+    3. Commit on-chain (skip with --skip-commit to test without committing)
+    
+    Args:
+        repo: HuggingFace repository ID (e.g., "username/model-name")
+        model_path: Path to local model directory (required unless --skip-upload)
+        revision: HuggingFace revision SHA (required if --skip-upload)
+        chute_id: Chutes deployment ID (required if --skip-chutes)
+        message: Commit message for HuggingFace upload
+        dry_run: If True, show what would be done without executing
+        skip_upload: Skip HuggingFace upload (requires --revision)
+        skip_chutes: Skip Chutes deployment (requires --chute-id)
+        skip_commit: Skip on-chain commit
+        chutes_api_key: Chutes API key (optional, from env if not provided)
+        chute_user: Chutes username (optional, from env if not provided)
+        coldkey: Wallet coldkey name (optional, from env if not provided)
+        hotkey: Wallet hotkey name (optional, from env if not provided)
+        hf_token: HuggingFace token (optional, from env if not provided)
+    """
+    from huggingface_hub import HfApi
+    
+    chutes_api_key = chutes_api_key or get_conf("CHUTES_API_KEY")
+    chute_user = chute_user or get_conf("CHUTE_USER")
+    hf_token = hf_token or get_conf("HF_TOKEN")
+    
+    # Validate arguments based on skip flags
+    if not skip_upload and not model_path:
+        logger.error("--model-path is required unless --skip-upload is set")
+        print(json.dumps({"success": False, "error": "--model-path is required unless --skip-upload is set"}))
+        sys.exit(1)
+    
+    if skip_upload and not revision:
+        logger.error("--revision is required when --skip-upload is set")
+        print(json.dumps({"success": False, "error": "--revision is required when --skip-upload is set"}))
+        sys.exit(1)
+    
+    if skip_chutes and not chute_id:
+        logger.error("--chute-id is required when --skip-chutes is set")
+        print(json.dumps({"success": False, "error": "--chute-id is required when --skip-chutes is set"}))
+        sys.exit(1)
+    
+    # Validate required credentials
+    if not dry_run:
+        if not skip_upload and not hf_token:
+            logger.error("HF_TOKEN not configured")
+            print(json.dumps({"success": False, "error": "HF_TOKEN not configured"}))
+            sys.exit(1)
+        
+        if not skip_chutes:
+            if not chutes_api_key:
+                logger.error("CHUTES_API_KEY not configured")
+                print(json.dumps({"success": False, "error": "CHUTES_API_KEY not configured"}))
+                sys.exit(1)
+            
+            if not chute_user:
+                logger.error("CHUTE_USER not configured")
+                print(json.dumps({"success": False, "error": "CHUTE_USER not configured"}))
+                sys.exit(1)
+    
+    # Determine which steps to run
+    steps = []
+    if not skip_upload:
+        steps.append("upload")
+    if not skip_chutes:
+        steps.append("chutes")
+    if not skip_commit:
+        steps.append("commit")
+    
+    total_steps = len(steps)
+    current_step = 0
+    
+    logger.info("=" * 60)
+    logger.info("AFFINE DEPLOYMENT")
+    logger.info("=" * 60)
+    logger.info(f"  Repository: {repo}")
+    if model_path:
+        logger.info(f"  Model Path: {model_path}")
+    if revision:
+        logger.info(f"  Revision: {revision}")
+    if chute_id:
+        logger.info(f"  Chute ID: {chute_id}")
+    logger.info(f"  Steps: {' -> '.join(steps) if steps else 'none'}")
+    if dry_run:
+        logger.info("  Mode: DRY RUN")
+    logger.info("=" * 60)
+    
+    # =========================================================================
+    # Step 1: Upload to HuggingFace
+    # =========================================================================
+    if not skip_upload:
+        current_step += 1
+        logger.info(f"[{current_step}/{total_steps}] Uploading to HuggingFace ({repo})...")
+        
+        if dry_run:
+            logger.info(f"  [DRY RUN] Would upload {model_path} to {repo}")
+            revision = "dry-run-revision-sha"
+        else:
+            try:
+                api = HfApi(token=hf_token)
+                
+                # Create repo if doesn't exist
+                try:
+                    api.create_repo(repo, exist_ok=True, repo_type="model")
+                    logger.debug(f"Repository {repo} ready")
+                except Exception as e:
+                    logger.debug(f"Repo creation note: {e}")
+                
+                # Upload folder
+                logger.info(f"  Uploading {model_path}...")
+                api.upload_folder(
+                    folder_path=model_path,
+                    repo_id=repo,
+                    commit_message=message
+                )
+                
+                # Get latest commit SHA
+                info = api.repo_info(repo, repo_type="model")
+                revision = info.sha
+                
+                logger.info(f"  Upload complete. Revision: {revision[:12]}...")
+                
+            except Exception as e:
+                logger.error(f"HuggingFace upload failed: {e}")
+                print(json.dumps({"success": False, "error": f"HuggingFace upload failed: {str(e)}"}))
+                sys.exit(1)
+    else:
+        logger.info(f"Skipping upload, using revision: {revision[:12]}...")
+    
+    # =========================================================================
+    # Step 2: Deploy to Chutes
+    # =========================================================================
+    if not skip_chutes:
+        current_step += 1
+        logger.info(f"[{current_step}/{total_steps}] Deploying to Chutes...")
+        
+        if dry_run:
+            logger.info(f"  [DRY RUN] Would deploy {repo}@{revision[:12]}...")
+            chute_id = "dry-run-chute-id"
+        else:
+            try:
+                # Generate Chute configuration (same as chutes_push_command)
+                chutes_config = textwrap.dedent(
+                    f"""
+import os
+from chutes.chute import NodeSelector
+from chutes.chute.template.sglang import build_sglang_chute
+os.environ["NO_PROXY"] = "localhost,127.0.0.1"
+
+chute = build_sglang_chute(
+    username="{chute_user}",
+    readme="{repo}",
+    model_name="{repo}",
+    image="chutes/sglang:nightly-2025081600",
+    concurrency=40,
+    revision="{revision}",
+    node_selector=NodeSelector(
+        gpu_count=4,
+        include=["h200"],
+    ),
+    scaling_threshold=0.5,
+    max_instances=2,
+    shutdown_after_seconds=28800,
+)
+"""
+                )
+                
+                tmp_file = Path("tmp_chute.py")
+                tmp_file.write_text(chutes_config)
+                logger.debug(f"Wrote Chute config to {tmp_file}")
+                
+                # Deploy to Chutes
+                cmd = ["chutes", "deploy", f"{tmp_file.stem}:chute", "--accept-fee"]
+                env = {**os.environ, "CHUTES_API_KEY": chutes_api_key}
+                
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    env=env,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    stdin=asyncio.subprocess.PIPE,
+                )
+                
+                if proc.stdin:
+                    proc.stdin.write(b"y\n")
+                    await proc.stdin.drain()
+                    proc.stdin.close()
+                
+                stdout, _ = await proc.communicate()
+                output = stdout.decode(errors="ignore")
+                logger.trace(output)
+                
+                # Check for errors
+                import re
+                match = re.search(
+                    r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+\|\s+(\w+)", output
+                )
+                if match and match.group(2) == "ERROR":
+                    logger.debug("Chutes deploy failed with error log")
+                    raise RuntimeError("Chutes deploy failed")
+                
+                if proc.returncode != 0:
+                    logger.debug(f"Chutes deploy failed with code {proc.returncode}")
+                    raise RuntimeError("Chutes deploy failed")
+                
+                tmp_file.unlink(missing_ok=True)
+                logger.debug("Chute deployment successful")
+                
+                # Get chute ID
+                chute_id = await get_latest_chute_id(repo, api_key=chutes_api_key)
+                
+                if not chute_id:
+                    raise RuntimeError("Failed to get chute_id after deployment")
+                
+                logger.info(f"  Chutes deployment complete. Chute ID: {chute_id}")
+                
+            except Exception as e:
+                logger.error(f"Chutes deployment failed: {e}")
+                if 'tmp_file' in locals():
+                    tmp_file.unlink(missing_ok=True)
+                print(json.dumps({"success": False, "error": f"Chutes deployment failed: {str(e)}"}))
+                sys.exit(1)
+    else:
+        logger.info(f"Skipping Chutes deployment, using chute_id: {chute_id}")
+    
+    # =========================================================================
+    # Step 3: Commit on-chain
+    # =========================================================================
+    if not skip_commit:
+        current_step += 1
+        logger.info(f"[{current_step}/{total_steps}] Committing on-chain...")
+        
+        if dry_run:
+            logger.info(f"  [DRY RUN] Would commit {repo}@{revision[:12]}... with chute {chute_id}")
+        else:
+            try:
+                import bittensor as bt
+                from bittensor.core.errors import MetadataError
+                from affine.utils.subtensor import get_subtensor
+                
+                cold = coldkey or get_conf("BT_WALLET_COLD", "default")
+                hot = hotkey or get_conf("BT_WALLET_HOT", "default")
+                wallet = bt.Wallet(name=cold, hotkey=hot)
+                
+                logger.info(f"  Using wallet: {wallet.hotkey.ss58_address[:16]}...")
+                
+                sub = await get_subtensor()
+                data = json.dumps({
+                    "model": repo,
+                    "revision": revision,
+                    "chute_id": chute_id
+                })
+                
+                while True:
+                    try:
+                        await sub.set_reveal_commitment(
+                            wallet=wallet,
+                            netuid=NETUID,
+                            data=data,
+                            blocks_until_reveal=1
+                        )
+                        break
+                    except MetadataError as e:
+                        if "SpaceLimitExceeded" in str(e):
+                            logger.warning("Space limit exceeded, waiting for next block...")
+                            await sub.wait_for_block()
+                        else:
+                            raise
+                
+                logger.info("  Commit successful")
+                
+            except Exception as e:
+                logger.error(f"On-chain commit failed: {e}")
+                print(json.dumps({"success": False, "error": f"On-chain commit failed: {str(e)}"}))
+                sys.exit(1)
+    else:
+        logger.info("Skipping on-chain commit")
+    
+    # =========================================================================
+    # Summary
+    # =========================================================================
+    logger.info("=" * 60)
+    if dry_run:
+        logger.info("DRY RUN COMPLETE - No changes were made")
+    else:
+        logger.info("DEPLOYMENT COMPLETE")
+    logger.info("=" * 60)
+    logger.info(f"  Repository: {repo}")
+    logger.info(f"  Revision: {revision[:12] if revision and len(revision) > 12 else revision}...")
+    logger.info(f"  Chute ID: {chute_id}")
+    logger.info("=" * 60)
+    
+    result = {
+        "success": True,
+        "repo": repo,
+        "revision": revision,
+        "chute_id": chute_id,
+        "dry_run": dry_run
+    }
+    print(json.dumps(result))
