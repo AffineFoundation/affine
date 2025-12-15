@@ -200,22 +200,29 @@ class ScoringCacheManager:
             for m in valid_miners
         ]
         
-        # Build ranges for scoring and sampling separately
+        # Build ranges for scoring and sampling separately (multi-range format)
+        from affine.database.dao.system_config import ranges_to_task_id_set
+        
         env_ranges_scoring = {}
         env_ranges_sampling = {}
         
         for env in all_envs:
-            scoring_range = env_ranges_dict[env]['scoring_range']
-            sampling_range = env_ranges_dict[env]['sampling_range']
+            scoring_ranges = env_ranges_dict[env]['scoring_range']  # [[start1, end1], ...]
+            sampling_ranges = env_ranges_dict[env]['sampling_range']  # [[start1, end1], ...]
             
-            scoring_start, scoring_end = scoring_range
-            sampling_start, sampling_end = sampling_range
+            # Convert multi-range to task ID set, then get min/max for superset query
+            scoring_ids = ranges_to_task_id_set(scoring_ranges)
+            sampling_ids = ranges_to_task_id_set(sampling_ranges)
             
             # Only add non-empty ranges
-            if scoring_start < scoring_end:
-                env_ranges_scoring[env] = (scoring_start, scoring_end)
-            if sampling_start < sampling_end:
-                env_ranges_sampling[env] = (sampling_start, sampling_end)
+            if scoring_ids:
+                min_id = min(scoring_ids)
+                max_id = max(scoring_ids)
+                env_ranges_scoring[env] = (min_id, max_id + 1)  # +1 for exclusive end
+            if sampling_ids:
+                min_id = min(sampling_ids)
+                max_id = max(sampling_ids)
+                env_ranges_sampling[env] = (min_id, max_id + 1)  # +1 for exclusive end
         
         # Execute two separate queries to avoid superset range inefficiency
         samples_data_scoring = await sample_dao.get_scoring_samples_batch(
@@ -227,12 +234,12 @@ class ScoringCacheManager:
             env_ranges=env_ranges_sampling
         )
         
-        # Assemble results using their respective query data
+        # Assemble results using their respective query data with original multi-ranges
         self._data_scoring = self._assemble_result(
-            valid_miners, all_envs, env_ranges_scoring, samples_data_scoring
+            valid_miners, all_envs, env_ranges_dict, samples_data_scoring, range_type='scoring_range'
         )
         self._data_sampling = self._assemble_result(
-            valid_miners, all_envs, env_ranges_sampling, samples_data_sampling
+            valid_miners, all_envs, env_ranges_dict, samples_data_sampling, range_type='sampling_range'
         )
         
         # Log statistics
@@ -251,10 +258,21 @@ class ScoringCacheManager:
         self,
         miners: list,
         envs: list,
-        env_ranges: dict,
-        samples_data: dict
+        env_ranges_dict: dict,
+        samples_data: dict,
+        range_type: str = 'scoring_range'
     ) -> Dict[str, Any]:
-        """Assemble scoring result from query data."""
+        """Assemble scoring result from query data with multi-range support.
+        
+        Args:
+            miners: List of miner info
+            envs: List of environment names (not used, kept for compatibility)
+            env_ranges_dict: Full environment ranges dict with multi-range format
+            samples_data: Query result data
+            range_type: 'scoring_range' or 'sampling_range'
+        """
+        from affine.database.dao.system_config import ranges_to_task_id_set
+        
         result = {}
         
         for miner in miners:
@@ -273,11 +291,17 @@ class ScoringCacheManager:
                 'env': {}
             }
             
-            for env in env_ranges.keys():
+            # Process each environment
+            for env in env_ranges_dict.keys():
                 env_samples = miner_samples.get(env, [])
-                start_id, end_id = env_ranges[env]
                 
-                # Filter samples to only include those within the specified range
+                # Get multi-range for this environment
+                ranges = env_ranges_dict[env].get(range_type, [[0, 0]])
+                
+                # Convert multi-range to task ID set for filtering
+                all_task_ids = ranges_to_task_id_set(ranges)
+                
+                # Filter samples to only include those within the multi-range
                 samples_list = [
                     {
                         'task_id': int(s['task_id']),
@@ -286,15 +310,14 @@ class ScoringCacheManager:
                         'timestamp': s['timestamp'],
                     }
                     for s in env_samples
-                    if start_id <= int(s['task_id']) < end_id
+                    if int(s['task_id']) in all_task_ids
                 ]
                 
-                expected_count = end_id - start_id
+                expected_count = len(all_task_ids)
                 completed_count = len(samples_list)
                 completeness = completed_count / expected_count if expected_count > 0 else 0.0
                 
                 completed_task_ids = {s['task_id'] for s in samples_list}
-                all_task_ids = set(range(start_id, end_id))
                 missing_task_ids = sorted(list(all_task_ids - completed_task_ids))[:100]
                 
                 miner_entry['env'][env] = {

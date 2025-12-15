@@ -434,6 +434,7 @@ async def get_pool_command(uid: int, env: str, full: bool = False):
                     "model_revision": data.get("model_revision"),
                     "env": data.get("env"),
                     "sampling_range": data.get("sampling_range"),
+                    "scoring_range": data.get("scoring_range"),
                     "total_tasks": data.get("total_tasks"),
                     "sampled_count": data.get("sampled_count"),
                     "pool_count": data.get("pool_count"),
