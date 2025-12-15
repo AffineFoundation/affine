@@ -145,6 +145,9 @@ class TaskGeneratorService:
         """
         Generate missing tasks for a specific miner and environment.
         
+        Prioritizes tasks within scoring_range over sampling_range tasks,
+        as scoring tasks are more important for miner evaluation.
+        
         Args:
             miner: Miner information
             env: Environment name
@@ -191,8 +194,21 @@ class TaskGeneratorService:
             return 0
 
         
-        # Limit batch size
-        tasks_to_create = sorted(missing_task_ids)[:max_tasks_per_batch]
+        # Prioritize scoring_range tasks over sampling_range tasks
+        from affine.database.dao.system_config import ranges_to_task_id_set
+        env_ranges = self._config_cache.get('env_ranges', {})
+        scoring_task_ids = set()
+        
+        if env in env_ranges:
+            scoring_ranges = env_ranges[env].get('scoring_range', [[0, 0]])
+            scoring_task_ids = ranges_to_task_id_set(scoring_ranges)
+        
+        # Split missing tasks into scoring and non-scoring
+        missing_scoring = sorted(missing_task_ids & scoring_task_ids)
+        missing_sampling_only = sorted(missing_task_ids - scoring_task_ids)
+        
+        # Prioritize scoring tasks first, then sampling-only tasks
+        tasks_to_create = (missing_scoring + missing_sampling_only)[:max_tasks_per_batch]
         
         # Prepare task data
         task_list = [
