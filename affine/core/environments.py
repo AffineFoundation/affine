@@ -77,7 +77,7 @@ _ENV_CONFIGS_CANONICAL = {
     "lgc": EnvConfig(
         name="lgc",
         docker_image="affinefoundation/lgc:pi",
-        env_vars={"UVICORN_WORKERS": "8"},
+        env_vars={"UVICORN_WORKERS": "12"},
         eval_params={
             "temperature": 0.0,
             "timeout": 600,
@@ -159,7 +159,7 @@ _ENV_CONFIGS_CANONICAL = {
         name="swe-pro",
         docker_image="affinefoundation/swebench:pro",
         env_type="swebench",
-        env_vars={"UVICORN_WORKERS": "3"},
+        env_vars={"UVICORN_WORKERS": "10"},
         mem_limit="10g",
         volumes={
             "/var/run/docker.sock": {
@@ -168,11 +168,11 @@ _ENV_CONFIGS_CANONICAL = {
             }
         },
         eval_params={
-            "max_iterations": 50,
+            "max_iterations": 200,
             "temperature": 0.0,
             "timeout": 1800,
         },
-        proxy_timeout=1800,
+        proxy_timeout=2000,
     ),
 }
 
