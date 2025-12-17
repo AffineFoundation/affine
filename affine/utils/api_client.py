@@ -50,11 +50,11 @@ class GlobalSessionManager:
                     keepalive_timeout=30,  # Close idle connections after 30s (prevent stale connections)
                 )
                 
-                # Increase connection timeout to handle pool contention
+                # Connection timeout with safety limits
                 timeout = aiohttp.ClientTimeout(
-                    total=None,  # No total timeout
+                    total=300,
                     connect=60,  # 60s connection timeout (wait for available connection)
-                    sock_read=None  # No read timeout
+                    sock_read=None
                 )
                 
                 cls._session = aiohttp.ClientSession(
@@ -103,8 +103,8 @@ class CLIAPIClient:
         )
         
         timeout = aiohttp.ClientTimeout(
-            total=None,
-            connect=30,  # CLI doesn't need long connection timeout
+            total=300,
+            connect=30,  # connection timeout
             sock_read=None
         )
         
