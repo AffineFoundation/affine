@@ -434,8 +434,7 @@ async def get_pool_command(uid: int, env: str, full: bool = False):
                     "hotkey": data.get("hotkey"),
                     "model_revision": data.get("model_revision"),
                     "env": data.get("env"),
-                    "sampling_range": data.get("sampling_range"),
-                    "scoring_range": data.get("scoring_range"),
+                    "sampling_config": data.get("sampling_config", {}),
                     "total_tasks": data.get("total_tasks"),
                     "sampled_count": data.get("sampled_count"),
                     "pool_count": data.get("pool_count"),
@@ -456,6 +455,20 @@ async def get_pool_command(uid: int, env: str, full: bool = False):
                 summary["missing_task_ids"] = format_task_ids(data.get("missing_task_ids", []))
                 
                 print(json.dumps(summary, indent=2, ensure_ascii=False))
+
+
+async def get_envs_command():
+    """Query current environment configurations.
+    
+    Returns all environment configurations including sampling settings,
+    rotation settings, and enabled flags.
+    """
+    async with cli_api_client() as client:
+        endpoint = "/config/environments"
+        data = await client.get(endpoint)
+        
+        if data:
+            print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
 async def deploy_command(

@@ -20,15 +20,14 @@ from affine.utils.subtensor import get_subtensor
 from affine.utils.api_client import cli_api_client
 
 
-async def fetch_scoring_data(api_client, range_type: str = "scoring") -> dict:
+async def fetch_scoring_data(api_client) -> dict:
     """Fetch scoring data from API with default timeout.
     
     Args:
         api_client: APIClient instance
-        range_type: Type of range to use ('scoring' or 'sampling')
     """
-    logger.info(f"Fetching scoring data from API (range_type={range_type})...")
-    data = await api_client.get(f"/samples/scoring?range_type={range_type}")
+    logger.info("Fetching scoring data from API...")
+    data = await api_client.get("/samples/scoring")
     
     # Check for API error response
     if isinstance(data, dict) and "success" in data and data.get("success") is False:
@@ -40,15 +39,14 @@ async def fetch_scoring_data(api_client, range_type: str = "scoring") -> dict:
     return data
 
 
-async def fetch_system_config(api_client, range_type: str = "scoring") -> dict:
+async def fetch_system_config(api_client) -> dict:
     """Fetch system configuration from API.
     
     Args:
         api_client: APIClient instance
-        range_type: Type of range to use ('scoring' or 'sampling')
     
     Returns:
-        System config dict with 'environments' key
+        System config dict with 'environments' key containing only enabled_for_scoring environments
     """
     try:
         config = await api_client.get("/config/environments")
@@ -56,15 +54,14 @@ async def fetch_system_config(api_client, range_type: str = "scoring") -> dict:
         if isinstance(config, dict):
             value = config.get("param_value")
             if isinstance(value, dict):
-                # Filter environments based on range_type
-                filter_key = "enabled_for_sampling" if range_type == "sampling" else "enabled_for_scoring"
+                # Filter environments with enabled_for_scoring=true
                 enabled_envs = [
                     env_name for env_name, env_config in value.items()
-                    if isinstance(env_config, dict) and env_config.get(filter_key, False)
+                    if isinstance(env_config, dict) and env_config.get("enabled_for_scoring", False)
                 ]
                 
                 if enabled_envs:
-                    logger.info(f"Fetched environments from API using {filter_key}: {enabled_envs}")
+                    logger.info(f"Fetched scoring environments from API: {enabled_envs}")
                     return {"environments": enabled_envs}
 
         logger.exception("Failed to parse environments config")
@@ -75,7 +72,7 @@ async def fetch_system_config(api_client, range_type: str = "scoring") -> dict:
 
 
 
-async def run_scoring_once(save_to_db: bool, range_type: str = "scoring"):
+async def run_scoring_once(save_to_db: bool):
     """Run scoring calculation once.
     
     Uses CLI context manager for automatic cleanup in both one-time
@@ -83,7 +80,6 @@ async def run_scoring_once(save_to_db: bool, range_type: str = "scoring"):
     
     Args:
         save_to_db: Whether to save results to database
-        range_type: Type of range to use ('scoring' or 'sampling')
     """
     start_time = time.time()
     
@@ -94,9 +90,9 @@ async def run_scoring_once(save_to_db: bool, range_type: str = "scoring"):
     # Always use CLI context manager for automatic cleanup
     async with cli_api_client() as api_client:
         # Fetch data
-        logger.info(f"Fetching data from API (range_type={range_type})...")
-        scoring_data = await fetch_scoring_data(api_client, range_type=range_type)
-        system_config = await fetch_system_config(api_client, range_type=range_type)
+        logger.info("Fetching data from API...")
+        scoring_data = await fetch_scoring_data(api_client)
+        system_config = await fetch_system_config(api_client)
         
         # Extract environments
         environments = system_config.get("environments")
@@ -140,14 +136,13 @@ async def run_scoring_once(save_to_db: bool, range_type: str = "scoring"):
         return result
 
 
-async def run_service_with_mode(save_to_db: bool, service_mode: bool, interval_minutes: int, range_type: str = "scoring"):
+async def run_service_with_mode(save_to_db: bool, service_mode: bool, interval_minutes: int):
     """Run the scorer service.
     
     Args:
         save_to_db: Whether to save results to database
         service_mode: If True, run continuously; if False, run once and exit
         interval_minutes: Minutes between scoring runs in service mode
-        range_type: Type of range to use ('scoring' or 'sampling')
     """
     logger.info("Starting Scorer Service")
     
@@ -164,13 +159,13 @@ async def run_service_with_mode(save_to_db: bool, service_mode: bool, interval_m
         if not service_mode:
             # Run once and exit (DEFAULT)
             logger.info("Running in one-time mode (default)")
-            await run_scoring_once(save_to_db, range_type=range_type)
+            await run_scoring_once(save_to_db)
         else:
             # Run continuously with configured interval
             logger.info(f"Running in service mode (continuous, every {interval_minutes} minutes)")
             while True:
                 try:
-                    await run_scoring_once(save_to_db, range_type=range_type)
+                    await run_scoring_once(save_to_db)
                     logger.info(f"Waiting {interval_minutes} minutes until next run...")
                     await asyncio.sleep(interval_minutes * 60)
                 except Exception as e:
@@ -196,21 +191,14 @@ async def run_service_with_mode(save_to_db: bool, service_mode: bool, interval_m
 
 
 @click.command()
-@click.option(
-    '--sampling',
-    is_flag=True,
-    default=False,
-    help='Use sampling_range instead of scoring_range for score calculation'
-)
-def main(sampling: bool):
+def main():
     """
     Affine Scorer - Calculate miner weights using four-stage algorithm.
     
     This service fetches scoring data from the API and calculates normalized
     weights for miners using a four-stage algorithm with Pareto filtering.
     
-    Options:
-    --sampling: Use sampling_range instead of scoring_range
+    Only uses environments with enabled_for_scoring=true.
     
     Run Mode:
     - Default: One-time execution (calculates scores once and exits)
@@ -219,7 +207,7 @@ def main(sampling: bool):
     Configuration:
     - SCORER_SAVE_TO_DB: Enable database saving (default: false)
     - SERVICE_MODE: Run as continuous service (default: false)
-    - SCORER_INTERVAL_MINUTES: Minutes between runs in service mode (default: 5)
+    - SCORER_INTERVAL_MINUTES: Minutes between runs in service mode (default: 10)
     - All scoring parameters are constants in config.py
     """
     # Check if should save to database
@@ -228,23 +216,19 @@ def main(sampling: bool):
     # Check service mode (default: false = one-time execution)
     service_mode = os.getenv("SERVICE_MODE", "false").lower() in ("true", "1", "yes")
     
-    # Get interval in minutes (default: 5 minutes)
+    # Get interval in minutes (default: 10 minutes)
     try:
         interval_minutes = int(os.getenv("SCORER_INTERVAL_MINUTES", "10"))
         if interval_minutes <= 0:
-            logger.warning(f"Invalid SCORER_INTERVAL_MINUTES={interval_minutes}, using default 5")
-            interval_minutes = 5
+            logger.warning(f"Invalid SCORER_INTERVAL_MINUTES={interval_minutes}, using default 10")
+            interval_minutes = 10
     except ValueError:
-        logger.warning(f"Invalid SCORER_INTERVAL_MINUTES value, using default 5")
-        interval_minutes = 5
-    
-    # Determine range type from --sampling flag
-    range_type = "sampling" if sampling else "scoring"
+        logger.warning(f"Invalid SCORER_INTERVAL_MINUTES value, using default 10")
+        interval_minutes = 10
     
     if save_to_db:
         logger.info("Database saving enabled (SCORER_SAVE_TO_DB=true)")
     logger.info(f"Service mode: {service_mode}")
-    logger.info(f"Range type: {range_type}")
     if service_mode:
         logger.info(f"Interval: {interval_minutes} minutes")
     
@@ -252,8 +236,7 @@ def main(sampling: bool):
     asyncio.run(run_service_with_mode(
         save_to_db=save_to_db,
         service_mode=service_mode,
-        interval_minutes=interval_minutes,
-        range_type=range_type
+        interval_minutes=interval_minutes
     ))
 
 

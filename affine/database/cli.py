@@ -103,9 +103,15 @@ async def cmd_migrate(tail: int, max_results: Optional[int]):
 
 
 async def cmd_load_config(json_file: str):
-    """Load system configuration from JSON file."""
+    """Load system configuration from JSON file.
+    
+    Supports smooth transition with optional initial_range:
+    - If initial_range exists: Use it to initialize sampling_list
+    - If initial_range missing: Keep existing sampling_list in database (no override)
+    """
     import json
     import os
+    import time
     
     print(f"Loading configuration from {json_file}...")
     
@@ -141,35 +147,103 @@ async def cmd_load_config(json_file: str):
             
             print(f"✓ Loaded validator burn percentage: {burn_percentage:.1%}")
         
-        # Load new unified environments structure
+        # Load environments configuration
         if 'environments' in config:
+            from affine.core.sampling_list import SamplingListManager
+            import random
+            
             environments = config['environments']
+            existing_envs = await config_dao.get_param_value('environments', default={})
+            manager = SamplingListManager()
+            
+            for env_name, env_config in environments.items():
+                sampling_config = env_config.get('sampling_config')
+                if not sampling_config:
+                    print(f"  Warning: {env_name} missing sampling_config, skipping")
+                    continue
+                
+                # Check if initial_range is provided
+                if 'initial_range' in sampling_config:
+                    # Use initial_range to generate sampling_list
+                    initial_range = sampling_config['initial_range']
+                    sampling_count = sampling_config.get('sampling_count', 0)
+                    
+                    # Generate sampling_list from initial_range
+                    sampling_list = await manager.initialize_sampling_list(
+                        env=env_name,
+                        initial_range=initial_range,
+                        sampling_size=sampling_count
+                    )
+                    
+                    sampling_config['sampling_list'] = sampling_list
+                    sampling_config['last_rotation_at'] = int(time.time())
+                    
+                    # Remove initial_range after use (keep config clean)
+                    del sampling_config['initial_range']
+                    
+                    print(f"  {env_name}: Initialized sampling_list from initial_range (size={len(sampling_list)})")
+                
+                else:
+                    # No initial_range: preserve existing sampling_list from database
+                    existing_env = existing_envs.get(env_name, {})
+                    existing_config = existing_env.get('sampling_config', {})
+                    existing_list = existing_config.get('sampling_list')
+                    
+                    if existing_list:
+                        sampling_config['sampling_list'] = existing_list
+                        sampling_config['last_rotation_at'] = existing_config.get('last_rotation_at', int(time.time()))
+                        print(f"  {env_name}: Preserved existing sampling_list from database (size={len(existing_list)})")
+                    else:
+                        # No existing list: generate from dataset_range using ranges_to_task_id_set
+                        from affine.database.dao.system_config import ranges_to_task_id_set
+                        
+                        dataset_range = sampling_config.get('dataset_range', [[0, 0]])
+                        sampling_count = sampling_config.get('sampling_count', 0)
+                        
+                        # Convert to set and randomly sample
+                        all_ids = ranges_to_task_id_set(dataset_range)
+                        sampling_list = random.sample(list(all_ids), min(sampling_count, len(all_ids))) if all_ids else []
+                        
+                        sampling_config['sampling_list'] = sorted(sampling_list)
+                        sampling_config['last_rotation_at'] = int(time.time())
+                        
+                        print(f"  {env_name}: Generated new sampling_list from dataset_range (size={len(sampling_list)})")
             
             # Save to database
             await config_dao.set_param(
                 param_name='environments',
                 param_value=environments,
                 param_type='dict',
-                description='Environment configurations (sampling, scoring, ranges)',
+                description='Environment configurations with dynamic sampling',
                 updated_by='cli_load_config'
             )
             
-            print(f"✓ Loaded configuration for {len(environments)} environments:")
+            print(f"\n✓ Loaded configuration for {len(environments)} environments:")
             
             for env_name, env_config in environments.items():
                 enabled_sampling = env_config.get('enabled_for_sampling', False)
                 enabled_scoring = env_config.get('enabled_for_scoring', False)
-                sampling_ranges = env_config.get('sampling_range', [[0, 0]])
-                scoring_ranges = env_config.get('scoring_range', [[0, 0]])
                 
-                status = []
+                sampling_config = env_config.get('sampling_config')
+                if sampling_config:
+                    sampling_list = sampling_config.get('sampling_list', [])
+                    rotation_count = sampling_config.get('rotation_count', 0)
+                    status = f"sampling_list={len(sampling_list)} tasks"
+                    if rotation_count > 0:
+                        status += f", rotation={rotation_count} tasks/hour"
+                    else:
+                        status += ", rotation=disabled"
+                else:
+                    status = "no sampling_config"
+                
+                flags = []
                 if enabled_sampling:
-                    status.append(f"sampling: {sampling_ranges}")
+                    flags.append("sampling")
                 if enabled_scoring:
-                    status.append(f"scoring: {scoring_ranges}")
+                    flags.append("scoring")
+                flags_str = "+".join(flags) if flags else "disabled"
                 
-                status_str = ", ".join(status) if status else "disabled"
-                print(f"  {env_name}: {status_str}")
+                print(f"  {env_name} [{flags_str}]: {status}")
         
         print("\n✓ Configuration loaded successfully!")
         
@@ -322,16 +396,23 @@ async def cmd_get_burn_percentage():
 
 
 async def cmd_delete_samples_by_range(
-    hotkey: str,
-    revision: str,
+    hotkey: Optional[str],
+    revision: Optional[str],
     env: str,
     start_task_id: int,
     end_task_id: int
 ):
-    """Delete samples within a task_id range."""
-    print(f"Deleting samples for hotkey={hotkey[:12]}..., env={env}, task_id range=[{start_task_id}, {end_task_id})...")
+    """Delete samples within a task_id range.
     
-    confirm = input(f"WARNING: This will delete samples in range [{start_task_id}, {end_task_id}). Type 'yes' to confirm: ")
+    If hotkey and revision are provided, deletes samples for that specific miner.
+    If they are not provided, deletes all samples in the environment and range.
+    """
+    if hotkey and revision:
+        print(f"Deleting samples for hotkey={hotkey[:12]}..., revision={revision[:8]}..., env={env}, task_id range=[{start_task_id}, {end_task_id})...")
+        confirm = input(f"WARNING: This will delete samples for specific miner in range [{start_task_id}, {end_task_id}). Type 'yes' to confirm: ")
+    else:
+        print(f"Deleting ALL samples for env={env}, task_id range=[{start_task_id}, {end_task_id})...")
+        confirm = input(f"WARNING: This will delete ALL samples across all miners/revisions for env={env} in range [{start_task_id}, {end_task_id}). Type 'yes' to confirm: ")
     
     if confirm.lower() != 'yes':
         print("Aborted")
@@ -341,13 +422,23 @@ async def cmd_delete_samples_by_range(
     
     try:
         sample_dao = SampleResultsDAO()
-        deleted_count = await sample_dao.delete_samples_by_task_range(
-            miner_hotkey=hotkey,
-            model_revision=revision,
-            env=env,
-            start_task_id=start_task_id,
-            end_task_id=end_task_id
-        )
+        
+        if hotkey and revision:
+            # Delete for specific miner
+            deleted_count = await sample_dao.delete_samples_by_task_range(
+                miner_hotkey=hotkey,
+                model_revision=revision,
+                env=env,
+                start_task_id=start_task_id,
+                end_task_id=end_task_id
+            )
+        else:
+            # Delete for all miners in the environment
+            deleted_count = await sample_dao.delete_samples_by_env_and_range(
+                env=env,
+                start_task_id=start_task_id,
+                end_task_id=end_task_id
+            )
         
         print(f"✓ Deleted {deleted_count} samples")
     
@@ -479,17 +570,29 @@ def get_burn():
 
 
 @db.command("delete-samples-by-range")
-@click.option("--hotkey", required=True, help="Miner's hotkey")
-@click.option("--revision", required=True, help="Model revision hash")
+@click.option("--hotkey", default=None, help="Miner's hotkey (optional, if not provided will delete for all miners)")
+@click.option("--revision", default=None, help="Model revision hash (optional, if not provided will delete for all revisions)")
 @click.option("--env", required=True, help="Environment name (e.g., agentgym:alfworld)")
 @click.option("--start-task-id", required=True, type=int, help="Start task_id (inclusive)")
 @click.option("--end-task-id", required=True, type=int, help="End task_id (exclusive)")
 def delete_samples_by_range(hotkey, revision, env, start_task_id, end_task_id):
     """Delete samples within a task_id range for a specific miner and environment.
     
-    Example:
+    If --hotkey and --revision are provided, deletes samples for that specific miner.
+    If they are omitted, deletes all samples in the environment and range across all miners.
+    
+    Examples:
+        # Delete for specific miner
         af db delete-samples-by-range --hotkey 5C5... --revision abc123 --env agentgym:alfworld --start-task-id 0 --end-task-id 100
+        
+        # Delete for all miners in environment
+        af db delete-samples-by-range --env agentgym:alfworld --start-task-id 0 --end-task-id 100
     """
+    # Validate that both hotkey and revision are provided together or both omitted
+    if (hotkey is None) != (revision is None):
+        print("Error: --hotkey and --revision must be provided together or both omitted")
+        sys.exit(1)
+    
     asyncio.run(cmd_delete_samples_by_range(hotkey, revision, env, start_task_id, end_task_id))
 
 
