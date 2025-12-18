@@ -101,9 +101,11 @@ class SamplingListManager:
         """
         from affine.database.dao.system_config import ranges_to_task_id_set
         
-        if rotation_count <= 0:
-            logger.debug(f"Skipping rotation for {env}: rotation_count={rotation_count}")
+        if rotation_count < 0:
+            logger.warning(f"Invalid rotation_count for {env}: {rotation_count}")
             return current_list, [], []
+        
+        # rotation_count=0 is valid: only adjust size, no rotation
         
         # Convert to sets
         dataset_set = ranges_to_task_id_set(dataset_range)
