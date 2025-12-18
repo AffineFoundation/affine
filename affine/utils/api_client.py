@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any
 from affine.core.setup import logger
 import aiohttp
 import asyncio
-from affine.errors import NetworkError, ApiResponseError
+from affine.utils.errors import NetworkError, ApiResponseError
 
 
 class GlobalSessionManager:

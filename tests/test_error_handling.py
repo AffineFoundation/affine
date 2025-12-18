@@ -2,7 +2,7 @@ import pytest
 import aiohttp
 from unittest.mock import MagicMock, AsyncMock, patch
 from affine.utils.api_client import APIClient
-from affine.errors import NetworkError, ApiResponseError
+from affine.utils.errors import NetworkError, ApiResponseError
 
 @pytest.mark.asyncio
 async def test_api_timeout():
