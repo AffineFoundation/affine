@@ -53,13 +53,13 @@ class SamplingScheduler:
         while self._running:
             try:
                 await self._check_and_rotate_all_envs()
-                await asyncio.sleep(3600)  # Check every hour
+                await asyncio.sleep(300)
             except asyncio.CancelledError:
                 logger.info("Rotation loop cancelled")
                 break
             except Exception as e:
                 logger.error(f"Rotation loop error: {e}", exc_info=True)
-                await asyncio.sleep(60)  # Continue after error
+                await asyncio.sleep(60)
     
     async def _check_and_rotate_all_envs(self):
         """Check all environments and rotate if needed.
@@ -73,18 +73,18 @@ class SamplingScheduler:
             try:
                 # KEY CHANGE: Only rotate if enabled_for_scoring=true
                 if not env_config.get('enabled_for_scoring'):
-                    logger.debug(f"Skipping rotation for {env_name}: scoring disabled")
+                    logger.info(f"Skipping rotation for {env_name}: scoring disabled")
                     continue
                 
                 sampling_config = env_config.get('sampling_config')
                 if not sampling_config:
-                    logger.debug(f"Skipping rotation for {env_name}: no sampling_config")
+                    logger.info(f"Skipping rotation for {env_name}: no sampling_config")
                     continue
                 
                 # Check if rotation is enabled
                 rotation_enabled = sampling_config.get('rotation_enabled', True)
                 if not rotation_enabled:
-                    logger.debug(f"Skipping rotation for {env_name}: rotation disabled")
+                    logger.info(f"Skipping rotation for {env_name}: rotation disabled")
                     continue
                 
                 # Check if rotation is needed
@@ -94,7 +94,7 @@ class SamplingScheduler:
                 
                 # Skip if rotation_count=0
                 if rotation_count == 0:
-                    logger.debug(f"Skipping rotation for {env_name}: rotation_count=0")
+                    logger.info(f"Skipping rotation for {env_name}: rotation_count=0")
                     continue
                 
                 # Check if interval elapsed
