@@ -45,9 +45,6 @@ class ScoringCacheManager:
         
         # Background task
         self._refresh_task: Optional[asyncio.Task] = None
-        
-        # UID to key mapping for efficient cleanup (shared)
-        self._uid_to_key: Dict[int, str] = {}
     
     @property
     def state(self) -> CacheState:
@@ -76,6 +73,9 @@ class ScoringCacheManager:
         
         Non-blocking: Returns cached data immediately when READY or REFRESHING.
         Blocking: Waits for initial warmup when EMPTY or WARMING.
+        
+        Returns:
+            Data dict with hotkey#revision as keys (includes uid field in each entry)
         """
         # Fast path: return cache if ready or refreshing (data can be empty dict)
         if self._state in [CacheState.READY, CacheState.REFRESHING]:
@@ -188,29 +188,11 @@ class ScoringCacheManager:
             for hotkey, revision in removed_miners:
                 key = f"{hotkey}#{revision}"
                 
-                # Find and remove UID alias
-                uid_to_remove = None
-                for uid, k in list(self._uid_to_key.items()):
-                    if k == key:
-                        uid_to_remove = uid
-                        break
+                # Remove from both caches
+                self._scoring_data.pop(key, None)
+                self._sampling_data.pop(key, None)
                 
-                # Clean up UID alias from both caches
-                if uid_to_remove is not None:
-                    uid_str = str(uid_to_remove)
-                    if uid_str in self._scoring_data:
-                        del self._scoring_data[uid_str]
-                    if uid_str in self._sampling_data:
-                        del self._sampling_data[uid_str]
-                    del self._uid_to_key[uid_to_remove]
-                
-                # Remove main entry from both caches
-                if key in self._scoring_data:
-                    del self._scoring_data[key]
-                if key in self._sampling_data:
-                    del self._sampling_data[key]
-                    
-                logger.info(f"Removed cache for invalid miner {hotkey[:8]}...#{revision[:8]}... (including UID alias)")
+                logger.info(f"Removed cache for invalid miner {hotkey[:8]}...#{revision[:8]}...")
         
         # 4. Get environment configurations
         environments = await system_config_dao.get_param_value('environments', {})
@@ -227,28 +209,39 @@ class ScoringCacheManager:
             logger.info("Full refresh completed: no valid miners")
             return
         
-        # 5. Initialize all miner entries first
+        # 5. Initialize all miner entries using hotkey#revision as key
         for miner in valid_miners:
             hotkey = miner['hotkey']
             revision = miner['revision']
-            key = f"{hotkey}#{revision}"
             uid = miner['uid']
+            key = f"{hotkey}#{revision}"
             
-            # Initialize miner entry in both caches
-            for cache_data in [self._scoring_data, self._sampling_data]:
-                if key not in cache_data:
-                    cache_data[key] = {
-                        'hotkey': hotkey,
-                        'model_revision': revision,
-                        'model_repo': miner.get('model'),
-                        'first_block': miner.get('first_block'),
-                        'env': {}
-                    }
+            # Initialize miner entry in both caches if not exists (include uid field)
+            if key not in self._scoring_data:
+                self._scoring_data[key] = {
+                    'uid': uid,
+                    'hotkey': hotkey,
+                    'model_revision': revision,
+                    'model_repo': miner.get('model'),
+                    'first_block': miner.get('first_block'),
+                    'env': {}
+                }
+            else:
+                # Update UID if it changed
+                self._scoring_data[key]['uid'] = uid
             
-            # For backward compatibility, also use UID as key
-            self._uid_to_key[uid] = key
-            self._scoring_data[str(uid)] = self._scoring_data[key]
-            self._sampling_data[str(uid)] = self._sampling_data[key]
+            if key not in self._sampling_data:
+                self._sampling_data[key] = {
+                    'uid': uid,
+                    'hotkey': hotkey,
+                    'model_revision': revision,
+                    'model_repo': miner.get('model'),
+                    'first_block': miner.get('first_block'),
+                    'env': {}
+                }
+            else:
+                # Update UID if it changed
+                self._sampling_data[key]['uid'] = uid
         
         # 6. Build concurrent query tasks for ALL miner×env combinations
         async def query_and_populate(miner: dict, env_name: str, env_config: dict):
@@ -266,13 +259,12 @@ class ScoringCacheManager:
             # Query once
             env_cache_data = await self._query_miner_env_data(
                 sample_dao=sample_dao,
-                miner_key=key,
                 miner_info=miner,
                 env=env_name,
                 env_config=env_config
             )
             
-            # Populate both caches if needed
+            # Populate both caches if needed (using hotkey#revision as key)
             if enabled_for_scoring:
                 self._scoring_data[key]['env'][env_name] = env_cache_data
             if enabled_for_sampling:
@@ -310,7 +302,6 @@ class ScoringCacheManager:
     async def _query_miner_env_data(
         self,
         sample_dao,
-        miner_key: str,
         miner_info: dict,
         env: str,
         env_config: dict
@@ -334,6 +325,7 @@ class ScoringCacheManager:
         
         hotkey = miner_info['hotkey']
         revision = miner_info['revision']
+        key = f"{hotkey}#{revision}"
         
         # 1. Get target task IDs
         target_task_ids = get_task_id_set_from_config(env_config)
@@ -347,12 +339,12 @@ class ScoringCacheManager:
                 'completeness': 0.0
             }
         
-        # 2. Get current cached samples
+        # 2. Get current cached samples (using hotkey#revision key)
         current_cache = {}
-        if miner_key in self._scoring_data and env in self._scoring_data[miner_key]['env']:
-            current_cache = self._scoring_data[miner_key]['env'][env]
-        elif miner_key in self._sampling_data and env in self._sampling_data[miner_key]['env']:
-            current_cache = self._sampling_data[miner_key]['env'][env]
+        if key in self._scoring_data and env in self._scoring_data[key]['env']:
+            current_cache = self._scoring_data[key]['env'][env]
+        elif key in self._sampling_data and env in self._sampling_data[key]['env']:
+            current_cache = self._sampling_data[key]['env'][env]
         
         current_samples = current_cache.get('samples', [])
         cached_task_ids = {s['task_id'] for s in current_samples}
@@ -411,7 +403,6 @@ class ScoringCacheManager:
             'completeness': round(completeness, 4)
         }
     
-
 
 # Global cache manager instance
 _cache_manager = ScoringCacheManager()

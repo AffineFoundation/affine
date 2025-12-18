@@ -20,14 +20,15 @@ from affine.utils.subtensor import get_subtensor
 from affine.utils.api_client import cli_api_client
 
 
-async def fetch_scoring_data(api_client) -> dict:
+async def fetch_scoring_data(api_client, range_type: str = "scoring") -> dict:
     """Fetch scoring data from API with default timeout.
     
     Args:
         api_client: APIClient instance
+        range_type: Type of range to use ('scoring' or 'sampling', default: 'scoring')
     """
-    logger.info("Fetching scoring data from API...")
-    data = await api_client.get("/samples/scoring")
+    logger.info(f"Fetching scoring data from API (range_type={range_type})...")
+    data = await api_client.get(f"/samples/scoring?range_type={range_type}")
     
     # Check for API error response
     if isinstance(data, dict) and "success" in data and data.get("success") is False:
@@ -72,7 +73,7 @@ async def fetch_system_config(api_client) -> dict:
 
 
 
-async def run_scoring_once(save_to_db: bool):
+async def run_scoring_once(save_to_db: bool, range_type: str = "scoring"):
     """Run scoring calculation once.
     
     Uses CLI context manager for automatic cleanup in both one-time
@@ -80,6 +81,7 @@ async def run_scoring_once(save_to_db: bool):
     
     Args:
         save_to_db: Whether to save results to database
+        range_type: Type of range to use ('scoring' or 'sampling', default: 'scoring')
     """
     start_time = time.time()
     
@@ -91,7 +93,7 @@ async def run_scoring_once(save_to_db: bool):
     async with cli_api_client() as api_client:
         # Fetch data
         logger.info("Fetching data from API...")
-        scoring_data = await fetch_scoring_data(api_client)
+        scoring_data = await fetch_scoring_data(api_client, range_type=range_type)
         system_config = await fetch_system_config(api_client)
         
         # Extract environments
@@ -136,15 +138,17 @@ async def run_scoring_once(save_to_db: bool):
         return result
 
 
-async def run_service_with_mode(save_to_db: bool, service_mode: bool, interval_minutes: int):
+async def run_service_with_mode(save_to_db: bool, service_mode: bool, interval_minutes: int, range_type: str = "scoring"):
     """Run the scorer service.
     
     Args:
         save_to_db: Whether to save results to database
         service_mode: If True, run continuously; if False, run once and exit
         interval_minutes: Minutes between scoring runs in service mode
+        range_type: Type of range to use ('scoring' or 'sampling', default: 'scoring')
     """
     logger.info("Starting Scorer Service")
+    logger.info(f"Range type: {range_type}")
     
     # Initialize database if saving results
     if save_to_db:
@@ -159,13 +163,13 @@ async def run_service_with_mode(save_to_db: bool, service_mode: bool, interval_m
         if not service_mode:
             # Run once and exit (DEFAULT)
             logger.info("Running in one-time mode (default)")
-            await run_scoring_once(save_to_db)
+            await run_scoring_once(save_to_db, range_type=range_type)
         else:
             # Run continuously with configured interval
             logger.info(f"Running in service mode (continuous, every {interval_minutes} minutes)")
             while True:
                 try:
-                    await run_scoring_once(save_to_db)
+                    await run_scoring_once(save_to_db, range_type=range_type)
                     logger.info(f"Waiting {interval_minutes} minutes until next run...")
                     await asyncio.sleep(interval_minutes * 60)
                 except Exception as e:
@@ -191,14 +195,21 @@ async def run_service_with_mode(save_to_db: bool, service_mode: bool, interval_m
 
 
 @click.command()
-def main():
+@click.option(
+    "--sampling",
+    is_flag=True,
+    default=False,
+    help="Use sampling environments instead of scoring environments"
+)
+def main(sampling: bool):
     """
     Affine Scorer - Calculate miner weights using four-stage algorithm.
     
     This service fetches scoring data from the API and calculates normalized
     weights for miners using a four-stage algorithm with Pareto filtering.
     
-    Only uses environments with enabled_for_scoring=true.
+    By default, uses environments with enabled_for_scoring=true.
+    With --sampling flag, uses environments with enabled_for_sampling=true.
     
     Run Mode:
     - Default: One-time execution (calculates scores once and exits)
@@ -209,7 +220,14 @@ def main():
     - SERVICE_MODE: Run as continuous service (default: false)
     - SCORER_INTERVAL_MINUTES: Minutes between runs in service mode (default: 10)
     - All scoring parameters are constants in config.py
+    
+    Examples:
+        af -v servers scorer                # Use scoring environments
+        af -v servers scorer --sampling     # Use sampling environments
     """
+    # Determine range type from flag
+    range_type = "sampling" if sampling else "scoring"
+    
     # Check if should save to database
     save_to_db = os.getenv("SCORER_SAVE_TO_DB", "false").lower() in ("true", "1", "yes")
     
@@ -236,7 +254,8 @@ def main():
     asyncio.run(run_service_with_mode(
         save_to_db=save_to_db,
         service_mode=service_mode,
-        interval_minutes=interval_minutes
+        interval_minutes=interval_minutes,
+        range_type=range_type
     ))
 
 
