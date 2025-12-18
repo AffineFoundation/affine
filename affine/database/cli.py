@@ -395,6 +395,126 @@ async def cmd_get_burn_percentage():
         await close_client()
 
 
+async def cmd_get_config():
+    """Get and print current system configuration."""
+    import json
+    
+    print("Fetching system configuration...\n")
+    await init_client()
+    
+    try:
+        config_dao = SystemConfigDAO()
+        
+        # Fetch all configuration parameters
+        burn_config = await config_dao.get_param('validator_burn_percentage')
+        environments = await config_dao.get_param_value('environments', default={})
+        blacklist = await config_dao.get_blacklist()
+        
+        # Print burn percentage
+        print("=" * 80)
+        print("VALIDATOR BURN PERCENTAGE")
+        print("=" * 80)
+        if burn_config:
+            burn_percentage = burn_config.get('param_value', 0.0)
+            print(f"Value: {burn_percentage:.1%}")
+            print(f"Updated: {burn_config.get('updated_at', 'unknown')}")
+            print(f"Updated by: {burn_config.get('updated_by', 'unknown')}")
+        else:
+            print("Not set (default: 0.0)")
+        
+        # Print blacklist
+        print("\n" + "=" * 80)
+        print("BLACKLIST")
+        print("=" * 80)
+        if blacklist:
+            print(f"Count: {len(blacklist)} hotkey(s)")
+            for i, hotkey in enumerate(blacklist, 1):
+                print(f"  {i}. {hotkey}")
+        else:
+            print("Empty")
+        
+        # Print environments configuration
+        print("\n" + "=" * 80)
+        print("ENVIRONMENTS CONFIGURATION")
+        print("=" * 80)
+        if not environments:
+            print("No environments configured")
+        else:
+            print(f"Total environments: {len(environments)}\n")
+            
+            for env_name, env_config in environments.items():
+                print(f"{'─' * 80}")
+                print(f"Environment: {env_name}")
+                print(f"{'─' * 80}")
+                
+                # Status flags
+                enabled_sampling = env_config.get('enabled_for_sampling', False)
+                enabled_scoring = env_config.get('enabled_for_scoring', False)
+                flags = []
+                if enabled_sampling:
+                    flags.append("sampling")
+                if enabled_scoring:
+                    flags.append("scoring")
+                status = "+".join(flags) if flags else "disabled"
+                print(f"Status: [{status}]")
+                
+                # Sampling configuration
+                sampling_config = env_config.get('sampling_config')
+                if sampling_config:
+                    print(f"\nSampling Configuration:")
+                    
+                    # Dataset range
+                    dataset_range = sampling_config.get('dataset_range', [])
+                    print(f"  Dataset range: {dataset_range}")
+                    
+                    # Sampling count
+                    sampling_count = sampling_config.get('sampling_count', 0)
+                    print(f"  Sampling count: {sampling_count}")
+                    
+                    # Sampling list
+                    sampling_list = sampling_config.get('sampling_list', [])
+                    print(f"  Sampling list: {len(sampling_list)} tasks")
+                    if sampling_list:
+                        # Show first and last few items
+                        if len(sampling_list) <= 10:
+                            print(f"    Tasks: {sampling_list}")
+                        else:
+                            preview = sampling_list[:5] + ["..."] + sampling_list[-5:]
+                            print(f"    Tasks: {preview}")
+                    
+                    # Rotation settings
+                    rotation_enabled = sampling_config.get('rotation_enabled', False)
+                    rotation_count = sampling_config.get('rotation_count', 0)
+                    rotation_interval = sampling_config.get('rotation_interval', 3600)
+                    
+                    print(f"  Rotation enabled: {rotation_enabled}")
+                    if rotation_enabled:
+                        print(f"  Rotation count: {rotation_count} tasks/rotation")
+                        print(f"  Rotation interval: {rotation_interval}s ({rotation_interval/3600:.1f} hours)")
+                    
+                    # Last rotation
+                    last_rotation = sampling_config.get('last_rotation_at')
+                    if last_rotation:
+                        import time
+                        elapsed = int(time.time()) - last_rotation
+                        print(f"  Last rotation: {elapsed}s ago ({elapsed/3600:.1f} hours)")
+                
+                # Scoring configuration
+                scoring_config = env_config.get('scoring_config')
+                if scoring_config:
+                    print(f"\nScoring Configuration:")
+                    weights = scoring_config.get('weights', {})
+                    print(f"  Weights: {json.dumps(weights, indent=4)}")
+                
+                print()  # Blank line between environments
+        
+        print("=" * 80)
+        print("✓ Configuration printed successfully")
+        
+    finally:
+        await close_client()
+
+
 async def cmd_delete_samples_by_range(
     hotkey: Optional[str],
     revision: Optional[str],
@@ -567,6 +687,12 @@ def set_burn(percentage):
 def get_burn():
     """Get current validator burn percentage."""
     asyncio.run(cmd_get_burn_percentage())
+
+
+@db.command("get-config")
+def get_config():
+    """Get and print current system configuration."""
+    asyncio.run(cmd_get_config())
 
 
 @db.command("delete-samples-by-range")

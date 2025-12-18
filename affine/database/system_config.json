@@ -6,10 +6,9 @@
       "enabled_for_scoring": true,
       "sampling_config": {
         "dataset_range": [[0, 23302]],
-        "sampling_count": 3302,
+        "sampling_count": 2000,
         "rotation_enabled": true,
-        "rotation_count": 10,
-        "initial_range": [[20000, 23302]]
+        "rotation_count": 10
       }
     },
     "affine:abd-v2": {
@@ -17,10 +16,9 @@
       "enabled_for_scoring": true,
       "sampling_config": {
         "dataset_range": [[0, 23302]],
-        "sampling_count": 3302,
+        "sampling_count": 2000,
         "rotation_enabled": true,
-        "rotation_count": 10,
-        "initial_range": [[20000, 23302]]
+        "rotation_count": 10
       }
     },
     "agentgym:alfworld": {
@@ -30,8 +28,7 @@
         "dataset_range": [[0, 2500]],
         "sampling_count": 1000,
         "rotation_enabled": false,
-        "rotation_count": 0,
-        "initial_range": [[0, 1000]]
+        "rotation_count": 0
       }
     },
     "agentgym:webshop": {
@@ -41,8 +38,7 @@
         "dataset_range": [[0, 500]],
         "sampling_count": 500,
         "rotation_enabled": false,
-        "rotation_count": 0,
-        "initial_range": [[0, 500]]
+        "rotation_count": 0
       }
     },
     "agentgym:sciworld": {
@@ -52,8 +48,7 @@
         "dataset_range": [[0, 2500]],
         "sampling_count": 1000,
         "rotation_enabled": false,
-        "rotation_count": 10,
-        "initial_range": [[0, 1000]]
+        "rotation_count": 0
       }
     },
     "agentgym:textcraft": {
@@ -63,8 +58,7 @@
         "dataset_range": [[0, 582]],
         "sampling_count": 582,
         "rotation_enabled": false,
-        "rotation_count": 0,
-        "initial_range": [[0, 582]]
+        "rotation_count": 0
       }
     },
     "CDE": {
@@ -74,8 +68,7 @@
         "dataset_range": [[0, 8580]],
         "sampling_count": 200,
         "rotation_enabled": true,
-        "rotation_count": 1,
-        "initial_range": [[0, 200]]
+        "rotation_count": 1
       }
     },
     "LGC": {
@@ -83,10 +76,9 @@
       "enabled_for_scoring": true,
       "sampling_config": {
         "dataset_range": [[0, 11600]],
-        "sampling_count": 2000,
+        "sampling_count": 1000,
         "rotation_enabled": true,
-        "rotation_count": 10,
-        "initial_range": [[1000, 1500], [8000, 8500]]
+        "rotation_count": 10
       }
     },
     "MTH": {
@@ -94,10 +86,9 @@
       "enabled_for_scoring": true,
       "sampling_config": {
         "dataset_range": [[0, 21200]],
-        "sampling_count": 2000,
+        "sampling_count": 1000,
         "rotation_enabled": true,
-        "rotation_count": 10,
-        "initial_range": [[1000, 1500], [5000, 5500]]
+        "rotation_count": 10
       }
     },
     "SCI": {
@@ -105,10 +96,9 @@
       "enabled_for_scoring": true,
       "sampling_config": {
         "dataset_range": [[0, 29300]],
-        "sampling_count": 2000,
+        "sampling_count": 1000,
         "rotation_enabled": true,
-        "rotation_count": 10,
-        "initial_range": [[1000, 1500], [10000, 10500]]
+        "rotation_count": 10
       }
     },
     "SWE-PRO": {
@@ -118,8 +108,7 @@
         "dataset_range": [[0, 731]],
         "sampling_count": 20,
         "rotation_enabled": false,
-        "rotation_count": 1,
-        "initial_range": [[0, 20]]
+        "rotation_count": 0
       }
     }
   }

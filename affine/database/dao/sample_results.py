@@ -323,6 +323,70 @@ class SampleResultsDAO(BaseDAO):
         
         return output
     
+    async def get_samples_by_task_ids(
+        self,
+        miner_hotkey: str,
+        model_revision: str,
+        env: str,
+        task_ids: List[int]
+    ) -> List[Dict[str, Any]]:
+        """Get samples for specific task IDs (efficient batch query).
+        
+        Uses Query with FilterExpression for efficient retrieval.
+        Handles large task_id lists by chunking (DynamoDB IN supports max 100 values).
+        
+        Args:
+            miner_hotkey: Miner's hotkey
+            model_revision: Model revision hash
+            env: Environment name
+            task_ids: List of task IDs to query
+            
+        Returns:
+            List of sample dicts
+        """
+        if not task_ids:
+            return []
+        
+        client = get_client()
+        pk = self._make_pk(miner_hotkey, model_revision, env)
+        
+        # DynamoDB IN clause supports max 100 values, so chunk the list
+        chunk_size = 100
+        all_samples = []
+        
+        for i in range(0, len(task_ids), chunk_size):
+            chunk = task_ids[i:i + chunk_size]
+            
+            # Build filter expression for this chunk
+            if len(chunk) == 1:
+                filter_expr = 'task_id = :tid0'
+                expr_values = {':tid0': {'N': str(chunk[0])}}
+            else:
+                # Build IN clause: task_id IN (:tid0, :tid1, ...)
+                placeholders = [f':tid{j}' for j in range(len(chunk))]
+                filter_expr = f"task_id IN ({','.join(placeholders)})"
+                expr_values = {
+                    f':tid{j}': {'N': str(tid)}
+                    for j, tid in enumerate(chunk)
+                }
+            
+            params = {
+                'TableName': self.table_name,
+                'KeyConditionExpression': 'pk = :pk',
+                'FilterExpression': filter_expr,
+                'ExpressionAttributeValues': {
+                    ':pk': {'S': pk},
+                    **expr_values
+                },
+                'ProjectionExpression': 'task_id,score,#ts',
+                'ExpressionAttributeNames': {'#ts': 'timestamp'}
+            }
+            
+            items = await self._query_all_pages(client, params)
+            all_samples.extend([self._deserialize(item) for item in items])
+        
+        return all_samples
+    
     async def delete_samples_by_task_range(
         self,
         miner_hotkey: str,

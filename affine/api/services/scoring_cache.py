@@ -34,8 +34,9 @@ class ScoringCacheManager:
     def __init__(self, config: Optional[CacheConfig] = None):
         self.config = config or CacheConfig()
         
-        # Cache data for scoring (enabled_for_scoring=true environments only)
-        self._data: Dict[str, Any] = {}
+        # Cache data for scoring and sampling environments
+        self._scoring_data: Dict[str, Any] = {}  # enabled_for_scoring
+        self._sampling_data: Dict[str, Any] = {}  # enabled_for_sampling
         self._state = CacheState.EMPTY
         self._lock = asyncio.Lock()
         
@@ -44,6 +45,9 @@ class ScoringCacheManager:
         
         # Background task
         self._refresh_task: Optional[asyncio.Task] = None
+        
+        # UID to key mapping for efficient cleanup (shared)
+        self._uid_to_key: Dict[int, str] = {}
     
     @property
     def state(self) -> CacheState:
@@ -51,7 +55,7 @@ class ScoringCacheManager:
     
     async def warmup(self) -> None:
         """Warm up cache on startup."""
-        logger.info("Warming up scoring cache (enabled_for_scoring environments only)...")
+        logger.info("Warming up scoring cache (scoring and sampling environments)...")
         
         async with self._lock:
             self._state = CacheState.WARMING
@@ -59,20 +63,23 @@ class ScoringCacheManager:
                 await self._full_refresh()
                 self._state = CacheState.READY
                 self._updated_at = int(time.time())
-                logger.info(f"Cache warmed up: {len(self._data)} miners")
+                logger.info(f"Cache warmed up: scoring={len(self._scoring_data)}, sampling={len(self._sampling_data)} miners")
             except Exception as e:
                 logger.error(f"Failed to warm up cache: {e}", exc_info=True)
                 self._state = CacheState.EMPTY
     
-    async def get_data(self) -> Dict[str, Any]:
-        """Get cached scoring data with fallback logic.
+    async def get_data(self, range_type: str = "scoring") -> Dict[str, Any]:
+        """Get cached data with fallback logic.
+        
+        Args:
+            range_type: "scoring" or "sampling"
         
         Non-blocking: Returns cached data immediately when READY or REFRESHING.
         Blocking: Waits for initial warmup when EMPTY or WARMING.
         """
         # Fast path: return cache if ready or refreshing (data can be empty dict)
         if self._state in [CacheState.READY, CacheState.REFRESHING]:
-            return self._data
+            return self._scoring_data if range_type == "scoring" else self._sampling_data
         
         # Slow path: cache not initialized yet
         if self._state == CacheState.EMPTY:
@@ -85,10 +92,10 @@ class ScoringCacheManager:
                         await self._full_refresh()
                         self._state = CacheState.READY
                         self._updated_at = int(time.time())
-                        return self._data
+                        return self._scoring_data if range_type == "scoring" else self._sampling_data
                     except Exception as e:
                         self._state = CacheState.EMPTY
-                        raise RuntimeError(f"Failed to compute scoring data: {e}") from e
+                        raise RuntimeError(f"Failed to compute cache data: {e}") from e
         
         # Warming in progress - wait and recheck
         if self._state == CacheState.WARMING:
@@ -96,14 +103,14 @@ class ScoringCacheManager:
                 await asyncio.sleep(1)
                 # Recheck state - may have changed to READY
                 if self._state == CacheState.READY:
-                    return self._data
+                    return self._scoring_data if range_type == "scoring" else self._sampling_data
             # Timeout - return whatever we have
             logger.warning("Cache warming timeout, returning current data")
-            return self._data
+            return self._scoring_data if range_type == "scoring" else self._sampling_data
         
         # Fallback: return any available data (should not reach here)
         logger.warning(f"Returning cache in unexpected state (state={self._state})")
-        return self._data
+        return self._scoring_data if range_type == "scoring" else self._sampling_data
     
     async def start_refresh_loop(self) -> None:
         """Start background refresh loop."""
@@ -176,133 +183,204 @@ class ScoringCacheManager:
         previous_miner_keys = getattr(self, '_previous_miner_keys', set())
         removed_miners = previous_miner_keys - current_miner_keys
         
-        # 3. Remove invalid miner cache
+        # 3. Remove invalid miner cache (from both scoring and sampling)
         if removed_miners:
             for hotkey, revision in removed_miners:
                 key = f"{hotkey}#{revision}"
-                if key in self._data:
-                    del self._data[key]
-                    logger.info(f"Removed cache for invalid miner {hotkey[:8]}...#{revision[:8]}...")
+                
+                # Find and remove UID alias
+                uid_to_remove = None
+                for uid, k in list(self._uid_to_key.items()):
+                    if k == key:
+                        uid_to_remove = uid
+                        break
+                
+                # Clean up UID alias from both caches
+                if uid_to_remove is not None:
+                    uid_str = str(uid_to_remove)
+                    if uid_str in self._scoring_data:
+                        del self._scoring_data[uid_str]
+                    if uid_str in self._sampling_data:
+                        del self._sampling_data[uid_str]
+                    del self._uid_to_key[uid_to_remove]
+                
+                # Remove main entry from both caches
+                if key in self._scoring_data:
+                    del self._scoring_data[key]
+                if key in self._sampling_data:
+                    del self._sampling_data[key]
+                    
+                logger.info(f"Removed cache for invalid miner {hotkey[:8]}...#{revision[:8]}... (including UID alias)")
         
         # 4. Get environment configurations
         environments = await system_config_dao.get_param_value('environments', {})
         
         if not environments:
-            self._data = {}
+            self._scoring_data = {}
+            self._sampling_data = {}
             logger.info("Full refresh completed: no environments configured")
             return
         
         if not valid_miners:
-            self._data = {}
+            self._scoring_data = {}
+            self._sampling_data = {}
             logger.info("Full refresh completed: no valid miners")
             return
         
-        # 5. Update cache for each miner+env combination
+        # 5. Initialize all miner entries first
         for miner in valid_miners:
             hotkey = miner['hotkey']
             revision = miner['revision']
             key = f"{hotkey}#{revision}"
             uid = miner['uid']
             
-            # Initialize miner entry
-            if key not in self._data:
-                self._data[key] = {
-                    'hotkey': hotkey,
-                    'model_revision': revision,
-                    'model_repo': miner.get('model'),
-                    'first_block': miner.get('first_block'),
-                    'env': {}
-                }
+            # Initialize miner entry in both caches
+            for cache_data in [self._scoring_data, self._sampling_data]:
+                if key not in cache_data:
+                    cache_data[key] = {
+                        'hotkey': hotkey,
+                        'model_revision': revision,
+                        'model_repo': miner.get('model'),
+                        'first_block': miner.get('first_block'),
+                        'env': {}
+                    }
             
             # For backward compatibility, also use UID as key
-            self._data[str(uid)] = self._data[key]
-            
-            # Only update cache for enabled_for_scoring environments
-            for env_name, env_config in environments.items():
-                if env_config.get('enabled_for_scoring'):
-                    await self._update_miner_env_cache(
-                        sample_dao=sample_dao,
-                        miner_key=key,
-                        miner_info=miner,
-                        env=env_name,
-                        env_config=env_config
-                    )
+            self._uid_to_key[uid] = key
+            self._scoring_data[str(uid)] = self._scoring_data[key]
+            self._sampling_data[str(uid)] = self._sampling_data[key]
         
-        # 6. Update miner tracking
+        # 6. Build concurrent query tasks for ALL miner×env combinations
+        async def query_and_populate(miner: dict, env_name: str, env_config: dict):
+            """Query a single miner×env and populate caches."""
+            hotkey = miner['hotkey']
+            revision = miner['revision']
+            key = f"{hotkey}#{revision}"
+            
+            enabled_for_scoring = env_config.get('enabled_for_scoring', False)
+            enabled_for_sampling = env_config.get('enabled_for_sampling', False)
+            
+            if not enabled_for_scoring and not enabled_for_sampling:
+                return
+            
+            # Query once
+            env_cache_data = await self._query_miner_env_data(
+                sample_dao=sample_dao,
+                miner_key=key,
+                miner_info=miner,
+                env=env_name,
+                env_config=env_config
+            )
+            
+            # Populate both caches if needed
+            if enabled_for_scoring:
+                self._scoring_data[key]['env'][env_name] = env_cache_data
+            if enabled_for_sampling:
+                self._sampling_data[key]['env'][env_name] = env_cache_data
+        
+        # Build all tasks
+        tasks = []
+        for miner in valid_miners:
+            for env_name, env_config in environments.items():
+                tasks.append(query_and_populate(miner, env_name, env_config))
+        
+        # Execute ALL miner×env queries concurrently
+        logger.info(f"Starting concurrent refresh for {len(tasks)} miner×env combinations...")
+        await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # 7. Update miner tracking
         self._previous_miner_keys = current_miner_keys
         
-        # Log statistics
+        # 8. Log statistics
         elapsed = time.time() - start_time
-        combo_count = len(valid_miners) * len(environments)
+        enabled_envs = sum(
+            1 for e in environments.values()
+            if e.get('enabled_for_scoring') or e.get('enabled_for_sampling')
+        )
+        combo_count = len(valid_miners) * enabled_envs
+        throughput = combo_count / elapsed if elapsed > 0 else 0
         logger.info(
             f"Full refresh completed: {len(valid_miners)} miners, "
-            f"{len(environments)} environments, "
+            f"{enabled_envs}/{len(environments)} enabled environments, "
             f"{combo_count} miner×env combinations, "
-            f"elapsed={elapsed:.2f}s"
+            f"elapsed={elapsed:.2f}s, "
+            f"throughput={throughput:.1f} combos/sec"
         )
     
-    async def _update_miner_env_cache(
+    async def _query_miner_env_data(
         self,
         sample_dao,
         miner_key: str,
         miner_info: dict,
         env: str,
         env_config: dict
-    ):
-        """Incremental update for single miner+env cache.
+    ) -> dict:
+        """Query and build cache data for a single miner+env combination.
         
-        Strategy:
-        1. Get target task IDs from sampling_config or ranges
-        2. Compare with current cache
-        3. Query new task IDs
-        4. Remove obsolete task IDs
+        Returns:
+            Cache data dict with samples and statistics
+        
+        OPTIMIZED Strategy (Fixes AWS signature expiration):
+        1. Get target task IDs from sampling_list
+        2. Use get_samples_by_task_ids() for efficient batch query
+        3. Merge with cached data
+        
+        Performance:
+        - Before: 1 Query (get completed IDs) + N GetItem calls (N = missing count)
+        - After: ~N/100 Queries (batch query with FilterExpression IN clause)
+        - Avoids AWS signature expiration (5 min timeout)
         """
         from affine.core.sampling_list import get_task_id_set_from_config
         
         hotkey = miner_info['hotkey']
         revision = miner_info['revision']
         
-        # 1. Get target task IDs (prioritize sampling_list, fallback to ranges)
+        # 1. Get target task IDs
         target_task_ids = get_task_id_set_from_config(env_config)
         
         if not target_task_ids:
-            return
+            return {
+                'samples': [],
+                'total_count': 0,
+                'completed_count': 0,
+                'missing_task_ids': [],
+                'completeness': 0.0
+            }
         
-        # 2. Get current cache
-        current_cache = self._data[miner_key]['env'].get(env, {})
+        # 2. Get current cached samples
+        current_cache = {}
+        if miner_key in self._scoring_data and env in self._scoring_data[miner_key]['env']:
+            current_cache = self._scoring_data[miner_key]['env'][env]
+        elif miner_key in self._sampling_data and env in self._sampling_data[miner_key]['env']:
+            current_cache = self._sampling_data[miner_key]['env'][env]
+        
         current_samples = current_cache.get('samples', [])
-        current_task_ids = {s['task_id'] for s in current_samples}
+        cached_task_ids = {s['task_id'] for s in current_samples}
         
-        # 3. Calculate differences
-        added_task_ids = target_task_ids - current_task_ids
-        removed_task_ids = current_task_ids - target_task_ids
+        # 3. Calculate what to query and what to remove
+        need_query = target_task_ids - cached_task_ids
+        obsolete_task_ids = cached_task_ids - target_task_ids
         
-        # 4. Query new task IDs
-        new_samples = []
-        for task_id in added_task_ids:
-            try:
-                sample = await sample_dao.get_sample_by_task_id(
-                    miner_hotkey=hotkey,
-                    model_revision=revision,
-                    env=env,
-                    task_id=str(task_id),
-                    include_extra=False
-                )
-                if sample:
-                    new_samples.append({
-                        'task_id': task_id,
-                        'score': sample['score'],
-                        'task_uuid': sample['timestamp'],
-                        'timestamp': sample['timestamp']
-                    })
-            except Exception as e:
-                logger.debug(f"Failed to query sample {env}/{task_id} for {hotkey[:8]}...: {e}")
+        # 4. Use efficient batch query for missing task IDs
+        # Sort task_ids for better DynamoDB scan performance (data is sorted by SK)
+        if need_query:
+            new_samples = await sample_dao.get_samples_by_task_ids(
+                miner_hotkey=hotkey,
+                model_revision=revision,
+                env=env,
+                task_ids=sorted(list(need_query))
+            )
+        else:
+            new_samples = []
         
-        # 5. Remove obsolete task IDs
-        updated_samples = [
-            s for s in current_samples
-            if s['task_id'] not in removed_task_ids
-        ]
+        # 5. Remove obsolete task IDs from cache
+        if obsolete_task_ids:
+            updated_samples = [
+                s for s in current_samples
+                if s['task_id'] not in obsolete_task_ids
+            ]
+        else:
+            updated_samples = current_samples.copy()
         
         # 6. Merge new samples
         updated_samples.extend(new_samples)
@@ -312,15 +390,24 @@ class ScoringCacheManager:
         completed_count = len(updated_samples)
         completeness = completed_count / expected_count if expected_count > 0 else 0.0
         
-        completed_task_ids = {s['task_id'] for s in updated_samples}
-        missing_task_ids = sorted(list(target_task_ids - completed_task_ids))[:100]
+        final_completed_ids = {s['task_id'] for s in updated_samples}
+        final_missing_ids = sorted(list(target_task_ids - final_completed_ids))[:100]
         
-        # 8. Update cache
-        self._data[miner_key]['env'][env] = {
+        # Log query statistics (only when there's actual work)
+        if need_query or obsolete_task_ids:
+            logger.debug(
+                f"Cache update for {hotkey[:8]}.../{env}: "
+                f"target={len(target_task_ids)}, "
+                f"queried={len(need_query)}, found={len(new_samples)}, "
+                f"removed={len(obsolete_task_ids)}, completeness={completeness:.2%}"
+            )
+        
+        # 8. Return cache data (caller will populate caches)
+        return {
             'samples': updated_samples,
             'total_count': expected_count,
             'completed_count': completed_count,
-            'missing_task_ids': missing_task_ids,
+            'missing_task_ids': final_missing_ids,
             'completeness': round(completeness, 4)
         }
     
@@ -341,6 +428,11 @@ async def refresh_cache_loop() -> None:
     await _cache_manager.start_refresh_loop()
 
 
-async def get_cached_data() -> Dict[str, Any]:
-    """Get cached scoring data (enabled_for_scoring environments only)."""
-    return await _cache_manager.get_data()
+async def get_cached_data(range_type: str = "scoring") -> Dict[str, Any]:
+    """Get cached data.
+    
+    Args:
+        range_type: "scoring" for enabled_for_scoring environments,
+                   "sampling" for enabled_for_sampling environments
+    """
+    return await _cache_manager.get_data(range_type=range_type)

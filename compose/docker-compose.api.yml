@@ -8,6 +8,8 @@ services:
       - /var/log/affine/api:/var/log/affine/api
     ports:
       - "8000:8000"
+    mem_reservation: "8g"
+    mem_limit: "16g"
     environment:
       - API_HOST=0.0.0.0
       - API_SERVICES_ENABLED=false
@@ -21,7 +23,7 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
-    command: ["-v", "servers", "api"]
+    command: ["-vv", "servers", "api"]
 
   watchtower:
     image: nickfedor/watchtower
