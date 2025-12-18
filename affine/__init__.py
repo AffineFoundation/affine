@@ -38,7 +38,6 @@ from affine.core.environments import (
     BABYAI_factory as BABYAI,
     SCIWORLD_factory as SCIWORLD,
     TEXTCRAFT_factory as TEXTCRAFT,
-    TEXTCRAFT_factory as TEXTCRAFT,
     CDE_factory as CDE,
     LGC_factory as LGC,
     MTH_factory as MTH,
