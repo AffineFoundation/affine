@@ -12,6 +12,7 @@ from typing import Optional, Dict, Any
 from affine.core.setup import logger
 import aiohttp
 import asyncio
+from affine.utils.errors import NetworkError, ApiResponseError
 
 
 class GlobalSessionManager:
@@ -150,7 +151,7 @@ class APIClient:
         endpoint: str,
         params: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Any:
         """Make GET request to API endpoint.
         
         Args:
@@ -159,34 +160,30 @@ class APIClient:
             headers: Optional request headers
         
         Returns:
-            Response data dict on success, None on error
+            Response data dict on success
+            
+        Raises:
+            NetworkError: On network/connection errors
+            ApiResponseError: On non-2xx response or invalid JSON
         """
         
         url = f"{self.base_url}{endpoint}"
         logger.debug(f"GET {url}")
 
-        async with self._session.get(url, params=params, headers=headers) as response:
-            if response.status == 200:
-                data = await response.json()
-                result = {
-                    "success": True,
-                    "data": data
-                }
-                return data
-            
-            else:
+        try:
+            async with self._session.get(url, params=params, headers=headers) as response:
+                if response.status >= 400:
+                    body = await response.text()
+                    raise ApiResponseError(f"HTTP {response.status}: {body[:200]}", response.status, url, body)
+                
                 try:
-                    error_detail = await response.json()
-                    error_msg = error_detail.get("detail", str(error_detail))
-                except:
-                    error_msg = await response.text()
-
-                result = {
-                    "success": False,
-                    "status_code": response.status,
-                    "error": error_msg
-                }
-                return result
+                    return await response.json()
+                except Exception:
+                    raw = await response.text()
+                    raise ApiResponseError(f"Invalid JSON response: {raw[:200]}", response.status, url, raw)
+                    
+        except aiohttp.ClientError as e:
+            raise NetworkError(f"Network error during GET {url}: {e}", url, e)
 
     
     async def post(
@@ -196,7 +193,7 @@ class APIClient:
         params: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
         output_json: bool = False,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Any:
         """Make POST request to API endpoint.
         
         Args:
@@ -207,7 +204,11 @@ class APIClient:
             output_json: Whether to print JSON response to stdout
         
         Returns:
-            Response data dict on success, raises exception on error
+            Response data dict on success
+            
+        Raises:
+            NetworkError: On network/connection errors
+            ApiResponseError: On non-2xx response or invalid JSON
         """
         
         url = f"{self.base_url}{endpoint}"
@@ -215,44 +216,37 @@ class APIClient:
         
         try:
             async with self._session.post(url, json=json, params=params, headers=headers) as response:
-                if response.status in (200, 201):
-                    response_data = await response.json()
-                    result = {
-                        "success": True,
-                        "data": response_data
-                    }
-                    if output_json:
-                        print(json.dumps(result, indent=2, ensure_ascii=False))
-                    return response_data
-                
-                else:
-                    # Try to parse JSON error response
+                if response.status >= 400:
+                    body = await response.text()
+                    # Try to parse JSON error details if possible
                     try:
-                        error_detail = await response.json()
-                        error_msg = error_detail.get("detail", str(error_detail))
+                        import json as json_lib
+                        error_json = json_lib.loads(body)
+                        msg = error_json.get("detail", str(error_json))
                     except:
-                        # Fall back to text response
-                        error_msg = await response.text()
+                        msg = body[:200]
                     
-                    result = {
-                        "success": False,
-                        "status_code": response.status,
-                        "error": error_msg
-                    }
                     if output_json:
-                        print(json.dumps(result, indent=2, ensure_ascii=False))
+                         print(f'{{"success": false, "error": "{msg}"}}')
+                    
+                    raise ApiResponseError(f"HTTP {response.status}: {msg}", response.status, url, body)
+                
+                try:
+                    data = await response.json()
+                    if output_json:
+                        import json as json_lib
+                        print(json_lib.dumps({"success": True, "data": data}, indent=2, ensure_ascii=False))
+                    return data
+                except Exception:
+                    raw = await response.text()
+                    if output_json:
+                        print(f'{{"success": false, "error": "Invalid JSON"}}')
+                    raise ApiResponseError(f"Invalid JSON response: {raw[:200]}", response.status, url, raw)
 
-                    # Raise exception for error status
-                    raise Exception(f"HTTP {response.status}: {error_msg}")
-        
-        except Exception as e:
-            result = {
-                "success": False,
-                "error": str(e)
-            }
+        except aiohttp.ClientError as e:
             if output_json:
-                print(json.dumps(result, indent=2, ensure_ascii=False))
-            raise
+                 print(f'{{"success": false, "error": "{str(e)}"}}')
+            raise NetworkError(f"Network error during POST {url}: {e}", url, e)
 
 
     async def put(
@@ -261,7 +255,7 @@ class APIClient:
         json: Optional[Dict[str, Any]] = None,
         params: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Any:
         """Make PUT request to API endpoint.
         
         Args:
@@ -277,20 +271,23 @@ class APIClient:
         url = f"{self.base_url}{endpoint}"
         logger.debug(f"PUT {url}")
 
-        async with self._session.put(url, json=json, params=params, headers=headers) as response:
-            if response.status in (200, 201, 204):
+        try:
+            async with self._session.put(url, json=json, params=params, headers=headers) as response:
+                if response.status >= 400:
+                    body = await response.text()
+                    raise ApiResponseError(f"HTTP {response.status}: {body[:200]}", response.status, url, body)
+                
                 if response.status == 204:
                     return {}
-                response_data = await response.json()
-                return response_data
-            else:
-                try:
-                    error_detail = await response.json()
-                    error_msg = error_detail.get("detail", str(error_detail))
-                except:
-                    error_msg = await response.text()
                 
-                raise Exception(f"HTTP {response.status}: {error_msg}")
+                try:
+                    return await response.json()
+                except Exception:
+                    raw = await response.text()
+                    raise ApiResponseError(f"Invalid JSON response: {raw[:200]}", response.status, url, raw)
+
+        except aiohttp.ClientError as e:
+            raise NetworkError(f"Network error during PUT {url}: {e}", url, e)
         
 
     async def get_chute_info(self, chute_id: str) -> Optional[Dict]:
