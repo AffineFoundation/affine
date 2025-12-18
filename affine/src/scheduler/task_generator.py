@@ -70,71 +70,57 @@ class TaskGeneratorService:
         """Load configuration from SystemConfig database."""
         try:
             sampling_envs = await self.system_config_dao.get_sampling_environments()
-            env_ranges = await self.system_config_dao.get_env_task_ranges()
+            environments = await self.system_config_dao.get_param_value('environments', {})
             
             self._config_cache = {
                 'sampling_envs': sampling_envs,
-                'env_ranges': env_ranges
+                'env_configs': environments
             }
             
             logger.info(
-                f"Loaded config from database, {len(sampling_envs)} environments: {sampling_envs}, "
-                f"range configs: {env_ranges}"
+                f"Loaded config from database, {len(sampling_envs)} environments: {sampling_envs}"
             )
         except Exception as e:
             logger.warning(f"Failed to load config from database: {e}, using defaults")
             self._config_cache = {
                 'sampling_envs': [],
-                'env_ranges': {}
+                'env_configs': {}
             }
     
     async def get_task_id_set(self, env: str) -> Set[int]:
-        """Get the complete set of task IDs needed for both sampling and scoring.
+        """Get the complete set of task IDs for sampling.
         
-        This method combines both sampling_range and scoring_range (multi-range format)
-        to ensure all tasks needed for both operations are generated. The ranges are
-        now in 2D array format: [[start1, end1], [start2, end2], ...]
+        Uses sampling_list from sampling_config.
         
         Args:
             env: Environment name
             
         Returns:
-            Set of task IDs covering both sampling and scoring ranges
+            Set of task IDs for this environment
             
         Raises:
             ValueError: If environment not found in SystemConfig
         """
-        from affine.database.dao.system_config import ranges_to_task_id_set
+        from affine.core.sampling_list import get_task_id_set_from_config
         
         # Load config from database if not cached
         if self._config_cache is None:
             await self._load_config_from_db()
         
-        # Get from SystemConfig
-        env_ranges = self._config_cache.get('env_ranges', {})
-        if env in env_ranges:
-            sampling_ranges = env_ranges[env].get('sampling_range', [[0, 0]])
-            scoring_ranges = env_ranges[env].get('scoring_range', [[0, 0]])
-            
-            # Convert multi-range to task ID sets
-            sampling_ids = ranges_to_task_id_set(sampling_ranges)
-            scoring_ids = ranges_to_task_id_set(scoring_ranges)
-            
-            # Union of both sets
-            all_task_ids = sampling_ids | scoring_ids
-            
-            logger.debug(
-                f"Task IDs for {env}: sampling={sampling_ranges} ({len(sampling_ids)} tasks), "
-                f"scoring={scoring_ranges} ({len(scoring_ids)} tasks), "
-                f"total={len(all_task_ids)} tasks"
+        # Get environment config
+        env_config = self._config_cache.get('env_configs', {}).get(env)
+        if not env_config:
+            raise ValueError(
+                f"Environment '{env}' not found in SystemConfig. "
+                f"Please load configuration using 'python -m affine.database.cli load-config'"
             )
-            return all_task_ids
         
-        # Environment not configured
-        raise ValueError(
-            f"Environment '{env}' not found in SystemConfig. "
-            f"Please load configuration using 'python -m affine.database.cli load-config'"
+        # Get task IDs from config (uses sampling_list)
+        task_ids = get_task_id_set_from_config(env_config)
+        logger.debug(
+            f"Task IDs for {env}: {len(task_ids)} tasks from sampling_list"
         )
+        return task_ids
     
     async def generate_tasks_for_miner_env(
         self,
@@ -145,9 +131,6 @@ class TaskGeneratorService:
         """
         Generate missing tasks for a specific miner and environment.
         
-        Prioritizes tasks within scoring_range over sampling_range tasks,
-        as scoring tasks are more important for miner evaluation.
-        
         Args:
             miner: Miner information
             env: Environment name
@@ -156,7 +139,7 @@ class TaskGeneratorService:
         Returns:
             Number of tasks created
         """
-        # Get expected task_ids (union of sampling and scoring ranges)
+        # Get expected task_ids from sampling_list
         expected_task_ids = await self.get_task_id_set(env)
         
         # Get completed task_ids from sample results
@@ -192,23 +175,9 @@ class TaskGeneratorService:
                 f"pending={len(pending_task_ids)} >= batch_size={max_tasks_per_batch}"
             )
             return 0
-
         
-        # Prioritize scoring_range tasks over sampling_range tasks
-        from affine.database.dao.system_config import ranges_to_task_id_set
-        env_ranges = self._config_cache.get('env_ranges', {})
-        scoring_task_ids = set()
-        
-        if env in env_ranges:
-            scoring_ranges = env_ranges[env].get('scoring_range', [[0, 0]])
-            scoring_task_ids = ranges_to_task_id_set(scoring_ranges)
-        
-        # Split missing tasks into scoring and non-scoring
-        missing_scoring = sorted(missing_task_ids & scoring_task_ids)
-        missing_sampling_only = sorted(missing_task_ids - scoring_task_ids)
-        
-        # Prioritize scoring tasks first, then sampling-only tasks
-        tasks_to_create = (missing_scoring + missing_sampling_only)[:max_tasks_per_batch]
+        # Select tasks to create (up to max_tasks_per_batch)
+        tasks_to_create = sorted(missing_task_ids)[:max_tasks_per_batch]
         
         # Prepare task data
         task_list = [

@@ -104,7 +104,9 @@ def _setup_file_handler(component: str, level: int) -> logging.Handler:
     
     Log directory structure: /var/log/affine/{component}/
     Log file: {component}.log
-    Rotation policy: every 3 days based on absolute dates, keep 20 backups
+    Rotation policy: every 3 days based on absolute dates
+    - API component: keep 0 backups (only current 3-day period)
+    - Other components: keep 20 backups (60 days)
     File suffix format: %Y-%m-%d
     
     The rotation is based on absolute date calculations (days since epoch),
@@ -115,11 +117,13 @@ def _setup_file_handler(component: str, level: int) -> logging.Handler:
     
     log_file = log_dir / f"{component}.log"
     
+    backup_count = 1 if component == "api" else 10
+    
     # Create custom handler with absolute 3-day rotation
     handler = AbsoluteDayRotatingFileHandler(
         log_file,
         interval_days=3,
-        backupCount=20,
+        backupCount=backup_count,
         encoding="utf-8",
         utc=True  # Use UTC time for consistent rotation across timezones
     )

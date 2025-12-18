@@ -46,7 +46,8 @@ class Stage1Collector:
         Args:
             scoring_data: Response from /api/v1/samples/scoring endpoint
                 Format: {
-                    "uid": {
+                    "hotkey#revision": {
+                        "uid": 5,
                         "hotkey": "5...",
                         "model_revision": "...",
                         "env": {
@@ -93,11 +94,17 @@ class Stage1Collector:
         valid_count = 0
         invalid_count = 0
         
-        for uid_str, miner_entry in scoring_data.items():
+        for key, miner_entry in scoring_data.items():
+            # Extract UID from miner_entry
+            uid = miner_entry.get('uid')
+            if uid is None:
+                logger.warning(f"Missing uid field in miner_entry for key {key}")
+                continue
+            
             try:
-                uid = int(uid_str)
+                uid = int(uid)
             except (ValueError, TypeError):
-                logger.warning(f"Invalid UID format: {uid_str}")
+                logger.warning(f"Invalid UID value: {uid} for key {key}")
                 continue
 
             # Extract miner metadata
