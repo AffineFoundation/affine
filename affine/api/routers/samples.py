@@ -206,7 +206,7 @@ async def get_task_pool(
     Returns:
     - sampled_task_ids: Tasks already completed and in sample_results
     - pool_task_ids: Tasks currently in the task pool (pending/assigned)
-    - missing_task_ids: Tasks not yet sampled and not in pool (based on sampling_range)
+    - missing_task_ids: Tasks not yet sampled and not in pool (based on sampling_list)
     """
     try:
         environments = await config_dao.get_param_value('environments', default={})
@@ -246,24 +246,23 @@ async def get_task_pool(
         hotkey = miner['hotkey']
         model_revision = miner['revision']
         
-        # Get sampling ranges for this environment (multi-range format)
-        from affine.database.dao.system_config import ranges_to_task_id_set
+        # Get task IDs from sampling_list or fallback to ranges
+        from affine.core.sampling_list import get_task_id_set_from_config
         
-        env_ranges = await config_dao.get_env_task_ranges()
-        if env not in env_ranges:
+        environments = await config_dao.get_param_value('environments', default={})
+        if env not in environments:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Environment '{env}' not configured in system config"
             )
         
-        env_config = env_ranges[env]
-        sampling_ranges = env_config.get('sampling_range', [[0, 0]])
-        scoring_ranges = env_config.get('scoring_range', [[0, 0]])
+        env_config = environments[env]
         
-        # Use union of sampling and scoring ranges (same as task generator logic)
-        sampling_ids = ranges_to_task_id_set(sampling_ranges)
-        scoring_ids = ranges_to_task_id_set(scoring_ranges)
-        all_task_ids = sampling_ids | scoring_ids
+        # Get all task IDs (prioritize sampling_list, fallback to ranges)
+        all_task_ids = get_task_id_set_from_config(env_config)
+        
+        # Get sampling config
+        sampling_config = env_config.get('sampling_config', {})
         
         # Get already sampled task_ids from sample_results
         sampled_task_ids = await sample_dao.get_completed_task_ids(
@@ -294,8 +293,7 @@ async def get_task_pool(
             "hotkey": hotkey,
             "model_revision": model_revision,
             "env": env,
-            "sampling_range": sampling_ranges,
-            "scoring_range": scoring_ranges,
+            "sampling_config": sampling_config,
             "total_tasks": len(all_task_ids),
             "sampled_count": len(sampled_task_ids),
             "pool_count": len(pool_task_ids),

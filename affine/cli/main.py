@@ -305,6 +305,23 @@ def get_rank(ctx):
     miner_get_rank.main(standalone_mode=False)
 
 
+@cli.command("get-envs", context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.pass_context
+def get_envs(ctx):
+    """Query current environment configurations.
+    
+    Returns all environment configurations including sampling settings,
+    rotation settings, and enabled flags.
+    
+    Example:
+        af get-envs
+    """
+    from affine.src.miner.main import get_envs as miner_get_envs
+    
+    sys.argv = ["get-envs"] + ctx.args
+    miner_get_envs.main(standalone_mode=False)
+
+
 @cli.command("miner-deploy", context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
 @click.pass_context
 def miner_deploy(ctx):

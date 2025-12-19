@@ -23,6 +23,7 @@ from affine.src.miner.commands import (
     get_scores_command,
     get_score_command,
     get_pool_command,
+    get_envs_command,
 )
 from affine.src.miner.rank import get_rank_command
 
@@ -169,6 +170,19 @@ def get_rank():
         af get-rank
     """
     asyncio.run(get_rank_command())
+
+
+@click.command("get-envs")
+def get_envs():
+    """Query current environment configurations.
+    
+    Returns all environment configurations including sampling settings,
+    rotation settings, and enabled flags.
+    
+    Example:
+        af get-envs
+    """
+    asyncio.run(get_envs_command())
 
 
 @click.command("deploy")

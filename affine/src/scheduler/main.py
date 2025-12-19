@@ -15,6 +15,7 @@ from affine.database.dao.sample_results import SampleResultsDAO
 from affine.database.dao.task_pool import TaskPoolDAO
 from .task_generator import TaskGeneratorService
 from .scheduler import SchedulerService
+from .sampling_scheduler import SamplingScheduler
 
 
 async def run_service(task_interval: int, cleanup_interval: int, max_tasks: int):
@@ -40,8 +41,9 @@ async def run_service(task_interval: int, cleanup_interval: int, max_tasks: int)
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, lambda s=sig: handle_shutdown(s))
     
-    # Initialize task generator and scheduler
+    # Initialize task generator and schedulers
     scheduler = None
+    sampling_scheduler = None
     try:
         # Create DAOs
         sample_results_dao = SampleResultsDAO()
@@ -67,6 +69,11 @@ async def run_service(task_interval: int, cleanup_interval: int, max_tasks: int)
             f"cleanup_interval={cleanup_interval}s, max_tasks={max_tasks})"
         )
         
+        # Create and start SamplingScheduler
+        sampling_scheduler = SamplingScheduler()
+        await sampling_scheduler.start()
+        logger.info("SamplingScheduler started for dynamic task rotation")
+        
         # Wait for shutdown signal
         await shutdown_event.wait()
         
@@ -75,6 +82,13 @@ async def run_service(task_interval: int, cleanup_interval: int, max_tasks: int)
         raise
     finally:
         # Cleanup
+        if sampling_scheduler:
+            try:
+                await sampling_scheduler.stop()
+                logger.info("SamplingScheduler stopped")
+            except Exception as e:
+                logger.error(f"Error stopping SamplingScheduler: {e}")
+        
         if scheduler:
             try:
                 await scheduler.stop()

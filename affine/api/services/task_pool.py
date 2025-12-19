@@ -750,8 +750,9 @@ class TaskPoolManager:
                 }
             
             # Status is 'pending', will retry (assigned_at is None for pending)
+            # Remove from cache since pending tasks should not be cached
             async with self._cache_lock:
-                self._uuid_cache[task_uuid] = (updated_task['pk'], updated_task['sk'], 0)
+                self._uuid_cache.pop(task_uuid, None)
             
             logger.info(
                 f"Task {task_uuid} will retry ({updated_task['retry_count']}/{updated_task['max_retries']})"
