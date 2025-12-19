@@ -37,6 +37,7 @@ import os
 import subprocess
 import click
 from affine.core.setup import setup_logging, logger
+from affine.config import config as affine_config
 
 # Check if admin commands should be visible
 SHOW_ADMIN_COMMANDS = os.getenv("AFFINE_SHOW_ADMIN_COMMANDS", "").lower() in ("1", "true", "yes")
@@ -48,7 +49,12 @@ SHOW_ADMIN_COMMANDS = os.getenv("AFFINE_SHOW_ADMIN_COMMANDS", "").lower() in ("1
     count=True,
     help="Increase logging verbosity (-v=INFO, -vv=DEBUG, -vvv=TRACE)"
 )
-def cli(verbosity):
+@click.option(
+    "--profile",
+    help="Active configuration profile",
+    required=False
+)
+def cli(verbosity, profile):
     """
     Affine CLI - Unified interface for all Affine components.
     
@@ -58,6 +64,9 @@ def cli(verbosity):
     # -v -> 1, -vv -> 2, -vvv -> 3
     verbosity_level = min(verbosity, 3)
     setup_logging(verbosity_level)
+    
+    if profile:
+        affine_config.set_cli_profile(profile)
 
 
 # ============================================================================
@@ -325,6 +334,49 @@ def miner_deploy(ctx):
 from affine.database.cli import db
 db.hidden = not SHOW_ADMIN_COMMANDS
 cli.add_command(db)
+
+
+# ============================================================================
+# Configuration Commands
+# ============================================================================
+
+@cli.group()
+def config():
+    """Manage configuration profiles."""
+    pass
+
+@config.command("list")
+def config_list():
+    """List available profiles."""
+    profiles = affine_config.get_all_profiles()
+    active = affine_config.get_profile_name()
+    for name in profiles:
+        prefix = "* " if name == active else "  "
+        click.echo(f"{prefix}{name}")
+
+@config.command("use")
+@click.argument("profile")
+def config_use(profile):
+    """Set active profile."""
+    affine_config.set_active_profile(profile)
+    click.echo(f"Active profile set to '{profile}'")
+
+@config.command("set")
+@click.argument("profile")
+@click.argument("key_value")
+def config_set(profile, key_value):
+    """Set profile value. Format: key=value"""
+    if "=" not in key_value:
+        click.echo("Error: Invalid format. Use key=value", err=True)
+        sys.exit(1)
+    
+    key, value = key_value.split("=", 1)
+    try:
+        affine_config.set_profile_value(profile, key, value)
+        click.echo(f"Updated profile '{profile}': {key} = {value}")
+    except Exception as e:
+        click.echo(f"Error updating profile: {e}", err=True)
+        sys.exit(1)
 
 
 # ============================================================================
