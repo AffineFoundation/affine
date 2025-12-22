@@ -152,7 +152,7 @@ def validate(ctx):
 # Evaluation Command
 # ============================================================================
 
-from affine.cli.eval import eval_cmd
+from affine.src.miner.eval import eval_cmd
 cli.add_command(eval_cmd, name="eval")
 
 
