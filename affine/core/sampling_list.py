@@ -83,15 +83,16 @@ class SamplingListManager:
     ) -> Tuple[List[int], List[int], List[int]]:
         """Rotate sampling list while maintaining sampling_count size.
         
-        Clean set-based logic:
+        Rotation strategy:
         1. Convert dataset_range to set (supports non-contiguous ranges)
         2. Calculate available = dataset - current
         3. Determine removal/addition counts based on current vs target size
-        4. Skip if insufficient IDs after deduplication
+        4. Remove from the FRONT of the list (old data first)
+        5. Add new data to the END (no sorting to preserve order)
         
         Args:
             env: Environment name
-            current_list: Current sampling list
+            current_list: Current sampling list (order matters)
             dataset_range: Dataset range in [[start, end], ...] format (supports multiple ranges)
             sampling_count: Target sampling list size
             rotation_count: Number of IDs to rotate per cycle
@@ -146,25 +147,25 @@ class SamplingListManager:
             )
             return current_list, [], []
         
-        # Execute removal
+        # Execute removal: Remove from FRONT (old data first)
         if to_remove > 0:
             to_remove = min(to_remove, current_size)
-            removed_ids = random.sample(current_list, to_remove)
-            remaining_set = current_set - set(removed_ids)
+            removed_ids = current_list[:to_remove]  # Remove from front
+            remaining_list = current_list[to_remove:]  # Keep rest in order
         else:
             removed_ids = []
-            remaining_set = current_set
+            remaining_list = current_list[:]
         
-        # Execute addition (recalculate available after removal)
+        # Execute addition: Add to END (recalculate available after removal)
+        remaining_set = set(remaining_list)
         available_for_add = dataset_set - remaining_set
         added_ids = random.sample(list(available_for_add), to_add)
         
-        # Merge and sort
-        new_set = remaining_set | set(added_ids)
-        new_list = sorted(list(new_set))
+        # Merge: Keep order - remaining list + new additions at end
+        new_list = remaining_list + added_ids
         
         logger.info(
-            f"Rotated {env}: removed={len(removed_ids)}, added={len(added_ids)}, "
+            f"Rotated {env}: removed={len(removed_ids)} from front, added={len(added_ids)} to end, "
             f"size: {current_size} -> {len(new_list)} (target={sampling_count})"
         )
         
