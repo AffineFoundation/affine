@@ -554,7 +554,7 @@ async def cmd_delete_samples_by_range(
             )
         else:
             # Delete for all miners in the environment
-            deleted_count = await sample_dao.delete_samples_by_env_and_range(
+            deleted_count = await sample_dao.delete_all_samples_by_task_range(
                 env=env,
                 start_task_id=start_task_id,
                 end_task_id=end_task_id

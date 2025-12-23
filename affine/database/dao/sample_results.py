@@ -461,227 +461,97 @@ class SampleResultsDAO(BaseDAO):
         logger.info(f"Deleted {deleted_count} samples in range [{start_task_id}, {end_task_id})")
         return deleted_count
     
-    async def delete_samples_with_empty_conversation(
+    async def delete_all_samples_by_task_range(
         self,
-        miner_hotkey: str,
-        model_revision: str,
-        env: str
+        env: str,
+        start_task_id: int,
+        end_task_id: int
     ) -> int:
-        """Delete samples where extra.conversation is empty.
+        """Delete all samples within a task_id range for all miners in an environment.
+        
+        This method uses Query (not Scan) for better efficiency:
+        1. Get all miners from miners table (max 256, very fast)
+        2. For each miner, Query their partition for matching samples
+        3. Delete in batches of 25
         
         Args:
-            miner_hotkey: Miner's hotkey
-            model_revision: Model revision hash
             env: Environment name
+            start_task_id: Start of task_id range (inclusive)
+            end_task_id: End of task_id range (exclusive)
             
         Returns:
-            Number of samples deleted
+            Total number of samples deleted
         """
+        from affine.database.dao.miners import MinersDAO
+        
+        logger.info(f"Starting batch deletion for env={env}, range=[{start_task_id}, {end_task_id})")
+        
+        # Step 1: Get all miners (max 256, fast operation)
+        miners_dao = MinersDAO()
+        miners = await miners_dao.get_all_miners()
+        logger.info(f"Found {len(miners)} miners in total")
+        
+        # Step 2: For each miner, query and delete their samples
         client = get_client()
-        pk = self._make_pk(miner_hotkey, model_revision, env)
+        total_deleted = 0
+        batch_size = 25
         
-        # Query all samples for this miner+env
-        params = {
-            'TableName': self.table_name,
-            'KeyConditionExpression': 'pk = :pk',
-            'ExpressionAttributeValues': {
-                ':pk': {'S': pk}
-            }
-        }
-        
-        all_items = await self._query_all_pages(client, params)
-        
-        if not all_items:
-            logger.info(f"No samples found for deletion")
-            return 0
-        
-        # Filter items with empty conversation
-        items_to_delete = []
-        for item_raw in all_items:
-            item = self._deserialize(item_raw)
+        for miner in miners:
+            hotkey = miner.get('hotkey')
+            revision = miner.get('revision')
             
-            # Decompress and check extra.conversation and extra.request.max_round
-            if 'extra_compressed' in item:
+            if not hotkey or not revision:
+                continue
+            
+            pk = self._make_pk(hotkey, revision, env)
+            
+            # Query this miner's partition with task_id filter
+            params = {
+                'TableName': self.table_name,
+                'KeyConditionExpression': 'pk = :pk',
+                'FilterExpression': 'task_id >= :start_id AND task_id < :end_id',
+                'ExpressionAttributeValues': {
+                    ':pk': {'S': pk},
+                    ':start_id': {'N': str(start_task_id)},
+                    ':end_id': {'N': str(end_task_id)}
+                },
+                'ProjectionExpression': 'pk, sk'
+            }
+            
+            # Get all matching items for this miner (paginated)
+            items = await self._query_all_pages(client, params)
+            
+            if not items:
+                continue
+            
+            logger.info(f"Miner {hotkey[:8]}... has {len(items)} samples to delete")
+            
+            # Delete in batches
+            for i in range(0, len(items), batch_size):
+                batch = items[i:i + batch_size]
+                
+                delete_requests = [
+                    {
+                        'DeleteRequest': {
+                            'Key': {
+                                'pk': item['pk'],
+                                'sk': item['sk']
+                            }
+                        }
+                    }
+                    for item in batch
+                ]
+                
                 try:
-                    extra_json = self.decompress_data(item['extra_compressed'])
-                    extra = json.loads(extra_json)
-                    conversation = extra.get('conversation', [])
-                    
-                    # Check deletion conditions
-                    should_delete = False
-                    
-                    # Condition 1: Empty conversation
-                    if not conversation or len(conversation) == 0:
-                        should_delete = True
-                    
-                    # Condition 2: max_round = 10 (only if field exists)
-                    if 'request' in extra and isinstance(extra['request'], dict):
-                        max_round = extra['request'].get('max_round')
-                        if max_round is not None and max_round == 10:
-                            should_delete = True
-                    
-                    if should_delete:
-                        items_to_delete.append({
-                            'pk': item_raw['pk'],
-                            'sk': item_raw['sk']
-                        })
+                    await client.batch_write_item(
+                        RequestItems={
+                            self.table_name: delete_requests
+                        }
+                    )
+                    batch_deleted = len(batch)
+                    total_deleted += batch_deleted
                 except Exception as e:
-                    logger.warning(f"Failed to parse extra for item {item.get('task_id')}: {e}")
+                    logger.error(f"Batch delete failed for {hotkey[:8]}...: {e}")
         
-        if not items_to_delete:
-            logger.info(f"No samples with empty conversation found")
-            return 0
-        
-        logger.info(f"Found {len(items_to_delete)} samples with empty conversation")
-        
-        # Batch delete items
-        deleted_count = 0
-        batch_size = 25
-        
-        for i in range(0, len(items_to_delete), batch_size):
-            batch = items_to_delete[i:i + batch_size]
-            
-            delete_requests = [
-                {
-                    'DeleteRequest': {
-                        'Key': {
-                            'pk': item['pk'],
-                            'sk': item['sk']
-                        }
-                    }
-                }
-                for item in batch
-            ]
-            
-            try:
-                await client.batch_write_item(
-                    RequestItems={
-                        self.table_name: delete_requests
-                    }
-                )
-                deleted_count += len(batch)
-            except Exception as e:
-                logger.error(f"Batch delete failed: {e}")
-        
-        logger.info(f"Deleted {deleted_count} samples with empty conversation")
-        return deleted_count
-    
-    async def delete_all_samples_with_empty_conversation(self) -> int:
-        """Delete all samples with empty conversation across the entire database.
-        
-        Performs a full table scan using GSI and streams deletion with progress logging.
-        
-        Returns:
-            Number of samples deleted
-        """
-        client = get_client()
-        
-        # Use GSI timestamp-index for full table scan
-        params = {
-            'TableName': self.table_name,
-            'IndexName': 'timestamp-index',
-            'KeyConditionExpression': 'gsi_partition = :partition',
-            'ExpressionAttributeValues': {
-                ':partition': {'S': 'SAMPLE'}
-            }
-        }
-        
-        # Stream scan with pagination
-        scanned_count = 0
-        items_to_delete = []
-        last_key = None
-        
-        logger.info("Starting full table scan for samples with empty conversation...")
-        print("Scanning database...")
-        
-        while True:
-            if last_key:
-                params['ExclusiveStartKey'] = last_key
-            
-            response = await client.query(**params)
-            items = response.get('Items', [])
-            
-            # Process batch
-            for item_raw in items:
-                scanned_count += 1
-                item = self._deserialize(item_raw)
-                
-                # Decompress and check extra.conversation and extra.request.max_round
-                if 'extra_compressed' in item:
-                    try:
-                        extra_json = self.decompress_data(item['extra_compressed'])
-                        extra = json.loads(extra_json)
-                        conversation = extra.get('conversation', [])
-                        
-                        # Check deletion conditions
-                        should_delete = False
-                        
-                        # Condition 1: Empty conversation
-                        if not conversation or len(conversation) == 0:
-                            should_delete = True
-                        
-                        # Condition 2: max_round = 10 (only if field exists)
-                        if 'request' in extra and isinstance(extra['request'], dict):
-                            max_round = extra['request'].get('max_round')
-                            if max_round is not None and max_round == 10:
-                                should_delete = True
-                        
-                        if should_delete:
-                            items_to_delete.append({
-                                'pk': item_raw['pk'],
-                                'sk': item_raw['sk']
-                            })
-                    except Exception as e:
-                        logger.warning(f"Failed to parse extra for item {item.get('task_id')}: {e}")
-                
-                # Log progress every 1000 items scanned
-                if scanned_count % 1000 == 0:
-                    print(f"Scanned {scanned_count} samples, found {len(items_to_delete)} invalid samples...")
-            
-            last_key = response.get('LastEvaluatedKey')
-            if not last_key:
-                break
-        
-        print(f"\nScan complete: Scanned {scanned_count} samples, found {len(items_to_delete)} invalid samples")
-        
-        if not items_to_delete:
-            logger.info("No samples with empty conversation found")
-            return 0
-        
-        # Stream deletion with progress logging
-        deleted_count = 0
-        batch_size = 25
-        total_batches = (len(items_to_delete) + batch_size - 1) // batch_size
-        
-        print(f"Starting deletion in {total_batches} batches...")
-        
-        for i in range(0, len(items_to_delete), batch_size):
-            batch = items_to_delete[i:i + batch_size]
-            batch_num = (i // batch_size) + 1
-            
-            delete_requests = [
-                {
-                    'DeleteRequest': {
-                        'Key': {
-                            'pk': item['pk'],
-                            'sk': item['sk']
-                        }
-                    }
-                }
-                for item in batch
-            ]
-            
-            try:
-                await client.batch_write_item(
-                    RequestItems={
-                        self.table_name: delete_requests
-                    }
-                )
-                deleted_count += len(batch)
-                print(f"Batch {batch_num}/{total_batches}: Deleted {len(batch)} samples (total: {deleted_count})")
-            except Exception as e:
-                logger.error(f"Batch delete failed at batch {batch_num}: {e}")
-        
-        logger.info(f"Successfully deleted {deleted_count} samples with empty conversation")
-        return deleted_count
-
+        logger.info(f"Completed deletion: {total_deleted} samples deleted for env={env} in range [{start_task_id}, {end_task_id})")
+        return total_deleted

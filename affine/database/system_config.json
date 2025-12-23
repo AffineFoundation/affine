@@ -66,7 +66,7 @@
       "enabled_for_scoring": true,
       "sampling_config": {
         "dataset_range": [[0, 8580]],
-        "sampling_count": 200,
+        "sampling_count": 210,
         "rotation_enabled": true,
         "rotation_count": 1
       }
@@ -75,10 +75,10 @@
       "enabled_for_sampling": true,
       "enabled_for_scoring": true,
       "sampling_config": {
-        "dataset_range": [[0, 11600]],
-        "sampling_count": 1000,
+        "dataset_range": [[0, 80979]],
+        "sampling_count": 1100,
         "rotation_enabled": true,
-        "rotation_count": 10
+        "rotation_count": 3
       }
     },
     "MTH": {
@@ -106,7 +106,7 @@
       "enabled_for_scoring": true,
       "sampling_config": {
         "dataset_range": [[0, 731]],
-        "sampling_count": 20,
+        "sampling_count": 36,
         "rotation_enabled": false,
         "rotation_count": 0
       }
