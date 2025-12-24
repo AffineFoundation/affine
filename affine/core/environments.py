@@ -84,75 +84,15 @@ _ENV_CONFIGS_CANONICAL = {
             "timeout": 600,
         },
     ),
-    "mth": EnvConfig(
-        name="mth",
-        docker_image="affinefoundation/mth:pi",
-        env_vars={"UVICORN_WORKERS": "8"},
+    "game": EnvConfig(
+        name="game",
+        docker_image="affinefoundation/game:openspiel",
+        env_vars={"UVICORN_WORKERS": "20"},
         eval_params={
             "temperature": 0.0,
-            "timeout": 600,
+            "timeout": 1200,
         },
-    ),
-    "sci": EnvConfig(
-        name="sci",
-        docker_image="affinefoundation/sci:pi",
-        env_vars={"UVICORN_WORKERS": "8"},
-        eval_params={
-            "temperature": 0.0,
-            "timeout": 600,
-        },
-    ),
-    
-    # AgentGym environments (require max_round)
-    "agentgym:alfworld": EnvConfig(
-        name="agentgym:alfworld",
-        docker_image="affinefoundation/agentgym:alfworld",
-        env_type="agentgym",
-        eval_params={
-            "max_round": 30,
-            "temperature": 0.0,
-            "timeout": 600,
-        },
-    ),
-    "agentgym:webshop": EnvConfig(
-        name="agentgym:webshop",
-        docker_image="affinefoundation/agentgym:webshop",
-        env_type="agentgym",
-        eval_params={
-            "max_round": 30,
-            "temperature": 0.0,
-            "timeout": 600,
-        },
-    ),
-    "agentgym:babyai": EnvConfig(
-        name="agentgym:babyai",
-        docker_image="affinefoundation/agentgym:babyai",
-        env_type="agentgym",
-        eval_params={
-            "max_round": 30,
-            "temperature": 0.0,
-            "timeout": 600,
-        },
-    ),
-    "agentgym:sciworld": EnvConfig(
-        name="agentgym:sciworld",
-        docker_image="affinefoundation/agentgym:sciworld",
-        env_type="agentgym",
-        eval_params={
-            "max_round": 30,
-            "temperature": 0.0,
-            "timeout": 600,
-        },
-    ),
-    "agentgym:textcraft": EnvConfig(
-        name="agentgym:textcraft",
-        docker_image="affinefoundation/agentgym:textcraft",
-        env_type="agentgym",
-        eval_params={
-            "max_round": 30,
-            "temperature": 0.0,
-            "timeout": 600,
-        },
+        proxy_timeout=1400,
     ),
     
     # SWE-bench Pro environment (requires DOOD)
@@ -195,8 +135,7 @@ _ENV_ALIASES = {
     # PrimeIntellect aliases (uppercase versions)
     "CDE": "cde",
     "LGC": "lgc",
-    "MTH": "mth",
-    "SCI": "sci",
+    "GAME": "game",
     
     # SWE-bench aliases
     "SWE-PRO": "swe-pro",
@@ -475,13 +414,7 @@ DED_V2_factory = lambda: create_environment("ded-v2")
 ABD_V2_factory = lambda: create_environment("abd-v2")
 CDE_factory = lambda: create_environment("cde")
 LGC_factory = lambda: create_environment("lgc")
-MTH_factory = lambda: create_environment("mth")
-SCI_factory = lambda: create_environment("sci")
-ALFWORLD_factory = lambda: create_environment("agentgym:alfworld")
-WEBSHOP_factory = lambda: create_environment("agentgym:webshop")
-BABYAI_factory = lambda: create_environment("agentgym:babyai")
-SCIWORLD_factory = lambda: create_environment("agentgym:sciworld")
-TEXTCRAFT_factory = lambda: create_environment("agentgym:textcraft")
+GAME_factory = lambda: create_environment("game")
 SWE_PRO_factory = lambda: create_environment("swe-pro")
 
 # Legacy class aliases
@@ -492,13 +425,7 @@ DED_V2 = DED_V2_factory
 ABD_V2 = ABD_V2_factory
 CDE = CDE_factory
 LGC = LGC_factory
-MTH = MTH_factory
-SCI = SCI_factory
-ALFWORLD = ALFWORLD_factory
-WEBSHOP = WEBSHOP_factory
-BABYAI = BABYAI_factory
-SCIWORLD = SCIWORLD_factory
-TEXTCRAFT = TEXTCRAFT_factory
+GAME = GAME_factory
 
 # SWE-bench factories
 SWE_PRO = SWE_PRO_factory
