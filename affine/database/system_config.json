@@ -6,7 +6,7 @@
       "enabled_for_scoring": true,
       "sampling_config": {
         "dataset_range": [[0, 23302]],
-        "sampling_count": 2000,
+        "sampling_count": 1000,
         "rotation_enabled": true,
         "rotation_count": 10
       }
@@ -16,49 +16,9 @@
       "enabled_for_scoring": true,
       "sampling_config": {
         "dataset_range": [[0, 23302]],
-        "sampling_count": 2000,
+        "sampling_count": 1000,
         "rotation_enabled": true,
         "rotation_count": 10
-      }
-    },
-    "agentgym:alfworld": {
-      "enabled_for_sampling": true,
-      "enabled_for_scoring": true,
-      "sampling_config": {
-        "dataset_range": [[0, 2500]],
-        "sampling_count": 1000,
-        "rotation_enabled": false,
-        "rotation_count": 0
-      }
-    },
-    "agentgym:webshop": {
-      "enabled_for_sampling": true,
-      "enabled_for_scoring": true,
-      "sampling_config": {
-        "dataset_range": [[0, 500]],
-        "sampling_count": 500,
-        "rotation_enabled": false,
-        "rotation_count": 0
-      }
-    },
-    "agentgym:sciworld": {
-      "enabled_for_sampling": true,
-      "enabled_for_scoring": true,
-      "sampling_config": {
-        "dataset_range": [[0, 2500]],
-        "sampling_count": 1000,
-        "rotation_enabled": false,
-        "rotation_count": 0
-      }
-    },
-    "agentgym:textcraft": {
-      "enabled_for_sampling": true,
-      "enabled_for_scoring": true,
-      "sampling_config": {
-        "dataset_range": [[0, 582]],
-        "sampling_count": 582,
-        "rotation_enabled": false,
-        "rotation_count": 0
       }
     },
     "CDE": {
@@ -68,7 +28,7 @@
         "dataset_range": [[0, 8580]],
         "sampling_count": 210,
         "rotation_enabled": true,
-        "rotation_count": 1
+        "rotation_count": 0
       }
     },
     "LGC": {
@@ -76,29 +36,9 @@
       "enabled_for_scoring": true,
       "sampling_config": {
         "dataset_range": [[0, 80979]],
-        "sampling_count": 1100,
+        "sampling_count": 850,
         "rotation_enabled": true,
-        "rotation_count": 3
-      }
-    },
-    "MTH": {
-      "enabled_for_sampling": true,
-      "enabled_for_scoring": true,
-      "sampling_config": {
-        "dataset_range": [[0, 21200]],
-        "sampling_count": 1000,
-        "rotation_enabled": true,
-        "rotation_count": 10
-      }
-    },
-    "SCI": {
-      "enabled_for_sampling": true,
-      "enabled_for_scoring": true,
-      "sampling_config": {
-        "dataset_range": [[0, 29300]],
-        "sampling_count": 1000,
-        "rotation_enabled": true,
-        "rotation_count": 10
+        "rotation_count": 30
       }
     },
     "SWE-PRO": {
@@ -106,7 +46,17 @@
       "enabled_for_scoring": true,
       "sampling_config": {
         "dataset_range": [[0, 731]],
-        "sampling_count": 36,
+        "sampling_count": 38,
+        "rotation_enabled": false,
+        "rotation_count": 0
+      }
+    },
+    "GAME": {
+      "enabled_for_sampling": true,
+      "enabled_for_scoring": false,
+      "sampling_config": {
+        "dataset_range": [[0, 400000000]],
+        "sampling_count": 38,
         "rotation_enabled": false,
         "rotation_count": 0
       }

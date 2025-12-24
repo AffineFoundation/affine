@@ -46,7 +46,7 @@ _ENV_CONFIGS_CANONICAL = {
     "affine:ded-v2": EnvConfig(
         name="affine:ded-v2",
         docker_image="affinefoundation/affine-env:v4",
-        env_vars={"UVICORN_WORKERS": "4"},
+        env_vars={"UVICORN_WORKERS": "10"},
         eval_params={
             "task_type": "ded",
             "temperature": 0.0,
@@ -56,7 +56,7 @@ _ENV_CONFIGS_CANONICAL = {
     "affine:abd-v2": EnvConfig(
         name="affine:abd-v2",
         docker_image="affinefoundation/affine-env:v4",
-        env_vars={"UVICORN_WORKERS": "4"},
+        env_vars={"UVICORN_WORKERS": "10"},
         eval_params={
             "task_type": "abd",
             "temperature": 0.0,
@@ -68,7 +68,8 @@ _ENV_CONFIGS_CANONICAL = {
     "cde": EnvConfig(
         name="cde",
         docker_image="affinefoundation/cde:pi",
-        mem_limit="20g",
+        mem_limit="25g",
+        env_vars={"UVICORN_WORKERS": "4"},
         eval_params={
             "temperature": 0.0,
             "timeout": 600,
@@ -77,7 +78,7 @@ _ENV_CONFIGS_CANONICAL = {
     "lgc": EnvConfig(
         name="lgc",
         docker_image="affinefoundation/lgc:pi",
-        env_vars={"UVICORN_WORKERS": "12"},
+        env_vars={"UVICORN_WORKERS": "20"},
         eval_params={
             "temperature": 0.0,
             "timeout": 600,
@@ -86,7 +87,7 @@ _ENV_CONFIGS_CANONICAL = {
     "mth": EnvConfig(
         name="mth",
         docker_image="affinefoundation/mth:pi",
-        env_vars={"UVICORN_WORKERS": "4"},
+        env_vars={"UVICORN_WORKERS": "8"},
         eval_params={
             "temperature": 0.0,
             "timeout": 600,
@@ -95,7 +96,7 @@ _ENV_CONFIGS_CANONICAL = {
     "sci": EnvConfig(
         name="sci",
         docker_image="affinefoundation/sci:pi",
-        env_vars={"UVICORN_WORKERS": "4"},
+        env_vars={"UVICORN_WORKERS": "8"},
         eval_params={
             "temperature": 0.0,
             "timeout": 600,
