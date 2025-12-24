@@ -8,6 +8,7 @@ import random
 from typing import List, Tuple, Set, Dict, Any
 
 from affine.core.setup import logger
+from affine.core.range_set import RangeSet
 
 
 def get_task_id_set_from_config(env_config: Dict[str, Any]) -> Set[int]:
@@ -47,7 +48,7 @@ class SamplingListManager:
     ) -> List[int]:
         """Initialize sampling list from initial range.
         
-        Simply expands initial_range to task ID set and randomly samples.
+        Uses RangeSet for efficient handling of large ranges.
         
         Args:
             env: Environment name
@@ -57,18 +58,17 @@ class SamplingListManager:
         Returns:
             Initialized task ID list (may be smaller than sampling_size if insufficient IDs)
         """
-        from affine.database.dao.system_config import ranges_to_task_id_set
-        
-        # Expand initial_range to task ID set
-        initial_ids = ranges_to_task_id_set(initial_range)
+        # Use RangeSet to avoid expanding large ranges
+        range_set = RangeSet(initial_range)
+        total_ids = range_set.size()
         
         # Randomly sample up to sampling_size
-        actual_size = min(len(initial_ids), sampling_size)
-        sampling_list = random.sample(list(initial_ids), actual_size)
+        actual_size = min(total_ids, sampling_size)
+        sampling_list = range_set.random_sample(actual_size)
         
         logger.info(
             f"Initialized sampling list for {env}: "
-            f"sampled {actual_size} from {len(initial_ids)} initial IDs (target={sampling_size})"
+            f"sampled {actual_size} from {total_ids} initial IDs (target={sampling_size})"
         )
         
         return sorted(sampling_list)
@@ -83,15 +83,16 @@ class SamplingListManager:
     ) -> Tuple[List[int], List[int], List[int]]:
         """Rotate sampling list while maintaining sampling_count size.
         
-        Clean set-based logic:
-        1. Convert dataset_range to set (supports non-contiguous ranges)
-        2. Calculate available = dataset - current
+        Rotation strategy:
+        1. Use RangeSet to avoid expanding large dataset_range
+        2. Calculate available = dataset - current (using RangeSet)
         3. Determine removal/addition counts based on current vs target size
-        4. Skip if insufficient IDs after deduplication
+        4. Remove from the FRONT of the list (old data first)
+        5. Add new data to the END (no sorting to preserve order)
         
         Args:
             env: Environment name
-            current_list: Current sampling list
+            current_list: Current sampling list (order matters)
             dataset_range: Dataset range in [[start, end], ...] format (supports multiple ranges)
             sampling_count: Target sampling list size
             rotation_count: Number of IDs to rotate per cycle
@@ -99,25 +100,27 @@ class SamplingListManager:
         Returns:
             (new_list, removed_ids, added_ids)
         """
-        from affine.database.dao.system_config import ranges_to_task_id_set
-        
         if rotation_count < 0:
             logger.warning(f"Invalid rotation_count for {env}: {rotation_count}")
             return current_list, [], []
         
         # rotation_count=0 is valid: only adjust size, no rotation
         
-        # Convert to sets
-        dataset_set = ranges_to_task_id_set(dataset_range)
+        # Use RangeSet to avoid expanding large ranges
+        dataset_rangeset = RangeSet(dataset_range)
+        dataset_size = dataset_rangeset.size()
         current_set = set(current_list)
-        available_set = dataset_set - current_set
+        
+        # Calculate available IDs using RangeSet subtraction
+        available_rangeset = dataset_rangeset.subtract_ids(current_set)
+        available_count = available_rangeset.size()
         
         # Safety check: Skip if would use > 80% of dataset
-        if sampling_count + rotation_count > len(dataset_set) * 0.8:
+        if sampling_count + rotation_count > dataset_size * 0.8:
             logger.warning(
                 f"Skipping rotation for {env}: safety check failed - "
                 f"sampling_count ({sampling_count}) + rotation_count ({rotation_count}) "
-                f"> 80% of dataset ({len(dataset_set) * 0.8:.0f})"
+                f"> 80% of dataset ({dataset_size * 0.8:.0f})"
             )
             return current_list, [], []
         
@@ -139,32 +142,32 @@ class SamplingListManager:
             to_add = rotation_count
         
         # Skip if not enough available IDs
-        if len(available_set) < to_add:
+        if available_count < to_add:
             logger.warning(
                 f"Skipping rotation for {env}: insufficient available IDs - "
-                f"need={to_add}, available={len(available_set)}"
+                f"need={to_add}, available={available_count}"
             )
             return current_list, [], []
         
-        # Execute removal
+        # Execute removal: Remove from FRONT (old data first)
         if to_remove > 0:
             to_remove = min(to_remove, current_size)
-            removed_ids = random.sample(current_list, to_remove)
-            remaining_set = current_set - set(removed_ids)
+            removed_ids = current_list[:to_remove]  # Remove from front
+            remaining_list = current_list[to_remove:]  # Keep rest in order
         else:
             removed_ids = []
-            remaining_set = current_set
+            remaining_list = current_list[:]
         
-        # Execute addition (recalculate available after removal)
-        available_for_add = dataset_set - remaining_set
-        added_ids = random.sample(list(available_for_add), to_add)
+        # Execute addition: Add to END (recalculate available after removal)
+        remaining_set = set(remaining_list)
+        available_for_add = dataset_rangeset.subtract_ids(remaining_set)
+        added_ids = available_for_add.random_sample(to_add)
         
-        # Merge and sort
-        new_set = remaining_set | set(added_ids)
-        new_list = sorted(list(new_set))
+        # Merge: Keep order - remaining list + new additions at end
+        new_list = remaining_list + added_ids
         
         logger.info(
-            f"Rotated {env}: removed={len(removed_ids)}, added={len(added_ids)}, "
+            f"Rotated {env}: removed={len(removed_ids)} from front, added={len(added_ids)} to end, "
             f"size: {current_size} -> {len(new_list)} (target={sampling_count})"
         )
         
