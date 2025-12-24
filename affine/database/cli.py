@@ -194,17 +194,18 @@ async def cmd_load_config(json_file: str):
                         sampling_config['last_rotation_at'] = existing_config.get('last_rotation_at', int(time.time()))
                         print(f"  {env_name}: Preserved existing sampling_list from database (size={len(existing_list)})")
                     else:
-                        # No existing list: generate from dataset_range using ranges_to_task_id_set
-                        from affine.database.dao.system_config import ranges_to_task_id_set
-                        
+                        # No existing list: generate from dataset_range using RangeSet-based manager
                         dataset_range = sampling_config.get('dataset_range', [[0, 0]])
                         sampling_count = sampling_config.get('sampling_count', 0)
                         
-                        # Convert to set and randomly sample
-                        all_ids = ranges_to_task_id_set(dataset_range)
-                        sampling_list = random.sample(list(all_ids), min(sampling_count, len(all_ids))) if all_ids else []
-                        
-                        sampling_config['sampling_list'] = sorted(sampling_list)
+                        # Use SamplingListManager which uses RangeSet for efficient handling
+                        sampling_list = await manager.initialize_sampling_list(
+                            env=env_name,
+                            initial_range=dataset_range,
+                            sampling_size=sampling_count
+                        )
+
+                        sampling_config['sampling_list'] = sampling_list
                         sampling_config['last_rotation_at'] = int(time.time())
                         
                         print(f"  {env_name}: Generated new sampling_list from dataset_range (size={len(sampling_list)})")

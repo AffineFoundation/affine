@@ -56,7 +56,7 @@
       "enabled_for_scoring": false,
       "sampling_config": {
         "dataset_range": [[0, 400000000]],
-        "sampling_count": 38,
+        "sampling_count": 100,
         "rotation_enabled": false,
         "rotation_count": 0
       }
