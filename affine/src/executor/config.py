@@ -4,8 +4,6 @@ Executor configuration for different environments
 
 # Max concurrent tasks for each environment
 ENV_MAX_CONCURRENT = {
-    "affine:ded-v2": 90,
-    "affine:abd-v2": 90,
     "SWE-PRO": 30,
     "LGC": 90,
 }

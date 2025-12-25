@@ -8,7 +8,8 @@
         "dataset_range": [[0, 23302]],
         "sampling_count": 1000,
         "rotation_enabled": true,
-        "rotation_count": 10
+        "rotation_count": 10,
+        "rotation_interval": 3600
       }
     },
     "affine:abd-v2": {
@@ -18,7 +19,8 @@
         "dataset_range": [[0, 23302]],
         "sampling_count": 1000,
         "rotation_enabled": true,
-        "rotation_count": 10
+        "rotation_count": 10,
+        "rotation_interval": 3600
       }
     },
     "CDE": {
@@ -28,17 +30,19 @@
         "dataset_range": [[0, 8580]],
         "sampling_count": 210,
         "rotation_enabled": true,
-        "rotation_count": 0
+        "rotation_count": 1,
+        "rotation_interval": 3600
       }
     },
     "LGC": {
       "enabled_for_sampling": true,
       "enabled_for_scoring": true,
       "sampling_config": {
-        "dataset_range": [[0, 80979]],
-        "sampling_count": 850,
+        "dataset_range": [[0, 1080979]],
+        "sampling_count": 950,
         "rotation_enabled": true,
-        "rotation_count": 30
+        "rotation_count": 10,
+        "rotation_interval": 3600
       }
     },
     "SWE-PRO": {
@@ -46,9 +50,10 @@
       "enabled_for_scoring": true,
       "sampling_config": {
         "dataset_range": [[0, 731]],
-        "sampling_count": 38,
-        "rotation_enabled": false,
-        "rotation_count": 0
+        "sampling_count": 40,
+        "rotation_enabled": true,
+        "rotation_count": 1,
+        "rotation_interval": 7200
       }
     },
     "GAME": {
@@ -56,9 +61,10 @@
       "enabled_for_scoring": false,
       "sampling_config": {
         "dataset_range": [[0, 400000000]],
-        "sampling_count": 100,
+        "sampling_count": 200,
         "rotation_enabled": false,
-        "rotation_count": 0
+        "rotation_count": 0,
+        "rotation_interval": 3600
       }
     }
   }

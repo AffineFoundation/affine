@@ -77,8 +77,9 @@ _ENV_CONFIGS_CANONICAL = {
     ),
     "lgc": EnvConfig(
         name="lgc",
+        mem_limit="20g",
         docker_image="affinefoundation/lgc:pi",
-        env_vars={"UVICORN_WORKERS": "20"},
+        env_vars={"UVICORN_WORKERS": "15"},
         eval_params={
             "temperature": 0.0,
             "timeout": 600,
