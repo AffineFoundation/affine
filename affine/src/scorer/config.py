@@ -80,7 +80,7 @@ class ScorerConfig:
     """Minimum weight threshold (1%). Miners below this are set to 0."""
     
     # Stage 1: Data Collection
-    MIN_COMPLETENESS: float = 0.95
+    MIN_COMPLETENESS: float = 0.9
     """Minimum sample completeness required."""
     
     # Environment Score Normalization

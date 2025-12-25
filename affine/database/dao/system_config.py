@@ -9,56 +9,6 @@ from affine.database.base_dao import BaseDAO
 from affine.database.schema import get_table_name
 
 
-def ranges_to_task_id_set(ranges: List[List[int]]) -> Set[int]:
-    """Convert multi-range to a set of task IDs.
-
-    Args:
-        ranges: List of [start, end] pairs (end is exclusive)
-
-    Returns:
-        Set of all task IDs in the ranges
-        
-    Raises:
-        ValueError: If ranges format is invalid
-    """
-    if not isinstance(ranges, list):
-        raise ValueError(f"Ranges must be a list, got {type(ranges).__name__}")
-    
-    # Handle edge case: empty ranges
-    if not ranges:
-        return set()
-    
-    # Check if ranges is a 1D array [start, end] instead of 2D [[start, end]]
-    if len(ranges) == 2 and isinstance(ranges[0], int) and isinstance(ranges[1], int):
-        raise ValueError(
-            f"Invalid range format: got 1D array {ranges}, expected 2D array [[start, end]]. "
-            "Ranges must be a list of [start, end] pairs, e.g., [[0, 100]] or [[0, 100], [200, 300]]"
-        )
-    
-    task_ids = set()
-    for i, r in enumerate(ranges):
-        if not isinstance(r, list):
-            raise ValueError(
-                f"Range {i} must be a list, got {type(r).__name__}: {r}. "
-                "Each range must be a [start, end] pair"
-            )
-        
-        if len(r) != 2:
-            raise ValueError(
-                f"Range {i} must have exactly 2 elements [start, end], got {len(r)} elements: {r}"
-            )
-        
-        start, end = r
-        if not isinstance(start, int) or not isinstance(end, int):
-            raise ValueError(
-                f"Range {i} values must be integers, got start={type(start).__name__}, end={type(end).__name__}: {r}"
-            )
-        
-        task_ids.update(range(start, end))
-    
-    return task_ids
-
-
 class SystemConfigDAO(BaseDAO):
     """DAO for system_config table.
     
