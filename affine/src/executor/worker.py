@@ -219,7 +219,7 @@ class ExecutorWorker:
             
             has_error = extra.get("error")
             if has_error:
-                error_brief = str(has_error).replace('\n', ' ').replace('\r', ' ')[:150]
+                error_brief = str(has_error).replace('\n', ' ').replace('\r', ' ')[:300]
                 safe_log(
                     f"[FAILED] U{task.get('miner_uid'):<4} │ {self.env:<20} │ {submission.score:10.3f} │ "
                     f"task_id={task_id:<6} │ {execution_time:6.3f}s │ error={error_brief}",
@@ -329,7 +329,7 @@ class ExecutorWorker:
                         miner_uid = task.get('miner_uid')
                         task_id = task.get('task_id', 'N/A')
                         
-                        error_brief = str(e).replace('\n', ' ').replace('\r', ' ')[:200]
+                        error_brief = str(e).replace('\n', ' ').replace('\r', ' ')[:300]
                         
                         safe_log(
                             f"[FAILED] U{miner_uid:<4} │ {self.env:<20} │     FAILED │ "

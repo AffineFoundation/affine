@@ -47,6 +47,7 @@ class Scorer:
         self,
         scoring_data: Dict[str, Any],
         environments: list,
+        env_configs: Dict[str, Any],
         block_number: int,
         print_summary: bool = True
     ) -> ScoringResult:
@@ -55,6 +56,7 @@ class Scorer:
         Args:
             scoring_data: Response from /api/v1/samples/scoring
             environments: List of environment names participating in scoring
+            env_configs: Dict mapping env_name -> env_config (including min_completeness)
             block_number: Current block number
             print_summary: Whether to print detailed summaries (default: True)
             
@@ -65,7 +67,7 @@ class Scorer:
         logger.info(f"Total Miners: {len(scoring_data)}")
         
         # Stage 1: Data Collection
-        stage1_output = self.stage1.collect(scoring_data, environments)
+        stage1_output = self.stage1.collect(scoring_data, environments, env_configs)
         
         # Stage 2: Pareto Filtering
         # Apply MAX_LAYERS limit: only evaluate top layers (e.g., L3-L8 if 8 envs and MAX_LAYERS=6)

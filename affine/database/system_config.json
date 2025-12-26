@@ -4,6 +4,7 @@
     "affine:ded-v2": {
       "enabled_for_sampling": true,
       "enabled_for_scoring": true,
+      "min_completeness": 0.9,
       "sampling_config": {
         "dataset_range": [[0, 23302]],
         "sampling_count": 1000,
@@ -15,6 +16,7 @@
     "affine:abd-v2": {
       "enabled_for_sampling": true,
       "enabled_for_scoring": true,
+      "min_completeness": 0.9,
       "sampling_config": {
         "dataset_range": [[0, 23302]],
         "sampling_count": 1000,
@@ -26,6 +28,7 @@
     "CDE": {
       "enabled_for_sampling": true,
       "enabled_for_scoring": true,
+      "min_completeness": 0.9,
       "sampling_config": {
         "dataset_range": [[0, 8580]],
         "sampling_count": 210,
@@ -37,6 +40,7 @@
     "LGC": {
       "enabled_for_sampling": true,
       "enabled_for_scoring": true,
+      "min_completeness": 0.9,
       "sampling_config": {
         "dataset_range": [[0, 1080979]],
         "sampling_count": 1000,
@@ -48,6 +52,7 @@
     "SWE-PRO": {
       "enabled_for_sampling": false,
       "enabled_for_scoring": false,
+      "min_completeness": 0.9,
       "sampling_config": {
         "dataset_range": [[0, 731]],
         "sampling_count": 40,
@@ -58,7 +63,8 @@
     },
     "GAME": {
       "enabled_for_sampling": true,
-      "enabled_for_scoring": false,
+      "enabled_for_scoring": true,
+      "min_completeness": 0.7,
       "sampling_config": {
         "dataset_range": [[0, 400000000]],
         "sampling_count": 200,
