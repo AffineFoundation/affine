@@ -6,7 +6,7 @@ using the same format as scorer's print_summary.
 """
 
 import asyncio
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from affine.utils.api_client import cli_api_client
 from affine.core.setup import logger
 from affine.core.miners import miners
@@ -52,14 +52,14 @@ async def fetch_miner_scores_at_block(client, block_number: int) -> Dict[int, Di
     return data
 
 
-async def fetch_environments(client) -> List[str]:
+async def fetch_environments(client) -> Tuple[List[str], Dict[str, Any]]:
     """Fetch enabled environments from system config.
     
     Args:
         client: APIClient instance
     
     Returns:
-        List of environment names enabled for scoring
+        Tuple of (list of environment names enabled for scoring, dict mapping env_name -> env_config)
     """
     try:
         config = await client.get("/config/environments")
@@ -68,21 +68,24 @@ async def fetch_environments(client) -> List[str]:
             value = config.get("param_value")
             if isinstance(value, dict):
                 # Filter environments where enabled_for_scoring=true
-                enabled_envs = [
-                    env_name for env_name, env_config in value.items()
-                    if isinstance(env_config, dict) and env_config.get("enabled_for_scoring", False)
-                ]
+                enabled_envs = []
+                env_configs = {}
+                
+                for env_name, env_config in value.items():
+                    if isinstance(env_config, dict) and env_config.get("enabled_for_scoring", False):
+                        enabled_envs.append(env_name)
+                        env_configs[env_name] = env_config
                 
                 if enabled_envs:
                     logger.debug(f"Fetched environments from API: {enabled_envs}")
-                    return sorted(enabled_envs)
+                    return sorted(enabled_envs), env_configs
         
         logger.warning("Failed to parse environments config")
-        return []
+        return [], {}
                 
     except Exception as e:
         logger.error(f"Error fetching environments: {e}")
-        return []
+        return [], {}
 
 
 async def fetch_scorer_config(client) -> dict:
@@ -121,7 +124,7 @@ async def print_rank_table():
     async with cli_api_client() as client:
         # Fetch scores, environments, and config
         scores_data = await fetch_latest_scores(client)
-        environments = await fetch_environments(client)
+        environments, env_configs = await fetch_environments(client)
         scorer_config = await fetch_scorer_config(client)
     
         if not scores_data or not scores_data.get('block_number'):
@@ -195,8 +198,8 @@ async def print_rank_table():
             ]
             
             # Environment scores - show "score[threshold]/count(!)" format (score × 100, 2 decimals)
-            # Get min_completeness from config (default: 0.99 if not available)
-            min_completeness = scorer_config.get("min_completeness", 0.99)
+            # Get default min_completeness from config (default: 0.9 if not available)
+            default_min_completeness = scorer_config.get("min_completeness", 0.9)
             
             for env in environments:
                 if env in scores_by_env:
@@ -209,8 +212,12 @@ async def print_rank_table():
                     score_percent = env_score * 100
                     threshold_percent = threshold * 100
                     
-                    # Check if sample count is insufficient using config parameter
-                    is_insufficient = completeness < min_completeness
+                    # Get environment-specific min_completeness or use default
+                    env_config = env_configs.get(env, {})
+                    env_min_completeness = env_config.get("min_completeness", default_min_completeness)
+                    
+                    # Check if sample count is insufficient using environment-specific parameter
+                    is_insufficient = completeness < env_min_completeness
                     
                     if is_insufficient:
                         score_str = f"{score_percent:.2f}[{threshold_percent:.2f}]/{sample_count}!"

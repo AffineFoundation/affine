@@ -77,8 +77,9 @@ _ENV_CONFIGS_CANONICAL = {
     ),
     "lgc": EnvConfig(
         name="lgc",
+        mem_limit="20g",
         docker_image="affinefoundation/lgc:pi",
-        env_vars={"UVICORN_WORKERS": "20"},
+        env_vars={"UVICORN_WORKERS": "15"},
         eval_params={
             "temperature": 0.0,
             "timeout": 600,
@@ -87,12 +88,12 @@ _ENV_CONFIGS_CANONICAL = {
     "game": EnvConfig(
         name="game",
         docker_image="affinefoundation/game:openspiel",
-        env_vars={"UVICORN_WORKERS": "20"},
+        env_vars={"UVICORN_WORKERS": "40"},
         eval_params={
             "temperature": 0.0,
-            "timeout": 1200,
+            "timeout": 1800,
         },
-        proxy_timeout=1400,
+        proxy_timeout=2000,
     ),
     
     # SWE-bench Pro environment (requires DOOD)

@@ -48,7 +48,9 @@ async def fetch_system_config(api_client, range_type: str = "scoring") -> dict:
         range_type: Type of range to use ('scoring' or 'sampling', default: 'scoring')
     
     Returns:
-        System config dict with 'environments' key containing enabled environments
+        System config dict with:
+        - 'environments': list of enabled environment names
+        - 'env_configs': dict mapping env_name -> env_config (including min_completeness)
     """
     try:
         config = await api_client.get("/config/environments")
@@ -57,23 +59,29 @@ async def fetch_system_config(api_client, range_type: str = "scoring") -> dict:
             value = config.get("param_value")
             if isinstance(value, dict):
                 # Filter environments based on range_type
+                enabled_envs = []
+                env_configs = {}
+                
                 if range_type == "sampling":
                     # Use enabled_for_sampling flag
-                    enabled_envs = [
-                        env_name for env_name, env_config in value.items()
-                        if isinstance(env_config, dict) and env_config.get("enabled_for_sampling", False)
-                    ]
+                    for env_name, env_config in value.items():
+                        if isinstance(env_config, dict) and env_config.get("enabled_for_sampling", False):
+                            enabled_envs.append(env_name)
+                            env_configs[env_name] = env_config
                     logger.info(f"Fetched sampling environments from API: {enabled_envs}")
                 else:
                     # Use enabled_for_scoring flag (default)
-                    enabled_envs = [
-                        env_name for env_name, env_config in value.items()
-                        if isinstance(env_config, dict) and env_config.get("enabled_for_scoring", False)
-                    ]
+                    for env_name, env_config in value.items():
+                        if isinstance(env_config, dict) and env_config.get("enabled_for_scoring", False):
+                            enabled_envs.append(env_name)
+                            env_configs[env_name] = env_config
                     logger.info(f"Fetched scoring environments from API: {enabled_envs}")
                 
                 if enabled_envs:
-                    return {"environments": enabled_envs}
+                    return {
+                        "environments": enabled_envs,
+                        "env_configs": env_configs
+                    }
 
         logger.exception("Failed to parse environments config")
                 
@@ -106,8 +114,9 @@ async def run_scoring_once(save_to_db: bool, range_type: str = "scoring"):
         scoring_data = await fetch_scoring_data(api_client, range_type=range_type)
         system_config = await fetch_system_config(api_client, range_type=range_type)
         
-        # Extract environments
+        # Extract environments and env_configs
         environments = system_config.get("environments")
+        env_configs = system_config.get("env_configs", {})
         logger.info(f"environments: {environments}")
         
         # Get current block number from Bittensor
@@ -121,6 +130,7 @@ async def run_scoring_once(save_to_db: bool, range_type: str = "scoring"):
         result = scorer.calculate_scores(
             scoring_data=scoring_data,
             environments=environments,
+            env_configs=env_configs,
             block_number=block_number,
             print_summary=True
         )
