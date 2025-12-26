@@ -4,8 +4,8 @@ Executor configuration for different environments
 
 # Max concurrent tasks for each environment
 ENV_MAX_CONCURRENT = {
-    "SWE-PRO": 30,
     "LGC": 90,
+    "GAME": 180,
 }
 
 # Default max concurrent tasks if environment not found in config
