@@ -75,11 +75,6 @@ class SamplingScheduler:
         
         for env_name, env_config in environments.items():
             try:
-                # Only process scoring-enabled environments
-                if not env_config.get('enabled_for_scoring'):
-                    logger.debug(f"Skipping {env_name}: scoring disabled")
-                    continue
-                
                 sampling_config = env_config.get('sampling_config')
                 if not sampling_config:
                     logger.debug(f"Skipping {env_name}: no sampling_config")

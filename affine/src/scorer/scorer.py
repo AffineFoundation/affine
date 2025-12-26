@@ -83,7 +83,7 @@ class Scorer:
         logger.info(f"Total Miners: {len(scoring_data)}")
         
         # Stage 1: Data Collection
-        stage1_output = self.stage1.collect(scoring_data, environments)
+        stage1_output = self.stage1.collect(scoring_data, environments, env_configs)
         
         # Stage 2: Pareto Filtering
         # Apply MAX_LAYERS limit: only evaluate top layers (e.g., L3-L8 if 8 envs and MAX_LAYERS=6)

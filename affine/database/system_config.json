@@ -4,61 +4,73 @@
     "affine:ded-v2": {
       "enabled_for_sampling": true,
       "enabled_for_scoring": true,
+      "min_completeness": 0.9,
       "sampling_config": {
         "dataset_range": [[0, 23302]],
-        "sampling_count": 1000,
+        "sampling_count": 800,
         "rotation_enabled": true,
-        "rotation_count": 10
+        "rotation_count": 8,
+        "rotation_interval": 3600
       }
     },
     "affine:abd-v2": {
       "enabled_for_sampling": true,
       "enabled_for_scoring": true,
+      "min_completeness": 0.9,
       "sampling_config": {
         "dataset_range": [[0, 23302]],
-        "sampling_count": 1000,
+        "sampling_count": 800,
         "rotation_enabled": true,
-        "rotation_count": 10
+        "rotation_count": 8,
+        "rotation_interval": 3600
       }
     },
     "CDE": {
       "enabled_for_sampling": true,
       "enabled_for_scoring": true,
+      "min_completeness": 0.9,
       "sampling_config": {
         "dataset_range": [[0, 8580]],
-        "sampling_count": 210,
+        "sampling_count": 200,
         "rotation_enabled": true,
-        "rotation_count": 0
+        "rotation_count": 1,
+        "rotation_interval": 3600
       }
     },
     "LGC": {
       "enabled_for_sampling": true,
       "enabled_for_scoring": true,
+      "min_completeness": 0.9,
       "sampling_config": {
-        "dataset_range": [[0, 80979]],
-        "sampling_count": 850,
+        "dataset_range": [[0, 1080979]],
+        "sampling_count": 1000,
         "rotation_enabled": true,
-        "rotation_count": 30
+        "rotation_count": 10,
+        "rotation_interval": 3600
       }
     },
     "SWE-PRO": {
-      "enabled_for_sampling": true,
-      "enabled_for_scoring": true,
+      "enabled_for_sampling": false,
+      "enabled_for_scoring": false,
+      "min_completeness": 0.9,
       "sampling_config": {
         "dataset_range": [[0, 731]],
-        "sampling_count": 38,
-        "rotation_enabled": false,
-        "rotation_count": 0
+        "sampling_count": 40,
+        "rotation_enabled": true,
+        "rotation_count": 1,
+        "rotation_interval": 7200
       }
     },
     "GAME": {
       "enabled_for_sampling": true,
-      "enabled_for_scoring": false,
+      "enabled_for_scoring": true,
+      "min_completeness": 0.5,
       "sampling_config": {
         "dataset_range": [[0, 400000000]],
-        "sampling_count": 100,
+        "sampling_count": 200,
         "rotation_enabled": false,
-        "rotation_count": 0
+        "rotation_count": 0,
+        "rotation_interval": 3600
       }
     }
   }
