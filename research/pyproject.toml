@@ -1,0 +1,18 @@
+[project]
+name = "sn120-research"
+version = "0.1.0"
+description = "SN120 research stack: scoring harness (S*, duels, RT probes) + offline analysis."
+requires-python = ">=3.11"
+# Deps only — harness/ and scripts/ are imported via PYTHONPATH (root .env), not installed.
+dependencies = [
+    "httpx",
+    "transformers",
+    "huggingface_hub",
+    "scipy",
+    "numpy",
+    "tqdm",
+]
+
+# Deps-only member: nothing to build/install, harness/ + scripts/ come in via PYTHONPATH.
+[tool.uv]
+package = false

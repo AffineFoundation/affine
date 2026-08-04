@@ -1,0 +1,46 @@
+[project]
+name = "affine"
+version = "0.1.0"
+description = "Affine (Bittensor SN120) king-of-the-hill validator: thought-injection duels against a frontier teacher."
+# Pinned by the [eval] extra: tau2 supports >=3.12,<3.14. Pods and this box run 3.12.
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "bittensor>=11,<12",
+    "httpx>=0.27",
+    "huggingface_hub>=0.30",
+    "boto3>=1.34",
+]
+
+[project.optional-dependencies]
+# Installed on the eval / bench GPU pods.
+eval = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "transformers>=4.51",
+    "vllm>=0.8",
+    # Rust multi-stream HF downloader; huggingface_hub uses it when
+    # HF_HUB_ENABLE_HF_TRANSFER=1 (set in bootstrap.sh). Takes challenger
+    # downloads from ~100 MB/s python-requests to near pod line rate.
+    "hf_transfer>=0.1.8",
+    # PyPI has no tau2-bench; install the upstream package from GitHub.
+    "tau2 @ git+https://github.com/sierra-research/tau2-bench",
+    # SWE-rebench lite (bench role): agent + HF dataset materialization.
+    # The SWE-rebench harness fork is installed by bootstrap.sh (git URL).
+    "mini-swe-agent>=1.15",
+    "datasets>=3.0",
+    "pyarrow>=17",
+]
+
+[tool.setuptools.package-data]
+evalsrv = ["data/*.json", "swebench_agent.yaml"]
+
+[project.scripts]
+affine-validator = "affine.validator:main"
+affine-evalsrv = "evalsrv.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["affine*", "evalsrv*"]

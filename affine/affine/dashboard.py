@@ -1,0 +1,313 @@
+"""Dashboard publishing: state → data/*.json on Hippius (+ the static site).
+
+Published objects (all world-readable, no secrets):
+  data/dashboard.json   king, reign chain, queue, live eval, stats, machine
+  data/history.json     recent verdicts / failures (tail of history.jsonl)
+  data/benchmarks.json  advisory tau2 results per model (albedo-style)
+  data/contract.json    the public chain contract (subset of affine.toml)
+  data/validator_log.txt            recent validator log tail (redacted)
+  data/history_full.jsonl.gz        complete verdict/failure audit log
+  data/bench_history_full.jsonl.gz  complete bench result log
+  evals/index.jsonl     manifest of published full duel records
+  evals/{cid}.json.gz   full duel record: rollouts, teacher refs, logprobs
+
+The website only fetches the small data/*.json at load; the heavy evals/*
+objects are lazy training data for miners, never on the page path.
+
+Writes are rate-limited and fail-open: presentation must never block or
+break the validator loop.
+"""
+
+from __future__ import annotations
+
+import gzip
+import importlib.util
+import json
+import logging
+import re
+import time
+from pathlib import Path
+
+from . import __version__
+from .config import Config
+from .hippius import Hippius
+from .state import State, now_iso
+
+log = logging.getLogger("affine.dashboard")
+
+HISTORY_TAIL = 100
+BENCH_TAIL = 200
+
+# Validator log publishing (transparency: anyone can watch the control plane
+# operate). Tail only — the full files grow forever on disk.
+LOG_TAIL_BYTES = 256 * 1024
+LOG_PUSH_INTERVAL_S = 60
+# Secrets never reach the log (provisioner redacts them at the source), but
+# pod SSH endpoints do (tunnel commands). Scrub network coordinates before
+# anything leaves this box — the public record shows WHAT happened, not WHERE
+# the rented GPUs live.
+_IP_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+_SSH_PORT_RE = re.compile(r"(-p\s+)\d{2,5}\b")
+
+
+def redact_log_text(text: str) -> str:
+    text = _IP_RE.sub("[ip]", text)
+    return _SSH_PORT_RE.sub(r"\1[port]", text)
+
+
+class Dashboard:
+    def __init__(self, cfg: Config, state: State, hippius: Hippius):
+        self.cfg = cfg
+        self.state = state
+        self.hippius = hippius
+        self._last_flush = 0.0
+        self._min_interval = cfg.validator.dashboard_flush_min_interval_s
+        self._last_log_push = 0.0
+        # pm2 writes logs relative to its cwd (affine/), see ecosystem.config.js.
+        self._logs_dir = Path(__file__).resolve().parents[1] / "logs"
+
+    # -- website -----------------------------------------------------------------
+    def push_website(self) -> None:
+        site = Path(__file__).resolve().parents[1] / "website"
+        if site.exists():
+            self._rebuild_llms_txt()
+            n = self.hippius.push_directory(site)
+            log.info("pushed %d website files to hippius", n)
+        self.flush(force=True)
+        self._push_contract()
+        self.publish_evals()
+
+    # -- training data -------------------------------------------------------------
+    def publish_evals(self) -> None:
+        """Upload full duel records + manifest + complete audit logs.
+
+        Artifacts are immutable (one per challenge_id); uploads already
+        acknowledged by Hippius are skipped via a local marker file, so a
+        cooldown or crash just retries on the next publish.
+        """
+        d = self.state.evals_dir
+        if d.exists():
+            marker = d / ".pushed.json"
+            pushed: set[str] = set()
+            if marker.exists():
+                try:
+                    pushed = set(json.loads(marker.read_text()))
+                except json.JSONDecodeError:
+                    log.warning("corrupt %s; re-uploading all artifacts", marker)
+            changed = False
+            for path in sorted(d.glob("*.json.gz")):
+                if path.name in pushed:
+                    continue
+                ok = self.hippius.put_bytes(
+                    f"evals/{path.name}", path.read_bytes(),
+                    "application/gzip",
+                    cache_control="public, max-age=31536000, immutable")
+                if not ok:
+                    break  # Hippius cooling down; retry next publish.
+                pushed.add(path.name)
+                changed = True
+            if changed:
+                marker.write_text(json.dumps(sorted(pushed)))
+            idx = self.state.evals_index_path
+            if idx.exists():
+                self.hippius.put_bytes("evals/index.jsonl", idx.read_bytes(),
+                                       "application/x-ndjson",
+                                       cache_control="no-cache")
+        self._push_full_logs()
+
+    def _push_full_logs(self) -> None:
+        """Complete history/bench logs, gzipped. Only called on verdicts and
+        website pushes — never on the 5s flush cadence."""
+        for path, key in ((self.state.history_path,
+                           "data/history_full.jsonl.gz"),
+                          (self.state.bench_history_path,
+                           "data/bench_history_full.jsonl.gz")):
+            if path.exists():
+                self.hippius.put_bytes(key, gzip.compress(path.read_bytes()),
+                                       "application/gzip",
+                                       cache_control="no-cache")
+
+    def _rebuild_llms_txt(self) -> None:
+        """Regenerate website/llms.txt from live sources before upload."""
+        script = Path(__file__).resolve().parents[1] / "scripts" / "build_llms_txt.py"
+        if not script.is_file():
+            log.warning("build_llms_txt.py missing; skipping llms.txt regenerate")
+            return
+        # Load by path so the validator does not need scripts/ on PYTHONPATH.
+        spec = importlib.util.spec_from_file_location("affine_build_llms_txt", script)
+        if spec is None or spec.loader is None:
+            log.warning("could not load %s; skipping llms.txt regenerate", script)
+            return
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.main()
+        log.info("regenerated website/llms.txt")
+
+    def _push_contract(self) -> None:
+        """The public rules miners build against. No secrets in affine.toml."""
+        contract = {
+            "subnet": self.cfg.raw["subnet"],
+            "submission": self.cfg.raw["submission"],
+            "teacher": {"repo": self.cfg.teacher.repo},
+            "dataset": self.cfg.raw["dataset"],
+            "duel": self.cfg.raw["duel"],
+            "bench": {k: v for k, v in self.cfg.raw["bench"].items()},
+            "version": __version__,
+        }
+        self.hippius.put_json("data/contract.json", contract)
+
+    # -- periodic state ---------------------------------------------------------------
+    def flush(self, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_flush < self._min_interval:
+            return
+        self._last_flush = now
+        s = self.state
+        king = s.king
+        payload = {
+            "generated_at": now_iso(),
+            "version": __version__,
+            "phase": s.phase,
+            "king": ({
+                "repo": king.repo, "revision": king.revision,
+                "hotkey": king.hotkey, "reign_number": king.reign_number,
+                "crowned_at": king.crowned_at, "block": king.block,
+                "score": king.score,
+            } if king else None),
+            # Rolling last-N kings (Albedo / Teutonic): equal-share weights.
+            "reign": {
+                "size": self.cfg.king_chain_size,
+                "members": s.king_chain_members(self.cfg.king_chain_size),
+            },
+            # Hotkey list kept for older readers / miners.
+            "reign_chain": s.king_chain_hotkeys(self.cfg.king_chain_size),
+            "queue": [{
+                "challenge_id": e.challenge_id, "repo": e.repo,
+                "hotkey": e.hotkey, "queued_at": e.queued_at,
+                "retry_count": e.retry_count,
+            } for e in s.queue],
+            "current_eval": s.current_eval,
+            "bench_jobs": s.bench_jobs,
+            "stats": s.stats,
+            "eval_machine": {
+                "provider": s.eval_machine.get("provider"),
+                "created_at": s.eval_machine.get("created_at"),
+            } if s.eval_machine else None,
+            "bench_machine": {
+                "provider": s.bench_machine.get("provider"),
+                "created_at": s.bench_machine.get("created_at"),
+            } if s.bench_machine else None,
+        }
+        self.hippius.put_json("data/dashboard.json", payload)
+        self._flush_history()
+        self._flush_benchmarks()
+        self._push_validator_log()
+
+    def _push_validator_log(self) -> None:
+        """Publish a redacted tail of the validator log. Rate-limited well
+        below the flush cadence — logs are for humans and monitors, not for
+        the page load path."""
+        now = time.monotonic()
+        if now - self._last_log_push < LOG_PUSH_INTERVAL_S:
+            return
+        self._last_log_push = now
+        sections = []
+        for name in ("validator.err.log", "validator.out.log"):
+            path = self._logs_dir / name
+            if not path.exists() or path.stat().st_size == 0:
+                continue
+            with open(path, "rb") as f:
+                f.seek(max(0, path.stat().st_size - LOG_TAIL_BYTES))
+                raw = f.read()
+            text = raw.decode("utf-8", errors="replace")
+            # Drop the first line: likely partial after the seek.
+            if len(raw) == LOG_TAIL_BYTES:
+                text = text.split("\n", 1)[-1]
+            sections.append(f"===== {name} (tail) =====\n{redact_log_text(text)}")
+        if not sections:
+            return
+        body = (f"# Affine validator log tail — generated {now_iso()}\n"
+                f"# Pod network coordinates are redacted; everything else is "
+                f"the live control-plane log.\n\n" + "\n\n".join(sections))
+        self.hippius.put_bytes("data/validator_log.txt", body.encode(),
+                               "text/plain; charset=utf-8",
+                               cache_control="no-cache")
+
+    def _tail_jsonl(self, path: Path, n: int) -> list[dict]:
+        """Last n records without reading the whole file: history files grow
+        forever, and this runs on every dashboard flush."""
+        if not path.exists():
+            return []
+        # Read fixed-size chunks from the end until we have n+1 newlines.
+        chunk = 1 << 16
+        buf = b""
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            pos = f.tell()
+            while pos > 0 and buf.count(b"\n") <= n:
+                step = min(chunk, pos)
+                pos -= step
+                f.seek(pos)
+                buf = f.read(step) + buf
+        lines = buf.split(b"\n")
+        if pos > 0 and lines:
+            lines = lines[1:]  # first line is likely partial
+        rows = []
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return rows[-n:]
+
+    def _flush_history(self) -> None:
+        rows = self._tail_jsonl(self.state.history_path, HISTORY_TAIL)
+        # Strip bulky per-side summaries down to what the site renders.
+        slim = []
+        for r in reversed(rows):
+            v = r.get("verdict") or {}
+            slim.append({
+                "event": r.get("event"), "at": r.get("at"),
+                "challenge_id": r.get("challenge_id"),
+                "repo": r.get("repo"), "hotkey": r.get("hotkey"),
+                "accepted": r.get("accepted"),
+                "error_code": r.get("error_code"),
+                "error_detail": (r.get("error_detail") or "")[:300],
+                "z": v.get("z"), "margin": v.get("margin"),
+                "n_paired_turns": v.get("n_paired_turns"),
+                "rejection_reason": v.get("rejection_reason"),
+                "reign_number": r.get("reign_number"),
+                # Absolute S* for both sides (reign chart + duel overlay).
+                "score": r.get("score", (v.get("challenger") or {}).get("S")),
+                "score_king": (v.get("king") or {}).get("S"),
+            })
+        self.hippius.put_json("data/history.json", slim)
+
+    def _flush_benchmarks(self) -> None:
+        done = self._tail_jsonl(self.state.bench_history_path, BENCH_TAIL)
+        models: dict[str, dict] = {}
+        for row in done:
+            key = f"{row['repo']}@{row['revision'][:12]}"
+            m = models.setdefault(key, {
+                "model_repo": row["repo"], "revision": row["revision"],
+                "label": row.get("label", ""), "hotkey": row.get("hotkey", ""),
+                "suites": {},
+            })
+            result = row.get("result") or {}
+            m["suites"][row["suite"]] = {
+                "score": result.get("score"),
+                "ok": result.get("ok", False),
+                "n_sims": result.get("n_sims"),
+                "finished_at": row.get("finished_at"),
+            }
+        active = [{
+            "job_id": j["job_id"], "model_repo": j["repo"], "suite": j["suite"],
+            "state": j["state"], "queued_at": j["queued_at"],
+        } for j in self.state.bench_jobs]
+        self.hippius.put_json("data/benchmarks.json", {
+            "generated_at": now_iso(),
+            "models": list(models.values()),
+            "active": active,
+        })

@@ -1,0 +1,709 @@
+{
+  "experiment": "E-BASELINE judge-score vs real benchmarks (Albedo SN97)",
+  "date": "2026-08-02",
+  "references": {
+    "swe_rebench_500task_genesis": 58.2,
+    "swe_rebench_500task_glm_5_2": 73.8
+  },
+  "duel_window": {
+    "n_eval_runs_in_window": 200,
+    "window": [
+      "2026-07-23",
+      "2026-08-02"
+    ],
+    "n_coronations_in_window": 12,
+    "king_versions_covered": [
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      98,
+      99,
+      100,
+      101,
+      102,
+      103
+    ],
+    "mean_coronation_win_margin": 0.0401,
+    "required_win_margin": 0.03
+  },
+  "judge_at_win": {
+    "92": 0.5837,
+    "93": 0.5271,
+    "94": 0.5885,
+    "95": 0.5649,
+    "96": 0.5759,
+    "97": 0.586,
+    "98": 0.5406,
+    "99": 0.5872,
+    "100": 0.5666,
+    "101": 0.5468,
+    "102": 0.5498,
+    "103": 0.5378
+  },
+  "correlations": {
+    "judge_at_win__vs__swe_rebench_500task": {
+      "n": 5,
+      "king_versions": [
+        94,
+        96,
+        99,
+        100,
+        101
+      ],
+      "spearman_r": 0.8721,
+      "spearman_p": 0.0539,
+      "pearson_r": 0.9457,
+      "pearson_p": 0.0151
+    },
+    "judge_at_win__vs__tau2_mean": {
+      "n": 12,
+      "king_versions": [
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103
+      ],
+      "spearman_r": -0.2277,
+      "spearman_p": 0.4767,
+      "pearson_r": -0.0448,
+      "pearson_p": 0.8899
+    },
+    "judge_at_win__vs__swe_rebench_110task_subset": {
+      "n": 12,
+      "king_versions": [
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103
+      ],
+      "spearman_r": 0.3115,
+      "spearman_p": 0.3243,
+      "pearson_r": 0.2545,
+      "pearson_p": 0.4247
+    },
+    "judge_defense_mean__vs__swe_rebench_500task": {
+      "n": 5,
+      "king_versions": [
+        94,
+        96,
+        99,
+        100,
+        101
+      ],
+      "spearman_r": 0.4617,
+      "spearman_p": 0.4338,
+      "pearson_r": 0.6984,
+      "pearson_p": 0.1896
+    },
+    "judge_defense_mean__vs__tau2_mean": {
+      "n": 13,
+      "king_versions": [
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103
+      ],
+      "spearman_r": -0.3439,
+      "spearman_p": 0.25,
+      "pearson_r": -0.1907,
+      "pearson_p": 0.5326
+    },
+    "judge_at_win__vs__tau2_airline": {
+      "n": 12,
+      "king_versions": [
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103
+      ],
+      "spearman_r": 0.0432,
+      "spearman_p": 0.894,
+      "pearson_r": 0.0054,
+      "pearson_p": 0.9866
+    },
+    "judge_at_win__vs__tau2_retail": {
+      "n": 12,
+      "king_versions": [
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103
+      ],
+      "spearman_r": 0.1668,
+      "spearman_p": 0.6044,
+      "pearson_r": 0.3025,
+      "pearson_p": 0.3393
+    },
+    "judge_at_win__vs__tau2_telecom": {
+      "n": 12,
+      "king_versions": [
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103
+      ],
+      "spearman_r": -0.3643,
+      "spearman_p": 0.2444,
+      "pearson_r": -0.3224,
+      "pearson_p": 0.3068
+    }
+  },
+  "trajectories": {
+    "swe_rebench_500task_incl_genesis": {
+      "n": 30,
+      "king_version_range": [
+        0,
+        101
+      ],
+      "slope_per_king": -0.0899,
+      "slope_p": 0.065306,
+      "intercept": 33.4177,
+      "spearman_vs_order": -0.4452,
+      "spearman_p": 0.013692,
+      "first_score": 58.2,
+      "last_score": 12.4
+    },
+    "swe_rebench_500task_kings_only": {
+      "n": 29,
+      "king_version_range": [
+        1,
+        101
+      ],
+      "slope_per_king": -0.0587,
+      "slope_p": 0.158037,
+      "intercept": 31.2807,
+      "spearman_vs_order": -0.3857,
+      "spearman_p": 0.038786,
+      "first_score": 38.4,
+      "last_score": 12.4
+    },
+    "tau2_mean_kings_only": {
+      "n": 55,
+      "king_version_range": [
+        2,
+        103
+      ],
+      "slope_per_king": 0.0008,
+      "slope_p": 0.292781,
+      "intercept": 0.4826,
+      "spearman_vs_order": 0.045,
+      "spearman_p": 0.744317,
+      "first_score": 0.2535672514619883,
+      "last_score": 0.5232748538011696
+    }
+  },
+  "transitions": {
+    "swe_rebench_500task": {
+      "n_transitions": 24,
+      "improved": 7,
+      "worsened": 17,
+      "unchanged": 0,
+      "pairs": [
+        {
+          "from": 0,
+          "to": 1,
+          "delta": -19.8
+        },
+        {
+          "from": 1,
+          "to": 2,
+          "delta": -1.2
+        },
+        {
+          "from": 2,
+          "to": 3,
+          "delta": -4.4
+        },
+        {
+          "from": 3,
+          "to": 4,
+          "delta": -3.6
+        },
+        {
+          "from": 4,
+          "to": 5,
+          "delta": 2.8
+        },
+        {
+          "from": 5,
+          "to": 6,
+          "delta": -4.6
+        },
+        {
+          "from": 6,
+          "to": 7,
+          "delta": 5.8
+        },
+        {
+          "from": 7,
+          "to": 8,
+          "delta": 3.0
+        },
+        {
+          "from": 8,
+          "to": 9,
+          "delta": -8.4
+        },
+        {
+          "from": 9,
+          "to": 10,
+          "delta": -1.4
+        },
+        {
+          "from": 10,
+          "to": 11,
+          "delta": 7.2
+        },
+        {
+          "from": 40,
+          "to": 41,
+          "delta": 2.0
+        },
+        {
+          "from": 41,
+          "to": 42,
+          "delta": -0.8
+        },
+        {
+          "from": 42,
+          "to": 43,
+          "delta": -4.6
+        },
+        {
+          "from": 43,
+          "to": 44,
+          "delta": -1.2
+        },
+        {
+          "from": 44,
+          "to": 45,
+          "delta": -1.6
+        },
+        {
+          "from": 45,
+          "to": 46,
+          "delta": -12.8
+        },
+        {
+          "from": 46,
+          "to": 47,
+          "delta": 15.0
+        },
+        {
+          "from": 47,
+          "to": 48,
+          "delta": -1.2
+        },
+        {
+          "from": 48,
+          "to": 49,
+          "delta": -1.4
+        },
+        {
+          "from": 49,
+          "to": 50,
+          "delta": 1.2
+        },
+        {
+          "from": 50,
+          "to": 51,
+          "delta": -15.2
+        },
+        {
+          "from": 99,
+          "to": 100,
+          "delta": -7.8
+        },
+        {
+          "from": 100,
+          "to": 101,
+          "delta": -19.6
+        }
+      ]
+    },
+    "tau2_mean": {
+      "n_transitions": 19,
+      "improved": 8,
+      "worsened": 10,
+      "unchanged": 1,
+      "pairs": [
+        {
+          "from": 74,
+          "to": 75,
+          "delta": 0.0593
+        },
+        {
+          "from": 75,
+          "to": 76,
+          "delta": 0.0309
+        },
+        {
+          "from": 76,
+          "to": 77,
+          "delta": -0.0205
+        },
+        {
+          "from": 80,
+          "to": 81,
+          "delta": -0.0807
+        },
+        {
+          "from": 81,
+          "to": 82,
+          "delta": -0.1736
+        },
+        {
+          "from": 82,
+          "to": 83,
+          "delta": -0.0675
+        },
+        {
+          "from": 90,
+          "to": 91,
+          "delta": 0.017
+        },
+        {
+          "from": 91,
+          "to": 92,
+          "delta": -0.0772
+        },
+        {
+          "from": 92,
+          "to": 93,
+          "delta": -0.038
+        },
+        {
+          "from": 93,
+          "to": 94,
+          "delta": 0.1094
+        },
+        {
+          "from": 94,
+          "to": 95,
+          "delta": 0.0698
+        },
+        {
+          "from": 95,
+          "to": 96,
+          "delta": -0.1061
+        },
+        {
+          "from": 96,
+          "to": 97,
+          "delta": 0.0146
+        },
+        {
+          "from": 97,
+          "to": 98,
+          "delta": 0.0626
+        },
+        {
+          "from": 98,
+          "to": 99,
+          "delta": -0.0434
+        },
+        {
+          "from": 99,
+          "to": 100,
+          "delta": -0.0013
+        },
+        {
+          "from": 100,
+          "to": 101,
+          "delta": 0.0356
+        },
+        {
+          "from": 101,
+          "to": 102,
+          "delta": 0.0
+        },
+        {
+          "from": 102,
+          "to": 103,
+          "delta": -0.0226
+        }
+      ]
+    },
+    "swe_rebench_110task_subset": {
+      "n_transitions": 43,
+      "improved": 9,
+      "worsened": 7,
+      "unchanged": 27,
+      "pairs": [
+        {
+          "from": 51,
+          "to": 52,
+          "delta": 0.0
+        },
+        {
+          "from": 52,
+          "to": 53,
+          "delta": 0.0
+        },
+        {
+          "from": 53,
+          "to": 54,
+          "delta": 0.0
+        },
+        {
+          "from": 54,
+          "to": 55,
+          "delta": 0.0
+        },
+        {
+          "from": 55,
+          "to": 56,
+          "delta": 0.0
+        },
+        {
+          "from": 56,
+          "to": 57,
+          "delta": 0.0
+        },
+        {
+          "from": 57,
+          "to": 58,
+          "delta": 0.0
+        },
+        {
+          "from": 58,
+          "to": 59,
+          "delta": 0.0
+        },
+        {
+          "from": 59,
+          "to": 60,
+          "delta": 0.0
+        },
+        {
+          "from": 60,
+          "to": 61,
+          "delta": 0.0
+        },
+        {
+          "from": 61,
+          "to": 62,
+          "delta": 0.0
+        },
+        {
+          "from": 62,
+          "to": 63,
+          "delta": 0.0
+        },
+        {
+          "from": 63,
+          "to": 64,
+          "delta": 0.0
+        },
+        {
+          "from": 64,
+          "to": 65,
+          "delta": 0.0
+        },
+        {
+          "from": 65,
+          "to": 66,
+          "delta": 0.0
+        },
+        {
+          "from": 66,
+          "to": 67,
+          "delta": 0.0
+        },
+        {
+          "from": 67,
+          "to": 68,
+          "delta": 0.0
+        },
+        {
+          "from": 68,
+          "to": 69,
+          "delta": 0.0
+        },
+        {
+          "from": 69,
+          "to": 70,
+          "delta": 0.0
+        },
+        {
+          "from": 70,
+          "to": 71,
+          "delta": 0.0
+        },
+        {
+          "from": 71,
+          "to": 72,
+          "delta": 0.0
+        },
+        {
+          "from": 72,
+          "to": 73,
+          "delta": 0.0
+        },
+        {
+          "from": 75,
+          "to": 76,
+          "delta": 0.0
+        },
+        {
+          "from": 76,
+          "to": 77,
+          "delta": 0.0
+        },
+        {
+          "from": 77,
+          "to": 78,
+          "delta": 0.0
+        },
+        {
+          "from": 78,
+          "to": 79,
+          "delta": 0.0
+        },
+        {
+          "from": 79,
+          "to": 80,
+          "delta": 0.0
+        },
+        {
+          "from": 80,
+          "to": 81,
+          "delta": 0.0636
+        },
+        {
+          "from": 81,
+          "to": 82,
+          "delta": -0.0636
+        },
+        {
+          "from": 82,
+          "to": 83,
+          "delta": 0.0455
+        },
+        {
+          "from": 90,
+          "to": 91,
+          "delta": 0.0727
+        },
+        {
+          "from": 91,
+          "to": 92,
+          "delta": -0.0273
+        },
+        {
+          "from": 92,
+          "to": 93,
+          "delta": -0.0091
+        },
+        {
+          "from": 93,
+          "to": 94,
+          "delta": 0.0091
+        },
+        {
+          "from": 94,
+          "to": 95,
+          "delta": -0.0455
+        },
+        {
+          "from": 95,
+          "to": 96,
+          "delta": 0.0273
+        },
+        {
+          "from": 96,
+          "to": 97,
+          "delta": -0.0273
+        },
+        {
+          "from": 97,
+          "to": 98,
+          "delta": 0.0273
+        },
+        {
+          "from": 98,
+          "to": 99,
+          "delta": 0.0545
+        },
+        {
+          "from": 99,
+          "to": 100,
+          "delta": -0.0364
+        },
+        {
+          "from": 100,
+          "to": 101,
+          "delta": -0.0364
+        },
+        {
+          "from": 101,
+          "to": 102,
+          "delta": 0.0091
+        },
+        {
+          "from": 102,
+          "to": 103,
+          "delta": 0.0182
+        }
+      ]
+    }
+  },
+  "notes": [
+    "eval_runs only retains the most recent 200 duels (2026-07-23..2026-08-02), so judge-score-at-win exists only for king versions 92-103.",
+    "swe_rebench_500task = albedo_scores.json (percent, 500 tasks); swe_rebench_110task_subset = albedo_bench.json suite swe_rebench_2026_03 (fraction, 110 tasks, different task set; kings LI-LXXIII score 0.0 on it).",
+    "tau2_mean = unweighted mean of tau2 airline/retail/telecom pass rates from albedo_bench.json.",
+    "judge_defense_mean = mean score_king over all duels a king defended within the 200-run window."
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "king": {
+    "name": "king-genesis",
+    "valid": true,
+    "S": -0.03932716369739285,
+    "gate_pass_rate": 0.629746835443038,
+    "bank_frac": 0.4020833333333333,
+    "n_turns": 80
+  },
+  "challenger": {
+    "name": "king-I",
+    "valid": true,
+    "S": -0.028096999534182602,
+    "gate_pass_rate": 0.559375,
+    "bank_frac": 0.503125,
+    "n_turns": 80
+  },
+  "duel": {
+    "margin": 0.010681592650015425,
+    "se": 0.008201103476420996,
+    "z": 1.30245797784726,
+    "k_sigma": 3.0,
+    "challenger_wins": false,
+    "n_paired_turns": 80
+  }
+}

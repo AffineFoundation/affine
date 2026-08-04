@@ -1,0 +1,15 @@
+READ THIS FIRST
+===============
+Project handoff (what we built, proved, froze, and what to do next):
+
+  AGENTS.md
+
+Then:
+  research/docs/MOTIVATION.md     thesis / fixed point
+  research/docs/REDTEAM.md        attack table
+  research/docs/PAPER_DRAFT.md     draft paper
+  LAYOUT.txt                      directory map
+
+Setup / activate:
+  ./setup.sh
+  source .venv/bin/activate && source .env

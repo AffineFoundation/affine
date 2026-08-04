@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, must-revalidate" />
+  <title>Affine — Subnet 120</title>
+  <meta name="description" content="Affine subnet 120 dashboard: reigning king, duel evolution, queue, and history." />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="affine-mark.png" type="image/png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="top-nav">
+    <div class="nav-inner">
+      <a class="brand" href="./index.html">
+        <img src="favicon.svg" width="18" height="18" alt="" aria-hidden="true" />
+        <span class="brand-name">AFFINE</span>
+      </a>
+      <a href="./llms.txt" class="nav-chip">llms.txt</a>
+    </div>
+  </header>
+
+  <!-- Full-bleed top chart -->
+  <section class="hero" id="evolution">
+    <div class="hero-inner">
+      <div class="hero-head">
+        <div class="hero-tabs" role="tablist">
+          <button type="button" class="hero-tab active" data-tab="duel" aria-pressed="true">duel z</button>
+          <button type="button" class="hero-tab" data-tab="score" aria-pressed="false">duel S*</button>
+          <button type="button" class="hero-tab" data-tab="reign" aria-pressed="false">reign</button>
+        </div>
+        <p class="hero-caption" id="hero-caption">
+          Paired duel z vs king · gold = coronation · dashed = 3σ dethrone threshold
+        </p>
+      </div>
+    </div>
+    <div class="hero-chart-wrap">
+      <div class="hero-scroll" id="hero-scroll">
+        <svg id="hero-chart" role="img" aria-label="Affine duel evolution"></svg>
+      </div>
+    </div>
+    <div class="hero-inner">
+      <div class="hero-king-row" id="hero-king-row"></div>
+    </div>
+  </section>
+
+  <main class="page">
+    <section class="section" id="reign">
+      <div class="section-head">
+        <h2 class="section-title">Reign</h2>
+        <span class="section-right" id="reign-meta"></span>
+      </div>
+      <div id="reign-wrap"><div class="empty">loading…</div></div>
+    </section>
+
+    <section class="section" id="challenge">
+      <div class="section-head">
+        <h2 class="section-title">latest challenge</h2>
+        <span class="section-right" id="challenge-meta"></span>
+      </div>
+      <div id="challenge-wrap"><div class="empty">loading…</div></div>
+    </section>
+
+    <section class="section" id="queue">
+      <div class="section-head">
+        <h2 class="section-title">queue</h2>
+        <span class="section-right" id="queue-meta"></span>
+      </div>
+      <div id="queue-wrap"><div class="empty">loading…</div></div>
+    </section>
+
+    <section class="section" id="benchmarks">
+      <div class="section-head">
+        <h2 class="section-title">benchmarks</h2>
+        <span class="section-right note">advisory — never part of S*</span>
+      </div>
+      <div id="benchmarks-wrap"><div class="empty">loading…</div></div>
+    </section>
+
+    <section class="section" id="history">
+      <div class="section-head">
+        <h2 class="section-title">history</h2>
+        <span class="section-right" id="history-meta"></span>
+      </div>
+      <div class="filter-bar">
+        <input id="filter-input" type="search" placeholder="filter hotkey / repo / event" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="table-scroll" id="history-wrap"><div class="empty">loading…</div></div>
+    </section>
+
+    <section class="section" id="fails">
+      <div class="section-head">
+        <h2 class="section-title">fails</h2>
+        <span class="section-right" id="fails-meta"></span>
+      </div>
+      <div class="table-scroll" id="fails-wrap"><div class="empty">loading…</div></div>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

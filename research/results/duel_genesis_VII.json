@@ -1,0 +1,38 @@
+{
+  "ranking_term": "mix",
+  "ranking_formula": "\u039b2 + 1\u00b7L1lift",
+  "gate_thresholds": {
+    "tau": 0.02,
+    "gamma": 0.3,
+    "gamma_bank": 0.08,
+    "l1_weight": 1.0
+  },
+  "king": {
+    "name": "king-genesis",
+    "valid": true,
+    "S": -0.0470067495874067,
+    "gate_pass_rate": 0.6572327044025157,
+    "bank_frac": 0.4104166666666667,
+    "n_turns": 80,
+    "mean_lambda2": -0.030160742290633827,
+    "mean_mix": -0.0470067495874067
+  },
+  "challenger": {
+    "name": "king-VII",
+    "valid": true,
+    "S": -0.6956502762087927,
+    "gate_pass_rate": 0.8125,
+    "bank_frac": 0.128125,
+    "n_turns": 80,
+    "mean_lambda2": -0.12952455363859305,
+    "mean_mix": -0.6956502762087927
+  },
+  "duel": {
+    "margin": -0.649032838991821,
+    "se": 0.061608062147056504,
+    "z": -10.534868593051995,
+    "k_sigma": 3.0,
+    "challenger_wins": false,
+    "n_paired_turns": 80
+  }
+}

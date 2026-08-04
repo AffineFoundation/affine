@@ -1,0 +1,28 @@
+# Production corpus (246M, over GitHub's 100M limit) lives on HF, sha-pinned in
+# affine/affine.toml. Headline freeze tables under results/ are committed; bulky
+# intermediate pair dumps are not.
+data/turns_minicoder.jsonl
+.hf/
+hf/
+
+# Ops / private lab notebook — keep local
+docs/RESEARCH_LOG.md
+
+# Secrets that may appear in smoke/provisioner artifacts
+**/.eval_env
+**/eval_token.txt
+
+# Bulky intermediate E-KINGS / duel / bank dumps (keep hybrid_*, rt6_*, tau2_prog_*, tables)
+results/ekings_*.jsonl
+results/ekings_*.jsonl.gz
+results/duel_*.jsonl
+results/bank_*.jsonl
+results/ladder_*.jsonl
+results/rt1*.jsonl
+results/rt2*.jsonl
+results/rt4*.jsonl
+results/*_partial*
+results/archive_tau2_bash/
+results/ref_*.jsonl
+results/judge_same_turns_calls.jsonl
+results/prefix_idents.json

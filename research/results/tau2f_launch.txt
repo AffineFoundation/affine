@@ -1,0 +1,23 @@
+
+Executing on swift-comet-29
+STARTED=944
+Downloading tokenspeed-triton (83.2MiB)
+Downloading nvidia-cuda-nvrtc (86.0MiB)
+Downloading nvidia-cusolver (191.6MiB)
+Downloading nvidia-nccl-cu13 (187.4MiB)
+Downloading nvidia-cufft (204.2MiB)
+Downloading nvidia-cutlass-dsl-libs-cu13 (83.9MiB)
+Downloading numpy (15.8MiB)
+Downloading nvidia-nvvm (66.0MiB)
+Downloading cuda-core (4.9MiB)
+Downloading nvidia-cuda-nvdisasm (4.6MiB)
+Downloading pynvvideocodec (41.2MiB)
+Downloading z3-solver (27.9MiB)
+Downloading nvidia-cuda-nvcc (42.9MiB)
+Downloading torchvision (7.2MiB)
+Downloading torch (506.1MiB)
+Downloading llguidance (2.9MiB)
+Downloading vllm (289.6MiB)
+Downloading triton (179.5MiB)
+Downloading tilelang (43.3MiB)
+Downloading openai-harmony (2.8MiB)

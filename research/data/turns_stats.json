@@ -1,0 +1,17 @@
+{
+  "n_trajectories_seen": 3000,
+  "n_records": 9000,
+  "prefix_chars": {
+    "p10": 6652,
+    "p50": 25508,
+    "p90": 52662
+  },
+  "reference_turn_len": {
+    "p10": 109,
+    "p50": 285,
+    "p90": 1268
+  },
+  "n_assistant_turns_seen": 102473,
+  "frac_assistant_turns_with_bash_block": 1.0,
+  "frac_assistant_turns_with_thought": 0.5130814946376119
+}

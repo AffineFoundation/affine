@@ -1,0 +1,25 @@
+
+Executing on calm-shark-5a
+Using Python 3.12.3 environment at: /root/venv
+Resolved 55 packages in 129ms
+   Building affine @ file:///root/affine
+      Built affine @ file:///root/affine
+Prepared 1 package in 760ms
+Uninstalled 1 package in 1ms
+Installed 1 package in 6ms
+ ~ affine==0.1.0 (from file:///root/affine)
+====
+__pycache__
+====
+/root/venv/bin/affine-evalsrv
+/root/venv/bin/affine-validator
+/root/venv/lib/python3.12/site-packages/affine-0.1.0.dist-info
+/root/venv/lib/python3.12/site-packages/torch/include/ATen/ops/affine_grid_generator.h
+/root/venv/lib/python3.12/site-packages/torch/include/ATen/ops/affine_grid_generator_backward.h
+/root/venv/lib/python3.12/site-packages/torch/include/ATen/ops/affine_grid_generator_backward_compositeimplicitautograd_dispatch.h
+/root/venv/lib/python3.12/site-packages/torch/include/ATen/ops/affine_grid_generator_backward_native.h
+/root/venv/lib/python3.12/site-packages/torch/include/ATen/ops/affine_grid_generator_backward_ops.h
+/root/venv/lib/python3.12/site-packages/torch/include/ATen/ops/affine_grid_generator_compositeexplicitautograd_dispatch.h
+/root/venv/lib/python3.12/site-packages/torch/include/ATen/ops/affine_grid_generator_native.h
+/root/venv/lib/python3.12/site-packages/torch/include/ATen/ops/affine_grid_generator_ops.h
+['', '/usr/lib/python312.zip', '/usr/lib/python3.12', '/usr/lib/python3.12/lib-dynload', '/usr/local/lib/python3.12/dist-packages', '/usr/lib/python3/dist-packages']

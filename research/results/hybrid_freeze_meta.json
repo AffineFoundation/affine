@@ -1,0 +1,83 @@
+{
+  "ungated_spearman": 0.8436107032605519,
+  "ungated_p": 7.736906123005992e-05,
+  "ungated_n": 15,
+  "hybrid_spearman": 0.9118583155200968,
+  "hybrid_p": 0.0002371436370050654,
+  "hybrid_n": 10,
+  "rejected": [
+    "XI",
+    "XLV",
+    "XLVI",
+    "CI",
+    "LI"
+  ],
+  "bank_fracs": {
+    "king-CI": {
+      "frac": 0.03763440860215054,
+      "n": 186
+    },
+    "king-I": {
+      "frac": 0.3015075376884422,
+      "n": 199
+    },
+    "king-II": {
+      "frac": 0.3,
+      "n": 200
+    },
+    "king-III": {
+      "frac": 0.12,
+      "n": 200
+    },
+    "king-LI": {
+      "frac": 0.04864864864864865,
+      "n": 185
+    },
+    "king-V": {
+      "frac": 0.11,
+      "n": 200
+    },
+    "king-VII": {
+      "frac": 0.085,
+      "n": 200
+    },
+    "king-VIII": {
+      "frac": 0.1,
+      "n": 200
+    },
+    "king-XCIV": {
+      "frac": 0.095,
+      "n": 200
+    },
+    "king-XCIX": {
+      "frac": 0.1,
+      "n": 200
+    },
+    "king-XI": {
+      "frac": 0.075,
+      "n": 200
+    },
+    "king-XLI": {
+      "frac": 0.08,
+      "n": 200
+    },
+    "king-XLV": {
+      "frac": 0.05405405405405406,
+      "n": 185
+    },
+    "king-XLVI": {
+      "frac": 0.053763440860215055,
+      "n": 186
+    },
+    "king-genesis": {
+      "frac": 0.24,
+      "n": 200
+    }
+  },
+  "fullz_miners": [
+    "king-CI",
+    "king-LI",
+    "king-XLV",
+    "king-XLVI"
+  ]
+}

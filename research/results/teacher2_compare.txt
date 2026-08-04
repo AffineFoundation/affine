@@ -1,0 +1,8 @@
+Second-teacher replication: GLM-4.5-Air (T1) vs Qwen3-32B (T2)
+genesis  T1=-0.0293 T2=+0.0053 swe=58.2
+XCIX     T1=-0.1764 T2=-0.0856 swe=39.8
+I        T1=-0.0369 T2=-0.0138 swe=38.4
+II       T1=-0.0269 T2=+0.0082 swe=37.2
+VIII     T1=-0.1845 T2=-0.0843 swe=36.2
+VII      T1=-0.1992 T2=-0.0964 swe=33.2
+T1vsSWE=+0.600 T2vsSWE=+0.429 T1vsT2=+0.943 n=6

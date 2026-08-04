@@ -1,0 +1,15 @@
+
+Executing on calm-shark-5a
+STARTED=4182
+[smoke] Tue Aug  4 02:12:40 UTC 2026 start
+[smoke] pip install editable + duel deps (skip tau2 git for smoke speed)
+Using Python 3.12.3 environment at: /root/venv
+Resolved 55 packages in 37ms
+   Building affine @ file:///root/affine
+      Built affine @ file:///root/affine
+Prepared 1 package in 759ms
+Uninstalled 1 package in 1ms
+Installed 1 package in 6ms
+ ~ affine==0.1.0 (from file:///root/affine)
+Using Python 3.12.3 environment at: /root/venv
+Checked 6 packages in 65ms

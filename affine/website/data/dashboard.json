@@ -1,0 +1,114 @@
+{
+  "generated_at": "2026-08-03T15:55:00+00:00",
+  "version": "0.1.0",
+  "phase": {
+    "name": "live",
+    "since": "2026-08-01T12:00:00+00:00"
+  },
+  "king": {
+    "repo": "AffineFoundation/Affine-genesis",
+    "revision": "a1b2c3d4e5f6789012345678901234567890abcd",
+    "hotkey": "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
+    "reign_number": 5,
+    "crowned_at": "2026-08-03T12:00:00+00:00",
+    "block": 6204500,
+    "score": -0.011
+  },
+  "reign": {
+    "size": 5,
+    "members": [
+      {
+        "reign_number": 5,
+        "repo": "AffineFoundation/Affine-genesis",
+        "revision": "a1b2c3d4e5f6789012345678901234567890abcd",
+        "hotkey": "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
+        "crowned_at": "2026-08-03T12:00:00+00:00",
+        "block": 6204500,
+        "score": -0.011,
+        "current": true,
+        "weight_bps": 2000
+      },
+      {
+        "reign_number": 4,
+        "repo": "north/Affine-distill-04",
+        "revision": "bb11223344556677889900112233445566778899",
+        "hotkey": "5HpG9w8EBLe5XCrbczpvBu5kYAgjLymcV9D3ZcY2sX8nV7Pq",
+        "crowned_at": "2026-08-02T20:00:00+00:00",
+        "block": 6203000,
+        "score": -0.019,
+        "current": false,
+        "weight_bps": 2000
+      },
+      {
+        "reign_number": 3,
+        "repo": "lab/Affine-nightly-v2",
+        "revision": "cc22334455667788990011223344556677889900",
+        "hotkey": "5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y",
+        "crowned_at": "2026-08-02T10:00:00+00:00",
+        "block": 6202000,
+        "score": -0.028,
+        "current": false,
+        "weight_bps": 2000
+      },
+      {
+        "reign_number": 2,
+        "repo": "forge/Affine-probe-beta",
+        "revision": "dd33445566778899001122334455667788990011",
+        "hotkey": "5DAAnrj7VHTznn2AWBemMuyBwZWs6FNFjdyVXUeYum3PTXFy",
+        "crowned_at": "2026-08-01T18:00:00+00:00",
+        "block": 6201000,
+        "score": -0.039,
+        "current": false,
+        "weight_bps": 2000
+      },
+      {
+        "reign_number": 1,
+        "repo": "0xminer/Affine-challenger-01",
+        "revision": "ee44556677889900112233445566778899001122",
+        "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+        "crowned_at": "2026-08-01T12:00:00+00:00",
+        "block": 6200000,
+        "score": -0.048,
+        "current": false,
+        "weight_bps": 2000
+      }
+    ]
+  },
+  "reign_chain": [
+    "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
+    "5HpG9w8EBLe5XCrbczpvBu5kYAgjLymcV9D3ZcY2sX8nV7Pq",
+    "5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y",
+    "5DAAnrj7VHTznn2AWBemMuyBwZWs6FNFjdyVXUeYum3PTXFy",
+    "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+  ],
+  "queue": [
+    {
+      "challenge_id": "ch_7f3a91",
+      "repo": "0xminer/Affine-challenger-02",
+      "hotkey": "5C4hrfjw9DjXZJeJnFSdgsgF5DNJxqNjaN9kGqYdG9YqXkLm",
+      "queued_at": "2026-08-03T15:40:00+00:00",
+      "retry_count": 0
+    }
+  ],
+  "current_eval": {
+    "challenge_id": "ch_aa0912",
+    "repo": "forge/Affine-probe-alpha",
+    "hotkey": "5HGjWAeHXxKgvH5KD71zQALREzzCmZyDiQVCqxW8e9Xj4mNp",
+    "stage": "duel",
+    "progress": {
+      "turns": "48/80",
+      "elapsed_s": 1820
+    }
+  },
+  "bench_jobs": [],
+  "stats": {
+    "duels": 14,
+    "crowns": 5,
+    "rejects": 9,
+    "fails": 4
+  },
+  "eval_machine": {
+    "provider": "lium",
+    "created_at": "2026-08-02T08:00:00+00:00"
+  }
+}

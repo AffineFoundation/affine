@@ -1,0 +1,147 @@
+{
+  "I": {
+    "king": {
+      "name": "king-genesis",
+      "valid": true,
+      "S": -0.03627089522254908,
+      "gate_pass_rate": 0.629746835443038,
+      "bank_frac": 0.40208333333333335,
+      "calib_ratio": 1.1247295158276562,
+      "n_turns": 80
+    },
+    "challenger": {
+      "name": "king-I",
+      "valid": true,
+      "S": -0.02353080133299914,
+      "gate_pass_rate": 0.559375,
+      "bank_frac": 0.503125,
+      "calib_ratio": 1.2776054590394474,
+      "n_turns": 80
+    },
+    "duel": {
+      "margin": 0.01210569284556796,
+      "se": 0.012229195152033943,
+      "z": 0.9899010274240786,
+      "k_sigma": 3.0,
+      "min_margin": 0.05,
+      "challenger_wins": false,
+      "n_paired_turns": 80
+    }
+  },
+  "II": {
+    "king": {
+      "name": "king-genesis",
+      "valid": true,
+      "S": -0.0471868784148629,
+      "gate_pass_rate": 0.6614420062695925,
+      "bank_frac": 0.3302083333333333,
+      "calib_ratio": 1.1896535566713515,
+      "n_turns": 80
+    },
+    "challenger": {
+      "name": "king-II",
+      "valid": true,
+      "S": -0.0161280962552633,
+      "gate_pass_rate": 0.73125,
+      "bank_frac": 0.44375,
+      "calib_ratio": 1.1501852818329366,
+      "n_turns": 80
+    },
+    "duel": {
+      "margin": 0.030781727740765392,
+      "se": 0.01576025887124046,
+      "z": 1.9531232318103806,
+      "k_sigma": 3.0,
+      "min_margin": 0.05,
+      "challenger_wins": false,
+      "n_paired_turns": 80
+    }
+  },
+  "VII": {
+    "king": {
+      "name": "king-genesis",
+      "valid": true,
+      "S": -0.03256738231728086,
+      "gate_pass_rate": 0.6572327044025157,
+      "bank_frac": 0.41041666666666665,
+      "calib_ratio": 1.1413815812271888,
+      "n_turns": 80
+    },
+    "challenger": {
+      "name": "king-VII",
+      "valid": true,
+      "S": -0.21139726863885505,
+      "gate_pass_rate": 0.8125,
+      "bank_frac": 0.128125,
+      "calib_ratio": 2.2377424272055295,
+      "n_turns": 80
+    },
+    "duel": {
+      "margin": -0.17912895264657086,
+      "se": 0.019168783278336807,
+      "z": -9.344826431889897,
+      "k_sigma": 3.0,
+      "min_margin": 0.05,
+      "challenger_wins": false,
+      "n_paired_turns": 80
+    }
+  },
+  "XCIX": {
+    "king": {
+      "name": "king-genesis",
+      "valid": true,
+      "S": -0.04607062313390362,
+      "gate_pass_rate": 0.6455696202531646,
+      "bank_frac": 0.35520833333333335,
+      "calib_ratio": 1.191278743676175,
+      "n_turns": 80
+    },
+    "challenger": {
+      "name": "king-XCIX",
+      "valid": true,
+      "S": -0.17651888740819086,
+      "gate_pass_rate": 0.765625,
+      "bank_frac": 0.153125,
+      "calib_ratio": 2.6512189569676905,
+      "n_turns": 80
+    },
+    "duel": {
+      "margin": -0.1313312078297963,
+      "se": 0.01852127401497004,
+      "z": -7.090830129916888,
+      "k_sigma": 3.0,
+      "min_margin": 0.05,
+      "challenger_wins": false,
+      "n_paired_turns": 80
+    }
+  },
+  "LI": {
+    "king": {
+      "name": "king-genesis",
+      "valid": true,
+      "S": -0.040163779532343416,
+      "gate_pass_rate": 0.5943396226415094,
+      "bank_frac": 0.3958333333333333,
+      "calib_ratio": 1.1551263974150796,
+      "n_turns": 80
+    },
+    "challenger": {
+      "name": "king-LI",
+      "valid": false,
+      "S": -Infinity,
+      "gate_pass_rate": 0.6344827586206897,
+      "bank_frac": 0.078125,
+      "calib_ratio": 3.5356877275583924,
+      "n_turns": 80
+    },
+    "duel": {
+      "margin": 0.0,
+      "se": Infinity,
+      "z": 0.0,
+      "k_sigma": 3.0,
+      "min_margin": 0.05,
+      "challenger_wins": false,
+      "n_paired_turns": 80
+    }
+  }
+}

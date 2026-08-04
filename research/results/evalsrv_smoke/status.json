@@ -1,0 +1,31 @@
+{
+  "pod": "calm-shark-5a",
+  "name": "affv-e10-evalsrv",
+  "started_utc": "2026-08-04T01:57:25Z",
+  "finished_utc": "2026-08-04T02:33:49Z",
+  "result": "PASS",
+  "turns_hf_repo": "Wejh/affine-turns",
+  "turns_sha256": "a30a3b5da61186a200dd2e16e4bc3e4bdf1a6ffaeaf81e005b5f8121ba5608c9",
+  "turns_bytes": 257727219,
+  "teacher": "zai-org/GLM-4.5-Air-FP8",
+  "health": {
+    "ok": true,
+    "turns_present": true
+  },
+  "smoke_n_turns": 8,
+  "duel": {
+    "king": "dendriteholdings/albedo-qwen3.6-35b-king-genesis@abe89194d6addf82e71f3f1ba9fef94b05404abf",
+    "challenger": "dendriteholdings/albedo-qwen3.6-35b-king-II@6b995b45bda4a3acf1615e288afcd1458d039fcd",
+    "challenger_wins": false,
+    "z": 1.1734600913551538,
+    "margin": 0.06873260732150488,
+    "se": 0.058572598955734405,
+    "n_paired_turns": 8,
+    "note": "II mean-S higher on 8-turn noise slice (margin>δ) but z<3 → reject; not a production claim"
+  },
+  "ops_lessons": [
+    "lium rsync dropped *.py (only __pycache__); use tar upload for affine sources",
+    "AffineFoundation/affine-turns 403 for HF user Wejh — public mirror Wejh/affine-turns",
+    "smoke skips tau2 git dep; duel path only needs fastapi/uvicorn/vllm/transformers"
+  ]
+}

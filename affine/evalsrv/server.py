@@ -1,0 +1,453 @@
+"""Affine eval server — FastAPI app on the GPU pod.
+
+Endpoints (driven by affine/eval_client.py on the root machine, all requiring
+the shared X-Affine-Token header when AFFINE_EVAL_TOKEN is set):
+
+  GET  /health              {ok, busy, busy_kind, engine, ...}
+  POST /duel                dispatch a duel; 409 when busy (aborts a bench)
+  GET  /duel/{id}           poll job record (verdict fallback for SSE races)
+  GET  /duel/{id}/stream    SSE: progress + heartbeat + verdict/error
+  GET  /duel/{id}/artifact  gzipped full duel record (rollouts + logprobs)
+  POST /bench               dispatch a benchmark suite; 409 when busy
+  GET  /bench/{id}          poll bench job
+  POST /abort_bench         abort a running bench so a duel can take the GPUs
+
+One duel OR one bench at a time (`_busy_lock`): both need miner-serving GPUs.
+Duels always win: a `/duel` arriving while a bench holds the lock signals the
+bench to abort, which frees the lock within seconds. Heartbeats every 30s keep
+the validator's stream-idle watchdog from tripping during cold model
+downloads. Fatal CUDA errors self-kill the process; the supervisor
+(bootstrap.sh loop) restarts it, and the validator's provisioner replaces the
+whole pod if health stays red.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import gzip
+import json
+import logging
+import os
+import threading
+import time
+import uuid
+from pathlib import Path
+from queue import Empty, Queue
+
+import uvicorn
+from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel
+
+from affine.config import load_config
+from affine.eval_client import Fault
+
+from . import benchrunner, dueling
+from .corpus import CorpusSync
+from .engine import Engine
+from .vllm_client import Served
+
+log = logging.getLogger("evalsrv")
+
+DATA_DIR = Path(os.environ.get("AFFINE_DATA_DIR", "/root/affine_data"))
+TURNS_PATH = DATA_DIR / "turns.jsonl"
+REF_CACHE_PATH = DATA_DIR / "ref_cache.jsonl"
+# Full duel records (rollouts + logprobs), gzipped, fetched by the root
+# validator after the verdict and published for miners. Bounded on disk.
+ARTIFACTS_DIR = DATA_DIR / "artifacts"
+ARTIFACTS_KEEP = 20
+EVAL_TOKEN = os.environ.get("AFFINE_EVAL_TOKEN", "")
+
+CUDA_FATAL_MARKERS = ("CUDA error", "device-side assert", "ECC error",
+                      "CUDA out of memory", "illegal memory access")
+
+app = FastAPI(title="affine-evalsrv")
+
+_cfg = load_config()
+_engine = Engine(_cfg.raw)
+_corpus = CorpusSync(_cfg.dataset.corpus_base_url, _cfg.dataset.manifest_key,
+                     DATA_DIR)
+_busy_lock = threading.Lock()
+_jobs: dict[str, dict] = {}
+_jobs_lock = threading.Lock()
+_current: dict = {"kind": None, "job_id": None}
+_abort_bench = threading.Event()
+_teacher_ready = False
+_ROLE = os.environ.get("AFFINE_ROLE", "duel")
+_JOBS_RETENTION = _cfg.validator.jobs_retention
+
+
+def _require_token(x_affine_token: str = Header(default="")) -> None:
+    if EVAL_TOKEN and x_affine_token != EVAL_TOKEN:
+        raise HTTPException(401, "bad or missing X-Affine-Token")
+
+
+def _register_job(job_id: str, record: dict) -> None:
+    with _jobs_lock:
+        _jobs[job_id] = record
+        # Prune oldest finished jobs beyond the retention cap.
+        if len(_jobs) > _JOBS_RETENTION:
+            finished = [(j.get("created_at", 0), jid) for jid, j in _jobs.items()
+                        if j.get("state") in ("completed", "failed")]
+            finished.sort()
+            for _, jid in finished[: len(_jobs) - _JOBS_RETENTION]:
+                _jobs.pop(jid, None)
+
+
+def _save_artifact(job_id: str, req: DuelRequest, verdict: dict,
+                   artifact: dict) -> None:
+    """Persist the full duel record; failures never affect the verdict."""
+    try:
+        ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "job_id": job_id,
+            "request": req.model_dump(),
+            "verdict": verdict,
+            **artifact,
+        }
+        path = ARTIFACTS_DIR / f"{job_id}.json.gz"
+        path.write_bytes(gzip.compress(json.dumps(payload).encode()))
+        files = sorted(ARTIFACTS_DIR.glob("*.json.gz"),
+                       key=lambda p: p.stat().st_mtime)
+        for old in files[:-ARTIFACTS_KEEP]:
+            old.unlink(missing_ok=True)
+    except Exception:
+        log.warning("artifact save failed for %s", job_id, exc_info=True)
+
+
+def _schedule_self_kill(reason: str) -> None:
+    log.critical("self-kill scheduled: %s", reason)
+
+    def _die():
+        time.sleep(5)
+        os._exit(70)
+
+    threading.Thread(target=_die, daemon=True).start()
+
+
+def _self_kill_if_cuda(context: str, err: str) -> None:
+    if any(m in err for m in CUDA_FATAL_MARKERS):
+        _schedule_self_kill(f"{context}: {err}")
+
+
+@app.on_event("startup")
+def _startup():
+    global _teacher_ready
+    if _ROLE == "bench":
+        # Dedicated bench pod: no teacher, no corpus — healthy as soon as the
+        # API is up. Miner weights load per-job into the challenger slot.
+        _teacher_ready = True
+        log.info("bench role: skipping teacher warmup and corpus refresh")
+        return
+
+    def _warm():
+        global _teacher_ready
+        _teacher_ready = _engine.ensure_teacher()
+        if not _teacher_ready:
+            _schedule_self_kill("teacher failed to start")
+    threading.Thread(target=_warm, daemon=True, name="teacher-warmup").start()
+
+    def _corpus_loop():
+        # Refresh between duels only: a manifest swap mid-duel would change
+        # turns.jsonl under a running slice.
+        while True:
+            time.sleep(_cfg.dataset.refresh_interval_s)
+            if _busy_lock.locked():
+                continue
+            _corpus.refresh()
+    threading.Thread(target=_corpus_loop, daemon=True,
+                     name="corpus-refresh").start()
+
+
+# -- health ---------------------------------------------------------------------
+
+@app.get("/health")
+def health(_: None = Depends(_require_token)):
+    return {
+        "ok": _teacher_ready,
+        "role": _ROLE,
+        "engine": _engine.status(),
+        "busy": _busy_lock.locked(),
+        "busy_kind": _current["kind"],
+        "free_disk_gb": round(_engine.free_disk_gb(), 1),
+        "turns_present": TURNS_PATH.exists(),
+        "corpus": _corpus.info() if _ROLE != "bench" else None,
+    }
+
+
+# -- duels ----------------------------------------------------------------------
+
+class DuelFault(RuntimeError):
+    """A duel failure the eval server can classify for the root client. The
+    `code` (an eval_client.Fault value) is stamped on the SSE error event so
+    the validator routes it without parsing free-form text — infra faults
+    never burn the miner."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+class DuelRequest(BaseModel):
+    king_repo: str
+    king_revision: str
+    challenger_repo: str
+    challenger_revision: str
+    challenger_hotkey: str
+    block_hash: str
+    # Servable-weight bytes of the challenger (from the root validator's
+    # metadata scan). 0 = unknown → skip the pre-download disk-fit check.
+    challenger_weight_bytes: int = 0
+
+
+def _run_duel_job(job_id: str, req: DuelRequest) -> None:
+    job = _jobs[job_id]
+    events: Queue = job["events"]
+    stop_heartbeat = threading.Event()
+    _current.update(kind="duel", job_id=job_id)
+    try:
+        def hb():
+            while not stop_heartbeat.wait(30.0):
+                events.put({"type": "heartbeat",
+                            "data": {"phase": job.get("phase", "?")}})
+        threading.Thread(target=hb, daemon=True).start()
+
+        job["state"] = "running"
+
+        job["phase"] = "ensure_teacher"
+        if not _engine.ensure_teacher():
+            # The teacher is ours: a dead teacher is a pod fault, not the
+            # challenger's — infra code so the miner's slot is never burned.
+            raise DuelFault(Fault.TEACHER, "teacher not servable")
+
+        job["phase"] = "ensure_king"
+        if not _engine.ensure_king(req.king_repo, req.king_revision):
+            # A king that will not *launch* is a transient/pod fault, NOT proof
+            # the king is gone: infra code so the miner is not burned and the
+            # king is not dethroned. The root proves a king is truly gone with
+            # an HF metadata probe before reverting it.
+            raise DuelFault(
+                Fault.KING_LAUNCH,
+                f"king {req.king_repo}@{req.king_revision[:12]} failed to launch")
+
+        job["phase"] = "load_challenger"
+        events.put({"type": "progress",
+                    "data": {"phase": "load_challenger", "repo": req.challenger_repo}})
+        # Fail fast (before a doomed multi-GB download) when the challenger's
+        # servable weights cannot fit the pod's serviceable disk. This is our
+        # pod being too small for a within-cap repo, so it is an infra fault
+        # (no miner burn); the validator defers it and the operator is paged.
+        fits, free_gb = _engine.challenger_fits(
+            req.challenger_weight_bytes,
+            repo=req.challenger_repo, revision=req.challenger_revision)
+        if not fits:
+            raise DuelFault(
+                Fault.POD_CAPACITY,
+                f"challenger weights ~{req.challenger_weight_bytes / 1e9:.0f} GB "
+                f"do not fit {free_gb:.0f} GB free after cache prune; provision "
+                "a larger pod or lower submission.max_model_size_gb")
+        if not _engine.load_challenger(req.challenger_repo, req.challenger_revision):
+            fault = _engine.diagnose_load_failure()
+            if fault == "infra":
+                # Our pod is unhealthy (disk/OOM/dead teacher). Emit an infra
+                # error so the validator requeues without burning the miner.
+                raise DuelFault(Fault.CHALLENGER_INFRA, "challenger could not "
+                                "load (pod disk/OOM/teacher unhealthy)")
+            # The checkpoint itself is unservable → a real rejection verdict.
+            verdict = {"challenger_wins": False, "job_id": job_id,
+                       "rejection_reason": "unservable:challenger failed to load in vLLM"}
+            job["verdict"] = verdict
+            events.put({"type": "verdict", "data": verdict})
+            job["state"] = "completed"
+            return
+
+        job["phase"] = "scoring"
+
+        def on_progress(miner: str, done: int, total: int):
+            events.put({"type": "progress",
+                        "data": {"phase": "scoring", "miner": miner,
+                                 "done": done, "total": total}})
+
+        verdict, artifact = asyncio.run(dueling.run_duel(
+            _cfg.raw, TURNS_PATH, REF_CACHE_PATH,
+            king=Served("king", req.king_repo, req.king_revision,
+                        _engine.king_slot.port),
+            challenger=Served("challenger", req.challenger_repo,
+                              req.challenger_revision, _engine.chall_slot.port),
+            teacher=Served("teacher", _cfg.teacher.repo, None,
+                           _engine.teacher_slot.port),
+            block_hash=req.block_hash, hotkey=req.challenger_hotkey,
+            corpus_info=_corpus.info(),
+            on_progress=on_progress))
+        verdict["job_id"] = job_id  # lets the root fetch the artifact post-verdict
+        _save_artifact(job_id, req, verdict, artifact)
+
+        # Set the verdict on the job and enqueue the event BEFORE flipping the
+        # terminal state, so the SSE generator can never observe "completed"
+        # with an empty queue while the verdict is still in flight.
+        job["verdict"] = verdict
+        events.put({"type": "verdict", "data": verdict})
+        job["state"] = "completed"
+    except Exception as e:
+        log.exception("duel %s failed", job_id)
+        code = getattr(e, "code", None)
+        job["error"] = str(e)
+        job["error_code"] = code
+        events.put({"type": "error", "data": {"error": str(e), "code": code}})
+        job["state"] = "failed"
+        _self_kill_if_cuda(f"duel {job_id}", str(e))
+    finally:
+        stop_heartbeat.set()
+        try:
+            _engine.unload_challenger()
+        except Exception:
+            log.warning("challenger unload failed", exc_info=True)
+        _current.update(kind=None, job_id=None)
+        _busy_lock.release()
+
+
+@app.post("/duel")
+def start_duel(req: DuelRequest, _: None = Depends(_require_token)):
+    if _ROLE == "bench":
+        raise HTTPException(400, "this pod is AFFINE_ROLE=bench; duels go to the eval machine")
+    if not _corpus.ready:
+        raise HTTPException(503, "turn corpus not synced yet")
+    if not _busy_lock.acquire(blocking=False):
+        # Duels own the GPU: if a bench is holding the lock, tell it to abort
+        # so the next retry can take over. Still 409 this call.
+        if _current["kind"] == "bench":
+            _abort_bench.set()
+            raise HTTPException(409, "aborting bench for duel; retry")
+        raise HTTPException(409, "eval server busy with a duel")
+    job_id = f"duel-{uuid.uuid4().hex[:12]}"
+    _register_job(job_id, {"state": "queued", "kind": "duel", "events": Queue(),
+                           "created_at": time.time(), "request": req.model_dump()})
+    threading.Thread(target=_run_duel_job, args=(job_id, req),
+                     daemon=True, name=job_id).start()
+    return {"job_id": job_id}
+
+
+@app.get("/duel/{job_id}")
+def get_duel(job_id: str, _: None = Depends(_require_token)):
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "unknown job")
+    return {k: v for k, v in job.items() if k != "events"}
+
+
+@app.get("/duel/{job_id}/artifact")
+def get_duel_artifact(job_id: str, _: None = Depends(_require_token)):
+    path = ARTIFACTS_DIR / f"{job_id}.json.gz"
+    if not path.is_file():
+        raise HTTPException(404, "no artifact for this job")
+    return Response(content=path.read_bytes(), media_type="application/gzip")
+
+
+@app.get("/duel/{job_id}/stream")
+async def stream_duel(job_id: str, _: None = Depends(_require_token)):
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "unknown job")
+
+    async def generate():
+        events: Queue = job["events"]
+        while True:
+            try:
+                ev = events.get_nowait()
+            except Empty:
+                if job["state"] in ("completed", "failed") and events.empty():
+                    break
+                await asyncio.sleep(1.0)
+                continue
+            yield f"data: {json.dumps(ev)}\n\n"
+            if ev["type"] in ("verdict", "error"):
+                break
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+# -- benchmarks -------------------------------------------------------------------
+
+class BenchRequest(BaseModel):
+    repo: str
+    revision: str
+    suite: str
+    num_trials: int = 2
+    max_concurrency: int = 8
+    user_llm: str = "teacher"
+
+
+def _run_bench_job(job_id: str, req: BenchRequest) -> None:
+    job = _jobs[job_id]
+    _current.update(kind="bench", job_id=job_id)
+    _abort_bench.clear()
+    try:
+        job["state"] = "LOADING_MODEL"
+        if not _engine.load_challenger(req.repo, req.revision):
+            job["result"] = {"ok": False, "suite": req.suite,
+                             "error": "model failed to load in vLLM"}
+            job["state"] = "failed"
+            return
+        job["state"] = "RUNNING"
+        result = benchrunner.run_suite(
+            suite=req.suite, model_repo=req.repo,
+            model_port=_engine.chall_slot.port,
+            user_llm=req.user_llm,
+            teacher_repo=_cfg.teacher.repo,
+            teacher_port=_engine.teacher_slot.port,
+            num_trials=req.num_trials, max_concurrency=req.max_concurrency,
+            abort_event=_abort_bench)
+        job["result"] = result
+        job["state"] = "aborted" if result.get("aborted") else "completed"
+    except Exception as e:
+        log.exception("bench %s failed", job_id)
+        job["result"] = {"ok": False, "suite": req.suite, "error": str(e)}
+        job["state"] = "failed"
+        _self_kill_if_cuda(f"bench {job_id}", str(e))
+    finally:
+        try:
+            _engine.unload_challenger()
+        except Exception:
+            log.warning("challenger unload failed", exc_info=True)
+        _current.update(kind=None, job_id=None)
+        _busy_lock.release()
+
+
+@app.post("/bench")
+def start_bench(req: BenchRequest, _: None = Depends(_require_token)):
+    if not _busy_lock.acquire(blocking=False):
+        raise HTTPException(409, "eval server busy")
+    job_id = f"bench-{uuid.uuid4().hex[:12]}"
+    _register_job(job_id, {"state": "queued", "kind": "bench", "events": Queue(),
+                           "created_at": time.time(), "request": req.model_dump()})
+    threading.Thread(target=_run_bench_job, args=(job_id, req),
+                     daemon=True, name=job_id).start()
+    return {"job_id": job_id}
+
+
+@app.get("/bench/{job_id}")
+def get_bench(job_id: str, _: None = Depends(_require_token)):
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "unknown job")
+    return {k: v for k, v in job.items() if k != "events"}
+
+
+@app.post("/abort_bench")
+def abort_bench(_: None = Depends(_require_token)):
+    if _current["kind"] == "bench":
+        _abort_bench.set()
+        return {"aborting": True, "job_id": _current["job_id"]}
+    return {"aborting": False}
+
+
+def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    port = int(os.environ.get("AFFINE_EVAL_PORT", "9000"))
+    uvicorn.run(app, host="127.0.0.1", port=port)
+
+
+if __name__ == "__main__":
+    main()

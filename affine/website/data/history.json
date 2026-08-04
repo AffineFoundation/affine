@@ -1,0 +1,87 @@
+[
+  {
+    "event": "verdict",
+    "at": "2026-08-03T14:55:00+00:00",
+    "challenge_id": "ch_prev01",
+    "repo": "forge/Affine-probe-beta",
+    "hotkey": "5DAAnrj7VHTznn2AWBemMuyBwZWs6FNFjdyVXUeYum3PTXFy",
+    "accepted": false,
+    "z": -2.14,
+    "margin": -0.08,
+    "n_paired_turns": 80,
+    "rejection_reason": "z below k·σ threshold",
+    "score": -0.027,
+    "score_king": -0.011
+  },
+  {
+    "event": "verdict",
+    "at": "2026-08-03T12:10:00+00:00",
+    "challenge_id": "ch_prev02",
+    "repo": "lab/Affine-nightly-v2",
+    "hotkey": "5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y",
+    "accepted": false,
+    "z": 1.72,
+    "margin": 0.04,
+    "n_paired_turns": 80,
+    "rejection_reason": "min_margin not cleared",
+    "score": -0.022,
+    "score_king": -0.011
+  },
+  {
+    "event": "failed",
+    "at": "2026-08-03T10:02:00+00:00",
+    "challenge_id": "ch_prev03",
+    "repo": "0xminer/Affine-broken-weights",
+    "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+    "error_code": "REPO_HYGIENE",
+    "error_detail": "python files not allowed in submission repo"
+  },
+  {
+    "event": "verdict",
+    "at": "2026-08-03T07:40:00+00:00",
+    "challenge_id": "ch_prev04",
+    "repo": "north/Affine-distill-04",
+    "hotkey": "5HpG9w8EBLe5XCrbczpvBu5kYAgjLymcV9D3ZcY2sX8nV7Pq",
+    "accepted": false,
+    "z": -8.60,
+    "margin": -0.31,
+    "rejection_reason": "challenger below king on S*",
+    "score": -0.052,
+    "score_king": -0.019
+  },
+  {
+    "event": "verdict",
+    "at": "2026-08-02T22:15:00+00:00",
+    "challenge_id": "ch_prev05",
+    "repo": "north/Affine-distill-03",
+    "hotkey": "5HpG9w8EBLe5XCrbczpvBu5kYAgjLymcV9D3ZcY2sX8nV7Pq",
+    "accepted": false,
+    "z": -10.53,
+    "margin": -0.44,
+    "rejection_reason": "challenger below king on S*",
+    "score": -0.061,
+    "score_king": -0.019
+  },
+  {
+    "event": "failed",
+    "at": "2026-08-02T18:00:00+00:00",
+    "challenge_id": "ch_prev06",
+    "repo": "spam/Affine-too-large",
+    "hotkey": "5C4hrfjw9DjXZJeJnFSdgsgF5DNJxqNjaN9kGqYdG9YqXkLm",
+    "error_code": "MODEL_TOO_LARGE",
+    "error_detail": "safetensors exceed max_model_size_gb=90"
+  },
+  {
+    "event": "crowned",
+    "at": "2026-08-01T12:00:00+00:00",
+    "challenge_id": "genesis",
+    "repo": "AffineFoundation/Affine-genesis",
+    "hotkey": "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
+    "accepted": true,
+    "reign_number": 1,
+    "z": null,
+    "score": -0.048,
+    "score_king": null,
+    "rejection_reason": null
+  }
+]

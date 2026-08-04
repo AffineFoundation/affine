@@ -1,0 +1,209 @@
+# Affine chain contract. Single source of truth for the live game.
+# Everything the validator, eval server, and miners need to agree on lives
+# here; secrets come from the environment (doppler), never from this file.
+
+[subnet]
+name = "Affine"
+netuid = 120
+network = "finney"
+# Emission fallback when no king in the chain is registered.
+burn_uid = 0
+# Rolling last-N kings payout (Albedo / Teutonic design): current king + up
+# to N-1 prior distinct kings share emissions equally (1/N each). Unregistered
+# members of the chain are skipped at weight-set time; empty chain → burn_uid.
+king_chain_size = 5
+# Reveals at or below this block are ignored. MUST be set to a recent block
+# at go-live so pre-launch test reveals are not eligible (-1 = unset guard:
+# the validator refuses to start until an operator sets a real value).
+# Set at go-live to a recent finney block (validator refuses to start if <0).
+# Placeholder updated 2026-08-03 from public finney header; bump again at launch.
+min_submission_block = 8767079
+# Bittensor weight-version gate for contract upgrades (bump on breaking
+# scoring/contract changes so stale validators are ignored by consensus).
+weight_version_key = 1
+
+[wallet]
+name = "default"
+hotkey = "default"
+
+[submission]
+# Reveal payload committed on-chain via set_reveal_commitment:
+#   affine1|<hf_repo>|<hf_revision_40hex>|<author_hotkey_ss58>
+reveal_prefix = "affine1"
+repo_pattern = '^[^/]+/[Aa]ffine-.+$'
+# Anti-impersonation: repo id must contain the first N AND last M chars of
+# the submitter's coldkey OR hotkey ss58 (case-insensitive; both halves
+# matched independently so a full embedded ss58 also passes; tail carries
+# checksum).
+coldkey_prefix_len = 5
+coldkey_suffix_len = 5
+# Repo hygiene caps enforced before any download of weights.
+#   max_model_size_gb  — cap on .safetensors bytes (the servable weights).
+#   max_total_repo_gb  — cap on TOTAL repo bytes (blocks oversized junk files
+#                        that bypass the safetensors cap and disk-DoS the pod).
+max_model_size_gb = 90.0
+max_total_repo_gb = 100.0
+allow_python_files = false
+allow_auto_map = false
+# Metadata-intake guards on attacker-controlled repos.
+max_repo_files = 5000
+max_config_bytes = 1048576   # 1 MiB; config.json larger than this is rejected
+
+[teacher]
+# Frozen frontier reference C. The eval machine serves this warm.
+repo = "zai-org/GLM-4.5-Air-FP8"
+port = 8000
+tp = 2
+gpus = "0,1"
+
+[miner_serving]
+# King stays warm; challenger is loaded per duel.
+king_port = 8001
+king_gpus = "2,3"
+challenger_port = 8002
+challenger_gpus = "4,5"
+tp = 2
+max_model_len = 32768
+gpu_memory_utilization = 0.85
+max_num_batched_tokens = 2048
+
+[dataset]
+# Unlabeled turn corpus D: append-only shards + an immutable-manifest pointer
+# on the public Hippius bucket. Push data = new shard + new manifest revision;
+# remove data = flip a shard inactive in a new revision (objects are never
+# deleted — old verdicts stay replayable). The eval machine syncs anonymously,
+# verifies the manifest hash resolves at turns/manifests/{hash}.json and every
+# shard sha256, and refuses to duel without a verified corpus (fail-closed).
+# Duel slices are seeded from the reveal-block hash so miners cannot
+# precompute them (private pool: rejected, see RESEARCH_LOG 2026-08-03), and
+# every verdict stamps the manifest sha256 it was scored against.
+# Corpus refresh no longer bumps weight_version_key — that stays reserved for
+# scoring-rule forks. RT-6 mitigations: fresh teacher y_C at duel time,
+# reveal-block slice seeding, and periodic shard refresh/retirement via
+# scripts/corpus_push.py (ρ_late=+0.845 stability: results/rt6_temporal_holdout.json).
+corpus_base_url = "https://s3.hippius.com/affine-sn120"
+manifest_key = "turns/manifest.json"
+# Pod re-checks the manifest pointer this often (between duels, never mid-duel).
+refresh_interval_s = 3600
+
+[duel]
+# Frozen production S* (RESEARCH_LOG 2026-08-03 hybrid freeze).
+n_turns = 80
+tau = 0.02
+gamma = 0.30
+gamma_bank = 0.08
+k_sigma = 3.0
+l1_weight = 1.0
+l1_clip = 0.1
+r_lo = 1.0
+r_hi = 4.0
+# Robustness floors on top of the k·SE rule (added 2026-08-03 after review):
+#   min_se     — floor on the paired SE so a near-zero-variance challenger
+#                cannot win on an arbitrarily tiny mean (k·SE → 0 degeneracy).
+#   min_margin — minimum absolute paired mean(S_c − S_k) required to dethrone,
+#                independent of variance. Both must be cleared to crown.
+min_se = 0.005
+min_margin = 0.05
+n_teacher_samples = 4
+n_miner_samples = 4
+temperature = 0.8
+max_thought_tokens = 1024
+max_action_tokens = 768
+concurrency = 24
+# Whole-duel wall clock budget on the eval server before the validator
+# classifies the eval as a transient failure and requeues.
+timeout_s = 7200
+
+[seed_king]
+# Genesis checkpoint crowned when the validator boots with empty state.
+# Production Albedo genesis until AffineFoundation/Affine-genesis is uploaded.
+repo = "dendriteholdings/albedo-qwen3.6-35b-king-genesis"
+revision = "abe89194d6addf82e71f3f1ba9fef94b05404abf"
+
+[bench]
+# Advisory benchmarks run on a dedicated always-on bench machine (never the
+# duel pod). NEVER part of S* or duels. Default suite is a pinned 25-task
+# SWE-rebench lite panel (coding isomorphism axis). tau2_* suites remain
+# supported by the runner if re-added here.
+enabled = true
+suites = ["swe_rebench_lite"]
+num_trials = 1
+# Parallel mini-SWE-agent workers (and swebench eval workers, capped at 4).
+max_concurrency = 2
+# Unused for swe_rebench_lite; kept for tau2_* suites if re-enabled.
+user_llm = "teacher"
+# Which submissions get benched: "accepted" (new kings only) or "all".
+policy = "all"
+
+[bench_serving]
+# GPU layout on the dedicated bench pod (AFFINE_ROLE=bench). One miner slot.
+port = 8002
+gpus = "0,1"
+tp = 2
+
+[eval_machine]
+# GPU pod hosting duel evalsrv. The provisioner keeps exactly one alive and
+# reprovisions automatically on sustained health failure.
+provider_order = ["lium", "targon"]
+# Preference order: B300 (fastest / most VRAM) → B200 → H200. First match
+# under the price cap wins.
+gpu_types = ["B300", "B200", "H200"]
+gpu_type = "B300"   # legacy single-type field; gpu_types takes precedence
+gpu_count = 8
+# Hard price cap for the whole pod ($/hr). B300 8× sits ~$56–64.
+max_price_per_hour = 70.0
+port = 9000
+health_interval_s = 60
+# TEMPORARY (2026-08-04): raised 5 → 30 while the eval pod recovers from an
+# in-place evalsrv bounce (teacher re-warm takes ~6 min > 5 strikes).
+# Revert to 5 once the first duel completes.
+unhealthy_threshold = 30
+provision_timeout_s = 3600
+# Lium: docker template id to boot (leave empty for provider default).
+lium_template_id = ""
+# Targon: inventory tier + image for the RENTAL workload fallback.
+targon_resource = "h200-xlarge"
+targon_image = "vllm/vllm-openai:latest"
+
+[bench_machine]
+# Always-on dedicated SWE bench pod (separate from the duel eval machine).
+# Sized for one miner TP=2 serve + docker agent/eval — not the 8× duel layout.
+# Prefer H200: currently ~$23/hr for 2× vs B300 8× at ~$64 for the duel pod.
+provider_order = ["lium", "targon"]
+gpu_types = ["H200", "B200", "B300"]
+gpu_type = "H200"
+gpu_count = 2
+max_price_per_hour = 30.0
+port = 9001
+health_interval_s = 60
+unhealthy_threshold = 5
+provision_timeout_s = 3600
+lium_template_id = ""
+targon_resource = "h200-large"
+targon_image = "vllm/vllm-openai:latest"
+
+[hippius]
+# Website + dashboard state pushed here; miners read it.
+endpoint = "https://s3.hippius.com"
+bucket = "affine-sn120"
+
+[validator]
+poll_interval_s = 30
+weight_interval_s = 300
+state_dir = "state"
+tick_warn_after_s = 120
+tick_restart_after_s = 2700
+stream_idle_warn_s = 180
+stream_idle_timeout_s = 420
+max_transient_eval_retries = 3
+# A persistent infra fault (dead king, a repo too large for the pod's disk)
+# never burns the miner, but after this many front-requeues the entry is
+# rotated to the queue tail so other submissions still get evaluated instead
+# of the head wedging forever.
+max_infra_front_requeues = 5
+dashboard_flush_min_interval_s = 5.0
+# Refuse to set weights if the metagraph has not refreshed within this many
+# seconds (stale uid→hotkey map would pay the wrong neurons).
+metagraph_max_age_s = 1800
+# Cap on retained finished eval-server job records (bounds pod memory).
+jobs_retention = 200

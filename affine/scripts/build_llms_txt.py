@@ -1,0 +1,362 @@
+"""Assemble website/llms.txt — miner index built from live sources.
+
+llms.txt is a table of contents: prose contract + links to everything the
+project publishes. The scoring/submission sources are NOT inlined; they are
+copied verbatim into website/code/ at build time and linked, so the published
+code is always byte-identical to what the validator runs.
+
+Regenerate:
+  cd ~/subnet120 && source .venv/bin/activate && source .env
+  python affine/scripts/build_llms_txt.py
+
+dashboard.push_website() calls this before uploading the static site (which
+includes website/code/), so neither the index nor the code can drift.
+"""
+
+from __future__ import annotations
+
+import shutil
+import sys
+import tomllib
+from pathlib import Path
+
+AFFINE_ROOT = Path(__file__).resolve().parents[1]
+OUT = AFFINE_ROOT / "website" / "llms.txt"
+CODE_DIR = AFFINE_ROOT / "website" / "code"
+
+
+def _site_base() -> str:
+    """Public site root, derived from the same affine.toml the validator runs."""
+    with open(AFFINE_ROOT / "affine.toml", "rb") as f:
+        raw = tomllib.load(f)
+    h = raw["hippius"]
+    return f"{h['endpoint'].rstrip('/')}/{h['bucket']}"
+
+# Sources published under code/ and linked from llms.txt: (relative_path, description).
+SOURCES: list[tuple[str, str]] = [
+    ("affine.toml", "chain contract SSOT — every frozen knob the validator runs"),
+    ("affine/score.py", "S* v2: gates, ranking term, duel decision — the scoring code"),
+    ("scripts/submit.py", "commit-reveal submission client (trust this over any prose)"),
+    ("affine/priors.py", "published prior bank behind the bank gate"),
+    ("affine/chain.py", "reveal payload contract + commit builders"),
+    ("evalsrv/dueling.py", "live duel: slice seeding, injectability probe, scoring loop"),
+    ("affine/model_store.py", "checkpoint hygiene rules + weight-copy detection"),
+    ("affine/state.py", "1-hotkey-1-eval policy, king lineage, queue invariants"),
+]
+
+
+HEADER = """\
+# Affine (Bittensor SN120)
+
+> King-of-the-hill subnet. Miners submit HF checkpoints; the validator crowns \
+the reigning king by a teacher-anchored distillation score S*, not an LLM judge. \
+This file is the miner index: submit path, public contract, and links to the \
+exact scoring code the network runs.
+
+Machine-readable knobs (subset of the contract below) also ship as \
+`data/contract.json` on this site. When in doubt, trust the linked sources \
+under `code/` (republished from the validator's own tree on every site push) \
+over any prose summary.
+
+---
+
+## Table of contents
+
+Everything the project publishes, in one index. All URLs are on this site's \
+root ({BASE}/).
+
+**In this file (read on)**
+
+- How the game works — rules, duel flow, emissions
+- Submit checklist — HF layout, repo naming, commit-reveal payload
+- S* v2 — the gates and ranking term you optimize
+- Public data — full field-level description of every published object
+- Source of truth — links to the exact validator code under `code/`
+
+**Code** (verbatim copies of the validator's own tree, republished on every \
+site push — always current)
+
+{CODE_LINKS}
+**Validator logs** (separate file, not inlined here)
+
+- [data/validator_log.txt]({BASE}/data/validator_log.txt) — redacted tail of \
+the live control-plane log, refreshed ~every minute
+
+**Eval results** (full duel records — the training data)
+
+- [evals/index.jsonl]({BASE}/evals/index.jsonl) — append-only manifest, one \
+line per duel
+- `evals/{challenge_id}.json.gz` — everything computed during a duel: \
+rollouts, teacher refs, every forced logprob
+
+**Live dashboard state** (small JSON, refreshed every few seconds)
+
+- [data/dashboard.json]({BASE}/data/dashboard.json) — king, reign chain, \
+queue, live eval progress
+- [data/history.json]({BASE}/data/history.json) — last 100 verdicts/failures
+- [data/benchmarks.json]({BASE}/data/benchmarks.json) — advisory tau2 scores \
+(never part of S*)
+- [data/contract.json]({BASE}/data/contract.json) — machine-readable \
+contract knobs
+
+**Complete audit logs** (gzipped JSONL)
+
+- [data/history_full.jsonl.gz]({BASE}/data/history_full.jsonl.gz) — every \
+verdict and failure since genesis
+- [data/bench_history_full.jsonl.gz]({BASE}/data/bench_history_full.jsonl.gz) \
+— every completed bench run
+
+**Turn corpus D** (the prompts)
+
+- [turns/manifest.json]({BASE}/turns/manifest.json) — current manifest: \
+shards, hashes, corpus epoch
+- `turns/shards/*.jsonl.gz` — immutable shard objects
+- `turns/manifests/{sha256}.json` — every manifest revision ever, immutable
+
+**Website**
+
+- [index.html]({BASE}/index.html) — live dashboard UI
+- [llms.txt]({BASE}/llms.txt) — this file
+
+---
+
+## How the game works
+
+1. A frozen teacher C (`zai-org/GLM-4.5-Air-FP8`) and a public turn corpus D \
+(sharded + manifest-pinned on this site under `turns/`) define the capability \
+axis (SWE-style coding).
+2. You commit-reveal an HF checkpoint pinned to a 40-hex git revision.
+3. The validator burns your hotkey's **one eval slot at enqueue** (not at \
+verdict). Failed hygiene, failed probe, or lost duel still burns the slot.
+4. Eval machine runs a duel on an `n_turns` slice of D seeded by \
+`blake2b(reveal_block_hash ‖ your_hotkey)` — you cannot know the slice before \
+reveal; anyone can re-derive it after.
+5. Both sides are scored with S* v2 (gates + ranking). Challenger dethrones \
+the king iff both are gate-valid AND `mean(S_c − S_k) > 3·SE` AND \
+`mean > min_margin` (SE floored by `min_se`).
+6. Emissions go to the rolling last-`king_chain_size` distinct kings, equal \
+share. Advisory tau2 benches never affect S* or crowning.
+
+There is no validator-private data. Replayability is the trust model: two \
+checkpoints + public D + `affine/score.py` → recompute the verdict.
+
+---
+
+## Submit checklist (do this)
+
+1. Train / distill a coding model that emits closed bash-fenced actions and \
+usable thoughts under the Affine chat contract (see probe below).
+2. Push weights to Hugging Face as safetensors in canonical layout \
+(`model.safetensors` **or** sharded `model-XXXXX-of-YYYYY.safetensors` + \
+`model.safetensors.index.json`). No `*.py`. No `auto_map` in `config.json`. \
+Safetensors ≤ 90 GB; whole repo ≤ 100 GB; ≤ 5000 files; `config.json` ≤ 1 MiB.
+3. Repo id must match `^[^/]+/[Aa]ffine-.+$` **and** embed your identity: \
+the first 5 AND last 5 chars (lowercase) of your coldkey **or** hotkey ss58 \
+must both appear in the repo id — the compact token or the full ss58 both \
+work. Example: `you/Affine-{token}-mymodel`.
+4. Pin a 40-hex revision (never a moving branch tip).
+5. From the `affine/` package, run:
+
+```bash
+python scripts/submit.py --repo you/Affine-{token}-mymodel \\
+    --wallet YOUR_WALLET --hotkey YOUR_HOTKEY [--revision <40hex>]
+```
+
+6. Payload committed on-chain:
+
+```
+affine1|<hf_repo>|<hf_revision_40hex>|<author_hotkey_ss58>
+```
+
+Live path uses bittensor 11 timelock encrypt (`reveal_in="60s"`) → \
+`Commitments.set_commitment`. Ignore older docs that say \
+`set_reveal_commitment(..., blocks_until_reveal=3)` — **trust `scripts/submit.py`**.
+7. Watch the dashboard queue. Reveal opens ~1 minute after submit. Reveals at \
+or below `min_submission_block` are ignored.
+
+**Hard policies**
+
+- One submission per hotkey, ever. Slot burned at enqueue.
+- A content revision that was ever submitted can never be resubmitted, by anyone.
+- Weight-identical copy of the current king → reject, unless your HF commit \
+timestamp is earlier than the king's → `crown_earlier` without a duel.
+- Current king's hotkey is skipped (already crowned).
+- Infra faults (dead eval pod, busy server, chain hiccup on block hash) \
+requeue without burning a failure record; miner-attributable failures burn.
+
+---
+
+## S* v2 (what you optimize)
+
+Per pair / miner gates (INVALID ⇒ cannot win, S = −∞ for ranking):
+
+1. **Causality + leakage** — pair passes if no fuzzy z⊃y leakage and \
+`lpA(y_A|z_A) − lpA(y_A|∅) ≥ τ` (τ=0.02). Miner INVALID if pass_rate < γ=0.30.
+2. **Prior-bank positivity** — `frac_bank` = share of pairs with Λ2_bank > 0 \
+over the published priors in `affine/priors.py`. INVALID if frac_bank < γ_bank=0.08.
+3. **Calibration ratio** — `r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|`. \
+INVALID if r ∉ [1.0, 4.0].
+
+Ranking term:
+
+```
+S = mean( Λ2 + w · clip(L1lift, ±0.1) ) with w = 1.0
+Λ2     = lpC(y_C|z_A) − lpC(y_C|∅)
+L1lift = lpA(y_C|z_A) − lpA(y_C|∅)
+```
+
+Duel crowning: challenger wins iff **all** of:
+
+- both sides gate-valid
+- paired `mean(S_c − S_k) > 3 · SE`
+- `mean > min_margin` (δ = 0.05)
+- SE floored by `min_se = 0.005`
+
+Before the full duel, an injectability probe rejects checkpoints that cannot \
+emit a parsable bash action or return finite forced logprobs.
+
+Frozen numeric knobs live in `affine.toml` `[duel]` (linked under `code/`). \
+Changing score.py, priors, duel knobs, or the reveal format is a chain fork \
+(`weight_version_key` bump). Corpus refreshes are data events, not forks: \
+the manifest's `corpus_epoch` increments and every verdict records which \
+manifest it was scored against.
+
+---
+
+## Public data (train on it)
+
+Everything the validator scores is published — there is no validator-private \
+data. All paths are relative to this site's root (Hippius S3 bucket \
+`affine-sn120`); fetch them directly with curl or any HTTP client.
+
+**Live dashboard state** (small JSON, refreshed every few seconds):
+
+- `data/dashboard.json` — current king, rolling reign chain, queue, live eval \
+progress, stats.
+- `data/history.json` — last 100 verdicts/failures, slimmed for the website \
+(z, margin, S, error codes).
+- `data/benchmarks.json` — advisory tau2 suite scores per model (never part \
+of S*).
+- `data/contract.json` — machine-readable contract knobs.
+- `data/validator_log.txt` — recent validator log tail (plain text, refreshed \
+~every minute). Watch the control plane operate: health checks, duels, \
+verdicts, crownings, weight-sets. Pod network coordinates are redacted; \
+nothing else is.
+
+**Complete audit logs** (gzipped JSONL, updated on every verdict):
+
+- `data/history_full.jsonl.gz` — every verdict and failure since genesis, \
+with full per-side S* summaries, gate stats, slice seeds, block hashes, \
+rejection reasons.
+- `data/bench_history_full.jsonl.gz` — every completed bench run.
+
+**Full duel records — the training data** (one immutable object per \
+challenge, published right after the verdict):
+
+- `evals/index.jsonl` — append-only manifest. One line per duel: \
+`{key, bytes, at, challenge_id, repo, revision, hotkey, challenger_wins, z, \
+margin, rejection_reason}`. Poll this to discover new records.
+- `evals/{challenge_id}.json.gz` — gzipped JSON with everything computed \
+during the duel:
+  - `request` — king/challenger repos + revisions, hotkey, block hash.
+  - `verdict` — same audit summary as history.
+  - `slice` — seed, digest, n, block_hash, corpus_epoch, manifest_sha256. \
+The manifest hash resolves at `turns/manifests/{hash}.json` forever, so you \
+can re-derive the exact slice from public D even after shards are retired.
+  - `turn_ids` — `{traj_id}:{turn_idx}` keys into the public corpus.
+  - `teacher_refs` — the teacher's reference rollouts per turn: \
+`{turn_id: [{z, y, lp_own, lp_empty}]}`. This is frontier-teacher \
+distillation data for the exact turns that were scored.
+  - `king_rows` / `challenger_rows` — per-turn instrumented records: \
+`{turn_id, miner, valid, n_pairs, bank_frac, L2_bank, pairs: [...]}`. Each \
+pair carries the miner rollout text (`z_a` thoughts, `y_a` action) plus every \
+forced-logprob component S* is computed from (`lpA_yc_za`, `lpC_yc_za`, \
+`lpA_yc_zc`, `lpA_yc_e`, `lpA_ya_za`, `lpC_ya_za`, `lpA_ya_zc`, `lpA_ya_e`, \
+`lpC_ya_e`, `lpC_ya_zc`, `lpC_yc_zc`, `lpC_yc_e`, `L2_bank`). You can \
+recompute any verdict offline from this file + `affine/score.py`.
+
+**Turn corpus D** (the prompts themselves) — sharded, on this site:
+
+- `turns/manifest.json` — current manifest: \
+`{corpus_epoch, created_at, shards: [{key, sha256, n_turns, active}], \
+prev_manifest}`. Poll it like `evals/index.jsonl`; a hash change means the \
+corpus moved.
+- `turns/shards/*.jsonl.gz` — immutable shard objects; `sha256` in the \
+manifest is over the uncompressed jsonl. Download every `active: true` shard \
+and concatenate in manifest order to reproduce exactly what the eval machine \
+scores against.
+- `turns/manifests/{sha256}.json` — every manifest revision ever published, \
+immutable. The `manifest_sha256` stamped in any verdict resolves here, so \
+retired data stays replayable.
+
+Slices are seeded by the reveal-block hash, so future slices are \
+unpredictable; past records tell you the distribution, not the next slice. \
+The corpus is refreshed continuously — new shards appear and old ones retire \
+via manifest revisions (`corpus_epoch` increments each time), so keep your \
+local copy synced to the manifest.
+
+Suggested agent loop: poll `evals/index.jsonl` → fetch new \
+`evals/*.json.gz` → train on `teacher_refs` (distillation) and on your own \
+gate/logprob diagnostics from `pairs`.
+
+---
+
+## Source of truth (linked)
+
+The files below are byte-identical copies of the validator's own tree, \
+republished under `code/` every time the site is pushed — they can never be \
+newer or older than the code that scores you. Fetch them with curl or any \
+HTTP client.
+
+{CODE_LINKS}
+This index and the `code/` copies are regenerated together on every validator \
+website push.
+"""
+
+
+def _publish_code() -> list[str]:
+    """Copy each source verbatim into website/code/<rel>; return link lines."""
+    if CODE_DIR.exists():
+        shutil.rmtree(CODE_DIR)
+    lines = []
+    for rel, desc in SOURCES:
+        src = AFFINE_ROOT / rel
+        if not src.is_file():
+            raise FileNotFoundError(f"required source missing: {src}")
+        dst = CODE_DIR / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+        lines.append(f"- [code/{rel}]({{BASE}}/code/{rel}) — {desc}\n")
+    return lines
+
+
+def build() -> str:
+    code_links = "".join(_publish_code())
+    # Only {BASE}/{CODE_LINKS} are substituted; other braces ({challenge_id},
+    # {token}, ...) are literal placeholders miners should read as-is.
+    text = (HEADER.replace("{CODE_LINKS}", code_links)
+                  .replace("{BASE}", _site_base()))
+    # Fail closed if we somehow produced a broken index.
+    if "## Table of contents" not in text or "data/validator_log.txt" not in text:
+        raise RuntimeError("llms.txt build failed closed: missing table of contents")
+    if "{BASE}" in text or "{CODE_LINKS}" in text:
+        raise RuntimeError("llms.txt build failed closed: unsubstituted placeholder")
+    score_copy = CODE_DIR / "affine" / "score.py"
+    if "def score_miner" not in score_copy.read_text(encoding="utf-8"):
+        raise RuntimeError("llms.txt build failed closed: code/affine/score.py missing score_miner")
+    if sum(1 for _ in CODE_DIR.rglob("*") if _.is_file()) != len(SOURCES):
+        raise RuntimeError("llms.txt build failed closed: code/ file count mismatch")
+    return text
+
+
+def main() -> None:
+    text = build()
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.write_text(text, encoding="utf-8")
+    n_code = sum(1 for p in CODE_DIR.rglob("*") if p.is_file())
+    print(f"wrote {OUT} ({len(text):,} chars, {text.count(chr(10)):,} lines) "
+          f"+ {n_code} sources under {CODE_DIR}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

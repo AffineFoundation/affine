@@ -1,0 +1,330 @@
+:root {
+  --void: #000000;
+  --ink: #050505;
+  --ash: #1a1a1a;
+  --smoke: #2e2e2e;
+  --fog: #6a6a6a;
+  --bone: #c8c4bc;
+  --paper: #ece8e0;
+  --up: #9a9a92;
+  --down: #4a4a46;
+  --accent: #b8b2a6;
+  --font-display: "Instrument Serif", Georgia, serif;
+  --font-ui: "Syne", "Helvetica Neue", sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--void);
+  color: var(--bone);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+body {
+  position: relative;
+  min-height: 100dvh;
+}
+
+.void {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 80% 55% at 50% 0%, #0c0c0c 0%, transparent 55%),
+    radial-gradient(ellipse 60% 40% at 80% 90%, #0a0a0a 0%, transparent 50%),
+    linear-gradient(180deg, #000 0%, #030303 45%, #000 100%);
+  animation: void-breathe 14s ease-in-out infinite alternate;
+}
+
+@keyframes void-breathe {
+  from {
+    opacity: 0.85;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.22;
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+  animation: grain-drift 8s steps(6) infinite;
+}
+
+@keyframes grain-drift {
+  0% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(-1%, 1%);
+  }
+  50% {
+    transform: translate(1%, -1%);
+  }
+  75% {
+    transform: translate(-0.5%, -0.5%);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+.mast,
+.stage {
+  position: relative;
+  z-index: 2;
+}
+
+.mast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.35rem clamp(1.25rem, 3vw, 2.5rem);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  animation: rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.brand-mark {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--paper);
+  box-shadow: 0 0 0 0 rgba(236, 232, 224, 0.35);
+  animation: mark-pulse 2.8s ease-out infinite;
+}
+
+@keyframes mark-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(236, 232, 224, 0.35);
+  }
+  70% {
+    box-shadow: 0 0 0 12px rgba(236, 232, 224, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(236, 232, 224, 0);
+  }
+}
+
+.brand-name {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(1.75rem, 3.5vw, 2.6rem);
+  letter-spacing: 0.18em;
+  color: var(--paper);
+  line-height: 1;
+}
+
+.pair-nav {
+  display: flex;
+  gap: 0.15rem;
+}
+
+.pair,
+.interval {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--fog);
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 0.55rem 0.85rem;
+  cursor: pointer;
+  transition: color 0.25s ease, background 0.25s ease;
+}
+
+.pair:hover,
+.interval:hover {
+  color: var(--bone);
+}
+
+.pair.active,
+.interval.active {
+  color: var(--paper);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.stage {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: calc(100dvh - 4.5rem);
+  padding: 0 clamp(1.25rem, 3vw, 2.5rem);
+}
+
+.quote {
+  padding: 1.5rem 0 0.5rem;
+  animation: rise 1s cubic-bezier(0.22, 1, 0.36, 1) 0.1s both;
+}
+
+.pair-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--fog);
+  margin-bottom: 0.4rem;
+}
+
+.price {
+  font-family: var(--font-display);
+  font-size: clamp(2.8rem, 7vw, 4.8rem);
+  font-style: italic;
+  color: var(--paper);
+  line-height: 0.95;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  transition: color 0.35s ease;
+}
+
+.price.flash-up {
+  color: #e8e4dc;
+}
+
+.price.flash-down {
+  color: #7a7670;
+}
+
+.delta {
+  display: flex;
+  gap: 0.85rem;
+  margin-top: 0.55rem;
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+  color: var(--fog);
+}
+
+.delta.up .delta-abs,
+.delta.up .delta-pct {
+  color: var(--up);
+}
+
+.delta.down .delta-abs,
+.delta.down .delta-pct {
+  color: var(--down);
+}
+
+.chart-wrap {
+  position: relative;
+  min-height: 0;
+  margin: 0.5rem 0 0.75rem;
+  animation: rise 1.1s cubic-bezier(0.22, 1, 0.36, 1) 0.18s both;
+}
+
+.chart {
+  width: 100%;
+  height: 100%;
+  min-height: 280px;
+}
+
+.chart-fade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.55) 0%, transparent 8%, transparent 92%, rgba(0, 0, 0, 0.45) 100%),
+    linear-gradient(180deg, transparent 70%, rgba(0, 0, 0, 0.55) 100%);
+}
+
+.rail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 0 1.35rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  animation: rise 1.15s cubic-bezier(0.22, 1, 0.36, 1) 0.25s both;
+}
+
+.intervals {
+  display: flex;
+  gap: 0.1rem;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fog);
+}
+
+.pulse {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: live 1.6s ease-in-out infinite;
+}
+
+@keyframes live {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 640px) {
+  .mast {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  .pair-nav {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .rail {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.85rem;
+  }
+
+  .price {
+    font-size: clamp(2.4rem, 12vw, 3.4rem);
+  }
+}

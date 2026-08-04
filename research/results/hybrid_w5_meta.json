@@ -1,0 +1,15 @@
+{
+  "score": "S* v2",
+  "mix": "L2 + 1.0 * clip(L1lift, ±0.1)",
+  "gates": {"gamma": 0.30, "gamma_bank": 0.08, "r": [1.0, 4.0]},
+  "duel": {"z": 3.0, "min_margin": 0.05},
+  "n_ungated": 30,
+  "spearman_ungated": 0.758,
+  "p_ungated": 1.202e-06,
+  "n_hybrid": 15,
+  "spearman_hybrid": 0.799,
+  "p_hybrid": 0.0003534,
+  "bank_turns": 80,
+  "rejected": ["XI", "XLII", "C", "XCVI", "XLIII", "XLVII", "IX", "XLVIII", "L", "XLV", "XLIX", "XC", "XLVI", "CI", "LI"],
+  "notes": "XC (swe 16.0) has mid S (-0.193) — soft outlier. Many mid kings sit at bank_frac≈0.075 knife-edge under 80-turn bank."
+}

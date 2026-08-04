@@ -1,0 +1,341 @@
+"""Duel execution on the eval machine: seeded slice, probe, scoring, verdict.
+
+Slice seeding (chain contract): the duel slice is drawn from the public turn
+corpus D with
+
+    seed = blake2b(reveal_block_hash || challenger_hotkey, digest_size=8)
+
+so a miner cannot know their slice before revealing (the block hash resolves
+after the commit), and any external auditor can re-derive it from public
+inputs. Stratified round-robin over repo×phase strata keeps single bug
+families from dominating.
+
+Before burning GPU-hours on the full duel, a cheap injectability probe
+rejects checkpoints that cannot play the game at all (no parsable actions,
+non-finite forced logprobs) — our analogue of a pretraining subnet's
+trainability probe: the asset the network buys must remain promptable.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import logging
+import math
+import random
+import re
+import statistics as st
+from collections import defaultdict
+from pathlib import Path
+
+import httpx
+
+from affine.score import (
+    DEFAULT_GAMMA,
+    DEFAULT_GAMMA_BANK,
+    DEFAULT_L1_WEIGHT,
+    DEFAULT_TAU,
+    duel as score_duel,
+    lambda2,
+    rank_term,
+    score_miner,
+)
+
+from .terms import miner_terms, teacher_reference
+from .vllm_client import Served, VllmModel
+
+log = logging.getLogger("evalsrv.dueling")
+
+_PHASE_RE = re.compile(r"(func_basic|func_pm|lm_rewrite|lm_modify|combine_|pr_\d+)")
+
+
+# -- slice ----------------------------------------------------------------------
+
+def turn_id(rec: dict) -> str:
+    return f"{rec['traj_id']}:{rec['turn_idx']}"
+
+
+def _phase_key(rec: dict) -> str:
+    tid = rec.get("traj_id", "")
+    repo = tid.split(".", 1)[0] if tid else "unknown"
+    m = _PHASE_RE.search(tid)
+    phase = m.group(1) if m else "other"
+    return f"{repo}|{phase}"
+
+
+def duel_seed(block_hash: str, hotkey: str) -> int:
+    material = block_hash.encode() + hotkey.encode()
+    return int.from_bytes(
+        hashlib.blake2b(material, digest_size=8).digest(), "little")
+
+
+def sample_slice(rows: list[dict], n: int, seed: int) -> list[dict]:
+    """Stratified sample without replacement (round-robin over strata)."""
+    if n >= len(rows):
+        rng = random.Random(seed)
+        out = list(rows)
+        rng.shuffle(out)
+        return out
+    by: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        by[_phase_key(r)].append(r)
+    rng = random.Random(seed)
+    for v in by.values():
+        rng.shuffle(v)
+    keys = sorted(by)
+    out: list[dict] = []
+    idx = {k: 0 for k in keys}
+    while len(out) < n:
+        progress = False
+        for k in keys:
+            i = idx[k]
+            if i < len(by[k]):
+                out.append(by[k][i])
+                idx[k] = i + 1
+                progress = True
+                if len(out) >= n:
+                    break
+        if not progress:
+            break
+    rng.shuffle(out)
+    return out
+
+
+def slice_digest(turns: list[dict]) -> str:
+    h = hashlib.sha256()
+    for t in turns:
+        h.update(turn_id(t).encode())
+        h.update(b"\n")
+    return h.hexdigest()
+
+
+# -- probe -----------------------------------------------------------------------
+
+async def probe_injectable(model: VllmModel, turns: list[dict],
+                           temperature: float, max_thought: int,
+                           max_action: int, n_probe_turns: int = 3) -> str | None:
+    """Cheap fail-fast before the full duel. Returns rejection reason or None.
+
+    A checkpoint passes if, across a few turns, it (a) produces at least one
+    rollout with a parsable closed ```bash action, and (b) returns finite
+    forced logprobs under thought injection.
+    """
+    any_action = False
+    for rec in turns[:n_probe_turns]:
+        prefix = rec["prefix"]
+        try:
+            z, y = await model.sample(prefix, temperature,
+                                      max_thought + max_action)
+        except Exception as e:
+            return f"probe_sample_failed:{type(e).__name__}:{e}"
+        if not y:
+            continue
+        any_action = True
+        try:
+            scored = await model.score_action(prefix, z, y)
+        except Exception as e:
+            return f"probe_force_failed:{type(e).__name__}:{e}"
+        if not math.isfinite(scored["lp_per_byte"]):
+            return f"probe_nonfinite_logprob:{scored['lp_per_byte']}"
+        if scored["n_tokens"] == 0:
+            # An empty scored span yields a 0.0 sentinel that would pass the
+            # finite check while meaning "nothing was actually scored".
+            return "probe_empty_action_span"
+    if not any_action:
+        return f"probe_no_parsable_action_in_{n_probe_turns}_turns"
+    return None
+
+
+# -- duel -------------------------------------------------------------------------
+
+class RefCache:
+    """Teacher rollouts per turn, persisted so all duels sharing a turn score
+    against identical references."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.cache: dict[str, list[dict]] = {}
+        if path.exists():
+            with open(path) as f:
+                for line in f:
+                    try:
+                        r = json.loads(line)
+                        self.cache[r["turn_id"]] = r["ref"]
+                    except json.JSONDecodeError:
+                        continue
+        self._f = open(path, "a")
+        # Per-turn locks: different turns sample teacher references
+        # concurrently; only same-turn callers serialize. A single global
+        # lock here would collapse the reference phase to sequential.
+        self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._write_lock = asyncio.Lock()
+
+    async def get_or_sample(self, tid: str, teacher: VllmModel,
+                            prefix: list[dict], n: int, temperature: float,
+                            max_thought: int, max_action: int) -> list[dict]:
+        if tid in self.cache:
+            return self.cache[tid]
+        async with self._locks[tid]:
+            if tid in self.cache:
+                return self.cache[tid]
+            ref = await teacher_reference(teacher, prefix, n, temperature,
+                                          max_thought, max_action)
+            self.cache[tid] = ref
+            async with self._write_lock:
+                self._f.write(json.dumps({"turn_id": tid, "ref": ref}) + "\n")
+                self._f.flush()
+            return ref
+
+    def close(self) -> None:
+        try:
+            self._f.close()
+        except Exception:
+            log.warning("ref cache close failed", exc_info=True)
+
+
+async def score_side(teacher: VllmModel, miner: VllmModel, turns: list[dict],
+                     refs: RefCache, duel_cfg: dict, turn_sem: asyncio.Semaphore,
+                     on_progress) -> list[dict]:
+    rows: list[dict] = []
+    done = 0
+    total = len(turns)
+
+    async def one(rec: dict) -> None:
+        nonlocal done
+        tid = turn_id(rec)
+        prefix = rec["prefix"]
+        async with turn_sem:
+            ref = await refs.get_or_sample(
+                tid, teacher, prefix,
+                int(duel_cfg["n_teacher_samples"]), float(duel_cfg["temperature"]),
+                int(duel_cfg["max_thought_tokens"]), int(duel_cfg["max_action_tokens"]))
+            if not ref:
+                done += 1
+                return
+            t = await miner_terms(
+                teacher, miner, prefix, ref,
+                int(duel_cfg["n_miner_samples"]), float(duel_cfg["temperature"]),
+                int(duel_cfg["max_thought_tokens"]), int(duel_cfg["max_action_tokens"]),
+                score_bank=True)
+        t.update({"turn_id": tid, "miner": miner.cfg.name})
+        rows.append(t)
+        done += 1
+        on_progress(miner.cfg.name, done, total)
+
+    await asyncio.gather(*[one(rec) for rec in turns])
+    return rows
+
+
+def _mean_bank(rows: list[dict]) -> float | None:
+    vals = [r["bank_frac"] for r in rows if r.get("valid") and "bank_frac" in r]
+    return sum(vals) / len(vals) if vals else None
+
+
+def _miner_summary(rows: list[dict]) -> dict:
+    s = score_miner(rows, bank_frac=_mean_bank(rows))
+    pairs = [p for r in rows if r.get("valid") and "pairs" in r for p in r["pairs"]]
+    return {
+        "valid": s.valid, "S": s.S if math.isfinite(s.S) else None,
+        "gate_pass_rate": s.gate_pass_rate, "bank_frac": s.bank_frac,
+        "n_turns": s.n_turns, "n_pairs": s.n_pairs,
+        "mean_lambda2": st.mean(lambda2(p) for p in pairs) if pairs else None,
+        "mean_mix": st.mean(rank_term(p) for p in pairs) if pairs else None,
+    }
+
+
+async def run_duel(engine_cfg: dict, turns_path: Path, ref_cache_path: Path,
+                   king: Served, challenger: Served, teacher: Served,
+                   block_hash: str, hotkey: str, corpus_info: dict,
+                   on_progress) -> tuple[dict, dict]:
+    """Full duel. Returns (verdict, artifact).
+
+    The verdict is the small audit summary streamed to the validator. The
+    artifact is the full training-grade record — sliced turn ids, teacher
+    reference rollouts, and both sides' per-turn pair rows (thoughts/actions
+    plus every forced-logprob component) — published post-hoc so miners can
+    train on exactly what was scored.
+    """
+    duel_cfg = engine_cfg["duel"]
+    with open(turns_path) as f:
+        rows = [json.loads(line) for line in f]
+    seed = duel_seed(block_hash, hotkey)
+    turns = sample_slice(rows, int(duel_cfg["n_turns"]), seed)
+    # The manifest hash pins exactly which shard set this duel was scored
+    # against — replayable even after shards are retired from the window.
+    slice_info = {"seed": seed, "n": len(turns),
+                  "digest": slice_digest(turns), "block_hash": block_hash,
+                  "corpus_epoch": int(corpus_info.get("corpus_epoch", 0)),
+                  "manifest_sha256": str(corpus_info.get("manifest_sha256", ""))}
+    turn_ids = [turn_id(rec) for rec in turns]
+
+    sem = asyncio.Semaphore(int(duel_cfg["concurrency"]))
+    turn_sem = asyncio.Semaphore(max(4, min(int(duel_cfg["concurrency"]), 16)))
+    async with httpx.AsyncClient() as http:
+        teacher_m = VllmModel(teacher, http, sem)
+        king_m = VllmModel(king, http, sem)
+        chall_m = VllmModel(challenger, http, sem)
+
+        rejection = await probe_injectable(
+            chall_m, turns, float(duel_cfg["temperature"]),
+            int(duel_cfg["max_thought_tokens"]), int(duel_cfg["max_action_tokens"]))
+        if rejection:
+            verdict = {
+                "challenger_wins": False,
+                "rejection_reason": f"unpromptable:{rejection}",
+                "slice": slice_info,
+            }
+            return verdict, {"slice": slice_info, "turn_ids": turn_ids,
+                             "rejection_reason": verdict["rejection_reason"]}
+
+        refs = RefCache(ref_cache_path)
+        try:
+            king_rows = await score_side(teacher_m, king_m, turns, refs,
+                                         duel_cfg, turn_sem, on_progress)
+            chall_rows = await score_side(teacher_m, chall_m, turns, refs,
+                                          duel_cfg, turn_sem, on_progress)
+            # Teacher rollouts actually used this duel (post-hoc: the slice
+            # was unpredictable before reveal, so publishing them is audit
+            # data, not a pre-computable target).
+            refs_used = {tid: refs.cache[tid] for tid in turn_ids
+                         if tid in refs.cache}
+        finally:
+            refs.close()
+
+    result = score_duel(
+        chall_rows, king_rows,
+        k_sigma=float(duel_cfg["k_sigma"]),
+        tau=float(duel_cfg["tau"]), gamma=float(duel_cfg["gamma"]),
+        challenger_bank_frac=_mean_bank(chall_rows),
+        king_bank_frac=_mean_bank(king_rows),
+        gamma_bank=float(duel_cfg["gamma_bank"]),
+        l1_weight=float(duel_cfg["l1_weight"]),
+        min_se=float(duel_cfg["min_se"]),
+        min_margin=float(duel_cfg["min_margin"]))
+
+    verdict = {
+        "challenger_wins": result.challenger_wins,
+        "margin": result.margin if math.isfinite(result.margin) else None,
+        "se": result.se if math.isfinite(result.se) else None,
+        "z": result.z if math.isfinite(result.z) else None,
+        "k_sigma": result.k_sigma,
+        "n_paired_turns": result.n_paired_turns,
+        "ranking_formula": f"Λ2 + {duel_cfg['l1_weight']}·L1lift",
+        "gates": {
+            "tau": DEFAULT_TAU, "gamma": DEFAULT_GAMMA,
+            "gamma_bank": DEFAULT_GAMMA_BANK, "l1_weight": DEFAULT_L1_WEIGHT,
+            "min_se": float(duel_cfg["min_se"]),
+            "min_margin": float(duel_cfg["min_margin"]),
+        },
+        "king": _miner_summary(king_rows),
+        "challenger": _miner_summary(chall_rows),
+        "slice": slice_info,
+    }
+    artifact = {
+        "slice": slice_info,
+        "turn_ids": turn_ids,
+        "teacher_refs": refs_used,
+        "king_rows": king_rows,
+        "challenger_rows": chall_rows,
+    }
+    return verdict, artifact

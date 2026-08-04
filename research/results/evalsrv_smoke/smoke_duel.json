@@ -1,0 +1,57 @@
+{
+  "state": "completed",
+  "kind": "duel",
+  "created_at": 1785809899.441284,
+  "request": {
+    "king_repo": "dendriteholdings/albedo-qwen3.6-35b-king-genesis",
+    "king_revision": "abe89194d6addf82e71f3f1ba9fef94b05404abf",
+    "challenger_repo": "dendriteholdings/albedo-qwen3.6-35b-king-II",
+    "challenger_revision": "6b995b45bda4a3acf1615e288afcd1458d039fcd",
+    "challenger_hotkey": "smoke",
+    "block_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "phase": "scoring",
+  "verdict": {
+    "challenger_wins": false,
+    "margin": 0.06873260732150488,
+    "se": 0.058572598955734405,
+    "z": 1.1734600913551538,
+    "k_sigma": 3.0,
+    "n_paired_turns": 8,
+    "ranking_formula": "\u039b2 + 1.0\u00b7L1lift",
+    "gates": {
+      "tau": 0.02,
+      "gamma": 0.3,
+      "gamma_bank": 0.08,
+      "l1_weight": 1.0,
+      "min_se": 0.005,
+      "min_margin": 0.05
+    },
+    "king": {
+      "valid": true,
+      "S": -0.09150337972907059,
+      "gate_pass_rate": 0.78125,
+      "bank_frac": 0.25,
+      "n_turns": 8,
+      "n_pairs": 32,
+      "mean_lambda2": -0.061270819353543476,
+      "mean_mix": -0.09150337972907059
+    },
+    "challenger": {
+      "valid": true,
+      "S": -0.02277077240756572,
+      "gate_pass_rate": 0.96875,
+      "bank_frac": 0.3125,
+      "n_turns": 8,
+      "n_pairs": 32,
+      "mean_lambda2": -0.0019652781654457296,
+      "mean_mix": -0.02277077240756572
+    },
+    "slice": {
+      "seed": 17010828741726564171,
+      "n": 8,
+      "digest": "ab50f9aea02238fcdf2d1a162047428f7283e4c707de32a8c430eeabd7253907",
+      "block_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  }
+}

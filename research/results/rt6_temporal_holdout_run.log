@@ -1,0 +1,87 @@
+WARN: no GITHUB_TOKEN; using unauthenticated GH API
+== dating 20 unique repo@commit from scored turns ==
+  PyCQA/flake8@cf1542ce → 2024-08-04T20:31:56Z
+  bottlepy/bottle@a8dfef30 → 2024-11-18T16:25:01Z
+  conan-io/conan@86f29e13 → 2025-02-26T09:59:56Z
+  facelessuser/soupsieve@a8080d97 → 2024-09-30T17:33:13Z
+  google/textfsm@c31b6007 → 2024-10-30T00:23:18Z
+  hjson/hjson-go@f3219653 → 2025-04-20T16:01:38Z
+  jawah/charset_normalizer@1fdd6463 → 2024-12-02T13:27:31Z
+  kayak/pypika@1c9646f0 → 2024-11-28T16:32:03Z
+  lincolnloop/python-qrcode@456b01d4 → 2024-09-27T20:12:48Z
+  luozhouyang/python-string-similarity@115acaac → 2021-10-11T14:55:05Z
+  mahmoud/boltons@3bfcfdd0 → 2024-11-28T18:05:53Z
+  mahmoud/glom@fb3c4e76 → 2024-11-26T18:22:18Z
+  mozilla/bleach@73871d76 → 2024-10-29T18:28:53Z
+  paramiko/paramiko@23f92003 → 2024-09-15T23:57:50Z
+  pydicom/pydicom@7d361b3d → 2024-11-17T18:25:20Z
+  pygments/pygments@27649ebb → 2024-11-10T12:47:04Z
+  pylint-dev/astroid@b114f6b5 → 2024-11-17T14:21:59Z
+  pyupio/safety@7654596b → 2024-12-04T17:34:55Z
+  seperman/deepdiff@ed252022 → 2025-02-04T08:06:44Z
+  tweepy/tweepy@91a41c6e → 2024-02-06T17:33:45Z
+== commit timeline (scored D) ==
+  2021-10-11T14:55:05Z  early  luozhouyang/python-string-similarity@115acaac
+  2024-02-06T17:33:45Z  early  tweepy/tweepy@91a41c6e
+  2024-08-04T20:31:56Z  early  PyCQA/flake8@cf1542ce
+  2024-09-15T23:57:50Z  early  paramiko/paramiko@23f92003
+  2024-09-27T20:12:48Z  early  lincolnloop/python-qrcode@456b01d4
+  2024-09-30T17:33:13Z  early  facelessuser/soupsieve@a8080d97
+  2024-10-29T18:28:53Z  early  mozilla/bleach@73871d76
+  2024-10-30T00:23:18Z  early  google/textfsm@c31b6007
+  2024-11-10T12:47:04Z  early  pygments/pygments@27649ebb
+  2024-11-17T14:21:59Z  early  pylint-dev/astroid@b114f6b5
+  2024-11-17T18:25:20Z  late   pydicom/pydicom@7d361b3d
+  2024-11-18T16:25:01Z  late   bottlepy/bottle@a8dfef30
+  2024-11-26T18:22:18Z  late   mahmoud/glom@fb3c4e76
+  2024-11-28T16:32:03Z  late   kayak/pypika@1c9646f0
+  2024-11-28T18:05:53Z  late   mahmoud/boltons@3bfcfdd0
+  2024-12-02T13:27:31Z  late   jawah/charset_normalizer@1fdd6463
+  2024-12-04T17:34:55Z  late   pyupio/safety@7654596b
+  2025-02-04T08:06:44Z  late   seperman/deepdiff@ed252022
+  2025-02-26T09:59:56Z  late   conan-io/conan@86f29e13
+  2025-04-20T16:01:38Z  late   hjson/hjson-go@f3219653
+early repos (10): ['PyCQA/flake8', 'facelessuser/soupsieve', 'google/textfsm', 'lincolnloop/python-qrcode', 'luozhouyang/python-string-similarity', 'mozilla/bleach', 'paramiko/paramiko', 'pygments/pygments', 'pylint-dev/astroid', 'tweepy/tweepy']
+late  repos (10): ['bottlepy/bottle', 'conan-io/conan', 'hjson/hjson-go', 'jawah/charset_normalizer', 'kayak/pypika', 'mahmoud/boltons', 'mahmoud/glom', 'pydicom/pydicom', 'pyupio/safety', 'seperman/deepdiff']
+
+king           swe    S_all    n  S_early   ne   S_late   nl   Δlate
+king-C        32.0  -0.6108  200  -0.5801   82  -0.6322  118 -0.0520
+king-CI       12.4  -0.5684  200  -0.5208   82  -0.6015  118 -0.0807
+king-I        38.4  -0.0507  199  -0.0488   82  -0.0520  117 -0.0032
+king-II       37.2  -0.0374  200  -0.0309   82  -0.0419  118 -0.0110
+king-III      32.8  -0.5868  200  -0.5749   82  -0.5950  118 -0.0200
+king-LI       11.6  -0.6162  200  -0.5983   82  -0.6287  118 -0.0303
+king-V        32.0  -0.5975  200  -0.5840   82  -0.6069  118 -0.0228
+king-VII      33.2  -0.6384  200  -0.6342   82  -0.6413  118 -0.0071
+king-VIII     36.2  -0.5265  200  -0.5089   82  -0.5387  118 -0.0297
+king-XCIV     36.2  -0.4458  200  -0.3991   82  -0.4782  118 -0.0791
+king-XCIX     39.8  -0.4421  200  -0.3903   82  -0.4781  118 -0.0877
+king-XCVI     32.0  -0.6027  200  -0.5641   82  -0.6296  118 -0.0655
+king-XI       33.6  -0.4527  200  -0.4199   82  -0.4755  118 -0.0556
+king-XL       32.2  -0.5423  200  -0.5100   82  -0.5647  118 -0.0547
+king-XLI      34.2  -0.5357  200  -0.5050   82  -0.5570  118 -0.0520
+king-XLII     33.4  -0.5362  200  -0.5089   82  -0.5551  118 -0.0462
+king-XLV      26.0  -0.6182  199  -0.5900   82  -0.6380  117 -0.0480
+king-XLVI     13.2  -0.6249  200  -0.5914   82  -0.6482  118 -0.0568
+king-genesis  58.2  -0.0356  200  -0.0400   82  -0.0325  118 +0.0075
+
+== Spearman(S_half, swe) ==
+  S_all   vs swe: ρ=+0.856  p=2.9e-06  n=19
+  S_early vs swe: ρ=+0.846  p=5.1e-06  n=19
+  S_late  vs swe: ρ=+0.845  p=5.33e-06  n=19
+  S_early vs S_late: ρ=+0.947  p=7.8e-10  n=19
+
+== largest late drops (S_late − S_early); sniper would drop) ==
+  king-XCIX    Δ=-0.0877  swe=39.8
+  king-CI      Δ=-0.0807  swe=12.4
+  king-XCIV    Δ=-0.0791  swe=36.2
+  king-XCVI    Δ=-0.0655  swe=32.0
+  king-XLVI    Δ=-0.0568  swe=13.2
+  king-XI      Δ=-0.0556  swe=33.6
+  king-XL      Δ=-0.0547  swe=32.2
+  king-XLI     Δ=-0.0520  swe=34.2
+
+VERDICT: STABLE — late-half swe isomorphism ρ=+0.845; early↔late ρ=+0.947.
+Interpretation: with one commit/repo, 'temporal' = dated leave-repo-out. Stable ρ ⇒ S is not carried by a few early-repo trajectories. Does not replace corpus refresh at deploy time.
+
+wrote /Users/const/affv/results/rt6_temporal_holdout.json and /Users/const/affv/results/rt6_temporal_holdout.txt

@@ -1,0 +1,67 @@
+
+Executing on calm-shark-5a
+Command failed (exit code: 1)
++ cd /root/affine
++ export 
+PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/b
+in:/usr/games:/usr/local/games:/snap/bin
++ 
+PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/b
+in:/usr/games:/usr/local/games:/snap/bin
++ source /root/venv/bin/activate
+++ '[' -z '' ']'
+++ '[' -n x ']'
+++ SCRIPT_PATH=/root/venv/bin/activate
+++ '[' /root/venv/bin/activate = /root/affine/pod_fix_install.sh ']'
+++ deactivate nondestructive
+++ unset -f pydoc
+++ '[' -z '' ']'
+++ '[' -z '' ']'
+++ hash -r
+++ '[' -z '' ']'
+++ unset VIRTUAL_ENV
+++ unset VIRTUAL_ENV_PROMPT
+++ '[' '!' nondestructive = nondestructive ']'
+++ VIRTUAL_ENV=/root/venv
+++ '[' linux-gnu = cygwin ']'
+++ '[' linux-gnu = msys ']'
+++ export VIRTUAL_ENV
+++ '[' -z '' ']'
+++ unset SCRIPT_PATH
+++ 
+_OLD_VIRTUAL_PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr
+/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ 
+PATH=/root/venv/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/u
+sr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ export PATH
+++ '[' x '!=' x ']'
++++ basename /root/venv
+++ VIRTUAL_ENV_PROMPT=venv
+++ export VIRTUAL_ENV_PROMPT
+++ '[' -z '' ']'
+++ '[' -z '' ']'
+++ _OLD_VIRTUAL_PS1=
+++ PS1='(venv) '
+++ export PS1
+++ alias pydoc
+++ true
+++ hash -r
++ echo '=== tree ==='
++ ls -la
++ ls affine
++ head
++ ls evalsrv
++ head
++ echo '=== show ==='
++ uv pip show affine
+Using Python 3.12.3 environment at: /root/venv
++ echo '=== reinstall editable (no extras first) ==='
++ uv pip install -e .
++ tee /root/logs/pip_affine.log
++ tail -50
++ echo '=== import ==='
++ python -
+Traceback (most recent call last):
+  File "<stdin>", line 2, in <module>
+ModuleNotFoundError: No module named 'affine.config'

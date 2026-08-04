@@ -1,0 +1,6 @@
+burn.log
+burn.pid
+legacy.log
+legacy.pid
+*.log
+*.pid

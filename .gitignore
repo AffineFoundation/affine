@@ -1,0 +1,8 @@
+# Workspace-wide. Package-specific rules live in affine/.gitignore and research/.gitignore.
+.env
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+**/.eval_env
+ralphs/

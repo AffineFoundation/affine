@@ -1,0 +1,49 @@
+/Users/const/affv/affine/.venv-smoke/bin/python3.12
+requeued chal-00001 at front (retry 0, counted=False) due to machine down
+requeued chal-00001 at front (retry 1, counted=True) due to flaky stream
+metagraph is infs stale (> 10s); refusing to set weights
+[transformers] PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+ok   config.typed_duel
+ok   config.duel_floors
+ok   config.submission_caps
+ok   config.min_submission_block_set
+ok   config.turns_sha256_pinned
+ok   config.corpus_epoch
+ok   config.refresh_max_age_blocks
+ok   config.validator_new_knobs
+ok   config.weight_version
+ok   config.raw_still_dict
+ok   duel.zero_variance_tiny_margin_blocked
+ok   duel.real_margin_still_wins
+ok   duel.min_margin_enforced
+ok   state.failed_models_removed
+ok   state.enqueue
+ok   state.pop_next
+ok   state.push_front
+ok   state.requeue_no_count
+ok   state.requeue_counted
+ok   state.revision_dedup_burns_slot
+ok   state.reload_king
+ok   hygiene.ok
+ok   hygiene.total_repo_cap
+ok   hygiene.file_count_cap
+ok   hygiene.config_size_cap
+ok   copy.multiset_rename_pad_flagged
+ok   copy.crown_earlier
+ok   copy.different_not_flagged
+ok   chain.reveal_roundtrip
+ok   chain.scale_mode0
+ok   chain.scale_mode1
+ok   chain.blockhash_fail_closed
+ok   chain.metagraph_stale_refuses
+ok   dashboard.tail_last_n
+ok   dashboard.tail_small_file
+ok   provisioner.cheapest_under_cap
+ok   provisioner.cap_refuses_all
+ok   provisioner.redaction
+ok   eval_client.busy_is_transient
+ok   eval_client.infra_is_transient
+ok   dueling.slice_deterministic
+ok   dueling.slice_hotkey_dependent
+
+ALL 42 CHECKS PASSED

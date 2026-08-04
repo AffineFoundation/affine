@@ -1,0 +1,25 @@
+S* mix w=1.0 + gates (incl. wave-4)
+king        S_mix   gate   bank  nbank valid   swe
+genesis   -0.0361    62%  0.220   168 True   58.2
+XCIX      -0.4436    77%  0.100   200 True   39.8
+I         -0.0508    59%  0.302   199 True   38.4
+II        -0.0375    74%  0.300   200 True   37.2
+VIII      -0.5276    79%  0.100   200 True   36.2
+XCIV      -0.4473    78%  0.095   200 True   36.2
+XLI       -0.5373    89%  0.080   200 True   34.2
+XI        -0.4539    83%  0.075   200 False  33.6
+XLII      -0.5404    89%  0.054   168 False  33.4
+VII       -0.6398    82%  0.085   200 True   33.2
+III       -0.5876    74%  0.120   200 True   32.8
+XL        -0.5451    91%  0.095   168 True   32.2
+C         -0.6121    85%  0.048   165 False  32.0
+V         -0.5988    77%  0.110   200 True   32.0
+XCVI      -0.6046    86%  0.056   162 False  32.0
+XLV       -0.6303    93%  0.054   185 False  26.0
+XLVI      -0.6334    93%  0.054   186 False  13.2
+CI        -0.5697    84%  0.038   186 False  12.4
+LI        -0.6177    90%  0.049   185 False  11.6
+
+ungated Spearman=+0.856 (n=19, p=2.9e-06)
+hybrid  Spearman=+0.897 (n=11, p=0.0001781)
+rejected: ['XI', 'XLII', 'C', 'XCVI', 'XLV', 'XLVI', 'CI', 'LI']

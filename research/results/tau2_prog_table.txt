@@ -1,0 +1,12 @@
+D_tau2 programmability probe (S* v2 ungated mix on tool-use turns)
+king       S_tau2  gate      r    swe   tau2
+genesis   -0.0615   5%  1.510   58.2  0.875
+XL        -0.0517   2%  1.320   32.2  0.785
+XLVI      -0.0641   1%  1.307   13.2  0.745
+XLII      -0.0517   2%  1.339   33.4  0.745
+CI        -0.0370   3%  1.186   12.4  0.546
+XCIX      -0.0040   7%  0.961   39.8  0.512
+VIII      -0.0430   8%  1.145   36.2  0.348
+II        -0.0418  13%  1.183   37.2  0.254
+
+S vs swe=+0.119  S vs tau2=-0.738  swe vs tau2=-0.095  n=8

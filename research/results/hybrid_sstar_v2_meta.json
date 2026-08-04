@@ -1,0 +1,341 @@
+{
+  "hybrid": {
+    "ungated_spearman": 0.8624196653078294,
+    "ungated_p": 2.043726982692672e-06,
+    "ungated_n": 19,
+    "hybrid_spearman": 0.7425987375524745,
+    "hybrid_p": 0.008849986875097558,
+    "hybrid_n": 11,
+    "genesis_rank": 2,
+    "rejected": [
+      "XI",
+      "XLII",
+      "C",
+      "XCVI",
+      "XLV",
+      "XLVI",
+      "CI",
+      "LI"
+    ],
+    "rows": [
+      {
+        "king": "genesis",
+        "S_mix": -0.029275723861432616,
+        "gate": 0.6196473551637279,
+        "bank": 0.22023809523809523,
+        "calib_ratio": 1.0687301966504466,
+        "valid": true,
+        "swe": 58.2
+      },
+      {
+        "king": "XCIX",
+        "S_mix": -0.17637142530478808,
+        "gate": 0.7653701380175659,
+        "bank": 0.1,
+        "calib_ratio": 2.6218330294907664,
+        "valid": true,
+        "swe": 39.8
+      },
+      {
+        "king": "I",
+        "S_mix": -0.036932494342580696,
+        "gate": 0.5919395465994962,
+        "bank": 0.3015075376884422,
+        "calib_ratio": 1.3273427018067014,
+        "valid": true,
+        "swe": 38.4
+      },
+      {
+        "king": "II",
+        "S_mix": -0.026922054172299318,
+        "gate": 0.7431077694235589,
+        "bank": 0.3,
+        "calib_ratio": 1.1720512605172702,
+        "valid": true,
+        "swe": 37.2
+      },
+      {
+        "king": "VIII",
+        "S_mix": -0.18448472569633914,
+        "gate": 0.7944862155388471,
+        "bank": 0.1,
+        "calib_ratio": 2.266695199278416,
+        "valid": true,
+        "swe": 36.2
+      },
+      {
+        "king": "XCIV",
+        "S_mix": -0.17947968343638993,
+        "gate": 0.7754077791718946,
+        "bank": 0.095,
+        "calib_ratio": 2.6244334338653927,
+        "valid": true,
+        "swe": 36.2
+      },
+      {
+        "king": "XLI",
+        "S_mix": -0.17958243714101507,
+        "gate": 0.8876262626262627,
+        "bank": 0.08,
+        "calib_ratio": 3.291252071527738,
+        "valid": true,
+        "swe": 34.2
+      },
+      {
+        "king": "XI",
+        "S_mix": -0.18744004643237083,
+        "gate": 0.8283208020050126,
+        "bank": 0.075,
+        "calib_ratio": 2.4011294886592975,
+        "valid": false,
+        "swe": 33.6
+      },
+      {
+        "king": "XLII",
+        "S_mix": -0.17924734745774254,
+        "gate": 0.8897338403041825,
+        "bank": 0.05357142857142857,
+        "calib_ratio": 3.3285838157997074,
+        "valid": false,
+        "swe": 33.4
+      },
+      {
+        "king": "VII",
+        "S_mix": -0.19924176354970932,
+        "gate": 0.8195488721804511,
+        "bank": 0.085,
+        "calib_ratio": 2.1332199011096686,
+        "valid": true,
+        "swe": 33.2
+      },
+      {
+        "king": "III",
+        "S_mix": -0.18087023387247078,
+        "gate": 0.7431077694235589,
+        "bank": 0.12,
+        "calib_ratio": 2.1766444771948064,
+        "valid": true,
+        "swe": 32.8
+      },
+      {
+        "king": "XL",
+        "S_mix": -0.18174231278246403,
+        "gate": 0.9079445145018915,
+        "bank": 0.09523809523809523,
+        "calib_ratio": 3.329791660012728,
+        "valid": true,
+        "swe": 32.2
+      },
+      {
+        "king": "C",
+        "S_mix": -0.21842924036904465,
+        "gate": 0.8533834586466166,
+        "bank": 0.048484848484848485,
+        "calib_ratio": 2.9865892163026744,
+        "valid": false,
+        "swe": 32.0
+      },
+      {
+        "king": "V",
+        "S_mix": -0.183151186250193,
+        "gate": 0.7719298245614035,
+        "bank": 0.11,
+        "calib_ratio": 2.240761392987086,
+        "valid": true,
+        "swe": 32.0
+      },
+      {
+        "king": "XCVI",
+        "S_mix": -0.2132680361216522,
+        "gate": 0.8607277289836889,
+        "bank": 0.05555555555555555,
+        "calib_ratio": 2.967968936913952,
+        "valid": false,
+        "swe": 32.0
+      },
+      {
+        "king": "XLV",
+        "S_mix": -0.2010265205041066,
+        "gate": 0.9296875,
+        "bank": 0.05405405405405406,
+        "calib_ratio": 3.5640074969613567,
+        "valid": false,
+        "swe": 26.0
+      },
+      {
+        "king": "XLVI",
+        "S_mix": -0.2022359481492227,
+        "gate": 0.9340232858990944,
+        "bank": 0.053763440860215055,
+        "calib_ratio": 3.5510679211922898,
+        "valid": false,
+        "swe": 13.2
+      },
+      {
+        "king": "CI",
+        "S_mix": -0.20807928326735514,
+        "gate": 0.8383458646616542,
+        "bank": 0.03763440860215054,
+        "calib_ratio": 3.1886909955663425,
+        "valid": false,
+        "swe": 12.4
+      },
+      {
+        "king": "LI",
+        "S_mix": -0.22146771026779574,
+        "gate": 0.8967921896792189,
+        "bank": 0.04864864864864865,
+        "calib_ratio": 3.396848048915029,
+        "valid": false,
+        "swe": 11.6
+      }
+    ]
+  },
+  "duels": {
+    "I": {
+      "king": {
+        "name": "king-genesis",
+        "valid": true,
+        "S": -0.03627089522254908,
+        "gate_pass_rate": 0.629746835443038,
+        "bank_frac": 0.40208333333333335,
+        "calib_ratio": 1.1247295158276562,
+        "n_turns": 80
+      },
+      "challenger": {
+        "name": "king-I",
+        "valid": true,
+        "S": -0.02353080133299914,
+        "gate_pass_rate": 0.559375,
+        "bank_frac": 0.503125,
+        "calib_ratio": 1.2776054590394474,
+        "n_turns": 80
+      },
+      "duel": {
+        "margin": 0.01210569284556796,
+        "se": 0.012229195152033943,
+        "z": 0.9899010274240786,
+        "k_sigma": 3.0,
+        "min_margin": 0.05,
+        "challenger_wins": false,
+        "n_paired_turns": 80
+      }
+    },
+    "II": {
+      "king": {
+        "name": "king-genesis",
+        "valid": true,
+        "S": -0.0471868784148629,
+        "gate_pass_rate": 0.6614420062695925,
+        "bank_frac": 0.3302083333333333,
+        "calib_ratio": 1.1896535566713515,
+        "n_turns": 80
+      },
+      "challenger": {
+        "name": "king-II",
+        "valid": true,
+        "S": -0.0161280962552633,
+        "gate_pass_rate": 0.73125,
+        "bank_frac": 0.44375,
+        "calib_ratio": 1.1501852818329366,
+        "n_turns": 80
+      },
+      "duel": {
+        "margin": 0.030781727740765392,
+        "se": 0.01576025887124046,
+        "z": 1.9531232318103806,
+        "k_sigma": 3.0,
+        "min_margin": 0.05,
+        "challenger_wins": false,
+        "n_paired_turns": 80
+      }
+    },
+    "VII": {
+      "king": {
+        "name": "king-genesis",
+        "valid": true,
+        "S": -0.03256738231728086,
+        "gate_pass_rate": 0.6572327044025157,
+        "bank_frac": 0.41041666666666665,
+        "calib_ratio": 1.1413815812271888,
+        "n_turns": 80
+      },
+      "challenger": {
+        "name": "king-VII",
+        "valid": true,
+        "S": -0.21139726863885505,
+        "gate_pass_rate": 0.8125,
+        "bank_frac": 0.128125,
+        "calib_ratio": 2.2377424272055295,
+        "n_turns": 80
+      },
+      "duel": {
+        "margin": -0.17912895264657086,
+        "se": 0.019168783278336807,
+        "z": -9.344826431889897,
+        "k_sigma": 3.0,
+        "min_margin": 0.05,
+        "challenger_wins": false,
+        "n_paired_turns": 80
+      }
+    },
+    "XCIX": {
+      "king": {
+        "name": "king-genesis",
+        "valid": true,
+        "S": -0.04607062313390362,
+        "gate_pass_rate": 0.6455696202531646,
+        "bank_frac": 0.35520833333333335,
+        "calib_ratio": 1.191278743676175,
+        "n_turns": 80
+      },
+      "challenger": {
+        "name": "king-XCIX",
+        "valid": true,
+        "S": -0.17651888740819086,
+        "gate_pass_rate": 0.765625,
+        "bank_frac": 0.153125,
+        "calib_ratio": 2.6512189569676905,
+        "n_turns": 80
+      },
+      "duel": {
+        "margin": -0.1313312078297963,
+        "se": 0.01852127401497004,
+        "z": -7.090830129916888,
+        "k_sigma": 3.0,
+        "min_margin": 0.05,
+        "challenger_wins": false,
+        "n_paired_turns": 80
+      }
+    },
+    "LI": {
+      "king": {
+        "name": "king-genesis",
+        "valid": true,
+        "S": -0.040163779532343416,
+        "gate_pass_rate": 0.5943396226415094,
+        "bank_frac": 0.3958333333333333,
+        "calib_ratio": 1.1551263974150796,
+        "n_turns": 80
+      },
+      "challenger": {
+        "name": "king-LI",
+        "valid": false,
+        "S": -Infinity,
+        "gate_pass_rate": 0.6344827586206897,
+        "bank_frac": 0.078125,
+        "calib_ratio": 3.5356877275583924,
+        "n_turns": 80
+      },
+      "duel": {
+        "margin": 0.0,
+        "se": Infinity,
+        "z": 0.0,
+        "k_sigma": 3.0,
+        "min_margin": 0.05,
+        "challenger_wins": false,
+        "n_paired_turns": 80
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+
+Executing on swift-comet-29
+D_tau2 FORCE-ONLY programmability probe
+
+king            S  gate   zlen    swe   tau2
+genesis   -0.0405   0%   1068   58.2  0.875
+XL        -0.0597   0%   2249   32.2  0.785
+XLVI      -0.0676   0%   3069   13.2  0.745
+XCIX      -0.0089   1%   1098   39.8  0.512
+VIII      -0.0371   3%    873   36.2  0.348
+II        -0.0507   3%    245   37.2  0.254
+
+Spearman S vs swe  = +0.714 (p=0.111)
+Spearman S vs tau2 = -0.257 (p=0.623)
+VERDICT: inconclusive

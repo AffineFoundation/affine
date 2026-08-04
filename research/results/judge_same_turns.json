@@ -1,0 +1,15 @@
+{
+  "experiment": "judge-on-same-turns apples-to-apples (11 kings x 50 turns)",
+  "date": "2026-08-03",
+  "S_thoughtKL_vs_swe": 0.827,
+  "judge_vs_swe": {
+    "glm-5.2/holistic": 0.092,
+    "glm-5.2/anchored": 0.345,
+    "gpt-4.1-mini/holistic": -0.5,
+    "gpt-4.1-mini/anchored": -0.409
+  },
+  "note": "GLM-5.2 anchored (+0.345) reproduces the production judge-at-win baseline (+0.31, n=12) on independent inputs, confirming it is not a strawman. gpt-4.1-mini anti-correlates: rates Goodharted short-style kings higher. S on identical kings/turns = +0.827.",
+  "n_kings": 11,
+  "turns_per_king": 50,
+  "cache": "results/judge_same_turns_calls.jsonl"
+}

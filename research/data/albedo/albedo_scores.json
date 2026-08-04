@@ -1,0 +1,250 @@
+[
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-C",
+    "run_id": "king-C",
+    "score": 32.0,
+    "resolved": 160,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-CI",
+    "run_id": "king-CI",
+    "score": 12.4,
+    "resolved": 62,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-genesis",
+    "run_id": "king-genesis",
+    "score": 58.2,
+    "resolved": 291,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-I",
+    "run_id": "king-I",
+    "score": 38.4,
+    "resolved": 192,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-II",
+    "run_id": "king-II",
+    "score": 37.2,
+    "resolved": 186,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-III",
+    "run_id": "king-III",
+    "score": 32.8,
+    "resolved": 164,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-IV",
+    "run_id": "king-IV",
+    "score": 29.2,
+    "resolved": 146,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-IX",
+    "run_id": "king-IX",
+    "score": 27.8,
+    "resolved": 139,
+    "total": 500,
+    "submitted": 500
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-L",
+    "run_id": "king-L",
+    "score": 26.8,
+    "resolved": 134,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-LI",
+    "run_id": "king-LI",
+    "score": 11.6,
+    "resolved": 58,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-V",
+    "run_id": "king-V",
+    "score": 32.0,
+    "resolved": 160,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-VI",
+    "run_id": "king-VI",
+    "score": 27.4,
+    "resolved": 137,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-VII",
+    "run_id": "king-VII",
+    "score": 33.2,
+    "resolved": 166,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-VIII",
+    "run_id": "king-VIII",
+    "score": 36.2,
+    "resolved": 181,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-X",
+    "run_id": "king-X",
+    "score": 26.4,
+    "resolved": 132,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-XC",
+    "run_id": "king-XC",
+    "score": 16.0,
+    "resolved": 80,
+    "total": 500,
+    "submitted": 198
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-XCIV",
+    "run_id": "king-XCIV",
+    "score": 36.2,
+    "resolved": 181,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-XCIX",
+    "run_id": "king-XCIX",
+    "score": 39.8,
+    "resolved": 199,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-XCVI",
+    "run_id": "king-XCVI",
+    "score": 32.0,
+    "resolved": 160,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-XI",
+    "run_id": "king-XI",
+    "score": 33.6,
+    "resolved": 168,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-XL",
+    "run_id": "king-XL",
+    "score": 32.2,
+    "resolved": 161,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-XLI",
+    "run_id": "king-XLI",
+    "score": 34.2,
+    "resolved": 171,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-XLII",
+    "run_id": "king-XLII",
+    "score": 33.4,
+    "resolved": 167,
+    "total": 500,
+    "submitted": 449
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-XLIII",
+    "run_id": "king-XLIII",
+    "score": 28.8,
+    "resolved": 144,
+    "total": 500,
+    "submitted": 500
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-XLIV",
+    "run_id": "king-XLIV",
+    "score": 27.6,
+    "resolved": 138,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-XLIX",
+    "run_id": "king-XLIX",
+    "score": 25.6,
+    "resolved": 128,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-XLV",
+    "run_id": "king-XLV",
+    "score": 26.0,
+    "resolved": 130,
+    "total": 500,
+    "submitted": 500
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-XLVI",
+    "run_id": "king-XLVI",
+    "score": 13.2,
+    "resolved": 66,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-XLVII",
+    "run_id": "king-XLVII",
+    "score": 28.2,
+    "resolved": 141,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/dendriteholdings/albedo-qwen3.6-35b-king-XLVIII",
+    "run_id": "king-XLVIII",
+    "score": 27.0,
+    "resolved": 135,
+    "total": 500,
+    "submitted": 499
+  },
+  {
+    "model": "hosted_vllm/glm-5.2-fp8.glm-5.2",
+    "run_id": "hosted_vllm__glm-5.2-fp8.glm-5.2",
+    "score": 73.8,
+    "resolved": 369,
+    "total": 500,
+    "submitted": 499
+  }
+]

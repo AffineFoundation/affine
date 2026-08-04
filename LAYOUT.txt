@@ -1,0 +1,32 @@
+affine — Affine SN120 command-center monorepo (uv workspace)
+============================================================
+
+AGENTS.md             project context / handoff (start here)
+pyproject.toml        uv workspace root (members: affine, research, ops)
+uv.lock               single lockfile — commit it
+setup.sh              uv sync --all-packages → one root .venv; writes .env
+.env                  PYTHONPATH=research/ (gitignored)
+
+affine/               Production SN120 package (validator, evalsrv, website, affine.toml)
+research/
+  harness/            Research scoring harness (S*, duels, RT probes)
+  scripts/            Offline analysis + pod orchestration scripts
+  data/               Turn corpora D (turns_minicoder.jsonl gitignored — on HF, sha-pinned)
+  results/            Headline freeze tables + RT/smoke metadata (bulky dumps gitignored)
+  docs/               MOTIVATION, PAPER_DRAFT, REDTEAM
+  chart/              Small viz helpers
+  e1/                 Early probe scraps
+ops/                  Weight helpers; discord/twitter planned (deps-only member)
+
+Setup:
+  ./setup.sh
+  source .venv/bin/activate && source .env
+
+Research scripts run from research/ (relative results/, data/ paths):
+  cd research && python -m harness.analyze_ekings ...
+
+Secrets: operator env / secret manager. Never commit .env or .eval_env.
+
+Handoff / resume:
+  START_HERE.txt
+  AGENTS.md

@@ -1,0 +1,61 @@
+# Paper tables (offline)
+
+Source root: `/Users/const/affv/results`
+
+Production S\*: rank by mix = Λ2 + 1·L1lift; invalidate with causality+leakage gate γ=0.30 and prior-bank gate γ_bank=0.08 (merged `bank_w1`/`bank_w3`/`bank_w2_fullz`).
+
+## a) E-LADDER: miner vs S vs LiveCodeBench truth
+
+| miner | n | S | LiveCodeBench |
+| --- | --- | --- | --- |
+| qwen3-32b | 120 | -0.4687 | 65.7 |
+| qwen3-14b | 118 | -0.6649 | 63.5 |
+| qwen3-8b | 118 | -0.8670 | 57.5 |
+| qwen3-4b | 116 | -1.1393 | 54.2 |
+| qwen3-1.7b | 119 | -1.7095 | 33.2 |
+
+Spearman(S, LCB) = +1.000 (p=1.4e-24), n=5
+
+## b) E-KINGS: mix ranking vs swe-rebench
+
+Production S\*: mix = Λ2 + 1·L1lift; γ=0.30, γ_bank=0.08 (bank from merged `bank_w1`/`bank_w3`/`bank_w2_fullz`).
+
+| king | mix | Λ2 | L1lift | swe-rebench | gate pass | bank_frac (merged) |
+| --- | --- | --- | --- | --- | --- | --- |
+| genesis | -0.0361 | -0.0275 | -0.0086 | 58.2 | 62% | 0.240 |
+| II | -0.0375 | -0.0167 | -0.0207 | 37.2 | 74% | 0.300 |
+| I | -0.0508 | -0.0174 | -0.0334 | 38.4 | 59% | 0.302 |
+| XCIX | -0.4436 | -0.1036 | -0.3400 | 39.8 | 77% | 0.100 |
+| XCIV | -0.4473 | -0.1064 | -0.3408 | 36.2 | 78% | 0.095 |
+| XI | -0.4539 | -0.1130 | -0.3409 | 33.6 | 83% | 0.075 |
+| VIII | -0.5276 | -0.1097 | -0.4180 | 36.2 | 79% | 0.100 |
+| XLI | -0.5373 | -0.0987 | -0.4386 | 34.2 | 89% | 0.080 |
+| CI | -0.5697 | -0.1229 | -0.4468 | 12.4 | 84% | 0.038 |
+| III | -0.5876 | -0.1057 | -0.4819 | 32.8 | 74% | 0.120 |
+| V | -0.5988 | -0.1088 | -0.4900 | 32.0 | 77% | 0.110 |
+| LI | -0.6169 | -0.1380 | -0.4789 | 11.6 | 90% | 0.049 |
+| XLV | -0.6303 | -0.1176 | -0.5127 | 26.0 | 93% | 0.054 |
+| XLVI | -0.6342 | -0.1192 | -0.5149 | 13.2 | 93% | 0.054 |
+| VII | -0.6350 | -0.1181 | -0.5168 | 33.2 | 82% | 0.085 |
+
+## c) Spearman vs swe-rebench (E-KINGS v2, 15 kings)
+
+| metric | Spearman | p | n | notes |
+| --- | --- | --- | --- | --- |
+| raw Λ2 | +0.847 | 6.72e-05 | 15 | I > genesis (FP) |
+| soft-idents (α=0.05, T=20) | +0.854 | 5.01e-05 | 15 | pad-gameable (RT-soft-pad) |
+| mix (Λ2 + 1·L1lift) | +0.844 | 7.74e-05 | 15 | genesis > I |
+| mix + gates (γ=0.30, γ_bank=0.08, merged bank) | +0.912 | 0.000237 | 10 | rejected: XI, XLV, XLVI, CI, LI |
+| judge-at-win baseline (110-task subset) | +0.311 | 0.324 | 12 | ns |
+
+## d) Red-team one-liners
+
+| attack | verdict |
+| --- | --- |
+| RT-1 payloads | instruct/jailbreak/stego etc. lose on Λ2; empty wins 100% but causality gate blocks |
+| RT-2 exact stuff | causality+leakage gate closes (pass 0%) |
+| RT-2 silence / A9 | causality+leakage gate closes (pass 5%) |
+| RT-2c paraphrase stuff | beats genesis on Λ2 (win 52%) but mix resists para (win 10%); bank gate closes (frac=0%<0.08) |
+| RT-soft-pad CONFIRMED | prefix `#` ident pads game soft-idents (junk pad win_I 64%, grounded prefix-scrape 68%); mix resists para better (see RT-2c) |
+| RT-4 king copier | 3σ duel rejects copier (|z|=1.48 < 3) |
+

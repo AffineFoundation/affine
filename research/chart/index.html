@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VANTABLACK</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="void" aria-hidden="true"></div>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="mast">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <h1 class="brand-name">VANTABLACK</h1>
+    </div>
+    <nav class="pair-nav" aria-label="Markets">
+      <button class="pair active" data-pair="BTCUSD" type="button">BTC</button>
+      <button class="pair" data-pair="ETHUSD" type="button">ETH</button>
+      <button class="pair" data-pair="SOLUSD" type="button">SOL</button>
+    </nav>
+  </header>
+
+  <main class="stage">
+    <section class="quote" aria-live="polite">
+      <p class="pair-label" id="pairLabel">BTC / USD</p>
+      <p class="price" id="price">—</p>
+      <p class="delta" id="delta">
+        <span class="delta-abs" id="deltaAbs">—</span>
+        <span class="delta-pct" id="deltaPct">—</span>
+      </p>
+    </section>
+
+    <section class="chart-wrap" aria-label="Price chart">
+      <div id="chart" class="chart"></div>
+      <div class="chart-fade" aria-hidden="true"></div>
+    </section>
+
+    <footer class="rail">
+      <div class="intervals" role="group" aria-label="Interval">
+        <button class="interval" data-interval="1" type="button">1m</button>
+        <button class="interval active" data-interval="5" type="button">5m</button>
+        <button class="interval" data-interval="15" type="button">15m</button>
+        <button class="interval" data-interval="60" type="button">1h</button>
+      </div>
+      <p class="status">
+        <span class="pulse" aria-hidden="true"></span>
+        <span id="statusText">live feed</span>
+      </p>
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

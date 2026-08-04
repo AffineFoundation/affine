@@ -1,0 +1,12 @@
+[project]
+name = "sn120-ops"
+version = "0.1.0"
+description = "Command-center ops: subnet discord notifications, twitter account, scheduling."
+requires-python = ">=3.11"
+dependencies = [
+    "httpx",
+]
+
+# Deps-only member for now; becomes a real package when the bots land.
+[tool.uv]
+package = false
