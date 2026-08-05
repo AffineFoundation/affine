@@ -58,7 +58,9 @@ module.exports = {
       error_file: "logs/caddy.err.log",
       merge_logs: true,
     },
-    // Public hostname https://sn120.arbos.life → 127.0.0.1:8787
+    // Legacy public hostname https://sn120.arbos.life → 127.0.0.1:8787.
+    // The official site https://affine.io reaches 127.0.0.1:8787 via
+    // Cloudflare (proxied DNS) → system caddy :80, not this tunnel.
     // Token: AFFINE_CF_TUNNEL_TOKEN in doppler (arbos/dev).
     {
       name: "affine-tunnel",

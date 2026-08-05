@@ -93,6 +93,8 @@ Full writeups: `research/docs/REDTEAM.md`.
 ## 4. Contract snapshot (`affine/affine.toml`)
 
 - netuid **120**, finney
+- official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
+  to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
 - `weight_version_key = 1`
 - teacher: `zai-org/GLM-4.5-Air-FP8`
 - seed king: `dendriteholdings/albedo-qwen3.6-35b-king-genesis`

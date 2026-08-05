@@ -48,16 +48,16 @@ Everything the project publishes, in one index. All URLs are on this site's root
 
 **Live dashboard API** (hot path on the validator box — prefer this for UI)
 
-Root: https://sn120.arbos.life/
+Root: https://affine.io/
 
-- [api/v1/snapshot](https://sn120.arbos.life/api/v1/snapshot) — king, reign, queue, live eval
-- [api/v1/history](https://sn120.arbos.life/api/v1/history) — filterable verdicts (`?q=&event=`)
-- [api/v1/benchmarks](https://sn120.arbos.life/api/v1/benchmarks) — advisory benches
-- [api/v1/contract](https://sn120.arbos.life/api/v1/contract) — machine-readable knobs
+- [api/v1/snapshot](https://affine.io/api/v1/snapshot) — king, reign, queue, live eval
+- [api/v1/history](https://affine.io/api/v1/history) — filterable verdicts (`?q=&event=`)
+- [api/v1/benchmarks](https://affine.io/api/v1/benchmarks) — advisory benches
+- [api/v1/contract](https://affine.io/api/v1/contract) — machine-readable knobs
 - `api/v1/duels/{challenge_id}` — duel detail (gates, S*, rejection)
 - `api/v1/duels/{challenge_id}/series` — chart-safe per-turn Λ2/L1lift
-- [api/v1/stream](https://sn120.arbos.life/api/v1/stream) — SSE snapshot deltas
-- [index.html](https://sn120.arbos.life/) — interactive dashboard UI
+- [api/v1/stream](https://affine.io/api/v1/stream) — SSE snapshot deltas
+- [index.html](https://affine.io/) — interactive dashboard UI
 
 **Hippius archive** (cold public mirror — miners / replay; same objects)
 
@@ -79,7 +79,7 @@ Root: https://sn120.arbos.life/
 
 **Website / index**
 
-- [llms.txt](https://s3.hippius.com/affine-sn120/llms.txt) — this file (also served from https://sn120.arbos.life/llms.txt)
+- [llms.txt](https://s3.hippius.com/affine-sn120/llms.txt) — this file (also served from https://affine.io/llms.txt)
 
 ---
 
@@ -182,7 +182,7 @@ Frozen numeric knobs live in `affine.toml` `[duel]` (linked under `code/`). Chan
 
 Everything the validator scores is published — there is no validator-private data. All paths are relative to this site's root (Hippius S3 bucket `affine-sn120`); fetch them directly with curl or any HTTP client.
 
-**Live dashboard API** (hot path — `https://sn120.arbos.life`):
+**Live dashboard API** (hot path — `https://affine.io`):
 
 - `GET /api/v1/snapshot` — king, reign chain, queue, live eval progress.
 - `GET /api/v1/history?limit=&cursor=&q=&event=` — filterable verdicts.

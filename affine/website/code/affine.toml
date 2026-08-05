@@ -217,10 +217,11 @@ bucket = "affine-sn120"
 # Hot-path read API (affine-dash) — separate from Hippius archive.
 api_host = "127.0.0.1"
 api_port = 8787
-# Public URL for llms.txt / absolute links. Caddy terminates TLS on :8443
-# until Cloudflare tunnel takes :443 later.
-public_host = "sn120.arbos.life"
-public_base_url = "https://sn120.arbos.life"
+# Public URL for llms.txt / absolute links. Official site: https://affine.io
+# (Cloudflare-proxied to this box; sn120.arbos.life stays up as a legacy alias
+# via the Cloudflare tunnel).
+public_host = "affine.io"
+public_base_url = "https://affine.io"
 
 [validator]
 poll_interval_s = 30
