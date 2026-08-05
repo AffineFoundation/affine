@@ -130,6 +130,29 @@ button {
   color: var(--color-gold);
 }
 
+.nav-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 1;
+}
+
+.nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--color-fg-3);
+  border: 1px solid transparent;
+}
+
+.nav-icon:hover {
+  color: var(--color-gold);
+  border-color: rgba(243, 196, 73, 0.35);
+}
+
 /* ---------- market ticker (TMC) ---------- */
 .market-bar {
   border-top: 1px solid rgba(243, 196, 73, 0.22);
@@ -140,13 +163,16 @@ button {
 .market-bar-inner {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 0;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: 8px 12px;
   min-height: 36px;
   padding: 8px 20px;
   font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 0.02em;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .market-item {
@@ -155,6 +181,17 @@ button {
   gap: 6px;
   white-space: nowrap;
   color: var(--color-fg);
+  flex: 1 1 0;
+  justify-content: center;
+  min-width: 0;
+}
+
+.market-item:first-child {
+  justify-content: flex-start;
+}
+
+.market-item:last-child {
+  justify-content: flex-end;
 }
 
 .market-item .k {
@@ -186,18 +223,22 @@ button {
 }
 
 .market-sep {
-  margin: 0 12px;
-  color: var(--color-fg-4);
-  user-select: none;
+  display: none;
 }
 
 @media (max-width: 720px) {
   .market-bar-inner {
-    gap: 4px 0;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 6px 16px;
     padding: 6px 16px;
   }
-  .market-sep {
-    margin: 0 8px;
+  .market-item {
+    flex: 0 0 auto;
+    justify-content: flex-start;
+  }
+  .market-item:last-child {
+    justify-content: flex-start;
   }
 }
 
@@ -224,53 +265,45 @@ button {
   padding: 0 20px;
 }
 
-.hero-head {
+.hero-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  width: 100%;
+}
+
+.hero-pane {
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.015);
+  padding: 12px 10px 8px;
+}
+
+.hero-pane-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
+  padding: 0 4px;
 }
 
-.hero-tabs {
-  display: inline-flex;
-  gap: 4px;
-}
-
-.hero-tab {
-  height: 28px;
-  padding: 0 12px;
-  border: 1px solid var(--color-border);
+.hero-pane-title {
+  margin: 0;
   font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--color-fg-3);
-}
-
-.hero-tab:hover {
-  color: var(--color-fg);
-  border-color: var(--color-border-hover);
-}
-
-.hero-tab.active {
   color: var(--color-gold);
-  border-color: rgba(243, 196, 73, 0.5);
-  background: rgba(243, 196, 73, 0.07);
 }
 
 .hero-caption {
+  margin: 0;
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--color-fg-3);
-}
-
-.hero-chart-wrap {
-  position: relative;
-  width: 100vw;
-  margin-left: calc(50% - 50vw);
-  margin-right: calc(50% - 50vw);
 }
 
 .hero-scroll {
@@ -282,6 +315,12 @@ button {
   display: block;
   width: 100%;
   height: auto;
+}
+
+@media (max-width: 900px) {
+  .hero-split {
+    grid-template-columns: 1fr;
+  }
 }
 
 .hero-king-row {
@@ -643,7 +682,6 @@ table.data-table td.when {
 
 /* ---------- live status ---------- */
 .live-status {
-  margin-left: auto;
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.06em;

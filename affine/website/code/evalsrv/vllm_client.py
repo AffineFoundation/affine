@@ -25,6 +25,47 @@ class Served:
     port: int
 
 
+class ModelPool:
+    """Round-robin over identical replicas of one model.
+
+    Used for the teacher, which does ~2/3 of all forced-logprob work in a
+    duel: a second GLM replica on otherwise-idle GPUs doubles teacher
+    throughput. Each replica keeps its own semaphore (its own queue-depth
+    budget); calls are spread least-loaded-first so a slow replica does not
+    stall the pool. Replicas serve identical weights at temperature-0 echo
+    scoring, so which replica answers is score-invariant.
+    """
+
+    def __init__(self, replicas: list[VllmModel]):
+        assert replicas, "ModelPool needs at least one replica"
+        self.replicas = replicas
+        self.cfg = replicas[0].cfg
+        self._rr = 0
+
+    def _pick(self) -> VllmModel:
+        # Prefer an idle replica; fall back to round-robin when all busy.
+        for m in self.replicas:
+            if not m.sem.locked():
+                return m
+        self._rr = (self._rr + 1) % len(self.replicas)
+        return self.replicas[self._rr]
+
+    async def sample(self, prefix_messages: list[dict], temperature: float,
+                     max_tokens: int) -> tuple[str, str]:
+        return await self._pick().sample(prefix_messages, temperature,
+                                         max_tokens)
+
+    async def sample_injected(self, prefix_messages: list[dict], thoughts: str,
+                              temperature: float, max_tokens: int) -> str:
+        return await self._pick().sample_injected(prefix_messages, thoughts,
+                                                  temperature, max_tokens)
+
+    async def score_action(self, prefix_messages: list[dict], thoughts: str,
+                           action: str) -> dict:
+        return await self._pick().score_action(prefix_messages, thoughts,
+                                               action)
+
+
 class VllmModel:
     def __init__(self, cfg: Served, client: httpx.AsyncClient, sem: asyncio.Semaphore):
         self.cfg = cfg

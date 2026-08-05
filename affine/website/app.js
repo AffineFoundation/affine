@@ -6,13 +6,12 @@ import {
   fetchRegHistory,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=7";
+} from "./api.js?v=16";
 import {
   drawBenchSuite,
   drawDuelScores,
   drawDuelZ,
   drawRegPrice,
-  drawReignChain,
   esc,
   fmtAge,
   fmtScore,
@@ -21,12 +20,11 @@ import {
   fmtZ,
   reignMembers,
   short,
-} from "./charts.js?v=7";
+} from "./charts.js?v=16";
 
 const $ = (id) => document.getElementById(id);
 
 let filter = "";
-let heroTab = "duel";
 let cache = { dashboard: null, benchmarks: null, history: null, regHistory: null };
 let fps = { dashboard: "", benchmarks: "", history: "", hero: "", reg: "" };
 let closeWatch = null;
@@ -43,48 +41,26 @@ function chartWidth() {
 
 /* ---------- hero ---------- */
 
+function paneWidth(svg) {
+  const host = svg?.closest(".hero-pane") || svg?.parentElement;
+  const w = host?.clientWidth || Math.floor(chartWidth() / 2);
+  return Math.max(w - 20, 280);
+}
+
 function renderHero(force = false) {
-  const svg = $("hero-chart");
-  if (!svg) return;
+  const scoreSvg = $("hero-chart-score");
+  const zSvg = $("hero-chart-z");
+  if (!scoreSvg || !zSvg) return;
   const d = cache.dashboard;
   // Market bar is independent of chart dirty-checks.
   renderMarketBar(d);
 
-  const key = `${heroTab}|${fps.history}|${fps.dashboard}|${chartWidth()}`;
+  const key = `${fps.history}|${fps.dashboard}|${chartWidth()}`;
   if (!force && key === fps.hero) return;
   fps.hero = key;
 
-  switch (heroTab) {
-    case "score":
-      $("hero-caption").textContent =
-        "Absolute S* per duel · gray = king · blue = challenger · gold = coronation · Δ above = chall − king";
-      drawDuelScores(svg, cache.history);
-      break;
-    case "reign":
-      $("hero-caption").textContent =
-        "Reign evolution · absolute S* at coronation · gold = current · delta vs prior king";
-      drawReignChain(svg, cache.dashboard);
-      break;
-    case "duel":
-    default:
-      $("hero-caption").textContent =
-        "Paired duel z vs king · gold = coronation · dashed = 3σ dethrone threshold";
-      drawDuelZ(svg, cache.history);
-      break;
-  }
-
-  const k = d?.king;
-  const stats = d?.stats || {};
-  const q = (d?.queue || []).length;
-  const name = k?.repo?.split("/").pop() || "—";
-  $("hero-king-row").innerHTML = [
-    ["champion", k ? `<b class="gold">${esc(name)}</b>` : "<b>—</b>"],
-    ["reign", `<b>${k ? `#${esc(k.reign_number)}` : "—"}</b>`],
-    ["queue", `<b>${esc(q)}</b>`],
-    ["duels", `<b>${esc(stats.duels ?? stats.accepted ?? "—")}</b>`],
-    ["phase", `<b>${esc(d?.phase?.name ?? "—")}</b>`],
-  ].map(([lab, val]) =>
-    `<span class="stat-chip"><span class="k">${lab}</span>${val}</span>`).join("");
+  drawDuelScores(scoreSvg, cache.history, { width: paneWidth(scoreSvg) });
+  drawDuelZ(zSvg, cache.history, { width: paneWidth(zSvg) });
 }
 
 function renderMarketBar(d) {
@@ -110,7 +86,7 @@ function renderMarketBar(d) {
       ? `<span class="market-item"><span class="k">block</span><b>${esc(market.block_number)}</b></span>`
       : "",
     `<span class="market-item dim" title="${esc(updated)}">tmc</span>`,
-  ].filter(Boolean).join('<span class="market-sep" aria-hidden="true">·</span>');
+  ].filter(Boolean).join("");
 }
 
 /* ---------- sections ---------- */
@@ -146,25 +122,6 @@ function renderReign(d) {
       </tr>`;
     }).join("")}</tbody>
   </table>`;
-}
-
-function renderChallenge(d) {
-  const ce = d?.current_eval;
-  if (!ce) {
-    $("challenge-meta").textContent = "idle";
-    $("challenge-wrap").innerHTML = `<div class="empty">no duel in flight</div>`;
-    return;
-  }
-  $("challenge-meta").textContent = ce.stage || "running";
-  const progress = ce.progress
-    ? Object.entries(ce.progress).map(([k, v]) => `${k}: ${v}`).join(" · ")
-    : "—";
-  $("challenge-wrap").innerHTML = `<div class="kv-grid">
-    <div class="kv"><span class="k">challenge</span><span class="v">${esc(ce.challenge_id)}</span></div>
-    <div class="kv"><span class="k">challenger</span><span class="v"><a href="${esc(hubUrl(ce.repo) || "#")}" target="_blank" rel="noopener">${esc(ce.repo)}</a></span></div>
-    <div class="kv"><span class="k">stage</span><span class="v gold">${esc(ce.stage)}</span></div>
-    <div class="kv"><span class="k">progress</span><span class="v dim">${esc(progress)}</span></div>
-  </div>`;
 }
 
 function renderRegPrice(force = false) {
@@ -249,12 +206,10 @@ function renderBenchmarks(b) {
   }
   const active = b?.active || [];
   el.innerHTML = `<div class="bench-grid">${suites.map((suite) => {
-    const scored = models.filter((m) => m.suites?.[suite]?.ok && m.suites[suite].score != null).length;
-    const failed = models.filter((m) => m.suites?.[suite]?.ok === false).length;
+    const scored = models.filter((m) => m.suites?.[suite]?.score != null).length;
     const running = active.filter((j) => j.suite === suite).length;
     const bits = [];
     if (scored) bits.push(`${scored} scored`);
-    if (failed) bits.push(`${failed} fail`);
     if (running) bits.push(`${running} running`);
     if (!bits.length) bits.push("awaiting runs");
     return `<div class="bench-card" data-suite="${esc(suite)}">
@@ -354,7 +309,6 @@ function renderSnapshotSections() {
   const d = cache.dashboard;
   if (!d) return;
   renderReign(d);
-  renderChallenge(d);
   renderQueue(d);
 }
 
@@ -582,18 +536,6 @@ async function refreshHistoryAndBench() {
 }
 
 function wire() {
-  document.querySelectorAll(".hero-tab").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      heroTab = btn.dataset.tab;
-      document.querySelectorAll(".hero-tab").forEach((b) => {
-        const on = b === btn;
-        b.classList.toggle("active", on);
-        b.setAttribute("aria-pressed", on ? "true" : "false");
-      });
-      fps.hero = "";
-      renderHero(true);
-    });
-  });
   $("filter-input")?.addEventListener("input", (e) => {
     filter = e.target.value.trim().toLowerCase();
     refreshHistoryAndBench();

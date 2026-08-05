@@ -89,10 +89,10 @@ export function fmtScore(v) {
   return n.toFixed(3);
 }
 
-export function drawDuelZ(svg, history) {
+export function drawDuelZ(svg, history, { width: widthOpt } = {}) {
   const points = duelPoints(history);
-  const width = chartWidth();
-  const height = 360;
+  const width = Math.max(widthOpt || chartWidth(), 280);
+  const height = 320;
   const padL = 52;
   const padR = 20;
   const padT = 28;
@@ -165,46 +165,66 @@ export function drawDuelZ(svg, history) {
   svg.innerHTML = `${grid}${columns}`;
 }
 
-export function drawDuelScores(svg, history) {
-  // Absolute S* only — paired king / challenger bars per duel.
-  const points = duelPoints(history).filter((p) =>
-    p.score != null || p.score_king != null || p.event === "crowned");
-  const width = chartWidth();
-  const height = 360;
+export function drawDuelScores(svg, history, { width: widthOpt } = {}) {
+  // Best absolute S per duel — max(king, challenger), reg-price style.
+  const points = (history || [])
+    .filter((r) => r.event !== "failed")
+    .filter((r) =>
+      r.score != null || r.score_king != null || r.event === "crowned"
+      || r.z != null)
+    .slice()
+    .reverse();
+  const width = Math.max(widthOpt || chartWidth(), 280);
+  const height = 320;
   const padL = 56;
-  const padR = 20;
-  const padT = 36;
+  const padR = 24;
+  const padT = 28;
   const padB = 56;
   const n = Math.max(points.length, 1);
   const slot = (width - padL - padR) / n;
-  const pairW = Math.max(16, Math.min(slot * 0.55, 72));
-  const barW = Math.max(6, pairW * 0.42);
+  const xAt = (i) => padL + slot * (i + 0.5);
+  const gold = "#f3c449";
+  const mono = "IBM Plex Mono, monospace";
 
-  const scores = points.flatMap((p) => {
-    const out = [];
-    if (p.score != null && Number.isFinite(Number(p.score))) out.push(Number(p.score));
-    if (p.score_king != null && Number.isFinite(Number(p.score_king))) out.push(Number(p.score_king));
-    return out;
-  });
-  let lo = scores.length ? Math.min(...scores) : -0.05;
-  let hi = scores.length ? Math.max(...scores) : 0;
+  const scoreOf = (p, key) => {
+    const v = p[key];
+    return v != null && Number.isFinite(Number(v)) ? Number(v) : null;
+  };
+  const bestScore = (p) => {
+    const chall = scoreOf(p, "score");
+    const king = scoreOf(p, "score_king");
+    if (chall == null) return king;
+    if (king == null) return chall;
+    return Math.max(chall, king);
+  };
+
+  const series = points.map((p, i) => ({ p, i, v: bestScore(p) }))
+    .filter((pt) => pt.v != null);
+  const scores = series.map((pt) => pt.v);
+
+  svg.setAttribute("width", String(width));
+  svg.setAttribute("height", String(height));
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+  if (!scores.length) {
+    svg.innerHTML = `<text x="${width / 2}" y="${height / 2}" text-anchor="middle"
+      fill="rgba(229,229,229,0.35)" font-family="${mono}" font-size="12">no absolute S recorded yet</text>`;
+    return;
+  }
+
+  let lo = Math.min(...scores);
+  let hi = Math.max(...scores);
   if (hi === lo) {
     lo -= Math.abs(lo) * 0.2 || 0.02;
     hi += Math.abs(hi) * 0.2 || 0.02;
   } else {
     const pad = (hi - lo) * 0.18;
     lo -= pad;
-    hi += pad * 0.35;
+    hi += pad;
   }
   const span = hi - lo || 1;
   const yAt = (v) => padT + ((hi - v) / span) * (height - padT - padB);
-  const yBase = yAt(lo);
-  const xAt = (i) => padL + slot * (i + 0.5);
-
-  const gold = "#f3c449";
-  const accent = "#5ac8fa";
-  const kingFill = "#6a655c";
-  const mono = "IBM Plex Mono, monospace";
+  const yFloor = height - padB;
 
   const ticks = Array.from({ length: 5 }, (_, i) => lo + (span * i) / 4);
   const grid = ticks.map((v) => {
@@ -217,90 +237,47 @@ export function drawDuelScores(svg, history) {
     </g>`;
   }).join("");
 
-  const legend = `<g font-family="${mono}" font-size="9">
-    <rect x="${padL}" y="8" width="8" height="8" fill="${kingFill}"/>
-    <text x="${padL + 12}" y="16" fill="rgba(229,229,229,0.45)">king</text>
-    <rect x="${padL + 52}" y="8" width="8" height="8" fill="${accent}"/>
-    <text x="${padL + 64}" y="16" fill="rgba(229,229,229,0.45)">challenger</text>
-    <rect x="${padL + 142}" y="8" width="8" height="8" fill="${gold}"/>
-    <text x="${padL + 154}" y="16" fill="rgba(229,229,229,0.45)">crowned</text>
-  </g>`;
+  const line = series.map((pt, k) =>
+    `${k ? "L" : "M"} ${xAt(pt.i)} ${yAt(pt.v)}`).join(" ");
+  const area = series.length >= 2
+    ? `${line} L ${xAt(series[series.length - 1].i)} ${yFloor} L ${xAt(series[0].i)} ${yFloor} Z`
+    : "";
 
-  const columns = points.map((p, i) => {
-    const x = xAt(i);
+  const showEvery = points.length > 14 ? Math.ceil(points.length / 10) : 1;
+  const last = series[series.length - 1];
+  const tip = last
+    ? `<circle cx="${xAt(last.i)}" cy="${yAt(last.v)}" r="3.5" fill="${gold}"/>
+       <text x="${xAt(last.i) - 8}" y="${yAt(last.v) - 10}" text-anchor="end"
+         fill="${gold}" font-family="${mono}" font-size="11">${esc(fmtScore(last.v))}</text>`
+    : "";
+
+  const labels = points.map((p, i) => {
     const crowned = p.event === "crowned";
-    const chall = p.score != null && Number.isFinite(Number(p.score)) ? Number(p.score) : null;
-    const king = p.score_king != null && Number.isFinite(Number(p.score_king)) ? Number(p.score_king) : null;
+    const v = bestScore(p);
+    if (v == null) return "";
+    const x = xAt(i);
     const label = crowned
       ? `#${p.reign_number ?? "?"}`
       : (p.repo || "").split("/").pop()?.slice(0, 12) || "duel";
-    const showDate = slot >= 64;
-    const gap = 2;
-    const kingX = x - barW - gap / 2;
-    const challX = x + gap / 2;
-    const challFill = crowned ? gold : accent;
-
-    let bars = "";
-    if (king != null) {
-      const y = yAt(king);
-      bars += `<rect x="${kingX}" y="${y}" width="${barW}" height="${Math.max(2, yBase - y)}"
-        rx="1" fill="${kingFill}" opacity="0.9"/>
-        <text x="${kingX + barW / 2}" y="${y - 6}" text-anchor="middle"
-          fill="rgba(229,229,229,0.4)" font-family="${mono}" font-size="8">${fmtScore(king)}</text>`;
-    }
-    if (chall != null) {
-      const y = yAt(chall);
-      bars += `<rect x="${challX}" y="${y}" width="${barW}" height="${Math.max(2, yBase - y)}"
-        rx="1" fill="${challFill}"/>
-        <text x="${challX + barW / 2}" y="${y - 6}" text-anchor="middle"
-          fill="${crowned ? gold : accent}" font-family="${mono}" font-size="8">${fmtScore(chall)}</text>`;
-    }
-    if (king == null && chall == null) {
-      bars = `<text x="${x}" y="${yBase - 8}" text-anchor="middle" fill="rgba(229,229,229,0.3)"
-        font-family="${mono}" font-size="10">—</text>`;
-    }
-
-    const delta = (king != null && chall != null)
-      ? fmtDelta(chall, king)
-      : "";
-
+    const showLabel = crowned || i % showEvery === 0 || i === points.length - 1;
+    const chall = scoreOf(p, "score");
+    const king = scoreOf(p, "score_king");
+    const who = (chall != null && (king == null || chall >= king)) ? "challenger" : "king";
     return `<g>
-      <title>${esc(p.repo || "")} · chall=${fmtScore(chall)} · king=${fmtScore(king)}</title>
-      ${bars}
-      ${delta ? `<text x="${x}" y="${padT - 4}" text-anchor="middle"
-        fill="${Number(chall) - Number(king) >= 0 ? accent : "rgba(255,71,71,0.7)"}"
-        font-family="${mono}" font-size="9">${esc(delta)}</text>` : ""}
-      <text x="${x}" y="${height - padB + 16}" text-anchor="middle"
-        fill="${crowned ? gold : "#e5e5e5"}" font-family="${mono}" font-size="10">${esc(label)}</text>
-      ${showDate ? `<text x="${x}" y="${height - padB + 32}" text-anchor="middle"
+      <title>${esc(p.repo || "")} · best=${fmtScore(v)} (${who})</title>
+      <circle cx="${x}" cy="${yAt(v)}" r="${crowned ? 4.5 : 2.5}"
+        fill="${gold}" opacity="${crowned ? 1 : 0.85}"/>
+      ${showLabel ? `<text x="${x}" y="${height - padB + 16}" text-anchor="middle"
+        fill="${crowned ? gold : "rgba(229,229,229,0.55)"}" font-family="${mono}" font-size="10">${esc(label)}</text>` : ""}
+      ${showLabel && slot >= 56 ? `<text x="${x}" y="${height - padB + 32}" text-anchor="middle"
         fill="rgba(229,229,229,0.35)" font-family="${mono}" font-size="9">${esc(fmtTime(p.at))}</text>` : ""}
     </g>`;
   }).join("");
 
-  // Challenger trend line across duels.
-  let line = "";
-  const challPath = points.reduce((acc, p, i) => {
-    if (p.score == null || !Number.isFinite(Number(p.score))) return acc;
-    const cmd = acc ? "L" : "M";
-    return `${acc}${acc ? " " : ""}${cmd} ${xAt(i)} ${yAt(Number(p.score))}`;
-  }, "");
-  if (challPath) {
-    line = `<path d="${challPath}" fill="none" stroke="${accent}" stroke-width="1.25" opacity="0.45"/>`;
-  }
-
-  if (!points.length) {
-    svg.setAttribute("width", String(width));
-    svg.setAttribute("height", String(height));
-    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-    svg.innerHTML = `<text x="${width / 2}" y="${height / 2}" text-anchor="middle"
-      fill="rgba(229,229,229,0.35)" font-family="${mono}" font-size="12">no absolute S* recorded yet</text>`;
-    return;
-  }
-
-  svg.setAttribute("width", String(width));
-  svg.setAttribute("height", String(height));
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.innerHTML = `${legend}${grid}${columns}${line}`;
+  svg.innerHTML = `${grid}
+    ${area ? `<path d="${area}" fill="rgba(243,196,73,0.08)"/>` : ""}
+    <path d="${line}" fill="none" stroke="${gold}" stroke-width="1.75"/>
+    ${labels}${tip}`;
 }
 
 export function fmtDelta(cur, prev) {
@@ -421,17 +398,18 @@ export function drawBenchSuite(svg, suite, models, { width } = {}) {
   const padB = 40;
   const mono = "IBM Plex Mono, monospace";
   const accent = "#5ac8fa";
-  const fail = "rgba(255,71,71,0.55)";
-  const dim = "rgba(229,229,229,0.28)";
 
-  const rows = (models || []).map((m) => {
-    const r = m?.suites?.[suite];
-    const score = r?.ok && r.score != null && Number.isFinite(Number(r.score))
-      ? Number(r.score) : null;
-    const failed = r && r.ok === false;
-    const label = m.label || (m.model_repo || "").split("/").pop() || "model";
-    return { label, score, failed, finished_at: r?.finished_at };
-  });
+  // The payload only carries latest successful scores (one value per model);
+  // models without a score for this suite are simply not drawn.
+  const rows = (models || [])
+    .map((m) => {
+      const r = m?.suites?.[suite];
+      const score = r?.score != null && Number.isFinite(Number(r.score))
+        ? Number(r.score) : null;
+      const label = m.label || (m.model_repo || "").split("/").pop() || "model";
+      return { label, score, finished_at: r?.finished_at };
+    })
+    .filter((r) => r.score != null);
 
   svg.setAttribute("width", String(w));
   svg.setAttribute("height", String(height));
@@ -473,34 +451,15 @@ export function drawBenchSuite(svg, suite, models, { width } = {}) {
   const bars = rows.map((r, i) => {
     const x = padL + slot * (i + 0.5);
     const label = short(r.label, 10);
-    if (r.score != null) {
-      const y = yAt(r.score);
-      const h = Math.max(2, y0 - y);
-      return `<g>
-        <title>${esc(r.label)} · ${fmtScore(r.score)}</title>
-        <rect x="${x - barW / 2}" y="${y}" width="${barW}" height="${h}"
-          rx="1" fill="${accent}"/>
-        <text x="${x}" y="${y - 5}" text-anchor="middle" fill="${accent}"
-          font-family="${mono}" font-size="9">${esc(fmtScore(r.score))}</text>
-        <text x="${x}" y="${height - 14}" text-anchor="middle" fill="#e5e5e5"
-          font-family="${mono}" font-size="9">${esc(label)}</text>
-      </g>`;
-    }
-    if (r.failed) {
-      return `<g>
-        <title>${esc(r.label)} · failed</title>
-        <line x1="${x - barW / 2}" x2="${x + barW / 2}" y1="${y0}" y2="${y0}"
-          stroke="${fail}" stroke-width="2"/>
-        <text x="${x}" y="${y0 - 8}" text-anchor="middle" fill="${fail}"
-          font-family="${mono}" font-size="9">fail</text>
-        <text x="${x}" y="${height - 14}" text-anchor="middle" fill="${dim}"
-          font-family="${mono}" font-size="9">${esc(label)}</text>
-      </g>`;
-    }
+    const y = yAt(r.score);
+    const h = Math.max(2, y0 - y);
     return `<g>
-      <text x="${x}" y="${y0 - 8}" text-anchor="middle" fill="${dim}"
-        font-family="${mono}" font-size="9">—</text>
-      <text x="${x}" y="${height - 14}" text-anchor="middle" fill="${dim}"
+      <title>${esc(r.label)} · ${fmtScore(r.score)}</title>
+      <rect x="${x - barW / 2}" y="${y}" width="${barW}" height="${h}"
+        rx="1" fill="${accent}"/>
+      <text x="${x}" y="${y - 5}" text-anchor="middle" fill="${accent}"
+        font-family="${mono}" font-size="9">${esc(fmtScore(r.score))}</text>
+      <text x="${x}" y="${height - 14}" text-anchor="middle" fill="#e5e5e5"
         font-family="${mono}" font-size="9">${esc(label)}</text>
     </g>`;
   }).join("");

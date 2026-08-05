@@ -55,6 +55,14 @@ repo = "zai-org/GLM-4.5-Air-FP8"
 port = 8000
 tp = 2
 gpus = "0,1"
+# Second replica on the otherwise-idle GPUs. The teacher does ~2/3 of a duel's
+# forced-logprob work (48 echo calls per turn per side vs 24 per miner), so
+# with king and challenger scored concurrently one GLM is the wall — the
+# replica doubles teacher throughput. Best-effort: if it fails to launch,
+# duels run on the primary alone. Identical weights at temperature-0 echo
+# scoring, so which replica answers a call is score-invariant.
+replica_port = 8003
+replica_gpus = "6,7"
 
 [miner_serving]
 # King stays warm; challenger is loaded per duel.

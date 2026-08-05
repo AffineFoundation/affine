@@ -144,26 +144,33 @@ def _run(cmd: list[str], env: dict, timeout_s: int,
     return proc.returncode, "".join(chunks)
 
 
-def _parse_resolve_rate(report_dir: Path, n_instances: int) -> tuple[float | None, int]:
-    """Find swebench report JSON and return (resolve_rate, n_resolved)."""
-    reports = sorted(report_dir.rglob("*.json"), key=lambda p: p.stat().st_mtime,
-                     reverse=True)
-    for path in reports:
+def _parse_resolve_rate(run_id: str, n_instances: int) -> tuple[float | None, int]:
+    """Find the swebench model-level report for run_id → (rate, n_resolved).
+
+    run_evaluation writes `<model>.<run_id>.json` into its CWD; the files
+    under logs/run_evaluation/<run_id>/ are per-instance reports that carry
+    no `resolved_ids` key. Only a report that actually declares resolved
+    counts may produce a rate — treating "key absent" as 0 resolved once
+    turned a genuine 5/25 run into a published 0.0."""
+    cands = list(Path.cwd().glob(f"*.{run_id}.json"))
+    log_dir = Path("logs") / "run_evaluation" / run_id
+    if log_dir.is_dir():
+        cands += list(log_dir.rglob("*.json"))
+    for path in sorted(cands, key=lambda p: p.stat().st_mtime, reverse=True):
         try:
             data = json.loads(path.read_text())
         except Exception:
             continue
         if not isinstance(data, dict):
             continue
-        resolved = data.get("resolved_ids") or data.get("resolved") or []
-        if isinstance(resolved, list):
-            n_ok = len(resolved)
-            return (n_ok / n_instances if n_instances else 0.0), n_ok
+        if isinstance(data.get("resolved_ids"), list):
+            n_ok = len(data["resolved_ids"])
+            total = int(data.get("total_instances") or n_instances) or 1
+            return n_ok / total, n_ok
         if "resolved_instances" in data and "total_instances" in data:
             n_ok = int(data["resolved_instances"])
-            total = int(data["total_instances"]) or n_instances
+            total = int(data["total_instances"]) or n_instances or 1
             return n_ok / total, n_ok
-    # Fallback: preds.json presence without report → unknown score.
     return None, 0
 
 
@@ -268,10 +275,7 @@ def run_swe_lite(model_repo: str, model_port: int, *,
                 "error": (out or "")[-2000:] or f"eval exit {code}",
                 "preds_path": str(preds_json)}
 
-    rate, n_ok = _parse_resolve_rate(Path("logs") / "run_evaluation" / run_id, n)
-    if rate is None:
-        # Also search under run_root / cwd.
-        rate, n_ok = _parse_resolve_rate(Path.cwd(), n)
+    rate, n_ok = _parse_resolve_rate(run_id, n)
     if rate is None:
         return {"ok": False, "suite": SUITE_NAME,
                 "wall_time_s": round(time.time() - t0, 1),

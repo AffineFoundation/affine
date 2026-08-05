@@ -177,6 +177,9 @@ class Slot:
 class Engine:
     cfg: dict  # full affine.toml dict
     teacher_slot: Slot = field(init=False)
+    # Optional second teacher replica ([teacher].replica_gpus). Best-effort:
+    # duels fall back to the primary alone when it is down.
+    teacher2_slot: Slot | None = field(init=False, default=None)
     king_slot: Slot = field(init=False)
     chall_slot: Slot = field(init=False)
     # One reentrant lock owns every keep-set read and cache prune, every slot
@@ -211,10 +214,19 @@ class Engine:
             self.chall_slot = Slot("challenger", port, gpus, tp)
             return
         self.teacher_slot = Slot("teacher", int(t["port"]), t["gpus"], int(t["tp"]))
+        if t.get("replica_gpus"):
+            self.teacher2_slot = Slot("teacher2", int(t.get("replica_port", 8003)),
+                                      str(t["replica_gpus"]), int(t["tp"]))
         self.king_slot = Slot("king", int(ms["king_port"]), ms["king_gpus"],
                               int(ms["tp"]))
         self.chall_slot = Slot("challenger", int(ms["challenger_port"]),
                                ms["challenger_gpus"], int(ms["tp"]))
+
+    def _slots(self) -> list[Slot]:
+        slots = [self.teacher_slot, self.king_slot, self.chall_slot]
+        if self.teacher2_slot is not None:
+            slots.append(self.teacher2_slot)
+        return slots
 
     # -- process control -------------------------------------------------------
     def _vllm_cmd(self, slot: Slot, repo: str, revision: str | None) -> list[str]:
@@ -280,8 +292,7 @@ class Engine:
                  "--format=csv,noheader"],
                 capture_output=True, text=True, timeout=30)
             want = {g.strip() for g in slot.gpus.split(",") if g.strip()}
-            keep_pgids = {s.pgid for s in
-                          (self.teacher_slot, self.king_slot, self.chall_slot)
+            keep_pgids = {s.pgid for s in self._slots()
                           if s is not slot and s.pgid is not None}
             for line in apps.stdout.strip().splitlines():
                 if "," not in line:
@@ -382,11 +393,39 @@ class Engine:
 
     # -- public API --------------------------------------------------------------
     def ensure_teacher(self) -> bool:
+        """Primary teacher is required; the replica is best-effort. Both are
+        launched before either wait so a cold rewarm pays one warmup, not two
+        (launch is just a Popen; readiness is what takes minutes)."""
         t = self.cfg["teacher"]
-        if self.teacher_slot.ready and self._alive(self.teacher_slot):
-            return True
-        self._launch(self.teacher_slot, t["repo"], None)
-        return self._wait_ready(self.teacher_slot)
+        primary_ok = self.teacher_slot.ready and self._alive(self.teacher_slot)
+        if not primary_ok:
+            self._launch(self.teacher_slot, t["repo"], None)
+        replica_launched = False
+        if self.teacher2_slot is not None and not (
+                self.teacher2_slot.ready and self._alive(self.teacher2_slot)):
+            self._launch(self.teacher2_slot, t["repo"], None)
+            replica_launched = True
+        if not primary_ok and not self._wait_ready(self.teacher_slot):
+            return False
+        if replica_launched and not self._wait_ready(self.teacher2_slot,
+                                                     timeout_s=1200):
+            # Non-fatal: reap the half-dead process so its GPUs stay clean
+            # and the duel routes everything to the primary.
+            log.warning("teacher replica failed to warm; running single-teacher")
+            self._kill(self.teacher2_slot)
+        return True
+
+    def teacher_serveds(self) -> list[Served]:
+        """Teacher endpoints currently servable, primary first. The replica is
+        re-probed here (cheap, once per duel): a replica that died since
+        warmup must not be handed to the duel's round-robin pool."""
+        out: list[Served] = []
+        if self.teacher_slot.served and self.teacher_slot.ready:
+            out.append(self.teacher_slot.served)
+        s2 = self.teacher2_slot
+        if (s2 is not None and s2.served and s2.ready and self._alive(s2)):
+            out.append(s2.served)
+        return out
 
     def ensure_king(self, repo: str, revision: str) -> bool:
         s = self.king_slot.served
@@ -615,9 +654,12 @@ class Engine:
                 "repo": slot.served.repo if slot.served else None,
                 "revision": slot.served.revision if slot.served else None,
             }
-        return {"teacher": one(self.teacher_slot),
-                "king": one(self.king_slot),
-                "challenger": one(self.chall_slot)}
+        out = {"teacher": one(self.teacher_slot),
+               "king": one(self.king_slot),
+               "challenger": one(self.chall_slot)}
+        if self.teacher2_slot is not None:
+            out["teacher2"] = one(self.teacher2_slot)
+        return out
 
     # -- disk hygiene ---------------------------------------------------------------
     @staticmethod

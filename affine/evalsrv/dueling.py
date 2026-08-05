@@ -43,7 +43,7 @@ from affine.score import (
 )
 
 from .terms import miner_terms, teacher_reference
-from .vllm_client import Served, VllmModel
+from .vllm_client import ModelPool, Served, VllmModel
 
 log = logging.getLogger("evalsrv.dueling")
 
@@ -194,9 +194,9 @@ class RefCache:
             log.warning("ref cache close failed", exc_info=True)
 
 
-async def score_side(teacher: VllmModel, miner: VllmModel, turns: list[dict],
-                     refs: RefCache, duel_cfg: dict, turn_sem: asyncio.Semaphore,
-                     on_progress) -> list[dict]:
+async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel,
+                     turns: list[dict], refs: RefCache, duel_cfg: dict,
+                     turn_sem: asyncio.Semaphore, on_progress) -> list[dict]:
     rows: list[dict] = []
     done = 0
     total = len(turns)
@@ -245,7 +245,8 @@ def _miner_summary(rows: list[dict]) -> dict:
 
 
 async def run_duel(engine_cfg: dict, turns_path: Path, ref_cache_path: Path,
-                   king: Served, challenger: Served, teacher: Served,
+                   king: Served, challenger: Served,
+                   teacher: Served | list[Served],
                    block_hash: str, hotkey: str, corpus_info: dict,
                    on_progress) -> tuple[dict, dict]:
     """Full duel. Returns (verdict, artifact).
@@ -269,12 +270,20 @@ async def run_duel(engine_cfg: dict, turns_path: Path, ref_cache_path: Path,
                   "manifest_sha256": str(corpus_info.get("manifest_sha256", ""))}
     turn_ids = [turn_id(rec) for rec in turns]
 
-    sem = asyncio.Semaphore(int(duel_cfg["concurrency"]))
-    turn_sem = asyncio.Semaphore(max(4, min(int(duel_cfg["concurrency"]), 16)))
+    # Per-engine in-flight budgets. One semaphore shared across all three
+    # engines (the old design) couples them: teacher calls starve miner calls
+    # and vice versa, and the engines idle in turns. Each vLLM engine bounds
+    # its own per-step work via max_num_batched_tokens, so client concurrency
+    # only controls queue depth — separate budgets keep every engine fed.
+    conc = int(duel_cfg["concurrency"])
+    turn_conc = max(4, min(conc, 16))
     async with httpx.AsyncClient() as http:
-        teacher_m = VllmModel(teacher, http, sem)
-        king_m = VllmModel(king, http, sem)
-        chall_m = VllmModel(challenger, http, sem)
+        teachers = teacher if isinstance(teacher, list) else [teacher]
+        teacher_m = ModelPool([
+            VllmModel(t, http, asyncio.Semaphore(conc)) for t in teachers
+        ])
+        king_m = VllmModel(king, http, asyncio.Semaphore(conc))
+        chall_m = VllmModel(challenger, http, asyncio.Semaphore(conc))
 
         rejection = await probe_injectable(
             chall_m, turns, float(duel_cfg["temperature"]),
@@ -290,10 +299,18 @@ async def run_duel(engine_cfg: dict, turns_path: Path, ref_cache_path: Path,
 
         refs = RefCache(ref_cache_path)
         try:
-            king_rows = await score_side(teacher_m, king_m, turns, refs,
-                                         duel_cfg, turn_sem, on_progress)
-            chall_rows = await score_side(teacher_m, chall_m, turns, refs,
-                                          duel_cfg, turn_sem, on_progress)
+            # Both sides score concurrently: they live on separate vLLM
+            # engines on separate GPUs, so interleaving them is pure win.
+            # The exact same calls happen — RefCache per-turn locks dedupe
+            # teacher reference sampling across the two sides — so scoring
+            # semantics are untouched. Per-side turn semaphores bound each
+            # side's in-flight turns independently.
+            king_rows, chall_rows = await asyncio.gather(
+                score_side(teacher_m, king_m, turns, refs, duel_cfg,
+                           asyncio.Semaphore(turn_conc), on_progress),
+                score_side(teacher_m, chall_m, turns, refs, duel_cfg,
+                           asyncio.Semaphore(turn_conc), on_progress),
+            )
             # Teacher rollouts actually used this duel (post-hoc: the slice
             # was unpredictable before reveal, so publishing them is audit
             # data, not a pre-computable target).

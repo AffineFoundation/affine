@@ -8,8 +8,8 @@
   <meta name="description" content="Affine subnet 120 dashboard: reigning king, duel evolution, queue, and history." />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
-  <link rel="stylesheet" href="fonts/fonts.css?v=7" />
-  <link rel="stylesheet" href="style.css?v=7" />
+  <link rel="stylesheet" href="fonts/fonts.css?v=16" />
+  <link rel="stylesheet" href="style.css?v=16" />
 </head>
 <body>
   <header class="top-nav">
@@ -19,7 +19,34 @@
         <span class="brand-name">AFFINE</span>
       </a>
       <a href="./llms.txt" class="nav-chip">llms.txt</a>
-      <span class="live-status" id="live-status" title="live update channel">…</span>
+      <div class="nav-right">
+        <a class="nav-icon"
+           href="https://github.com/AffineFoundation/affine"
+           target="_blank" rel="noopener noreferrer"
+           title="GitHub — AffineFoundation/affine" aria-label="GitHub">
+          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58
+              0-.29-.01-1.05-.02-2.06-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76
+              -1.09-.75.08-.73.08-.73 1.21.09 1.85 1.24 1.85 1.24 1.07 1.84 2.81 1.31 3.5 1
+              .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22
+              -.12-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23.96-.27 1.98-.4 3-.4s2.04.13 3 .4
+              c2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.24 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22
+              0 4.61-2.81 5.62-5.48 5.92.43.37.81 1.1.81 2.22 0 1.61-.01 2.9-.01 3.29
+              0 .32.21.7.82.58C20.56 21.8 24 17.3 24 12 24 5.37 18.63 0 12 0z"/>
+          </svg>
+        </a>
+        <a class="nav-icon"
+           href="https://x.com/affine_io"
+           target="_blank" rel="noopener noreferrer"
+           title="X — @affine_io" aria-label="X (Twitter)">
+          <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231
+              -5.401 6.231H2.744l7.727-8.835L1.254 2.25H8.08l4.253 5.622L18.244 2.25zm
+              -1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77z"/>
+          </svg>
+        </a>
+        <span class="live-status" id="live-status" title="live update channel">…</span>
+      </div>
     </div>
     <div class="market-bar" id="market-bar" aria-label="SN120 market">
       <div class="market-bar-inner" id="market-bar-inner">
@@ -28,27 +55,29 @@
     </div>
   </header>
 
-  <!-- Full-bleed top chart -->
+  <!-- Top charts: S + Z side by side -->
   <section class="hero" id="evolution">
     <div class="hero-inner">
-      <div class="hero-head">
-        <div class="hero-tabs" role="tablist">
-          <button type="button" class="hero-tab active" data-tab="duel" aria-pressed="true">duel z</button>
-          <button type="button" class="hero-tab" data-tab="score" aria-pressed="false">duel S*</button>
-          <button type="button" class="hero-tab" data-tab="reign" aria-pressed="false">reign</button>
+      <div class="hero-split">
+        <div class="hero-pane">
+          <div class="hero-pane-head">
+            <h2 class="hero-pane-title">S</h2>
+            <p class="hero-caption">best of king and challenger each duel</p>
+          </div>
+          <div class="hero-scroll">
+            <svg id="hero-chart-score" role="img" aria-label="Absolute S king vs challenger"></svg>
+          </div>
         </div>
-        <p class="hero-caption" id="hero-caption">
-          Paired duel z vs king · gold = coronation · dashed = 3σ dethrone threshold
-        </p>
+        <div class="hero-pane">
+          <div class="hero-pane-head">
+            <h2 class="hero-pane-title">Z</h2>
+            <p class="hero-caption">paired duel z vs king · dashed = 3σ dethrone threshold</p>
+          </div>
+          <div class="hero-scroll">
+            <svg id="hero-chart-z" role="img" aria-label="Paired duel z vs king"></svg>
+          </div>
+        </div>
       </div>
-    </div>
-    <div class="hero-chart-wrap">
-      <div class="hero-scroll" id="hero-scroll">
-        <svg id="hero-chart" role="img" aria-label="Affine duel evolution"></svg>
-      </div>
-    </div>
-    <div class="hero-inner">
-      <div class="hero-king-row" id="hero-king-row"></div>
     </div>
   </section>
 
@@ -59,14 +88,6 @@
         <span class="section-right" id="reign-meta"></span>
       </div>
       <div id="reign-wrap"><div class="empty">loading…</div></div>
-    </section>
-
-    <section class="section" id="challenge">
-      <div class="section-head">
-        <h2 class="section-title">latest challenge</h2>
-        <span class="section-right" id="challenge-meta"></span>
-      </div>
-      <div id="challenge-wrap"><div class="empty">loading…</div></div>
     </section>
 
     <section class="section" id="benchmarks">
@@ -126,6 +147,6 @@
     </aside>
   </div>
 
-  <script type="module" src="app.js?v=7"></script>
+  <script type="module" src="app.js?v=16"></script>
 </body>
 </html>

@@ -245,22 +245,24 @@ class DashIndex:
                 rec = json.loads(row["payload"])
             except json.JSONDecodeError:
                 continue
-            rev = (rec.get("revision") or "")[:12]
-            key = f"{rec.get('repo')}@{rev}"
-            m = models.setdefault(key, {
+            result = rec.get("result") or {}
+            # One value per model (keyed by repo): its latest successful
+            # score. Failures never reach the panel — see dashboard.py.
+            if not result.get("ok") or result.get("score") is None:
+                continue
+            m = models.setdefault(rec.get("repo"), {
                 "model_repo": rec.get("repo"),
                 "revision": rec.get("revision"),
                 "label": rec.get("label", ""),
                 "hotkey": rec.get("hotkey", ""),
                 "suites": {},
             })
-            result = rec.get("result") or {}
+            m["revision"] = rec.get("revision")  # chronological: last ok wins
             m["suites"][rec["suite"]] = {
                 "score": result.get("score"),
-                "ok": result.get("ok", False),
+                "ok": True,
                 "n_sims": result.get("n_sims"),
                 "finished_at": rec.get("finished_at"),
-                "error": (result.get("error") or "")[:240] or None,
             }
         active = [{
             "job_id": j["job_id"], "model_repo": j["repo"], "suite": j["suite"],

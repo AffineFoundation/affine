@@ -292,21 +292,25 @@ class Dashboard:
 
     def _flush_benchmarks(self) -> None:
         done = self._tail_jsonl(self.state.bench_history_path, BENCH_TAIL)
+        # Presentation contract: one value per model (keyed by repo, so a
+        # re-benched king keeps a single column) — its latest successful score.
+        # Failures never reach the panel; they live in bench history and logs.
         models: dict[str, dict] = {}
         for row in done:
-            key = f"{row['repo']}@{row['revision'][:12]}"
-            m = models.setdefault(key, {
+            result = row.get("result") or {}
+            if not result.get("ok") or result.get("score") is None:
+                continue
+            m = models.setdefault(row["repo"], {
                 "model_repo": row["repo"], "revision": row["revision"],
                 "label": row.get("label", ""), "hotkey": row.get("hotkey", ""),
                 "suites": {},
             })
-            result = row.get("result") or {}
+            m["revision"] = row["revision"]  # rows are chronological: last ok wins
             m["suites"][row["suite"]] = {
                 "score": result.get("score"),
-                "ok": result.get("ok", False),
+                "ok": True,
                 "n_sims": result.get("n_sims"),
                 "finished_at": row.get("finished_at"),
-                "error": (result.get("error") or "")[:240] or None,
             }
         active = [{
             "job_id": j["job_id"], "model_repo": j["repo"], "suite": j["suite"],

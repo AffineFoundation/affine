@@ -275,8 +275,12 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
                         _engine.king_slot.port),
             challenger=Served("challenger", req.challenger_repo,
                               req.challenger_revision, _engine.chall_slot.port),
-            teacher=Served("teacher", _cfg.teacher.repo, None,
-                           _engine.teacher_slot.port),
+            # All servable teacher replicas — dueling round-robins the echo
+            # load across them. Falls back to the primary endpoint if the
+            # engine reports none (ensure_teacher just passed, so it serves).
+            teacher=_engine.teacher_serveds() or [
+                Served("teacher", _cfg.teacher.repo, None,
+                       _engine.teacher_slot.port)],
             block_hash=req.block_hash, hotkey=req.challenger_hotkey,
             corpus_info=_corpus.info(),
             on_progress=on_progress))
