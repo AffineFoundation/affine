@@ -4,7 +4,8 @@ Reveal payload (chain contract, see affine.toml [submission]):
 
     affine1|<hf_repo>|<hf_revision_40hex>|<author_hotkey_ss58>
 
-submitted with `set_reveal_commitment(..., blocks_until_reveal=3)`. The
+committed timelock-encrypted via `Commitments.set_commitment` (bittensor 11;
+see scripts/submit.py). The
 revision is the HF git commit sha the validator will pin (TOCTOU safety —
 we evaluate exactly the snapshot the miner committed to, never a moving
 branch tip). The author hotkey is a redundancy cross-check; the chain-side

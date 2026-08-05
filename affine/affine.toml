@@ -27,7 +27,7 @@ name = "default"
 hotkey = "default"
 
 [submission]
-# Reveal payload committed on-chain via set_reveal_commitment:
+# Reveal payload, timelock-encrypted via Commitments.set_commitment:
 #   affine1|<hf_repo>|<hf_revision_40hex>|<author_hotkey_ss58>
 reveal_prefix = "affine1"
 repo_pattern = '^[^/]+/[Aa]ffine-.+$'
