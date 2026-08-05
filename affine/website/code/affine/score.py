@@ -24,12 +24,13 @@ S*(A; C, D):
          L1lift = lpA(y_C|z_A) − lpA(y_C|∅)
        clip0.1 keeps ρ≈+0.862@19 and caps RT-3b per-turn inflation.
   5. Duel: challenger wins iff paired mean(S_c − S_k) > 3·SE
-       AND mean margin > δ (default 0.02). δ is a NOISE floor (contract v2,
+       AND mean margin > δ (default 0.02). δ is a NOISE floor (policy
        2026-08-05): it covers the RT-4 copy null (3·SE≈0.0195), the measured
        lm_head-sharpening residual (≤ +0.012), and the min_se degeneracy —
        any challenger statistically above the king crowns. The former 0.05
        effect-size floor (A11 short-style FP defense) was dropped by policy:
-       same-tier S winners are accepted as kings.
+       same-tier S winners are accepted as kings. weight_version_key was NOT
+       bumped for this change (operator decision).
 
 `score_miner` needs pair components from v2 instrumentation. Bank positivity is
 passed in via `bank_frac` (from `harness.rescore_bank` / online bank scoring)

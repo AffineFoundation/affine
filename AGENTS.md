@@ -51,7 +51,7 @@ L1lift = lpA(y_C|z_A) − lpA(y_C|∅)
 ### Duel crowning rule
 Challenger wins iff **all** of:
 - paired mean(S_c − S_k) > 3 · SE
-- mean margin > δ = **0.02** (`min_margin`, contract v2 2026-08-05)
+- mean margin > δ = **0.02** (`min_margin`, updated 2026-08-05)
 - SE floored by `min_se = 0.005`
 - both sides gate-valid
 
@@ -99,7 +99,8 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
-- `weight_version_key = 2` (v2 2026-08-05: min_margin 0.05 → 0.02 noise floor)
+- `weight_version_key = 1` (min_margin 0.05 → 0.02 on 2026-08-05 shipped WITHOUT a
+  version bump — operator decision)
 - teacher: `zai-org/GLM-4.5-Air-FP8`
 - seed king: `dendriteholdings/albedo-qwen3.6-35b-king-genesis`
 - turns: sharded corpus with immutable manifest; sha-pinned (see toml `[dataset]`)

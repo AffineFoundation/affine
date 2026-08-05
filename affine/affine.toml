@@ -20,9 +20,7 @@ king_chain_size = 5
 min_submission_block = 8767079
 # Bittensor weight-version gate for contract upgrades (bump on breaking
 # scoring/contract changes so stale validators are ignored by consensus).
-# v2 (2026-08-05): min_margin 0.05 → 0.02 — dethrone floor now covers scoring
-# variance only (see [duel] min_margin), not effect size.
-weight_version_key = 2
+weight_version_key = 1
 
 [wallet]
 name = "default"

@@ -5,7 +5,7 @@
     "network": "finney",
     "burn_uid": 0,
     "king_chain_size": 5,
-    "weight_version_key": 2
+    "weight_version_key": 1
   },
   "submission": {
     "reveal_prefix": "affine1",
