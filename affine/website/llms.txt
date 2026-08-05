@@ -16,6 +16,7 @@ Everything the project publishes, in one index. All URLs are on this site's root
 
 - How the game works — rules, duel flow, emissions
 - Submit checklist — HF layout, repo naming, commit-reveal payload
+- Serving stack — how your checkpoint is loaded; pre-flight before you burn the slot
 - S* v2 — the gates and ranking term you optimize
 - Public data — full field-level description of every published object
 - Source of truth — links to the exact validator code under `code/`
@@ -31,6 +32,8 @@ Everything the project publishes, in one index. All URLs are on this site's root
 - [code/evalsrv/chat.py](https://s3.hippius.com/affine-sn120/code/evalsrv/chat.py) — the chat contract: prompt assembly, thought-injection template, z/y rollout parsing — byte-exact
 - [code/evalsrv/terms.py](https://s3.hippius.com/affine-sn120/code/evalsrv/terms.py) — per-turn instrumentation: teacher references + the ten forced-logprob calls behind every lp* component
 - [code/evalsrv/vllm_client.py](https://s3.hippius.com/affine-sn120/code/evalsrv/vllm_client.py) — vLLM sampling + echo/logprob forcing + per-byte normalization (lp_per_byte)
+- [code/evalsrv/engine.py](https://s3.hippius.com/affine-sn120/code/evalsrv/engine.py) — slot lifecycle + the exact `vllm serve` invocation your checkpoint is loaded with (_vllm_cmd)
+- [code/pyproject.toml](https://s3.hippius.com/affine-sn120/code/pyproject.toml) — eval-pod dependency floors ([eval] extra) — vllm / transformers are installed fresh at pod provision
 - [code/affine/model_store.py](https://s3.hippius.com/affine-sn120/code/affine/model_store.py) — checkpoint hygiene rules + weight-copy detection
 - [code/affine/state.py](https://s3.hippius.com/affine-sn120/code/affine/state.py) — 1-hotkey-1-eval policy, king lineage, queue invariants
 
@@ -129,6 +132,18 @@ Live path uses bittensor 11 timelock encrypt (`reveal_in="60s"`) → `Commitment
 
 ---
 
+## Serving stack (will your checkpoint load?)
+
+Your checkpoint is served with stock `vllm serve` — **never** `--trust-remote-code`. Combined with the hygiene rules (no `*.py`, no `auto_map`), only architectures natively supported by the pod's vLLM build can play. If vLLM cannot load or serve your model, the injectability probe rejects it — and your slot is already burned. Pre-flight before submitting.
+
+- **Exact invocation**: `_vllm_cmd` in [code/evalsrv/engine.py](https://s3.hippius.com/affine-sn120/code/evalsrv/engine.py). Current knobs (`affine.toml [miner_serving]`, substituted here at site build time): `--tensor-parallel-size 2`, `--max-model-len 32768`, `--gpu-memory-utilization 0.8`, `--max-num-batched-tokens 8192`, FLASH_ATTN attention, triton MoE backend.
+- **dtype** is vLLM `auto`: it follows `torch_dtype` in your `config.json`.
+- **Versions float**: pods install the [eval] extra fresh at provision time (floors from `pyproject.toml`: `vllm>=0.8`, `transformers>=4.51`). The versions actually running right now are reported live at `api/v1/snapshot` under `eval_machine.versions` (vllm / transformers / torch) and in `data/contract.json` `serving` for the frozen knobs.
+- **Hardware**: an 8-GPU B300/B200/H200 pod; the miner slot is 2 GPUs, tensor-parallel 2. Your model (≤ 90 GB safetensors) must load and serve under exactly that.
+- **Pre-flight recipe**: same vLLM version as the snapshot reports, then `vllm serve you/Affine-... --revision <sha> --max-model-len 32768 --tensor-parallel-size 2` and check it answers `/v1/completions` with finite logprobs on an echo request (see `score_action` in `code/evalsrv/vllm_client.py`).
+
+---
+
 ## S* v2 (what you optimize)
 
 Per pair / miner gates (INVALID ⇒ cannot win, S = −∞ for ranking):
@@ -220,6 +235,8 @@ The files below are byte-identical copies of the validator's own tree, republish
 - [code/evalsrv/chat.py](https://s3.hippius.com/affine-sn120/code/evalsrv/chat.py) — the chat contract: prompt assembly, thought-injection template, z/y rollout parsing — byte-exact
 - [code/evalsrv/terms.py](https://s3.hippius.com/affine-sn120/code/evalsrv/terms.py) — per-turn instrumentation: teacher references + the ten forced-logprob calls behind every lp* component
 - [code/evalsrv/vllm_client.py](https://s3.hippius.com/affine-sn120/code/evalsrv/vllm_client.py) — vLLM sampling + echo/logprob forcing + per-byte normalization (lp_per_byte)
+- [code/evalsrv/engine.py](https://s3.hippius.com/affine-sn120/code/evalsrv/engine.py) — slot lifecycle + the exact `vllm serve` invocation your checkpoint is loaded with (_vllm_cmd)
+- [code/pyproject.toml](https://s3.hippius.com/affine-sn120/code/pyproject.toml) — eval-pod dependency floors ([eval] extra) — vllm / transformers are installed fresh at pod provision
 - [code/affine/model_store.py](https://s3.hippius.com/affine-sn120/code/affine/model_store.py) — checkpoint hygiene rules + weight-copy detection
 - [code/affine/state.py](https://s3.hippius.com/affine-sn120/code/affine/state.py) — 1-hotkey-1-eval policy, king lineage, queue invariants
 

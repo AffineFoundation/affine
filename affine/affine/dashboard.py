@@ -145,6 +145,7 @@ class Dashboard:
 
     def _push_contract(self) -> None:
         """The public rules miners build against. No secrets in affine.toml."""
+        ms = self.cfg.miner_serving
         contract = {
             "subnet": self.cfg.raw["subnet"],
             "submission": self.cfg.raw["submission"],
@@ -152,6 +153,21 @@ class Dashboard:
             "dataset": self.cfg.raw["dataset"],
             "duel": self.cfg.raw["duel"],
             "bench": {k: v for k, v in self.cfg.raw["bench"].items()},
+            # Serving-stack disclosure: how challenger checkpoints are loaded.
+            # Stock vLLM, never --trust-remote-code; dtype follows the
+            # checkpoint's own config.json (vLLM "auto"). Exact invocation:
+            # code/evalsrv/engine.py _vllm_cmd. Live installed versions:
+            # api/v1/snapshot eval_machine.versions.
+            "serving": {
+                "engine": "vllm",
+                "trust_remote_code": False,
+                "dtype": "auto",
+                "tensor_parallel_size": int(ms["tp"]),
+                "max_model_len": int(ms["max_model_len"]),
+                "gpu_memory_utilization": float(ms["gpu_memory_utilization"]),
+                "max_num_batched_tokens": int(ms["max_num_batched_tokens"]),
+                "gpu_types": list(self.cfg.eval_machine.gpu_types),
+            },
             "version": __version__,
         }
         self.hippius.put_json("data/contract.json", contract)
@@ -193,6 +209,9 @@ class Dashboard:
             "eval_machine": {
                 "provider": s.eval_machine.get("provider"),
                 "created_at": s.eval_machine.get("created_at"),
+                # Live serving-stack disclosure (vllm/transformers/torch as
+                # reported by the pod's /health) — miners pre-flight against it.
+                "versions": s.eval_machine.get("versions"),
             } if s.eval_machine else None,
             "bench_machine": {
                 "provider": s.bench_machine.get("provider"),

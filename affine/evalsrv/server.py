@@ -26,12 +26,14 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import importlib.metadata
 import json
 import logging
 import os
 import threading
 import time
 import uuid
+from functools import lru_cache
 from pathlib import Path
 from queue import Empty, Queue
 
@@ -162,6 +164,21 @@ def _startup():
 
 # -- health ---------------------------------------------------------------------
 
+@lru_cache(maxsize=1)
+def _stack_versions() -> dict:
+    """Installed serving-stack versions. Disclosed via /health → validator
+    state → snapshot API + website, so miners can pre-flight their checkpoint
+    against the exact vLLM/transformers build that will load it (pins in
+    pyproject are floors; pods install fresh at provision time)."""
+    out: dict[str, str | None] = {}
+    for pkg in ("vllm", "transformers", "torch"):
+        try:
+            out[pkg] = importlib.metadata.version(pkg)
+        except importlib.metadata.PackageNotFoundError:
+            out[pkg] = None
+    return out
+
+
 @app.get("/health")
 def health(_: None = Depends(_require_token)):
     return {
@@ -173,6 +190,7 @@ def health(_: None = Depends(_require_token)):
         "free_disk_gb": round(_engine.free_disk_gb(), 1),
         "turns_present": TURNS_PATH.exists(),
         "corpus": _corpus.info() if _ROLE != "bench" else None,
+        "versions": _stack_versions(),
     }
 
 

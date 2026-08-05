@@ -798,6 +798,15 @@ class MachineManager:
                             self.label, self.role, role)
                 self._last_health_reason = f"role mismatch: want {self.role} got {role}"
                 return False
+            # Serving-stack disclosure: surface the pod's installed
+            # vllm/transformers/torch versions through state → snapshot API so
+            # miners can pre-flight checkpoints against the live stack.
+            versions = body.get("versions")
+            machine = self._get_machine()
+            if versions and machine and machine.get("versions") != versions:
+                machine["versions"] = versions
+                self._set_machine(machine)
+                self.state.flush()
             self._last_health_reason = ""
             return True
         except Exception as e:

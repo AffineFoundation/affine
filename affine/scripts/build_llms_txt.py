@@ -41,6 +41,27 @@ def _dash_base() -> str:
     d = _toml().get("dashboard") or {}
     return str(d.get("public_base_url") or "https://localhost:8443").rstrip("/")
 
+
+def _serving_subs() -> dict[str, str]:
+    """Serving-stack facts substituted into the prose at build time, so the
+    published numbers can never drift from what the validator runs."""
+    raw = _toml()
+    ms = raw["miner_serving"]
+    em = raw["eval_machine"]
+    with open(AFFINE_ROOT / "pyproject.toml", "rb") as f:
+        pins = tomllib.load(f)["project"]["optional-dependencies"]["eval"]
+    vllm_pin = next(p for p in pins if p.startswith("vllm"))
+    tf_pin = next(p for p in pins if p.startswith("transformers"))
+    return {
+        "{TP}": str(ms["tp"]),
+        "{MAXLEN}": str(ms["max_model_len"]),
+        "{GPUUTIL}": str(ms["gpu_memory_utilization"]),
+        "{BATCHED}": str(ms["max_num_batched_tokens"]),
+        "{GPUTYPES}": "/".join(em["gpu_types"]),
+        "{VLLM_PIN}": vllm_pin,
+        "{TF_PIN}": tf_pin,
+    }
+
 # Sources published under code/ and linked from llms.txt: (relative_path, description).
 SOURCES: list[tuple[str, str]] = [
     ("affine.toml", "chain contract SSOT — every frozen knob the validator runs"),
@@ -56,6 +77,10 @@ SOURCES: list[tuple[str, str]] = [
      "forced-logprob calls behind every lp* component"),
     ("evalsrv/vllm_client.py", "vLLM sampling + echo/logprob forcing + per-byte "
      "normalization (lp_per_byte)"),
+    ("evalsrv/engine.py", "slot lifecycle + the exact `vllm serve` invocation "
+     "your checkpoint is loaded with (_vllm_cmd)"),
+    ("pyproject.toml", "eval-pod dependency floors ([eval] extra) — vllm / "
+     "transformers are installed fresh at pod provision"),
     ("affine/model_store.py", "checkpoint hygiene rules + weight-copy detection"),
     ("affine/state.py", "1-hotkey-1-eval policy, king lineage, queue invariants"),
 ]
@@ -90,6 +115,8 @@ root ({BASE}/).
 
 - How the game works — rules, duel flow, emissions
 - Submit checklist — HF layout, repo naming, commit-reveal payload
+- Serving stack — how your checkpoint is loaded; pre-flight before you burn \
+the slot
 - S* v2 — the gates and ranking term you optimize
 - Public data — full field-level description of every published object
 - Source of truth — links to the exact validator code under `code/`
@@ -235,6 +262,37 @@ timestamp is earlier than the king's → `crown_earlier` without a duel.
 - Current king's hotkey is skipped (already crowned).
 - Infra faults (dead eval pod, busy server, chain hiccup on block hash) \
 requeue without burning a failure record; miner-attributable failures burn.
+
+---
+
+## Serving stack (will your checkpoint load?)
+
+Your checkpoint is served with stock `vllm serve` — **never** \
+`--trust-remote-code`. Combined with the hygiene rules (no `*.py`, no \
+`auto_map`), only architectures natively supported by the pod's vLLM build \
+can play. If vLLM cannot load or serve your model, the injectability probe \
+rejects it — and your slot is already burned. Pre-flight before submitting.
+
+- **Exact invocation**: `_vllm_cmd` in \
+[code/evalsrv/engine.py]({BASE}/code/evalsrv/engine.py). Current knobs \
+(`affine.toml [miner_serving]`, substituted here at site build time): \
+`--tensor-parallel-size {TP}`, `--max-model-len {MAXLEN}`, \
+`--gpu-memory-utilization {GPUUTIL}`, `--max-num-batched-tokens {BATCHED}`, \
+FLASH_ATTN attention, triton MoE backend.
+- **dtype** is vLLM `auto`: it follows `torch_dtype` in your `config.json`.
+- **Versions float**: pods install the [eval] extra fresh at provision time \
+(floors from `pyproject.toml`: `{VLLM_PIN}`, `{TF_PIN}`). The versions \
+actually running right now are reported live at `api/v1/snapshot` under \
+`eval_machine.versions` (vllm / transformers / torch) and in \
+`data/contract.json` `serving` for the frozen knobs.
+- **Hardware**: an 8-GPU {GPUTYPES} pod; the miner slot is {TP} GPUs, \
+tensor-parallel {TP}. Your model (≤ 90 GB safetensors) must load and serve \
+under exactly that.
+- **Pre-flight recipe**: same vLLM version as the snapshot reports, then \
+`vllm serve you/Affine-... --revision <sha> --max-model-len {MAXLEN} \
+--tensor-parallel-size {TP}` and check it answers `/v1/completions` with \
+finite logprobs on an echo request (see `score_action` in \
+`code/evalsrv/vllm_client.py`).
 
 ---
 
@@ -410,10 +468,13 @@ def build() -> str:
     text = (HEADER.replace("{CODE_LINKS}", code_links)
                   .replace("{BASE}", _site_base())
                   .replace("{DASH}", _dash_base()))
+    for token, value in _serving_subs().items():
+        text = text.replace(token, value)
     # Fail closed if we somehow produced a broken index.
     if "## Table of contents" not in text or "data/validator_log.txt" not in text:
         raise RuntimeError("llms.txt build failed closed: missing table of contents")
-    if "{BASE}" in text or "{DASH}" in text or "{CODE_LINKS}" in text:
+    leftovers = ["{BASE}", "{DASH}", "{CODE_LINKS}", *_serving_subs()]
+    if any(t in text for t in leftovers):
         raise RuntimeError("llms.txt build failed closed: unsubstituted placeholder")
     score_copy = CODE_DIR / "affine" / "score.py"
     if "def score_miner" not in score_copy.read_text(encoding="utf-8"):
