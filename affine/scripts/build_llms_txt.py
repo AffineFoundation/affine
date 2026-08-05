@@ -232,10 +232,18 @@ work. Example: `you/Affine-{token}-mymodel`.
 4. Pin a 40-hex revision (never a moving branch tip).
 5. Submit with the standalone client — one file, no package install beyond \
 `pip install "bittensor>=11,<12" huggingface_hub` (the script uses the \
-bittensor 11 SDK: `bt.timelock` + raw `Commitments.set_commitment`):
+bittensor 11 SDK: `bt.timelock` + raw `Commitments.set_commitment`). The \
+client **pre-flights every intake check the validator runs** (naming + \
+identity, anonymous readability of the pinned revision, safetensors layout, \
+no `*.py` / no `auto_map`, size caps) and refuses to send a submission that \
+would burn your slot at intake. Add `--check` to validate and print the \
+payload without submitting anything:
 
 ```bash
 curl -O {BASE}/code/scripts/submit.py
+python submit.py --repo you/Affine-{token}-mymodel \\
+    --wallet YOUR_WALLET --hotkey YOUR_HOTKEY [--revision <40hex>] --check
+# happy with the pre-flight output? drop --check to submit for real
 python submit.py --repo you/Affine-{token}-mymodel \\
     --wallet YOUR_WALLET --hotkey YOUR_HOTKEY [--revision <40hex>]
 ```
