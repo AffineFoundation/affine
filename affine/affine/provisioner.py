@@ -724,7 +724,46 @@ class MachineManager:
             self._terminate()
             self._unhealthy = 0
             self._start_provisioning()
+        elif self._unhealthy % 3 == 0:
+            # Cheap recovery first: a dead evalsrv/bootstrap on a live pod is
+            # fixable in ~2 min over SSH, vs ~30-60 min for terminate + rent +
+            # re-download weights. Only reprovision when SSH recovery keeps
+            # failing all the way to the threshold.
+            self._soft_restart()
         return False
+
+    def _soft_restart(self) -> None:
+        """Relaunch bootstrap over direct SSH if evalsrv died on a live pod.
+
+        No-op when the server or a bootstrap supervisor is already running
+        (then the problem is elsewhere — warmup, tunnel, model load — and
+        killing processes would only make it worse)."""
+        machine = self._get_machine()
+        ssh = machine.get("ssh") or ""
+        if not ssh:
+            return
+        # The explicit ( ... & ) subshell detaches bootstrap from the ssh
+        # session's pipes (see push_and_bootstrap for the full story).
+        # The [b]racket trick keeps pgrep -f from matching the `bash -lc`
+        # wrapper that carries this very script in its own cmdline — without
+        # it both checks always self-match and the relaunch branch is
+        # unreachable (soft restart silently becomes a permanent no-op).
+        remote = (
+            "if pgrep -f '[p]ython -m evalsrv.server' >/dev/null "
+            "|| pgrep -f '[e]valsrv/bootstrap.sh' >/dev/null; then "
+            "echo ALREADY_RUNNING; "
+            f"elif [ -d {REMOTE_DIR} ]; then "
+            f"cd {REMOTE_DIR} && (nohup bash evalsrv/bootstrap.sh "
+            "</dev/null >> /root/bootstrap.log 2>&1 &) && echo RELAUNCHED; "
+            "else echo NO_REPO; fi"
+        )
+        try:
+            p = _ssh_run(ssh, remote, timeout=60)
+            out = (p.stdout or "").strip()
+            log.warning("%s soft-restart attempt: %s", self.label,
+                        out or _redact((p.stderr or "")[-200:]))
+        except Exception:
+            log.warning("%s soft-restart ssh failed", self.label, exc_info=True)
 
     def is_healthy_now(self) -> bool:
         """Live probe, bypassing the check-interval cache. Used by the

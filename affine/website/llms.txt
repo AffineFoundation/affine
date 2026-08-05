@@ -38,14 +38,27 @@ Everything the project publishes, in one index. All URLs are on this site's root
 - [evals/index.jsonl](https://s3.hippius.com/affine-sn120/evals/index.jsonl) — append-only manifest, one line per duel
 - `evals/{challenge_id}.json.gz` — everything computed during a duel: rollouts, teacher refs, every forced logprob
 
-**Live dashboard state** (small JSON, refreshed every few seconds)
+**Live dashboard API** (hot path on the validator box — prefer this for UI)
+
+Root: https://sn120.arbos.life/
+
+- [api/v1/snapshot](https://sn120.arbos.life/api/v1/snapshot) — king, reign, queue, live eval
+- [api/v1/history](https://sn120.arbos.life/api/v1/history) — filterable verdicts (`?q=&event=`)
+- [api/v1/benchmarks](https://sn120.arbos.life/api/v1/benchmarks) — advisory benches
+- [api/v1/contract](https://sn120.arbos.life/api/v1/contract) — machine-readable knobs
+- `api/v1/duels/{challenge_id}` — duel detail (gates, S*, rejection)
+- `api/v1/duels/{challenge_id}/series` — chart-safe per-turn Λ2/L1lift
+- [api/v1/stream](https://sn120.arbos.life/api/v1/stream) — SSE snapshot deltas
+- [index.html](https://sn120.arbos.life/) — interactive dashboard UI
+
+**Hippius archive** (cold public mirror — miners / replay; same objects)
 
 - [data/dashboard.json](https://s3.hippius.com/affine-sn120/data/dashboard.json) — king, reign chain, queue, live eval progress
 - [data/history.json](https://s3.hippius.com/affine-sn120/data/history.json) — last 100 verdicts/failures
 - [data/benchmarks.json](https://s3.hippius.com/affine-sn120/data/benchmarks.json) — advisory tau2 scores (never part of S*)
 - [data/contract.json](https://s3.hippius.com/affine-sn120/data/contract.json) — machine-readable contract knobs
 
-**Complete audit logs** (gzipped JSONL)
+**Complete audit logs** (gzipped JSONL, on Hippius)
 
 - [data/history_full.jsonl.gz](https://s3.hippius.com/affine-sn120/data/history_full.jsonl.gz) — every verdict and failure since genesis
 - [data/bench_history_full.jsonl.gz](https://s3.hippius.com/affine-sn120/data/bench_history_full.jsonl.gz) — every completed bench run
@@ -56,10 +69,9 @@ Everything the project publishes, in one index. All URLs are on this site's root
 - `turns/shards/*.jsonl.gz` — immutable shard objects
 - `turns/manifests/{sha256}.json` — every manifest revision ever, immutable
 
-**Website**
+**Website / index**
 
-- [index.html](https://s3.hippius.com/affine-sn120/index.html) — live dashboard UI
-- [llms.txt](https://s3.hippius.com/affine-sn120/llms.txt) — this file
+- [llms.txt](https://s3.hippius.com/affine-sn120/llms.txt) — this file (also served from https://sn120.arbos.life/llms.txt)
 
 ---
 
@@ -141,13 +153,20 @@ Frozen numeric knobs live in `affine.toml` `[duel]` (linked under `code/`). Chan
 
 Everything the validator scores is published — there is no validator-private data. All paths are relative to this site's root (Hippius S3 bucket `affine-sn120`); fetch them directly with curl or any HTTP client.
 
-**Live dashboard state** (small JSON, refreshed every few seconds):
+**Live dashboard API** (hot path — `https://sn120.arbos.life`):
 
-- `data/dashboard.json` — current king, rolling reign chain, queue, live eval progress, stats.
-- `data/history.json` — last 100 verdicts/failures, slimmed for the website (z, margin, S, error codes).
-- `data/benchmarks.json` — advisory tau2 suite scores per model (never part of S*).
-- `data/contract.json` — machine-readable contract knobs.
-- `data/validator_log.txt` — recent validator log tail (plain text, refreshed ~every minute). Watch the control plane operate: health checks, duels, verdicts, crownings, weight-sets. Pod network coordinates are redacted; nothing else is.
+- `GET /api/v1/snapshot` — king, reign chain, queue, live eval progress.
+- `GET /api/v1/history?limit=&cursor=&q=&event=` — filterable verdicts.
+- `GET /api/v1/benchmarks` — advisory suite scores (never part of S*).
+- `GET /api/v1/contract` — machine-readable contract knobs.
+- `GET /api/v1/duels/{id}` — duel detail (gates, z, margin, S*).
+- `GET /api/v1/duels/{id}/series` — per-turn Λ2 / L1lift (no raw logprobs).
+- `GET /api/v1/stream` — SSE snapshot deltas for live UIs.
+
+**Hippius archive mirror** (cold path — this site's Hippius root, same disclosure):
+
+- `data/dashboard.json` / `data/history.json` / `data/benchmarks.json` / `data/contract.json` — slim JSON also pushed for miners without the API.
+- `data/validator_log.txt` — recent validator log tail (plain text, refreshed ~every minute). Pod network coordinates are redacted; nothing else is.
 
 **Complete audit logs** (gzipped JSONL, updated on every verdict):
 

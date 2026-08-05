@@ -64,8 +64,18 @@ challenger_port = 8002
 challenger_gpus = "4,5"
 tp = 2
 max_model_len = 32768
-gpu_memory_utilization = 0.85
-max_num_batched_tokens = 2048
+# 0.80 (not the usual 0.85–0.90): teacher-forcing echo+logprobs materializes
+# an fp32 log_softmax over (step_tokens x vocab) OUTSIDE vLLM's budgeted pool
+# — ~5 GB transient at 8192x151k — so the duel pod needs real headroom.
+# 0.85 + 16384 OOM'd the king mid-duel on 268 GiB B300s (2026-08-04).
+gpu_memory_utilization = 0.80
+# Scheduler token budget per engine step (applies to teacher/king/challenger
+# alike). Duel scoring is dominated by ~20k-token prefill-only echo calls
+# (~100M prompt tokens per duel per model); at 2048 the scheduler was the
+# bottleneck (~50 min/duel of queueing). 8192 is 4x that throughput while the
+# log_softmax transient stays far below the 0.80-util headroom. Ops knob only
+# — no effect on scoring semantics.
+max_num_batched_tokens = 8192
 
 [dataset]
 # Unlabeled turn corpus D: append-only shards + an immutable-manifest pointer
@@ -128,8 +138,10 @@ revision = "abe89194d6addf82e71f3f1ba9fef94b05404abf"
 enabled = true
 suites = ["swe_rebench_lite"]
 num_trials = 1
-# Parallel mini-SWE-agent workers (and swebench eval workers, capped at 4).
-max_concurrency = 2
+# Parallel mini-SWE-agent workers (and swebench eval workers, capped at 8).
+# Rollouts are docker/CPU-bound most of the time; the H200 pair serving the
+# miner sits idle at 2 workers (measured 0% GPU util), so run wide.
+max_concurrency = 12
 # Unused for swe_rebench_lite; kept for tau2_* suites if re-enabled.
 user_llm = "teacher"
 # Which submissions get benched: "accepted" (new kings only) or "all".
@@ -140,6 +152,10 @@ policy = "all"
 port = 8002
 gpus = "0,1"
 tp = 2
+# Bench serves plain generation (no echo+logprobs teacher forcing), so the
+# small prefill chunks the duel pod needs do not apply — big chunks keep
+# long-context agent prompts fast.
+max_num_batched_tokens = 16384
 
 [eval_machine]
 # GPU pod hosting duel evalsrv. The provisioner keeps exactly one alive and
@@ -154,10 +170,12 @@ gpu_count = 8
 max_price_per_hour = 70.0
 port = 9000
 health_interval_s = 60
-# TEMPORARY (2026-08-04): raised 5 → 30 while the eval pod recovers from an
-# in-place evalsrv bounce (teacher re-warm takes ~6 min > 5 strikes).
-# Revert to 5 once the first duel completes.
-unhealthy_threshold = 30
+# Strikes (one per health_interval_s) before terminate + reprovision. Must
+# ride out a routine evalsrv bounce: teacher re-warm takes ~6-7 checks of
+# ok=false, and soft restarts fire every 3rd strike, so 12 gives one full
+# restart + re-warm cycle before the nuclear option (~12 min for a truly
+# dead pod vs 30-60 min to re-rent and re-download weights).
+unhealthy_threshold = 12
 provision_timeout_s = 3600
 # Lium: docker template id to boot (leave empty for provider default).
 lium_template_id = ""
@@ -186,6 +204,15 @@ targon_image = "vllm/vllm-openai:latest"
 # Website + dashboard state pushed here; miners read it.
 endpoint = "https://s3.hippius.com"
 bucket = "affine-sn120"
+
+[dashboard]
+# Hot-path read API (affine-dash) — separate from Hippius archive.
+api_host = "127.0.0.1"
+api_port = 8787
+# Public URL for llms.txt / absolute links. Caddy terminates TLS on :8443
+# until Cloudflare tunnel takes :443 later.
+public_host = "sn120.arbos.life"
+public_base_url = "https://sn120.arbos.life"
 
 [validator]
 poll_interval_s = 30

@@ -66,6 +66,29 @@ class EvalClient:
         self.stream_idle_timeout_s = stream_idle_timeout_s
         self._headers = {"X-Affine-Token": eval_token} if eval_token else {}
 
+    # -- prefetch --------------------------------------------------------------
+    async def prefetch(self, repo: str, revision: str,
+                       weight_bytes: int = 0) -> None:
+        """Best-effort hint: warm the next challenger's weights on the pod
+        while the current duel scores. Every failure is swallowed — a missed
+        prefetch only means the next duel pays the download as before."""
+        try:
+            async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(60.0, connect=10.0),
+                    headers=self._headers) as client:
+                r = await client.post(f"{self.base}/prefetch",
+                                      json={"repo": repo, "revision": revision,
+                                            "weight_bytes": weight_bytes})
+                body = r.json() if r.status_code == 200 else {}
+                if body.get("accepted"):
+                    log.info("prefetch accepted for %s@%s (%s)",
+                             repo, revision[:12], body.get("reason"))
+                else:
+                    log.info("prefetch declined for %s: %s", repo,
+                             body.get("reason") or f"HTTP {r.status_code}")
+        except Exception as e:
+            log.debug("prefetch call failed for %s (ignored): %s", repo, e)
+
     # -- duels ---------------------------------------------------------------
     async def run_duel(self, *, king_repo: str, king_revision: str,
                        challenger_repo: str, challenger_revision: str,

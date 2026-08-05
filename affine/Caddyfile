@@ -1,0 +1,15 @@
+# Affine dash edge — TLS on :8443 → local affine-dash :8787
+# forest-head already owns :443 (arbos.life). Cloudflare tunnel later
+# can point at 127.0.0.1:8787 and skip this file.
+#
+# auto_https disable_redirects: do not bind :80 (needs root; we only want :8443).
+{
+	admin off
+	auto_https disable_redirects
+}
+
+https://localhost:8443 {
+	tls internal
+	encode gzip
+	reverse_proxy 127.0.0.1:8787
+}

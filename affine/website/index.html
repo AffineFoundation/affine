@@ -4,14 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="Cache-Control" content="no-cache, must-revalidate" />
-  <title>Affine — Subnet 120</title>
+  <title>Affine</title>
   <meta name="description" content="Affine subnet 120 dashboard: reigning king, duel evolution, queue, and history." />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="fonts/fonts.css?v=7" />
+  <link rel="stylesheet" href="style.css?v=7" />
 </head>
 <body>
   <header class="top-nav">
@@ -21,6 +19,12 @@
         <span class="brand-name">AFFINE</span>
       </a>
       <a href="./llms.txt" class="nav-chip">llms.txt</a>
+      <span class="live-status" id="live-status" title="live update channel">…</span>
+    </div>
+    <div class="market-bar" id="market-bar" aria-label="SN120 market">
+      <div class="market-bar-inner" id="market-bar-inner">
+        <span class="market-item dim">SN120 market…</span>
+      </div>
     </div>
   </header>
 
@@ -65,20 +69,30 @@
       <div id="challenge-wrap"><div class="empty">loading…</div></div>
     </section>
 
-    <section class="section" id="queue">
-      <div class="section-head">
-        <h2 class="section-title">queue</h2>
-        <span class="section-right" id="queue-meta"></span>
-      </div>
-      <div id="queue-wrap"><div class="empty">loading…</div></div>
-    </section>
-
     <section class="section" id="benchmarks">
       <div class="section-head">
         <h2 class="section-title">benchmarks</h2>
         <span class="section-right note">advisory — never part of S*</span>
       </div>
       <div id="benchmarks-wrap"><div class="empty">loading…</div></div>
+    </section>
+
+    <section class="section" id="reg-price">
+      <div class="section-head">
+        <h2 class="section-title">registration price</h2>
+        <span class="section-right" id="reg-price-meta"></span>
+      </div>
+      <div class="reg-chart-wrap">
+        <svg id="reg-price-chart" role="img" aria-label="SN120 registration burn history"></svg>
+      </div>
+    </section>
+
+    <section class="section" id="queue">
+      <div class="section-head">
+        <h2 class="section-title">queue</h2>
+        <span class="section-right" id="queue-meta"></span>
+      </div>
+      <div id="queue-wrap"><div class="empty">loading…</div></div>
     </section>
 
     <section class="section" id="history">
@@ -101,6 +115,17 @@
     </section>
   </main>
 
-  <script type="module" src="app.js"></script>
+  <div id="duel-panel" class="duel-panel" hidden>
+    <div class="duel-panel-backdrop" id="duel-panel-backdrop"></div>
+    <aside class="duel-panel-sheet" role="dialog" aria-modal="true" aria-labelledby="duel-panel-title">
+      <div class="duel-panel-head">
+        <h2 class="section-title" id="duel-panel-title">duel</h2>
+        <button type="button" class="duel-panel-close" id="duel-panel-close" aria-label="Close">✕</button>
+      </div>
+      <div class="duel-panel-body" id="duel-panel-body"></div>
+    </aside>
+  </div>
+
+  <script type="module" src="app.js?v=7"></script>
 </body>
 </html>

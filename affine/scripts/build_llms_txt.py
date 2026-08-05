@@ -25,12 +25,21 @@ OUT = AFFINE_ROOT / "website" / "llms.txt"
 CODE_DIR = AFFINE_ROOT / "website" / "code"
 
 
-def _site_base() -> str:
-    """Public site root, derived from the same affine.toml the validator runs."""
+def _toml() -> dict:
     with open(AFFINE_ROOT / "affine.toml", "rb") as f:
-        raw = tomllib.load(f)
-    h = raw["hippius"]
+        return tomllib.load(f)
+
+
+def _site_base() -> str:
+    """Hippius archive root (miners / cold public objects)."""
+    h = _toml()["hippius"]
     return f"{h['endpoint'].rstrip('/')}/{h['bucket']}"
+
+
+def _dash_base() -> str:
+    """Hot-path dashboard API + interactive UI (affine-dash behind Caddy)."""
+    d = _toml().get("dashboard") or {}
+    return str(d.get("public_base_url") or "https://localhost:8443").rstrip("/")
 
 # Sources published under code/ and linked from llms.txt: (relative_path, description).
 SOURCES: list[tuple[str, str]] = [
@@ -89,7 +98,20 @@ line per duel
 - `evals/{challenge_id}.json.gz` — everything computed during a duel: \
 rollouts, teacher refs, every forced logprob
 
-**Live dashboard state** (small JSON, refreshed every few seconds)
+**Live dashboard API** (hot path on the validator box — prefer this for UI)
+
+Root: {DASH}/
+
+- [api/v1/snapshot]({DASH}/api/v1/snapshot) — king, reign, queue, live eval
+- [api/v1/history]({DASH}/api/v1/history) — filterable verdicts (`?q=&event=`)
+- [api/v1/benchmarks]({DASH}/api/v1/benchmarks) — advisory benches
+- [api/v1/contract]({DASH}/api/v1/contract) — machine-readable knobs
+- `api/v1/duels/{challenge_id}` — duel detail (gates, S*, rejection)
+- `api/v1/duels/{challenge_id}/series` — chart-safe per-turn Λ2/L1lift
+- [api/v1/stream]({DASH}/api/v1/stream) — SSE snapshot deltas
+- [index.html]({DASH}/) — interactive dashboard UI
+
+**Hippius archive** (cold public mirror — miners / replay; same objects)
 
 - [data/dashboard.json]({BASE}/data/dashboard.json) — king, reign chain, \
 queue, live eval progress
@@ -99,7 +121,7 @@ queue, live eval progress
 - [data/contract.json]({BASE}/data/contract.json) — machine-readable \
 contract knobs
 
-**Complete audit logs** (gzipped JSONL)
+**Complete audit logs** (gzipped JSONL, on Hippius)
 
 - [data/history_full.jsonl.gz]({BASE}/data/history_full.jsonl.gz) — every \
 verdict and failure since genesis
@@ -113,10 +135,9 @@ shards, hashes, corpus epoch
 - `turns/shards/*.jsonl.gz` — immutable shard objects
 - `turns/manifests/{sha256}.json` — every manifest revision ever, immutable
 
-**Website**
+**Website / index**
 
-- [index.html]({BASE}/index.html) — live dashboard UI
-- [llms.txt]({BASE}/llms.txt) — this file
+- [llms.txt]({BASE}/llms.txt) — this file (also served from {DASH}/llms.txt)
 
 ---
 
@@ -229,19 +250,22 @@ Everything the validator scores is published — there is no validator-private \
 data. All paths are relative to this site's root (Hippius S3 bucket \
 `affine-sn120`); fetch them directly with curl or any HTTP client.
 
-**Live dashboard state** (small JSON, refreshed every few seconds):
+**Live dashboard API** (hot path — `{DASH}`):
 
-- `data/dashboard.json` — current king, rolling reign chain, queue, live eval \
-progress, stats.
-- `data/history.json` — last 100 verdicts/failures, slimmed for the website \
-(z, margin, S, error codes).
-- `data/benchmarks.json` — advisory tau2 suite scores per model (never part \
-of S*).
-- `data/contract.json` — machine-readable contract knobs.
+- `GET /api/v1/snapshot` — king, reign chain, queue, live eval progress.
+- `GET /api/v1/history?limit=&cursor=&q=&event=` — filterable verdicts.
+- `GET /api/v1/benchmarks` — advisory suite scores (never part of S*).
+- `GET /api/v1/contract` — machine-readable contract knobs.
+- `GET /api/v1/duels/{id}` — duel detail (gates, z, margin, S*).
+- `GET /api/v1/duels/{id}/series` — per-turn Λ2 / L1lift (no raw logprobs).
+- `GET /api/v1/stream` — SSE snapshot deltas for live UIs.
+
+**Hippius archive mirror** (cold path — this site's Hippius root, same disclosure):
+
+- `data/dashboard.json` / `data/history.json` / `data/benchmarks.json` / \
+`data/contract.json` — slim JSON also pushed for miners without the API.
 - `data/validator_log.txt` — recent validator log tail (plain text, refreshed \
-~every minute). Watch the control plane operate: health checks, duels, \
-verdicts, crownings, weight-sets. Pod network coordinates are redacted; \
-nothing else is.
+~every minute). Pod network coordinates are redacted; nothing else is.
 
 **Complete audit logs** (gzipped JSONL, updated on every verdict):
 
@@ -335,11 +359,12 @@ def build() -> str:
     # Only {BASE}/{CODE_LINKS} are substituted; other braces ({challenge_id},
     # {token}, ...) are literal placeholders miners should read as-is.
     text = (HEADER.replace("{CODE_LINKS}", code_links)
-                  .replace("{BASE}", _site_base()))
+                  .replace("{BASE}", _site_base())
+                  .replace("{DASH}", _dash_base()))
     # Fail closed if we somehow produced a broken index.
     if "## Table of contents" not in text or "data/validator_log.txt" not in text:
         raise RuntimeError("llms.txt build failed closed: missing table of contents")
-    if "{BASE}" in text or "{CODE_LINKS}" in text:
+    if "{BASE}" in text or "{DASH}" in text or "{CODE_LINKS}" in text:
         raise RuntimeError("llms.txt build failed closed: unsubstituted placeholder")
     score_copy = CODE_DIR / "affine" / "score.py"
     if "def score_miner" not in score_copy.read_text(encoding="utf-8"):

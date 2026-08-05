@@ -1,434 +1,59 @@
-const REFRESH_MS = 15000;
+import {
+  fetchBenchmarks,
+  fetchDuel,
+  fetchDuelSeries,
+  fetchHistory,
+  fetchRegHistory,
+  fingerprint,
+  watchSnapshot,
+} from "./api.js?v=7";
+import {
+  drawBenchSuite,
+  drawDuelScores,
+  drawDuelZ,
+  drawRegPrice,
+  drawReignChain,
+  esc,
+  fmtAge,
+  fmtScore,
+  fmtTao,
+  fmtTime,
+  fmtZ,
+  reignMembers,
+  short,
+} from "./charts.js?v=7";
+
 const $ = (id) => document.getElementById(id);
 
 let filter = "";
 let heroTab = "duel";
-let cache = { dashboard: null, benchmarks: null, history: null };
+let cache = { dashboard: null, benchmarks: null, history: null, regHistory: null };
+let fps = { dashboard: "", benchmarks: "", history: "", hero: "", reg: "" };
+let closeWatch = null;
 
-async function getJSON(path) {
-  try {
-    const r = await fetch(`${path}?t=${Date.now()}`, { cache: "no-store" });
-    if (!r.ok) return null;
-    return await r.json();
-  } catch {
-    return null;
-  }
-}
-
-const esc = (s) =>
-  String(s ?? "—").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-
-const short = (s, n = 18) => {
-  const v = String(s ?? "");
-  return v.length > n ? `${v.slice(0, n)}…` : v || "—";
-};
-
-function fmtTime(iso) {
-  if (!iso) return "—";
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return String(iso);
-  const d = new Date(t);
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const hh = String(d.getUTCHours()).padStart(2, "0");
-  const mi = String(d.getUTCMinutes()).padStart(2, "0");
-  return `${mm}/${dd} ${hh}:${mi}`;
-}
-
-function fmtZ(z) {
-  if (z == null || Number.isNaN(Number(z))) return "—";
-  const n = Number(z);
-  return `${n > 0 ? "+" : ""}${n.toFixed(2)}`;
-}
-
-function hubUrl(repo) {
-  return repo ? `https://huggingface.co/${repo}` : null;
-}
+const hubUrl = (repo) => (repo ? `https://huggingface.co/${repo}` : null);
 
 function badge(kind, text) {
   return `<span class="badge ${kind}">${esc(text)}</span>`;
 }
 
-function matches(row, q) {
-  if (!q) return true;
-  const hay = [
-    row.event, row.repo, row.hotkey, row.error_code,
-    row.rejection_reason, row.challenge_id,
-  ].join(" ").toLowerCase();
-  return hay.includes(q);
-}
-
-function reignMembers(d) {
-  const fromReign = d?.reign?.members;
-  if (Array.isArray(fromReign) && fromReign.length) return fromReign;
-  const chain = d?.reign_chain || [];
-  const king = d?.king;
-  if (!king && !chain.length) return [];
-  const members = [];
-  if (king) {
-    members.push({
-      reign_number: king.reign_number, repo: king.repo, revision: king.revision,
-      hotkey: king.hotkey, crowned_at: king.crowned_at, score: king.score,
-      current: true,
-    });
-  }
-  for (const hk of chain) {
-    if (king && hk === king.hotkey) continue;
-    members.push({ hotkey: hk, repo: "", revision: "", current: false });
-  }
-  const weight_bps = Math.floor(10000 / Math.max(members.length, 1));
-  return members.map((m) => ({ ...m, weight_bps }));
-}
-
-function duelPoints(history) {
-  return (history || [])
-    .filter((r) => r.event !== "failed")
-    .filter((r) => r.z != null || r.event === "crowned")
-    .slice()
-    .reverse();
-}
-
-/* ---------- hero charts (different from affine.io env bars) ---------- */
-
 function chartWidth() {
   return Math.max(window.innerWidth || 960, 320);
 }
 
-function fmtScore(v) {
-  if (v == null || Number.isNaN(Number(v))) return "—";
-  const n = Number(v);
-  const abs = Math.abs(n);
-  if (abs >= 10) return n.toFixed(1);
-  if (abs >= 1) return n.toFixed(2);
-  return n.toFixed(3);
-}
+/* ---------- hero ---------- */
 
-function drawDuelZ(svg, history) {
-  const points = duelPoints(history);
-  const width = chartWidth();
-  const height = 360;
-  const padL = 52;
-  const padR = 20;
-  const padT = 28;
-  const padB = 52;
-  const n = Math.max(points.length, 1);
-  const slot = (width - padL - padR) / n;
-  const barW = Math.max(10, Math.min(slot * 0.55, 64));
-
-  const zs = points.map((p) =>
-    p.event === "crowned" ? Math.max(Number(p.z) || 0, 3) : Number(p.z) || 0);
-  let min = Math.min(-1, ...zs, 0);
-  let max = Math.max(3.5, ...zs, 1);
-  max = Math.max(max, 3.2);
-  const yAt = (v) => padT + ((max - v) / (max - min || 1)) * (height - padT - padB);
-  const xAt = (i) => padL + slot * (i + 0.5);
-
-  const ticks = [];
-  const step = max - min > 8 ? 2 : 1;
-  for (let v = Math.ceil(min); v <= Math.floor(max); v += step) ticks.push(v);
-  if (!ticks.includes(0)) ticks.push(0);
-  if (!ticks.includes(3)) ticks.push(3);
-  ticks.sort((a, b) => a - b);
-
-  const gold = "#f3c449";
-  const bar = "#c6bda8";
-  const mono = "IBM Plex Mono, monospace";
-
-  const grid = ticks.map((v) => {
-    const y = yAt(v);
-    const major = v === 0 || v === 3;
-    return `<g>
-      <line x1="${padL}" x2="${width - padR}" y1="${y}" y2="${y}"
-        stroke="${major ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.03)"}"
-        stroke-width="1" ${v === 3 ? 'stroke-dasharray="4 4"' : v !== 0 ? 'stroke-dasharray="2 4"' : ""}/>
-      <text x="${padL - 10}" y="${y + 3}" fill="rgba(229,229,229,0.45)"
-        font-family="${mono}" font-size="10" text-anchor="end">${v === 3 ? "3σ" : v.toFixed(0)}</text>
-    </g>`;
-  }).join("");
-
-  const columns = points.map((p, i) => {
-    const z = zs[i];
-    const x = xAt(i);
-    const y0 = yAt(0);
-    const y1 = yAt(z);
-    const top = Math.min(y0, y1);
-    const h = Math.max(Math.abs(y0 - y1), 2);
-    const crowned = p.event === "crowned";
-    const fill = crowned ? gold : (z >= 0 ? bar : "rgba(255,71,71,0.55)");
-    const label = crowned
-      ? `#${p.reign_number ?? "?"}`
-      : (p.repo || "").split("/").pop()?.slice(0, 12) || "duel";
-    const zLabel = fmtZ(p.event === "crowned" && p.z == null ? 3 : p.z);
-    const showDate = slot >= 56;
-    return `<g>
-      <title>${esc(p.repo || "")} · ${esc(p.event)} · z=${zLabel}</title>
-      <rect x="${x - barW / 2}" y="${top}" width="${barW}" height="${h}" rx="1" fill="${fill}"
-        opacity="${crowned ? 1 : 0.92}"/>
-      <text x="${x}" y="${top - 8}" text-anchor="middle" fill="${crowned ? gold : "#e5e5e5"}"
-        font-family="${mono}" font-size="10" font-weight="${crowned ? 700 : 400}">${esc(zLabel)}</text>
-      <text x="${x}" y="${height - padB + 16}" text-anchor="middle"
-        fill="${crowned ? gold : "#e5e5e5"}" font-family="${mono}" font-size="10">${esc(label)}</text>
-      ${showDate ? `<text x="${x}" y="${height - padB + 32}" text-anchor="middle"
-        fill="rgba(229,229,229,0.35)" font-family="${mono}" font-size="9">${esc(fmtTime(p.at))}</text>` : ""}
-    </g>`;
-  }).join("");
-
-  svg.setAttribute("width", String(width));
-  svg.setAttribute("height", String(height));
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.innerHTML = `${grid}${columns}`;
-}
-
-function drawDuelScores(svg, history) {
-  // Absolute S* only — paired king / challenger bars per duel.
-  const points = duelPoints(history).filter((p) =>
-    p.score != null || p.score_king != null || p.event === "crowned");
-  const width = chartWidth();
-  const height = 360;
-  const padL = 56;
-  const padR = 20;
-  const padT = 36;
-  const padB = 56;
-  const n = Math.max(points.length, 1);
-  const slot = (width - padL - padR) / n;
-  const pairW = Math.max(16, Math.min(slot * 0.55, 72));
-  const barW = Math.max(6, pairW * 0.42);
-
-  const scores = points.flatMap((p) => {
-    const out = [];
-    if (p.score != null && Number.isFinite(Number(p.score))) out.push(Number(p.score));
-    if (p.score_king != null && Number.isFinite(Number(p.score_king))) out.push(Number(p.score_king));
-    return out;
-  });
-  let lo = scores.length ? Math.min(...scores) : -0.05;
-  let hi = scores.length ? Math.max(...scores) : 0;
-  if (hi === lo) {
-    lo -= Math.abs(lo) * 0.2 || 0.02;
-    hi += Math.abs(hi) * 0.2 || 0.02;
-  } else {
-    const pad = (hi - lo) * 0.18;
-    lo -= pad;
-    hi += pad * 0.35;
-  }
-  const span = hi - lo || 1;
-  const yAt = (v) => padT + ((hi - v) / span) * (height - padT - padB);
-  const yBase = yAt(lo);
-  const xAt = (i) => padL + slot * (i + 0.5);
-
-  const gold = "#f3c449";
-  const accent = "#5ac8fa";
-  const kingFill = "#6a655c";
-  const mono = "IBM Plex Mono, monospace";
-
-  const ticks = Array.from({ length: 5 }, (_, i) => lo + (span * i) / 4);
-  const grid = ticks.map((v) => {
-    const y = yAt(v);
-    return `<g>
-      <line x1="${padL}" x2="${width - padR}" y1="${y}" y2="${y}"
-        stroke="rgba(255,255,255,0.04)" stroke-dasharray="2 4"/>
-      <text x="${padL - 10}" y="${y + 3}" text-anchor="end" fill="rgba(229,229,229,0.45)"
-        font-family="${mono}" font-size="10">${fmtScore(v)}</text>
-    </g>`;
-  }).join("");
-
-  const legend = `<g font-family="${mono}" font-size="9">
-    <rect x="${padL}" y="8" width="8" height="8" fill="${kingFill}"/>
-    <text x="${padL + 12}" y="16" fill="rgba(229,229,229,0.45)">king</text>
-    <rect x="${padL + 52}" y="8" width="8" height="8" fill="${accent}"/>
-    <text x="${padL + 64}" y="16" fill="rgba(229,229,229,0.45)">challenger</text>
-    <rect x="${padL + 142}" y="8" width="8" height="8" fill="${gold}"/>
-    <text x="${padL + 154}" y="16" fill="rgba(229,229,229,0.45)">crowned</text>
-  </g>`;
-
-  const columns = points.map((p, i) => {
-    const x = xAt(i);
-    const crowned = p.event === "crowned";
-    const chall = p.score != null && Number.isFinite(Number(p.score)) ? Number(p.score) : null;
-    const king = p.score_king != null && Number.isFinite(Number(p.score_king)) ? Number(p.score_king) : null;
-    const label = crowned
-      ? `#${p.reign_number ?? "?"}`
-      : (p.repo || "").split("/").pop()?.slice(0, 12) || "duel";
-    const showDate = slot >= 64;
-    const gap = 2;
-    const kingX = x - barW - gap / 2;
-    const challX = x + gap / 2;
-    const challFill = crowned ? gold : accent;
-
-    let bars = "";
-    if (king != null) {
-      const y = yAt(king);
-      bars += `<rect x="${kingX}" y="${y}" width="${barW}" height="${Math.max(2, yBase - y)}"
-        rx="1" fill="${kingFill}" opacity="0.9"/>
-        <text x="${kingX + barW / 2}" y="${y - 6}" text-anchor="middle"
-          fill="rgba(229,229,229,0.4)" font-family="${mono}" font-size="8">${fmtScore(king)}</text>`;
-    }
-    if (chall != null) {
-      const y = yAt(chall);
-      bars += `<rect x="${challX}" y="${y}" width="${barW}" height="${Math.max(2, yBase - y)}"
-        rx="1" fill="${challFill}"/>
-        <text x="${challX + barW / 2}" y="${y - 6}" text-anchor="middle"
-          fill="${crowned ? gold : accent}" font-family="${mono}" font-size="8">${fmtScore(chall)}</text>`;
-    }
-    if (king == null && chall == null) {
-      bars = `<text x="${x}" y="${yBase - 8}" text-anchor="middle" fill="rgba(229,229,229,0.3)"
-        font-family="${mono}" font-size="10">—</text>`;
-    }
-
-    const delta = (king != null && chall != null)
-      ? fmtDelta(chall, king)
-      : "";
-
-    return `<g>
-      <title>${esc(p.repo || "")} · chall=${fmtScore(chall)} · king=${fmtScore(king)}</title>
-      ${bars}
-      ${delta ? `<text x="${x}" y="${padT - 4}" text-anchor="middle"
-        fill="${Number(chall) - Number(king) >= 0 ? accent : "rgba(255,71,71,0.7)"}"
-        font-family="${mono}" font-size="9">${esc(delta)}</text>` : ""}
-      <text x="${x}" y="${height - padB + 16}" text-anchor="middle"
-        fill="${crowned ? gold : "#e5e5e5"}" font-family="${mono}" font-size="10">${esc(label)}</text>
-      ${showDate ? `<text x="${x}" y="${height - padB + 32}" text-anchor="middle"
-        fill="rgba(229,229,229,0.35)" font-family="${mono}" font-size="9">${esc(fmtTime(p.at))}</text>` : ""}
-    </g>`;
-  }).join("");
-
-  // Challenger trend line across duels.
-  let line = "";
-  const challPath = points.reduce((acc, p, i) => {
-    if (p.score == null || !Number.isFinite(Number(p.score))) return acc;
-    const cmd = acc ? "L" : "M";
-    return `${acc}${acc ? " " : ""}${cmd} ${xAt(i)} ${yAt(Number(p.score))}`;
-  }, "");
-  if (challPath) {
-    line = `<path d="${challPath}" fill="none" stroke="${accent}" stroke-width="1.25" opacity="0.45"/>`;
-  }
-
-  if (!points.length) {
-    svg.setAttribute("width", String(width));
-    svg.setAttribute("height", String(height));
-    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-    svg.innerHTML = `<text x="${width / 2}" y="${height / 2}" text-anchor="middle"
-      fill="rgba(229,229,229,0.35)" font-family="${mono}" font-size="12">no absolute S* recorded yet</text>`;
-    return;
-  }
-
-  svg.setAttribute("width", String(width));
-  svg.setAttribute("height", String(height));
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.innerHTML = `${legend}${grid}${columns}${line}`;
-}
-
-function fmtDelta(cur, prev) {
-  if (cur == null || prev == null) return "";
-  const d = Number(cur) - Number(prev);
-  if (!Number.isFinite(d) || d === 0) return "";
-  const sign = d > 0 ? "+" : "";
-  return `${sign}${fmtScore(d)}`;
-}
-
-function drawReignChain(svg, d) {
-  // Oldest → newest so absolute S* climbs left-to-right over time.
-  const members = [...reignMembers(d)].reverse();
-  const width = chartWidth();
-  const height = 320;
-  const padL = 56;
-  const padR = 20;
-  const padT = 36;
-  const padB = 72;
-  const n = Math.max(members.length, 1);
-  const slot = (width - padL - padR) / n;
-  const barW = Math.max(18, Math.min(slot * 0.45, 72));
-  const mono = "IBM Plex Mono, monospace";
-
-  const scores = members.map((m) =>
-    m.score != null && Number.isFinite(Number(m.score)) ? Number(m.score) : null);
-  const known = scores.filter((s) => s != null);
-  let lo = known.length ? Math.min(...known) : 0;
-  let hi = known.length ? Math.max(...known) : 1;
-  if (hi === lo) {
-    lo -= Math.abs(lo) * 0.15 || 0.05;
-    hi += Math.abs(hi) * 0.15 || 0.05;
-  } else {
-    const pad = (hi - lo) * 0.18;
-    lo -= pad;
-    hi += pad * 0.35;
-  }
-  // Keep a floor under the axis so short bars still read.
-  const span = hi - lo || 1;
-  const yAt = (v) => padT + ((hi - v) / span) * (height - padT - padB);
-  const y0 = yAt(lo);
-
-  const tickCount = 4;
-  const ticks = Array.from({ length: tickCount + 1 }, (_, i) =>
-    lo + (span * i) / tickCount);
-  const grid = ticks.map((v) => {
-    const y = yAt(v);
-    return `<g>
-      <line x1="${padL}" x2="${width - padR}" y1="${y}" y2="${y}"
-        stroke="rgba(255,255,255,0.04)" stroke-dasharray="2 4"/>
-      <text x="${padL - 10}" y="${y + 3}" text-anchor="end" fill="rgba(229,229,229,0.45)"
-        font-family="${mono}" font-size="10">${fmtScore(v)}</text>
-    </g>`;
-  }).join("");
-
-  const cols = members.map((m, i) => {
-    const score = scores[i];
-    const x = padL + slot * (i + 0.5);
-    const current = !!m.current;
-    const fill = current ? "#BF9939" : "#C6BDA8";
-    const label = m.reign_number != null ? `#${m.reign_number}` : "prior";
-    const repo = (m.repo || "").split("/").pop() || short(m.hotkey, 10);
-    const prev = i > 0 ? scores[i - 1] : null;
-    const delta = fmtDelta(score, prev);
-    if (score == null) {
-      return `<g>
-        <title>${esc(m.repo || m.hotkey)} · S* unknown</title>
-        <text x="${x}" y="${y0 - 8}" text-anchor="middle" fill="rgba(229,229,229,0.35)"
-          font-family="${mono}" font-size="10">—</text>
-        <text x="${x}" y="${y0 + 18}" text-anchor="middle" fill="${current ? "#FFC93C" : "#e5e5e5"}"
-          font-family="${mono}" font-size="11">${esc(label)}</text>
-        <text x="${x}" y="${y0 + 34}" text-anchor="middle" fill="rgba(229,229,229,0.45)"
-          font-family="${mono}" font-size="9">${esc(short(repo, 16))}</text>
-      </g>`;
-    }
-    const y = yAt(score);
-    const h = Math.max(2, y0 - y);
-    return `<g>
-      <title>${esc(m.repo || m.hotkey)} · S*=${fmtScore(score)}</title>
-      <rect x="${x - barW / 2}" y="${y}" width="${barW}" height="${h}" rx="1" fill="${fill}"/>
-      <text x="${x}" y="${y - 8}" text-anchor="middle" fill="${current ? "#FFC93C" : "#e5e5e5"}"
-        font-family="${mono}" font-size="10">${fmtScore(score)}</text>
-      ${delta ? `<text x="${x}" y="${y - 22}" text-anchor="middle"
-        fill="${Number(score) - Number(prev) >= 0 ? "#5ac8fa" : "rgba(255,71,71,0.7)"}"
-        font-family="${mono}" font-size="9">${esc(delta)}</text>` : ""}
-      <text x="${x}" y="${y0 + 18}" text-anchor="middle" fill="${current ? "#FFC93C" : "#e5e5e5"}"
-        font-family="${mono}" font-size="11">${esc(label)}</text>
-      <text x="${x}" y="${y0 + 34}" text-anchor="middle" fill="rgba(229,229,229,0.45)"
-        font-family="${mono}" font-size="9">${esc(short(repo, 16))}</text>
-      ${current ? `<text x="${x}" y="${y0 + 48}" text-anchor="middle" fill="#FFC93C"
-        font-family="${mono}" font-size="9">CURRENT</text>` : ""}
-    </g>`;
-  }).join("");
-
-  let line = "";
-  if (known.length > 1) {
-    const path = scores.reduce((acc, s, i) => {
-      if (s == null) return acc;
-      const cmd = acc ? "L" : "M";
-      return `${acc}${acc ? " " : ""}${cmd} ${padL + slot * (i + 0.5)} ${yAt(s)}`;
-    }, "");
-    line = `<path d="${path}" fill="none" stroke="#f3c449" stroke-width="1.5" opacity="0.5"/>`;
-  }
-
-  svg.setAttribute("width", String(width));
-  svg.setAttribute("height", String(height));
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.innerHTML = grid + cols + line;
-}
-
-function renderHero() {
+function renderHero(force = false) {
   const svg = $("hero-chart");
   if (!svg) return;
+  const d = cache.dashboard;
+  // Market bar is independent of chart dirty-checks.
+  renderMarketBar(d);
+
+  const key = `${heroTab}|${fps.history}|${fps.dashboard}|${chartWidth()}`;
+  if (!force && key === fps.hero) return;
+  fps.hero = key;
+
   switch (heroTab) {
     case "score":
       $("hero-caption").textContent =
@@ -448,7 +73,6 @@ function renderHero() {
       break;
   }
 
-  const d = cache.dashboard;
   const k = d?.king;
   const stats = d?.stats || {};
   const q = (d?.queue || []).length;
@@ -457,10 +81,36 @@ function renderHero() {
     ["champion", k ? `<b class="gold">${esc(name)}</b>` : "<b>—</b>"],
     ["reign", `<b>${k ? `#${esc(k.reign_number)}` : "—"}</b>`],
     ["queue", `<b>${esc(q)}</b>`],
-    ["duels", `<b>${esc(stats.duels ?? "—")}</b>`],
+    ["duels", `<b>${esc(stats.duels ?? stats.accepted ?? "—")}</b>`],
     ["phase", `<b>${esc(d?.phase?.name ?? "—")}</b>`],
   ].map(([lab, val]) =>
     `<span class="stat-chip"><span class="k">${lab}</span>${val}</span>`).join("");
+}
+
+function renderMarketBar(d) {
+  const el = $("market-bar-inner");
+  if (!el) return;
+  const market = d?.market;
+  if (!market) {
+    el.innerHTML = `<span class="market-item dim">SN120 · waiting on TaoMarketCap</span>`;
+    return;
+  }
+  const weightsTitle = market.weights_committed_at
+    ? `last weights commit ${market.weights_committed_at}`
+    : "last weights commit (TMC)";
+  const updated = market.updated_at
+    ? `TMC updated ${fmtAge(market.updated_at)} ago`
+    : "TaoMarketCap";
+  el.innerHTML = [
+    `<span class="market-item"><span class="k">SN</span><b>120</b></span>`,
+    `<span class="market-item"><span class="k">price</span><b class="gold">${esc(fmtTao(market.price_tao, 4))}</b></span>`,
+    `<span class="market-item"><span class="k">reg</span><b>${esc(fmtTao(market.reg_cost_tao, 3))}</b></span>`,
+    `<span class="market-item" title="${esc(weightsTitle)}"><span class="k">weights</span><b>${esc(fmtAge(market.weights_committed_at))}</b></span>`,
+    market.block_number != null
+      ? `<span class="market-item"><span class="k">block</span><b>${esc(market.block_number)}</b></span>`
+      : "",
+    `<span class="market-item dim" title="${esc(updated)}">tmc</span>`,
+  ].filter(Boolean).join('<span class="market-sep" aria-hidden="true">·</span>');
 }
 
 /* ---------- sections ---------- */
@@ -517,6 +167,27 @@ function renderChallenge(d) {
   </div>`;
 }
 
+function renderRegPrice(force = false) {
+  const svg = $("reg-price-chart");
+  if (!svg) return;
+  const hist = cache.regHistory;
+  const points = hist?.points || [];
+  const last = points.length ? points[points.length - 1] : null;
+  const key = `${fps.reg}|${chartWidth()}|${last?.reg_tao ?? ""}`;
+  if (!force && key === fps.regRender) return;
+  fps.regRender = key;
+  const meta = $("reg-price-meta");
+  if (meta) {
+    if (last?.reg_tao != null) {
+      const n = points.length;
+      meta.textContent = `${fmtTao(last.reg_tao, 3)} · ${n} pts · tmc`;
+    } else {
+      meta.textContent = "tmc burn history";
+    }
+  }
+  drawRegPrice(svg, hist);
+}
+
 function renderQueue(d) {
   const q = d?.queue || [];
   const ce = d?.current_eval;
@@ -556,28 +227,52 @@ function renderQueue(d) {
   </table>`;
 }
 
+function benchSuites(b) {
+  // Prefer contract suites (what the subnet is following). Fall back to
+  // whatever appears in results if the payload omitted `suites`.
+  const fromCfg = Array.isArray(b?.suites) ? b.suites.filter(Boolean) : [];
+  if (fromCfg.length) return fromCfg;
+  return [...new Set((b?.models || []).flatMap((m) => Object.keys(m.suites || {})))];
+}
+
+function suiteLabel(suite) {
+  return String(suite || "").replace(/^tau2_/, "").replace(/_/g, " ");
+}
+
 function renderBenchmarks(b) {
   const el = $("benchmarks-wrap");
-  if (!b?.models?.length) {
-    el.innerHTML = `<div class="empty">no benchmark results yet</div>`;
+  const suites = benchSuites(b);
+  const models = b?.models || [];
+  if (!suites.length) {
+    el.innerHTML = `<div class="empty">no benchmark suites configured</div>`;
     return;
   }
-  const suites = [...new Set(b.models.flatMap((m) => Object.keys(m.suites || {})))].sort();
-  el.innerHTML = `<table class="data-table">
-    <thead><tr>
-      <th>model</th>${suites.map((s) => `<th class="r">${esc(s.replace(/^tau2_/, ""))}</th>`).join("")}
-    </tr></thead>
-    <tbody>${b.models.map((m) => `<tr>
-      <td><a href="${esc(hubUrl(m.model_repo) || "#")}" target="_blank" rel="noopener">${esc(m.label || m.model_repo)}</a></td>
-      ${suites.map((s) => {
-        const r = m.suites?.[s];
-        if (!r) return `<td class="r dim">—</td>`;
-        return r.ok
-          ? `<td class="r ok">${esc(Number(r.score).toFixed(3))}</td>`
-          : `<td class="r bad">fail</td>`;
-      }).join("")}
-    </tr>`).join("")}</tbody>
-  </table>`;
+  const active = b?.active || [];
+  el.innerHTML = `<div class="bench-grid">${suites.map((suite) => {
+    const scored = models.filter((m) => m.suites?.[suite]?.ok && m.suites[suite].score != null).length;
+    const failed = models.filter((m) => m.suites?.[suite]?.ok === false).length;
+    const running = active.filter((j) => j.suite === suite).length;
+    const bits = [];
+    if (scored) bits.push(`${scored} scored`);
+    if (failed) bits.push(`${failed} fail`);
+    if (running) bits.push(`${running} running`);
+    if (!bits.length) bits.push("awaiting runs");
+    return `<div class="bench-card" data-suite="${esc(suite)}">
+      <div class="bench-card-head">
+        <span class="bench-card-title">${esc(suiteLabel(suite))}</span>
+        <span class="bench-card-meta">${esc(bits.join(" · "))}</span>
+      </div>
+      <svg class="bench-suite-chart" data-suite="${esc(suite)}"
+        role="img" aria-label="${esc(suiteLabel(suite))} scores"></svg>
+    </div>`;
+  }).join("")}</div>`;
+
+  el.querySelectorAll("svg.bench-suite-chart").forEach((svg) => {
+    const suite = svg.dataset.suite;
+    const host = svg.parentElement;
+    const w = Math.max((host?.clientWidth || 280) - 20, 200);
+    drawBenchSuite(svg, suite, models, { width: w });
+  });
 }
 
 function outcomeBadge(r) {
@@ -591,7 +286,12 @@ function outcomeBadge(r) {
 function renderHistory(h) {
   const rows = (h || [])
     .filter((r) => r.event !== "failed")
-    .filter((r) => matches(r, filter));
+    .filter((r) => {
+      if (!filter) return true;
+      const hay = [r.event, r.repo, r.hotkey, r.error_code,
+        r.rejection_reason, r.challenge_id].join(" ").toLowerCase();
+      return hay.includes(filter);
+    });
   $("history-meta").textContent = `${rows.length} shown`;
   if (!rows.length) {
     $("history-wrap").innerHTML = `<div class="empty">empty</div>`;
@@ -604,7 +304,8 @@ function renderHistory(h) {
     <tbody>${rows.slice(0, 80).map((r) => {
       const url = hubUrl(r.repo);
       const zClass = r.z == null ? "" : Number(r.z) >= 0 ? "ok" : "bad";
-      return `<tr class="${r.event === "crowned" ? "current" : ""}">
+      const cid = r.challenge_id || "";
+      return `<tr class="row-link ${r.event === "crowned" ? "current" : ""}" data-cid="${esc(cid)}">
         <td class="when">${esc(fmtTime(r.at))}</td>
         <td>${esc(r.event)}</td>
         <td>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(r.repo)}</a>` : esc(r.repo)}</td>
@@ -621,7 +322,12 @@ function renderHistory(h) {
 function renderFails(h) {
   const fails = (h || []).filter((r) =>
     r.event === "failed" || (r.accepted === false && r.event !== "crowned"));
-  const rows = fails.filter((r) => matches(r, filter));
+  const rows = fails.filter((r) => {
+    if (!filter) return true;
+    const hay = [r.event, r.repo, r.hotkey, r.error_code,
+      r.rejection_reason, r.challenge_id].join(" ").toLowerCase();
+    return hay.includes(filter);
+  });
   $("fails-meta").textContent = `${rows.length} shown`;
   if (!rows.length) {
     $("fails-wrap").innerHTML = `<div class="empty">none</div>`;
@@ -633,7 +339,8 @@ function renderFails(h) {
     </tr></thead>
     <tbody>${rows.slice(0, 60).map((r) => {
       const url = hubUrl(r.repo);
-      return `<tr>
+      const cid = r.challenge_id || "";
+      return `<tr class="row-link" data-cid="${esc(cid)}">
         <td class="when">${esc(fmtTime(r.at))}</td>
         <td>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(r.repo)}</a>` : esc(r.repo)}</td>
         <td class="bad">${esc(r.error_code || r.rejection_reason || "reject")}</td>
@@ -643,29 +350,235 @@ function renderFails(h) {
   </table>`;
 }
 
-function renderAll() {
+function renderSnapshotSections() {
   const d = cache.dashboard;
+  if (!d) return;
+  renderReign(d);
+  renderChallenge(d);
+  renderQueue(d);
+}
+
+function renderAll() {
   renderHero();
-  if (d) {
-    renderReign(d);
-    renderChallenge(d);
-    renderQueue(d);
-  }
+  renderSnapshotSections();
   renderBenchmarks(cache.benchmarks);
   renderHistory(cache.history);
   renderFails(cache.history);
 }
 
-async function refresh() {
-  const [d, b, h] = await Promise.all([
-    getJSON("data/dashboard.json"),
-    getJSON("data/benchmarks.json"),
-    getJSON("data/history.json"),
+/* ---------- duel detail panel ---------- */
+
+function drawSeriesScatter(svg, series) {
+  const pts = (series?.challenger || []).filter(
+    (p) => p.lambda2 != null && p.l1lift != null);
+  const width = Math.min(560, (window.innerWidth || 600) - 48);
+  const height = 240;
+  const pad = { l: 44, r: 16, t: 16, b: 36 };
+  const mono = "IBM Plex Mono, monospace";
+  if (!pts.length) {
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.innerHTML = `<text x="${width / 2}" y="${height / 2}" text-anchor="middle"
+      fill="rgba(229,229,229,0.35)" font-family="${mono}" font-size="11">no pair series for this duel</text>`;
+    return;
+  }
+  const xs = pts.map((p) => Number(p.lambda2));
+  const ys = pts.map((p) => Number(p.l1lift));
+  let x0 = Math.min(...xs, 0);
+  let x1 = Math.max(...xs, 0);
+  let y0 = Math.min(...ys, 0);
+  let y1 = Math.max(...ys, 0);
+  const xpad = (x1 - x0) * 0.12 || 0.05;
+  const ypad = (y1 - y0) * 0.12 || 0.05;
+  x0 -= xpad; x1 += xpad; y0 -= ypad; y1 += ypad;
+  const xAt = (v) => pad.l + ((v - x0) / (x1 - x0 || 1)) * (width - pad.l - pad.r);
+  const yAt = (v) => pad.t + ((y1 - v) / (y1 - y0 || 1)) * (height - pad.t - pad.b);
+  const axes = `
+    <line x1="${pad.l}" x2="${width - pad.r}" y1="${yAt(0)}" y2="${yAt(0)}"
+      stroke="rgba(255,255,255,0.12)"/>
+    <line x1="${xAt(0)}" x2="${xAt(0)}" y1="${pad.t}" y2="${height - pad.b}"
+      stroke="rgba(255,255,255,0.12)"/>
+    <text x="${width / 2}" y="${height - 8}" text-anchor="middle" fill="rgba(229,229,229,0.4)"
+      font-family="${mono}" font-size="10">Λ2</text>
+    <text x="12" y="${height / 2}" fill="rgba(229,229,229,0.4)"
+      font-family="${mono}" font-size="10" transform="rotate(-90 12 ${height / 2})">L1lift</text>`;
+  const dots = pts.map((p) => {
+    const fill = p.gate_ok ? "#5ac8fa" : "rgba(255,71,71,0.7)";
+    return `<circle cx="${xAt(p.lambda2)}" cy="${yAt(p.l1lift)}" r="3.5" fill="${fill}" opacity="0.85">
+      <title>Λ2=${fmtScore(p.lambda2)} L1=${fmtScore(p.l1lift)} gate=${p.gate_ok}</title>
+    </circle>`;
+  }).join("");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", String(width));
+  svg.setAttribute("height", String(height));
+  svg.innerHTML = axes + dots;
+}
+
+function failureDetail(duel) {
+  const f = duel?.failure || {};
+  return {
+    code: f.code || duel?.error_code || duel?.rejection_reason || duel?.event || "failed",
+    detail: f.detail || duel?.error_detail || duel?.rejection_reason || "",
+    at: f.at || duel?.at,
+    repo: f.repo || duel?.repo,
+    hotkey: f.hotkey || duel?.hotkey,
+    revision: f.revision || duel?.revision,
+  };
+}
+
+function isFailureDuel(duel) {
+  return duel?.event === "failed"
+    || duel?.accepted === false
+    || Boolean(duel?.error_code)
+    || Boolean(duel?.failure);
+}
+
+async function openDuel(challengeId) {
+  if (!challengeId) return;
+  const panel = $("duel-panel");
+  const body = $("duel-panel-body");
+  const title = $("duel-panel-title");
+  panel.hidden = false;
+  title.textContent = challengeId;
+  body.innerHTML = `<div class="empty">loading…</div>`;
+  const [duel, series] = await Promise.all([
+    fetchDuel(challengeId),
+    fetchDuelSeries(challengeId).catch(() => null),
   ]);
-  cache.dashboard = d;
-  cache.benchmarks = b;
-  cache.history = h;
-  renderAll();
+  if (!duel || duel.error) {
+    // Fall back to the slim history row so fails still open with detail.
+    const row = (cache.history || []).find((r) => r.challenge_id === challengeId);
+    if (!row) {
+      body.innerHTML = `<div class="empty">no detail for ${esc(challengeId)}</div>`;
+      return;
+    }
+    renderDuelBody(body, row, null);
+    return;
+  }
+  renderDuelBody(body, duel, series && !series.error ? series : null);
+}
+
+function renderDuelBody(body, duel, series) {
+  const fail = isFailureDuel(duel);
+  const info = failureDetail(duel);
+  const ch = duel.challenger || {};
+  const kg = duel.king || {};
+  const gates = duel.gates || {};
+  const url = hubUrl(duel.repo || info.repo);
+
+  if (fail && !duel.has_series && duel.z == null && duel.score == null) {
+    body.innerHTML = `
+      <div class="kv-grid">
+        <div class="kv"><span class="k">when</span><span class="v">${esc(fmtTime(info.at))}</span></div>
+        <div class="kv"><span class="k">code</span><span class="v bad">${esc(info.code)}</span></div>
+        <div class="kv"><span class="k">model</span><span class="v">${
+          url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(info.repo || "—")}</a>`
+              : esc(info.repo || "—")}</span></div>
+        <div class="kv"><span class="k">revision</span><span class="v mono">${esc(info.revision || "—")}</span></div>
+        <div class="kv"><span class="k">hotkey</span><span class="v mono">${esc(info.hotkey || "—")}</span></div>
+        <div class="kv"><span class="k">challenge</span><span class="v mono">${esc(duel.challenge_id || "—")}</span></div>
+      </div>
+      <div class="fail-log-block">
+        <div class="section-head">
+          <h3 class="section-title">failure detail</h3>
+          <span class="section-right note">validator log</span>
+        </div>
+        <pre class="fail-log">${esc(info.detail || "no detail recorded")}</pre>
+      </div>`;
+    return;
+  }
+
+  const outcome = duel.event === "crowned"
+    ? `crowned #${duel.reign_number ?? "?"}`
+    : (info.code || duel.event || "—");
+  body.innerHTML = `
+    <div class="kv-grid">
+      <div class="kv"><span class="k">model</span><span class="v">${
+        url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(duel.repo || "—")}</a>`
+            : esc(duel.repo || "—")}</span></div>
+      <div class="kv"><span class="k">outcome</span><span class="v ${fail ? "bad" : ""}">${esc(outcome)}</span></div>
+      <div class="kv"><span class="k">z</span><span class="v ${Number(duel.z) >= 0 ? "ok" : "bad"}">${esc(fmtZ(duel.z))}</span></div>
+      <div class="kv"><span class="k">margin</span><span class="v">${esc(fmtScore(duel.margin))} · se ${esc(fmtScore(duel.se))}</span></div>
+      <div class="kv"><span class="k">S* chall</span><span class="v">${esc(fmtScore(duel.score ?? ch.S))}</span></div>
+      <div class="kv"><span class="k">S* king</span><span class="v">${esc(fmtScore(duel.score_king ?? kg.S))}</span></div>
+      <div class="kv"><span class="k">gate pass</span><span class="v">${esc(fmtScore(ch.gate_pass_rate))} / bank ${esc(fmtScore(ch.bank_frac))}</span></div>
+      <div class="kv"><span class="k">thresholds</span><span class="v dim">kσ=${esc(gates.k_sigma ?? 3)} · δ=${esc(gates.min_margin ?? "—")}</span></div>
+    </div>
+    ${fail && info.detail ? `
+      <div class="fail-log-block">
+        <div class="section-head">
+          <h3 class="section-title">failure detail</h3>
+          <span class="section-right note">validator log</span>
+        </div>
+        <pre class="fail-log">${esc(info.detail)}</pre>
+      </div>` : ""}
+    <div class="duel-chart-block">
+      <div class="section-head"><h3 class="section-title">Λ2 vs L1lift</h3>
+        <span class="section-right note">blue = gate ok · red = gate fail</span></div>
+      <svg id="duel-series-chart" role="img" aria-label="pair series"></svg>
+    </div>`;
+  const svg = $("duel-series-chart");
+  if (svg) drawSeriesScatter(svg, series);
+}
+
+function closeDuel() {
+  $("duel-panel").hidden = true;
+}
+
+/* ---------- data wiring ---------- */
+
+function applySnapshot(snap) {
+  if (!snap) return;
+  const fp = fingerprint({
+    generated_at: snap.generated_at,
+    phase: snap.phase,
+    current_eval: snap.current_eval,
+    king: snap.king,
+    queue: snap.queue,
+    stats: snap.stats,
+    reign: snap.reign,
+    market: snap.market,
+  });
+  if (fp === fps.dashboard) return;
+  fps.dashboard = fp;
+  cache.dashboard = snap;
+  renderMarketBar(snap);
+  renderHero();
+  renderSnapshotSections();
+}
+
+async function refreshHistoryAndBench() {
+  const [h, b, reg] = await Promise.all([
+    fetchHistory({ limit: 100, q: filter }),
+    fetchBenchmarks(),
+    fetchRegHistory(),
+  ]);
+  const hfp = fingerprint(h);
+  if (hfp !== fps.history) {
+    fps.history = hfp;
+    cache.history = h;
+    fps.hero = "";
+    renderHero(true);
+    renderHistory(cache.history);
+    renderFails(cache.history);
+  }
+  const bfp = fingerprint(b);
+  if (b && bfp !== fps.benchmarks) {
+    fps.benchmarks = bfp;
+    cache.benchmarks = b;
+    renderBenchmarks(cache.benchmarks);
+  }
+  if (reg?.points?.length) {
+    const rfp = fingerprint({
+      updated_at: reg.updated_at,
+      n: reg.points.length,
+      last: reg.points[reg.points.length - 1],
+    });
+    if (rfp !== fps.reg) {
+      fps.reg = rfp;
+      cache.regHistory = reg;
+      renderRegPrice(true);
+    }
+  }
 }
 
 function wire() {
@@ -677,21 +590,48 @@ function wire() {
         b.classList.toggle("active", on);
         b.setAttribute("aria-pressed", on ? "true" : "false");
       });
-      renderHero();
+      fps.hero = "";
+      renderHero(true);
     });
   });
   $("filter-input")?.addEventListener("input", (e) => {
     filter = e.target.value.trim().toLowerCase();
-    renderHistory(cache.history);
-    renderFails(cache.history);
+    refreshHistoryAndBench();
   });
-  window.addEventListener("resize", () => renderHero());
+  window.addEventListener("resize", () => {
+    fps.hero = "";
+    renderHero(true);
+    renderRegPrice(true);
+    if (cache.benchmarks) renderBenchmarks(cache.benchmarks);
+  });
+  $("history-wrap")?.addEventListener("click", (e) => {
+    const tr = e.target.closest("tr[data-cid]");
+    if (!tr || e.target.closest("a")) return;
+    openDuel(tr.dataset.cid);
+  });
+  $("fails-wrap")?.addEventListener("click", (e) => {
+    const tr = e.target.closest("tr[data-cid]");
+    if (!tr || e.target.closest("a")) return;
+    openDuel(tr.dataset.cid);
+  });
+  $("duel-panel-close")?.addEventListener("click", closeDuel);
+  $("duel-panel-backdrop")?.addEventListener("click", closeDuel);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeDuel();
+  });
 }
 
 async function boot() {
   wire();
-  await refresh();
-  setInterval(refresh, REFRESH_MS);
+  await refreshHistoryAndBench();
+  closeWatch = watchSnapshot(applySnapshot, {
+    onStatus: (s) => {
+      const el = $("live-status");
+      if (el) el.textContent = s;
+    },
+  });
+  // History grows slower than live snapshot — refresh on an interval.
+  setInterval(refreshHistoryAndBench, 15000);
 }
 
 boot();

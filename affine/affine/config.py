@@ -36,6 +36,8 @@ class Secrets:
     openrouter_api_key: str = ""
     # Shared secret the validator sends and evalsrv requires on every request.
     eval_token: str = ""
+    # TaoMarketCap public API key (dash market stream). Header: Authorization: <key>.
+    taomarketcap: str = ""
 
     @classmethod
     def from_env(cls) -> "Secrets":
@@ -47,6 +49,12 @@ class Secrets:
             targon_api_key=os.environ.get("TARGON_API_KEY", ""),
             openrouter_api_key=os.environ.get("OPENROUTER_API_KEY", ""),
             eval_token=os.environ.get("AFFINE_EVAL_TOKEN", ""),
+            # Doppler stores TMC_API_KEY; older docs used TAOMARKETCAP.
+            taomarketcap=(
+                os.environ.get("TAOMARKETCAP")
+                or os.environ.get("TMC_API_KEY")
+                or ""
+            ),
         )
 
 
@@ -208,6 +216,16 @@ class Config:
     @property
     def hippius(self) -> dict:
         return self.raw["hippius"]
+
+    @property
+    def dashboard(self) -> dict:
+        """Hot-path dash-api knobs (host/port/public URL). Optional section."""
+        return self.raw.get("dashboard") or {
+            "api_host": "127.0.0.1",
+            "api_port": 8787,
+            "public_host": "localhost",
+            "public_base_url": "https://localhost:8443",
+        }
 
     @property
     def state_dir(self) -> Path:

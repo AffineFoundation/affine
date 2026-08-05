@@ -8,6 +8,7 @@ the shared X-Affine-Token header when AFFINE_EVAL_TOKEN is set):
   GET  /duel/{id}           poll job record (verdict fallback for SSE races)
   GET  /duel/{id}/stream    SSE: progress + heartbeat + verdict/error
   GET  /duel/{id}/artifact  gzipped full duel record (rollouts + logprobs)
+  POST /prefetch            background-download the next challenger's weights
   POST /bench               dispatch a benchmark suite; 409 when busy
   GET  /bench/{id}          poll bench job
   POST /abort_bench         abort a running bench so a duel can take the GPUs
@@ -366,6 +367,28 @@ async def stream_duel(job_id: str, _: None = Depends(_require_token)):
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
+# -- prefetch ---------------------------------------------------------------------
+
+class PrefetchRequest(BaseModel):
+    repo: str
+    revision: str
+    # Servable-weight bytes from the validator's metadata scan (same source
+    # as DuelRequest.challenger_weight_bytes). 0 = unknown → skip disk-fit.
+    weight_bytes: int = 0
+
+
+@app.post("/prefetch")
+def prefetch(req: PrefetchRequest, _: None = Depends(_require_token)):
+    """Warm the next queued challenger's snapshot while the current duel
+    scores (network-bound download overlaps GPU-bound scoring). Purely
+    advisory: declining just means the next /duel pays the download."""
+    accepted, reason = _engine.start_prefetch(req.repo, req.revision,
+                                              req.weight_bytes)
+    (log.info if accepted else log.debug)(
+        "prefetch %s@%s: %s", req.repo, req.revision[:12], reason)
+    return {"accepted": accepted, "reason": reason}
+
+
 # -- benchmarks -------------------------------------------------------------------
 
 class BenchRequest(BaseModel):
@@ -377,18 +400,54 @@ class BenchRequest(BaseModel):
     user_llm: str = "teacher"
 
 
+def _fail_bench(job: dict, suite: str, detail: str) -> None:
+    job["result"] = {"ok": False, "suite": suite, "error": detail[:1500]}
+    job["state"] = "failed"
+
+
 def _run_bench_job(job_id: str, req: BenchRequest) -> None:
     job = _jobs[job_id]
     _current.update(kind="bench", job_id=job_id)
     _abort_bench.clear()
+    engine_died = threading.Event()
+    watchdog_stop = threading.Event()
+
+    def _watchdog() -> None:
+        # A crashed vLLM (e.g. a JIT kernel failing at first request) leaves
+        # the agent harness hammering a dead endpoint for the rest of the
+        # suite. A dead PROCESS is unambiguous — abort on sight. A failed
+        # HTTP probe is not: a saturated API server (12 agents x 16k-token
+        # prefills) can blow a short timeout while perfectly healthy, and a
+        # false abort wastes a pod-day, so HTTP needs a long timeout and
+        # several consecutive misses (~2 min silent) before we call it dead.
+        misses = 0
+        while not watchdog_stop.wait(30.0):
+            if _engine.challenger_process_dead():
+                log.error("bench %s: challenger vLLM process died; aborting",
+                          job_id)
+                engine_died.set()
+                _abort_bench.set()
+                return
+            if _engine.challenger_alive(http_timeout=10.0):
+                misses = 0
+                continue
+            misses += 1
+            if misses >= 4:
+                log.error("bench %s: challenger vLLM unresponsive for ~2min; "
+                          "aborting", job_id)
+                engine_died.set()
+                _abort_bench.set()
+                return
+
     try:
         job["state"] = "LOADING_MODEL"
         if not _engine.load_challenger(req.repo, req.revision):
-            job["result"] = {"ok": False, "suite": req.suite,
-                             "error": "model failed to load in vLLM"}
-            job["state"] = "failed"
+            _fail_bench(job, req.suite, _engine.chall_slot.load_error
+                        or "model failed to load in vLLM")
             return
         job["state"] = "RUNNING"
+        threading.Thread(target=_watchdog, daemon=True,
+                         name=f"{job_id}-watchdog").start()
         result = benchrunner.run_suite(
             suite=req.suite, model_repo=req.repo,
             model_port=_engine.chall_slot.port,
@@ -397,14 +456,19 @@ def _run_bench_job(job_id: str, req: BenchRequest) -> None:
             teacher_port=_engine.teacher_slot.port,
             num_trials=req.num_trials, max_concurrency=req.max_concurrency,
             abort_event=_abort_bench)
+        if engine_died.is_set():
+            tail = _engine.challenger_log_tail()
+            _fail_bench(job, req.suite, "challenger vLLM died mid-run"
+                        + (f" | {tail}" if tail else ""))
+            return
         job["result"] = result
         job["state"] = "aborted" if result.get("aborted") else "completed"
     except Exception as e:
         log.exception("bench %s failed", job_id)
-        job["result"] = {"ok": False, "suite": req.suite, "error": str(e)}
-        job["state"] = "failed"
+        _fail_bench(job, req.suite, str(e))
         _self_kill_if_cuda(f"bench {job_id}", str(e))
     finally:
+        watchdog_stop.set()
         try:
             _engine.unload_challenger()
         except Exception:

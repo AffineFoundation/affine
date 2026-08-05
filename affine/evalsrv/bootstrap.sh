@@ -65,10 +65,14 @@ fi
 # 3. Supervise the eval server. On duel role, teacher warmup happens inside
 #    the app and /health flips ok=true when it is servable. On bench role,
 #    /health is ok immediately (no teacher).
+#    `|| code=$?` is load-bearing: under `set -e` a bare nonzero exit of the
+#    server (crash, SIGTERM, CUDA self-kill) aborts this whole script and the
+#    restart loop never runs — exactly the always-online failure mode this
+#    loop exists to prevent.
 while true; do
   echo "[bootstrap] $(date -u) launching evalsrv role=$ROLE"
-  python -m evalsrv.server >> /root/logs/evalsrv.log 2>&1
-  code=$?
+  code=0
+  python -m evalsrv.server >> /root/logs/evalsrv.log 2>&1 || code=$?
   echo "[bootstrap] $(date -u) evalsrv exited code=$code; restarting in 10s"
   sleep 10
 done

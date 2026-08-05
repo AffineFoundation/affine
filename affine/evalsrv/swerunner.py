@@ -7,21 +7,22 @@ scores patches with the SWE-rebench fork harness. Advisory only — never S*.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 import os
-import re
 import signal
 import subprocess
 import threading
 import time
 from pathlib import Path
 
+import yaml
+
 log = logging.getLogger("evalsrv.swe")
 
 SUITE_NAME = "swe_rebench_lite"
 IDS_PATH = Path(__file__).resolve().parent / "data" / "swe_rebench_lite_ids.json"
-AGENT_CFG_TEMPLATE = Path(__file__).resolve().parent / "swebench_agent.yaml"
 BENCH_DATA_DIR = Path(os.environ.get("AFFINE_BENCH_DIR", "/root/bench"))
 
 
@@ -60,15 +61,57 @@ def _prepare_subset(pin: dict, out_dir: Path) -> Path:
 
 
 def _write_agent_config(model_repo: str, model_port: int, path: Path) -> None:
-    raw = AGENT_CFG_TEMPLATE.read_text()
-    raw = raw.replace("openai/PLACEHOLDER", f"openai/{model_repo}")
-    raw = re.sub(
-        r'api_base:\s*"[^"]*"',
-        f'api_base: "http://127.0.0.1:{model_port}/v1"',
-        raw,
-        count=1,
-    )
-    path.write_text(raw)
+    """Derive the agent config from mini-swe-agent's packaged swebench config.
+
+    The backticks variant is required: miner models are served by plain vLLM
+    chat completions (no tool-call parser), and its templates use the
+    ``{{task}}`` variable the installed runner actually provides. A hand-rolled
+    template previously referenced ``{{problem_statement}}``, which mini-swe-
+    agent v2 never exposes — every task failed at step 0 with api_calls=0.
+    Only the model section and limits are overridden here so the config tracks
+    whatever mini-swe-agent version bootstrap installs.
+    """
+    spec = importlib.util.find_spec("minisweagent")
+    if spec is None or not spec.origin:
+        raise RuntimeError("mini-swe-agent is not installed")
+    base = (Path(spec.origin).parent / "config" / "benchmarks"
+            / "swebench_backticks.yaml")
+    cfg = yaml.safe_load(base.read_text())
+    cfg["agent"]["step_limit"] = 50
+    cfg["agent"]["cost_limit"] = 0  # local vLLM is free; 0 disables the check
+    model = cfg.setdefault("model", {})
+    model["model_name"] = f"openai/{model_repo}"
+    # v2's default LitellmModel sends native tool calls (tools=[BASH_TOOL]);
+    # plain vLLM rejects those with 400 unless launched with a tool parser.
+    # The backticks templates expect the text-action model class instead.
+    model["model_class"] = "litellm_textbased"
+    model["cost_tracking"] = "ignore_errors"
+    kwargs = model.setdefault("model_kwargs", {})
+    kwargs.update({
+        "api_base": f"http://127.0.0.1:{model_port}/v1",
+        "api_key": "local",
+        "temperature": 0.0,
+        # Bound retry storms: a model that rejects requests outright should
+        # fail its 25 tasks in minutes, not ride litellm backoff into the
+        # suite-level timeout with zero trajectories.
+        "num_retries": 2,
+    })
+    path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+
+
+def _reap_stale_containers() -> None:
+    """Remove leftover mini-swe-agent containers from aborted/crashed runs.
+
+    Aborts SIGTERM the harness process group but orphan its docker containers,
+    which keep holding CPU/RAM and skew the next run. Only containers named
+    minisweagent-* are touched (never swebench eval containers mid-run: reaping
+    happens before the agent phase starts, when none of ours should exist)."""
+    try:
+        subprocess.run(
+            "docker ps -aq --filter name=minisweagent- | xargs -r docker rm -f",
+            shell=True, capture_output=True, timeout=180)
+    except Exception:
+        log.warning("stale container reap failed", exc_info=True)
 
 
 def _run(cmd: list[str], env: dict, timeout_s: int,
@@ -138,6 +181,7 @@ def run_swe_lite(model_repo: str, model_port: int, *,
     preds_dir.mkdir(parents=True, exist_ok=True)
 
     t0 = time.time()
+    _reap_stale_containers()
     try:
         _prepare_subset(pin, subset_dir)
         _write_agent_config(model_repo, model_port, agent_cfg)
@@ -208,7 +252,7 @@ def run_swe_lite(model_repo: str, model_port: int, *,
         "--split", pin.get("split", "test"),
         "--predictions_path", str(preds_jsonl),
         "--instance_ids", *pin["instance_ids"],
-        "--max_workers", str(max(1, min(workers, 4))),
+        "--max_workers", str(max(1, min(workers, 8))),
         "--run_id", run_id,
         "--namespace", pin.get("namespace", "swerebench"),
         "--cache_level", "instance",

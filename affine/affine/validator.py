@@ -125,16 +125,27 @@ class Validator:
         self._last_weights = 0.0
         self._consecutive_tick_errors = 0
         self._duel_task: asyncio.Task | None = None
+        # One slot: at most one prefetch fires per duel. Held so the event
+        # loop (which references tasks weakly) can never GC it mid-flight.
+        self._prefetch_task: asyncio.Task | None = None
         self._last_heartbeat = 0.0
+
+    # A suite that failed this many recorded runs for the same revision is
+    # deterministic, not flaky: stop re-burning a bench pod-day on it at
+    # every validator restart.
+    _BENCH_BACKFILL_MAX_FAILURES = 3
 
     def _enqueue_king_benches_if_needed(self) -> None:
         """Backfill advisory suites for the reigning king (e.g. after a suite
-        contract change). Skips suites already queued or recorded in history."""
+        contract change). Skips suites already queued or successfully scored.
+        Failed runs are retriable (load/infra flakes) but only up to
+        _BENCH_BACKFILL_MAX_FAILURES per revision+suite."""
         king = self.state.king
         if king is None or not self.cfg.bench.enabled:
             return
         pending = {(j["revision"], j["suite"]) for j in self.state.bench_jobs}
         done: set[tuple[str, str]] = set()
+        failures: dict[tuple[str, str], int] = {}
         path = self.state.bench_history_path
         if path.exists():
             with open(path) as f:
@@ -143,11 +154,24 @@ class Validator:
                         row = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    if row.get("revision") == king.revision:
-                        done.add((king.revision, row.get("suite", "")))
+                    if row.get("revision") != king.revision:
+                        continue
+                    key = (king.revision, row.get("suite", ""))
+                    result = row.get("result") or {}
+                    if result.get("ok"):
+                        done.add(key)
+                    else:
+                        failures[key] = failures.get(key, 0) + 1
+        exhausted = {k for k, n in failures.items()
+                     if n >= self._BENCH_BACKFILL_MAX_FAILURES}
+        if exhausted:
+            log.warning("bench backfill: giving up on %s after %d+ failures",
+                        sorted(s for _, s in exhausted),
+                        self._BENCH_BACKFILL_MAX_FAILURES)
         missing = [s for s in self.cfg.bench.suites
                    if (king.revision, s) not in pending
-                   and (king.revision, s) not in done]
+                   and (king.revision, s) not in done
+                   and (king.revision, s) not in exhausted]
         if not missing:
             return
         self.state.enqueue_bench(king.repo, king.revision, king.hotkey,
@@ -213,6 +237,16 @@ class Validator:
                 self.state.record_failure(
                     entry, "internal_error",
                     f"{type(e).__name__}: {e} (after {entry.retry_count} retries)")
+        except BaseException as e:
+            # Shutdown path (KeyboardInterrupt / CancelledError): without this
+            # the popped entry dies with the task and the submission vanishes
+            # (observed limbo: chal-00075, 2026-08-04). Requeue uncounted and
+            # flush NOW — the process is going down and the periodic tick
+            # flush will not run again.
+            self.state.requeue_front(
+                entry, f"interrupted: {type(e).__name__}", count_retry=False)
+            self.state.flush()
+            raise
         finally:
             self.state.current_eval = None
 
@@ -265,6 +299,43 @@ class Validator:
                 entry, "eval_infra_exhausted",
                 f"{e} (after {entry.retry_count} transient retries)")
 
+    def _hygiene_reason(self, info: model_store.RepoInfo) -> str | None:
+        """Contract hygiene gates on a repo's metadata; one definition so the
+        dispatch gate and the prefetch precheck can never drift."""
+        sub = self.cfg.submission
+        return model_store.validate_repo_hygiene(
+            info, max_size_gb=sub.max_model_size_gb,
+            max_total_repo_gb=sub.max_total_repo_gb,
+            allow_python_files=sub.allow_python_files,
+            allow_auto_map=sub.allow_auto_map,
+            max_repo_files=sub.max_repo_files,
+            max_config_bytes=sub.max_config_bytes)
+
+    async def _prefetch_next(self, nxt: QueueEntry) -> None:
+        """Warm the next queued challenger's weights on the pod while the
+        current duel scores. Runs the same cheap gates that entry's own
+        dispatch will run (name + metadata hygiene) so bandwidth is never
+        spent on a repo that would be rejected anyway, and ships the weight
+        size so the engine needs no HF-metadata access of its own.
+        Best-effort: every failure is swallowed — a missed prefetch only
+        means that duel pays its own download."""
+        sub = self.cfg.submission
+        try:
+            pairs = self.metagraph.identity_token_pairs(
+                nxt.hotkey, sub.coldkey_prefix_len, sub.coldkey_suffix_len)
+            if model_store.validate_repo_name(nxt.repo, sub.repo_pattern, pairs):
+                return
+            ref = model_store.ModelRef(nxt.repo, nxt.revision)
+            info = await asyncio.to_thread(
+                model_store.fetch_repo_info, ref, self.cfg.secrets.hf_token)
+            if self._hygiene_reason(info):
+                return
+            await self.eval_client.prefetch(nxt.repo, nxt.revision,
+                                            info.total_safetensors_bytes)
+        except Exception as e:
+            log.debug("prefetch precheck failed for %s (ignored): %s",
+                      nxt.repo, e)
+
     async def _process_challenge(self, entry: QueueEntry) -> None:
         cid = entry.challenge_id
         sub = self.cfg.submission
@@ -292,13 +363,7 @@ class Validator:
             self.state.record_failure(entry, "revision_not_found",
                                       f"cannot read {ref.immutable_ref}: {e}")
             return
-        reason = model_store.validate_repo_hygiene(
-            info, max_size_gb=sub.max_model_size_gb,
-            max_total_repo_gb=sub.max_total_repo_gb,
-            allow_python_files=sub.allow_python_files,
-            allow_auto_map=sub.allow_auto_map,
-            max_repo_files=sub.max_repo_files,
-            max_config_bytes=sub.max_config_bytes)
+        reason = self._hygiene_reason(info)
         if reason:
             self.state.record_failure(entry, "repo_hygiene_rejected", reason)
             return
@@ -350,12 +415,26 @@ class Validator:
         self.state.set_phase("duel", challenge_id=cid)
         self.dashboard.flush(force=True)
 
+        prefetch_sent = False
+
         def on_progress(data: dict) -> None:
+            nonlocal prefetch_sent
             self.watchdog.beat()
             if self.state.current_eval is not None:
                 self.state.current_eval["stage"] = data.get("phase", "scoring")
                 self.state.current_eval["progress"] = data
             self.dashboard.flush()
+            # Scoring is GPU-bound and the pod's network is idle: warm the next
+            # queued challenger's weights so its duel skips the download. Fired
+            # at the load→scoring transition, never earlier, so it cannot steal
+            # bandwidth from the current challenger's own download.
+            if not prefetch_sent and data.get("phase") == "scoring":
+                prefetch_sent = True
+                nxt = self.state.peek_next()
+                if nxt is not None:
+                    self._prefetch_task = asyncio.create_task(
+                        self._prefetch_next(nxt),
+                        name=f"prefetch-{nxt.challenge_id}")
 
         verdict = await self.eval_client.run_duel(
             king_repo=king.repo, king_revision=king.revision,

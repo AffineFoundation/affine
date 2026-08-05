@@ -155,6 +155,7 @@ class Dashboard:
             "version": __version__,
         }
         self.hippius.put_json("data/contract.json", contract)
+        self._write_public_json("contract.json", contract)
 
     # -- periodic state ---------------------------------------------------------------
     def flush(self, force: bool = False) -> None:
@@ -199,6 +200,9 @@ class Dashboard:
             } if s.bench_machine else None,
         }
         self.hippius.put_json("data/dashboard.json", payload)
+        # Local hot-path snapshot for affine-dash (live current_eval lives in
+        # memory; Hippius alone is too slow / cold for the interactive UI).
+        self._write_public_json("snapshot.json", payload)
         self._flush_history()
         self._flush_benchmarks()
         self._push_validator_log()
@@ -274,7 +278,7 @@ class Dashboard:
                 "repo": r.get("repo"), "hotkey": r.get("hotkey"),
                 "accepted": r.get("accepted"),
                 "error_code": r.get("error_code"),
-                "error_detail": (r.get("error_detail") or "")[:300],
+                "error_detail": (r.get("error_detail") or "")[:2000],
                 "z": v.get("z"), "margin": v.get("margin"),
                 "n_paired_turns": v.get("n_paired_turns"),
                 "rejection_reason": v.get("rejection_reason"),
@@ -284,6 +288,7 @@ class Dashboard:
                 "score_king": (v.get("king") or {}).get("S"),
             })
         self.hippius.put_json("data/history.json", slim)
+        self._write_public_json("history.json", slim)
 
     def _flush_benchmarks(self) -> None:
         done = self._tail_jsonl(self.state.bench_history_path, BENCH_TAIL)
@@ -301,13 +306,29 @@ class Dashboard:
                 "ok": result.get("ok", False),
                 "n_sims": result.get("n_sims"),
                 "finished_at": row.get("finished_at"),
+                "error": (result.get("error") or "")[:240] or None,
             }
         active = [{
             "job_id": j["job_id"], "model_repo": j["repo"], "suite": j["suite"],
             "state": j["state"], "queued_at": j["queued_at"],
         } for j in self.state.bench_jobs]
-        self.hippius.put_json("data/benchmarks.json", {
+        bench_payload = {
             "generated_at": now_iso(),
+            "suites": list(self.cfg.bench.suites),
             "models": list(models.values()),
             "active": active,
-        })
+        }
+        self.hippius.put_json("data/benchmarks.json", bench_payload)
+        self._write_public_json("benchmarks.json", bench_payload)
+
+    def _write_public_json(self, name: str, data) -> None:
+        """Atomically mirror a presentation object under state/public/."""
+        public = self.cfg.state_dir / "public"
+        try:
+            public.mkdir(parents=True, exist_ok=True)
+            path = public / name
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(json.dumps(data, default=str))
+            tmp.replace(path)
+        except OSError as exc:
+            log.warning("local public write %s failed: %s", name, exc)

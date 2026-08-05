@@ -25,5 +25,53 @@ module.exports = {
         PYTHONUNBUFFERED: "1",
       },
     },
+    // Read-only hot-path dashboard API + static site. Separate from the
+    // validator so public traffic never blocks weight-setting / duels.
+    {
+      name: "affine-dash",
+      cwd: __dirname + "/..",
+      script: "doppler",
+      args: "run -- ../.venv/bin/python -m affine.dash",
+      interpreter: "none",
+      autorestart: true,
+      max_restarts: 1000,
+      restart_delay: 5000,
+      kill_timeout: 10000,
+      out_file: "logs/dash.out.log",
+      error_file: "logs/dash.err.log",
+      merge_logs: true,
+      env: {
+        PYTHONUNBUFFERED: "1",
+      },
+    },
+    // TLS edge on :8443 (443 is owned by forest-head / arbos.life).
+    {
+      name: "affine-caddy",
+      cwd: __dirname + "/..",
+      script: "caddy",
+      args: "run --config Caddyfile",
+      interpreter: "none",
+      autorestart: true,
+      max_restarts: 1000,
+      restart_delay: 5000,
+      out_file: "logs/caddy.out.log",
+      error_file: "logs/caddy.err.log",
+      merge_logs: true,
+    },
+    // Public hostname https://sn120.arbos.life → 127.0.0.1:8787
+    // Token: AFFINE_CF_TUNNEL_TOKEN in doppler (arbos/dev).
+    {
+      name: "affine-tunnel",
+      cwd: __dirname + "/..",
+      script: "doppler",
+      args: "run -- bash -lc 'exec cloudflared tunnel --no-autoupdate run --token \"$AFFINE_CF_TUNNEL_TOKEN\"'",
+      interpreter: "none",
+      autorestart: true,
+      max_restarts: 1000,
+      restart_delay: 5000,
+      out_file: "logs/tunnel.out.log",
+      error_file: "logs/tunnel.err.log",
+      merge_logs: true,
+    },
   ],
 };

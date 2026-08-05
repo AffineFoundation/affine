@@ -80,6 +80,12 @@ class State:
         self._id_counter = 0
         self.eval_machine: dict = {}   # duel provisioner {provider, id, host, url, ...}
         self.bench_machine: dict = {}  # dedicated SWE bench provisioner record
+        # The popped-but-unresolved queue entry, persisted so a HARD exit
+        # (watchdog os._exit, SIGKILL) can never vanish a submission: normal
+        # shutdowns requeue via the BaseException handler, but nothing that
+        # bypasses `finally` would — load() reconciles this back into the
+        # queue instead (observed limbo: chal-00075/chal-00080, 2026-08-04).
+        self.in_flight: QueueEntry | None = None
         self.current_eval: dict | None = None
         self.phase: dict = {"name": "boot", "since": now_iso()}
         self._last_flush = 0.0
@@ -140,6 +146,18 @@ class State:
                 if j.get("state") == "RUNNING":
                     j["state"] = "QUEUED"
                     j.pop("started_at", None)
+            # A persisted in-flight entry means the previous process died a
+            # hard death mid-duel (os._exit / SIGKILL): put it back at the
+            # front, uncounted — infra deaths never burn the miner.
+            inflight = d.get("in_flight")
+            if inflight:
+                entry = QueueEntry(**inflight)
+                if not any(e.challenge_id == entry.challenge_id
+                           for e in self.queue):
+                    log.warning("recovered in-flight %s (%s) from a hard "
+                                "shutdown; requeued at front",
+                                entry.challenge_id, entry.repo)
+                    self.queue.insert(0, entry)
         self._reconcile_from_history()
 
     def drop_unknown_bench_suites(self, suites: list[str]) -> int:
@@ -156,6 +174,7 @@ class State:
             d = {
                 "king": asdict(self.king) if self.king else None,
                 "queue": [asdict(e) for e in self.queue],
+                "in_flight": asdict(self.in_flight) if self.in_flight else None,
                 "seen_hotkeys": sorted(self.seen_hotkeys),
                 "completed_revisions": sorted(self.completed_revisions),
                 "bench_jobs": self.bench_jobs,
@@ -246,12 +265,32 @@ class State:
 
     def pop_next(self) -> QueueEntry | None:
         with self._lock:
-            return self.queue.pop(0) if self.queue else None
+            entry = self.queue.pop(0) if self.queue else None
+            if entry is not None:
+                # Durable BEFORE dispatch: from here until the entry lands in
+                # history or back in the queue, state.json carries it as
+                # in_flight so no exit path can lose it.
+                self.in_flight = entry
+                self.flush()
+            return entry
+
+    def _clear_in_flight(self, entry: QueueEntry) -> None:
+        """The entry landed (history or queue); stop tracking it as popped."""
+        with self._lock:
+            if (self.in_flight is not None
+                    and self.in_flight.challenge_id == entry.challenge_id):
+                self.in_flight = None
+
+    def peek_next(self) -> QueueEntry | None:
+        """Head of the queue without popping (prefetch hinting)."""
+        with self._lock:
+            return self.queue[0] if self.queue else None
 
     def push_front(self, entry: QueueEntry) -> None:
         """Put an entry back untouched (e.g. metagraph not ready yet)."""
         with self._lock:
             self.queue.insert(0, entry)
+            self._clear_in_flight(entry)
 
     def requeue_front(self, entry: QueueEntry, reason: str,
                       count_retry: bool = True) -> int:
@@ -265,6 +304,7 @@ class State:
             entry.queued_at = now_iso()
             self.queue = [entry] + [e for e in self.queue if e.repo != entry.repo]
             self.current_eval = None
+            self._clear_in_flight(entry)
         log.warning("requeued %s at front (retry %d, counted=%s) due to %s",
                     entry.challenge_id, entry.retry_count, count_retry, reason)
         return entry.retry_count
@@ -278,6 +318,7 @@ class State:
             entry.queued_at = now_iso()
             self.queue = [e for e in self.queue if e.repo != entry.repo] + [entry]
             self.current_eval = None
+            self._clear_in_flight(entry)
         log.warning("deferred %s to queue tail (infra retry %d) due to %s",
                     entry.challenge_id, entry.infra_retry_count, reason)
 
@@ -291,6 +332,7 @@ class State:
             "hotkey": entry.hotkey, "repo": entry.repo, "revision": entry.revision,
             "error_code": code, "error_detail": detail[:2000],
         })
+        self._clear_in_flight(entry)
 
     def record_failure_raw(self, hotkey: str, repo: str, revision: str,
                            code: str, detail: str) -> None:
@@ -311,6 +353,7 @@ class State:
             "hotkey": entry.hotkey, "repo": entry.repo, "revision": entry.revision,
             "accepted": accepted, "verdict": verdict,
         })
+        self._clear_in_flight(entry)
 
     @staticmethod
     def _king_lineage_entry(king: King) -> dict:
