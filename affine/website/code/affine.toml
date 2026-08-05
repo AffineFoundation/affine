@@ -20,7 +20,9 @@ king_chain_size = 5
 min_submission_block = 8767079
 # Bittensor weight-version gate for contract upgrades (bump on breaking
 # scoring/contract changes so stale validators are ignored by consensus).
-weight_version_key = 1
+# v2 (2026-08-05): min_margin 0.05 → 0.02 — dethrone floor now covers scoring
+# variance only (see [duel] min_margin), not effect size.
+weight_version_key = 2
 
 [wallet]
 name = "default"
@@ -115,13 +117,20 @@ l1_weight = 1.0
 l1_clip = 0.1
 r_lo = 1.0
 r_hi = 4.0
-# Robustness floors on top of the k·SE rule (added 2026-08-03 after review):
+# Robustness floors on top of the k·SE rule:
 #   min_se     — floor on the paired SE so a near-zero-variance challenger
 #                cannot win on an arbitrarily tiny mean (k·SE → 0 degeneracy).
-#   min_margin — minimum absolute paired mean(S_c − S_k) required to dethrone,
-#                independent of variance. Both must be cleared to crown.
+#   min_margin — minimum absolute paired mean(S_c − S_k) required to dethrone.
+#                Policy (2026-08-05): a NOISE floor, not an effect-size floor —
+#                any challenger statistically above the king crowns. 0.02 covers
+#                the RT-4 same-model null (SE 0.0065, 3·SE≈0.0195), the measured
+#                lm_head-sharpening residual (≤ +0.012), and the min_se
+#                degeneracy (3·min_se = 0.015); live 3·SE runs 0.023–0.043 so in
+#                practice the 3σ test governs. Supersedes the 0.05 effect floor
+#                (A11): short-style same-tier models (king-II margin +0.034) CAN
+#                now crown — accepted, S is the metric.
 min_se = 0.005
-min_margin = 0.05
+min_margin = 0.02
 n_teacher_samples = 4
 n_miner_samples = 4
 temperature = 0.8

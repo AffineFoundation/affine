@@ -167,7 +167,7 @@ Duel crowning: challenger wins iff **all** of:
 
 - both sides gate-valid
 - paired `mean(S_c − S_k) > 3 · SE`
-- `mean > min_margin` (δ = 0.05)
+- `mean > min_margin` (δ = 0.02 — a noise floor, not an effect floor: any challenger statistically above the king crowns)
 - SE floored by `min_se = 0.005`
 
 Before the full duel, an injectability probe rejects checkpoints that cannot emit a parsable bash action or return finite forced logprobs.

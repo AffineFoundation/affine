@@ -43,8 +43,9 @@ through a replayable audit trail, not multi-validator voting.
    injectability probe; full S* instrumentation against the warm teacher;
    verdict = `paired mean(S_c − S_k) > 3·SE` with causality/leakage and
    prior-bank gates, plus two robustness floors (`min_se` on the paired SE so
-   zero-variance challengers can't win on an ε margin, and `min_margin` as an
-   absolute dethroning threshold). Frozen constants in `affine.toml [duel]`.
+   zero-variance challengers can't win on an ε margin, and `min_margin` as a
+   noise floor sized to the RT-4 copy null — any challenger statistically
+   above the king crowns). Frozen constants in `affine.toml [duel]`.
 5. Win ⇒ crown, immediate weight set. Either way, tau2 suites are enqueued
    (advisory only — never part of S*; a running bench is aborted server-side
    the moment a duel arrives, then requeued). Weights go to the rolling king

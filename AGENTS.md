@@ -51,12 +51,16 @@ L1lift = lpA(y_C|z_A) − lpA(y_C|∅)
 ### Duel crowning rule
 Challenger wins iff **all** of:
 - paired mean(S_c − S_k) > 3 · SE
-- mean margin > δ = **0.05** (`min_margin`)
+- mean margin > δ = **0.02** (`min_margin`, contract v2 2026-08-05)
 - SE floored by `min_se = 0.005`
 - both sides gate-valid
 
-The δ floor closes short-style I/II n\*-scaling (pure 3σ would eventually fire for any
-persistent tiny margin).
+δ is a **noise floor, not an effect floor** (policy 2026-08-05): it covers the RT-4
+copy null (3·SE≈0.0195), the measured lm_head-sharpening residual (≤ +0.012), and the
+min_se degeneracy (3·min_se=0.015). Any challenger statistically above the king crowns.
+The former δ=0.05 effect floor (A11 defense) was dropped by explicit decision: same-tier
+short-style winners (king-II persistent margin +0.034) are accepted as kings — S is the
+metric.
 
 ### Headline correlations (coding D)
 | set | Spearman(S, swe) | notes |
@@ -81,8 +85,8 @@ Second teacher (Qwen3-32B vs GLM-Air), n=6 kings: Spearman(S_T1, S_T2) = **+0.94
 | RT-2c / A2c | paraphrase stuffing | CLOSED | bank gate |
 | RT-soft-pad / A10 | soft-idents pad | CLOSED | abandoned; use mix w=1 |
 | RT-4 / A4 | king copy | CLOSED | 3σ null |
-| RT-3 / A3 | L1lift / overconfidence | CLOSED live | clip0.1 + r∈[1,4] + δ |
-| A11 | short-style I/II FP | CLOSED | δ=0.05 |
+| RT-3 / A3 | L1lift / overconfidence | CLOSED live | clip0.1 + r∈[1,4]; sharpening residual ≤ +0.012 < 3·SE floor |
+| A11 | short-style I/II FP | **ACCEPTED (policy 2026-08-05)** | δ→0.02 noise floor; same-tier S winners may crown |
 | RT-6 / A6 | dataset sniping | **MITIGATED (ops)** | not a score gate — see §5 |
 | D_tau2 | programmability falsifier | **NOT demonstrated** | see §6 |
 
@@ -95,11 +99,11 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
-- `weight_version_key = 1`
+- `weight_version_key = 2` (v2 2026-08-05: min_margin 0.05 → 0.02 noise floor)
 - teacher: `zai-org/GLM-4.5-Air-FP8`
 - seed king: `dendriteholdings/albedo-qwen3.6-35b-king-genesis`
 - turns: sharded corpus with immutable manifest; sha-pinned (see toml `[dataset]`)
-- duel: n_turns=80, clip=0.1, r∈[1,4], δ=0.05, k_sigma=3
+- duel: n_turns=80, clip=0.1, r∈[1,4], δ=0.02, k_sigma=3
 
 ### Evalsrv roles
 - `AFFINE_ROLE=duel` — teacher + king + challenger; S\* only
@@ -252,7 +256,7 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 ## 12. One-paragraph resume
 
 > Affine SN120: teacher-anchored thought-injection duels (S\* v2 = clip0.1 mix +
-> causality/leakage + bank + r-gate + 3σ∧δ=0.05). Coding isomorphism holds at +0.758@30
+> causality/leakage + bank + r-gate + 3σ∧δ=0.02 noise floor). Coding isomorphism holds at +0.758@30
 > ungated; second teacher +0.943; RT suite closed/mitigated except D_tau2 programmability
 > (three negative probes). Corpus sha-pinned on HF; uv-workspace monorepo
 > (`affine` + `research` + `ops`). Next: production n=80 burn-in and go-live ops, or paper
