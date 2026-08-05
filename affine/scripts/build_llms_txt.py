@@ -50,6 +50,12 @@ SOURCES: list[tuple[str, str]] = [
     ("affine/priors.py", "published prior bank behind the bank gate"),
     ("affine/chain.py", "reveal payload contract + commit builders"),
     ("evalsrv/dueling.py", "live duel: slice seeding, injectability probe, scoring loop"),
+    ("evalsrv/chat.py", "the chat contract: prompt assembly, thought-injection "
+     "template, z/y rollout parsing — byte-exact"),
+    ("evalsrv/terms.py", "per-turn instrumentation: teacher references + the ten "
+     "forced-logprob calls behind every lp* component"),
+    ("evalsrv/vllm_client.py", "vLLM sampling + echo/logprob forcing + per-byte "
+     "normalization (lp_per_byte)"),
     ("affine/model_store.py", "checkpoint hygiene rules + weight-copy detection"),
     ("affine/state.py", "1-hotkey-1-eval policy, king lineage, queue invariants"),
 ]
@@ -261,6 +267,21 @@ Duel crowning: challenger wins iff **all** of:
 Before the full duel, an injectability probe rejects checkpoints that cannot \
 emit a parsable bash action or return finite forced logprobs.
 
+**Simulate before you submit.** Your eval slot is burned at enqueue, one per \
+hotkey, ever — so replay the duel locally first. The complete measurement \
+layer is published under `code/` and is import-closed (every module \
+`dueling.py` touches is in the list above): `evalsrv/chat.py` is the chat \
+contract — models are rendered through their own chat template to a string \
+and driven via `/v1/completions`, injection plants thoughts as the canonical \
+assistant body `</think>\\nTHOUGHT: {z}\\n\\n{y}`, and `split_rollout` \
+defines exactly what counts as z (all reasoning text) and y (the last closed \
+bash-fenced block). `evalsrv/terms.py` makes the ten forced-logprob calls behind \
+every `lp*` component; `evalsrv/vllm_client.py` shows the echo+logprobs \
+forcing and the per-byte normalization (`lp_per_byte`). Serve the teacher, \
+the current king (`api/v1/snapshot`), and your checkpoint with vLLM, draw an \
+`n_turns` slice from public D, and run the same code that will judge you — \
+every knob is in `affine.toml` `[duel]`.
+
 Frozen numeric knobs live in `affine.toml` `[duel]` (linked under `code/`). \
 Changing score.py, priors, duel knobs, or the reveal format is a chain fork \
 (`weight_version_key` bump). Corpus refreshes are data events, not forks: \
@@ -355,7 +376,10 @@ gate/logprob diagnostics from `pairs`.
 The files below are byte-identical copies of the validator's own tree, \
 republished under `code/` every time the site is pushed — they can never be \
 newer or older than the code that scores you. Fetch them with curl or any \
-HTTP client.
+HTTP client. The set is import-closed over the scoring path: everything \
+`dueling.py` calls (chat contract, forced-logprob instrumentation, vLLM \
+client) is in the list, so a local pre-submit simulator needs nothing that \
+is not linked here.
 
 {CODE_LINKS}
 This index and the `code/` copies are regenerated together on every validator \
