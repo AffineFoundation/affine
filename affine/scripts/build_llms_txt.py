@@ -162,7 +162,8 @@ reveal; anyone can re-derive it after.
 the king iff both are gate-valid AND `mean(S_c − S_k) > 3·SE` AND \
 `mean > min_margin` (SE floored by `min_se`).
 6. Emissions go to the rolling last-`king_chain_size` distinct kings, equal \
-share. Advisory tau2 benches never affect S* or crowning.
+share — **registered hotkeys only** (see step 0 of the submit checklist). \
+Advisory tau2 benches never affect S* or crowning.
 
 There is no validator-private data. Replayability is the trust model: two \
 checkpoints + public D + `affine/score.py` → recompute the verdict.
@@ -170,6 +171,20 @@ checkpoints + public D + `affine/score.py` → recompute the verdict.
 ---
 
 ## Submit checklist (do this)
+
+**Step 0 — wallet + registration.** Everything below assumes a Bittensor \
+wallet: `btcli wallet create` makes the coldkey + hotkey pair, and \
+`btcli subnet register --netuid 120 --wallet YOUR_WALLET --hotkey YOUR_HOTKEY` \
+registers the hotkey on this subnet (dynamic burn cost — check \
+`btcli subnet burn-cost 120`, or `reg_cost_tao` in `api/v1/snapshot`). \
+Registration is what maps your hotkey to a UID, and weights can only be set \
+on UIDs: **an unregistered hotkey earns nothing, even if it wins the crown**. \
+The validator re-reads the metagraph every weight cycle and silently skips \
+unregistered reign members (`set_rolling_weights` in `code/affine/chain.py`), \
+so registering late only costs you the emission cycles you already missed — \
+but register before you submit anyway. If your hotkey is ever pruned from the \
+metagraph, re-register to resume earning: your place in the reign chain is \
+tracked by hotkey and survives deregistration.
 
 1. Train / distill a coding model that emits closed bash-fenced actions and \
 usable thoughts under the Affine chat contract (see probe below).
@@ -182,10 +197,7 @@ the first 5 AND last 5 chars (lowercase) of your coldkey **or** hotkey ss58 \
 must both appear in the repo id — the compact token or the full ss58 both \
 work. Example: `you/Affine-{token}-mymodel`.
 4. Pin a 40-hex revision (never a moving branch tip).
-5. Register your hotkey on the subnet so a winning model can receive \
-emissions: `btcli subnet register --netuid 120`. Unregistered kings are \
-skipped at weight-set time.
-6. Submit with the standalone client — one file, no package install beyond \
+5. Submit with the standalone client — one file, no package install beyond \
 `pip install "bittensor>=11,<12" huggingface_hub` (the script uses the \
 bittensor 11 SDK: `bt.timelock` + raw `Commitments.set_commitment`):
 
@@ -197,7 +209,7 @@ python submit.py --repo you/Affine-{token}-mymodel \\
 
 (or clone [github.com/AffineFoundation/affine]\
 (https://github.com/AffineFoundation/affine) and run `affine/scripts/submit.py`)
-7. Payload committed on-chain:
+6. Payload committed on-chain:
 
 ```
 affine1|<hf_repo>|<hf_revision_40hex>|<author_hotkey_ss58>
@@ -205,7 +217,7 @@ affine1|<hf_repo>|<hf_revision_40hex>|<author_hotkey_ss58>
 
 Live path uses bittensor 11 timelock encrypt (`reveal_in="60s"`) → \
 `Commitments.set_commitment` — **trust `scripts/submit.py`** over any prose.
-8. Watch the dashboard queue. Reveal opens ~1 minute after submit. Reveals at \
+7. Watch the dashboard queue. Reveal opens ~1 minute after submit. Reveals at \
 or below `min_submission_block` are ignored.
 
 **Hard policies**
