@@ -79,7 +79,14 @@ def sample_slice(rows: list[dict], n: int, seed: int) -> list[dict]:
     rng = random.Random(seed)
     for v in by.values():
         rng.shuffle(v)
+    # Seed-shuffled strata order. With more strata than n, a fixed (sorted)
+    # order means every duel draws from the same alphabetically-first strata
+    # forever — measured live: a 267-turn reachable pool out of a 9000-turn
+    # corpus, 96-99% slice recurrence, fully predictable (and memorizable)
+    # by miners. Shuffling the order by the duel seed makes each duel sample
+    # a different strata subset, restoring the whole corpus as the pool.
     keys = sorted(by)
+    rng.shuffle(keys)
     out: list[dict] = []
     idx = {k: 0 for k in keys}
     while len(out) < n:
