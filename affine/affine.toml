@@ -113,8 +113,18 @@ gamma_bank = 0.08
 k_sigma = 3.0
 l1_weight = 1.0
 l1_clip = 0.1
-r_lo = 1.0
+# Calibration band (2026-08-06): r_lo lowered 1.0 → 0.3. r < 1 is exactly
+# mean L1lift > 0 — the natural signature of a faithful teacher distill
+# (live distills measured at r 0.72–0.81 with healthy causality/bank gates;
+# teacher-self ≈ 0.35). The RT-3d empty-baseline sabotage r_lo=1.0 guarded
+# against is closed by baseline_band below instead.
+r_lo = 0.3
 r_hi = 4.0
+# Paired empty-baseline band (challenger only): mean|lpA(y_C|∅)| must be
+# ≤ baseline_band × the king's on the same slice. Honest fleet max observed
+# 1.14×; inflating this baseline is the only way to mint L1lift for free
+# once r_lo < 1. Enforced inside score.duel (gate 3b).
+baseline_band = 1.25
 # Robustness floors on top of the k·SE rule:
 #   min_se     — floor on the paired SE so a near-zero-variance challenger
 #                cannot win on an arbitrarily tiny mean (k·SE → 0 degeneracy).

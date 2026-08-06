@@ -16,8 +16,19 @@ S*(A; C, D):
        Closes paraphrase stuffing (RT-2c: frac_bank=0).
   3. Serve-time calibration-ratio gate (miner-level, RT-3b/3d):
        r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|
-       Miner INVALID if r ∉ [r_lo, r_hi] (default [1.0, 4.0]).
-       Honest fleet band ≈ [1.07, 3.56]; RT-3b must leave band to breach duel.
+       Miner INVALID if r ∉ [r_lo, r_hi] (default [0.3, 4.0]).
+       r_lo was 1.0 at launch; lowered to 0.3 on 2026-08-06 because r < 1 is
+       exactly mean L1lift > 0 — the natural signature of a faithful teacher
+       distill (live distills measured at r 0.72–0.81 with healthy causality
+       and bank; teacher-self sits at ≈ 0.35). The RT-3d empty-baseline
+       sabotage that r_lo=1.0 guarded against is instead closed by the paired
+       baseline band (gate 3b).
+  3b. Paired empty-baseline band (duel-level, challenger only, RT-3d):
+       mean|lpA(y_C|∅)| must not exceed baseline_band × the king's value on
+       the same slice (default 1.25; honest fleet max observed 1.14×).
+       Inflating the empty baseline is the only way to mint L1lift for free
+       once r_lo < 1, and it is exactly what a genuine distill does NOT do
+       (live distills: baselines 1.06–1.14× king, improved numerators).
   4. Ranking term (teacher-anchored mix, L1lift clipped):
        S = mean(Λ2 + w · clip(L1lift, ±clip)) with w=1.0, clip=0.1
          Λ2     = lpC(y_C|z_A) − lpC(y_C|∅)
@@ -52,8 +63,9 @@ DEFAULT_K_SIGMA = 3.0
 DEFAULT_FUZZY = 0.6
 DEFAULT_L1_WEIGHT = 1.0
 DEFAULT_L1_CLIP = 0.1
-DEFAULT_R_LO = 1.0
+DEFAULT_R_LO = 0.3
 DEFAULT_R_HI = 4.0
+DEFAULT_BASELINE_BAND = 1.25
 DEFAULT_MIN_MARGIN = 0.02
 DEFAULT_MIN_SE = 0.005
 
@@ -127,6 +139,9 @@ class MinerScore:
     n_pairs: int
     n_turns: int
     calib_ratio: float | None = None
+    # mean|lpA(y_C|∅)| — the empty-context denominator of r, exposed so the
+    # duel-level baseline band (gate 3b) and auditors can check it directly.
+    baseline_abs: float | None = None
 
 
 def score_miner(rows: list[dict], tau: float = DEFAULT_TAU,
@@ -160,6 +175,7 @@ def score_miner(rows: list[dict], tau: float = DEFAULT_TAU,
         n_pairs=len(pairs),
         n_turns=len({r["turn_id"] for r in rows}),
         calib_ratio=r,
+        baseline_abs=st.mean(abs(p["lpA_yc_e"]) for p in pairs),
     )
 
 
@@ -188,11 +204,19 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
          r_hi: float = DEFAULT_R_HI,
          check_calib: bool = True,
          min_se: float = DEFAULT_MIN_SE,
-         min_margin: float = DEFAULT_MIN_MARGIN) -> DuelResult:
+         min_margin: float = DEFAULT_MIN_MARGIN,
+         baseline_band: float | None = DEFAULT_BASELINE_BAND) -> DuelResult:
     cs = score_miner(challenger_rows, tau, gamma, challenger_bank_frac,
                      gamma_bank, l1_weight, l1_clip, r_lo, r_hi, check_calib)
     ks = score_miner(king_rows, tau, gamma, king_bank_frac,
                      gamma_bank, l1_weight, l1_clip, r_lo, r_hi, check_calib)
+    # Gate 3b — paired empty-baseline band (challenger only): with r_lo < 1
+    # the free-L1lift attack is inflating mean|lpA(y_C|∅)|; a challenger whose
+    # empty baseline is far above the king's on the same slice is gated.
+    if (baseline_band and cs.baseline_abs and ks.baseline_abs
+            and cs.baseline_abs > baseline_band * ks.baseline_abs):
+        cs.valid = False
+        cs.S = float("-inf")
     c_by = {r["turn_id"]: r for r in challenger_rows if r.get("valid") and "pairs" in r}
     k_by = {r["turn_id"]: r for r in king_rows if r.get("valid") and "pairs" in r}
     diffs = []

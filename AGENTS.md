@@ -39,7 +39,12 @@ knobs in `affine/affine.toml` `[duel]` + `[dataset]`.
 2. **Prior-bank positivity** — `frac_bank` = share of pairs with Λ2_bank > 0 over published
    priors. INVALID if frac_bank < γ_bank=0.08. Closes paraphrase stuffing (RT-2c).
 3. **Calibration ratio** — `r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|`. INVALID if
-   r ∉ [1.0, 4.0]. Honest live band ≈ [1.07, 3.56] / measured live ≈ [1.14, 1.42].
+ r ∉ [0.3, 4.0]. r_lo was 1.0 at launch; lowered 2026-08-06 — r < 1 is exactly mean
+ L1lift > 0, the natural signature of a faithful distill (live distills at r 0.72–0.81;
+ teacher-self ≈ 0.35). r_lo=1.0 was invalidating every genuine winner.
+3b. **Empty-baseline band** (challenger only, paired, added 2026-08-06) — challenger
+ mean|lpA(y_C|∅)| ≤ 1.25× king's on the same slice (honest max observed 1.14×). Closes
+ RT-3d free-L1lift via baseline sabotage, which r_lo=1.0 used to cover.
 
 ### Ranking term
 ```
@@ -85,7 +90,7 @@ Second teacher (Qwen3-32B vs GLM-Air), n=6 kings: Spearman(S_T1, S_T2) = **+0.94
 | RT-2c / A2c | paraphrase stuffing | CLOSED | bank gate |
 | RT-soft-pad / A10 | soft-idents pad | CLOSED | abandoned; use mix w=1 |
 | RT-4 / A4 | king copy | CLOSED | 3σ null |
-| RT-3 / A3 | L1lift / overconfidence | CLOSED live | clip0.1 + r∈[1,4]; sharpening residual ≤ +0.012 < 3·SE floor |
+| RT-3 / A3 | L1lift / overconfidence | CLOSED live | clip0.1 + r∈[0.3,4] + baseline band 1.25×; sharpening residual ≤ +0.012 < 3·SE floor |
 | A11 | short-style I/II FP | **ACCEPTED (policy 2026-08-05)** | δ→0.02 noise floor; same-tier S winners may crown |
 | RT-6 / A6 | dataset sniping | **MITIGATED (ops)** | not a score gate — see §5 |
 | D_tau2 | programmability falsifier | **NOT demonstrated** | see §6 |
@@ -104,7 +109,7 @@ Full writeups: `research/docs/REDTEAM.md`.
 - teacher: `zai-org/GLM-4.5-Air-FP8`
 - seed king: `dendriteholdings/albedo-qwen3.6-35b-king-genesis`
 - turns: sharded corpus with immutable manifest; sha-pinned (see toml `[dataset]`)
-- duel: n_turns=80, clip=0.1, r∈[1,4], δ=0.02, k_sigma=3
+- duel: n_turns=80, clip=0.1, r∈[0.3,4], baseline_band=1.25, δ=0.02, k_sigma=3
 
 ### Evalsrv roles
 - `AFFINE_ROLE=duel` — teacher + king + challenger; S\* only
@@ -257,7 +262,10 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 ## 12. One-paragraph resume
 
 > Affine SN120: teacher-anchored thought-injection duels (S\* v2 = clip0.1 mix +
-> causality/leakage + bank + r-gate + 3σ∧δ=0.02 noise floor). Coding isomorphism holds at +0.758@30
+> causality/leakage + bank + r∈[0.3,4] + 1.25× baseline band + 3σ∧δ=0.02 noise floor).
+> Reigns 1–2 (pandora-box ckpt300-m4, kevin954 sft) were crowned retroactively on
+> 2026-08-06 from their published genesis duels when r_lo 1.0→0.3 shipped (operator
+> decision, no re-eval; margins +0.061/z=5.7 and +0.070/z=6.3 vs genesis). Coding isomorphism holds at +0.758@30
 > ungated; second teacher +0.943; RT suite closed/mitigated except D_tau2 programmability
 > (three negative probes). Corpus sha-pinned on HF; uv-workspace monorepo
 > (`affine` + `research` + `ops`). Next: production n=80 burn-in and go-live ops, or paper

@@ -32,10 +32,6 @@ from pathlib import Path
 import httpx
 
 from affine.score import (
-    DEFAULT_GAMMA,
-    DEFAULT_GAMMA_BANK,
-    DEFAULT_L1_WEIGHT,
-    DEFAULT_TAU,
     duel as score_duel,
     lambda2,
     rank_term,
@@ -232,12 +228,17 @@ def _mean_bank(rows: list[dict]) -> float | None:
     return sum(vals) / len(vals) if vals else None
 
 
-def _miner_summary(rows: list[dict]) -> dict:
-    s = score_miner(rows, bank_frac=_mean_bank(rows))
+def _miner_summary(rows: list[dict], duel_cfg: dict) -> dict:
+    s = score_miner(rows, bank_frac=_mean_bank(rows),
+                    l1_weight=float(duel_cfg["l1_weight"]),
+                    l1_clip=float(duel_cfg["l1_clip"]),
+                    r_lo=float(duel_cfg["r_lo"]),
+                    r_hi=float(duel_cfg["r_hi"]))
     pairs = [p for r in rows if r.get("valid") and "pairs" in r for p in r["pairs"]]
     return {
         "valid": s.valid, "S": s.S if math.isfinite(s.S) else None,
         "gate_pass_rate": s.gate_pass_rate, "bank_frac": s.bank_frac,
+        "calib_ratio": s.calib_ratio, "baseline_abs": s.baseline_abs,
         "n_turns": s.n_turns, "n_pairs": s.n_pairs,
         "mean_lambda2": st.mean(lambda2(p) for p in pairs) if pairs else None,
         "mean_mix": st.mean(rank_term(p) for p in pairs) if pairs else None,
@@ -327,8 +328,23 @@ async def run_duel(engine_cfg: dict, turns_path: Path, ref_cache_path: Path,
         king_bank_frac=_mean_bank(king_rows),
         gamma_bank=float(duel_cfg["gamma_bank"]),
         l1_weight=float(duel_cfg["l1_weight"]),
+        l1_clip=float(duel_cfg["l1_clip"]),
+        r_lo=float(duel_cfg["r_lo"]),
+        r_hi=float(duel_cfg["r_hi"]),
         min_se=float(duel_cfg["min_se"]),
-        min_margin=float(duel_cfg["min_margin"]))
+        min_margin=float(duel_cfg["min_margin"]),
+        baseline_band=float(duel_cfg["baseline_band"]))
+
+    king_sum = _miner_summary(king_rows, duel_cfg)
+    chall_sum = _miner_summary(chall_rows, duel_cfg)
+    # Mirror gate 3b (paired baseline band, enforced inside score_duel) into
+    # the published challenger summary so miners can see which gate fired.
+    band = float(duel_cfg["baseline_band"])
+    if (chall_sum["baseline_abs"] and king_sum["baseline_abs"]
+            and chall_sum["baseline_abs"] > band * king_sum["baseline_abs"]):
+        chall_sum["valid"] = False
+        chall_sum["S"] = None
+        chall_sum["baseline_band_exceeded"] = True
 
     verdict = {
         "challenger_wins": result.challenger_wins,
@@ -339,13 +355,17 @@ async def run_duel(engine_cfg: dict, turns_path: Path, ref_cache_path: Path,
         "n_paired_turns": result.n_paired_turns,
         "ranking_formula": f"Λ2 + {duel_cfg['l1_weight']}·L1lift",
         "gates": {
-            "tau": DEFAULT_TAU, "gamma": DEFAULT_GAMMA,
-            "gamma_bank": DEFAULT_GAMMA_BANK, "l1_weight": DEFAULT_L1_WEIGHT,
+            "tau": float(duel_cfg["tau"]), "gamma": float(duel_cfg["gamma"]),
+            "gamma_bank": float(duel_cfg["gamma_bank"]),
+            "l1_weight": float(duel_cfg["l1_weight"]),
+            "l1_clip": float(duel_cfg["l1_clip"]),
+            "r_lo": float(duel_cfg["r_lo"]), "r_hi": float(duel_cfg["r_hi"]),
+            "baseline_band": band,
             "min_se": float(duel_cfg["min_se"]),
             "min_margin": float(duel_cfg["min_margin"]),
         },
-        "king": _miner_summary(king_rows),
-        "challenger": _miner_summary(chall_rows),
+        "king": king_sum,
+        "challenger": chall_sum,
         "slice": slice_info,
     }
     artifact = {

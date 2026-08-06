@@ -313,7 +313,11 @@ Per pair / miner gates (INVALID ⇒ cannot win, S = −∞ for ranking):
 2. **Prior-bank positivity** — `frac_bank` = share of pairs with Λ2_bank > 0 \
 over the published priors in `affine/priors.py`. INVALID if frac_bank < γ_bank=0.08.
 3. **Calibration ratio** — `r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|`. \
-INVALID if r ∉ [1.0, 4.0].
+INVALID if r ∉ [0.3, 4.0]. (r_lo was 1.0 until 2026-08-06; it gated faithful \
+teacher distills, whose own thoughts legitimately raise their own p(y_C).)
+3b. **Empty-baseline band** (challenger only, paired) — your \
+`mean|lpA(y_C|∅)|` must be ≤ 1.25× the king's on the same slice. Closes \
+free-L1lift via a sabotaged empty baseline; honest models sit ≤ 1.14×.
 
 Ranking term:
 

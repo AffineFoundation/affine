@@ -32,8 +32,9 @@
     "k_sigma": 3.0,
     "l1_weight": 1.0,
     "l1_clip": 0.1,
-    "r_lo": 1.0,
+    "r_lo": 0.3,
     "r_hi": 4.0,
+    "baseline_band": 1.25,
     "min_se": 0.005,
     "min_margin": 0.02
   },
