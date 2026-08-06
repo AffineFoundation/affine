@@ -92,7 +92,7 @@ Second teacher (Qwen3-32B vs GLM-Air), n=6 kings: Spearman(S_T1, S_T2) = **+0.94
 | RT-4 / A4 | king copy | CLOSED | 3σ null |
 | RT-3 / A3 | L1lift / overconfidence | CLOSED live | clip0.1 + r∈[0.3,4] + baseline band 1.25×; sharpening residual ≤ +0.012 < 3·SE floor |
 | A11 | short-style I/II FP | **ACCEPTED (policy 2026-08-05)** | δ→0.02 noise floor; same-tier S winners may crown |
-| RT-6 / A6 | dataset sniping | **MITIGATED (ops)** | not a score gate — see §5 |
+| RT-6 / A6 | dataset sniping | **CLOSED (code, 2026-08-06)** | seed-shuffled strata + per-duel fresh y_C — see §5 |
 | D_tau2 | programmability falsifier | **NOT demonstrated** | see §6 |
 
 Full writeups: `research/docs/REDTEAM.md`.
@@ -137,9 +137,23 @@ Dated leave-repo-out on 20 commit-pinned repos (early/late 10+10), from stored p
 - ρ(S, swe) early +0.846 / late **+0.845** / early↔late **+0.947**
 - Not carried by a few early trajectories.
 
-**Mitigations (ops, not a new score gate):**
-1. Fresh teacher `y_C` sampled at duel time (not a frozen published target)
-2. Reveal-block-hash slice seeding (miner can’t precompute D_t)
+**2026-08-06 incident: both intended mitigations were broken in code, found via a
+miner report ("SFT to memorize the result").**
+- `sample_slice` round-robined strata in *sorted* order and stopped at n=80; with
+  417 strata the reachable pool was the ~267 turns of the alphabetically-first 80
+  strata (96–99% slice recurrence, fully predictable). Fixed: strata order is now
+  shuffled by the duel seed → pool = full corpus, cross-duel overlap ~5/80.
+- `RefCache` persisted `y_C` across duels while artifacts publish them — recurring
+  turns were frozen, known targets. Fixed: refs are per-duel now; the cache only
+  dedupes teacher sampling between the two sides within one duel.
+- Interaction with r_lo: at r_lo=1.0 mean L1lift ≤ 0 was forced, which accidentally
+  neutralized memorization-minted L1; r_lo=0.3 made it live. With both fixes the
+  channel can't be targeted; pure baseline inflation at the band edge mints at most
+  +0.015 < δ=0.02 (simulated at king parity), so r_lo=0.3 + band 1.25 stand.
+
+**Mitigations (now enforced in code, not a new score gate):**
+1. Fresh teacher `y_C` sampled per duel (`RefCache` scoped to one duel)
+2. Reveal-block-hash slice seeding incl. strata order (miner can’t precompute D_t)
 3. Corpus refresh with `corpus_epoch` + `weight_version_key` bump
 
 Private 50/50 holdout pool: **REJECTED** (breaks external replayability).
