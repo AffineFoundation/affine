@@ -153,26 +153,23 @@ async def probe_injectable(model: VllmModel, turns: list[dict],
 # -- duel -------------------------------------------------------------------------
 
 class RefCache:
-    """Teacher rollouts per turn, persisted so all duels sharing a turn score
-    against identical references."""
+    """Teacher rollouts per turn, scoped to a single duel.
 
-    def __init__(self, path: Path):
-        self.path = path
+    Deliberately NOT persisted across duels: a persistent cache froze y_C per
+    turn while artifacts publish it, so recurring turns became known targets
+    a miner could SFT-memorize for free L1lift (RT-6). Fresh references per
+    duel mean memorizing published refs only pays through genuine
+    generalization to the teacher's distribution — i.e. distillation, which
+    is exactly what S rewards. Within a duel the cache still dedupes teacher
+    sampling so both sides score against identical references (that pairing
+    is what the verdict needs)."""
+
+    def __init__(self):
         self.cache: dict[str, list[dict]] = {}
-        if path.exists():
-            with open(path) as f:
-                for line in f:
-                    try:
-                        r = json.loads(line)
-                        self.cache[r["turn_id"]] = r["ref"]
-                    except json.JSONDecodeError:
-                        continue
-        self._f = open(path, "a")
         # Per-turn locks: different turns sample teacher references
         # concurrently; only same-turn callers serialize. A single global
         # lock here would collapse the reference phase to sequential.
         self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self._write_lock = asyncio.Lock()
 
     async def get_or_sample(self, tid: str, teacher: VllmModel,
                             prefix: list[dict], n: int, temperature: float,
@@ -185,16 +182,7 @@ class RefCache:
             ref = await teacher_reference(teacher, prefix, n, temperature,
                                           max_thought, max_action)
             self.cache[tid] = ref
-            async with self._write_lock:
-                self._f.write(json.dumps({"turn_id": tid, "ref": ref}) + "\n")
-                self._f.flush()
             return ref
-
-    def close(self) -> None:
-        try:
-            self._f.close()
-        except Exception:
-            log.warning("ref cache close failed", exc_info=True)
 
 
 async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel,
@@ -252,7 +240,7 @@ def _miner_summary(rows: list[dict], duel_cfg: dict) -> dict:
     }
 
 
-async def run_duel(engine_cfg: dict, turns_path: Path, ref_cache_path: Path,
+async def run_duel(engine_cfg: dict, turns_path: Path,
                    king: Served, challenger: Served,
                    teacher: Served | list[Served],
                    block_hash: str, hotkey: str, corpus_info: dict,
@@ -305,27 +293,26 @@ async def run_duel(engine_cfg: dict, turns_path: Path, ref_cache_path: Path,
             return verdict, {"slice": slice_info, "turn_ids": turn_ids,
                              "rejection_reason": verdict["rejection_reason"]}
 
-        refs = RefCache(ref_cache_path)
-        try:
-            # Both sides score concurrently: they live on separate vLLM
-            # engines on separate GPUs, so interleaving them is pure win.
-            # The exact same calls happen — RefCache per-turn locks dedupe
-            # teacher reference sampling across the two sides — so scoring
-            # semantics are untouched. Per-side turn semaphores bound each
-            # side's in-flight turns independently.
-            king_rows, chall_rows = await asyncio.gather(
-                score_side(teacher_m, king_m, turns, refs, duel_cfg,
-                           asyncio.Semaphore(turn_conc), on_progress),
-                score_side(teacher_m, chall_m, turns, refs, duel_cfg,
-                           asyncio.Semaphore(turn_conc), on_progress),
-            )
-            # Teacher rollouts actually used this duel (post-hoc: the slice
-            # was unpredictable before reveal, so publishing them is audit
-            # data, not a pre-computable target).
-            refs_used = {tid: refs.cache[tid] for tid in turn_ids
-                         if tid in refs.cache}
-        finally:
-            refs.close()
+        # Fresh teacher references every duel (see RefCache docstring): the
+        # cache lives and dies inside this call.
+        refs = RefCache()
+        # Both sides score concurrently: they live on separate vLLM
+        # engines on separate GPUs, so interleaving them is pure win.
+        # The exact same calls happen — RefCache per-turn locks dedupe
+        # teacher reference sampling across the two sides — so scoring
+        # semantics are untouched. Per-side turn semaphores bound each
+        # side's in-flight turns independently.
+        king_rows, chall_rows = await asyncio.gather(
+            score_side(teacher_m, king_m, turns, refs, duel_cfg,
+                       asyncio.Semaphore(turn_conc), on_progress),
+            score_side(teacher_m, chall_m, turns, refs, duel_cfg,
+                       asyncio.Semaphore(turn_conc), on_progress),
+        )
+        # Teacher rollouts actually used this duel (post-hoc: the slice
+        # was unpredictable before reveal and the refs are resampled per
+        # duel, so publishing them is audit data, not a reusable target).
+        refs_used = {tid: refs.cache[tid] for tid in turn_ids
+                     if tid in refs.cache}
 
     result = score_duel(
         chall_rows, king_rows,

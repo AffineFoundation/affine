@@ -54,7 +54,6 @@ log = logging.getLogger("evalsrv")
 
 DATA_DIR = Path(os.environ.get("AFFINE_DATA_DIR", "/root/affine_data"))
 TURNS_PATH = DATA_DIR / "turns.jsonl"
-REF_CACHE_PATH = DATA_DIR / "ref_cache.jsonl"
 # Full duel records (rollouts + logprobs), gzipped, fetched by the root
 # validator after the verdict and published for miners. Bounded on disk.
 ARTIFACTS_DIR = DATA_DIR / "artifacts"
@@ -288,7 +287,7 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
                                  "done": done, "total": total}})
 
         verdict, artifact = asyncio.run(dueling.run_duel(
-            _cfg.raw, TURNS_PATH, REF_CACHE_PATH,
+            _cfg.raw, TURNS_PATH,
             king=Served("king", req.king_repo, req.king_revision,
                         _engine.king_slot.port),
             challenger=Served("challenger", req.challenger_repo,
