@@ -380,42 +380,43 @@ button {
   height: auto;
 }
 
-.bench-grid {
+.metric-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+  width: 100%;
 }
 
-.bench-card {
+.metric-pane {
+  min-width: 0;
   border: 1px solid var(--color-border);
   background: rgba(255, 255, 255, 0.015);
-  padding: 10px 10px 6px;
-  min-width: 0;
+  padding: 10px 8px 4px;
 }
 
-.bench-card-head {
+.metric-head {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0 4px 6px;
 }
 
-.bench-card-title {
+.metric-title {
   font-family: var(--font-mono);
   font-size: 11px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--color-fg);
+  color: var(--color-gold);
 }
 
-.bench-card-meta {
+.metric-caption {
   font-family: var(--font-mono);
   font-size: 10px;
+  line-height: 1.4;
   color: var(--color-fg-3);
 }
 
-.bench-card svg {
+.metric-pane svg {
   display: block;
   width: 100%;
   height: auto;

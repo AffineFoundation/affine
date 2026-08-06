@@ -45,7 +45,7 @@ from .eval_client import (EvalBusyError, EvalClient, InfraFaultError,
                           TransientEvalError)
 from .hippius import Hippius
 from .provisioner import BenchMachineManager, EvalMachineManager
-from .state import QueueEntry, State
+from .state import QueueEntry, State, now_iso
 
 log = logging.getLogger("affine.validator")
 
@@ -123,6 +123,10 @@ class Validator:
         self.subtensor = bt.subtensor(network=cfg.network)
         self.wallet = bt.Wallet(name=cfg.wallet_name, hotkey=cfg.wallet_hotkey)
         self._last_weights = 0.0
+        # (repo, revision) -> (status, monotonic ts) from the payout
+        # accessibility sweep, so force-triggered weight sets (crowns/reverts)
+        # don't re-probe HF within one weight interval.
+        self._access_cache: dict[tuple[str, str], tuple[str, float]] = {}
         self._consecutive_tick_errors = 0
         self._duel_task: asyncio.Task | None = None
         # One slot: at most one prefetch fires per duel. Held so the event
@@ -194,10 +198,46 @@ class Validator:
                             block=chain.safe_block(self.subtensor),
                             challenge_id="seed")
 
+    def _sweep_payout_accessibility(self) -> None:
+        """Contract: no incentive while your model is not downloadable at the
+        exact crowned commit. The pre-dispatch probe only covers the *current*
+        king; prior kings in the payout window were never re-checked, so one
+        could gate its HF repo after crowning and keep earning (observed:
+        reign #1 gated post-crown, 403 on the bench pod, still paid 20%).
+        Probe every window candidate here, right before weights are set:
+        provably gone/gated ⇒ forfeit the slot (deeper kings backfill); the
+        slot returns if the repo comes back. "unknown" probes keep the
+        member's previous status — an HF hiccup must never flip payouts."""
+        depth = self.cfg.king_chain_size
+        # 2x headroom so backfill candidates behind excluded members are
+        # probed too; beyond that the lineage tail is dashboard-only.
+        candidates = self.state.king_lineage_members(depth)[:depth * 2]
+        ttl = self.cfg.validator.weight_interval_s
+        gone = set(self.state.inaccessible_hotkeys)
+        for m in candidates:
+            if not m["hotkey"] or not m["repo"]:
+                continue  # genesis seed rows can't earn via the metagraph
+            key = (m["repo"], m["revision"])
+            status, ts = self._access_cache.get(key, ("", 0.0))
+            if not status or time.monotonic() - ts >= ttl:
+                ref = model_store.ModelRef(m["repo"], m["revision"])
+                status, _ = model_store.fetch_repo_info_or_status(
+                    ref, self.cfg.secrets.hf_token)
+                self._access_cache[key] = (status, time.monotonic())
+            if status == "gone":
+                gone.add(m["hotkey"])
+            elif status == "ok":
+                gone.discard(m["hotkey"])
+        if gone != self.state.inaccessible_hotkeys:
+            log.warning("payout accessibility changed: inaccessible %s -> %s",
+                        sorted(self.state.inaccessible_hotkeys), sorted(gone))
+        self.state.inaccessible_hotkeys = gone
+
     async def _maybe_set_weights(self, force: bool = False) -> None:
         if not force and (time.monotonic() - self._last_weights
                           < self.cfg.validator.weight_interval_s):
             return
+        await asyncio.to_thread(self._sweep_payout_accessibility)
         hotkeys = self.state.king_chain_hotkeys(self.cfg.king_chain_size)
         ok = chain.set_rolling_weights(
             self.subtensor, self.wallet, self.cfg.netuid,
@@ -206,13 +246,19 @@ class Validator:
             version_key=self.cfg.weight_version_key)
         if ok:
             self._last_weights = time.monotonic()
+            self.state.record_weights_set()
 
     # -- intake -------------------------------------------------------------------
     def _scan_and_enqueue(self) -> None:
-        reveals = chain.scan_reveals(
+        reveals, bad = chain.scan_reveals(
             self.subtensor, self.cfg.netuid,
             self.cfg.submission.reveal_prefix,
             self.cfg.min_submission_block, self.state.seen_hotkeys)
+        for b in bad:
+            self.state.record_intake(
+                hotkey=b["hotkey"], block=b["block"],
+                decision="rejected_bad_payload",
+                detail=b.get("detail") or "unparseable reveal payload")
         for r in reveals:
             entry = self.state.enqueue(r.hotkey, r.repo, r.revision, r.block,
                                        self.cfg.min_submission_block)
@@ -236,7 +282,8 @@ class Validator:
             else:
                 self.state.record_failure(
                     entry, "internal_error",
-                    f"{type(e).__name__}: {e} (after {entry.retry_count} retries)")
+                    f"{type(e).__name__}: {e} (after {entry.retry_count} retries)",
+                    uid=self.metagraph.uid_of.get(entry.hotkey))
         except BaseException as e:
             # Shutdown path (KeyboardInterrupt / CancelledError): without this
             # the popped entry dies with the task and the submission vanishes
@@ -297,7 +344,15 @@ class Validator:
         else:
             self.state.record_failure(
                 entry, "eval_infra_exhausted",
-                f"{e} (after {entry.retry_count} transient retries)")
+                f"{e} (after {entry.retry_count} transient retries)",
+                uid=self.metagraph.uid_of.get(entry.hotkey))
+
+    def _history_meta(self, entry: QueueEntry,
+                      t0: float | None = None) -> dict:
+        meta: dict = {"uid": self.metagraph.uid_of.get(entry.hotkey)}
+        if t0 is not None:
+            meta["duration_s"] = max(0.0, time.monotonic() - t0)
+        return meta
 
     def _hygiene_reason(self, info: model_store.RepoInfo) -> str | None:
         """Contract hygiene gates on a repo's metadata; one definition so the
@@ -341,6 +396,7 @@ class Validator:
         sub = self.cfg.submission
         king = self.state.king
         assert king is not None
+        t0 = time.monotonic()
         self.state.set_phase("process_challenge", challenge_id=cid, repo=entry.repo)
         log.info("processing %s: %s@%s", cid, entry.repo, entry.revision[:12])
 
@@ -352,7 +408,8 @@ class Validator:
             entry.hotkey, sub.coldkey_prefix_len, sub.coldkey_suffix_len)
         reason = model_store.validate_repo_name(entry.repo, sub.repo_pattern, pairs)
         if reason:
-            self.state.record_failure(entry, "repo_name_rejected", reason)
+            self.state.record_failure(entry, "repo_name_rejected", reason,
+                                      **self._history_meta(entry, t0))
             return
 
         # Pin + hygiene (metadata only, no weight download).
@@ -361,11 +418,13 @@ class Validator:
             info = model_store.fetch_repo_info(ref, self.cfg.secrets.hf_token)
         except Exception as e:
             self.state.record_failure(entry, "revision_not_found",
-                                      f"cannot read {ref.immutable_ref}: {e}")
+                                      f"cannot read {ref.immutable_ref}: {e}",
+                                      **self._history_meta(entry, t0))
             return
         reason = self._hygiene_reason(info)
         if reason:
-            self.state.record_failure(entry, "repo_hygiene_rejected", reason)
+            self.state.record_failure(entry, "repo_hygiene_rejected", reason,
+                                      **self._history_meta(entry, t0))
             return
 
         # Proactive king liveness (the fix for a king that takes its model off
@@ -385,14 +444,15 @@ class Validator:
         copy = model_store.check_model_copy(ref, info, king_ref, king_info)
         if copy is not None:
             if copy.action == "reject":
-                self.state.record_failure(entry, "model_copy", copy.reason)
+                self.state.record_failure(entry, "model_copy", copy.reason,
+                                          **self._history_meta(entry, t0))
                 return
             if copy.action == "crown_earlier":
                 log.warning("%s: identical weights, earlier commit — crowning original: %s",
                             cid, copy.reason)
                 self.state.record_verdict(entry, {
                     "challenger_wins": True, "verdict": "crown_earlier",
-                    "reason": copy.reason})
+                    "reason": copy.reason}, **self._history_meta(entry, t0))
                 # No duel S* for copy-arbitration crowns.
                 self.state.set_king(entry.hotkey, entry.repo, entry.revision,
                                     entry.block, cid, score=None)
@@ -401,7 +461,8 @@ class Validator:
                                        accepted=True, label=f"reign-{self.state.king.reign_number}")
                 return
             log.error("unknown copy action %r; failing safe (reject)", copy.action)
-            self.state.record_failure(entry, "model_copy", copy.reason)
+            self.state.record_failure(entry, "model_copy", copy.reason,
+                                      **self._history_meta(entry, t0))
             return
 
         # Duel. Seeded by the reveal-block hash (external auditability).
@@ -411,6 +472,7 @@ class Validator:
         self.state.current_eval = {
             "challenge_id": cid, "repo": entry.repo, "hotkey": entry.hotkey,
             "stage": "dispatching", "progress": {},
+            "started_at": now_iso(),
         }
         self.state.set_phase("duel", challenge_id=cid)
         self.dashboard.flush(force=True)
@@ -445,7 +507,7 @@ class Validator:
         self.state.current_eval = None
 
         verdict["block_hash"] = block_hash
-        self.state.record_verdict(entry, verdict)
+        self.state.record_verdict(entry, verdict, **self._history_meta(entry, t0))
         accepted = bool(verdict.get("challenger_wins"))
         log.info("verdict %s: challenger_wins=%s z=%s reason=%s", cid, accepted,
                  verdict.get("z"), verdict.get("rejection_reason"))
@@ -498,6 +560,7 @@ class Validator:
         if not self._duel_running():
             self.state.set_phase("tick")
         self.metagraph.refresh(self.subtensor, self.cfg.netuid)
+        self.dashboard.uid_of = dict(self.metagraph.uid_of)
         self._seed_king_if_needed()
 
         machine_healthy = self.machine.ensure()

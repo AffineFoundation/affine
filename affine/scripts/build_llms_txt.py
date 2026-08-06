@@ -141,7 +141,8 @@ rollouts, teacher refs, every forced logprob
 
 Root: {DASH}/
 
-- [api/v1/snapshot]({DASH}/api/v1/snapshot) — king, reign, queue, live eval
+- [api/v1/snapshot]({DASH}/api/v1/snapshot) — king, reign, intake, duel \
+queue, live eval
 - [api/v1/history]({DASH}/api/v1/history) — filterable verdicts (`?q=&event=`)
 - [api/v1/benchmarks]({DASH}/api/v1/benchmarks) — advisory benches
 - [api/v1/contract]({DASH}/api/v1/contract) — machine-readable knobs
@@ -153,7 +154,7 @@ Root: {DASH}/
 **Hippius archive** (cold public mirror — miners / replay; same objects)
 
 - [data/dashboard.json]({BASE}/data/dashboard.json) — king, reign chain, \
-queue, live eval progress
+intake, duel queue, live eval progress
 - [data/history.json]({BASE}/data/history.json) — last 100 verdicts/failures
 - [data/benchmarks.json]({BASE}/data/benchmarks.json) — advisory tau2 scores \
 (never part of S*)
@@ -258,12 +259,28 @@ affine1|<hf_repo>|<hf_revision_40hex>|<author_hotkey_ss58>
 
 Live path uses bittensor 11 timelock encrypt (`reveal_in="60s"`) → \
 `Commitments.set_commitment` — **trust `scripts/submit.py`** over any prose.
-7. Watch the dashboard queue. Reveal opens ~1 minute after submit. Reveals at \
-or below `min_submission_block` are ignored.
+
+**Commit ≠ duel-queue row.** `LastCommitment` alone is encrypted and not a \
+dashboard row. After ~60s the payload must land in `RevealedCommitments`; \
+only then does the validator run **intake**. Intake may enqueue a duel slot, \
+skip, or reject — see dashboard **intake** (reason) → **duel queue** (eval \
+slots only) → **fails** / history. Lifetime `stats.queued` / \
+`enqueued_total` is not "your commit is waiting."
+
+7. Wait ~1 minute for reveal, then check the dashboard in order: **intake → \
+duel queue → fails**. Do not expect a queue row from commit alone. Common \
+intake outcomes:
+   - `enqueued` — you have a duel-queue challenge id
+   - `skipped_min_block` — reveal block ≤ `min_submission_block` (ignored)
+   - `skipped_slot_burned` — this hotkey already burned its one eval slot
+   - `skipped_king` / `skipped_repo_queued` — already crowned or same repo \
+waiting
+   - `rejected_*` — bad payload / revision already submitted / etc. (see fails)
 
 **Hard policies**
 
-- One submission per hotkey, ever. Slot burned at enqueue.
+- One submission per hotkey, ever. Slot burned at enqueue (prior enqueue ⇒ \
+no new duel-queue row).
 - A content revision that was ever submitted can never be resubmitted, by anyone.
 - Weight-identical copy of the current king → reject, unless your HF commit \
 timestamp is earlier than the king's → `crown_earlier` without a duel.
@@ -369,7 +386,7 @@ data. All paths are relative to this site's root (Hippius S3 bucket \
 
 **Live dashboard API** (hot path — `{DASH}`):
 
-- `GET /api/v1/snapshot` — king, reign chain, queue, live eval progress.
+- `GET /api/v1/snapshot` — king, reign chain, intake, duel queue, live eval.
 - `GET /api/v1/history?limit=&cursor=&q=&event=` — filterable verdicts.
 - `GET /api/v1/benchmarks` — advisory suite scores (never part of S*).
 - `GET /api/v1/contract` — machine-readable contract knobs.

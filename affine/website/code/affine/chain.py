@@ -111,37 +111,51 @@ def _decode_commitment_pair(pair) -> tuple[str, list[tuple[int, str]]]:
 
 def scan_reveals(subtensor, netuid: int, prefix: str,
                  min_submission_block: int,
-                 seen_hotkeys: set[str]) -> list[Reveal]:
-    """Pull revealed commitments; return the latest valid reveal per unseen hotkey,
-    sorted by block (oldest first)."""
+                 seen_hotkeys: set[str]) -> tuple[list[Reveal], list[dict]]:
+    """Pull RevealedCommitments; return (parseable latest reveals, bad payloads).
+
+    Returns the latest reveal per hotkey (oldest-first), including those the
+    validator will later skip (seen slot / below min_submission_block) so
+    intake can surface the decision. `min_submission_block` and `seen_hotkeys`
+    are retained for call-site compat but no longer filter the reveal list —
+    enqueue / intake owns those gates.
+
+    `bad` entries are `{hotkey, block, detail}` for undecodable or unparseable
+    payloads (so the dashboard can show rejected_bad_payload).
+    """
+    del min_submission_block, seen_hotkeys  # gates moved to State.enqueue
     try:
         query = subtensor.query_map(
             bt.storage.Commitments.RevealedCommitments, [netuid])
     except Exception:
         log.exception("query_map RevealedCommitments failed")
-        return []
+        return [], []
 
     all_reveals: dict[str, list[tuple[int, str]]] = {}
-    bad = 0
+    bad_rows = 0
     for pair in query:
         try:
             hotkey, entries = _decode_commitment_pair(pair)
             all_reveals[hotkey] = entries
         except Exception:
-            bad += 1
-    if bad:
-        log.warning("scan_reveals: skipped %d undecodable on-chain commitments", bad)
+            bad_rows += 1
+    if bad_rows:
+        log.warning("scan_reveals: skipped %d undecodable on-chain commitments",
+                    bad_rows)
 
     out: list[Reveal] = []
+    bad: list[dict] = []
     for hotkey, entries in all_reveals.items():
-        if not entries or hotkey in seen_hotkeys:
+        if not entries:
             continue
         block, payload = max(entries, key=lambda e: e[0])
-        if block <= min_submission_block:
-            continue
         try:
             repo, revision, author = parse_reveal(prefix, payload)
-        except ValueError:
+        except ValueError as e:
+            bad.append({
+                "hotkey": hotkey, "block": int(block),
+                "detail": str(e)[:300],
+            })
             continue
         if author != hotkey:
             # Chain key is the signer and therefore the source of truth.
@@ -149,7 +163,7 @@ def scan_reveals(subtensor, netuid: int, prefix: str,
                         author[:16], hotkey[:16])
         out.append(Reveal(hotkey=hotkey, block=block, repo=repo, revision=revision))
     out.sort(key=lambda r: r.block)
-    return out
+    return out, bad
 
 
 def safe_block(subtensor) -> int:

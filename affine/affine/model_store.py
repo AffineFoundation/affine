@@ -24,7 +24,7 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, get_hf_file_metadata, hf_hub_url
 
 # HF raises these for a repo/revision that no longer exists or is gated. The
 # import path moved across huggingface_hub versions; support both.
@@ -139,14 +139,25 @@ def fetch_repo_info_or_status(ref: ModelRef,
     """Probe a repo's availability while fetching its metadata.
 
     Returns one of:
-      ("ok", RepoInfo)  — repo+revision exist and were read.
+      ("ok", RepoInfo)  — repo+revision exist AND files are downloadable.
       ("gone", None)    — repo/revision missing or gated (a *permanent* signal;
                           the caller may act on it, e.g. dethrone a dead king).
       ("unknown", None) — inconclusive (network/HF hiccup); the caller must NOT
                           treat this as gone (never dethrone on uncertainty).
+
+    "ok" requires an uncached file HEAD, not just readable metadata: a repo
+    gated *after* we first saw it keeps a public tree and a locally cached
+    config.json, so fetch_repo_info alone reports it healthy while every
+    weight download 403s (observed: reign #1 gated post-crown, kept earning).
     """
     try:
-        return "ok", fetch_repo_info(ref, hf_token)
+        info = fetch_repo_info(ref, hf_token)
+        # HEAD the config blob at the pinned revision. Never served from the
+        # local HF cache, so this is the actual download-permission check.
+        get_hf_file_metadata(
+            hf_hub_url(ref.repo, "config.json", revision=ref.revision),
+            token=hf_token or None)
+        return "ok", info
     except (RepositoryNotFoundError, RevisionNotFoundError, GatedRepoError):
         return "gone", None
     except Exception:

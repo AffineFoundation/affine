@@ -28,6 +28,9 @@ from pathlib import Path
 
 log = logging.getLogger("affine.state")
 
+# Recent reveal→intake decisions for the dashboard (commit ≠ queue row).
+INTAKE_MAX = 50
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -80,12 +83,27 @@ class State:
         self._id_counter = 0
         self.eval_machine: dict = {}   # duel provisioner {provider, id, host, url, ...}
         self.bench_machine: dict = {}  # dedicated SWE bench provisioner record
+        # Newest-last ring of reveal intake decisions (dashboard "intake" panel).
+        self.intake: list[dict] = []
+        # Permanent dedupe of (hotkey:block) so trimmed ring rows are not
+        # re-emitted every scan tick.
+        self.intake_decided: set[str] = set()
         # The popped-but-unresolved queue entry, persisted so a HARD exit
         # (watchdog os._exit, SIGKILL) can never vanish a submission: normal
         # shutdowns requeue via the BaseException handler, but nothing that
         # bypasses `finally` would — load() reconciles this back into the
         # queue instead (observed limbo: chal-00075/chal-00080, 2026-08-04).
         self.in_flight: QueueEntry | None = None
+        # When this validator last successfully set weights on-chain (ISO).
+        # Persisted so the dashboard can show ground truth instead of a
+        # third-party indexer's view of it (TMC's last_commit_at was observed
+        # frozen for 16h while the chain kept accepting our set_weights).
+        self.last_weights_at: str = ""
+        # Payout-window members whose repo@revision is provably gone/gated on
+        # HF right now (validator accessibility sweep). Not persisted: it is
+        # re-derived before every weight set, and a stale carry-over across a
+        # restart could wrongly withhold a restored model's share.
+        self.inaccessible_hotkeys: set[str] = set()
         self.current_eval: dict | None = None
         self.phase: dict = {"name": "boot", "since": now_iso()}
         self._last_flush = 0.0
@@ -136,11 +154,22 @@ class State:
             self.queue = [QueueEntry(**e) for e in d.get("queue", [])]
             self.seen_hotkeys = set(d.get("seen_hotkeys", []))
             self.completed_revisions = set(d.get("completed_revisions", []))
+            self.last_weights_at = d.get("last_weights_at", "")
             self.bench_jobs = d.get("bench_jobs", [])
             self.stats = d.get("stats", self.stats)
             self._id_counter = int(d.get("id_counter", 0))
             self.eval_machine = d.get("eval_machine", {})
             self.bench_machine = d.get("bench_machine", {})
+            self.intake = list(d.get("intake") or [])[-INTAKE_MAX:]
+            decided = d.get("intake_decided")
+            if isinstance(decided, list) and decided:
+                self.intake_decided = set(str(x) for x in decided)
+            else:
+                self.intake_decided = {
+                    f"{e.get('hotkey')}:{e.get('block')}"
+                    for e in self.intake
+                    if e.get("hotkey") is not None and e.get("block") is not None
+                }
             # Validator restart loses in-memory bench dispatch; requeue.
             for j in self.bench_jobs:
                 if j.get("state") == "RUNNING":
@@ -177,8 +206,11 @@ class State:
                 "in_flight": asdict(self.in_flight) if self.in_flight else None,
                 "seen_hotkeys": sorted(self.seen_hotkeys),
                 "completed_revisions": sorted(self.completed_revisions),
+                "last_weights_at": self.last_weights_at,
                 "bench_jobs": self.bench_jobs,
                 "stats": self.stats,
+                "intake": self.intake,
+                "intake_decided": sorted(self.intake_decided),
                 "id_counter": self._id_counter,
                 "eval_machine": self.eval_machine,
                 "bench_machine": self.bench_machine,
@@ -226,32 +258,89 @@ class State:
             score=float(score) if score is not None else None,
             previous=prev)
 
-    # -- queue ---------------------------------------------------------------
+    # -- intake / queue ------------------------------------------------------
     def next_id(self) -> str:
         self._id_counter += 1
         return f"chal-{self._id_counter:05d}"
 
+    def record_intake(self, *, hotkey: str, block: int, decision: str,
+                      repo: str = "", revision: str = "", detail: str = "",
+                      challenge_id: str | None = None) -> None:
+        """Record a one-shot reveal intake decision for the dashboard.
+
+        Deduped by (hotkey, block) so a reveal is not re-logged every tick.
+        """
+        key = f"{hotkey}:{block}"
+        with self._lock:
+            if key in self.intake_decided:
+                return
+            event = {
+                "at": now_iso(),
+                "hotkey": hotkey,
+                "repo": repo,
+                "revision": revision,
+                "block": int(block),
+                "decision": decision,
+                "detail": (detail or "")[:500],
+                "challenge_id": challenge_id,
+            }
+            self.intake.append(event)
+            self.intake_decided.add(key)
+            while len(self.intake) > INTAKE_MAX:
+                self.intake.pop(0)
+
     def enqueue(self, hotkey: str, repo: str, revision: str, block: int,
                 min_submission_block: int) -> QueueEntry | None:
+        """Try to place a reveal on the duel queue. Records an intake decision.
+
+        Returns the new QueueEntry on success, else None. Slot is burned at
+        successful enqueue (and on revision_already_submitted).
+        """
         with self._lock:
+            # Already decided this reveal (prior tick) — do not re-run gates.
+            if f"{hotkey}:{block}" in self.intake_decided:
+                return None
             if block <= min_submission_block:
+                self.record_intake(
+                    hotkey=hotkey, block=block, repo=repo, revision=revision,
+                    decision="skipped_min_block",
+                    detail=(f"reveal block {block} ≤ min_submission_block "
+                            f"{min_submission_block}"))
                 return None
             if self.king and hotkey == self.king.hotkey:
                 log.info("skip enqueue: %s is the current king", hotkey[:16])
+                self.record_intake(
+                    hotkey=hotkey, block=block, repo=repo, revision=revision,
+                    decision="skipped_king",
+                    detail="hotkey is the reigning king")
                 return None
             if hotkey in self.seen_hotkeys:
                 log.info("skip enqueue: hotkey %s already used its eval slot",
                          hotkey[:16])
+                self.record_intake(
+                    hotkey=hotkey, block=block, repo=repo, revision=revision,
+                    decision="skipped_slot_burned",
+                    detail="hotkey already used its one eval slot")
                 return None
             if revision in self.completed_revisions:
                 # Burn the slot anyway: resubmitting known content is not free.
                 self.seen_hotkeys.add(hotkey)
+                detail = (f"revision {revision[:12]} was already submitted "
+                          f"before")
                 self.record_failure_raw(
                     hotkey, repo, revision, "revision_already_submitted",
-                    f"revision {revision[:12]} was already submitted before")
+                    detail)
+                self.record_intake(
+                    hotkey=hotkey, block=block, repo=repo, revision=revision,
+                    decision="rejected_revision_already_submitted",
+                    detail=detail)
                 return None
             if any(e.repo == repo for e in self.queue):
                 log.info("skip enqueue: repo %s already queued", repo)
+                self.record_intake(
+                    hotkey=hotkey, block=block, repo=repo, revision=revision,
+                    decision="skipped_repo_queued",
+                    detail=f"repo {repo} is already on the duel queue")
                 return None
             entry = QueueEntry(challenge_id=self.next_id(), hotkey=hotkey,
                                repo=repo, revision=revision, block=block,
@@ -261,6 +350,10 @@ class State:
             self.seen_hotkeys.add(hotkey)
             self.completed_revisions.add(revision)
             self.stats["queued"] += 1
+            self.record_intake(
+                hotkey=hotkey, block=block, repo=repo, revision=revision,
+                decision="enqueued", challenge_id=entry.challenge_id,
+                detail=f"duel queue ← {entry.challenge_id}")
             return entry
 
     def pop_next(self) -> QueueEntry | None:
@@ -280,6 +373,13 @@ class State:
             if (self.in_flight is not None
                     and self.in_flight.challenge_id == entry.challenge_id):
                 self.in_flight = None
+
+    def record_weights_set(self) -> None:
+        """Stamp a successful on-chain set_weights (flushed immediately so
+        the dashboard sees it without waiting for the next periodic flush)."""
+        with self._lock:
+            self.last_weights_at = now_iso()
+            self.flush()
 
     def peek_next(self) -> QueueEntry | None:
         """Head of the queue without popping (prefetch hinting)."""
@@ -323,36 +423,54 @@ class State:
                     entry.challenge_id, entry.infra_retry_count, reason)
 
     # -- verdicts / king lifecycle --------------------------------------------
-    def record_failure(self, entry: QueueEntry, code: str, detail: str = "") -> None:
+    def record_failure(self, entry: QueueEntry, code: str, detail: str = "",
+                       *, uid: int | None = None,
+                       duration_s: float | None = None) -> None:
         log.info("failed %s: %s — %s@%s: %s", entry.challenge_id, code,
                  entry.repo, entry.revision[:12], detail[:200])
         self.stats["failed"] += 1
-        self._append_history({
+        row = {
             "event": "failed", "at": now_iso(), "challenge_id": entry.challenge_id,
             "hotkey": entry.hotkey, "repo": entry.repo, "revision": entry.revision,
             "error_code": code, "error_detail": detail[:2000],
-        })
+        }
+        if uid is not None:
+            row["uid"] = int(uid)
+        if duration_s is not None:
+            row["duration_s"] = round(float(duration_s), 1)
+        self._append_history(row)
         self._clear_in_flight(entry)
 
     def record_failure_raw(self, hotkey: str, repo: str, revision: str,
-                           code: str, detail: str) -> None:
+                           code: str, detail: str, *,
+                           uid: int | None = None) -> None:
         log.info("failed (raw): %s — %s@%s: %s", code, repo, revision[:12],
                  detail[:200])
         self.stats["failed"] += 1
-        self._append_history({
+        row = {
             "event": "failed", "at": now_iso(), "challenge_id": self.next_id(),
             "hotkey": hotkey, "repo": repo, "revision": revision,
             "error_code": code, "error_detail": detail[:2000],
-        })
+        }
+        if uid is not None:
+            row["uid"] = int(uid)
+        self._append_history(row)
 
-    def record_verdict(self, entry: QueueEntry, verdict: dict) -> None:
+    def record_verdict(self, entry: QueueEntry, verdict: dict, *,
+                       uid: int | None = None,
+                       duration_s: float | None = None) -> None:
         accepted = bool(verdict.get("challenger_wins"))
         self.stats["accepted" if accepted else "rejected"] += 1
-        self._append_history({
+        row = {
             "event": "verdict", "at": now_iso(), "challenge_id": entry.challenge_id,
             "hotkey": entry.hotkey, "repo": entry.repo, "revision": entry.revision,
             "accepted": accepted, "verdict": verdict,
-        })
+        }
+        if uid is not None:
+            row["uid"] = int(uid)
+        if duration_s is not None:
+            row["duration_s"] = round(float(duration_s), 1)
+        self._append_history(row)
         self._clear_in_flight(entry)
 
     @staticmethod
@@ -369,7 +487,8 @@ class State:
             prev = []
             reign = 0
             if self.king:
-                prev = ([self._king_lineage_entry(self.king)] + self.king.previous)[:16]
+                prev = ([self._king_lineage_entry(self.king)]
+                        + self.king.previous)[:64]
                 reign = self.king.reign_number + 1
             self.king = King(hotkey=hotkey, repo=repo, revision=revision,
                              block=block, challenge_id=challenge_id,
@@ -430,14 +549,18 @@ class State:
             self.flush()
             return self.king
 
-    def king_chain_members(self, depth: int) -> list[dict]:
-        """Rolling last-N king chain (current first), equal-share weights.
+    def king_lineage_members(self, payout_depth: int) -> list[dict]:
+        """Full stored king lineage (current first) for the dashboard.
 
-        Same payout shape as Albedo / Teutonic: up to `depth` distinct
-        hotkeys, each receiving 1/N of emissions. Entries carry the model
-        identity and absolute S* (`score`) the dashboard renders.
+        The rolling payout window is the first `payout_depth` distinct hotkeys
+        whose model is still accessible on HF (`earning=True`, equal-share
+        `weight_bps`). Members in `inaccessible_hotkeys` (repo@revision gone or
+        gated — validator sweep) forfeit their slot for as long as the repo
+        stays dark; deeper accessible kings backfill the window. Older kings
+        stay listed with `earning=False` / zero weight so miners can see the
+        full reign history, not only the last-N earners.
         """
-        if not self.king or depth <= 0:
+        if not self.king:
             return []
         members = [{
             "reign_number": self.king.reign_number,
@@ -455,7 +578,7 @@ class State:
             if not hk or hk in seen:
                 continue
             seen.add(hk)
-            members.append({
+            row = {
                 "reign_number": p.get("reign_number"),
                 "repo": p.get("repo", ""),
                 "revision": p.get("revision", ""),
@@ -464,14 +587,28 @@ class State:
                 "block": p.get("block"),
                 "score": p.get("score"),
                 "current": False,
-            })
-            if len(members) >= depth:
-                break
-        members = members[:depth]
-        weight_bps = 10000 // len(members)
+            }
+            if p.get("uid") is not None:
+                row["uid"] = int(p["uid"])
+            members.append(row)
+        depth = max(int(payout_depth), 0)
+        n_earners = 0
         for m in members:
-            m["weight_bps"] = weight_bps
+            m["inaccessible"] = m["hotkey"] in self.inaccessible_hotkeys
+            m["earning"] = not m["inaccessible"] and n_earners < depth
+            n_earners += m["earning"]
+        weight_bps = (10000 // n_earners) if n_earners else 0
+        for m in members:
+            m["weight_bps"] = weight_bps if m["earning"] else 0
         return members
+
+    def king_chain_members(self, depth: int) -> list[dict]:
+        """Rolling last-N king chain (current first), equal-share weights.
+
+        Same payout shape as Albedo / Teutonic: up to `depth` distinct
+        hotkeys, each receiving 1/N of emissions. Used for weight-setting.
+        """
+        return [m for m in self.king_lineage_members(depth) if m.get("earning")]
 
     def king_chain_hotkeys(self, depth: int) -> list[str]:
         """Current king first, then prior distinct kings, deduped by hotkey."""

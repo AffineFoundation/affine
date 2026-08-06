@@ -27,6 +27,7 @@ def _fingerprint(payload: dict) -> str:
         "current_eval": payload.get("current_eval"),
         "king": payload.get("king"),
         "queue": payload.get("queue"),
+        "intake": payload.get("intake"),
         "stats": payload.get("stats"),
         "reign": payload.get("reign"),
         "market": payload.get("market"),

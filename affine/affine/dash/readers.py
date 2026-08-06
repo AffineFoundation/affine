@@ -43,9 +43,9 @@ def load_public_benchmarks(cfg: Config) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def _reign_members(king: dict | None, depth: int) -> list[dict]:
-    """Mirror State.king_chain_members without loading/mutating State."""
-    if not king or depth <= 0:
+def _reign_members(king: dict | None, payout_depth: int) -> list[dict]:
+    """Mirror State.king_lineage_members without loading/mutating State."""
+    if not king:
         return []
     members = [{
         "reign_number": king.get("reign_number"),
@@ -73,12 +73,13 @@ def _reign_members(king: dict | None, depth: int) -> list[dict]:
             "score": p.get("score"),
             "current": False,
         })
-        if len(members) >= depth:
-            break
-    members = members[:depth]
-    weight_bps = 10000 // len(members)
-    for m in members:
-        m["weight_bps"] = weight_bps
+    depth = max(int(payout_depth), 0)
+    earners = max(min(depth, len(members)), 1) if members and depth else 0
+    weight_bps = (10000 // earners) if earners else 0
+    for i, m in enumerate(members):
+        earning = bool(earners and i < earners)
+        m["earning"] = earning
+        m["weight_bps"] = weight_bps if earning else 0
     return members
 
 
@@ -108,15 +109,20 @@ def reconstruct_snapshot(cfg: Config) -> dict:
             "score": king.get("score"),
         } if isinstance(king, dict) else None),
         "reign": {"size": cfg.king_chain_size, "members": members},
-        "reign_chain": [m["hotkey"] for m in members],
+        "reign_chain": [m["hotkey"] for m in members if m.get("earning")],
         "queue": [{
             "challenge_id": e.get("challenge_id"), "repo": e.get("repo"),
             "hotkey": e.get("hotkey"), "queued_at": e.get("queued_at"),
             "retry_count": e.get("retry_count", 0),
         } for e in queue if isinstance(e, dict)],
         "current_eval": None,
+        "intake": list(raw.get("intake") or []),
         "bench_jobs": raw.get("bench_jobs") or [],
-        "stats": raw.get("stats") or {},
+        "stats": {
+            **(raw.get("stats") or {}),
+            "enqueued_total": (raw.get("stats") or {}).get("queued", 0),
+            "duel_queue_len": len(queue),
+        },
         "eval_machine": {
             "provider": (raw.get("eval_machine") or {}).get("provider"),
             "created_at": (raw.get("eval_machine") or {}).get("created_at"),
@@ -176,6 +182,8 @@ def history_row_from_raw(r: dict) -> dict:
         "challenge_id": r.get("challenge_id"),
         "repo": r.get("repo"),
         "hotkey": r.get("hotkey"),
+        "uid": r.get("uid"),
+        "duration_s": r.get("duration_s"),
         "revision": r.get("revision"),
         "accepted": r.get("accepted"),
         "error_code": r.get("error_code"),

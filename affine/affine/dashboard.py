@@ -55,6 +55,20 @@ def redact_log_text(text: str) -> str:
     return _SSH_PORT_RE.sub(r"\1[port]", text)
 
 
+# Per-side gate scalars the site charts. The full summary also carries the
+# rollout-level detail, which belongs in the Hippius artifact, not in the
+# history file every page load fetches.
+_SIDE_FIELDS = ("valid", "S", "gate_pass_rate", "bank_frac", "calib_ratio",
+                "baseline_abs", "mean_lambda2", "n_turns", "n_pairs",
+                "baseline_band_exceeded")
+
+
+def _slim_side(side: dict | None) -> dict | None:
+    if not side:
+        return None
+    return {k: side[k] for k in _SIDE_FIELDS if k in side}
+
+
 class Dashboard:
     def __init__(self, cfg: Config, state: State, hippius: Hippius):
         self.cfg = cfg
@@ -65,6 +79,8 @@ class Dashboard:
         self._last_log_push = 0.0
         # pm2 writes logs relative to its cwd (affine/), see ecosystem.config.js.
         self._logs_dir = Path(__file__).resolve().parents[1] / "logs"
+        # Hotkey→uid from the validator metagraph (updated each tick).
+        self.uid_of: dict[str, int] = {}
 
     # -- website -----------------------------------------------------------------
     def push_website(self) -> None:
@@ -191,12 +207,13 @@ class Dashboard:
                 "crowned_at": king.crowned_at, "block": king.block,
                 "score": king.score,
             } if king else None),
-            # Rolling last-N kings (Albedo / Teutonic): equal-share weights.
+            # Full lineage for the UI; `size` is the equal-share payout window.
             "reign": {
                 "size": self.cfg.king_chain_size,
-                "members": s.king_chain_members(self.cfg.king_chain_size),
+                "members": self._annotate_uids(
+                    s.king_lineage_members(self.cfg.king_chain_size)),
             },
-            # Hotkey list kept for older readers / miners.
+            # Hotkey list kept for older readers / miners (payout window only).
             "reign_chain": s.king_chain_hotkeys(self.cfg.king_chain_size),
             "queue": [{
                 "challenge_id": e.challenge_id, "repo": e.repo,
@@ -204,8 +221,15 @@ class Dashboard:
                 "retry_count": e.retry_count,
             } for e in s.queue],
             "current_eval": s.current_eval,
+            # Newest-last reveal→intake decisions (commit ≠ duel queue row).
+            "intake": list(s.intake),
             "bench_jobs": s.bench_jobs,
-            "stats": s.stats,
+            # stats.queued = lifetime enqueues (not "waiting now").
+            "stats": {
+                **s.stats,
+                "enqueued_total": s.stats.get("queued", 0),
+                "duel_queue_len": len(s.queue) + (1 if s.current_eval else 0),
+            },
             "eval_machine": {
                 "provider": s.eval_machine.get("provider"),
                 "created_at": s.eval_machine.get("created_at"),
@@ -285,26 +309,49 @@ class Dashboard:
                 continue
         return rows[-n:]
 
+    def _annotate_uids(self, members: list[dict]) -> list[dict]:
+        out = []
+        for m in members:
+            row = dict(m)
+            uid = self.uid_of.get(str(row.get("hotkey") or ""))
+            if uid is not None:
+                row["uid"] = int(uid)
+            out.append(row)
+        return out
+
     def _flush_history(self) -> None:
         rows = self._tail_jsonl(self.state.history_path, HISTORY_TAIL)
         # Strip bulky per-side summaries down to what the site renders.
         slim = []
         for r in reversed(rows):
             v = r.get("verdict") or {}
+            hk = r.get("hotkey")
+            uid = r.get("uid")
+            if uid is None and hk:
+                uid = self.uid_of.get(str(hk))
             slim.append({
                 "event": r.get("event"), "at": r.get("at"),
                 "challenge_id": r.get("challenge_id"),
-                "repo": r.get("repo"), "hotkey": r.get("hotkey"),
+                "repo": r.get("repo"), "hotkey": hk,
+                "uid": uid,
+                "duration_s": r.get("duration_s"),
                 "accepted": r.get("accepted"),
                 "error_code": r.get("error_code"),
                 "error_detail": (r.get("error_detail") or "")[:2000],
                 "z": v.get("z"), "margin": v.get("margin"),
+                "se": v.get("se"), "k_sigma": v.get("k_sigma"),
                 "n_paired_turns": v.get("n_paired_turns"),
                 "rejection_reason": v.get("rejection_reason"),
                 "reign_number": r.get("reign_number"),
                 # Absolute S* for both sides (reign chart + duel overlay).
                 "score": r.get("score", (v.get("challenger") or {}).get("S")),
                 "score_king": (v.get("king") or {}).get("S"),
+                # Gate scalars + the thresholds they were judged against, so
+                # the static mirror renders the same duel-measurement grid the
+                # API serves.
+                "gates": v.get("gates"),
+                "challenger": _slim_side(v.get("challenger")),
+                "king": _slim_side(v.get("king")),
             })
         self.hippius.put_json("data/history.json", slim)
         self._write_public_json("history.json", slim)
