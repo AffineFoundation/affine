@@ -289,9 +289,18 @@ class Validator:
             # the popped entry dies with the task and the submission vanishes
             # (observed limbo: chal-00075, 2026-08-04). Requeue uncounted and
             # flush NOW — the process is going down and the periodic tick
-            # flush will not run again.
-            self.state.requeue_front(
-                entry, f"interrupted: {type(e).__name__}", count_retry=False)
+            # flush will not run again. But NOT when the duel already landed:
+            # record_verdict / record_failure clear in_flight when they write
+            # the terminal history row, and requeuing after that duplicates
+            # the duel (observed: chal-00308 re-dueled after a post-verdict
+            # SIGINT, 2026-08-07).
+            if (self.state.in_flight is not None
+                    and self.state.in_flight.challenge_id == entry.challenge_id):
+                self.state.requeue_front(
+                    entry, f"interrupted: {type(e).__name__}", count_retry=False)
+            else:
+                log.info("not requeuing %s on %s: verdict already recorded",
+                         entry.challenge_id, type(e).__name__)
             self.state.flush()
             raise
         finally:
