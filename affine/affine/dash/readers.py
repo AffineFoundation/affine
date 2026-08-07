@@ -5,6 +5,7 @@ from __future__ import annotations
 import gzip
 import json
 import logging
+import re
 from pathlib import Path
 
 from .. import __version__
@@ -12,6 +13,43 @@ from ..config import Config
 from ..state import now_iso
 
 log = logging.getLogger("affine.dash.readers")
+
+# Same scrub as dashboard.redact_log_text (duplicated so the dash process
+# never imports the validator-side module): pod SSH coordinates stay private.
+_IP_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+_SSH_PORT_RE = re.compile(r"(-p\s+)\d{2,5}\b")
+
+# pm2 writes logs relative to its cwd (affine/), see ecosystem.config.js.
+_LOGS_DIR = Path(__file__).resolve().parents[2] / "logs"
+_LOG_TAIL_BYTES = 8 << 20
+_LOG_MAX_LINES = 400
+
+
+def duel_log_lines(challenge_id: str) -> list[str]:
+    """Validator log lines mentioning this duel, redacted, oldest first.
+
+    Greps a bounded tail of the validator logs so the endpoint stays cheap
+    even as the files grow without rotation.
+    """
+    needle = challenge_id
+    out: list[str] = []
+    for name in ("validator.out.log", "validator.err.log"):
+        path = _LOGS_DIR / name
+        if not path.exists() or path.stat().st_size == 0:
+            continue
+        try:
+            with open(path, "rb") as f:
+                f.seek(max(0, path.stat().st_size - _LOG_TAIL_BYTES))
+                raw = f.read()
+        except OSError as exc:
+            log.warning("log read failed %s: %s", path, exc)
+            continue
+        text = raw.decode("utf-8", errors="replace")
+        for line in text.splitlines():
+            if needle in line:
+                line = _IP_RE.sub("[ip]", line)
+                out.append(_SSH_PORT_RE.sub(r"\1[port]", line))
+    return out[-_LOG_MAX_LINES:]
 
 
 def public_dir(cfg: Config) -> Path:

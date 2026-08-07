@@ -1,18 +1,23 @@
 import {
   fetchBenchmarks,
   fetchDuel,
+  fetchDuelLog,
   fetchDuelSeries,
   fetchHistory,
   fetchRegHistory,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=27";
+} from "./api.js?v=34";
 import {
   GATE_METRICS,
+  HERO_CHARTS,
+  drawDeltaBars,
   drawDuelScores,
   drawDuelZ,
   drawGateMetric,
+  drawPairScatter,
   drawRegPrice,
+  drawSideScatter,
   esc,
   gatePoints,
   fmtAge,
@@ -27,7 +32,7 @@ import {
   reignMembers,
   setReignLookup,
   short,
-} from "./charts.js?v=27";
+} from "./charts.js?v=34";
 
 const $ = (id) => document.getElementById(id);
 
@@ -113,9 +118,6 @@ function renderMarketBar(d) {
   const weightsTitle = market.weights_committed_at
     ? `last weights ${weightsSrc} ${market.weights_committed_at}`
     : "last weights commit (TMC)";
-  const updated = market.updated_at
-    ? `TMC updated ${fmtAge(market.updated_at)} ago`
-    : "TaoMarketCap";
   el.innerHTML = [
     `<span class="market-item"><span class="k">SN</span><b>120</b></span>`,
     `<span class="market-item"><span class="k">price</span><b class="gold">${esc(fmtTao(market.price_tao, 4))}</b></span>`,
@@ -124,7 +126,6 @@ function renderMarketBar(d) {
     market.block_number != null
       ? `<span class="market-item"><span class="k">block</span><b>${esc(market.block_number)}</b></span>`
       : "",
-    `<span class="market-item dim" title="${esc(updated)}">tmc</span>`,
   ].filter(Boolean).join("");
 }
 
@@ -267,7 +268,12 @@ function renderGates(force = false) {
     wrap.innerHTML = GATE_METRICS.map((m) => `
       <div class="metric-pane" id="metric-${esc(m.id)}">
         <div class="metric-head">
-          <span class="metric-title">${esc(m.title)}</span>
+          <div class="metric-head-row">
+            <span class="metric-title">${esc(m.title)}</span>
+            <button type="button" class="expand-btn" data-chart="${esc(m.id)}"
+              title="expand ${esc(m.title)}"
+              aria-label="Expand ${esc(m.title)} chart">⤢</button>
+          </div>
           <span class="metric-caption">${esc(m.caption)}</span>
         </div>
         <svg role="img" aria-label="${esc(m.title)} per duel"></svg>
@@ -281,6 +287,91 @@ function renderGates(force = false) {
       width: Math.max((pane.clientWidth || 320) - 18, 240),
     });
   }
+}
+
+/* ---------- expanded chart ---------- */
+
+// Every chart on the page, keyed by the data-chart on its expand button.
+const CHART_SPECS = new Map([
+  ...HERO_CHARTS.map((c) => [c.id, {
+    ...c,
+    render: (svg, width) => c.draw(svg, cache.history, { width, height: 460 }),
+  }]),
+  ...GATE_METRICS.map((m) => [m.id, {
+    ...m,
+    render: (svg, width) =>
+      drawGateMetric(svg, gatePoints(cache.history), m, { width, height: 420 }),
+  }]),
+  ["reg-price", {
+    id: "reg-price",
+    title: "registration price",
+    caption: "SN120 registration burn (τ) · TMC history",
+    detail: `<p>The TAO burned to register a hotkey on SN120 over time, sourced
+      from TaoMarketCap and downsampled by affine-dash. Registration cost
+      doubles on each registration and decays toward a floor between them, so
+      spikes are registration bursts — miners piling in — and the long decays
+      are quiet periods.</p>
+      <p>It matters to miners because a duel slot requires a registered hotkey:
+      reg cost is effectively the price of a seat at the table. A rising curve
+      means the subnet is contested right now; a decayed one means entry is
+      cheap.</p>`,
+    render: (svg, width) => drawRegPrice(svg, cache.regHistory, { width, height: 460 }),
+  }],
+]);
+
+let openChartId = null;
+
+function drawOpenChart() {
+  const spec = CHART_SPECS.get(openChartId);
+  const svg = $("chart-modal-svg");
+  if (!spec || !svg) return;
+  const host = svg.parentElement;
+  spec.render(svg, Math.max((host?.clientWidth || 900) - 2, 320));
+}
+
+function openChart(id) {
+  const spec = CHART_SPECS.get(id);
+  const modal = $("chart-modal");
+  if (!spec || !modal) return;
+  openChartId = id;
+  modal.hidden = false;
+  $("chart-modal-title").textContent = spec.title;
+  $("chart-modal-caption").textContent = spec.caption || "";
+  // detail is authored markup from charts.js, never user input.
+  $("chart-modal-detail").innerHTML = spec.detail || "";
+  drawOpenChart();
+}
+
+function closeChart() {
+  openChartId = null;
+  const modal = $("chart-modal");
+  if (modal) modal.hidden = true;
+}
+
+/** Instant cursor-following readout for chart marks (native <title> is too slow). */
+function wireChartTip() {
+  const tip = document.createElement("div");
+  tip.id = "chart-tip";
+  tip.hidden = true;
+  document.body.appendChild(tip);
+  document.addEventListener("mousemove", (e) => {
+    const g = e.target instanceof Element && e.target.closest(".duel-hit[data-tip]");
+    if (!g) {
+      tip.hidden = true;
+      return;
+    }
+    tip.textContent = g.dataset.tip;
+    tip.hidden = false;
+    const pad = 14;
+    const w = tip.offsetWidth;
+    const h = tip.offsetHeight;
+    let x = e.clientX + pad;
+    let y = e.clientY + pad;
+    if (x + w > window.innerWidth - 8) x = e.clientX - w - pad;
+    if (y + h > window.innerHeight - 8) y = e.clientY - h - pad;
+    tip.style.left = `${x}px`;
+    tip.style.top = `${y}px`;
+  }, { passive: true });
 }
 
 function intakeBadge(decision) {
@@ -389,7 +480,7 @@ function renderHistory(h) {
   }
   $("history-wrap").innerHTML = `<table class="data-table">
     <thead><tr>
-      <th>when</th><th>event</th><th>model</th><th>hotkey</th><th>outcome</th>
+      <th>when</th><th>age</th><th>event</th><th>model</th><th>hotkey</th><th>outcome</th>
       <th class="r">dur</th><th class="r">z</th><th class="r">S*</th><th class="r">king S*</th><th>detail</th>
     </tr></thead>
     <tbody>${rows.slice(0, 80).map((r) => {
@@ -397,6 +488,7 @@ function renderHistory(h) {
       const cid = r.challenge_id || "";
       return `<tr class="row-link ${r.event === "crowned" ? "current" : ""}" data-cid="${esc(cid)}">
         <td class="when">${esc(fmtTime(r.at))}</td>
+        <td class="dim" title="${esc(fmtTime(r.at))}">${r.at ? `${esc(fmtAge(r.at))} ago` : "—"}</td>
         <td>${esc(r.event)}</td>
         <td>${modelLink(r.repo, r.hotkey, r.reign_number)}</td>
         <td>${hotkeyLink(r.hotkey)}</td>
@@ -427,12 +519,13 @@ function renderFails(h) {
   }
   $("fails-wrap").innerHTML = `<table class="data-table">
     <thead><tr>
-      <th>when</th><th>uid</th><th>model</th><th>hotkey</th><th class="r">dur</th><th>code</th><th>detail</th>
+      <th>when</th><th>age</th><th>uid</th><th>model</th><th>hotkey</th><th class="r">dur</th><th>code</th><th>detail</th>
     </tr></thead>
     <tbody>${rows.slice(0, 60).map((r) => {
       const cid = r.challenge_id || "";
       return `<tr class="row-link" data-cid="${esc(cid)}">
         <td class="when">${esc(fmtTime(r.at))}</td>
+        <td class="dim" title="${esc(fmtTime(r.at))}">${r.at ? `${esc(fmtAge(r.at))} ago` : "—"}</td>
         <td class="dim">${r.uid != null ? esc(r.uid) : "—"}</td>
         <td>${modelLink(r.repo, r.hotkey)}</td>
         <td>${hotkeyLink(r.hotkey)}</td>
@@ -460,52 +553,7 @@ function renderAll() {
   renderFails(cache.history);
 }
 
-/* ---------- duel detail panel ---------- */
-
-function drawSeriesScatter(svg, series) {
-  const pts = (series?.challenger || []).filter(
-    (p) => p.lambda2 != null && p.l1lift != null);
-  const width = Math.min(560, (window.innerWidth || 600) - 48);
-  const height = 240;
-  const pad = { l: 44, r: 16, t: 16, b: 36 };
-  const mono = "IBM Plex Mono, monospace";
-  if (!pts.length) {
-    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-    svg.innerHTML = `<text x="${width / 2}" y="${height / 2}" text-anchor="middle"
-      fill="rgba(229,229,229,0.35)" font-family="${mono}" font-size="11">no pair series for this duel</text>`;
-    return;
-  }
-  const xs = pts.map((p) => Number(p.lambda2));
-  const ys = pts.map((p) => Number(p.l1lift));
-  let x0 = Math.min(...xs, 0);
-  let x1 = Math.max(...xs, 0);
-  let y0 = Math.min(...ys, 0);
-  let y1 = Math.max(...ys, 0);
-  const xpad = (x1 - x0) * 0.12 || 0.05;
-  const ypad = (y1 - y0) * 0.12 || 0.05;
-  x0 -= xpad; x1 += xpad; y0 -= ypad; y1 += ypad;
-  const xAt = (v) => pad.l + ((v - x0) / (x1 - x0 || 1)) * (width - pad.l - pad.r);
-  const yAt = (v) => pad.t + ((y1 - v) / (y1 - y0 || 1)) * (height - pad.t - pad.b);
-  const axes = `
-    <line x1="${pad.l}" x2="${width - pad.r}" y1="${yAt(0)}" y2="${yAt(0)}"
-      stroke="rgba(255,255,255,0.12)"/>
-    <line x1="${xAt(0)}" x2="${xAt(0)}" y1="${pad.t}" y2="${height - pad.b}"
-      stroke="rgba(255,255,255,0.12)"/>
-    <text x="${width / 2}" y="${height - 8}" text-anchor="middle" fill="rgba(229,229,229,0.4)"
-      font-family="${mono}" font-size="10">Λ2</text>
-    <text x="12" y="${height / 2}" fill="rgba(229,229,229,0.4)"
-      font-family="${mono}" font-size="10" transform="rotate(-90 12 ${height / 2})">L1lift</text>`;
-  const dots = pts.map((p) => {
-    const fill = p.gate_ok ? "#5ac8fa" : "rgba(255,71,71,0.7)";
-    return `<circle cx="${xAt(p.lambda2)}" cy="${yAt(p.l1lift)}" r="3.5" fill="${fill}" opacity="0.85">
-      <title>Λ2=${fmtScore(p.lambda2)} L1=${fmtScore(p.l1lift)} gate=${p.gate_ok}</title>
-    </circle>`;
-  }).join("");
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.setAttribute("width", String(width));
-  svg.setAttribute("height", String(height));
-  svg.innerHTML = axes + dots;
-}
+/* ---------- duel page (#duel/<challenge_id>) ---------- */
 
 function failureDetail(duel) {
   const f = duel?.failure || {};
@@ -526,97 +574,319 @@ function isFailureDuel(duel) {
     || Boolean(duel?.failure);
 }
 
-async function openDuel(challengeId) {
+function openDuel(challengeId) {
   if (!challengeId) return;
-  const panel = $("duel-panel");
-  const body = $("duel-panel-body");
-  const title = $("duel-panel-title");
-  panel.hidden = false;
-  title.textContent = challengeId;
-  body.innerHTML = `<div class="empty">loading…</div>`;
-  const [duel, series] = await Promise.all([
-    fetchDuel(challengeId),
-    fetchDuelSeries(challengeId).catch(() => null),
-  ]);
-  if (!duel || duel.error) {
-    // Fall back to the slim history row so fails still open with detail.
-    const row = (cache.history || []).find((r) => r.challenge_id === challengeId);
-    if (!row) {
-      body.innerHTML = `<div class="empty">no detail for ${esc(challengeId)}</div>`;
-      return;
-    }
-    renderDuelBody(body, row, null);
-    return;
-  }
-  renderDuelBody(body, duel, series && !series.error ? series : null);
+  closeChart();
+  location.hash = `duel/${encodeURIComponent(challengeId)}`;
 }
 
-function renderDuelBody(body, duel, series) {
-  const fail = isFailureDuel(duel);
-  const info = failureDetail(duel);
+function duelHashCid() {
+  const m = location.hash.match(/^#duel\/(.+)$/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+function closeDuelPage() {
+  // Prefer real back so front page scroll position is restored.
+  if (window.history.length > 1) window.history.back();
+  else location.hash = "";
+}
+
+function route() {
+  const cid = duelHashCid();
+  const page = $("duel-page");
+  if (!page) return;
+  document.body.classList.toggle("duel-open", Boolean(cid));
+  page.hidden = !cid;
+  if (!cid) {
+    page.dataset.cid = "";
+    return;
+  }
+  window.scrollTo(0, 0);
+  if (page.dataset.cid !== cid) {
+    page.dataset.cid = cid;
+    renderDuelPage(cid);
+  }
+}
+
+const duelChartWidth = (el) =>
+  Math.max((el?.closest(".duel-chart-pane")?.clientWidth || 560) - 26, 320);
+
+async function renderDuelPage(cid) {
+  const body = $("duel-page-body");
+  const title = $("duel-page-title");
+  if (!body) return;
+  if (title) title.textContent = cid;
+  body.innerHTML = `<div class="empty">loading duel record…</div>`;
+  const [duelRaw, seriesRaw, logRaw] = await Promise.all([
+    fetchDuel(cid).catch(() => null),
+    fetchDuelSeries(cid).catch(() => null),
+    fetchDuelLog(cid).catch(() => null),
+  ]);
+  if (duelHashCid() !== cid) return; // user navigated away mid-fetch
+  let duel = duelRaw && !duelRaw.error ? duelRaw : null;
+  if (!duel) {
+    duel = (cache.history || []).find((r) => r.challenge_id === cid) || null;
+  }
+  if (!duel) {
+    body.innerHTML = `<div class="empty">no record for ${esc(cid)} — it may have rotated out of the recent history window</div>`;
+    // Allow a retry once history arrives (deep links land before first fetch).
+    const page = $("duel-page");
+    if (page) page.dataset.cid = "";
+    return;
+  }
+  const series = seriesRaw && !seriesRaw.error ? seriesRaw : null;
+  const logLines = (logRaw && !logRaw.error && Array.isArray(logRaw.lines))
+    ? logRaw.lines : null;
+  body.innerHTML = duelPageHtml(duel, series, logLines);
+  const paired = series?.paired || [];
+  const delta = $("duel-chart-delta");
+  if (delta) drawDeltaBars(delta, paired, { width: duelChartWidth(delta) });
+  const sides = $("duel-chart-sides");
+  if (sides) drawSideScatter(sides, paired, { width: duelChartWidth(sides) });
+  const pair = $("duel-chart-pair");
+  if (pair) drawPairScatter(pair, series, { width: duelChartWidth(pair) });
+}
+
+function verdictSummary(duel) {
+  const gates = duel.gates || {};
+  const k = Number(gates.k_sigma ?? 3);
+  const delta = gates.min_margin != null ? Number(gates.min_margin) : null;
+  const bar = duel.se != null ? k * Number(duel.se) : null;
+  const name = modelDisplayName(duel.repo, duel.hotkey, duel.reign_number);
+  if (isFailureDuel(duel) && duel.z == null && duel.margin == null) {
+    return `${name} never reached a paired verdict — the duel failed with `
+      + `“${failureDetail(duel).code}” before scoring completed.`;
+  }
+  const m = duel.margin != null ? fmtScore(duel.margin) : "—";
+  const need = [
+    bar != null ? `${k}·SE ≈ ${fmtScore(bar)}` : `${k}·SE`,
+    delta != null ? `δ = ${fmtScore(delta)}` : null,
+  ].filter(Boolean).join(" and ");
+  if (duel.event === "crowned" || duel.challenger_wins) {
+    return `${name} beat the king: paired margin ${m} cleared both ${need} `
+      + `(z = ${fmtZ(duel.z)})${duel.event === "crowned" ? ` — crowned reign #${duel.reign_number ?? "?"}` : ""}.`;
+  }
+  if (duel.rejection_reason) {
+    return `${name} was rejected before the margin test: ${duel.rejection_reason}.`;
+  }
+  return `${name} did not dethrone the king: paired margin ${m} `
+    + `(z = ${fmtZ(duel.z)}) needed to clear ${need}.`;
+}
+
+/** One side-by-side row of the challenger/king comparison table. */
+function sideRow(label, tip, cv, kv, thr, cPass, kPass, fmt = fmtScore) {
+  const cell = (v, pass) => {
+    const cls = v == null ? "dim" : pass == null ? "" : pass ? "ok" : "bad";
+    return `<td class="num ${cls}">${v == null ? "—" : esc(fmt(v))}</td>`;
+  };
+  return `<tr>
+    <td class="mono" ${tip ? `title="${esc(tip)}"` : ""}>${esc(label)}</td>
+    ${cell(cv, cPass)}${cell(kv, kPass)}
+    <td class="dim">${thr ? esc(thr) : ""}</td>
+  </tr>`;
+}
+
+function sidesTableHtml(duel) {
   const ch = duel.challenger || {};
   const kg = duel.king || {};
-  const gates = duel.gates || {};
-  if (fail && !duel.has_series && duel.z == null && duel.score == null) {
-    body.innerHTML = `
-      <div class="kv-grid">
-        <div class="kv"><span class="k">when</span><span class="v">${esc(fmtTime(info.at))}</span></div>
-        <div class="kv"><span class="k">code</span><span class="v bad">${esc(info.code)}</span></div>
-        <div class="kv"><span class="k">uid</span><span class="v">${duel.uid != null ? esc(duel.uid) : "—"}</span></div>
-        <div class="kv"><span class="k">duration</span><span class="v">${esc(fmtDuration(duel.duration_s))}</span></div>
-        <div class="kv"><span class="k">model</span><span class="v">${modelLink(info.repo || duel.repo, info.hotkey || duel.hotkey, duel.reign_number)}</span></div>
-        <div class="kv"><span class="k">revision</span><span class="v mono">${esc(info.revision || "—")}</span></div>
-        <div class="kv"><span class="k">hotkey</span><span class="v">${hotkeyLink(info.hotkey || duel.hotkey)}</span></div>
-        <div class="kv"><span class="k">challenge</span><span class="v mono">${esc(duel.challenge_id || "—")}</span></div>
-      </div>
-      <div class="fail-log-block">
-        <div class="section-head">
-          <h3 class="section-title">failure detail</h3>
-          <span class="section-right note">validator log</span>
-        </div>
-        <pre class="fail-log">${esc(info.detail || "no detail recorded")}</pre>
-      </div>`;
-    return;
+  const g = duel.gates || {};
+  if (ch.S == null && kg.S == null && duel.score == null) {
+    return `<div class="empty">no per-side scores recorded for this duel</div>`;
   }
-
-  const outcome = duel.event === "crowned"
-    ? `crowned #${duel.reign_number ?? "?"}`
-    : (info.code || duel.event || "—");
-  body.innerHTML = `
-    <div class="kv-grid">
-      <div class="kv"><span class="k">model</span><span class="v">${modelLink(duel.repo || info.repo, duel.hotkey || info.hotkey, duel.reign_number)}</span></div>
-      <div class="kv"><span class="k">hotkey</span><span class="v">${hotkeyLink(duel.hotkey || info.hotkey)}</span></div>
-      <div class="kv"><span class="k">uid</span><span class="v">${duel.uid != null ? esc(duel.uid) : "—"}</span></div>
-      <div class="kv"><span class="k">duration</span><span class="v">${esc(fmtDuration(duel.duration_s))}</span></div>
-      <div class="kv"><span class="k">outcome</span><span class="v ${fail ? "bad" : ""}">${esc(outcome)}</span></div>
-      <div class="kv"><span class="k">z</span><span class="v ${Number(duel.z) >= 0 ? "ok" : "bad"}">${esc(fmtZ(duel.z))}</span></div>
-      <div class="kv"><span class="k">margin</span><span class="v">${esc(fmtScore(duel.margin))} · se ${esc(fmtScore(duel.se))}</span></div>
-      <div class="kv"><span class="k">S* chall</span><span class="v">${esc(fmtScore(duel.score ?? ch.S))}</span></div>
-      <div class="kv"><span class="k">S* king</span><span class="v">${esc(fmtScore(duel.score_king ?? kg.S))}</span></div>
-      <div class="kv"><span class="k">gate pass</span><span class="v">${esc(fmtScore(ch.gate_pass_rate))} / bank ${esc(fmtScore(ch.bank_frac))}</span></div>
-      <div class="kv"><span class="k">thresholds</span><span class="v dim">kσ=${esc(gates.k_sigma ?? 3)} · δ=${esc(gates.min_margin ?? "—")}</span></div>
-      ${duel.has_artifact && duel.challenge_id ? `
-      <div class="kv"><span class="k">artifact</span><span class="v"><a href="${esc(hippiusEvalUrl(duel.challenge_id))}" target="_blank" rel="noopener" title="full duel record on Hippius (rollouts, teacher refs, logprobs)">hippius · evals/${esc(short(duel.challenge_id, 14))}.json.gz</a></span></div>` : ""}
-    </div>
-    ${fail && info.detail ? `
-      <div class="fail-log-block">
-        <div class="section-head">
-          <h3 class="section-title">failure detail</h3>
-          <span class="section-right note">validator log</span>
-        </div>
-        <pre class="fail-log">${esc(info.detail)}</pre>
-      </div>` : ""}
-    <div class="duel-chart-block">
-      <div class="section-head"><h3 class="section-title">Λ2 vs L1lift</h3>
-        <span class="section-right note">blue = gate ok · red = gate fail</span></div>
-      <svg id="duel-series-chart" role="img" aria-label="pair series"></svg>
-    </div>`;
-  const svg = $("duel-series-chart");
-  if (svg) drawSeriesScatter(svg, series);
+  const pct = (v) => `${(Number(v) * 100).toFixed(0)}%`;
+  const inBand = (v, lo, hi) =>
+    v == null || lo == null ? null : Number(v) >= Number(lo) && Number(v) <= Number(hi);
+  const gte = (v, t) => (v == null || t == null ? null : Number(v) >= Number(t));
+  const baselineOk = ch.baseline_abs != null && kg.baseline_abs && g.baseline_band != null
+    ? Number(ch.baseline_abs) <= Number(g.baseline_band) * Number(kg.baseline_abs)
+    : null;
+  const rows = [
+    sideRow("valid", "all gates passed for this side", ch.valid, kg.valid,
+      "must be true", ch.valid === true, kg.valid === true,
+      (v) => (v ? "yes" : "NO")),
+    sideRow("S*", "ranking score: mean(Λ2 + clip(L1lift, ±0.1))",
+      duel.score ?? ch.S, duel.score_king ?? kg.S, "higher wins"),
+    sideRow("causality pass", "share of pairs passing leakage + causality",
+      ch.gate_pass_rate, kg.gate_pass_rate,
+      g.gamma != null ? `≥ ${g.gamma}` : "≥ γ",
+      gte(ch.gate_pass_rate, g.gamma), gte(kg.gate_pass_rate, g.gamma), pct),
+    sideRow("prior bank", "share of pairs with Λ2 > 0 vs published prior thoughts",
+      ch.bank_frac, kg.bank_frac,
+      g.gamma_bank != null ? `≥ ${g.gamma_bank}` : "≥ γ_bank",
+      gte(ch.bank_frac, g.gamma_bank), gte(kg.bank_frac, g.gamma_bank), pct),
+    sideRow("calibration r", "mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|",
+      ch.calib_ratio, kg.calib_ratio,
+      g.r_lo != null ? `${g.r_lo} – ${g.r_hi}` : "in band",
+      inBand(ch.calib_ratio, g.r_lo, g.r_hi), inBand(kg.calib_ratio, g.r_lo, g.r_hi)),
+    sideRow("empty baseline", "mean|lpA(y_C|∅)| — challenger capped vs king",
+      ch.baseline_abs, kg.baseline_abs,
+      g.baseline_band != null ? `chall ≤ ${g.baseline_band}× king` : "banded",
+      baselineOk, null),
+    sideRow("mean Λ2", "teacher-side score: lpC(y_C|z) − lpC(y_C|∅)",
+      ch.mean_lambda2, kg.mean_lambda2, ""),
+    sideRow("turns scored", "", ch.n_turns, kg.n_turns, "", null, null, String),
+    sideRow("pairs scored", "", ch.n_pairs, kg.n_pairs, "", null, null, String),
+  ].join("");
+  return `<div class="table-wrap"><table class="data-table sides-table">
+    <thead><tr><th>metric</th><th class="num">challenger</th>
+      <th class="num">king</th><th>gate</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
 }
 
-function closeDuel() {
-  $("duel-panel").hidden = true;
+function turnsTableHtml(duel, paired) {
+  if (!paired.length) {
+    return `<div class="empty">no per-turn series — the eval artifact is not published (older duel or failure before scoring)</div>`;
+  }
+  const sorted = [...paired].sort(
+    (a, b) => (b.delta_mix ?? -Infinity) - (a.delta_mix ?? -Infinity));
+  const rows = sorted.map((p) => {
+    const d = p.delta_mix;
+    return `<tr>
+      <td class="mono" title="${esc(p.turn_id ?? "")}">${esc(short(p.turn_id ?? "—", 44))}</td>
+      <td class="num ${d == null ? "dim" : d >= 0 ? "ok" : "bad"}">${d == null ? "—" : esc(fmtScore(d))}</td>
+      <td class="num">${esc(fmtScore(p.challenger_mix))}</td>
+      <td class="num">${esc(fmtScore(p.king_mix))}</td>
+      <td class="num">${esc(fmtScore(p.challenger_lambda2))}</td>
+      <td class="num">${esc(fmtScore(p.king_lambda2))}</td>
+      <td class="${p.challenger_gate_ok ? "ok" : "bad"}">${p.challenger_gate_ok ? "ok" : "fail"}</td>
+      <td class="${p.king_gate_ok ? "ok" : "bad"}">${p.king_gate_ok ? "ok" : "fail"}</td>
+    </tr>`;
+  }).join("");
+  return `<div class="table-wrap table-scroll"><table class="data-table turns-table">
+    <thead><tr><th>turn</th><th class="num">Δmix</th>
+      <th class="num">chall mix</th><th class="num">king mix</th>
+      <th class="num">chall Λ2</th><th class="num">king Λ2</th>
+      <th>chall gates</th><th>king gates</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
+function duelExplainHtml() {
+  const specs = [
+    ...HERO_CHARTS.map((c) => ({ title: c.title, caption: c.caption, detail: c.detail })),
+    ...GATE_METRICS.map((m) => ({ title: m.title, caption: m.caption, detail: m.detail })),
+  ];
+  // detail is trusted static HTML from charts.js (same strings as the modal).
+  return specs.map((s) => `
+    <details class="explain-item">
+      <summary><span class="mono">${esc(s.title)}</span>
+        <span class="dim">· ${esc(s.caption)}</span></summary>
+      <div class="explain-detail">${s.detail}</div>
+    </details>`).join("");
+}
+
+function duelPageHtml(duel, series, logLines) {
+  const fail = isFailureDuel(duel);
+  const info = failureDetail(duel);
+  const slice = duel.slice || series?.slice || {};
+  const outcome = duel.event === "crowned"
+    ? `crowned #${duel.reign_number ?? "?"}`
+    : fail ? (info.code || "failed") : (duel.event || "—");
+  const meta = $("duel-page-meta");
+  if (meta) {
+    // Lost-but-clean verdicts get the neutral badge — green would read as a win.
+    meta.innerHTML = `<span class="badge ${duel.event === "crowned" ? "crowned" : fail ? "rejected" : duel.challenger_wins ? "accepted" : "queued"}">${esc(outcome)}</span>`;
+  }
+  const paired = series?.paired || [];
+  const artifactLink = duel.challenge_id && (duel.has_artifact || paired.length)
+    ? `<a href="${esc(hippiusEvalUrl(duel.challenge_id))}" target="_blank" rel="noopener">evals/${esc(short(duel.challenge_id, 18))}.json.gz</a>`
+    : `<span class="dim">not published</span>`;
+
+  const overview = `
+    <div class="kv-grid duel-overview">
+      <div class="kv"><span class="k">challenger</span><span class="v">${modelLink(duel.repo || info.repo, duel.hotkey || info.hotkey, duel.reign_number)}</span></div>
+      <div class="kv"><span class="k">hotkey</span><span class="v">${hotkeyLink(duel.hotkey || info.hotkey)}</span></div>
+      <div class="kv"><span class="k">uid</span><span class="v">${duel.uid != null ? esc(duel.uid) : "—"}</span></div>
+      <div class="kv"><span class="k">revision</span><span class="v mono">${esc(short(duel.revision || info.revision || "—", 14))}</span></div>
+      <div class="kv"><span class="k">when</span><span class="v" title="${esc(fmtTime(duel.at))}">${esc(fmtTime(duel.at))} · ${esc(fmtAge(duel.at))}</span></div>
+      <div class="kv"><span class="k">duration</span><span class="v">${esc(fmtDuration(duel.duration_s))}</span></div>
+      <div class="kv"><span class="k">paired turns</span><span class="v">${esc(duel.n_paired_turns ?? paired.length ?? "—")}</span></div>
+      <div class="kv"><span class="k">artifact</span><span class="v">${artifactLink}</span></div>
+      ${slice.seed != null ? `<div class="kv"><span class="k">slice seed</span><span class="v mono" title="derived from the reveal block hash — miners cannot precompute the slice">${esc(slice.seed)}</span></div>` : ""}
+      ${slice.block_hash ? `<div class="kv"><span class="k">block hash</span><span class="v mono" title="${esc(slice.block_hash)}">${esc(short(slice.block_hash, 18))}</span></div>` : ""}
+      ${slice.digest ? `<div class="kv"><span class="k">corpus digest</span><span class="v mono" title="${esc(slice.digest)}">${esc(short(slice.digest, 18))}</span></div>` : ""}
+    </div>`;
+
+  const gates = duel.gates || {};
+  const kSE = duel.se != null ? Number(gates.k_sigma ?? 3) * Number(duel.se) : null;
+  const marginOk = duel.margin != null && kSE != null
+    ? Number(duel.margin) > kSE
+      && (gates.min_margin == null || Number(duel.margin) > Number(gates.min_margin))
+    : null;
+  const verdict = `
+    <p class="duel-verdict-line">${esc(verdictSummary(duel))}</p>
+    <div class="kv-grid">
+      <div class="kv"><span class="k">z</span><span class="v ${Number(duel.z) >= 0 ? "ok" : "bad"}">${esc(fmtZ(duel.z))}</span></div>
+      <div class="kv"><span class="k">margin ⟨S_c − S_k⟩</span><span class="v ${marginOk == null ? "" : marginOk ? "ok" : "bad"}">${esc(fmtScore(duel.margin))}</span></div>
+      <div class="kv"><span class="k">SE</span><span class="v">${esc(fmtScore(duel.se))}</span></div>
+      <div class="kv"><span class="k">${esc(String(gates.k_sigma ?? 3))}·SE bar</span><span class="v">${kSE == null ? "—" : esc(fmtScore(kSE))}</span></div>
+      <div class="kv"><span class="k">δ noise floor</span><span class="v">${esc(fmtScore(gates.min_margin))}</span></div>
+      <div class="kv"><span class="k">challenger wins</span><span class="v ${duel.challenger_wins ? "ok" : "bad"}">${duel.challenger_wins == null ? "—" : duel.challenger_wins ? "yes" : "no"}</span></div>
+    </div>`;
+
+  const failBlock = fail && info.detail ? `
+    <div class="duel-block">
+      <div class="section-head"><h3 class="section-title">failure detail</h3>
+        <span class="section-right note">${esc(info.code || "")}</span></div>
+      <pre class="fail-log">${esc(info.detail)}</pre>
+    </div>` : "";
+
+  const charts = `
+    <div class="duel-chart-grid">
+      <div class="duel-chart-pane">
+        <div class="metric-head"><span class="metric-title">Δmix per turn</span>
+          <span class="metric-caption">challenger − king, slice order · gold = challenger won the turn</span></div>
+        <svg id="duel-chart-delta" role="img" aria-label="delta mix per turn"></svg>
+      </div>
+      <div class="duel-chart-pane">
+        <div class="metric-head"><span class="metric-title">challenger vs king</span>
+          <span class="metric-caption">per-turn mix · above the dashed diagonal = challenger better</span></div>
+        <svg id="duel-chart-sides" role="img" aria-label="challenger vs king mix"></svg>
+      </div>
+      <div class="duel-chart-pane">
+        <div class="metric-head"><span class="metric-title">Λ2 vs L1lift</span>
+          <span class="metric-caption">gold = challenger · bone = king · red ring = gate fail</span></div>
+        <svg id="duel-chart-pair" role="img" aria-label="lambda2 vs l1lift"></svg>
+      </div>
+    </div>`;
+
+  const logBlock = `
+    <div class="duel-block">
+      <div class="section-head"><h3 class="section-title">validator log</h3>
+        <span class="section-right note">lines mentioning ${esc(duel.challenge_id || "this duel")} · redacted</span></div>
+      ${logLines && logLines.length
+        ? `<pre class="fail-log duel-log">${esc(logLines.join("\n"))}</pre>`
+        : `<div class="empty">log not available${logLines ? " for this duel" : " in static mode"} — full log: <a href="https://s3.hippius.com/affine-sn120/data/validator_log.txt" target="_blank" rel="noopener">validator_log.txt</a></div>`}
+    </div>`;
+
+  return `
+    ${overview}
+    <div class="duel-block">
+      <div class="section-head"><h3 class="section-title">verdict</h3>
+        <span class="section-right note">crown rule: z > ${esc(String(gates.k_sigma ?? 3))} AND margin > δ, both sides gate-valid</span></div>
+      ${verdict}
+    </div>
+    ${failBlock}
+    <div class="duel-block">
+      <div class="section-head"><h3 class="section-title">challenger vs king</h3>
+        <span class="section-right note">per-side gates and scores</span></div>
+      ${sidesTableHtml(duel)}
+    </div>
+    <div class="duel-block">
+      <div class="section-head"><h3 class="section-title">samples</h3>
+        <span class="section-right note">${esc(String(paired.length))} paired turns from the seeded slice</span></div>
+      ${charts}
+    </div>
+    <div class="duel-block">
+      <div class="section-head"><h3 class="section-title">rollouts</h3>
+        <span class="section-right note">sorted by Δmix · full thoughts/actions/logprobs in the artifact: ${artifactLink}</span></div>
+      ${turnsTableHtml(duel, paired)}
+    </div>
+    ${logBlock}
+    <div class="duel-block">
+      <div class="section-head"><h3 class="section-title">how to read these numbers</h3>
+        <span class="section-right note">same definitions as the charts on the front page</span></div>
+      ${duelExplainHtml()}
+    </div>`;
 }
 
 /* ---------- data wiring ---------- */
@@ -638,6 +908,12 @@ function applySnapshot(snap) {
   fps.dashboard = fp;
   cache.dashboard = snap;
   setReignLookup(reignMembers(snap), BENCH_GENESIS.repo);
+  const navKing = $("nav-king");
+  if (navKing && snap.king?.repo) {
+    navKing.textContent =
+      modelDisplayName(snap.king.repo, snap.king.hotkey, snap.king.reign_number);
+    navKing.href = hubUrl(snap.king.repo);
+  }
   renderMarketBar(snap);
   renderHero();
   renderSnapshotSections();
@@ -662,6 +938,7 @@ async function refreshHistoryAndBench() {
     renderGates(true);
     renderHistory(cache.history);
     renderFails(cache.history);
+    drawOpenChart();
   }
   const bfp = fingerprint(b);
   if (b && bfp !== fps.benchmarks) {
@@ -694,7 +971,21 @@ function wire() {
     renderHero(true);
     renderGates(true);
     renderRegPrice(true);
+    drawOpenChart();
   });
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".expand-btn");
+    if (btn) {
+      e.preventDefault();
+      openChart(btn.dataset.chart);
+      return;
+    }
+    // Any chart mark carrying a challenge id opens its duel page.
+    const hit = e.target.closest(".duel-hit[data-cid]");
+    if (hit) openDuel(hit.dataset.cid);
+  });
+  $("chart-modal-close")?.addEventListener("click", closeChart);
+  $("chart-modal-backdrop")?.addEventListener("click", closeChart);
   $("intake-wrap")?.addEventListener("click", (e) => {
     const tr = e.target.closest("tr[data-cid]");
     if (!tr || e.target.closest("a")) return;
@@ -710,16 +1001,21 @@ function wire() {
     if (!tr || e.target.closest("a")) return;
     openDuel(tr.dataset.cid);
   });
-  $("duel-panel-close")?.addEventListener("click", closeDuel);
-  $("duel-panel-backdrop")?.addEventListener("click", closeDuel);
+  $("duel-back")?.addEventListener("click", closeDuelPage);
+  window.addEventListener("hashchange", route);
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeDuel();
+    if (e.key !== "Escape") return;
+    if (openChartId) closeChart();
+    else if (duelHashCid()) closeDuelPage();
   });
 }
 
 async function boot() {
   wire();
+  wireChartTip();
+  route(); // deep link straight to a duel page (#duel/<cid>)
   await refreshHistoryAndBench();
+  route(); // retry the duel render now that history is cached (static mode)
   closeWatch = watchSnapshot(applySnapshot, {
     onStatus: (s) => {
       const el = $("live-status");

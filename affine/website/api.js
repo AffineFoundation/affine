@@ -91,6 +91,13 @@ export async function fetchDuelSeries(challengeId, signal) {
   return getJSON(`${API}/duels/${encodeURIComponent(challengeId)}/series`, { signal });
 }
 
+/** Validator log lines mentioning this duel. API mode only. */
+export async function fetchDuelLog(challengeId, signal) {
+  const m = await detectMode({ signal });
+  if (m !== "api") return null;
+  return getJSON(`${API}/duels/${encodeURIComponent(challengeId)}/log`, { signal });
+}
+
 /** Historical SN registration burn (τ) from TMC, downsampled by affine-dash. */
 export async function fetchRegHistory(signal) {
   const m = await detectMode({ signal });

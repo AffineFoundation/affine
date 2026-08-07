@@ -9,16 +9,21 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
   <link rel="stylesheet" href="fonts/fonts.css?v=20" />
-  <link rel="stylesheet" href="style.css?v=27" />
+  <link rel="stylesheet" href="style.css?v=34" />
 </head>
 <body>
   <header class="top-nav">
     <div class="nav-inner">
-      <a class="brand" href="./index.html">
+      <a class="brand" href="./">
         <img src="favicon.svg" width="18" height="18" alt="" aria-hidden="true" />
         <span class="brand-name">AFFINE</span>
       </a>
-      <a href="./llms.txt" class="nav-chip">llms.txt</a>
+      <div class="nav-center">
+        <a id="nav-king" class="nav-chip" target="_blank" rel="noopener">AFFINE</a>
+        <a href="./llms.txt" class="nav-chip">llms.txt</a>
+        <a class="nav-chip" href="https://s3.hippius.com/affine-sn120/turns/manifest.json"
+           target="_blank" rel="noopener">Dataset</a>
+      </div>
       <div class="nav-right">
         <a class="nav-icon"
            href="https://github.com/AffineFoundation/affine"
@@ -45,7 +50,6 @@
               -1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77z"/>
           </svg>
         </a>
-        <span class="live-status" id="live-status" title="live update channel">…</span>
       </div>
     </div>
     <div class="market-bar" id="market-bar" aria-label="SN120 market">
@@ -63,6 +67,8 @@
           <div class="hero-pane-head">
             <h2 class="hero-pane-title">S</h2>
             <p class="hero-caption">best of king and challenger each duel</p>
+            <button type="button" class="expand-btn" data-chart="hero-score"
+              title="expand S" aria-label="Expand S chart">⤢</button>
           </div>
           <div class="hero-scroll">
             <svg id="hero-chart-score" role="img" aria-label="Absolute S king vs challenger"></svg>
@@ -72,6 +78,8 @@
           <div class="hero-pane-head">
             <h2 class="hero-pane-title">Z</h2>
             <p class="hero-caption">paired duel z vs king · dashed = 3σ dethrone threshold</p>
+            <button type="button" class="expand-btn" data-chart="hero-z"
+              title="expand Z" aria-label="Expand Z chart">⤢</button>
           </div>
           <div class="hero-scroll">
             <svg id="hero-chart-z" role="img" aria-label="Paired duel z vs king"></svg>
@@ -101,6 +109,9 @@
     <section class="section" id="reg-price">
       <div class="section-head">
         <h2 class="section-title">registration price</h2>
+        <button type="button" class="expand-btn" data-chart="reg-price"
+          title="expand registration price"
+          aria-label="Expand registration price chart">⤢</button>
         <span class="section-right" id="reg-price-meta"></span>
       </div>
       <div class="reg-chart-wrap">
@@ -144,17 +155,37 @@
     </section>
   </main>
 
-  <div id="duel-panel" class="duel-panel" hidden>
-    <div class="duel-panel-backdrop" id="duel-panel-backdrop"></div>
-    <aside class="duel-panel-sheet" role="dialog" aria-modal="true" aria-labelledby="duel-panel-title">
-      <div class="duel-panel-head">
-        <h2 class="section-title" id="duel-panel-title">duel</h2>
-        <button type="button" class="duel-panel-close" id="duel-panel-close" aria-label="Close">✕</button>
+  <div id="chart-modal" class="chart-modal" hidden>
+    <div class="chart-modal-backdrop" id="chart-modal-backdrop"></div>
+    <div class="chart-modal-sheet" role="dialog" aria-modal="true"
+         aria-labelledby="chart-modal-title">
+      <div class="chart-modal-head">
+        <h2 class="section-title" id="chart-modal-title">chart</h2>
+        <span class="section-right" id="chart-modal-caption"></span>
+        <button type="button" class="duel-panel-close" id="chart-modal-close"
+          aria-label="Close">✕</button>
       </div>
-      <div class="duel-panel-body" id="duel-panel-body"></div>
-    </aside>
+      <div class="chart-modal-body">
+        <div class="chart-modal-chart">
+          <svg id="chart-modal-svg" role="img" aria-label="expanded chart"></svg>
+        </div>
+        <div class="chart-modal-detail" id="chart-modal-detail"></div>
+      </div>
+    </div>
   </div>
 
-  <script type="module" src="app.js?v=27"></script>
+  <section id="duel-page" class="duel-page" hidden>
+    <div class="duel-page-inner">
+      <div class="duel-page-head">
+        <button type="button" class="back-btn" id="duel-back"
+          aria-label="Back to dashboard">←</button>
+        <h2 class="section-title" id="duel-page-title">duel</h2>
+        <span class="section-right" id="duel-page-meta"></span>
+      </div>
+      <div id="duel-page-body"></div>
+    </div>
+  </section>
+
+  <script type="module" src="app.js?v=34"></script>
 </body>
 </html>

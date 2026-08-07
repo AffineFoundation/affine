@@ -168,6 +168,11 @@ function duelTipName(p) {
   return p?.repo && p.repo !== name ? `${name} (${p.repo})` : name;
 }
 
+/** Marks with a challenge id navigate to the duel page on click. */
+function duelCidAttr(p) {
+  return p?.challenge_id ? ` data-cid="${esc(p.challenge_id)}"` : "";
+}
+
 /**
  * X axis: crownings are named moments; every other duel is a bare tick.
  * Reign numerals are dropped when two crowns land closer than the label is
@@ -208,10 +213,10 @@ export function fmtScore(v) {
   return n.toFixed(3);
 }
 
-export function drawDuelZ(svg, history, { width: widthOpt } = {}) {
+export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } = {}) {
   const points = duelPoints(history);
   const width = Math.max(widthOpt || chartWidth(), 280);
-  const height = 320;
+  const height = heightOpt || 320;
   const padL = 52;
   const padR = 20;
   const padT = 28;
@@ -267,8 +272,8 @@ export function drawDuelZ(svg, history, { width: widthOpt } = {}) {
     const crowned = p.event === "crowned";
     const fill = crowned ? gold : (z >= 0 ? bar : "rgba(255,71,71,0.55)");
     const zLabel = fmtZ(p.event === "crowned" && p.z == null ? 3 : p.z);
-    return `<g>
-      <title>${esc(duelTipName(p))} · ${esc(p.event)} · z=${zLabel} · ${esc(fmtTime(p.at))}</title>
+    const tip = `${duelTipName(p)} · ${p.event} · z=${zLabel} · ${fmtTime(p.at)}`;
+    return `<g class="duel-hit" data-tip="${esc(tip)}"${duelCidAttr(p)}>
       <rect x="${x - barW / 2}" y="${top}" width="${barW}" height="${h}" rx="1" fill="${fill}"
         opacity="${crowned ? 1 : 0.92}"/>
     </g>`;
@@ -281,7 +286,8 @@ export function drawDuelZ(svg, history, { width: widthOpt } = {}) {
   svg.innerHTML = `${grid}${crownLine}${columns}${axis}`;
 }
 
-export function drawDuelScores(svg, history, { width: widthOpt } = {}) {
+export function drawDuelScores(svg, history,
+                               { width: widthOpt, height: heightOpt } = {}) {
   // Best absolute S per duel — max(king, challenger), reg-price style.
   const points = (history || [])
     .filter((r) => r.event !== "failed")
@@ -291,7 +297,7 @@ export function drawDuelScores(svg, history, { width: widthOpt } = {}) {
     .slice()
     .reverse();
   const width = Math.max(widthOpt || chartWidth(), 280);
-  const height = 320;
+  const height = heightOpt || 320;
   const padL = 56;
   const padR = 24;
   const padT = 28;
@@ -374,8 +380,9 @@ export function drawDuelScores(svg, history, { width: widthOpt } = {}) {
     const chall = scoreOf(p, "score");
     const king = scoreOf(p, "score_king");
     const who = (chall != null && (king == null || chall >= king)) ? "challenger" : "king";
-    return `<g>
-      <title>${esc(duelTipName(p))} · best=${fmtScore(v)} (${who}) · ${esc(fmtTime(p.at))}</title>
+    const tip = `${duelTipName(p)} · best=${fmtScore(v)} (${who}) · ${fmtTime(p.at)}`;
+    return `<g class="duel-hit" data-tip="${esc(tip)}"${duelCidAttr(p)}>
+      <circle cx="${x}" cy="${yAt(v)}" r="9" fill="transparent"/>
       <circle cx="${x}" cy="${yAt(v)}" r="${crowned ? 4.5 : 2.5}"
         fill="${gold}" opacity="${crowned ? 1 : 0.85}"/>
     </g>`;
@@ -427,6 +434,15 @@ export const GATE_METRICS = [
     id: "gate-pass",
     title: "causality",
     caption: "pairs whose thought earns ≥ τ lift without leaking · invalid below γ",
+    detail: `<p>A pair passes the causality gate when the miner's thought
+      <code>z_A</code> contains no fuzzy copy of the action it is supposed to
+      justify, and injecting it raises the miner's own logprob of that action by
+      at least <code>τ = 0.02</code> over the empty-context baseline:
+      <code>lpA(y_A|z_A) − lpA(y_A|∅) ≥ τ</code>.</p>
+      <p>This pane plots the share of the slice's pairs that pass, for each side.
+      A miner whose rate falls below <code>γ = 0.30</code> is INVALID and cannot
+      crown no matter how large its margin. The gate is what closes the silent
+      miner (empty thoughts carry no lift) and the fixed-payload attack.</p>`,
     fmt: fmtPct,
     domain: [0, 1],
     lines: [{ label: "γ", at: (g) => g.gamma ?? 0.3 }],
@@ -439,6 +455,14 @@ export const GATE_METRICS = [
     id: "bank",
     title: "prior bank",
     caption: "pairs beating the published priors · invalid below γ_bank",
+    detail: `<p>Share of pairs whose teacher lift beats the published prior bank
+      — a fixed set of generic, context-free thoughts. <code>Λ2_bank > 0</code>
+      means the miner's thought helped the teacher <em>more than a canned prior
+      would have</em>, so the lift is specific to this turn rather than to
+      sounding thoughtful in general.</p>
+      <p>Below <code>γ_bank = 0.08</code> the miner is INVALID. This is the gate
+      that closes paraphrase stuffing: restating the prompt scores like a prior
+      and drives this fraction to zero.</p>`,
     fmt: fmtPct,
     domain: [0, 1],
     lines: [{ label: "γb", at: (g) => g.gamma_bank ?? 0.08 }],
@@ -451,6 +475,17 @@ export const GATE_METRICS = [
     id: "calib",
     title: "calibration r",
     caption: "mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)| · must sit inside the band",
+    detail: `<p>Serve-time calibration check on the miner's own logprobs:
+      <code>r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|</code>. Values below 1 mean
+      injecting the thought made the teacher's action cheaper for the miner to
+      predict — mean <code>L1lift > 0</code>, the natural signature of a faithful
+      distill. Live distills measure 0.72–0.81; the teacher scoring itself sits
+      near 0.35.</p>
+      <p>Outside <code>[0.3, 4.0]</code> the miner is INVALID: a runaway r means
+      the head is sharpened or broken rather than informed. <code>r_lo</code> was
+      1.0 at launch and was lowered on 2026-08-06 because it was invalidating
+      every genuine winner; the attack it used to cover is now handled by the
+      empty-baseline band instead.</p>`,
     fmt: fmtRatio,
     lines: [
       { label: "r_lo", at: (g) => g.r_lo ?? 0.3 },
@@ -465,6 +500,15 @@ export const GATE_METRICS = [
     id: "baseline",
     title: "empty baseline",
     caption: "challenger mean|lpA(y_C|∅)| ÷ king's · capped at baseline_band",
+    detail: `<p>The challenger's empty-context baseline <code>mean|lpA(y_C|∅)|</code>
+      divided by the king's on the same slice. Both sides see identical turns and
+      identical teacher actions, so an honest challenger lands near the king —
+      the observed honest maximum is 1.14×.</p>
+      <p>Above <code>baseline_band = 1.25×</code> the challenger is INVALID.
+      Inflating your own empty baseline is the one way to mint free
+      <code>L1lift</code> once <code>r_lo &lt; 1</code>: sabotage the denominator
+      and every thought looks helpful. A real distill improves the numerator
+      instead, which is why this pane and calibration r are read together.</p>`,
     fmt: fmtRatio,
     lines: [
       { label: "band", at: (g) => g.baseline_band ?? 1.25 },
@@ -486,6 +530,15 @@ export const GATE_METRICS = [
     id: "margin",
     title: "margin",
     caption: "paired mean(S_c − S_k) against its own k·SE bar and δ",
+    detail: `<p>The duel itself: <code>margin = mean(S_c − S_k)</code> over turns
+      where both sides produced a scorable pair. Because it is paired per turn,
+      turn difficulty cancels — a hard slice hurts both sides equally.</p>
+      <p>The dashed bone line is that duel's own <code>k·SE</code> bar, which
+      moves with how noisy the slice was. Gold above bone means the challenger
+      cleared 3σ. The gold dotted line is <code>δ = 0.02</code>, an absolute
+      floor sized to the same-model null so a freakishly low-variance challenger
+      cannot crown on a trivial mean. In practice 3·SE runs 0.023–0.043, so the
+      σ test is what governs.</p>`,
     fmt: fmtScore,
     lines: [
       { label: "δ", at: (g) => g.min_margin ?? 0.02 },
@@ -508,6 +561,14 @@ export const GATE_METRICS = [
     id: "se",
     title: "paired SE",
     caption: "spread of the per-turn S difference · floored at min_se",
+    detail: `<p>Standard error of the per-turn <code>S_c − S_k</code> differences,
+      i.e. how much this slice disagreed with itself. It sets the height of the
+      bar the challenger has to clear, since crowning needs
+      <code>margin > 3·SE</code>.</p>
+      <p>It is floored at <code>min_se = 0.005</code> before z is computed. Without
+      that floor a challenger that returns near-identical differences on every
+      turn would drive SE toward zero and manufacture an unbounded z off a
+      meaningless mean.</p>`,
     fmt: fmtScore,
     lines: [{ label: "min", at: (g) => g.min_se ?? 0.005 }],
     series: [{ label: "SE", color: GOLD, get: (p) => num(p.se) }],
@@ -516,6 +577,12 @@ export const GATE_METRICS = [
     id: "lambda2",
     title: "Λ2",
     caption: "teacher lift lpC(y_C|z_A) − lpC(y_C|∅) — the ranking core",
+    detail: `<p><code>Λ2 = lpC(y_C|z_A) − lpC(y_C|∅)</code>: how much the miner's
+      thought helps <em>the teacher</em> predict its own action. The teacher is
+      the anchor — the miner is never judged by another model's opinion of its
+      prose, only by whether its reasoning measurably transfers.</p>
+      <p>This is the dominant term of S*. Positive means the thought carried real
+      information about what to do next; near zero means it was decoration.</p>`,
     fmt: fmtScore,
     lines: [{ label: "", at: () => 0, faint: true }],
     series: [
@@ -527,6 +594,13 @@ export const GATE_METRICS = [
     id: "score",
     title: "S*",
     caption: "Λ2 + w·clip(L1lift) — the ranked quantity",
+    detail: `<p>The full ranking term per side:
+      <code>S = mean(Λ2 + w·clip(L1lift, ±0.1))</code> with <code>w = 1</code>.
+      <code>Λ2</code> is the teacher-side lift; <code>L1lift</code> is the
+      miner-side lift on the same teacher action, clipped so a single
+      overconfident turn cannot dominate the mean.</p>
+      <p>An INVALID side has no S at all — gates are evaluated before ranking, so
+      a gated miner drops out of the pane rather than scoring badly.</p>`,
     fmt: fmtScore,
     lines: [{ label: "", at: () => 0, faint: true }],
     series: [
@@ -538,6 +612,13 @@ export const GATE_METRICS = [
     id: "turns",
     title: "paired turns",
     caption: "turns where both sides produced a scorable pair",
+    detail: `<p>Gold is the number of turns that actually entered the paired test;
+      bone is the slice the duel was handed. The slice is 80 turns seeded by
+      <code>blake2b(reveal_block_hash ‖ hotkey)</code>, so no one can know it
+      before reveal and anyone can re-derive it afterwards.</p>
+      <p>A shortfall means turns dropped out — a side failed to emit a parsable
+      action, or a rollout returned non-finite logprobs. Large gaps make the SE
+      wider and the crown harder, which is the intended behaviour.</p>`,
     fmt: fmtInt,
     lines: [],
     series: [
@@ -549,9 +630,51 @@ export const GATE_METRICS = [
     id: "duration",
     title: "duel wall clock",
     caption: "enqueue → verdict on the eval pod",
+    detail: `<p>Wall clock from the validator handing the challenge to the eval
+      pod through to the published verdict: model download, vLLM warm-up, the
+      injectability probe, then teacher references and both sides scored
+      concurrently across the slice.</p>
+      <p>It is an operations signal, not part of S*. Spikes usually mean a large
+      checkpoint pull or a cold engine rather than anything about the model's
+      quality.</p>`,
     fmt: fmtDuration,
     lines: [],
     series: [{ label: "duration", color: GOLD, get: (p) => num(p.duration_s) }],
+  },
+];
+
+/**
+ * The two hero charts, described the same way as the grid panes so the expand
+ * view can treat every chart on the page uniformly.
+ */
+export const HERO_CHARTS = [
+  {
+    id: "hero-score",
+    title: "S",
+    caption: "best of king and challenger each duel",
+    detail: `<p>The higher of the two sides' absolute <code>S*</code> in each duel,
+      oldest to newest. It is the level the subnet is currently distilling at:
+      it steps up when a stronger model takes the crown and drifts with slice
+      difficulty in between.</p>
+      <p><code>S = mean(Λ2 + w·clip(L1lift, ±0.1))</code>, measured against a
+      fixed teacher on SWE-style trajectories. S never touches a benchmark task,
+      yet it tracked swe-rebench at Spearman <code>+0.758</code> across 30 models
+      — that correlation is the whole claim of the mechanism.</p>`,
+    draw: (svg, history, opts) => drawDuelScores(svg, history, opts),
+  },
+  {
+    id: "hero-z",
+    title: "Z",
+    caption: "paired duel z vs king · dashed = 3σ dethrone threshold",
+    detail: `<p>Each duel's paired <code>z = mean(S_c − S_k) / SE</code> against
+      the reigning king. Gold bars are crownings, bone is a challenger that
+      scored above the king without clearing the bar, red is a loss.</p>
+      <p>The dotted gold line at 3σ is the dethrone threshold. Clearing it is
+      necessary but not sufficient: the challenger also needs
+      <code>margin > δ = 0.02</code> and both sides must pass every validity
+      gate. The panes under "duel measurements" show those gates duel by
+      duel.</p>`,
+    draw: (svg, history, opts) => drawDuelZ(svg, history, opts),
   },
 ];
 
@@ -563,9 +686,10 @@ function lastGates(points) {
 }
 
 /** One pane of the gate grid: every duel on x, one value per side on y. */
-export function drawGateMetric(svg, points, metric, { width: widthOpt } = {}) {
+export function drawGateMetric(svg, points, metric,
+                               { width: widthOpt, height: heightOpt } = {}) {
   const width = Math.max(widthOpt || 320, 240);
-  const height = 168;
+  const height = heightOpt || 168;
   const padL = 46;
   const padR = 12;
   const padT = 12;
@@ -655,9 +779,11 @@ export function drawGateMetric(svg, points, metric, { width: widthOpt } = {}) {
   const dots = metric.series.map((s, si) => cols[si].map((v, i) => {
     if (v == null || s.dash) return "";
     const p = points[i];
-    return `<g>
-      <title>${esc(duelTipName(p))} · ${esc(s.label)} ${esc(metric.fmt(v))} · ${esc(fmtTime(p.at))}</title>
-      <circle cx="${xAt(i)}" cy="${yAt(Math.min(Math.max(v, lo), hi))}"
+    const tip = `${duelTipName(p)} · ${s.label} ${metric.fmt(v)} · ${fmtTime(p.at)}`;
+    const cy = yAt(Math.min(Math.max(v, lo), hi));
+    return `<g class="duel-hit" data-tip="${esc(tip)}"${duelCidAttr(p)}>
+      <circle cx="${xAt(i)}" cy="${cy}" r="8" fill="transparent"/>
+      <circle cx="${xAt(i)}" cy="${cy}"
         r="${p.event === "crowned" ? 3 : 2}" fill="${s.color}"/>
     </g>`;
   }).join("")).join("");
@@ -665,6 +791,173 @@ export function drawGateMetric(svg, points, metric, { width: widthOpt } = {}) {
   const axis = duelAxisMarks(points, xAt, height - padB);
 
   svg.innerHTML = `${grid}${crowns}${thresholds}${paths}${dots}${axis}`;
+}
+
+/* ---------- duel page charts (per-turn samples of one duel) ---------- */
+
+const turnShort = (tid) => {
+  const s = String(tid ?? "—");
+  return s.length > 34 ? `${s.slice(0, 34)}…` : s;
+};
+
+/** Per-turn Δmix bars in slice order — which turns won or lost the duel. */
+export function drawDeltaBars(svg, paired, { width: widthOpt, height: heightOpt } = {}) {
+  const pts = (paired || []).filter((p) => p.delta_mix != null);
+  const width = Math.max(widthOpt || 560, 320);
+  const height = heightOpt || 240;
+  const padL = 52;
+  const padR = 14;
+  const padT = 16;
+  const padB = 18;
+  svg.setAttribute("width", String(width));
+  svg.setAttribute("height", String(height));
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  if (!pts.length) {
+    svg.innerHTML = `<text x="${padL}" y="${height / 2}" fill="rgba(229,229,229,0.35)"
+      font-family="${MONO}" font-size="11">no paired turns</text>`;
+    return;
+  }
+  const vals = pts.map((p) => Number(p.delta_mix));
+  const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+  let lo = Math.min(...vals, 0);
+  let hi = Math.max(...vals, 0);
+  const pad = (hi - lo) * 0.1 || 0.01;
+  lo -= pad;
+  hi += pad;
+  const n = pts.length;
+  const slot = (width - padL - padR) / n;
+  const barW = Math.max(2, Math.min(slot * 0.7, 18));
+  const yAt = (v) => padT + ((hi - v) / ((hi - lo) || 1)) * (height - padT - padB);
+  const y0 = yAt(0);
+
+  const labels = [hi, 0, lo].map((v) => `
+    <text x="${padL - 8}" y="${yAt(v) + 3}" text-anchor="end" fill="rgba(229,229,229,0.4)"
+      font-family="${MONO}" font-size="9">${esc(fmtScore(v))}</text>`).join("");
+
+  const bars = pts.map((p, i) => {
+    const v = Number(p.delta_mix);
+    const x = padL + slot * (i + 0.5);
+    const y1 = yAt(v);
+    const tip = `${turnShort(p.turn_id)} · Δmix ${fmtScore(v)} · chall ${fmtScore(p.challenger_mix)} vs king ${fmtScore(p.king_mix)}`;
+    return `<g class="duel-hit" data-tip="${esc(tip)}">
+      <rect x="${x - barW / 2}" y="${Math.min(y0, y1)}" width="${barW}"
+        height="${Math.max(Math.abs(y0 - y1), 1.5)}" rx="1"
+        fill="${v >= 0 ? GOLD : "rgba(255,71,71,0.6)"}" opacity="0.9"/>
+    </g>`;
+  }).join("");
+
+  svg.innerHTML = `
+    <line x1="${padL}" x2="${width - padR}" y1="${y0}" y2="${y0}"
+      stroke="rgba(255,255,255,0.14)" stroke-width="1"/>
+    <line x1="${padL}" x2="${width - padR}" y1="${yAt(mean)}" y2="${yAt(mean)}"
+      stroke="${GOLD}" stroke-width="1" stroke-dasharray="2 5" opacity="0.7"/>
+    <text x="${width - padR}" y="${yAt(mean) - 5}" text-anchor="end" fill="${GOLD}"
+      font-family="${MONO}" font-size="9" opacity="0.85">mean ${esc(fmtScore(mean))}</text>
+    ${labels}${bars}`;
+}
+
+/** Challenger mix vs king mix per turn; above the diagonal = challenger better. */
+export function drawSideScatter(svg, paired, { width: widthOpt, height: heightOpt } = {}) {
+  const pts = (paired || []).filter(
+    (p) => p.challenger_mix != null && p.king_mix != null);
+  const width = Math.max(widthOpt || 560, 320);
+  const height = heightOpt || 240;
+  const padL = 52;
+  const padR = 14;
+  const padT = 16;
+  const padB = 30;
+  svg.setAttribute("width", String(width));
+  svg.setAttribute("height", String(height));
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  if (!pts.length) {
+    svg.innerHTML = `<text x="${padL}" y="${height / 2}" fill="rgba(229,229,229,0.35)"
+      font-family="${MONO}" font-size="11">no paired turns</text>`;
+    return;
+  }
+  const all = pts.flatMap((p) => [Number(p.challenger_mix), Number(p.king_mix)]);
+  let lo = Math.min(...all);
+  let hi = Math.max(...all);
+  const pad = (hi - lo) * 0.08 || 0.01;
+  lo -= pad;
+  hi += pad;
+  const xAt = (v) => padL + ((v - lo) / ((hi - lo) || 1)) * (width - padL - padR);
+  const yAt = (v) => padT + ((hi - v) / ((hi - lo) || 1)) * (height - padT - padB);
+
+  const dots = pts.map((p) => {
+    const c = Number(p.challenger_mix);
+    const k = Number(p.king_mix);
+    const win = c >= k;
+    const tip = `${turnShort(p.turn_id)} · chall ${fmtScore(c)} vs king ${fmtScore(k)} · Δ ${fmtScore(c - k)}`;
+    return `<g class="duel-hit" data-tip="${esc(tip)}">
+      <circle cx="${xAt(k)}" cy="${yAt(c)}" r="7" fill="transparent"/>
+      <circle cx="${xAt(k)}" cy="${yAt(c)}" r="3"
+        fill="${win ? GOLD : "rgba(255,71,71,0.65)"}" opacity="0.85"/>
+    </g>`;
+  }).join("");
+
+  svg.innerHTML = `
+    <line x1="${xAt(lo)}" y1="${yAt(lo)}" x2="${xAt(hi)}" y2="${yAt(hi)}"
+      stroke="rgba(255,255,255,0.16)" stroke-width="1" stroke-dasharray="4 4"/>
+    <text x="${width / 2}" y="${height - 8}" text-anchor="middle"
+      fill="rgba(229,229,229,0.4)" font-family="${MONO}" font-size="10">king mix</text>
+    <text x="14" y="${height / 2}" fill="rgba(229,229,229,0.4)" font-family="${MONO}"
+      font-size="10" transform="rotate(-90 14 ${height / 2})">challenger mix</text>
+    ${dots}`;
+}
+
+/** Λ2 vs L1lift for both sides — the two components of every S* sample. */
+export function drawPairScatter(svg, series, { width: widthOpt, height: heightOpt } = {}) {
+  const pts = [
+    ...(series?.challenger || []).map((p) => ({ ...p, side: "challenger" })),
+    ...(series?.king || []).map((p) => ({ ...p, side: "king" })),
+  ].filter((p) => p.lambda2 != null && p.l1lift != null);
+  const width = Math.max(widthOpt || 560, 320);
+  const height = heightOpt || 240;
+  const padL = 52;
+  const padR = 14;
+  const padT = 16;
+  const padB = 30;
+  svg.setAttribute("width", String(width));
+  svg.setAttribute("height", String(height));
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  if (!pts.length) {
+    svg.innerHTML = `<text x="${padL}" y="${height / 2}" fill="rgba(229,229,229,0.35)"
+      font-family="${MONO}" font-size="11">no pair series for this duel</text>`;
+    return;
+  }
+  const xs = pts.map((p) => Number(p.lambda2));
+  const ys = pts.map((p) => Number(p.l1lift));
+  let x0 = Math.min(...xs, 0);
+  let x1 = Math.max(...xs, 0);
+  let y0 = Math.min(...ys, 0);
+  let y1 = Math.max(...ys, 0);
+  const xp = (x1 - x0) * 0.1 || 0.02;
+  const yp = (y1 - y0) * 0.1 || 0.02;
+  x0 -= xp; x1 += xp; y0 -= yp; y1 += yp;
+  const xAt = (v) => padL + ((v - x0) / ((x1 - x0) || 1)) * (width - padL - padR);
+  const yAt = (v) => padT + ((y1 - v) / ((y1 - y0) || 1)) * (height - padT - padB);
+
+  const dots = pts.map((p) => {
+    const chall = p.side === "challenger";
+    const tip = `${p.side} · ${turnShort(p.turn_id)} · Λ2 ${fmtScore(p.lambda2)} · L1 ${fmtScore(p.l1lift)} · gate ${p.gate_ok ? "ok" : "fail"}`;
+    return `<g class="duel-hit" data-tip="${esc(tip)}">
+      <circle cx="${xAt(p.lambda2)}" cy="${yAt(p.l1lift)}" r="7" fill="transparent"/>
+      <circle cx="${xAt(p.lambda2)}" cy="${yAt(p.l1lift)}" r="3"
+        fill="${chall ? GOLD : BONE}" opacity="${p.gate_ok ? 0.85 : 0.9}"
+        ${p.gate_ok ? "" : 'stroke="rgba(255,71,71,0.9)" stroke-width="1.4"'}/>
+    </g>`;
+  }).join("");
+
+  svg.innerHTML = `
+    <line x1="${padL}" x2="${width - padR}" y1="${yAt(0)}" y2="${yAt(0)}"
+      stroke="rgba(255,255,255,0.12)"/>
+    <line x1="${xAt(0)}" x2="${xAt(0)}" y1="${padT}" y2="${height - padB}"
+      stroke="rgba(255,255,255,0.12)"/>
+    <text x="${width / 2}" y="${height - 8}" text-anchor="middle"
+      fill="rgba(229,229,229,0.4)" font-family="${MONO}" font-size="10">Λ2</text>
+    <text x="14" y="${height / 2}" fill="rgba(229,229,229,0.4)" font-family="${MONO}"
+      font-size="10" transform="rotate(-90 14 ${height / 2})">L1lift</text>
+    ${dots}`;
 }
 
 export function fmtDelta(cur, prev) {
@@ -776,10 +1069,10 @@ export function drawReignChain(svg, d) {
 }
 
 /** SN registration burn (τ) over time — TMC history, oldest → newest. */
-export function drawRegPrice(svg, history) {
+export function drawRegPrice(svg, history, { width: widthOpt, height: heightOpt } = {}) {
   const points = Array.isArray(history?.points) ? history.points : [];
-  const width = chartWidth();
-  const height = 200;
+  const width = Math.max(widthOpt || chartWidth(), 280);
+  const height = heightOpt || 200;
   const padL = 52;
   const padR = 16;
   const padT = 18;

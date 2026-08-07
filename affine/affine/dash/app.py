@@ -19,6 +19,7 @@ from .index import DashIndex
 from .project import project_duel_summary, project_series
 from .readers import (
     contract_payload,
+    duel_log_lines,
     load_eval_artifact,
     load_public_benchmarks,
     snapshot,
@@ -199,6 +200,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 status_code=404)
         # Series is immutable once the artifact exists on disk.
         return _json(cached[1], max_age=86400, request=request, immutable=True)
+
+    @app.get("/api/v1/duels/{challenge_id}/log")
+    def api_duel_log(challenge_id: str, request: Request):
+        lines = duel_log_lines(challenge_id)
+        # Short cache: an in-flight duel keeps appending heartbeat lines.
+        return _json({"challenge_id": challenge_id, "lines": lines},
+                     max_age=10, request=request)
 
     @app.get("/api/v1/stream")
     async def api_stream():
