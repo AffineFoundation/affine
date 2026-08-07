@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..config import Config, load_config
 from .index import DashIndex
-from .project import project_duel_summary, project_series
+from .project import project_duel_summary, project_series, project_turn_detail
 from .readers import (
     contract_payload,
     duel_log_lines,
@@ -200,6 +200,24 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 status_code=404)
         # Series is immutable once the artifact exists on disk.
         return _json(cached[1], max_age=86400, request=request, immutable=True)
+
+    @app.get("/api/v1/duels/{challenge_id}/turn")
+    def api_duel_turn(challenge_id: str, request: Request,
+                      turn_id: str = Query(..., min_length=1)):
+        """One turn's full rollout (both sides + teacher refs) from the artifact."""
+        cached = _artifact_and_series(challenge_id)
+        if cached is None:
+            return JSONResponse(
+                {"error": "not_found", "challenge_id": challenge_id},
+                status_code=404)
+        detail = project_turn_detail(cached[0], turn_id)
+        if detail is None:
+            return JSONResponse(
+                {"error": "turn_not_found", "challenge_id": challenge_id,
+                 "turn_id": turn_id},
+                status_code=404)
+        detail["challenge_id"] = challenge_id
+        return _json(detail, max_age=86400, request=request, immutable=True)
 
     @app.get("/api/v1/duels/{challenge_id}/log")
     def api_duel_log(challenge_id: str, request: Request):

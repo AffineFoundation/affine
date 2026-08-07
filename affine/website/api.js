@@ -98,6 +98,18 @@ export async function fetchDuelLog(challengeId, signal) {
   return getJSON(`${API}/duels/${encodeURIComponent(challengeId)}/log`, { signal });
 }
 
+export function duelTurnUrl(challengeId, turnId) {
+  return `${API}/duels/${encodeURIComponent(challengeId)}/turn`
+    + `?turn_id=${encodeURIComponent(turnId)}`;
+}
+
+/** Full rollout detail for one turn of a duel. API mode only. */
+export async function fetchDuelTurn(challengeId, turnId, signal) {
+  const m = await detectMode({ signal });
+  if (m !== "api") return null;
+  return getJSON(duelTurnUrl(challengeId, turnId), { signal });
+}
+
 /** Historical SN registration burn (τ) from TMC, downsampled by affine-dash. */
 export async function fetchRegHistory(signal) {
   const m = await detectMode({ signal });

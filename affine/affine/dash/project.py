@@ -85,6 +85,67 @@ def project_series(artifact: dict) -> dict:
     }
 
 
+def _pair_detail(p: dict) -> dict:
+    """One scored pair with its published rollout text and derived terms.
+
+    Everything here is already public in the Hippius artifact; this just
+    serves one turn of it without the multi-MB gunzip on the client.
+    """
+    out = {
+        "thought": p.get("z_a"),
+        "action": p.get("y_a"),
+        "lambda2": None,
+        "l1lift": None,
+        "mix": None,
+        "gate_ok": None,
+    }
+    try:
+        out["lambda2"] = _finite(lambda2(p))
+        out["l1lift"] = _finite(l1_lift(p))
+        out["mix"] = _finite(rank_term(p))
+        out["gate_ok"] = bool(gate_pass(p))
+    except (KeyError, TypeError, ValueError):
+        pass
+    # Raw logprob components for full replay verification.
+    for k, v in p.items():
+        if k.startswith("lp"):
+            out[k] = _finite(v)
+    return out
+
+
+def _side_turn(rows: list[dict], turn_id: str) -> dict | None:
+    for r in rows:
+        if r.get("turn_id") != turn_id:
+            continue
+        return {
+            "valid": r.get("valid"),
+            "bank_frac": _finite(r.get("bank_frac")),
+            "n_pairs": r.get("n_pairs"),
+            "pairs": [_pair_detail(p) for p in (r.get("pairs") or [])],
+        }
+    return None
+
+
+def project_turn_detail(artifact: dict, turn_id: str) -> dict | None:
+    """Full rollout detail for one turn: both sides + teacher references."""
+    chall = _side_turn(artifact.get("challenger_rows") or [], turn_id)
+    king = _side_turn(artifact.get("king_rows") or [], turn_id)
+    refs = (artifact.get("teacher_refs") or {}).get(turn_id) or []
+    if chall is None and king is None and not refs:
+        return None
+    return {
+        "turn_id": turn_id,
+        "challenger": chall,
+        "king": king,
+        "teacher_refs": [{
+            "thought": r.get("z"),
+            "action": r.get("y"),
+            "lp_own": _finite(r.get("lp_own")),
+            "lp_empty": _finite(r.get("lp_empty")),
+        } for r in refs],
+    }
+
+
 def project_duel_summary(history_row: dict | None, artifact: dict | None,
                          series: dict | None = None) -> dict:
     """Combine history verdict + optional artifact projection."""

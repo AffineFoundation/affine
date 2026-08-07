@@ -1,13 +1,16 @@
 import {
+  currentMode,
+  duelTurnUrl,
   fetchBenchmarks,
   fetchDuel,
   fetchDuelLog,
   fetchDuelSeries,
+  fetchDuelTurn,
   fetchHistory,
   fetchRegHistory,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=34";
+} from "./api.js?v=35";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -32,7 +35,7 @@ import {
   reignMembers,
   setReignLookup,
   short,
-} from "./charts.js?v=34";
+} from "./charts.js?v=35";
 
 const $ = (id) => document.getElementById(id);
 
@@ -292,7 +295,59 @@ function renderGates(force = false) {
 /* ---------- expanded chart ---------- */
 
 // Every chart on the page, keyed by the data-chart on its expand button.
+/** Series of the duel page currently on screen (for expanded chart modals). */
+const duelPage = { cid: null, series: null };
+
+const DUEL_CHART_SPECS = [
+  {
+    id: "duel-delta",
+    title: "Δmix per turn",
+    caption: "challenger − king, slice order · gold = challenger won the turn",
+    detail: `<p>Each bar is one turn of the seeded slice:
+      <code>Δmix = S_challenger − S_king</code> on that turn, where each side's
+      mix is <code>Λ2 + w·clip(L1lift, ±0.1)</code> averaged over the turn's
+      scored pairs. Gold bars are turns the challenger won, red bars turns the
+      king won.</p>
+      <p>The dashed line is the mean of these bars — exactly the duel's
+      <code>margin</code>. The crown rule asks that this mean clear both
+      <code>k·SE</code> of its own spread and the δ noise floor, so a duel is
+      won by consistent per-turn advantage, not a few outlier turns.</p>`,
+    render: (svg, width) =>
+      drawDeltaBars(svg, duelPage.series?.paired || [], { width, height: 440 }),
+  },
+  {
+    id: "duel-sides",
+    title: "challenger vs king",
+    caption: "per-turn mix · above the dashed diagonal = challenger better",
+    detail: `<p>Every dot is one paired turn, placed at (king mix, challenger
+      mix). The dashed diagonal is parity: dots above it are turns where the
+      challenger's ranking term beat the king's on the same prompt with the
+      same teacher references.</p>
+      <p>This view separates "the challenger is better" (cloud shifted above
+      the diagonal) from "the turns are just easier/harder" (cloud sliding
+      along the diagonal): only distance from the diagonal wins duels.</p>`,
+    render: (svg, width) =>
+      drawSideScatter(svg, duelPage.series?.paired || [], { width, height: 440 }),
+  },
+  {
+    id: "duel-pair",
+    title: "Λ2 vs L1lift",
+    caption: "gold = challenger · bone = king · red ring = gate fail",
+    detail: `<p>The two components of every scored sample.
+      <code>Λ2 = lpC(y_C|z_A) − lpC(y_C|∅)</code> is the teacher-side lift the
+      miner's thought gives the teacher's own reference action — the ranking
+      core. <code>L1lift = lpA(y_C|z_A) − lpA(y_C|∅)</code> is the same
+      measured on the miner's own logprobs, clipped at ±0.1 in the mix.</p>
+      <p>Gold dots are challenger turns, bone dots king turns; a red ring
+      marks turns whose pairs failed the causality/leakage gate. A faithful
+      distill drifts up and to the right of its opponent.</p>`,
+    render: (svg, width) =>
+      drawPairScatter(svg, duelPage.series, { width, height: 440 }),
+  },
+];
+
 const CHART_SPECS = new Map([
+  ...DUEL_CHART_SPECS.map((c) => [c.id, c]),
   ...HERO_CHARTS.map((c) => [c.id, {
     ...c,
     render: (svg, width) => c.draw(svg, cache.history, { width, height: 460 }),
@@ -611,6 +666,32 @@ function route() {
 const duelChartWidth = (el) =>
   Math.max((el?.closest(".duel-chart-pane")?.clientWidth || 560) - 26, 320);
 
+function copyToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).catch(() => copyFallback(text));
+    return;
+  }
+  copyFallback(text);
+}
+
+function copyFallback(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand("copy");
+  ta.remove();
+}
+
+/** Icon button that copies the FULL value even when the display truncates. */
+function copyBtn(value) {
+  if (value == null || value === "") return "";
+  return `<button type="button" class="copy-btn" data-copy="${esc(String(value))}"
+    title="copy" aria-label="Copy value">⧉</button>`;
+}
+
 async function renderDuelPage(cid) {
   const body = $("duel-page-body");
   const title = $("duel-page-title");
@@ -637,6 +718,8 @@ async function renderDuelPage(cid) {
   const series = seriesRaw && !seriesRaw.error ? seriesRaw : null;
   const logLines = (logRaw && !logRaw.error && Array.isArray(logRaw.lines))
     ? logRaw.lines : null;
+  duelPage.cid = cid;
+  duelPage.series = series;
   body.innerHTML = duelPageHtml(duel, series, logLines);
   const paired = series?.paired || [];
   const delta = $("duel-chart-delta");
@@ -733,16 +816,21 @@ function sidesTableHtml(duel) {
     <tbody>${rows}</tbody></table></div>`;
 }
 
+const TURNS_COLSPAN = 9;
+
 function turnsTableHtml(duel, paired) {
   if (!paired.length) {
     return `<div class="empty">no per-turn series — the eval artifact is not published (older duel or failure before scoring)</div>`;
   }
+  const cid = duel.challenge_id || "";
   const sorted = [...paired].sort(
     (a, b) => (b.delta_mix ?? -Infinity) - (a.delta_mix ?? -Infinity));
   const rows = sorted.map((p) => {
     const d = p.delta_mix;
-    return `<tr>
-      <td class="mono" title="${esc(p.turn_id ?? "")}">${esc(short(p.turn_id ?? "—", 44))}</td>
+    const tid = p.turn_id ?? "";
+    return `<tr class="turn-row" data-turn="${esc(tid)}"
+        title="click to view the rollout texts for this turn">
+      <td class="mono">${esc(short(tid || "—", 44))}</td>
       <td class="num ${d == null ? "dim" : d >= 0 ? "ok" : "bad"}">${d == null ? "—" : esc(fmtScore(d))}</td>
       <td class="num">${esc(fmtScore(p.challenger_mix))}</td>
       <td class="num">${esc(fmtScore(p.king_mix))}</td>
@@ -750,14 +838,87 @@ function turnsTableHtml(duel, paired) {
       <td class="num">${esc(fmtScore(p.king_lambda2))}</td>
       <td class="${p.challenger_gate_ok ? "ok" : "bad"}">${p.challenger_gate_ok ? "ok" : "fail"}</td>
       <td class="${p.king_gate_ok ? "ok" : "bad"}">${p.king_gate_ok ? "ok" : "fail"}</td>
+      <td>${cid && tid ? `<a class="raw-link" href="${esc(duelTurnUrl(cid, tid))}"
+        target="_blank" rel="noopener" title="raw JSON for this exact turn">json ↗</a>` : ""}</td>
     </tr>`;
   }).join("");
   return `<div class="table-wrap table-scroll"><table class="data-table turns-table">
     <thead><tr><th>turn</th><th class="num">Δmix</th>
       <th class="num">chall mix</th><th class="num">king mix</th>
       <th class="num">chall Λ2</th><th class="num">king Λ2</th>
-      <th>chall gates</th><th>king gates</th></tr></thead>
+      <th>chall gates</th><th>king gates</th><th>raw</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
+}
+
+/* ---------- inline rollout viewer (one turn's actual texts) ---------- */
+
+function rolloutPairHtml(p, i) {
+  const chips = `
+    <span class="chip ${p.gate_ok ? "ok" : "bad"}">gate ${p.gate_ok ? "ok" : "fail"}</span>
+    <span class="chip">Λ2 ${esc(fmtScore(p.lambda2))}</span>
+    <span class="chip">L1 ${esc(fmtScore(p.l1lift))}</span>
+    <span class="chip">mix ${esc(fmtScore(p.mix))}</span>`;
+  return `<div class="rollout-pair">
+    <div class="rollout-pair-head"><span class="dim">pair ${i + 1}</span>${chips}</div>
+    <div class="rollout-text"><span class="k">thought z_A</span>
+      <pre>${esc(p.thought ?? "—")}</pre></div>
+    <div class="rollout-text"><span class="k">action y_A</span>
+      <pre>${esc(p.action ?? "—")}</pre></div>
+  </div>`;
+}
+
+function rolloutDetailHtml(detail) {
+  const side = (label, cls, s) => !s ? "" : `
+    <div class="rollout-side">
+      <div class="rollout-side-head ${cls}">${esc(label)}
+        <span class="dim">· ${s.valid ? "valid" : "INVALID"} · bank ${esc(fmtScore(s.bank_frac))} · ${esc(String(s.n_pairs ?? (s.pairs || []).length))} pairs</span></div>
+      ${(s.pairs || []).map(rolloutPairHtml).join("")}
+    </div>`;
+  const refs = (detail.teacher_refs || []).map((r, i) => `
+    <div class="rollout-pair">
+      <div class="rollout-pair-head"><span class="dim">reference ${i + 1}</span>
+        <span class="chip">lp own ${esc(fmtScore(r.lp_own))}</span>
+        <span class="chip">lp ∅ ${esc(fmtScore(r.lp_empty))}</span></div>
+      <div class="rollout-text"><span class="k">teacher thought z_C</span>
+        <pre>${esc(r.thought ?? "—")}</pre></div>
+      <div class="rollout-text"><span class="k">teacher action y_C</span>
+        <pre>${esc(r.action ?? "—")}</pre></div>
+    </div>`).join("");
+  return `<div class="rollout-detail">
+    ${side("challenger", "gold", detail.challenger)}
+    ${side("king", "", detail.king)}
+    ${refs ? `<div class="rollout-side">
+      <div class="rollout-side-head dim">teacher references (the y_C both sides were scored against)</div>
+      ${refs}</div>` : ""}
+  </div>`;
+}
+
+async function toggleRolloutRow(tr) {
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains("rollout-row")) {
+    next.remove();
+    return;
+  }
+  const cid = duelPage.cid;
+  const tid = tr.dataset.turn;
+  if (!cid || !tid) return;
+  const holder = document.createElement("tr");
+  holder.className = "rollout-row";
+  holder.innerHTML = `<td colspan="${TURNS_COLSPAN}"><div class="empty">loading rollout…</div></td>`;
+  tr.after(holder);
+  if (currentMode() !== "api") {
+    holder.firstElementChild.innerHTML = `<div class="empty">rollout texts need the live API —
+      in static mode download the full artifact:
+      <a href="${esc(hippiusEvalUrl(cid))}" target="_blank" rel="noopener">evals/${esc(cid)}.json.gz</a></div>`;
+    return;
+  }
+  const detail = await fetchDuelTurn(cid, tid).catch(() => null);
+  if (!holder.isConnected) return;
+  if (!detail || detail.error) {
+    holder.firstElementChild.innerHTML = `<div class="empty">no rollout detail for this turn</div>`;
+    return;
+  }
+  holder.firstElementChild.innerHTML = rolloutDetailHtml(detail);
 }
 
 function duelExplainHtml() {
@@ -791,19 +952,23 @@ function duelPageHtml(duel, series, logLines) {
     ? `<a href="${esc(hippiusEvalUrl(duel.challenge_id))}" target="_blank" rel="noopener">evals/${esc(short(duel.challenge_id, 18))}.json.gz</a>`
     : `<span class="dim">not published</span>`;
 
+  const repo = duel.repo || info.repo;
+  const hotkey = duel.hotkey || info.hotkey;
+  const revision = duel.revision || info.revision;
   const overview = `
     <div class="kv-grid duel-overview">
-      <div class="kv"><span class="k">challenger</span><span class="v">${modelLink(duel.repo || info.repo, duel.hotkey || info.hotkey, duel.reign_number)}</span></div>
-      <div class="kv"><span class="k">hotkey</span><span class="v">${hotkeyLink(duel.hotkey || info.hotkey)}</span></div>
+      <div class="kv"><span class="k">challenger</span><span class="v">${modelLink(repo, hotkey, duel.reign_number)}${copyBtn(repo)}</span></div>
+      <div class="kv"><span class="k">hotkey</span><span class="v">${hotkeyLink(hotkey)}${copyBtn(hotkey)}</span></div>
       <div class="kv"><span class="k">uid</span><span class="v">${duel.uid != null ? esc(duel.uid) : "—"}</span></div>
-      <div class="kv"><span class="k">revision</span><span class="v mono">${esc(short(duel.revision || info.revision || "—", 14))}</span></div>
+      <div class="kv"><span class="k">revision</span><span class="v mono">${esc(short(revision || "—", 14))}${copyBtn(revision)}</span></div>
+      <div class="kv"><span class="k">challenge</span><span class="v mono">${esc(duel.challenge_id || "—")}${copyBtn(duel.challenge_id)}</span></div>
       <div class="kv"><span class="k">when</span><span class="v" title="${esc(fmtTime(duel.at))}">${esc(fmtTime(duel.at))} · ${esc(fmtAge(duel.at))}</span></div>
       <div class="kv"><span class="k">duration</span><span class="v">${esc(fmtDuration(duel.duration_s))}</span></div>
       <div class="kv"><span class="k">paired turns</span><span class="v">${esc(duel.n_paired_turns ?? paired.length ?? "—")}</span></div>
-      <div class="kv"><span class="k">artifact</span><span class="v">${artifactLink}</span></div>
-      ${slice.seed != null ? `<div class="kv"><span class="k">slice seed</span><span class="v mono" title="derived from the reveal block hash — miners cannot precompute the slice">${esc(slice.seed)}</span></div>` : ""}
-      ${slice.block_hash ? `<div class="kv"><span class="k">block hash</span><span class="v mono" title="${esc(slice.block_hash)}">${esc(short(slice.block_hash, 18))}</span></div>` : ""}
-      ${slice.digest ? `<div class="kv"><span class="k">corpus digest</span><span class="v mono" title="${esc(slice.digest)}">${esc(short(slice.digest, 18))}</span></div>` : ""}
+      <div class="kv"><span class="k">artifact</span><span class="v">${artifactLink}${duel.challenge_id ? copyBtn(hippiusEvalUrl(duel.challenge_id)) : ""}</span></div>
+      ${slice.seed != null ? `<div class="kv"><span class="k">slice seed</span><span class="v mono" title="derived from the reveal block hash — miners cannot precompute the slice">${esc(slice.seed)}${copyBtn(slice.seed)}</span></div>` : ""}
+      ${slice.block_hash ? `<div class="kv"><span class="k">block hash</span><span class="v mono" title="${esc(slice.block_hash)}">${esc(short(slice.block_hash, 18))}${copyBtn(slice.block_hash)}</span></div>` : ""}
+      ${slice.digest ? `<div class="kv"><span class="k">corpus digest</span><span class="v mono" title="${esc(slice.digest)}">${esc(short(slice.digest, 18))}${copyBtn(slice.digest)}</span></div>` : ""}
     </div>`;
 
   const gates = duel.gates || {};
@@ -830,23 +995,24 @@ function duelPageHtml(duel, series, logLines) {
       <pre class="fail-log">${esc(info.detail)}</pre>
     </div>` : "";
 
+  const chartPane = (spec, svgId, ariaLabel) => `
+    <div class="duel-chart-pane">
+      <div class="metric-head">
+        <div class="metric-head-row">
+          <span class="metric-title">${esc(spec.title)}</span>
+          <button type="button" class="expand-btn" data-chart="${esc(spec.id)}"
+            title="expand ${esc(spec.title)}"
+            aria-label="Expand ${esc(spec.title)} chart">⤢</button>
+        </div>
+        <span class="metric-caption">${esc(spec.caption)}</span>
+      </div>
+      <svg id="${svgId}" role="img" aria-label="${ariaLabel}"></svg>
+    </div>`;
   const charts = `
     <div class="duel-chart-grid">
-      <div class="duel-chart-pane">
-        <div class="metric-head"><span class="metric-title">Δmix per turn</span>
-          <span class="metric-caption">challenger − king, slice order · gold = challenger won the turn</span></div>
-        <svg id="duel-chart-delta" role="img" aria-label="delta mix per turn"></svg>
-      </div>
-      <div class="duel-chart-pane">
-        <div class="metric-head"><span class="metric-title">challenger vs king</span>
-          <span class="metric-caption">per-turn mix · above the dashed diagonal = challenger better</span></div>
-        <svg id="duel-chart-sides" role="img" aria-label="challenger vs king mix"></svg>
-      </div>
-      <div class="duel-chart-pane">
-        <div class="metric-head"><span class="metric-title">Λ2 vs L1lift</span>
-          <span class="metric-caption">gold = challenger · bone = king · red ring = gate fail</span></div>
-        <svg id="duel-chart-pair" role="img" aria-label="lambda2 vs l1lift"></svg>
-      </div>
+      ${chartPane(DUEL_CHART_SPECS[0], "duel-chart-delta", "delta mix per turn")}
+      ${chartPane(DUEL_CHART_SPECS[1], "duel-chart-sides", "challenger vs king mix")}
+      ${chartPane(DUEL_CHART_SPECS[2], "duel-chart-pair", "lambda2 vs l1lift")}
     </div>`;
 
   const logBlock = `
@@ -856,6 +1022,43 @@ function duelPageHtml(duel, series, logLines) {
       ${logLines && logLines.length
         ? `<pre class="fail-log duel-log">${esc(logLines.join("\n"))}</pre>`
         : `<div class="empty">log not available${logLines ? " for this duel" : " in static mode"} — full log: <a href="https://s3.hippius.com/affine-sn120/data/validator_log.txt" target="_blank" rel="noopener">validator_log.txt</a></div>`}
+    </div>`;
+
+  const auditBlock = `
+    <div class="duel-block">
+      <div class="section-head"><h3 class="section-title">verify this result</h3>
+        <span class="section-right note">every number on this page is recomputable from public data</span></div>
+      <div class="audit-note">
+        <ol>
+          <li><strong>The slice cannot be cherry-picked.</strong> The 80 turns
+            were selected by a seed derived from the finney block hash of the
+            miner's reveal block${slice.block_hash ? ` (<code>${esc(short(slice.block_hash, 18))}</code>, shown above)` : ""} —
+            it does not exist before the commitment lands on chain, so neither
+            the miner nor the validator can precompute or steer the slice.</li>
+          <li><strong>The corpus is content-addressed.</strong> The turn corpus
+            is sha-pinned in <a href="/api/v1/contract" target="_blank" rel="noopener">the chain contract</a>
+            (affine.toml) and mirrored on Hugging Face (Dataset link in the
+            nav)${slice.digest ? ` — this duel's slice digest is <code>${esc(short(slice.digest, 18))}</code>` : ""}.
+            Re-derive the slice from seed + corpus and you get these exact turn ids.</li>
+          <li><strong>The raw evidence is published.</strong> The artifact
+            (${artifactLink}) contains every scored pair: the miner's thought
+            <code>z_A</code>, its action <code>y_A</code>, the teacher references
+            <code>y_C</code>, and all logprob components — the same data the
+            rollout rows above are rendered from.</li>
+          <li><strong>The math is replayable.</strong> Teacher-force the pinned
+            teacher (see the contract) over the published texts to reproduce
+            the logprobs, then recompute
+            <code>Λ2 = lpC(y_C|z_A) − lpC(y_C|∅)</code>,
+            <code>S = mean(Λ2 + w·clip(L1lift, ±0.1))</code>, and the paired
+            <code>z = mean(S_c − S_k) / SE</code>. The exact scoring code ships
+            in the repo — see <a href="/llms.txt" target="_blank" rel="noopener">llms.txt</a>
+            → <code>code/affine/score.py</code>.</li>
+          <li><strong>The verdict follows mechanically.</strong> Crown iff
+            z &gt; ${esc(String(gates.k_sigma ?? 3))}, margin &gt; δ = ${esc(fmtScore(gates.min_margin))},
+            and both sides pass the gates in the table above. No judge, no
+            discretion.</li>
+        </ol>
+      </div>
     </div>`;
 
   return `
@@ -882,6 +1085,7 @@ function duelPageHtml(duel, series, logLines) {
       ${turnsTableHtml(duel, paired)}
     </div>
     ${logBlock}
+    ${auditBlock}
     <div class="duel-block">
       <div class="section-head"><h3 class="section-title">how to read these numbers</h3>
         <span class="section-right note">same definitions as the charts on the front page</span></div>
@@ -974,10 +1178,27 @@ function wire() {
     drawOpenChart();
   });
   document.addEventListener("click", (e) => {
+    const copy = e.target.closest(".copy-btn");
+    if (copy) {
+      e.preventDefault();
+      copyToClipboard(copy.dataset.copy || "");
+      copy.textContent = "✓";
+      copy.classList.add("copied");
+      setTimeout(() => {
+        copy.textContent = "⧉";
+        copy.classList.remove("copied");
+      }, 1200);
+      return;
+    }
     const btn = e.target.closest(".expand-btn");
     if (btn) {
       e.preventDefault();
       openChart(btn.dataset.chart);
+      return;
+    }
+    const turn = e.target.closest("tr.turn-row");
+    if (turn && !e.target.closest("a")) {
+      toggleRolloutRow(turn);
       return;
     }
     // Any chart mark carrying a challenge id opens its duel page.
