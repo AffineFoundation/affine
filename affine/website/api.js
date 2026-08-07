@@ -3,6 +3,10 @@
 const API = "/api/v1";
 const POLL_MS = 15000;
 
+// Asset version from our own module URL (api.js?v=N) — appended to duel
+// fetches so a deploy busts long-lived browser caches of old payloads.
+const SITE_V = new URL(import.meta.url).searchParams.get("v") || "0";
+
 /** "api" | "static" | null (undetected) */
 let mode = null;
 let detectPromise = null;
@@ -77,7 +81,8 @@ export async function fetchBenchmarks(signal) {
 export async function fetchDuel(challengeId, signal) {
   const m = await detectMode({ signal });
   if (m === "api") {
-    return getJSON(`${API}/duels/${encodeURIComponent(challengeId)}`, { signal });
+    return getJSON(
+      `${API}/duels/${encodeURIComponent(challengeId)}?v=${SITE_V}`, { signal });
   }
   // Static archive: best-effort from slim history.json (no full artifact).
   const items = await fetchHistory({ limit: 200 }, signal);

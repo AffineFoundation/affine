@@ -187,9 +187,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         if row is None and art is None:
             return JSONResponse({"error": "not_found", "challenge_id": challenge_id},
                                 status_code=404)
+        # NOT immutable: the summary is built from the history row, and history
+        # rows can be repaired (2026-08-07: the verdict+crowned row merge left
+        # day-long stale browser caches). The artifact-derived /series and
+        # /turn endpoints stay immutable; this one revalidates cheaply via
+        # ETag + the artifact LRU.
         terminal = payload.get("event") in ("verdict", "crowned", "failed")
-        return _json(payload, max_age=86400 if terminal else 5,
-                     request=request, immutable=terminal)
+        return _json(payload, max_age=300 if terminal else 5, request=request)
 
     @app.get("/api/v1/duels/{challenge_id}/series")
     def api_duel_series(challenge_id: str, request: Request):

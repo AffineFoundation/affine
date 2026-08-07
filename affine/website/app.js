@@ -10,7 +10,7 @@ import {
   fetchRegHistory,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=35";
+} from "./api.js?v=36";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -35,7 +35,7 @@ import {
   reignMembers,
   setReignLookup,
   short,
-} from "./charts.js?v=35";
+} from "./charts.js?v=36";
 
 const $ = (id) => document.getElementById(id);
 
