@@ -450,12 +450,11 @@ class Validator:
             if copy.action == "crown_earlier":
                 log.warning("%s: identical weights, earlier commit — crowning original: %s",
                             cid, copy.reason)
+                # record_verdict crowns inline (one history row per duel).
+                # No duel S* for copy-arbitration crowns.
                 self.state.record_verdict(entry, {
                     "challenger_wins": True, "verdict": "crown_earlier",
                     "reason": copy.reason}, **self._history_meta(entry, t0))
-                # No duel S* for copy-arbitration crowns.
-                self.state.set_king(entry.hotkey, entry.repo, entry.revision,
-                                    entry.block, cid, score=None)
                 await self._maybe_set_weights(force=True)
                 self.bench.enqueue_for(entry.repo, entry.revision, entry.hotkey,
                                        accepted=True, label=f"reign-{self.state.king.reign_number}")
@@ -507,6 +506,8 @@ class Validator:
         self.state.current_eval = None
 
         verdict["block_hash"] = block_hash
+        # One history row per duel: a winning verdict crowns inside
+        # record_verdict, so the crowned row carries the full verdict payload.
         self.state.record_verdict(entry, verdict, **self._history_meta(entry, t0))
         accepted = bool(verdict.get("challenger_wins"))
         log.info("verdict %s: challenger_wins=%s z=%s reason=%s", cid, accepted,
@@ -514,11 +515,6 @@ class Validator:
         await self._publish_eval_artifact(entry, verdict)
 
         if accepted:
-            chall = verdict.get("challenger") or {}
-            score = chall.get("S")
-            self.state.set_king(
-                entry.hotkey, entry.repo, entry.revision, entry.block, cid,
-                score=float(score) if score is not None else None)
             await self._maybe_set_weights(force=True)
         self.bench.enqueue_for(
             entry.repo, entry.revision, entry.hotkey, accepted=accepted,

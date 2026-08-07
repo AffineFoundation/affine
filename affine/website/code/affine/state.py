@@ -3,8 +3,12 @@
 Persistence model: local JSON/JSONL under `state/` on the root machine (the
 durable home of the validator), with the presentation subset mirrored to
 Hippius by dashboard.py. On startup the king chain is reconciled from
-history.jsonl so a dethrone lost to a crash between record_verdict and
-set_king is recovered (idempotent).
+history.jsonl so a dethrone lost to a crash between the `crowned` history
+append and the state.json flush is recovered (idempotent).
+
+History invariant: one row per duel. A winning verdict crowns inline and the
+single `crowned` row carries the full verdict payload — never a `verdict` row
+plus a bare `crowned` row for the same challenge.
 
 Policy invariants enforced here:
   * 1-hotkey-1-eval: the hotkey slot is burned at ENQUEUE, not at verdict.
@@ -458,20 +462,39 @@ class State:
 
     def record_verdict(self, entry: QueueEntry, verdict: dict, *,
                        uid: int | None = None,
-                       duration_s: float | None = None) -> None:
+                       duration_s: float | None = None) -> "King | None":
+        """Terminal duel outcome — exactly ONE history row per duel.
+
+        A winning verdict crowns inline: the single `crowned` row carries the
+        full verdict payload (z, margin, gates, per-side scores). The old
+        shape wrote a `verdict` row then a bare `crowned` row, which doubled
+        the duel on every chart and left the crown row without values.
+        Returns the new King when the challenger won, else None.
+        """
         accepted = bool(verdict.get("challenger_wins"))
         self.stats["accepted" if accepted else "rejected"] += 1
+        extra: dict = {"accepted": accepted, "verdict": verdict}
+        if uid is not None:
+            extra["uid"] = int(uid)
+        if duration_s is not None:
+            extra["duration_s"] = round(float(duration_s), 1)
+        if accepted:
+            score = (verdict.get("challenger") or {}).get("S")
+            king = self.set_king(
+                entry.hotkey, entry.repo, entry.revision, entry.block,
+                entry.challenge_id,
+                score=float(score) if score is not None else None,
+                history_extra=extra)
+            self._clear_in_flight(entry)
+            return king
         row = {
             "event": "verdict", "at": now_iso(), "challenge_id": entry.challenge_id,
             "hotkey": entry.hotkey, "repo": entry.repo, "revision": entry.revision,
-            "accepted": accepted, "verdict": verdict,
+            **extra,
         }
-        if uid is not None:
-            row["uid"] = int(uid)
-        if duration_s is not None:
-            row["duration_s"] = round(float(duration_s), 1)
         self._append_history(row)
         self._clear_in_flight(entry)
+        return None
 
     @staticmethod
     def _king_lineage_entry(king: King) -> dict:
@@ -482,7 +505,11 @@ class State:
         }
 
     def set_king(self, hotkey: str, repo: str, revision: str, block: int,
-                 challenge_id: str, score: float | None = None) -> King:
+                 challenge_id: str, score: float | None = None,
+                 history_extra: dict | None = None) -> King:
+        """Crown a king. `history_extra` merges duel context (verdict payload,
+        uid, duration) into the single `crowned` history row — duels must not
+        write a second row for the same challenge."""
         with self._lock:
             prev = []
             reign = 0
@@ -496,11 +523,14 @@ class State:
                              score=score, previous=prev)
             log.info("CROWNED reign #%d: %s@%s (challenge %s, score=%s)",
                      reign, repo, revision[:12], challenge_id, score)
-            self._append_history({
+            row = {
                 "event": "crowned", "at": now_iso(), "challenge_id": challenge_id,
                 "hotkey": hotkey, "repo": repo, "revision": revision,
                 "block": block, "reign_number": reign, "score": score,
-            })
+            }
+            if history_extra:
+                row.update(history_extra)
+            self._append_history(row)
             self.flush()
             return self.king
 
