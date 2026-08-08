@@ -223,7 +223,9 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
   const padB = 36;
   const n = Math.max(points.length, 1);
   const slot = (width - padL - padR) / n;
-  const barW = Math.max(10, Math.min(slot * 0.55, 64));
+  // Scale bars down with the slot so dense histories keep a visible gap
+  // (a fixed 10px floor fused bars into a block past ~60 duels).
+  const barW = Math.max(1.5, Math.min(slot * 0.6, 64, slot - 1.5));
 
   const zs = points.map((p) =>
     p.event === "crowned" ? Math.max(Number(p.z) || 0, 3) : Number(p.z) || 0);
