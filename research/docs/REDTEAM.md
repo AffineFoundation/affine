@@ -250,10 +250,67 @@ Source: `results/duel_genesis_*.json`.
 Hybrid freeze: Spearman +0.912 (n=10), rejects XI/XLV/XLVI/CI/LI — confirmed by
 `bank_w2_fullz` late-king rescoring (`results/hybrid_freeze_meta.json`).
 
+## A12 / RT-7 — Isomorphism inverts on the live panel  [SEVERE — **OPEN, not defended**]
+
+**The claim this breaks.** MOTIVATION says S stays benchmark-isomorphic *under
+adversarial pressure*. Every panel behind the +0.758 freeze is Albedo kings —
+models optimised against a **GLM judge**, not against S. They are adversarial to
+SN97, not to us. The live SN120 board is the first genuinely adversarial panel,
+because every submission on it was made by someone maximising S.
+
+**Result (validator's own published artifacts, n=29 live challengers):**
+
+| statistic | value | p (permutation) |
+|---|---|---|
+| Spearman(duel margin, swe_lite) | **−0.421** | 0.024 |
+| Spearman(S absolute, swe_lite) | −0.371 | 0.049 |
+| freeze, Albedo panel (n=30) | **+0.758** | — |
+
+The sign flips. Corroborating, independent of the correlation:
+
+- **Every model crowned by S scores 0.00 on swe** — reign-2 kevin954, reign-3
+  TalentPigs, reign-4 Tok331102, all 0/25. Only reign-0 genesis (0.20) is
+  non-zero, and genesis was *seeded*, never won a duel. 37% of the field sits at
+  zero, so 3-of-3 is p=0.052 by itself.
+- **The untouched base model wins the benchmark.** `Qwen/Qwen3.6-35B-A3B` scores
+  **0.24**, the best of 51 benched models. 400+ submissions of "improvement" and
+  none beats doing nothing.
+- **Within one miner, the crowned checkpoint is the broken one.** Tok331102 `af5`
+  scores swe 0.16 and *lost* its duel (S=−0.014); the same miner's `af10` scores
+  **0.00** and *took the crown* (S=+0.0446). Optimising S destroyed swe inside a
+  single lineage — Goodhart with the confounds held fixed.
+- **Mechanism, measured independently.** An external red-team run screened raw
+  published models against the king over n=80 with all gates clear: raw genesis
+  m=**−0.05489** (z=−6.05, r=0.977, base_x=1.009), and eight others −0.006…−0.087.
+  Every one loses through **Λ2**, not through a gate (λ2_c −0.017…−0.029 vs king
+  +0.005). Λ2 rewards *thoughts that help the teacher*, and the incumbent maxes
+  that by construction, so Λ2 behaves as a **similarity-to-incumbent term**, not
+  a capability term. 45 structurally distinct families all failed this way.
+
+**Why the gates do not catch it.** Every gate is a *validity* check on the pair
+(causality, leakage, bank, r, baseline band). None of them asks whether the
+winner can write code. A model can be perfectly gate-valid, crown, and resolve
+0/25.
+
+**Status: OPEN.** No defense shipped. This is the SN97 pathology the subnet was
+built to fix, reproduced by a different mechanism: SN97 was genesis 58.2 → kings
+26–38, SN120 is genesis 0.20 → kings 0.00, i.e. the kings are now at the floor.
+
+Artifacts: `research/results/rt7_live_isomorphism.{json,txt}`,
+`research/scripts/rt7_live_isomorphism.py` (re-runs from live published data).
+
+**Caveats.** swe_rebench_lite is 25 tasks (0.04 granularity, floor-heavy) where
+the freeze used 500; `history.json` exposes only the last 100 events, capping n
+near 30; margin is paired within a duel but still spans different kings/slices.
+The direction and the three corroborating facts do not depend on the instrument.
+
+---
+
 ## Status summary (2026-08-03)
 
 | ID | attack | status | defense |
 |---|---|---|---|
+| **RT-7 / A12** | **isomorphism inverts live** | **OPEN** | **none — ρ=−0.42 (p=0.024); all 3 S-kings swe=0.00; base model best of 51** |
 | RT-1 / A1 | fixed payloads | **CLOSED** | lose to genesis; empty → causality gate |
 | RT-2 / A2 | exact stuffing | **CLOSED** | leakage gate (0% pass) |
 | RT-2 / A9 | silence | **CLOSED** | causality gate (≤5% pass) |

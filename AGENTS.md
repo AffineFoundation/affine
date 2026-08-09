@@ -18,7 +18,9 @@ We want a score that stays **benchmark-isomorphic under adversarial pressure** o
 capability axis that the turn set D exercises.
 
 **Claim (precise):** higher S ⇒ higher swe-rebench for models below the teacher, even though
-S never touches benchmark tasks. D is SWE-style coding trajectories ⇒ target axis is coding.
+S never touches benchmark tasks. ⚠️ **This holds only on the Albedo panel. On the live
+SN120 board it inverts (ρ=−0.42, p=0.024; all three S-crowned kings resolve 0/25) — see
+§3b RT-7 before repeating the claim.** D is SWE-style coding trajectories ⇒ target axis is coding.
 “Programmable capability meter” (pick D → get matching benchmark) is an *interpretation*;
 D_tau2 tests did **not** demonstrate it yet.
 
@@ -93,7 +95,37 @@ Second teacher (Qwen3-32B vs GLM-Air), n=6 kings: Spearman(S_T1, S_T2) = **+0.94
 | RT-3 / A3 | L1lift / overconfidence | CLOSED live | clip0.1 + r∈[0.3,4] + baseline band 1.25×; sharpening residual ≤ +0.012 < 3·SE floor |
 | A11 | short-style I/II FP | **ACCEPTED (policy 2026-08-05)** | δ→0.02 noise floor; same-tier S winners may crown |
 | RT-6 / A6 | dataset sniping | **CLOSED (code, 2026-08-06)** | seed-shuffled strata + per-duel fresh y_C — see §5 |
+| **RT-7 / A12** | **isomorphism inverts on the live panel** | **OPEN — no defense** | see §3b |
 | D_tau2 | programmability falsifier | **NOT demonstrated** | see §6 |
+
+### 3b. RT-7 — the coding claim does not survive the live board (2026-08-09)
+
+Every panel behind +0.758 is Albedo kings, optimised against a **GLM judge** —
+adversarial to SN97, not to us. On the live SN120 board, where every submission
+was made by someone maximising S, the sign flips:
+
+| statistic | value | p |
+|---|---|---|
+| Spearman(duel margin, swe_lite), n=29 | **−0.421** | 0.024 |
+| Spearman(S, swe_lite), n=29 | −0.371 | 0.049 |
+| freeze (Albedo, n=30) | +0.758 | — |
+
+- **All three S-crowned kings score swe 0.00** (kevin954, TalentPigs, Tok331102).
+  Only genesis (0.20) is non-zero and it was seeded, never won a duel.
+- **Untouched `Qwen/Qwen3.6-35B-A3B` scores 0.24 — best of 51 benched models.**
+- **Same-miner control:** Tok `af5` swe 0.16 *lost* (S=−0.014); `af10` swe **0.00**
+  *crowned* (S=+0.0446). Goodhart with confounds held fixed.
+- **Mechanism:** raw genesis loses to the king by **−0.055** (n=80, z=−6.05, all
+  gates clear) via **Λ2**, and 45 structurally distinct families fail identically
+  (λ2_c −0.017…−0.029 vs king +0.005). Λ2 rewards thoughts that help the teacher,
+  which the incumbent maximises by construction, so it acts as a
+  **similarity-to-incumbent term rather than a capability term.**
+
+The gates are validity checks (causality, leakage, bank, r, band); none asks
+whether the winner can write code. A model can be gate-valid, crown, resolve 0/25.
+
+**Do not claim coding isomorphism without this caveat.** Artifacts:
+`research/results/rt7_live_isomorphism.{json,txt}`, `research/scripts/rt7_live_isomorphism.py`.
 
 Full writeups: `research/docs/REDTEAM.md`.
 
@@ -154,7 +186,11 @@ miner report ("SFT to memorize the result").**
 **Mitigations (now enforced in code, not a new score gate):**
 1. Fresh teacher `y_C` sampled per duel (`RefCache` scoped to one duel)
 2. Reveal-block-hash slice seeding incl. strata order (miner can’t precompute D_t)
-3. Corpus refresh with `corpus_epoch` + `weight_version_key` bump
+3. Corpus refresh via manifest `corpus_epoch` increment — a **data event, not a
+   fork** (per the toml comment + published llms.txt; `weight_version_key` is
+   reserved for scoring-rule changes). First refresh: epoch 2, 2026-08-07, +327
+   SWE-verified datagen turns (`turns_epoch_0002.jsonl.gz`); verdicts stamp the
+   manifest they were scored against.
 
 Private 50/50 holdout pool: **REJECTED** (breaks external replayability).
 
@@ -202,8 +238,11 @@ imported from there, not installed). Research scripts run from `research/` (rela
 `results/`, `data/` paths).
 
 Production corpus `research/data/turns_minicoder.jsonl` is **gitignored** (GitHub 100M
-cap). Canonical copy is on Hugging Face, sha-pinned in `affine/affine.toml`. Headline
-freeze tables under `research/results/` are committed; bulky intermediate pair dumps are not.
+cap). Canonical copy lives on the public Hippius bucket (`s3.hippius.com/affine-sn120`,
+append-only shards + immutable manifest; see toml `[dataset]`); the datagen loop stages
+raw shards on HF (`unconst/affine-datagen-turns`, private) until a corpus refresh folds
+them in. Headline freeze tables under `research/results/` are committed; bulky
+intermediate pair dumps are not.
 
 ---
 

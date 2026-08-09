@@ -1,0 +1,264 @@
+{
+  "n_challengers": 29,
+  "n_benched_total": 51,
+  "spearman_S_swe": -0.37110635213570914,
+  "p_S_swe": 0.04916475417622912,
+  "spearman_margin_swe": -0.42117425998317093,
+  "p_margin_swe": 0.024354878225608872,
+  "freeze_spearman_albedo_panel": 0.758,
+  "reigns": {
+    "dendriteholdings/albedo-qwen3.6-35b-king-genesis": {
+      "label": "reign-0",
+      "swe": 0.2
+    },
+    "kevin954/affine-5dfqbbh8ev-sft": {
+      "label": "reign-2",
+      "swe": 0.0
+    },
+    "talentpigs/affine-5ekxlcg3fx-abc": {
+      "label": "reign-3",
+      "swe": 0.0
+    },
+    "tok331102/affine-5eqyw8mcuc-af10": {
+      "label": "reign-4",
+      "swe": 0.0
+    }
+  },
+  "baseline_qwen_swe": 0.24,
+  "field_max_swe": 0.24,
+  "field_zero_fraction": 0.37254901960784315,
+  "rows": [
+    {
+      "repo": "tok331102/affine-5eqyw8mcuc-af10",
+      "s": 0.04455803438896373,
+      "margin": 0.026904774477195508,
+      "swe": 0.0,
+      "accepted": true,
+      "label": "reign-4"
+    },
+    {
+      "repo": "0pentensor/affine-5dkbdyucyr-awesome-v1",
+      "s": 0.04319475895743706,
+      "margin": 0.003543169277536971,
+      "swe": 0.08,
+      "accepted": false,
+      "label": "chal-00343"
+    },
+    {
+      "repo": "syntaxsorcerer1/affine-5gbhwtw4zo-sft2",
+      "s": 0.03209777158157413,
+      "margin": 0.01094616544303506,
+      "swe": 0.04,
+      "accepted": false,
+      "label": "chal-00325"
+    },
+    {
+      "repo": "talentpigs/affine-5ekxlcg3fx-abc",
+      "s": 0.031501971059510636,
+      "margin": 0.028034631289228805,
+      "swe": 0.0,
+      "accepted": true,
+      "label": "reign-3"
+    },
+    {
+      "repo": "bkn1890/affine-5cye3tdpnk-sec",
+      "s": 0.030942506919852793,
+      "margin": 0.0028496239800860656,
+      "swe": 0.04,
+      "accepted": false,
+      "label": "chal-00355"
+    },
+    {
+      "repo": "0pentensor/affine-5dkbdyucyr-awesome-v2",
+      "s": 0.027662533906995544,
+      "margin": 0.00438546542617986,
+      "swe": 0.08,
+      "accepted": false,
+      "label": "chal-00353"
+    },
+    {
+      "repo": "justice101/affine-5dz2gkonkn-120",
+      "s": 0.026634059490533758,
+      "margin": 0.0024571415678631007,
+      "swe": 0.08,
+      "accepted": false,
+      "label": "chal-00359"
+    },
+    {
+      "repo": "leary-criste/affine-5g4yy75zuz-test",
+      "s": 0.026439983650184715,
+      "margin": 0.005858827866907402,
+      "swe": 0.04,
+      "accepted": false,
+      "label": "chal-00315"
+    },
+    {
+      "repo": "adambell/affine-5eqdtdzqle-ckpt511-m6",
+      "s": 0.025590621631101453,
+      "margin": -0.002495291343766623,
+      "swe": 0.16,
+      "accepted": false,
+      "label": "chal-00289"
+    },
+    {
+      "repo": "aurora1001/affine-5cwwlhucdc-alsdkjf",
+      "s": 0.022733798557402558,
+      "margin": -0.0006369978755251495,
+      "swe": 0.0,
+      "accepted": false,
+      "label": "chal-00358"
+    },
+    {
+      "repo": "bkn1890/affine-5fwsxgdhfr-ct1072no",
+      "s": 0.021815345981026538,
+      "margin": -0.0033753311943811194,
+      "swe": 0.12,
+      "accepted": false,
+      "label": "chal-00307"
+    },
+    {
+      "repo": "sansaliu/affine-5dm33ngrnj-v1",
+      "s": 0.02161266260839103,
+      "margin": 0.0007891599877347892,
+      "swe": 0.12,
+      "accepted": false,
+      "label": "chal-00276"
+    },
+    {
+      "repo": "fortunategambler/affine-5cwwlhucdc-topper",
+      "s": 0.021534852504437103,
+      "margin": 0.01277637733118329,
+      "swe": 0.12,
+      "accepted": false,
+      "label": "chal-00350"
+    },
+    {
+      "repo": "syntaxs0cerer/affine-5gcl5uxakb-epoch3",
+      "s": 0.02114324528572774,
+      "margin": 0.00016411554167631526,
+      "swe": 0.0,
+      "accepted": false,
+      "label": "chal-00403"
+    },
+    {
+      "repo": "longertime/affine-5he5ssykut-hk9",
+      "s": 0.019228113227200083,
+      "margin": 0.008433985884174594,
+      "swe": 0.04,
+      "accepted": false,
+      "label": "chal-00333"
+    },
+    {
+      "repo": "llorite/affine-5cjfxpsxn8-tpc6",
+      "s": 0.016989173087911827,
+      "margin": -0.0037397883016899785,
+      "swe": 0.0,
+      "accepted": false,
+      "label": "chal-00321"
+    },
+    {
+      "repo": "bkn1890/affine-5dcro3nxkz-fourth",
+      "s": 0.015109450699678922,
+      "margin": -0.0031692671319502783,
+      "swe": 0.12,
+      "accepted": false,
+      "label": "chal-00378"
+    },
+    {
+      "repo": "leary-criste/affine-5g4yy75zuz-tt",
+      "s": 0.01244398993273084,
+      "margin": 0.011633378519265537,
+      "swe": 0.12,
+      "accepted": false,
+      "label": "chal-00337"
+    },
+    {
+      "repo": "thompsville/affine-5dvegrgnsg-cgpb2",
+      "s": 0.011035012133833426,
+      "margin": -0.012551984813726515,
+      "swe": 0.16,
+      "accepted": false,
+      "label": "chal-00235"
+    },
+    {
+      "repo": "syntaxsorcerer1/affine-5gbhwtw4zo-sft1",
+      "s": 0.010360054707409154,
+      "margin": -0.003961352995740323,
+      "swe": 0.0,
+      "accepted": false,
+      "label": "chal-00338"
+    },
+    {
+      "repo": "kevin954/affine-5dfqbbh8ev-sft",
+      "s": 0.008608654059530041,
+      "margin": -0.006010206222141407,
+      "swe": 0.0,
+      "accepted": false,
+      "label": "reign-2"
+    },
+    {
+      "repo": "ttttxxxxsada/affine-5fvpb6y4be",
+      "s": 0.003576597764761461,
+      "margin": -0.023955040412715754,
+      "swe": 0.08,
+      "accepted": false,
+      "label": "chal-00234"
+    },
+    {
+      "repo": "llorite/affine-5cjfxpsxn8-tpc2",
+      "s": -0.00996747753653446,
+      "margin": -0.02435636364997912,
+      "swe": 0.12,
+      "accepted": false,
+      "label": "chal-00233"
+    },
+    {
+      "repo": "tok331102/affine-5eqyw8mcuc-af5",
+      "s": -0.01447726301185893,
+      "margin": -0.01651346580072977,
+      "swe": 0.16,
+      "accepted": false,
+      "label": "chal-00255"
+    },
+    {
+      "repo": "llorite/affine-5cjfxpsxn8-tpc3",
+      "s": -0.019844332597291264,
+      "margin": -0.058837337722742196,
+      "swe": 0.16,
+      "accepted": false,
+      "label": "chal-00237"
+    },
+    {
+      "repo": "llorite/affine-5cjfxpsxn8-tpc1",
+      "s": -0.027252367722813788,
+      "margin": -0.004653739053998576,
+      "swe": 0.0,
+      "accepted": false,
+      "label": "chal-00220"
+    },
+    {
+      "repo": "tojointhecommunity/affine-5efg6cm3yl-temp",
+      "s": -0.027593761102631124,
+      "margin": -0.04036042118784895,
+      "swe": 0.16,
+      "accepted": false,
+      "label": "chal-00232"
+    },
+    {
+      "repo": "aldiendix/affine-5dfqbbh8ev-star-v1",
+      "s": -0.029406199787169515,
+      "margin": -0.043157403113596386,
+      "swe": 0.2,
+      "accepted": false,
+      "label": "chal-00236"
+    },
+    {
+      "repo": "thompsville/affine-5dvegrgnsg-cgpb1",
+      "s": -0.039696745420158545,
+      "margin": -0.01744097626263952,
+      "swe": 0.08,
+      "accepted": false,
+      "label": "chal-00222"
+    }
+  ]
+}
