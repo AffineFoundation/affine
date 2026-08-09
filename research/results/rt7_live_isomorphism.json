@@ -27,6 +27,14 @@
   "baseline_qwen_swe": 0.24,
   "field_max_swe": 0.24,
   "field_zero_fraction": 0.37254901960784315,
+  "kings_resolved": 0,
+  "kings_attempted": 75,
+  "kings_binomial_p": {
+    "genesis_pooled_0.10": 0.00036998848503512764,
+    "genesis_published_0.20": 5.39198933343015e-08,
+    "qwen_baseline_0.24": 1.1508518523254365e-09
+  },
+  "bench_repeatability": "genesis, same revision abe89194, scored 0/25 then 5/25",
   "rows": [
     {
       "repo": "tok331102/affine-5eqyw8mcuc-af10",

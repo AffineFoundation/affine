@@ -268,10 +268,12 @@ because every submission on it was made by someone maximising S.
 
 The sign flips. Corroborating, independent of the correlation:
 
-- **Every model crowned by S scores 0.00 on swe** — reign-2 kevin954, reign-3
-  TalentPigs, reign-4 Tok331102, all 0/25. Only reign-0 genesis (0.20) is
-  non-zero, and genesis was *seeded*, never won a duel. 37% of the field sits at
-  zero, so 3-of-3 is p=0.052 by itself.
+- **Every model crowned by S resolves 0/25** — reign-2 kevin954, reign-3
+  TalentPigs, reign-4 Tok331102. Only reign-0 genesis (0.20) is non-zero, and
+  genesis was *seeded*, never won a duel. Pooled that is **0 resolved out of 75
+  attempted**; against a binomial null where kings keep base-level ability,
+  P(0/75) = **3.7e-4** at the conservative genesis-pooled rate 0.10, 5.4e-8 at
+  genesis-published 0.20, 1.2e-9 at the Qwen baseline 0.24.
 - **The untouched base model wins the benchmark.** `Qwen/Qwen3.6-35B-A3B` scores
   **0.24**, the best of 51 benched models. 400+ submissions of "improvement" and
   none beats doing nothing.
@@ -299,10 +301,19 @@ built to fix, reproduced by a different mechanism: SN97 was genesis 58.2 → kin
 Artifacts: `research/results/rt7_live_isomorphism.{json,txt}`,
 `research/scripts/rt7_live_isomorphism.py` (re-runs from live published data).
 
+**Repeatability — checked, and it constrains what may be claimed.** Genesis ran
+the suite twice on the *same revision* and scored **0/25 then 5/25**. A single
+25-task score is therefore near-worthless alone, which is why the king result is
+stated **pooled** (0/75) against a binomial null rather than per model. The noise
+cuts one way only: classical error in the outcome **attenuates** Spearman toward
+zero, so ρ=−0.42 is a conservative floor rather than an inflated estimate.
+
 **Caveats.** swe_rebench_lite is 25 tasks (0.04 granularity, floor-heavy) where
 the freeze used 500; `history.json` exposes only the last 100 events, capping n
-near 30; margin is paired within a duel but still spans different kings/slices.
-The direction and the three corroborating facts do not depend on the instrument.
+near 30; margin is paired within a duel but still spans different kings/slices;
+only 2 of 51 models have repeat bench runs, so the noise model is assumed
+binomial rather than measured. The direction and the corroborating facts do not
+depend on the instrument.
 
 ---
 

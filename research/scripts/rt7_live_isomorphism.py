@@ -109,6 +109,21 @@ def main() -> None:
 
     rho_s = spearman(s_vals, w_vals)
     rho_m = spearman(m_vals, mw_vals)
+    # Per-model swe is one noisy 25-task draw. Genesis ran twice on the SAME
+    # revision and scored 0/25 then 5/25, so no single score is worth much on its
+    # own. Two consequences, both handled rather than hidden:
+    #   1. Correlation: classical error in the outcome ATTENUATES rho toward 0,
+    #      so a significant negative here is conservative, not inflated.
+    #   2. Kings: test them POOLED against a binomial null instead of trusting
+    #      any one 0/25. 0 resolved out of 3x25 is the actual observation.
+    king_repos = [r for r in swe if str(labels.get(r, "")).startswith("reign")
+                  and "genesis" not in r]  # genesis was seeded, never won a duel
+    king_resolved = sum(round(swe[r] * 25) for r in king_repos)
+    king_attempted = 25 * len(king_repos)
+    null_rates = {"genesis_pooled_0.10": 0.10, "genesis_published_0.20": 0.20,
+                  "qwen_baseline_0.24": 0.24}
+    king_pvals = {k: (1 - p) ** king_attempted for k, p in null_rates.items()}
+
     res = {
         "n_challengers": len(rows),
         "n_benched_total": len(swe),
@@ -122,6 +137,10 @@ def main() -> None:
         "baseline_qwen_swe": next((s for r, s in swe.items() if "qwen/qwen3.6" in r), None),
         "field_max_swe": max(swe.values()),
         "field_zero_fraction": sum(1 for v in swe.values() if v == 0.0) / len(swe),
+        "kings_resolved": king_resolved,
+        "kings_attempted": king_attempted,
+        "kings_binomial_p": king_pvals,
+        "bench_repeatability": "genesis, same revision abe89194, scored 0/25 then 5/25",
         "rows": rows,
     }
 
@@ -150,9 +169,20 @@ def main() -> None:
     lines += [
         f"  baseline  swe={res['baseline_qwen_swe']:.2f}  Qwen/Qwen3.6-35B-A3B (untouched)",
         "",
-        f"  Every model crowned BY S* scores 0.00. The untouched base model scores",
-        f"  {res['baseline_qwen_swe']:.2f}, the best on a panel of {res['n_benched_total']}. {zero_frac*100:.0f}% of the field is at zero,",
-        f"  so three-of-three kings at zero is p={zero_frac**3:.3f} on its own.",
+        f"  Every model crowned BY S* resolves 0/25. The untouched base model is the",
+        f"  best of {res['n_benched_total']} at {res['baseline_qwen_swe']:.2f}. Pooled over the {len(king_repos)} duel-won kings that is",
+        f"  {king_resolved} resolved out of {king_attempted} attempted. Binomial null — if kings kept",
+        "  base-level ability, P(0 resolved) would be:",
+    ]
+    for name, p in king_pvals.items():
+        lines.append(f"    vs {name:24} p = {p:.2e}")
+    lines += [
+        "",
+        "Repeatability (checked, and it matters):",
+        f"  {res['bench_repeatability']}.",
+        "  So NO single 25-task score is worth much alone, and per-model claims are",
+        "  stated pooled. This cuts one way only: noise in the outcome attenuates",
+        "  Spearman toward zero, so rho=-0.42 is a conservative floor, not inflation.",
         "",
         "Caveats:",
         "  - swe_rebench_lite is 25 tasks (0.04 granularity, floor-heavy); the freeze",
@@ -160,6 +190,8 @@ def main() -> None:
         "  - history.json exposes the last 100 events, so n is capped near 30.",
         "  - Absolute S is only strictly comparable within one duel; margin is paired",
         "    within a duel but still spans different kings and slices.",
+        "  - Only 2 of 51 models have repeat bench runs, so the noise model is",
+        "    assumed binomial rather than measured.",
     ]
     text = "\n".join(lines)
     out.with_suffix(".txt").write_text(text + "\n")

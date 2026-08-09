@@ -110,7 +110,8 @@ was made by someone maximising S, the sign flips:
 | Spearman(S, swe_lite), n=29 | −0.371 | 0.049 |
 | freeze (Albedo, n=30) | +0.758 | — |
 
-- **All three S-crowned kings score swe 0.00** (kevin954, TalentPigs, Tok331102).
+- **All three S-crowned kings resolve 0/25** (kevin954, TalentPigs, Tok331102) —
+  pooled **0/75**, binomial p=**3.7e-4** even against a conservative 0.10 null.
   Only genesis (0.20) is non-zero and it was seeded, never won a duel.
 - **Untouched `Qwen/Qwen3.6-35B-A3B` scores 0.24 — best of 51 benched models.**
 - **Same-miner control:** Tok `af5` swe 0.16 *lost* (S=−0.014); `af10` swe **0.00**
@@ -123,6 +124,10 @@ was made by someone maximising S, the sign flips:
 
 The gates are validity checks (causality, leakage, bank, r, band); none asks
 whether the winner can write code. A model can be gate-valid, crown, resolve 0/25.
+
+**Bench repeatability:** genesis scored 0/25 then 5/25 on the *same revision*, so
+single 25-task scores are not per-model evidence — hence the pooled binomial test.
+Outcome noise attenuates Spearman toward zero, so −0.42 is a conservative floor.
 
 **Do not claim coding isomorphism without this caveat.** Artifacts:
 `research/results/rt7_live_isomorphism.{json,txt}`, `research/scripts/rt7_live_isomorphism.py`.

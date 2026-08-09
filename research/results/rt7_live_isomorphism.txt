@@ -17,9 +17,19 @@ Crowned by S* vs the field:
   reign-4   swe=0.00  tok331102/affine-5eqyw8mcuc-af10
   baseline  swe=0.24  Qwen/Qwen3.6-35B-A3B (untouched)
 
-  Every model crowned BY S* scores 0.00. The untouched base model scores
-  0.24, the best on a panel of 51. 37% of the field is at zero,
-  so three-of-three kings at zero is p=0.052 on its own.
+  Every model crowned BY S* resolves 0/25. The untouched base model is the
+  best of 51 at 0.24. Pooled over the 3 duel-won kings that is
+  0 resolved out of 75 attempted. Binomial null — if kings kept
+  base-level ability, P(0 resolved) would be:
+    vs genesis_pooled_0.10      p = 3.70e-04
+    vs genesis_published_0.20   p = 5.39e-08
+    vs qwen_baseline_0.24       p = 1.15e-09
+
+Repeatability (checked, and it matters):
+  genesis, same revision abe89194, scored 0/25 then 5/25.
+  So NO single 25-task score is worth much alone, and per-model claims are
+  stated pooled. This cuts one way only: noise in the outcome attenuates
+  Spearman toward zero, so rho=-0.42 is a conservative floor, not inflation.
 
 Caveats:
   - swe_rebench_lite is 25 tasks (0.04 granularity, floor-heavy); the freeze
@@ -27,3 +37,5 @@ Caveats:
   - history.json exposes the last 100 events, so n is capped near 30.
   - Absolute S is only strictly comparable within one duel; margin is paired
     within a duel but still spans different kings and slices.
+  - Only 2 of 51 models have repeat bench runs, so the noise model is
+    assumed binomial rather than measured.
