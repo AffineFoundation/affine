@@ -1,22 +1,34 @@
 affine — Affine SN120 command-center monorepo (uv workspace)
 ============================================================
 
-AGENTS.md             project context / handoff (start here)
+START_HERE.txt        read first (handoff pointer)
+AGENTS.md             project context / handoff
 pyproject.toml        uv workspace root (members: affine, research, ops)
 uv.lock               single lockfile — commit it
 setup.sh              uv sync --all-packages → one root .venv; writes .env
 .env                  PYTHONPATH=research/ (gitignored)
 
-affine/               Production SN120 package (validator, evalsrv, website, affine.toml)
+affine/               Production SN120 package (validator, evalsrv, datagen,
+                      website, affine.toml — the chain-contract SSOT)
 research/
-  harness/            Research scoring harness (S*, duels, RT probes)
+  harness/            Research scoring harness (Reason + legacy S* v2 replay,
+                      duels, RT probes)
   scripts/            Offline analysis + pod orchestration scripts
-  data/               Turn corpora D (turns_minicoder.jsonl gitignored — on HF, sha-pinned)
-  results/            Headline freeze tables + RT/smoke metadata (bulky dumps gitignored)
-  docs/               MOTIVATION, PAPER_DRAFT, REDTEAM
+  data/               Turn corpora D (bulky corpora gitignored — canonical on
+                      the public Hippius bucket, sha-pinned manifest)
+  results/            Headline freeze tables + RT/smoke metadata (bulky dumps
+                      gitignored)
+  docs/               MOTIVATION, REDTEAM, EQUILIBRIUM, PAPER_DRAFT, RESEARCH_LOG
   chart/              Small viz helpers
   e1/                 Early probe scraps
-ops/                  Weight helpers; discord/twitter planned (deps-only member)
+ops/                  Burn/legacy weight helpers + datagen refresh loop
+                      (deps-only member)
+mining/               Operator's own SN120 mining effort — GOAL/LESSONS/STATE,
+                      experiments/, wallets/ (not a workspace member; driven by
+                      ralph loops)
+ralphs/               cursor-agent loop runners: ralph.sh / ralphctl.sh + one
+                      dir per loop (keepalive, discord-*, bench-sentinel,
+                      king-analysis, miner-digest, daily-af)
 
 Setup:
   ./setup.sh
@@ -25,7 +37,7 @@ Setup:
 Research scripts run from research/ (relative results/, data/ paths):
   cd research && python -m harness.analyze_ekings ...
 
-Secrets: operator env / secret manager. Never commit .env or .eval_env.
+Secrets: operator env / secret manager (doppler). Never commit .env or .eval_env.
 
 Handoff / resume:
   START_HERE.txt

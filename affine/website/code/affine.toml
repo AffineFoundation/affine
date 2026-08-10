@@ -20,10 +20,15 @@ king_chain_size = 5
 min_submission_block = 8767079
 # Bittensor weight-version gate for contract upgrades (bump on breaking
 # scoring/contract changes so stale validators are ignored by consensus).
-# Current: 3 (Reason v3, 2026-08-10).
-# DO NOT bump this key without an explicit dated operator directive.
-# Infra / teacher-host / serving / corpus work is NOT a weight_version_key
-# event. Agents must leave this integer alone.
+# Current: 3 (Reason v3, 2026-08-10). History: 1→2 teacher swap (2026-08-10,
+# same day, later reverted to GLM-Air); 2→3 Reason v3 scoring fork.
+#
+# ############################################################################
+# #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
+# #  Not for teacher moves, serving knobs, corpus refreshes, doc passes,     #
+# #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
+# #  names this key may change it. If you think it needs a bump: STOP ASK.   #
+# ############################################################################
 weight_version_key = 3
 
 [wallet]

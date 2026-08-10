@@ -6,7 +6,7 @@ import math
 import statistics as st
 from typing import Any
 
-from ..score import gate_pass, l1_lift, reason
+from ..score import eta, gate_pass, l1_lift, reason
 
 
 def _legacy_mix(p: dict) -> float:
@@ -37,6 +37,7 @@ def _turn_points(rows: list[dict], side: str) -> list[dict]:
             lift = st.mean(l1_lift(p) for p in pairs)
             mix = st.mean(_legacy_mix(p) for p in pairs)
             gpass = st.mean(1.0 if gate_pass(p) else 0.0 for p in pairs)
+            etas = [e for p in pairs if (e := eta(p)) is not None]
             len_z = st.mean(float(len(p.get("z_a", ""))) for p in pairs)
             len_y = st.mean(float(len(p.get("y_a", ""))) for p in pairs)
         except (KeyError, TypeError, ValueError):
@@ -49,6 +50,7 @@ def _turn_points(rows: list[dict], side: str) -> list[dict]:
             "lambda2": _finite(rsn),
             "l1lift": _finite(lift),
             "mix": _finite(mix),
+            "eta": _finite(st.mean(etas)) if etas else None,
             "gate_ok": gpass >= 0.5,
             "gate_pass_rate": _finite(gpass),
             "len_z": _finite(len_z),
@@ -87,6 +89,8 @@ def project_series(artifact: dict) -> dict:
             "king_lambda2": kp.get("lambda2"),
             "challenger_l1lift": cp.get("l1lift"),
             "king_l1lift": kp.get("l1lift"),
+            "challenger_eta": cp.get("eta"),
+            "king_eta": kp.get("eta"),
             "challenger_gate_ok": cp.get("gate_ok"),
             "king_gate_ok": kp.get("gate_ok"),
         })
@@ -114,6 +118,7 @@ def _pair_detail(p: dict) -> dict:
         "reason": None,
         "lambda2": None,
         "l1lift": None,
+        "eta": None,
         "mix": None,
         "gate_ok": None,
     }
@@ -121,10 +126,14 @@ def _pair_detail(p: dict) -> dict:
         out["reason"] = _finite(reason(p))
         out["lambda2"] = out["reason"]
         out["l1lift"] = _finite(l1_lift(p))
+        out["eta"] = _finite(eta(p))
         out["mix"] = _finite(_legacy_mix(p))
         out["gate_ok"] = bool(gate_pass(p))
     except (KeyError, TypeError, ValueError):
         pass
+    # Prefer the stamped pair field when present (day-one logging).
+    if out["eta"] is None and p.get("eta") is not None:
+        out["eta"] = _finite(p.get("eta"))
     # Raw logprob components for full replay verification.
     for k, v in p.items():
         if k.startswith("lp"):

@@ -502,6 +502,29 @@ export const GATE_METRICS = [
     ],
   },
   {
+    id: "eta",
+    title: "η sufficiency",
+    caption: "telemetry · Λ2(z_A) / Λ2(z_C) — fraction of teacher thinking replaced",
+    detail: `<p><code>η = Λ2(z_A) / Λ2(z_C)</code> =
+      <code>Reason / (lpC(y_C|z_C) − lpC(y_C|∅))</code>: how much of the
+      teacher's own thinking the miner's thought replaces on the same
+      reference action. Climbing η across reigns is the capability-slope
+      signature; kings that crown while η sits flat are budget burn.</p>
+      <p>Denominator is taken from the teacher reference
+      (<code>lpC_yc_zc</code> / <code>lp_own</code>) already scored when refs
+      are built — no extra GPU echo. Undefined on pairs where the teacher's
+      own lift is ~0; the published mean skips those.</p>${TELEMETRY_NOTE}`,
+    fmt: fmtScore,
+    lines: [
+      { label: "1", at: () => 1.0, faint: true },
+      { label: "", at: () => 0, faint: true },
+    ],
+    series: [
+      { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "mean_eta") },
+      { label: "king", color: BONE, get: (p) => sideVal(p, "king", "mean_eta") },
+    ],
+  },
+  {
     id: "gate-pass",
     title: "causality",
     caption: "telemetry · pairs whose thought earns ≥ τ lift without leaking",

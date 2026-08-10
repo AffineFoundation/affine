@@ -28,6 +28,8 @@ validity:
     king at k_sigma·SE)
   - calibration ratio r and empty-baseline magnitude (lpA channel diagnostics)
   - raw L1lift mean (unclipped — safe to publish now that it is not scored)
+  - η (eta): sufficiency fraction Λ2(z_A)/Λ2(z_C) — how much of the teacher's
+    own thinking the miner's thought replaces (needs lpC(y_C|z_C) from refs)
   - thought/action character lengths (miner-vs-teacher length deltas are
     assembled in evalsrv where teacher refs are in scope)
 
@@ -105,6 +107,37 @@ def l1_lift(pair: dict) -> float:
     return pair["lpA_yc_za"] - pair["lpA_yc_e"]
 
 
+# Floor under |Λ2(z_C)| below which η is undefined (teacher own-lift ~0).
+ETA_DENOM_EPS = 1e-9
+
+
+def eta(pair: dict) -> float | None:
+    """Telemetry: η = Λ2(z_A) / Λ2(z_C) = Reason / (lpC(y_C|z_C) − lpC(y_C|∅)).
+
+    How much of the teacher's own thinking the miner's thought replaces on
+    this pair. Denominator comes from the teacher reference (`lpC_yc_zc` /
+    `lp_own`); no extra GPU echo is required. Undefined when |Λ2(z_C)| is
+    below ETA_DENOM_EPS. Not scored.
+    """
+    try:
+        num = reason(pair)
+        den = pair["lpC_yc_zc"] - pair["lpC_yc_e"]
+    except (KeyError, TypeError):
+        return None
+    if not (math.isfinite(num) and math.isfinite(den)):
+        return None
+    if abs(den) < ETA_DENOM_EPS:
+        return None
+    v = num / den
+    return v if math.isfinite(v) else None
+
+
+def mean_eta(pairs: list[dict]) -> float | None:
+    """Mean η over pairs where the ratio is defined."""
+    vals = [e for p in pairs if (e := eta(p)) is not None]
+    return st.mean(vals) if vals else None
+
+
 def calibration_ratio(pairs: list[dict]) -> float | None:
     """Telemetry: r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)| (not scored)."""
     if not pairs:
@@ -128,6 +161,7 @@ class MinerScore:
     calib_ratio: float | None = None
     baseline_abs: float | None = None  # mean|lpA(y_C|∅)|
     mean_l1lift: float | None = None
+    mean_eta: float | None = None      # sufficiency: mean Λ2(z_A)/Λ2(z_C)
     mean_len_z: float | None = None    # chars of z_A
     mean_len_y: float | None = None    # chars of y_A
 
@@ -150,6 +184,7 @@ def score_miner(rows: list[dict],
         calib_ratio=calibration_ratio(pairs),
         baseline_abs=st.mean(abs(p["lpA_yc_e"]) for p in pairs),
         mean_l1lift=st.mean(l1_lift(p) for p in pairs),
+        mean_eta=mean_eta(pairs),
         mean_len_z=st.mean(float(len(p.get("z_a", ""))) for p in pairs),
         mean_len_y=st.mean(float(len(p.get("y_a", ""))) for p in pairs),
     )

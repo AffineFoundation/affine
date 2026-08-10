@@ -2,6 +2,18 @@
 
 _Draft skeleton — 2026-08-03. Numbers from `results/hybrid_w1_table.txt`, `results/paper_tables.txt`, `results/duel_genesis_*.json`, `MOTIVATION.md`, `REDTEAM.md`, `harness/score.py` only._
 
+> **Status note (2026-08-10).** This draft describes the **S\* v2** research
+> freeze. Production has since forked to **Reason v3**
+> (`weight_version_key=3`): score = raw Λ2 only, crown = paired 3σ — no
+> L1lift mix, no gates, no δ floor (see `affine/affine.toml [duel]`,
+> AGENTS.md §2, `REDTEAM.md` v3 restatement). Two claim boundaries changed:
+> (i) the live SN120 board **inverts** the isomorphism (RT-7/A12, REDTEAM.md
+> — Spearman −0.42, all three S-crowned kings 0/25), so the public claim is a
+> *distillation meter*, not a coding meter; (ii) raw Λ2 matches the mix on
+> the Albedo panel (+0.847 vs +0.844 @15), which motivated the fork. Rework
+> the paper against v3 + RT-7 before submission; the numbers below stand as
+> the v2-era record. Equilibrium/asymptote framing: `EQUILIBRIUM.md`.
+
 ---
 
 ## 1. Abstract

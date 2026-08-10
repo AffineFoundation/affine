@@ -3,6 +3,17 @@
 _Last updated: 2026-08-03. This file is the fixed point of the research program. Re-read it
 whenever resuming work. Results go to RESEARCH_LOG.md; this file holds the goal._
 
+> **Status note (2026-08-10).** Two things changed after this file froze.
+> (1) Production scoring forked to **Reason v3** (`weight_version_key=3`):
+> score = raw Λ2, crown = paired 3σ — the S\* v2 mix/gates/δ described in
+> "Current production candidate" below are **retired** (kept as telemetry in
+> every verdict). Current contract: `affine/affine.toml [duel]`, AGENTS.md §2.
+> (2) The isomorphism claim **inverted on the live SN120 board** (RT-7/A12 in
+> REDTEAM.md: ρ=−0.42, all three S-crowned kings 0/25) — the public claim is
+> now a **distillation meter**, not coding isomorphism; the +0.758/+0.844
+> results below remain true of the Albedo panel only. Asymptote/equilibrium
+> framing and the assumption ledger live in `EQUILIBRIUM.md`.
+
 ## The problem, observed in production
 
 Albedo (SN97, albedo.tech) is a king-of-the-hill Bittensor subnet: miners fine-tune

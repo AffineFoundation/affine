@@ -59,7 +59,7 @@ def redact_log_text(text: str) -> str:
 # S* v2 fields (valid/S/mean_lambda2/...) are kept so pre-fork history rows
 # still render. Rollout-level detail belongs in the Hippius artifact, not in
 # the history file every page load fetches.
-_SIDE_FIELDS = ("reason", "mean_l1lift", "mean_len_z", "mean_len_y",
+_SIDE_FIELDS = ("reason", "mean_l1lift", "mean_eta", "mean_len_z", "mean_len_y",
                 "len_z_delta", "len_y_delta",
                 "gate_pass_rate", "bank_frac", "calib_ratio", "baseline_abs",
                 "n_turns", "n_pairs",

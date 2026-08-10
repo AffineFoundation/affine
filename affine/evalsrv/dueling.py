@@ -231,6 +231,7 @@ def _miner_summary(rows: list[dict]) -> dict:
         "gate_pass_rate": s.gate_pass_rate, "bank_frac": s.bank_frac,
         "calib_ratio": s.calib_ratio, "baseline_abs": s.baseline_abs,
         "mean_l1lift": s.mean_l1lift,
+        "mean_eta": s.mean_eta,
         "mean_len_z": s.mean_len_z, "mean_len_y": s.mean_len_y,
     }
 

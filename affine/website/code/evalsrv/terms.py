@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 
 from affine.priors import PRIOR_BANK
+from affine.score import eta
 
 from .vllm_client import VllmModel
 
@@ -111,6 +112,9 @@ async def miner_terms(teacher: VllmModel, miner: VllmModel, prefix: list[dict],
         # Full texts kept: truncation biases offline bank rescoring.
         lp["z_a"] = rollouts[i][0]
         lp["y_a"] = rollouts[i][1]
+        # η stamped here so artifacts carry it from day one (denominator is
+        # the teacher-ref lp_own already on the pair — no extra echo).
+        lp["eta"] = eta(lp)
         if bank_vals is not None:
             lp["L2_bank"] = bank_vals[i]
         pairs.append(lp)

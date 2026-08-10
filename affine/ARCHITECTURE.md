@@ -12,16 +12,20 @@ through a replayable audit trail, not multi-validator voting.
 │    ├─ state.py        king/queue/history (local JSON+JSONL, crash-safe)   │
 │    ├─ provisioner.py  keep 1 eval pod alive (Lium → Targon fallback)      │
 │    ├─ eval_client.py  duel dispatch + SSE stream + idle watchdog          │
-│    ├─ bench.py        tau2 queue (runs when no duel is pending)           │
+│    ├─ bench.py        advisory bench queue → dedicated bench machine      │
 │    └─ dashboard.py    data/*.json + website → Hippius S3                  │
-│         │ ssh tunnel (lium port-forward / ssh -N -L) :9000                │
+│         │ ssh tunnels (lium port-forward / ssh -N -L) :9000 / :9001       │
 └─────────┼─────────────────────────────────────────────────────────────────┘
           ▼
-┌─ eval machine (8×H200 pod, reprovisioned automatically) ──────────────────┐
-│  evalsrv (FastAPI, self-restarting; self-kills on fatal CUDA errors)      │
-│    ├─ engine.py       vLLM slots: teacher (warm) · king (warm) · chall.   │
-│    ├─ dueling.py      seeded slice → probe → Reason scoring → verdict     │
-│    └─ benchrunner.py  tau2 airline/retail/telecom vs served model         │
+┌─ eval machine (8×B300/B200/H200 pod, reprovisioned automatically) ────────┐
+│  evalsrv AFFINE_ROLE=duel (FastAPI; self-kills on fatal CUDA errors)      │
+│    ├─ engine.py       vLLM slots: teacher (warm, +replica) · king · chall.│
+│    └─ dueling.py      seeded slice → probe → Reason scoring → verdict     │
+└────────────────────────────────────────────────────────────────────────────┘
+┌─ bench machine (2×H200 pod, always-on, separate from the duel pod) ───────┐
+│  evalsrv AFFINE_ROLE=bench — one miner slot                               │
+│    └─ benchrunner.py  advisory suites: swe_rebench_lite (default);        │
+│                       tau2_* still supported if re-added to [bench]       │
 └────────────────────────────────────────────────────────────────────────────┘
           ▼
    Hippius S3 bucket: index.html + data/{dashboard,history,benchmarks,contract}.json
@@ -46,11 +50,13 @@ through a replayable audit trail, not multi-validator voting.
    retired S* v2 gates measured (causality/leakage, bank frac, calibration r,
    baseline magnitude, L1lift, lengths) is published as verdict telemetry.
    Frozen constants in `affine.toml [duel]` (`n_turns`, `k_sigma`).
-5. Win ⇒ crown, immediate weight set. Either way, tau2 suites are enqueued
-   (advisory only — never part of the score; a running bench is aborted server-side
-   the moment a duel arrives, then requeued). Weights go to the rolling king
-   chain (current + up to 4 prior kings, equal share, burn fallback), gated
-   on metagraph freshness and stamped with `weight_version_key`.
+5. Win ⇒ crown, immediate weight set. Either way, advisory bench suites
+   (default `swe_rebench_lite`; `[bench] policy` selects all submissions or
+   new kings only) are enqueued to the dedicated always-on bench machine
+   (`AFFINE_ROLE=bench`) — advisory only, never part of the score. Weights go
+   to the rolling king chain (current + up to 4 prior kings, equal share,
+   burn fallback), gated on metagraph freshness and stamped with
+   `weight_version_key`.
 
 Hygiene caps both the `.safetensors` bytes and the TOTAL repo bytes (plus
 file-count and config.json-size guards), so junk files can't disk-DoS the
@@ -126,6 +132,7 @@ Secrets expected in the environment: `HF_TOKEN`, `HIPPIUS_ACCESS_KEY`,
 optional `OPENROUTER_API_KEY` (bench user-sim fallback).
 The bittensor wallet (`affine`/`validator`) must exist on this machine.
 
-Offline verification: `scripts/smoke_test.py` (39 checks over config,
-scoring floors, state invariants, hygiene, copy detection, chain decode,
-tail reads, price parsing, and the eval-server auth surface).
+Offline verification: `scripts/smoke_test.py` (checks over config — incl.
+the v3 fork key and absence of retired v2 knobs — state invariants, hygiene,
+copy detection, chain decode, tail reads, price parsing, and the eval-server
+auth surface).

@@ -67,11 +67,13 @@ check("swe_lite_pin_present",
 from affine import score  # noqa: E402
 
 
-def rows_for(miner: str, per_turn: list[float], lift: float = 1.0) -> list[dict]:
+def rows_for(miner: str, per_turn: list[float], lift: float = 1.0,
+             teacher_own: float = 1.0) -> list[dict]:
     out = []
     for i, s in enumerate(per_turn):
         pair = {"lpA_ya_za": lift, "lpA_ya_e": 0.0,
                 "lpC_yc_za": s, "lpC_yc_e": 0.0,
+                "lpC_yc_zc": teacher_own,  # Λ2(z_C) = teacher_own − 0
                 "lpA_yc_za": -2.0, "lpA_yc_e": -1.0,
                 "z_a": "some genuine reasoning", "y_a": "ls -la"}
         out.append({"turn_id": f"t{i}", "miner": miner, "valid": True,
@@ -112,6 +114,15 @@ check("score.miner_reason_mean", abs(ms.reason - 0.5) < 1e-9
       and ms.mean_l1lift == -1.0 and ms.gate_pass_rate == 1.0,
       f"reason={ms.reason} l1={ms.mean_l1lift}")
 check("score.miner_no_gating", not hasattr(ms, "valid"))
+# η = Reason / Λ2(z_C); teacher_own=1.0 ⇒ mean η ≈ mean Reason.
+check("score.miner_mean_eta", ms.mean_eta is not None
+      and abs(ms.mean_eta - ms.reason) < 1e-9,
+      f"mean_eta={ms.mean_eta} reason={ms.reason}")
+# Undefined when teacher own-lift is ~0.
+no_own = rows_for("x", [0.5], teacher_own=0.0)
+check("score.eta_undefined_zero_denom",
+      score.eta(no_own[0]["pairs"][0]) is None
+      and score.score_miner(no_own).mean_eta is None)
 
 # -- state: locking, pop/push, no-count requeue, dead code gone ---------------
 from affine.state import QueueEntry, State  # noqa: E402

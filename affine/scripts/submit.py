@@ -24,7 +24,7 @@ Requirements the validator enforces (see data/contract.json on the site):
   * safetensors in canonical layout; no *.py; no auto_map; under size caps
   * one submission per hotkey, ever — a failed eval burns the slot
   * your hotkey must be registered on the subnet to receive emissions
-    (btcli subnet register --netuid 120)
+    (btcli subnets register --netuid 120)
 
 The constants below are the frozen chain contract (affine.toml [subnet] /
 [submission]); changing any of them is a chain fork, so hardcoding them here

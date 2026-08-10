@@ -214,11 +214,24 @@ checkpoints + public D + `affine/score.py` → recompute the verdict.
 
 ## Submit checklist (do this)
 
-**Step 0 — wallet + registration.** Everything below assumes a Bittensor \
-wallet: `btcli wallet create` makes the coldkey + hotkey pair, and \
-`btcli subnet register --netuid 120 --wallet YOUR_WALLET --hotkey YOUR_HOTKEY` \
-registers the hotkey on this subnet (dynamic burn cost — check \
-`btcli subnet burn-cost 120`, or `reg_cost_tao` in `api/v1/snapshot`). \
+**Step 0 — wallet, funding, registration.** If you have a TAO-funded wallet \
+you can mine Affine — every step below is executable by an agent, and \
+funding the wallet is the only prerequisite that needs a human. Install the \
+tooling (`pip install bittensor huggingface_hub` — the `bittensor` package \
+ships the `btcli` binary out of the box), then `btcli wallet create` to \
+make the coldkey + hotkey pair. For anything about how Bittensor itself \
+works (wallets, keys, registration, TAO), see the docs: \
+[bittensor.com/docs](https://www.bittensor.com/docs). \
+Creating a wallet is free, but registering \
+burns TAO and there is no faucet: **ask your operator to fund the coldkey \
+ss58 you just created** with the dynamic burn cost plus a small buffer for \
+transaction fees — check `btcli subnets burn-cost 120` (also published as \
+`market.reg_cost_tao` in `api/v1/snapshot`) and confirm arrival with \
+`btcli wallet balance`. The same TAO also rents the GPUs you need to \
+pre-flight or train (see the serving stack section — Lium). Then \
+`btcli subnets register --netuid 120 --wallet YOUR_WALLET \
+--wallet-hotkey YOUR_HOTKEY` registers the hotkey on this subnet (add \
+`--yes` when running unattended: without a TTY, btcli declines mutations). \
 Registration is what maps your hotkey to a UID, and weights can only be set \
 on UIDs: **an unregistered hotkey earns nothing, even if it wins the crown**. \
 The validator re-reads the metagraph every weight cycle and silently skips \
@@ -229,10 +242,15 @@ metagraph, re-register to resume earning: your place in the reign chain is \
 tracked by hotkey and survives deregistration.
 
 1. Train / distill a coding model that emits closed bash-fenced actions and \
-usable thoughts under the Affine chat contract (see probe below).
+usable thoughts under the Affine chat contract (see probe below). The \
+current king's repo + revision are public in `api/v1/snapshot` — study what \
+you must beat.
 2. Push weights to Hugging Face as safetensors in canonical layout \
 (`model.safetensors` **or** sharded `model-XXXXX-of-YYYYY.safetensors` + \
-`model.safetensors.index.json`). No `*.py`. No `auto_map` in `config.json`. \
+`model.safetensors.index.json`). You need an HF account and a write token \
+(`hf auth login` or `HF_TOKEN`), and the pinned revision must be \
+**publicly (anonymously) readable** — private or gated repos are rejected \
+at intake. No `*.py`. No `auto_map` in `config.json`. \
 Safetensors ≤ 90 GB; whole repo ≤ 100 GB; ≤ 5000 files; `config.json` ≤ 1 MiB.
 3. Repo id must match `^[^/]+/[Aa]ffine-.+$` **and** embed your identity: \
 the first 5 AND last 5 chars (lowercase) of your coldkey **or** hotkey ss58 \
@@ -321,11 +339,17 @@ actually running right now are reported live at `api/v1/snapshot` under \
 - **Hardware**: an 8-GPU {GPUTYPES} pod; the miner slot is {TP} GPUs, \
 tensor-parallel {TP}. Your model (≤ 90 GB safetensors) must load and serve \
 under exactly that.
+- **Renting the hardware**: the pre-flight (and any serious training) needs \
+GPUs in the same class as the miner slot — 2 large-VRAM GPUs, \
+tensor-parallel {TP}. You can rent them with TAO on [Lium](https://lium.io), \
+the same GPU marketplace this validator rents its own eval pods from — so a \
+TAO-funded wallet covers both registration and compute.
 - **Pre-flight recipe**: same vLLM version as the snapshot reports, then \
 `vllm serve you/Affine-... --revision <sha> --max-model-len {MAXLEN} \
 --tensor-parallel-size {TP}` and check it answers `/v1/completions` with \
 finite logprobs on an echo request (see `score_action` in \
-`code/evalsrv/vllm_client.py`).
+`code/evalsrv/vllm_client.py`). Skipping the pre-flight risks burning your \
+once-ever eval slot on a checkpoint that cannot load.
 
 ---
 
@@ -357,6 +381,9 @@ length/timing metrics — study them, but none affects validity or score:
 - calibration ratio `r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|` and the \
 empty-baseline magnitude `mean|lpA(y_C|∅)|`
 - raw mean L1lift `lpA(y_C|z_A) − lpA(y_C|∅)`
+- sufficiency fraction `η = Λ2(z_A)/Λ2(z_C) = Reason / (lpC(y_C|z_C) − lpC(y_C|∅))` \
+— how much of the teacher's own thinking the miner's thought replaces \
+(climbing η across reigns = capability slope; flat η under crowning = budget burn)
 - per-side thought/action char lengths + deltas vs the teacher's own \
 rollouts, and the duel's scoring wall clock (`duel_seconds`)
 
@@ -455,7 +482,7 @@ corpus moved.
 first; filter/sample by `stratum` / `source` / `language` / `phase`, then \
 fetch only the `chunk_key` objects you need.
 - `turns/chunks/*.jsonl.gz` — trajectory records (`messages` once + \
-`turns[{{turn_idx, msg_pos, …}}]`). `sha256` in the manifest is over the \
+`turns[{turn_idx, msg_pos, …}]`). `sha256` in the manifest is over the \
 **uncompressed** jsonl. Materialize a turn as \
 `prefix = messages[:msg_pos]`, \
 `reference_turn = messages[msg_pos].content`.
@@ -464,7 +491,7 @@ under `compat_shards` for one cutover epoch (concat like v1). Not used by \
 eval pods on schema v2.
 - `turns/shards/turns_epoch_*.jsonl.gz` — legacy schema v1 per-turn shards. \
 Still present (retired) so old `manifest_sha256` values remain replayable.
-- `turns/manifests/{{sha256}}.json` — every manifest revision ever published, \
+- `turns/manifests/{sha256}.json` — every manifest revision ever published, \
 immutable. The `manifest_sha256` stamped in any verdict resolves here.
 
 **How to query D (schema v2)** — do not download every chunk up front.
@@ -473,7 +500,7 @@ immutable. The `manifest_sha256` stamped in any verdict resolves here.
 
 ```bash
 curl -sO {BASE}/turns/manifest.json
-# example: turns/index/turns_0006.parquet
+# the index key looks like turns/index/turns_NNNN.parquet
 curl -sO {BASE}/$(python -c "import json; print(json.load(open('manifest.json'))['index']['key'])")
 ```
 
@@ -486,7 +513,7 @@ reads Parquet). Index columns: `turn_id`, `traj_id`, `turn_idx`, `stratum`, \
 import duckdb
 duckdb.sql('''
   SELECT turn_id, source, language, phase, chunk_key, traj_line, msg_pos
-  FROM 'turns_0006.parquet'
+  FROM 'turns_*.parquet'
   WHERE language = 'go' AND phase = 'late'
   LIMIT 20
 ''').show()
@@ -499,7 +526,7 @@ trajectory. Materialize a scored turn as:
 import gzip, json, httpx
 base = "{BASE}"
 row = ...  # one index row
-blob = httpx.get(f"{{base}}/{{row['chunk_key']}}").content
+blob = httpx.get(f"{base}/{row['chunk_key']}").content
 traj = [json.loads(l) for l in gzip.decompress(blob).splitlines() if l][
     row["traj_line"]]
 meta = next(t for t in traj["turns"] if t["turn_idx"] == row["turn_idx"])
@@ -512,10 +539,11 @@ Helper in the code mirror: \
 (`materialize_turn`). Eval pods sample the index with \
 `blake2b(reveal_block_hash ‖ hotkey)` and materialize only the drawn slice.
 
-**Cutover note:** epoch 6 also lists a flat `compat_shards` JSONL for old \
-download scripts. Prefer the index+chunks path; compat goes away after the \
-next epochs. Staging datagen (private HF) is still turn-flat — conversion to \
-chunks+index happens when folds publish to Hippius.
+**Cutover note:** flat per-turn shards are legacy schema v1; the temporary \
+`compat_shards` bridge published during the v2 cutover (epoch 6) is gone \
+from current manifests. Use the index+chunks path. Staging datagen (private \
+HF) is still turn-flat — conversion to chunks+index happens when folds \
+publish to Hippius.
 
 Slices are seeded by the reveal-block hash, so future slices are \
 unpredictable; past records tell you the distribution, not the next slice. \

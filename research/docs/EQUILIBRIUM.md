@@ -52,39 +52,50 @@ miner can reduce it without knowing the answer by dumping top-k candidates
 into z — recall instead of precision, log(k) bits cheaper than commitment.
 
 That is RT-2 (action stuffing) and RT-2c (paraphrase stuffing). So in the
-equilibrium picture the leakage and bank gates are not anti-cheat bolt-ons:
-they **force commitment**, converting the objective from "reduce GLM's
-entropy by any means" into "reduce it with one committed line of reasoning" —
-which is the distill objective. "The answer is obviously X" is fine; "the
-answer is one of X₁…X₁₀" is the thing the gates correctly tax.
+equilibrium picture the v2 leakage and bank gates were not anti-cheat
+bolt-ons: they **forced commitment**, converting the objective from "reduce
+GLM's entropy by any means" into "reduce it with one committed line of
+reasoning" — which is the distill objective. "The answer is obviously X" is
+fine; "the answer is one of X₁…X₁₀" is the thing worth taxing.
 
-## 3. The graduation argument (δ as a ratchet)
+Under Reason v3 the gates are retired to telemetry; the residual defense is
+that **tying is not winning** — RT-2c para-stuffing only ever *tied* genesis
+on raw Λ2 (−0.0025, 52% wins), and a tie loses a 3σ relative duel against a
+sitting king. Bank/leakage telemetry is the early-warning channel; if an
+enumeration miner ever clears 3σ over a genuine king, that is the signal to
+resurrect the gate (a version-bump fork).
 
-Each crowning requires paired mean(S_c − S_k) > 3·SE **and** > δ = 0.02, so
-noise cannot crown and every reign raises the champion's true S by ≥ δ.
-S is bounded above (per turn, by the teacher's baseline uncertainty,
-−lpC(y_C|∅)). A strictly increasing, bounded sequence with a minimum step
-size terminates:
+## 3. The graduation argument (the incumbent ratchet)
 
-> **There can only be finitely many reigns before the only S left to mine is
-> S that requires actually predicting `y_C`.**
+Each crowning requires paired mean(Reason_c − Reason_k) > 3·SE (Reason v3;
+the retired v2 rule additionally required margin > δ = 0.02), so noise
+essentially cannot crown (false-crown ≈ 0.13%/duel at 3σ) and every reign
+raises the true Reason bar the next challenger must beat. Reason is bounded
+above (per turn, by the teacher's baseline uncertainty, −lpC(y_C|∅)), so the
+king sequence is monotone and bounded:
+
+> **There can only be finitely many reigns before the only Reason left to
+> mine is Reason that requires actually predicting `y_C`.**
 
 Every capability-free exploit channel is therefore a **finite prepaid
-budget**, not a refutation. It buys some number of cheap crownings (each
-costing ≥ δ of headroom) and is spent. The red-team table is a ledger of
-channel budgets against δ:
+budget**, not a refutation. It buys some number of cheap crownings and is
+spent. Under v2 the per-reign spend had a contractual floor (δ); under v3 the
+floor is empirical — the observed 3·SE at n=80 runs ≈ 0.02–0.03 — so budgets
+can in principle be spent in more, smaller reigns (micro-reign watch, A11
+n*-scaling family). The red-team table is a ledger of channel budgets against
+that step size:
 
-| channel | measured budget | vs δ=0.02 |
+| channel | measured budget | vs a ≈0.02 crowning step |
 |---|---|---|
 | lm_head sharpening (RT-3 residual) | ≤ +0.012 | < 1 crowning |
-| baseline-band minting (RT-3d, at band edge) | ≤ +0.015 | < 1 crowning |
+| baseline minting (RT-3d, at v2 band edge) | ≤ +0.015 | < 1 crowning |
 | style similarity to teacher (RT-7 mechanism) | crowned 3 kings so far | finite but not yet sized |
 
-Technical caveat, stated so the argument is not overclaimed: the potential
-function here is **Λ2**. The L1lift term is miner-referenced, so S is not a
-single global potential; but L1lift is clipped ±0.1, causality-gated, and
-band-gated, so any cycling it permits is confined to a bounded slab and
-cannot sustain an infinite reign sequence on its own.
+Technical caveat, kept for the v2-era record: under the v2 mix the potential
+function was Λ2 with clipped L1lift as a bounded perturbation. Under v3 the
+ranked quantity *is* the potential — Reason is a single global function of
+the miner's z-policy through the frozen teacher — so the ratchet argument
+applies without qualification.
 
 ## 4. The style channel's own asymptote is the distill
 
@@ -111,9 +122,10 @@ condition:
 
 This is a sharper red-team target than "no exploits exist." A finite-margin
 exploit is annoying but digested by the ratchet. The only fatal object is a
-channel extracting > δ per reign *forever* without ever matching GLM's
-conditional. When triaging a new attack, the first question is not "can it
-win a duel" but "**is its budget bounded, and by how much**."
+channel that keeps clearing the 3σ bar reign after reign *forever* without
+ever matching GLM's conditional. When triaging a new attack, the first
+question is not "can it win a duel" but "**is its budget bounded, and by how
+much**."
 
 Watch-class: **decoder manipulation** — thoughts that make GLM generically
 more confident rather than better-informed (sharpening family). It is the one
@@ -140,17 +152,27 @@ The graduation argument holds iff **all** of these stay true:
 3. **D refresh outpaces memorization** — corpus_epoch refreshes keep the
    target the *function*, not the corpus. "If we degenerate, we generate more
    data" is a standing operational commitment, not a one-off.
-4. **δ enforced and > every residual channel's per-reign mint** — δ=0.02 vs
-   ledger in §3. Lowering δ or raising a channel bound re-opens the game.
-5. **Commitment gates live** — leakage + bank gates (else hedging, §2).
+4. **A real per-reign step floor** — contractual δ=0.02 under v2; under v3
+   only the empirical 3·SE floor at n=80 (≈0.02–0.03 observed). If SE
+   compresses (variance-reduced strategies), budgets stretch into micro-reigns
+   — watch crowning margins, and re-floor by fork if they collapse.
+5. **Commitment enforced or watched** — v2: leakage + bank gates; v3: "ties
+   don't crown" + bank/leakage telemetry with a resurrection trigger (§2).
 6. **`y_C` stays sampled** — bounds the decoder-manipulation class (§5).
 7. **Contract stationarity per ratchet** — each teacher/scoring change resets
    budgets; graduation is per-era. Fine, but expect cheap reigns after swaps.
 
 Falsifier for the whole file: a demonstrated **unbounded** capability-free
-channel (> δ per reign, sustained across reigns, without conditional
+channel (clears the 3σ bar reign after reign, sustained, without conditional
 matching). That would break the asymptote claim, not just an intermediate
 state, and would demand a scoring change, not a data refresh.
+
+**Status vs Reason v3 (2026-08-10, weight_version_key=3).** The live contract
+is pure Reason + 3σ: no gates, no mix, no δ, no min_se. Ledger items 4 and 5
+are held by *empirical floor + telemetry watch* rather than contract, as
+described inline above. Resurrecting a gate or floor is a scoring fork
+(version bump); the telemetry is what buys the evidence before paying that
+cost.
 
 ---
 

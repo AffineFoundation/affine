@@ -199,10 +199,12 @@ miner report ("SFT to memorize the result").**
 - `RefCache` persisted `y_C` across duels while artifacts publish them — recurring
   turns were frozen, known targets. Fixed: refs are per-duel now; the cache only
   dedupes teacher sampling between the two sides within one duel.
-- Interaction with r_lo: at r_lo=1.0 mean L1lift ≤ 0 was forced, which accidentally
-  neutralized memorization-minted L1; r_lo=0.3 made it live. With both fixes the
-  channel can't be targeted; pure baseline inflation at the band edge mints at most
-  +0.015 < δ=0.02 (simulated at king parity), so r_lo=0.3 + band 1.25 stand.
+- Interaction with r_lo (v2-era analysis): at r_lo=1.0 mean L1lift ≤ 0 was forced,
+  which accidentally neutralized memorization-minted L1; r_lo=0.3 made it live.
+  With both fixes the channel couldn't be targeted; baseline inflation at the band
+  edge minted at most +0.015 < δ=0.02 (simulated at king parity). Under Reason v3
+  the whole lpA/L1 channel is unscored, so this interaction is moot — the two code
+  fixes above are the load-bearing part.
 
 **Mitigations (now enforced in code, not a new score gate):**
 1. Fresh teacher `y_C` sampled per duel (`RefCache` scoped to one duel)
@@ -244,14 +246,19 @@ Results: `research/results/tau2_prog_force_table.txt`.
 ```
 .
   AGENTS.md           this file
+  START_HERE.txt      handoff pointer (read first)
   LAYOUT.txt          short directory index
   pyproject.toml      uv workspace root (members: affine, research, ops)
   uv.lock             single lockfile — commit it
   setup.sh            uv sync --all-packages → one root .venv; writes .env
   .env                PYTHONPATH=research/ (gitignored; no secrets required for layout)
-  affine/             SN120 validator + evalsrv + website + affine.toml (installed editable)
+  affine/             SN120 validator + evalsrv + datagen + website + affine.toml (editable)
   research/           deps-only member (harness, scripts, data, results, docs, chart, e1)
-  ops/                deps-only member — weight helpers; discord/twitter planned
+  ops/                deps-only member — burn/legacy weight helpers + datagen refresh
+  mining/             operator's own SN120 mining effort (GOAL/LESSONS/experiments/wallets;
+                      driven by ralph loops — not a workspace member)
+  ralphs/             cursor-agent loop runners (ralph.sh / ralphctl.sh + per-loop prompts:
+                      keepalive, discord, bench-sentinel, king-analysis, …)
 ```
 
 Imports assume `PYTHONPATH=<repo>/research` (set by `.env`; `harness/` and `scripts/` are

@@ -5,10 +5,14 @@ Project handoff (what we built, proved, froze, and what to do next):
   AGENTS.md
 
 Then:
-  research/docs/MOTIVATION.md     thesis / fixed point
-  research/docs/REDTEAM.md        attack table
-  research/docs/PAPER_DRAFT.md     draft paper
+  research/docs/MOTIVATION.md     thesis / fixed point (see 2026-08-10 status note)
+  research/docs/REDTEAM.md        attack table (Reason v3 restatement up top)
+  research/docs/EQUILIBRIUM.md    asymptote argument + assumption ledger
+  research/docs/RESEARCH_LOG.md   dated experiment record
+  research/docs/PAPER_DRAFT.md    draft paper (v2-era numbers; see status note)
   LAYOUT.txt                      directory map
+
+Live contract SSOT: affine/affine.toml  (Reason v3, weight_version_key=3)
 
 Setup / activate:
   ./setup.sh
