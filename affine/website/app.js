@@ -10,7 +10,7 @@ import {
   fetchRegHistory,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=44";
+} from "./api.js?v=45";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -35,7 +35,7 @@ import {
   reignMembers,
   setReignLookup,
   short,
-} from "./charts.js?v=44";
+} from "./charts.js?v=45";
 
 const $ = (id) => document.getElementById(id);
 
@@ -665,6 +665,28 @@ function closeDuelPage() {
   else location.hash = "";
 }
 
+/* ---------- section tabs ---------- */
+
+// The hero stays put; exactly one of these sections is shown below it.
+const TAB_SECTIONS = ["reign", "gates", "queue", "history", "fails", "intake"];
+
+function activateTab(id) {
+  if (!TAB_SECTIONS.includes(id)) id = "reign";
+  for (const t of TAB_SECTIONS) {
+    const sec = document.getElementById(t);
+    if (sec) sec.hidden = t !== id;
+  }
+  document.querySelectorAll(".toc-link").forEach((a) => {
+    a.classList.toggle("active", (a.getAttribute("href") || "").slice(1) === id);
+  });
+  // Charts laid out while hidden fall back to a default width — redraw now
+  // that the pane has real geometry.
+  if (id === "gates") {
+    renderGates(true);
+    renderRegPrice(true);
+  }
+}
+
 function route() {
   const cid = duelHashCid();
   const page = $("duel-page");
@@ -1261,36 +1283,11 @@ function wire() {
     const hit = e.target.closest(".duel-hit[data-cid]");
     if (hit) openDuel(hit.dataset.cid);
   });
-  // Section TOC + collapsible lower sections. Charts drawn while a section
-  // is display:none get a fallback width, so expanding the telemetry grid
-  // forces a redraw at the real pane width.
-  const expandSection = (id) => {
-    const sec = document.getElementById(id);
-    if (!sec || !sec.classList.contains("collapsed")) return;
-    sec.classList.remove("collapsed");
-    if (id === "gates") {
-      renderGates(true);
-      renderRegPrice(true);
-    }
-  };
   document.querySelectorAll(".toc-link").forEach((a) => {
     a.addEventListener("click", (e) => {
       e.preventDefault();
-      const id = (a.getAttribute("href") || "").slice(1);
       if (duelHashCid()) location.hash = "";
-      expandSection(id);
-      setTimeout(() => {
-        document.getElementById(id)
-          ?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 60);
-    });
-  });
-  document.querySelectorAll(".section.collapsible > .section-head").forEach((head) => {
-    head.addEventListener("click", (e) => {
-      if (e.target.closest("a, button, input")) return;
-      const sec = head.parentElement;
-      if (sec.classList.contains("collapsed")) expandSection(sec.id);
-      else sec.classList.add("collapsed");
+      activateTab((a.getAttribute("href") || "").slice(1));
     });
   });
   $("chart-modal-close")?.addEventListener("click", closeChart);

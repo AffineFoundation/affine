@@ -159,13 +159,13 @@ button {
   border-color: rgba(243, 196, 73, 0.35);
 }
 
-/* ---------- section table of contents ---------- */
+/* ---------- section tabs (one section shown below the hero) ---------- */
 .toc-bar {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 4px 24px;
-  padding: 7px 20px;
+  gap: 4px 26px;
+  padding: 8px 20px 0;
   background: var(--color-bg);
   border-bottom: 1px solid var(--color-border);
 }
@@ -177,39 +177,18 @@ button {
   text-transform: uppercase;
   color: var(--color-fg-3);
   text-decoration: none;
-  transition: color 120ms ease;
+  padding-bottom: 7px;
+  border-bottom: 2px solid transparent;
+  transition: color 120ms ease, border-color 120ms ease;
 }
 
 .toc-link:hover {
+  color: var(--color-fg);
+}
+
+.toc-link.active {
   color: var(--color-gold);
-}
-
-/* Anchor jumps land below the sticky header (nav + market + toc). */
-.hero,
-.section {
-  scroll-margin-top: 122px;
-}
-
-/* ---------- collapsible sections ---------- */
-.section.collapsible > .section-head {
-  cursor: pointer;
-  user-select: none;
-}
-
-.section.collapsible > .section-head .section-title::before {
-  content: "▾";
-  display: inline-block;
-  width: 15px;
-  color: var(--color-fg-3);
-  font-size: 10px;
-}
-
-.section.collapsed > .section-head .section-title::before {
-  content: "▸";
-}
-
-.section.collapsed > *:not(.section-head) {
-  display: none;
+  border-bottom-color: var(--color-gold);
 }
 
 /* ---------- market ticker (TMC) ---------- */
