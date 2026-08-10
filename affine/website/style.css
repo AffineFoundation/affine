@@ -507,6 +507,19 @@ button {
   padding: 10px 8px 4px;
 }
 
+/* The two S* components (Λ2, L1lift) lead the grid at hero-pane size:
+   half the row each, same padding and chart height as the S/Z panes. */
+.metric-pane--featured {
+  grid-column: span 2;
+  padding: 12px 10px 8px;
+}
+
+@media (max-width: 700px) {
+  .metric-pane--featured {
+    grid-column: auto;
+  }
+}
+
 .metric-head {
   display: flex;
   flex-direction: column;

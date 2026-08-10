@@ -431,7 +431,65 @@ export function gatePoints(history) {
  * enter the y-domain when the data already reaches them (r_hi = 4 would
  * otherwise flatten a series that lives near 1).
  */
+/**
+ * Mean clipped L1lift per side. The verdict publishes mean Λ2 and the mean
+ * mix S = Λ2 + w·clip(L1lift), so the L1 term is recovered exactly as
+ * (mix − Λ2) / w — no re-eval needed for historical duels.
+ */
+const l1Term = (p, side) => {
+  const mix = sideVal(p, side, "mean_mix");
+  const l2 = sideVal(p, side, "mean_lambda2");
+  if (mix == null || l2 == null) return null;
+  const w = Number(p.gates?.l1_weight) || 1;
+  return (mix - l2) / w;
+};
+
 export const GATE_METRICS = [
+  {
+    id: "lambda2",
+    featured: true,
+    title: "Λ2",
+    caption: "teacher lift lpC(y_C|z_A) − lpC(y_C|∅) — the ranking core",
+    detail: `<p><code>Λ2 = lpC(y_C|z_A) − lpC(y_C|∅)</code>: how much the miner's
+      thought helps <em>the teacher</em> predict its own action. The teacher is
+      the anchor — the miner is never judged by another model's opinion of its
+      prose, only by whether its reasoning measurably transfers.</p>
+      <p>This is the dominant term of S*. Positive means the thought carried real
+      information about what to do next; near zero means it was decoration.</p>`,
+    fmt: fmtScore,
+    lines: [{ label: "", at: () => 0, faint: true }],
+    series: [
+      { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "mean_lambda2") },
+      { label: "king", color: BONE, get: (p) => sideVal(p, "king", "mean_lambda2") },
+    ],
+  },
+  {
+    id: "l1lift",
+    featured: true,
+    title: "L1lift",
+    caption: "miner lift lpA(y_C|z_A) − lpA(y_C|∅) · clipped at ±l1_clip",
+    detail: `<p><code>L1lift = lpA(y_C|z_A) − lpA(y_C|∅)</code>: how much the
+      miner's thought helps <em>the miner itself</em> predict the teacher's
+      action. It is the second term of the mix,
+      <code>S = mean(Λ2 + w·clip(L1lift, ±0.1))</code>, clipped so a single
+      overconfident turn cannot dominate the mean. Positive means the miner's
+      reasoning genuinely anticipates what the teacher will do — the natural
+      signature of a faithful distill.</p>
+      <p>The verdict publishes mean Λ2 and the mean mix per side, so this pane
+      plots the clipped term recovered exactly as <code>(S − Λ2) / w</code>.
+      Minting L1lift for free requires sabotaging the empty baseline, which the
+      1.25× baseline band catches.</p>`,
+    fmt: fmtScore,
+    lines: [
+      { label: "clip", at: (g) => num(g.l1_clip) ?? 0.1, keep: false },
+      { label: "", at: () => 0, faint: true },
+      { label: "-clip", at: (g) => -(num(g.l1_clip) ?? 0.1), keep: false },
+    ],
+    series: [
+      { label: "challenger", color: GOLD, get: (p) => l1Term(p, "challenger") },
+      { label: "king", color: BONE, get: (p) => l1Term(p, "king") },
+    ],
+  },
   {
     id: "gate-pass",
     title: "causality",
@@ -574,23 +632,6 @@ export const GATE_METRICS = [
     fmt: fmtScore,
     lines: [{ label: "min", at: (g) => g.min_se ?? 0.005 }],
     series: [{ label: "SE", color: GOLD, get: (p) => num(p.se) }],
-  },
-  {
-    id: "lambda2",
-    title: "Λ2",
-    caption: "teacher lift lpC(y_C|z_A) − lpC(y_C|∅) — the ranking core",
-    detail: `<p><code>Λ2 = lpC(y_C|z_A) − lpC(y_C|∅)</code>: how much the miner's
-      thought helps <em>the teacher</em> predict its own action. The teacher is
-      the anchor — the miner is never judged by another model's opinion of its
-      prose, only by whether its reasoning measurably transfers.</p>
-      <p>This is the dominant term of S*. Positive means the thought carried real
-      information about what to do next; near zero means it was decoration.</p>`,
-    fmt: fmtScore,
-    lines: [{ label: "", at: () => 0, faint: true }],
-    series: [
-      { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "mean_lambda2") },
-      { label: "king", color: BONE, get: (p) => sideVal(p, "king", "mean_lambda2") },
-    ],
   },
   {
     id: "score",

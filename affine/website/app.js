@@ -10,7 +10,7 @@ import {
   fetchRegHistory,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=37";
+} from "./api.js?v=38";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -35,7 +35,7 @@ import {
   reignMembers,
   setReignLookup,
   short,
-} from "./charts.js?v=37";
+} from "./charts.js?v=38";
 
 const $ = (id) => document.getElementById(id);
 
@@ -269,7 +269,8 @@ function renderGates(force = false) {
   }
   if (!wrap.querySelector(".metric-pane")) {
     wrap.innerHTML = GATE_METRICS.map((m) => `
-      <div class="metric-pane" id="metric-${esc(m.id)}">
+      <div class="metric-pane${m.featured ? " metric-pane--featured" : ""}"
+        id="metric-${esc(m.id)}">
         <div class="metric-head">
           <div class="metric-head-row">
             <span class="metric-title">${esc(m.title)}</span>
@@ -288,6 +289,7 @@ function renderGates(force = false) {
     if (!svg) continue;
     drawGateMetric(svg, points, m, {
       width: Math.max((pane.clientWidth || 320) - 18, 240),
+      height: m.featured ? 320 : undefined,
     });
   }
 }
