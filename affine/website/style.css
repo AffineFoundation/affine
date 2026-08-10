@@ -355,19 +355,6 @@ button {
   border-bottom: 1px solid var(--color-border);
 }
 
-.reg-chart-wrap {
-  width: 100%;
-  overflow: hidden;
-  border: 1px solid var(--color-border);
-  background: rgba(255, 255, 255, 0.015);
-}
-
-.reg-chart-wrap svg {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
 #chart-tip {
   position: fixed;
   z-index: 120;

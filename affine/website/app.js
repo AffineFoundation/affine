@@ -10,7 +10,7 @@ import {
   fetchRegHistory,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=38";
+} from "./api.js?v=39";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -35,7 +35,7 @@ import {
   reignMembers,
   setReignLookup,
   short,
-} from "./charts.js?v=38";
+} from "./charts.js?v=39";
 
 const $ = (id) => document.getElementById(id);
 
@@ -246,7 +246,11 @@ function renderRegPrice(force = false) {
       meta.textContent = "tmc burn history";
     }
   }
-  drawRegPrice(svg, hist);
+  const pane = svg.closest(".metric-pane");
+  drawRegPrice(svg, hist, {
+    width: Math.max((pane?.clientWidth || 320) - 20, 280),
+    height: 320,
+  });
 }
 
 function renderGates(force = false) {
@@ -280,7 +284,21 @@ function renderGates(force = false) {
           <span class="metric-caption">${esc(m.caption)}</span>
         </div>
         <svg role="img" aria-label="${esc(m.title)} per duel"></svg>
-      </div>`).join("");
+      </div>`).join("") + `
+      <div class="metric-pane" id="metric-reg-price">
+        <div class="metric-head">
+          <div class="metric-head-row">
+            <span class="metric-title">registration price</span>
+            <button type="button" class="expand-btn" data-chart="reg-price"
+              title="expand registration price"
+              aria-label="Expand registration price chart">⤢</button>
+          </div>
+          <span class="metric-caption" id="reg-price-meta">tmc burn history</span>
+        </div>
+        <svg id="reg-price-chart" role="img"
+          aria-label="SN120 registration burn history"></svg>
+      </div>`;
+    renderRegPrice(true);
   }
   for (const m of GATE_METRICS) {
     const pane = $(`metric-${m.id}`);
