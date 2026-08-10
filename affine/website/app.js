@@ -10,7 +10,7 @@ import {
   fetchRegHistory,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=45";
+} from "./api.js?v=46";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -35,7 +35,7 @@ import {
   reignMembers,
   setReignLookup,
   short,
-} from "./charts.js?v=45";
+} from "./charts.js?v=46";
 
 const $ = (id) => document.getElementById(id);
 
@@ -667,11 +667,12 @@ function closeDuelPage() {
 
 /* ---------- section tabs ---------- */
 
-// The hero stays put; exactly one of these sections is shown below it.
-const TAB_SECTIONS = ["reign", "gates", "queue", "history", "fails", "intake"];
+// Exactly one section is shown at a time; "evolution" is the hero charts.
+const TAB_SECTIONS = ["evolution", "reign", "gates", "queue", "history",
+  "fails", "intake"];
 
 function activateTab(id) {
-  if (!TAB_SECTIONS.includes(id)) id = "reign";
+  if (!TAB_SECTIONS.includes(id)) id = "evolution";
   for (const t of TAB_SECTIONS) {
     const sec = document.getElementById(t);
     if (sec) sec.hidden = t !== id;
@@ -681,6 +682,7 @@ function activateTab(id) {
   });
   // Charts laid out while hidden fall back to a default width — redraw now
   // that the pane has real geometry.
+  if (id === "evolution") renderHero(true);
   if (id === "gates") {
     renderGates(true);
     renderRegPrice(true);
