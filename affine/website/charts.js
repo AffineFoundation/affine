@@ -291,12 +291,11 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
 export function drawDuelScores(svg, history,
                                { width: widthOpt, height: heightOpt } = {}) {
   // Best absolute Reason per duel — max(king, challenger), reg-price style.
-  // `score`/`score_king` carry Reason for v3 rows and legacy S* for pre-fork.
   const points = (history || [])
     .filter((r) => r.event !== "failed")
     .filter((r) =>
-      r.score != null || r.score_king != null || r.event === "crowned"
-      || r.z != null)
+      r.challenger || r.king || r.score != null || r.score_king != null
+      || r.event === "crowned" || r.z != null)
     .slice()
     .reverse();
   const width = Math.max(widthOpt || chartWidth(), 280);
@@ -315,12 +314,16 @@ export function drawDuelScores(svg, history,
     const v = p[key];
     return v != null && Number.isFinite(Number(v)) ? Number(v) : null;
   };
+  // Per-side mean Reason, same accessor as the sides pane: v3 rows publish
+  // `reason`, pre-fork rows carried the identical quantity as `mean_lambda2`.
+  // The top-level `score`/`score_king` fields are a last resort only — on
+  // pre-fork rows they hold the retired S* mix, not Reason.
   const bestScore = (p) => {
-    const chall = scoreOf(p, "score");
-    const king = scoreOf(p, "score_king");
-    if (chall == null) return king;
-    if (king == null) return chall;
-    return Math.max(chall, king);
+    const vals = [
+      reasonOf(p, "challenger") ?? scoreOf(p, "score"),
+      reasonOf(p, "king") ?? scoreOf(p, "score_king"),
+    ].filter((v) => v != null);
+    return vals.length ? Math.max(...vals) : null;
   };
 
   const series = points.map((p, i) => ({ p, i, v: bestScore(p) }))
