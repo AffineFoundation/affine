@@ -35,7 +35,9 @@ from affine.config import load_config  # noqa: E402
 
 cfg = load_config()
 check("config.typed_duel", cfg.duel.k_sigma == 3.0 and cfg.duel.n_turns == 80)
-check("config.duel_floors", cfg.duel.min_se > 0 and cfg.duel.min_margin > 0)
+check("config.v2_floors_gone",
+      not hasattr(cfg.duel, "min_se") and not hasattr(cfg.duel, "min_margin"))
+check("config.v3_fork_key", cfg.weight_version_key >= 3)
 check("config.submission_caps",
       cfg.submission.max_total_repo_gb > cfg.submission.max_model_size_gb)
 check("config.min_submission_block_set", cfg.min_submission_block >= 0)
@@ -61,15 +63,13 @@ pin = json.loads(swe_ids.read_text())
 check("swe_lite_pin_present",
       swe_ids.is_file() and len(pin.get("instance_ids", [])) >= 10)
 
-# -- score: duel floors -------------------------------------------------------
+# -- score: Reason v3 duel (purely relative, k_sigma-only) --------------------
 from affine import score  # noqa: E402
 
 
 def rows_for(miner: str, per_turn: list[float], lift: float = 1.0) -> list[dict]:
     out = []
     for i, s in enumerate(per_turn):
-        # Calibration ratio r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)| must sit
-        # in the honest band [1, 4] under S* v2 or the miner is invalid.
         pair = {"lpA_ya_za": lift, "lpA_ya_e": 0.0,
                 "lpC_yc_za": s, "lpC_yc_e": 0.0,
                 "lpA_yc_za": -2.0, "lpA_yc_e": -1.0,
@@ -79,25 +79,39 @@ def rows_for(miner: str, per_turn: list[float], lift: float = 1.0) -> list[dict]
     return out
 
 
-# Zero-variance challenger with a microscopic mean edge must NOT win
-# (pre-fix: mean > 3*SE degenerated to mean > 0).
-king = rows_for("king", [0.0] * 20)
-chall_tiny = rows_for("chall", [1e-6] * 20)
-r = score.duel(chall_tiny, king, min_se=0.005, min_margin=0.01)
-check("duel.zero_variance_tiny_margin_blocked", not r.challenger_wins,
+# RT-4 copy null: identical per-turn scores → margin exactly 0 → no crown.
+king = rows_for("king", [0.05 * ((i % 5) - 2) for i in range(20)])
+copycat = rows_for("chall", [0.05 * ((i % 5) - 2) for i in range(20)])
+r = score.duel(copycat, king)
+check("duel.copy_null_no_crown", not r.challenger_wins and r.margin == 0.0,
       f"z={r.z:.3f} margin={r.margin}")
 
-# A real margin with real variance still wins as before.
+# A real margin with real variance wins.
+flat_king = rows_for("king", [0.0] * 20)
 chall_real = rows_for("chall", [0.5 + 0.05 * ((i % 5) - 2) for i in range(20)])
-r2 = score.duel(chall_real, king, min_se=0.005, min_margin=0.01)
-check("duel.real_margin_still_wins", r2.challenger_wins,
+r2 = score.duel(chall_real, flat_king)
+check("duel.real_margin_wins", r2.challenger_wins,
       f"margin={r2.margin:.3f} se={r2.se:.4f} z={r2.z:.1f}")
 
-# min_margin blocks a statistically-significant but absolutely-tiny win.
+# v3 has no absolute floor: a statistically-real but tiny margin DOES crown
+# (accepted risk — the 2026-08-05 noise-floor policy taken to its limit).
 chall_sig = rows_for("chall", [0.008 + 0.0004 * ((i % 5) - 2) for i in range(20)])
-r3 = score.duel(chall_sig, king, min_se=0.0001, min_margin=0.01)
-check("duel.min_margin_enforced", not r3.challenger_wins,
-      f"margin={r3.margin:.4f}")
+r3 = score.duel(chall_sig, flat_king)
+check("duel.tiny_real_margin_crowns", r3.challenger_wins,
+      f"margin={r3.margin:.4f} z={r3.z:.1f}")
+
+# A positive but sub-3σ margin does not crown.
+chall_noise = rows_for("chall", [0.01 + 0.05 * ((i % 5) - 2) for i in range(20)])
+r4 = score.duel(chall_noise, flat_king)
+check("duel.sub_sigma_no_crown", not r4.challenger_wins,
+      f"margin={r4.margin:.4f} z={r4.z:.2f}")
+
+# score_miner is gateless: mean Reason + telemetry, no valid flag.
+ms = score.score_miner(chall_real)
+check("score.miner_reason_mean", abs(ms.reason - 0.5) < 1e-9
+      and ms.mean_l1lift == -1.0 and ms.gate_pass_rate == 1.0,
+      f"reason={ms.reason} l1={ms.mean_l1lift}")
+check("score.miner_no_gating", not hasattr(ms, "valid"))
 
 # -- state: locking, pop/push, no-count requeue, dead code gone ---------------
 from affine.state import QueueEntry, State  # noqa: E402

@@ -6,7 +6,13 @@ import math
 import statistics as st
 from typing import Any
 
-from ..score import gate_pass, l1_lift, lambda2, rank_term
+from ..score import gate_pass, l1_lift, reason
+
+
+def _legacy_mix(p: dict) -> float:
+    """Retired S* v2 rank term (Λ2 + clip(L1lift, ±0.1)) — kept only so
+    pre-fork duel pages keep rendering the mix they were judged on."""
+    return reason(p) + max(-0.1, min(l1_lift(p), 0.1))
 
 
 def _finite(x: Any) -> float | None:
@@ -27,20 +33,26 @@ def _turn_points(rows: list[dict], side: str) -> list[dict]:
         if not pairs:
             continue
         try:
-            lam = st.mean(lambda2(p) for p in pairs)
+            rsn = st.mean(reason(p) for p in pairs)
             lift = st.mean(l1_lift(p) for p in pairs)
-            mix = st.mean(rank_term(p) for p in pairs)
+            mix = st.mean(_legacy_mix(p) for p in pairs)
             gpass = st.mean(1.0 if gate_pass(p) else 0.0 for p in pairs)
+            len_z = st.mean(float(len(p.get("z_a", ""))) for p in pairs)
+            len_y = st.mean(float(len(p.get("y_a", ""))) for p in pairs)
         except (KeyError, TypeError, ValueError):
             continue
         out.append({
             "turn_id": r.get("turn_id"),
             "side": side,
-            "lambda2": _finite(lam),
+            "reason": _finite(rsn),
+            # lambda2/mix kept for pre-fork chart back-compat (lambda2 ≡ reason).
+            "lambda2": _finite(rsn),
             "l1lift": _finite(lift),
             "mix": _finite(mix),
             "gate_ok": gpass >= 0.5,
             "gate_pass_rate": _finite(gpass),
+            "len_z": _finite(len_z),
+            "len_y": _finite(len_y),
             "n_pairs": len(pairs),
         })
     return out
@@ -60,9 +72,14 @@ def project_series(artifact: dict) -> dict:
         kp = k_by.get(tid)
         if not kp:
             continue
+        cr, kr = cp.get("reason"), kp.get("reason")
         cm, km = cp.get("mix"), kp.get("mix")
         paired.append({
             "turn_id": tid,
+            "delta_reason": _finite((cr or 0) - (kr or 0)) if cr is not None and kr is not None else None,
+            "challenger_reason": cr,
+            "king_reason": kr,
+            # Legacy mix deltas kept so pre-fork duel pages render unchanged.
             "delta_mix": _finite((cm or 0) - (km or 0)) if cm is not None and km is not None else None,
             "challenger_mix": cm,
             "king_mix": km,
@@ -94,15 +111,17 @@ def _pair_detail(p: dict) -> dict:
     out = {
         "thought": p.get("z_a"),
         "action": p.get("y_a"),
+        "reason": None,
         "lambda2": None,
         "l1lift": None,
         "mix": None,
         "gate_ok": None,
     }
     try:
-        out["lambda2"] = _finite(lambda2(p))
+        out["reason"] = _finite(reason(p))
+        out["lambda2"] = out["reason"]
         out["l1lift"] = _finite(l1_lift(p))
-        out["mix"] = _finite(rank_term(p))
+        out["mix"] = _finite(_legacy_mix(p))
         out["gate_ok"] = bool(gate_pass(p))
     except (KeyError, TypeError, ValueError):
         pass
@@ -172,7 +191,10 @@ def project_duel_summary(history_row: dict | None, artifact: dict | None,
         "reign_number": row.get("reign_number"),
         "score": row.get("score"),
         "score_king": row.get("score_king"),
-        "gates": row.get("gates"),
+        "gates": row.get("gates"),                 # pre-fork verdicts only
+        "duel_params": row.get("duel_params"),     # Reason v3 verdicts
+        "teacher": row.get("teacher"),             # teacher length telemetry
+        "duel_seconds": row.get("duel_seconds"),
         "challenger": row.get("challenger"),
         "king": row.get("king"),
         "slice": art.get("slice"),

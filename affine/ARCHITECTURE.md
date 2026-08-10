@@ -20,7 +20,7 @@ through a replayable audit trail, not multi-validator voting.
 ┌─ eval machine (8×H200 pod, reprovisioned automatically) ──────────────────┐
 │  evalsrv (FastAPI, self-restarting; self-kills on fatal CUDA errors)      │
 │    ├─ engine.py       vLLM slots: teacher (warm) · king (warm) · chall.   │
-│    ├─ dueling.py      seeded slice → probe → S* scoring → verdict         │
+│    ├─ dueling.py      seeded slice → probe → Reason scoring → verdict     │
 │    └─ benchrunner.py  tau2 airline/retail/telecom vs served model         │
 └────────────────────────────────────────────────────────────────────────────┘
           ▼
@@ -40,14 +40,14 @@ through a replayable audit trail, not multi-validator voting.
 4. Duel on the eval machine: slice of `n_turns` drawn from public corpus D
    seeded by `blake2b(reveal_block_hash ‖ hotkey)` (block hash fetch is
    fail-closed: chain hiccup ⇒ requeue, never a predictable fallback slice);
-   injectability probe; full S* instrumentation against the warm teacher;
-   verdict = `paired mean(S_c − S_k) > 3·SE` with causality/leakage and
-   prior-bank gates, plus two robustness floors (`min_se` on the paired SE so
-   zero-variance challengers can't win on an ε margin, and `min_margin` as a
-   noise floor sized to the RT-4 copy null — any challenger statistically
-   above the king crowns). Frozen constants in `affine.toml [duel]`.
+   injectability probe; full Reason instrumentation against the warm teacher;
+   verdict = `paired mean(Reason_c − Reason_k) > k_sigma·SE` — purely relative,
+   no gates and no absolute floors (Reason v3, 2026-08-10). Everything the
+   retired S* v2 gates measured (causality/leakage, bank frac, calibration r,
+   baseline magnitude, L1lift, lengths) is published as verdict telemetry.
+   Frozen constants in `affine.toml [duel]` (`n_turns`, `k_sigma`).
 5. Win ⇒ crown, immediate weight set. Either way, tau2 suites are enqueued
-   (advisory only — never part of S*; a running bench is aborted server-side
+   (advisory only — never part of the score; a running bench is aborted server-side
    the moment a duel arrives, then requeued). Weights go to the rolling king
    chain (current + up to 4 prior kings, equal share, burn fallback), gated
    on metagraph freshness and stamped with `weight_version_key`.
@@ -105,12 +105,13 @@ padding the repo with an extra safetensors doesn't evade it.
 
 ## Trust & audit
 
-Every verdict records the reveal-block hash, slice seed + digest, gate
-constants, and per-side S* summaries. Anyone with the two checkpoints, the
-public corpus, and `affine/score.py` can recompute the verdict. There is no
-validator-private data (explicitly rejected 2026-08-03) — unpredictability
-comes from the reveal-block hash, and memorization attacks are handled by
-the causality/leakage + prior-bank gates.
+Every verdict records the reveal-block hash, slice seed + digest, duel
+params, and per-side Reason + telemetry summaries. Anyone with the two
+checkpoints, the public corpus, and `affine/score.py` can recompute the
+verdict. There is no validator-private data (explicitly rejected 2026-08-03)
+— unpredictability comes from the reveal-block hash, and memorization
+attacks are handled by fresh per-duel teacher refs + seed-shuffled slices
+(pre-fork verdicts additionally carry the retired S* v2 gate constants).
 
 ## Running it
 

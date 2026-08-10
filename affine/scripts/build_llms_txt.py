@@ -65,10 +65,11 @@ def _serving_subs() -> dict[str, str]:
 # Sources published under code/ and linked from llms.txt: (relative_path, description).
 SOURCES: list[tuple[str, str]] = [
     ("affine.toml", "chain contract SSOT — every frozen knob the validator runs"),
-    ("affine/score.py", "S* v2: gates, ranking term, duel decision — the scoring code"),
+    ("affine/score.py", "Reason v3: the score, the duel decision, and every "
+     "telemetry helper — the scoring code"),
     ("scripts/submit.py", "standalone commit-reveal submission client — this single "
      "file is the whole submit path (trust it over any prose)"),
-    ("affine/priors.py", "published prior bank behind the bank gate"),
+    ("affine/priors.py", "published prior bank behind the bank telemetry"),
     ("affine/chain.py", "reveal payload contract + commit builders"),
     ("evalsrv/dueling.py", "live duel: slice seeding, injectability probe, scoring loop"),
     ("evalsrv/corpus.py", "corpus sync: schema v1 flat shards or v2 parquet "
@@ -94,9 +95,9 @@ HEADER = """\
 # Affine (Bittensor SN120)
 
 > King-of-the-hill subnet. Miners submit HF checkpoints; the validator crowns \
-the reigning king by a teacher-anchored distillation score S*, not an LLM judge. \
-This file is the miner index: submit path, public contract, and links to the \
-exact scoring code the network runs.
+the reigning king by a single teacher-anchored distillation score — Reason — \
+not an LLM judge. This file is the miner index: submit path, public contract, \
+and links to the exact scoring code the network runs.
 
 Machine-readable knobs (subset of the contract below) also ship as \
 `data/contract.json` on this site. When in doubt, trust the linked sources \
@@ -121,7 +122,7 @@ root ({BASE}/).
 - Submit checklist — HF layout, repo naming, commit-reveal payload
 - Serving stack — how your checkpoint is loaded; pre-flight before you burn \
 the slot
-- S* v2 — the gates and ranking term you optimize
+- Reason — the one score you optimize (and the telemetry published around it)
 - Public data — full field-level description of every published object
 - Source of truth — links to the exact validator code under `code/`
 
@@ -150,8 +151,8 @@ queue, live eval
 - [api/v1/history]({DASH}/api/v1/history) — filterable verdicts (`?q=&event=`)
 - [api/v1/benchmarks]({DASH}/api/v1/benchmarks) — advisory benches
 - [api/v1/contract]({DASH}/api/v1/contract) — machine-readable knobs
-- `api/v1/duels/{challenge_id}` — duel detail (gates, S*, rejection)
-- `api/v1/duels/{challenge_id}/series` — chart-safe per-turn Λ2/L1lift
+- `api/v1/duels/{challenge_id}` — duel detail (Reason, telemetry, rejection)
+- `api/v1/duels/{challenge_id}/series` — chart-safe per-turn Reason/L1lift
 - [api/v1/stream]({DASH}/api/v1/stream) — SSE snapshot deltas
 - [index.html]({DASH}/) — interactive dashboard UI
 
@@ -161,7 +162,7 @@ queue, live eval
 intake, duel queue, live eval progress
 - [data/history.json]({BASE}/data/history.json) — last 100 verdicts/failures
 - [data/benchmarks.json]({BASE}/data/benchmarks.json) — advisory tau2 scores \
-(never part of S*)
+(never part of the score)
 - [data/contract.json]({BASE}/data/contract.json) — machine-readable \
 contract knobs
 
@@ -198,12 +199,13 @@ verdict). Failed hygiene, failed probe, or lost duel still burns the slot.
 4. Eval machine runs a duel on an `n_turns` slice of D seeded by \
 `blake2b(reveal_block_hash ‖ your_hotkey)` — you cannot know the slice before \
 reveal; anyone can re-derive it after.
-5. Both sides are scored with S* v2 (gates + ranking). Challenger dethrones \
-the king iff both are gate-valid AND `mean(S_c − S_k) > 3·SE` AND \
-`mean > min_margin` (SE floored by `min_se`).
+5. Both sides are scored with Reason (v3, 2026-08-10): \
+`Reason = lpC(y_C|z_A) − lpC(y_C|∅)` per pair, miner score = mean. Challenger \
+dethrones the king iff paired `mean(Reason_c − Reason_k) > k_sigma·SE` — a \
+purely relative test, no gates, no absolute floors.
 6. Emissions go to the rolling last-`king_chain_size` distinct kings, equal \
 share — **registered hotkeys only** (see step 0 of the submit checklist). \
-Advisory tau2 benches never affect S* or crowning.
+Advisory tau2 benches never affect Reason or crowning.
 
 There is no validator-private data. Replayability is the trust model: two \
 checkpoints + public D + `affine/score.py` → recompute the verdict.
@@ -327,36 +329,39 @@ finite logprobs on an echo request (see `score_action` in \
 
 ---
 
-## S* v2 (what you optimize)
+## Reason (what you optimize)
 
-Per pair / miner gates (INVALID ⇒ cannot win, S = −∞ for ranking):
-
-1. **Causality + leakage** — pair passes if no fuzzy z⊃y leakage and \
-`lpA(y_A|z_A) − lpA(y_A|∅) ≥ τ` (τ=0.02). Miner INVALID if pass_rate < γ=0.30.
-2. **Prior-bank positivity** — `frac_bank` = share of pairs with Λ2_bank > 0 \
-over the published priors in `affine/priors.py`. INVALID if frac_bank < γ_bank=0.08.
-3. **Calibration ratio** — `r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|`. \
-INVALID if r ∉ [0.3, 4.0]. (r_lo was 1.0 until 2026-08-06; it gated faithful \
-teacher distills, whose own thoughts legitimately raise their own p(y_C).)
-3b. **Empty-baseline band** (challenger only, paired) — your \
-`mean|lpA(y_C|∅)|` must be ≤ 1.25× the king's on the same slice. Closes \
-free-L1lift via a sabotaged empty baseline; honest models sit ≤ 1.14×.
-
-Ranking term:
+Since 2026-08-10 (`weight_version_key = 3`) the whole scoring contract is:
 
 ```
-S = mean( Λ2 + w · clip(L1lift, ±0.1) ) with w = 1.0
-Λ2     = lpC(y_C|z_A) − lpC(y_C|∅)
-L1lift = lpA(y_C|z_A) − lpA(y_C|∅)
+Reason (per pair)  = lpC(y_C | z_A) − lpC(y_C | ∅)
+Miner score        = mean(Reason) over all scored pairs
+Crown              = paired mean(Reason_c − Reason_k) > k_sigma · SE
 ```
 
-Duel crowning: challenger wins iff **all** of:
+`y_C` is the frozen teacher's own reference action (resampled fresh every \
+duel), `z_A` is your model's thought on the same turn, and both logprobs are \
+teacher-forced on the teacher — **your model's own logprobs never enter the \
+ranked quantity**. You win by producing thoughts that measurably raise the \
+teacher's likelihood of its own action, i.e. by genuinely reasoning about the \
+turn. Scoring hyperparameters: `n_turns = 80`, `k_sigma = 3.0`. There is no \
+mix, no clip, no gates, and no absolute margin floor — the duel is purely \
+relative to the slice's own noise (`SE = stdev/√n` over paired turns).
 
-- both sides gate-valid
-- paired `mean(S_c − S_k) > 3 · SE`
-- `mean > min_margin` (δ = 0.02 — a noise floor, not an effect floor: any \
-challenger statistically above the king crowns)
-- SE floored by `min_se = 0.005`
+**Telemetry (measured, published, never scored).** Every verdict also \
+records the quantities the retired S* v2 contract used to gate on, plus new \
+length/timing metrics — study them, but none affects validity or score:
+
+- causality/leakage pass rate (τ = 0.02 telemetry constant)
+- prior-bank positivity fraction vs `affine/priors.py`
+- calibration ratio `r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|` and the \
+empty-baseline magnitude `mean|lpA(y_C|∅)|`
+- raw mean L1lift `lpA(y_C|z_A) − lpA(y_C|∅)`
+- per-side thought/action char lengths + deltas vs the teacher's own \
+rollouts, and the duel's scoring wall clock (`duel_seconds`)
+
+Pre-fork verdicts (before 2026-08-10) stamp the old `gates` block and the \
+S* mix formula they were judged under; they remain replayable as recorded.
 
 Before the full duel, an injectability probe rejects checkpoints that cannot \
 emit a parsable bash action or return finite forced logprobs.
@@ -394,10 +399,10 @@ data. All paths are relative to this site's root (Hippius S3 bucket \
 
 - `GET /api/v1/snapshot` — king, reign chain, intake, duel queue, live eval.
 - `GET /api/v1/history?limit=&cursor=&q=&event=` — filterable verdicts.
-- `GET /api/v1/benchmarks` — advisory suite scores (never part of S*).
+- `GET /api/v1/benchmarks` — advisory suite scores (never part of the score).
 - `GET /api/v1/contract` — machine-readable contract knobs.
-- `GET /api/v1/duels/{id}` — duel detail (gates, z, margin, S*).
-- `GET /api/v1/duels/{id}/series` — per-turn Λ2 / L1lift (no raw logprobs).
+- `GET /api/v1/duels/{id}` — duel detail (z, margin, Reason, telemetry).
+- `GET /api/v1/duels/{id}/series` — per-turn Reason / L1lift (no raw logprobs).
 - `GET /api/v1/stream` — SSE snapshot deltas for live UIs.
 
 **Hippius archive mirror** (cold path — this site's Hippius root, same disclosure):
@@ -410,8 +415,8 @@ data. All paths are relative to this site's root (Hippius S3 bucket \
 **Complete audit logs** (gzipped JSONL, updated on every verdict):
 
 - `data/history_full.jsonl.gz` — every verdict and failure since genesis, \
-with full per-side S* summaries, gate stats, slice seeds, block hashes, \
-rejection reasons.
+with full per-side Reason + telemetry summaries, slice seeds, block hashes, \
+rejection reasons (pre-fork rows carry their original S* gate stats).
 - `data/bench_history_full.jsonl.gz` — every completed bench run.
 
 **Full duel records — the training data** (one immutable object per \
@@ -434,7 +439,7 @@ distillation data for the exact turns that were scored.
   - `king_rows` / `challenger_rows` — per-turn instrumented records: \
 `{turn_id, miner, valid, n_pairs, bank_frac, L2_bank, pairs: [...]}`. Each \
 pair carries the miner rollout text (`z_a` thoughts, `y_a` action) plus every \
-forced-logprob component S* is computed from (`lpA_yc_za`, `lpC_yc_za`, \
+forced-logprob component Reason and the telemetry are computed from (`lpA_yc_za`, `lpC_yc_za`, \
 `lpA_yc_zc`, `lpA_yc_e`, `lpA_ya_za`, `lpC_ya_za`, `lpA_ya_zc`, `lpA_ya_e`, \
 `lpC_ya_e`, `lpC_ya_zc`, `lpC_yc_zc`, `lpC_yc_e`, `L2_bank`). You can \
 recompute any verdict offline from this file + `affine/score.py`.

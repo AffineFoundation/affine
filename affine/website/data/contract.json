@@ -5,43 +5,52 @@
     "network": "finney",
     "burn_uid": 0,
     "king_chain_size": 5,
-    "weight_version_key": 1
+    "min_submission_block": 8767079,
+    "weight_version_key": 3
   },
   "submission": {
     "reveal_prefix": "affine1",
     "repo_pattern": "^[^/]+/[Aa]ffine-.+$",
+    "coldkey_prefix_len": 5,
+    "coldkey_suffix_len": 5,
     "max_model_size_gb": 90.0,
     "max_total_repo_gb": 100.0,
-    "allow_python_files": false
+    "allow_python_files": false,
+    "allow_auto_map": false,
+    "max_repo_files": 5000,
+    "max_config_bytes": 1048576
   },
   "teacher": {
     "repo": "zai-org/GLM-4.5-Air-FP8"
   },
   "dataset": {
-    "turns_hf_repo": "Wejh/affine-turns",
-    "turns_file": "turns_minicoder.jsonl",
-    "turns_sha256": "a30a3b5da61186a200dd2e16e4bc3e4bdf1a6ffaeaf81e005b5f8121ba5608c9",
-    "corpus_epoch": 1,
-    "refresh_max_age_blocks": 216000
+    "corpus_base_url": "https://s3.hippius.com/affine-sn120",
+    "manifest_key": "turns/manifest.json",
+    "refresh_interval_s": 3600
   },
   "duel": {
     "n_turns": 80,
-    "tau": 0.02,
-    "gamma": 0.3,
-    "gamma_bank": 0.08,
     "k_sigma": 3.0,
-    "l1_weight": 1.0,
-    "l1_clip": 0.1,
-    "r_lo": 0.3,
-    "r_hi": 4.0,
-    "baseline_band": 1.25,
-    "min_se": 0.005,
-    "min_margin": 0.02
+    "n_teacher_samples": 4,
+    "n_miner_samples": 4,
+    "temperature": 0.8,
+    "max_thought_tokens": 1024,
+    "max_action_tokens": 768,
+    "concurrency": 24,
+    "timeout_s": 7200
   },
   "bench": {
     "enabled": true,
-    "suites": ["tau2_airline", "tau2_retail", "tau2_telecom"],
+    "suites": [
+      "swe_rebench_lite"
+    ],
+    "num_trials": 1,
+    "max_concurrency": 12,
+    "user_llm": "teacher",
     "policy": "all"
+  },
+  "dashboard": {
+    "public_base_url": "https://affine.io"
   },
   "version": "0.1.0"
 }

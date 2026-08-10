@@ -290,7 +290,8 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
 
 export function drawDuelScores(svg, history,
                                { width: widthOpt, height: heightOpt } = {}) {
-  // Best absolute S per duel — max(king, challenger), reg-price style.
+  // Best absolute Reason per duel — max(king, challenger), reg-price style.
+  // `score`/`score_king` carry Reason for v3 rows and legacy S* for pre-fork.
   const points = (history || [])
     .filter((r) => r.event !== "failed")
     .filter((r) =>
@@ -332,7 +333,7 @@ export function drawDuelScores(svg, history,
 
   if (!scores.length) {
     svg.innerHTML = `<text x="${width / 2}" y="${height / 2}" text-anchor="middle"
-      fill="rgba(229,229,229,0.35)" font-family="${mono}" font-size="12">no absolute S recorded yet</text>`;
+      fill="rgba(229,229,229,0.35)" font-family="${mono}" font-size="12">no Reason recorded yet</text>`;
     return;
   }
 
@@ -425,18 +426,26 @@ export function gatePoints(history) {
 }
 
 /**
- * Everything the duel measures per side, one pane each. `lines` are the
- * thresholds read off the duel's own published gate config, so the chart
- * follows the contract instead of restating it. `keep: false` lines only
- * enter the y-domain when the data already reaches them (r_hi = 4 would
- * otherwise flatten a series that lives near 1).
+ * Everything the duel measures per side, one pane each. Since the Reason v3
+ * fork only Reason is scored — every other pane is TELEMETRY: measured and
+ * published in the verdict so the axis can be studied, never affecting the
+ * score. The dashed threshold lines on telemetry panes are the retired S* v2
+ * gate values, kept as visual context for pre-fork history. `keep: false`
+ * lines only enter the y-domain when the data already reaches them.
  */
+/** Per-side Reason: v3 verdicts publish `reason`; pre-fork rows carried the
+ * identical quantity as `mean_lambda2`. */
+const reasonOf = (p, side) =>
+  sideVal(p, side, "reason") ?? sideVal(p, side, "mean_lambda2");
+
 /**
- * Mean clipped L1lift per side. The verdict publishes mean Λ2 and the mean
- * mix S = Λ2 + w·clip(L1lift), so the L1 term is recovered exactly as
- * (mix − Λ2) / w — no re-eval needed for historical duels.
+ * Mean L1lift per side (telemetry). v3 verdicts publish the raw mean
+ * directly; pre-fork verdicts published mean Λ2 + the mean mix, so the
+ * clipped term is recovered exactly as (mix − Λ2) / w.
  */
 const l1Term = (p, side) => {
+  const direct = sideVal(p, side, "mean_l1lift");
+  if (direct != null) return direct;
   const mix = sideVal(p, side, "mean_mix");
   const l2 = sideVal(p, side, "mean_lambda2");
   if (mix == null || l2 == null) return null;
@@ -444,45 +453,45 @@ const l1Term = (p, side) => {
   return (mix - l2) / w;
 };
 
+const TELEMETRY_NOTE = `<p><em>Telemetry: measured and published in every
+  verdict for study — it does not affect the score or the crown. The dashed
+  threshold is the retired S* v2 gate value, kept as context for pre-fork
+  history.</em></p>`;
+
 export const GATE_METRICS = [
   {
-    id: "lambda2",
-    title: "Λ2",
-    caption: "teacher lift lpC(y_C|z_A) − lpC(y_C|∅) — the ranking core",
-    detail: `<p><code>Λ2 = lpC(y_C|z_A) − lpC(y_C|∅)</code>: how much the miner's
-      thought helps <em>the teacher</em> predict its own action. The teacher is
-      the anchor — the miner is never judged by another model's opinion of its
-      prose, only by whether its reasoning measurably transfers.</p>
-      <p>This is the dominant term of S*. Positive means the thought carried real
-      information about what to do next; near zero means it was decoration.</p>`,
+    id: "reason",
+    title: "Reason (sides)",
+    caption: "per-side mean lpC(y_C|z_A) − lpC(y_C|∅) — the score",
+    detail: `<p><code>Reason = lpC(y_C|z_A) − lpC(y_C|∅)</code>: how much the
+      miner's thought helps <em>the teacher</em> predict its own action. The
+      teacher is the anchor — the miner is never judged by another model's
+      opinion of its prose, only by whether its reasoning measurably transfers
+      into the teacher.</p>
+      <p>This is the whole score. Positive means the thought carried real
+      information about what to do next; near zero means it was decoration.
+      The hero chart shows the best side per duel; this pane shows both
+      sides.</p>`,
     fmt: fmtScore,
     lines: [{ label: "", at: () => 0, faint: true }],
     series: [
-      { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "mean_lambda2") },
-      { label: "king", color: BONE, get: (p) => sideVal(p, "king", "mean_lambda2") },
+      { label: "challenger", color: GOLD, get: (p) => reasonOf(p, "challenger") },
+      { label: "king", color: BONE, get: (p) => reasonOf(p, "king") },
     ],
   },
   {
     id: "l1lift",
     title: "L1lift",
-    caption: "miner lift lpA(y_C|z_A) − lpA(y_C|∅) · clipped at ±l1_clip",
+    caption: "telemetry · miner-side lift lpA(y_C|z_A) − lpA(y_C|∅)",
     detail: `<p><code>L1lift = lpA(y_C|z_A) − lpA(y_C|∅)</code>: how much the
       miner's thought helps <em>the miner itself</em> predict the teacher's
-      action. It is the second term of the mix,
-      <code>S = mean(Λ2 + w·clip(L1lift, ±0.1))</code>, clipped so a single
-      overconfident turn cannot dominate the mean. Positive means the miner's
-      reasoning genuinely anticipates what the teacher will do — the natural
-      signature of a faithful distill.</p>
-      <p>The verdict publishes mean Λ2 and the mean mix per side, so this pane
-      plots the clipped term recovered exactly as <code>(S − Λ2) / w</code>.
-      Minting L1lift for free requires sabotaging the empty baseline, which the
-      1.25× baseline band catches.</p>`,
+      action. Positive is the natural signature of a faithful distill — the
+      model genuinely anticipates what the teacher will do.</p>
+      <p>Under S* v2 this term was part of the ranked mix; since Reason v3 it
+      is recorded only. v3 verdicts publish the raw mean directly; pre-fork
+      points are recovered as <code>(S − Λ2) / w</code>.</p>${TELEMETRY_NOTE}`,
     fmt: fmtScore,
-    lines: [
-      { label: "clip", at: (g) => num(g.l1_clip) ?? 0.1, keep: false },
-      { label: "", at: () => 0, faint: true },
-      { label: "-clip", at: (g) => -(num(g.l1_clip) ?? 0.1), keep: false },
-    ],
+    lines: [{ label: "", at: () => 0, faint: true }],
     series: [
       { label: "challenger", color: GOLD, get: (p) => l1Term(p, "challenger") },
       { label: "king", color: BONE, get: (p) => l1Term(p, "king") },
@@ -491,19 +500,17 @@ export const GATE_METRICS = [
   {
     id: "gate-pass",
     title: "causality",
-    caption: "pairs whose thought earns ≥ τ lift without leaking · invalid below γ",
-    detail: `<p>A pair passes the causality gate when the miner's thought
-      <code>z_A</code> contains no fuzzy copy of the action it is supposed to
-      justify, and injecting it raises the miner's own logprob of that action by
-      at least <code>τ = 0.02</code> over the empty-context baseline:
-      <code>lpA(y_A|z_A) − lpA(y_A|∅) ≥ τ</code>.</p>
-      <p>This pane plots the share of the slice's pairs that pass, for each side.
-      A miner whose rate falls below <code>γ = 0.30</code> is INVALID and cannot
-      crown no matter how large its margin. The gate is what closes the silent
-      miner (empty thoughts carry no lift) and the fixed-payload attack.</p>`,
+    caption: "telemetry · pairs whose thought earns ≥ τ lift without leaking",
+    detail: `<p>Share of the slice's pairs where the miner's thought
+      <code>z_A</code> contains no fuzzy copy of its own action and injecting
+      it raises the miner's own logprob of that action by at least
+      <code>τ = 0.02</code>: <code>lpA(y_A|z_A) − lpA(y_A|∅) ≥ τ</code>.</p>
+      <p>Formerly gate 1 of S* v2 (invalid below γ = 0.30). A silent or
+      payload-stuffing miner shows up here first — under Reason v3 such a
+      miner simply scores ≈ 0 and loses the duel on its own.</p>${TELEMETRY_NOTE}`,
     fmt: fmtPct,
     domain: [0, 1],
-    lines: [{ label: "γ", at: (g) => g.gamma ?? 0.3 }],
+    lines: [{ label: "γ", at: (g) => g.gamma ?? 0.3, faint: true }],
     series: [
       { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "gate_pass_rate") },
       { label: "king", color: BONE, get: (p) => sideVal(p, "king", "gate_pass_rate") },
@@ -512,18 +519,18 @@ export const GATE_METRICS = [
   {
     id: "bank",
     title: "prior bank",
-    caption: "pairs beating the published priors · invalid below γ_bank",
+    caption: "telemetry · pairs beating the published generic priors",
     detail: `<p>Share of pairs whose teacher lift beats the published prior bank
-      — a fixed set of generic, context-free thoughts. <code>Λ2_bank > 0</code>
-      means the miner's thought helped the teacher <em>more than a canned prior
-      would have</em>, so the lift is specific to this turn rather than to
-      sounding thoughtful in general.</p>
-      <p>Below <code>γ_bank = 0.08</code> the miner is INVALID. This is the gate
-      that closes paraphrase stuffing: restating the prompt scores like a prior
-      and drives this fraction to zero.</p>`,
+      — a fixed set of generic, context-free thoughts. Above zero means the
+      miner's thought helped the teacher <em>more than a canned prior would
+      have</em>, so the lift is specific to this turn rather than to sounding
+      thoughtful in general.</p>
+      <p>Formerly gate 2 of S* v2 (invalid below γ_bank = 0.08). This is the
+      pane to watch for paraphrase-prior strategies: they tie genesis on raw
+      Reason but sit at zero here.</p>${TELEMETRY_NOTE}`,
     fmt: fmtPct,
     domain: [0, 1],
-    lines: [{ label: "γb", at: (g) => g.gamma_bank ?? 0.08 }],
+    lines: [{ label: "γb", at: (g) => g.gamma_bank ?? 0.08, faint: true }],
     series: [
       { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "bank_frac") },
       { label: "king", color: BONE, get: (p) => sideVal(p, "king", "bank_frac") },
@@ -532,22 +539,19 @@ export const GATE_METRICS = [
   {
     id: "calib",
     title: "calibration r",
-    caption: "mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)| · must sit inside the band",
-    detail: `<p>Serve-time calibration check on the miner's own logprobs:
-      <code>r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|</code>. Values below 1 mean
-      injecting the thought made the teacher's action cheaper for the miner to
-      predict — mean <code>L1lift > 0</code>, the natural signature of a faithful
-      distill. Live distills measure 0.72–0.81; the teacher scoring itself sits
-      near 0.35.</p>
-      <p>Outside <code>[0.3, 4.0]</code> the miner is INVALID: a runaway r means
-      the head is sharpened or broken rather than informed. <code>r_lo</code> was
-      1.0 at launch and was lowered on 2026-08-06 because it was invalidating
-      every genuine winner; the attack it used to cover is now handled by the
-      empty-baseline band instead.</p>`,
+    caption: "telemetry · mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|",
+    detail: `<p>Calibration diagnostic on the miner's own logprobs:
+      <code>r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|</code>. Values below 1
+      mean injecting the thought made the teacher's action cheaper for the
+      miner to predict — mean <code>L1lift > 0</code>, the distill signature.
+      Live distills measure 0.72–0.81; the teacher scoring itself sits near
+      0.35.</p>
+      <p>Formerly gate 3 of S* v2 (invalid outside [0.3, 4.0]) — a defense of
+      the L1 channel, which is no longer scored.</p>${TELEMETRY_NOTE}`,
     fmt: fmtRatio,
     lines: [
-      { label: "r_lo", at: (g) => g.r_lo ?? 0.3 },
-      { label: "r_hi", at: (g) => g.r_hi ?? 4.0, keep: false },
+      { label: "r_lo", at: (g) => g.r_lo ?? 0.3, faint: true },
+      { label: "r_hi", at: (g) => g.r_hi ?? 4.0, keep: false, faint: true },
     ],
     series: [
       { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "calib_ratio") },
@@ -557,19 +561,18 @@ export const GATE_METRICS = [
   {
     id: "baseline",
     title: "empty baseline",
-    caption: "challenger mean|lpA(y_C|∅)| ÷ king's · capped at baseline_band",
-    detail: `<p>The challenger's empty-context baseline <code>mean|lpA(y_C|∅)|</code>
-      divided by the king's on the same slice. Both sides see identical turns and
-      identical teacher actions, so an honest challenger lands near the king —
-      the observed honest maximum is 1.14×.</p>
-      <p>Above <code>baseline_band = 1.25×</code> the challenger is INVALID.
-      Inflating your own empty baseline is the one way to mint free
-      <code>L1lift</code> once <code>r_lo &lt; 1</code>: sabotage the denominator
-      and every thought looks helpful. A real distill improves the numerator
-      instead, which is why this pane and calibration r are read together.</p>`,
+    caption: "telemetry · challenger mean|lpA(y_C|∅)| ÷ king's",
+    detail: `<p>The challenger's empty-context baseline
+      <code>mean|lpA(y_C|∅)|</code> divided by the king's on the same slice.
+      Both sides see identical turns and identical teacher actions, so an
+      honest challenger lands near the king — the observed honest maximum is
+      1.14×.</p>
+      <p>Formerly gate 3b of S* v2 (invalid above 1.25×) — it closed free
+      L1lift minting via baseline sabotage, an attack on a channel that is no
+      longer scored.</p>${TELEMETRY_NOTE}`,
     fmt: fmtRatio,
     lines: [
-      { label: "band", at: (g) => g.baseline_band ?? 1.25 },
+      { label: "band", at: (g) => g.baseline_band ?? 1.25, faint: true },
       { label: "", at: () => 1.0, faint: true },
     ],
     series: [
@@ -585,68 +588,74 @@ export const GATE_METRICS = [
     ],
   },
   {
-    id: "margin",
-    title: "margin",
-    caption: "paired mean(S_c − S_k) against its own k·SE bar and δ",
-    detail: `<p>The duel itself: <code>margin = mean(S_c − S_k)</code> over turns
-      where both sides produced a scorable pair. Because it is paired per turn,
-      turn difficulty cancels — a hard slice hurts both sides equally.</p>
-      <p>The dashed bone line is that duel's own <code>k·SE</code> bar, which
-      moves with how noisy the slice was. Gold above bone means the challenger
-      cleared 3σ. The gold dotted line is <code>δ = 0.02</code>, an absolute
-      floor sized to the same-model null so a freakishly low-variance challenger
-      cannot crown on a trivial mean. In practice 3·SE runs 0.023–0.043, so the
-      σ test is what governs.</p>`,
-    fmt: fmtScore,
-    lines: [
-      { label: "δ", at: (g) => g.min_margin ?? 0.02 },
-      { label: "", at: () => 0, faint: true },
-    ],
-    series: [
-      { label: "margin", color: GOLD, get: (p) => num(p.margin) },
-      {
-        label: "k·SE",
-        color: BONE,
-        dash: true,
-        get: (p) => {
-          const se = num(p.se);
-          return se == null ? null : se * (num(p.k_sigma) ?? 3);
-        },
-      },
-    ],
-  },
-  {
     id: "se",
     title: "paired SE",
-    caption: "spread of the per-turn S difference · floored at min_se",
-    detail: `<p>Standard error of the per-turn <code>S_c − S_k</code> differences,
-      i.e. how much this slice disagreed with itself. It sets the height of the
-      bar the challenger has to clear, since crowning needs
-      <code>margin > 3·SE</code>.</p>
-      <p>It is floored at <code>min_se = 0.005</code> before z is computed. Without
-      that floor a challenger that returns near-identical differences on every
-      turn would drive SE toward zero and manufacture an unbounded z off a
-      meaningless mean.</p>`,
+    caption: "spread of the per-turn Reason difference",
+    detail: `<p>Standard error of the per-turn <code>Reason_c − Reason_k</code>
+      differences, i.e. how much this slice disagreed with itself. It sets the
+      height of the bar the challenger has to clear, since crowning needs
+      <code>margin > k·SE</code>.</p>
+      <p>Since Reason v3 there is no floor under it — the duel is purely
+      relative to the slice's own noise. Pre-fork duels floored SE at
+      <code>min_se = 0.005</code>.</p>`,
     fmt: fmtScore,
-    lines: [{ label: "min", at: (g) => g.min_se ?? 0.005 }],
+    lines: [],
     series: [{ label: "SE", color: GOLD, get: (p) => num(p.se) }],
   },
   {
-    id: "score",
-    title: "S*",
-    caption: "Λ2 + w·clip(L1lift) — the ranked quantity",
-    detail: `<p>The full ranking term per side:
-      <code>S = mean(Λ2 + w·clip(L1lift, ±0.1))</code> with <code>w = 1</code>.
-      <code>Λ2</code> is the teacher-side lift; <code>L1lift</code> is the
-      miner-side lift on the same teacher action, clipped so a single
-      overconfident turn cannot dominate the mean.</p>
-      <p>An INVALID side has no S at all — gates are evaluated before ranking, so
-      a gated miner drops out of the pane rather than scoring badly.</p>`,
-    fmt: fmtScore,
+    id: "len-thought",
+    title: "thought length",
+    caption: "mean chars of z per side · dashed = teacher",
+    detail: `<p>Mean character length of the thoughts each side produced on the
+      slice, with the teacher's own thoughts (dashed) as the anchor. Style
+      pressure shows up here first: short-style models sit far below the
+      teacher, verbose padders far above.</p>
+      <p>Recorded since Reason v3 as telemetry — length is not scored, but the
+      gap to the teacher is exactly the axis where style-vs-content strategies
+      separate.</p>`,
+    fmt: fmtInt,
+    lines: [],
+    series: [
+      { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "mean_len_z") },
+      { label: "king", color: BONE, get: (p) => sideVal(p, "king", "mean_len_z") },
+      { label: "teacher", color: BONE, dash: true, get: (p) => num(p.teacher?.mean_len_z) },
+    ],
+  },
+  {
+    id: "len-action",
+    title: "action length",
+    caption: "mean chars of y per side · dashed = teacher",
+    detail: `<p>Mean character length of the actions each side emitted, against
+      the teacher's own actions (dashed). Actions are scored by the teacher's
+      likelihood of <em>its own</em> reference action, so action length is pure
+      telemetry — but a side whose actions look nothing like the teacher's
+      shows up here immediately.</p>`,
+    fmt: fmtInt,
+    lines: [],
+    series: [
+      { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "mean_len_y") },
+      { label: "king", color: BONE, get: (p) => sideVal(p, "king", "mean_len_y") },
+      { label: "teacher", color: BONE, dash: true, get: (p) => num(p.teacher?.mean_len_y) },
+    ],
+  },
+  {
+    id: "len-delta",
+    title: "length delta",
+    caption: "miner − teacher mean chars · solid = thought · dashed = action",
+    detail: `<p>How far each side's output length sits from the teacher's on
+      the same slice: <code>Δlen = mean_len(miner) − mean_len(teacher)</code>.
+      Solid lines are thought deltas, dashed are action deltas; zero means
+      teacher-shaped output.</p>
+      <p>A faithful distill should drift toward zero from either direction.
+      Persistent large negative thought deltas are the short-style signature;
+      large positive ones are padding.</p>`,
+    fmt: fmtInt,
     lines: [{ label: "", at: () => 0, faint: true }],
     series: [
-      { label: "challenger", color: GOLD, get: (p) => num(p.score) },
-      { label: "king", color: BONE, get: (p) => num(p.score_king) },
+      { label: "chall Δz", color: GOLD, get: (p) => sideVal(p, "challenger", "len_z_delta") },
+      { label: "king Δz", color: BONE, get: (p) => sideVal(p, "king", "len_z_delta") },
+      { label: "chall Δy", color: GOLD, dash: true, get: (p) => sideVal(p, "challenger", "len_y_delta") },
+      { label: "king Δy", color: BONE, dash: true, get: (p) => sideVal(p, "king", "len_y_delta") },
     ],
   },
   {
@@ -669,52 +678,63 @@ export const GATE_METRICS = [
   },
   {
     id: "duration",
-    title: "duel wall clock",
-    caption: "enqueue → verdict on the eval pod",
-    detail: `<p>Wall clock from the validator handing the challenge to the eval
-      pod through to the published verdict: model download, vLLM warm-up, the
-      injectability probe, then teacher references and both sides scored
-      concurrently across the slice.</p>
-      <p>It is an operations signal, not part of S*. Spikes usually mean a large
-      checkpoint pull or a cold engine rather than anything about the model's
-      quality.</p>`,
+    title: "duel time",
+    caption: "gold = enqueue → verdict · dashed = scoring only",
+    detail: `<p>Gold is wall clock from the validator handing the challenge to
+      the eval pod through to the published verdict: model download, vLLM
+      warm-up, the injectability probe, then teacher references and both sides
+      scored concurrently across the slice. The dashed line (Reason v3
+      verdicts) is the scoring portion alone, measured on the pod.</p>
+      <p>It is an operations signal, not part of the score. Spikes usually mean
+      a large checkpoint pull or a cold engine rather than anything about the
+      model's quality.</p>`,
     fmt: fmtDuration,
     lines: [],
-    series: [{ label: "duration", color: GOLD, get: (p) => num(p.duration_s) }],
+    series: [
+      { label: "duration", color: GOLD, get: (p) => num(p.duration_s) },
+      { label: "scoring", color: BONE, dash: true, get: (p) => num(p.duel_seconds) },
+    ],
   },
 ];
 
 /**
  * The two hero charts, described the same way as the grid panes so the expand
- * view can treat every chart on the page uniformly.
+ * view can treat every chart on the page uniformly. Since Reason v3 the
+ * heroes are the two quantities the contract actually consists of: the score
+ * (Reason) and the crown rule (Margin vs k·SE).
  */
 export const HERO_CHARTS = [
   {
     id: "hero-score",
-    title: "S",
+    title: "Reason",
     caption: "best of king and challenger each duel",
-    detail: `<p>The higher of the two sides' absolute <code>S*</code> in each duel,
-      oldest to newest. It is the level the subnet is currently distilling at:
-      it steps up when a stronger model takes the crown and drifts with slice
-      difficulty in between.</p>
-      <p><code>S = mean(Λ2 + w·clip(L1lift, ±0.1))</code>, measured against a
-      fixed teacher on SWE-style trajectories. S never touches a benchmark task,
-      yet it tracked swe-rebench at Spearman <code>+0.758</code> across 30 models
-      — that correlation is the whole claim of the mechanism.</p>`,
+    detail: `<p>The higher of the two sides' mean <code>Reason</code> in each
+      duel, oldest to newest. It is the level the subnet is currently
+      distilling at: it steps up when a stronger model takes the crown and
+      drifts with slice difficulty in between.</p>
+      <p><code>Reason = lpC(y_C|z_A) − lpC(y_C|∅)</code>: how much the miner's
+      thought raises the frozen teacher's likelihood of reproducing its own
+      action, measured on SWE-style trajectories. The miner's own weights
+      never enter the ranked quantity. This single term is the entire score —
+      raw Λ2 tracked swe-rebench as well as the retired mix on the research
+      panel (Spearman <code>+0.847</code> vs <code>+0.844</code> @ 15).</p>`,
     draw: (svg, history, opts) => drawDuelScores(svg, history, opts),
   },
   {
-    id: "hero-z",
-    title: "Z",
-    caption: "paired duel z vs king · dashed = 3σ dethrone threshold",
-    detail: `<p>Each duel's paired <code>z = mean(S_c − S_k) / SE</code> against
-      the reigning king. Gold bars are crownings, bone is a challenger that
-      scored above the king without clearing the bar, red is a loss.</p>
-      <p>The dotted gold line at 3σ is the dethrone threshold. Clearing it is
-      necessary but not sufficient: the challenger also needs
-      <code>margin > δ = 0.02</code> and both sides must pass every validity
-      gate. The panes under "duel measurements" show those gates duel by
-      duel.</p>`,
+    id: "hero-margin",
+    title: "Margin",
+    caption: "paired z vs king · dashed = 3σ dethrone threshold",
+    detail: `<p>The duel itself, in units of its own noise: each bar is
+      <code>z = mean(Reason_c − Reason_k) / SE</code> against the reigning
+      king. Because the mean is paired per turn, turn difficulty cancels — a
+      hard slice hurts both sides equally. Gold bars are crownings, bone is a
+      challenger that scored above the king without clearing the bar, red is
+      a loss.</p>
+      <p>The dotted gold line at 3σ is the dethrone threshold — under Reason
+      v3 clearing it is the whole crown rule, so every bar reads directly as
+      how close that challenger came to the crown. There is no absolute
+      floor: the test is purely relative to the slice's own noise. Pre-fork
+      duels additionally required the retired <code>δ</code> floor.</p>`,
     draw: (svg, history, opts) => drawDuelZ(svg, history, opts),
   },
 ];
@@ -841,9 +861,15 @@ const turnShort = (tid) => {
   return s.length > 34 ? `${s.slice(0, 34)}…` : s;
 };
 
-/** Per-turn Δmix bars in slice order — which turns won or lost the duel. */
+/** Reason v3 series publish delta_reason / *_reason; pre-fork series carried
+ * the mix. One accessor keeps every duel page rendering across the fork. */
+const pairedDelta = (p) => p.delta_reason ?? p.delta_mix;
+const pairedChall = (p) => p.challenger_reason ?? p.challenger_mix;
+const pairedKing = (p) => p.king_reason ?? p.king_mix;
+
+/** Per-turn ΔReason bars in slice order — which turns won or lost the duel. */
 export function drawDeltaBars(svg, paired, { width: widthOpt, height: heightOpt } = {}) {
-  const pts = (paired || []).filter((p) => p.delta_mix != null);
+  const pts = (paired || []).filter((p) => pairedDelta(p) != null);
   const width = Math.max(widthOpt || 560, 320);
   const height = heightOpt || 240;
   const padL = 52;
@@ -858,7 +884,7 @@ export function drawDeltaBars(svg, paired, { width: widthOpt, height: heightOpt 
       font-family="${MONO}" font-size="11">no paired turns</text>`;
     return;
   }
-  const vals = pts.map((p) => Number(p.delta_mix));
+  const vals = pts.map((p) => Number(pairedDelta(p)));
   const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
   let lo = Math.min(...vals, 0);
   let hi = Math.max(...vals, 0);
@@ -876,10 +902,10 @@ export function drawDeltaBars(svg, paired, { width: widthOpt, height: heightOpt 
       font-family="${MONO}" font-size="9">${esc(fmtScore(v))}</text>`).join("");
 
   const bars = pts.map((p, i) => {
-    const v = Number(p.delta_mix);
+    const v = Number(pairedDelta(p));
     const x = padL + slot * (i + 0.5);
     const y1 = yAt(v);
-    const tip = `${turnShort(p.turn_id)} · Δmix ${fmtScore(v)} · chall ${fmtScore(p.challenger_mix)} vs king ${fmtScore(p.king_mix)}`;
+    const tip = `${turnShort(p.turn_id)} · ΔReason ${fmtScore(v)} · chall ${fmtScore(pairedChall(p))} vs king ${fmtScore(pairedKing(p))}`;
     return `<g class="duel-hit" data-tip="${esc(tip)}">
       <rect x="${x - barW / 2}" y="${Math.min(y0, y1)}" width="${barW}"
         height="${Math.max(Math.abs(y0 - y1), 1.5)}" rx="1"
@@ -897,10 +923,10 @@ export function drawDeltaBars(svg, paired, { width: widthOpt, height: heightOpt 
     ${labels}${bars}`;
 }
 
-/** Challenger mix vs king mix per turn; above the diagonal = challenger better. */
+/** Challenger vs king Reason per turn; above the diagonal = challenger better. */
 export function drawSideScatter(svg, paired, { width: widthOpt, height: heightOpt } = {}) {
   const pts = (paired || []).filter(
-    (p) => p.challenger_mix != null && p.king_mix != null);
+    (p) => pairedChall(p) != null && pairedKing(p) != null);
   const width = Math.max(widthOpt || 560, 320);
   const height = heightOpt || 240;
   const padL = 52;
@@ -915,7 +941,7 @@ export function drawSideScatter(svg, paired, { width: widthOpt, height: heightOp
       font-family="${MONO}" font-size="11">no paired turns</text>`;
     return;
   }
-  const all = pts.flatMap((p) => [Number(p.challenger_mix), Number(p.king_mix)]);
+  const all = pts.flatMap((p) => [Number(pairedChall(p)), Number(pairedKing(p))]);
   let lo = Math.min(...all);
   let hi = Math.max(...all);
   const pad = (hi - lo) * 0.08 || 0.01;
@@ -925,8 +951,8 @@ export function drawSideScatter(svg, paired, { width: widthOpt, height: heightOp
   const yAt = (v) => padT + ((hi - v) / ((hi - lo) || 1)) * (height - padT - padB);
 
   const dots = pts.map((p) => {
-    const c = Number(p.challenger_mix);
-    const k = Number(p.king_mix);
+    const c = Number(pairedChall(p));
+    const k = Number(pairedKing(p));
     const win = c >= k;
     const tip = `${turnShort(p.turn_id)} · chall ${fmtScore(c)} vs king ${fmtScore(k)} · Δ ${fmtScore(c - k)}`;
     return `<g class="duel-hit" data-tip="${esc(tip)}">
@@ -940,13 +966,13 @@ export function drawSideScatter(svg, paired, { width: widthOpt, height: heightOp
     <line x1="${xAt(lo)}" y1="${yAt(lo)}" x2="${xAt(hi)}" y2="${yAt(hi)}"
       stroke="rgba(255,255,255,0.16)" stroke-width="1" stroke-dasharray="4 4"/>
     <text x="${width / 2}" y="${height - 8}" text-anchor="middle"
-      fill="rgba(229,229,229,0.4)" font-family="${MONO}" font-size="10">king mix</text>
+      fill="rgba(229,229,229,0.4)" font-family="${MONO}" font-size="10">king Reason</text>
     <text x="14" y="${height / 2}" fill="rgba(229,229,229,0.4)" font-family="${MONO}"
-      font-size="10" transform="rotate(-90 14 ${height / 2})">challenger mix</text>
+      font-size="10" transform="rotate(-90 14 ${height / 2})">challenger Reason</text>
     ${dots}`;
 }
 
-/** Λ2 vs L1lift for both sides — the two components of every S* sample. */
+/** Reason vs L1lift for both sides — the score against its telemetry twin. */
 export function drawPairScatter(svg, series, { width: widthOpt, height: heightOpt } = {}) {
   const pts = [
     ...(series?.challenger || []).map((p) => ({ ...p, side: "challenger" })),
@@ -980,7 +1006,7 @@ export function drawPairScatter(svg, series, { width: widthOpt, height: heightOp
 
   const dots = pts.map((p) => {
     const chall = p.side === "challenger";
-    const tip = `${p.side} · ${turnShort(p.turn_id)} · Λ2 ${fmtScore(p.lambda2)} · L1 ${fmtScore(p.l1lift)} · gate ${p.gate_ok ? "ok" : "fail"}`;
+    const tip = `${p.side} · ${turnShort(p.turn_id)} · Reason ${fmtScore(p.lambda2)} · L1 ${fmtScore(p.l1lift)} · causality ${p.gate_ok ? "ok" : "fail"}`;
     return `<g class="duel-hit" data-tip="${esc(tip)}">
       <circle cx="${xAt(p.lambda2)}" cy="${yAt(p.l1lift)}" r="7" fill="transparent"/>
       <circle cx="${xAt(p.lambda2)}" cy="${yAt(p.l1lift)}" r="3"
@@ -995,7 +1021,7 @@ export function drawPairScatter(svg, series, { width: widthOpt, height: heightOp
     <line x1="${xAt(0)}" x2="${xAt(0)}" y1="${padT}" y2="${height - padB}"
       stroke="rgba(255,255,255,0.12)"/>
     <text x="${width / 2}" y="${height - 8}" text-anchor="middle"
-      fill="rgba(229,229,229,0.4)" font-family="${MONO}" font-size="10">Λ2</text>
+      fill="rgba(229,229,229,0.4)" font-family="${MONO}" font-size="10">Reason</text>
     <text x="14" y="${height / 2}" fill="rgba(229,229,229,0.4)" font-family="${MONO}"
       font-size="10" transform="rotate(-90 14 ${height / 2})">L1lift</text>
     ${dots}`;
@@ -1010,7 +1036,7 @@ export function fmtDelta(cur, prev) {
 }
 
 export function drawReignChain(svg, d) {
-  // Oldest → newest so absolute S* climbs left-to-right over time.
+  // Oldest → newest so absolute Reason climbs left-to-right over time.
   const members = [...reignMembers(d)].reverse();
   const width = chartWidth();
   const height = 320;
@@ -1065,7 +1091,7 @@ export function drawReignChain(svg, d) {
     const delta = fmtDelta(score, prev);
     if (score == null) {
       return `<g>
-        <title>${esc(m.repo || m.hotkey)} · S* unknown</title>
+        <title>${esc(m.repo || m.hotkey)} · Reason unknown</title>
         <text x="${x}" y="${y0 - 8}" text-anchor="middle" fill="rgba(229,229,229,0.35)"
           font-family="${mono}" font-size="10">—</text>
         <text x="${x}" y="${y0 + 18}" text-anchor="middle" fill="${current ? "#FFC93C" : "#e5e5e5"}"
@@ -1077,7 +1103,7 @@ export function drawReignChain(svg, d) {
     const y = yAt(score);
     const h = Math.max(2, y0 - y);
     return `<g>
-      <title>${esc(m.repo || m.hotkey)} · S*=${fmtScore(score)}</title>
+      <title>${esc(m.repo || m.hotkey)} · Reason=${fmtScore(score)}</title>
       <rect x="${x - barW / 2}" y="${y}" width="${barW}" height="${h}" rx="1" fill="${fill}"/>
       <text x="${x}" y="${y - 8}" text-anchor="middle" fill="${current ? "#FFC93C" : "#e5e5e5"}"
         font-family="${mono}" font-size="10">${fmtScore(score)}</text>

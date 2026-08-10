@@ -4,10 +4,54 @@ Living document. Every attack gets: mechanism, which terms it touches, expected 
 defense, and the experiment that measures it. Attacks are ranked by expected severity.
 Experiment IDs RT-n; results go to RESEARCH_LOG.md as they land.
 
-**Status key:** **CONFIRMED** = attack works in isolation; **CLOSED** = production S\* blocks it;
+**Status key:** **CONFIRMED** = attack works in isolation; **CLOSED** = production scoring blocks it;
 **OPEN** = not yet tested or low-priority residual.
 
-**Production S\* (2026-08-03):** mix = Λ2 + 1.0·L1lift; gates γ=0.30 + γ_bank=0.08; duel 3σ.
+**Production (2026-08-10, Reason v3, `weight_version_key=3`):** score = mean Reason
+= mean(lpC(y_C|z_A) − lpC(y_C|∅)); crown iff paired mean(Reason_c − Reason_k) > 3·SE.
+No gates, no L1 mix, no δ/min_se floors — everything below that references gates,
+clip, r-band, baseline band, or δ describes the retired **S\* v2** rule
+(2026-08-03 → 2026-08-10) and is kept as the experimental record.
+
+## 2026-08-10 — Reason v3 fork: statuses restated for the gateless rule
+
+The v2 gates were validity checks bolted onto a mixed score; v3 deletes the mix
+and the gates and leans entirely on (a) the teacher channel — lpA never enters
+the ranked quantity — and (b) the purely relative 3σ paired duel against the
+incumbent. What each attack looks like now:
+
+- **RT-3 family (A3, RT-3b/3d — L1lift inflation/deflation): DEAD CHANNEL.**
+  The entire attack surface was the L1 term and its lpA-side baselines. Reason
+  never evaluates the miner's own decoder, so overconfidence, uniform rescaling,
+  baseline sabotage, and the clip/r/band machinery that contained them are all
+  moot. Nothing to defend.
+- **RT-2 / A2 (stuffing), A9 (silence), RT-1 (payloads):** silence and fixed
+  payloads self-neutralize (Reason ≈ 0 while the incumbent's is positive — you
+  lose a relative duel by default); exact y_C stuffing is impossible because
+  teacher refs are sampled fresh per duel (RT-6 fix) and z_A is written before
+  y_C exists. The causality/leakage gates that used to enforce this are now
+  **telemetry** (`gate_pass_rate` in the verdict), monitored not enforced.
+- **RT-2c (adaptive paraphrase prior): the residual watch item.** RT-2c showed
+  para-stuffing *ties genesis* on raw Λ2 (−0.0025, 52% wins) — it never beat it.
+  Under v3 tying the incumbent loses (need > 3·SE). The defense is now "must
+  beat the incumbent at 3σ on raw Reason" plus **bank telemetry** (`bank_frac`
+  still computed and published every duel) as the early-warning channel. If a
+  paraphrase-prior miner ever clears 3σ over a genuine king, that is the signal
+  to act — no gate will fire first.
+- **A11 (short-style FP) / δ removal:** already policy-accepted 2026-08-05 when
+  δ was cut 0.05 → 0.02 as a noise floor; v3 takes the same policy to its limit
+  and removes the floor entirely. Rationale: δ and min_se were absolute knobs on
+  a relative test — every value we ever picked was recalibrated within days
+  (0.05 → 0.02 → gone), and the 2026-08-05 decision already conceded that any
+  statistically real edge may crown. The 3σ test alone bounds copy-churn (RT-4
+  null ⇒ false-crown ≈ 0.13%/duel) and min_se's degeneracy patch dies with it.
+- **RT-4 (copy), A7 (variance), A8 (tokenizer):** unchanged — paired 3σ null,
+  paired SE, byte normalization all survive the fork intact.
+- **RT-6 (sniping):** unchanged — the defense was never a gate (fresh y_C,
+  reveal-hash slice seeding, corpus refresh); all still enforced in code.
+- **RT-7 / A12:** still **OPEN**. v3 neither fixes nor worsens it: the inversion
+  lives in Λ2 itself (similarity-to-incumbent), which is now the whole score.
+  Public claim stays **distillation meter**, not coding meter.
 
 Recall the terms (per-byte forced logprobs; C = teacher, A = miner; higher Δ = worse):
 
@@ -314,6 +358,18 @@ near 30; margin is paired within a duel but still spans different kings/slices;
 only 2 of 51 models have repeat bench runs, so the noise model is assumed
 binomial rather than measured. The direction and the corroborating facts do not
 depend on the instrument.
+
+**Equilibrium framing (2026-08-10, operator policy — see
+`docs/EQUILIBRIUM.md`).** RT-7 measures the *slope from where miners stand*,
+not the asymptote. The incumbent ratchet makes every capability-free channel a
+finite budget (each crowning raises the raw-Reason bar the next challenger must
+clear at 3σ; under v2 this was the δ ratchet), and the style channel's own
+fixed point — matching GLM's conditional on fresh prefixes — *is*
+the distill. Under that frame RT-7 stays open as a measurement ("the live
+board is on the shallow, style-similarity prefix of the slope") but the
+red-team question it poses changes from "does an exploit exist" to "**is the
+style budget bounded and how many reigns does it fund**." The fatal object
+would be an *unbounded* capability-free channel; none demonstrated.
 
 ---
 

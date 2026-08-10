@@ -1,121 +1,112 @@
-"""Frozen production scoring rule S* v2 (verbatim port of research freeze).
+"""Frozen production scoring rule: Reason (v3, 2026-08-10).
 
-Shared between root validator and eval server. Any change here is a chain fork.
+Shared between root validator and eval server. Any change here is a chain fork
+(bump [subnet].weight_version_key).
 
+Reason(A; C, D):
+  Per pair:   Reason = lpC(y_C | z_A) − lpC(y_C | ∅)
+  Per miner:  score  = mean(Reason) over all pairs
+  Duel:       challenger wins iff paired mean(Reason_c − Reason_k) > k_sigma · SE
+              with SE = stdev(diffs) / sqrt(n) over paired turns.
 
-S*(A; C, D):
-  1. Causality+leakage gate (per pair, miner-level aggregate):
-       pass if (no fuzzy z⊃y leakage) ∧ (lpA(y_A|z_A)−lpA(y_A|∅) ≥ τ)
-       Miner INVALID if pass_rate < γ (default 0.30).
-       Closes exact stuffing (0%) and silence (≤5%).
-  2. Prior-bank positivity gate (miner-level):
-       frac_bank = fraction of pairs with Λ2_bank > 0, where
-         Λ2_bank = lpC(y_C|z_A) − max_k lpC(y_C|prior_k)
-       over published bank {∅, ls, cat, grep, find, test, para_ls}.
-       Miner INVALID if frac_bank < γ_bank (default 0.08).
-       Closes paraphrase stuffing (RT-2c: frac_bank=0).
-  3. Serve-time calibration-ratio gate (miner-level, RT-3b/3d):
-       r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|
-       Miner INVALID if r ∉ [r_lo, r_hi] (default [0.3, 4.0]).
-       r_lo was 1.0 at launch; lowered to 0.3 on 2026-08-06 because r < 1 is
-       exactly mean L1lift > 0 — the natural signature of a faithful teacher
-       distill (live distills measured at r 0.72–0.81 with healthy causality
-       and bank; teacher-self sits at ≈ 0.35). The RT-3d empty-baseline
-       sabotage that r_lo=1.0 guarded against is instead closed by the paired
-       baseline band (gate 3b).
-  3b. Paired empty-baseline band (duel-level, challenger only, RT-3d):
-       mean|lpA(y_C|∅)| must not exceed baseline_band × the king's value on
-       the same slice (default 1.25; honest fleet max observed 1.14×).
-       Inflating the empty baseline is the only way to mint L1lift for free
-       once r_lo < 1, and it is exactly what a genuine distill does NOT do
-       (live distills: baselines 1.06–1.14× king, improved numerators).
-  4. Ranking term (teacher-anchored mix, L1lift clipped):
-       S = mean(Λ2 + w · clip(L1lift, ±clip)) with w=1.0, clip=0.1
-         Λ2     = lpC(y_C|z_A) − lpC(y_C|∅)
-         L1lift = lpA(y_C|z_A) − lpA(y_C|∅)
-       clip0.1 keeps ρ≈+0.862@19 and caps RT-3b per-turn inflation.
-  5. Duel: challenger wins iff paired mean(S_c − S_k) > 3·SE
-       AND mean margin > δ (default 0.02). δ is a NOISE floor (policy
-       2026-08-05): it covers the RT-4 copy null (3·SE≈0.0195), the measured
-       lm_head-sharpening residual (≤ +0.012), and the min_se degeneracy —
-       any challenger statistically above the king crowns. The former 0.05
-       effect-size floor (A11 short-style FP defense) was dropped by policy:
-       same-tier S winners are accepted as kings. weight_version_key was NOT
-       bumped for this change (operator decision).
+That is the whole contract. Scoring hyperparameters: n_turns and k_sigma.
+There is no mix, no clip, no gates, and no absolute margin floor.
 
-`score_miner` needs pair components from v2 instrumentation. Bank positivity is
-passed in via `bank_frac` (from `harness.rescore_bank` / online bank scoring)
-because prior-bank logprobs are not in the base pair record.
+Reason (formerly Λ2) is computed entirely on the teacher side: it asks how much
+the miner's thought z_A raises the frozen teacher's likelihood of reproducing
+its own action y_C. The miner's weights never touch the ranked quantity, which
+retires the whole lpA attack surface (RT-3 family: lm_head sharpening,
+water-filling, empty-baseline sabotage).
+
+Everything the retired S* v2 gates measured is still computed and published as
+TELEMETRY — recorded for study and monitoring, never affecting score or
+validity:
+  - causality/leakage pass rate  (τ/fuzzy are telemetry constants, not
+    consensus knobs)
+  - prior-bank positivity frac   (bank_frac; watched for adaptive paraphrase
+    priors, which tie genesis on raw Reason but must still beat the sitting
+    king at k_sigma·SE)
+  - calibration ratio r and empty-baseline magnitude (lpA channel diagnostics)
+  - raw L1lift mean (unclipped — safe to publish now that it is not scored)
+  - thought/action character lengths (miner-vs-teacher length deltas are
+    assembled in evalsrv where teacher refs are in scope)
+
+History: S* v2 (mix + 5 gates + δ floor) was retired 2026-08-10. Raw Λ2
+correlates with swe-rebench as well as the mix did on the Albedo panel
+(+0.847@15 vs +0.844); the L1 term and its defensive gates were complexity
+without signal. The A11 short-style objection to Λ2-only ranking was already
+policy-dead (2026-08-05: same-tier S winners may crown). Pre-fork verdicts
+stamp the old formula and remain replayable under their stored `gates` block.
 """
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import statistics as st
 from dataclasses import dataclass
 
 
-DEFAULT_TAU = 0.02
-DEFAULT_GAMMA = 0.30
-DEFAULT_GAMMA_BANK = 0.08
 DEFAULT_K_SIGMA = 3.0
-DEFAULT_FUZZY = 0.6
-DEFAULT_L1_WEIGHT = 1.0
-DEFAULT_L1_CLIP = 0.1
-DEFAULT_R_LO = 0.3
-DEFAULT_R_HI = 4.0
-DEFAULT_BASELINE_BAND = 1.25
-DEFAULT_MIN_MARGIN = 0.02
-DEFAULT_MIN_SE = 0.005
+
+# Telemetry constants (non-consensus): thresholds used only to report the
+# legacy causality/leakage pass rate. Changing them is NOT a chain fork.
+TELEMETRY_TAU = 0.02
+TELEMETRY_FUZZY = 0.6
 
 
 def _cmd(y: str) -> str:
-    return y.removeprefix("```bash\n").removesuffix("\n```").strip()
+    """Normalize action text for leakage telemetry (bash fence or tool JSON)."""
+    y = y.strip()
+    if y.startswith("```bash\n") and y.endswith("\n```"):
+        return y.removeprefix("```bash\n").removesuffix("\n```").strip()
+    return y
 
 
-def leakage(z: str, y: str, fuzzy: float = DEFAULT_FUZZY) -> bool:
+def leakage(z: str, y: str, fuzzy: float = TELEMETRY_FUZZY) -> bool:
+    """Telemetry: fuzzy z⊃y containment (legacy gate 1 component)."""
     c = _cmd(y)
     if not c:
         return False
     if c in z:
         return True
+    if c.startswith("{") and '"name"' in c:
+        try:
+            name = json.loads(c).get("name") or ""
+        except json.JSONDecodeError:
+            name = ""
+        return bool(name) and name in z
     toks = [t for t in re.split(r"\s+", c) if len(t) >= 3]
     if not toks:
         return False
     return sum(1 for t in toks if t in z) / len(toks) >= fuzzy
 
 
-def gate_pass(pair: dict, tau: float = DEFAULT_TAU,
-              fuzzy: float = DEFAULT_FUZZY) -> bool:
+def gate_pass(pair: dict, tau: float = TELEMETRY_TAU,
+              fuzzy: float = TELEMETRY_FUZZY) -> bool:
+    """Telemetry: legacy causality+leakage pass (no longer affects score)."""
     if leakage(pair.get("z_a", ""), pair.get("y_a", ""), fuzzy=fuzzy):
         return False
     return (pair["lpA_ya_za"] - pair["lpA_ya_e"]) >= tau
 
 
-def lambda2(pair: dict) -> float:
+def reason(pair: dict) -> float:
+    """Reason = lpC(y_C|z_A) − lpC(y_C|∅). The score."""
     return pair["lpC_yc_za"] - pair["lpC_yc_e"]
 
 
+# Historical name (Λ2) kept for research scripts and old artifact replay.
+lambda2 = reason
+
+
 def l1_lift(pair: dict) -> float:
+    """Telemetry: miner-side lift lpA(y_C|z_A) − lpA(y_C|∅) (not scored)."""
     return pair["lpA_yc_za"] - pair["lpA_yc_e"]
 
 
-def clipped_l1_lift(pair: dict, clip: float = DEFAULT_L1_CLIP) -> float:
-    lift = l1_lift(pair)
-    if clip is None or clip <= 0:
-        return lift
-    return max(-clip, min(lift, clip))
-
-
-def rank_term(pair: dict, l1_weight: float = DEFAULT_L1_WEIGHT,
-              l1_clip: float = DEFAULT_L1_CLIP) -> float:
-    """Teacher-anchored mix: Λ2 + w·clip(L1lift, ±clip)."""
-    return lambda2(pair) + l1_weight * clipped_l1_lift(pair, l1_clip)
-
-
 def calibration_ratio(pairs: list[dict]) -> float | None:
-    """r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|. None if empty baseline is 0."""
+    """Telemetry: r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)| (not scored)."""
     if not pairs:
         return None
     num = st.mean(abs(p["lpA_yc_za"]) for p in pairs)
@@ -125,57 +116,42 @@ def calibration_ratio(pairs: list[dict]) -> float | None:
     return num / den
 
 
-# Back-compat aliases used by older call sites / notebooks.
-soft_lambda2 = rank_term
-
-
 @dataclass
 class MinerScore:
     miner: str
-    valid: bool
-    gate_pass_rate: float
-    bank_frac: float
-    S: float
+    reason: float                     # the score: mean per-pair Reason
     n_pairs: int
     n_turns: int
+    # -- telemetry (measured, never scored) --
+    gate_pass_rate: float = 0.0
+    bank_frac: float | None = None
     calib_ratio: float | None = None
-    # mean|lpA(y_C|∅)| — the empty-context denominator of r, exposed so the
-    # duel-level baseline band (gate 3b) and auditors can check it directly.
-    baseline_abs: float | None = None
+    baseline_abs: float | None = None  # mean|lpA(y_C|∅)|
+    mean_l1lift: float | None = None
+    mean_len_z: float | None = None    # chars of z_A
+    mean_len_y: float | None = None    # chars of y_A
 
 
-def score_miner(rows: list[dict], tau: float = DEFAULT_TAU,
-                gamma: float = DEFAULT_GAMMA,
-                bank_frac: float | None = None,
-                gamma_bank: float = DEFAULT_GAMMA_BANK,
-                l1_weight: float = DEFAULT_L1_WEIGHT,
-                l1_clip: float = DEFAULT_L1_CLIP,
-                r_lo: float = DEFAULT_R_LO,
-                r_hi: float = DEFAULT_R_HI,
-                check_calib: bool = True) -> MinerScore:
-    """Score one miner. Pass `bank_frac` from prior-bank scoring when available."""
+def score_miner(rows: list[dict],
+                bank_frac: float | None = None) -> MinerScore:
+    """Score one miner: mean Reason + telemetry. No gating of any kind."""
     if not rows:
-        return MinerScore("?", False, 0.0, 0.0, float("-inf"), 0, 0, None)
+        return MinerScore("?", float("-inf"), 0, 0)
     pairs = [p for r in rows if r.get("valid") and "pairs" in r for p in r["pairs"]]
     if not pairs:
-        return MinerScore(rows[0].get("miner", "?"), False, 0.0, 0.0,
-                          float("-inf"), 0, 0, None)
-    rate = st.mean(1.0 if gate_pass(p, tau) else 0.0 for p in pairs)
-    s = st.mean(rank_term(p, l1_weight, l1_clip) for p in pairs)
-    bf = 1.0 if bank_frac is None else bank_frac
-    r = calibration_ratio(pairs)
-    calib_ok = (not check_calib) or (r is not None and r_lo <= r <= r_hi)
-    valid = rate >= gamma and bf >= gamma_bank and calib_ok
+        return MinerScore(rows[0].get("miner", "?"), float("-inf"), 0, 0)
     return MinerScore(
         miner=rows[0].get("miner", "?"),
-        valid=valid,
-        gate_pass_rate=rate,
-        bank_frac=bf,
-        S=s if valid else float("-inf"),
+        reason=st.mean(reason(p) for p in pairs),
         n_pairs=len(pairs),
         n_turns=len({r["turn_id"] for r in rows}),
-        calib_ratio=r,
+        gate_pass_rate=st.mean(1.0 if gate_pass(p) else 0.0 for p in pairs),
+        bank_frac=bank_frac,
+        calib_ratio=calibration_ratio(pairs),
         baseline_abs=st.mean(abs(p["lpA_yc_e"]) for p in pairs),
+        mean_l1lift=st.mean(l1_lift(p) for p in pairs),
+        mean_len_z=st.mean(float(len(p.get("z_a", ""))) for p in pairs),
+        mean_len_y=st.mean(float(len(p.get("y_a", ""))) for p in pairs),
     )
 
 
@@ -189,51 +165,32 @@ class DuelResult:
     k_sigma: float
     challenger_wins: bool
     n_paired_turns: int
-    min_margin: float = DEFAULT_MIN_MARGIN
 
 
 def duel(challenger_rows: list[dict], king_rows: list[dict],
          k_sigma: float = DEFAULT_K_SIGMA,
-         tau: float = DEFAULT_TAU, gamma: float = DEFAULT_GAMMA,
          challenger_bank_frac: float | None = None,
-         king_bank_frac: float | None = None,
-         gamma_bank: float = DEFAULT_GAMMA_BANK,
-         l1_weight: float = DEFAULT_L1_WEIGHT,
-         l1_clip: float = DEFAULT_L1_CLIP,
-         r_lo: float = DEFAULT_R_LO,
-         r_hi: float = DEFAULT_R_HI,
-         check_calib: bool = True,
-         min_se: float = DEFAULT_MIN_SE,
-         min_margin: float = DEFAULT_MIN_MARGIN,
-         baseline_band: float | None = DEFAULT_BASELINE_BAND) -> DuelResult:
-    cs = score_miner(challenger_rows, tau, gamma, challenger_bank_frac,
-                     gamma_bank, l1_weight, l1_clip, r_lo, r_hi, check_calib)
-    ks = score_miner(king_rows, tau, gamma, king_bank_frac,
-                     gamma_bank, l1_weight, l1_clip, r_lo, r_hi, check_calib)
-    # Gate 3b — paired empty-baseline band (challenger only): with r_lo < 1
-    # the free-L1lift attack is inflating mean|lpA(y_C|∅)|; a challenger whose
-    # empty baseline is far above the king's on the same slice is gated.
-    if (baseline_band and cs.baseline_abs and ks.baseline_abs
-            and cs.baseline_abs > baseline_band * ks.baseline_abs):
-        cs.valid = False
-        cs.S = float("-inf")
+         king_bank_frac: float | None = None) -> DuelResult:
+    """Paired duel on per-turn mean Reason. Purely relative: wins iff
+    mean > k_sigma·SE. Bank fracs are accepted only to thread telemetry."""
+    cs = score_miner(challenger_rows, challenger_bank_frac)
+    ks = score_miner(king_rows, king_bank_frac)
     c_by = {r["turn_id"]: r for r in challenger_rows if r.get("valid") and "pairs" in r}
     k_by = {r["turn_id"]: r for r in king_rows if r.get("valid") and "pairs" in r}
     diffs = []
     for tid in sorted(set(c_by) & set(k_by)):
-        lc = st.mean(rank_term(p, l1_weight, l1_clip) for p in c_by[tid]["pairs"])
-        lk = st.mean(rank_term(p, l1_weight, l1_clip) for p in k_by[tid]["pairs"])
-        diffs.append(lc - lk)
+        rc = st.mean(reason(p) for p in c_by[tid]["pairs"])
+        rk = st.mean(reason(p) for p in k_by[tid]["pairs"])
+        diffs.append(rc - rk)
     n = len(diffs)
-    if n < 2 or not cs.valid or not ks.valid:
-        return DuelResult(cs.miner, ks.miner, 0.0, float("inf"), 0.0, k_sigma,
-                          False, n, min_margin)
+    if n < 2:
+        return DuelResult(cs.miner, ks.miner, 0.0, float("inf"), 0.0,
+                          k_sigma, False, n)
     mean = st.mean(diffs)
-    se = max(st.stdev(diffs) / math.sqrt(n), min_se)
-    z = mean / se if se > 0 else 0.0
-    wins = (mean > k_sigma * se) and (mean > min_margin)
+    se = st.stdev(diffs) / math.sqrt(n)
+    z = mean / se if se > 0 else (math.inf if mean > 0 else 0.0)
+    wins = mean > k_sigma * se
     return DuelResult(
         challenger=cs.miner, king=ks.miner, margin=mean, se=se, z=z,
         k_sigma=k_sigma, challenger_wins=wins, n_paired_turns=n,
-        min_margin=min_margin,
     )

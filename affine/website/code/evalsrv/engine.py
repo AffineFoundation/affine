@@ -392,11 +392,49 @@ class Engine:
         return self._fail_load(slot, f"not ready after {timeout_s}s")
 
     # -- public API --------------------------------------------------------------
+    def _teacher_base_url(self) -> str:
+        return str(self.cfg.get("teacher", {}).get("base_url") or "").rstrip("/")
+
+    def _probe_remote_teacher(self, base_url: str, repo: str) -> bool:
+        """Health-check a remote OpenAI-compatible teacher; no local vLLM."""
+        models_url = f"{base_url}/models"
+        try:
+            r = httpx.get(models_url, timeout=5.0)
+            r.raise_for_status()
+            data = r.json().get("data") or []
+            ids = {m.get("id") for m in data if isinstance(m, dict)}
+            if ids and repo not in ids:
+                log.warning("remote teacher at %s serves %s (expected %s)",
+                            base_url, sorted(ids)[:5], repo)
+            self.teacher_slot.served = Served(
+                name="teacher", repo=repo, revision=None, port=0,
+                base_url=base_url)
+            self.teacher_slot.ready = True
+            self.teacher_slot.load_error = ""
+            # Remote mode: never keep a stale local replica in the pool.
+            if self.teacher2_slot is not None:
+                self._kill(self.teacher2_slot)
+            log.info("remote teacher ready at %s (repo=%s)", base_url, repo)
+            return True
+        except Exception as e:
+            self.teacher_slot.ready = False
+            self.teacher_slot.served = None
+            self.teacher_slot.load_error = f"remote teacher probe failed: {e}"[:1500]
+            log.error("remote teacher probe failed (%s): %s", models_url, e)
+            return False
+
     def ensure_teacher(self) -> bool:
         """Primary teacher is required; the replica is best-effort. Both are
         launched before either wait so a cold rewarm pays one warmup, not two
-        (launch is just a Popen; readiness is what takes minutes)."""
+        (launch is just a Popen; readiness is what takes minutes).
+
+        When [teacher].base_url is set, skip local launch and probe the remote
+        OpenAI-compatible endpoint instead (dedicated teacher box)."""
         t = self.cfg["teacher"]
+        base_url = self._teacher_base_url()
+        if base_url:
+            # Re-probe every ensure: a dead remote must fail the duel closed.
+            return self._probe_remote_teacher(base_url, str(t["repo"]))
         primary_ok = self.teacher_slot.ready and self._alive(self.teacher_slot)
         if not primary_ok:
             self._launch(self.teacher_slot, t["repo"], None)
@@ -419,6 +457,14 @@ class Engine:
         """Teacher endpoints currently servable, primary first. The replica is
         re-probed here (cheap, once per duel): a replica that died since
         warmup must not be handed to the duel's round-robin pool."""
+        base_url = self._teacher_base_url()
+        if base_url:
+            if self.teacher_slot.served and self.teacher_slot.ready:
+                # Cheap liveness re-check so a mid-queue remote death does not
+                # keep feeding a dead URL into the duel pool.
+                if self._probe_remote_teacher(base_url, str(self.cfg["teacher"]["repo"])):
+                    return [self.teacher_slot.served]
+            return []
         out: list[Served] = []
         if self.teacher_slot.served and self.teacher_slot.ready:
             out.append(self.teacher_slot.served)

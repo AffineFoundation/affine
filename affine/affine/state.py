@@ -479,7 +479,8 @@ class State:
         if duration_s is not None:
             extra["duration_s"] = round(float(duration_s), 1)
         if accepted:
-            score = (verdict.get("challenger") or {}).get("S")
+            side = verdict.get("challenger") or {}
+            score = side.get("reason", side.get("S"))
             king = self.set_king(
                 entry.hotkey, entry.repo, entry.revision, entry.block,
                 entry.challenge_id,

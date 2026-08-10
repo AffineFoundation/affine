@@ -25,6 +25,7 @@ import logging
 import math
 import random
 import statistics as st
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -37,8 +38,6 @@ if TYPE_CHECKING:
 from affine.corpus.materialize import stratum_key
 from affine.score import (
     duel as score_duel,
-    lambda2,
-    rank_term,
     score_miner,
 )
 
@@ -222,21 +221,37 @@ def _mean_bank(rows: list[dict]) -> float | None:
     return sum(vals) / len(vals) if vals else None
 
 
-def _miner_summary(rows: list[dict], duel_cfg: dict) -> dict:
-    s = score_miner(rows, bank_frac=_mean_bank(rows),
-                    l1_weight=float(duel_cfg["l1_weight"]),
-                    l1_clip=float(duel_cfg["l1_clip"]),
-                    r_lo=float(duel_cfg["r_lo"]),
-                    r_hi=float(duel_cfg["r_hi"]))
-    pairs = [p for r in rows if r.get("valid") and "pairs" in r for p in r["pairs"]]
+def _miner_summary(rows: list[dict]) -> dict:
+    """Per-side summary: the score (reason) plus measured-not-scored telemetry."""
+    s = score_miner(rows, bank_frac=_mean_bank(rows))
     return {
-        "valid": s.valid, "S": s.S if math.isfinite(s.S) else None,
+        "reason": s.reason if math.isfinite(s.reason) else None,
+        "n_turns": s.n_turns, "n_pairs": s.n_pairs,
+        # -- telemetry (recorded for study; never affects score or validity) --
         "gate_pass_rate": s.gate_pass_rate, "bank_frac": s.bank_frac,
         "calib_ratio": s.calib_ratio, "baseline_abs": s.baseline_abs,
-        "n_turns": s.n_turns, "n_pairs": s.n_pairs,
-        "mean_lambda2": st.mean(lambda2(p) for p in pairs) if pairs else None,
-        "mean_mix": st.mean(rank_term(p) for p in pairs) if pairs else None,
+        "mean_l1lift": s.mean_l1lift,
+        "mean_len_z": s.mean_len_z, "mean_len_y": s.mean_len_y,
     }
+
+
+def _teacher_lengths(refs_used: dict[str, list[dict]]) -> dict:
+    """Mean char lengths of the teacher rollouts actually used this duel."""
+    zs = [len(r["z"]) for ref in refs_used.values() for r in ref]
+    ys = [len(r["y"]) for ref in refs_used.values() for r in ref]
+    if not zs:
+        return {"mean_len_z": None, "mean_len_y": None}
+    return {"mean_len_z": st.mean(map(float, zs)),
+            "mean_len_y": st.mean(map(float, ys))}
+
+
+def _len_deltas(side: dict, teacher: dict) -> None:
+    """Attach miner − teacher length deltas to a side summary, in place."""
+    for key, out in (("mean_len_z", "len_z_delta"), ("mean_len_y", "len_y_delta")):
+        if side.get(key) is not None and teacher.get(key) is not None:
+            side[out] = side[key] - teacher[key]
+        else:
+            side[out] = None
 
 
 async def run_duel(engine_cfg: dict, turns_path: Path | None,
@@ -257,6 +272,7 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     only the drawn turns. schema v1 / ``turns_path``: load flat turns.jsonl.
     """
     duel_cfg = engine_cfg["duel"]
+    started = time.monotonic()
     seed = duel_seed(block_hash, hotkey)
     n = int(duel_cfg["n_turns"])
     if corpus is not None and corpus.schema_version >= 2:
@@ -328,28 +344,14 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     result = score_duel(
         chall_rows, king_rows,
         k_sigma=float(duel_cfg["k_sigma"]),
-        tau=float(duel_cfg["tau"]), gamma=float(duel_cfg["gamma"]),
         challenger_bank_frac=_mean_bank(chall_rows),
-        king_bank_frac=_mean_bank(king_rows),
-        gamma_bank=float(duel_cfg["gamma_bank"]),
-        l1_weight=float(duel_cfg["l1_weight"]),
-        l1_clip=float(duel_cfg["l1_clip"]),
-        r_lo=float(duel_cfg["r_lo"]),
-        r_hi=float(duel_cfg["r_hi"]),
-        min_se=float(duel_cfg["min_se"]),
-        min_margin=float(duel_cfg["min_margin"]),
-        baseline_band=float(duel_cfg["baseline_band"]))
+        king_bank_frac=_mean_bank(king_rows))
 
-    king_sum = _miner_summary(king_rows, duel_cfg)
-    chall_sum = _miner_summary(chall_rows, duel_cfg)
-    # Mirror gate 3b (paired baseline band, enforced inside score_duel) into
-    # the published challenger summary so miners can see which gate fired.
-    band = float(duel_cfg["baseline_band"])
-    if (chall_sum["baseline_abs"] and king_sum["baseline_abs"]
-            and chall_sum["baseline_abs"] > band * king_sum["baseline_abs"]):
-        chall_sum["valid"] = False
-        chall_sum["S"] = None
-        chall_sum["baseline_band_exceeded"] = True
+    king_sum = _miner_summary(king_rows)
+    chall_sum = _miner_summary(chall_rows)
+    teacher_sum = _teacher_lengths(refs_used)
+    _len_deltas(king_sum, teacher_sum)
+    _len_deltas(chall_sum, teacher_sum)
 
     verdict = {
         "challenger_wins": result.challenger_wins,
@@ -358,19 +360,15 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         "z": result.z if math.isfinite(result.z) else None,
         "k_sigma": result.k_sigma,
         "n_paired_turns": result.n_paired_turns,
-        "ranking_formula": f"Λ2 + {duel_cfg['l1_weight']}·L1lift",
-        "gates": {
-            "tau": float(duel_cfg["tau"]), "gamma": float(duel_cfg["gamma"]),
-            "gamma_bank": float(duel_cfg["gamma_bank"]),
-            "l1_weight": float(duel_cfg["l1_weight"]),
-            "l1_clip": float(duel_cfg["l1_clip"]),
-            "r_lo": float(duel_cfg["r_lo"]), "r_hi": float(duel_cfg["r_hi"]),
-            "baseline_band": band,
-            "min_se": float(duel_cfg["min_se"]),
-            "min_margin": float(duel_cfg["min_margin"]),
+        "ranking_formula": "Reason = lpC(y_C|z_A) − lpC(y_C|∅)",
+        "duel_params": {
+            "n_turns": int(duel_cfg["n_turns"]),
+            "k_sigma": float(duel_cfg["k_sigma"]),
         },
         "king": king_sum,
         "challenger": chall_sum,
+        "teacher": teacher_sum,
+        "duel_seconds": time.monotonic() - started,
         "slice": slice_info,
     }
     artifact = {

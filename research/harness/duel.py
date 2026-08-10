@@ -1,7 +1,8 @@
-"""Subnet duel loop skeleton: challenger vs king under production S*.
+"""Subnet duel loop skeleton: challenger vs king under production Reason (v3).
 
 Assumes teacher + both miners are already serving. Scores the same N turns
-(paired), applies causality/leakage + prior-bank gates, dethrones at 3σ.
+(paired), ranks by mean Reason = lpC(y_C|z_A) − lpC(y_C|∅), dethrones at
+k_sigma·SE. Gates/bank/L1lift are recorded as telemetry only.
 
 Usage (on pod):
   python -m harness.duel \
@@ -27,13 +28,9 @@ from .client import VllmModel
 from .config import TEACHER, ModelCfg, RunCfg, king_cfg
 from .runner import load_turns, turn_id
 from .score import (
-    DEFAULT_GAMMA,
-    DEFAULT_GAMMA_BANK,
-    DEFAULT_L1_WEIGHT,
-    DEFAULT_TAU,
     duel as score_duel,
-    lambda2,
-    rank_term,
+    l1_lift,
+    reason,
     score_miner,
 )
 from .terms import miner_terms, teacher_reference
@@ -68,19 +65,17 @@ def _load_rows(path: pathlib.Path) -> tuple[set[tuple[str, str]], dict[str, list
     return done, by_miner
 
 
-def _ranking_formula(l1_weight: float = DEFAULT_L1_WEIGHT) -> str:
-    w = int(l1_weight) if l1_weight == int(l1_weight) else l1_weight
-    return f"Λ2 + {w}·L1lift"
+RANKING_FORMULA = "Reason = lpC(y_C|z_A) − lpC(y_C|∅)"
 
 
 def _miner_audit(rows: list[dict]) -> dict[str, float | None]:
     pairs = [p for r in rows if r.get("valid") and "pairs" in r
              for p in r["pairs"]]
     if not pairs:
-        return {"mean_lambda2": None, "mean_mix": None}
+        return {"reason": None, "mean_l1lift": None}
     return {
-        "mean_lambda2": st.mean(lambda2(p) for p in pairs),
-        "mean_mix": st.mean(rank_term(p) for p in pairs),
+        "reason": st.mean(reason(p) for p in pairs),
+        "mean_l1lift": st.mean(l1_lift(p) for p in pairs),
     }
 
 
@@ -112,27 +107,19 @@ def build_summary(king_rows: list[dict], chal_rows: list[dict]) -> dict:
     king_audit = _miner_audit(king_rows)
     chal_audit = _miner_audit(chal_rows)
     return {
-        "ranking_term": "mix",
-        "ranking_formula": _ranking_formula(DEFAULT_L1_WEIGHT),
-        "gate_thresholds": {
-            "tau": DEFAULT_TAU,
-            "gamma": DEFAULT_GAMMA,
-            "gamma_bank": DEFAULT_GAMMA_BANK,
-            "l1_weight": DEFAULT_L1_WEIGHT,
-        },
+        "ranking_term": "reason",
+        "ranking_formula": RANKING_FORMULA,
         "king": {
-            "name": ks.miner, "valid": ks.valid, "S": ks.S,
+            "name": ks.miner, "reason": ks.reason,
             "gate_pass_rate": ks.gate_pass_rate, "bank_frac": ks.bank_frac,
             "n_turns": ks.n_turns,
-            "mean_lambda2": king_audit["mean_lambda2"],
-            "mean_mix": king_audit["mean_mix"],
+            "mean_l1lift": king_audit["mean_l1lift"],
         },
         "challenger": {
-            "name": cs.miner, "valid": cs.valid, "S": cs.S,
+            "name": cs.miner, "reason": cs.reason,
             "gate_pass_rate": cs.gate_pass_rate, "bank_frac": cs.bank_frac,
             "n_turns": cs.n_turns,
-            "mean_lambda2": chal_audit["mean_lambda2"],
-            "mean_mix": chal_audit["mean_mix"],
+            "mean_l1lift": chal_audit["mean_l1lift"],
         },
         "duel": {
             "margin": result.margin, "se": result.se, "z": result.z,
@@ -145,7 +132,6 @@ def build_summary(king_rows: list[dict], chal_rows: list[dict]) -> dict:
 
 def verdict_from_summary(summary: dict) -> dict:
     """Compact JSON verdict for subnet drop-in."""
-    gt = summary["gate_thresholds"]
     return {
         "challenger_wins": summary["duel"]["challenger_wins"],
         "margin": summary["duel"]["margin"],
@@ -153,20 +139,17 @@ def verdict_from_summary(summary: dict) -> dict:
         "se": summary["duel"]["se"],
         "n_paired_turns": summary["duel"]["n_paired_turns"],
         "ranking_term": summary["ranking_term"],
-        "l1_weight": gt["l1_weight"],
-        "gates": {
-            "tau": gt["tau"],
-            "gamma": gt["gamma"],
-            "gamma_bank": gt["gamma_bank"],
+        "ranking_formula": summary["ranking_formula"],
+        "telemetry": {
             "king": {
                 "name": summary["king"]["name"],
-                "valid": summary["king"]["valid"],
+                "reason": summary["king"]["reason"],
                 "gate_pass_rate": summary["king"]["gate_pass_rate"],
                 "bank_frac": summary["king"]["bank_frac"],
             },
             "challenger": {
                 "name": summary["challenger"]["name"],
-                "valid": summary["challenger"]["valid"],
+                "reason": summary["challenger"]["reason"],
                 "gate_pass_rate": summary["challenger"]["gate_pass_rate"],
                 "bank_frac": summary["challenger"]["bank_frac"],
             },

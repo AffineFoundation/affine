@@ -233,10 +233,21 @@ def history_row_from_raw(r: dict) -> dict:
         "n_paired_turns": v.get("n_paired_turns"),
         "rejection_reason": v.get("rejection_reason"),
         "reign_number": r.get("reign_number"),
-        "score": r.get("score", (v.get("challenger") or {}).get("S")),
-        "score_king": (v.get("king") or {}).get("S"),
-        "gates": v.get("gates"),
+        "score": r.get("score", _side_score(v.get("challenger"))),
+        "score_king": _side_score(v.get("king")),
+        "gates": v.get("gates"),                 # pre-fork verdicts
+        "duel_params": v.get("duel_params"),     # Reason v3 verdicts
+        "teacher": v.get("teacher"),
+        "duel_seconds": v.get("duel_seconds"),
         "challenger": v.get("challenger"),
         "king": v.get("king"),
         "challenger_wins": v.get("challenger_wins"),
     }
+
+
+def _side_score(side: dict | None) -> float | None:
+    """Score of one side: Reason (v3) with legacy S* fallback."""
+    if not side:
+        return None
+    r = side.get("reason")
+    return r if r is not None else side.get("S")

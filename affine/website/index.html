@@ -9,7 +9,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
   <link rel="stylesheet" href="fonts/fonts.css?v=20" />
-  <link rel="stylesheet" href="style.css?v=39" />
+  <link rel="stylesheet" href="style.css?v=42" />
 </head>
 <body>
   <header class="top-nav">
@@ -59,30 +59,30 @@
     </div>
   </header>
 
-  <!-- Top charts: S + Z side by side -->
+  <!-- Top charts: the whole contract — Reason (the score) + Margin (the crown rule) -->
   <section class="hero" id="evolution">
     <div class="hero-inner">
       <div class="hero-split">
         <div class="hero-pane">
           <div class="hero-pane-head">
-            <h2 class="hero-pane-title">S</h2>
+            <h2 class="hero-pane-title">Reason</h2>
             <p class="hero-caption">best of king and challenger each duel</p>
             <button type="button" class="expand-btn" data-chart="hero-score"
-              title="expand S" aria-label="Expand S chart">⤢</button>
+              title="expand Reason" aria-label="Expand Reason chart">⤢</button>
           </div>
           <div class="hero-scroll">
-            <svg id="hero-chart-score" role="img" aria-label="Absolute S king vs challenger"></svg>
+            <svg id="hero-chart-score" role="img" aria-label="Reason king vs challenger"></svg>
           </div>
         </div>
         <div class="hero-pane">
           <div class="hero-pane-head">
-            <h2 class="hero-pane-title">Z</h2>
-            <p class="hero-caption">paired duel z vs king · dashed = 3σ dethrone threshold</p>
-            <button type="button" class="expand-btn" data-chart="hero-z"
-              title="expand Z" aria-label="Expand Z chart">⤢</button>
+            <h2 class="hero-pane-title">Margin</h2>
+            <p class="hero-caption">paired z vs king · dashed = 3σ dethrone threshold</p>
+            <button type="button" class="expand-btn" data-chart="hero-margin"
+              title="expand Margin" aria-label="Expand Margin chart">⤢</button>
           </div>
           <div class="hero-scroll">
-            <svg id="hero-chart-z" role="img" aria-label="Paired duel z vs king"></svg>
+            <svg id="hero-chart-margin" role="img" aria-label="Paired duel z vs king"></svg>
           </div>
         </div>
       </div>
@@ -100,7 +100,7 @@
 
     <section class="section" id="gates">
       <div class="section-head">
-        <h2 class="section-title">duel measurements</h2>
+        <h2 class="section-title">duel telemetry</h2>
         <span class="section-right" id="gates-meta"></span>
       </div>
       <div class="metric-grid" id="gates-wrap"><div class="empty">loading…</div></div>
@@ -173,6 +173,6 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=39"></script>
+  <script type="module" src="app.js?v=42"></script>
 </body>
 </html>

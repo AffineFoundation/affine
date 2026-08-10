@@ -85,14 +85,10 @@ class TeacherCfg:
 
 @dataclass(frozen=True)
 class DuelCfg:
+    # Scoring contract (Reason v3): n_turns + k_sigma. That's all of it.
     n_turns: int
-    tau: float
-    gamma: float
-    gamma_bank: float
     k_sigma: float
-    l1_weight: float
-    min_se: float
-    min_margin: float
+    # Sampling / ops knobs (no effect on scoring semantics).
     n_teacher_samples: int
     n_miner_samples: int
     temperature: float
@@ -258,10 +254,7 @@ def _submission(raw: dict) -> SubmissionCfg:
 def _duel(raw: dict) -> DuelCfg:
     d = raw["duel"]
     return DuelCfg(
-        n_turns=int(d["n_turns"]), tau=float(d["tau"]), gamma=float(d["gamma"]),
-        gamma_bank=float(d["gamma_bank"]), k_sigma=float(d["k_sigma"]),
-        l1_weight=float(d["l1_weight"]), min_se=float(d["min_se"]),
-        min_margin=float(d["min_margin"]),
+        n_turns=int(d["n_turns"]), k_sigma=float(d["k_sigma"]),
         n_teacher_samples=int(d["n_teacher_samples"]),
         n_miner_samples=int(d["n_miner_samples"]),
         temperature=float(d["temperature"]),

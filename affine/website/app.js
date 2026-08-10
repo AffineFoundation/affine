@@ -10,7 +10,7 @@ import {
   fetchRegHistory,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=39";
+} from "./api.js?v=42";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -35,7 +35,7 @@ import {
   reignMembers,
   setReignLookup,
   short,
-} from "./charts.js?v=39";
+} from "./charts.js?v=42";
 
 const $ = (id) => document.getElementById(id);
 
@@ -94,8 +94,8 @@ function paneWidth(svg) {
 
 function renderHero(force = false) {
   const scoreSvg = $("hero-chart-score");
-  const zSvg = $("hero-chart-z");
-  if (!scoreSvg || !zSvg) return;
+  const marginSvg = $("hero-chart-margin");
+  if (!scoreSvg || !marginSvg) return;
   const d = cache.dashboard;
   // Market bar is independent of chart dirty-checks.
   renderMarketBar(d);
@@ -105,7 +105,8 @@ function renderHero(force = false) {
   fps.hero = key;
 
   drawDuelScores(scoreSvg, cache.history, { width: paneWidth(scoreSvg) });
-  drawDuelZ(zSvg, cache.history, { width: paneWidth(zSvg) });
+  drawDuelZ(marginSvg, cache.history,
+    { width: paneWidth(marginSvg), height: 320 });
 }
 
 function renderMarketBar(d) {
@@ -198,7 +199,7 @@ function renderReign(d) {
     <thead><tr>
       <th>reign</th><th>crowned</th><th>uid</th><th>model</th><th>hotkey</th>
       <th class="r">swe</th><th class="r">vs qwen</th><th class="r">vs Affine-I</th>
-      <th class="r">S*</th><th class="r">α/day</th><th class="r">$/day</th><th class="r">weight</th>
+      <th class="r">Reason</th><th class="r">α/day</th><th class="r">$/day</th><th class="r">weight</th>
     </tr></thead>
     <tbody>${members.map((m) => {
       const earning = m.earning || (m.weight_bps || 0) > 0;
@@ -264,7 +265,7 @@ function renderGates(force = false) {
   const meta = $("gates-meta");
   if (meta) {
     meta.textContent = points.length
-      ? `${points.length} scored duels · challenger gold · king bone · dashed = gate`
+      ? `${points.length} scored duels · measured, not scored · challenger gold · king bone`
       : "waiting on a scored duel";
   }
   if (!points.length) {
@@ -288,10 +289,10 @@ function renderGates(force = false) {
       <div class="metric-pane" id="metric-reg-price">
         <div class="metric-head">
           <div class="metric-head-row">
-            <span class="metric-title">registration price</span>
+            <span class="metric-title">registration cost</span>
             <button type="button" class="expand-btn" data-chart="reg-price"
-              title="expand registration price"
-              aria-label="Expand registration price chart">⤢</button>
+              title="expand registration cost"
+              aria-label="Expand registration cost chart">⤢</button>
           </div>
           <span class="metric-caption" id="reg-price-meta">tmc burn history</span>
         </div>
@@ -320,28 +321,27 @@ const duelPage = { cid: null, series: null };
 const DUEL_CHART_SPECS = [
   {
     id: "duel-delta",
-    title: "Δmix per turn",
+    title: "ΔReason per turn",
     caption: "challenger − king, slice order · gold = challenger won the turn",
     detail: `<p>Each bar is one turn of the seeded slice:
-      <code>Δmix = S_challenger − S_king</code> on that turn, where each side's
-      mix is <code>Λ2 + w·clip(L1lift, ±0.1)</code> averaged over the turn's
-      scored pairs. Gold bars are turns the challenger won, red bars turns the
-      king won.</p>
+      <code>ΔReason = Reason_challenger − Reason_king</code> on that turn,
+      averaged over the turn's scored pairs. Gold bars are turns the
+      challenger won, red bars turns the king won.</p>
       <p>The dashed line is the mean of these bars — exactly the duel's
-      <code>margin</code>. The crown rule asks that this mean clear both
-      <code>k·SE</code> of its own spread and the δ noise floor, so a duel is
-      won by consistent per-turn advantage, not a few outlier turns.</p>`,
+      <code>margin</code>. The crown rule asks that this mean clear
+      <code>k·SE</code> of its own spread, so a duel is won by consistent
+      per-turn advantage, not a few outlier turns.</p>`,
     render: (svg, width) =>
       drawDeltaBars(svg, duelPage.series?.paired || [], { width, height: 440 }),
   },
   {
     id: "duel-sides",
     title: "challenger vs king",
-    caption: "per-turn mix · above the dashed diagonal = challenger better",
-    detail: `<p>Every dot is one paired turn, placed at (king mix, challenger
-      mix). The dashed diagonal is parity: dots above it are turns where the
-      challenger's ranking term beat the king's on the same prompt with the
-      same teacher references.</p>
+    caption: "per-turn Reason · above the dashed diagonal = challenger better",
+    detail: `<p>Every dot is one paired turn, placed at (king Reason,
+      challenger Reason). The dashed diagonal is parity: dots above it are
+      turns where the challenger's score beat the king's on the same prompt
+      with the same teacher references.</p>
       <p>This view separates "the challenger is better" (cloud shifted above
       the diagonal) from "the turns are just easier/harder" (cloud sliding
       along the diagonal): only distance from the diagonal wins duels.</p>`,
@@ -350,16 +350,16 @@ const DUEL_CHART_SPECS = [
   },
   {
     id: "duel-pair",
-    title: "Λ2 vs L1lift",
-    caption: "gold = challenger · bone = king · red ring = gate fail",
-    detail: `<p>The two components of every scored sample.
-      <code>Λ2 = lpC(y_C|z_A) − lpC(y_C|∅)</code> is the teacher-side lift the
-      miner's thought gives the teacher's own reference action — the ranking
-      core. <code>L1lift = lpA(y_C|z_A) − lpA(y_C|∅)</code> is the same
-      measured on the miner's own logprobs, clipped at ±0.1 in the mix.</p>
+    title: "Reason vs L1lift",
+    caption: "gold = challenger · bone = king · red ring = causality fail",
+    detail: `<p>The score against its telemetry twin, per turn.
+      <code>Reason = lpC(y_C|z_A) − lpC(y_C|∅)</code> is the teacher-side lift
+      the miner's thought gives the teacher's own reference action — the whole
+      score. <code>L1lift = lpA(y_C|z_A) − lpA(y_C|∅)</code> is the same lift
+      measured on the miner's own logprobs — recorded, not scored.</p>
       <p>Gold dots are challenger turns, bone dots king turns; a red ring
-      marks turns whose pairs failed the causality/leakage gate. A faithful
-      distill drifts up and to the right of its opponent.</p>`,
+      marks turns whose pairs failed the (telemetry) causality/leakage check.
+      A faithful distill drifts up and to the right of its opponent.</p>`,
     render: (svg, width) =>
       drawPairScatter(svg, duelPage.series, { width, height: 440 }),
   },
@@ -378,7 +378,7 @@ const CHART_SPECS = new Map([
   }]),
   ["reg-price", {
     id: "reg-price",
-    title: "registration price",
+    title: "registration cost",
     caption: "SN120 registration burn (τ) · TMC history",
     detail: `<p>The TAO burned to register a hotkey on SN120 over time, sourced
       from TaoMarketCap and downsampled by affine-dash. Registration cost
@@ -555,7 +555,7 @@ function renderHistory(h) {
   $("history-wrap").innerHTML = `<table class="data-table">
     <thead><tr>
       <th>when</th><th>age</th><th>event</th><th>model</th><th>hotkey</th><th>outcome</th>
-      <th class="r">dur</th><th class="r">z</th><th class="r">S*</th><th class="r">king S*</th><th>detail</th>
+      <th class="r">dur</th><th class="r">z</th><th class="r">Reason</th><th class="r">king Reason</th><th>detail</th>
     </tr></thead>
     <tbody>${rows.slice(0, 80).map((r) => {
       const zClass = r.z == null ? "" : Number(r.z) >= 0 ? "ok" : "bad";
@@ -749,10 +749,21 @@ async function renderDuelPage(cid) {
   if (pair) drawPairScatter(pair, series, { width: duelChartWidth(pair) });
 }
 
+/** Pre-fork verdicts stamp `gates`; Reason v3 verdicts stamp `duel_params`. */
+function duelParams(duel) {
+  return duel.duel_params || duel.gates || {};
+}
+
+function isPreFork(duel) {
+  return Boolean(duel.gates) && !duel.duel_params;
+}
+
 function verdictSummary(duel) {
-  const gates = duel.gates || {};
-  const k = Number(gates.k_sigma ?? 3);
-  const delta = gates.min_margin != null ? Number(gates.min_margin) : null;
+  const params = duelParams(duel);
+  const k = Number(params.k_sigma ?? 3);
+  // δ floor existed only pre-fork; v3 duels are purely relative.
+  const delta = isPreFork(duel) && params.min_margin != null
+    ? Number(params.min_margin) : null;
   const bar = duel.se != null ? k * Number(duel.se) : null;
   const name = modelDisplayName(duel.repo, duel.hotkey, duel.reign_number);
   if (isFailureDuel(duel) && duel.z == null && duel.margin == null) {
@@ -765,13 +776,13 @@ function verdictSummary(duel) {
     delta != null ? `δ = ${fmtScore(delta)}` : null,
   ].filter(Boolean).join(" and ");
   if (duel.event === "crowned" || duel.challenger_wins) {
-    return `${name} beat the king: paired margin ${m} cleared both ${need} `
+    return `${name} beat the king: paired Reason margin ${m} cleared ${need} `
       + `(z = ${fmtZ(duel.z)})${duel.event === "crowned" ? ` — crowned reign #${duel.reign_number ?? "?"}` : ""}.`;
   }
   if (duel.rejection_reason) {
     return `${name} was rejected before the margin test: ${duel.rejection_reason}.`;
   }
-  return `${name} did not dethrone the king: paired margin ${m} `
+  return `${name} did not dethrone the king: paired Reason margin ${m} `
     + `(z = ${fmtZ(duel.z)}) needed to clear ${need}.`;
 }
 
@@ -791,47 +802,69 @@ function sideRow(label, tip, cv, kv, thr, cPass, kPass, fmt = fmtScore) {
 function sidesTableHtml(duel) {
   const ch = duel.challenger || {};
   const kg = duel.king || {};
-  const g = duel.gates || {};
-  if (ch.S == null && kg.S == null && duel.score == null) {
+  const chReason = ch.reason ?? ch.mean_lambda2 ?? ch.S;
+  const kgReason = kg.reason ?? kg.mean_lambda2 ?? kg.S;
+  if (chReason == null && kgReason == null && duel.score == null) {
     return `<div class="empty">no per-side scores recorded for this duel</div>`;
   }
   const pct = (v) => `${(Number(v) * 100).toFixed(0)}%`;
+  const pre = isPreFork(duel);
+  const g = duel.gates || {};
   const inBand = (v, lo, hi) =>
     v == null || lo == null ? null : Number(v) >= Number(lo) && Number(v) <= Number(hi);
   const gte = (v, t) => (v == null || t == null ? null : Number(v) >= Number(t));
   const baselineOk = ch.baseline_abs != null && kg.baseline_abs && g.baseline_band != null
     ? Number(ch.baseline_abs) <= Number(g.baseline_band) * Number(kg.baseline_abs)
     : null;
+  // Pre-fork rows keep their pass/fail coloring and gate thresholds; Reason v3
+  // rows render the same quantities as plain telemetry.
   const rows = [
-    sideRow("valid", "all gates passed for this side", ch.valid, kg.valid,
-      "must be true", ch.valid === true, kg.valid === true,
-      (v) => (v ? "yes" : "NO")),
-    sideRow("S*", "ranking score: mean(Λ2 + clip(L1lift, ±0.1))",
-      duel.score ?? ch.S, duel.score_king ?? kg.S, "higher wins"),
+    ...(pre ? [
+      sideRow("valid", "all S* v2 gates passed for this side", ch.valid, kg.valid,
+        "must be true", ch.valid === true, kg.valid === true,
+        (v) => (v ? "yes" : "NO")),
+      sideRow("S* (legacy mix)", "retired ranking score: mean(Λ2 + clip(L1lift, ±0.1))",
+        duel.score ?? ch.S, duel.score_king ?? kg.S, "higher wins"),
+    ] : []),
+    sideRow("Reason", "the score: mean lpC(y_C|z_A) − lpC(y_C|∅)",
+      chReason, kgReason, "higher wins"),
+    sideRow("L1lift", "miner-side lift lpA(y_C|z_A) − lpA(y_C|∅)",
+      ch.mean_l1lift, kg.mean_l1lift, pre ? "" : "telemetry"),
     sideRow("causality pass", "share of pairs passing leakage + causality",
       ch.gate_pass_rate, kg.gate_pass_rate,
-      g.gamma != null ? `≥ ${g.gamma}` : "≥ γ",
-      gte(ch.gate_pass_rate, g.gamma), gte(kg.gate_pass_rate, g.gamma), pct),
-    sideRow("prior bank", "share of pairs with Λ2 > 0 vs published prior thoughts",
+      pre ? (g.gamma != null ? `≥ ${g.gamma}` : "≥ γ") : "telemetry",
+      pre ? gte(ch.gate_pass_rate, g.gamma) : null,
+      pre ? gte(kg.gate_pass_rate, g.gamma) : null, pct),
+    sideRow("prior bank", "share of pairs beating the published prior thoughts",
       ch.bank_frac, kg.bank_frac,
-      g.gamma_bank != null ? `≥ ${g.gamma_bank}` : "≥ γ_bank",
-      gte(ch.bank_frac, g.gamma_bank), gte(kg.bank_frac, g.gamma_bank), pct),
+      pre ? (g.gamma_bank != null ? `≥ ${g.gamma_bank}` : "≥ γ_bank") : "telemetry",
+      pre ? gte(ch.bank_frac, g.gamma_bank) : null,
+      pre ? gte(kg.bank_frac, g.gamma_bank) : null, pct),
     sideRow("calibration r", "mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|",
       ch.calib_ratio, kg.calib_ratio,
-      g.r_lo != null ? `${g.r_lo} – ${g.r_hi}` : "in band",
-      inBand(ch.calib_ratio, g.r_lo, g.r_hi), inBand(kg.calib_ratio, g.r_lo, g.r_hi)),
-    sideRow("empty baseline", "mean|lpA(y_C|∅)| — challenger capped vs king",
+      pre ? (g.r_lo != null ? `${g.r_lo} – ${g.r_hi}` : "in band") : "telemetry",
+      pre ? inBand(ch.calib_ratio, g.r_lo, g.r_hi) : null,
+      pre ? inBand(kg.calib_ratio, g.r_lo, g.r_hi) : null),
+    sideRow("empty baseline", "mean|lpA(y_C|∅)|",
       ch.baseline_abs, kg.baseline_abs,
-      g.baseline_band != null ? `chall ≤ ${g.baseline_band}× king` : "banded",
-      baselineOk, null),
-    sideRow("mean Λ2", "teacher-side score: lpC(y_C|z) − lpC(y_C|∅)",
-      ch.mean_lambda2, kg.mean_lambda2, ""),
+      pre ? (g.baseline_band != null ? `chall ≤ ${g.baseline_band}× king` : "banded")
+        : "telemetry",
+      pre ? baselineOk : null, null),
+    sideRow("thought chars", "mean length of z_A (chars)",
+      ch.mean_len_z, kg.mean_len_z, "telemetry", null, null,
+      (v) => String(Math.round(Number(v)))),
+    sideRow("action chars", "mean length of y_A (chars)",
+      ch.mean_len_y, kg.mean_len_y, "telemetry", null, null,
+      (v) => String(Math.round(Number(v)))),
+    sideRow("Δ len vs teacher", "thought-length delta miner − teacher (chars)",
+      ch.len_z_delta, kg.len_z_delta, "telemetry", null, null,
+      (v) => String(Math.round(Number(v)))),
     sideRow("turns scored", "", ch.n_turns, kg.n_turns, "", null, null, String),
     sideRow("pairs scored", "", ch.n_pairs, kg.n_pairs, "", null, null, String),
   ].join("");
   return `<div class="table-wrap"><table class="data-table sides-table">
     <thead><tr><th>metric</th><th class="num">challenger</th>
-      <th class="num">king</th><th>gate</th></tr></thead>
+      <th class="num">king</th><th>${pre ? "gate" : "role"}</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
 
@@ -842,19 +875,20 @@ function turnsTableHtml(duel, paired) {
     return `<div class="empty">no per-turn series — the eval artifact is not published (older duel or failure before scoring)</div>`;
   }
   const cid = duel.challenge_id || "";
+  const dOf = (p) => p.delta_reason ?? p.delta_mix;
   const sorted = [...paired].sort(
-    (a, b) => (b.delta_mix ?? -Infinity) - (a.delta_mix ?? -Infinity));
+    (a, b) => (dOf(b) ?? -Infinity) - (dOf(a) ?? -Infinity));
   const rows = sorted.map((p) => {
-    const d = p.delta_mix;
+    const d = dOf(p);
     const tid = p.turn_id ?? "";
     return `<tr class="turn-row" data-turn="${esc(tid)}"
         title="click to view the rollout texts for this turn">
       <td class="mono">${esc(short(tid || "—", 44))}</td>
       <td class="num ${d == null ? "dim" : d >= 0 ? "ok" : "bad"}">${d == null ? "—" : esc(fmtScore(d))}</td>
-      <td class="num">${esc(fmtScore(p.challenger_mix))}</td>
-      <td class="num">${esc(fmtScore(p.king_mix))}</td>
-      <td class="num">${esc(fmtScore(p.challenger_lambda2))}</td>
-      <td class="num">${esc(fmtScore(p.king_lambda2))}</td>
+      <td class="num">${esc(fmtScore(p.challenger_reason ?? p.challenger_mix))}</td>
+      <td class="num">${esc(fmtScore(p.king_reason ?? p.king_mix))}</td>
+      <td class="num">${esc(fmtScore(p.challenger_l1lift))}</td>
+      <td class="num">${esc(fmtScore(p.king_l1lift))}</td>
       <td class="${p.challenger_gate_ok ? "ok" : "bad"}">${p.challenger_gate_ok ? "ok" : "fail"}</td>
       <td class="${p.king_gate_ok ? "ok" : "bad"}">${p.king_gate_ok ? "ok" : "fail"}</td>
       <td>${cid && tid ? `<a class="raw-link" href="${esc(duelTurnUrl(cid, tid))}"
@@ -862,10 +896,10 @@ function turnsTableHtml(duel, paired) {
     </tr>`;
   }).join("");
   return `<div class="table-wrap table-scroll"><table class="data-table turns-table">
-    <thead><tr><th>turn</th><th class="num">Δmix</th>
-      <th class="num">chall mix</th><th class="num">king mix</th>
-      <th class="num">chall Λ2</th><th class="num">king Λ2</th>
-      <th>chall gates</th><th>king gates</th><th>raw</th></tr></thead>
+    <thead><tr><th>turn</th><th class="num">ΔReason</th>
+      <th class="num">chall Reason</th><th class="num">king Reason</th>
+      <th class="num">chall L1 ·t</th><th class="num">king L1 ·t</th>
+      <th>chall caus ·t</th><th>king caus ·t</th><th>raw</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
 
@@ -873,10 +907,9 @@ function turnsTableHtml(duel, paired) {
 
 function rolloutPairHtml(p, i) {
   const chips = `
-    <span class="chip ${p.gate_ok ? "ok" : "bad"}">gate ${p.gate_ok ? "ok" : "fail"}</span>
-    <span class="chip">Λ2 ${esc(fmtScore(p.lambda2))}</span>
-    <span class="chip">L1 ${esc(fmtScore(p.l1lift))}</span>
-    <span class="chip">mix ${esc(fmtScore(p.mix))}</span>`;
+    <span class="chip">Reason ${esc(fmtScore(p.reason ?? p.lambda2))}</span>
+    <span class="chip">L1 ${esc(fmtScore(p.l1lift))} ·t</span>
+    <span class="chip ${p.gate_ok ? "ok" : "bad"}">caus ${p.gate_ok ? "ok" : "fail"} ·t</span>`;
   return `<div class="rollout-pair">
     <div class="rollout-pair-head"><span class="dim">pair ${i + 1}</span>${chips}</div>
     <div class="rollout-text"><span class="k">thought z_A</span>
@@ -990,20 +1023,23 @@ function duelPageHtml(duel, series, logLines) {
       ${slice.digest ? `<div class="kv"><span class="k">corpus digest</span><span class="v mono" title="${esc(slice.digest)}">${esc(short(slice.digest, 18))}${copyBtn(slice.digest)}</span></div>` : ""}
     </div>`;
 
-  const gates = duel.gates || {};
-  const kSE = duel.se != null ? Number(gates.k_sigma ?? 3) * Number(duel.se) : null;
+  const params = duelParams(duel);
+  const pre = isPreFork(duel);
+  const kSE = duel.se != null ? Number(params.k_sigma ?? 3) * Number(duel.se) : null;
   const marginOk = duel.margin != null && kSE != null
     ? Number(duel.margin) > kSE
-      && (gates.min_margin == null || Number(duel.margin) > Number(gates.min_margin))
+      && (!pre || params.min_margin == null
+          || Number(duel.margin) > Number(params.min_margin))
     : null;
   const verdict = `
     <p class="duel-verdict-line">${esc(verdictSummary(duel))}</p>
     <div class="kv-grid">
       <div class="kv"><span class="k">z</span><span class="v ${Number(duel.z) >= 0 ? "ok" : "bad"}">${esc(fmtZ(duel.z))}</span></div>
-      <div class="kv"><span class="k">margin ⟨S_c − S_k⟩</span><span class="v ${marginOk == null ? "" : marginOk ? "ok" : "bad"}">${esc(fmtScore(duel.margin))}</span></div>
+      <div class="kv"><span class="k">margin ⟨Reason_c − Reason_k⟩</span><span class="v ${marginOk == null ? "" : marginOk ? "ok" : "bad"}">${esc(fmtScore(duel.margin))}</span></div>
       <div class="kv"><span class="k">SE</span><span class="v">${esc(fmtScore(duel.se))}</span></div>
-      <div class="kv"><span class="k">${esc(String(gates.k_sigma ?? 3))}·SE bar</span><span class="v">${kSE == null ? "—" : esc(fmtScore(kSE))}</span></div>
-      <div class="kv"><span class="k">δ noise floor</span><span class="v">${esc(fmtScore(gates.min_margin))}</span></div>
+      <div class="kv"><span class="k">${esc(String(params.k_sigma ?? 3))}·SE bar</span><span class="v">${kSE == null ? "—" : esc(fmtScore(kSE))}</span></div>
+      ${pre ? `<div class="kv"><span class="k">δ noise floor (legacy)</span><span class="v">${esc(fmtScore(params.min_margin))}</span></div>` : ""}
+      ${duel.duel_seconds != null ? `<div class="kv"><span class="k">scoring time</span><span class="v">${esc(fmtDuration(duel.duel_seconds))}</span></div>` : ""}
       <div class="kv"><span class="k">challenger wins</span><span class="v ${duel.challenger_wins ? "ok" : "bad"}">${duel.challenger_wins == null ? "—" : duel.challenger_wins ? "yes" : "no"}</span></div>
     </div>`;
 
@@ -1031,7 +1067,7 @@ function duelPageHtml(duel, series, logLines) {
     <div class="duel-chart-grid">
       ${chartPane(DUEL_CHART_SPECS[0], "duel-chart-delta", "delta mix per turn")}
       ${chartPane(DUEL_CHART_SPECS[1], "duel-chart-sides", "challenger vs king mix")}
-      ${chartPane(DUEL_CHART_SPECS[2], "duel-chart-pair", "lambda2 vs l1lift")}
+      ${chartPane(DUEL_CHART_SPECS[2], "duel-chart-pair", "reason vs l1lift")}
     </div>`;
 
   const logBlock = `
@@ -1067,15 +1103,14 @@ function duelPageHtml(duel, series, logLines) {
           <li><strong>The math is replayable.</strong> Teacher-force the pinned
             teacher (see the contract) over the published texts to reproduce
             the logprobs, then recompute
-            <code>Λ2 = lpC(y_C|z_A) − lpC(y_C|∅)</code>,
-            <code>S = mean(Λ2 + w·clip(L1lift, ±0.1))</code>, and the paired
-            <code>z = mean(S_c − S_k) / SE</code>. The exact scoring code ships
-            in the repo — see <a href="/llms.txt" target="_blank" rel="noopener">llms.txt</a>
+            <code>Reason = lpC(y_C|z_A) − lpC(y_C|∅)</code> and the paired
+            <code>z = mean(Reason_c − Reason_k) / SE</code>. The exact scoring
+            code ships in the repo — see <a href="/llms.txt" target="_blank" rel="noopener">llms.txt</a>
             → <code>code/affine/score.py</code>.</li>
           <li><strong>The verdict follows mechanically.</strong> Crown iff
-            z &gt; ${esc(String(gates.k_sigma ?? 3))}, margin &gt; δ = ${esc(fmtScore(gates.min_margin))},
-            and both sides pass the gates in the table above. No judge, no
-            discretion.</li>
+            margin &gt; ${esc(String(params.k_sigma ?? 3))}·SE${pre
+              ? ` (this pre-fork duel additionally required margin &gt; δ = ${esc(fmtScore(params.min_margin))} and every S* v2 gate)`
+              : " — that is the whole rule"}. No judge, no discretion.</li>
         </ol>
       </div>
     </div>`;
@@ -1084,13 +1119,15 @@ function duelPageHtml(duel, series, logLines) {
     ${overview}
     <div class="duel-block">
       <div class="section-head"><h3 class="section-title">verdict</h3>
-        <span class="section-right note">crown rule: z > ${esc(String(gates.k_sigma ?? 3))} AND margin > δ, both sides gate-valid</span></div>
+        <span class="section-right note">${pre
+          ? `crown rule (pre-fork S* v2): z > ${esc(String(params.k_sigma ?? 3))} AND margin > δ, both sides gate-valid`
+          : `crown rule: margin > ${esc(String(params.k_sigma ?? 3))}·SE — nothing else`}</span></div>
       ${verdict}
     </div>
     ${failBlock}
     <div class="duel-block">
       <div class="section-head"><h3 class="section-title">challenger vs king</h3>
-        <span class="section-right note">per-side gates and scores</span></div>
+        <span class="section-right note">${pre ? "per-side gates and scores" : "Reason (the score) + telemetry (·t = measured, not scored)"}</span></div>
       ${sidesTableHtml(duel)}
     </div>
     <div class="duel-block">
@@ -1100,7 +1137,7 @@ function duelPageHtml(duel, series, logLines) {
     </div>
     <div class="duel-block">
       <div class="section-head"><h3 class="section-title">rollouts</h3>
-        <span class="section-right note">sorted by Δmix · full thoughts/actions/logprobs in the artifact: ${artifactLink}</span></div>
+        <span class="section-right note">sorted by ΔReason · full thoughts/actions/logprobs in the artifact: ${artifactLink}</span></div>
       ${turnsTableHtml(duel, paired)}
     </div>
     ${logBlock}

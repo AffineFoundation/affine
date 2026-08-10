@@ -20,7 +20,11 @@ king_chain_size = 5
 min_submission_block = 8767079
 # Bittensor weight-version gate for contract upgrades (bump on breaking
 # scoring/contract changes so stale validators are ignored by consensus).
-weight_version_key = 2
+# Current: 3 (Reason v3, 2026-08-10).
+# DO NOT bump this key without an explicit dated operator directive.
+# Infra / teacher-host / serving / corpus work is NOT a weight_version_key
+# event. Agents must leave this integer alone.
+weight_version_key = 3
 
 [wallet]
 name = "default"
@@ -51,11 +55,13 @@ max_config_bytes = 1048576   # 1 MiB; config.json larger than this is rejected
 
 [teacher]
 # Frozen frontier reference C. The eval machine serves this warm.
-repo = "zai-org/GLM-5.2-FP8"
-base_url = "http://204.9.206.243:40000/v1"
+# Stay on Air. The 2026-08-10 GLM-5.2 dedicated-teacher push was torn down
+# (pod killed; never cut over). Do not reintroduce base_url / a remote teacher
+# without an explicit operator directive.
+repo = "zai-org/GLM-4.5-Air-FP8"
 port = 8000
-tp = 8
-gpus = "0,1,2,3,4,5,6,7"
+tp = 2
+gpus = "0,1"
 # Second replica on the otherwise-idle GPUs. The teacher does ~2/3 of a duel's
 # forced-logprob work (48 echo calls per turn per side vs 24 per miner), so
 # with king and challenger scored concurrently one GLM is the wall — the
@@ -72,6 +78,10 @@ king_gpus = "2,3"
 challenger_port = 8002
 challenger_gpus = "4,5"
 tp = 2
+# Was 32768; corpus prefixes routinely hit ~31k tokens, and sample() asks for
+# max_thought+max_action=1792 more → vLLM 400 "maximum context length" mid-duel
+# (observed 2026-08-09/10, burned as eval_infra_exhausted). 65536 clears the
+# knife-edge; both GLM-Air and Qwen3.6-35B support ≥128k. Ops knob only.
 max_model_len = 65536
 # 0.80 (not the usual 0.85–0.90): teacher-forcing echo+logprobs materializes
 # an fp32 log_softmax over (step_tokens x vocab) OUTSIDE vLLM's budgeted pool
@@ -106,40 +116,16 @@ manifest_key = "turns/manifest.json"
 refresh_interval_s = 3600
 
 [duel]
-# Frozen production S* (RESEARCH_LOG 2026-08-03 hybrid freeze).
+# Reason v3 (2026-08-10, weight_version_key=3). The whole scoring contract:
+#   Reason = lpC(y_C|z_A) − lpC(y_C|∅)   (per pair; miner score = mean)
+#   crown  = paired mean(Reason_c − Reason_k) > k_sigma · SE
+# No gates, no mix, no clip, no absolute margin/SE floors. The retired S* v2
+# knobs (tau/gamma/gamma_bank/l1_weight/l1_clip/r_lo/r_hi/baseline_band/
+# min_se/min_margin) are gone from the contract; everything they measured is
+# still computed and published as telemetry in every verdict. Pre-fork
+# verdicts remain replayable under the `gates` block they stamped.
 n_turns = 80
-tau = 0.02
-gamma = 0.30
-gamma_bank = 0.08
 k_sigma = 3.0
-l1_weight = 1.0
-l1_clip = 0.1
-# Calibration band (2026-08-06): r_lo lowered 1.0 → 0.3. r < 1 is exactly
-# mean L1lift > 0 — the natural signature of a faithful teacher distill
-# (live distills measured at r 0.72–0.81 with healthy causality/bank gates;
-# teacher-self ≈ 0.35). The RT-3d empty-baseline sabotage r_lo=1.0 guarded
-# against is closed by baseline_band below instead.
-r_lo = 0.3
-r_hi = 4.0
-# Paired empty-baseline band (challenger only): mean|lpA(y_C|∅)| must be
-# ≤ baseline_band × the king's on the same slice. Honest fleet max observed
-# 1.14×; inflating this baseline is the only way to mint L1lift for free
-# once r_lo < 1. Enforced inside score.duel (gate 3b).
-baseline_band = 1.25
-# Robustness floors on top of the k·SE rule:
-#   min_se     — floor on the paired SE so a near-zero-variance challenger
-#                cannot win on an arbitrarily tiny mean (k·SE → 0 degeneracy).
-#   min_margin — minimum absolute paired mean(S_c − S_k) required to dethrone.
-#                Policy (2026-08-05): a NOISE floor, not an effect-size floor —
-#                any challenger statistically above the king crowns. 0.02 covers
-#                the RT-4 same-model null (SE 0.0065, 3·SE≈0.0195), the measured
-#                lm_head-sharpening residual (≤ +0.012), and the min_se
-#                degeneracy (3·min_se = 0.015); live 3·SE runs 0.023–0.043 so in
-#                practice the 3σ test governs. Supersedes the 0.05 effect floor
-#                (A11): short-style same-tier models (king-II margin +0.034) CAN
-#                now crown — accepted, S is the metric.
-min_se = 0.005
-min_margin = 0.02
 n_teacher_samples = 4
 n_miner_samples = 4
 temperature = 0.8

@@ -55,18 +55,30 @@ def redact_log_text(text: str) -> str:
     return _SSH_PORT_RE.sub(r"\1[port]", text)
 
 
-# Per-side gate scalars the site charts. The full summary also carries the
-# rollout-level detail, which belongs in the Hippius artifact, not in the
-# history file every page load fetches.
-_SIDE_FIELDS = ("valid", "S", "gate_pass_rate", "bank_frac", "calib_ratio",
-                "baseline_abs", "mean_lambda2", "n_turns", "n_pairs",
-                "baseline_band_exceeded")
+# Per-side scalars the site charts: the score (reason) + telemetry. Legacy
+# S* v2 fields (valid/S/mean_lambda2/...) are kept so pre-fork history rows
+# still render. Rollout-level detail belongs in the Hippius artifact, not in
+# the history file every page load fetches.
+_SIDE_FIELDS = ("reason", "mean_l1lift", "mean_len_z", "mean_len_y",
+                "len_z_delta", "len_y_delta",
+                "gate_pass_rate", "bank_frac", "calib_ratio", "baseline_abs",
+                "n_turns", "n_pairs",
+                # legacy (pre-fork verdicts)
+                "valid", "S", "mean_lambda2", "baseline_band_exceeded")
 
 
 def _slim_side(side: dict | None) -> dict | None:
     if not side:
         return None
     return {k: side[k] for k in _SIDE_FIELDS if k in side}
+
+
+def _side_score(side: dict | None) -> float | None:
+    """Score of one side: Reason (v3) with legacy S* fallback."""
+    if not side:
+        return None
+    r = side.get("reason")
+    return r if r is not None else side.get("S")
 
 
 class Dashboard:
@@ -343,13 +355,16 @@ class Dashboard:
                 "n_paired_turns": v.get("n_paired_turns"),
                 "rejection_reason": v.get("rejection_reason"),
                 "reign_number": r.get("reign_number"),
-                # Absolute S* for both sides (reign chart + duel overlay).
-                "score": r.get("score", (v.get("challenger") or {}).get("S")),
-                "score_king": (v.get("king") or {}).get("S"),
-                # Gate scalars + the thresholds they were judged against, so
-                # the static mirror renders the same duel-measurement grid the
-                # API serves.
+                # Absolute score (Reason) for both sides; falls back to the
+                # legacy S* field for pre-fork rows.
+                "score": r.get("score", _side_score(v.get("challenger"))),
+                "score_king": _side_score(v.get("king")),
+                # Pre-fork rows stamp `gates`; Reason v3 rows stamp
+                # `duel_params` + teacher length telemetry + duel_seconds.
                 "gates": v.get("gates"),
+                "duel_params": v.get("duel_params"),
+                "teacher": v.get("teacher"),
+                "duel_seconds": v.get("duel_seconds"),
                 "challenger": _slim_side(v.get("challenger")),
                 "king": _slim_side(v.get("king")),
             })

@@ -1,12 +1,13 @@
 # Affine / SN120 — project context
 
-Affine is a Bittensor subnet (netuid **120**) that crowns miners by a **teacher-anchored
-distillation score S\***, not an LLM judge. This monorepo is the public command center:
+Affine is a Bittensor subnet (netuid **120**) that crowns miners by a single
+**teacher-anchored distillation score — Reason (Λ2)**, not an LLM judge. This monorepo is the public command center:
 validator + evalsrv (`affine/`), research harness and freeze artifacts (`research/`), and
 lightweight ops helpers (`ops/`).
 
 Thesis: `research/docs/MOTIVATION.md` · Red-team: `research/docs/REDTEAM.md` ·
-Paper draft: `research/docs/PAPER_DRAFT.md` · Contract SSOT: `affine/affine.toml`
+Equilibrium: `research/docs/EQUILIBRIUM.md` · Paper draft: `research/docs/PAPER_DRAFT.md` ·
+Contract SSOT: `affine/affine.toml`
 
 ---
 
@@ -30,49 +31,46 @@ evalsrv package under `affine/`.
 
 ---
 
-## 2. Frozen production scoring — S\* v2
+## 2. Frozen production scoring — Reason v3 (2026-08-10, `weight_version_key = 3`)
 
-Implemented in `research/harness/score.py` and ported to `affine/affine/score.py`. Contract
-knobs in `affine/affine.toml` `[duel]` + `[dataset]`.
+Implemented in `affine/affine/score.py` (research twin `research/harness/score.py`,
+which also keeps the v2 rule under `legacy_*` for pre-fork replay). Contract knobs in
+`affine/affine.toml` `[duel]` + `[dataset]`.
 
-### Per-pair / miner gates
-1. **Causality + leakage** — pair passes if no fuzzy z⊃y leakage and
-   `lpA(y_A|z_A) − lpA(y_A|∅) ≥ τ` (τ=0.02). Miner INVALID if pass_rate < γ=0.30.
-2. **Prior-bank positivity** — `frac_bank` = share of pairs with Λ2_bank > 0 over published
-   priors. INVALID if frac_bank < γ_bank=0.08. Closes paraphrase stuffing (RT-2c).
-3. **Calibration ratio** — `r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|`. INVALID if
- r ∉ [0.3, 4.0]. r_lo was 1.0 at launch; lowered 2026-08-06 — r < 1 is exactly mean
- L1lift > 0, the natural signature of a faithful distill (live distills at r 0.72–0.81;
- teacher-self ≈ 0.35). r_lo=1.0 was invalidating every genuine winner.
-3b. **Empty-baseline band** (challenger only, paired, added 2026-08-06) — challenger
- mean|lpA(y_C|∅)| ≤ 1.25× king's on the same slice (honest max observed 1.14×). Closes
- RT-3d free-L1lift via baseline sabotage, which r_lo=1.0 used to cover.
-
-### Ranking term
+### The whole contract
 ```
-S = mean( Λ2 + w · clip(L1lift, ±0.1) )   with w = 1.0
-Λ2     = lpC(y_C|z_A) − lpC(y_C|∅)
-L1lift = lpA(y_C|z_A) − lpA(y_C|∅)
+Reason (per pair)  = lpC(y_C | z_A) − lpC(y_C | ∅)      # formerly Λ2; Score = Reason
+Miner score        = mean(Reason) over all scored pairs
+Crown              = paired mean(Reason_c − Reason_k) > k_sigma · SE
 ```
+Scoring hyperparameters: `n_turns = 80`, `k_sigma = 3.0`. Nothing else — no mix, no
+clip, **no gates**, no `min_margin`/`min_se` floors. The duel is purely relative to
+the slice's own noise (bare `SE = stdev/√n`; false-crown ≈ 0.13%/duel at 3σ). The
+ranked quantity lives entirely on the teacher side, which retires the whole lpA
+attack surface by construction.
 
-### Duel crowning rule
-Challenger wins iff **all** of:
-- paired mean(S_c − S_k) > 3 · SE
-- mean margin > δ = **0.02** (`min_margin`, updated 2026-08-05)
-- SE floored by `min_se = 0.005`
-- both sides gate-valid
+### Telemetry (measured + published in every verdict, never scored)
+Everything S\* v2 used to gate on: causality/leakage pass rate (τ=0.02 is now a
+non-consensus telemetry constant), prior-bank positivity fraction, calibration
+ratio r, empty-baseline magnitude, raw mean L1lift — plus new metrics: per-side
+thought/action char lengths, length deltas vs the teacher's own rollouts, and
+`duel_seconds` (scoring wall clock). Watch bank telemetry for adaptive paraphrase
+priors (the residual channel: ties genesis on raw Reason but must still beat the
+sitting king at 3σ).
 
-δ is a **noise floor, not an effect floor** (policy 2026-08-05): it covers the RT-4
-copy null (3·SE≈0.0195), the measured lm_head-sharpening residual (≤ +0.012), and the
-min_se degeneracy (3·min_se=0.015). Any challenger statistically above the king crowns.
-The former δ=0.05 effect floor (A11 defense) was dropped by explicit decision: same-tier
-short-style winners (king-II persistent margin +0.034) are accepted as kings — S is the
-metric.
+### History — S\* v2 (retired 2026-08-10)
+v2 was `S = mean(Λ2 + w·clip(L1lift, ±0.1))` behind 4 gates (causality γ=0.30,
+bank γ_bank=0.08, calibration r∈[0.3,4], baseline band 1.25×) and a duel floor
+δ=0.02 + min_se=0.005. Retired because raw Λ2 correlates with swe-rebench as well
+as the mix (+0.847@15 vs +0.844) while the L1 term dragged in most of the contract's
+complexity (RT-3 family + three defensive gates), and A11 was already policy-dead.
+Pre-fork verdicts stamp the old formula/`gates` block and remain replayable
+(`legacy_duel` in `research/harness/score.py`).
 
-### Headline correlations (coding D)
+### Headline correlations (coding D, measured under v2-era freezes)
 | set | Spearman(S, swe) | notes |
 |---|---|---|
-| ungated @ n=15 | +0.844 | early freeze |
+| ungated @ n=15 | +0.844 (mix) / **+0.847 raw Λ2** | early freeze; basis for v3 |
 | ungated @ n=19 | +0.856 / +0.862 under clip | |
 | ungated @ n=30 | **+0.758** (p≈1.2e-6) | wave-5; XC soft outlier |
 | hybrid @ n=15 | +0.799 | many mid kings at γ_bank knife-edge ~0.075 |
@@ -84,16 +82,18 @@ Second teacher (Qwen3-32B vs GLM-Air), n=6 kings: Spearman(S_T1, S_T2) = **+0.94
 
 ## 3. Red-team status (load-bearing)
 
-| ID | Attack | Status | Defense |
+Statuses restated 2026-08-10 for Reason v3 (gates removed; L1 channel unscored):
+
+| ID | Attack | Status | Defense under Reason v3 |
 |---|---|---|---|
-| RT-1 / A1 | fixed thought payloads | CLOSED | lose to genesis; empty → causality |
-| RT-2 / A2 | action stuffing into z | CLOSED | leakage gate |
-| RT-2 / A9 | silent miner | CLOSED | causality gate |
-| RT-2c / A2c | paraphrase stuffing | CLOSED | bank gate |
-| RT-soft-pad / A10 | soft-idents pad | CLOSED | abandoned; use mix w=1 |
-| RT-4 / A4 | king copy | CLOSED | 3σ null |
-| RT-3 / A3 | L1lift / overconfidence | CLOSED live | clip0.1 + r∈[0.3,4] + baseline band 1.25×; sharpening residual ≤ +0.012 < 3·SE floor |
-| A11 | short-style I/II FP | **ACCEPTED (policy 2026-08-05)** | δ→0.02 noise floor; same-tier S winners may crown |
+| RT-1 / A1 | fixed thought payloads | CLOSED | Reason ≈ 0 loses the relative duel |
+| RT-2 / A2 | action stuffing into z | CLOSED | must beat incumbent at 3σ; y_C fresh per duel (leakage now telemetry) |
+| RT-2 / A9 | silent miner | CLOSED | Reason ≈ 0 self-neutralizes |
+| RT-2c / A2c | paraphrase stuffing | MITIGATED | ties genesis on raw Reason ⇒ cannot dethrone; **bank telemetry monitored** (residual watch item) |
+| RT-soft-pad / A10 | soft-idents pad | CLOSED | abandoned by attacker; single-term score |
+| RT-4 / A4 | king copy | CLOSED | 3σ null (false-crown ≈ 0.13%/duel; δ removed — copy-churn bounded by that rate) |
+| RT-3 / A3 | L1lift / overconfidence | **DEAD CHANNEL** | L1lift is not scored; lpA never enters the ranked quantity |
+| A11 | short-style I/II FP | MOOT | already policy-accepted 2026-08-05; v3 removes the floor entirely |
 | RT-6 / A6 | dataset sniping | **CLOSED (code, 2026-08-06)** | seed-shuffled strata + per-duel fresh y_C — see §5 |
 | **RT-7 / A12** | **isomorphism inverts on the live panel** | **OPEN — no defense** | see §3b |
 | D_tau2 | programmability falsifier | **NOT demonstrated** | see §6 |
@@ -122,8 +122,10 @@ was made by someone maximising S, the sign flips:
   which the incumbent maximises by construction, so it acts as a
   **similarity-to-incumbent term rather than a capability term.**
 
-The gates are validity checks (causality, leakage, bank, r, band); none asks
-whether the winner can write code. A model can be gate-valid, crown, resolve 0/25.
+The v2 gates were validity checks (causality, leakage, bank, r, band); none asked
+whether the winner can write code — a model could be gate-valid, crown, resolve 0/25.
+Reason v3 removes them outright: the public claim is a **distillation meter**, not a
+coding meter, and crowns do not imply benchmark capability.
 
 **Bench repeatability:** genesis scored 0/25 then 5/25 on the *same revision*, so
 single 25-task scores are not per-model evidence — hence the pooled binomial test.
@@ -131,6 +133,17 @@ Outcome noise attenuates Spearman toward zero, so −0.42 is a conservative floo
 
 **Do not claim coding isomorphism without this caveat.** Artifacts:
 `research/results/rt7_live_isomorphism.{json,txt}`, `research/scripts/rt7_live_isomorphism.py`.
+
+**Equilibrium framing (policy 2026-08-10, `research/docs/EQUILIBRIUM.md`):** we
+care about alignment of the *asymptote*, not intermediate states. Leaking-is-
+knowing in the fresh-D regime (perfect thought = "the answer is X", which
+requires computing X = distilling GLM). Reason v3 takes this to its limit:
+gates and the δ ratchet are gone; the only ratchet left is the incumbent
+itself — every crown raises the raw-Reason bar the next challenger must beat
+at 3σ, so capability-free channels stay finite budgets unless an **unbounded**
+one exists (none demonstrated — that is the red-team target). RT-7 under this
+frame = live board is on the shallow style prefix of the slope; kings at 0/25
+are the budget being spent.
 
 Full writeups: `research/docs/REDTEAM.md`.
 
@@ -141,17 +154,19 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
-- `weight_version_key = 2` (bumped 2026-08-10 on teacher C swap Air→GLM-5.2-FP8;
-  earlier min_margin 0.05→0.02 on 2026-08-05 shipped WITHOUT a version bump)
-- teacher: `zai-org/GLM-5.2-FP8` (dedicated `affine-teacher` B300 box; evalsrv
-  remote `base_url`)
+- `weight_version_key = 3` (Reason v3, 2026-08-10). **Do not bump** without an
+  explicit dated operator directive — not for teacher-host moves, serving
+  knobs, corpus refresh, or agent “cleanup.” Leave the integer alone.
+- teacher: `zai-org/GLM-4.5-Air-FP8` (co-located on eval; 2026-08-10 GLM-5.2
+  remote-teacher push torn down, never cut over)
 - seed king: `dendriteholdings/albedo-qwen3.6-35b-king-genesis`
 - turns: sharded corpus with immutable manifest; sha-pinned (see toml `[dataset]`)
-- duel: n_turns=80, clip=0.1, r∈[0.3,4], baseline_band=1.25, δ=0.02, k_sigma=3
+- duel: n_turns=80, k_sigma=3 — that is the whole scoring contract (v2 knobs
+  deleted from `[duel]` 2026-08-10; everything they measured is verdict telemetry)
 
 ### Evalsrv roles
-- `AFFINE_ROLE=duel` — teacher + king + challenger; S\* only
-- `AFFINE_ROLE=bench` — SWE advisory (never part of S\*)
+- `AFFINE_ROLE=duel` — teacher + king + challenger; Reason only
+- `AFFINE_ROLE=bench` — SWE advisory (never part of the score)
 - Bootstrap: `affine/evalsrv/bootstrap.sh` (fail-closed on empty sha / missing sources)
 
 ### Smoke
@@ -261,11 +276,12 @@ pair dumps are not.
 2. Teacher C samples reference rollouts (z_C, y_C); cached per turn in ref jsonl.
 3. Miner A samples (z_A, y_A) [or force-y pins y to gold].
 4. Teacher-force echo+logprobs for the component lp\* fields (stored in pair records).
-5. Offline or online: gates → mix S → duel paired test.
+5. Offline or online: mean Reason per side → paired 3σ duel (telemetry recorded
+   alongside; pre-fork replays use the legacy gates→mix→δ path).
 
 Key modules:
 - `research/harness/terms.py` — Δ terms + pair components
-- `research/harness/score.py` — production S\* + duel
+- `research/harness/score.py` — Reason v3 + duel (legacy v2 kept for replay)
 - `research/harness/runner.py` — E-KINGS batch scorer
 - `affine/evalsrv/dueling.py` — live duel (slice seed, probe, score, verdict)
 - `affine/evalsrv/engine.py` — vLLM slot lifecycle (teacher/king/challenger)
@@ -299,10 +315,12 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 4. Mirror corpus to an AffineFoundation HF dataset when org write exists; retarget toml.
 
 ### Research / paper
-1. Claim coding isomorphism + teacher robustness + closed RT suite; **not** D_tau2
+1. Public claim = **distillation meter** (teacher-anchored Reason) + teacher
+   robustness; **not** coding isomorphism (RT-7 open) and **not** D_tau2
    programmability.
 2. Optional: tool-capable miner panel or tau2-strong teacher for a real D_tau2 test.
-3. Keep refreshing D as the RT-6 residual defense.
+3. Keep refreshing D as the RT-6 residual defense; watch bank telemetry for
+   adaptive paraphrase priors (the residual channel under gateless Reason).
 
 ---
 
@@ -312,6 +330,7 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 |---|---|
 | `research/docs/MOTIVATION.md` | Thesis / fixed point of the program |
 | `research/docs/REDTEAM.md` | Attack table + statuses |
+| `research/docs/EQUILIBRIUM.md` | Asymptote alignment argument + assumption ledger |
 | `research/docs/PAPER_DRAFT.md` | Draft paper text |
 | `research/results/hybrid_w5_table.txt` / `_meta.json` | n=30 freeze |
 | `research/results/hybrid_sstar_v2_*` | S\* v2 re-freeze |
@@ -323,16 +342,19 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 
 ## 12. One-paragraph resume
 
-> Affine SN120: teacher-anchored thought-injection duels (S\* v2 = clip0.1 mix +
-> causality/leakage + bank + r∈[0.3,4] + 1.25× baseline band + 3σ∧δ=0.02 noise floor).
-> Teacher C is `zai-org/GLM-5.2-FP8` on a dedicated B300 box (`weight_version_key=2`,
-> 2026-08-10). Reigns 1–2 (pandora-box ckpt300-m4, kevin954 sft) were crowned
-> retroactively on 2026-08-06 from their published genesis duels when r_lo 1.0→0.3
-> shipped (operator decision, no re-eval; margins +0.061/z=5.7 and +0.070/z=6.3 vs
-> genesis). Coding isomorphism holds at +0.758@30 ungated on the Albedo panel;
-> live-board RT-7 inversion open. Second teacher +0.943; RT suite closed/mitigated
-> except D_tau2 programmability (three negative probes). Corpus sha-pinned;
-> uv-workspace monorepo (`affine` + `research` + `ops`).
+> Affine SN120: teacher-anchored thought-injection duels. Since 2026-08-10
+> (`weight_version_key=3`) the contract is **Reason v3**: score =
+> mean(lpC(y_C|z_A) − lpC(y_C|∅)), crown = paired mean > 3·SE — no gates, no mix,
+> no floors; everything v2 gated on (causality, bank, calibration r, baseline,
+> L1lift) plus lengths/timing is published as verdict telemetry. Teacher C is
+> `zai-org/GLM-4.5-Air-FP8` co-located on the eval box (a 2026-08-10 GLM-5.2
+> dedicated-teacher push was torn down before cutover). Reigns 1–2 (pandora-box
+> ckpt300-m4, kevin954 sft) were crowned
+> retroactively on 2026-08-06 under v2 (r_lo 1.0→0.3, no re-eval). Public claim is
+> a distillation meter: raw Λ2 +0.847@15 ≈ mix on the Albedo panel, but live-board
+> RT-7 inversion is open — do not claim coding isomorphism. Second teacher +0.943;
+> D_tau2 programmability not demonstrated. Corpus sha-pinned; uv-workspace
+> monorepo (`affine` + `research` + `ops`).
 
 ---
 
