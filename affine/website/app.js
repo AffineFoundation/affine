@@ -10,7 +10,7 @@ import {
   fetchRegHistory,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=43";
+} from "./api.js?v=44";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -35,7 +35,7 @@ import {
   reignMembers,
   setReignLookup,
   short,
-} from "./charts.js?v=43";
+} from "./charts.js?v=44";
 
 const $ = (id) => document.getElementById(id);
 
@@ -1260,6 +1260,38 @@ function wire() {
     // Any chart mark carrying a challenge id opens its duel page.
     const hit = e.target.closest(".duel-hit[data-cid]");
     if (hit) openDuel(hit.dataset.cid);
+  });
+  // Section TOC + collapsible lower sections. Charts drawn while a section
+  // is display:none get a fallback width, so expanding the telemetry grid
+  // forces a redraw at the real pane width.
+  const expandSection = (id) => {
+    const sec = document.getElementById(id);
+    if (!sec || !sec.classList.contains("collapsed")) return;
+    sec.classList.remove("collapsed");
+    if (id === "gates") {
+      renderGates(true);
+      renderRegPrice(true);
+    }
+  };
+  document.querySelectorAll(".toc-link").forEach((a) => {
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      const id = (a.getAttribute("href") || "").slice(1);
+      if (duelHashCid()) location.hash = "";
+      expandSection(id);
+      setTimeout(() => {
+        document.getElementById(id)
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 60);
+    });
+  });
+  document.querySelectorAll(".section.collapsible > .section-head").forEach((head) => {
+    head.addEventListener("click", (e) => {
+      if (e.target.closest("a, button, input")) return;
+      const sec = head.parentElement;
+      if (sec.classList.contains("collapsed")) expandSection(sec.id);
+      else sec.classList.add("collapsed");
+    });
   });
   $("chart-modal-close")?.addEventListener("click", closeChart);
   $("chart-modal-backdrop")?.addEventListener("click", closeChart);
