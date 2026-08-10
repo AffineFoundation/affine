@@ -285,9 +285,10 @@ button {
   padding: 0 20px;
 }
 
+/* Performance tab: the two hero charts stacked full-width, axes aligned. */
 .hero-split {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 16px;
   width: 100%;
 }
@@ -337,11 +338,6 @@ button {
   height: auto;
 }
 
-@media (max-width: 900px) {
-  .hero-split {
-    grid-template-columns: 1fr;
-  }
-}
 
 .hero-king-row {
   margin-top: 16px;
@@ -658,8 +654,7 @@ button {
 }
 
 .table-scroll {
-  max-height: 440px;
-  overflow: auto;
+  overflow-x: auto;
 }
 
 table.data-table {

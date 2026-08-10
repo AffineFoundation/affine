@@ -10,7 +10,7 @@ import {
   fetchRegHistory,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=46";
+} from "./api.js?v=47";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -35,7 +35,7 @@ import {
   reignMembers,
   setReignLookup,
   short,
-} from "./charts.js?v=46";
+} from "./charts.js?v=47";
 
 const $ = (id) => document.getElementById(id);
 
@@ -476,7 +476,7 @@ function renderIntake(d) {
     <thead><tr>
       <th>when</th><th>decision</th><th>model</th><th>hotkey</th><th>block</th><th>detail</th>
     </tr></thead>
-    <tbody>${rows.slice(0, 40).map((r) => {
+    <tbody>${rows.map((r) => {
       const cid = r.challenge_id || "";
       return `<tr class="${cid ? "row-link" : ""}" ${cid ? `data-cid="${esc(cid)}"` : ""}>
         <td class="when">${esc(fmtTime(r.at))}</td>
@@ -557,7 +557,7 @@ function renderHistory(h) {
       <th>when</th><th>age</th><th>event</th><th>model</th><th>hotkey</th><th>outcome</th>
       <th class="r">dur</th><th class="r">z</th><th class="r">Reason</th><th class="r">king Reason</th><th>detail</th>
     </tr></thead>
-    <tbody>${rows.slice(0, 80).map((r) => {
+    <tbody>${rows.map((r) => {
       const zClass = r.z == null ? "" : Number(r.z) >= 0 ? "ok" : "bad";
       const cid = r.challenge_id || "";
       return `<tr class="row-link ${r.event === "crowned" ? "current" : ""}" data-cid="${esc(cid)}">
@@ -595,7 +595,7 @@ function renderFails(h) {
     <thead><tr>
       <th>when</th><th>age</th><th>uid</th><th>model</th><th>hotkey</th><th class="r">dur</th><th>code</th><th>detail</th>
     </tr></thead>
-    <tbody>${rows.slice(0, 60).map((r) => {
+    <tbody>${rows.map((r) => {
       const cid = r.challenge_id || "";
       return `<tr class="row-link" data-cid="${esc(cid)}">
         <td class="when">${esc(fmtTime(r.at))}</td>

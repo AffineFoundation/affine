@@ -217,8 +217,9 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
   const points = duelPoints(history);
   const width = Math.max(widthOpt || chartWidth(), 280);
   const height = heightOpt || 320;
-  const padL = 52;
-  const padR = 20;
+  // Same gutters as drawDuelScores so the stacked heroes align.
+  const padL = 56;
+  const padR = 24;
   const padT = 28;
   const padB = 36;
   const n = Math.max(points.length, 1);
