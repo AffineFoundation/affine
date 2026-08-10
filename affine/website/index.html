@@ -9,7 +9,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
   <link rel="stylesheet" href="fonts/fonts.css?v=20" />
-  <link rel="stylesheet" href="style.css?v=47" />
+  <link rel="stylesheet" href="style.css?v=48" />
 </head>
 <body>
   <header class="top-nav">
@@ -120,6 +120,19 @@
         <h2 class="section-title">duel queue</h2>
         <span class="section-right" id="queue-meta"></span>
       </div>
+      <div class="metric-pane reg-pane" id="metric-reg-price">
+        <div class="metric-head">
+          <div class="metric-head-row">
+            <span class="metric-title">registration price</span>
+            <button type="button" class="expand-btn" data-chart="reg-price"
+              title="expand registration price"
+              aria-label="Expand registration price chart">⤢</button>
+          </div>
+          <span class="metric-caption" id="reg-price-meta">tmc burn history</span>
+        </div>
+        <svg id="reg-price-chart" role="img"
+          aria-label="SN120 registration burn history"></svg>
+      </div>
       <div id="queue-wrap"><div class="empty">loading…</div></div>
     </section>
 
@@ -182,6 +195,6 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=47"></script>
+  <script type="module" src="app.js?v=48"></script>
 </body>
 </html>

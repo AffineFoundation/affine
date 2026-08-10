@@ -10,7 +10,7 @@ import {
   fetchRegHistory,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=47";
+} from "./api.js?v=48";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -35,7 +35,7 @@ import {
   reignMembers,
   setReignLookup,
   short,
-} from "./charts.js?v=47";
+} from "./charts.js?v=48";
 
 const $ = (id) => document.getElementById(id);
 
@@ -285,21 +285,7 @@ function renderGates(force = false) {
           <span class="metric-caption">${esc(m.caption)}</span>
         </div>
         <svg role="img" aria-label="${esc(m.title)} per duel"></svg>
-      </div>`).join("") + `
-      <div class="metric-pane" id="metric-reg-price">
-        <div class="metric-head">
-          <div class="metric-head-row">
-            <span class="metric-title">registration cost</span>
-            <button type="button" class="expand-btn" data-chart="reg-price"
-              title="expand registration cost"
-              aria-label="Expand registration cost chart">⤢</button>
-          </div>
-          <span class="metric-caption" id="reg-price-meta">tmc burn history</span>
-        </div>
-        <svg id="reg-price-chart" role="img"
-          aria-label="SN120 registration burn history"></svg>
-      </div>`;
-    renderRegPrice(true);
+      </div>`).join("");
   }
   for (const m of GATE_METRICS) {
     const pane = $(`metric-${m.id}`);
@@ -683,10 +669,8 @@ function activateTab(id) {
   // Charts laid out while hidden fall back to a default width — redraw now
   // that the pane has real geometry.
   if (id === "evolution") renderHero(true);
-  if (id === "gates") {
-    renderGates(true);
-    renderRegPrice(true);
-  }
+  if (id === "gates") renderGates(true);
+  if (id === "queue") renderRegPrice(true);
 }
 
 function route() {
@@ -852,6 +836,8 @@ function sidesTableHtml(duel) {
     ] : []),
     sideRow("Reason", "the score: mean lpC(y_C|z_A) − lpC(y_C|∅)",
       chReason, kgReason, "higher wins"),
+    sideRow("η sufficiency", "Λ2(z_A)/Λ2(z_C) — how much of GLM's own thinking z_A replaces",
+      ch.mean_eta, kg.mean_eta, "telemetry"),
     sideRow("L1lift", "miner-side lift lpA(y_C|z_A) − lpA(y_C|∅)",
       ch.mean_l1lift, kg.mean_l1lift, pre ? "" : "telemetry"),
     sideRow("causality pass", "share of pairs passing leakage + causality",
@@ -892,7 +878,7 @@ function sidesTableHtml(duel) {
     <tbody>${rows}</tbody></table></div>`;
 }
 
-const TURNS_COLSPAN = 9;
+const TURNS_COLSPAN = 11;
 
 function turnsTableHtml(duel, paired) {
   if (!paired.length) {
@@ -911,6 +897,8 @@ function turnsTableHtml(duel, paired) {
       <td class="num ${d == null ? "dim" : d >= 0 ? "ok" : "bad"}">${d == null ? "—" : esc(fmtScore(d))}</td>
       <td class="num">${esc(fmtScore(p.challenger_reason ?? p.challenger_mix))}</td>
       <td class="num">${esc(fmtScore(p.king_reason ?? p.king_mix))}</td>
+      <td class="num">${esc(fmtScore(p.challenger_eta))}</td>
+      <td class="num">${esc(fmtScore(p.king_eta))}</td>
       <td class="num">${esc(fmtScore(p.challenger_l1lift))}</td>
       <td class="num">${esc(fmtScore(p.king_l1lift))}</td>
       <td class="${p.challenger_gate_ok ? "ok" : "bad"}">${p.challenger_gate_ok ? "ok" : "fail"}</td>
@@ -922,6 +910,7 @@ function turnsTableHtml(duel, paired) {
   return `<div class="table-wrap table-scroll"><table class="data-table turns-table">
     <thead><tr><th>turn</th><th class="num">ΔReason</th>
       <th class="num">chall Reason</th><th class="num">king Reason</th>
+      <th class="num">chall η ·t</th><th class="num">king η ·t</th>
       <th class="num">chall L1 ·t</th><th class="num">king L1 ·t</th>
       <th>chall caus ·t</th><th>king caus ·t</th><th>raw</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
@@ -932,6 +921,7 @@ function turnsTableHtml(duel, paired) {
 function rolloutPairHtml(p, i) {
   const chips = `
     <span class="chip">Reason ${esc(fmtScore(p.reason ?? p.lambda2))}</span>
+    <span class="chip">η ${esc(fmtScore(p.eta))} ·t</span>
     <span class="chip">L1 ${esc(fmtScore(p.l1lift))} ·t</span>
     <span class="chip ${p.gate_ok ? "ok" : "bad"}">caus ${p.gate_ok ? "ok" : "fail"} ·t</span>`;
   return `<div class="rollout-pair">

@@ -529,6 +529,11 @@ button {
   padding: 12px 10px 8px;
 }
 
+/* Registration price pane at the top of the queue tab. */
+.reg-pane {
+  margin-bottom: 14px;
+}
+
 .metric-head {
   display: flex;
   flex-direction: column;
