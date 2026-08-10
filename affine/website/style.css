@@ -493,31 +493,25 @@ button {
   color: var(--color-gold);
 }
 
+/* 2×N grid of hero-sized panes, same split and breakpoint as .hero-split. */
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 12px;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
   width: 100%;
+}
+
+@media (max-width: 900px) {
+  .metric-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .metric-pane {
   min-width: 0;
   border: 1px solid var(--color-border);
   background: rgba(255, 255, 255, 0.015);
-  padding: 10px 8px 4px;
-}
-
-/* The two S* components (Λ2, L1lift) lead the grid at hero-pane size:
-   half the row each, same padding and chart height as the S/Z panes. */
-.metric-pane--featured {
-  grid-column: span 2;
   padding: 12px 10px 8px;
-}
-
-@media (max-width: 700px) {
-  .metric-pane--featured {
-    grid-column: auto;
-  }
 }
 
 .metric-head {

@@ -269,8 +269,7 @@ function renderGates(force = false) {
   }
   if (!wrap.querySelector(".metric-pane")) {
     wrap.innerHTML = GATE_METRICS.map((m) => `
-      <div class="metric-pane${m.featured ? " metric-pane--featured" : ""}"
-        id="metric-${esc(m.id)}">
+      <div class="metric-pane" id="metric-${esc(m.id)}">
         <div class="metric-head">
           <div class="metric-head-row">
             <span class="metric-title">${esc(m.title)}</span>
@@ -288,8 +287,8 @@ function renderGates(force = false) {
     const svg = pane?.querySelector("svg");
     if (!svg) continue;
     drawGateMetric(svg, points, m, {
-      width: Math.max((pane.clientWidth || 320) - 18, 240),
-      height: m.featured ? 320 : undefined,
+      width: Math.max((pane.clientWidth || 320) - 20, 280),
+      height: 320,
     });
   }
 }

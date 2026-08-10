@@ -447,7 +447,6 @@ const l1Term = (p, side) => {
 export const GATE_METRICS = [
   {
     id: "lambda2",
-    featured: true,
     title: "Λ2",
     caption: "teacher lift lpC(y_C|z_A) − lpC(y_C|∅) — the ranking core",
     detail: `<p><code>Λ2 = lpC(y_C|z_A) − lpC(y_C|∅)</code>: how much the miner's
@@ -465,7 +464,6 @@ export const GATE_METRICS = [
   },
   {
     id: "l1lift",
-    featured: true,
     title: "L1lift",
     caption: "miner lift lpA(y_C|z_A) − lpA(y_C|∅) · clipped at ±l1_clip",
     detail: `<p><code>L1lift = lpA(y_C|z_A) − lpA(y_C|∅)</code>: how much the
