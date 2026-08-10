@@ -17,12 +17,23 @@ from .chat import (
 )
 
 
+class ContextLengthError(RuntimeError):
+    """vLLM rejected the request: prompt (+ max_tokens) > max_model_len.
+
+    This is a serving-config / corpus-length mismatch, not a model fault —
+    the duel server maps it to Fault.CONTEXT_LIMIT (infra, requeue).
+    """
+
+
 @dataclass(frozen=True)
 class Served:
     name: str            # short id used in result rows ("king", "challenger", "teacher")
     repo: str            # HF repo (also the vLLM served-model name)
     revision: str | None
     port: int
+    # Optional OpenAI-compatible base including /v1 (e.g. remote teacher box).
+    # When set, clients hit this URL instead of localhost:{port}/v1.
+    base_url: str | None = None
 
 
 class ModelPool:
@@ -69,7 +80,10 @@ class ModelPool:
 class VllmModel:
     def __init__(self, cfg: Served, client: httpx.AsyncClient, sem: asyncio.Semaphore):
         self.cfg = cfg
-        self.base = f"http://localhost:{cfg.port}/v1"
+        if cfg.base_url:
+            self.base = cfg.base_url.rstrip("/")
+        else:
+            self.base = f"http://localhost:{cfg.port}/v1"
         self.http = client
         self.sem = sem
 
@@ -86,6 +100,23 @@ class VllmModel:
                     )
                     r.raise_for_status()
                     return r.json()
+                except httpx.HTTPStatusError as e:
+                    body = (e.response.text or "")[:500]
+                    # Context-length 400s are deterministic for this prompt —
+                    # retrying burns minutes and used to exhaust the miner's
+                    # transient budget as eval_infra_exhausted.
+                    if e.response.status_code == 400 and (
+                            "maximum context length" in body
+                            or "max_model_len" in body
+                            or "input_tokens" in body):
+                        raise ContextLengthError(
+                            f"{self.cfg.name} prompt exceeds max_model_len: "
+                            f"{body}") from e
+                    if attempt == 2:
+                        raise httpx.HTTPStatusError(
+                            f"{e}; body={body}",
+                            request=e.request, response=e.response) from e
+                    await asyncio.sleep(2 * (attempt + 1))
                 except (httpx.HTTPError, httpx.TimeoutException):
                     if attempt == 2:
                         raise

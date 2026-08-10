@@ -20,7 +20,7 @@ king_chain_size = 5
 min_submission_block = 8767079
 # Bittensor weight-version gate for contract upgrades (bump on breaking
 # scoring/contract changes so stale validators are ignored by consensus).
-weight_version_key = 1
+weight_version_key = 2
 
 [wallet]
 name = "default"
@@ -51,10 +51,11 @@ max_config_bytes = 1048576   # 1 MiB; config.json larger than this is rejected
 
 [teacher]
 # Frozen frontier reference C. The eval machine serves this warm.
-repo = "zai-org/GLM-4.5-Air-FP8"
+repo = "zai-org/GLM-5.2-FP8"
+base_url = "http://204.9.206.243:40000/v1"
 port = 8000
-tp = 2
-gpus = "0,1"
+tp = 8
+gpus = "0,1,2,3,4,5,6,7"
 # Second replica on the otherwise-idle GPUs. The teacher does ~2/3 of a duel's
 # forced-logprob work (48 echo calls per turn per side vs 24 per miner), so
 # with king and challenger scored concurrently one GLM is the wall — the
@@ -71,7 +72,7 @@ king_gpus = "2,3"
 challenger_port = 8002
 challenger_gpus = "4,5"
 tp = 2
-max_model_len = 32768
+max_model_len = 65536
 # 0.80 (not the usual 0.85–0.90): teacher-forcing echo+logprobs materializes
 # an fp32 log_softmax over (step_tokens x vocab) OUTSIDE vLLM's budgeted pool
 # — ~5 GB transient at 8192x151k — so the duel pod needs real headroom.

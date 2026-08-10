@@ -317,7 +317,7 @@ check("eval_client.busy_is_transient", issubclass(EvalBusyError, TransientEvalEr
 check("eval_client.infra_is_transient", issubclass(InfraFaultError, TransientEvalError))
 check("eval_client.fault_codes_are_infra",
       {Fault.TEACHER, Fault.KING_LAUNCH, Fault.POD_CAPACITY,
-       Fault.CHALLENGER_INFRA} <= INFRA_FAULT_CODES)
+       Fault.CHALLENGER_INFRA, Fault.CONTEXT_LIMIT} <= INFRA_FAULT_CODES)
 
 # -- dueling helpers (pure parts) ----------------------------------------------
 sys.modules.setdefault("httpx_missing_guard", None)

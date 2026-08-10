@@ -78,6 +78,9 @@ class TeacherCfg:
     port: int
     tp: int
     gpus: str
+    # When set (OpenAI-compatible base incl. /v1), evalsrv probes this remote
+    # endpoint and skips launching a local teacher vLLM.
+    base_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -323,7 +326,8 @@ def load_config(path: str | Path | None = None) -> Config:
         secrets=Secrets.from_env(),
         submission=_submission(raw),
         teacher=TeacherCfg(repo=str(t["repo"]), port=int(t["port"]),
-                           tp=int(t["tp"]), gpus=str(t["gpus"])),
+                           tp=int(t["tp"]), gpus=str(t["gpus"]),
+                           base_url=str(t.get("base_url") or "").rstrip("/")),
         duel=_duel(raw),
         dataset=DatasetCfg(corpus_base_url=str(ds["corpus_base_url"]).rstrip("/"),
                            manifest_key=str(ds["manifest_key"]),

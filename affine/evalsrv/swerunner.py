@@ -123,6 +123,22 @@ def _run(cmd: list[str], env: dict, timeout_s: int,
     t0 = time.time()
     chunks: list[str] = []
 
+    # Drain stdout continuously. Reading only after exit deadlocks the whole
+    # suite: once the harness prints more than the pipe buffer (~64KB), its
+    # write blocks *inside rich's console handler while holding the logging
+    # lock*, every worker thread queues on that lock, and the run freezes
+    # until the suite timeout (observed: king bench stalled 1h at 16/25
+    # trajectories; af-k1 and Tok331102 rode the same deadlock to 7200s).
+    def _drain() -> None:
+        try:
+            for line in proc.stdout:  # type: ignore[union-attr]
+                chunks.append(line)
+        except Exception:
+            pass  # EOF/decode races on kill are fine — output is best-effort
+
+    reader = threading.Thread(target=_drain, daemon=True, name="swe-drain")
+    reader.start()
+
     def _kill():
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -139,8 +155,7 @@ def _run(cmd: list[str], env: dict, timeout_s: int,
             _kill()
             return -2, f"timeout after {timeout_s}s"
         time.sleep(2)
-    out = proc.stdout.read() if proc.stdout else ""
-    chunks.append(out)
+    reader.join(timeout=30)
     return proc.returncode, "".join(chunks)
 
 

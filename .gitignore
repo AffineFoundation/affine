@@ -6,3 +6,12 @@ __pycache__/
 .DS_Store
 **/.eval_env
 ralphs/
+# mining/ is tracked — the loop's notes and results are the point. Keys,
+# loop plumbing, and model weights are not.
+mining/wallets/
+mining/.env
+mining/MNEMONICS.txt
+mining/.ralph/
+mining/**/*.safetensors
+mining/**/*.bin
+mining/**/*.gguf

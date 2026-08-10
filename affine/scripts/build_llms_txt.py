@@ -71,6 +71,10 @@ SOURCES: list[tuple[str, str]] = [
     ("affine/priors.py", "published prior bank behind the bank gate"),
     ("affine/chain.py", "reveal payload contract + commit builders"),
     ("evalsrv/dueling.py", "live duel: slice seeding, injectability probe, scoring loop"),
+    ("evalsrv/corpus.py", "corpus sync: schema v1 flat shards or v2 parquet "
+     "index + trajectory chunks"),
+    ("affine/corpus/materialize.py", "schema v2: stratum key + turn "
+     "materialization from trajectory records"),
     ("evalsrv/chat.py", "the chat contract: prompt assembly, thought-injection "
      "template, z/y rollout parsing — byte-exact"),
     ("evalsrv/terms.py", "per-turn instrumentation: teacher references + the ten "
@@ -171,8 +175,10 @@ verdict and failure since genesis
 **Turn corpus D** (the prompts)
 
 - [turns/manifest.json]({BASE}/turns/manifest.json) — current manifest: \
-shards, hashes, corpus epoch
-- `turns/shards/*.jsonl.gz` — immutable shard objects
+shards/chunks, index, hashes, corpus epoch, `schema_version`
+- `turns/index/turns_*.parquet` — schema v2 turn index (sample here)
+- `turns/chunks/*.jsonl.gz` — schema v2 trajectory objects
+- `turns/shards/*.jsonl.gz` — schema v1 / compat flat per-turn JSONL
 - `turns/manifests/{sha256}.json` — every manifest revision ever, immutable
 
 **Website / index**
@@ -433,25 +439,84 @@ forced-logprob component S* is computed from (`lpA_yc_za`, `lpC_yc_za`, \
 `lpC_ya_e`, `lpC_ya_zc`, `lpC_yc_zc`, `lpC_yc_e`, `L2_bank`). You can \
 recompute any verdict offline from this file + `affine/score.py`.
 
-**Turn corpus D** (the prompts themselves) — sharded, on this site:
+**Turn corpus D** (the prompts themselves) — on this site:
 
-- `turns/manifest.json` — current manifest: \
-`{corpus_epoch, created_at, shards: [{key, sha256, n_turns, active}], \
+- `turns/manifest.json` — current manifest. schema_version **2** shape: \
+`{corpus_epoch, schema_version, created_at, index: {key, sha256, n_turns}, \
+shards: [{key, sha256, n_trajectories, format, active}], compat_shards?, \
 prev_manifest}`. Poll it like `evals/index.jsonl`; a hash change means the \
 corpus moved.
-- `turns/shards/*.jsonl.gz` — immutable shard objects; `sha256` in the \
-manifest is over the uncompressed jsonl. Download every `active: true` shard \
-and concatenate in manifest order to reproduce exactly what the eval machine \
-scores against.
-- `turns/manifests/{sha256}.json` — every manifest revision ever published, \
-immutable. The `manifest_sha256` stamped in any verdict resolves here, so \
-retired data stays replayable.
+- `turns/index/turns_*.parquet` — one row per scorable turn. Download this \
+first; filter/sample by `stratum` / `source` / `language` / `phase`, then \
+fetch only the `chunk_key` objects you need.
+- `turns/chunks/*.jsonl.gz` — trajectory records (`messages` once + \
+`turns[{{turn_idx, msg_pos, …}}]`). `sha256` in the manifest is over the \
+**uncompressed** jsonl. Materialize a turn as \
+`prefix = messages[:msg_pos]`, \
+`reference_turn = messages[msg_pos].content`.
+- `turns/shards/*_compat.jsonl.gz` — optional flat per-turn JSONL listed \
+under `compat_shards` for one cutover epoch (concat like v1). Not used by \
+eval pods on schema v2.
+- `turns/shards/turns_epoch_*.jsonl.gz` — legacy schema v1 per-turn shards. \
+Still present (retired) so old `manifest_sha256` values remain replayable.
+- `turns/manifests/{{sha256}}.json` — every manifest revision ever published, \
+immutable. The `manifest_sha256` stamped in any verdict resolves here.
+
+**How to query D (schema v2)** — do not download every chunk up front.
+
+1. Fetch the manifest and the Parquet index named in `manifest["index"]["key"]`:
+
+```bash
+curl -sO {BASE}/turns/manifest.json
+# example: turns/index/turns_0006.parquet
+curl -sO {BASE}/$(python -c "import json; print(json.load(open('manifest.json'))['index']['key'])")
+```
+
+2. Filter / sample the index locally (DuckDB, pandas, polars — anything that \
+reads Parquet). Index columns: `turn_id`, `traj_id`, `turn_idx`, `stratum`, \
+`phase`, `source`, `language`, `chunk_key`, `traj_line`, `msg_pos`, \
+`n_prefix_chars`.
+
+```python
+import duckdb
+duckdb.sql('''
+  SELECT turn_id, source, language, phase, chunk_key, traj_line, msg_pos
+  FROM 'turns_0006.parquet'
+  WHERE language = 'go' AND phase = 'late'
+  LIMIT 20
+''').show()
+```
+
+3. Download only the `chunk_key` objects you need. Each line is one \
+trajectory. Materialize a scored turn as:
+
+```python
+import gzip, json, httpx
+base = "{BASE}"
+row = ...  # one index row
+blob = httpx.get(f"{{base}}/{{row['chunk_key']}}").content
+traj = [json.loads(l) for l in gzip.decompress(blob).splitlines() if l][
+    row["traj_line"]]
+meta = next(t for t in traj["turns"] if t["turn_idx"] == row["turn_idx"])
+prefix = traj["messages"][: meta["msg_pos"]]          # ends on user / env out
+reference_turn = traj["messages"][meta["msg_pos"]]["content"]  # THOUGHT+bash
+```
+
+Helper in the code mirror: \
+[`code/affine/corpus/materialize.py`]({BASE}/code/affine/corpus/materialize.py) \
+(`materialize_turn`). Eval pods sample the index with \
+`blake2b(reveal_block_hash ‖ hotkey)` and materialize only the drawn slice.
+
+**Cutover note:** epoch 6 also lists a flat `compat_shards` JSONL for old \
+download scripts. Prefer the index+chunks path; compat goes away after the \
+next epochs. Staging datagen (private HF) is still turn-flat — conversion to \
+chunks+index happens when folds publish to Hippius.
 
 Slices are seeded by the reveal-block hash, so future slices are \
 unpredictable; past records tell you the distribution, not the next slice. \
-The corpus is refreshed continuously — new shards appear and old ones retire \
-via manifest revisions (`corpus_epoch` increments each time), so keep your \
-local copy synced to the manifest.
+The corpus is refreshed continuously — new chunks appear and old ones retire \
+via manifest revisions (`corpus_epoch` increments each time; this is a data \
+event, not a scoring fork), so keep your local copy synced to the manifest.
 
 Suggested agent loop: poll `evals/index.jsonl` → fetch new \
 `evals/*.json.gz` → train on `teacher_refs` (distillation) and on your own \

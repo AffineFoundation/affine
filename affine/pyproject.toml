@@ -12,6 +12,8 @@ dependencies = [
     # Hot-path dash-api on the root machine (also used by evalsrv on pods).
     "fastapi>=0.110",
     "uvicorn>=0.29",
+    # Corpus packer + Parquet turn index (schema_version=2).
+    "pyarrow>=17",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +35,14 @@ eval = [
     "datasets>=3.0",
     "pyarrow>=17",
 ]
+# Installed on the CPU-only datagen machine (datagen/bootstrap.sh). The
+# SWE-rebench harness fork is installed by that bootstrap (git URL).
+datagen = [
+    "mini-swe-agent>=2.4",
+    "datasets>=3.0",
+    "pyarrow>=17",
+    "pyyaml>=6",
+]
 
 [tool.setuptools.package-data]
 evalsrv = ["data/*.json"]
@@ -47,4 +57,4 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["affine*", "evalsrv*"]
+include = ["affine*", "evalsrv*", "datagen*"]

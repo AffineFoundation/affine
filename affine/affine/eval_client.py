@@ -48,6 +48,9 @@ class Fault:
     KING_LAUNCH = "king_launch_failed"    # king would not launch (transient/pod)
     POD_CAPACITY = "pod_capacity"         # challenger cannot fit the pod's disk
     CHALLENGER_INFRA = "challenger_infra"  # load failed for a pod-side reason
+    # Prompt (+ max_tokens) exceeded vLLM --max-model-len. Our serving config /
+    # corpus length mismatch — never the checkpoint's fault.
+    CONTEXT_LIMIT = "context_limit"
 
 
 # Every code above is OUR infrastructure, never the miner's fault: the duel is
@@ -55,6 +58,7 @@ class Fault:
 # with no known code is treated as a generic transient (bounded retries).
 INFRA_FAULT_CODES = frozenset({
     Fault.TEACHER, Fault.KING_LAUNCH, Fault.POD_CAPACITY, Fault.CHALLENGER_INFRA,
+    Fault.CONTEXT_LIMIT,
 })
 
 

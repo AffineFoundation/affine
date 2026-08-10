@@ -24,13 +24,17 @@ import json
 import logging
 import math
 import random
-import re
 import statistics as st
 from collections import defaultdict
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 
+if TYPE_CHECKING:
+    from .corpus import CorpusSync
+
+from affine.corpus.materialize import stratum_key
 from affine.score import (
     duel as score_duel,
     lambda2,
@@ -43,21 +47,16 @@ from .vllm_client import ModelPool, Served, VllmModel
 
 log = logging.getLogger("evalsrv.dueling")
 
-_PHASE_RE = re.compile(r"(func_basic|func_pm|lm_rewrite|lm_modify|combine_|pr_\d+)")
+# Back-compat alias for anything that imported _phase_key.
+_phase_key = stratum_key
 
 
 # -- slice ----------------------------------------------------------------------
 
 def turn_id(rec: dict) -> str:
+    if rec.get("turn_id"):
+        return str(rec["turn_id"])
     return f"{rec['traj_id']}:{rec['turn_idx']}"
-
-
-def _phase_key(rec: dict) -> str:
-    tid = rec.get("traj_id", "")
-    repo = tid.split(".", 1)[0] if tid else "unknown"
-    m = _PHASE_RE.search(tid)
-    phase = m.group(1) if m else "other"
-    return f"{repo}|{phase}"
 
 
 def duel_seed(block_hash: str, hotkey: str) -> int:
@@ -75,7 +74,7 @@ def sample_slice(rows: list[dict], n: int, seed: int) -> list[dict]:
         return out
     by: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
-        by[_phase_key(r)].append(r)
+        by[stratum_key(r)].append(r)
     rng = random.Random(seed)
     for v in by.values():
         rng.shuffle(v)
@@ -240,11 +239,12 @@ def _miner_summary(rows: list[dict], duel_cfg: dict) -> dict:
     }
 
 
-async def run_duel(engine_cfg: dict, turns_path: Path,
+async def run_duel(engine_cfg: dict, turns_path: Path | None,
                    king: Served, challenger: Served,
                    teacher: Served | list[Served],
                    block_hash: str, hotkey: str, corpus_info: dict,
-                   on_progress) -> tuple[dict, dict]:
+                   on_progress,
+                   corpus: "CorpusSync | None" = None) -> tuple[dict, dict]:
     """Full duel. Returns (verdict, artifact).
 
     The verdict is the small audit summary streamed to the validator. The
@@ -252,12 +252,23 @@ async def run_duel(engine_cfg: dict, turns_path: Path,
     reference rollouts, and both sides' per-turn pair rows (thoughts/actions
     plus every forced-logprob component) — published post-hoc so miners can
     train on exactly what was scored.
+
+    schema_version>=2: sample the Parquet index via ``corpus``, materialize
+    only the drawn turns. schema v1 / ``turns_path``: load flat turns.jsonl.
     """
     duel_cfg = engine_cfg["duel"]
-    with open(turns_path) as f:
-        rows = [json.loads(line) for line in f]
     seed = duel_seed(block_hash, hotkey)
-    turns = sample_slice(rows, int(duel_cfg["n_turns"]), seed)
+    n = int(duel_cfg["n_turns"])
+    if corpus is not None and corpus.schema_version >= 2:
+        rows = corpus.load_index_rows()
+        picked = sample_slice(rows, n, seed)
+        turns = corpus.materialize_turns(picked)
+    else:
+        if turns_path is None:
+            raise ValueError("turns_path required for schema_version=1")
+        with open(turns_path) as f:
+            rows = [json.loads(line) for line in f if line.strip()]
+        turns = sample_slice(rows, n, seed)
     # The manifest hash pins exactly which shard set this duel was scored
     # against — replayable even after shards are retired from the window.
     slice_info = {"seed": seed, "n": len(turns),

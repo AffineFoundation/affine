@@ -58,6 +58,26 @@ module.exports = {
       error_file: "logs/caddy.err.log",
       merge_logs: true,
     },
+    // Daily datagen → production corpus refresh at 16:00 UTC (host is UTC).
+    // Runs once per cron fire and exits (autorestart off). Deliberately NOT
+    // wrapped in doppler (local doppler token is broken): the script sources
+    // Hippius keys from the running validator's process env and caches the
+    // datagen HF token itself — see ops/datagen_refresh.py.
+    {
+      name: "affine-corpus-refresh",
+      cwd: __dirname + "/../..",
+      script: ".venv/bin/python",
+      args: "ops/datagen_refresh.py",
+      interpreter: "none",
+      autorestart: false,
+      cron_restart: "0 16 * * *",
+      out_file: "affine/logs/corpus_refresh.out.log",
+      error_file: "affine/logs/corpus_refresh.err.log",
+      merge_logs: true,
+      env: {
+        PYTHONUNBUFFERED: "1",
+      },
+    },
     // Legacy public hostname https://sn120.arbos.life → 127.0.0.1:8787.
     // The official site https://affine.io reaches 127.0.0.1:8787 via
     // Cloudflare (proxied DNS) → system caddy :80, not this tunnel.

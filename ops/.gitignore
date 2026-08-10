@@ -4,3 +4,5 @@ legacy.log
 legacy.pid
 *.log
 *.pid
+# corpus-refresh job state (folded-shard ledger, cached HF token, work files)
+datagen_refresh/

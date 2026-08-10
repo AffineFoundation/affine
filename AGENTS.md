@@ -141,9 +141,10 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
-- `weight_version_key = 1` (min_margin 0.05 → 0.02 on 2026-08-05 shipped WITHOUT a
-  version bump — operator decision)
-- teacher: `zai-org/GLM-4.5-Air-FP8`
+- `weight_version_key = 2` (bumped 2026-08-10 on teacher C swap Air→GLM-5.2-FP8;
+  earlier min_margin 0.05→0.02 on 2026-08-05 shipped WITHOUT a version bump)
+- teacher: `zai-org/GLM-5.2-FP8` (dedicated `affine-teacher` B300 box; evalsrv
+  remote `base_url`)
 - seed king: `dendriteholdings/albedo-qwen3.6-35b-king-genesis`
 - turns: sharded corpus with immutable manifest; sha-pinned (see toml `[dataset]`)
 - duel: n_turns=80, clip=0.1, r∈[0.3,4], baseline_band=1.25, δ=0.02, k_sigma=3
@@ -243,11 +244,14 @@ imported from there, not installed). Research scripts run from `research/` (rela
 `results/`, `data/` paths).
 
 Production corpus `research/data/turns_minicoder.jsonl` is **gitignored** (GitHub 100M
-cap). Canonical copy lives on the public Hippius bucket (`s3.hippius.com/affine-sn120`,
-append-only shards + immutable manifest; see toml `[dataset]`); the datagen loop stages
-raw shards on HF (`unconst/affine-datagen-turns`, private) until a corpus refresh folds
-them in. Headline freeze tables under `research/results/` are committed; bulky
-intermediate pair dumps are not.
+cap). Canonical copy lives on the public Hippius bucket (`s3.hippius.com/affine-sn120`):
+schema_version **2** uses trajectory chunks (`turns/chunks/`) + a Parquet turn index
+(`turns/index/`) behind an immutable manifest (see toml `[dataset]`); evalsrv samples
+the index and materializes prefixes on demand. Legacy per-turn shards remain for
+historical replay. The datagen loop stages raw turn-flat shards on HF
+(`unconst/affine-datagen-turns`, private) until a corpus refresh packs and folds them
+in. Headline freeze tables under `research/results/` are committed; bulky intermediate
+pair dumps are not.
 
 ---
 
@@ -321,13 +325,14 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 
 > Affine SN120: teacher-anchored thought-injection duels (S\* v2 = clip0.1 mix +
 > causality/leakage + bank + r∈[0.3,4] + 1.25× baseline band + 3σ∧δ=0.02 noise floor).
-> Reigns 1–2 (pandora-box ckpt300-m4, kevin954 sft) were crowned retroactively on
-> 2026-08-06 from their published genesis duels when r_lo 1.0→0.3 shipped (operator
-> decision, no re-eval; margins +0.061/z=5.7 and +0.070/z=6.3 vs genesis). Coding isomorphism holds at +0.758@30
-> ungated; second teacher +0.943; RT suite closed/mitigated except D_tau2 programmability
-> (three negative probes). Corpus sha-pinned on HF; uv-workspace monorepo
-> (`affine` + `research` + `ops`). Next: production n=80 burn-in and go-live ops, or paper
-> writeup without claiming D_tau2.
+> Teacher C is `zai-org/GLM-5.2-FP8` on a dedicated B300 box (`weight_version_key=2`,
+> 2026-08-10). Reigns 1–2 (pandora-box ckpt300-m4, kevin954 sft) were crowned
+> retroactively on 2026-08-06 from their published genesis duels when r_lo 1.0→0.3
+> shipped (operator decision, no re-eval; margins +0.061/z=5.7 and +0.070/z=6.3 vs
+> genesis). Coding isomorphism holds at +0.758@30 ungated on the Albedo panel;
+> live-board RT-7 inversion open. Second teacher +0.943; RT suite closed/mitigated
+> except D_tau2 programmability (three negative probes). Corpus sha-pinned;
+> uv-workspace monorepo (`affine` + `research` + `ops`).
 
 ---
 

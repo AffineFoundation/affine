@@ -48,7 +48,7 @@ from affine.eval_client import Fault
 from . import benchrunner, dueling
 from .corpus import CorpusSync
 from .engine import Engine
-from .vllm_client import Served
+from .vllm_client import ContextLengthError, Served
 
 log = logging.getLogger("evalsrv")
 
@@ -74,6 +74,7 @@ _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 _current: dict = {"kind": None, "job_id": None}
 _abort_bench = threading.Event()
+_corpus_kick = threading.Event()
 _teacher_ready = False
 _ROLE = os.environ.get("AFFINE_ROLE", "duel")
 _JOBS_RETENTION = _cfg.validator.jobs_retention
@@ -151,9 +152,15 @@ def _startup():
 
     def _corpus_loop():
         # Refresh between duels only: a manifest swap mid-duel would change
-        # turns.jsonl under a running slice.
+        # turns.jsonl under a running slice. The fixed hourly probe used to
+        # starve under a hot queue (observed 15h stale: the instant check
+        # almost always found _busy_lock held and slept another full hour), so
+        # duel completion now kicks the loop and the inter-duel gap is always
+        # used. If the next duel already grabbed the lock, its own completion
+        # kicks again.
         while True:
-            time.sleep(_cfg.dataset.refresh_interval_s)
+            _corpus_kick.wait(_cfg.dataset.refresh_interval_s)
+            _corpus_kick.clear()
             if _busy_lock.locked():
                 continue
             _corpus.refresh()
@@ -187,7 +194,8 @@ def health(_: None = Depends(_require_token)):
         "busy": _busy_lock.locked(),
         "busy_kind": _current["kind"],
         "free_disk_gb": round(_engine.free_disk_gb(), 1),
-        "turns_present": TURNS_PATH.exists(),
+        "turns_present": (_corpus.ready if _ROLE != "bench"
+                          else TURNS_PATH.exists()),
         "corpus": _corpus.info() if _ROLE != "bench" else None,
         "versions": _stack_versions(),
     }
@@ -286,21 +294,28 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
                         "data": {"phase": "scoring", "miner": miner,
                                  "done": done, "total": total}})
 
-        verdict, artifact = asyncio.run(dueling.run_duel(
-            _cfg.raw, TURNS_PATH,
-            king=Served("king", req.king_repo, req.king_revision,
-                        _engine.king_slot.port),
-            challenger=Served("challenger", req.challenger_repo,
-                              req.challenger_revision, _engine.chall_slot.port),
-            # All servable teacher replicas — dueling round-robins the echo
-            # load across them. Falls back to the primary endpoint if the
-            # engine reports none (ensure_teacher just passed, so it serves).
-            teacher=_engine.teacher_serveds() or [
-                Served("teacher", _cfg.teacher.repo, None,
-                       _engine.teacher_slot.port)],
-            block_hash=req.block_hash, hotkey=req.challenger_hotkey,
-            corpus_info=_corpus.info(),
-            on_progress=on_progress))
+        try:
+            verdict, artifact = asyncio.run(dueling.run_duel(
+                _cfg.raw, TURNS_PATH,
+                king=Served("king", req.king_repo, req.king_revision,
+                            _engine.king_slot.port),
+                challenger=Served("challenger", req.challenger_repo,
+                                  req.challenger_revision,
+                                  _engine.chall_slot.port),
+                # All servable teacher replicas — dueling round-robins the
+                # echo load across them. Falls back to the primary endpoint
+                # if the engine reports none (ensure_teacher just passed).
+                teacher=_engine.teacher_serveds() or [
+                    Served("teacher", _cfg.teacher.repo, None,
+                           _engine.teacher_slot.port,
+                           base_url=(_cfg.teacher.base_url or None))],
+                block_hash=req.block_hash, hotkey=req.challenger_hotkey,
+                corpus_info=_corpus.info(),
+                on_progress=on_progress,
+                corpus=_corpus))
+        except ContextLengthError as e:
+            # Serving config / corpus length — requeue without burning miner.
+            raise DuelFault(Fault.CONTEXT_LIMIT, str(e)) from e
         verdict["job_id"] = job_id  # lets the root fetch the artifact post-verdict
         _save_artifact(job_id, req, verdict, artifact)
 
@@ -326,6 +341,7 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
             log.warning("challenger unload failed", exc_info=True)
         _current.update(kind=None, job_id=None)
         _busy_lock.release()
+        _corpus_kick.set()
 
 
 @app.post("/duel")
