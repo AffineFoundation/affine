@@ -12,15 +12,20 @@ daily at 16:00 UTC (host clock is UTC). Each cycle:
      one closed ```bash block in reference_turn, no verbatim leakage of that
      block into the prefix, and bench-panel repo disjointness
      (affine/evalsrv/data/swe_rebench_lite_ids.json);
-  3. skip the cycle when fewer than MIN_NEW_TURNS valid new turns accumulated,
+  3. enforce the [mix] group targets from rollouts/rollouts/sources.toml:
+     candidates are selected by whole-corpus deficit waterfill (a group over
+     its target share defers its surplus turns to work/deferred_turns.jsonl,
+     re-considered every cycle) — this also retroactively rebalances the
+     pre-mix corpus, which counts as group "coding";
+  4. skip the cycle when fewer than MIN_NEW_TURNS valid new turns accumulated,
      unless the newest unfolded shard is older than STALE_AFTER_S (stalled
      producer -- fold whatever exists to keep the cadence);
-  4. publish via the corpus_push path and in its safe order: immutable shard
+  5. publish via the corpus_push path and in its safe order: immutable shard
      object first, manifest revision last, local state only after the manifest
      confirms. A `pending` record written before the upload makes a crashed
      publish resumable: the next run re-publishes the exact same candidate
      bytes, verifying the remote shard sha instead of re-uploading;
-  5. announce on the SN120 Discord channel -- only when a publish actually
+  6. announce on the SN120 Discord channel -- only when a publish actually
      happened; a failed announcement is queued and retried next cycle.
 
 Credentials (the local doppler token is broken, 2026-08-07):
@@ -46,6 +51,7 @@ import re
 import subprocess
 import sys
 import os
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -56,6 +62,11 @@ STATE_DIR = REPO / "ops" / "datagen_refresh"
 STATE_PATH = STATE_DIR / "state.json"
 HF_TOKEN_PATH = STATE_DIR / "hf_token"
 WORK_DIR = STATE_DIR / "work"
+DEFERRED_PATH = WORK_DIR / "deferred_turns.jsonl"
+SOURCES_TOML = REPO / "rollouts" / "rollouts" / "sources.toml"
+# Records without a source tag predate the unified pipeline: mini-swe
+# swerebench trajectories, i.e. coding.
+DEFAULT_GROUP = "coding"
 
 DATAGEN_REPO = "unconst/affine-datagen-turns"
 PANEL_PATH = REPO / "affine" / "evalsrv" / "data" / "swe_rebench_lite_ids.json"
@@ -290,6 +301,58 @@ def prefilter(lines: list[str], published: set[str],
     return kept, drops
 
 
+# -- mix enforcement -------------------------------------------------------------
+def load_mix() -> tuple[dict[str, float], dict[str, str]]:
+    """([mix] group targets, source name -> group) from the rollouts
+    registry TOML (single source of truth shared with the generation-side
+    scheduler)."""
+    raw = tomllib.loads(SOURCES_TOML.read_text())
+    mix = {g: float(v) for g, v in raw.get("mix", {}).items()}
+    if abs(sum(mix.values()) - 1.0) > 0.01:
+        fatal(f"[mix] in {SOURCES_TOML} must sum to 1.0")
+    src2grp = {name: cfg["group"] for name, cfg in raw.get("source", {}).items()}
+    return mix, src2grp
+
+
+def enforce_mix(kept: list[str], group_counts: dict[str, int],
+                mix: dict[str, float], src2grp: dict[str, str],
+                ) -> tuple[list[str], list[str], dict[str, int]]:
+    """Whole-corpus deficit waterfill: repeatedly take a turn from the
+    group furthest below its target share of the post-fold corpus; stop
+    when every group with candidates left would only move further above
+    target. Returns (selected, deferred, per-group counts added).
+
+    The existing corpus counts (group_counts) are the retroactive part:
+    a fully-coding corpus keeps coding candidates deferred until the other
+    groups catch up to the declared mix."""
+    pools: dict[str, list[str]] = {}
+    for line in kept:
+        rec = json.loads(line)
+        group = src2grp.get(rec.get("source") or "", DEFAULT_GROUP)
+        if group not in mix:
+            group = DEFAULT_GROUP
+        pools.setdefault(group, []).append(line)
+    counts = {g: int(group_counts.get(g, 0)) for g in mix}
+    added: dict[str, int] = {}
+    selected: list[str] = []
+    cursors = {g: 0 for g in pools}
+    while True:
+        cands = [g for g in pools if cursors[g] < len(pools[g])]
+        if not cands:
+            break
+        total = sum(counts.values()) + 1
+        best = max(cands, key=lambda g: mix[g] * total - counts[g])
+        if mix[best] * total - counts[best] <= 0:
+            break   # every remaining group is at/over target
+        selected.append(pools[best][cursors[best]])
+        cursors[best] += 1
+        counts[best] += 1
+        added[best] = added.get(best, 0) + 1
+    deferred = [line for g, pool in pools.items()
+                for line in pool[cursors[g]:]]
+    return selected, deferred, added
+
+
 # -- publish -------------------------------------------------------------------
 def publish_candidate(corpus: "corpus_push.Corpus", state: dict) -> dict:
     """Publish state['pending']. Routes to v1 or v2 based on live schema /
@@ -507,6 +570,10 @@ def finalize(state: dict, manifest: dict) -> None:
         n_added = int(pending["n_turns"])
     raw = json.dumps(manifest, indent=2, sort_keys=True).encode()
     state["folded"] = sorted(set(state["folded"]) | set(pending["folded_keys"]))
+    counts = state.get("group_counts", {})
+    for group, n in (pending.get("group_added") or {}).items():
+        counts[group] = int(counts.get(group, 0)) + int(n)
+    state["group_counts"] = counts
     unann = {
         "epoch": int(pending["epoch"]), "n_added": n_added,
         "total": total, "manifest_sha256": hashlib.sha256(raw).hexdigest(),
@@ -546,42 +613,72 @@ def main() -> None:
     token = hf_token()
     shards = datagen_manifest(token).get("shards", [])
     unfolded = [s for s in shards if s["key"] not in state["folded"]]
-    if not unfolded:
-        log(f"no unfolded datagen shards ({len(shards)} total); done")
+    carryover = ([line for line in DEFERRED_PATH.read_text().splitlines()
+                  if line.strip()] if DEFERRED_PATH.exists() else [])
+    if not unfolded and not carryover:
+        log(f"no unfolded datagen shards ({len(shards)} total) and no "
+            "deferred turns; done")
         return
-    log(f"{len(unfolded)} unfolded shard(s): "
-        + ", ".join(s["key"] for s in unfolded))
+    log(f"{len(unfolded)} unfolded shard(s), {len(carryover)} deferred "
+        "turn(s): " + ", ".join(s["key"] for s in unfolded))
 
     manifest = corpus._require_manifest()
     published = published_turn_ids(corpus, manifest)
     panel_ids, panel_repos = panel_keys()
 
-    lines: list[str] = []
+    # Deferred turns re-enter first; prefilter dedup makes re-downloaded
+    # shard copies of the same turns harmless.
+    lines: list[str] = list(carryover)
     for s in unfolded:
         lines.extend(download_shard(token, s).decode().splitlines())
     kept, drops = prefilter(lines, published, panel_ids, panel_repos)
     log(f"prefilter: kept {len(kept)} / dropped {len(lines) - len(kept)} "
         f"of {len(lines)} ({drops or 'no drops'})")
 
-    newest = max(datetime.fromisoformat(s["uploaded_at"]) for s in unfolded)
-    age_s = (datetime.now(timezone.utc) - newest).total_seconds()
-    if len(kept) < MIN_NEW_TURNS and age_s < STALE_AFTER_S:
-        log(f"only {len(kept)} valid new turns (< {MIN_NEW_TURNS}) and newest "
-            f"shard is {age_s / 3600:.1f}h old (< 48h); skipping this cycle")
+    mix, src2grp = load_mix()
+    if not state.get("group_counts"):
+        # First mix-aware fold: everything already published predates the
+        # unified pipeline and counts as the default group.
+        if manifest.get("index"):
+            existing_total = int(manifest["index"]["n_turns"])
+        else:
+            existing_total = sum(int(s.get("n_turns") or 0)
+                                 for s in manifest["shards"] if s["active"])
+        state["group_counts"] = {DEFAULT_GROUP: existing_total}
+        log(f"initialized group_counts: {existing_total} existing turns "
+            f"as {DEFAULT_GROUP!r}")
+    selected, deferred, group_added = enforce_mix(
+        kept, state["group_counts"], mix, src2grp)
+    log(f"mix enforcement: selected {len(selected)} (+{group_added}), "
+        f"deferred {len(deferred)}")
+
+    stale = False
+    if unfolded:
+        newest = max(datetime.fromisoformat(s["uploaded_at"])
+                     for s in unfolded)
+        age_s = (datetime.now(timezone.utc) - newest).total_seconds()
+        stale = age_s >= STALE_AFTER_S
+    if len(selected) < MIN_NEW_TURNS and not stale:
+        log(f"only {len(selected)} mix-eligible new turns "
+            f"(< {MIN_NEW_TURNS}); skipping this cycle")
         return
-    if not kept:
-        log("no valid new turns at all; nothing to publish")
+    if not selected:
+        log("no mix-eligible new turns at all; nothing to publish")
         return
 
     epoch = int(manifest["corpus_epoch"]) + 1
     candidate = WORK_DIR / f"candidate_epoch_{epoch:04d}.jsonl"
-    candidate.write_text("\n".join(kept) + "\n")
+    candidate.write_text("\n".join(selected) + "\n")
+    tmp = DEFERRED_PATH.with_suffix(".jsonl.tmp")
+    tmp.write_text("\n".join(deferred) + ("\n" if deferred else ""))
+    tmp.replace(DEFERRED_PATH)
     pending = {
         "epoch": epoch,
         "candidate": str(candidate),
         "sha256": hashlib.sha256(candidate.read_bytes()).hexdigest(),
-        "n_turns": len(kept),
-        "n_added": len(kept),
+        "n_turns": len(selected),
+        "n_added": len(selected),
+        "group_added": group_added,
         "folded_keys": [s["key"] for s in unfolded],
     }
     # After the v2 cutover, every fold packs traj chunks + merges the index.
@@ -592,7 +689,8 @@ def main() -> None:
 
     finalize(state, publish_candidate(corpus, state))
     announce(state)
-    log(f"cycle complete: epoch {epoch}, +{len(kept)} turns")
+    log(f"cycle complete: epoch {epoch}, +{len(selected)} turns "
+        f"({len(deferred)} deferred by mix)")
 
 
 if __name__ == "__main__":
