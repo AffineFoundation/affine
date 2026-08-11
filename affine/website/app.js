@@ -14,7 +14,7 @@ import {
   fetchRegHistory,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=49";
+} from "./api.js?v=50";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -39,7 +39,7 @@ import {
   reignMembers,
   setReignLookup,
   short,
-} from "./charts.js?v=49";
+} from "./charts.js?v=50";
 
 const $ = (id) => document.getElementById(id);
 
@@ -965,26 +965,11 @@ function wireDatasetPage() {
   $("dataset-back")?.addEventListener("click", closeDatasetPage);
 }
 
-/* ---------- section tabs ---------- */
+/* ---------- section nav (linear page, scroll links) ---------- */
 
-// Exactly one section is shown at a time; "evolution" is the hero charts.
-const TAB_SECTIONS = ["evolution", "reign", "gates", "queue", "history",
-  "fails", "intake"];
-
-function activateTab(id) {
-  if (!TAB_SECTIONS.includes(id)) id = "evolution";
-  for (const t of TAB_SECTIONS) {
-    const sec = document.getElementById(t);
-    if (sec) sec.hidden = t !== id;
-  }
-  document.querySelectorAll(".toc-link").forEach((a) => {
-    a.classList.toggle("active", (a.getAttribute("href") || "").slice(1) === id);
-  });
-  // Charts laid out while hidden fall back to a default width — redraw now
-  // that the pane has real geometry.
-  if (id === "evolution") renderHero(true);
-  if (id === "gates") renderGates(true);
-  if (id === "queue") renderRegPrice(true);
+function scrollToSection(id) {
+  document.getElementById(id)
+    ?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function datasetOpen() {
@@ -1612,8 +1597,14 @@ function wire() {
   document.querySelectorAll(".toc-link").forEach((a) => {
     a.addEventListener("click", (e) => {
       e.preventDefault();
-      if (duelHashCid() || datasetOpen()) location.hash = "";
-      activateTab((a.getAttribute("href") || "").slice(1));
+      const id = (a.getAttribute("href") || "").slice(1);
+      // From a duel/dataset page, return to the dashboard first, then jump.
+      if (duelHashCid() || datasetOpen()) {
+        location.hash = "";
+        setTimeout(() => scrollToSection(id), 60);
+      } else {
+        scrollToSection(id);
+      }
     });
   });
   $("chart-modal-close")?.addEventListener("click", closeChart);

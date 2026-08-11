@@ -183,12 +183,13 @@ button {
 }
 
 .toc-link:hover {
-  color: var(--color-fg);
+  color: var(--color-gold);
 }
 
-.toc-link.active {
-  color: var(--color-gold);
-  border-bottom-color: var(--color-gold);
+/* Anchor jumps land below the sticky header (nav + market + toc). */
+.hero,
+.section {
+  scroll-margin-top: 104px;
 }
 
 /* ---------- market ticker (TMC) ---------- */
