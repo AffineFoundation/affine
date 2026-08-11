@@ -15,6 +15,7 @@ resolution-markers = [
 [manifest]
 members = [
     "affine",
+    "rollouts",
     "sn120-ops",
     "sn120-research",
 ]
@@ -38,10 +39,17 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "huggingface-hub" },
+    { name = "pyarrow" },
     { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
+datagen = [
+    { name = "datasets" },
+    { name = "mini-swe-agent" },
+    { name = "pyarrow" },
+    { name = "pyyaml" },
+]
 eval = [
     { name = "datasets" },
     { name = "hf-transfer" },
@@ -56,19 +64,24 @@ eval = [
 requires-dist = [
     { name = "bittensor", specifier = ">=11,<12" },
     { name = "boto3", specifier = ">=1.34" },
+    { name = "datasets", marker = "extra == 'datagen'", specifier = ">=3.0" },
     { name = "datasets", marker = "extra == 'eval'", specifier = ">=3.0" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "hf-transfer", marker = "extra == 'eval'", specifier = ">=0.1.8" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "huggingface-hub", specifier = ">=0.30" },
+    { name = "mini-swe-agent", marker = "extra == 'datagen'", specifier = ">=2.4" },
     { name = "mini-swe-agent", marker = "extra == 'eval'", specifier = ">=2.4" },
+    { name = "pyarrow", specifier = ">=17" },
+    { name = "pyarrow", marker = "extra == 'datagen'", specifier = ">=17" },
     { name = "pyarrow", marker = "extra == 'eval'", specifier = ">=17" },
+    { name = "pyyaml", marker = "extra == 'datagen'", specifier = ">=6" },
     { name = "tau2", marker = "extra == 'eval'", git = "https://github.com/sierra-research/tau2-bench" },
     { name = "transformers", marker = "extra == 'eval'", specifier = ">=4.51" },
     { name = "uvicorn", specifier = ">=0.29" },
     { name = "vllm", marker = "extra == 'eval'", specifier = ">=0.8" },
 ]
-provides-extras = ["eval"]
+provides-extras = ["eval", "datagen"]
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -3701,6 +3714,27 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1b/2d/439b0728a92964a04d9c88ea1ca9ebb128893fbbd5834faa31f987f2fd4c/rlp-4.1.0.tar.gz", hash = "sha256:be07564270a96f3e225e2c107db263de96b5bc1f27722d2855bd3459a08e95a9", size = 33429, upload-time = "2025-02-04T22:05:59.089Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/99/fb/e4c0ced9893b84ac95b7181d69a9786ce5879aeb3bbbcbba80a164f85d6a/rlp-4.1.0-py3-none-any.whl", hash = "sha256:8eca394c579bad34ee0b937aecb96a57052ff3716e19c7a578883e767bc5da6f", size = 19973, upload-time = "2025-02-04T22:05:57.05Z" },
+]
+
+[[package]]
+name = "rollouts"
+version = "0.1.0"
+source = { editable = "rollouts" }
+dependencies = [
+    { name = "affine" },
+    { name = "datasets" },
+    { name = "huggingface-hub" },
+    { name = "pyarrow" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "affine", editable = "affine" },
+    { name = "datasets", specifier = ">=3.0" },
+    { name = "huggingface-hub", specifier = ">=0.30" },
+    { name = "pyarrow", specifier = ">=17" },
+    { name = "pyyaml", specifier = ">=6" },
 ]
 
 [[package]]
