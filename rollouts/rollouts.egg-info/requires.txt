@@ -1,5 +1,0 @@
-affine
-datasets>=3.0
-huggingface_hub>=0.30
-pyarrow>=17
-pyyaml>=6
