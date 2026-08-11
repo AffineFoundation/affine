@@ -1,0 +1,52 @@
+# Policy matrix: who plays the agent seat. policy = harness + sampling +
+# an ORDERED endpoint fallback chain (first healthy endpoint wins; a
+# provider-suspect batch retries on the next one). API keys are referenced
+# by env-var name only — never stored here.
+#
+# `share` is the target share of kept turns among the policies enabled for
+# a source (scheduler picks by per-policy deficit). A policy whose every
+# endpoint is missing its key env is skipped (fail-open to the others,
+# fail-closed when none remain).
+
+[policy.glm_textbased]
+harness = "mini_swe_textbased"
+share = 1.0
+
+[policy.glm_textbased.sampling]
+temperature = 0.7
+
+[[policy.glm_textbased.endpoints]]
+name = "engy"
+model = "glm-5.2"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+[[policy.glm_textbased.endpoints]]
+name = "openrouter"
+model = "z-ai/glm-4.5-air"
+base_url = "https://openrouter.ai/api/v1"
+key_env = "OPENROUTER"
+litellm_model = "openrouter/z-ai/glm-4.5-air"   # native litellm route
+
+# -- examples: third-party agent harnesses (enable by adding the policy id
+# to [defaults].policies or a source's `policies`) ------------------------------
+#
+# [policy.hermes]
+# harness = "hermes_agent"        # installs Hermes Agent in the task
+# share = 0.5                     # container, drives it over ACP
+#
+# [[policy.hermes.endpoints]]
+# name = "engy"
+# model = "glm-5.2"
+# base_url = "https://api.engy.ai/v1"
+# key_env = "ENGY"
+#
+# [policy.claude_code]
+# harness = "claude_code"
+# share = 0.5
+#
+# [[policy.claude_code.endpoints]]
+# name = "anthropic"
+# model = "claude-sonnet-5"
+# base_url = "https://api.anthropic.com/v1"
+# key_env = "ANTHROPIC_API_KEY"

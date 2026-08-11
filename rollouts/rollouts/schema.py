@@ -48,11 +48,18 @@ class Endpoint:
     model: str                # model name as the endpoint knows it
     base_url: str
     key_env: str              # env var holding the API key (never the key)
+    litellm_model: str = ""   # mini_swe route override (e.g. openrouter/...)
 
     @property
     def label(self) -> str:
         """Turn-record model tag, e.g. engy/glm-5.2."""
         return f"{self.name}/{self.model}"
+
+    @property
+    def litellm(self) -> str:
+        """Model string for litellm-based harnesses; defaults to the
+        OpenAI-compatible route against base_url."""
+        return self.litellm_model or f"openai/{self.model}"
 
 
 @dataclass(frozen=True)

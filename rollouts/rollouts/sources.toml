@@ -1,0 +1,123 @@
+# Source registry: every task source is one declarative block.
+# Adding a source = adding one block (+ a catalog builder if its kind is new).
+#
+# [mix] targets are shares of KEPT TURNS (records that survive the
+# duel_turns view + prefilter) per group — not attempts. The scheduler
+# steers generation toward these; ops/datagen_refresh.py enforces the same
+# targets at fold time.
+
+[mix]
+coding = 0.60
+terminal = 0.30
+nl2repo = 0.10
+
+[defaults]
+# Policy ids from policies.toml; sources may override with `policies = [...]`.
+policies = ["glm_textbased"]
+
+# -- coding --------------------------------------------------------------------
+
+[source.swerebench_main]
+# The former main datagen loop (mini-swe-agent on the nebius pool).
+group = "coding"
+runner = "mini_swe"
+catalog = "hf_swebench"
+dataset = "nebius/SWE-rebench"
+split = "filtered"
+swe_eval = true          # swebench verdict as rewards.solved telemetry
+share = 3.0
+
+[source.scaleswe]
+group = "coding"
+runner = "verifiers"
+taskset_id = "scaleswe-v1"
+catalog = "hf"
+dataset = "PrimeIntellect/Scale-SWE-Verified"
+split = "train"
+row_meta = "scaleswe"
+share = 3.0
+# Catalog + pull failures already cover availability; the taskset's own
+# docker-hub tag enumeration costs ~17 registry calls per batch.
+extra_flags = ["--env.taskset.filter-unavailable-images", "False"]
+
+[source.swerebench_v2]
+group = "coding"
+runner = "verifiers"
+taskset_id = "swerebench-v2-full"
+catalog = "hf"
+dataset = "PrimeIntellect/SWE-rebench-V2"
+split = "train"
+row_meta = "swerebench_v2"
+share = 2.0
+
+[source.r2e_gym]
+group = "coding"
+runner = "verifiers"
+taskset_id = "r2e-gym-v1"
+catalog = "hf"
+dataset = "PrimeIntellect/R2E-Gym-Subset-Verified"
+split = "train"
+uid_field = "commit_hash"
+row_meta = "r2e"
+share = 1.0
+
+[source.multiswe]
+group = "coding"
+runner = "verifiers"
+taskset_id = "multiswe-v1"
+catalog = "hf"
+dataset = "PrimeIntellect/Multi-SWE-RL-Verified"
+split = "train"
+row_meta = "multiswe"
+share = 1.0
+
+[source.swesmith]
+group = "coding"
+runner = "verifiers"
+taskset_id = "swesmith-v1"
+catalog = "swesmith"        # multi-language HF shards + per-repo cap
+pass_dataset = false
+share = 4.0
+
+[source.swelego]
+group = "coding"
+runner = "verifiers"
+taskset_id = "swelego-v1"
+catalog = "hf"
+dataset = "PrimeIntellect/SWE-Lego-Real-Data-Verified"
+split = "resolved"
+row_meta = "swelego"
+share = 2.0
+
+# -- terminal ------------------------------------------------------------------
+
+[source.terminal_lego]
+group = "terminal"
+runner = "verifiers"
+taskset_id = "terminal-lego-v1"
+catalog = "terminal_lego"   # HF git checkout + task.toml scan
+select = "tasks"
+pass_dataset = false
+local_docker_build = true
+share = 3.0
+
+[source.terminal_bench_2]
+group = "terminal"
+runner = "verifiers"
+taskset_id = "terminal-bench-2-v1"
+catalog = "terminal_bench_2"
+select = "tasks"
+pass_dataset = false
+task_id_basename = true     # harbor filters on the task dir basename
+share = 1.0
+
+# -- nl2repo -------------------------------------------------------------------
+
+[source.nl2repobench]
+group = "nl2repo"
+runner = "verifiers"
+taskset_id = "nl2repobench-v1"
+catalog = "nl2repobench"    # bundled test_files scan
+select = "tasks"
+pass_dataset = false
+share = 1.0
