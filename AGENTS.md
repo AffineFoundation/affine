@@ -43,20 +43,21 @@ Reason (per pair)  = lpC(y_C | z_A) − lpC(y_C | ∅)      # formerly Λ2; Scor
 Miner score        = mean(Reason) over all scored pairs
 Crown              = paired mean(Reason_c − Reason_k) > k_sigma · SE
 ```
-Scoring hyperparameters: `n_turns = 80`, `k_sigma = 3.0`. Nothing else — no mix, no
-clip, **no gates**, no `min_margin`/`min_se` floors. The duel is purely relative to
-the slice's own noise (bare `SE = stdev/√n`; false-crown ≈ 0.13%/duel at 3σ). The
-ranked quantity lives entirely on the teacher side, which retires the whole lpA
-attack surface by construction.
+Scoring hyperparameters: `n_turns = 2080`, `k_sigma = 2.0` (lowered from 3.0
+on 2026-08-11), with `n_teacher_samples = n_miner_samples = 1`. Nothing else —
+no mix, no clip, **no gates**, no `min_margin`/`min_se` floors. The duel is
+purely relative to the slice's own noise (bare `SE = stdev/√n`; false-crown ≈
+2.28%/duel ≈ 1 in 44 at 2σ under a Gaussian null). The ranked quantity lives
+entirely on the teacher side, which retires the whole lpA attack surface by
+construction.
 
-### Telemetry (measured + published in every verdict, never scored)
-Everything S\* v2 used to gate on: causality/leakage pass rate (τ=0.02 is now a
-non-consensus telemetry constant), prior-bank positivity fraction, calibration
-ratio r, empty-baseline magnitude, raw mean L1lift — plus new metrics: per-side
-thought/action char lengths, length deltas vs the teacher's own rollouts, and
-`duel_seconds` (scoring wall clock). Watch bank telemetry for adaptive paraphrase
-priors (the residual channel: ties genesis on raw Reason but must still beat the
-sitting king at 3σ).
+### Live instrumentation (Reason-only, 2026-08-11)
+GPU work per pair is miner sample + `lpC(y_C|z_A)`; ref supplies
+`lpC(y_C|z_C)` / `lpC(y_C|∅)`. Prior-bank and retired lpA / extra lpC echoes are
+**off** (`reason_only`, `score_bank=false`) so the budget sits in `n_turns`.
+Still published: η (sufficiency), thought/action lengths + teacher deltas,
+`duel_seconds`. Pre-fork / full-telemetry verdicts may still carry causality,
+bank, r, baseline, L1lift.
 
 ### History — S\* v2 (retired 2026-08-10)
 v2 was `S = mean(Λ2 + w·clip(L1lift, ±0.1))` behind 4 gates (causality γ=0.30,
@@ -161,8 +162,8 @@ Full writeups: `research/docs/REDTEAM.md`.
   remote-teacher push torn down, never cut over)
 - seed king: `dendriteholdings/albedo-qwen3.6-35b-king-genesis`
 - turns: sharded corpus with immutable manifest; sha-pinned (see toml `[dataset]`)
-- duel: n_turns=80, k_sigma=3 — that is the whole scoring contract (v2 knobs
-  deleted from `[duel]` 2026-08-10; everything they measured is verdict telemetry)
+- duel: n_turns=2080, k_sigma=2, samples 1/1, reason_only (v2 knobs deleted
+  from `[duel]` 2026-08-10; bank/lpA echoes off 2026-08-11)
 
 ### Evalsrv roles
 - `AFFINE_ROLE=duel` — teacher + king + challenger; Reason only
@@ -283,7 +284,7 @@ pair dumps are not.
 2. Teacher C samples reference rollouts (z_C, y_C); cached per turn in ref jsonl.
 3. Miner A samples (z_A, y_A) [or force-y pins y to gold].
 4. Teacher-force echo+logprobs for the component lp\* fields (stored in pair records).
-5. Offline or online: mean Reason per side → paired 3σ duel (telemetry recorded
+5. Offline or online: mean Reason per side → paired kσ duel (telemetry recorded
    alongside; pre-fork replays use the legacy gates→mix→δ path).
 
 Key modules:

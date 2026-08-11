@@ -153,8 +153,13 @@ queue, live eval
 - [api/v1/contract]({DASH}/api/v1/contract) — machine-readable knobs
 - `api/v1/duels/{challenge_id}` — duel detail (Reason, telemetry, rejection)
 - `api/v1/duels/{challenge_id}/series` — chart-safe per-turn Reason/L1lift
+- [api/v1/dataset]({DASH}/api/v1/dataset) — corpus D stats (epoch, mix, \
+length histogram)
+- `api/v1/dataset/turns?source=&language=&phase=&repo=&q=&limit=&cursor=` — \
+paginated turn index
+- `api/v1/dataset/turn?turn_id=` — one turn's prompt prefix + reference action
 - [api/v1/stream]({DASH}/api/v1/stream) — SSE snapshot deltas
-- [index.html]({DASH}/) — interactive dashboard UI
+- [index.html]({DASH}/) — interactive dashboard UI (`#dataset` = corpus browser)
 
 **Hippius archive** (cold public mirror — miners / replay; same objects)
 
@@ -368,24 +373,24 @@ duel), `z_A` is your model's thought on the same turn, and both logprobs are \
 teacher-forced on the teacher — **your model's own logprobs never enter the \
 ranked quantity**. You win by producing thoughts that measurably raise the \
 teacher's likelihood of its own action, i.e. by genuinely reasoning about the \
-turn. Scoring hyperparameters: `n_turns = 80`, `k_sigma = 3.0`. There is no \
+turn. Scoring hyperparameters: `n_turns = 2080`, `k_sigma = 2.0`, with \
+`n_teacher_samples = n_miner_samples = 1` (one pair per turn). There is no \
 mix, no clip, no gates, and no absolute margin floor — the duel is purely \
 relative to the slice's own noise (`SE = stdev/√n` over paired turns).
 
-**Telemetry (measured, published, never scored).** Every verdict also \
-records the quantities the retired S* v2 contract used to gate on, plus new \
-length/timing metrics — study them, but none affects validity or score:
+**Live instrumentation (Reason-only).** Each scored pair runs a miner sample \
+plus one teacher echo `lpC(y_C|z_A)`; `lpC(y_C|z_C)` / `lpC(y_C|∅)` come from \
+the fresh teacher reference. Prior-bank and retired lpA / extra lpC echoes \
+are **not** computed live (`reason_only = true`, `score_bank = false`) so the \
+GPU budget can sit in `n_turns`. Published per verdict when available:
 
-- causality/leakage pass rate (τ = 0.02 telemetry constant)
-- prior-bank positivity fraction vs `affine/priors.py`
-- calibration ratio `r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|` and the \
-empty-baseline magnitude `mean|lpA(y_C|∅)|`
-- raw mean L1lift `lpA(y_C|z_A) − lpA(y_C|∅)`
 - sufficiency fraction `η = Λ2(z_A)/Λ2(z_C) = Reason / (lpC(y_C|z_C) − lpC(y_C|∅))` \
 — how much of the teacher's own thinking the miner's thought replaces \
 (climbing η across reigns = capability slope; flat η under crowning = budget burn)
 - per-side thought/action char lengths + deltas vs the teacher's own \
 rollouts, and the duel's scoring wall clock (`duel_seconds`)
+- Pre-fork / full-telemetry verdicts may still carry causality, bank, \
+calibration r, baseline, and L1lift fields — those are not live GPU work now.
 
 Pre-fork verdicts (before 2026-08-10) stamp the old `gates` block and the \
 S* mix formula they were judged under; they remain replayable as recorded.
@@ -401,9 +406,9 @@ contract — models are rendered through their own chat template to a string \
 and driven via `/v1/completions`, injection plants thoughts as the canonical \
 assistant body `</think>\\nTHOUGHT: {z}\\n\\n{y}`, and `split_rollout` \
 defines exactly what counts as z (all reasoning text) and y (the last closed \
-bash-fenced block). `evalsrv/terms.py` makes the ten forced-logprob calls behind \
-every `lp*` component; `evalsrv/vllm_client.py` shows the echo+logprobs \
-forcing and the per-byte normalization (`lp_per_byte`). Serve the teacher, \
+bash-fenced block). `evalsrv/terms.py` runs the live Reason-only echo \
+(`lpC(y_C|z_A)`) plus teacher refs; `evalsrv/vllm_client.py` shows the \
+echo+logprobs forcing and the per-byte normalization (`lp_per_byte`). Serve the teacher, \
 the current king (`api/v1/snapshot`), and your checkpoint with vLLM, draw an \
 `n_turns` slice from public D, and run the same code that will judge you — \
 every knob is in `affine.toml` `[duel]`.
@@ -430,6 +435,12 @@ data. All paths are relative to this site's root (Hippius S3 bucket \
 - `GET /api/v1/contract` — machine-readable contract knobs.
 - `GET /api/v1/duels/{id}` — duel detail (z, margin, Reason, telemetry).
 - `GET /api/v1/duels/{id}/series` — per-turn Reason / L1lift (no raw logprobs).
+- `GET /api/v1/dataset` — corpus D stats: epoch, turn/traj counts, mix by \
+source/language/phase/repo, prompt-length histogram.
+- `GET /api/v1/dataset/turns` — paginated turn index rows \
+(`?source=&language=&phase=&repo=&q=&limit=&cursor=`).
+- `GET /api/v1/dataset/turn?turn_id=` — one turn materialized: prompt prefix \
+messages + the reference assistant action (same objects the duels sample).
 - `GET /api/v1/stream` — SSE snapshot deltas for live UIs.
 
 **Hippius archive mirror** (cold path — this site's Hippius root, same disclosure):

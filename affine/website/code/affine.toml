@@ -124,15 +124,23 @@ refresh_interval_s = 3600
 # Reason v3 (2026-08-10, weight_version_key=3). The whole scoring contract:
 #   Reason = lpC(y_C|z_A) − lpC(y_C|∅)   (per pair; miner score = mean)
 #   crown  = paired mean(Reason_c − Reason_k) > k_sigma · SE
-# No gates, no mix, no clip, no absolute margin/SE floors. The retired S* v2
-# knobs (tau/gamma/gamma_bank/l1_weight/l1_clip/r_lo/r_hi/baseline_band/
-# min_se/min_margin) are gone from the contract; everything they measured is
-# still computed and published as telemetry in every verdict. Pre-fork
-# verdicts remain replayable under the `gates` block they stamped.
-n_turns = 80
-k_sigma = 3.0
-n_teacher_samples = 4
-n_miner_samples = 4
+# No gates, no mix, no clip, no absolute margin/SE floors.
+#
+# Sample budget (2026-08-11): Reason-only / no bank / 1+1 samples, with the
+# freed teacher-echo budget reinvested into n_turns (80→2080) so crown SE
+# shrinks as 1/√n. Live GPU work per pair is miner sample + lpC(y_C|z_A);
+# lpC(y_C|z_C)/∅ come from teacher refs. Retired S* v2 lpA/bank echoes are
+# off (reason_only/score_bank) — η and lengths remain. Pre-fork verdicts
+# stay replayable under the `gates` block they stamped.
+n_turns = 2080
+# Crown bar: k=2 (2026-08-11). False-crown under Gaussian null ≈ 2.28%/duel
+# (~1 in 44). Was 3.0 (~0.13%/duel) under the Reason v3 launch default.
+k_sigma = 2.0
+n_teacher_samples = 1
+n_miner_samples = 1
+# Ops: skip prior-bank and non-Reason forced-logprob echos (telemetry GPU).
+score_bank = false
+reason_only = true
 temperature = 0.8
 max_thought_tokens = 1024
 max_action_tokens = 768

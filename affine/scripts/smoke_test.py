@@ -34,7 +34,10 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 from affine.config import load_config  # noqa: E402
 
 cfg = load_config()
-check("config.typed_duel", cfg.duel.k_sigma == 3.0 and cfg.duel.n_turns == 80)
+check("config.typed_duel",
+      cfg.duel.k_sigma == 2.0 and cfg.duel.n_turns == 2080
+      and cfg.duel.n_teacher_samples == 1 and cfg.duel.n_miner_samples == 1
+      and cfg.duel.reason_only is True and cfg.duel.score_bank is False)
 check("config.v2_floors_gone",
       not hasattr(cfg.duel, "min_se") and not hasattr(cfg.duel, "min_margin"))
 check("config.v3_fork_key", cfg.weight_version_key >= 3)
@@ -102,11 +105,11 @@ r3 = score.duel(chall_sig, flat_king)
 check("duel.tiny_real_margin_crowns", r3.challenger_wins,
       f"margin={r3.margin:.4f} z={r3.z:.1f}")
 
-# A positive but sub-3σ margin does not crown.
+# A positive but sub-kσ margin does not crown (k_sigma default = 2).
 chall_noise = rows_for("chall", [0.01 + 0.05 * ((i % 5) - 2) for i in range(20)])
 r4 = score.duel(chall_noise, flat_king)
-check("duel.sub_sigma_no_crown", not r4.challenger_wins,
-      f"margin={r4.margin:.4f} z={r4.z:.2f}")
+check("duel.sub_sigma_no_crown", not r4.challenger_wins and r4.z <= r4.k_sigma,
+      f"margin={r4.margin:.4f} z={r4.z:.2f} k={r4.k_sigma}")
 
 # score_miner is gateless: mean Reason + telemetry, no valid flag.
 ms = score.score_miner(chall_real)
@@ -123,6 +126,16 @@ no_own = rows_for("x", [0.5], teacher_own=0.0)
 check("score.eta_undefined_zero_denom",
       score.eta(no_own[0]["pairs"][0]) is None
       and score.score_miner(no_own).mean_eta is None)
+# Reason-only pairs (no lpA): score still works; lpA telemetry is None.
+ro_pair = {"lpC_yc_za": 0.4, "lpC_yc_e": 0.0, "lpC_yc_zc": 0.8,
+           "z_a": "thought", "y_a": "ls"}
+ro_rows = [{"turn_id": "t0", "miner": "ro", "valid": True, "pairs": [ro_pair]}]
+ro = score.score_miner(ro_rows)
+check("score.reason_only_ok",
+      abs(ro.reason - 0.4) < 1e-9 and ro.mean_l1lift is None
+      and ro.calib_ratio is None and ro.baseline_abs is None
+      and score.gate_pass(ro_pair) is None,
+      f"reason={ro.reason} l1={ro.mean_l1lift}")
 
 # -- state: locking, pop/push, no-count requeue, dead code gone ---------------
 from affine.state import QueueEntry, State  # noqa: E402

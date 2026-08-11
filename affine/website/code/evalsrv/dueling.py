@@ -206,7 +206,8 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel,
                 teacher, miner, prefix, ref,
                 int(duel_cfg["n_miner_samples"]), float(duel_cfg["temperature"]),
                 int(duel_cfg["max_thought_tokens"]), int(duel_cfg["max_action_tokens"]),
-                score_bank=True)
+                score_bank=bool(duel_cfg.get("score_bank", False)),
+                reason_only=bool(duel_cfg.get("reason_only", True)))
         t.update({"turn_id": tid, "miner": miner.cfg.name})
         rows.append(t)
         done += 1

@@ -1,4 +1,4 @@
-"""Slice resolved mini-swe-agent trajectories into corpus turn records.
+"""Slice mini-swe-agent trajectories into corpus turn records.
 
 One record per clean assistant turn, drop-in compatible with the production
 duel corpus (affine/scripts/corpus_push.py contract; consumed by

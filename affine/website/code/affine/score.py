@@ -50,7 +50,7 @@ import statistics as st
 from dataclasses import dataclass
 
 
-DEFAULT_K_SIGMA = 3.0
+DEFAULT_K_SIGMA = 2.0
 
 # Telemetry constants (non-consensus): thresholds used only to report the
 # legacy causality/leakage pass rate. Changing them is NOT a chain fork.
@@ -86,11 +86,18 @@ def leakage(z: str, y: str, fuzzy: float = TELEMETRY_FUZZY) -> bool:
 
 
 def gate_pass(pair: dict, tau: float = TELEMETRY_TAU,
-              fuzzy: float = TELEMETRY_FUZZY) -> bool:
-    """Telemetry: legacy causality+leakage pass (no longer affects score)."""
+              fuzzy: float = TELEMETRY_FUZZY) -> bool | None:
+    """Telemetry: legacy causality+leakage pass (no longer affects score).
+
+    None when the pair was scored Reason-only (lpA echoes omitted).
+    """
+    try:
+        ya_za, ya_e = pair["lpA_ya_za"], pair["lpA_ya_e"]
+    except KeyError:
+        return None
     if leakage(pair.get("z_a", ""), pair.get("y_a", ""), fuzzy=fuzzy):
         return False
-    return (pair["lpA_ya_za"] - pair["lpA_ya_e"]) >= tau
+    return (ya_za - ya_e) >= tau
 
 
 def reason(pair: dict) -> float:
@@ -102,9 +109,15 @@ def reason(pair: dict) -> float:
 lambda2 = reason
 
 
-def l1_lift(pair: dict) -> float:
-    """Telemetry: miner-side lift lpA(y_C|z_A) − lpA(y_C|∅) (not scored)."""
-    return pair["lpA_yc_za"] - pair["lpA_yc_e"]
+def l1_lift(pair: dict) -> float | None:
+    """Telemetry: miner-side lift lpA(y_C|z_A) − lpA(y_C|∅) (not scored).
+
+    None when the pair was scored Reason-only (lpA echoes omitted).
+    """
+    try:
+        return pair["lpA_yc_za"] - pair["lpA_yc_e"]
+    except KeyError:
+        return None
 
 
 # Floor under |Λ2(z_C)| below which η is undefined (teacher own-lift ~0).
@@ -142,11 +155,19 @@ def calibration_ratio(pairs: list[dict]) -> float | None:
     """Telemetry: r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)| (not scored)."""
     if not pairs:
         return None
-    num = st.mean(abs(p["lpA_yc_za"]) for p in pairs)
-    den = st.mean(abs(p["lpA_yc_e"]) for p in pairs)
+    try:
+        num = st.mean(abs(p["lpA_yc_za"]) for p in pairs)
+        den = st.mean(abs(p["lpA_yc_e"]) for p in pairs)
+    except KeyError:
+        return None
     if den <= 0:
         return None
     return num / den
+
+
+def _mean_optional(vals: list[float | None]) -> float | None:
+    have = [v for v in vals if v is not None and math.isfinite(v)]
+    return st.mean(have) if have else None
 
 
 @dataclass
@@ -174,16 +195,22 @@ def score_miner(rows: list[dict],
     pairs = [p for r in rows if r.get("valid") and "pairs" in r for p in r["pairs"]]
     if not pairs:
         return MinerScore(rows[0].get("miner", "?"), float("-inf"), 0, 0)
+    gpass = [gate_pass(p) for p in pairs]
+    gpass_f = [1.0 if g else 0.0 for g in gpass if g is not None]
+    try:
+        baseline_abs = st.mean(abs(p["lpA_yc_e"]) for p in pairs)
+    except KeyError:
+        baseline_abs = None
     return MinerScore(
         miner=rows[0].get("miner", "?"),
         reason=st.mean(reason(p) for p in pairs),
         n_pairs=len(pairs),
         n_turns=len({r["turn_id"] for r in rows}),
-        gate_pass_rate=st.mean(1.0 if gate_pass(p) else 0.0 for p in pairs),
+        gate_pass_rate=(st.mean(gpass_f) if gpass_f else 0.0),
         bank_frac=bank_frac,
         calib_ratio=calibration_ratio(pairs),
-        baseline_abs=st.mean(abs(p["lpA_yc_e"]) for p in pairs),
-        mean_l1lift=st.mean(l1_lift(p) for p in pairs),
+        baseline_abs=baseline_abs,
+        mean_l1lift=_mean_optional([l1_lift(p) for p in pairs]),
         mean_eta=mean_eta(pairs),
         mean_len_z=st.mean(float(len(p.get("z_a", ""))) for p in pairs),
         mean_len_y=st.mean(float(len(p.get("y_a", ""))) for p in pairs),

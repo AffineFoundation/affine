@@ -88,7 +88,8 @@ class DuelCfg:
     # Scoring contract (Reason v3): n_turns + k_sigma. That's all of it.
     n_turns: int
     k_sigma: float
-    # Sampling / ops knobs (no effect on scoring semantics).
+    # Sampling / ops knobs. n_*_samples set pairs per turn; reason_only /
+    # score_bank control whether non-Reason GPU telemetry runs (off in prod).
     n_teacher_samples: int
     n_miner_samples: int
     temperature: float
@@ -96,6 +97,8 @@ class DuelCfg:
     max_action_tokens: int
     concurrency: int
     timeout_s: int
+    score_bank: bool = False
+    reason_only: bool = True
 
 
 @dataclass(frozen=True)
@@ -261,6 +264,8 @@ def _duel(raw: dict) -> DuelCfg:
         max_thought_tokens=int(d["max_thought_tokens"]),
         max_action_tokens=int(d["max_action_tokens"]),
         concurrency=int(d["concurrency"]), timeout_s=int(d["timeout_s"]),
+        score_bank=bool(d.get("score_bank", False)),
+        reason_only=bool(d.get("reason_only", True)),
     )
 
 

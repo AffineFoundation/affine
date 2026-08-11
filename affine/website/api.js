@@ -115,6 +115,43 @@ export async function fetchDuelTurn(challengeId, turnId, signal) {
   return getJSON(duelTurnUrl(challengeId, turnId), { signal });
 }
 
+/* ---------- dataset browser (corpus D) ---------- */
+
+/** Corpus stats: epoch, counts, mix, length histogram. API mode only. */
+export async function fetchDataset(signal) {
+  const m = await detectMode({ signal });
+  if (m !== "api") return null;
+  return getJSON(`${API}/dataset?v=${SITE_V}`, { signal });
+}
+
+/** One page of turn index rows with filters. API mode only. */
+export async function fetchDatasetTurns(
+  { limit = 50, cursor = 0, source = "", language = "", phase = "",
+    repo = "", q = "" } = {}, signal) {
+  const m = await detectMode({ signal });
+  if (m !== "api") return null;
+  const params = new URLSearchParams({
+    limit: String(limit), cursor: String(cursor),
+  });
+  if (source) params.set("source", source);
+  if (language) params.set("language", language);
+  if (phase) params.set("phase", phase);
+  if (repo) params.set("repo", repo);
+  if (q) params.set("q", q);
+  return getJSON(`${API}/dataset/turns?${params}`, { signal });
+}
+
+export function datasetTurnUrl(turnId) {
+  return `${API}/dataset/turn?turn_id=${encodeURIComponent(turnId)}`;
+}
+
+/** Full turn content (prompt prefix + reference action). API mode only. */
+export async function fetchDatasetTurn(turnId, signal) {
+  const m = await detectMode({ signal });
+  if (m !== "api") return null;
+  return getJSON(datasetTurnUrl(turnId), { signal });
+}
+
 /** Historical SN registration burn (τ) from TMC, downsampled by affine-dash. */
 export async function fetchRegHistory(signal) {
   const m = await detectMode({ signal });

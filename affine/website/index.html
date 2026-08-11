@@ -9,7 +9,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
   <link rel="stylesheet" href="fonts/fonts.css?v=20" />
-  <link rel="stylesheet" href="style.css?v=48" />
+  <link rel="stylesheet" href="style.css?v=49" />
 </head>
 <body>
   <header class="top-nav">
@@ -21,8 +21,7 @@
       <div class="nav-center">
         <a id="nav-king" class="nav-chip" target="_blank" rel="noopener">AFFINE</a>
         <a href="./llms.txt" class="nav-chip">llms.txt</a>
-        <a class="nav-chip" href="https://s3.hippius.com/affine-sn120/turns/manifest.json"
-           target="_blank" rel="noopener">Dataset</a>
+        <a class="nav-chip" href="#dataset" id="nav-dataset">Dataset</a>
       </div>
       <div class="nav-right">
         <a class="nav-icon"
@@ -86,7 +85,7 @@
         <div class="hero-pane">
           <div class="hero-pane-head">
             <h2 class="hero-pane-title">Margin</h2>
-            <p class="hero-caption">paired z vs king · dashed = 3σ dethrone threshold</p>
+            <p class="hero-caption">paired z vs king · dashed = 2σ dethrone threshold</p>
             <button type="button" class="expand-btn" data-chart="hero-margin"
               title="expand Margin" aria-label="Expand Margin chart">⤢</button>
           </div>
@@ -195,6 +194,18 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=48"></script>
+  <section id="dataset-page" class="duel-page" hidden>
+    <div class="duel-page-inner">
+      <div class="duel-page-head">
+        <button type="button" class="back-btn" id="dataset-back"
+          aria-label="Back to dashboard">←</button>
+        <h2 class="section-title">dataset</h2>
+        <span class="section-right" id="dataset-page-meta"></span>
+      </div>
+      <div id="dataset-page-body"></div>
+    </div>
+  </section>
+
+  <script type="module" src="app.js?v=49"></script>
 </body>
 </html>

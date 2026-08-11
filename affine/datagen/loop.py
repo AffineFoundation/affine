@@ -2,7 +2,7 @@
 
   main thread   : select batch -> prefetch next batch's images (background)
                   -> shard across the provider pool -> mini-swe-agent rollouts
-  eval thread   : swebench eval per source dataset -> keep resolved
+  eval thread   : swebench eval (telemetry) + slice turns from all trajs
                   trajectories -> slice per-turn records -> upload shards
 
 Generation is API-bound and eval is docker/CPU-bound, so batch N evaluates
@@ -261,23 +261,29 @@ def _finalize_batch(cfg: DatagenConfig, job: dict, state: ProcessedState,
     traj_archive = cfg.data_dir / "trajs"
     traj_archive.mkdir(parents=True, exist_ok=True)
     n_turns_total = 0
+    # Reason v3: D is teacher-continuable prefixes. Keep turns from any
+    # trajectory that slices cleanly — resolved is telemetry, not a gate.
     for iid, info in attempted.items():
         traj_path = info["preds_dir"] / iid / f"{iid}.traj.json"
         usage = traj_usage(traj_path)
-        if iid in no_patch:
-            state.mark(iid, "unresolved", provider=info["provider"],
-                       detail=f"no patch ({info['detail']})", **usage)
-            continue
-        if iid not in resolved:
-            state.mark(iid, "unresolved", provider=info["provider"],
-                       detail=info["detail"], **usage)
-            continue
-        records = slice_traj_file(traj_path, model_label=info["provider"])
-        _append_turns(pending, records)
-        shutil.copy2(traj_path, traj_archive / traj_path.name)
-        n_turns_total += len(records)
-        state.mark(iid, "resolved", n_turns=len(records),
-                   provider=info["provider"], **usage)
+        records: list[dict] = []
+        if traj_path.is_file():
+            records = slice_traj_file(traj_path, model_label=info["provider"])
+            if records:
+                _append_turns(pending, records)
+                shutil.copy2(traj_path, traj_archive / traj_path.name)
+                n_turns_total += len(records)
+        if iid in resolved:
+            outcome = "resolved"
+            detail = info["detail"]
+        elif iid in no_patch:
+            outcome = "unresolved"
+            detail = f"no patch ({info['detail']})"
+        else:
+            outcome = "unresolved"
+            detail = info["detail"]
+        state.mark(iid, outcome, n_turns=len(records),
+                   provider=info["provider"], detail=detail, **usage)
 
     log.info("eval done in %.0fs: %d/%d resolved (%d attempted, %d with "
              "patch), %d turns sliced", time.time() - t0, len(resolved),

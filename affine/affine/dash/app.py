@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..config import Config, load_config
+from .corpus import REFRESH_TTL_S, DatasetView
 from .index import DashIndex
 from .project import project_duel_summary, project_series, project_turn_detail
 from .readers import (
@@ -65,6 +66,7 @@ def _json(payload, *, max_age: int = 5, request: Request | None = None,
 def create_app(cfg: Config | None = None) -> FastAPI:
     cfg = cfg or load_config()
     index = DashIndex(cfg.state_dir)
+    dataset = DatasetView(cfg)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -80,15 +82,26 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 except Exception as exc:
                     log.warning("index ingest failed: %s", exc)
 
+        async def _dataset_loop():
+            # Manifest + index sync off the event loop; endpoints only read
+            # the in-memory caches this builds.
+            while True:
+                try:
+                    await asyncio.to_thread(dataset.refresh)
+                except Exception as exc:
+                    log.warning("dataset refresh failed: %s", exc)
+                await asyncio.sleep(REFRESH_TTL_S)
+
         ingest_task = asyncio.create_task(_ingest_loop())
         market_task = asyncio.create_task(run_market_stream(cfg))
         reg_task = asyncio.create_task(run_reg_history_loop(cfg))
+        dataset_task = asyncio.create_task(_dataset_loop())
         log.info("affine-dash serving state_dir=%s website=%s",
                  cfg.state_dir, WEBSITE_DIR)
         try:
             yield
         finally:
-            for task in (ingest_task, market_task, reg_task):
+            for task in (ingest_task, market_task, reg_task, dataset_task):
                 task.cancel()
                 try:
                     await task
@@ -140,6 +153,50 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     @app.get("/api/v1/contract")
     def api_contract(request: Request):
         return _json(contract_payload(cfg), max_age=60, request=request)
+
+    # -- dataset browser (corpus D is public on the bucket; these endpoints
+    # only make it browsable — stats + turn pages come from the in-memory
+    # Parquet index cache, /turn may fetch one chunk on first view) --------------
+    @app.get("/api/v1/dataset")
+    def api_dataset(request: Request):
+        stats = dataset.stats()
+        if stats is None:
+            return JSONResponse(
+                {"error": "corpus_not_synced"}, status_code=503,
+                headers={"Retry-After": "60"})
+        return _json(stats, max_age=300, request=request)
+
+    @app.get("/api/v1/dataset/turns")
+    def api_dataset_turns(
+        request: Request,
+        limit: int = Query(50, ge=1, le=200),
+        cursor: int = Query(0, ge=0),
+        source: str = "",
+        language: str = "",
+        phase: str = "",
+        repo: str = "",
+        q: str = "",
+    ):
+        page = dataset.turns_page(
+            source=source.strip(), language=language.strip(),
+            phase=phase.strip(), repo=repo.strip(), q=q,
+            limit=limit, cursor=cursor)
+        if page is None:
+            return JSONResponse(
+                {"error": "corpus_not_synced"}, status_code=503,
+                headers={"Retry-After": "60"})
+        return _json(page, max_age=300, request=request)
+
+    @app.get("/api/v1/dataset/turn")
+    def api_dataset_turn(request: Request,
+                         turn_id: str = Query(..., min_length=1)):
+        detail = dataset.turn_detail(turn_id)
+        if detail is None:
+            return JSONResponse(
+                {"error": "turn_not_found", "turn_id": turn_id},
+                status_code=404)
+        # Turn content is immutable once published (append-only corpus).
+        return _json(detail, max_age=86400, request=request, immutable=True)
 
     @app.get("/api/v1/market")
     def api_market(request: Request):

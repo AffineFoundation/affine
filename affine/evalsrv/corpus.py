@@ -60,10 +60,16 @@ def schema_version(manifest: dict | None) -> int:
 
 
 class CorpusSync:
-    def __init__(self, base_url: str, manifest_key: str, data_dir: Path):
+    def __init__(self, base_url: str, manifest_key: str, data_dir: Path,
+                 lazy_chunks: bool = False):
+        # lazy_chunks: refresh verifies manifest + index only; chunk objects
+        # are fetched (and sha-verified) on first access. Used by the dash
+        # dataset browser, where most chunks are never viewed. Eval pods keep
+        # the default eager, fail-closed sync.
         self.base = base_url.rstrip("/")
         self.manifest_key = manifest_key
         self.data_dir = data_dir
+        self.lazy_chunks = lazy_chunks
         self.turns_path = data_dir / "turns.jsonl"
         self.index_path = data_dir / "turns_index.parquet"
         self.shards_dir = data_dir / "shards"
@@ -227,12 +233,14 @@ class CorpusSync:
         if not index or not index.get("key") or not index.get("sha256"):
             raise CorpusVerificationError("v2 manifest missing index")
         self.chunks_dir.mkdir(parents=True, exist_ok=True)
-        for shard in active:
-            if (shard.get("format") or "") != "traj_v1":
-                # Skip non-chunk actives (should not happen post-migrate).
-                log.warning("skipping non-traj active shard %s", shard["key"])
-                continue
-            self._ensure_gzip_object(shard, self.chunks_dir)
+        if not self.lazy_chunks:
+            for shard in active:
+                if (shard.get("format") or "") != "traj_v1":
+                    # Skip non-chunk actives (should not happen post-migrate).
+                    log.warning("skipping non-traj active shard %s",
+                                shard["key"])
+                    continue
+                self._ensure_gzip_object(shard, self.chunks_dir)
 
         # Index: sha over raw parquet bytes (not gzip).
         want = str(index["sha256"]).lower()
@@ -294,8 +302,31 @@ class CorpusSync:
         path.write_bytes(blob)
         sidecar.write_text(want)
 
+    def ensure_chunk(self, chunk_key: str) -> None:
+        """Fetch + sha-verify one chunk on demand (lazy_chunks mode)."""
+        path = self.chunks_dir / posixpath.basename(chunk_key)
+        sidecar = path.with_suffix(path.suffix + ".sha")
+        if path.exists() and sidecar.exists():
+            return
+        shard = next((s for s in (self.manifest or {}).get("shards", [])
+                      if s.get("key") == chunk_key), None)
+        if shard is None:
+            raise CorpusVerificationError(
+                f"chunk {chunk_key} not in the active manifest")
+        self.chunks_dir.mkdir(parents=True, exist_ok=True)
+        self._ensure_gzip_object(shard, self.chunks_dir)
+
+    # In lazy mode only a handful of chunks are viewed at a time; cap the
+    # parsed-line cache so the dash process does not grow with corpus size.
+    _LAZY_CACHE_CHUNKS = 4
+
     def _traj_at(self, chunk_key: str, traj_line: int) -> dict:
         if chunk_key not in self._chunk_line_cache:
+            if self.lazy_chunks:
+                self.ensure_chunk(chunk_key)
+                while len(self._chunk_line_cache) >= self._LAZY_CACHE_CHUNKS:
+                    self._chunk_line_cache.pop(
+                        next(iter(self._chunk_line_cache)))
             path = self.chunks_dir / posixpath.basename(chunk_key)
             with gzip.open(path, "rt", encoding="utf-8") as f:
                 self._chunk_line_cache[chunk_key] = [

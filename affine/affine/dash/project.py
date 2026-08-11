@@ -9,10 +9,13 @@ from typing import Any
 from ..score import eta, gate_pass, l1_lift, reason
 
 
-def _legacy_mix(p: dict) -> float:
+def _legacy_mix(p: dict) -> float | None:
     """Retired S* v2 rank term (Λ2 + clip(L1lift, ±0.1)) — kept only so
     pre-fork duel pages keep rendering the mix they were judged on."""
-    return reason(p) + max(-0.1, min(l1_lift(p), 0.1))
+    lift = l1_lift(p)
+    if lift is None:
+        return None
+    return reason(p) + max(-0.1, min(lift, 0.1))
 
 
 def _finite(x: Any) -> float | None:
@@ -34,9 +37,11 @@ def _turn_points(rows: list[dict], side: str) -> list[dict]:
             continue
         try:
             rsn = st.mean(reason(p) for p in pairs)
-            lift = st.mean(l1_lift(p) for p in pairs)
-            mix = st.mean(_legacy_mix(p) for p in pairs)
-            gpass = st.mean(1.0 if gate_pass(p) else 0.0 for p in pairs)
+            lifts = [v for p in pairs if (v := l1_lift(p)) is not None]
+            mixes = [v for p in pairs if (v := _legacy_mix(p)) is not None]
+            gflags = [gate_pass(p) for p in pairs]
+            gflags = [g for g in gflags if g is not None]
+            gpass = st.mean(1.0 if g else 0.0 for g in gflags) if gflags else None
             etas = [e for p in pairs if (e := eta(p)) is not None]
             len_z = st.mean(float(len(p.get("z_a", ""))) for p in pairs)
             len_y = st.mean(float(len(p.get("y_a", ""))) for p in pairs)
@@ -48,10 +53,10 @@ def _turn_points(rows: list[dict], side: str) -> list[dict]:
             "reason": _finite(rsn),
             # lambda2/mix kept for pre-fork chart back-compat (lambda2 ≡ reason).
             "lambda2": _finite(rsn),
-            "l1lift": _finite(lift),
-            "mix": _finite(mix),
+            "l1lift": _finite(st.mean(lifts)) if lifts else None,
+            "mix": _finite(st.mean(mixes)) if mixes else None,
             "eta": _finite(st.mean(etas)) if etas else None,
-            "gate_ok": gpass >= 0.5,
+            "gate_ok": (gpass >= 0.5) if gpass is not None else None,
             "gate_pass_rate": _finite(gpass),
             "len_z": _finite(len_z),
             "len_y": _finite(len_y),
@@ -128,7 +133,8 @@ def _pair_detail(p: dict) -> dict:
         out["l1lift"] = _finite(l1_lift(p))
         out["eta"] = _finite(eta(p))
         out["mix"] = _finite(_legacy_mix(p))
-        out["gate_ok"] = bool(gate_pass(p))
+        g = gate_pass(p)
+        out["gate_ok"] = None if g is None else bool(g)
     except (KeyError, TypeError, ValueError):
         pass
     # Prefer the stamped pair field when present (day-one logging).

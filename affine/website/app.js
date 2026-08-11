@@ -1,7 +1,11 @@
 import {
   currentMode,
+  datasetTurnUrl,
   duelTurnUrl,
   fetchBenchmarks,
+  fetchDataset,
+  fetchDatasetTurn,
+  fetchDatasetTurns,
   fetchDuel,
   fetchDuelLog,
   fetchDuelSeries,
@@ -10,7 +14,7 @@ import {
   fetchRegHistory,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=48";
+} from "./api.js?v=49";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -35,7 +39,7 @@ import {
   reignMembers,
   setReignLookup,
   short,
-} from "./charts.js?v=48";
+} from "./charts.js?v=49";
 
 const $ = (id) => document.getElementById(id);
 
@@ -651,6 +655,316 @@ function closeDuelPage() {
   else location.hash = "";
 }
 
+/* ---------- dataset page (#dataset) ---------- */
+
+const MANIFEST_URL = "https://s3.hippius.com/affine-sn120/turns/manifest.json";
+const PAGE_SIZE = 50;
+
+const datasetPage = {
+  stats: null,
+  filters: { source: "", language: "", phase: "", repo: "", q: "" },
+  items: [],
+  total: 0,
+  nextCursor: null,
+  loading: false,
+};
+
+function closeDatasetPage() {
+  if (window.history.length > 1) window.history.back();
+  else location.hash = "";
+}
+
+function fmtCount(n) {
+  return n == null ? "—" : Number(n).toLocaleString("en-US");
+}
+
+/** Horizontal bar rows for one mix facet; rows click-filter the table. */
+function mixRowsHtml(counts, total, kind) {
+  const max = Math.max(...Object.values(counts), 1);
+  return Object.entries(counts).map(([k, n]) => {
+    const pct = total ? (n / total) * 100 : 0;
+    return `<button type="button" class="mix-row" data-fkind="${esc(kind)}"
+        data-fvalue="${esc(k)}" title="show only ${esc(kind)} = ${esc(k)}">
+      <span class="mix-label">${esc(k)}</span>
+      <span class="mix-bar"><i style="width:${((n / max) * 100).toFixed(2)}%"></i></span>
+      <span class="mix-count">${fmtCount(n)} · ${pct.toFixed(1)}%</span>
+    </button>`;
+  }).join("");
+}
+
+function mixBlockHtml(title, counts, total, kind) {
+  return `<div class="mix-block">
+    <div class="mix-title">${esc(title)}</div>
+    ${mixRowsHtml(counts, total, kind)}
+  </div>`;
+}
+
+function datasetSelectHtml(kind, label, values) {
+  const opts = values.map((v) =>
+    `<option value="${esc(v)}">${esc(v)}</option>`).join("");
+  return `<label class="ds-filter"><span class="k">${esc(label)}</span>
+    <select data-fkind="${esc(kind)}"><option value="">all</option>${opts}</select>
+  </label>`;
+}
+
+function datasetPageHtml(stats) {
+  const total = stats.n_turns || 0;
+  const mix = stats.mix || {};
+  const hist = Object.fromEntries(
+    (stats.prefix_chars_hist || []).map((b) => [b.bucket, b.n_turns]));
+  const repoValues = (stats.repos || [])
+    .map((r) => r.repo).filter((r) => r !== "(other)");
+  const repoCounts = Object.fromEntries(
+    (stats.repos || []).filter((r) => r.repo !== "(other)")
+      .map((r) => [r.repo, r.n_turns]));
+  const overview = `
+    <div class="kv-grid">
+      <div class="kv"><span class="k">corpus epoch</span><span class="v gold">${esc(stats.corpus_epoch)}</span></div>
+      <div class="kv"><span class="k">scorable turns</span><span class="v">${fmtCount(stats.n_turns)}</span></div>
+      <div class="kv"><span class="k">trajectories</span><span class="v">${fmtCount(stats.n_trajectories)}</span></div>
+      <div class="kv"><span class="k">chunks</span><span class="v">${fmtCount(stats.n_chunks)}</span></div>
+      <div class="kv"><span class="k">manifest</span><span class="v mono" title="${esc(stats.manifest_sha256 || "")}">${esc(short(stats.manifest_sha256 || "—", 14))}${copyBtn(stats.manifest_sha256)}</span></div>
+      <div class="kv"><span class="k">schema</span><span class="v">v${esc(stats.schema_version)}</span></div>
+    </div>`;
+  const mixes = `
+    <div class="mix-grid">
+      ${mixBlockHtml("by source", mix.source || {}, total, "source")}
+      ${mixBlockHtml("by language", mix.language || {}, total, "language")}
+      ${mixBlockHtml("by phase", mix.phase || {}, total, "phase")}
+      ${mixBlockHtml("prompt length (chars)", hist, total, "")}
+    </div>`;
+  const repos = `
+    <div class="mix-block mix-block-wide">
+      <div class="mix-title">top repos (turns)</div>
+      ${mixRowsHtml(repoCounts, total, "repo")}
+    </div>`;
+  const filters = `
+    <div class="ds-filter-bar">
+      ${datasetSelectHtml("source", "source", Object.keys(mix.source || {}))}
+      ${datasetSelectHtml("language", "language", Object.keys(mix.language || {}))}
+      ${datasetSelectHtml("phase", "phase", Object.keys(mix.phase || {}))}
+      ${datasetSelectHtml("repo", "repo", repoValues)}
+      <label class="ds-filter ds-filter-q"><span class="k">turn id</span>
+        <input id="ds-q" type="search" placeholder="substring…"
+          autocomplete="off" spellcheck="false" /></label>
+      <button type="button" class="ds-clear" id="ds-clear" hidden>clear filters</button>
+    </div>`;
+  const audit = `
+    <div class="duel-block">
+      <div class="section-head"><h3 class="section-title">raw data</h3>
+        <span class="section-right note">everything on this page is served from the public corpus</span></div>
+      <div class="audit-note">
+        <p>The corpus is content-addressed and public: the
+        <a href="${esc(MANIFEST_URL)}" target="_blank" rel="noopener">manifest</a>
+        pins a Parquet turn index and gzipped trajectory chunks by sha256, and
+        the <a href="/api/v1/contract" target="_blank" rel="noopener">chain contract</a>
+        pins the manifest. Every duel samples its 80-turn slice from this exact
+        data via a block-hash seed — download the files behind the manifest and
+        you can rebuild everything shown here, including any duel's slice.</p>
+      </div>
+    </div>`;
+  return `
+    ${overview}
+    <div class="duel-block">
+      <div class="section-head"><h3 class="section-title">composition</h3>
+        <span class="section-right note">click a bar to filter the browser below</span></div>
+      ${mixes}
+      ${repos}
+    </div>
+    <div class="duel-block">
+      <div class="section-head"><h3 class="section-title">browse turns</h3>
+        <span class="section-right" id="ds-table-meta"></span></div>
+      ${filters}
+      <div class="table-scroll" id="ds-table-wrap"><div class="empty">loading…</div></div>
+      <div class="ds-more-wrap">
+        <button type="button" class="ds-more" id="ds-more" hidden>load more</button>
+      </div>
+    </div>
+    ${audit}`;
+}
+
+function renderDatasetMeta() {
+  const meta = $("dataset-page-meta");
+  const s = datasetPage.stats;
+  if (meta && s) {
+    meta.textContent =
+      `epoch ${s.corpus_epoch} · ${fmtCount(s.n_turns)} turns`
+      + (s.synced_at ? ` · synced ${fmtAge(new Date(s.synced_at * 1000).toISOString())} ago` : "");
+  }
+}
+
+function renderDatasetTable() {
+  const wrap = $("ds-table-wrap");
+  const meta = $("ds-table-meta");
+  const more = $("ds-more");
+  if (!wrap) return;
+  const items = datasetPage.items;
+  if (meta) {
+    meta.textContent = `${fmtCount(items.length)} of ${fmtCount(datasetPage.total)} turns`;
+  }
+  if (more) more.hidden = datasetPage.nextCursor == null;
+  const clear = $("ds-clear");
+  if (clear) {
+    clear.hidden = !Object.values(datasetPage.filters).some(Boolean);
+  }
+  if (!items.length) {
+    wrap.innerHTML = `<div class="empty">no turns match these filters</div>`;
+    return;
+  }
+  wrap.innerHTML = `<table class="data-table ds-table">
+    <thead><tr>
+      <th>turn</th><th>source</th><th>lang</th><th>phase</th><th>repo</th>
+      <th class="r">prompt chars</th><th>raw</th>
+    </tr></thead>
+    <tbody>${items.map((t) => `
+      <tr class="ds-turn-row" data-turn="${esc(t.turn_id)}"
+          title="click to view the prompt and reference action">
+        <td class="mono">${esc(short(t.turn_id, 52))}</td>
+        <td>${esc(t.source || "—")}</td>
+        <td class="dim">${esc(t.language || "—")}</td>
+        <td class="dim">${esc(t.phase || "—")}</td>
+        <td class="dim">${esc(short(t.repo || "—", 28))}</td>
+        <td class="r dim">${fmtCount(t.n_prefix_chars)}</td>
+        <td><a class="raw-link" href="${esc(datasetTurnUrl(t.turn_id))}"
+          target="_blank" rel="noopener" title="raw JSON for this turn"
+          onclick="event.stopPropagation()">json ↗</a></td>
+      </tr>`).join("")}</tbody>
+  </table>`;
+}
+
+async function loadDatasetTurns(reset) {
+  if (datasetPage.loading) return;
+  datasetPage.loading = true;
+  const cursor = reset ? 0 : (datasetPage.nextCursor || 0);
+  const page = await fetchDatasetTurns(
+    { ...datasetPage.filters, limit: PAGE_SIZE, cursor }).catch(() => null);
+  datasetPage.loading = false;
+  if (!datasetOpen()) return;
+  if (!page || page.error) {
+    const wrap = $("ds-table-wrap");
+    if (wrap) wrap.innerHTML = `<div class="empty">turn index unavailable — try again shortly</div>`;
+    return;
+  }
+  datasetPage.total = page.total;
+  datasetPage.nextCursor = page.next_cursor;
+  datasetPage.items = reset ? page.items : datasetPage.items.concat(page.items);
+  renderDatasetTable();
+}
+
+const DS_TURN_COLSPAN = 7;
+
+function datasetTurnHtml(d) {
+  const chips = `
+    ${d.model ? `<span class="chip">model ${esc(short(d.model, 32))}</span>` : ""}
+    ${d.action_kind ? `<span class="chip">${esc(d.action_kind)}</span>` : ""}
+    ${d.instance_id ? `<span class="chip" title="${esc(d.instance_id)}">instance ${esc(short(d.instance_id, 28))}</span>` : ""}
+    ${d.generated_at ? `<span class="chip">generated ${esc(fmtTime(d.generated_at))}</span>` : ""}`;
+  const msgs = (d.prefix || []).map((m) => `
+    <div class="rollout-text ds-msg"><span class="k">${esc(m.role)}</span>
+      <pre>${esc(m.content ?? "")}</pre></div>`).join("");
+  return `<div class="rollout-detail ds-turn-detail">
+    <div class="rollout-pair-head"><span class="dim">prompt prefix
+      (${(d.prefix || []).length} messages) → reference action</span>${chips}</div>
+    ${msgs}
+    <div class="rollout-text ds-msg ds-ref"><span class="k gold">reference action (scored assistant turn)</span>
+      <pre>${esc(d.reference_turn ?? "—")}</pre></div>
+  </div>`;
+}
+
+async function toggleDatasetTurnRow(tr) {
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains("rollout-row")) {
+    next.remove();
+    return;
+  }
+  const tid = tr.dataset.turn;
+  if (!tid) return;
+  const holder = document.createElement("tr");
+  holder.className = "rollout-row";
+  holder.innerHTML = `<td colspan="${DS_TURN_COLSPAN}"><div class="empty">loading turn…</div></td>`;
+  tr.after(holder);
+  const detail = await fetchDatasetTurn(tid).catch(() => null);
+  if (!holder.isConnected) return;
+  if (!detail || detail.error) {
+    holder.firstElementChild.innerHTML = `<div class="empty">turn content unavailable</div>`;
+    return;
+  }
+  holder.firstElementChild.innerHTML = datasetTurnHtml(detail);
+}
+
+function applyDatasetFilter(kind, value) {
+  if (!kind) return;
+  datasetPage.filters[kind] = value;
+  // Keep the dropdowns in sync when a mix bar set the filter.
+  const sel = document.querySelector(`#dataset-page select[data-fkind="${kind}"]`);
+  if (sel) sel.value = value;
+  loadDatasetTurns(true);
+  $("ds-table-wrap")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function renderDatasetPage() {
+  const body = $("dataset-page-body");
+  if (!body) return;
+  body.innerHTML = `<div class="empty">loading corpus stats…</div>`;
+  const stats = await fetchDataset().catch(() => null);
+  if (!datasetOpen()) return;
+  if (!stats || stats.error) {
+    body.innerHTML = `<div class="empty">
+      the dataset browser needs the live API${currentMode() === "api" ? " (corpus still syncing — retry in a minute)" : ""} —
+      the raw corpus is always public:
+      <a href="${esc(MANIFEST_URL)}" target="_blank" rel="noopener">turns/manifest.json</a></div>`;
+    return;
+  }
+  datasetPage.stats = stats;
+  datasetPage.filters = { source: "", language: "", phase: "", repo: "", q: "" };
+  datasetPage.items = [];
+  datasetPage.nextCursor = null;
+  body.innerHTML = datasetPageHtml(stats);
+  renderDatasetMeta();
+  loadDatasetTurns(true);
+}
+
+let dsQTimer = null;
+
+function wireDatasetPage() {
+  const body = $("dataset-page-body");
+  if (!body) return;
+  body.addEventListener("click", (e) => {
+    const mix = e.target.closest(".mix-row[data-fkind]");
+    if (mix && mix.dataset.fkind) {
+      applyDatasetFilter(mix.dataset.fkind, mix.dataset.fvalue || "");
+      return;
+    }
+    if (e.target.closest("#ds-more")) {
+      loadDatasetTurns(false);
+      return;
+    }
+    if (e.target.closest("#ds-clear")) {
+      datasetPage.filters = { source: "", language: "", phase: "", repo: "", q: "" };
+      body.querySelectorAll("select[data-fkind]").forEach((s) => { s.value = ""; });
+      const q = $("ds-q");
+      if (q) q.value = "";
+      loadDatasetTurns(true);
+      return;
+    }
+    const row = e.target.closest("tr.ds-turn-row");
+    if (row && !e.target.closest("a")) toggleDatasetTurnRow(row);
+  });
+  body.addEventListener("change", (e) => {
+    const sel = e.target.closest("select[data-fkind]");
+    if (sel) applyDatasetFilter(sel.dataset.fkind, sel.value);
+  });
+  body.addEventListener("input", (e) => {
+    if (e.target.id !== "ds-q") return;
+    clearTimeout(dsQTimer);
+    dsQTimer = setTimeout(() => {
+      datasetPage.filters.q = e.target.value.trim();
+      loadDatasetTurns(true);
+    }, 250);
+  });
+  $("dataset-back")?.addEventListener("click", closeDatasetPage);
+}
+
 /* ---------- section tabs ---------- */
 
 // Exactly one section is shown at a time; "evolution" is the hero charts.
@@ -673,12 +987,32 @@ function activateTab(id) {
   if (id === "queue") renderRegPrice(true);
 }
 
+function datasetOpen() {
+  return location.hash === "#dataset";
+}
+
 function route() {
   const cid = duelHashCid();
+  const ds = datasetOpen();
   const page = $("duel-page");
+  const dsPage = $("dataset-page");
   if (!page) return;
-  document.body.classList.toggle("duel-open", Boolean(cid));
+  // Both full-screen pages reuse the duel-open body state (hides the main
+  // dashboard); exactly one of them can be visible.
+  document.body.classList.toggle("duel-open", Boolean(cid) || ds);
   page.hidden = !cid;
+  if (dsPage) {
+    dsPage.hidden = !ds;
+    if (ds) {
+      window.scrollTo(0, 0);
+      if (!dsPage.dataset.open) {
+        dsPage.dataset.open = "1";
+        renderDatasetPage();
+      }
+    } else {
+      dsPage.dataset.open = "";
+    }
+  }
   if (!cid) {
     page.dataset.cid = "";
     return;
@@ -768,7 +1102,7 @@ function isPreFork(duel) {
 
 function verdictSummary(duel) {
   const params = duelParams(duel);
-  const k = Number(params.k_sigma ?? 3);
+  const k = Number(params.k_sigma ?? 2);
   // δ floor existed only pre-fork; v3 duels are purely relative.
   const delta = isPreFork(duel) && params.min_margin != null
     ? Number(params.min_margin) : null;
@@ -1039,7 +1373,7 @@ function duelPageHtml(duel, series, logLines) {
 
   const params = duelParams(duel);
   const pre = isPreFork(duel);
-  const kSE = duel.se != null ? Number(params.k_sigma ?? 3) * Number(duel.se) : null;
+  const kSE = duel.se != null ? Number(params.k_sigma ?? 2) * Number(duel.se) : null;
   const marginOk = duel.margin != null && kSE != null
     ? Number(duel.margin) > kSE
       && (!pre || params.min_margin == null
@@ -1051,7 +1385,7 @@ function duelPageHtml(duel, series, logLines) {
       <div class="kv"><span class="k">z</span><span class="v ${Number(duel.z) >= 0 ? "ok" : "bad"}">${esc(fmtZ(duel.z))}</span></div>
       <div class="kv"><span class="k">margin ⟨Reason_c − Reason_k⟩</span><span class="v ${marginOk == null ? "" : marginOk ? "ok" : "bad"}">${esc(fmtScore(duel.margin))}</span></div>
       <div class="kv"><span class="k">SE</span><span class="v">${esc(fmtScore(duel.se))}</span></div>
-      <div class="kv"><span class="k">${esc(String(params.k_sigma ?? 3))}·SE bar</span><span class="v">${kSE == null ? "—" : esc(fmtScore(kSE))}</span></div>
+      <div class="kv"><span class="k">${esc(String(params.k_sigma ?? 2))}·SE bar</span><span class="v">${kSE == null ? "—" : esc(fmtScore(kSE))}</span></div>
       ${pre ? `<div class="kv"><span class="k">δ noise floor (legacy)</span><span class="v">${esc(fmtScore(params.min_margin))}</span></div>` : ""}
       ${duel.duel_seconds != null ? `<div class="kv"><span class="k">scoring time</span><span class="v">${esc(fmtDuration(duel.duel_seconds))}</span></div>` : ""}
       <div class="kv"><span class="k">challenger wins</span><span class="v ${duel.challenger_wins ? "ok" : "bad"}">${duel.challenger_wins == null ? "—" : duel.challenger_wins ? "yes" : "no"}</span></div>
@@ -1122,7 +1456,7 @@ function duelPageHtml(duel, series, logLines) {
             code ships in the repo — see <a href="/llms.txt" target="_blank" rel="noopener">llms.txt</a>
             → <code>code/affine/score.py</code>.</li>
           <li><strong>The verdict follows mechanically.</strong> Crown iff
-            margin &gt; ${esc(String(params.k_sigma ?? 3))}·SE${pre
+            margin &gt; ${esc(String(params.k_sigma ?? 2))}·SE${pre
               ? ` (this pre-fork duel additionally required margin &gt; δ = ${esc(fmtScore(params.min_margin))} and every S* v2 gate)`
               : " — that is the whole rule"}. No judge, no discretion.</li>
         </ol>
@@ -1134,8 +1468,8 @@ function duelPageHtml(duel, series, logLines) {
     <div class="duel-block">
       <div class="section-head"><h3 class="section-title">verdict</h3>
         <span class="section-right note">${pre
-          ? `crown rule (pre-fork S* v2): z > ${esc(String(params.k_sigma ?? 3))} AND margin > δ, both sides gate-valid`
-          : `crown rule: margin > ${esc(String(params.k_sigma ?? 3))}·SE — nothing else`}</span></div>
+          ? `crown rule (pre-fork S* v2): z > ${esc(String(params.k_sigma ?? 2))} AND margin > δ, both sides gate-valid`
+          : `crown rule: margin > ${esc(String(params.k_sigma ?? 2))}·SE — nothing else`}</span></div>
       ${verdict}
     </div>
     ${failBlock}
@@ -1278,7 +1612,7 @@ function wire() {
   document.querySelectorAll(".toc-link").forEach((a) => {
     a.addEventListener("click", (e) => {
       e.preventDefault();
-      if (duelHashCid()) location.hash = "";
+      if (duelHashCid() || datasetOpen()) location.hash = "";
       activateTab((a.getAttribute("href") || "").slice(1));
     });
   });
@@ -1300,11 +1634,13 @@ function wire() {
     openDuel(tr.dataset.cid);
   });
   $("duel-back")?.addEventListener("click", closeDuelPage);
+  wireDatasetPage();
   window.addEventListener("hashchange", route);
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if (openChartId) closeChart();
     else if (duelHashCid()) closeDuelPage();
+    else if (datasetOpen()) closeDatasetPage();
   });
 }
 

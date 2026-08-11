@@ -1,13 +1,16 @@
-"""Per-turn instrumentation: teacher references + the ten forced-logprob calls.
+"""Per-turn instrumentation: teacher references + forced-logprob calls.
 
 Per turn x, with teacher C and miner A:
   teacher rollouts  R_C = {(z_C^i, y_C^i)}  i = 1..n
   miner rollouts    R_A = {(z_A^j, y_A^j)}  j = 1..n
 
 Pairing (i, j) is diagonal to keep the call count linear. All lp* come from
-echo+logprobs teacher forcing, never from tempered sampling logprobs. The raw
-per-pair components are recorded so any scoring rule can be recomputed
-offline (audit) without re-running GPU work.
+echo+logprobs teacher forcing, never from tempered sampling logprobs.
+
+Production (Reason-only): each pair records z_A/y_A plus the components the
+score needs — lpC(y_C|z_A) and the teacher-ref lpC(y_C|z_C)/lpC(y_C|∅).
+Optional full_terms / score_bank keep the retired S* v2 telemetry echoes for
+offline replay; they are off in live duels.
 """
 
 from __future__ import annotations
@@ -20,6 +23,25 @@ from affine.score import eta
 from .vllm_client import VllmModel
 
 EMPTY_THOUGHTS = ""
+
+# Full (legacy telemetry) echo set — unused when reason_only=True.
+_FULL_CALLS = [
+    ("lpA_yc_za", "miner", "za", "yc"),
+    ("lpC_yc_za", "teacher", "za", "yc"),
+    ("lpA_yc_zc", "miner", "zc", "yc"),
+    ("lpA_yc_e", "miner", "", "yc"),
+    ("lpA_ya_za", "miner", "za", "ya"),
+    ("lpC_ya_za", "teacher", "za", "ya"),
+    ("lpA_ya_zc", "miner", "zc", "ya"),
+    ("lpA_ya_e", "miner", "", "ya"),
+    ("lpC_ya_e", "teacher", "", "ya"),
+    ("lpC_ya_zc", "teacher", "zc", "ya"),
+]
+
+# Score path: Reason = lpC(y_C|z_A) − lpC(y_C|∅); empty/own come from refs.
+_REASON_CALLS = [
+    ("lpC_yc_za", "teacher", "za", "yc"),
+]
 
 
 async def teacher_reference(teacher: VllmModel, prefix: list[dict], n: int,
@@ -62,8 +84,13 @@ async def _bank_lift(teacher: VllmModel, prefix: list[dict],
 async def miner_terms(teacher: VllmModel, miner: VllmModel, prefix: list[dict],
                       ref: list[dict], n: int, temperature: float,
                       max_thought: int, max_action: int,
-                      score_bank: bool = True) -> dict:
-    """Compute the instrumented pair record for one miner on one turn."""
+                      score_bank: bool = False,
+                      reason_only: bool = True) -> dict:
+    """Compute the pair record for one miner on one turn.
+
+    reason_only (production): sample the miner, echo lpC(y_C|z_A) on the
+    teacher, stamp η from teacher-ref denominators. No lpA / bank GPU work.
+    """
     rollouts = await asyncio.gather(*[
         miner.sample(prefix, temperature, max_thought + max_action)
         for _ in range(n)
@@ -75,18 +102,7 @@ async def miner_terms(teacher: VllmModel, miner: VllmModel, prefix: list[dict],
     m = min(len(ref), len(rollouts))
     ref, rollouts = ref[:m], rollouts[:m]
 
-    calls = [
-        ("lpA_yc_za", "miner", "za", "yc"),
-        ("lpC_yc_za", "teacher", "za", "yc"),
-        ("lpA_yc_zc", "miner", "zc", "yc"),
-        ("lpA_yc_e", "miner", "", "yc"),
-        ("lpA_ya_za", "miner", "za", "ya"),
-        ("lpC_ya_za", "teacher", "za", "ya"),
-        ("lpA_ya_zc", "miner", "zc", "ya"),
-        ("lpA_ya_e", "miner", "", "ya"),
-        ("lpC_ya_e", "teacher", "", "ya"),
-        ("lpC_ya_zc", "teacher", "zc", "ya"),
-    ]
+    calls = _REASON_CALLS if reason_only else _FULL_CALLS
     tasks = []
     for i in range(m):
         ctx = {"zc": ref[i]["z"], "yc": ref[i]["y"],
@@ -109,11 +125,8 @@ async def miner_terms(teacher: VllmModel, miner: VllmModel, prefix: list[dict],
               for j, (name, *_) in enumerate(calls)}
         lp["lpC_yc_zc"] = ref[i]["lp_own"]
         lp["lpC_yc_e"] = ref[i]["lp_empty"]
-        # Full texts kept: truncation biases offline bank rescoring.
         lp["z_a"] = rollouts[i][0]
         lp["y_a"] = rollouts[i][1]
-        # η stamped here so artifacts carry it from day one (denominator is
-        # the teacher-ref lp_own already on the pair — no extra echo).
         lp["eta"] = eta(lp)
         if bank_vals is not None:
             lp["L2_bank"] = bank_vals[i]

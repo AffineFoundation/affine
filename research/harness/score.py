@@ -23,7 +23,7 @@ import statistics as st
 from dataclasses import dataclass
 
 
-DEFAULT_K_SIGMA = 3.0
+DEFAULT_K_SIGMA = 2.0
 
 # Telemetry constants (non-consensus).
 TELEMETRY_TAU = 0.02

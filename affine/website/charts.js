@@ -246,7 +246,9 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
   const bar = "#c6bda8";
   const mono = "IBM Plex Mono, monospace";
 
-  const grid = ticks.filter((v) => v !== 3).map((v) => {
+  // Crown threshold in z-units = k_sigma (contract: 2.0 since 2026-08-11).
+  const kCrown = 2;
+  const grid = ticks.filter((v) => v !== kCrown).map((v) => {
     const y = yAt(v);
     return `<g>
       <line x1="${padL}" x2="${width - padR}" y1="${y}" y2="${y}"
@@ -257,12 +259,12 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
     </g>`;
   }).join("");
 
-  const yCrown = yAt(3);
+  const yCrown = yAt(kCrown);
   const crownLine = `<g>
     <line x1="${padL}" x2="${width - padR}" y1="${yCrown}" y2="${yCrown}"
       stroke="${gold}" stroke-width="1" stroke-dasharray="2 5" opacity="0.7"/>
     <text x="${padL - 10}" y="${yCrown + 3}" fill="${gold}" font-family="${mono}"
-      font-size="10" text-anchor="end">3σ</text>
+      font-size="10" text-anchor="end">${kCrown}σ</text>
   </g>`;
 
   const columns = points.map((p, i) => {
@@ -274,7 +276,7 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
     const h = Math.max(Math.abs(y0 - y1), 2);
     const crowned = p.event === "crowned";
     const fill = crowned ? gold : (z >= 0 ? bar : "rgba(255,71,71,0.55)");
-    const zLabel = fmtZ(p.event === "crowned" && p.z == null ? 3 : p.z);
+    const zLabel = fmtZ(p.event === "crowned" && p.z == null ? kCrown : p.z);
     const tip = `${duelTipName(p)} · ${p.event} · z=${zLabel} · ${fmtTime(p.at)}`;
     return `<g class="duel-hit" data-tip="${esc(tip)}"${duelCidAttr(p)}>
       <rect x="${x - barW / 2}" y="${top}" width="${barW}" height="${h}" rx="1" fill="${fill}"
@@ -750,18 +752,19 @@ export const HERO_CHARTS = [
   {
     id: "hero-margin",
     title: "Margin",
-    caption: "paired z vs king · dashed = 3σ dethrone threshold",
+    caption: "paired z vs king · dashed = 2σ dethrone threshold",
     detail: `<p>The duel itself, in units of its own noise: each bar is
       <code>z = mean(Reason_c − Reason_k) / SE</code> against the reigning
       king. Because the mean is paired per turn, turn difficulty cancels — a
       hard slice hurts both sides equally. Gold bars are crownings, bone is a
       challenger that scored above the king without clearing the bar, red is
       a loss.</p>
-      <p>The dotted gold line at 3σ is the dethrone threshold — under Reason
-      v3 clearing it is the whole crown rule, so every bar reads directly as
-      how close that challenger came to the crown. There is no absolute
-      floor: the test is purely relative to the slice's own noise. Pre-fork
-      duels additionally required the retired <code>δ</code> floor.</p>`,
+      <p>The dotted gold line at 2σ is the dethrone threshold (since
+      2026-08-11; was 3σ at Reason v3 launch). Clearing it is the whole crown
+      rule under Reason v3, so every bar reads directly as how close that
+      challenger came to the crown. There is no absolute floor: the test is
+      purely relative to the slice's own noise. Pre-fork duels additionally
+      required the retired <code>δ</code> floor.</p>`,
     draw: (svg, history, opts) => drawDuelZ(svg, history, opts),
   },
 ];
