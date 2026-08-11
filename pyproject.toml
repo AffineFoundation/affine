@@ -1,4 +1,4 @@
 # Virtual workspace root — one lockfile, one .venv for all members.
 # `uv sync --all-packages` (via ./setup.sh) installs everything.
 [tool.uv.workspace]
-members = ["affine", "research", "ops"]
+members = ["affine", "research", "ops", "rollouts"]

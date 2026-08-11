@@ -1,0 +1,28 @@
+[project]
+name = "rollouts"
+version = "0.1.0"
+description = "Unified rollout datagen: canonical trace store + Parquet index + derived views, deficit scheduler, multi-model/multi-harness policy matrix."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    # Contract code reused from the affine member: datagen.slicer (turn
+    # slicing byte-compatible with the production corpus) and
+    # datagen.uploader (sha-manifested HF shard uploads).
+    "affine",
+    "datasets>=3.0",
+    "huggingface_hub>=0.30",
+    "pyarrow>=17",
+    "pyyaml>=6",
+]
+
+[tool.uv.sources]
+affine = { workspace = true }
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["rollouts*"]
+
+[tool.setuptools.package-data]
+rollouts = ["*.toml"]

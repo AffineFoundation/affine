@@ -1,0 +1,13 @@
+Verbatim snapshot of /root/prime-lane on the datagen pod
+(66.153.184.201:3049), taken 2026-08-11 before the unified-rollouts
+refactor. Reference only — the live code is the rollouts/ package.
+
+  primelane/*.py    -> *.py here
+  bootstrap.sh      -> bootstrap.sh
+  .lane_env         -> lane_env.example (values sanitized)
+
+tests/fixtures/ holds real archived traces from the same pod:
+  swelego-*.jsonl.gz, swesmith-*.jsonl.gz, terminal_lego-*.jsonl.gz
+    verifiers trace v1 episodes (one json per line, traces[] inside)
+  networkx__networkx-3848.traj.json.gz
+    mini-swe-agent trajectory from the main datagen loop (/root/datagen/trajs)

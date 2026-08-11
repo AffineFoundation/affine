@@ -1,0 +1,10 @@
+# Prime-lane knobs (keys come from /root/affine/.datagen_env, sourced first).
+# Capacity coordination with the main datagen loop (same pod): keep
+# LANE_CONCURRENCY <= 12 so the pod's total rollout containers stay < ~40.
+export LANE_TASKSETS="scaleswe:3,swerebench_v2:2,r2e_gym:1,multiswe:1,swesmith:4,swelego:2,terminal_lego:3,terminal_bench_2:1,nl2repobench:1"
+export LANE_LANGS="all"
+export LANE_BATCH_SIZE=10
+export LANE_CONCURRENCY=10
+export LANE_MAX_TURNS=80
+export LANE_UPLOAD_MIN_TURNS=400
+export LANE_UPLOAD_INTERVAL_S=3600
