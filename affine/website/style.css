@@ -807,6 +807,19 @@ table.data-table td.when {
 .gold { color: var(--color-gold); }
 .dim { color: var(--color-fg-3); }
 
+/* Muted up/down tint for score deltas — softer than .ok/.bad status colors.
+ * table.data-table td prefixes outrank the default td color rule. */
+.delta-up,
+table.data-table td.delta-up { color: #7fb98a; }
+.delta-down,
+table.data-table td.delta-down { color: #c98080; }
+
+/* King model names (Affine-<roman>) render gold wherever they appear;
+ * the td a variant outranks the table link color. */
+.king-gold,
+table.data-table td a.king-gold,
+table.data-table td span.king-gold { color: var(--color-gold); }
+
 .contract {
   margin: 0;
   padding: 14px 16px;

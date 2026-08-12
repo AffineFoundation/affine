@@ -51,16 +51,20 @@ export function setReignLookup(members, genesisRepo) {
 }
 
 /**
- * Kings display as Affine-<roman>; everything else as Affine-<hotkey[0:5]>.
+ * Resolve a repo/hotkey to a reign number, or null when it isn't a king.
  * Repo is the primary key (a king hotkey can later submit a different model);
  * hotkey lookup only applies when the row has no repo at all.
  */
+export function resolveReign(repo, hotkey, reignNumber) {
+  if (reignNumber != null) return reignNumber;
+  if (repo && reignByRepo.has(repo)) return reignByRepo.get(repo);
+  if (!repo && hotkey && reignByHotkey.has(hotkey)) return reignByHotkey.get(hotkey);
+  return null;
+}
+
+/** Kings display as Affine-<roman>; everything else as Affine-<hotkey[0:5]>. */
 export function modelDisplayName(repo, hotkey, reignNumber) {
-  let rn = reignNumber;
-  if (rn == null && repo && reignByRepo.has(repo)) rn = reignByRepo.get(repo);
-  if (rn == null && !repo && hotkey && reignByHotkey.has(hotkey)) {
-    rn = reignByHotkey.get(hotkey);
-  }
+  const rn = resolveReign(repo, hotkey, reignNumber);
   if (rn != null) return kingName(rn);
   if (hotkey) return `Affine-${String(hotkey).slice(0, 5)}`;
   return repo ? String(repo) : "—";

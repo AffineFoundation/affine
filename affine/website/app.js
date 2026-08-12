@@ -12,9 +12,10 @@ import {
   fetchDuelTurn,
   fetchHistory,
   fetchRegHistory,
+  fetchSnapshot,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=50";
+} from "./api.js?v=51";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -35,11 +36,13 @@ import {
   fmtTime,
   fmtUsd,
   fmtZ,
+  kingName,
   modelDisplayName,
   reignMembers,
+  resolveReign,
   setReignLookup,
   short,
-} from "./charts.js?v=50";
+} from "./charts.js?v=51";
 
 const $ = (id) => document.getElementById(id);
 
@@ -59,16 +62,18 @@ const hippiusEvalUrl = (cid) =>
     ? `https://s3.hippius.com/affine-sn120/evals/${encodeURIComponent(cid)}.json.gz`
     : null);
 
-// Kings render as Affine-<roman>, everything else as Affine-<hotkey[0:5]>;
-// the real repo string stays discoverable via the title attribute.
+// Kings render as Affine-<roman> in gold, everything else as
+// Affine-<hotkey[0:5]>; the real repo string stays discoverable via the
+// title attribute.
 function modelLink(repo, hotkey, reignNumber) {
   if (!repo && !hotkey) return "—";
   const name = modelDisplayName(repo, hotkey, reignNumber);
   const title = repo || hotkey || "";
+  const cls = resolveReign(repo, hotkey, reignNumber) != null ? "king-gold" : "";
   const url = hubUrl(repo);
   return url
-    ? `<a href="${esc(url)}" target="_blank" rel="noopener" title="${esc(title)}" onclick="event.stopPropagation()">${esc(name)}</a>`
-    : `<span title="${esc(title)}">${esc(name)}</span>`;
+    ? `<a class="${cls}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(title)}" onclick="event.stopPropagation()">${esc(name)}</a>`
+    : `<span class="${cls}" title="${esc(title)}">${esc(name)}</span>`;
 }
 
 function hotkeyLink(hk) {
@@ -170,16 +175,16 @@ function benchInfo(b) {
   return { suite, scores, qwen: refScore(BENCH_BASELINE), genesis: refScore(BENCH_GENESIS) };
 }
 
-function deltaCell(score, ref, fmt) {
+function deltaCell(score, ref) {
   if (score == null || ref == null) return `<td class="r dim">—</td>`;
   const d = score - ref;
-  const cls = d > 0 ? "ok" : d < 0 ? "bad" : "dim";
-  return `<td class="r ${cls}">${esc(fmt(d, ref))}</td>`;
+  const cls = d > 0 ? "delta-up" : d < 0 ? "delta-down" : "dim";
+  return `<td class="r ${cls}">${esc(fmtPctDelta(d))}</td>`;
 }
 
-const fmtRelPct = (d, ref) =>
-  ref === 0 ? "—" : `${d > 0 ? "+" : ""}${((d / ref) * 100).toFixed(0)}%`;
-const fmtAbsDelta = (d) => `${d > 0 ? "+" : ""}${d.toFixed(2)}`;
+// swe-rebench scores are fractions of 1; display as percentages.
+const fmtPct = (v) => (v == null ? "—" : `${(Number(v) * 100).toFixed(1)}%`);
+const fmtPctDelta = (d) => `${d > 0 ? "+" : ""}${(d * 100).toFixed(1)}%`;
 
 function renderReign(d) {
   const members = reignMembers(d);
@@ -194,8 +199,8 @@ function renderReign(d) {
     ? ((earners[0].weight_bps || 0) / 100).toFixed(0)
     : "0";
   const benchBits = [];
-  if (bench.qwen != null) benchBits.push(`qwen ${fmtScore(bench.qwen)}`);
-  if (bench.genesis != null) benchBits.push(`Affine-I ${fmtScore(bench.genesis)}`);
+  if (bench.qwen != null) benchBits.push(`qwen ${fmtPct(bench.qwen)}`);
+  if (bench.genesis != null) benchBits.push(`Affine-I ${fmtPct(bench.genesis)}`);
   $("reign-meta").textContent =
     `${members.length} kings · ${earners.length} earning · ${pct}% each`
     + (benchBits.length ? ` · swe: ${benchBits.join(" / ")}` : "");
@@ -217,9 +222,9 @@ function renderReign(d) {
         <td class="dim">${m.uid != null ? esc(m.uid) : "—"}</td>
         <td>${modelLink(m.repo, m.hotkey, m.reign_number)}</td>
         <td>${hotkeyLink(m.hotkey)}</td>
-        <td class="r ${swe != null ? "" : "dim"}">${esc(swe != null ? fmtScore(swe) : "—")}</td>
-        ${deltaCell(swe, bench.qwen, fmtRelPct)}
-        ${deltaCell(swe, bench.genesis, fmtAbsDelta)}
+        <td class="r ${swe != null ? "" : "dim"}">${esc(fmtPct(swe))}</td>
+        ${deltaCell(swe, bench.qwen)}
+        ${deltaCell(swe, bench.genesis)}
         <td class="r ${m.current ? "gold" : ""}">${esc(fmtScore(m.score))}</td>
         <td class="r ${earning ? "gold" : "dim"}">${esc(alpha)}</td>
         <td class="r ${earning ? "" : "dim"}">${esc(usd)}</td>
@@ -520,6 +525,33 @@ function renderQueue(d) {
   </table>`;
 }
 
+/**
+ * Opposing king for a history row, derived from the reign lineage: a duel is
+ * fought against the king whose reign covered the verdict time. Crowned rows
+ * name the previous king (the one they dethroned).
+ */
+function opponentKing(r) {
+  const members = reignMembers(cache.dashboard || {})
+    .filter((m) => m.reign_number != null && m.repo);
+  const genesis = { repo: BENCH_GENESIS.repo, hotkey: "", reign_number: 0 };
+  if (r.event === "crowned" && r.reign_number != null) {
+    const prevReign = Number(r.reign_number) - 1;
+    return members.find((m) => m.reign_number === prevReign)
+      || (prevReign === 0 ? genesis : null);
+  }
+  const t = r.at ? Date.parse(r.at) : NaN;
+  if (Number.isNaN(t)) return null;
+  let best = genesis;
+  for (const m of members) {
+    const c = m.crowned_at ? Date.parse(m.crowned_at) : NaN;
+    if (!Number.isNaN(c) && c <= t
+        && (m.reign_number ?? -1) > (best.reign_number ?? -1)) {
+      best = m;
+    }
+  }
+  return best;
+}
+
 function outcomeBadge(r) {
   if (r.event === "crowned") return badge("crowned", `crowned #${r.reign_number ?? "?"}`);
   if (r.event === "failed") return badge("failed", r.error_code || "failed");
@@ -544,11 +576,15 @@ function renderHistory(h) {
   }
   $("history-wrap").innerHTML = `<table class="data-table">
     <thead><tr>
-      <th>when</th><th>age</th><th>event</th><th>model</th><th>hotkey</th><th>outcome</th>
+      <th>when</th><th>age</th><th>event</th><th>model</th><th>hotkey</th><th>vs</th><th>outcome</th>
       <th class="r">dur</th><th class="r">z</th><th class="r">Reason</th><th class="r">king Reason</th><th>detail</th>
     </tr></thead>
     <tbody>${rows.map((r) => {
-      const zClass = r.z == null ? "" : Number(r.z) >= 0 ? "ok" : "bad";
+      const zClass = r.z == null ? "" : Number(r.z) >= 0 ? "delta-up" : "delta-down";
+      const reasonClass = r.score == null || r.score_king == null
+        ? ""
+        : Number(r.score) >= Number(r.score_king) ? "delta-up" : "delta-down";
+      const opp = opponentKing(r);
       const cid = r.challenge_id || "";
       return `<tr class="row-link ${r.event === "crowned" ? "current" : ""}" data-cid="${esc(cid)}">
         <td class="when">${esc(fmtTime(r.at))}</td>
@@ -556,10 +592,11 @@ function renderHistory(h) {
         <td>${esc(r.event)}</td>
         <td>${modelLink(r.repo, r.hotkey, r.reign_number)}</td>
         <td>${hotkeyLink(r.hotkey)}</td>
+        <td>${opp ? modelLink(opp.repo, opp.hotkey, opp.reign_number) : "—"}</td>
         <td>${outcomeBadge(r)}</td>
         <td class="r dim">${esc(fmtDuration(r.duration_s))}</td>
         <td class="r ${zClass}">${esc(fmtZ(r.z))}</td>
-        <td class="r">${esc(fmtScore(r.score))}</td>
+        <td class="r ${reasonClass}">${esc(fmtScore(r.score))}</td>
         <td class="r dim">${esc(fmtScore(r.score_king))}</td>
         <td class="dim">${esc(short(r.rejection_reason || r.error_detail || "—", 48))}</td>
       </tr>`;
@@ -1044,11 +1081,15 @@ async function renderDuelPage(cid) {
   if (!body) return;
   if (title) title.textContent = cid;
   body.innerHTML = `<div class="empty">loading duel record…</div>`;
-  const [duelRaw, seriesRaw, logRaw] = await Promise.all([
+  const [duelRaw, seriesRaw, logRaw, snapRaw] = await Promise.all([
     fetchDuel(cid).catch(() => null),
     fetchDuelSeries(cid).catch(() => null),
     fetchDuelLog(cid).catch(() => null),
+    // Deep links render before the snapshot poller fires; the reign lineage
+    // (king names, opponent lookup) needs it.
+    cache.dashboard ? null : fetchSnapshot().catch(() => null),
   ]);
+  if (snapRaw) applySnapshot(snapRaw);
   if (duelHashCid() !== cid) return; // user navigated away mid-fetch
   let duel = duelRaw && !duelRaw.error ? duelRaw : null;
   if (!duel) {
@@ -1343,6 +1384,10 @@ function duelPageHtml(duel, series, logLines) {
   const overview = `
     <div class="kv-grid duel-overview">
       <div class="kv"><span class="k">challenger</span><span class="v">${modelLink(repo, hotkey, duel.reign_number)}${copyBtn(repo)}</span></div>
+      <div class="kv"><span class="k">vs king</span><span class="v">${(() => {
+        const opp = opponentKing(duel);
+        return opp ? modelLink(opp.repo, opp.hotkey, opp.reign_number) : "—";
+      })()}</span></div>
       <div class="kv"><span class="k">hotkey</span><span class="v">${hotkeyLink(hotkey)}${copyBtn(hotkey)}</span></div>
       <div class="kv"><span class="k">uid</span><span class="v">${duel.uid != null ? esc(duel.uid) : "—"}</span></div>
       <div class="kv"><span class="k">revision</span><span class="v mono">${esc(short(revision || "—", 14))}${copyBtn(revision)}</span></div>
