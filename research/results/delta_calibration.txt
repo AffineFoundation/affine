@@ -1,0 +1,25 @@
+δ calibration for Reason v3 (n=2080, k=2) — generated 2026-08-12
+duels: 148 (103 pre-fork n=80, 45 post-fork n≈2080)
+
+NULL (spread of a zero-edge challenger's measured margin @ n=2080):
+  sigma iid bootstrap (median across post-fork duels)      0.00121
+  sigma trajectory-cluster bootstrap (median)              0.00120
+  sigma trajectory-cluster bootstrap (max, conservative)   0.00223
+  cluster inflation factor                                 1.00x
+  statistical bar k*SE at live settings                    0.00241
+  king overdispersion Tok331102/affine-5EqYW8McUc-af10 (37 duels): cross-duel std 0.00360 vs within SE 0.00405 (phi=0.89)
+  king overdispersion tolegend/Affine-5fqbxvz29b-ckp333 (7 duels): cross-duel std 0.00152 vs within SE 0.00158 (phi=0.96)
+
+SIGNAL (Reason-only margins recomputed from pair records):
+  all duels    n=148 min=-0.0872 p25=-0.0059 med=-0.0003 p75=+0.0039 max=+0.0299
+  crowned      ['+0.0032', '+0.0039', '+0.0093', '+0.0123']
+
+DELTA TABLE (noise-crown prob per duel for a true-zero challenger):
+  delta   p_noise[lo]   p_noise[hi]   1-in-N[lo]   1-in-N[hi]  crowns_blocked
+  0.0020  2.30e-02     1.40e-01     43.5       7.17        0
+  0.0030  6.48e-03     8.89e-02     154       11.3        0
+  0.0050  1.72e-05     1.23e-02     5.8e+04       81        2
+  0.0075  2.61e-10     3.77e-04     3.83e+09       2.65e+03        2
+  0.0100  5.99e-17     3.52e-06     1.67e+16       2.84e+05        3
+  0.0150  9.57e-36     8.00e-12     1.05e+35       1.25e+11        4
+  0.0200  6.07e-62     1.30e-19     1.65e+61       7.71e+18        4

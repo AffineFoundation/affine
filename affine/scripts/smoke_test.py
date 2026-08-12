@@ -35,12 +35,13 @@ from affine.config import load_config  # noqa: E402
 
 cfg = load_config()
 check("config.typed_duel",
-      cfg.duel.k_sigma == 2.0 and cfg.duel.n_turns == 2080
+      cfg.duel.n_turns == 2080 and cfg.duel.k_sigma == 2.0
       and cfg.duel.n_teacher_samples == 1 and cfg.duel.n_miner_samples == 1
       and cfg.duel.reason_only is True and cfg.duel.score_bank is False)
-check("config.v2_floors_gone",
-      not hasattr(cfg.duel, "min_se") and not hasattr(cfg.duel, "min_margin"))
-check("config.v3_fork_key", cfg.weight_version_key >= 3)
+# δ crown floor (2026-08-12, weight_version_key=4); the v2 SE floor stays gone.
+check("config.delta_floor",
+      cfg.duel.min_margin == 0.002 and not hasattr(cfg.duel, "min_se"))
+check("config.v4_fork_key", cfg.weight_version_key >= 4)
 check("config.submission_caps",
       cfg.submission.max_total_repo_gb > cfg.submission.max_model_size_gb)
 check("config.min_submission_block_set", cfg.min_submission_block >= 0)
@@ -66,7 +67,7 @@ pin = json.loads(swe_ids.read_text())
 check("swe_lite_pin_present",
       swe_ids.is_file() and len(pin.get("instance_ids", [])) >= 10)
 
-# -- score: Reason v3 duel (purely relative, k_sigma-only) --------------------
+# -- score: duel invariants (k_sigma z-test + δ floor) ------------------------
 from affine import score  # noqa: E402
 
 
@@ -98,12 +99,20 @@ r2 = score.duel(chall_real, flat_king)
 check("duel.real_margin_wins", r2.challenger_wins,
       f"margin={r2.margin:.3f} se={r2.se:.4f} z={r2.z:.1f}")
 
-# v3 has no absolute floor: a statistically-real but tiny margin DOES crown
-# (accepted risk — the 2026-08-05 noise-floor policy taken to its limit).
+# A small-but-real margin above δ crowns (0.008 > 0.002 floor).
 chall_sig = rows_for("chall", [0.008 + 0.0004 * ((i % 5) - 2) for i in range(20)])
 r3 = score.duel(chall_sig, flat_king)
-check("duel.tiny_real_margin_crowns", r3.challenger_wins,
+check("duel.small_real_margin_crowns", r3.challenger_wins,
       f"margin={r3.margin:.4f} z={r3.z:.1f}")
+
+# δ floor: an ε-copy's noise margin can be hugely significant in z (its own
+# variance is tiny) yet must NOT crown below the absolute floor.
+eps_copy = rows_for("chall", [0.001 + 0.00005 * ((i % 5) - 2) for i in range(20)])
+r_eps = score.duel(eps_copy, flat_king)
+check("duel.delta_floor_blocks_eps_copy",
+      not r_eps.challenger_wins and r_eps.z > r_eps.k_sigma
+      and r_eps.margin < r_eps.min_margin,
+      f"margin={r_eps.margin:.4f} z={r_eps.z:.1f} delta={r_eps.min_margin}")
 
 # A positive but sub-kσ margin does not crown (k_sigma default = 2).
 chall_noise = rows_for("chall", [0.01 + 0.05 * ((i % 5) - 2) for i in range(20)])

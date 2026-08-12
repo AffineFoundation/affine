@@ -49,7 +49,7 @@ from affine.eval_client import Fault
 from . import benchrunner, dueling
 from .corpus import CorpusSync
 from .engine import Engine
-from .vllm_client import ContextLengthError, Served
+from .vllm_client import ContextLengthError, EngineUnreachableError, Served
 
 log = logging.getLogger("evalsrv")
 
@@ -322,6 +322,18 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
         except ContextLengthError as e:
             # Serving config / corpus length — requeue without burning miner.
             raise DuelFault(Fault.CONTEXT_LIMIT, str(e)) from e
+        except EngineUnreachableError as e:
+            # Engine died or is not accepting connections (common after an
+            # evalsrv bounce while a slot is still warming). Requeue; do not
+            # stamp unpromptable / burn the miner.
+            name = (e.name or "").lower()
+            if name.startswith("teacher"):
+                code = Fault.TEACHER
+            elif name == "king":
+                code = Fault.KING_LAUNCH
+            else:
+                code = Fault.CHALLENGER_INFRA
+            raise DuelFault(code, str(e)) from e
         verdict["job_id"] = job_id  # lets the root fetch the artifact post-verdict
         _save_artifact(job_id, req, verdict, artifact)
 

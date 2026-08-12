@@ -6,8 +6,8 @@ operator secrets (doppler-provided). Every module reads config through
 contract values.
 
 Sections are parsed once into typed dataclasses so call sites use
-`cfg.duel.k_sigma` (already the right type) instead of
-`float(cfg.duel["k_sigma"])`. The raw dict is still exposed as `cfg.raw` for
+`cfg.duel.n_turns` (already the right type) instead of
+`int(cfg.duel["n_turns"])`. The raw dict is still exposed as `cfg.raw` for
 the eval-server side (engine/dueling), which is handed the whole dict and
 reads it positionally.
 """
@@ -85,9 +85,11 @@ class TeacherCfg:
 
 @dataclass(frozen=True)
 class DuelCfg:
-    # Scoring contract (Reason v3): n_turns + k_sigma. That's all of it.
+    # Scoring contract: n_turns is the duel slice size, k_sigma the crown
+    # significance bar, min_margin the δ crown floor.
     n_turns: int
     k_sigma: float
+    min_margin: float
     # Sampling / ops knobs. n_*_samples set pairs per turn; reason_only /
     # score_bank control whether non-Reason GPU telemetry runs (off in prod).
     n_teacher_samples: int
@@ -258,6 +260,7 @@ def _duel(raw: dict) -> DuelCfg:
     d = raw["duel"]
     return DuelCfg(
         n_turns=int(d["n_turns"]), k_sigma=float(d["k_sigma"]),
+        min_margin=float(d.get("min_margin", 0.0)),
         n_teacher_samples=int(d["n_teacher_samples"]),
         n_miner_samples=int(d["n_miner_samples"]),
         temperature=float(d["temperature"]),

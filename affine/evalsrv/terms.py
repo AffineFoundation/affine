@@ -20,7 +20,9 @@ import asyncio
 from affine.priors import PRIOR_BANK
 from affine.score import eta
 
-from .vllm_client import VllmModel
+from .vllm_client import ModelPool, VllmModel
+
+TeacherClient = VllmModel | ModelPool
 
 EMPTY_THOUGHTS = ""
 
@@ -44,22 +46,32 @@ _REASON_CALLS = [
 ]
 
 
-async def teacher_reference(teacher: VllmModel, prefix: list[dict], n: int,
-                            temperature: float, max_thought: int,
-                            max_action: int) -> list[dict]:
-    """Sample teacher rollouts once per turn; reused across all miners.
-
-    Returns list of dicts with z, y, lp_own (lpC(y|z_C)) and lp_empty (lpC(y|∅)).
-    """
+async def sample_teacher_rollouts(
+        teacher: TeacherClient, prefix: list[dict], n: int,
+        temperature: float, max_thought: int, max_action: int, *,
+        sticky_key: str | None = None) -> list[tuple[str, str]]:
+    """Sample teacher (z, y) only — no forced-logprob echoes yet."""
     rollouts = await asyncio.gather(*[
-        teacher.sample(prefix, temperature, max_thought + max_action)
+        teacher.sample(prefix, temperature, max_thought + max_action,
+                       sticky_key=sticky_key)
         for _ in range(n)
     ])
-    rollouts = [(z, y) for z, y in rollouts if y]
+    return [(z, y) for z, y in rollouts if y]
+
+
+async def score_teacher_rollouts(
+        teacher: TeacherClient, prefix: list[dict],
+        rollouts: list[tuple[str, str]], *,
+        sticky_key: str | None = None) -> list[dict]:
+    """lpC(y|z_C) and lpC(y|∅) for already-sampled teacher rollouts."""
+    if not rollouts:
+        return []
     scored = await asyncio.gather(*[
-        teacher.score_action(prefix, z, y) for z, y in rollouts
+        teacher.score_action(prefix, z, y, sticky_key=sticky_key)
+        for z, y in rollouts
     ], *[
-        teacher.score_action(prefix, EMPTY_THOUGHTS, y) for z, y in rollouts
+        teacher.score_action(prefix, EMPTY_THOUGHTS, y, sticky_key=sticky_key)
+        for z, y in rollouts
     ])
     k = len(rollouts)
     return [
@@ -70,31 +82,65 @@ async def teacher_reference(teacher: VllmModel, prefix: list[dict], n: int,
     ]
 
 
-async def _bank_lift(teacher: VllmModel, prefix: list[dict],
-                     y_c: str, z_a: str) -> float:
-    """Λ2_bank = lpC(y_C|z_A) − max_k lpC(y_C|prior_k)."""
-    keys = list(PRIOR_BANK)
-    zs = [z_a] + [PRIOR_BANK[k] for k in keys]
-    scores = await asyncio.gather(*[
-        teacher.score_action(prefix, z, y_c) for z in zs
-    ])
-    return scores[0]["lp_per_byte"] - max(s["lp_per_byte"] for s in scores[1:])
+async def teacher_reference(teacher: TeacherClient, prefix: list[dict], n: int,
+                            temperature: float, max_thought: int,
+                            max_action: int, *,
+                            sticky_key: str | None = None) -> list[dict]:
+    """Sample teacher rollouts once per turn; reused across all miners.
 
-
-async def miner_terms(teacher: VllmModel, miner: VllmModel, prefix: list[dict],
-                      ref: list[dict], n: int, temperature: float,
-                      max_thought: int, max_action: int,
-                      score_bank: bool = False,
-                      reason_only: bool = True) -> dict:
-    """Compute the pair record for one miner on one turn.
-
-    reason_only (production): sample the miner, echo lpC(y_C|z_A) on the
-    teacher, stamp η from teacher-ref denominators. No lpA / bank GPU work.
+    Returns list of dicts with z, y, lp_own (lpC(y|z_C)) and lp_empty (lpC(y|∅)).
+    sticky_key pins all calls for this turn to one teacher replica (prefix cache).
     """
+    rollouts = await sample_teacher_rollouts(
+        teacher, prefix, n, temperature, max_thought, max_action,
+        sticky_key=sticky_key)
+    return await score_teacher_rollouts(
+        teacher, prefix, rollouts, sticky_key=sticky_key)
+
+
+async def sample_miner_rollouts(
+        miner: VllmModel, prefix: list[dict], n: int,
+        temperature: float, max_thought: int, max_action: int
+        ) -> list[tuple[str, str]]:
+    """Sample miner (z, y) rollouts; filter empty actions."""
     rollouts = await asyncio.gather(*[
         miner.sample(prefix, temperature, max_thought + max_action)
         for _ in range(n)
     ])
+    return [(z, y) for z, y in rollouts if y]
+
+
+async def _bank_lift(teacher: TeacherClient, prefix: list[dict],
+                     y_c: str, z_a: str, *,
+                     sticky_key: str | None = None) -> float:
+    """Λ2_bank = lpC(y_C|z_A) − max_k lpC(y_C|prior_k)."""
+    keys = list(PRIOR_BANK)
+    zs = [z_a] + [PRIOR_BANK[k] for k in keys]
+    scores = await asyncio.gather(*[
+        teacher.score_action(prefix, z, y_c, sticky_key=sticky_key) for z in zs
+    ])
+    return scores[0]["lp_per_byte"] - max(s["lp_per_byte"] for s in scores[1:])
+
+
+async def miner_terms(teacher: TeacherClient, miner: VllmModel, prefix: list[dict],
+                      ref: list[dict], n: int, temperature: float,
+                      max_thought: int, max_action: int,
+                      score_bank: bool = False,
+                      reason_only: bool = True, *,
+                      sticky_key: str | None = None,
+                      rollouts: list[tuple[str, str]] | None = None) -> dict:
+    """Compute the pair record for one miner on one turn.
+
+    reason_only (production): sample the miner, echo lpC(y_C|z_A) on the
+    teacher, stamp η from teacher-ref denominators. No lpA / bank GPU work.
+    sticky_key pins teacher echoes for this turn to one replica (prefix cache).
+
+    If ``rollouts`` is provided (already sampled), skip miner sampling — used
+    when the caller overlapped miner sample with teacher ref scoring.
+    """
+    if rollouts is None:
+        rollouts = await sample_miner_rollouts(
+            miner, prefix, n, temperature, max_thought, max_action)
     rollouts = [(z, y) for z, y in rollouts if y]
     if not rollouts or not ref:
         return {"valid": False}
@@ -108,14 +154,18 @@ async def miner_terms(teacher: VllmModel, miner: VllmModel, prefix: list[dict],
         ctx = {"zc": ref[i]["z"], "yc": ref[i]["y"],
                "za": rollouts[i][0], "ya": rollouts[i][1], "": EMPTY_THOUGHTS}
         for _, model, z_key, y_key in calls:
-            mdl = miner if model == "miner" else teacher
-            tasks.append(mdl.score_action(prefix, ctx[z_key], ctx[y_key]))
+            if model == "miner":
+                tasks.append(miner.score_action(prefix, ctx[z_key], ctx[y_key]))
+            else:
+                tasks.append(teacher.score_action(
+                    prefix, ctx[z_key], ctx[y_key], sticky_key=sticky_key))
     res = await asyncio.gather(*tasks)
 
     bank_vals = None
     if score_bank:
         bank_vals = await asyncio.gather(*[
-            _bank_lift(teacher, prefix, ref[i]["y"], rollouts[i][0])
+            _bank_lift(teacher, prefix, ref[i]["y"], rollouts[i][0],
+                       sticky_key=sticky_key)
             for i in range(m)
         ])
 

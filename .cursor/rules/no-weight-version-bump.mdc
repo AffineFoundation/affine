@@ -1,0 +1,12 @@
+---
+description: Never bump affine.toml weight_version_key without explicit operator order
+alwaysApply: true
+---
+
+# No autonomous weight_version_key bumps
+
+Do **not** change `[subnet].weight_version_key` in `affine/affine.toml` (or the website mirror) unless the user gives an explicit, dated directive to bump it.
+
+- Teacher swaps, remote endpoints, vLLM flags, corpus refresh, and other infra are **not** weight_version_key events.
+- Leave the integer at its current value. Comment/docs updates that restate the freeze are fine; changing the number is not.
+- If a task seems to require a fork, stop and ask the operator instead of bumping.

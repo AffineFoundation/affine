@@ -41,8 +41,13 @@ from affine.score import (
     score_miner,
 )
 
-from .terms import miner_terms, teacher_reference
-from .vllm_client import ModelPool, Served, VllmModel
+from .terms import (
+    miner_terms,
+    sample_miner_rollouts,
+    sample_teacher_rollouts,
+    score_teacher_rollouts,
+)
+from .vllm_client import EngineUnreachableError, ModelPool, Served, VllmModel
 
 log = logging.getLogger("evalsrv.dueling")
 
@@ -128,6 +133,9 @@ async def probe_injectable(model: VllmModel, turns: list[dict],
         try:
             z, y = await model.sample(prefix, temperature,
                                       max_thought + max_action)
+        except EngineUnreachableError:
+            # Dead/unreachable vLLM slot — infra, never a miner burn.
+            raise
         except Exception as e:
             return f"probe_sample_failed:{type(e).__name__}:{e}"
         if not y:
@@ -135,6 +143,8 @@ async def probe_injectable(model: VllmModel, turns: list[dict],
         any_action = True
         try:
             scored = await model.score_action(prefix, z, y)
+        except EngineUnreachableError:
+            raise
         except Exception as e:
             return f"probe_force_failed:{type(e).__name__}:{e}"
         if not math.isfinite(scored["lp_per_byte"]):
@@ -164,23 +174,56 @@ class RefCache:
 
     def __init__(self):
         self.cache: dict[str, list[dict]] = {}
+        # (z, y) after sample, before own/empty echoes — lets miner sampling
+        # overlap teacher ref scoring on the first side that draws the turn.
+        self._raw: dict[str, list[tuple[str, str]]] = {}
         # Per-turn locks: different turns sample teacher references
         # concurrently; only same-turn callers serialize. A single global
         # lock here would collapse the reference phase to sequential.
         self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
-    async def get_or_sample(self, tid: str, teacher: VllmModel,
-                            prefix: list[dict], n: int, temperature: float,
-                            max_thought: int, max_action: int) -> list[dict]:
+    async def ensure_raw(self, tid: str, teacher: VllmModel | ModelPool,
+                         prefix: list[dict], n: int, temperature: float,
+                         max_thought: int, max_action: int
+                         ) -> list[tuple[str, str]]:
+        """Teacher (z, y) only — shared across king/challenger for this turn."""
+        if tid in self.cache:
+            return [(r["z"], r["y"]) for r in self.cache[tid]]
+        if tid in self._raw:
+            return self._raw[tid]
+        async with self._locks[tid]:
+            if tid in self.cache:
+                return [(r["z"], r["y"]) for r in self.cache[tid]]
+            if tid in self._raw:
+                return self._raw[tid]
+            raw = await sample_teacher_rollouts(
+                teacher, prefix, n, temperature, max_thought, max_action,
+                sticky_key=tid)
+            self._raw[tid] = raw
+            return raw
+
+    async def ensure_scored(self, tid: str, teacher: VllmModel | ModelPool,
+                            prefix: list[dict]) -> list[dict]:
+        """lp_own / lp_empty for the turn's raw teacher rollouts."""
         if tid in self.cache:
             return self.cache[tid]
         async with self._locks[tid]:
             if tid in self.cache:
                 return self.cache[tid]
-            ref = await teacher_reference(teacher, prefix, n, temperature,
-                                          max_thought, max_action)
+            raw = self._raw.get(tid) or []
+            ref = await score_teacher_rollouts(
+                teacher, prefix, raw, sticky_key=tid)
             self.cache[tid] = ref
             return ref
+
+    async def get_or_sample(self, tid: str, teacher: VllmModel | ModelPool,
+                            prefix: list[dict], n: int, temperature: float,
+                            max_thought: int, max_action: int) -> list[dict]:
+        if tid in self.cache:
+            return self.cache[tid]
+        await self.ensure_raw(
+            tid, teacher, prefix, n, temperature, max_thought, max_action)
+        return await self.ensure_scored(tid, teacher, prefix)
 
 
 async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel,
@@ -189,25 +232,43 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel,
     rows: list[dict] = []
     done = 0
     total = len(turns)
+    n_teacher = int(duel_cfg["n_teacher_samples"])
+    n_miner = int(duel_cfg["n_miner_samples"])
+    temperature = float(duel_cfg["temperature"])
+    max_thought = int(duel_cfg["max_thought_tokens"])
+    max_action = int(duel_cfg["max_action_tokens"])
+    score_bank = bool(duel_cfg.get("score_bank", False))
+    reason_only = bool(duel_cfg.get("reason_only", True))
 
     async def one(rec: dict) -> None:
         nonlocal done
         tid = turn_id(rec)
         prefix = rec["prefix"]
         async with turn_sem:
-            ref = await refs.get_or_sample(
-                tid, teacher, prefix,
-                int(duel_cfg["n_teacher_samples"]), float(duel_cfg["temperature"]),
-                int(duel_cfg["max_thought_tokens"]), int(duel_cfg["max_action_tokens"]))
+            # 1) Sample teacher (z_C, y_C) once per turn (deduped across sides).
+            raw = await refs.ensure_raw(
+                tid, teacher, prefix, n_teacher, temperature,
+                max_thought, max_action)
+            if not raw:
+                done += 1
+                return
+            # 2) Overlap: teacher own/empty echoes || this miner's sample.
+            #    Miner only needs the prefix; ref logprobs only need (z_C, y_C).
+            ref, miner_rollouts = await asyncio.gather(
+                refs.ensure_scored(tid, teacher, prefix),
+                sample_miner_rollouts(
+                    miner, prefix, n_miner, temperature,
+                    max_thought, max_action),
+            )
             if not ref:
                 done += 1
                 return
+            # 3) lpC(y_C|z_A) (+ optional legacy echoes) after both are ready.
             t = await miner_terms(
-                teacher, miner, prefix, ref,
-                int(duel_cfg["n_miner_samples"]), float(duel_cfg["temperature"]),
-                int(duel_cfg["max_thought_tokens"]), int(duel_cfg["max_action_tokens"]),
-                score_bank=bool(duel_cfg.get("score_bank", False)),
-                reason_only=bool(duel_cfg.get("reason_only", True)))
+                teacher, miner, prefix, ref, n_miner, temperature,
+                max_thought, max_action,
+                score_bank=score_bank, reason_only=reason_only,
+                sticky_key=tid, rollouts=miner_rollouts)
         t.update({"turn_id": tid, "miner": miner.cfg.name})
         rows.append(t)
         done += 1
@@ -301,7 +362,9 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     # its own per-step work via max_num_batched_tokens, so client concurrency
     # only controls queue depth — separate budgets keep every engine fed.
     conc = int(duel_cfg["concurrency"])
-    turn_conc = max(4, min(conc, 16))
+    # Cap used to be 16 while concurrency=24, which under-fed the dual teacher
+    # replicas once sticky routing spread load. Match the client queue depth.
+    turn_conc = max(4, conc)
     async with httpx.AsyncClient() as http:
         teachers = teacher if isinstance(teacher, list) else [teacher]
         teacher_m = ModelPool([
@@ -346,6 +409,7 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     result = score_duel(
         chall_rows, king_rows,
         k_sigma=float(duel_cfg["k_sigma"]),
+        min_margin=float(duel_cfg.get("min_margin", 0.0)),
         challenger_bank_frac=_mean_bank(chall_rows),
         king_bank_frac=_mean_bank(king_rows))
 
@@ -361,11 +425,15 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         "se": result.se if math.isfinite(result.se) else None,
         "z": result.z if math.isfinite(result.z) else None,
         "k_sigma": result.k_sigma,
+        "min_margin": result.min_margin,
         "n_paired_turns": result.n_paired_turns,
         "ranking_formula": "Reason = lpC(y_C|z_A) − lpC(y_C|∅)",
         "duel_params": {
             "n_turns": int(duel_cfg["n_turns"]),
             "k_sigma": float(duel_cfg["k_sigma"]),
+            "min_margin": float(duel_cfg.get("min_margin", 0.0)),
+            "n_teacher_samples": int(duel_cfg["n_teacher_samples"]),
+            "n_miner_samples": int(duel_cfg["n_miner_samples"]),
         },
         "king": king_sum,
         "challenger": chall_sum,

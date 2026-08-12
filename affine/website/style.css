@@ -40,6 +40,9 @@ body {
   font-feature-settings: "tnum";
   min-height: 100%;
   overflow-x: hidden;
+  /* Stop iOS/Android from inflating text in landscape. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 ::-webkit-scrollbar { display: none; }
@@ -159,34 +162,7 @@ button {
   border-color: rgba(243, 196, 73, 0.35);
 }
 
-/* ---------- section tabs (one section shown below the hero) ---------- */
-.toc-bar {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 4px 26px;
-  padding: 8px 20px 0;
-  background: var(--color-bg);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.toc-link {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--color-fg-3);
-  text-decoration: none;
-  padding-bottom: 7px;
-  border-bottom: 2px solid transparent;
-  transition: color 120ms ease, border-color 120ms ease;
-}
-
-.toc-link:hover {
-  color: var(--color-gold);
-}
-
-/* Anchor jumps land below the sticky header (nav + market + toc). */
+/* Anchor jumps land below the sticky header (nav + market). */
 .hero,
 .section {
   scroll-margin-top: 104px;
@@ -281,17 +257,25 @@ button {
   background: var(--color-bg);
 }
 
+/* Same shell as .page so the hero grid lines up with the tables below. */
 .hero-inner {
-  width: 100%;
+  max-width: 1680px;
+  margin: 0 auto;
   padding: 0 20px;
 }
 
-/* Performance tab: the two hero charts stacked full-width, axes aligned. */
+/* 2×2 hero grid: Reason | Margin (σ) / Margin (abs) | reg price. */
 .hero-split {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 16px;
   width: 100%;
+}
+
+@media (max-width: 900px) {
+  .hero-split {
+    grid-template-columns: 1fr;
+  }
 }
 
 .hero-pane {
@@ -400,6 +384,15 @@ button {
 
 #chart-tip[hidden] {
   display: none;
+}
+
+/* Touch devices have no hover: the synthetic mouse event from a tap would
+ * leave the tip stuck on screen (over the duel page the tap just opened).
+ * Tapping a mark opens the duel page anyway — the richer view of the value. */
+@media (hover: none) {
+  #chart-tip {
+    display: none;
+  }
 }
 
 /* Subtle hover highlight on chart marks (Z bars, S dots, gate-grid dots).
@@ -558,11 +551,6 @@ button {
   padding: 12px 10px 8px;
 }
 
-/* Registration price pane at the top of the queue tab. */
-.reg-pane {
-  margin-bottom: 14px;
-}
-
 .metric-head {
   display: flex;
   flex-direction: column;
@@ -689,6 +677,16 @@ button {
 
 .table-scroll {
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Reign / queue / intake tables have no .table-scroll wrapper in the markup;
+ * without this they clip (not scroll) once the table outgrows a phone. */
+#reign-wrap,
+#queue-wrap,
+#intake-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 table.data-table {
@@ -721,6 +719,12 @@ table.data-table th {
 table.data-table th.r,
 table.data-table td.r {
   text-align: right;
+}
+
+/* Duel history: every column centered (overrides the .r right-align). */
+#history-wrap table.data-table th,
+#history-wrap table.data-table td {
+  text-align: center;
 }
 
 table.data-table tbody tr {
@@ -828,6 +832,42 @@ table.data-table td.when {
 .weight-cell {
   color: var(--color-gold);
   white-space: nowrap;
+}
+
+/* Signed mini-bar (± vs previous king): fill grows from the center line. */
+.pm-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.pm-bar {
+  position: relative;
+  display: inline-block;
+  width: 56px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-border);
+  vertical-align: middle;
+  overflow: hidden;
+}
+
+.pm-bar::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.pm-bar i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
 }
 
 .ok { color: var(--color-ok); }
@@ -961,10 +1001,55 @@ body.duel-open main.page {
   word-break: break-all;
 }
 
+/* One chart per row — these are the duel's evidence, give them the width. */
 .duel-chart-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  grid-template-columns: 1fr;
   gap: 16px;
+}
+
+/* Big verdict numbers: the few quantities that decide the duel. */
+.stat-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  min-width: 0;
+}
+
+.stat-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-fg-3);
+}
+
+.stat-value {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  line-height: 1.1;
+  color: var(--color-fg);
+}
+
+.stat-value.delta-up { color: #7fb98a; }
+.stat-value.delta-down { color: #c98080; }
+
+.stat-sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--color-fg-3);
 }
 
 .duel-chart-pane {
@@ -1011,53 +1096,6 @@ table.data-table td.mono {
   background: var(--color-surface);
   color: var(--color-fg-2);
   max-height: 360px;
-}
-
-.explain-item {
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  background: var(--color-surface);
-  padding: 0;
-}
-
-.explain-item + .explain-item {
-  margin-top: 8px;
-}
-
-.explain-item summary {
-  cursor: pointer;
-  padding: 12px 16px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--color-fg);
-  list-style: none;
-}
-
-.explain-item summary::-webkit-details-marker {
-  display: none;
-}
-
-.explain-item summary::before {
-  content: "▸ ";
-  color: var(--color-fg-3);
-}
-
-.explain-item[open] summary::before {
-  content: "▾ ";
-}
-
-.explain-item .explain-detail {
-  padding: 0 16px 14px;
-  font-size: 13px;
-  line-height: 1.65;
-  color: var(--color-fg-2);
-  max-width: 78ch;
-}
-
-.explain-item .explain-detail code {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--color-gold);
 }
 
 .duel-hit[data-cid] {
@@ -1427,4 +1465,149 @@ table.data-table td.mono {
 
 .ds-ref pre {
   border-color: rgba(212, 175, 55, 0.4);
+}
+
+/* ---------- phone layout (mobile audit 2026-08-12) ----------
+ * Checklist: no horizontal page scroll, nav that doesn't collide, tap
+ * targets ≥ ~40px, 16px inputs (stops iOS focus zoom), readable label
+ * floors, tables that swipe instead of clip. */
+@media (max-width: 720px) {
+  /* Nav: brand + icons stay on row one; the chips become a full-width,
+   * horizontally swipeable row below (they collided with the absolute
+   * centering on narrow screens). */
+  .nav-inner {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    row-gap: 6px;
+  }
+
+  .brand {
+    padding: 6px 8px 6px 0;
+  }
+
+  .nav-center {
+    position: static;
+    transform: none;
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+  }
+
+  .nav-chip {
+    flex: none;
+    height: 36px;
+    padding: 0 14px;
+  }
+
+  .nav-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  /* The stacked nav would eat ~18% of a phone screen if it stayed sticky
+   * (guideline: keep sticky chrome under 15%) — let it scroll away. */
+  .top-nav {
+    position: static;
+  }
+
+  .hero,
+  .section {
+    scroll-margin-top: 12px;
+  }
+
+  /* Tap targets. */
+  .expand-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .copy-btn {
+    width: 30px;
+    height: 30px;
+  }
+
+  .back-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .mix-row {
+    min-height: 40px;
+    padding: 6px 4px;
+  }
+
+  .raw-link {
+    display: inline-block;
+    padding: 9px 6px;
+  }
+
+  /* Readability floor: lift the 10px mono labels one notch on phones. */
+  table.data-table th,
+  .metric-caption,
+  .hero-caption,
+  .section-right,
+  .market-item .k,
+  .market-item .u,
+  .market-item.dim,
+  .kv .k,
+  .badge,
+  .ds-filter .k,
+  .mix-title,
+  .mix-count,
+  .stat-label,
+  .stat-sub {
+    font-size: 11px;
+  }
+
+  table.data-table td {
+    padding: 10px 12px;
+  }
+
+  /* Inside a swipe wrapper, let tables take their natural width instead of
+   * compressing to the viewport — otherwise columns hit min-content and
+   * cells wrap word-by-word into 90px-tall rows (intake was the worst). */
+  .table-scroll table,
+  .table-wrap table,
+  #reign-wrap table,
+  #queue-wrap table,
+  #intake-wrap table {
+    width: max-content;
+    min-width: 100%;
+  }
+
+  /* Expanded rollout / dataset-turn rows span the whole (wider) table.
+   * Pin the reader to the swipe viewport so its text is never off-screen. */
+  .rollout-detail {
+    position: sticky;
+    left: 0;
+    max-width: calc(100vw - 40px);
+  }
+
+  /* 16px inputs stop iOS Safari from zooming the page on focus. */
+  .filter-bar input,
+  .ds-filter-bar input,
+  .ds-filter-bar select {
+    font-size: 16px;
+    min-height: 42px;
+  }
+
+  .filter-bar input {
+    max-width: none;
+  }
+
+  /* Expanded-chart modal uses the whole phone screen. */
+  .chart-modal {
+    padding: 8px;
+  }
+
+  .chart-modal-sheet {
+    max-height: 96vh;
+  }
+
+  .duel-page {
+    padding: 20px 14px 72px;
+  }
 }

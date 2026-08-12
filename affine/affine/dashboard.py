@@ -359,6 +359,7 @@ class Dashboard:
                 "error_detail": (r.get("error_detail") or "")[:2000],
                 "z": v.get("z"), "margin": v.get("margin"),
                 "se": v.get("se"), "k_sigma": v.get("k_sigma"),
+                "min_margin": v.get("min_margin"),
                 "n_paired_turns": v.get("n_paired_turns"),
                 "rejection_reason": v.get("rejection_reason"),
                 "reign_number": r.get("reign_number"),

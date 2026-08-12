@@ -6,11 +6,21 @@ Shared between root validator and eval server. Any change here is a chain fork
 Reason(A; C, D):
   Per pair:   Reason = lpC(y_C | z_A) − lpC(y_C | ∅)
   Per miner:  score  = mean(Reason) over all pairs
-  Duel:       challenger wins iff paired mean(Reason_c − Reason_k) > k_sigma · SE
+  Duel:       challenger wins iff
+              paired mean(Reason_c − Reason_k) > max(k_sigma · SE, min_margin)
               with SE = stdev(diffs) / sqrt(n) over paired turns.
 
-That is the whole contract. Scoring hyperparameters: n_turns and k_sigma.
-There is no mix, no clip, no gates, and no absolute margin floor.
+That is the whole contract. Scoring hyperparameters: n_turns, k_sigma, and
+min_margin (δ). There is no mix, no clip, and no gates.
+
+δ (min_margin = 0.002, added 2026-08-12, weight_version_key=4) exists for one
+reason: the z-test is relative to the challenger's own noise, so an ε-copy of
+the king (per-duel SE ≈ 0.0003, ~6× below a distinct model's) crowns at the
+same 1-in-44 as anyone else on ±0.0006 noise margins. The absolute floor makes
+that ~z=6.7 (≈1-in-7.6e10) while staying below the live 2·SE bar (~0.0035),
+so honest duels never touch it. It also caps SE-compression strategies: the
+crown bar never drops below δ no matter how consistent a challenger's thoughts
+are. Calibration: research/results/delta_calibration.{json,txt}.
 
 Reason (formerly Λ2) is computed entirely on the teacher side: it asks how much
 the miner's thought z_A raises the frozen teacher's likelihood of reproducing
@@ -51,6 +61,7 @@ from dataclasses import dataclass
 
 
 DEFAULT_K_SIGMA = 2.0
+DEFAULT_MIN_MARGIN = 0.002
 
 # Telemetry constants (non-consensus): thresholds used only to report the
 # legacy causality/leakage pass rate. Changing them is NOT a chain fork.
@@ -227,14 +238,18 @@ class DuelResult:
     k_sigma: float
     challenger_wins: bool
     n_paired_turns: int
+    min_margin: float = DEFAULT_MIN_MARGIN
 
 
 def duel(challenger_rows: list[dict], king_rows: list[dict],
          k_sigma: float = DEFAULT_K_SIGMA,
+         min_margin: float = DEFAULT_MIN_MARGIN,
          challenger_bank_frac: float | None = None,
          king_bank_frac: float | None = None) -> DuelResult:
-    """Paired duel on per-turn mean Reason. Purely relative: wins iff
-    mean > k_sigma·SE. Bank fracs are accepted only to thread telemetry."""
+    """Paired duel on per-turn mean Reason: wins iff
+    mean > max(k_sigma·SE, min_margin). The δ floor is what stops ε-copies
+    and SE-compression; see the module docstring. Bank fracs are accepted
+    only to thread telemetry."""
     cs = score_miner(challenger_rows, challenger_bank_frac)
     ks = score_miner(king_rows, king_bank_frac)
     c_by = {r["turn_id"]: r for r in challenger_rows if r.get("valid") and "pairs" in r}
@@ -247,12 +262,13 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
     n = len(diffs)
     if n < 2:
         return DuelResult(cs.miner, ks.miner, 0.0, float("inf"), 0.0,
-                          k_sigma, False, n)
+                          k_sigma, False, n, min_margin)
     mean = st.mean(diffs)
     se = st.stdev(diffs) / math.sqrt(n)
     z = mean / se if se > 0 else (math.inf if mean > 0 else 0.0)
-    wins = mean > k_sigma * se
+    wins = mean > max(k_sigma * se, min_margin)
     return DuelResult(
         challenger=cs.miner, king=ks.miner, margin=mean, se=se, z=z,
         k_sigma=k_sigma, challenger_wins=wins, n_paired_turns=n,
+        min_margin=min_margin,
     )

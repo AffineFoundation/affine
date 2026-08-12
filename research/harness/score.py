@@ -1,17 +1,19 @@
-"""Scoring rule: Reason (v3, 2026-08-10) — research twin of affine/affine/score.py.
+"""Scoring rule: Reason (v3, 2026-08-10) — research twin of
+affine/affine/score.py.
 
   Per pair:   Reason = lpC(y_C | z_A) − lpC(y_C | ∅)
   Per miner:  score  = mean(Reason)
-  Duel:       challenger wins iff paired mean(Reason_c − Reason_k) > k_sigma · SE
+  Duel:       paired mean(Reason_c − Reason_k) > max(k_sigma · SE, min_margin)
 
-No mix, no clip, no gates, no absolute margin floor. Everything the retired
-S* v2 measured (causality, bank, calibration r, baseline, L1lift) is telemetry.
+No mix, no clip, no gates, no SE floor. min_margin (δ = 0.002, added
+2026-08-12, weight_version_key=4) is an absolute crown floor that kills
+ε-copies / SE-compression (calibration: results/delta_calibration.{json,txt});
+pre-δ v3 verdicts replay with min_margin=0.0. Everything the retired S* v2
+measured (causality, bank, calibration r, baseline, L1lift) is telemetry.
 
-IMPORTANT — pre-fork freezes: every result frozen before 2026-08-10
-(hybrid_w5, sstar_v2, RT tables) was produced under S* v2. To replay those,
-use the LEGACY section at the bottom (`legacy_score_miner` / `legacy_duel`
-and the DEFAULT_* v2 constants). `score_miner`/`duel` here are the v3 rule
-and intentionally reject the old keyword arguments.
+The pre-fork S* v2 rule (mix + gates + δ=0.02 + min_se) is preserved at the
+bottom of this file (`legacy_score_miner` / `legacy_duel` and the DEFAULT_*
+v2 constants) so archived freezes stay replayable.
 """
 
 from __future__ import annotations
@@ -24,6 +26,9 @@ from dataclasses import dataclass
 
 
 DEFAULT_K_SIGMA = 2.0
+# v3 δ crown floor (2026-08-12). Distinct from the legacy v2 DEFAULT_MIN_MARGIN
+# (0.02) kept below for pre-fork replay.
+DEFAULT_V3_MIN_MARGIN = 0.002
 
 # Telemetry constants (non-consensus).
 TELEMETRY_TAU = 0.02
@@ -136,13 +141,16 @@ class DuelResult:
     k_sigma: float
     challenger_wins: bool
     n_paired_turns: int
+    min_margin: float = DEFAULT_V3_MIN_MARGIN
 
 
 def duel(challenger_rows: list[dict], king_rows: list[dict],
          k_sigma: float = DEFAULT_K_SIGMA,
+         min_margin: float = DEFAULT_V3_MIN_MARGIN,
          challenger_bank_frac: float | None = None,
          king_bank_frac: float | None = None) -> DuelResult:
-    """v3 paired duel on per-turn mean Reason: wins iff mean > k_sigma·SE."""
+    """v3 paired duel: wins iff mean > max(k_sigma·SE, min_margin).
+    Pass min_margin=0.0 to replay pre-δ (weight_version_key=3) verdicts."""
     cs = score_miner(challenger_rows, challenger_bank_frac)
     ks = score_miner(king_rows, king_bank_frac)
     c_by = {r["turn_id"]: r for r in challenger_rows if r.get("valid") and "pairs" in r}
@@ -155,13 +163,14 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
     n = len(diffs)
     if n < 2:
         return DuelResult(cs.miner, ks.miner, 0.0, float("inf"), 0.0,
-                          k_sigma, False, n)
+                          k_sigma, False, n, min_margin)
     mean = st.mean(diffs)
     se = st.stdev(diffs) / math.sqrt(n)
     z = mean / se if se > 0 else (math.inf if mean > 0 else 0.0)
     return DuelResult(
         challenger=cs.miner, king=ks.miner, margin=mean, se=se, z=z,
-        k_sigma=k_sigma, challenger_wins=mean > k_sigma * se, n_paired_turns=n,
+        k_sigma=k_sigma, challenger_wins=mean > max(k_sigma * se, min_margin),
+        n_paired_turns=n, min_margin=min_margin,
     )
 
 

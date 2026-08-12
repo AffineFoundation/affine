@@ -20,8 +20,9 @@ king_chain_size = 5
 min_submission_block = 8767079
 # Bittensor weight-version gate for contract upgrades (bump on breaking
 # scoring/contract changes so stale validators are ignored by consensus).
-# Current: 3 (Reason v3, 2026-08-10). History: 1→2 teacher swap (2026-08-10,
-# same day, later reverted to GLM-Air); 2→3 Reason v3 scoring fork.
+# Current: 4 (δ floor, 2026-08-12, explicit dated operator directive).
+# History: 1→2 teacher swap (2026-08-10, same day, later reverted to GLM-Air);
+# 2→3 Reason v3 scoring fork; 3→4 min_margin=0.002 crown floor (2026-08-12).
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -29,7 +30,7 @@ min_submission_block = 8767079
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 3
+weight_version_key = 4
 
 [wallet]
 name = "default"
@@ -96,10 +97,11 @@ gpu_memory_utilization = 0.80
 # Scheduler token budget per engine step (applies to teacher/king/challenger
 # alike). Duel scoring is dominated by ~20k-token prefill-only echo calls
 # (~100M prompt tokens per duel per model); at 2048 the scheduler was the
-# bottleneck (~50 min/duel of queueing). 8192 is 4x that throughput while the
-# log_softmax transient stays far below the 0.80-util headroom. Ops knob only
-# — no effect on scoring semantics.
-max_num_batched_tokens = 8192
+# bottleneck (~50 min/duel of queueing). 12288 (2026-08-12): step up from
+# 8192 — teachers were ~75% queued with KV only ~2–5% full after sticky
+# routing; 16384+ / 0.85 util has OOM'd echo log_softmax on this pod before,
+# so stay under that. Ops knob only — no effect on scoring semantics.
+max_num_batched_tokens = 12288
 
 [dataset]
 # Unlabeled turn corpus D: append-only shards + an immutable-manifest pointer
@@ -121,10 +123,11 @@ manifest_key = "turns/manifest.json"
 refresh_interval_s = 3600
 
 [duel]
-# Reason v3 (2026-08-10, weight_version_key=3). The whole scoring contract:
+# Reason v3 + δ crown floor (2026-08-12, weight_version_key=4). The whole
+# scoring contract:
 #   Reason = lpC(y_C|z_A) − lpC(y_C|∅)   (per pair; miner score = mean)
-#   crown  = paired mean(Reason_c − Reason_k) > k_sigma · SE
-# No gates, no mix, no clip, no absolute margin/SE floors.
+#   crown  = paired mean(Reason_c − Reason_k) > max(k_sigma · SE, min_margin)
+# No gates, no mix, no clip, no SE floor.
 #
 # Sample budget (2026-08-11): Reason-only / no bank / 1+1 samples, with the
 # freed teacher-echo budget reinvested into n_turns (80→2080) so crown SE
@@ -136,6 +139,18 @@ n_turns = 2080
 # Crown bar: k=2 (2026-08-11). False-crown under Gaussian null ≈ 2.28%/duel
 # (~1 in 44). Was 3.0 (~0.13%/duel) under the Reason v3 launch default.
 k_sigma = 2.0
+# Absolute crown-margin floor δ (2026-08-12, weight_version_key=4). Calibrated
+# from 148 archived duels (research/results/delta_calibration.{json,txt}):
+# live null SE ≈ 0.0015–0.0029/duel, so the honest crown bar 2·SE ≈ 0.0035
+# sits above δ and real duels never touch it. What it kills is low-variance
+# attackers the z-test cannot see: an ε-copy of the king has SE ≈ 0.0003 and
+# would crown on ±0.0006 noise margins at the same 1-in-44 as anyone else —
+# under the floor that is ~z=6.7 (≈1-in-7.6e10). Also caps SE-compression
+# (A11 family): the crown bar never drops below δ. Merges / freshly trained
+# parity models are policy-accepted (king-equivalent crowns don't regress
+# the ratchet), hence the floor sits at the lowest calibrated point rather
+# than higher.
+min_margin = 0.002
 n_teacher_samples = 1
 n_miner_samples = 1
 # Ops: skip prior-bank and non-Reason forced-logprob echos (telemetry GPU).

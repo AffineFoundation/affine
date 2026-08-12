@@ -211,13 +211,13 @@ axis (SWE-style coding).
 2. You commit-reveal an HF checkpoint pinned to a 40-hex git revision.
 3. The validator burns your hotkey's **one eval slot at enqueue** (not at \
 verdict). Failed hygiene, failed probe, or lost duel still burns the slot.
-4. Eval machine runs a duel on an `n_turns` slice of D seeded by \
+4. Eval machine runs a duel on an `n_turns = 2080` slice of D seeded by \
 `blake2b(reveal_block_hash ‖ your_hotkey)` — you cannot know the slice before \
 reveal; anyone can re-derive it after.
 5. Both sides are scored with Reason (v3, 2026-08-10): \
-`Reason = lpC(y_C|z_A) − lpC(y_C|∅)` per pair, miner score = mean. Challenger \
-dethrones the king iff paired `mean(Reason_c − Reason_k) > k_sigma·SE` — a \
-purely relative test, no gates, no absolute floors.
+`Reason = lpC(y_C|z_A) − lpC(y_C|∅)` per pair, miner score = mean. You \
+dethrone the king iff the paired mean `Reason_c − Reason_k` beats \
+`max(k_sigma·SE, δ)` (`k_sigma = 2`, `min_margin = 0.002`). No gates.
 6. Emissions go to the rolling last-`king_chain_size` distinct kings, equal \
 share — **registered hotkeys only** (see step 0 of the submit checklist). \
 Advisory tau2 benches never affect Reason or crowning.
@@ -370,12 +370,13 @@ once-ever eval slot on a checkpoint that cannot load.
 
 ## Reason (what you optimize)
 
-Since 2026-08-10 (`weight_version_key = 3`) the whole scoring contract is:
+Since 2026-08-12 (`weight_version_key = 4`) the whole scoring contract is:
 
 ```
-Reason (per pair)  = lpC(y_C | z_A) − lpC(y_C | ∅)
-Miner score        = mean(Reason) over all scored pairs
-Crown              = paired mean(Reason_c − Reason_k) > k_sigma · SE
+Reason (per pair) = lpC(y_C | z_A) − lpC(y_C | ∅)
+Miner score       = mean(Reason) over all scored pairs
+Crown             = paired mean(Reason_c − Reason_k) > max(k_sigma·SE, δ)
+                    (k_sigma = 2, δ = min_margin = 0.002, SE = sd/√n)
 ```
 
 `y_C` is the frozen teacher's own reference action (resampled fresh every \
@@ -383,16 +384,25 @@ duel), `z_A` is your model's thought on the same turn, and both logprobs are \
 teacher-forced on the teacher — **your model's own logprobs never enter the \
 ranked quantity**. You win by producing thoughts that measurably raise the \
 teacher's likelihood of its own action, i.e. by genuinely reasoning about the \
-turn. Scoring hyperparameters: `n_turns = 2080`, `k_sigma = 2.0`, with \
-`n_teacher_samples = n_miner_samples = 1` (one pair per turn). There is no \
-mix, no clip, no gates, and no absolute margin floor — the duel is purely \
-relative to the slice's own noise (`SE = stdev/√n` over paired turns).
+turn. `n_teacher_samples = n_miner_samples = 1` (one pair per turn). There \
+is no mix, no clip, and no gates.
+
+**Why the δ floor (`min_margin = 0.002`, 2026-08-12).** The z-test is \
+relative to the challenger's own per-turn noise. A near-copy of the king \
+has ~6× less duel variance than a genuinely distinct model, so without the \
+floor it could crown on a ±0.0006 noise fluctuation at the same 1-in-44 \
+odds as anyone else. The absolute floor makes that ~z = 6.7 (≈1-in-10^10) \
+while sitting safely below the live honest bar 2·SE ≈ 0.0035 — real duels \
+never touch it. It also caps SE-compression — however consistent your \
+thoughts, the crown bar never drops below 0.002. The calibration (148 \
+archived duels) ships in the repo as \
+`research/results/delta_calibration.json`.
 
 **Live instrumentation (Reason-only).** Each scored pair runs a miner sample \
 plus one teacher echo `lpC(y_C|z_A)`; `lpC(y_C|z_C)` / `lpC(y_C|∅)` come from \
 the fresh teacher reference. Prior-bank and retired lpA / extra lpC echoes \
 are **not** computed live (`reason_only = true`, `score_bank = false`) so the \
-GPU budget can sit in `n_turns`. Published per verdict when available:
+GPU budget can sit in turn count. Published per verdict when available:
 
 - sufficiency fraction `η = Λ2(z_A)/Λ2(z_C) = Reason / (lpC(y_C|z_C) − lpC(y_C|∅))` \
 — how much of the teacher's own thinking the miner's thought replaces \
@@ -421,12 +431,13 @@ bash-fenced block). `evalsrv/terms.py` runs the live Reason-only echo \
 echo+logprobs forcing and the per-byte normalization (`lp_per_byte`). Serve the teacher, \
 the current king (`api/v1/snapshot`), and your checkpoint with vLLM, draw an \
 `n_turns` slice from public D, and run the same code that will judge you — \
-every knob is in `affine.toml` `[duel]`.
+every knob is in `affine.toml` `[duel]`, and `duel` in \
+`code/affine/score.py` is the exact decision function.
 
 Frozen numeric knobs live in `affine.toml` `[duel]` (linked under `code/`). \
-Changing score.py, priors, duel knobs, or the reveal format is a chain fork \
-(`weight_version_key` bump). Corpus refreshes are data events, not forks: \
-the manifest's `corpus_epoch` increments and every verdict records which \
+Score changes fork the chain: `weight_version_key` bumps and the toml \
+comment carries the dated rationale. Corpus refreshes are data events: the \
+manifest's `corpus_epoch` increments and every verdict records which \
 manifest it was scored against.
 
 ---

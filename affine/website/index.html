@@ -9,7 +9,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
   <link rel="stylesheet" href="fonts/fonts.css?v=20" />
-  <link rel="stylesheet" href="style.css?v=52" />
+  <link rel="stylesheet" href="style.css?v=67" />
 </head>
 <body>
   <header class="top-nav">
@@ -57,17 +57,12 @@
         <span class="market-item dim">SN120 market…</span>
       </div>
     </div>
-    <nav class="toc-bar" id="toc-bar" aria-label="Page sections">
-      <a class="toc-link" href="#evolution">performance</a>
-      <a class="toc-link" href="#reign">reign</a>
-      <a class="toc-link" href="#queue">queue</a>
-      <a class="toc-link" href="#history">history</a>
-      <a class="toc-link" href="#fails">fails</a>
-      <a class="toc-link" href="#intake">intake</a>
-    </nav>
   </header>
 
-  <!-- Top charts: the whole contract — Reason (the score) + Margin (the crown rule) -->
+  <!-- Top charts, 2×2: Reason + Margin (σ) over Margin (abs) + reg price —
+       the whole contract (score + crown rule margin > max(2·SE, δ)) plus
+       the price of a seat at the table -->
+
   <section class="hero" id="evolution">
     <div class="hero-inner">
       <div class="hero-split">
@@ -84,13 +79,37 @@
         </div>
         <div class="hero-pane">
           <div class="hero-pane-head">
-            <h2 class="hero-pane-title">Margin</h2>
+            <h2 class="hero-pane-title">Margin (σ)</h2>
             <p class="hero-caption">paired z vs king · dashed = 2σ dethrone threshold</p>
             <button type="button" class="expand-btn" data-chart="hero-margin"
-              title="expand Margin" aria-label="Expand Margin chart">⤢</button>
+              title="expand Margin (σ)" aria-label="Expand Margin (σ) chart">⤢</button>
           </div>
           <div class="hero-scroll">
             <svg id="hero-chart-margin" role="img" aria-label="Paired duel z vs king"></svg>
+          </div>
+        </div>
+        <div class="hero-pane">
+          <div class="hero-pane-head">
+            <h2 class="hero-pane-title">Margin (abs)</h2>
+            <p class="hero-caption">mean(Reason_c − Reason_k) per duel · dashed = δ = 0.002 crown floor</p>
+            <button type="button" class="expand-btn" data-chart="hero-margin-abs"
+              title="expand Margin (abs)" aria-label="Expand Margin (abs) chart">⤢</button>
+          </div>
+          <div class="hero-scroll">
+            <svg id="hero-chart-margin-abs" role="img" aria-label="Absolute paired Reason margin vs the δ crown floor"></svg>
+          </div>
+        </div>
+        <div class="hero-pane">
+          <div class="hero-pane-head">
+            <h2 class="hero-pane-title">Registration price</h2>
+            <p class="hero-caption" id="reg-price-meta">tmc burn history</p>
+            <button type="button" class="expand-btn" data-chart="reg-price"
+              title="expand registration price"
+              aria-label="Expand registration price chart">⤢</button>
+          </div>
+          <div class="hero-scroll">
+            <svg id="reg-price-chart" role="img"
+              aria-label="SN120 registration burn history"></svg>
           </div>
         </div>
       </div>
@@ -110,19 +129,6 @@
       <div class="section-head">
         <h2 class="section-title">duel queue</h2>
         <span class="section-right" id="queue-meta"></span>
-      </div>
-      <div class="metric-pane reg-pane" id="metric-reg-price">
-        <div class="metric-head">
-          <div class="metric-head-row">
-            <span class="metric-title">registration price</span>
-            <button type="button" class="expand-btn" data-chart="reg-price"
-              title="expand registration price"
-              aria-label="Expand registration price chart">⤢</button>
-          </div>
-          <span class="metric-caption" id="reg-price-meta">tmc burn history</span>
-        </div>
-        <svg id="reg-price-chart" role="img"
-          aria-label="SN120 registration burn history"></svg>
       </div>
       <div id="queue-wrap"><div class="empty">loading…</div></div>
     </section>
@@ -212,6 +218,6 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=52"></script>
+  <script type="module" src="app.js?v=67"></script>
 </body>
 </html>

@@ -295,6 +295,97 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
   svg.innerHTML = `${grid}${crownLine}${columns}${axis}`;
 }
 
+/** Contract δ crown floor (min_margin, weight_version_key=4, 2026-08-12).
+ * Verdicts stamp it per duel; this is the fallback for pre-δ rows. */
+const DELTA_FLOOR = 0.002;
+
+/** Latest stamped min_margin in the history, else the contract default. */
+function deltaFloorOf(points) {
+  for (let i = points.length - 1; i >= 0; i--) {
+    const v = points[i]?.min_margin ?? points[i]?.duel_params?.min_margin;
+    if (v != null && Number.isFinite(Number(v))) return Number(v);
+  }
+  return DELTA_FLOOR;
+}
+
+/** Absolute paired margin per duel, with the δ crown floor drawn in. */
+export function drawDuelMargin(svg, history, { width: widthOpt, height: heightOpt } = {}) {
+  const points = duelPoints(history);
+  const width = Math.max(widthOpt || chartWidth(), 280);
+  const height = heightOpt || 320;
+  // Same gutters as the other heroes so the stacked charts align.
+  const padL = 56;
+  const padR = 24;
+  const padT = 28;
+  const padB = 36;
+  const n = Math.max(points.length, 1);
+  const slot = (width - padL - padR) / n;
+  const barW = Math.max(1.5, Math.min(slot * 0.6, 64, slot - 1.5));
+
+  const delta = deltaFloorOf(points);
+  const margins = points.map((p) => {
+    const v = Number(p.margin);
+    return p.margin != null && Number.isFinite(v) ? v : null;
+  });
+  const have = margins.filter((v) => v != null);
+  let min = Math.min(0, ...have);
+  let max = Math.max(delta * 1.8, ...have);
+  const pad = (max - min) * 0.1 || 0.001;
+  min -= pad;
+  max += pad;
+  const yAt = (v) => padT + ((max - v) / (max - min || 1)) * (height - padT - padB);
+  const xAt = (i) => padL + slot * (i + 0.5);
+
+  const gold = "#f3c449";
+  const bar = "#c6bda8";
+  const mono = "IBM Plex Mono, monospace";
+
+  const span = max - min || 1;
+  const ticks = Array.from({ length: 5 }, (_, i) => min + (span * i) / 4);
+  const grid = ticks.map((v) => {
+    const y = yAt(v);
+    return `<g>
+      <line x1="${padL}" x2="${width - padR}" y1="${y}" y2="${y}"
+        stroke="rgba(255,255,255,0.03)" stroke-width="1" stroke-dasharray="2 4"/>
+      <text x="${padL - 10}" y="${y + 3}" fill="rgba(229,229,229,0.45)"
+        font-family="${mono}" font-size="10" text-anchor="end">${fmtScore(v)}</text>
+    </g>`;
+  }).join("");
+  const zeroLine = `<line x1="${padL}" x2="${width - padR}" y1="${yAt(0)}" y2="${yAt(0)}"
+    stroke="rgba(255,255,255,0.08)" stroke-width="1"/>`;
+
+  const yDelta = yAt(delta);
+  const deltaLine = `<g>
+    <line x1="${padL}" x2="${width - padR}" y1="${yDelta}" y2="${yDelta}"
+      stroke="${gold}" stroke-width="1" stroke-dasharray="2 5" opacity="0.7"/>
+    <text x="${width - padR}" y="${yDelta - 5}" fill="${gold}" font-family="${mono}"
+      font-size="10" text-anchor="end">δ ${fmtScore(delta)}</text>
+  </g>`;
+
+  const columns = points.map((p, i) => {
+    const m = margins[i];
+    if (m == null) return "";
+    const x = xAt(i);
+    const y0 = yAt(0);
+    const y1 = yAt(m);
+    const top = Math.min(y0, y1);
+    const h = Math.max(Math.abs(y0 - y1), 2);
+    const crowned = p.event === "crowned";
+    const fill = crowned ? gold : (m >= 0 ? bar : "rgba(255,71,71,0.55)");
+    const tip = `${duelTipName(p)} · ${p.event} · margin=${fmtScore(m)} · ${fmtTime(p.at)}`;
+    return `<g class="duel-hit" data-tip="${esc(tip)}"${duelCidAttr(p)}>
+      <rect x="${x - barW / 2}" y="${top}" width="${barW}" height="${h}" rx="1" fill="${fill}"
+        opacity="${crowned ? 1 : 0.92}"/>
+    </g>`;
+  }).join("");
+  const axis = duelAxisMarks(points, xAt, height - padB);
+
+  svg.setAttribute("width", String(width));
+  svg.setAttribute("height", String(height));
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.innerHTML = `${grid}${zeroLine}${deltaLine}${columns}${axis}`;
+}
+
 export function drawDuelScores(svg, history,
                                { width: widthOpt, height: heightOpt } = {}) {
   // Best absolute Reason per duel — max(king, challenger), reg-price style.
@@ -419,8 +510,6 @@ const num = (v) => {
   return v == null || !Number.isFinite(n) ? null : n;
 };
 const sideVal = (p, which, key) => num((p?.[which] || {})[key]);
-const fmtPct = (v) => (v == null ? "—" : `${(Number(v) * 100).toFixed(0)}%`);
-const fmtRatio = (v) => (v == null ? "—" : Number(v).toFixed(2));
 const fmtInt = (v) => (v == null ? "—" : String(Math.round(Number(v))));
 
 /**
@@ -436,37 +525,20 @@ export function gatePoints(history) {
 }
 
 /**
- * Everything the duel measures per side, one pane each. Since the Reason v3
- * fork only Reason is scored — every other pane is TELEMETRY: measured and
- * published in the verdict so the axis can be studied, never affecting the
- * score. The dashed threshold lines on telemetry panes are the retired S* v2
- * gate values, kept as visual context for pre-fork history. `keep: false`
- * lines only enter the y-domain when the data already reaches them.
+ * Everything the duel still measures per side, one pane each. Since the
+ * Reason v3 fork only Reason is scored — every other pane is TELEMETRY:
+ * measured and published in the verdict so the axis can be studied, never
+ * affecting the score. The retired lpA-side panes (L1lift, causality, prior
+ * bank, calibration r, empty baseline) were removed when their echoes were
+ * switched off on 2026-08-11 — live verdicts no longer publish those fields.
  */
 /** Per-side Reason: v3 verdicts publish `reason`; pre-fork rows carried the
  * identical quantity as `mean_lambda2`. */
 const reasonOf = (p, side) =>
   sideVal(p, side, "reason") ?? sideVal(p, side, "mean_lambda2");
 
-/**
- * Mean L1lift per side (telemetry). v3 verdicts publish the raw mean
- * directly; pre-fork verdicts published mean Λ2 + the mean mix, so the
- * clipped term is recovered exactly as (mix − Λ2) / w.
- */
-const l1Term = (p, side) => {
-  const direct = sideVal(p, side, "mean_l1lift");
-  if (direct != null) return direct;
-  const mix = sideVal(p, side, "mean_mix");
-  const l2 = sideVal(p, side, "mean_lambda2");
-  if (mix == null || l2 == null) return null;
-  const w = Number(p.gates?.l1_weight) || 1;
-  return (mix - l2) / w;
-};
-
 const TELEMETRY_NOTE = `<p><em>Telemetry: measured and published in every
-  verdict for study — it does not affect the score or the crown. The dashed
-  threshold is the retired S* v2 gate value, kept as context for pre-fork
-  history.</em></p>`;
+  verdict for study — it does not affect the score or the crown.</em></p>`;
 
 export const GATE_METRICS = [
   {
@@ -487,24 +559,6 @@ export const GATE_METRICS = [
     series: [
       { label: "challenger", color: GOLD, get: (p) => reasonOf(p, "challenger") },
       { label: "king", color: BONE, get: (p) => reasonOf(p, "king") },
-    ],
-  },
-  {
-    id: "l1lift",
-    title: "L1lift",
-    caption: "telemetry · miner-side lift lpA(y_C|z_A) − lpA(y_C|∅)",
-    detail: `<p><code>L1lift = lpA(y_C|z_A) − lpA(y_C|∅)</code>: how much the
-      miner's thought helps <em>the miner itself</em> predict the teacher's
-      action. Positive is the natural signature of a faithful distill — the
-      model genuinely anticipates what the teacher will do.</p>
-      <p>Under S* v2 this term was part of the ranked mix; since Reason v3 it
-      is recorded only. v3 verdicts publish the raw mean directly; pre-fork
-      points are recovered as <code>(S − Λ2) / w</code>.</p>${TELEMETRY_NOTE}`,
-    fmt: fmtScore,
-    lines: [{ label: "", at: () => 0, faint: true }],
-    series: [
-      { label: "challenger", color: GOLD, get: (p) => l1Term(p, "challenger") },
-      { label: "king", color: BONE, get: (p) => l1Term(p, "king") },
     ],
   },
   {
@@ -531,106 +585,17 @@ export const GATE_METRICS = [
     ],
   },
   {
-    id: "gate-pass",
-    title: "causality",
-    caption: "telemetry · pairs whose thought earns ≥ τ lift without leaking",
-    detail: `<p>Share of the slice's pairs where the miner's thought
-      <code>z_A</code> contains no fuzzy copy of its own action and injecting
-      it raises the miner's own logprob of that action by at least
-      <code>τ = 0.02</code>: <code>lpA(y_A|z_A) − lpA(y_A|∅) ≥ τ</code>.</p>
-      <p>Formerly gate 1 of S* v2 (invalid below γ = 0.30). A silent or
-      payload-stuffing miner shows up here first — under Reason v3 such a
-      miner simply scores ≈ 0 and loses the duel on its own.</p>${TELEMETRY_NOTE}`,
-    fmt: fmtPct,
-    domain: [0, 1],
-    lines: [{ label: "γ", at: (g) => g.gamma ?? 0.3, faint: true }],
-    series: [
-      { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "gate_pass_rate") },
-      { label: "king", color: BONE, get: (p) => sideVal(p, "king", "gate_pass_rate") },
-    ],
-  },
-  {
-    id: "bank",
-    title: "prior bank",
-    caption: "telemetry · pairs beating the published generic priors",
-    detail: `<p>Share of pairs whose teacher lift beats the published prior bank
-      — a fixed set of generic, context-free thoughts. Above zero means the
-      miner's thought helped the teacher <em>more than a canned prior would
-      have</em>, so the lift is specific to this turn rather than to sounding
-      thoughtful in general.</p>
-      <p>Formerly gate 2 of S* v2 (invalid below γ_bank = 0.08). This is the
-      pane to watch for paraphrase-prior strategies: they tie genesis on raw
-      Reason but sit at zero here.</p>${TELEMETRY_NOTE}`,
-    fmt: fmtPct,
-    domain: [0, 1],
-    lines: [{ label: "γb", at: (g) => g.gamma_bank ?? 0.08, faint: true }],
-    series: [
-      { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "bank_frac") },
-      { label: "king", color: BONE, get: (p) => sideVal(p, "king", "bank_frac") },
-    ],
-  },
-  {
-    id: "calib",
-    title: "calibration r",
-    caption: "telemetry · mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|",
-    detail: `<p>Calibration diagnostic on the miner's own logprobs:
-      <code>r = mean|lpA(y_C|z_A)| / mean|lpA(y_C|∅)|</code>. Values below 1
-      mean injecting the thought made the teacher's action cheaper for the
-      miner to predict — mean <code>L1lift > 0</code>, the distill signature.
-      Live distills measure 0.72–0.81; the teacher scoring itself sits near
-      0.35.</p>
-      <p>Formerly gate 3 of S* v2 (invalid outside [0.3, 4.0]) — a defense of
-      the L1 channel, which is no longer scored.</p>${TELEMETRY_NOTE}`,
-    fmt: fmtRatio,
-    lines: [
-      { label: "r_lo", at: (g) => g.r_lo ?? 0.3, faint: true },
-      { label: "r_hi", at: (g) => g.r_hi ?? 4.0, keep: false, faint: true },
-    ],
-    series: [
-      { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "calib_ratio") },
-      { label: "king", color: BONE, get: (p) => sideVal(p, "king", "calib_ratio") },
-    ],
-  },
-  {
-    id: "baseline",
-    title: "empty baseline",
-    caption: "telemetry · challenger mean|lpA(y_C|∅)| ÷ king's",
-    detail: `<p>The challenger's empty-context baseline
-      <code>mean|lpA(y_C|∅)|</code> divided by the king's on the same slice.
-      Both sides see identical turns and identical teacher actions, so an
-      honest challenger lands near the king — the observed honest maximum is
-      1.14×.</p>
-      <p>Formerly gate 3b of S* v2 (invalid above 1.25×) — it closed free
-      L1lift minting via baseline sabotage, an attack on a channel that is no
-      longer scored.</p>${TELEMETRY_NOTE}`,
-    fmt: fmtRatio,
-    lines: [
-      { label: "band", at: (g) => g.baseline_band ?? 1.25, faint: true },
-      { label: "", at: () => 1.0, faint: true },
-    ],
-    series: [
-      {
-        label: "ratio",
-        color: GOLD,
-        get: (p) => {
-          const c = sideVal(p, "challenger", "baseline_abs");
-          const k = sideVal(p, "king", "baseline_abs");
-          return c != null && k ? c / k : null;
-        },
-      },
-    ],
-  },
-  {
     id: "se",
     title: "paired SE",
     caption: "spread of the per-turn Reason difference",
     detail: `<p>Standard error of the per-turn <code>Reason_c − Reason_k</code>
-      differences, i.e. how much this slice disagreed with itself. It sets the
-      height of the bar the challenger has to clear, since crowning needs
-      <code>margin > k·SE</code>.</p>
-      <p>Since Reason v3 there is no floor under it — the duel is purely
-      relative to the slice's own noise. Pre-fork duels floored SE at
-      <code>min_se = 0.005</code>.</p>`,
+      differences, i.e. how much the slice disagreed with itself. The crown
+      bar is <code>max(k·SE, δ)</code>, so the noisier the diffs, the larger
+      the margin a challenger needs.</p>
+      <p>SE itself has no floor (the pre-fork <code>min_se = 0.005</code> is
+      retired) — but the crown bar cannot drop below <code>δ = 0.002</code>
+      however small SE gets, which is what caps low-variance copies and
+      SE-compression strategies.</p>`,
     fmt: fmtScore,
     lines: [],
     series: [{ label: "SE", color: GOLD, get: (p) => num(p.se) }],
@@ -695,13 +660,13 @@ export const GATE_METRICS = [
     id: "turns",
     title: "paired turns",
     caption: "turns where both sides produced a scorable pair",
-    detail: `<p>Gold is the number of turns that actually entered the paired test;
-      bone is the slice the duel was handed. The slice is 80 turns seeded by
+    detail: `<p>Gold is the number of turns where both sides produced a
+      scorable pair, out of the seeded slice (dashed). The slice is seeded by
       <code>blake2b(reveal_block_hash ‖ hotkey)</code>, so no one can know it
       before reveal and anyone can re-derive it afterwards.</p>
-      <p>A shortfall means turns dropped out — a side failed to emit a parsable
-      action, or a rollout returned non-finite logprobs. Large gaps make the SE
-      wider and the crown harder, which is the intended behaviour.</p>`,
+      <p>Turns drop out when a side fails to emit a parsable action or a
+      rollout returns non-finite logprobs. A large gap between the lines is
+      a health signal for the duel, not a scoring input.</p>`,
     fmt: fmtInt,
     lines: [],
     series: [
@@ -731,10 +696,10 @@ export const GATE_METRICS = [
 ];
 
 /**
- * The two hero charts, described the same way as the grid panes so the expand
+ * The hero charts, described the same way as the grid panes so the expand
  * view can treat every chart on the page uniformly. Since Reason v3 the
- * heroes are the two quantities the contract actually consists of: the score
- * (Reason) and the crown rule (Margin vs k·SE).
+ * heroes are the quantities the contract actually consists of: the score
+ * (Reason) and the crown rule (margin vs max(k·SE, δ)).
  */
 export const HERO_CHARTS = [
   {
@@ -755,21 +720,38 @@ export const HERO_CHARTS = [
   },
   {
     id: "hero-margin",
-    title: "Margin",
-    caption: "paired z vs king · dashed = 2σ dethrone threshold",
-    detail: `<p>The duel itself, in units of its own noise: each bar is
+    title: "Margin (σ)",
+    caption: "paired z vs king per duel · dashed = 2σ crown bar",
+    detail: `<p>The duel in units of its own noise: each bar is
       <code>z = mean(Reason_c − Reason_k) / SE</code> against the reigning
       king. Because the mean is paired per turn, turn difficulty cancels — a
       hard slice hurts both sides equally. Gold bars are crownings, bone is a
       challenger that scored above the king without clearing the bar, red is
       a loss.</p>
-      <p>The dotted gold line at 2σ is the dethrone threshold (since
-      2026-08-11; was 3σ at Reason v3 launch). Clearing it is the whole crown
-      rule under Reason v3, so every bar reads directly as how close that
-      challenger came to the crown. There is no absolute floor: the test is
-      purely relative to the slice's own noise. Pre-fork duels additionally
-      required the retired <code>δ</code> floor.</p>`,
+      <p>The dotted line is the crown bar <code>k_sigma = 2</code>: crossing
+      it is one half of the whole crown rule (the other is the absolute
+      δ floor, next chart). Under the Gaussian null that is a ~2.3%
+      false-crown rate per duel for a genuinely distinct zero-edge model.</p>`,
     draw: (svg, history, opts) => drawDuelZ(svg, history, opts),
+  },
+  {
+    id: "hero-margin-abs",
+    title: "Margin (abs)",
+    caption: "mean(Reason_c − Reason_k) per duel · dashed = δ = 0.002 crown floor",
+    detail: `<p>The same duels as Margin (σ), but in absolute Reason units:
+      each bar is the paired mean <code>Reason_c − Reason_k</code> itself.
+      Gold bars are crownings, bone is a positive margin that didn't crown,
+      red is a loss.</p>
+      <p>The dotted gold line is <code>δ = 0.002</code>, the absolute crown
+      floor (2026-08-12, weight_version_key=4): a challenger must beat
+      <code>max(k·SE, δ)</code>. The z-test alone is relative to the
+      challenger's <em>own</em> noise, so a near-copy of the king — whose
+      per-duel spread is ~6× smaller than a distinct model's — crowns on a
+      ±0.0006 noise fluctuation as easily as anyone else. The floor turns
+      that into ~z = 6.7 (≈1-in-10<sup>10</sup>) while sitting safely below
+      the live honest bar 2·SE ≈ 0.0035. Calibrated from 148 archived duels
+      (<code>research/results/delta_calibration.json</code>).</p>`,
+    draw: (svg, history, opts) => drawDuelMargin(svg, history, opts),
   },
 ];
 
