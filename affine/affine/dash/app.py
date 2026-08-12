@@ -19,8 +19,10 @@ from .corpus import REFRESH_TTL_S, DatasetView
 from .index import DashIndex
 from .project import project_duel_summary, project_series, project_turn_detail
 from .readers import (
+    bench_artifact_index,
     contract_payload,
     duel_log_lines,
+    load_bench_artifact,
     load_eval_artifact,
     load_public_benchmarks,
     snapshot,
@@ -286,6 +288,64 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         # Short cache: an in-flight duel keeps appending heartbeat lines.
         return _json({"challenge_id": challenge_id, "lines": lines},
                      max_age=10, request=request)
+
+    # Bench rollout records mirror the duel-artifact pattern: immutable
+    # multi-MB gzips on disk, a tiny LRU for repeat views, and the message
+    # transcripts only shipped per-instance (the summary strips them).
+    _bench_lru: OrderedDict[str, dict] = OrderedDict()
+
+    def _bench_artifact(job_id: str) -> dict | None:
+        hit = _bench_lru.get(job_id)
+        if hit is not None:
+            _bench_lru.move_to_end(job_id)
+            return hit
+        art = load_bench_artifact(cfg, job_id)
+        if art is None:
+            return None
+        _bench_lru[job_id] = art
+        while len(_bench_lru) > 4:
+            _bench_lru.popitem(last=False)
+        return art
+
+    @app.get("/api/v1/benches")
+    def api_benches(request: Request):
+        """Manifest of published bench rollout records (newest first)."""
+        return _json({"benches": bench_artifact_index(cfg)},
+                     max_age=10, request=request)
+
+    @app.get("/api/v1/benches/{job_id}")
+    def api_bench(job_id: str, request: Request):
+        art = _bench_artifact(job_id)
+        if art is None:
+            return JSONResponse({"error": "not_found", "job_id": job_id},
+                                status_code=404)
+        instances = {}
+        for iid, inst in (art.get("instances") or {}).items():
+            instances[iid] = {
+                "resolved": inst.get("resolved"),
+                "exit_status": inst.get("exit_status"),
+                "model_patch": inst.get("model_patch"),
+                "n_messages": len(inst.get("messages") or []),
+            }
+        payload = {"job_id": art.get("job_id"),
+                   "request": art.get("request"),
+                   "result": art.get("result"),
+                   "instances": instances}
+        return _json(payload, max_age=86400, request=request, immutable=True)
+
+    @app.get("/api/v1/benches/{job_id}/trajectory")
+    def api_bench_trajectory(job_id: str, request: Request,
+                             instance_id: str = Query(..., min_length=1)):
+        """One instance's full agent transcript from the bench artifact."""
+        art = _bench_artifact(job_id)
+        inst = (art or {}).get("instances", {}).get(instance_id)
+        if inst is None:
+            return JSONResponse(
+                {"error": "not_found", "job_id": job_id,
+                 "instance_id": instance_id},
+                status_code=404)
+        payload = {"job_id": job_id, "instance_id": instance_id, **inst}
+        return _json(payload, max_age=86400, request=request, immutable=True)
 
     @app.get("/api/v1/stream")
     async def api_stream():

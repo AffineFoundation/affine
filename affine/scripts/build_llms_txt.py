@@ -142,6 +142,13 @@ line per duel
 - `evals/{challenge_id}.json.gz` — everything computed during a duel: \
 rollouts, teacher refs, every forced logprob
 
+**Bench results** (full advisory-bench rollout records — why a score happened)
+
+- [benches/index.jsonl]({BASE}/benches/index.jsonl) — append-only manifest, \
+one line per bench run
+- `benches/{job_id}.json.gz` — per-task agent trajectories (full message \
+transcripts), submitted patches, exit statuses, and harness resolution
+
 **Live dashboard API** (hot path on the validator box — prefer this for UI)
 
 Root: {DASH}/
@@ -153,6 +160,9 @@ queue, live eval
 - [api/v1/contract]({DASH}/api/v1/contract) — machine-readable knobs
 - `api/v1/duels/{challenge_id}` — duel detail (Reason, telemetry, rejection)
 - `api/v1/duels/{challenge_id}/series` — chart-safe per-turn Reason/L1lift
+- [api/v1/benches]({DASH}/api/v1/benches) — manifest of bench rollout records
+- `api/v1/benches/{job_id}` — one bench run: per-task patch/exit/resolution
+- `api/v1/benches/{job_id}/trajectory?instance_id=` — full agent transcript
 - [api/v1/dataset]({DASH}/api/v1/dataset) — corpus D stats (epoch, mix, \
 length histogram)
 - `api/v1/dataset/turns?source=&language=&phase=&repo=&q=&limit=&cursor=` — \
@@ -435,6 +445,11 @@ data. All paths are relative to this site's root (Hippius S3 bucket \
 - `GET /api/v1/contract` — machine-readable contract knobs.
 - `GET /api/v1/duels/{id}` — duel detail (z, margin, Reason, telemetry).
 - `GET /api/v1/duels/{id}/series` — per-turn Reason / L1lift (no raw logprobs).
+- `GET /api/v1/benches` — manifest of published bench rollout records.
+- `GET /api/v1/benches/{job_id}` — one bench run: per-instance resolved / \
+exit_status / model_patch (+ message counts).
+- `GET /api/v1/benches/{job_id}/trajectory?instance_id=` — one instance's \
+full agent message transcript.
 - `GET /api/v1/dataset` — corpus D stats: epoch, turn/traj counts, mix by \
 source/language/phase/repo, prompt-length histogram.
 - `GET /api/v1/dataset/turns` — paginated turn index rows \
@@ -456,6 +471,22 @@ messages + the reference assistant action (same objects the duels sample).
 with full per-side Reason + telemetry summaries, slice seeds, block hashes, \
 rejection reasons (pre-fork rows carry their original S* gate stats).
 - `data/bench_history_full.jsonl.gz` — every completed bench run.
+
+**Full bench rollout records** (one immutable object per bench run, \
+published right after the run finishes):
+
+- `benches/index.jsonl` — append-only manifest. One line per run: \
+`{key, bytes, at, job_id, repo, revision, hotkey, suite, label, ok, score}`. \
+Poll this to discover new records.
+- `benches/{job_id}.json.gz` — gzipped JSON for one advisory bench run:
+  - `request` — miner repo + revision, suite, worker config.
+  - `result` — the same summary as bench history (score, n_resolved, error).
+  - `instances` — per swe-rebench instance: `resolved` (harness verdict), \
+`exit_status` (Submitted / LimitsExceeded / ContextWindowExceededError / …), \
+`model_patch` (the submitted diff), and `messages` (the full mini-swe-agent \
+transcript — every model response and environment observation). This is the \
+ground truth for WHY a bench score happened; scores alone are in \
+`data/benchmarks.json`.
 
 **Full duel records — the training data** (one immutable object per \
 challenge, published right after the verdict):

@@ -211,6 +211,45 @@ def load_eval_artifact(cfg: Config, challenge_id: str) -> dict | None:
         return None
 
 
+def bench_artifact_path(cfg: Config, job_id: str) -> Path:
+    return cfg.state_dir / "benches" / f"{job_id}.json.gz"
+
+
+def load_bench_artifact(cfg: Config, job_id: str) -> dict | None:
+    path = bench_artifact_path(cfg, job_id)
+    if not path.exists():
+        return None
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except (OSError, json.JSONDecodeError, gzip.BadGzipFile) as exc:
+        log.warning("bad bench artifact %s: %s", path, exc)
+        return None
+
+
+def bench_artifact_index(cfg: Config, limit: int = 200) -> list[dict]:
+    """Newest-first manifest rows of published bench rollout records."""
+    path = cfg.state_dir / "benches" / "index.jsonl"
+    if not path.exists():
+        return []
+    rows: list[dict] = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError as exc:
+        log.warning("bench index read failed: %s", exc)
+        return []
+    return rows[::-1][:limit]
+
+
 def history_row_from_raw(r: dict) -> dict:
     """Normalize a history.jsonl record into the slim dashboard shape."""
     v = r.get("verdict") or {}

@@ -159,8 +159,10 @@ def _run(cmd: list[str], env: dict, timeout_s: int,
     return proc.returncode, "".join(chunks)
 
 
-def _parse_resolve_rate(run_id: str, n_instances: int) -> tuple[float | None, int]:
-    """Find the swebench model-level report for run_id → (rate, n_resolved).
+def _parse_resolve_rate(
+        run_id: str, n_instances: int) -> tuple[float | None, int, list[str]]:
+    """Find the swebench model-level report for run_id →
+    (rate, n_resolved, resolved_ids).
 
     run_evaluation writes `<model>.<run_id>.json` into its CWD; the files
     under logs/run_evaluation/<run_id>/ are per-instance reports that carry
@@ -179,14 +181,69 @@ def _parse_resolve_rate(run_id: str, n_instances: int) -> tuple[float | None, in
         if not isinstance(data, dict):
             continue
         if isinstance(data.get("resolved_ids"), list):
-            n_ok = len(data["resolved_ids"])
+            ids = [str(i) for i in data["resolved_ids"]]
             total = int(data.get("total_instances") or n_instances) or 1
-            return n_ok / total, n_ok
+            return len(ids) / total, len(ids), ids
         if "resolved_instances" in data and "total_instances" in data:
             n_ok = int(data["resolved_instances"])
             total = int(data["total_instances"]) or n_instances or 1
-            return n_ok / total, n_ok
-    return None, 0
+            return n_ok / total, n_ok, []
+    return None, 0, []
+
+
+def _collect_artifact(preds_dir: Path, preds_raw,
+                      resolved_ids: list[str]) -> dict:
+    """Bundle the per-task rollouts of one bench run for publishing.
+
+    Everything a miner needs to see WHY a score happened: the full agent
+    message transcript per instance, the submitted patch, the agent's exit
+    status, and the harness resolution — the same transparency contract the
+    duel artifacts already honor. Best-effort per instance: one unreadable
+    traj file drops that instance's messages, never the artifact."""
+    resolved = set(resolved_ids)
+    exit_status: dict[str, str] = {}
+    for yml in sorted(preds_dir.glob("exit_statuses_*.yaml")):
+        try:
+            data = yaml.safe_load(yml.read_text()) or {}
+            for status, iids in (data.get("instances_by_exit_status")
+                                 or {}).items():
+                for iid in iids or []:
+                    exit_status[str(iid)] = str(status)
+        except Exception:
+            log.warning("unparsable %s", yml, exc_info=True)
+
+    preds: dict[str, dict] = {}
+    if isinstance(preds_raw, dict):
+        preds = {k: v for k, v in preds_raw.items() if isinstance(v, dict)}
+    elif isinstance(preds_raw, list):
+        preds = {str(r.get("instance_id")): r for r in preds_raw
+                 if isinstance(r, dict) and r.get("instance_id")}
+
+    # Union of predicted instances and on-disk trajectory dirs: an instance
+    # that crashed before producing a prediction still has a transcript.
+    iids = set(preds)
+    iids.update(p.parent.name for p in preds_dir.glob("*/*.traj.json"))
+
+    instances: dict[str, dict] = {}
+    for iid in sorted(iids):
+        messages: list = []
+        traj_path = preds_dir / iid / f"{iid}.traj.json"
+        if traj_path.is_file():
+            try:
+                traj = json.loads(traj_path.read_text())
+                raw_msgs = (traj.get("messages")
+                            if isinstance(traj, dict) else traj)
+                if isinstance(raw_msgs, list):
+                    messages = raw_msgs
+            except Exception:
+                log.warning("unparsable traj %s", traj_path, exc_info=True)
+        instances[iid] = {
+            "resolved": iid in resolved,
+            "exit_status": exit_status.get(iid),
+            "model_patch": (preds.get(iid) or {}).get("model_patch") or "",
+            "messages": messages,
+        }
+    return {"instances": instances}
 
 
 def run_swe_lite(model_repo: str, model_port: int, *,
@@ -249,8 +306,10 @@ def run_swe_lite(model_repo: str, model_port: int, *,
 
     # Convert dict preds.json → jsonl for swebench harness when needed.
     preds_jsonl = run_root / "predictions.jsonl"
+    preds_raw = None
     try:
         raw = json.loads(preds_json.read_text())
+        preds_raw = raw
         if isinstance(raw, dict):
             with open(preds_jsonl, "w") as f:
                 for iid, row in raw.items():
@@ -266,6 +325,14 @@ def run_swe_lite(model_repo: str, model_port: int, *,
             preds_jsonl = preds_json
     except Exception:
         preds_jsonl = preds_json
+
+    def _artifact(resolved_ids: list[str]) -> dict:
+        # Instance traj dirs sit next to whichever preds.json was found.
+        try:
+            return _collect_artifact(preds_json.parent, preds_raw, resolved_ids)
+        except Exception:
+            log.warning("bench artifact collection failed", exc_info=True)
+            return {}
 
     run_id = f"affine-{int(time.time())}"
     eval_cmd = [
@@ -285,17 +352,20 @@ def run_swe_lite(model_repo: str, model_port: int, *,
         return {"ok": False, "suite": SUITE_NAME, "aborted": True,
                 "error": "aborted during evaluation"}
     if code != 0:
+        # Rollouts exist even when the harness fails; still publish them.
         return {"ok": False, "suite": SUITE_NAME,
                 "wall_time_s": round(time.time() - t0, 1),
                 "error": (out or "")[-2000:] or f"eval exit {code}",
-                "preds_path": str(preds_json)}
+                "preds_path": str(preds_json),
+                "_artifact": _artifact([])}
 
-    rate, n_ok = _parse_resolve_rate(run_id, n)
+    rate, n_ok, resolved_ids = _parse_resolve_rate(run_id, n)
     if rate is None:
         return {"ok": False, "suite": SUITE_NAME,
                 "wall_time_s": round(time.time() - t0, 1),
                 "error": "evaluation finished but resolve rate not found",
-                "preds_path": str(preds_json)}
+                "preds_path": str(preds_json),
+                "_artifact": _artifact([])}
 
     return {
         "ok": True,
@@ -306,4 +376,5 @@ def run_swe_lite(model_repo: str, model_port: int, *,
         "wall_time_s": round(time.time() - t0, 1),
         "preds_path": str(preds_json),
         "run_id": run_id,
+        "_artifact": _artifact(resolved_ids),
     }

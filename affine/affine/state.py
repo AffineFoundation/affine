@@ -150,6 +150,33 @@ class State:
             with open(self.evals_index_path, "a") as f:
                 f.write(json.dumps(line, default=str) + "\n")
 
+    @property
+    def benches_dir(self) -> Path:
+        return self.dir / "benches"
+
+    @property
+    def benches_index_path(self) -> Path:
+        return self.benches_dir / "index.jsonl"
+
+    def save_bench_artifact(self, job: dict, result: dict,
+                            gz_bytes: bytes) -> None:
+        """Persist a full bench rollout record (per-task trajectories +
+        patches) locally, mirroring the duel artifact contract: durable home
+        before Hippius upload, plus an append-only manifest line."""
+        with self._lock:
+            self.benches_dir.mkdir(parents=True, exist_ok=True)
+            name = f"{job['job_id']}.json.gz"
+            (self.benches_dir / name).write_bytes(gz_bytes)
+            line = {"key": f"benches/{name}", "bytes": len(gz_bytes),
+                    "at": now_iso(), "job_id": job["job_id"],
+                    "repo": job.get("repo"), "revision": job.get("revision"),
+                    "hotkey": job.get("hotkey"), "suite": job.get("suite"),
+                    "label": job.get("label"),
+                    "ok": bool(result.get("ok")),
+                    "score": result.get("score")}
+            with open(self.benches_index_path, "a") as f:
+                f.write(json.dumps(line, default=str) + "\n")
+
     # -- load / save ----------------------------------------------------------
     def load(self) -> None:
         if self._state_path.exists():

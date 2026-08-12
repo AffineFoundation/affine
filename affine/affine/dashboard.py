@@ -10,9 +10,11 @@ Published objects (all world-readable, no secrets):
   data/bench_history_full.jsonl.gz  complete bench result log
   evals/index.jsonl     manifest of published full duel records
   evals/{cid}.json.gz   full duel record: rollouts, teacher refs, logprobs
+  benches/index.jsonl   manifest of published bench rollout records
+  benches/{job}.json.gz full bench record: per-task trajectories + patches
 
 The website only fetches the small data/*.json at load; the heavy evals/*
-objects are lazy training data for miners, never on the page path.
+and benches/* objects are lazy audit/training data, never on the page path.
 
 Writes are rate-limited and fail-open: presentation must never block or
 break the validator loop.
@@ -107,41 +109,46 @@ class Dashboard:
 
     # -- training data -------------------------------------------------------------
     def publish_evals(self) -> None:
-        """Upload full duel records + manifest + complete audit logs.
+        """Upload full duel + bench records + manifests + complete audit logs.
 
-        Artifacts are immutable (one per challenge_id); uploads already
-        acknowledged by Hippius are skipped via a local marker file, so a
-        cooldown or crash just retries on the next publish.
+        Artifacts are immutable (one per challenge_id / bench job_id);
+        uploads already acknowledged by Hippius are skipped via a local
+        marker file, so a cooldown or crash just retries on the next publish.
         """
-        d = self.state.evals_dir
-        if d.exists():
-            marker = d / ".pushed.json"
-            pushed: set[str] = set()
-            if marker.exists():
-                try:
-                    pushed = set(json.loads(marker.read_text()))
-                except json.JSONDecodeError:
-                    log.warning("corrupt %s; re-uploading all artifacts", marker)
-            changed = False
-            for path in sorted(d.glob("*.json.gz")):
-                if path.name in pushed:
-                    continue
-                ok = self.hippius.put_bytes(
-                    f"evals/{path.name}", path.read_bytes(),
-                    "application/gzip",
-                    cache_control="public, max-age=31536000, immutable")
-                if not ok:
-                    break  # Hippius cooling down; retry next publish.
-                pushed.add(path.name)
-                changed = True
-            if changed:
-                marker.write_text(json.dumps(sorted(pushed)))
-            idx = self.state.evals_index_path
-            if idx.exists():
-                self.hippius.put_bytes("evals/index.jsonl", idx.read_bytes(),
-                                       "application/x-ndjson",
-                                       cache_control="no-cache")
+        self._push_artifact_dir(self.state.evals_dir, "evals",
+                                self.state.evals_index_path)
+        self._push_artifact_dir(self.state.benches_dir, "benches",
+                                self.state.benches_index_path)
         self._push_full_logs()
+
+    def _push_artifact_dir(self, d: Path, prefix: str, idx: Path) -> None:
+        if not d.exists():
+            return
+        marker = d / ".pushed.json"
+        pushed: set[str] = set()
+        if marker.exists():
+            try:
+                pushed = set(json.loads(marker.read_text()))
+            except json.JSONDecodeError:
+                log.warning("corrupt %s; re-uploading all artifacts", marker)
+        changed = False
+        for path in sorted(d.glob("*.json.gz")):
+            if path.name in pushed:
+                continue
+            ok = self.hippius.put_bytes(
+                f"{prefix}/{path.name}", path.read_bytes(),
+                "application/gzip",
+                cache_control="public, max-age=31536000, immutable")
+            if not ok:
+                break  # Hippius cooling down; retry next publish.
+            pushed.add(path.name)
+            changed = True
+        if changed:
+            marker.write_text(json.dumps(sorted(pushed)))
+        if idx.exists():
+            self.hippius.put_bytes(f"{prefix}/index.jsonl", idx.read_bytes(),
+                                   "application/x-ndjson",
+                                   cache_control="no-cache")
 
     def _push_full_logs(self) -> None:
         """Complete history/bench logs, gzipped. Only called on verdicts and

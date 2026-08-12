@@ -588,7 +588,13 @@ class Validator:
                     self._process_challenge_safely(entry),
                     name=f"duel-{entry.challenge_id}")
 
-        self.bench.pump(machine_ready=bench_healthy)
+        if self.bench.pump(machine_ready=bench_healthy):
+            # A bench result just landed: publish its rollout artifact (and
+            # any backlog) without waiting for the next duel verdict.
+            try:
+                self.dashboard.publish_evals()
+            except Exception:
+                log.warning("bench artifact publish failed", exc_info=True)
         await self._maybe_set_weights()
         self._maybe_heartbeat()
         self.state.flush()

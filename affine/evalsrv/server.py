@@ -11,6 +11,7 @@ the shared X-Affine-Token header when AFFINE_EVAL_TOKEN is set):
   POST /prefetch            background-download the next challenger's weights
   POST /bench               dispatch a benchmark suite; 409 when busy
   GET  /bench/{id}          poll bench job
+  GET  /bench/{id}/artifact gzipped per-task bench rollouts (trajectories)
   POST /abort_bench         abort a running bench so a duel can take the GPUs
 
 One duel OR one bench at a time (`_busy_lock`): both need miner-serving GPUs.
@@ -97,17 +98,11 @@ def _register_job(job_id: str, record: dict) -> None:
                 _jobs.pop(jid, None)
 
 
-def _save_artifact(job_id: str, req: DuelRequest, verdict: dict,
-                   artifact: dict) -> None:
-    """Persist the full duel record; failures never affect the verdict."""
+def _write_artifact(job_id: str, payload: dict) -> None:
+    """Persist a full job record (duel or bench); failures never affect the
+    verdict/result path."""
     try:
         ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "job_id": job_id,
-            "request": req.model_dump(),
-            "verdict": verdict,
-            **artifact,
-        }
         path = ARTIFACTS_DIR / f"{job_id}.json.gz"
         path.write_bytes(gzip.compress(json.dumps(payload).encode()))
         files = sorted(ARTIFACTS_DIR.glob("*.json.gz"),
@@ -116,6 +111,17 @@ def _save_artifact(job_id: str, req: DuelRequest, verdict: dict,
             old.unlink(missing_ok=True)
     except Exception:
         log.warning("artifact save failed for %s", job_id, exc_info=True)
+
+
+def _save_artifact(job_id: str, req: DuelRequest, verdict: dict,
+                   artifact: dict) -> None:
+    """Persist the full duel record; failures never affect the verdict."""
+    _write_artifact(job_id, {
+        "job_id": job_id,
+        "request": req.model_dump(),
+        "verdict": verdict,
+        **artifact,
+    })
 
 
 def _schedule_self_kill(reason: str) -> None:
@@ -493,11 +499,22 @@ def _run_bench_job(job_id: str, req: BenchRequest) -> None:
             teacher_port=_engine.teacher_slot.port,
             num_trials=req.num_trials, max_concurrency=req.max_concurrency,
             abort_event=_abort_bench)
+        # Per-task rollouts are multi-MB: they live in the artifact fetched
+        # once post-completion, never in the result the validator re-polls.
+        bench_artifact = (result.pop("_artifact", None)
+                          if isinstance(result, dict) else None)
         if engine_died.is_set():
             tail = _engine.challenger_log_tail()
             _fail_bench(job, req.suite, "challenger vLLM died mid-run"
                         + (f" | {tail}" if tail else ""))
             return
+        if bench_artifact and not result.get("aborted"):
+            _write_artifact(job_id, {
+                "job_id": job_id,
+                "request": req.model_dump(),
+                "result": result,
+                **bench_artifact,
+            })
         job["result"] = result
         job["state"] = "aborted" if result.get("aborted") else "completed"
     except Exception as e:
@@ -532,6 +549,14 @@ def get_bench(job_id: str, _: None = Depends(_require_token)):
     if not job:
         raise HTTPException(404, "unknown job")
     return {k: v for k, v in job.items() if k != "events"}
+
+
+@app.get("/bench/{job_id}/artifact")
+def get_bench_artifact(job_id: str, _: None = Depends(_require_token)):
+    path = ARTIFACTS_DIR / f"{job_id}.json.gz"
+    if not path.is_file():
+        raise HTTPException(404, "no artifact for this job")
+    return Response(content=path.read_bytes(), media_type="application/gzip")
 
 
 @app.post("/abort_bench")

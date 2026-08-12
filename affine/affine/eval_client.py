@@ -230,6 +230,22 @@ class EvalClient:
             log.warning("bench dispatch failed", exc_info=True)
             return None
 
+    def fetch_bench_artifact(self, job_id: str) -> bytes | None:
+        """Gzipped per-task bench rollouts for a finished job. Sync (the
+        bench orchestrator pumps synchronously); best-effort like the duel
+        artifact — publishing must never affect the recorded result."""
+        try:
+            r = httpx.get(f"{self.base}/bench/{job_id}/artifact",
+                          timeout=120, headers=self._headers)
+            if r.status_code == 404:
+                return None
+            r.raise_for_status()
+            return r.content
+        except httpx.HTTPError:
+            log.warning("bench artifact fetch failed for %s", job_id,
+                        exc_info=True)
+            return None
+
     def poll_bench(self, job_id: str) -> dict | None:
         try:
             r = httpx.get(f"{self.base}/bench/{job_id}", timeout=30,
