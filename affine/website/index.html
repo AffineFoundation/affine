@@ -9,7 +9,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
   <link rel="stylesheet" href="fonts/fonts.css?v=20" />
-  <link rel="stylesheet" href="style.css?v=51" />
+  <link rel="stylesheet" href="style.css?v=52" />
 </head>
 <body>
   <header class="top-nav">
@@ -22,6 +22,7 @@
         <a id="nav-king" class="nav-chip" target="_blank" rel="noopener">AFFINE</a>
         <a href="./llms.txt" class="nav-chip">llms.txt</a>
         <a class="nav-chip" href="#dataset" id="nav-dataset">Dataset</a>
+        <a class="nav-chip" href="#metrics" id="nav-metrics">Metrics</a>
       </div>
       <div class="nav-right">
         <a class="nav-icon"
@@ -59,7 +60,6 @@
     <nav class="toc-bar" id="toc-bar" aria-label="Page sections">
       <a class="toc-link" href="#evolution">performance</a>
       <a class="toc-link" href="#reign">reign</a>
-      <a class="toc-link" href="#gates">metrics</a>
       <a class="toc-link" href="#queue">queue</a>
       <a class="toc-link" href="#history">history</a>
       <a class="toc-link" href="#fails">fails</a>
@@ -104,14 +104,6 @@
         <span class="section-right" id="reign-meta"></span>
       </div>
       <div id="reign-wrap"><div class="empty">loading…</div></div>
-    </section>
-
-    <section class="section" id="gates">
-      <div class="section-head">
-        <h2 class="section-title">duel metrics</h2>
-        <span class="section-right" id="gates-meta"></span>
-      </div>
-      <div class="metric-grid" id="gates-wrap"><div class="empty">loading…</div></div>
     </section>
 
     <section class="section" id="queue">
@@ -206,6 +198,20 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=51"></script>
+  <section id="metrics-page" class="duel-page metrics-page" hidden>
+    <div class="duel-page-inner">
+      <div class="duel-page-head">
+        <button type="button" class="back-btn" id="metrics-back"
+          aria-label="Back to dashboard">←</button>
+        <h2 class="section-title">duel metrics</h2>
+        <span class="section-right" id="gates-meta"></span>
+      </div>
+      <div class="metric-grid metric-grid--page" id="gates-wrap">
+        <div class="empty">loading…</div>
+      </div>
+    </div>
+  </section>
+
+  <script type="module" src="app.js?v=52"></script>
 </body>
 </html>

@@ -523,6 +523,34 @@ button {
   }
 }
 
+/* Dedicated #metrics page: wider shell, panes flow into as many equal
+ * columns as fit (2 on a laptop, 3 on a wide monitor, 1 on mobile). */
+.duel-page.metrics-page {
+  max-width: 1560px;
+}
+
+.metric-grid--page {
+  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+  gap: 18px;
+}
+
+@media (max-width: 900px) {
+  .metric-grid--page {
+    grid-template-columns: 1fr;
+  }
+}
+
+.metric-grid--page .metric-pane {
+  display: flex;
+  flex-direction: column;
+}
+
+.metric-grid--page .metric-pane svg {
+  display: block;
+  width: 100%;
+  margin-top: auto;
+}
+
 .metric-pane {
   min-width: 0;
   border: 1px solid var(--color-border);

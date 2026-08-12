@@ -15,7 +15,7 @@ import {
   fetchSnapshot,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=51";
+} from "./api.js?v=52";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -42,7 +42,7 @@ import {
   resolveReign,
   setReignLookup,
   short,
-} from "./charts.js?v=51";
+} from "./charts.js?v=52";
 
 const $ = (id) => document.getElementById(id);
 
@@ -266,6 +266,10 @@ function renderRegPrice(force = false) {
 function renderGates(force = false) {
   const wrap = $("gates-wrap");
   if (!wrap) return;
+  // The grid lives on its own page (#metrics); don't burn layout work (and
+  // don't measure 0-width panes) while it is hidden. route() force-renders
+  // on open.
+  if ($("metrics-page")?.hidden) return;
   const key = `${fps.history}|${chartWidth()}`;
   if (!force && key === fps.gates) return;
   fps.gates = key;
@@ -1013,15 +1017,26 @@ function datasetOpen() {
   return location.hash === "#dataset";
 }
 
+function metricsOpen() {
+  return location.hash === "#metrics";
+}
+
+function closeMetricsPage() {
+  if (window.history.length > 1) window.history.back();
+  else location.hash = "";
+}
+
 function route() {
   const cid = duelHashCid();
   const ds = datasetOpen();
+  const mx = metricsOpen();
   const page = $("duel-page");
   const dsPage = $("dataset-page");
+  const mxPage = $("metrics-page");
   if (!page) return;
-  // Both full-screen pages reuse the duel-open body state (hides the main
+  // All full-screen pages reuse the duel-open body state (hides the main
   // dashboard); exactly one of them can be visible.
-  document.body.classList.toggle("duel-open", Boolean(cid) || ds);
+  document.body.classList.toggle("duel-open", Boolean(cid) || ds || mx);
   page.hidden = !cid;
   if (dsPage) {
     dsPage.hidden = !ds;
@@ -1033,6 +1048,13 @@ function route() {
       }
     } else {
       dsPage.dataset.open = "";
+    }
+  }
+  if (mxPage) {
+    mxPage.hidden = !mx;
+    if (mx) {
+      window.scrollTo(0, 0);
+      renderGates(true); // panes now have real widths — draw at full size
     }
   }
   if (!cid) {
@@ -1643,8 +1665,8 @@ function wire() {
     a.addEventListener("click", (e) => {
       e.preventDefault();
       const id = (a.getAttribute("href") || "").slice(1);
-      // From a duel/dataset page, return to the dashboard first, then jump.
-      if (duelHashCid() || datasetOpen()) {
+      // From a full-screen page, return to the dashboard first, then jump.
+      if (duelHashCid() || datasetOpen() || metricsOpen()) {
         location.hash = "";
         setTimeout(() => scrollToSection(id), 60);
       } else {
@@ -1670,6 +1692,7 @@ function wire() {
     openDuel(tr.dataset.cid);
   });
   $("duel-back")?.addEventListener("click", closeDuelPage);
+  $("metrics-back")?.addEventListener("click", closeMetricsPage);
   wireDatasetPage();
   window.addEventListener("hashchange", route);
   document.addEventListener("keydown", (e) => {
@@ -1677,6 +1700,7 @@ function wire() {
     if (openChartId) closeChart();
     else if (duelHashCid()) closeDuelPage();
     else if (datasetOpen()) closeDatasetPage();
+    else if (metricsOpen()) closeMetricsPage();
   });
 }
 
