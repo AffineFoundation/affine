@@ -307,6 +307,48 @@ def build_swesmith_catalog(cfg: RolloutsConfig, src: Source) -> dict:
     })
 
 
+_DOCKER_COPY_RE = re.compile(r"^\s*(?:COPY|ADD)\s+(.+)$",
+                             re.IGNORECASE | re.MULTILINE)
+
+
+def _dockerfile_missing_sources(context: Path, dockerfile: Path) -> list[str]:
+    """Relative COPY/ADD sources absent from the build context.
+
+    ~51% of Terminal-Lego tasks ship a Dockerfile that copies ./task_file
+    without the checkout carrying it. Probing the official prebuilt images
+    (published on the Prime registry) showed /app/task_file is an *empty*
+    scratch dir the agent works in, so those tasks are recovered by stubbing
+    the dir locally; anything else missing stays unbuildable.
+    """
+    missing: list[str] = []
+    text = dockerfile.read_text(errors="ignore")
+    for args in _DOCKER_COPY_RE.findall(text):
+        if args.lstrip().startswith("["):        # JSON form: ["src", "dst"]
+            try:
+                parts = [str(p) for p in json.loads(args)]
+            except json.JSONDecodeError:
+                continue
+        else:
+            parts = args.split()
+        if any(p.startswith("--from=") for p in parts):
+            continue                             # copies from a build stage
+        parts = [p for p in parts if not p.startswith("--")]
+        if len(parts) < 2:
+            continue
+        for src in parts[:-1]:
+            if src.startswith(("http://", "https://")):
+                continue                         # ADD from URL
+            rel = src.strip('"').lstrip("./").rstrip("/")
+            if not rel:
+                continue                         # "COPY . /x" = whole context
+            if any(ch in rel for ch in "*?["):
+                if not any(context.glob(rel)):
+                    missing.append(rel)
+            elif not (context / rel).exists():
+                missing.append(rel)
+    return missing
+
+
 def _terminal_lego_root() -> Path:
     """Match terminal_lego_v1.taskset.git_cache_root layout."""
     home = Path(os.environ.get("HF_HOME", "~/.cache/huggingface")).expanduser()
@@ -339,15 +381,28 @@ def build_terminal_lego_catalog(cfg: RolloutsConfig, src: Source) -> dict:
     root = ensure_terminal_lego_checkout()
     kept: list[dict] = []
     n_unusable = 0
+    n_unbuildable = 0
+    n_stubbed = 0
     for task_dir in sorted(root.iterdir()):
         if not task_dir.is_dir() or not task_dir.name.startswith("task_"):
             continue
         if not all((task_dir / f).is_file() for f in REQUIRED_LEGO_FILES):
             n_unusable += 1
             continue
-        if not (task_dir / "environment" / "Dockerfile").is_file():
+        dockerfile = task_dir / "environment" / "Dockerfile"
+        if not dockerfile.is_file():
             n_unusable += 1
             continue
+        missing = _dockerfile_missing_sources(dockerfile.parent, dockerfile)
+        if missing:
+            # task_file is the agent's empty working dir in the official
+            # images — safe to materialize; any other gap is a real one.
+            if all(m == "task_file" for m in missing):
+                (dockerfile.parent / "task_file").mkdir(exist_ok=True)
+                n_stubbed += 1
+            else:
+                n_unbuildable += 1
+                continue
         try:
             env = tomllib.loads(
                 (task_dir / "task.toml").read_text()).get("environment", {})
@@ -369,8 +424,9 @@ def build_terminal_lego_catalog(cfg: RolloutsConfig, src: Source) -> dict:
         })
     return _write_catalog(cfg, src.name, kept, {
         "source": src.name, "dataset": TERMINAL_LEGO_DATASET,
-        "total": len(kept) + n_unusable, "kept": len(kept),
+        "total": len(kept) + n_unusable + n_unbuildable, "kept": len(kept),
         "panel_excluded": 0, "unusable": n_unusable,
+        "unbuildable": n_unbuildable, "task_file_stubbed": n_stubbed,
     })
 
 
