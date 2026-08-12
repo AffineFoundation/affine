@@ -188,6 +188,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--once", action="store_true",
                     help="process a single batch, then exit")
+    ap.add_argument("--source", default=None,
+                    help="bypass the scheduler and force this source "
+                         "every cycle (diagnostics)")
     ap.add_argument("--no-mirror", action="store_true",
                     help="skip the trace-chunk HF mirror")
     args = ap.parse_args()
@@ -238,7 +241,10 @@ def main() -> None:
                       if r["uid"] not in state.done_for(name))
             for name, rows in pools.items()
         }
-        name = scheduler.pick_source(remaining)
+        if args.source:
+            name = args.source if remaining.get(args.source) else None
+        else:
+            name = scheduler.pick_source(remaining)
         if name is None:
             log.info("all pools exhausted or cooling; sleeping %ds",
                      POOL_EXHAUSTED_SLEEP_S)
