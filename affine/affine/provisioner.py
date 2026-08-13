@@ -335,10 +335,20 @@ class LiumProvider(Provider):
 
     def terminate(self, machine: dict) -> bool:
         name = machine.get("id") or self.pod_name
-        p = _run(["lium", "rm", name], timeout=120, input_text="y\n")
+        # -y: non-interactive (stdin "y\n" is unreliable across lium versions).
+        p = _run(["lium", "rm", name, "-y"], timeout=120)
+        out = ((p.stdout or "") + (p.stderr or "")).strip()
         if p.returncode != 0:
+            # lium exits non-zero when nothing matched — pod already gone,
+            # so billing is already stopped. Treat as confirmed release
+            # (mirrors targon DELETE 404). Otherwise we wedge forever on
+            # terminate_failed and never rent a replacement.
+            if "No pods match targets" in out:
+                log.info("lium rm %s: already absent; treating as terminated",
+                         name)
+                return True
             log.error("lium rm %s failed (pod may still be billing): %s",
-                      name, _redact(p.stderr[-300:]))
+                      name, _redact(out[-300:]))
             return False
         return True
 
@@ -695,7 +705,10 @@ class MachineManager:
         if machine.get("terminate_failed"):
             self._last_check_ok = False
             self._terminate()
-            return False
+            machine = self._get_machine()
+            if machine.get("terminate_failed"):
+                return False
+            # Cleared — fall through (usually into provisioning).
 
         if not machine:
             self._last_check_ok = False
