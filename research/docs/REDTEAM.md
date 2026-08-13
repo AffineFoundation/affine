@@ -7,11 +7,32 @@ Experiment IDs RT-n; results go to RESEARCH_LOG.md as they land.
 **Status key:** **CONFIRMED** = attack works in isolation; **CLOSED** = production scoring blocks it;
 **OPEN** = not yet tested or low-priority residual.
 
-**Production (2026-08-10, Reason v3, `weight_version_key=3`):** score = mean Reason
-= mean(lpC(y_C|z_A) − lpC(y_C|∅)); crown iff paired mean(Reason_c − Reason_k) > 3·SE.
-No gates, no L1 mix, no δ/min_se floors — everything below that references gates,
-clip, r-band, baseline band, or δ describes the retired **S\* v2** rule
-(2026-08-03 → 2026-08-10) and is kept as the experimental record.
+**Production (2026-08-13, Reason v3 + δ + thought-length floor + B gate, `weight_version_key=6`):**
+score = mean Reason = mean(lpC(y_C|z_A) − lpC(y_C|∅)); crown iff paired
+mean(Reason_c − Reason_k) > max(2·SE, 0.002) **and** median(len(z.strip())) ≥ 80
+**and** B pass rate ≥ 0.30. B = lpC(y_A|z_A) − lpC(y_A|∅); pair passes if
+B ≥ 0.02 and no leakage. No lpA gates, no L1 mix. Length floor (wvk=5) plus
+B (wvk=6) close A9; live fill-in n80: thermo cue 20% fail, guass CoT 45% pass.
+Everything below that references gates, clip, r-band, baseline band, or the
+pre-δ 3σ-only rule describes a retired snapshot and is kept as the
+experimental record.
+
+## 2026-08-13 — A9 live on the board: median thought-length floor
+
+Gateless Reason does **not** self-neutralize silence. Empty thoughts score
+Reason ≈ 0; foreign CoT is often negative; short command cues (`"Next
+command:"`, len 13) score a small positive. Relative duels therefore prefer
+silence/cues over honest thoughts. Live:
+
+- reign 9 `diceofgod/affine-5fjgc5jhxq-legend` — median `len(z) = 0`
+- reign 10 `thermopylae-777/Affine-5eptsnvsre-v1` — cue phrases, mean ~22 chars
+
+**Shipped:** `min_thought_chars = 80` (median stripped), `weight_version_key=5`,
+then teacher-side B (`causality_gate=true`, τ=0.02, γ=0.30),
+`weight_version_key=6`. Honest kings (guass ~290, teacher ~240) pass the
+length floor; guass n80 B pass = 45%. Cue max common length is 24; thermo
+n80 B pass = 20% (below γ). **Residual:** 80-char padding that also lifts
+B ≥ 0.02 on ≥30% of pairs.
 
 ## 2026-08-10 — Reason v3 fork: statuses restated for the gateless rule
 
@@ -25,12 +46,14 @@ incumbent. What each attack looks like now:
   never evaluates the miner's own decoder, so overconfidence, uniform rescaling,
   baseline sabotage, and the clip/r/band machinery that contained them are all
   moot. Nothing to defend.
-- **RT-2 / A2 (stuffing), A9 (silence), RT-1 (payloads):** silence and fixed
-  payloads self-neutralize (Reason ≈ 0 while the incumbent's is positive — you
-  lose a relative duel by default); exact y_C stuffing is impossible because
-  teacher refs are sampled fresh per duel (RT-6 fix) and z_A is written before
-  y_C exists. The causality/leakage gates that used to enforce this are now
-  **telemetry** (`gate_pass_rate` in the verdict), monitored not enforced.
+- **RT-2 / A2 (stuffing), A9 (silence), RT-1 (payloads):** the 2026-08-10
+  restatement claimed silence self-neutralizes (Reason ≈ 0). That was **false
+  against a sitting cue/empty king** — see the 2026-08-13 incident above.
+  Exact y_C stuffing is still impossible because teacher refs are sampled
+  fresh per duel (RT-6 fix) and z_A is written before y_C exists. The
+  causality/leakage gates that used to enforce A9 are **telemetry**
+  (`gate_pass_rate` in the verdict). Production defense for A9 as of
+  2026-08-13 is the median length floor, not self-neutralization.
 - **RT-2c (adaptive paraphrase prior): the residual watch item.** RT-2c showed
   para-stuffing *ties genesis* on raw Λ2 (−0.0025, 52% wins) — it never beat it.
   Under v3 tying the incumbent loses (need > 3·SE). The defense is now "must
@@ -116,7 +139,7 @@ and whether total S with production weights improves; calibrate the leakage pena
 the worse finding uncovered by the same run. **Status: CLOSED** — exact-substring + fuzzy
 leakage mask → 0% gate pass.
 
-## A9 — Silent miner (thought suppression)  [SEVERE — **CONFIRMED RT-2 → CLOSED by causality gate**]
+## A9 — Silent miner (thought suppression)  [SEVERE — **MITIGATED 2026-08-13 by median length floor**]
 
 **Mechanism**: submit a miner that emits empty thoughts. RT-2's `empty` arm scored S=−0.39 vs
 honest −1.13: conditioning either decoder on a *foreign model's real reasoning* lowers the
@@ -133,7 +156,11 @@ worst-case; (b) anchor capability terms on quantities the miner's z cannot touch
 **Experiment RT-2b**: v2 runs record all 12 raw lp components per pair + rollout texts;
 evaluate candidate rules offline against (1) 10-king ranking power, (2) silence resistance,
 (3) stuffing resistance simultaneously.
-**Status: CLOSED** — causality gate (≤5% pass on empty arm).
+**Status (v2): CLOSED** — causality gate (≤5% pass on empty arm).
+**Status (v3 live, 2026-08-13): MITIGATED** — gateless Reason reopened A9
+(legend median 0, thermo cue phrases crowned). Median `len(z.strip()) ≥ 80`
+evicts the live kings; padding remains. Teacher-side causality is the
+follow-up.
 
 ## A3 — Overconfidence / L1lift inflation  [HIGH — **RT-3b MITIGATED (bound+detector+duel); calibration REJECTED**]
 
@@ -380,7 +407,7 @@ would be an *unbounded* capability-free channel; none demonstrated.
 | **RT-7 / A12** | **isomorphism inverts live** | **OPEN** | **none — ρ=−0.42 (p=0.024); all 3 S-kings swe=0.00; base model best of 51** |
 | RT-1 / A1 | fixed payloads | **CLOSED** | lose to genesis; empty → causality gate |
 | RT-2 / A2 | exact stuffing | **CLOSED** | leakage gate (0% pass) |
-| RT-2 / A9 | silence | **CLOSED** | causality gate (≤5% pass) |
+| RT-2 / A9 | silence / cue thoughts | **MITIGATED** (2026-08-13) | median `|z|≥80` + B pass ≥ 0.30 (wvk=6); padding+B residual |
 | RT-2c / A2c | paraphrase stuffing | **CLOSED** | bank gate (frac=0); mix w=1 ~21% win |
 | RT-soft-pad / A10 | soft-idents pad | **CLOSED** | abandoned; use mix w=1.0 |
 | RT-4 / A4 | king copier | **CLOSED** | 3σ duel (|z|=1.48) |
@@ -400,7 +427,7 @@ would be an *unbounded* capability-free channel; none demonstrated.
 ## Priority queue (updated 2026-08-03)
 
 1. ~~RT-2 exact stuffer~~ **CLOSED** — leakage gate (0% pass).
-2. ~~A9 silence~~ **CLOSED** — causality gate (≤5% pass).
+2. ~~A9 silence~~ **MITIGATED 2026-08-13** — median thought-length floor; padding residual.
 3. ~~RT-1 fixed payloads~~ **CLOSED** — lose to genesis; empty needs gate.
 4. ~~RT-2c paraphrase~~ **CLOSED** — bank gate; mix@w=1 win≈21% vs G.
 5. ~~RT-4 copier~~ **CLOSED** — null |z|=1.48 at n=80.

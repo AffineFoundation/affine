@@ -50,6 +50,16 @@ export async function fetchSnapshot(signal) {
   return getJSON("data/dashboard.json", { signal });
 }
 
+/** Live scoring knobs. API first, then the static Hippius/site copy. */
+export async function fetchContract(signal) {
+  const m = await detectMode({ signal });
+  if (m === "api") {
+    const live = await getJSON(`${API}/contract`, { signal });
+    if (live) return live;
+  }
+  return getJSON("data/contract.json", { signal });
+}
+
 export async function fetchHistory({ limit = 100, q = "", event = "" } = {}, signal) {
   const m = await detectMode({ signal });
   if (m === "api") {

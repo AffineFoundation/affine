@@ -104,7 +104,7 @@ Root: https://affine.io/
 2. You commit-reveal an HF checkpoint pinned to a 40-hex git revision.
 3. The validator burns your hotkey's **one eval slot at enqueue** (not at verdict). Failed hygiene, failed probe, or lost duel still burns the slot.
 4. Eval machine runs a duel on an `n_turns = 2080` slice of D seeded by `blake2b(reveal_block_hash ‖ your_hotkey)` — you cannot know the slice before reveal; anyone can re-derive it after.
-5. Both sides are scored with Reason (v3, 2026-08-10): `Reason = lpC(y_C|z_A) − lpC(y_C|∅)` per pair, miner score = mean. You dethrone the king iff the paired mean `Reason_c − Reason_k` beats `max(k_sigma·SE, δ)` (`k_sigma = 2`, `min_margin = 0.002`). No gates.
+5. Both sides are scored with Reason (v3 + δ + thought-length floor + B gate): `Reason = lpC(y_C|z_A) − lpC(y_C|∅)` per pair, miner score = mean. You dethrone the king iff the paired mean `Reason_c − Reason_k` beats `max(k_sigma·SE, δ)` (`k_sigma = 2`, `min_margin = 0.002`) **and** your median stripped thought length is at least `min_thought_chars = 80` **and** at least `causality_gamma = 0.30` of pairs pass teacher-side B (`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no leakage). No lpA gates.
 6. Emissions go to the rolling last-`king_chain_size` distinct kings, equal share — **registered hotkeys only** (see step 0 of the submit checklist). Advisory tau2 benches never affect Reason or crowning.
 
 There is no validator-private data. Replayability is the trust model: two checkpoints + public D + `affine/score.py` → recompute the verdict.
@@ -162,7 +162,7 @@ Live path uses bittensor 11 timelock encrypt (`reveal_in="60s"`) → `Commitment
 
 Your checkpoint is served with stock `vllm serve` — **never** `--trust-remote-code`. Combined with the hygiene rules (no `*.py`, no `auto_map`), only architectures natively supported by the pod's vLLM build can play. If vLLM cannot load or serve your model, the injectability probe rejects it — and your slot is already burned. Pre-flight before submitting.
 
-- **Exact invocation**: `_vllm_cmd` in [code/evalsrv/engine.py](https://s3.hippius.com/affine-sn120/code/evalsrv/engine.py). Current knobs (`affine.toml [miner_serving]`, substituted here at site build time): `--tensor-parallel-size 2`, `--max-model-len 65536`, `--gpu-memory-utilization 0.8`, `--max-num-batched-tokens 8192`, FLASH_ATTN attention, triton MoE backend.
+- **Exact invocation**: `_vllm_cmd` in [code/evalsrv/engine.py](https://s3.hippius.com/affine-sn120/code/evalsrv/engine.py). Current knobs (`affine.toml [miner_serving]`, substituted here at site build time): `--tensor-parallel-size 2`, `--max-model-len 65536`, `--gpu-memory-utilization 0.8`, `--max-num-batched-tokens 12288`, FLASH_ATTN attention, triton MoE backend.
 - **dtype** is vLLM `auto`: it follows `torch_dtype` in your `config.json`.
 - **Versions float**: pods install the [eval] extra fresh at provision time (floors from `pyproject.toml`: `vllm>=0.8`, `transformers>=4.51`). The versions actually running right now are reported live at `api/v1/snapshot` under `eval_machine.versions` (vllm / transformers / torch) and in `data/contract.json` `serving` for the frozen knobs.
 - **Hardware**: an 8-GPU B300/B200/H200 pod; the miner slot is 2 GPUs, tensor-parallel 2. Your model (≤ 90 GB safetensors) must load and serve under exactly that.
@@ -173,30 +173,37 @@ Your checkpoint is served with stock `vllm serve` — **never** `--trust-remote-
 
 ## Reason (what you optimize)
 
-Since 2026-08-12 (`weight_version_key = 4`) the whole scoring contract is:
+Since 2026-08-13 (`weight_version_key = 6`) the whole scoring contract is:
 
 ```
 Reason (per pair) = lpC(y_C | z_A) − lpC(y_C | ∅)
 Miner score       = mean(Reason) over all scored pairs
 Crown             = paired mean(Reason_c − Reason_k) > max(k_sigma·SE, δ)
-                    (k_sigma = 2, δ = min_margin = 0.002, SE = sd/√n)
+                    AND median(len(z_A.strip())) ≥ min_thought_chars
+                    AND B pass rate ≥ causality_gamma
+                    (k_sigma = 2, δ = min_margin = 0.002,
+                     min_thought_chars = 80, causality_gamma = 0.30,
+                     SE = sd/√n)
+B (per pair)      = lpC(y_A | z_A) − lpC(y_A | ∅)
+                    pair passes iff B ≥ 0.02 and z does not contain y
 ```
 
-`y_C` is the frozen teacher's own reference action (resampled fresh every duel), `z_A` is your model's thought on the same turn, and both logprobs are teacher-forced on the teacher — **your model's own logprobs never enter the ranked quantity**. You win by producing thoughts that measurably raise the teacher's likelihood of its own action, i.e. by genuinely reasoning about the turn. `n_teacher_samples = n_miner_samples = 1` (one pair per turn). There is no mix, no clip, and no gates.
+`y_C` is the frozen teacher's own reference action (resampled fresh every duel), `z_A` is your model's thought on the same turn, and both Reason logprobs are teacher-forced on the teacher — **your model's own logprobs never enter the ranked quantity**. B is a license, not the score: the teacher must find that your thought caused your own action. Empty or cue thoughts (`"Next command:"`) fail both the length floor and B (live fill-in: thermo cue pass 20%, guass CoT pass 45%). `n_teacher_samples = n_miner_samples = 1` (one pair per turn). There is no mix, no clip, and no lpA gates.
 
 **Why the δ floor (`min_margin = 0.002`, 2026-08-12).** The z-test is relative to the challenger's own per-turn noise. A near-copy of the king has ~6× less duel variance than a genuinely distinct model, so without the floor it could crown on a ±0.0006 noise fluctuation at the same 1-in-44 odds as anyone else. The absolute floor makes that ~z = 6.7 (≈1-in-10^10) while sitting safely below the live honest bar 2·SE ≈ 0.0035 — real duels never touch it. It also caps SE-compression — however consistent your thoughts, the crown bar never drops below 0.002. The calibration (148 archived duels) ships in the repo as `research/results/delta_calibration.json`.
 
-**Live instrumentation (Reason-only).** Each scored pair runs a miner sample plus one teacher echo `lpC(y_C|z_A)`; `lpC(y_C|z_C)` / `lpC(y_C|∅)` come from the fresh teacher reference. Prior-bank and retired lpA / extra lpC echoes are **not** computed live (`reason_only = true`, `score_bank = false`) so the GPU budget can sit in turn count. Published per verdict when available:
+**Live instrumentation.** Each scored pair runs a miner sample plus three teacher echoes: `lpC(y_C|z_A)` for Reason, and `lpC(y_A|z_A)` / `lpC(y_A|∅)` for B. `lpC(y_C|z_C)` / `lpC(y_C|∅)` come from the fresh teacher reference. Prior-bank and retired lpA echoes are **not** computed live (`reason_only = true`, `score_bank = false`). Published per verdict when available:
 
 - sufficiency fraction `η = Λ2(z_A)/Λ2(z_C) = Reason / (lpC(y_C|z_C) − lpC(y_C|∅))` — how much of the teacher's own thinking the miner's thought replaces (climbing η across reigns = capability slope; flat η under crowning = budget burn)
+- teacher-side B mean and pass rate (`mean_b`, `b_gate_pass_rate`)
 - per-side thought/action char lengths + deltas vs the teacher's own rollouts, and the duel's scoring wall clock (`duel_seconds`)
-- Pre-fork / full-telemetry verdicts may still carry causality, bank, calibration r, baseline, and L1lift fields — those are not live GPU work now.
+- Pre-fork / full-telemetry verdicts may still carry miner-side causality, bank, calibration r, baseline, and L1lift fields — those are not live GPU work now.
 
 Pre-fork verdicts (before 2026-08-10) stamp the old `gates` block and the S* mix formula they were judged under; they remain replayable as recorded.
 
 Before the full duel, an injectability probe rejects checkpoints that cannot emit a parsable bash action or return finite forced logprobs.
 
-**Simulate before you submit.** Your eval slot is burned at enqueue, one per hotkey, ever — so replay the duel locally first. The complete measurement layer is published under `code/` and is import-closed (every module `dueling.py` touches is in the list above): `evalsrv/chat.py` is the chat contract — models are rendered through their own chat template to a string and driven via `/v1/completions`, injection plants thoughts as the canonical assistant body `</think>\nTHOUGHT: {z}\n\n{y}`, and `split_rollout` defines exactly what counts as z (all reasoning text) and y (the last closed bash-fenced block). `evalsrv/terms.py` runs the live Reason-only echo (`lpC(y_C|z_A)`) plus teacher refs; `evalsrv/vllm_client.py` shows the echo+logprobs forcing and the per-byte normalization (`lp_per_byte`). Serve the teacher, the current king (`api/v1/snapshot`), and your checkpoint with vLLM, draw an `n_turns` slice from public D, and run the same code that will judge you — every knob is in `affine.toml` `[duel]`, and `duel` in `code/affine/score.py` is the exact decision function.
+**Simulate before you submit.** Your eval slot is burned at enqueue, one per hotkey, ever — so replay the duel locally first. The complete measurement layer is published under `code/` and is import-closed (every module `dueling.py` touches is in the list above): `evalsrv/chat.py` is the chat contract — models are rendered through their own chat template to a string and driven via `/v1/completions`, injection plants thoughts as the canonical assistant body `</think>\nTHOUGHT: {z}\n\n{y}`, and `split_rollout` defines exactly what counts as z (all reasoning text) and y (the last closed bash-fenced block). `evalsrv/terms.py` runs the live Reason echo (`lpC(y_C|z_A)`) plus the B pair (`lpC(y_A|z_A)`, `lpC(y_A|∅)`) and teacher refs; `evalsrv/vllm_client.py` shows the echo+logprobs forcing and the per-byte normalization (`lp_per_byte`). Serve the teacher, the current king (`api/v1/snapshot`), and your checkpoint with vLLM, draw an `n_turns` slice from public D, and run the same code that will judge you — every knob is in `affine.toml` `[duel]`, and `duel` in `code/affine/score.py` is the exact decision function.
 
 Frozen numeric knobs live in `affine.toml` `[duel]` (linked under `code/`). Score changes fork the chain: `weight_version_key` bumps and the toml comment carries the dated rationale. Corpus refreshes are data events: the manifest's `corpus_epoch` increments and every verdict records which manifest it was scored against.
 

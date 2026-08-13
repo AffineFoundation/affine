@@ -526,11 +526,12 @@ export function gatePoints(history) {
 
 /**
  * Everything the duel still measures per side, one pane each. Since the
- * Reason v3 fork only Reason is scored — every other pane is TELEMETRY:
- * measured and published in the verdict so the axis can be studied, never
- * affecting the score. The retired lpA-side panes (L1lift, causality, prior
- * bank, calibration r, empty baseline) were removed when their echoes were
- * switched off on 2026-08-11 — live verdicts no longer publish those fields.
+ * Reason v3 fork only Reason is scored. Length / η / SE / timing are
+ * telemetry. B pass is a validity gate as of weight_version_key=6
+ * (challenger must clear γ = 0.30 to be licensed to crown). The retired
+ * lpA-side panes (L1lift, miner-side causality, prior bank, calibration r,
+ * empty baseline) were removed when their echoes were switched off on
+ * 2026-08-11 — live verdicts no longer publish those fields.
  */
 /** Per-side Reason: v3 verdicts publish `reason`; pre-fork rows carried the
  * identical quantity as `mean_lambda2`. */
@@ -608,15 +609,38 @@ export const GATE_METRICS = [
       slice, with the teacher's own thoughts (dashed) as the anchor. Style
       pressure shows up here first: short-style models sit far below the
       teacher, verbose padders far above.</p>
-      <p>Recorded since Reason v3 as telemetry — length is not scored, but the
-      gap to the teacher is exactly the axis where style-vs-content strategies
-      separate.</p>`,
+      <p>Mean length is telemetry. Since 2026-08-13 the crown also requires
+      median stripped thought length ≥ 80, so a silent or cue miner cannot
+      dethrone even with a huge Reason margin. The B license (next pane,
+      weight_version_key=6) is the follow-up: padding still clears 80 chars,
+      but empty/cue thoughts fail teacher-side causality.</p>`,
     fmt: fmtInt,
     lines: [],
     series: [
       { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "mean_len_z") },
       { label: "king", color: BONE, get: (p) => sideVal(p, "king", "mean_len_z") },
       { label: "teacher", color: BONE, dash: true, get: (p) => num(p.teacher?.mean_len_z) },
+    ],
+  },
+  {
+    id: "b-pass",
+    title: "B pass",
+    caption: "teacher-side B pass rate · dashed = γ = 0.30 license",
+    detail: `<p><code>B = lpC(y_A|z_A) − lpC(y_A|∅)</code>: does the miner's
+      thought cause the teacher to prefer the miner's <em>own</em> action?
+      A pair passes when <code>B ≥ 0.02</code> and the thought does not
+      leak the action. The challenger is licensed to crown only when at
+      least <code>γ = 0.30</code> of pairs pass (2026-08-13,
+      <code>weight_version_key = 6</code>).</p>
+      <p>Reason stays the score. B is a validity gate: cue thoughts like
+      <code>Next command:</code> fail it; real chain-of-thought passes.
+      Sitting kings are not re-checked. Pre-fork rows have no B field.</p>`,
+    fmt: (v) => (v == null ? "—" : `${Math.round(Number(v) * 100)}%`),
+    domain: [0, 1],
+    lines: [{ label: "γ", at: () => 0.30 }],
+    series: [
+      { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "b_gate_pass_rate") },
+      { label: "king", color: BONE, get: (p) => sideVal(p, "king", "b_gate_pass_rate") },
     ],
   },
   {
@@ -729,9 +753,11 @@ export const HERO_CHARTS = [
       challenger that scored above the king without clearing the bar, red is
       a loss.</p>
       <p>The dotted line is the crown bar <code>k_sigma = 2</code>: crossing
-      it is one half of the whole crown rule (the other is the absolute
-      δ floor, next chart). Under the Gaussian null that is a ~2.3%
-      false-crown rate per duel for a genuinely distinct zero-edge model.</p>`,
+      it is the z-test half of the crown rule (the other halves are the
+      absolute δ floor, next chart; median stripped <code>|z| ≥ 80</code>;
+      and teacher-side B pass ≥ 0.30). Under the Gaussian null that is a
+      ~2.3% false-crown rate per duel for a genuinely distinct zero-edge
+      model.</p>`,
     draw: (svg, history, opts) => drawDuelZ(svg, history, opts),
   },
   {

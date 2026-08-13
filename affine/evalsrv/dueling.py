@@ -239,6 +239,7 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel,
     max_action = int(duel_cfg["max_action_tokens"])
     score_bank = bool(duel_cfg.get("score_bank", False))
     reason_only = bool(duel_cfg.get("reason_only", True))
+    causality_gate = bool(duel_cfg.get("causality_gate", False))
 
     async def one(rec: dict) -> None:
         nonlocal done
@@ -268,6 +269,7 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel,
                 teacher, miner, prefix, ref, n_miner, temperature,
                 max_thought, max_action,
                 score_bank=score_bank, reason_only=reason_only,
+                causality_gate=causality_gate,
                 sticky_key=tid, rollouts=miner_rollouts)
         t.update({"turn_id": tid, "miner": miner.cfg.name})
         rows.append(t)
@@ -289,12 +291,14 @@ def _miner_summary(rows: list[dict]) -> dict:
     return {
         "reason": s.reason if math.isfinite(s.reason) else None,
         "n_turns": s.n_turns, "n_pairs": s.n_pairs,
-        # -- telemetry (recorded for study; never affects score or validity) --
+        # -- telemetry (B pass rate is validity only when causality_gate) --
         "gate_pass_rate": s.gate_pass_rate, "bank_frac": s.bank_frac,
         "calib_ratio": s.calib_ratio, "baseline_abs": s.baseline_abs,
         "mean_l1lift": s.mean_l1lift,
         "mean_eta": s.mean_eta,
-        "mean_len_z": s.mean_len_z, "mean_len_y": s.mean_len_y,
+        "mean_len_z": s.mean_len_z, "median_len_z": s.median_len_z,
+        "mean_len_y": s.mean_len_y,
+        "mean_b": s.mean_b, "b_gate_pass_rate": s.b_gate_pass_rate,
     }
 
 
@@ -406,10 +410,16 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         refs_used = {tid: refs.cache[tid] for tid in turn_ids
                      if tid in refs.cache}
 
+    min_thought = int(duel_cfg.get("min_thought_chars", 0))
+    causality_gate = bool(duel_cfg.get("causality_gate", False))
+    causality_gamma = (
+        float(duel_cfg.get("causality_gamma", 0.30)) if causality_gate else 0.0)
     result = score_duel(
         chall_rows, king_rows,
         k_sigma=float(duel_cfg["k_sigma"]),
         min_margin=float(duel_cfg.get("min_margin", 0.0)),
+        min_thought_chars=min_thought,
+        causality_gamma=causality_gamma,
         challenger_bank_frac=_mean_bank(chall_rows),
         king_bank_frac=_mean_bank(king_rows))
 
@@ -421,6 +431,10 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
 
     verdict = {
         "challenger_wins": result.challenger_wins,
+        "rejection_reason": (
+            "thought_too_short" if result.thought_floor_blocked
+            else "causality_fail" if result.causality_blocked
+            else None),
         "margin": result.margin if math.isfinite(result.margin) else None,
         "se": result.se if math.isfinite(result.se) else None,
         "z": result.z if math.isfinite(result.z) else None,
@@ -432,6 +446,9 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "n_turns": int(duel_cfg["n_turns"]),
             "k_sigma": float(duel_cfg["k_sigma"]),
             "min_margin": float(duel_cfg.get("min_margin", 0.0)),
+            "min_thought_chars": min_thought,
+            "causality_gate": causality_gate,
+            "causality_gamma": causality_gamma,
             "n_teacher_samples": int(duel_cfg["n_teacher_samples"]),
             "n_miner_samples": int(duel_cfg["n_miner_samples"]),
         },

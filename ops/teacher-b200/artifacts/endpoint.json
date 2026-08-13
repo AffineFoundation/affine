@@ -1,0 +1,17 @@
+{
+  "utc": "2026-08-12T14:54:43Z",
+  "host": "152.236.142.232",
+  "ssh": "ssh root@152.236.142.232 -p 40301",
+  "gpu": "8xH200",
+  "mode": "dual_tp4",
+  "base_urls": [
+    "http://152.236.142.232:40000/v1",
+    "http://152.236.142.232:40001/v1"
+  ],
+  "repo": "zai-org/GLM-4.5-Air-FP8",
+  "tp_per_replica": 4,
+  "knobs": {
+    "max_num_batched_tokens": 8192,
+    "gpu_memory_utilization": 0.85
+  }
+}

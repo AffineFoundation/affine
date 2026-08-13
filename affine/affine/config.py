@@ -90,6 +90,7 @@ class DuelCfg:
     n_turns: int
     k_sigma: float
     min_margin: float
+    min_thought_chars: int
     # Sampling / ops knobs. n_*_samples set pairs per turn; reason_only /
     # score_bank control whether non-Reason GPU telemetry runs (off in prod).
     n_teacher_samples: int
@@ -101,6 +102,10 @@ class DuelCfg:
     timeout_s: int
     score_bank: bool = False
     reason_only: bool = True
+    # Teacher-side B gate (on as of weight_version_key=6, 2026-08-13).
+    causality_gate: bool = False
+    causality_tau: float = 0.02
+    causality_gamma: float = 0.30
 
 
 @dataclass(frozen=True)
@@ -261,6 +266,7 @@ def _duel(raw: dict) -> DuelCfg:
     return DuelCfg(
         n_turns=int(d["n_turns"]), k_sigma=float(d["k_sigma"]),
         min_margin=float(d.get("min_margin", 0.0)),
+        min_thought_chars=int(d.get("min_thought_chars", 0)),
         n_teacher_samples=int(d["n_teacher_samples"]),
         n_miner_samples=int(d["n_miner_samples"]),
         temperature=float(d["temperature"]),
@@ -269,6 +275,9 @@ def _duel(raw: dict) -> DuelCfg:
         concurrency=int(d["concurrency"]), timeout_s=int(d["timeout_s"]),
         score_bank=bool(d.get("score_bank", False)),
         reason_only=bool(d.get("reason_only", True)),
+        causality_gate=bool(d.get("causality_gate", False)),
+        causality_tau=float(d.get("causality_tau", 0.02)),
+        causality_gamma=float(d.get("causality_gamma", 0.30)),
     )
 
 

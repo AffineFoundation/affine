@@ -1,0 +1,106 @@
+{
+  "corpus_epoch": 9,
+  "created_at": "2026-08-12T16:01:41.126122+00:00",
+  "index": {
+    "key": "turns/index/turns_0009.parquet",
+    "n_turns": 44417,
+    "sha256": "b6d67ca594c1ba72056c2f5fa0ace90a41dbe39a25ac7f8fcc73eeba84a0d918"
+  },
+  "prev_manifest": "turns/manifests/68a38fe1a9a426ceb6eb342e061c7062ee7f481b60d3e51aa49d08efeaddbfbc.json",
+  "schema_version": 2,
+  "shards": [
+    {
+      "active": false,
+      "key": "turns/shards/turns_epoch_0001.jsonl.gz",
+      "n_turns": 9000,
+      "sha256": "a30a3b5da61186a200dd2e16e4bc3e4bdf1a6ffaeaf81e005b5f8121ba5608c9"
+    },
+    {
+      "active": false,
+      "key": "turns/shards/turns_epoch_0002.jsonl.gz",
+      "n_turns": 327,
+      "sha256": "1b4a7bd6acb50893767630837212d237a12dc77a36fa3c42e7fa9911e8ed6764"
+    },
+    {
+      "active": false,
+      "key": "turns/shards/turns_epoch_0003.jsonl.gz",
+      "n_turns": 544,
+      "sha256": "fe896ffc6fd6156fb3b3274cdb4091042f32e0b0d3ffd0146ba55831b4a94e4e"
+    },
+    {
+      "active": false,
+      "key": "turns/shards/turns_epoch_0004.jsonl.gz",
+      "n_turns": 8513,
+      "sha256": "2fd328f32f50f97d6b13ba7f00d256518c617926e0601fe29bb95ac2216683b6"
+    },
+    {
+      "active": false,
+      "key": "turns/shards/turns_epoch_0005.jsonl.gz",
+      "n_turns": 11476,
+      "sha256": "f29e5c5adf59bd732a63bfb62b2c94ace5f28e23b493b0efe9e4c194ea95f27b"
+    },
+    {
+      "active": true,
+      "format": "traj_v1",
+      "key": "turns/chunks/chunk_0006_0000.jsonl.gz",
+      "n_trajectories": 1000,
+      "n_turns": 3000,
+      "sha256": "738f3283609279c1de9d2f36d4bb6e48b7a0c093cd361488888cfc561e1f51d7"
+    },
+    {
+      "active": true,
+      "format": "traj_v1",
+      "key": "turns/chunks/chunk_0006_0001.jsonl.gz",
+      "n_trajectories": 1000,
+      "n_turns": 3000,
+      "sha256": "9e0e17b8eeb33cad4c1021de1cd562659f0db270800c459ac3530e3d281e7f90"
+    },
+    {
+      "active": true,
+      "format": "traj_v1",
+      "key": "turns/chunks/chunk_0006_0002.jsonl.gz",
+      "n_trajectories": 1000,
+      "n_turns": 3000,
+      "sha256": "ccbf7d1720459d43729229126dc513de564de5d5e169e71660c7e7de03c43d0b"
+    },
+    {
+      "active": true,
+      "format": "traj_v1",
+      "key": "turns/chunks/chunk_0006_0003.jsonl.gz",
+      "n_trajectories": 724,
+      "n_turns": 20860,
+      "sha256": "4dc9a30cc34f0c908780218756592d6f9d61df304f32aab708f806343410de26"
+    },
+    {
+      "active": false,
+      "format": "turn_v1_compat",
+      "key": "turns/shards/turns_epoch_0006_compat.jsonl.gz",
+      "n_turns": 29860,
+      "sha256": "5d00dc01f043d698cbb8e18873bb285d80690b3969c83c3902547a0ef785a542"
+    },
+    {
+      "active": true,
+      "format": "traj_v1",
+      "key": "turns/chunks/chunk_0007_0000.jsonl.gz",
+      "n_trajectories": 271,
+      "n_turns": 10475,
+      "sha256": "f10701432feee08b2089b7d64b250a7ed8a76edd62fe4c361644152f23694d40"
+    },
+    {
+      "active": true,
+      "format": "traj_v1",
+      "key": "turns/chunks/chunk_0008_0000.jsonl.gz",
+      "n_trajectories": 54,
+      "n_turns": 513,
+      "sha256": "ff2bef4d130fb96c2ad05582f4da6b36017b70ab81f67578c0f19b2407903cf9"
+    },
+    {
+      "active": true,
+      "format": "traj_v1",
+      "key": "turns/chunks/chunk_0009_0000.jsonl.gz",
+      "n_trajectories": 453,
+      "n_turns": 3569,
+      "sha256": "2d9b42a2943ee5f4ecd7c842edc8ed2596910fdf447fc9faf839d0e01afc2c87"
+    }
+  ]
+}

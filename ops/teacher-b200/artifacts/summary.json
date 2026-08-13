@@ -1,0 +1,108 @@
+{
+  "utc": "2026-08-12T14:54:43Z",
+  "config": "dual TP=4 on 8xH200",
+  "endpoints": [
+    "http://152.236.142.232:40000/v1",
+    "http://152.236.142.232:40001/v1"
+  ],
+  "ssh": "ssh root@152.236.142.232 -p 40301",
+  "best": {
+    "file": "bench_mixed_dual_tp4_c96_e8k_unique.json",
+    "bases": 2,
+    "concurrency": 96,
+    "echo_tokens": 8192,
+    "turns_per_s": 6.502,
+    "proj_4000_min": 10.3
+  },
+  "table": [
+    {
+      "file": "bench_mixed_dual_tp4_c32_e12k_unique.json",
+      "bases": 2,
+      "concurrency": 32,
+      "echo_tokens": 12288,
+      "turns_per_s": 3.682,
+      "proj_4000_min": 18.1
+    },
+    {
+      "file": "bench_mixed_dual_tp4_c32_e16384_unique.json",
+      "bases": 2,
+      "concurrency": 32,
+      "echo_tokens": 16384,
+      "turns_per_s": 2.75,
+      "proj_4000_min": 24.2
+    },
+    {
+      "file": "bench_mixed_dual_tp4_c32_e20480_unique.json",
+      "bases": 2,
+      "concurrency": 32,
+      "echo_tokens": 20480,
+      "turns_per_s": 2.171,
+      "proj_4000_min": 30.7
+    },
+    {
+      "file": "bench_mixed_dual_tp4_c48_e20480_unique.json",
+      "bases": 2,
+      "concurrency": 48,
+      "echo_tokens": 20480,
+      "turns_per_s": 2.62,
+      "proj_4000_min": 25.4
+    },
+    {
+      "file": "bench_mixed_dual_tp4_c48_e8k_unique.json",
+      "bases": 2,
+      "concurrency": 48,
+      "echo_tokens": 8192,
+      "turns_per_s": 4.119,
+      "proj_4000_min": 16.2
+    },
+    {
+      "file": "bench_mixed_dual_tp4_c64_e16384_unique.json",
+      "bases": 2,
+      "concurrency": 64,
+      "echo_tokens": 16384,
+      "turns_per_s": 3.142,
+      "proj_4000_min": 21.2
+    },
+    {
+      "file": "bench_mixed_dual_tp4_c64_e20480_unique.json",
+      "bases": 2,
+      "concurrency": 64,
+      "echo_tokens": 20480,
+      "turns_per_s": 2.628,
+      "proj_4000_min": 25.4
+    },
+    {
+      "file": "bench_mixed_dual_tp4_c64_e8k_unique.json",
+      "bases": 2,
+      "concurrency": 64,
+      "echo_tokens": 8192,
+      "turns_per_s": 5.64,
+      "proj_4000_min": 11.8
+    },
+    {
+      "file": "bench_mixed_dual_tp4_c96_e8k_unique.json",
+      "bases": 2,
+      "concurrency": 96,
+      "echo_tokens": 8192,
+      "turns_per_s": 6.502,
+      "proj_4000_min": 10.3
+    },
+    {
+      "file": "bench_mixed_tp4a_c24_e8k_unique.json",
+      "bases": 1,
+      "concurrency": 24,
+      "echo_tokens": 8192,
+      "turns_per_s": 2.772,
+      "proj_4000_min": 24.1
+    },
+    {
+      "file": "bench_mixed_tp8_c24_e8k_unique.json",
+      "bases": 1,
+      "concurrency": 24,
+      "echo_tokens": 8192,
+      "turns_per_s": 2.615,
+      "proj_4000_min": 25.5
+    }
+  ],
+  "verdict": "Dedicated dual-TP4 teacher can carry ~4k duel turns of sample+echo teacher work in ~10\u201325 min depending on echo length (8k\u219210min @c96; 20k\u219225min @c64). Earlier TP8 single-replica was ~25min @8k. Ready for eval wiring via multi base_url / ModelPool."
+}

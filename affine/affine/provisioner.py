@@ -82,8 +82,15 @@ def _redact(text: str) -> str:
 def _run(cmd: list[str], timeout: int = 300,
          input_text: str | None = None) -> subprocess.CompletedProcess:
     log.debug("run: %s", _redact(" ".join(shlex.quote(c) for c in cmd)))
+    env = None
+    # Doppler/pm2 may inject a stale LIUM_API_KEY that overrides the working
+    # ~/.lium/config.ini profile and makes every `lium` call fail with
+    # "Invalid API key". Prefer the on-disk CLI profile when present.
+    if cmd and cmd[0] == "lium" and (Path.home() / ".lium" / "config.ini").is_file():
+        env = os.environ.copy()
+        env.pop("LIUM_API_KEY", None)
     return subprocess.run(cmd, capture_output=True, text=True,
-                          timeout=timeout, input=input_text)
+                          timeout=timeout, input=input_text, env=env)
 
 
 def _kill_pid(pid: int) -> None:

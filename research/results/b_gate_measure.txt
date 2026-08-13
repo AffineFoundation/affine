@@ -1,0 +1,136 @@
+B gate measurement  τ=0.02  γ=0.30
+B = lpC(y_A|z_A) − lpC(y_A|∅)  + no leakage
+Gate is OFF live (causality_gate=false). This is a try, not a fork.
+
+artifact                     side            n  med_z  empty   leak   mean_B   pass    γ   Reason
+-------------------------------------------------------------------------------------------------
+=== full telemetry (B measurable) ===
+s4-h30-m7-king-self          challenger    317    191  0.0%  0.3% +0.0597 62.5%   ok  -0.0113
+                               z×2    'Now let me look at the `_configure_prese'
+                               z×2    'Let me check the current state of the fi'
+                               z×2    'Let me run this fresh test:'
+                             king          316    198  0.3%  1.3% +0.0642 64.6%   ok  -0.0007
+                               z×2    '<think>\nNow let me run the test script a'
+                               z×2    '<think>'
+                               z×2    '<think>\nI found the UL4 lexer implementa'
+s4-h29-king-self-clip-l1     challenger    319    181  0.0%  3.8% +0.0619 58.0%   ok  -0.0127
+                               z×2    'Let me check the cache API implementatio'
+                               z×1    '<think>\nI found the file `./charset_norm'
+                               z×1    'Great, I found the file at `./charset_no'
+                             king          319    188  0.0%  2.2% +0.0636 65.2%   ok  -0.0044
+                               z×1    'Let me see the current function implemen'
+                               z×1    'Now let me see the exact implementation:'
+                               z×1    '<think>\n<think>\nLet me see the exact con'
+s4-h117-f22-raw-everest12    challenger    317    137  0.0%  1.3% +0.0632 64.7%   ok  -0.0171
+                               z×4    'Let me verify the change was applied cor'
+                               z×3    'Let me verify the patch file was created'
+                               z×3    'The test requires the `mock` module. Let'
+                             king          315    258  0.0%  3.2% +0.0462 54.3%   ok  -0.0149
+                               z×3    'Now let me run this test to see what hap'
+                               z×2    'Let me install mock and try again.\nLet m'
+                               z×2    'I need to find the util.py file in the p'
+s4-h44-m7-winner-za-clip08   skipped (no rows)
+s4-h43-m7-winner-za-a64      challenger    320    176  0.0%  0.6% +0.0557 61.3%   ok  -0.0055
+                               z×3    'Now let me test the fix by running the r'
+                               z×2    'Let me fix the sed command properly:'
+                               z×2    'Let me check the version range implement'
+                             king          318    176  0.0%  2.8% +0.0693 63.8%   ok  -0.0049
+                               z×2    '<think>\nNow let me test the fix by runni'
+                               z×2    '<think>\nLet me check if the fix was appl'
+                               z×1    '<think>\nI can see the repository structu'
+s4-h42-m7-winner-za-lr5e6    challenger    319    198  0.0%  1.6% +0.0607 62.7%   ok  -0.0068
+                               z×3    'Let me check the current state of the re'
+                               z×3    'Let me verify the patch file contains th'
+                               z×2    'Let me run this test to understand the e'
+                             king          320    191  0.0%  0.3% +0.0734 70.3%   ok  -0.0072
+                               z×2    '<think>\nI found the relevant file `./con'
+                               z×2    'Let me run this test to understand the e'
+                               z×2    '<think>\nLet me look at the test cases fo'
+s4-h41-m7-winner-za-r32      challenger    317    174  0.0%  1.6% +0.0570 65.6%   ok  -0.0069
+                               z×2    'I found the relevant file `./conan/tools'
+                               z×2    'Now let me make a clean edit to the func'
+                               z×2    'Let me check the current state of the fi'
+                             king          318    163  1.3%  1.9% +0.0555 65.7%   ok  -0.0057
+                               z×4    '(empty)'
+                               z×1    '<think>\nLet me look for the remote manag'
+                               z×1    'Let me look for the remote manager imple'
+s4-h39-m7-winner-za-lr3e5    challenger    320    216  0.6%  1.9% +0.0584 67.2%   ok  +0.0085
+                               z×2    'Let me check what the current state of t'
+                               z×2    '(empty)'
+                               z×2    'Let me try to install pytest and run the'
+                             king          319    214  0.3%  2.2% +0.0719 68.7%   ok  +0.0083
+                               z×3    '<think>'
+                               z×1    '<think>\n<think>\nLet me verify the final '
+                               z×1    'Let me verify the fix is applied correct'
+s4-h1v2-sft                  challenger    319    193  0.0%  2.5% +0.0644 64.6%   ok  -0.0098
+                               z×4    'Let me check if the fix was applied corr'
+                               z×3    'Let me check if the Org Mode lexer is in'
+                               z×2    'Let me run the numeric debug test:'
+                             king          319    201  0.0%  2.5% +0.0701 65.5%   ok  -0.0114
+                               z×4    'Let me check if the fix was applied corr'
+                               z×3    'Let me check what the current state of t'
+                               z×2    'Let me run the numeric debug test:'
+s4-h1-sft                    challenger    158    216  0.0%  4.4% +0.0839 69.6%   ok  -0.0345
+                               z×1    'Let me also check for the cpp compiler:'
+                               z×1    'Let me look at the area around line 269 '
+                               z×1    'Now I need to see how the `compilers_by_'
+                             king          160    202  0.0%  1.9% +0.0905 79.4%   ok  -0.0380
+                               z×2    'I found the relevant files. The `config '
+                               z×2    'Let me fix the sed command syntax:'
+                               z×2    'Let me get the complete max_id property '
+s4-h2-merge                  challenger    320    174  0.0%  2.5% +0.0516 64.4%   ok  +0.0011
+                               z×2    'Now let me run the updated test script t'
+                               z×2    'Let me check the current state of the fi'
+                               z×2    'Let me search for the startsWithNumber f'
+                             king          320    165  0.0%  0.3% +0.0561 68.1%   ok  -0.0056
+                               z×3    'Let me fix the sed command syntax:'
+                               z×2    'Let me check the remote_manager.py file '
+                               z×2    'Let me verify the changes I made to the '
+s4-h5b-talentpigs-distill    challenger    318    184  1.3%  2.2% +0.0531 60.1%   ok  +0.0134
+                               z×4    '(empty)'
+                               z×2    'Let me run this debug script to get more'
+                               z×2    'Let me look at the recipe reference matc'
+                             king          316    195  1.6%  1.3% +0.0586 63.0%   ok  +0.0094
+                               z×5    '(empty)'
+                               z×2    '<think>'
+                               z×2    "<think>\nLet me check what's in the tempo"
+
+=== Reason-only (B echoes omitted) ===
+Empty z ⇒ B=0 by construction. Cue phrases are unmeasured until
+a GLM echo of y_A with that z. Leakage 0% does not pass B.
+r160-thermopylae-grpo        challenger     80     13  0.0%  0.0%    n/a   n/a    —  +0.0050
+                               z×64   'Next command:'
+                               z×9    'Next command to run:'
+                               z×7    'Next bash command:'
+                             king           80     18  0.0%  0.0%    n/a   n/a    —  +0.0053
+                               z×38   'Next command:'
+                               z×21   'Next command to run:'
+                               z×20   'Next bash command:'
+r160-thermopylae-grpo        challenger     80     20  0.0%  0.0%    n/a   n/a    —  +0.0081
+                               z×67   'Next command to run:'
+                               z×12   'Next command:'
+                               z×1    'Next command:\n</think>'
+                             king           79     18  0.0%  0.0%    n/a   n/a    —  +0.0077
+                               z×39   'Next command:'
+                               z×28   'Next command to run:'
+                               z×11   'Next bash command:'
+r68-hirank-hilr              challenger     80    348  0.0%  7.5%    n/a   n/a    —  -0.0050
+                               z×2    'THOUGHT: I need to understand the struct'
+                               z×1    'Now let me verify the changes by viewing'
+                               z×1    "Now let's reproduce the issue to see the"
+                             king           80     13  0.0%  0.0%    n/a   n/a    —  +0.0075
+                               z×49   'Next command:'
+                               z×17   'Next bash command:'
+                               z×14   'Next command to run:'
+r159-legend-grpo             challenger     79      0 100.0%  0.0%    n/a   n/a    —  -0.0001
+                               z×79   '(empty)'
+                             king           79      0 100.0%  0.0%    n/a   n/a    —  +0.0005
+                               z×79   '(empty)'
+r17-coder-rl                 challenger     27    203  3.7%  3.7%    n/a   n/a    —  -0.0123
+                               z×1    '(empty)'
+                               z×1    'Let me get the correct context around th'
+                               z×1    'I can see there are relevant files in th'
+                             king           80    227  0.0%  0.0%    n/a   n/a    —  -0.0051
+                               z×3    'I need to understand the structure of th'
+                               z×1    'Let me verify the patch file contains th'
+                               z×1    'Let me check the full README to understa'

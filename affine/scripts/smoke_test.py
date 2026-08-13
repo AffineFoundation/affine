@@ -41,7 +41,11 @@ check("config.typed_duel",
 # δ crown floor (2026-08-12, weight_version_key=4); the v2 SE floor stays gone.
 check("config.delta_floor",
       cfg.duel.min_margin == 0.002 and not hasattr(cfg.duel, "min_se"))
-check("config.v4_fork_key", cfg.weight_version_key >= 4)
+check("config.thought_floor", cfg.duel.min_thought_chars == 80)
+check("config.causality_gate_on",
+      cfg.duel.causality_gate is True and cfg.duel.causality_gamma == 0.30
+      and cfg.duel.causality_tau == 0.02)
+check("config.v6_fork_key", cfg.weight_version_key >= 6)
 check("config.submission_caps",
       cfg.submission.max_total_repo_gb > cfg.submission.max_model_size_gb)
 check("config.min_submission_block_set", cfg.min_submission_block >= 0)
@@ -72,14 +76,17 @@ from affine import score  # noqa: E402
 
 
 def rows_for(miner: str, per_turn: list[float], lift: float = 1.0,
-             teacher_own: float = 1.0) -> list[dict]:
+             teacher_own: float = 1.0, z_a: str | None = None) -> list[dict]:
+    thought = z_a if z_a is not None else (
+        "I need to inspect the repository structure and read the relevant "
+        "source file before making a change.")
     out = []
     for i, s in enumerate(per_turn):
         pair = {"lpA_ya_za": lift, "lpA_ya_e": 0.0,
                 "lpC_yc_za": s, "lpC_yc_e": 0.0,
                 "lpC_yc_zc": teacher_own,  # Λ2(z_C) = teacher_own − 0
                 "lpA_yc_za": -2.0, "lpA_yc_e": -1.0,
-                "z_a": "some genuine reasoning", "y_a": "ls -la"}
+                "z_a": thought, "y_a": "ls -la"}
         out.append({"turn_id": f"t{i}", "miner": miner, "valid": True,
                     "pairs": [pair]})
     return out
@@ -120,11 +127,62 @@ r4 = score.duel(chall_noise, flat_king)
 check("duel.sub_sigma_no_crown", not r4.challenger_wins and r4.z <= r4.k_sigma,
       f"margin={r4.margin:.4f} z={r4.z:.2f} k={r4.k_sigma}")
 
+# Length floor: a cue-thought miner with a huge Reason margin still cannot crown.
+cue = rows_for("chall", [0.5] * 20, z_a="Next command:")
+r_cue = score.duel(cue, flat_king)
+check("duel.thought_floor_blocks_cue",
+      not r_cue.challenger_wins and r_cue.thought_floor_blocked
+      and r_cue.margin > r_cue.min_margin,
+      f"margin={r_cue.margin:.3f} blocked={r_cue.thought_floor_blocked} "
+      f"med={score.score_miner(cue).median_len_z}")
+# Empty thoughts: same.
+empty = rows_for("chall", [0.5] * 20, z_a="")
+r_empty = score.duel(empty, flat_king)
+check("duel.thought_floor_blocks_empty",
+      not r_empty.challenger_wins and r_empty.thought_floor_blocked)
+
+# B gate (off by default): cue with B=0 cannot crown when γ=0.30.
+cue_b = rows_for("chall", [0.5] * 20, z_a=(
+    "I need to inspect the repository structure and read the relevant "
+    "source file before making a change."))
+for row in cue_b:
+    row["pairs"][0]["lpC_ya_za"] = 0.0
+    row["pairs"][0]["lpC_ya_e"] = 0.0
+r_b0 = score.duel(cue_b, flat_king, causality_gamma=0.30)
+check("duel.b_gate_blocks_zero_b",
+      not r_b0.challenger_wins and r_b0.causality_blocked)
+honest_b = rows_for("chall", [0.5] * 20)
+for row in honest_b:
+    row["pairs"][0]["lpC_ya_za"] = 0.05
+    row["pairs"][0]["lpC_ya_e"] = 0.0
+r_b1 = score.duel(honest_b, flat_king, causality_gamma=0.30)
+check("duel.b_gate_allows_causal",
+      r_b1.challenger_wins and not r_b1.causality_blocked,
+      f"rate={score.score_miner(honest_b).b_gate_pass_rate}")
+# Leakage fails B even when the lift is huge.
+stuff = rows_for("chall", [0.5] * 20, z_a="I will run ls -la now")
+for row in stuff:
+    row["pairs"][0]["lpC_ya_za"] = 1.0
+    row["pairs"][0]["lpC_ya_e"] = 0.0
+    row["pairs"][0]["y_a"] = "```bash\nls -la\n```"
+r_st = score.duel(stuff, flat_king, causality_gamma=0.30, min_thought_chars=0)
+check("duel.b_gate_blocks_leakage",
+      not r_st.challenger_wins and r_st.causality_blocked)
+# Fail closed: γ>0 with no B echoes must not crown.
+no_b = rows_for("chall", [0.5] * 20)
+r_nob = score.duel(no_b, flat_king, causality_gamma=0.30)
+check("duel.b_gate_fail_closed_missing",
+      not r_nob.challenger_wins and r_nob.causality_blocked
+      and score.score_miner(no_b).b_gate_pass_rate is None)
+
 # score_miner is gateless: mean Reason + telemetry, no valid flag.
 ms = score.score_miner(chall_real)
 check("score.miner_reason_mean", abs(ms.reason - 0.5) < 1e-9
       and ms.mean_l1lift == -1.0 and ms.gate_pass_rate == 1.0,
       f"reason={ms.reason} l1={ms.mean_l1lift}")
+check("score.median_len_z_honest",
+      ms.median_len_z is not None and ms.median_len_z >= 80,
+      f"median_len_z={ms.median_len_z}")
 check("score.miner_no_gating", not hasattr(ms, "valid"))
 # η = Reason / Λ2(z_C); teacher_own=1.0 ⇒ mean η ≈ mean Reason.
 check("score.miner_mean_eta", ms.mean_eta is not None

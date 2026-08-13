@@ -6,7 +6,7 @@
     "burn_uid": 0,
     "king_chain_size": 5,
     "min_submission_block": 8767079,
-    "weight_version_key": 4
+    "weight_version_key": 6
   },
   "submission": {
     "reveal_prefix": "affine1",
@@ -32,15 +32,19 @@
     "n_turns": 2080,
     "k_sigma": 2.0,
     "min_margin": 0.002,
+    "min_thought_chars": 80,
     "n_teacher_samples": 1,
     "n_miner_samples": 1,
+    "score_bank": false,
+    "reason_only": true,
+    "causality_gate": true,
+    "causality_tau": 0.02,
+    "causality_gamma": 0.3,
     "temperature": 0.8,
     "max_thought_tokens": 1024,
     "max_action_tokens": 768,
     "concurrency": 24,
-    "timeout_s": 7200,
-    "score_bank": false,
-    "reason_only": true
+    "timeout_s": 7200
   },
   "bench": {
     "enabled": true,

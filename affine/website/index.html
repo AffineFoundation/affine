@@ -20,7 +20,7 @@
       </a>
       <div class="nav-center">
         <a id="nav-king" class="nav-chip" target="_blank" rel="noopener">AFFINE</a>
-        <a href="./llms.txt" class="nav-chip">llms.txt</a>
+        <a href="./llms.txt" class="nav-chip" id="nav-llms">llms.txt</a>
         <a class="nav-chip" href="#dataset" id="nav-dataset">Dataset</a>
         <a class="nav-chip" href="#metrics" id="nav-metrics">Metrics</a>
       </div>
@@ -60,7 +60,8 @@
   </header>
 
   <!-- Top charts, 2×2: Reason + Margin (σ) over Margin (abs) + reg price —
-       the whole contract (score + crown rule margin > max(2·SE, δ)) plus
+       the scored quantity plus the margin half of the crown rule
+       (margin > max(2·SE, δ); also median |z| ≥ 80 and B pass ≥ 0.30) plus
        the price of a seat at the table -->
 
   <section class="hero" id="evolution">
@@ -218,6 +219,6 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=67"></script>
+  <script type="module" src="app.js?v=69"></script>
 </body>
 </html>

@@ -4,12 +4,15 @@ affine/affine/score.py.
   Per pair:   Reason = lpC(y_C | z_A) − lpC(y_C | ∅)
   Per miner:  score  = mean(Reason)
   Duel:       paired mean(Reason_c − Reason_k) > max(k_sigma · SE, min_margin)
+              AND median(len(z_A.strip())) ≥ min_thought_chars
 
-No mix, no clip, no gates, no SE floor. min_margin (δ = 0.002, added
+No mix, no clip, no SE floor. min_margin (δ = 0.002, added
 2026-08-12, weight_version_key=4) is an absolute crown floor that kills
 ε-copies / SE-compression (calibration: results/delta_calibration.{json,txt});
-pre-δ v3 verdicts replay with min_margin=0.0. Everything the retired S* v2
-measured (causality, bank, calibration r, baseline, L1lift) is telemetry.
+pre-δ v3 verdicts replay with min_margin=0.0. min_thought_chars (80, added
+2026-08-13, weight_version_key=5) evicts empty / cue-thought kings; pass 0
+to disable. Teacher-side B (lpC(y_A|z_A) − lpC(y_A|∅), τ=0.02, γ=0.30) is
+a license to play, on live when causality_gamma > 0 (weight_version_key=6).
 
 The pre-fork S* v2 rule (mix + gates + δ=0.02 + min_se) is preserved at the
 bottom of this file (`legacy_score_miner` / `legacy_duel` and the DEFAULT_*
@@ -29,6 +32,9 @@ DEFAULT_K_SIGMA = 2.0
 # v3 δ crown floor (2026-08-12). Distinct from the legacy v2 DEFAULT_MIN_MARGIN
 # (0.02) kept below for pre-fork replay.
 DEFAULT_V3_MIN_MARGIN = 0.002
+DEFAULT_MIN_THOUGHT_CHARS = 80
+DEFAULT_CAUSALITY_TAU = 0.02
+DEFAULT_CAUSALITY_GAMMA = 0.0
 
 # Telemetry constants (non-consensus).
 TELEMETRY_TAU = 0.02
@@ -69,6 +75,26 @@ def gate_pass(pair: dict, tau: float = TELEMETRY_TAU,
     return (pair["lpA_ya_za"] - pair["lpA_ya_e"]) >= tau
 
 
+def teacher_causality(pair: dict) -> float | None:
+    """B = lpC(y_A|z_A) − lpC(y_A|∅). None when those echoes were omitted."""
+    try:
+        return pair["lpC_ya_za"] - pair["lpC_ya_e"]
+    except (KeyError, TypeError):
+        return None
+
+
+def b_gate_pass(pair: dict, tau: float = DEFAULT_CAUSALITY_TAU,
+                fuzzy: float = TELEMETRY_FUZZY) -> bool | None:
+    """Teacher-side causality+leakage pass. None when B echoes are missing."""
+    b = teacher_causality(pair)
+    if b is None:
+        return None
+    if leakage(pair.get("z_a", "") or "", pair.get("y_a", "") or "",
+               fuzzy=fuzzy):
+        return False
+    return b >= tau
+
+
 def reason(pair: dict) -> float:
     """Reason = lpC(y_C|z_A) − lpC(y_C|∅). The score."""
     return pair["lpC_yc_za"] - pair["lpC_yc_e"]
@@ -105,7 +131,10 @@ class MinerScore:
     baseline_abs: float | None = None
     mean_l1lift: float | None = None
     mean_len_z: float | None = None
+    median_len_z: float | None = None
     mean_len_y: float | None = None
+    mean_b: float | None = None
+    b_gate_pass_rate: float | None = None
 
 
 def score_miner(rows: list[dict],
@@ -116,6 +145,11 @@ def score_miner(rows: list[dict],
     pairs = [p for r in rows if r.get("valid") and "pairs" in r for p in r["pairs"]]
     if not pairs:
         return MinerScore(rows[0].get("miner", "?"), float("-inf"), 0, 0)
+    z_lens = [len((p.get("z_a") or "").strip()) for p in pairs]
+    bflags = [b_gate_pass(p) for p in pairs]
+    b_have = [1.0 if g else 0.0 for g in bflags if g is not None]
+    b_vals = [teacher_causality(p) for p in pairs]
+    b_finite = [v for v in b_vals if v is not None and math.isfinite(v)]
     return MinerScore(
         miner=rows[0].get("miner", "?"),
         reason=st.mean(reason(p) for p in pairs),
@@ -126,8 +160,11 @@ def score_miner(rows: list[dict],
         calib_ratio=calibration_ratio(pairs),
         baseline_abs=st.mean(abs(p["lpA_yc_e"]) for p in pairs),
         mean_l1lift=st.mean(l1_lift(p) for p in pairs),
-        mean_len_z=st.mean(float(len(p.get("z_a", ""))) for p in pairs),
+        mean_len_z=st.mean(float(n) for n in z_lens),
+        median_len_z=float(st.median(z_lens)),
         mean_len_y=st.mean(float(len(p.get("y_a", ""))) for p in pairs),
+        mean_b=(st.mean(b_finite) if b_finite else None),
+        b_gate_pass_rate=(st.mean(b_have) if b_have else None),
     )
 
 
@@ -142,15 +179,25 @@ class DuelResult:
     challenger_wins: bool
     n_paired_turns: int
     min_margin: float = DEFAULT_V3_MIN_MARGIN
+    min_thought_chars: int = DEFAULT_MIN_THOUGHT_CHARS
+    thought_floor_blocked: bool = False
+    causality_gamma: float = DEFAULT_CAUSALITY_GAMMA
+    causality_blocked: bool = False
 
 
 def duel(challenger_rows: list[dict], king_rows: list[dict],
          k_sigma: float = DEFAULT_K_SIGMA,
          min_margin: float = DEFAULT_V3_MIN_MARGIN,
+         min_thought_chars: int = DEFAULT_MIN_THOUGHT_CHARS,
+         causality_gamma: float = DEFAULT_CAUSALITY_GAMMA,
          challenger_bank_frac: float | None = None,
          king_bank_frac: float | None = None) -> DuelResult:
-    """v3 paired duel: wins iff mean > max(k_sigma·SE, min_margin).
-    Pass min_margin=0.0 to replay pre-δ (weight_version_key=3) verdicts."""
+    """v3 paired duel: wins iff mean > max(k_sigma·SE, min_margin)
+    AND median stripped thought length ≥ min_thought_chars
+    AND (if causality_gamma > 0) B pass rate ≥ causality_gamma.
+    Pass min_margin=0.0 to replay pre-δ (weight_version_key=3) verdicts.
+    Pass min_thought_chars=0 to disable the length floor (pre-fork replay).
+    Pass causality_gamma=0 to disable B (live default)."""
     cs = score_miner(challenger_rows, challenger_bank_frac)
     ks = score_miner(king_rows, king_bank_frac)
     c_by = {r["turn_id"]: r for r in challenger_rows if r.get("valid") and "pairs" in r}
@@ -163,14 +210,30 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
     n = len(diffs)
     if n < 2:
         return DuelResult(cs.miner, ks.miner, 0.0, float("inf"), 0.0,
-                          k_sigma, False, n, min_margin)
+                          k_sigma, False, n, min_margin, min_thought_chars,
+                          False, causality_gamma)
     mean = st.mean(diffs)
     se = st.stdev(diffs) / math.sqrt(n)
     z = mean / se if se > 0 else (math.inf if mean > 0 else 0.0)
+    wins = mean > max(k_sigma * se, min_margin)
+    blocked = False
+    if min_thought_chars > 0 and (
+            cs.median_len_z is None or cs.median_len_z < min_thought_chars):
+        wins = False
+        blocked = True
+    causality_blocked = False
+    if causality_gamma > 0:
+        rate = cs.b_gate_pass_rate
+        if rate is None or rate < causality_gamma:
+            wins = False
+            causality_blocked = True
     return DuelResult(
         challenger=cs.miner, king=ks.miner, margin=mean, se=se, z=z,
-        k_sigma=k_sigma, challenger_wins=mean > max(k_sigma * se, min_margin),
-        n_paired_turns=n, min_margin=min_margin,
+        k_sigma=k_sigma, challenger_wins=wins, n_paired_turns=n,
+        min_margin=min_margin, min_thought_chars=min_thought_chars,
+        thought_floor_blocked=blocked,
+        causality_gamma=causality_gamma,
+        causality_blocked=causality_blocked,
     )
 
 

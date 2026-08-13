@@ -12,10 +12,11 @@ import {
   fetchDuelTurn,
   fetchHistory,
   fetchRegHistory,
+  fetchContract,
   fetchSnapshot,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=65";
+} from "./api.js?v=66";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -42,14 +43,43 @@ import {
   resolveReign,
   setReignLookup,
   short,
-} from "./charts.js?v=67";
+} from "./charts.js?v=69";
 
 const $ = (id) => document.getElementById(id);
 
 let filter = "";
-let cache = { dashboard: null, benchmarks: null, history: null, regHistory: null };
+let cache = { dashboard: null, benchmarks: null, history: null, regHistory: null, contract: null };
 let fps = { dashboard: "", benchmarks: "", history: "", hero: "", reg: "", gates: "" };
 let closeWatch = null;
+
+function liveCrownShort(contract) {
+  const subnet = contract?.subnet || {};
+  const duel = contract?.duel || {};
+  const wvk = subnet.weight_version_key;
+  const k = duel.k_sigma ?? 2;
+  const delta = duel.min_margin;
+  const thought = duel.min_thought_chars;
+  const bOn = Boolean(duel.causality_gate) || Number(duel.causality_gamma || 0) > 0;
+  const bits = [];
+  if (wvk != null) bits.push(`wvk ${wvk}`);
+  if (delta != null && Number(delta) > 0) {
+    bits.push(`margin > max(${k}·SE, δ=${fmtScore(delta)})`);
+  } else {
+    bits.push(`margin > ${k}·SE`);
+  }
+  if (Number(thought) > 0) bits.push(`median |z| ≥ ${thought}`);
+  if (bOn) bits.push(`B pass ≥ ${duel.causality_gamma ?? 0.30}`);
+  return bits.join(" · ");
+}
+
+function renderLiveContract() {
+  const rule = liveCrownShort(cache.contract);
+  const llms = $("nav-llms");
+  if (llms && cache.contract?.subnet?.weight_version_key != null) {
+    llms.textContent = `llms.txt · wvk ${cache.contract.subnet.weight_version_key}`;
+    if (rule) llms.title = rule;
+  }
+}
 
 const hubUrl = (repo) => (repo ? `https://huggingface.co/${repo}` : null);
 const tmcHotkeyUrl = (hk) =>
@@ -586,7 +616,12 @@ function renderHistory(h) {
         r.rejection_reason, r.challenge_id].join(" ").toLowerCase();
       return hay.includes(filter);
     });
-  $("history-meta").textContent = `${rows.length} shown`;
+  const rule = liveCrownShort(cache.contract);
+  const meta = $("history-meta");
+  meta.textContent = rule
+    ? `${rule} · ${rows.length} shown`
+    : `${rows.length} shown`;
+  if (rule) meta.title = rule;
   if (!rows.length) {
     $("history-wrap").innerHTML = `<div class="empty">empty</div>`;
     return;
@@ -1178,6 +1213,31 @@ function isPreFork(duel) {
   return Boolean(duel.gates) && !duel.duel_params;
 }
 
+/** Live crown extras beyond the paired margin test (thought floor + B). */
+function crownExtras(params) {
+  const thought = Number(params.min_thought_chars || 0);
+  const bOn = Boolean(params.causality_gate) || Number(params.causality_gamma || 0) > 0;
+  const gamma = Number(params.causality_gamma || 0.30);
+  const bits = [];
+  if (thought > 0) bits.push(`median |z| ≥ ${thought}`);
+  if (bOn) bits.push(`B pass ≥ ${gamma}`);
+  return bits;
+}
+
+function crownRuleShort(params, pre) {
+  const k = params.k_sigma ?? 2;
+  if (pre) {
+    return `crown rule (pre-fork S* v2): z > ${k} AND margin > δ, both sides gate-valid`;
+  }
+  const delta = params.min_margin != null && Number(params.min_margin) > 0
+    ? Number(params.min_margin) : null;
+  const margin = delta != null
+    ? `margin > max(${k}·SE, δ = ${fmtScore(delta)})`
+    : `margin > ${k}·SE`;
+  const extra = crownExtras(params);
+  return extra.length ? `crown rule: ${margin} and ${extra.join(" and ")}` : `crown rule: ${margin}`;
+}
+
 function verdictSummary(duel) {
   const params = duelParams(duel);
   const k = Number(params.k_sigma ?? 2);
@@ -1199,7 +1259,11 @@ function verdictSummary(duel) {
       + `(z = ${fmtZ(duel.z)})${duel.event === "crowned" ? ` — crowned reign #${duel.reign_number ?? "?"}` : ""}.`;
   }
   if (duel.rejection_reason) {
-    return `${name} was rejected before the margin test: ${duel.rejection_reason}.`;
+    const why = {
+      thought_too_short: "median thought length below the floor",
+      causality_fail: "teacher-side B pass rate below γ",
+    }[duel.rejection_reason] || duel.rejection_reason;
+    return `${name} was rejected: ${why}.`;
   }
   return `${name} did not dethrone the king: paired Reason margin ${m} `
     + `(z = ${fmtZ(duel.z)}) needed to clear ${need}.`;
@@ -1228,6 +1292,7 @@ function sidesTableHtml(duel) {
   }
   const pct = (v) => `${(Number(v) * 100).toFixed(0)}%`;
   const pre = isPreFork(duel);
+  const params = duelParams(duel);
   const g = duel.gates || {};
   const inBand = (v, lo, hi) =>
     v == null || lo == null ? null : Number(v) >= Number(lo) && Number(v) <= Number(hi);
@@ -1248,6 +1313,22 @@ function sidesTableHtml(duel) {
     sideRow("thought chars", "mean length of z_A (chars)",
       ch.mean_len_z, kg.mean_len_z, "telemetry", null, null,
       (v) => String(Math.round(Number(v)))),
+    has(ch.median_len_z, kg.median_len_z)
+      ? sideRow("median |z|", "median stripped thought length (chars); floor is 80",
+          ch.median_len_z, kg.median_len_z,
+          params.min_thought_chars ? `≥ ${params.min_thought_chars}` : "telemetry",
+          params.min_thought_chars
+            ? gte(ch.median_len_z, params.min_thought_chars) : null,
+          null, (v) => String(Math.round(Number(v))))
+      : "",
+    has(ch.b_gate_pass_rate, kg.b_gate_pass_rate)
+      ? sideRow("B pass", "teacher-side B = lpC(y_A|z_A)−lpC(y_A|∅); license to play",
+          ch.b_gate_pass_rate, kg.b_gate_pass_rate,
+          params.causality_gamma != null ? `≥ ${params.causality_gamma}` : "≥ 0.30",
+          params.causality_gate || Number(params.causality_gamma || 0) > 0
+            ? gte(ch.b_gate_pass_rate, params.causality_gamma ?? 0.30) : null,
+          null, pct)
+      : "",
     sideRow("action chars", "mean length of y_A (chars)",
       ch.mean_len_y, kg.mean_len_y, "telemetry", null, null,
       (v) => String(Math.round(Number(v)))),
@@ -1548,9 +1629,7 @@ function duelPageHtml(duel, series, logLines) {
           <li><strong>The verdict follows mechanically.</strong> Crown iff
             ${pre
               ? `margin &gt; ${esc(String(params.k_sigma ?? 2))}·SE (this pre-fork duel additionally required margin &gt; δ = ${esc(fmtScore(params.min_margin))} and every S* v2 gate)`
-              : deltaFloor != null
-                ? `margin &gt; max(${esc(String(params.k_sigma ?? 2))}·SE, δ = ${esc(fmtScore(deltaFloor))}) — that is the whole rule`
-                : `margin &gt; ${esc(String(params.k_sigma ?? 2))}·SE — that is the whole rule`}. No judge, no discretion.</li>
+              : `${esc(crownRuleShort(params, false).replace(/^crown rule: /, ""))}`}. No judge, no discretion.</li>
         </ol>
       </div>
     </div>`;
@@ -1559,11 +1638,7 @@ function duelPageHtml(duel, series, logLines) {
     ${overview}
     <div class="duel-block">
       <div class="section-head"><h3 class="section-title">verdict</h3>
-        <span class="section-right note">${pre
-          ? `crown rule (pre-fork S* v2): z > ${esc(String(params.k_sigma ?? 2))} AND margin > δ, both sides gate-valid`
-          : deltaFloor != null
-            ? `crown rule: margin > max(${esc(String(params.k_sigma ?? 2))}·SE, δ = ${esc(fmtScore(deltaFloor))}) — nothing else`
-            : `crown rule: margin > ${esc(String(params.k_sigma ?? 2))}·SE — nothing else`}</span></div>
+        <span class="section-right note">${esc(crownRuleShort(params, pre))}</span></div>
       ${verdict}
     </div>
     ${failBlock}
@@ -1732,6 +1807,8 @@ async function boot() {
   wire();
   wireChartTip();
   route(); // deep link straight to a duel page (#duel/<cid>)
+  cache.contract = await fetchContract().catch(() => null);
+  renderLiveContract();
   await refreshHistoryAndBench();
   route(); // retry the duel render now that history is cached (static mode)
   closeWatch = watchSnapshot(applySnapshot, {

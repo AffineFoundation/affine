@@ -259,14 +259,15 @@ class Engine:
             # skips that path for unquantized MoE.
             "--moe-backend", "triton",
         ]
-        if self.role == "bench":
-            # Qwen3.6 GDN linear attention: gdn_prefill_backend=auto picks
-            # FlashInfer on Hopper (SM90) and JIT-compiles gdn_prefill_sm90 at
-            # the first request; pip cu13 nvcc vs mismatched CUDA headers makes
-            # the ninja build fail and the engine dies mid-serve. Triton/FLA
-            # needs no JIT. Bench-only: the duel pod (Blackwell) resolves its
-            # own working backend and its numerics stay as burned in.
-            cmd += ["--additional-config", '{"gdn_prefill_backend": "triton"}']
+        # Qwen3.6 GDN linear attention: gdn_prefill_backend=auto picks
+        # FlashInfer on Hopper (SM90) and JIT-compiles gdn_prefill_sm90 at
+        # the first request; pip cu13 nvcc vs mismatched CUDA headers makes
+        # the ninja build fail and the engine dies mid-serve (passes the
+        # /v1/models ready check, then drops every completion → ConnectError).
+        # Triton/FLA needs no JIT. Applied to all roles since the duel pod
+        # moved to H200 (2026-08-13): score-safe because ranked logprobs are
+        # teacher-side (GLM, non-GDN); miner GDN engines only sample.
+        cmd += ["--additional-config", '{"gdn_prefill_backend": "triton"}']
         if revision:
             cmd += ["--revision", revision]
         return cmd

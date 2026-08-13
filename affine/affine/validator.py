@@ -356,6 +356,45 @@ class Validator:
                 f"{e} (after {entry.retry_count} transient retries)",
                 uid=self.metagraph.uid_of.get(entry.hotkey))
 
+    def _apply_thought_floor(self, verdict: dict) -> None:
+        """Reject a crown when the challenger's thoughts are below the floor.
+
+        Evalsrv applies the same rule. This copy catches a stale eval pod
+        that still only publishes mean_len_z: median is preferred, mean is
+        the fallback (enough to evict the current cue kings).
+        """
+        floor = int(self.cfg.duel.min_thought_chars)
+        if floor <= 0:
+            return
+        side = verdict.get("challenger") or {}
+        length = side.get("median_len_z")
+        if length is None:
+            length = side.get("mean_len_z")
+        if length is None:
+            return
+        if float(length) < floor:
+            verdict["challenger_wins"] = False
+            if not verdict.get("rejection_reason"):
+                verdict["rejection_reason"] = "thought_too_short"
+
+    def _apply_causality_gate(self, verdict: dict) -> None:
+        """Reject a crown when teacher-side B pass rate is below γ.
+
+        Off unless causality_gate is set. Fail closed if the pod omitted B
+        fields while the gate is on.
+        """
+        if not bool(self.cfg.duel.causality_gate):
+            return
+        gamma = float(self.cfg.duel.causality_gamma)
+        if gamma <= 0:
+            return
+        side = verdict.get("challenger") or {}
+        rate = side.get("b_gate_pass_rate")
+        if rate is None or float(rate) < gamma:
+            verdict["challenger_wins"] = False
+            if not verdict.get("rejection_reason"):
+                verdict["rejection_reason"] = "causality_fail"
+
     def _history_meta(self, entry: QueueEntry,
                       t0: float | None = None) -> dict:
         meta: dict = {"uid": self.metagraph.uid_of.get(entry.hotkey)}
@@ -515,6 +554,8 @@ class Validator:
         self.state.current_eval = None
 
         verdict["block_hash"] = block_hash
+        self._apply_thought_floor(verdict)
+        self._apply_causality_gate(verdict)
         # One history row per duel: a winning verdict crowns inside
         # record_verdict, so the crowned row carries the full verdict payload.
         self.state.record_verdict(entry, verdict, **self._history_meta(entry, t0))

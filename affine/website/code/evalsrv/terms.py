@@ -45,6 +45,13 @@ _REASON_CALLS = [
     ("lpC_yc_za", "teacher", "za", "yc"),
 ]
 
+# Reason + teacher-side B (lpC of the miner's own action with/without z).
+_REASON_PLUS_B_CALLS = [
+    ("lpC_yc_za", "teacher", "za", "yc"),
+    ("lpC_ya_za", "teacher", "za", "ya"),
+    ("lpC_ya_e", "teacher", "", "ya"),
+]
+
 
 async def sample_teacher_rollouts(
         teacher: TeacherClient, prefix: list[dict], n: int,
@@ -126,13 +133,15 @@ async def miner_terms(teacher: TeacherClient, miner: VllmModel, prefix: list[dic
                       ref: list[dict], n: int, temperature: float,
                       max_thought: int, max_action: int,
                       score_bank: bool = False,
-                      reason_only: bool = True, *,
+                      reason_only: bool = True,
+                      causality_gate: bool = False, *,
                       sticky_key: str | None = None,
                       rollouts: list[tuple[str, str]] | None = None) -> dict:
     """Compute the pair record for one miner on one turn.
 
     reason_only (production): sample the miner, echo lpC(y_C|z_A) on the
     teacher, stamp η from teacher-ref denominators. No lpA / bank GPU work.
+    causality_gate adds lpC(y_A|z_A) and lpC(y_A|∅) for the B license.
     sticky_key pins teacher echoes for this turn to one replica (prefix cache).
 
     If ``rollouts`` is provided (already sampled), skip miner sampling — used
@@ -148,7 +157,9 @@ async def miner_terms(teacher: TeacherClient, miner: VllmModel, prefix: list[dic
     m = min(len(ref), len(rollouts))
     ref, rollouts = ref[:m], rollouts[:m]
 
-    calls = _REASON_CALLS if reason_only else _FULL_CALLS
+    calls = _FULL_CALLS
+    if reason_only:
+        calls = _REASON_PLUS_B_CALLS if causality_gate else _REASON_CALLS
     tasks = []
     for i in range(m):
         ctx = {"zc": ref[i]["z"], "yc": ref[i]["y"],

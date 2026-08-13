@@ -31,7 +31,7 @@ evalsrv package under `affine/`.
 
 ---
 
-## 2. Frozen production scoring — Reason v3 + δ floor (2026-08-12, `weight_version_key = 4`)
+## 2. Frozen production scoring — Reason v3 + δ floor + thought-length floor + B gate (2026-08-13, `weight_version_key = 6`)
 
 Implemented in `affine/affine/score.py` (research twin `research/harness/score.py`,
 which also keeps the v2 rule under `legacy_*` for pre-fork replay). Contract knobs in
@@ -42,13 +42,22 @@ which also keeps the v2 rule under `legacy_*` for pre-fork replay). Contract kno
 Reason (per pair) = lpC(y_C | z_A) − lpC(y_C | ∅)      # formerly Λ2; Score = Reason
 Miner score = mean(Reason) over all scored pairs
 Crown = paired mean(Reason_c − Reason_k) > max(k_sigma · SE, min_margin)
+        AND median(len(z_A.strip())) ≥ min_thought_chars
+        AND B pass rate ≥ causality_gamma
 ```
 Scoring hyperparameters: `n_turns = 2080`, `k_sigma = 2.0` (lowered from 3.0
 on 2026-08-11), `min_margin = 0.002` (δ crown floor, 2026-08-12, explicit
-dated operator directive → fork 3→4), with
-`n_teacher_samples = n_miner_samples = 1`. Nothing else — no mix, no clip,
-**no gates**, no `min_se` floor. The z-test is relative to the slice's own
-noise (bare `SE = stdev/√n`; false-crown ≈ 2.28%/duel ≈ 1 in 44 at 2σ for a
+dated operator directive → fork 3→4), `min_thought_chars = 80` (median
+stripped thought length, 2026-08-13, explicit dated operator directive →
+fork 4→5), `causality_gate = true` (teacher-side B, 2026-08-13, explicit
+dated operator directive → fork 5→6), with `n_teacher_samples =
+n_miner_samples = 1`. No mix, no clip, no lpA gates, no `min_se` floor.
+B = `lpC(y_A|z_A) − lpC(y_A|∅)`; a pair passes if B ≥ 0.02 and no leakage;
+the miner is licensed if pass rate ≥ 0.30. Fill-in on live n80: thermo cue
+20% (reject), guass CoT 45% (license). The length floor evicts empty /
+cue-thought kings; B is the license against padding. The z-test
+is relative to the slice's own noise (bare `SE = stdev/√n`; false-crown ≈
+2.28%/duel ≈ 1 in 44 at 2σ for a
 *distinct* zero-edge model). δ exists because that test tracks the
 challenger's own variance: an ε-copy of the king (per-duel SE ≈ 0.0003) would
 crown on ±0.0006 noise at the same 1-in-44 — under the floor that is ~z=6.7
@@ -61,12 +70,13 @@ entirely on the teacher side, which retires the whole lpA attack surface by
 construction.
 
 ### Live instrumentation (Reason-only, 2026-08-11)
-GPU work per pair is miner sample + `lpC(y_C|z_A)`; ref supplies
-`lpC(y_C|z_C)` / `lpC(y_C|∅)`. Prior-bank and retired lpA / extra lpC echoes are
-**off** (`reason_only`, `score_bank=false`) so the budget sits in turn count.
-Still published: η (sufficiency), thought/action lengths + teacher deltas,
-`duel_seconds`. Pre-fork / full-telemetry verdicts may still carry causality,
-bank, r, baseline, L1lift.
+GPU work per pair is miner sample + `lpC(y_C|z_A)` + B echoes
+`lpC(y_A|z_A)` / `lpC(y_A|∅)`; ref supplies `lpC(y_C|z_C)` / `lpC(y_C|∅)`.
+Prior-bank and retired lpA / extra lpC echoes are **off** (`reason_only`,
+`score_bank=false`). Still published: η (sufficiency), B mean/pass rate,
+thought/action lengths + teacher deltas, `duel_seconds`. Pre-fork /
+full-telemetry verdicts may still carry miner-side causality, bank, r,
+baseline, L1lift.
 
 ### History — S\* v2 (retired 2026-08-10)
 v2 was `S = mean(Λ2 + w·clip(L1lift, ±0.1))` behind 4 gates (causality γ=0.30,
@@ -98,7 +108,7 @@ Statuses restated 2026-08-10 for Reason v3 (gates removed; L1 channel unscored):
 |---|---|---|---|
 | RT-1 / A1 | fixed thought payloads | CLOSED | Reason ≈ 0 loses the relative duel |
 | RT-2 / A2 | action stuffing into z | CLOSED | must beat incumbent at 3σ; y_C fresh per duel (leakage now telemetry) |
-| RT-2 / A9 | silent miner | CLOSED | Reason ≈ 0 self-neutralizes |
+| RT-2 / A9 | silent / cue-thought miner | **MITIGATED** (2026-08-13) | median `len(z.strip()) ≥ 80` **and** teacher-side B pass ≥ 0.30 (wvk=6); padding still a residual if B also clears |
 | RT-2c / A2c | paraphrase stuffing | MITIGATED | ties genesis on raw Reason ⇒ cannot dethrone; **bank telemetry monitored** (residual watch item) |
 | RT-soft-pad / A10 | soft-idents pad | CLOSED | abandoned by attacker; single-term score |
 | RT-4 / A4 | king copy | CLOSED | δ = 0.002 floor (2026-08-12): ε-copy needs +0.002 absolute at SE ≈ 0.0003 ⇒ ~z=6.7, ≈1-in-7.6e10 (was 1-in-44 under the bare 2σ null) |
@@ -164,20 +174,23 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
-- `weight_version_key = 4` (δ floor min_margin=0.002, 2026-08-12; Reason v3
- was 3, 2026-08-10). **Do not bump** without an explicit dated operator
- directive — not for teacher-host moves, serving knobs, corpus refresh, or
- agent “cleanup.” Leave the integer alone.
+- `weight_version_key = 6` (teacher-side B gate, 2026-08-13, explicit dated
+  operator directive; thought-length floor was 5, δ floor was 4, Reason v3
+  was 3). **Do not bump** without an explicit dated operator
+  directive — not for teacher-host moves, serving knobs, corpus refresh, or
+  agent “cleanup.” Leave the integer alone.
 - teacher: `zai-org/GLM-4.5-Air-FP8` (co-located on eval; 2026-08-10 GLM-5.2
   remote-teacher push torn down, never cut over)
 - seed king: `dendriteholdings/albedo-qwen3.6-35b-king-genesis`
 - turns: sharded corpus with immutable manifest; sha-pinned (see toml `[dataset]`)
-- duel: n_turns=2080, k_sigma=2, min_margin=0.002, samples 1/1, reason_only
+- duel: n_turns=2080, k_sigma=2, min_margin=0.002, min_thought_chars=80,
+  causality_gate=true, causality_tau=0.02, causality_gamma=0.30,
+  samples 1/1, reason_only
  (v2 knobs deleted from `[duel]` 2026-08-10; bank/lpA echoes off 2026-08-11;
- δ floor restored 2026-08-12)
+ δ floor restored 2026-08-12; thought-length floor 2026-08-13; B gate 2026-08-13)
 
 ### Evalsrv roles
-- `AFFINE_ROLE=duel` — teacher + king + challenger; Reason only
+- `AFFINE_ROLE=duel` — teacher + king + challenger; Reason + B echoes
 - `AFFINE_ROLE=bench` — SWE advisory (never part of the score)
 - Bootstrap: `affine/evalsrv/bootstrap.sh` (fail-closed on empty sha / missing sources)
 
@@ -361,12 +374,16 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 
 ## 12. One-paragraph resume
 
-> Affine SN120: teacher-anchored thought-injection duels. Since 2026-08-12
-> (`weight_version_key=4`) the contract is **Reason v3 + δ floor**: score =
-> mean(lpC(y_C|z_A) − lpC(y_C|∅)), crown = paired mean > max(2·SE, 0.002) —
-> no gates, no mix; the δ floor only kills ε-copies / SE-compression (honest
-> 2·SE bar ≈ 0.0035 sits above it); everything v2 gated on (causality, bank, calibration r, baseline,
-> L1lift) plus lengths/timing is published as verdict telemetry. Teacher C is
+> Affine SN120: teacher-anchored thought-injection duels. Since 2026-08-13
+> (`weight_version_key=6`) the contract is **Reason v3 + δ floor + thought-length
+> floor + B gate**: score = mean(lpC(y_C|z_A) − lpC(y_C|∅)), crown = paired mean >
+> max(2·SE, 0.002) **and** median stripped `|z| ≥ 80` **and** B pass ≥ 0.30 —
+> no lpA gates, no mix. B = lpC(y_A|z_A) − lpC(y_A|∅) is a license (thermo cue
+> 20% fail, guass CoT 45% pass on n80 fill-in). δ kills ε-copies /
+> SE-compression (honest 2·SE bar ≈ 0.0035 sits above it); the length floor
+> evicts empty / `"Next command:"` cue kings. Everything v2 gated on
+> (miner-side causality, bank, calibration r, baseline, L1lift) plus
+> lengths/timing is published as verdict telemetry. Teacher C is
 > `zai-org/GLM-4.5-Air-FP8` co-located on the eval box (a 2026-08-10 GLM-5.2
 > dedicated-teacher push was torn down before cutover). Reigns 1–2 (pandora-box
 > ckpt300-m4, kevin954 sft) were crowned

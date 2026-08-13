@@ -20,9 +20,11 @@ king_chain_size = 5
 min_submission_block = 8767079
 # Bittensor weight-version gate for contract upgrades (bump on breaking
 # scoring/contract changes so stale validators are ignored by consensus).
-# Current: 4 (δ floor, 2026-08-12, explicit dated operator directive).
-# History: 1→2 teacher swap (2026-08-10, same day, later reverted to GLM-Air);
-# 2→3 Reason v3 scoring fork; 3→4 min_margin=0.002 crown floor (2026-08-12).
+# Current: 6 (teacher-side B causality gate, 2026-08-13, explicit operator
+# directive). History: 1→2 teacher swap (2026-08-10, later reverted to
+# GLM-Air); 2→3 Reason v3 scoring fork; 3→4 min_margin=0.002 (2026-08-12);
+# 4→5 min_thought_chars=80 (2026-08-13, empty/cue-thought kings);
+# 5→6 causality_gate=true (2026-08-13, teacher-side B license).
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -30,7 +32,7 @@ min_submission_block = 8767079
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 4
+weight_version_key = 6
 
 [wallet]
 name = "default"
@@ -97,10 +99,12 @@ gpu_memory_utilization = 0.80
 # Scheduler token budget per engine step (applies to teacher/king/challenger
 # alike). Duel scoring is dominated by ~20k-token prefill-only echo calls
 # (~100M prompt tokens per duel per model); at 2048 the scheduler was the
-# bottleneck (~50 min/duel of queueing). 8192 is 4x that throughput while the
-# log_softmax transient stays far below the 0.80-util headroom. Ops knob only
-# — no effect on scoring semantics.
-max_num_batched_tokens = 12288
+# bottleneck (~50 min/duel of queueing). 12288 (2026-08-12): step up from
+# Echo+logprobs materializes fp32 log_softmax over (chunk x vocab) per
+# request: at 12288 that is a ~10.9 GiB transient spike, which OOM'd the
+# challenger on the H200 duel pod (141 GB; 2026-08-13). 8192 is the proven
+# ceiling there. Ops knob only — no effect on scoring semantics.
+max_num_batched_tokens = 8192
 
 [dataset]
 # Unlabeled turn corpus D: append-only shards + an immutable-manifest pointer
@@ -122,11 +126,14 @@ manifest_key = "turns/manifest.json"
 refresh_interval_s = 3600
 
 [duel]
-# Reason v3 + δ crown floor (2026-08-12, weight_version_key=4). The whole
-# scoring contract:
+# Reason v3 + δ crown floor + median thought-length floor + B gate
+# (2026-08-13, weight_version_key=6). The scoring contract:
 #   Reason = lpC(y_C|z_A) − lpC(y_C|∅)   (per pair; miner score = mean)
 #   crown  = paired mean(Reason_c − Reason_k) > max(k_sigma · SE, min_margin)
-# No gates, no mix, no clip, no SE floor.
+#            AND median(len(z.strip())) ≥ min_thought_chars
+#            AND B pass rate ≥ causality_gamma
+# No mix, no clip, no SE floor. The length floor evicts empty / cue kings.
+# B = lpC(y_A|z_A) − lpC(y_A|∅) is the license to play (not the score).
 #
 # Sample budget (2026-08-11): Reason-only / no bank / 1+1 samples, with the
 # freed teacher-echo budget reinvested into n_turns (80→2080) so crown SE
@@ -150,11 +157,24 @@ k_sigma = 2.0
 # the ratchet), hence the floor sits at the lowest calibrated point rather
 # than higher.
 min_margin = 0.002
+# Median stripped thought length, in characters (2026-08-13, wvk=5).
+# Invalid challenger cannot crown. 80 sits above live cue phrases
+# ("Next command:" = 13, "Next bash command:" = 18) and below guass (~290)
+# / teacher (~240). Use the median so one long dump cannot wash a silent
+# miner. Set 0 to disable (pre-fork replay).
+min_thought_chars = 80
 n_teacher_samples = 1
 n_miner_samples = 1
 # Ops: skip prior-bank and non-Reason forced-logprob echos (telemetry GPU).
 score_bank = false
 reason_only = true
+# Teacher-side causality gate B = lpC(y_A|z_A) − lpC(y_A|∅) (design B).
+# ON as of 2026-08-13, weight_version_key=6. τ/γ match retired v2 A9.
+# Evalsrv adds two teacher echoes per pair (lpC_ya_za, lpC_ya_e).
+# Fill-in (n=80): thermo cue pass 20% (reject); guass CoT pass 45% (license).
+causality_gate = true
+causality_tau = 0.02
+causality_gamma = 0.30
 temperature = 0.8
 max_thought_tokens = 1024
 max_action_tokens = 768

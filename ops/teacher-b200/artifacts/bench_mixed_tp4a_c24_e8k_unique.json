@@ -1,0 +1,30 @@
+{
+  "utc": "2026-08-12T14:49:33Z",
+  "base_urls": [
+    "http://152.236.142.232:40000/v1"
+  ],
+  "model": "zai-org/GLM-4.5-Air-FP8",
+  "concurrency": 24,
+  "n_turns": 48,
+  "wall_s": 17.318,
+  "turns_per_s": 2.772,
+  "proj_4000_min": 24.1,
+  "sample_prompt_tokens": 2048,
+  "echo_prompt_tokens": 8192,
+  "sample": {
+    "name": "sample",
+    "n": 48,
+    "rps": 2.772,
+    "p50_s": 3.465,
+    "p95_s": 7.385,
+    "mean_s": 4.453
+  },
+  "echo": {
+    "name": "echo",
+    "n": 48,
+    "rps": 2.772,
+    "p50_s": 2.594,
+    "p95_s": 4.998,
+    "mean_s": 2.97
+  }
+}

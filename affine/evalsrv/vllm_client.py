@@ -125,10 +125,13 @@ class VllmModel:
         self.in_flight = 0
 
     async def _post(self, payload: dict) -> dict:
-        # Keep per-request timeout well under vLLM hang windows. 180s covers
-        # echo+logprobs on 32k ctx with prompt_logprobs; retries absorb
-        # transient engine stalls without wedging the whole asyncio gather.
-        timeout = httpx.Timeout(180.0, connect=10.0)
+        # Keep per-request timeout under vLLM hang windows but above worst-case
+        # queue wait. 180s was sized for 32k-ctx echo on the B300 pod; on the
+        # H200 pod with turn_conc=concurrency a tail echo request can sit in
+        # the teacher queue past 180s while the engine is healthy (observed
+        # 2026-08-13: ReadTimeout x3 killed an hour-long duel mid-scoring).
+        # Retries absorb transient engine stalls without wedging the gather.
+        timeout = httpx.Timeout(480.0, connect=10.0)
         async with self.sem:
             self.in_flight += 1
             try:

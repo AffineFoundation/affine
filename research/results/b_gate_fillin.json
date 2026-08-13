@@ -1,0 +1,76 @@
+{
+  "tau": 0.02,
+  "gamma": 0.3,
+  "teacher": [
+    "http://152.236.142.232:40000/v1",
+    "http://152.236.142.232:40001/v1"
+  ],
+  "jobs": [
+    {
+      "label": "thermo",
+      "n": 80,
+      "mean_b": 0.008204560427392461,
+      "median_b": 0.0024856767066182097,
+      "b_pass_rate": 0.2,
+      "would_pass_gamma": false,
+      "leak_frac": 0.0,
+      "median_len_z": 13.0,
+      "top_z": [
+        [
+          "Next command:",
+          64
+        ],
+        [
+          "Next command to run:",
+          9
+        ],
+        [
+          "Next bash command:",
+          7
+        ]
+      ],
+      "expect": "fail",
+      "n_requested": 80,
+      "n_missing_prefix": 0,
+      "n_errors": 0,
+      "matched_expect": true
+    },
+    {
+      "label": "guass",
+      "n": 80,
+      "mean_b": 0.035781043501956364,
+      "median_b": 0.017539428526850642,
+      "b_pass_rate": 0.45,
+      "would_pass_gamma": true,
+      "leak_frac": 0.0,
+      "median_len_z": 227.0,
+      "top_z": [
+        [
+          "I need to understand the structure of the reposito",
+          3
+        ],
+        [
+          "Let me verify the patch file contains the correct ",
+          1
+        ],
+        [
+          "Let me check the full README to understand what qu",
+          1
+        ],
+        [
+          "I need to look at the actual max_value method impl",
+          1
+        ],
+        [
+          "I've found the relevant files. The issue is with t",
+          1
+        ]
+      ],
+      "expect": "pass",
+      "n_requested": 80,
+      "n_missing_prefix": 0,
+      "n_errors": 0,
+      "matched_expect": true
+    }
+  ]
+}

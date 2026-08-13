@@ -1,0 +1,20 @@
+{
+  "utc": "2026-08-12T13:14:59Z",
+  "name": "affine-teacher",
+  "gpu": "H200",
+  "huid": "lunar-orbit-1d",
+  "price_per_hour": 28.0,
+  "ttl": "24h",
+  "ssh": "ssh root@152.236.142.232 -p 40301",
+  "purpose": "dedicated GLM-4.5-Air-FP8 teacher (H200 stand-in while B200 empty)",
+  "describe_keys": [
+    "pod",
+    "gpu",
+    "machine",
+    "ports",
+    "access",
+    "template",
+    "storage",
+    "billing"
+  ]
+}

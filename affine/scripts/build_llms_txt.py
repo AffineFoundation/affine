@@ -214,10 +214,13 @@ verdict). Failed hygiene, failed probe, or lost duel still burns the slot.
 4. Eval machine runs a duel on an `n_turns = 2080` slice of D seeded by \
 `blake2b(reveal_block_hash ‖ your_hotkey)` — you cannot know the slice before \
 reveal; anyone can re-derive it after.
-5. Both sides are scored with Reason (v3, 2026-08-10): \
-`Reason = lpC(y_C|z_A) − lpC(y_C|∅)` per pair, miner score = mean. You \
-dethrone the king iff the paired mean `Reason_c − Reason_k` beats \
-`max(k_sigma·SE, δ)` (`k_sigma = 2`, `min_margin = 0.002`). No gates.
+5. Both sides are scored with Reason (v3 + δ + thought-length floor + B \
+gate): `Reason = lpC(y_C|z_A) − lpC(y_C|∅)` per pair, miner score = mean. \
+You dethrone the king iff the paired mean `Reason_c − Reason_k` beats \
+`max(k_sigma·SE, δ)` (`k_sigma = 2`, `min_margin = 0.002`) **and** your \
+median stripped thought length is at least `min_thought_chars = 80` **and** \
+at least `causality_gamma = 0.30` of pairs pass teacher-side B \
+(`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no leakage). No lpA gates.
 6. Emissions go to the rolling last-`king_chain_size` distinct kings, equal \
 share — **registered hotkeys only** (see step 0 of the submit checklist). \
 Advisory tau2 benches never affect Reason or crowning.
@@ -370,22 +373,30 @@ once-ever eval slot on a checkpoint that cannot load.
 
 ## Reason (what you optimize)
 
-Since 2026-08-12 (`weight_version_key = 4`) the whole scoring contract is:
+Since 2026-08-13 (`weight_version_key = 6`) the whole scoring contract is:
 
 ```
 Reason (per pair) = lpC(y_C | z_A) − lpC(y_C | ∅)
 Miner score       = mean(Reason) over all scored pairs
 Crown             = paired mean(Reason_c − Reason_k) > max(k_sigma·SE, δ)
-                    (k_sigma = 2, δ = min_margin = 0.002, SE = sd/√n)
+                    AND median(len(z_A.strip())) ≥ min_thought_chars
+                    AND B pass rate ≥ causality_gamma
+                    (k_sigma = 2, δ = min_margin = 0.002,
+                     min_thought_chars = 80, causality_gamma = 0.30,
+                     SE = sd/√n)
+B (per pair)      = lpC(y_A | z_A) − lpC(y_A | ∅)
+                    pair passes iff B ≥ 0.02 and z does not contain y
 ```
 
 `y_C` is the frozen teacher's own reference action (resampled fresh every \
-duel), `z_A` is your model's thought on the same turn, and both logprobs are \
-teacher-forced on the teacher — **your model's own logprobs never enter the \
-ranked quantity**. You win by producing thoughts that measurably raise the \
-teacher's likelihood of its own action, i.e. by genuinely reasoning about the \
-turn. `n_teacher_samples = n_miner_samples = 1` (one pair per turn). There \
-is no mix, no clip, and no gates.
+duel), `z_A` is your model's thought on the same turn, and both Reason \
+logprobs are teacher-forced on the teacher — **your model's own logprobs \
+never enter the ranked quantity**. B is a license, not the score: the \
+teacher must find that your thought caused your own action. Empty or cue \
+thoughts (`"Next command:"`) fail both the length floor and B (live fill-in: \
+thermo cue pass 20%, guass CoT pass 45%). `n_teacher_samples = \
+n_miner_samples = 1` (one pair per turn). There is no mix, no clip, and no \
+lpA gates.
 
 **Why the δ floor (`min_margin = 0.002`, 2026-08-12).** The z-test is \
 relative to the challenger's own per-turn noise. A near-copy of the king \
@@ -398,19 +409,22 @@ thoughts, the crown bar never drops below 0.002. The calibration (148 \
 archived duels) ships in the repo as \
 `research/results/delta_calibration.json`.
 
-**Live instrumentation (Reason-only).** Each scored pair runs a miner sample \
-plus one teacher echo `lpC(y_C|z_A)`; `lpC(y_C|z_C)` / `lpC(y_C|∅)` come from \
-the fresh teacher reference. Prior-bank and retired lpA / extra lpC echoes \
-are **not** computed live (`reason_only = true`, `score_bank = false`) so the \
-GPU budget can sit in turn count. Published per verdict when available:
+**Live instrumentation.** Each scored pair runs a miner sample plus three \
+teacher echoes: `lpC(y_C|z_A)` for Reason, and `lpC(y_A|z_A)` / \
+`lpC(y_A|∅)` for B. `lpC(y_C|z_C)` / `lpC(y_C|∅)` come from the fresh \
+teacher reference. Prior-bank and retired lpA echoes are **not** computed \
+live (`reason_only = true`, `score_bank = false`). Published per verdict \
+when available:
 
 - sufficiency fraction `η = Λ2(z_A)/Λ2(z_C) = Reason / (lpC(y_C|z_C) − lpC(y_C|∅))` \
 — how much of the teacher's own thinking the miner's thought replaces \
 (climbing η across reigns = capability slope; flat η under crowning = budget burn)
+- teacher-side B mean and pass rate (`mean_b`, `b_gate_pass_rate`)
 - per-side thought/action char lengths + deltas vs the teacher's own \
 rollouts, and the duel's scoring wall clock (`duel_seconds`)
-- Pre-fork / full-telemetry verdicts may still carry causality, bank, \
-calibration r, baseline, and L1lift fields — those are not live GPU work now.
+- Pre-fork / full-telemetry verdicts may still carry miner-side causality, \
+bank, calibration r, baseline, and L1lift fields — those are not live GPU \
+work now.
 
 Pre-fork verdicts (before 2026-08-10) stamp the old `gates` block and the \
 S* mix formula they were judged under; they remain replayable as recorded.
@@ -426,9 +440,10 @@ contract — models are rendered through their own chat template to a string \
 and driven via `/v1/completions`, injection plants thoughts as the canonical \
 assistant body `</think>\\nTHOUGHT: {z}\\n\\n{y}`, and `split_rollout` \
 defines exactly what counts as z (all reasoning text) and y (the last closed \
-bash-fenced block). `evalsrv/terms.py` runs the live Reason-only echo \
-(`lpC(y_C|z_A)`) plus teacher refs; `evalsrv/vllm_client.py` shows the \
-echo+logprobs forcing and the per-byte normalization (`lp_per_byte`). Serve the teacher, \
+bash-fenced block). `evalsrv/terms.py` runs the live Reason echo (`lpC(y_C|z_A)`) plus the B \
+pair (`lpC(y_A|z_A)`, `lpC(y_A|∅)`) and teacher refs; `evalsrv/vllm_client.py` \
+shows the echo+logprobs forcing and the per-byte normalization \
+(`lp_per_byte`). Serve the teacher, \
 the current king (`api/v1/snapshot`), and your checkpoint with vLLM, draw an \
 `n_turns` slice from public D, and run the same code that will judge you — \
 every knob is in `affine.toml` `[duel]`, and `duel` in \
