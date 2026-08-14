@@ -81,6 +81,40 @@ def load_public_benchmarks(cfg: Config) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def load_public_audits(cfg: Config) -> list | None:
+    """Post-crown exploit-audit verdict list (newest first)."""
+    data = read_json(public_dir(cfg) / "audits.json")
+    return data if isinstance(data, list) else None
+
+
+def load_audit_detail(cfg: Config, reign: int) -> dict | None:
+    """One audit's replayable workspace: the verdict entry, the pinned
+    manifest (input sha256s), the machine verdict, and the analysis prose.
+    Everything here is also on the public bucket under audits/reign_NNNN/."""
+    entries = load_public_audits(cfg) or []
+    entry = next((e for e in entries
+                  if int(e.get("reign_number", -1)) == int(reign)), None)
+    ws = public_dir(cfg) / "audits" / f"reign_{int(reign):04d}"
+    manifest = read_json(ws / "manifest.json")
+    verdict = read_json(ws / "verdict.json")
+    analysis_path = ws / "analysis.md"
+    analysis = None
+    if analysis_path.exists():
+        try:
+            analysis = analysis_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            log.warning("bad analysis %s: %s", analysis_path, exc)
+    if entry is None and manifest is None:
+        return None
+    return {
+        "reign_number": int(reign),
+        "entry": entry,
+        "manifest": manifest,
+        "verdict": verdict,
+        "analysis_md": analysis,
+    }
+
+
 def _reign_members(king: dict | None, payout_depth: int) -> list[dict]:
     """Mirror State.king_lineage_members without loading/mutating State."""
     if not king:

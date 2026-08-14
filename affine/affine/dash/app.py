@@ -22,8 +22,10 @@ from .readers import (
     bench_artifact_index,
     contract_payload,
     duel_log_lines,
+    load_audit_detail,
     load_bench_artifact,
     load_eval_artifact,
+    load_public_audits,
     load_public_benchmarks,
     snapshot,
 )
@@ -155,6 +157,22 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     @app.get("/api/v1/contract")
     def api_contract(request: Request):
         return _json(contract_payload(cfg), max_age=60, request=request)
+
+    # -- post-crown exploit audits (verdicts + replayable workspaces) --------
+    @app.get("/api/v1/audits")
+    def api_audits(request: Request):
+        entries = load_public_audits(cfg) or []
+        return _json({"items": entries, "count": len(entries)},
+                     max_age=15, request=request)
+
+    @app.get("/api/v1/audits/{reign}")
+    def api_audit(reign: int, request: Request):
+        detail = load_audit_detail(cfg, reign)
+        if detail is None:
+            return JSONResponse(
+                {"error": "not_found", "reign_number": reign},
+                status_code=404)
+        return _json(detail, max_age=60, request=request)
 
     # -- dataset browser (corpus D is public on the bucket; these endpoints
     # only make it browsable — stats + turn pages come from the in-memory

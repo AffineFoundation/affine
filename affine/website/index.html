@@ -9,7 +9,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
   <link rel="stylesheet" href="fonts/fonts.css?v=20" />
-  <link rel="stylesheet" href="style.css?v=67" />
+  <link rel="stylesheet" href="style.css?v=68" />
 </head>
 <body>
   <header class="top-nav">
@@ -22,6 +22,7 @@
         <a id="nav-king" class="nav-chip" target="_blank" rel="noopener">AFFINE</a>
         <a href="./llms.txt" class="nav-chip" id="nav-llms">llms.txt</a>
         <a class="nav-chip" href="#dataset" id="nav-dataset">Dataset</a>
+        <a class="nav-chip" href="#audits" id="nav-audits">Audits</a>
         <a class="nav-chip" href="#metrics" id="nav-metrics">Metrics</a>
       </div>
       <div class="nav-right">
@@ -160,6 +161,14 @@
       </div>
       <div id="intake-wrap"><div class="empty">loading…</div></div>
     </section>
+
+    <section class="section" id="audits">
+      <div class="section-head">
+        <h2 class="section-title">audits</h2>
+        <span class="section-right note" id="audits-meta">post-crown exploit review · policy, not consensus</span>
+      </div>
+      <div id="audits-wrap"><div class="empty">loading…</div></div>
+    </section>
   </main>
 
   <div id="chart-modal" class="chart-modal" hidden>
@@ -205,6 +214,18 @@
     </div>
   </section>
 
+  <section id="audits-page" class="duel-page" hidden>
+    <div class="duel-page-inner">
+      <div class="duel-page-head">
+        <button type="button" class="back-btn" id="audits-back"
+          aria-label="Back to dashboard">←</button>
+        <h2 class="section-title" id="audits-page-title">audit</h2>
+        <span class="section-right" id="audits-page-meta"></span>
+      </div>
+      <div id="audits-page-body"></div>
+    </div>
+  </section>
+
   <section id="metrics-page" class="duel-page metrics-page" hidden>
     <div class="duel-page-inner">
       <div class="duel-page-head">
@@ -219,6 +240,6 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=69"></script>
+  <script type="module" src="app.js?v=72"></script>
 </body>
 </html>

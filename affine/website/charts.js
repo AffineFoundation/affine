@@ -604,7 +604,7 @@ export const GATE_METRICS = [
   {
     id: "len-thought",
     title: "thought length",
-    caption: "mean chars of z per side · dashed = teacher",
+    caption: "mean chars of z per side · dashed = teacher · floor = 80 (gates the median)",
     detail: `<p>Mean character length of the thoughts each side produced on the
       slice, with the teacher's own thoughts (dashed) as the anchor. Style
       pressure shows up here first: short-style models sit far below the
@@ -615,7 +615,7 @@ export const GATE_METRICS = [
       weight_version_key=6) is the follow-up: padding still clears 80 chars,
       but empty/cue thoughts fail teacher-side causality.</p>`,
     fmt: fmtInt,
-    lines: [],
+    lines: [{ label: "80", at: () => 80, faint: true }],
     series: [
       { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "mean_len_z") },
       { label: "king", color: BONE, get: (p) => sideVal(p, "king", "mean_len_z") },
@@ -641,6 +641,31 @@ export const GATE_METRICS = [
     series: [
       { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "b_gate_pass_rate") },
       { label: "king", color: BONE, get: (p) => sideVal(p, "king", "b_gate_pass_rate") },
+    ],
+  },
+  {
+    id: "b-mean",
+    title: "B (mean)",
+    caption: "mean teacher-side B per side · dashed = τ = 0.02 per-pair pass bar",
+    detail: `<p>The raw B values behind the pass rate:
+      <code>B = lpC(y_A|z_A) − lpC(y_A|∅)</code> averaged over the slice, per
+      side. B asks the teacher a different question than Reason: not "does
+      this thought help me reproduce <em>my</em> action" but "does this
+      thought actually cause the <em>miner's own</em> action". A thought that
+      is a real derivation sits well above zero; a cue or empty thought sits
+      at ~0 because the miner's action is equally likely without it.</p>
+      <p>The dashed line is <code>τ = 0.02</code> — the per-pair pass bar the
+      license (previous pane) counts against. The mean is telemetry: the
+      crown condition is the <em>pass rate</em> ≥ γ = 0.30, not this mean.
+      Pre-fork rows and early v3 rows have no B echoes.</p>`,
+    fmt: fmtScore,
+    lines: [
+      { label: "τ", at: () => 0.02 },
+      { label: "", at: () => 0, faint: true },
+    ],
+    series: [
+      { label: "challenger", color: GOLD, get: (p) => sideVal(p, "challenger", "mean_b") },
+      { label: "king", color: BONE, get: (p) => sideVal(p, "king", "mean_b") },
     ],
   },
   {

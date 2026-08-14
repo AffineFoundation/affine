@@ -2,6 +2,8 @@ import {
   currentMode,
   datasetTurnUrl,
   duelTurnUrl,
+  fetchAudit,
+  fetchAudits,
   fetchBenchmarks,
   fetchDataset,
   fetchDatasetTurn,
@@ -16,7 +18,7 @@ import {
   fetchSnapshot,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=66";
+} from "./api.js?v=67";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -43,14 +45,18 @@ import {
   resolveReign,
   setReignLookup,
   short,
-} from "./charts.js?v=69";
+} from "./charts.js?v=70";
 
 const $ = (id) => document.getElementById(id);
 
 let filter = "";
-let cache = { dashboard: null, benchmarks: null, history: null, regHistory: null, contract: null };
-let fps = { dashboard: "", benchmarks: "", history: "", hero: "", reg: "", gates: "" };
+let cache = { dashboard: null, benchmarks: null, history: null, regHistory: null, contract: null, audits: null };
+let fps = { dashboard: "", benchmarks: "", history: "", hero: "", reg: "", gates: "", audits: "" };
 let closeWatch = null;
+
+// Public bucket root — audit workspaces live under audits/reign_NNNN/ and are
+// byte-identical to what the dash API serves (see MANIFEST_URL nearby).
+const BUCKET_BASE = "https://s3.hippius.com/affine-sn120";
 
 function liveCrownShort(contract) {
   const subnet = contract?.subnet || {};
@@ -336,7 +342,7 @@ function renderGates(force = false) {
   const meta = $("gates-meta");
   if (meta) {
     meta.textContent = points.length
-      ? `${points.length} scored duels · measured, not scored · challenger gold · king bone`
+      ? `${points.length} scored duels · the score, the crown gates (B pass, median |z|) and telemetry · challenger gold · king bone`
       : "waiting on a scored duel";
   }
   if (!points.length) {
@@ -636,6 +642,7 @@ function renderHistory(h) {
       <th class="r" title="paired mean(Reason_c − Reason_k) · green = cleared max(k·SE, δ)">margin</th>
       <th class="r" title="margin − max(k·SE, δ) — distance to the crown bar">delta</th>
       <th class="r" title="margin ÷ max(k·SE, δ) — ≥1× clears the crown bar">factor</th>
+      <th class="r" title="challenger teacher-side B pass rate — crown needs ≥ γ of pairs with B ≥ 0.02">B pass</th>
     </tr></thead>
     <tbody>${rows.map((r) => {
       // Crown-rule coloring: green = cleared the crown bar, red = lost.
@@ -662,6 +669,15 @@ function renderHistory(h) {
       const reasonClass = r.score == null || r.score_king == null
         ? ""
         : Number(r.score) >= Number(r.score_king) ? "delta-up" : "delta-down";
+      // Teacher-side B license (wvk=6). Pre-B rows have no field → "—".
+      const bRate = r.challenger?.b_gate_pass_rate;
+      const bOn = Boolean(params.causality_gate) || Number(params.causality_gamma || 0) > 0;
+      const gamma = Number(params.causality_gamma ?? 0.30);
+      const bClass = bRate == null || !bOn ? ""
+        : Number(bRate) >= gamma ? "delta-up" : "delta-down";
+      const bText = bRate == null ? "—" : `${Math.round(Number(bRate) * 100)}%`;
+      const bTip = bRate == null ? ""
+        : `mean B = ${fmt4(r.challenger?.mean_b)}${bOn ? ` — license needs ≥ ${Math.round(gamma * 100)}%` : " — telemetry (gate off for this duel)"}`;
       const opp = opponentKing(r);
       const cid = r.challenge_id || "";
       return `<tr class="row-link ${r.event === "crowned" ? "current" : ""}" data-cid="${esc(cid)}">
@@ -677,6 +693,7 @@ function renderHistory(h) {
         <td class="r ${marginClass}" title="${m == null ? "" : esc(`${barDesc} ≈ ${fmt4(bar)}`)}">${esc(fmt4(r.margin))}</td>
         <td class="r ${dBarClass}" title="${dBar == null ? "" : esc(`margin − bar (${barDesc})`)}">${esc(dBarText)}</td>
         <td class="r ${factorClass}" title="${factor == null ? "" : esc(`margin ÷ bar (bar ≈ ${fmt4(bar)}) — ≥1× crowns`)}">${esc(factorText)}</td>
+        <td class="r ${bClass}" title="${esc(bTip)}">${esc(bText)}</td>
       </tr>`;
     }).join("")}</tbody>
   </table>`;
@@ -714,6 +731,183 @@ function renderFails(h) {
       </tr>`;
     }).join("")}</tbody>
   </table>`;
+}
+
+/* ---------- audits (post-crown exploit review) ---------- */
+
+function auditVerdictBadge(a) {
+  if (a.status !== "ok") return badge("failed", "audit error");
+  if (a.exploit) return badge("rejected", "exploit");
+  return badge("accepted", "clean");
+}
+
+function auditActionText(a) {
+  const enf = a.enforcement || {};
+  if (enf.enforced && enf.reverted_to) {
+    return `reverted → reign ${enf.reverted_to.reign_number} · `
+      + `${(enf.requeued || []).length} requeued`;
+  }
+  if (enf.enforced && enf.popped_from_chain) {
+    return `popped from payout chain · ${(enf.requeued || []).length} requeued`;
+  }
+  if (enf.dry_run || a.dry_run) return "dry run";
+  if (a.exploit) return "flagged (no enforcement)";
+  return "king stands";
+}
+
+function auditWorkspaceBase(a) {
+  const ws = a.workspace || `audits/reign_${String(a.reign_number).padStart(4, "0")}/`;
+  return `${BUCKET_BASE}/${ws.replace(/\/$/, "")}`;
+}
+
+function renderAudits(list) {
+  const rows = Array.isArray(list) ? list : [];
+  const meta = $("audits-meta");
+  if (meta) {
+    meta.textContent = rows.length
+      ? `${rows.length} audit${rows.length === 1 ? "" : "s"} · verify each yourself`
+      : "post-crown exploit review · policy, not consensus";
+  }
+  const wrap = $("audits-wrap");
+  if (!wrap) return;
+  if (!rows.length) {
+    wrap.innerHTML = `<div class="empty">no audits yet — verdicts appear here after each dethrone</div>`;
+    return;
+  }
+  wrap.innerHTML = `<table class="data-table">
+    <thead><tr>
+      <th>when</th><th>reign</th><th>model</th><th>verdict</th>
+      <th class="r">confidence</th><th>action</th><th>audit the audit</th>
+    </tr></thead>
+    <tbody>${rows.map((a) => {
+      const base = auditWorkspaceBase(a);
+      const conf = a.confidence == null ? "—" : `${Math.round(Number(a.confidence) * 100)}%`;
+      const links = [
+        `<a href="${esc(base)}/analysis.md" target="_blank" rel="noopener" onclick="event.stopPropagation()">analysis</a>`,
+        `<a href="${esc(base)}/manifest.json" target="_blank" rel="noopener" onclick="event.stopPropagation()">manifest</a>`,
+        `<a href="${esc(base)}/verdict.json" target="_blank" rel="noopener" onclick="event.stopPropagation()">verdict</a>`,
+      ];
+      if (a.challenge_id) {
+        links.push(`<a href="${esc(BUCKET_BASE)}/evals/${esc(a.challenge_id)}.json.gz" target="_blank" rel="noopener" onclick="event.stopPropagation()">duel record</a>`);
+      }
+      return `<tr class="row-link ${a.exploit ? "" : "current"}" data-reign="${esc(a.reign_number)}">
+        <td class="when">${esc(fmtTime(a.audited_at))}</td>
+        <td class="dim">#${esc(a.reign_number)}</td>
+        <td>${modelLink(a.repo, a.hotkey, a.reign_number)}</td>
+        <td>${auditVerdictBadge(a)}</td>
+        <td class="r">${esc(conf)}</td>
+        <td class="dim">${esc(auditActionText(a))}</td>
+        <td class="dim">${links.join(" · ")}</td>
+      </tr>`;
+    }).join("")}</tbody>
+  </table>`;
+}
+
+function auditHashReign() {
+  const m = location.hash.match(/^#audit\/(\d+)$/);
+  return m ? Number(m[1]) : null;
+}
+
+function openAudit(reign) {
+  if (reign == null) return;
+  location.hash = `audit/${encodeURIComponent(reign)}`;
+}
+
+function closeAuditsPage() {
+  if (window.history.length > 1) window.history.back();
+  else location.hash = "";
+}
+
+/** Minimal, safe markdown → HTML: escape everything, then light formatting. */
+function renderMarkdownSafe(md) {
+  const lines = String(md).split("\n");
+  const out = [];
+  let inCode = false;
+  let inTable = false;
+  const flushTable = () => { if (inTable) { out.push("</table>"); inTable = false; } };
+  for (const raw of lines) {
+    if (raw.startsWith("```")) {
+      flushTable();
+      if (inCode) { out.push("</pre>"); inCode = false; }
+      else { out.push(`<pre class="audit-code">`); inCode = true; }
+      continue;
+    }
+    if (inCode) { out.push(esc(raw)); continue; }
+    if (/^\s*\|.*\|\s*$/.test(raw)) {
+      if (/^\s*\|[\s:|-]+\|\s*$/.test(raw)) continue; // separator row
+      const cells = raw.trim().replace(/^\||\|$/g, "").split("|");
+      if (!inTable) { out.push(`<table class="audit-md-table">`); inTable = true; }
+      out.push("<tr>" + cells.map((c) => `<td>${esc(c.trim())}</td>`).join("") + "</tr>");
+      continue;
+    }
+    flushTable();
+    const h = raw.match(/^(#{1,4})\s+(.*)$/);
+    if (h) { const n = h[1].length; out.push(`<h${n} class="audit-h">${esc(h[2])}</h${n}>`); continue; }
+    if (/^\s*[-*]\s+/.test(raw)) { out.push(`<div class="audit-li">• ${esc(raw.replace(/^\s*[-*]\s+/, ""))}</div>`); continue; }
+    if (!raw.trim()) { out.push("<div class=\"audit-gap\"></div>"); continue; }
+    out.push(`<p class="audit-p">${esc(raw)}</p>`);
+  }
+  if (inCode) out.push("</pre>");
+  flushTable();
+  return out.join("\n");
+}
+
+async function renderAuditPage(reign) {
+  const body = $("audits-page-body");
+  const title = $("audits-page-title");
+  const meta = $("audits-page-meta");
+  if (!body) return;
+  if (title) title.textContent = `audit · reign ${reign}`;
+  body.innerHTML = `<div class="empty">loading audit…</div>`;
+  const detail = await fetchAudit(reign).catch(() => null);
+  if (auditHashReign() !== reign) return; // navigated away
+  if (!detail) {
+    body.innerHTML = `<div class="empty">audit not found for reign ${esc(reign)}</div>`;
+    return;
+  }
+  const entry = detail.entry || {};
+  const verdict = detail.verdict || {};
+  const manifest = detail.manifest || {};
+  const base = auditWorkspaceBase(entry.workspace ? entry : { reign_number: reign });
+  const files = manifest.files || {};
+  const conf = verdict.confidence ?? entry.confidence;
+  if (meta) meta.textContent = `${entry.repo || ""} · ${verdict.exploit ?? entry.exploit ? "exploit" : "clean"}`;
+  const evidence = (verdict.evidence || entry.evidence || []);
+  const hashRows = Object.entries(files).map(([name, m]) =>
+    `<tr><td>${esc(name)}</td><td class="mono dim">${esc(String(m.sha256 || "—").slice(0, 24))}</td>
+     <td class="dim">${esc(m.source || "")}</td></tr>`).join("");
+  body.innerHTML = `
+    <div class="audit-detail">
+      <div class="audit-detail-head">
+        ${auditVerdictBadge({ status: entry.status || "ok", exploit: verdict.exploit ?? entry.exploit })}
+        <span class="audit-conf">${conf == null ? "" : `confidence ${Math.round(Number(conf) * 100)}%`}</span>
+        <span class="dim">${esc(auditActionText(entry))}</span>
+      </div>
+      <p class="audit-summary">${esc(verdict.summary || entry.summary || "")}</p>
+      ${evidence.length ? `<ul class="audit-evidence">${evidence.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}
+      <div class="audit-links">
+        <a href="${esc(base)}/analysis.md" target="_blank" rel="noopener">analysis.md</a>
+        <a href="${esc(base)}/manifest.json" target="_blank" rel="noopener">manifest.json</a>
+        <a href="${esc(base)}/verdict.json" target="_blank" rel="noopener">verdict.json</a>
+        ${entry.challenge_id ? `<a href="${esc(BUCKET_BASE)}/evals/${esc(entry.challenge_id)}.json.gz" target="_blank" rel="noopener">duel_record.json.gz</a>` : ""}
+        <a href="./llms.txt#post-crown-exploit-audit" target="_blank" rel="noopener">how to reproduce</a>
+      </div>
+      ${hashRows ? `<h3 class="audit-h">Pinned inputs (sha256)</h3>
+      <table class="data-table audit-hash-table"><thead><tr><th>file</th><th>sha256</th><th>source</th></tr></thead>
+      <tbody>${hashRows}</tbody></table>` : ""}
+      ${detail.analysis_md ? `<h3 class="audit-h">Analysis</h3>
+      <div class="audit-analysis">${renderMarkdownSafe(detail.analysis_md)}</div>` : ""}
+    </div>`;
+}
+
+async function refreshAudits() {
+  const list = await fetchAudits().catch(() => null);
+  if (!list) return;
+  const fp = fingerprint(list);
+  if (fp === fps.audits) return;
+  fps.audits = fp;
+  cache.audits = list;
+  renderAudits(list);
 }
 
 function renderSnapshotSections() {
@@ -1097,13 +1291,28 @@ function route() {
   const cid = duelHashCid();
   const ds = datasetOpen();
   const mx = metricsOpen();
+  const auditReign = auditHashReign();
   const page = $("duel-page");
   const dsPage = $("dataset-page");
   const mxPage = $("metrics-page");
+  const auPage = $("audits-page");
   if (!page) return;
   // All full-screen pages reuse the duel-open body state (hides the main
   // dashboard); exactly one of them can be visible.
-  document.body.classList.toggle("duel-open", Boolean(cid) || ds || mx);
+  document.body.classList.toggle(
+    "duel-open", Boolean(cid) || ds || mx || auditReign != null);
+  if (auPage) {
+    auPage.hidden = auditReign == null;
+    if (auditReign != null) {
+      window.scrollTo(0, 0);
+      if (auPage.dataset.reign !== String(auditReign)) {
+        auPage.dataset.reign = String(auditReign);
+        renderAuditPage(auditReign);
+      }
+    } else {
+      auPage.dataset.reign = "";
+    }
+  }
   page.hidden = !cid;
   if (dsPage) {
     dsPage.hidden = !ds;
@@ -1328,6 +1537,10 @@ function sidesTableHtml(duel) {
           params.causality_gate || Number(params.causality_gamma || 0) > 0
             ? gte(ch.b_gate_pass_rate, params.causality_gamma ?? 0.30) : null,
           null, pct)
+      : "",
+    has(ch.mean_b, kg.mean_b)
+      ? sideRow("mean B", "mean lpC(y_A|z_A)−lpC(y_A|∅); pairs pass at B ≥ 0.02 — the gate is on the pass rate, not this mean",
+          ch.mean_b, kg.mean_b, "telemetry")
       : "",
     sideRow("action chars", "mean length of y_A (chars)",
       ch.mean_len_y, kg.mean_len_y, "telemetry", null, null,
@@ -1555,6 +1768,27 @@ function duelPageHtml(duel, series, logLines) {
       ${card("challenger Reason", esc(fine(chR)), "mean over the slice",
         chR != null && kgR != null ? passCls(Number(chR) >= Number(kgR)) : "")}
       ${card("king Reason", esc(fine(kgR)), "same slice, same teacher")}
+      ${(() => {
+        // The two non-margin crown conditions (wvk=5/6). Render only when the
+        // duel recorded them — pre-fork rows have neither.
+        const med = duel.challenger?.median_len_z;
+        const floor = Number(params.min_thought_chars || 0);
+        const bRate = duel.challenger?.b_gate_pass_rate;
+        const bMean = duel.challenger?.mean_b;
+        const gamma = Number(params.causality_gamma ?? 0.30);
+        const bOn = Boolean(params.causality_gate) || Number(params.causality_gamma || 0) > 0;
+        return [
+          med != null ? card("median |z|", esc(String(Math.round(Number(med)))),
+            floor > 0 ? `median stripped thought chars · crown needs ≥ ${floor}`
+              : "median stripped thought chars · telemetry",
+            floor > 0 ? passCls(Number(med) >= floor) : "") : "",
+          bRate != null ? card("B pass", esc(`${Math.round(Number(bRate) * 100)}%`),
+            (bOn ? `license: ≥ ${Math.round(gamma * 100)}% of pairs need B ≥ 0.02`
+              : "share of pairs with teacher-side B ≥ 0.02 · telemetry")
+              + (bMean != null ? ` · mean B = ${fine(bMean)}` : ""),
+            bOn ? passCls(Number(bRate) >= gamma) : "") : "",
+        ].join("");
+      })()}
     </div>`;
 
   const failBlock = fail && info.detail ? `
@@ -1790,7 +2024,13 @@ function wire() {
     if (!tr || e.target.closest("a")) return;
     openDuel(tr.dataset.cid);
   });
+  $("audits-wrap")?.addEventListener("click", (e) => {
+    const tr = e.target.closest("tr[data-reign]");
+    if (!tr || e.target.closest("a")) return;
+    openAudit(Number(tr.dataset.reign));
+  });
   $("duel-back")?.addEventListener("click", closeDuelPage);
+  $("audits-back")?.addEventListener("click", closeAuditsPage);
   $("metrics-back")?.addEventListener("click", closeMetricsPage);
   wireDatasetPage();
   window.addEventListener("hashchange", route);
@@ -1798,6 +2038,7 @@ function wire() {
     if (e.key !== "Escape") return;
     if (openChartId) closeChart();
     else if (duelHashCid()) closeDuelPage();
+    else if (auditHashReign() != null) closeAuditsPage();
     else if (datasetOpen()) closeDatasetPage();
     else if (metricsOpen()) closeMetricsPage();
   });
@@ -1809,7 +2050,7 @@ async function boot() {
   route(); // deep link straight to a duel page (#duel/<cid>)
   cache.contract = await fetchContract().catch(() => null);
   renderLiveContract();
-  await refreshHistoryAndBench();
+  await Promise.all([refreshHistoryAndBench(), refreshAudits()]);
   route(); // retry the duel render now that history is cached (static mode)
   closeWatch = watchSnapshot(applySnapshot, {
     onStatus: (s) => {
@@ -1819,6 +2060,7 @@ async function boot() {
   });
   // History grows slower than live snapshot — refresh on an interval.
   setInterval(refreshHistoryAndBench, 15000);
+  setInterval(refreshAudits, 30000);
 }
 
 boot();

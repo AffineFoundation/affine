@@ -88,6 +88,40 @@ export async function fetchBenchmarks(signal) {
   return getJSON("data/benchmarks.json", { signal });
 }
 
+/** Post-crown exploit-audit verdicts (newest first). */
+export async function fetchAudits(signal) {
+  const m = await detectMode({ signal });
+  if (m === "api") {
+    const data = await getJSON(`${API}/audits`, { signal });
+    return Array.isArray(data?.items) ? data.items : [];
+  }
+  const items = await getJSON("data/audits.json", { signal });
+  return Array.isArray(items) ? items : [];
+}
+
+/** One audit's replayable detail: verdict + manifest hashes + analysis prose. */
+export async function fetchAudit(reign, signal) {
+  const m = await detectMode({ signal });
+  if (m === "api") return getJSON(`${API}/audits/${encodeURIComponent(reign)}`, { signal });
+  // Static mirror: assemble from the published bucket workspace.
+  const pad = String(reign).padStart(4, "0");
+  const base = `audits/reign_${pad}`;
+  const [manifest, verdict, entryList] = await Promise.all([
+    getJSON(`${base}/manifest.json`, { signal }),
+    getJSON(`${base}/verdict.json`, { signal }),
+    getJSON("data/audits.json", { signal }),
+  ]);
+  let analysis_md = null;
+  try {
+    const r = await fetch(`${base}/analysis.md`, { signal });
+    if (r.ok) analysis_md = await r.text();
+  } catch { /* ignore */ }
+  const entry = Array.isArray(entryList)
+    ? entryList.find((e) => Number(e.reign_number) === Number(reign)) : null;
+  if (!manifest && !entry) return null;
+  return { reign_number: Number(reign), entry, manifest, verdict, analysis_md };
+}
+
 export async function fetchDuel(challengeId, signal) {
   const m = await detectMode({ signal });
   if (m === "api") {

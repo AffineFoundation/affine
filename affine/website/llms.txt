@@ -18,6 +18,7 @@ Everything the project publishes, in one index. All URLs are on this site's root
 - Submit checklist — HF layout, repo naming, commit-reveal payload
 - Serving stack — how your checkpoint is loaded; pre-flight before you burn the slot
 - Reason — the one score you optimize (and the telemetry published around it)
+- Post-crown exploit audit — the auditor, its published verdicts, and how to run the same audit yourself
 - Public data — full field-level description of every published object
 - Source of truth — links to the exact validator code under `code/`
 
@@ -38,6 +39,8 @@ Everything the project publishes, in one index. All URLs are on this site's root
 - [code/pyproject.toml](https://s3.hippius.com/affine-sn120/code/pyproject.toml) — eval-pod dependency floors ([eval] extra) — vllm / transformers are installed fresh at pod provision
 - [code/affine/model_store.py](https://s3.hippius.com/affine-sn120/code/affine/model_store.py) — checkpoint hygiene rules + weight-copy detection
 - [code/affine/state.py](https://s3.hippius.com/affine-sn120/code/affine/state.py) — 1-hotkey-1-eval policy, king lineage, queue invariants
+- [code/ops/exploit-audit/prompt.md](https://s3.hippius.com/affine-sn120/code/ops/exploit-audit/prompt.md) — the exact task the post-crown exploit auditor runs — audit the auditor
+- [code/ops/exploit-audit/auditd.py](https://s3.hippius.com/affine-sn120/code/ops/exploit-audit/auditd.py) — the audit daemon: crown watcher, agent runner, verdict publisher, revert enforcement
 
 **Validator logs** (separate file, not inlined here)
 
@@ -69,8 +72,10 @@ Root: https://affine.io/
 - [api/v1/dataset](https://affine.io/api/v1/dataset) — corpus D stats (epoch, mix, length histogram)
 - `api/v1/dataset/turns?source=&language=&phase=&repo=&q=&limit=&cursor=` — paginated turn index
 - `api/v1/dataset/turn?turn_id=` — one turn's prompt prefix + reference action
+- [api/v1/audits](https://affine.io/api/v1/audits) — post-crown exploit-audit verdicts
+- `api/v1/audits/{reign}` — one audit's verdict + pinned-input manifest + analysis prose
 - [api/v1/stream](https://affine.io/api/v1/stream) — SSE snapshot deltas
-- [index.html](https://affine.io/) — interactive dashboard UI (`#dataset` = corpus browser)
+- [index.html](https://affine.io/) — interactive dashboard UI (`#dataset` = corpus browser, `#audits` = exploit-audit verdicts)
 
 **Hippius archive** (cold public mirror — miners / replay; same objects)
 
@@ -78,6 +83,7 @@ Root: https://affine.io/
 - [data/history.json](https://s3.hippius.com/affine-sn120/data/history.json) — last 100 verdicts/failures
 - [data/benchmarks.json](https://s3.hippius.com/affine-sn120/data/benchmarks.json) — advisory tau2 scores (never part of the score)
 - [data/contract.json](https://s3.hippius.com/affine-sn120/data/contract.json) — machine-readable contract knobs
+- [data/audits.json](https://s3.hippius.com/affine-sn120/data/audits.json) — post-crown exploit-audit verdicts, newest first
 
 **Complete audit logs** (gzipped JSONL, on Hippius)
 
@@ -106,6 +112,7 @@ Root: https://affine.io/
 4. Eval machine runs a duel on an `n_turns = 2080` slice of D seeded by `blake2b(reveal_block_hash ‖ your_hotkey)` — you cannot know the slice before reveal; anyone can re-derive it after.
 5. Both sides are scored with Reason (v3 + δ + thought-length floor + B gate): `Reason = lpC(y_C|z_A) − lpC(y_C|∅)` per pair, miner score = mean. You dethrone the king iff the paired mean `Reason_c − Reason_k` beats `max(k_sigma·SE, δ)` (`k_sigma = 2`, `min_margin = 0.002`) **and** your median stripped thought length is at least `min_thought_chars = 80` **and** at least `causality_gamma = 0.30` of pairs pass teacher-side B (`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no leakage). No lpA gates.
 6. Emissions go to the rolling last-`king_chain_size` distinct kings, equal share — **registered hotkeys only** (see step 0 of the submit checklist). Advisory tau2 benches never affect Reason or crowning.
+7. Every dethrone is reviewed post-crown by a published LLM audit (see the exploit-audit section below). An `exploit = true` verdict reverts the crown and requeues every challenger the exploit king eclipsed. All verdicts are public at `data/audits.json`; the audit task and daemon are published verbatim under `code/ops/exploit-audit/`.
 
 There is no validator-private data. Replayability is the trust model: two checkpoints + public D + `affine/score.py` → recompute the verdict.
 
@@ -162,7 +169,7 @@ Live path uses bittensor 11 timelock encrypt (`reveal_in="60s"`) → `Commitment
 
 Your checkpoint is served with stock `vllm serve` — **never** `--trust-remote-code`. Combined with the hygiene rules (no `*.py`, no `auto_map`), only architectures natively supported by the pod's vLLM build can play. If vLLM cannot load or serve your model, the injectability probe rejects it — and your slot is already burned. Pre-flight before submitting.
 
-- **Exact invocation**: `_vllm_cmd` in [code/evalsrv/engine.py](https://s3.hippius.com/affine-sn120/code/evalsrv/engine.py). Current knobs (`affine.toml [miner_serving]`, substituted here at site build time): `--tensor-parallel-size 2`, `--max-model-len 65536`, `--gpu-memory-utilization 0.8`, `--max-num-batched-tokens 12288`, FLASH_ATTN attention, triton MoE backend.
+- **Exact invocation**: `_vllm_cmd` in [code/evalsrv/engine.py](https://s3.hippius.com/affine-sn120/code/evalsrv/engine.py). Current knobs (`affine.toml [miner_serving]`, substituted here at site build time): `--tensor-parallel-size 2`, `--max-model-len 65536`, `--gpu-memory-utilization 0.8`, `--max-num-batched-tokens 8192`, FLASH_ATTN attention, triton MoE backend.
 - **dtype** is vLLM `auto`: it follows `torch_dtype` in your `config.json`.
 - **Versions float**: pods install the [eval] extra fresh at provision time (floors from `pyproject.toml`: `vllm>=0.8`, `transformers>=4.51`). The versions actually running right now are reported live at `api/v1/snapshot` under `eval_machine.versions` (vllm / transformers / torch) and in `data/contract.json` `serving` for the frozen knobs.
 - **Hardware**: an 8-GPU B300/B200/H200 pod; the miner slot is 2 GPUs, tensor-parallel 2. Your model (≤ 90 GB safetensors) must load and serve under exactly that.
@@ -209,6 +216,41 @@ Frozen numeric knobs live in `affine.toml` `[duel]` (linked under `code/`). Scor
 
 ---
 
+## Post-crown exploit audit (audit the auditor)
+
+The score is code; the crown review is an agent. Every dethrone triggers one automated audit pass: an LLM agent reads the full duel record — the raw thought strings, the telemetry, the duel shape — and answers one question: did this model win by real distillation (thoughts that help the teacher toward its own answer), or by a capability-free channel (empty/cue thoughts, padding, action stuffing into z, chat-template token smuggling, ε-copy of the king, dataset sniping)?
+
+- The **exact task the auditor runs** is published verbatim: [code/ops/exploit-audit/prompt.md](https://s3.hippius.com/affine-sn120/code/ops/exploit-audit/prompt.md). It includes the verdict schema and the fail-open rule: ambiguous evidence must produce `exploit = false` — a broken judge can flag, never depose.
+- The **daemon** that automates it on the validator box is also published: [code/ops/exploit-audit/auditd.py](https://s3.hippius.com/affine-sn120/code/ops/exploit-audit/auditd.py) (crown watcher → agent pass → verdict validation → publish → enforcement).
+- On `exploit = true` the crown is reverted with the same monotonic-reign machinery as the dead-repo revert, and every challenger that lost to the exploit king is requeued for a fresh duel.
+- Every verdict — clean or exploit — is published at [data/audits.json](https://s3.hippius.com/affine-sn120/data/audits.json) with confidence, evidence bullets, and whether enforcement ran. The audit is **policy, not consensus**: Reason decides duels; the audit only defends the crown against capability-free channels, in the open.
+
+**The audit is hermetic and reproducible.** Each audit runs inside a self-contained workspace with fixed relative file names — the agent sees ONLY that directory, never the validator box. The entire workspace is published per reign under `audits/reign_NNNN/`:
+
+- `manifest.json` — sha256 + source of every input the agent saw
+- `evidence.json` — the pinned crowned row, lineage, and contract snapshot
+- `verdict.json` / `analysis.md` — what the auditor concluded and why
+
+**Verify a published audit yourself** (audit the auditor) — with Cursor or any coding agent:
+
+```bash
+N=0011   # the reign you are auditing (zero-padded, see data/audits.json)
+mkdir audit && cd audit
+curl -sO https://s3.hippius.com/affine-sn120/audits/reign_$N/manifest.json
+curl -sO https://s3.hippius.com/affine-sn120/audits/reign_$N/evidence.json
+curl -sO https://s3.hippius.com/affine-sn120/code/ops/exploit-audit/prompt.md
+# challenge_id is in the manifest:
+curl -s https://s3.hippius.com/affine-sn120/evals/$(python3 -c \
+  "import json; print(json.load(open('manifest.json'))['challenge_id'])"\
+).json.gz -o duel_record.json.gz
+sha256sum prompt.md evidence.json duel_record.json.gz  # vs manifest.json
+cursor-agent -p "$(cat prompt.md)"   # run from inside this directory
+```
+
+You now ran the exact task on the exact bytes the official auditor saw. Compare your `verdict.json` with the published `audits/reign_$N/verdict.json`. Disagree? Open an issue on [github.com/AffineFoundation/affine](https://github.com/AffineFoundation/affine) with your `analysis.md` — the audit is meant to be contested in public. (LLM output is not bit-for-bit deterministic; what must reproduce is the evidence and the binary verdict, not the prose.)
+
+---
+
 ## Public data (train on it)
 
 Everything the validator scores is published — there is no validator-private data. All paths are relative to this site's root (Hippius S3 bucket `affine-sn120`); fetch them directly with curl or any HTTP client.
@@ -227,6 +269,8 @@ Everything the validator scores is published — there is no validator-private d
 - `GET /api/v1/dataset` — corpus D stats: epoch, turn/traj counts, mix by source/language/phase/repo, prompt-length histogram.
 - `GET /api/v1/dataset/turns` — paginated turn index rows (`?source=&language=&phase=&repo=&q=&limit=&cursor=`).
 - `GET /api/v1/dataset/turn?turn_id=` — one turn materialized: prompt prefix messages + the reference assistant action (same objects the duels sample).
+- `GET /api/v1/audits` — post-crown exploit-audit verdicts, newest first.
+- `GET /api/v1/audits/{reign}` — one audit assembled for review: verdict, sha256-pinned input manifest, and the auditor's full analysis prose. The same files live on the bucket under `audits/reign_NNNN/`; the dashboard renders them at `/#audits`.
 - `GET /api/v1/stream` — SSE snapshot deltas for live UIs.
 
 **Hippius archive mirror** (cold path — this site's Hippius root, same disclosure):
@@ -332,5 +376,7 @@ The files below are byte-identical copies of the validator's own tree, republish
 - [code/pyproject.toml](https://s3.hippius.com/affine-sn120/code/pyproject.toml) — eval-pod dependency floors ([eval] extra) — vllm / transformers are installed fresh at pod provision
 - [code/affine/model_store.py](https://s3.hippius.com/affine-sn120/code/affine/model_store.py) — checkpoint hygiene rules + weight-copy detection
 - [code/affine/state.py](https://s3.hippius.com/affine-sn120/code/affine/state.py) — 1-hotkey-1-eval policy, king lineage, queue invariants
+- [code/ops/exploit-audit/prompt.md](https://s3.hippius.com/affine-sn120/code/ops/exploit-audit/prompt.md) — the exact task the post-crown exploit auditor runs — audit the auditor
+- [code/ops/exploit-audit/auditd.py](https://s3.hippius.com/affine-sn120/code/ops/exploit-audit/auditd.py) — the audit daemon: crown watcher, agent runner, verdict publisher, revert enforcement
 
 This index and the `code/` copies are regenerated together on every validator website push.

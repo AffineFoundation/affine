@@ -32,7 +32,7 @@ SITE_DIR = AFFINE_DIR / "website"
 
 # The validator publishes these to Hippius data/<name> verbatim; state/public
 # holds the same bytes. Left as a copy so the mirror can't drift from them.
-COPIED = ("history.json", "benchmarks.json")
+COPIED = ("history.json", "benchmarks.json", "audits.json")
 
 # Never ship a stale placeholder if the live source is missing.
 REQUIRED = ("dashboard.json", "history.json", "contract.json")
@@ -82,6 +82,13 @@ def build(out_dir: Path) -> None:
             log.warning("missing %s — omitting", src)
             continue
         shutil.copyfile(src, data_dir / name)
+
+    # Replayable audit workspaces (manifest + evidence + verdict + analysis)
+    # under audits/reign_NNNN/ — mirror the bucket layout so the static site
+    # can serve the "audit the audit" workspace exactly like the live box.
+    audits_src = public / "audits"
+    if audits_src.is_dir():
+        shutil.copytree(audits_src, out_dir / "audits", dirs_exist_ok=True)
 
     missing = [n for n in REQUIRED if not (data_dir / n).exists()]
     if missing:

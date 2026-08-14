@@ -63,6 +63,8 @@ def _serving_subs() -> dict[str, str]:
     }
 
 # Sources published under code/ and linked from llms.txt: (relative_path, description).
+# Paths starting with "ops/" resolve against the repo root; everything else
+# against affine/. All are published under code/<rel> either way.
 SOURCES: list[tuple[str, str]] = [
     ("affine.toml", "chain contract SSOT — every frozen knob the validator runs"),
     ("affine/score.py", "Reason v3: the score, the duel decision, and every "
@@ -88,6 +90,10 @@ SOURCES: list[tuple[str, str]] = [
      "transformers are installed fresh at pod provision"),
     ("affine/model_store.py", "checkpoint hygiene rules + weight-copy detection"),
     ("affine/state.py", "1-hotkey-1-eval policy, king lineage, queue invariants"),
+    ("ops/exploit-audit/prompt.md", "the exact task the post-crown exploit "
+     "auditor runs — audit the auditor"),
+    ("ops/exploit-audit/auditd.py", "the audit daemon: crown watcher, agent "
+     "runner, verdict publisher, revert enforcement"),
 ]
 
 
@@ -123,6 +129,8 @@ root ({BASE}/).
 - Serving stack — how your checkpoint is loaded; pre-flight before you burn \
 the slot
 - Reason — the one score you optimize (and the telemetry published around it)
+- Post-crown exploit audit — the auditor, its published verdicts, and how to \
+run the same audit yourself
 - Public data — full field-level description of every published object
 - Source of truth — links to the exact validator code under `code/`
 
@@ -168,8 +176,12 @@ length histogram)
 - `api/v1/dataset/turns?source=&language=&phase=&repo=&q=&limit=&cursor=` — \
 paginated turn index
 - `api/v1/dataset/turn?turn_id=` — one turn's prompt prefix + reference action
+- [api/v1/audits]({DASH}/api/v1/audits) — post-crown exploit-audit verdicts
+- `api/v1/audits/{reign}` — one audit's verdict + pinned-input manifest + \
+analysis prose
 - [api/v1/stream]({DASH}/api/v1/stream) — SSE snapshot deltas
-- [index.html]({DASH}/) — interactive dashboard UI (`#dataset` = corpus browser)
+- [index.html]({DASH}/) — interactive dashboard UI (`#dataset` = corpus \
+browser, `#audits` = exploit-audit verdicts)
 
 **Hippius archive** (cold public mirror — miners / replay; same objects)
 
@@ -180,6 +192,8 @@ intake, duel queue, live eval progress
 (never part of the score)
 - [data/contract.json]({BASE}/data/contract.json) — machine-readable \
 contract knobs
+- [data/audits.json]({BASE}/data/audits.json) — post-crown exploit-audit \
+verdicts, newest first
 
 **Complete audit logs** (gzipped JSONL, on Hippius)
 
@@ -224,6 +238,11 @@ at least `causality_gamma = 0.30` of pairs pass teacher-side B \
 6. Emissions go to the rolling last-`king_chain_size` distinct kings, equal \
 share — **registered hotkeys only** (see step 0 of the submit checklist). \
 Advisory tau2 benches never affect Reason or crowning.
+7. Every dethrone is reviewed post-crown by a published LLM audit (see the \
+exploit-audit section below). An `exploit = true` verdict reverts the crown \
+and requeues every challenger the exploit king eclipsed. All verdicts are \
+public at `data/audits.json`; the audit task and daemon are published \
+verbatim under `code/ops/exploit-audit/`.
 
 There is no validator-private data. Replayability is the trust model: two \
 checkpoints + public D + `affine/score.py` → recompute the verdict.
@@ -457,6 +476,69 @@ manifest it was scored against.
 
 ---
 
+## Post-crown exploit audit (audit the auditor)
+
+The score is code; the crown review is an agent. Every dethrone triggers one \
+automated audit pass: an LLM agent reads the full duel record — the raw \
+thought strings, the telemetry, the duel shape — and answers one question: \
+did this model win by real distillation (thoughts that help the teacher \
+toward its own answer), or by a capability-free channel (empty/cue thoughts, \
+padding, action stuffing into z, chat-template token smuggling, ε-copy of \
+the king, dataset sniping)?
+
+- The **exact task the auditor runs** is published verbatim: \
+[code/ops/exploit-audit/prompt.md]({BASE}/code/ops/exploit-audit/prompt.md). \
+It includes the verdict schema and the fail-open rule: ambiguous evidence \
+must produce `exploit = false` — a broken judge can flag, never depose.
+- The **daemon** that automates it on the validator box is also published: \
+[code/ops/exploit-audit/auditd.py]({BASE}/code/ops/exploit-audit/auditd.py) \
+(crown watcher → agent pass → verdict validation → publish → enforcement).
+- On `exploit = true` the crown is reverted with the same monotonic-reign \
+machinery as the dead-repo revert, and every challenger that lost to the \
+exploit king is requeued for a fresh duel.
+- Every verdict — clean or exploit — is published at \
+[data/audits.json]({BASE}/data/audits.json) with confidence, evidence \
+bullets, and whether enforcement ran. The audit is **policy, not \
+consensus**: Reason decides duels; the audit only defends the crown against \
+capability-free channels, in the open.
+
+**The audit is hermetic and reproducible.** Each audit runs inside a \
+self-contained workspace with fixed relative file names — the agent sees \
+ONLY that directory, never the validator box. The entire workspace is \
+published per reign under `audits/reign_NNNN/`:
+
+- `manifest.json` — sha256 + source of every input the agent saw
+- `evidence.json` — the pinned crowned row, lineage, and contract snapshot
+- `verdict.json` / `analysis.md` — what the auditor concluded and why
+
+**Verify a published audit yourself** (audit the auditor) — with Cursor or \
+any coding agent:
+
+```bash
+N=0011   # the reign you are auditing (zero-padded, see data/audits.json)
+mkdir audit && cd audit
+curl -sO {BASE}/audits/reign_$N/manifest.json
+curl -sO {BASE}/audits/reign_$N/evidence.json
+curl -sO {BASE}/code/ops/exploit-audit/prompt.md
+# challenge_id is in the manifest:
+curl -s {BASE}/evals/$(python3 -c \\
+  "import json; print(json.load(open('manifest.json'))['challenge_id'])"\\
+).json.gz -o duel_record.json.gz
+sha256sum prompt.md evidence.json duel_record.json.gz  # vs manifest.json
+cursor-agent -p "$(cat prompt.md)"   # run from inside this directory
+```
+
+You now ran the exact task on the exact bytes the official auditor saw. \
+Compare your `verdict.json` with the published \
+`audits/reign_$N/verdict.json`. Disagree? Open an issue on \
+[github.com/AffineFoundation/affine]\
+(https://github.com/AffineFoundation/affine) with your `analysis.md` — the \
+audit is meant to be contested in public. (LLM output is not bit-for-bit \
+deterministic; what must reproduce is the evidence and the binary verdict, \
+not the prose.)
+
+---
+
 ## Public data (train on it)
 
 Everything the validator scores is published — there is no validator-private \
@@ -482,6 +564,11 @@ source/language/phase/repo, prompt-length histogram.
 (`?source=&language=&phase=&repo=&q=&limit=&cursor=`).
 - `GET /api/v1/dataset/turn?turn_id=` — one turn materialized: prompt prefix \
 messages + the reference assistant action (same objects the duels sample).
+- `GET /api/v1/audits` — post-crown exploit-audit verdicts, newest first.
+- `GET /api/v1/audits/{reign}` — one audit assembled for review: verdict, \
+sha256-pinned input manifest, and the auditor's full analysis prose. The \
+same files live on the bucket under `audits/reign_NNNN/`; the dashboard \
+renders them at `/#audits`.
 - `GET /api/v1/stream` — SSE snapshot deltas for live UIs.
 
 **Hippius archive mirror** (cold path — this site's Hippius root, same disclosure):
@@ -647,7 +734,8 @@ def _publish_code() -> list[str]:
         shutil.rmtree(CODE_DIR)
     lines = []
     for rel, desc in SOURCES:
-        src = AFFINE_ROOT / rel
+        root = AFFINE_ROOT.parent if rel.startswith("ops/") else AFFINE_ROOT
+        src = root / rel
         if not src.is_file():
             raise FileNotFoundError(f"required source missing: {src}")
         dst = CODE_DIR / rel

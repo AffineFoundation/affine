@@ -16,3 +16,9 @@ mining/**/*.safetensors
 mining/**/*.bin
 mining/**/*.gguf
 *.egg-info/
+# exploit-audit runtime artifacts — source (auditd.py, prompt.md) is tracked;
+# workspaces/verdicts are published to Hippius under audits/ + data/audits.json
+ops/exploit-audit/audits/
+ops/exploit-audit/audits.jsonl
+ops/exploit-audit/state/
+ops/teacher-b200/logs/
