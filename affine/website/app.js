@@ -622,16 +622,44 @@ function renderHistory(h) {
         r.rejection_reason, r.challenge_id].join(" ").toLowerCase();
       return hay.includes(filter);
     });
+  // Post-crown audit verdicts interleave with the duels they follow.
+  const audits = (cache.audits || []).filter((a) => {
+    if (!filter) return true;
+    const hay = ["audit", a.repo, a.hotkey, a.summary, a.challenge_id,
+      a.status !== "ok" ? "error" : a.exploit ? "exploit" : "clean",
+    ].join(" ").toLowerCase();
+    return hay.includes(filter);
+  });
   const rule = liveCrownShort(cache.contract);
   const meta = $("history-meta");
+  const shown = rows.length + audits.length;
   meta.textContent = rule
-    ? `${rule} · ${rows.length} shown`
-    : `${rows.length} shown`;
+    ? `${rule} · ${shown} shown`
+    : `${shown} shown`;
   if (rule) meta.title = rule;
-  if (!rows.length) {
+  if (!shown) {
     $("history-wrap").innerHTML = `<div class="empty">empty</div>`;
     return;
   }
+  // Every crown is followed by an agent audit of the duel record; the verdict
+  // lands in the same timeline so the reader sees crowned → audited in order.
+  const auditRowHtml = (a) => {
+    const conf = a.confidence == null ? "" : `${Math.round(Number(a.confidence) * 100)}% confidence · `;
+    const full = a.summary || "";
+    const sum = full.length > 160 ? `${full.slice(0, 160)}…` : full;
+    const verdict = a.status !== "ok" ? badge("failed", "audit error")
+      : a.exploit ? badge("rejected", "audit: exploit")
+      : badge("accepted", "audit: clean");
+    return `<tr class="row-link" data-reign="${esc(a.reign_number)}">
+      <td class="when">${esc(fmtTime(a.audited_at))}</td>
+      <td class="dim" title="${esc(fmtTime(a.audited_at))}">${a.audited_at ? `${esc(fmtAge(a.audited_at))} ago` : "—"}</td>
+      <td class="r dim">—</td>
+      <td>${modelLink(a.repo, a.hotkey, a.reign_number)}</td>
+      <td class="dim">post-crown audit</td>
+      <td>${verdict}</td>
+      <td class="dim audit-summary" colspan="7" title="${esc(full)}">${esc(conf)}${esc(auditActionText(a))} — ${esc(sum)}</td>
+    </tr>`;
+  };
   $("history-wrap").innerHTML = `<table class="data-table">
     <thead><tr>
       <th>when</th><th>age</th><th class="r">duration</th>
@@ -644,7 +672,13 @@ function renderHistory(h) {
       <th class="r" title="margin ÷ max(k·SE, δ) — ≥1× clears the crown bar">factor</th>
       <th class="r" title="challenger teacher-side B pass rate — crown needs ≥ γ of pairs with B ≥ 0.02">B pass</th>
     </tr></thead>
-    <tbody>${rows.map((r) => {
+    <tbody>${[
+      ...rows.map((r) => ({ t: Date.parse(r.at || "") || 0, html: duelRowHtml(r) })),
+      ...audits.map((a) => ({ t: Date.parse(a.audited_at || "") || 0, html: auditRowHtml(a) })),
+    ].sort((x, y) => y.t - x.t).map((e) => e.html).join("")}</tbody>
+  </table>`;
+
+  function duelRowHtml(r) {
       // Crown-rule coloring: green = cleared the crown bar, red = lost.
       // The bar is max(k·SE, δ); pre-δ rows stamp min_margin 0.
       const params = r.duel_params || r.gates || {};
@@ -695,8 +729,7 @@ function renderHistory(h) {
         <td class="r ${factorClass}" title="${factor == null ? "" : esc(`margin ÷ bar (bar ≈ ${fmt4(bar)}) — ≥1× crowns`)}">${esc(factorText)}</td>
         <td class="r ${bClass}" title="${esc(bTip)}">${esc(bText)}</td>
       </tr>`;
-    }).join("")}</tbody>
-  </table>`;
+  }
 }
 
 function renderFails(h) {
@@ -908,6 +941,8 @@ async function refreshAudits() {
   fps.audits = fp;
   cache.audits = list;
   renderAudits(list);
+  // Audit rows interleave into the history table.
+  if (cache.history) renderHistory(cache.history);
 }
 
 function renderSnapshotSections() {
@@ -2015,9 +2050,11 @@ function wire() {
     openDuel(tr.dataset.cid);
   });
   $("history-wrap")?.addEventListener("click", (e) => {
+    if (e.target.closest("a")) return;
+    const ar = e.target.closest("tr[data-reign]");
+    if (ar) { openAudit(Number(ar.dataset.reign)); return; }
     const tr = e.target.closest("tr[data-cid]");
-    if (!tr || e.target.closest("a")) return;
-    openDuel(tr.dataset.cid);
+    if (tr) openDuel(tr.dataset.cid);
   });
   $("fails-wrap")?.addEventListener("click", (e) => {
     const tr = e.target.closest("tr[data-cid]");

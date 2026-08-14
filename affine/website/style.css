@@ -1688,3 +1688,10 @@ table.data-table td.mono {
   border: 1px solid var(--color-border);
   padding: 4px 8px;
 }
+
+/* Audit verdict rows interleaved into the history table. */
+table.data-table td.audit-summary {
+  font-style: italic;
+  font-size: 11px;
+  max-width: 520px;
+}
