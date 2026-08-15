@@ -55,6 +55,18 @@ log = logging.getLogger("evalsrv.dueling")
 _phase_key = stratum_key
 
 
+class DuelAborted(RuntimeError):
+    """Raised cooperatively when the running duel has been superseded.
+
+    The validator never re-attaches to a running job (dispatch is POST /duel +
+    SSE stream), so a new /duel arriving while one runs proves the running
+    job's dispatcher is gone (validator restart, crown revert) and its verdict
+    can never be consumed. Aborting at the next turn boundary hands the GPUs
+    to the live request instead of burning up to a full scoring pass
+    (observed 2026-08-14: 47 wasted minutes after the reign-19 revert).
+    """
+
+
 # -- slice ----------------------------------------------------------------------
 
 def turn_id(rec: dict) -> str:
@@ -228,7 +240,8 @@ class RefCache:
 
 async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel,
                      turns: list[dict], refs: RefCache, duel_cfg: dict,
-                     turn_sem: asyncio.Semaphore, on_progress) -> list[dict]:
+                     turn_sem: asyncio.Semaphore, on_progress,
+                     abort_event=None) -> list[dict]:
     rows: list[dict] = []
     done = 0
     total = len(turns)
@@ -246,6 +259,8 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel,
         tid = turn_id(rec)
         prefix = rec["prefix"]
         async with turn_sem:
+            if abort_event is not None and abort_event.is_set():
+                raise DuelAborted("superseded by a new duel request")
             # 1) Sample teacher (z_C, y_C) once per turn (deduped across sides).
             raw = await refs.ensure_raw(
                 tid, teacher, prefix, n_teacher, temperature,
@@ -326,7 +341,8 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
                    teacher: Served | list[Served],
                    block_hash: str, hotkey: str, corpus_info: dict,
                    on_progress,
-                   corpus: "CorpusSync | None" = None) -> tuple[dict, dict]:
+                   corpus: "CorpusSync | None" = None,
+                   abort_event=None) -> tuple[dict, dict]:
     """Full duel. Returns (verdict, artifact).
 
     The verdict is the small audit summary streamed to the validator. The
@@ -400,9 +416,11 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         # side's in-flight turns independently.
         king_rows, chall_rows = await asyncio.gather(
             score_side(teacher_m, king_m, turns, refs, duel_cfg,
-                       asyncio.Semaphore(turn_conc), on_progress),
+                       asyncio.Semaphore(turn_conc), on_progress,
+                       abort_event=abort_event),
             score_side(teacher_m, chall_m, turns, refs, duel_cfg,
-                       asyncio.Semaphore(turn_conc), on_progress),
+                       asyncio.Semaphore(turn_conc), on_progress,
+                       abort_event=abort_event),
         )
         # Teacher rollouts actually used this duel (post-hoc: the slice
         # was unpredictable before reveal and the refs are resampled per

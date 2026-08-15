@@ -75,6 +75,7 @@ _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 _current: dict = {"kind": None, "job_id": None}
 _abort_bench = threading.Event()
+_abort_duel = threading.Event()
 _corpus_kick = threading.Event()
 _teacher_ready = False
 _ROLE = os.environ.get("AFFINE_ROLE", "duel")
@@ -237,6 +238,15 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
     events: Queue = job["events"]
     stop_heartbeat = threading.Event()
     _current.update(kind="duel", job_id=job_id)
+    _abort_duel.clear()
+
+    def _check_superseded() -> None:
+        # Between engine-load phases (each takes minutes and cannot be
+        # interrupted mid-way): bail before starting the next phase if a
+        # newer /duel already declared this job stale.
+        if _abort_duel.is_set():
+            raise dueling.DuelAborted("superseded by a new duel request")
+
     try:
         def hb():
             while not stop_heartbeat.wait(30.0):
@@ -253,6 +263,7 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
             raise DuelFault(Fault.TEACHER, "teacher not servable")
 
         job["phase"] = "ensure_king"
+        _check_superseded()
         if not _engine.ensure_king(req.king_repo, req.king_revision):
             # A king that will not *launch* is a transient/pod fault, NOT proof
             # the king is gone: infra code so the miner is not burned and the
@@ -263,6 +274,7 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
                 f"king {req.king_repo}@{req.king_revision[:12]} failed to launch")
 
         job["phase"] = "load_challenger"
+        _check_superseded()
         events.put({"type": "progress",
                     "data": {"phase": "load_challenger", "repo": req.challenger_repo}})
         # Fail fast (before a doomed multi-GB download) when the challenger's
@@ -294,6 +306,7 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
             return
 
         job["phase"] = "scoring"
+        _check_superseded()
 
         def on_progress(miner: str, done: int, total: int):
             events.put({"type": "progress",
@@ -318,7 +331,8 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
                 block_hash=req.block_hash, hotkey=req.challenger_hotkey,
                 corpus_info=_corpus.info(),
                 on_progress=on_progress,
-                corpus=_corpus))
+                corpus=_corpus,
+                abort_event=_abort_duel))
         except ContextLengthError as e:
             # Serving config / corpus length — requeue without burning miner.
             raise DuelFault(Fault.CONTEXT_LIMIT, str(e)) from e
@@ -343,6 +357,16 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
         job["verdict"] = verdict
         events.put({"type": "verdict", "data": verdict})
         job["state"] = "completed"
+    except dueling.DuelAborted as e:
+        # Not a failure: this job's dispatcher is gone and a live /duel is
+        # waiting on the busy lock. No miner is burned — the live request
+        # re-dispatches the same or a newer challenge.
+        log.info("duel %s aborted: %s", job_id, e)
+        job["error"] = str(e)
+        job["error_code"] = "superseded"
+        events.put({"type": "error",
+                    "data": {"error": str(e), "code": "superseded"}})
+        job["state"] = "failed"
     except Exception as e:
         log.exception("duel %s failed", job_id)
         code = getattr(e, "code", None)
@@ -374,6 +398,14 @@ def start_duel(req: DuelRequest, _: None = Depends(_require_token)):
         if _current["kind"] == "bench":
             _abort_bench.set()
             raise HTTPException(409, "aborting bench for duel; retry")
+        if _current["kind"] == "duel":
+            # The validator dispatches one duel at a time and never
+            # re-attaches to a running job, so a second /duel proves the
+            # running job is orphaned (validator restart / crown revert).
+            # Tell it to abort at the next phase/turn boundary; the retry
+            # takes over instead of waiting out a full stale scoring pass.
+            _abort_duel.set()
+            raise HTTPException(409, "aborting stale duel for new duel; retry")
         raise HTTPException(409, "eval server busy with a duel")
     job_id = f"duel-{uuid.uuid4().hex[:12]}"
     _register_job(job_id, {"state": "queued", "kind": "duel", "events": Queue(),
