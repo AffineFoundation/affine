@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -324,10 +325,40 @@ class Engine:
             log.warning("gpu orphan sweep failed for %s", slot.label,
                         exc_info=True)
 
+    def _kill_port_listener(self, slot: Slot) -> None:
+        """SIGKILL whatever still listens on the slot's port.
+
+        An evalsrv restart orphans the previous vLLM processes: the GPU
+        sweep reaps the CUDA workers, but the CPU-side API-server parent
+        keeps the port bound and keeps answering /v1/models. A fresh launch
+        then cannot bind, _wait_ready's GET hits the zombie and declares
+        "ready in 0s", and every completion ConnectErrors (2026-08-15,
+        king + challenger, twice in one day). Slot ports are engine-owned,
+        one engine per port, so any listener found here is stale by
+        definition.
+        """
+        try:
+            out = subprocess.run(
+                ["ss", "-tlnpH", f"sport = :{slot.port}"],
+                capture_output=True, text=True, timeout=10).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            return
+        for pid_s in set(re.findall(r"pid=(\d+)", out or "")):
+            pid = int(pid_s)
+            if pid == os.getpid():
+                continue
+            log.warning("killing stale listener pid %d on %s port %d",
+                        pid, slot.label, slot.port)
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
     def _launch(self, slot: Slot, repo: str, revision: str | None) -> None:
         with self._lock:
             self._kill(slot)
             self._sweep_slot_gpus(slot)
+            self._kill_port_listener(slot)
             slot.load_error = ""
             LOG_DIR.mkdir(parents=True, exist_ok=True)
             _purge_broken_flashinfer_moe_cache()
@@ -464,6 +495,16 @@ class Engine:
             self._kill(self.teacher2_slot)
         return True
 
+    def _probe_extra_teacher(self, base_url: str) -> bool:
+        """Stateless liveness probe of one additive remote teacher endpoint."""
+        try:
+            r = httpx.get(f"{base_url}/models", timeout=5.0)
+            r.raise_for_status()
+            return True
+        except Exception as e:
+            log.warning("extra teacher %s dark, skipping: %s", base_url, e)
+            return False
+
     def teacher_serveds(self) -> list[Served]:
         """Teacher endpoints currently servable, primary first. The replica is
         re-probed here (cheap, once per duel): a replica that died since
@@ -482,6 +523,23 @@ class Engine:
         s2 = self.teacher2_slot
         if (s2 is not None and s2.served and s2.ready and self._alive(s2)):
             out.append(s2.served)
+        # Additive swarm capacity (2026-08-15 operator directive): extra
+        # OpenAI-compatible teacher endpoints join the duel pool when alive.
+        # Strictly fail-open — a dark extra is skipped and the local slots
+        # above remain the mandatory floor (ensure_teacher is unchanged).
+        # Same repo at temperature-0 echo scoring, so which endpoint answers
+        # a call is score-invariant; duplicates in the list are allowed and
+        # weight the pool's uniform turn hash toward the bigger backend.
+        repo = str(self.cfg["teacher"]["repo"])
+        extras = [str(u).rstrip("/")
+                  for u in (self.cfg["teacher"].get("extra_urls") or [])]
+        alive: dict[str, bool] = {}
+        for u in extras:
+            if u not in alive:
+                alive[u] = self._probe_extra_teacher(u)
+            if alive[u]:
+                out.append(Served(name="teacher", repo=repo, revision=None,
+                                  port=0, base_url=u))
         return out
 
     def ensure_king(self, repo: str, revision: str) -> bool:
