@@ -190,6 +190,16 @@ class Engine:
     # window and delete the snapshot the duel just decided to keep.
     _lock: threading.RLock = field(init=False, default_factory=threading.RLock,
                                    repr=False)
+    # Serializes ensure_teacher: the startup warmup thread and a duel job
+    # can call it concurrently (evalsrv bounce with a dispatch in flight),
+    # and unserialized each caller sees not-ready, relaunches, and sweeps
+    # the other's warming workers as GPU orphans — teachers never finish
+    # warmup and the load-failure self-kill loops the server (2026-08-15).
+    # Cannot ride _lock: ensure_teacher blocks for minutes in _wait_ready,
+    # which must not hold up prefetch/prune/launch state transitions.
+    _teacher_lock: threading.Lock = field(init=False,
+                                          default_factory=threading.Lock,
+                                          repr=False)
     # Next-challenger snapshot being warmed while the current duel scores
     # (download is network-bound, scoring is GPU-bound): (repo, worker,
     # cancel event). Protection from pruning is derived from thread liveness:
@@ -477,23 +487,26 @@ class Engine:
         if base_url:
             # Re-probe every ensure: a dead remote must fail the duel closed.
             return self._probe_remote_teacher(base_url, str(t["repo"]))
-        primary_ok = self.teacher_slot.ready and self._alive(self.teacher_slot)
-        if not primary_ok:
-            self._launch(self.teacher_slot, t["repo"], None)
-        replica_launched = False
-        if self.teacher2_slot is not None and not (
-                self.teacher2_slot.ready and self._alive(self.teacher2_slot)):
-            self._launch(self.teacher2_slot, t["repo"], None)
-            replica_launched = True
-        if not primary_ok and not self._wait_ready(self.teacher_slot):
-            return False
-        if replica_launched and not self._wait_ready(self.teacher2_slot,
-                                                     timeout_s=1200):
-            # Non-fatal: reap the half-dead process so its GPUs stay clean
-            # and the duel routes everything to the primary.
-            log.warning("teacher replica failed to warm; running single-teacher")
-            self._kill(self.teacher2_slot)
-        return True
+        # Serialized: a second caller waits out the first warmup and then
+        # sees ready teachers instead of relaunching over them.
+        with self._teacher_lock:
+            primary_ok = self.teacher_slot.ready and self._alive(self.teacher_slot)
+            if not primary_ok:
+                self._launch(self.teacher_slot, t["repo"], None)
+            replica_launched = False
+            if self.teacher2_slot is not None and not (
+                    self.teacher2_slot.ready and self._alive(self.teacher2_slot)):
+                self._launch(self.teacher2_slot, t["repo"], None)
+                replica_launched = True
+            if not primary_ok and not self._wait_ready(self.teacher_slot):
+                return False
+            if replica_launched and not self._wait_ready(self.teacher2_slot,
+                                                         timeout_s=1200):
+                # Non-fatal: reap the half-dead process so its GPUs stay clean
+                # and the duel routes everything to the primary.
+                log.warning("teacher replica failed to warm; running single-teacher")
+                self._kill(self.teacher2_slot)
+            return True
 
     def _probe_extra_teacher(self, base_url: str) -> bool:
         """Stateless liveness probe of one additive remote teacher endpoint."""
