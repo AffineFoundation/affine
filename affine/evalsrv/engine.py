@@ -238,6 +238,16 @@ class Engine:
         # bigger chunks ([bench_serving].max_num_batched_tokens) for fast
         # long-context agent prefills.
         batched_tokens = int(ms["max_num_batched_tokens"])
+        gpu_util = ms["gpu_memory_utilization"]
+        if slot.label.startswith("teacher"):
+            # Teachers absorb nearly all echo traffic, so they get bigger
+            # chunks — but the fp32 log_softmax spike lives OUTSIDE vLLM's
+            # budgeted pool, and at 0.80 util a 12288-chunk spike OOM'd
+            # teacher2 mid-duel (2026-08-14). Teacher KV runs ~2-5% full, so
+            # a lower util buys the spike headroom for free.
+            batched_tokens = int(ms.get("teacher_max_num_batched_tokens",
+                                        batched_tokens))
+            gpu_util = ms.get("teacher_gpu_memory_utilization", gpu_util)
         if self.role == "bench":
             bs = self.cfg.get("bench_serving") or {}
             batched_tokens = int(bs.get("max_num_batched_tokens", 16384))
@@ -246,7 +256,7 @@ class Engine:
             "--port", str(slot.port),
             "--tensor-parallel-size", str(slot.tp),
             "--max-model-len", str(ms["max_model_len"]),
-            "--gpu-memory-utilization", str(ms["gpu_memory_utilization"]),
+            "--gpu-memory-utilization", str(gpu_util),
             "--max-num-batched-tokens", str(batched_tokens),
             # Avoid FlashInfer JIT (needs a coherent system CUDA toolkit; the
             # pip nvidia-cu13 wheel headers often trip B300/Blackwell builds).
