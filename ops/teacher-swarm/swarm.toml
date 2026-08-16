@@ -1,0 +1,135 @@
+# Teacher-swarm config. One goal: maximize teacher samples/s.
+#
+# The manager rents boxes per [types.*] targets, bootstraps a vLLM replica
+# set on each (see bootstrap_pod.sh), self-heals (replica relaunch on-pod,
+# pod replacement here), and writes state/state.json for the router.
+#
+# Operator directive 2026-08-15: rent as many machines as we can; B300s ok.
+
+[swarm]
+model = "zai-org/GLM-4.5-Air-FP8"
+vllm_version = "0.22.1"          # match production eval pod (flag-compatible)
+pod_prefix = "swarm-t-"          # manager only ever touches pods with this prefix
+template_id = "345273fa-4818-46f7-a8fa-32f0e331713c"  # Pytorch (Cuda+DinD) cu13.0.2
+budget_usd_hr = 240.0            # hard cap on aggregate swarm $/hr
+ttl_hours = 48                   # per-pod safety-net TTL at rent time
+bootstrap_timeout_min = 50       # venv + 110 GB model pull + engine warmup (slow pipes)
+unreachable_grace_min = 25   # dark grace after healthy: covers a supervisor engine relaunch
+min_balance_usd = 10000.0        # refuse to rent below this Lium balance
+
+# Serving knobs shared by every replica (mirrors production teacher slots).
+max_model_len = 65536
+gpu_memory_utilization = 0.70
+max_num_batched_tokens = 12288
+
+# --- box types --------------------------------------------------------------
+# match:      substring of Lium machine_name (case-insensitive)
+# gpu_count:  exact GPU count of the box
+# tp:         tensor-parallel size per replica (floor; widens if ports are few)
+# replicas:   replicas per box (tp * replicas must be <= gpu_count)
+# target:     desired live boxes of this type
+# max_price:  $/hr cap for the whole box
+# est_tps:    prior estimate of duel turns/s per box (updated after benches)
+# gpu_util / max_num_batched_tokens: optional per-type overrides
+
+[types.pro6000-8x]           # 768 GB/box: the throughput king so far
+match = "RTX PRO 6000 Blackwell Server"
+gpu_count = 8
+tp = 2
+replicas = 4
+target = 6
+max_price = 15.0
+est_tps = 0.6               # measured duel-real c12 (2xTP4 layout)
+
+[types.pro6000-4x]           # 384 GB/box: 2 replicas TP2
+match = "RTX PRO 6000 Blackwell Server"
+gpu_count = 4
+tp = 2
+replicas = 2
+target = 1
+max_price = 8.0
+est_tps = 0.25
+
+[types.b300-1x]              # 269 GB single GPU: whole model, no TP overhead
+match = "B300"
+gpu_count = 1
+tp = 1
+replicas = 1
+target = 3
+max_price = 8.5
+est_tps = 0.63
+
+[types.b200-1x]              # 179 GB single GPU: tight but fits at 0.80 util
+match = "B200"
+gpu_count = 1
+tp = 1
+replicas = 1
+target = 1
+max_price = 7.0
+est_tps = 0.5
+gpu_util = 0.80
+
+[types.h100-8x]              # 8x80 GB: 4 replicas TP2, proven arch
+match = "H100"
+gpu_count = 8
+tp = 2
+replicas = 4
+target = 1
+max_price = 14.0
+est_tps = 0.8
+
+[types.h200-8x]              # adopted: previously-idle operator pod put to work
+# (2026-08-15). The manager bootstraps and heals it like any member but can
+# never delete it (lium_api.remove enforces the swarm-t- prefix).
+match = "H200"
+gpu_count = 8
+tp = 2
+replicas = 4
+target = 1
+max_price = 27.0
+est_tps = 2.4
+adopt = ["affine-teacher2"]
+
+[types.h200-4x]              # production-style TP2 pairs
+match = "H200"
+gpu_count = 4
+tp = 2
+replicas = 2
+target = 1
+max_price = 17.0
+est_tps = 1.0
+
+[types.rtx5090-8x]           # 256 GB/box, TP8 only; cheap bulk
+match = "RTX 5090"
+gpu_count = 8
+tp = 8
+replicas = 1
+target = 20
+max_price = 5.6
+est_tps = 0.12               # measured duel-real (bench_5090_tp8_c24_real)
+gpu_util = 0.66
+# fp32 logits spike (chunk x 151k vocab) lives OUTSIDE the vLLM pool and
+# OOMs 32 GB cards: 8192-token chunks want ~4.5 GB, 4096 ~2.2 GB.
+max_num_batched_tokens = 4096
+
+[types.ada6000-8x]           # 8x48 GB Ada: FP8-capable (SM89); TP8 single
+# replica — TP4 puts 27.5 GB of weights per 48 GB card and the echo logits
+# spike OOMs it. TP8 leaves ~17 GB/GPU headroom.
+match = "RTX 6000 Ada"
+gpu_count = 8
+tp = 8
+replicas = 1
+target = 2
+max_price = 6.0
+est_tps = 0.3
+max_num_batched_tokens = 4096
+
+[types.l40s-8x]              # same class as Ada 6000: TP8 single replica
+match = "L40S"
+gpu_count = 8
+tp = 8
+replicas = 1
+target = 1
+max_price = 5.0
+est_tps = 0.25
+max_num_batched_tokens = 4096

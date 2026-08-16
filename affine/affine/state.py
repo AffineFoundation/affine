@@ -653,7 +653,10 @@ class State:
         n_earners = 0
         for m in members:
             m["inaccessible"] = m["hotkey"] in self.inaccessible_hotkeys
-            m["earning"] = not m["inaccessible"] and n_earners < depth
+            # Seed/genesis rows use an empty hotkey and cannot take a metagraph
+            # slot — they must never consume a payout window seat.
+            m["earning"] = (bool(m["hotkey"]) and not m["inaccessible"]
+                            and n_earners < depth)
             n_earners += m["earning"]
         weight_bps = (10000 // n_earners) if n_earners else 0
         for m in members:

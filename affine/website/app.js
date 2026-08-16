@@ -646,18 +646,14 @@ function renderHistory(h) {
   const auditRowHtml = (a) => {
     const conf = a.confidence == null ? "" : `${Math.round(Number(a.confidence) * 100)}% confidence · `;
     const full = a.summary || "";
-    const sum = full.length > 160 ? `${full.slice(0, 160)}…` : full;
-    const verdict = a.status !== "ok" ? badge("failed", "audit error")
-      : a.exploit ? badge("rejected", "audit: exploit")
-      : badge("accepted", "audit: clean");
     return `<tr class="row-link" data-reign="${esc(a.reign_number)}">
       <td class="when">${esc(fmtTime(a.audited_at))}</td>
       <td class="dim" title="${esc(fmtTime(a.audited_at))}">${a.audited_at ? `${esc(fmtAge(a.audited_at))} ago` : "—"}</td>
       <td class="r dim">—</td>
       <td>${modelLink(a.repo, a.hotkey, a.reign_number)}</td>
       <td class="dim">post-crown audit</td>
-      <td>${verdict}</td>
-      <td class="dim audit-summary" colspan="7" title="${esc(full)}">${esc(conf)}${esc(auditActionText(a))} — ${esc(sum)}</td>
+      <td>${auditVerdictBadge(a)}</td>
+      <td class="dim audit-summary" colspan="7" title="click through for the full audit">${esc(conf)}${esc(auditActionText(a))} — ${esc(full)}</td>
     </tr>`;
   };
   $("history-wrap").innerHTML = `<table class="data-table">
@@ -769,9 +765,9 @@ function renderFails(h) {
 /* ---------- audits (post-crown exploit review) ---------- */
 
 function auditVerdictBadge(a) {
-  if (a.status !== "ok") return badge("failed", "audit error");
-  if (a.exploit) return badge("rejected", "exploit");
-  return badge("accepted", "clean");
+  if (a.status !== "ok") return badge("audit-error", "audit error");
+  if (a.exploit) return badge("audit-exploit", "audit: exploit");
+  return badge("audit-clean", "audit: clean");
 }
 
 function auditActionText(a) {
@@ -823,7 +819,7 @@ function renderAudits(list) {
       if (a.challenge_id) {
         links.push(`<a href="${esc(BUCKET_BASE)}/evals/${esc(a.challenge_id)}.json.gz" target="_blank" rel="noopener" onclick="event.stopPropagation()">duel record</a>`);
       }
-      return `<tr class="row-link ${a.exploit ? "" : "current"}" data-reign="${esc(a.reign_number)}">
+      return `<tr class="row-link" data-reign="${esc(a.reign_number)}">
         <td class="when">${esc(fmtTime(a.audited_at))}</td>
         <td class="dim">#${esc(a.reign_number)}</td>
         <td>${modelLink(a.repo, a.hotkey, a.reign_number)}</td>

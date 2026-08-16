@@ -5,7 +5,11 @@ __pycache__/
 *.pyc
 .DS_Store
 **/.eval_env
-ralphs/
+# ralphs/ loop runner code is tracked; per-loop prompts/state/logs and the
+# secret resolver are not.
+ralphs/*
+!ralphs/ralph.sh
+!ralphs/ralphctl.sh
 # mining/ is tracked — the loop's notes and results are the point. Keys,
 # loop plumbing, and model weights are not.
 mining/wallets/
@@ -22,3 +26,5 @@ ops/exploit-audit/audits/
 ops/exploit-audit/audits.jsonl
 ops/exploit-audit/state/
 ops/teacher-b200/logs/
+ops/teacher-swarm/.swarm_env
+ops/teacher-swarm/state/

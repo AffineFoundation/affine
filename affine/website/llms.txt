@@ -169,7 +169,7 @@ Live path uses bittensor 11 timelock encrypt (`reveal_in="60s"`) → `Commitment
 
 Your checkpoint is served with stock `vllm serve` — **never** `--trust-remote-code`. Combined with the hygiene rules (no `*.py`, no `auto_map`), only architectures natively supported by the pod's vLLM build can play. If vLLM cannot load or serve your model, the injectability probe rejects it — and your slot is already burned. Pre-flight before submitting.
 
-- **Exact invocation**: `_vllm_cmd` in [code/evalsrv/engine.py](https://s3.hippius.com/affine-sn120/code/evalsrv/engine.py). Current knobs (`affine.toml [miner_serving]`, substituted here at site build time): `--tensor-parallel-size 2`, `--max-model-len 65536`, `--gpu-memory-utilization 0.8`, `--max-num-batched-tokens 8192`, FLASH_ATTN attention, triton MoE backend.
+- **Exact invocation**: `_vllm_cmd` in [code/evalsrv/engine.py](https://s3.hippius.com/affine-sn120/code/evalsrv/engine.py). Current knobs (`affine.toml [miner_serving]`, substituted here at site build time): `--tensor-parallel-size 2`, `--max-model-len 65536`, `--gpu-memory-utilization 0.8`, `--max-num-batched-tokens 4096`, FLASH_ATTN attention, triton MoE backend.
 - **dtype** is vLLM `auto`: it follows `torch_dtype` in your `config.json`.
 - **Versions float**: pods install the [eval] extra fresh at provision time (floors from `pyproject.toml`: `vllm>=0.8`, `transformers>=4.51`). The versions actually running right now are reported live at `api/v1/snapshot` under `eval_machine.versions` (vllm / transformers / torch) and in `data/contract.json` `serving` for the frozen knobs.
 - **Hardware**: an 8-GPU B300/B200/H200 pod; the miner slot is 2 GPUs, tensor-parallel 2. Your model (≤ 90 GB safetensors) must load and serve under exactly that.

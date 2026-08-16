@@ -99,6 +99,42 @@ def _write_agent_config(model_repo: str, model_port: int, path: Path) -> None:
     path.write_text(yaml.safe_dump(cfg, sort_keys=False))
 
 
+def _prepull_images(pin: dict) -> None:
+    """Pull every suite image that isn't cached yet before the agent starts.
+
+    mini-swe-agent's container-start timeout (120s) includes the image pull;
+    on a freshly provisioned pod with an empty docker cache the multi-GB
+    swerebench images take minutes each to pull, so every task dies with
+    TimeoutExpired and zero messages. Pre-pulling is idempotent and near-free
+    once the cache is warm. Best-effort: a failed pull just leaves that task
+    to fail individually instead of aborting the suite."""
+    images = [
+        "swerebench/sweb.eval.x86_64."
+        f"{iid.replace('__', '_1776_').lower()}:latest"
+        for iid in pin["instance_ids"]
+    ]
+    try:
+        p = subprocess.run(["docker", "images", "--format",
+                            "{{.Repository}}:{{.Tag}}"],
+                           capture_output=True, text=True, timeout=60)
+        cached = set((p.stdout or "").split())
+    except Exception:
+        cached = set()
+    missing = [img for img in images if img not in cached]
+    if not missing:
+        return
+    log.info("pre-pulling %d/%d suite images", len(missing), len(images))
+    t0 = time.time()
+    try:
+        subprocess.run(
+            ["xargs", "-P", "6", "-n", "1", "docker", "pull"],
+            input="\n".join(missing), text=True, capture_output=True,
+            timeout=3600)
+    except Exception:
+        log.warning("image pre-pull incomplete", exc_info=True)
+    log.info("image pre-pull done in %.0fs", time.time() - t0)
+
+
 def _reap_stale_containers() -> None:
     """Remove leftover mini-swe-agent containers from aborted/crashed runs.
 
@@ -266,6 +302,7 @@ def run_swe_lite(model_repo: str, model_port: int, *,
         _write_agent_config(model_repo, model_port, agent_cfg)
     except Exception as e:
         return {"ok": False, "suite": SUITE_NAME, "error": f"prepare: {e}"}
+    _prepull_images(pin)
 
     env = dict(os.environ)
     env["MSWEA_COST_TRACKING"] = "ignore_errors"

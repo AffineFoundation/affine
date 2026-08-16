@@ -265,6 +265,20 @@ class LiumProvider(Provider):
                       self.pod_name, ssh)
             _run(["lium", "rm", self.pod_name], timeout=120, input_text="y\n")
             return None
+        # Verify the pod actually exposes the GPUs the listing promised —
+        # executors have delivered fewer (e.g. 1× on a "2×" listing), which
+        # passes health checks but breaks every TP>=2 vllm serve.
+        smi = _ssh_run(ssh, "nvidia-smi -L | wc -l", timeout=45)
+        try:
+            n_gpus = int((smi.stdout or "0").strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            n_gpus = 0
+        if n_gpus < self.em.gpu_count:
+            log.error("pod %s on %s exposes %d GPUs, need %d; releasing and "
+                      "blacklisting", self.pod_name, huid, n_gpus,
+                      self.em.gpu_count)
+            _run(["lium", "rm", self.pod_name], timeout=120, input_text="y\n")
+            return None
         return {"provider": "lium", "id": self.pod_name, "executor": huid,
                 "gpu": gpu, "price_per_hour": price, "ssh": ssh,
                 "created_at": time.time()}
@@ -301,15 +315,18 @@ class LiumProvider(Provider):
         exclude = exclude or set()
         gpu_types = list(getattr(self.em, "gpu_types", None) or [self.em.gpu_type])
         for gpu in gpu_types:
-            p = _run(["lium", "ls", "--gpu", gpu,
-                      "--count", str(self.em.gpu_count),
-                      "--format", "json"],
+            # NOTE: combining `--gpu` and `--count` in `lium ls` has been
+            # observed to return [] even when matching executors exist, so we
+            # filter gpu_count locally instead (>= wanted; the price cap keeps
+            # oversized pods out).
+            p = _run(["lium", "ls", "--gpu", gpu, "--format", "json"],
                      timeout=120)
             if p.returncode != 0:
                 log.error("lium ls --gpu %s failed: %s",
                           gpu, _redact(p.stderr[-300:]))
                 continue
-            ranked = _rank_lium_executors(p.stdout, self.em.max_price_per_hour)
+            ranked = _rank_lium_executors(p.stdout, self.em.max_price_per_hour,
+                                          min_gpu_count=self.em.gpu_count)
             for huid, price in ranked:
                 if huid in exclude:
                     continue
@@ -565,11 +582,15 @@ def _scp_to(ssh: str, local: Path, remote: str,
     return _run(cmd, timeout=timeout)
 
 
-def _rank_lium_executors(ls_output: str, cap: float) -> list[tuple[str, float]]:
+def _rank_lium_executors(ls_output: str, cap: float,
+                         min_gpu_count: int | None = None
+                         ) -> list[tuple[str, float]]:
     """Parse `lium ls --format json` → [(id, $/hr), ...] cheapest first under cap.
 
-    Falls back to a table scrape for older smoke fixtures / CLI versions, but
-    only accepts huid-looking tokens (never Config labels like '8×H200')."""
+    `min_gpu_count` drops JSON rows with fewer GPUs (the CLI's own
+    --gpu/--count combo filter is unreliable). Falls back to a table scrape
+    for older smoke fixtures / CLI versions, but only accepts huid-looking
+    tokens (never Config labels like '8×H200')."""
     import re
     text = (ls_output or "").strip()
     if not text:
@@ -594,6 +615,12 @@ def _rank_lium_executors(ls_output: str, cap: float) -> list[tuple[str, float]]:
                 ident = str(row.get("id") or row.get("huid") or "").strip()
                 if not ident or price > cap:
                     continue
+                if min_gpu_count is not None:
+                    try:
+                        if int(row.get("gpu_count") or 0) < min_gpu_count:
+                            continue
+                    except (TypeError, ValueError):
+                        continue
                 ranked.append((ident, price))
             ranked.sort(key=lambda x: x[1])
             return ranked

@@ -71,6 +71,22 @@ def build_reveal(prefix: str, repo: str, revision: str, hotkey: str) -> str:
     return f"{prefix}|{repo}|{revision}|{hotkey}"
 
 
+def scale_encode_vec_u8(data: bytes) -> bytes:
+    """SCALE-encode a byte string the way working affine1 RC rows store it.
+
+    Validator `_decode_commitment_pair` strips a compact length prefix before
+    parsing. Bare UTF-8 lands in RevealedCommitments but fails intake.
+    """
+    n = len(data)
+    if n < 64:
+        return bytes([(n << 2) & 0xFF]) + data
+    if n < 16384:
+        return ((n << 2) | 0b01).to_bytes(2, "little") + data
+    if n < (1 << 30):
+        return ((n << 2) | 0b10).to_bytes(4, "little") + data
+    raise ValueError(f"reveal payload too large for SCALE compact: {n}")
+
+
 def check_repo_name(repo: str, coldkey: str, hotkey: str) -> list[str]:
     """The two naming rules the validator rejects on (repo_name_rejected)."""
     problems = []
@@ -195,7 +211,9 @@ def main() -> None:
     # bittensor 11: timelock-encrypt the payload to a near-future drand round
     # and publish it via the raw Commitments call; the chain decrypts and
     # lands it in RevealedCommitments (~1 min).
-    sealed = bt.timelock.encrypt(payload, reveal_in="60s")
+    # Encrypt SCALE(utf8) so validator decode matches live foreign affine1 rows.
+    sealed = bt.timelock.encrypt(
+        scale_encode_vec_u8(payload.encode("utf-8")), reveal_in="180s")
     call = bt.calls.Commitments.set_commitment(
         args.netuid,
         {"fields": [{"TimelockEncrypted": {
@@ -206,7 +224,7 @@ def main() -> None:
     res = subtensor.submit_call(call, wallet, signer="hotkey")
     res.raise_for_failure()
     print(f"submitted in block {res.block_hash}; reveal opens at drand round "
-          f"{sealed.reveal_round} (~1 min). Watch the queue on the dashboard.")
+          f"{sealed.reveal_round} (~3 min). Watch the queue on the dashboard.")
 
 
 if __name__ == "__main__":

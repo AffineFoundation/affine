@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -189,6 +190,16 @@ class Engine:
     # window and delete the snapshot the duel just decided to keep.
     _lock: threading.RLock = field(init=False, default_factory=threading.RLock,
                                    repr=False)
+    # Serializes ensure_teacher: the startup warmup thread and a duel job
+    # can call it concurrently (evalsrv bounce with a dispatch in flight),
+    # and unserialized each caller sees not-ready, relaunches, and sweeps
+    # the other's warming workers as GPU orphans — teachers never finish
+    # warmup and the load-failure self-kill loops the server (2026-08-15).
+    # Cannot ride _lock: ensure_teacher blocks for minutes in _wait_ready,
+    # which must not hold up prefetch/prune/launch state transitions.
+    _teacher_lock: threading.Lock = field(init=False,
+                                          default_factory=threading.Lock,
+                                          repr=False)
     # Next-challenger snapshot being warmed while the current duel scores
     # (download is network-bound, scoring is GPU-bound): (repo, worker,
     # cancel event). Protection from pruning is derived from thread liveness:
@@ -238,6 +249,16 @@ class Engine:
         # bigger chunks ([bench_serving].max_num_batched_tokens) for fast
         # long-context agent prefills.
         batched_tokens = int(ms["max_num_batched_tokens"])
+        gpu_util = ms["gpu_memory_utilization"]
+        if slot.label.startswith("teacher"):
+            # Teachers absorb nearly all echo traffic, so they get bigger
+            # chunks — but the fp32 log_softmax spike lives OUTSIDE vLLM's
+            # budgeted pool, and at 0.80 util a 12288-chunk spike OOM'd
+            # teacher2 mid-duel (2026-08-14). Teacher KV runs ~2-5% full, so
+            # a lower util buys the spike headroom for free.
+            batched_tokens = int(ms.get("teacher_max_num_batched_tokens",
+                                        batched_tokens))
+            gpu_util = ms.get("teacher_gpu_memory_utilization", gpu_util)
         if self.role == "bench":
             bs = self.cfg.get("bench_serving") or {}
             batched_tokens = int(bs.get("max_num_batched_tokens", 16384))
@@ -246,7 +267,7 @@ class Engine:
             "--port", str(slot.port),
             "--tensor-parallel-size", str(slot.tp),
             "--max-model-len", str(ms["max_model_len"]),
-            "--gpu-memory-utilization", str(ms["gpu_memory_utilization"]),
+            "--gpu-memory-utilization", str(gpu_util),
             "--max-num-batched-tokens", str(batched_tokens),
             # Avoid FlashInfer JIT (needs a coherent system CUDA toolkit; the
             # pip nvidia-cu13 wheel headers often trip B300/Blackwell builds).
@@ -314,10 +335,40 @@ class Engine:
             log.warning("gpu orphan sweep failed for %s", slot.label,
                         exc_info=True)
 
+    def _kill_port_listener(self, slot: Slot) -> None:
+        """SIGKILL whatever still listens on the slot's port.
+
+        An evalsrv restart orphans the previous vLLM processes: the GPU
+        sweep reaps the CUDA workers, but the CPU-side API-server parent
+        keeps the port bound and keeps answering /v1/models. A fresh launch
+        then cannot bind, _wait_ready's GET hits the zombie and declares
+        "ready in 0s", and every completion ConnectErrors (2026-08-15,
+        king + challenger, twice in one day). Slot ports are engine-owned,
+        one engine per port, so any listener found here is stale by
+        definition.
+        """
+        try:
+            out = subprocess.run(
+                ["ss", "-tlnpH", f"sport = :{slot.port}"],
+                capture_output=True, text=True, timeout=10).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            return
+        for pid_s in set(re.findall(r"pid=(\d+)", out or "")):
+            pid = int(pid_s)
+            if pid == os.getpid():
+                continue
+            log.warning("killing stale listener pid %d on %s port %d",
+                        pid, slot.label, slot.port)
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
     def _launch(self, slot: Slot, repo: str, revision: str | None) -> None:
         with self._lock:
             self._kill(slot)
             self._sweep_slot_gpus(slot)
+            self._kill_port_listener(slot)
             slot.load_error = ""
             LOG_DIR.mkdir(parents=True, exist_ok=True)
             _purge_broken_flashinfer_moe_cache()
@@ -436,23 +487,36 @@ class Engine:
         if base_url:
             # Re-probe every ensure: a dead remote must fail the duel closed.
             return self._probe_remote_teacher(base_url, str(t["repo"]))
-        primary_ok = self.teacher_slot.ready and self._alive(self.teacher_slot)
-        if not primary_ok:
-            self._launch(self.teacher_slot, t["repo"], None)
-        replica_launched = False
-        if self.teacher2_slot is not None and not (
-                self.teacher2_slot.ready and self._alive(self.teacher2_slot)):
-            self._launch(self.teacher2_slot, t["repo"], None)
-            replica_launched = True
-        if not primary_ok and not self._wait_ready(self.teacher_slot):
+        # Serialized: a second caller waits out the first warmup and then
+        # sees ready teachers instead of relaunching over them.
+        with self._teacher_lock:
+            primary_ok = self.teacher_slot.ready and self._alive(self.teacher_slot)
+            if not primary_ok:
+                self._launch(self.teacher_slot, t["repo"], None)
+            replica_launched = False
+            if self.teacher2_slot is not None and not (
+                    self.teacher2_slot.ready and self._alive(self.teacher2_slot)):
+                self._launch(self.teacher2_slot, t["repo"], None)
+                replica_launched = True
+            if not primary_ok and not self._wait_ready(self.teacher_slot):
+                return False
+            if replica_launched and not self._wait_ready(self.teacher2_slot,
+                                                         timeout_s=1200):
+                # Non-fatal: reap the half-dead process so its GPUs stay clean
+                # and the duel routes everything to the primary.
+                log.warning("teacher replica failed to warm; running single-teacher")
+                self._kill(self.teacher2_slot)
+            return True
+
+    def _probe_extra_teacher(self, base_url: str) -> bool:
+        """Stateless liveness probe of one additive remote teacher endpoint."""
+        try:
+            r = httpx.get(f"{base_url}/models", timeout=5.0)
+            r.raise_for_status()
+            return True
+        except Exception as e:
+            log.warning("extra teacher %s dark, skipping: %s", base_url, e)
             return False
-        if replica_launched and not self._wait_ready(self.teacher2_slot,
-                                                     timeout_s=1200):
-            # Non-fatal: reap the half-dead process so its GPUs stay clean
-            # and the duel routes everything to the primary.
-            log.warning("teacher replica failed to warm; running single-teacher")
-            self._kill(self.teacher2_slot)
-        return True
 
     def teacher_serveds(self) -> list[Served]:
         """Teacher endpoints currently servable, primary first. The replica is
@@ -472,6 +536,23 @@ class Engine:
         s2 = self.teacher2_slot
         if (s2 is not None and s2.served and s2.ready and self._alive(s2)):
             out.append(s2.served)
+        # Additive swarm capacity (2026-08-15 operator directive): extra
+        # OpenAI-compatible teacher endpoints join the duel pool when alive.
+        # Strictly fail-open — a dark extra is skipped and the local slots
+        # above remain the mandatory floor (ensure_teacher is unchanged).
+        # Same repo at temperature-0 echo scoring, so which endpoint answers
+        # a call is score-invariant; duplicates in the list are allowed and
+        # weight the pool's uniform turn hash toward the bigger backend.
+        repo = str(self.cfg["teacher"]["repo"])
+        extras = [str(u).rstrip("/")
+                  for u in (self.cfg["teacher"].get("extra_urls") or [])]
+        alive: dict[str, bool] = {}
+        for u in extras:
+            if u not in alive:
+                alive[u] = self._probe_extra_teacher(u)
+            if alive[u]:
+                out.append(Served(name="teacher", repo=repo, revision=None,
+                                  port=0, base_url=u))
         return out
 
     def ensure_king(self, repo: str, revision: str) -> bool:

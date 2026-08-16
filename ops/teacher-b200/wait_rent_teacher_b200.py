@@ -103,9 +103,23 @@ def _get_json(
     return None
 
 
-def _is_b200(machine: str) -> bool:
+# Comma-separated preference order; first match wins the sort. "B200" also
+# excludes B300 (its name contains the substring) via the explicit check.
+GPU_TYPES = [
+    t.strip().upper()
+    for t in os.environ.get("GPU_TYPES", "B200").split(",")
+    if t.strip()
+]
+
+
+def _gpu_rank(machine: str) -> int | None:
     u = (machine or "").upper()
-    return "B200" in u and "B300" not in u
+    for rank, want in enumerate(GPU_TYPES):
+        if want == "B200" and "B300" in u:
+            continue
+        if want in u:
+            return rank
+    return None
 
 
 def list_b200_8x(sess: requests.Session) -> list[dict] | None:
@@ -122,8 +136,11 @@ def list_b200_8x(sess: requests.Session) -> list[dict] | None:
             continue
         if n.get("has_no_pending_rental") is False:
             continue
-        if _is_b200(n.get("machine_name") or ""):
+        rank = _gpu_rank(n.get("machine_name") or "")
+        if rank is not None:
+            n["_gpu_rank"] = rank
             out.append(n)
+    out.sort(key=lambda n: (n["_gpu_rank"], n.get("price_per_hour") or 1e9))
     return out
 
 

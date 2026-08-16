@@ -812,6 +812,23 @@ table.data-table td.when {
   color: rgba(90, 200, 250, 0.85);
 }
 
+/* Audit verdicts: deliberately muted — the audit is context, not an outcome
+   the eye should snag on. Read the full verdict by clicking through. */
+.badge.audit-clean {
+  border-color: rgba(68, 255, 154, 0.14);
+  color: rgba(68, 255, 154, 0.45);
+}
+
+.badge.audit-exploit {
+  border-color: rgba(255, 71, 71, 0.16);
+  color: rgba(255, 71, 71, 0.5);
+}
+
+.badge.audit-error {
+  border-color: rgba(245, 230, 99, 0.16);
+  color: rgba(245, 230, 99, 0.5);
+}
+
 .bar {
   display: inline-block;
   width: 48px;
@@ -1689,9 +1706,14 @@ table.data-table td.mono {
   padding: 4px 8px;
 }
 
-/* Audit verdict rows interleaved into the history table. */
+/* Audit verdict rows interleaved into the history table: one line, always —
+   max-width 1px + nowrap forces ellipsis in an auto-layout table. Full text
+   lives on the audit page (click the row). */
 table.data-table td.audit-summary {
   font-style: italic;
   font-size: 11px;
-  max-width: 520px;
+  max-width: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

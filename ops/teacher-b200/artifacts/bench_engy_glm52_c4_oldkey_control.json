@@ -1,0 +1,30 @@
+{
+  "utc": "2026-08-15T15:27:26Z",
+  "base_urls": [
+    "https://api.engy.ai/v1"
+  ],
+  "model": "glm-5.2",
+  "concurrency": 4,
+  "n_turns": 16,
+  "prefix_tokens": 8192,
+  "suffix_tokens": 1024,
+  "echoes_per_turn": 4,
+  "serial_echoes": false,
+  "span_tokenizer": "zai-org/GLM-5.2",
+  "retries": 0,
+  "wall_s": 24.775,
+  "turns_per_s": 0.646,
+  "proj_4000_min": 103.2,
+  "sample": {
+    "n": 16,
+    "rps": 0.646,
+    "p50_s": 3.609,
+    "p95_s": 4.524
+  },
+  "echo": {
+    "n": 64,
+    "rps": 2.583,
+    "p50_s": 1.244,
+    "p95_s": 2.119
+  }
+}

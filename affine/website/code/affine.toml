@@ -78,6 +78,33 @@ gpus = "0,1"
 # scoring, so which replica answers a call is score-invariant.
 replica_port = 8003
 replica_gpus = "6,7"
+# Additive teacher-swarm capacity (2026-08-15, explicit operator directive:
+# "gently add it into our eval process"). These OpenAI-compatible endpoints
+# JOIN the duel's teacher pool next to the mandatory local slots — this is
+# NOT the retired base_url full cutover. Fail-open: each URL is probed per
+# duel and skipped when dark, so a dead swarm degrades to local-only.
+# Identical repo at temperature-0 echo scoring → score-invariant; ops knob
+# only, no weight_version_key event. The URL is a localhost reverse-tunnel
+# to the swarm router (ops/teacher-swarm/), which load-balances ~30 rented
+# boxes with canary admission and per-pod self-healing. Listing it 10x
+# weights the pool's uniform turn hash: 10/12 of turns ride the swarm.
+# 4x -> 10x on 2026-08-15 after mid-scoring queue depths showed the local
+# replica saturated (5 running + 8 waiting) while 34 swarm replicas held ~1
+# request each: sticky turns pinned to a queued local slot paced the duel.
+# At 10/12 weighting the locals keep roughly the same absolute turn load
+# as before while the swarm absorbs everything else.
+extra_urls = [
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+]
 
 [miner_serving]
 # King stays warm; challenger is loaded per duel.
@@ -96,15 +123,24 @@ max_model_len = 65536
 # — ~5 GB transient at 8192x151k — so the duel pod needs real headroom.
 # 0.85 + 16384 OOM'd the king mid-duel on 268 GiB B300s (2026-08-04).
 gpu_memory_utilization = 0.80
-# Scheduler token budget per engine step (applies to teacher/king/challenger
-# alike). Duel scoring is dominated by ~20k-token prefill-only echo calls
-# (~100M prompt tokens per duel per model); at 2048 the scheduler was the
-# bottleneck (~50 min/duel of queueing). 12288 (2026-08-12): step up from
-# Echo+logprobs materializes fp32 log_softmax over (chunk x vocab) per
-# request: at 12288 that is a ~10.9 GiB transient spike, which OOM'd the
-# challenger on the H200 duel pod (141 GB; 2026-08-13). 8192 is the proven
-# ceiling there. Ops knob only — no effect on scoring semantics.
-max_num_batched_tokens = 8192
+# Scheduler token budget per engine step for MINER slots (king/challenger).
+# Under reason_only miners only sample — the sole echo they serve is the
+# injectability probe — but that one echo still materializes fp32
+# log_softmax over (chunk x vocab) outside vLLM's budgeted pool. A barely-
+# fitting bf16 challenger (Talucampe037, 2026-08-15) left 6.3 GiB free at
+# 0.80 util and the 8192-chunk probe spike wanted 7.6 GiB → EngineDead
+# crash loop. 4096 halves the spike to ~3.8 GiB so max-size checkpoints
+# survive their probe; miner prefill is sampling-side and decode-dominated,
+# so the smaller chunk is not on the duel critical path (teachers keep
+# their own override below). Ops knob only — no scoring effect.
+max_num_batched_tokens = 4096
+# Teacher slots only: bigger chunks cut the echo queue wait that dominates
+# duel wall time. At 0.80 util the 12288 spike OOM'd teacher2 mid-duel
+# (2026-08-14, 6.93 GiB wanted vs 6.66 free), so teachers also run a lower
+# gpu_memory_utilization — their KV cache sits at ~2-5% full, so trading
+# ~14 GB of unused KV pool for spike headroom costs nothing.
+teacher_max_num_batched_tokens = 12288
+teacher_gpu_memory_utilization = 0.70
 
 [dataset]
 # Unlabeled turn corpus D: append-only shards + an immutable-manifest pointer
@@ -178,7 +214,11 @@ causality_gamma = 0.30
 temperature = 0.8
 max_thought_tokens = 1024
 max_action_tokens = 768
-concurrency = 24
+# Client-side turn pipelines in flight per side (ops knob, no scoring
+# effect). 24 -> 36 on 2026-08-15 with the teacher swarm absorbing echo
+# load: mid-scoring the miner engines ran 5-7 requests with zero queueing,
+# so the extra in-flight turns feed idle sampling capacity.
+concurrency = 36
 # Whole-duel wall clock budget on the eval server before the validator
 # classifies the eval as a transient failure and requeues.
 timeout_s = 7200
@@ -247,7 +287,9 @@ targon_image = "vllm/vllm-openai:latest"
 # Sized for one miner TP=2 serve + docker agent/eval — not the 8× duel layout.
 # Prefer H200: currently ~$23/hr for 2× vs B300 8× at ~$64 for the duel pod.
 provider_order = ["lium", "targon"]
-gpu_types = ["H200", "B200", "B300"]
+# H100 last-resort: 2×80GB comfortably serves a ~35B king at TP=2, and Lium
+# regularly has 2× H100 when all Blackwell/H200 2× inventory is gone.
+gpu_types = ["H200", "B200", "B300", "H100"]
 gpu_type = "H200"
 gpu_count = 2
 max_price_per_hour = 30.0

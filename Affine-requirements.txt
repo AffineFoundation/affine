@@ -1,0 +1,148 @@
+AFFINE (Bittensor SN120) — SERVICE REQUIREMENTS FOR CHUTES
+============================================================
+Contact: Affine / SN120 operators
+Date: 2026-08-15
+Status: draft for discussion
+
+WHAT WE DO AND WHY WE NEED YOU
+------------------------------
+Affine scores miners with teacher-anchored distillation duels. The entire
+score is built from per-token log-probabilities ("logprobs") that a fixed
+teacher model assigns to a fixed piece of text. We never need the teacher
+to *write* anything new for the scored quantity — we need it to *read* a
+text we supply and tell us, token by token, how likely each token was.
+This operation is called teacher forcing, or "echo scoring" in
+OpenAI-compatible APIs.
+
+Today (2026-08-15) chutes returns "logprobs": null for every model, every
+endpoint, and every parameter spelling we tried (OpenAI `logprobs`,
+`echo` + `logprobs`, chat `logprobs`/`top_logprobs`, SGLang
+`return_logprob`). This single gap makes chutes unusable for us. Fixing
+it would make chutes the best home for this workload, because your TEE
+attestation solves the trust problem that no other decentralized
+inference network solves.
+
+The word MUST marks a hard requirement. SHOULD marks a strong preference.
+
+R1. PROMPT LOGPROBS (THE CORE REQUIREMENT)
+------------------------------------------
+1.1 `/v1/completions` MUST support `echo: true` with `logprobs: N`, and
+    return `token_logprobs` for the PROMPT tokens, not only generated
+    tokens. `max_tokens: 0` or `1` MUST be accepted for pure scoring
+    requests.
+1.2 The response MUST include, per prompt token: the token string (or
+    id) and its logprob. Top-k alternatives are optional (k=1 is fine).
+1.3 If a model or deployment cannot serve logprobs, the API MUST return
+    an explicit 4xx error. Silently returning `"logprobs": null` on an
+    accepted request (current behavior) is the worst failure mode: it
+    wastes paid tokens and hides the incapability.
+
+R2. SPAN SCORING (COST AND MEMORY CONTROL)
+------------------------------------------
+Our prompts are ~8,000-token context prefixes followed by a ~700–1,500
+token answer span. We only need logprobs over the answer span.
+2.1 The API MUST support scoring only the tail of the prompt, via
+    `logprob_start_len` (the SGLang/vLLM parameter giving the token
+    offset where scoring starts) or an equivalent.
+2.2 `prompt` MUST accept a list of token ids (list[int]) so the client
+    can compute the span offset exactly. Publishing which tokenizer/
+    revision each model uses is then sufficient; a server-side
+    /tokenize endpoint is a nice-to-have, not required.
+2.3 Full-prompt echo on long prompts MAY be capped (we understand the
+    memory cost — roughly one vocab-sized softmax row per scored
+    token). A cap is fine as long as span scoring exists.
+
+R3. MODELS
+----------
+3.1 We need at least one strong, fixed teacher model with logprob
+    support. Exact preference order:
+      a) zai-org/GLM-4.5-Air-FP8  (our current production teacher)
+      b) zai-org/GLM-5.2          (already on chutes)
+      c) Qwen/Qwen3-32B           (already on chutes; validated as a
+                                   second teacher in our research,
+                                   rank agreement +0.943 with (a))
+3.2 The model MUST be pinned: fixed weights revision, fixed
+    quantization, fixed dtype for the logprob computation. The response
+    SHOULD stamp these (your `metadata.weight_version` field is a good
+    start — make it a content hash, not "default").
+3.3 A model we depend on MUST NOT be delisted or hot-swapped without
+    notice. We watched a model (glm-5.2 on another network) disappear
+    mid-benchmark today; a scoring run that loses its teacher mid-duel
+    is void. A deprecation window of >= 30 days SHOULD apply.
+
+R4. DETERMINISM AND VERIFIABILITY
+---------------------------------
+Scores decide on-chain weights, so third parties must be able to replay
+a verdict and get the same numbers within tolerance.
+4.1 Echo scoring at temperature 0 has no sampling; remaining variance
+    is numeric (kernel batch-invariance, dtype). Logprobs for the same
+    (model revision, token ids, span) MUST be reproducible across
+    workers within a stated tolerance (we can work with |delta lp| <=
+    1e-2 per token; state what you can guarantee).
+4.2 TEE attestation SHOULD cover the model weights hash and the
+    inference engine version/config, and be checkable per response
+    (your `chutes_verification` field — document how to verify it).
+4.3 The response MUST identify the serving backend version (engine +
+    model revision) so drift is detectable.
+
+R5. THROUGHPUT AND CAPACITY
+---------------------------
+Our unit of work is a "turn": 1 generation request (~8k-token prefill,
+up to ~1.5k generated tokens) + 4 echo-score requests (~8k-token prefill
+each, ~1k-token scored span, all 4 sharing the same prefix). A duel is
+2,080 turns; we run duels continuously.
+5.1 Sustained: >= 2 turns/second (= ~10 requests/s at ~8k prefill each,
+    or ~100k prefill tokens/s) for >= 60 minutes. Our own dedicated
+    2xTP4 H200 box does 4–6.5 turns/s; matching the low end makes you a
+    useful supplement, matching the high end a replacement.
+5.2 Concurrency: >= 64 requests in flight without 502/504. Under load
+    we expect 429 with a Retry-After header, never a bare gateway
+    error.
+5.3 Prefix caching SHOULD be enabled and requests SHOULD be routable so
+    the 4 echoes sharing one prefix hit the same worker (sticky
+    routing by a client-supplied key would be ideal).
+5.4 Cold starts: a "scale from zero" model that needs minutes to warm
+    up is acceptable only if warm capacity can be reserved.
+
+R6. RELIABILITY AND OPERATIONS
+------------------------------
+6.1 Request success rate >= 99.5% over any 1-hour window, measured on
+    valid requests.
+6.2 Errors MUST be JSON with a machine-readable code. Cloudflare HTML
+    error pages on an API route make client-side retry logic guesswork.
+6.3 A status page or health endpoint per model, so we can route around
+    capacity gaps before committing a scoring run to you.
+6.4 Rate limits MUST be documented per key/account.
+
+R7. BILLING
+-----------
+7.1 Echo-score requests SHOULD be billed by scored span tokens plus a
+    cache-read rate for the shared prefix, not as full-price prompt
+    tokens for every request. At full prompt pricing our workload pays
+    5x for the same prefill.
+7.2 Usage reporting per request (prompt/cached/scored token counts) so
+    we can reconcile costs.
+
+WHAT WE CAN OFFER
+-----------------
+- A steady, predictable, high-volume workload (hundreds of millions of
+  prefill tokens per day when duels run continuously).
+- Public, cite-able use of chutes TEE attestation as the trust anchor
+  for decentralized eval scoring — a use case beyond plain inference.
+- Engineering time to co-test: we have a duel-shaped load benchmark
+  ready (1 sample + 4 span echoes per turn, 8k prefixes) and can run
+  it against a staging deployment on request.
+
+ACCEPTANCE TEST (CONCRETE)
+--------------------------
+A deployment passes when:
+  1) POST /v1/completions with {model, prompt: <token ids, ~9k tokens>,
+     logprob_start_len: <offset ~8k>, echo: true, logprobs: 1,
+     max_tokens: 1, temperature: 0} returns per-token logprobs for the
+     ~1k-token span.
+  2) The same request repeated on different workers agrees within the
+     stated tolerance (R4.1).
+  3) 64 concurrent such requests sustain >= 10 req/s for 15 minutes
+     with < 0.5% errors and zero bare-gateway (502/504) responses.
+  4) The turn benchmark (1 sample + 4 echoes, 96 turns, concurrency 24)
+     completes with >= 2 turns/s.
