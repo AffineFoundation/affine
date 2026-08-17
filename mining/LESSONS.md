@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3703: **R681 TRAIN** fill idle brave **4,5** after R671 MERGE_DONE — MidCtx HiRank HiBeta UltraExtra (β=0.3 r=64 @8192 steps=7200); kept r670+r671; R663~17G/4sh R655~54G/14sh; B300 empty. **Never `pkill -f`**.
 - p3702: **R680 TRAIN** fill idle zesty **6,7** after R668 MERGE_DONE — Long MidRank HiBeta UltraExtra (β=0.3 r=32 @16384 steps=7200); freed ~588G /tmp REFUTE merges (kept r662+r668); R663~13G/3sh R655~53G/14sh; B300 empty. **Never `pkill -f`**.
 - p3701: **R679 TRAIN** fill idle brave **2,3** after R670 MERGE_DONE — Short HiRank HiBeta UltraExtra (β=0.3 r=64 @6144 steps=7200); freed ~1.1T /tmp by RM REFUTE merges (kept r637+r670); R663~8G/2sh R655~50G/13sh; B300+B200 empty. **Never `pkill -f`**.
 - p3700: **R677+R678 TRAIN** fill idle crown **2–5** after R664/R665 MERGE — Long MidRank MidBeta UltraExtra (β=0.1 r=32 steps=7200) + Long HiRank MidBeta UltraExtra (β=0.1 r=64 steps=7200); ≠ R676 HiRank LoBeta UltraExtra / ≠ Mega 3600; R663~4G R655~12sh; B300 empty. **Never `pkill -f`**.
