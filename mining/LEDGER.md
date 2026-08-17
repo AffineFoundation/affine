@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 88431.73763177953 | p3704 |
-| Lium balance | **$88431.73763177953** | p3704 |
-| cumulative mining spend | ~$114,872 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$78432** (balance − $10,000 floor) | $UTC |
+| $UTC | 88390.81176785109 | p3705 |
+| Lium balance | **$88390.81176785109** | p3705 |
+| cumulative mining spend | ~$114,913 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$78391** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T17:57:30Z | 88390.81176785109 | p3705 **R655 N80** + **R682/R683 TRAIN** (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T17:50:53Z | 88431.73763177953 | p3704 **R655 SCP_READY→CHALL** lunar 4,5 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T17:27:45Z | 88634.85122193607 | p3703 **R681 TRAIN** brave 4,5 UltraExtra (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T17:24:44Z | 88675.56647358203 | p3702 **R680 TRAIN** zesty 6,7 UltraExtra (no rent; B300 empty); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T17:05:37Z | 88798.04014378539 | p3698 **R676 TRAIN** crown 0,1 UltraExtra Long HiRank LoBeta (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T17:00:34Z | 88879.64636172207 | p3697 **R653 SCP_READY→CHALL** (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T16:54:51Z | 88891.92650988192 | p3696 **R653+R655 REPAIR** armed (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T16:51:10Z | 88891.92650988192 | p3695 **R675 TRAIN** R252 6,7 Soft MidRank MidBeta UltraExtra (no rent; B300 empty); burn **~$331.45/h** |
