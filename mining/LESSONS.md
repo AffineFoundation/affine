@@ -13,6 +13,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - Miner-side terms (L1lift, lpA, calibration r) do **not** enter Reason. Do not train them as objectives.
 - Absolute Reason is only comparable within one duel slice. Use paired margin vs the live king.
 - Confirm `weight_version_key` from `api/v1/contract` every pass (3→4→5→6→**7**). v4 favors **commit** to a teacher mode over hedge-filler.
+- p3665: **R596 v4 re-sim LIVE** on warm R252 :8002 (pid247246) → `r596_*_reign34_wvk7.json`; fail-closed if stamp ≠ k=3 — prior p3588c ~1.31× was k=1 advisory only.
 - p3664: fleet `affine_pkg` synced to live wvk=7 (k=3/τ=0.03/n=1300) on all 6 mine-*; LME smoke OK — next n80s are v4-isomorphic; pre-p3664 k=1 margins are advisory only.
 - p3663: live **wvk=7**; fleet `run_sim_duel` still stamps **n_teacher_samples=1** — n80 margins are pre-v4 until patched.
 
@@ -24,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3665: **R596 v4 n80** — warm chall already on R252 :8002; launch `relaunch_r596_n80_reign34_wvk7_p3665.sh` (new `*_wvk7` outs; assert stamp k=3); teacher GPUs 100% within ~30s; B300 stock still empty. **Never `pkill -f`**.
 - p3664: **fleet v4 sync** — tar-deploy toml+score+terms+dueling+config+chat → all mine-* `affine_pkg`; zesty verify LME>mean; R634 still SCP~19G/5sh. **Never `pkill -f`**.
 - p3663: **R643 REFUTE** m=+0.005608~0.50× (thought✓178 B✓0.513) vs reign34; reap lunar 4,5 by PID; contract fork **wvk=7** (k=3/τ=0.03/n=1300) — patch sims before next submit. **Never `pkill -f`**.
 - p3662: **R643 lean died** after GPUs free — `du -sm $TCACHE` on missing `chall_r643` under `set -o pipefail` (same R648 landmine); fix `du … || true` + `${_pre_sz:-0}` → seed from chall_r640 → CHALL_READY→n80. **Never `pkill -f`**.
