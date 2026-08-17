@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 85745.25562401353 | p3753 |
-| Lium balance | **$85745.25562401353** | p3753 |
-| cumulative mining spend | ~$117,556 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$75745** (balance − $10,000 floor) | $UTC |
+| $UTC | 85663.33179500113 | p3754 |
+| Lium balance | **$85663.33179500113** | p3754 |
+| cumulative mining spend | ~$117,638 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$75663** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1260.382 | after R683 reg burn (~τ1.53; kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T23:34:37Z | 85663.33179500113 | p3754 **R696 REFUTE** + **R718 TRAIN** crown 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-17T23:27:07Z | 85745.25562401353 | p3753 **R693 REFUTE** + **R717 TRAIN** crown 4,5 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-17T23:22:29Z | 85745.25562401353 | p3752 **R715+R716 TRAIN** brave 4–7 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-17T23:17:07Z | 85786.49413103018 | p3751 **R693 N80 LIVE** crown 4,5 (no rent; B300×8=0); burn **~$331.45/h** |
@@ -35,5 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T22:25:16Z | 86233.67342036712 | p3747 **R703 REFUTE** + **R709 TRAIN** zesty 4,5 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T22:20:49Z | 86233.67342036712 | p3746 **R708 TRAIN** zesty 6,7 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T22:15:57Z | 86274.26724677208 | p3745 **R703 N80 LIVE** + **R702 REFUTE** (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T22:10:35Z | 86355.76560593078 | p3744 **R702 N80 LIVE** zesty 6,7 (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T22:02:38Z | 86394.18774338797 | p3743 **R696 SCP** brave→crown + R683 LOST + R698 REFUTE (no rent; B300 empty); burn **~$331.45/h** |

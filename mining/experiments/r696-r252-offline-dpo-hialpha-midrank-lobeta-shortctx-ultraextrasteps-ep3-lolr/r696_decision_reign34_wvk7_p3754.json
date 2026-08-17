@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-17T23:31:01Z",
+  "hypo": "R696",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign34",
+  "margin": -0.0027082661195067955,
+  "se": 0.0033092745008379294,
+  "z": -0.8183866641528363,
+  "n": 80,
+  "bar": 0.006618549001675859,
+  "thought_median": 140.5,
+  "b_pass": 0.4375,
+  "wins": false,
+  "note": "p3743 chall+v4-n80 crown 6,7; Short MidRank LoBeta UltraExtra ep3 LoLR; SCP brave\u2192crown; vs reign34 wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}
