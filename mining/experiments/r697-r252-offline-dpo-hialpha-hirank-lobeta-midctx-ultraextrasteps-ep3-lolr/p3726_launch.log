@@ -1,0 +1,43 @@
+Executing on gentle-wolf-8c
+[p3726-r697-launch] 2026-08-17T20:13:52Z VRAM6+7 used_mib=0 iter=1
+[p3726-r697-launch] 2026-08-17T20:13:53Z tmp_avail_G=2490
+[p3726-r697-launch] 2026-08-17T20:13:56Z TRAIN_UP pid=276157 iter=1
+OUTER=276127 WAIT=276236 TRAIN=276157
+=== lean_warm ===
+[r697-lean] 2026-08-17T20:13:53Z start GPUs 6,7
+[r697-lean] data_lines=604
+[r697-lean] wait VRAM6+7 used_mib=0 iter=1
+[r697] 2026-08-17T20:13:53Z examples=604 lr=1e-6 r=64 β=0.02 steps=7200 len=8192 ep=3 gpus=6,7
+{
+  "utc": "2026-08-17T20:13:53Z",
+  "axis": "r252_offline_dpo_hialpha_hirank_lobeta_midctx_ultraextrasteps_ep3_lolr",
+  "base": "/root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f",
+  "data": "/root/r697/dpo_duel_reason.jsonl",
+  "examples": 604,
+  "lr": "1e-6",
+  "lora_r": 64,
+  "lora_alpha": 128,
+  "beta": 0.02,
+  "max_steps": 7200,
+  "max_len": 8192,
+  "epochs": 3,
+  "gpus": "6,7",
+  "pid": 276157,
+  "parent_signal": "R655 MidCtx HiRank LoBeta Mega ep3 REFUTE ~-0.92x / R649 ep2 \u2014 UltraExtra steps=7200 (\u2260 Mega 3600; \u2260 R689 MidCtx HiRank MidBeta UltraExtra; \u2260 R681 MidCtx HiRank HiBeta UltraExtra; \u2260 R694 MidCtx HiRank HiBeta HyperExtra; \u2260 R692 MidCtx MidRank LoBeta UltraExtra; \u2260 Online / \u2260 GRPO)",
+  "decision_rule": "Stage-5 iff fresh n80 paired margin > max(2*SE, 0.002) AND median |z|>=80 AND B pass>=0.30 vs reign34 (v4 k=3)"
+}
+[r697] TRAIN_ARMED pid=276157
+[r697-lean] 2026-08-17T20:13:53Z TRAIN launched pid=276157
+=== gpu ===
+index, memory.used [MiB], utilization.gpu [%]
+0, 240036 MiB, 0 %
+1, 240036 MiB, 0 %
+2, 222500 MiB, 0 %
+3, 222500 MiB, 0 %
+4, 60050 MiB, 69 %
+5, 54198 MiB, 2 %
+6, 0 MiB, 0 %
+7, 0 MiB, 0 %
+    PID     ELAPSED CMD
+ 276157 441077233-23:48:48 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f --data /root/r697/dpo_duel_reason.jsonl --out-dir /root/r697/train --max-len 8192 --epochs 3 --lr 1e-6 --lora-r 64 --lora-alpha 128 --beta 0.02 --max-steps 7200
+[p3726-r697-launch] 2026-08-17T20:13:56Z DONE
