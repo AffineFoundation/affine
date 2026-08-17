@@ -22,6 +22,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3659: **R641** SCP_READY then lean **purged** seeded Triton 170M→724K (same R640 landmine) — kill-by-PID, patch lean **REUSE if n_so≥25 & ≥100M / wipe+seed NO purge**, reseed from `/root/.triton/cache/chall`, CHALL_READY→**n80** pid724905. **Never `pkill -f`**.
 - p3658: **R648 REFUTE** m=+0.005039~0.68× (thought✓148 B✓0.506); reap golden :8003 by PID → **R646 ARMED** Long HiRank MidBeta; **R631 DEFER** again (~6G slow; free brave uplink). **Never `pkill -f`**.
 - p3657: **R648 lean died** after "GPUs free" — `du -sm $TCACHE` on missing `chall_r648` under `set -o pipefail` exits before seed; fix `du … || true` + `${_sz:-0}`; then wipe+seed from chall_r645 → CHALL_READY→n80. **Never `pkill -f`**.
 - p3656: **R652 TRAIN** Soft HiRank LoBeta ep3×LoLR on idle brave **2,3** while R651 owns **0,1** and R648 uplink still live — fill free GPUs with a distinct Soft×ep3 axis when B300 stock empty. **Never `pkill -f`**.

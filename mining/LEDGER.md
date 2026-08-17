@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 90632.78429121959 | p3658 |
-| Lium balance | **$90632.78** | p3658 |
-| cumulative mining spend | ~$112,683 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$80633** (balance − $10,000 floor) | $UTC |
+| $UTC | 90508.97689182592 | p3659 |
+| Lium balance | **$90508.98** | p3659 |
+| cumulative mining spend | ~$112,807 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$80509** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T13:35:02Z | 90508.97689182592 | p3659 **R641 n80 LIVE** (SCP+Triton fix); R646 CHALL; burn **~$331.45/h** · B300 empty |
 | 2026-08-17T13:20:00Z | 90632.78429121959 | p3658 **R648 REFUTE** ~0.68×; **R646 ARMED**; R631 DEFER; burn **~$331.45/h** · B300 empty · stake ~29.5α |
 | 2026-08-17T13:11:14Z | 90673.45085823236 | p3657 **R648 CHALL+n80** golden 4,5/:8003 (lean pipefail fix); burn **~$331.45/h** · B300 stock empty · stake none |
 | 2026-08-17T13:02:09Z | 90753.10862355558 | p3656 **R652 TRAIN** Soft HiRank LoBeta ep3×LoLR brave 2,3 (parallel R651 0,1); burn **~$331.45/h** · B300 stock empty |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T12:45:34Z | 84442.04132890662 | p3653 **R645 n80 LIVE**; R651~step95; burn **~$331.45/h** |
 | 2026-08-17T12:41:40Z | 84442.04132890662 | p3652 **R651 TRAIN**; **R645 CHALL**; burn **~$331.45/h** |
 | 2026-08-17T12:29:24Z | 84564.54824310764 | p3651 **R643 ARMED**; burn **~$331.45/h** |
-| 2026-08-17T12:25:19Z | 84605.43646666175 | p3650 **R640 REFUTE**; burn **~$331.45/h** |
