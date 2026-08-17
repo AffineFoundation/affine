@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 87454.8892824822 | p3722 |
-| Lium balance | **$87454.8892824822** | p3722 |
-| cumulative mining spend | ~$115,845 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$77455** (balance − $10,000 floor) | $UTC |
+| $UTC | 87413.77000699901 | p3723 |
+| Lium balance | **$87413.77000699901** | p3723 |
+| cumulative mining spend | ~$115,886 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$77414** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T19:56:50Z | 87413.77000699901 | p3723 **R683 SCP_QUEUED** gate R680 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T19:51:44Z | 87454.8892824822 | p3722 **R686 REFUTE** + **R694 TRAIN** (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T19:41:30Z | 87569.12166206757 | p3721 **R686 CHALL** zesty local (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T19:36:59Z | 87569.12166206757 | p3720 **R693 TRAIN** crown 4,5 (no rent; B300 empty); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T19:14:26Z | 87780.64946210934 | p3716 **R689 TRAIN** R252 6,7 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T19:07:40Z | 87821.36483452916 | p3715 **TTL+24h** + **R681 REFUTE** + **R673 TK** (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T18:57:49Z | 87902.7516655513 | p3714 **R681 CHALL** + **R679 SCP** (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T18:51:17Z | 87943.3856544509 | p3713 **R687+R688 TRAIN** brave 2–5 (no rent; B300 empty); burn **~$331.45/h** |
