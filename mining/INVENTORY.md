@@ -19,8 +19,8 @@ SSH R262: `ssh root@38.127.229.127 -p 40299`
 SSH R260: `lium exec zesty-comet-da` / `ssh root@86.38.182.95 -p 20299`
 SSH brave: `ssh -p 40127 root@18.118.83.97` / `lium exec brave-raven-a9`
 SSH R252: `ssh -p 40299 root@95.133.252.28` / `lium exec gentle-wolf-8c`
-Host fleet: next=**harvest R698 n80**; B300×8 **empty**; burn **~$331.45/h** · **wvk=7**
-**p3741:** **R698 N80 LIVE** crown 6,7/:8003; bal **~$86682**
+Host fleet: next=**watch R683 chal-00860 + harvest R698 n80**; B300×8 **empty**; burn **~$331.45/h** · **wvk=7**
+**p3741:** **R698 N80 LIVE** (~10/80) + **R683 chal-00860**; bal **~$86641**
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval` (eager-fox-27), `affine-teacher2`.
 
