@@ -1,0 +1,19 @@
+{
+  "utc": "2026-08-17T18:38:31Z",
+  "hypo": "R663",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign34",
+  "margin": -0.006775749117660069,
+  "se": 0.003978611443018783,
+  "z": -1.703043691172554,
+  "n": 78,
+  "bar": 0.007957222886037566,
+  "ratio": -0.851521845586277,
+  "thought_median": 172.0,
+  "b_pass": 0.401673640167364,
+  "wins": false,
+  "status": "REFUTE",
+  "note": "Long HiRank LoBeta Mega ep3\u00d7LoLR fails LME vs reign34; chall reaped \u2192 R681 SCP"
+}
