@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 85826.5515667286 | p3750 |
-| Lium balance | **$85826.5515667286** | p3750 |
-| cumulative mining spend | ~$117,475 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$75827** (balance − $10,000 floor) | $UTC |
+| $UTC | 85786.49413103018 | p3751 |
+| Lium balance | **$85786.49413103018** | p3751 |
+| cumulative mining spend | ~$117,515 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$75786** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1260.382 | after R683 reg burn (~τ1.53; kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T23:17:07Z | 85786.49413103018 | p3751 **R693 N80 LIVE** crown 4,5 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-17T23:12:57Z | 85826.5515667286 | p3750 **R713+R714 TRAIN** brave 0–3 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-17T22:44:00Z | 86071.169199442 | p3749 **R705 REFUTE** + **R706/R707** R252 n80/chall (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T22:34:00Z | 86152.07244358957 | p3748 **R705 N80 LIVE** crown 4,5 (no rent; B300 empty); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T22:10:35Z | 86355.76560593078 | p3744 **R702 N80 LIVE** zesty 6,7 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T22:02:38Z | 86394.18774338797 | p3743 **R696 SCP** brave→crown + R683 LOST + R698 REFUTE (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T21:34:33Z | 86640.60017037512 | p3741 **R698 N80 LIVE** + R683 **chal-00860**; burn **~$331.45/h** |
-| 2026-08-17T21:26:25Z | 86722.40238082873 | p3740 **R683 Stage-5 SUBMIT** (reg burn ~τ1.53; no rent; B300 empty); burn **~$331.45/h** |
