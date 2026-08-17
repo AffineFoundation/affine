@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 86722.40238082873 | p3739 |
-| Lium balance | **$86722.40238082873** | p3739 |
+| $UTC | 86722.40238082873 | p3740 |
+| Lium balance | **$86722.40238082873** | p3740 |
 | cumulative mining spend | ~$116,578 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
 | **available for mining** | **~$76722** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
-| miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
+| miner coldkey free | τ1260.382 | after R683 reg burn (~τ1.53; kept ≥τ50) |
 | miner stake | **~29.52 α** on r252 (~τ1.68; below τ5 sweep) | 2026-08-17 |
-| registrations / submissions | **9** / **9** (… **r252** r33; **r596** chal-00822; **r637** chal-00829) | |
+| registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** pending reveal) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T21:26:25Z | 86722.40238082873 | p3740 **R683 Stage-5 SUBMIT** (reg burn ~τ1.53; no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T21:21:46Z | 86722.40238082873 | p3739 **R683 HF PUSH** armed (token refresh; no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T21:17:48Z | 86763.36460387707 | p3738 **R707 TRAIN** + **R683 WIN** harvest (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T21:13:08Z | 86803.6346418794 | p3737 **R705+R706 TRAIN** crown/R252 4,5 (no rent; B300 empty); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T20:49:33Z | 87007.57450046793 | p3733 **R691 REFUTE** + **R694 CHALL→N80** (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T20:44:46Z | 87047.62726802021 | p3732 **R701 TRAIN** lunar 4,5 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T20:39:44Z | 87088.57212436352 | p3731 **R691 CHALL→N80** zesty 6,7 (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T20:34:21Z | 87129.12053348684 | p3730 **R700 TRAIN** brave 2,3 (no rent; B300 empty); burn **~$331.45/h** |
