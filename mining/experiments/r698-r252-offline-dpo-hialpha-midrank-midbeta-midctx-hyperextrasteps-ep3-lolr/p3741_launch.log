@@ -1,0 +1,8 @@
+p3741 2026-08-17T21:34:08Z
+R698 MERGE_DONE → local CHALL :8003 + v4 n80 on mine-crown-1 GPUs 6,7
+vllm pid=69077  sim pid=71346
+king=cryptoDev23/Affine-5Dku3dYp9j-hk8161@55b7ffe0
+contract wvk=7 k=3 tau=0.03 fail-closed
+artifacts: /root/affine_data/r698_*_reign34_wvk7.json
+R705 TRAIN left on GPUs 4,5
+B300/B200 stock empty this pass
