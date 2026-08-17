@@ -1,0 +1,42 @@
+[p3730-r700-launch] 2026-08-17T20:33:01Z VRAM2+3 used_mib=0 iter=1
+[p3730-r700-launch] 2026-08-17T20:33:01Z tmp_avail_G=567
+[p3730-r700-launch] 2026-08-17T20:33:04Z TRAIN_UP pid=246401 iter=1
+OUTER=246371 WAIT=246478 TRAIN=246401
+=== lean_warm ===
+[r700-lean] 2026-08-17T20:33:01Z start GPUs 2,3
+[r700-lean] data_lines=604
+[r700-lean] wait VRAM2+3 used_mib=0 iter=1
+[r700] 2026-08-17T20:33:01Z examples=604 lr=1e-6 r=32 β=0.3 steps=10800 len=12288 ep=3 gpus=2,3
+{
+  "utc": "2026-08-17T20:33:01Z",
+  "axis": "r252_offline_dpo_hialpha_midrank_hibeta_softctx_hyperextrasteps_ep3_lolr",
+  "base": "/root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f",
+  "data": "/root/r700/dpo_duel_reason.jsonl",
+  "examples": 604,
+  "lr": "1e-6",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.3,
+  "max_steps": 10800,
+  "max_len": 12288,
+  "epochs": 3,
+  "gpus": "2,3",
+  "pid": 246401,
+  "parent_signal": "R687 Soft MidRank HiBeta SoftCtx UltraExtra MERGE \u2014 HyperExtra steps=10800 (\u2260 UltraExtra 7200; \u2260 Mega 3600; \u2260 R699 Soft MidRank MidBeta SoftCtx HyperExtra; \u2260 R693 Soft HiRank HiBeta SoftCtx UltraExtra; \u2260 Online / \u2260 GRPO)",
+  "decision_rule": "Stage-5 iff fresh n80 paired margin > max(2*SE, 0.002) AND median |z|>=80 AND B pass>=0.30 vs reign34 (v4 k=3)"
+}
+[r700] TRAIN_ARMED pid=246401
+[r700-lean] 2026-08-17T20:33:01Z TRAIN launched pid=246401
+=== gpu ===
+index, memory.used [MiB], utilization.gpu [%]
+0, 47072 MiB, 5 %
+1, 44596 MiB, 0 %
+2, 0 MiB, 0 %
+3, 0 MiB, 0 %
+4, 72120 MiB, 0 %
+5, 63964 MiB, 57 %
+6, 175540 MiB, 2 %
+7, 123938 MiB, 38 %
+    PID     ELAPSED CMD
+ 246401 441077231-19:52:00 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f --data /root/r700/dpo_duel_reason.jsonl --out-dir /root/r700/train --max-len 12288 --epochs 3 --lr 1e-6 --lora-r 32 --lora-alpha 128 --beta 0.3 --max-steps 10800
+[p3730-r700-launch] 2026-08-17T20:33:04Z DONE
