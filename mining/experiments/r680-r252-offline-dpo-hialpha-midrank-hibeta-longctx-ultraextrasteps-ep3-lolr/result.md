@@ -1,8 +1,17 @@
-# R680 result
+# R680 result — REFUTE v4 (p3735)
 
-**Status (p3719):** SCP LIVE zesty→golden 4,5/:8003. Host relay pid + repair armed.
-Waiter launches lean v4 `*_wvk7` n80 after SCP_READY + size-check (fail-closed k=3).
+Long MidRank HiBeta UltraExtra vs reign34, fresh slice, `*_wvk7` k=3 τ=0.03.
 
-**Axis:** Long MidRank HiBeta UltraExtra ep3×LoLR (β=0.3 r=32 @16384 steps=7200).
-**Source:** `/tmp/r680_merged` on zesty (16sh/66G exact).
-**Check:** `tail -40 experiments/fleet-rent/logs/host_relay_r680_p3719.log`; golden `du -sh /tmp/r680_merged`.
+| metric | value |
+|---|---|
+| margin | **−0.000714** |
+| SE | 0.002579 |
+| z | −0.277 |
+| n | 77 |
+| bar max(2·SE, δ) | 0.005158 |
+| ratio | **~−0.14×** |
+| thought median \|z\| | 174 ✓ (≥80) |
+| B pass | 0.442 ✓ (≥0.30) |
+| challenger_wins | false |
+
+Artifact: `r680_sim_result_reign34_wvk7.json`. Chall on golden 4,5/:8003 reaped p3735; R683 SCP continues (~15/16).

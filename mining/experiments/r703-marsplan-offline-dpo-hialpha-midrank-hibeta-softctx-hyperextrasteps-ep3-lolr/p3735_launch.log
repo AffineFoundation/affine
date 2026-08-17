@@ -1,0 +1,42 @@
+[p3735-r703-launch] 2026-08-17T21:02:01Z VRAM4+5 used_mib=0 iter=1
+[p3735-r703-launch] 2026-08-17T21:02:01Z tmp_avail_G=1081
+[p3735-r703-launch] 2026-08-17T21:02:04Z TRAIN_UP pid=829521 iter=1
+OUTER=829491 WAIT=829602 TRAIN=829521
+=== lean_warm ===
+[r703-lean] 2026-08-17T21:02:01Z start GPUs 4,5
+[r703-lean] data_lines=604
+[r703-lean] wait VRAM4+5 used_mib=0 iter=1
+[r703] 2026-08-17T21:02:02Z examples=604 lr=1e-6 r=32 β=0.3 steps=10800 len=12288 ep=3 gpus=4,5
+{
+  "utc": "2026-08-17T21:02:02Z",
+  "axis": "marsplan_offline_dpo_hialpha_midrank_hibeta_softctx_hyperextrasteps_ep3_lolr",
+  "base": "/root/hf/hub/models--marsplan0624--affine-5gedzafcvg-queen/snapshots/556d02a2adfa9bd42a02de3c766f98be7e44ca46",
+  "data": "/root/r703/dpo_duel_reason.jsonl",
+  "examples": 604,
+  "lr": "1e-6",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.3,
+  "max_steps": 10800,
+  "max_len": 12288,
+  "epochs": 3,
+  "gpus": "4,5",
+  "pid": 829521,
+  "parent_signal": "R700 Soft MidRank HiBeta SoftCtx HyperExtra / R687 UltraExtra \u2014 transfer onto marsplan \u03b2=0.3 HyperExtra steps=10800 (\u2260 R701 marsplan Soft MidRank LoBeta SoftCtx HyperExtra; \u2260 R702 marsplan Soft MidRank MidBeta SoftCtx HyperExtra; \u2260 R700 r252 Soft MidRank HiBeta SoftCtx HyperExtra; \u2260 Online / \u2260 GRPO)",
+  "decision_rule": "Stage-5 iff fresh n80 paired margin > max(2*SE, 0.002) AND median |z|>=80 AND B pass>=0.30 vs reign34 (v4 k=3)"
+}
+[r703] TRAIN_ARMED pid=829521
+[r703-lean] 2026-08-17T21:02:02Z TRAIN launched pid=829521
+=== gpu ===
+index, memory.used [MiB], utilization.gpu [%]
+0, 248750 MiB, 0 %
+1, 248750 MiB, 0 %
+2, 222838 MiB, 0 %
+3, 222838 MiB, 0 %
+4, 0 MiB, 0 %
+5, 0 MiB, 0 %
+6, 47062 MiB, 27 %
+7, 44586 MiB, 28 %
+    PID     ELAPSED CMD
+ 829521 441077233-23:41:20 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--marsplan0624--affine-5gedzafcvg-queen/snapshots/556d02a2adfa9bd42a02de3c766f98be7e44ca46 --data /root/r703/dpo_duel_reason.jsonl --out-dir /root/r703/train --max-len 12288 --epochs 3 --lr 1e-6 --lora-r 32 --lora-alpha 128 --beta 0.3 --max-steps 10800
+[p3735-r703-launch] 2026-08-17T21:02:04Z DONE
