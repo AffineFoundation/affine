@@ -1,0 +1,3 @@
+p3749: R707 MERGE_DONE → local CHALL :8003 + v4 n80 on R252 GPUs 6,7 (after R705 REFUTE).
+vllm pid 287634 loading · Triton seed from chall_r706 n_star=26.
+Do not touch R706 n80 on 4,5/:8002. Decision = live crown rule (wvk7 k=3 τ=0.03).

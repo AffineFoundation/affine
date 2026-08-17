@@ -1,0 +1,4 @@
+p3749: R706 MERGE_DONE → local CHALL :8002 + v4 n80 on R252 GPUs 4,5.
+vllm pid 284178 · sim pid 286907 · out /root/affine_data/r706_sim_result_reign34_wvk7.json
+Triton seed chall_r706 n_star=23→26. Decision = live crown rule (wvk7 k=3 τ=0.03).
+Leave R707 CHALL on 6,7/:8003. Leave R705 REFUTE harvest on crown.
