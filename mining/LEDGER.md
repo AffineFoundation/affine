@@ -1,0 +1,38 @@
+# LEDGER — money in / money out
+
+**Cap: 40 lines.** Totals + last 10 movements. Older → archive/.
+Floor ≥ **$10,000**. Mining B300 burn floor **>$20,000/day = $833/h**.
+Live burn = Σ $/h over `mine-*` pods every pass.
+
+**Funding (operator 2026-08-16):** free to convert **SN120 Alpha → TAO → Lium**
+(`lium fund -w miner`) to scale mining. Keep ≥ τ50 free coldkey for regs.
+**SN120 α cannot pay Lium directly** — CLI only takes TAO or **SN51** α
+(`lium fund --alpha …`). Optional SN51 probe OK; log every Alpha/TAO/Lium move.
+
+## Totals
+
+| item | value | as of |
+|---|---|---|
+| $UTC | 90753.10862355558 | p3656 |
+| Lium balance | **$90753.11** | p3656 |
+| cumulative mining spend | ~$112,562 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$80753** (balance − $10,000 floor) | $UTC |
+| validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
+| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
+| miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
+| miner stake | **0** α (unstaked r252 rewards → Lium) | 2026-08-17 |
+| registrations / submissions | **9** / **9** (… **r252** r33; **r596** chal-00822; **r637** chal-00829) | |
+
+## Recent movements
+| UTC | Lium USD | event |
+|---|---|---|
+| 2026-08-17T13:02:09Z | 90753.10862355558 | p3656 **R652 TRAIN** Soft HiRank LoBeta ep3×LoLR brave 2,3 (parallel R651 0,1); burn **~$331.45/h** · B300 stock empty |
+| 2026-08-17T12:55:53Z | 90796.3147131677 | p3655 **R631 STALL→DEFER** (kill flat@12G; wait R648; host pid428475); burn **~$331.45/h** |
+| 2026-08-17T12:55Z | **90836.83** | **FUND** SN120 α on r252 → TAO τ**31.545** → Lium (`btcli transfer` to funding coldkey; `lium fund` CLI MetadataVersioned fail). Unstake extrinsic **8864533-0009**; transfer **8864540-0013**. ΔLium **+$6476** |
+| 2026-08-17T12:51:23Z | 84360.76560890493 | p3654 **R645 REFUTE** m=−0.001633~−0.29×; **R648 ARMED**; R651~step130; burn **~$331.45/h** |
+| 2026-08-17T12:45:34Z | 84442.04132890662 | p3653 **R645 n80 LIVE**; R651~step95; burn **~$331.45/h** |
+| 2026-08-17T12:41:40Z | 84442.04132890662 | p3652 **R651 TRAIN**; **R645 CHALL**; burn **~$331.45/h** |
+| 2026-08-17T12:29:24Z | 84564.54824310764 | p3651 **R643 ARMED**; burn **~$331.45/h** |
+| 2026-08-17T12:25:19Z | 84605.43646666175 | p3650 **R640 REFUTE**; burn **~$331.45/h** |
+| 2026-08-17T12:17:32Z | 84645.16097191257 | p3649 **R640 TRITON FIX**; burn **~$331.45/h** |
+| 2026-08-17T12:09:05Z | 84725.50681014612 | p3648 **R640 CHALL**; burn **~$331.45/h** |
