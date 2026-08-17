@@ -2,7 +2,7 @@
 Rewritten every pass. Do not append.
 
 ## Stage
-**Stage 5 · FORK wvk=7 Reason v4 · R655 REFUTE · R675 SCP · R663 SCP · R684/R682/R683/R681/R680/R679/R678/R677/R676/R685 TRAIN**.
+**Stage 5 · FORK wvk=7 Reason v4 · R655 REFUTE · R663 CHALL · R675 SCP · R684/R682/R683/R681/R680/R679/R678/R677/R676/R685 TRAIN**.
 King=reign34 · r252 reign33 earning. Burn floor **≥$833/h** on mine-* 8×B300.
 
 ## Live facts
@@ -15,21 +15,21 @@ King=reign34 · r252 reign33 earning. Burn floor **≥$833/h** on mine-* 8×B300
 | king | **`cryptoDev23/Affine-5Dku3dYp9j-hk8161`** @ `55b7ffe0…` **reign 34** |
 | our reign | **r252** reign33 / uid90 / earning |
 | miner burn | **~$331.45/h** · floor $833/h · **gap -$501.55/h** |
-| B300 stock | **empty** (API+CLI waiter live; only 1×B200 spot) |
-| Lium bal | **~$88268** · floor $10k OK |
+| B300 stock | **empty** (API+CLI waiter live; 8×B300/B200 rented out) |
+| Lium bal | **~$88147** · floor $10k OK |
 | submissions | **9** · r252 CROWNED r33 · r596 chal-00822 · r637 chal-00829 |
-| **p3708** | **R685 TRAIN** brave 0,1 Long HiRank HiBeta UltraExtra pid**226118** |
+| **p3709** | **R663 SCP_READY→CHALL** golden 4,5/:8003 (16sh/66G exact; proactive hole patch 5/8) vllm**453484** loading |
 
 ## Running
 
 | name | huid | $/h | role |
 |---|---|---|---|
-| mine-crown-1 | gentle-orbit-bd | $52.25 | **R676** 0,1 · **R677** 2,3 · **R678** 4,5 · **R682 TRAIN** 6,7 · **R663 uplink** |
-| mine-r165-awesome-hialpha-1 | lunar-wolf-be | $44.00 | TK · R537 :8002 · **R675 SCP** 4,5/:8003 (~2G/1sh) |
-| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | $60.00 | TK · R637 :8004 · **R663 SCP** 4,5 (~51G/13sh) |
+| mine-crown-1 | gentle-orbit-bd | $52.25 | **R676** 0,1 · **R677** 2,3 · **R678** 4,5 · **R682 TRAIN** 6,7 |
+| mine-r165-awesome-hialpha-1 | lunar-wolf-be | $44.00 | TK · R537 :8002 · **R675 SCP** 4,5/:8003 (~8G/2sh) |
+| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | $60.00 | TK · R637 :8004 · **R663 CHALL** 4,5/:8003 loading |
 | mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da | $64.00 | TK · **R680 TRAIN** 6,7 · **R674 TRAIN** 4,5 · R668 keep |
-| mine-r226-marsplan-fullft-1 | brave-raven-a9 | $47.20 | **R685 TRAIN** 0,1 · **R679** 2,3 · **R681** 4,5 · **R683 TRAIN** 6,7 · R669–R671 keep |
-| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | $64.00 | TK · R596 :8002 · **R675 uplink** · **R684 TRAIN** 6,7 |
+| mine-r226-marsplan-fullft-1 | brave-raven-a9 | $47.20 | **R685 TRAIN** 0,1 · **R679** 2,3 · **R681** 4,5 · **R683 TRAIN** 6,7 |
+| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | $64.00 | TK · R596 :8002 · **R684 TRAIN** 6,7 · R675 uplink done |
 
 SSH: crown `…90:40099` · R165 `…118:20299` · R262 `…127:40299` · R260 `…95:20299` · brave `18.118.83.97:40127` · R252 `95.133.252.28:40299`
 
@@ -37,7 +37,7 @@ SSH: crown `…90:40099` · R165 `…118:20299` · R262 `…127:40299` · R260 `
 Under $833/h — **no 8×B300/B200**. Pre-p3664 n80s stamped k=1 — ignore for submit. **Never `pkill -f`**. Stake ~29.5α (~τ1.68) below τ5 sweep.
 
 ## Next action
-1. Watch **R675 SCP** (~2G/1sh) → `r675_scp_ready.done` (+repair) → lunar lean 4,5/:8003 v4 n80.
-2. Watch **R663 SCP** (~51G/13sh) → golden lean 4,5/:8003 v4 n80.
+1. Watch **R663** vllm→CHALL_READY→v4 n80 (`*_wvk7`, fail-closed k=3) on golden 4,5/:8003.
+2. Watch **R675 SCP** (~8G/2sh) → `r675_scp_ready.done` (+repair) → lunar lean 4,5/:8003 v4 n80.
 3. R685 + R684 + R682–R683 (+R674–R681) trains → merge when done.
 4. Blind rent **R337** when 8×B300/B200 appears (waiter live).
