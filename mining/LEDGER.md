@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 90388.50267150775 | p3661 |
-| Lium balance | **$90388.50** | p3661 |
-| cumulative mining spend | ~$112,928 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$80389** (balance − $10,000 floor) | $UTC |
+| $UTC | 90348.00744950866 | p3662 |
+| Lium balance | **$90348.01** | p3662 |
+| cumulative mining spend | ~$112,968 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$80348** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T13:53:30Z | 90348.00744950866 | p3662 **R643** lean `du` pipefail fix → CHALL+n80 LIVE; R634 SCP; burn **~$331.45/h** · B300 empty |
 | 2026-08-17T13:47:08Z | 90388.50267150775 | p3661 **R646 REFUTE** ~−0.49×; **R647 ARMED** (gated R634); R633 re-gate; burn **~$331.45/h** · B300 empty |
 | 2026-08-17T13:39:26Z | 90469.60579157784 | p3660 **R641 REFUTE** ~0.31×; **R634 SCP** (bypass R631 DEFER); R646 n80; burn **~$331.45/h** · B300 empty |
 | 2026-08-17T13:35:02Z | 90508.97689182592 | p3659 **R641 n80 LIVE** (SCP+Triton fix); R646 CHALL; burn **~$331.45/h** · B300 empty |

@@ -22,6 +22,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3662: **R643 lean died** after GPUs free — `du -sm $TCACHE` on missing `chall_r643` under `set -o pipefail` (same R648 landmine); fix `du … || true` + `${_pre_sz:-0}` → seed from chall_r640 → CHALL_READY→n80. **Never `pkill -f`**.
 - p3661: **R646 REFUTE** m=−0.003615~−0.49× (thought✓154 B✓0.429); reap golden 4,5 → **R647 ARMED** (Short HiRank MidBeta) gated on R634 SCP; restart **R633** to also wait R647 SCP_READY (never dual-pipe). **Never `pkill -f`**.
 - p3660: **R641 REFUTE** m=+0.001550~0.31× (thought✓169 B✓0.418); kill stuck **R634** host-relay waiting forever on **R631 DEFER** — bypass gate when R641 ready + GPUs 6,7 free; brave→zesty SCP. **Never `pkill -f`**.
 - p3659: **R641** SCP_READY then lean **purged** seeded Triton 170M→724K (same R640 landmine) — kill-by-PID, patch lean **REUSE if n_so≥25 & ≥100M / wipe+seed NO purge**, reseed from `/root/.triton/cache/chall`, CHALL_READY→**n80** pid724905. **Never `pkill -f`**.
