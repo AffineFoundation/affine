@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3707: **R684 TRAIN** fill idle R252 **6,7** after R675 MERGE uplink — MidCtx MidRank HiBeta UltraExtra (β=0.3 r=32 @8192 steps=7200; amplify R660/R650 ~0.47×; ≠ R682 MidCtx MidRank MidBeta / ≠ R681 MidCtx HiRank HiBeta); pid**262017** + wait→merge; R675~2G/1sh R663~49G/13sh; B300 empty. **Never `pkill -f`**.
 - p3706: **R655 REFUTE v4** m=−0.003895~−0.92× (thought✓145 B✓0.353 k=3) — MidCtx HiRank LoBeta Mega ep3×LoLR fails LME; reap lunar 4,5; **R675 SCP** R252→lunar Soft MidRank MidBeta UltraExtra + size-check repair (must `seen_tar=1` before completeness — early race patched all shards). R663~46G/12sh. **Never `pkill -f`**.
 - p3705: **R655 CHALL_READY→N80_LIVE** ~55/80 (vllm629762→sim631754); **R682+R683 TRAIN** fill idle crown/brave **6,7** after R673/R672 MERGE — MidCtx MidRank MidBeta UltraExtra (β=0.1 r=32 @8192) + Short MidRank HiBeta UltraExtra (β=0.3 r=32 @6144); freed crown REFUTE r641+r643 (~132G); R663~40G/12sh; B300 empty. **Never `pkill -f`**.
 - p3704: **R655 SCP_READY→CHALL** — live tar filled holes 7→8→5 (16sh/66G exact); waiter launched lean v4 `*_wvk7` + fail-closed k=3 on lunar 4,5/:8003 (vllm pid629762); R663~35G/9sh; B300 empty. **Never `pkill -f`**.
