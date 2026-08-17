@@ -1,0 +1,19 @@
+[p3734-r702-launch] 2026-08-17T20:53:52Z VRAM6+7 used_mib=0 iter=1
+[p3734-r702-launch] 2026-08-17T20:53:52Z tmp_avail_G=1016
+OUTER=827484 WAIT=827537 TRAIN=none
+=== lean_warm ===
+[r702-lean] 2026-08-17T20:53:52Z start GPUs 6,7
+[r702-lean] data_lines=604
+[r702-lean] wait VRAM6+7 used_mib=0 iter=1
+FATAL bad BASE=/root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f
+=== gpu ===
+index, memory.used [MiB], utilization.gpu [%]
+0, 248750 MiB, 0 %
+1, 248750 MiB, 0 %
+2, 222838 MiB, 0 %
+3, 222838 MiB, 0 %
+4, 220380 MiB, 0 %
+5, 220378 MiB, 0 %
+6, 0 MiB, 0 %
+7, 0 MiB, 0 %
+[p3734-r702-launch] 2026-08-17T20:56:55Z DONE

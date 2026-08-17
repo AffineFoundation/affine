@@ -1,9 +1,17 @@
-# R694 result — MidCtx HiRank HiBeta HyperExtra
+# R694 p3734 harvest — REFUTE
 
-**Status:** N80_LIVE p3733 zesty GPUs **4,5**/:8003 vs reign34 (wvk7 k=3)
-**Merge:** 2026-08-17T20:42:36Z · `/tmp/r694_merged` 16sh/66G
-**Chall:** vllm pid**824317** CHALL_READY 20:50:06Z · Triton seed chall_r691 n_star=26 · outer pid**824135**
-**Sim:** pid**826583** · `r694_*_reign34_wvk7.json` · fail-closed if stamp ≠ k=3
-**Note:** local chall after R691 REFUTE reap; no SCP (R680 still owns zesty→golden uplink); freed `/tmp/r691_merged`
-**Axis:** MidCtx HiRank HiBeta HyperExtra ep3×LoLR (amplify R681 ~0.77×; steps=10800)
-**Decision rule:** margin > max(2·SE, 0.002) **and** thought≥80 **and** B≥0.30
+v4 n80 vs reign34 on zesty 4,5/:8003 (`*_wvk7`, k=3, τ=0.03)
+
+| metric | value |
+|---|---|
+| margin | −0.001579 |
+| SE | 0.003477 |
+| z | −0.454 |
+| n_paired | 74 |
+| bar max(2·SE, δ) | 0.006955 |
+| margin/bar | ~−0.23× |
+| median \|z\| | 161 ✓ (≥80) |
+| B pass | 0.494 ✓ (≥0.30) |
+| challenger_wins | false |
+
+Chall reaped by pidfile; `/tmp/r694_merged` freed. Artifact: `artifacts/r694_sim_result_reign34_wvk7.json`.
