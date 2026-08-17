@@ -6,7 +6,7 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | gentle-orbit-bd (`3d07e519-…`) | 8×B200 | $52.25 | **2026-08-18T19:04Z** | TK · **R693 N80** 4,5/:8002 · **R696 SCP** 6,7 · waiter**73008** · **v4 pkg** |
+| mine-crown-1 | gentle-orbit-bd (`3d07e519-…`) | 8×B200 | $52.25 | **2026-08-18T19:04Z** | TK · **R717 TRAIN** 4,5 · **R696 N80** 6,7/:8003 · **v4 pkg** |
 | mine-r165-awesome-hialpha-1 | lunar-wolf-be (`0f283151-…`) | 8×B200 | $44.00 | **2026-08-18T19:04Z** | TK · **R712 TRAIN** 4,5 · keep `/tmp/r675_merged` · **v4 pkg** |
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 (`522c84fd-…`) | 8×B200 | $60.00 | **2026-08-18T19:04Z** | TK · R683 **LOST** · R637 :8004 · **v4 pkg** |
 | mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da (`5e54186c-…`) | 8×B300 | $64.00 | **2026-08-18T19:04Z** | TK · **R709/R708 TRAIN** · **v4 pkg** |
@@ -19,8 +19,8 @@ SSH R262: `ssh root@38.127.229.127 -p 40299`
 SSH R260: `lium exec zesty-comet-da` / `ssh root@86.38.182.95 -p 20299`
 SSH brave: `ssh -p 40127 root@18.118.83.97` / `lium exec brave-raven-a9`
 SSH R252: `ssh -p 40299 root@95.133.252.28` / `lium exec gentle-wolf-8c`
-Host fleet: next=**R693 harvest** + R696 CHALL; B300×8 **0**; burn **~$331.45/h** · **wvk=7**
-**p3752:** **R715+R716 TRAIN** brave 4–7; R693 ~51/80; bal **~$85745**
+Host fleet: next=**R696 harvest**; B300×8 **0**; burn **~$331.45/h** · **wvk=7**
+**p3753:** **R693 REFUTE** ~0.72×; **R717 TRAIN** crown 4,5; R696~30/80; bal **~$85745**
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval` (eager-fox-27), `affine-teacher2`.
 
@@ -28,6 +28,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-17T23:27:07Z | p3753: **R693 REFUTE** ~0.72×; reap 4,5; **R717 TRAIN** Soft MidRank LoBeta SoftCtx SuperExtra; R696~30/80; B300×8=0; bal **~$85745** |
 | 2026-08-17T23:22:29Z | p3752: **R715+R716 TRAIN** brave 4–7 Soft HiRank Mid/HiBeta SoftCtx SuperExtra; R693~51/80; B300×8=0; bal **~$85745** |
 | 2026-08-17T23:17:07Z | p3751: **R693 N80 LIVE** crown 4,5/:8002; R696 16/16; B300×8=0; bal **~$85786** |
-| 2026-08-17T23:12:57Z | p3750: **R713+R714 TRAIN** brave 0–3; R696 14/16; B300×8=0; bal **~$85827** |
