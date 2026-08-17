@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 88024.3553383761 | p3711 |
-| Lium balance | **$88024.3553383761** | p3711 |
-| cumulative mining spend | ~$115,279 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$78024** (balance − $10,000 floor) | $UTC |
+| $UTC | 87984.17573676819 | p3712 |
+| Lium balance | **$87984.17573676819** | p3712 |
+| cumulative mining spend | ~$115,319 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$77984** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T18:47:03Z | 87984.17573676819 | p3712 **R686 TRAIN** zesty 4,5 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T18:41:08Z | 88024.3553383761 | p3711 **R663 REFUTE** + **R681 SCP** (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T18:33:32Z | 88105.67977134137 | p3710 **R674 MERGE→CHALL** zesty (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T18:29:01Z | 88146.74284328493 | p3709 **R663 SCP→CHALL** (no rent; B300 empty); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T17:57:30Z | 88390.81176785109 | p3705 **R655 N80** + **R682/R683 TRAIN** (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T17:50:53Z | 88431.73763177953 | p3704 **R655 SCP_READY→CHALL** lunar 4,5 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T17:27:45Z | 88634.85122193607 | p3703 **R681 TRAIN** brave 4,5 UltraExtra (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T17:24:44Z | 88675.56647358203 | p3702 **R680 TRAIN** zesty 6,7 UltraExtra (no rent; B300 empty); burn **~$331.45/h** |
