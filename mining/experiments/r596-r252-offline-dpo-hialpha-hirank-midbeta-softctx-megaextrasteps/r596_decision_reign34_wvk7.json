@@ -1,0 +1,18 @@
+{
+  "utc": "2026-08-17T14:10:32Z",
+  "hypo": "R596",
+  "vs": "reign34",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "margin": -0.0020595556783780584,
+  "se": 0.0023594569848668333,
+  "z": -0.8728939292335939,
+  "n": 76,
+  "bar": 0.0047189139697336666,
+  "thought_median": 176.0,
+  "b_pass": 0.38461538461538464,
+  "wins": false,
+  "ranking_formula": "Reason(turn) = tau·log(mean_i exp((lpC(y_i|z_A) − lpC(y_i|∅))/tau))",
+  "note": "p3665 R596 warm chall v4 re-sim (k=3 tau=0.03) vs reign34; prior p3588c was k=1"
+}

@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 90227.26248186323 | p3665 |
-| Lium balance | **$90227.26** | p3665 |
-| cumulative mining spend | ~$113,088 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$80227** (balance − $10,000 floor) | $UTC |
+| $UTC | 90186.47632486247 | p3666 |
+| Lium balance | **$90186.48** | p3666 |
+| cumulative mining spend | ~$113,129 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$80186** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T14:11:31Z | 90186.47632486247 | p3666 **R651 ARMED** lunar (gate R634→R647); **R596 v4 REFUTE**; burn **~$331.45/h** · B300 empty |
 | 2026-08-17T14:07:02Z | 90227.26248186323 | p3665 **R596 v4 n80 LIVE** R252 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T14:03:04Z | 90264.75848219698 | p3664 **fleet v4 affine_pkg sync** (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T13:59:12Z | 90307.95769378815 | p3663 **R643 REFUTE** ~0.50×; **wvk=7** noted; R634 SCP; burn **~$331.45/h** · B300 empty |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T13:35:02Z | 90508.97689182592 | p3659 **R641 n80 LIVE** (SCP+Triton fix); R646 CHALL; burn **~$331.45/h** · B300 empty |
 | 2026-08-17T13:20:00Z | 90632.78429121959 | p3658 **R648 REFUTE** ~0.68×; **R646 ARMED**; R631 DEFER; burn **~$331.45/h** · B300 empty · stake ~29.5α |
 | 2026-08-17T13:11:14Z | 90673.45085823236 | p3657 **R648 CHALL+n80** golden 4,5/:8003 (lean pipefail fix); burn **~$331.45/h** · B300 stock empty · stake none |
-| 2026-08-17T13:02:09Z | 90753.10862355558 | p3656 **R652 TRAIN** Soft HiRank LoBeta ep3×LoLR brave 2,3 (parallel R651 0,1); burn **~$331.45/h** · B300 stock empty |
