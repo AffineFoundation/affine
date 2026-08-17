@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3683: **R667 TRAIN** Soft HiRank HiBeta SoftCtx ep3×LoLR on idle R252 **6,7** after R655 MERGE_DONE (fills Soft×HiRank×HiBeta hole never tried at ep3×LoLR; ≠ R651 MidRank HiBeta / ≠ R633 HiRank MidBeta / ≠ R652 HiRank LoBeta); R647 n80~31/80; R651 SCP~24G/6sh; B300 empty. **Never `pkill -f`**.
 - p3682: **R665/R666 TRAIN** on idle crown **4,5/6,7** after R654–R658 MERGE_DONE — Long HiRank MidBeta ep3×LoLR (≠ R663 HiRank LoBeta / ≠ R664 MidRank MidBeta) + Short HiRank MidBeta ep3×LoLR (≠ R656 LoBeta / ≠ R659 MidRank); R647 lean :8003; R651 SCP brave→lunar (~10G); B300 empty. **Never `pkill -f`**.
 - p3681: **R634 REFUTE v4** m=+0.000497~0.08× (thought✓155 B✓0.314 k=3) — Short HiRank LoBeta ep2×LoLR fails LME; pipeline.done+reap chall by PID; **R664 TRAIN** Long MidRank MidBeta ep3×LoLR on idle crown **2,3** (amplify R641 ~0.31×; ≠ R662 LoBeta / ≠ R663 HiRank LoBeta); R647~51G; B300 empty. **Never `pkill -f`**.
 - p3680: **R663 TRAIN** Long HiRank LoBeta ep3×LoLR on idle crown **0,1** (amplify R648 ~0.68× best Long near-miss; ≠ R662 Long MidRank / ≠ R656 Short HiRank) — fill free crown GPUs after R654 MERGE while R634 n80 + R647 SCP live; kept=604. **Never `pkill -f`**.

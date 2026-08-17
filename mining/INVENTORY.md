@@ -8,10 +8,10 @@
 |---|---|---|---|---|---|
 | mine-crown-1 | gentle-orbit-bd (`3d07e519-…`) | 8×B200 | $52.25 | **2026-08-17T19:41Z** | **R665** 4,5 · **R666** 6,7 · **R664** 2,3 · **R663** 0,1 · R654–R658 MERGE · **v4 pkg** |
 | mine-r165-awesome-hialpha-1 | lunar-wolf-be (`0f283151-…`) | 8×B200 | $44.00 | **2026-08-17T19:41Z** | TK · R537 :8002 · **R651 SCP** 4,5 · **v4 pkg** |
-| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 (`522c84fd-…`) | 8×B200 | $60.00 | **2026-08-17T19:41Z** | TK · **R647 LEAN** :8003 · R637 :8004 · **v4 pkg** |
+| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 (`522c84fd-…`) | 8×B200 | $60.00 | **2026-08-17T19:41Z** | TK · **R647 N80** :8003 · R637 :8004 · **v4 pkg** |
 | mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da (`5e54186c-…`) | 8×B300 | $64.00 | **2026-08-17T19:41Z** | TK · **R662 TRAIN** 4,5 · 6,7 free · **v4 pkg** |
-| mine-r226-marsplan-fullft-1 | brave-raven-a9 (`5c019a27-…`) | 8×B200 | $47.20 | **2026-08-17T19:41Z** | **R659/R660/R661 TRAIN** · **R651 uplink** · R652/R653 MERGE · **v4 pkg** |
-| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c (`61d17753-…`) | 8×B300 | $64.00 | **2026-08-17T19:41Z** | TK · R596 :8002 · **R655** MERGE · 6,7 free · **v4 pkg** |
+| mine-r226-marsplan-fullft-1 | brave-raven-a9 (`5c019a27-…`) | 8×B200 | $47.20 | **2026-08-17T19:41Z** | **R659/R660/R661 TRAIN** · **R651 uplink** · R652/R653 MERGE · 0,1 free · **v4 pkg** |
+| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c (`61d17753-…`) | 8×B300 | $64.00 | **2026-08-17T19:41Z** | TK · R596 :8002 · **R667 TRAIN** 6,7 · R655 MERGE · **v4 pkg** |
 
 SSH crown: `ssh root@95.133.253.90 -p 40099`
 SSH R165: `lium exec lunar-wolf-be` / `ssh -p 20299 root@150.136.46.118`
@@ -20,7 +20,7 @@ SSH R260: `lium exec zesty-comet-da` / `ssh root@86.38.182.95 -p 20299`
 SSH brave: `ssh -p 40127 root@18.118.83.97` / `lium exec brave-raven-a9`
 SSH R252: `ssh -p 40299 root@95.133.252.28` / `lium exec gentle-wolf-8c`
 Host fleet: next=**R337**; B300×8 **empty**; burn **~$331.45/h** · **wvk=7**
-**p3682:** R665/R666 TRAIN crown 4–7; R647 lean; R651 SCP~10G; bal **~$89580**
+**p3683:** R667 TRAIN R252 6,7 Soft HiRank HiBeta SoftCtx ep3×LoLR; R647 n80~31/80; bal **~$89539**
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval` (eager-fox-27), `affine-teacher2`.
 
@@ -28,6 +28,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-17T15:34:06Z | p3683: **R667 TRAIN** R252 6,7 Soft HiRank HiBeta SoftCtx ep3×LoLR pid**252289**; R647 n80~31/80; R651~24G; B300 empty; bal **~$89539** |
 | 2026-08-17T15:30:08Z | p3682: **R665/R666 TRAIN** crown 4–7; R647 lean :8003; R651 SCP~10G; B300 empty; bal **~$89580** |
 | 2026-08-17T15:24:45Z | p3681: **R634 REFUTE** v4 m=+0.000497~0.08×; chall reaped; **R664 TRAIN** crown 2,3; B300 empty; bal **~$89621** |
-| 2026-08-17T15:18:40Z | p3680: **R663 TRAIN** crown 0,1; R634 n80 27/80; R647~26G/7sh; B300 empty; bal **~$89661** |
