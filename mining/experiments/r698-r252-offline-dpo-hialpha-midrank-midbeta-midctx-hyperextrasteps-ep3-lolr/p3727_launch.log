@@ -1,0 +1,45 @@
+Executing on gentle-orbit-bd
+-rw-r--r-- 1 root root 2.5K Aug 17 20:19 /tmp/p3727_launch_r698_crown67.sh
+-rw-r--r-- 1 root root 3.8M Aug 17 20:19 /tmp/r698_exp_p3727.tar.gz
+[p3727-r698-launch] 2026-08-17T20:19:54Z VRAM6+7 used_mib=0 iter=1
+[p3727-r698-launch] 2026-08-17T20:19:54Z tmp_avail_G=669
+[p3727-r698-launch] 2026-08-17T20:19:57Z TRAIN_UP pid=61214 iter=1
+OUTER=61184 WAIT=61295 TRAIN=61214
+=== lean_warm ===
+[r698-lean] 2026-08-17T20:19:54Z start GPUs 6,7
+[r698-lean] data_lines=604
+[r698-lean] wait VRAM6+7 used_mib=0 iter=1
+[r698] 2026-08-17T20:19:54Z examples=604 lr=1e-6 r=32 β=0.1 steps=10800 len=8192 ep=3 gpus=6,7
+{
+  "utc": "2026-08-17T20:19:54Z",
+  "axis": "r252_offline_dpo_hialpha_midrank_midbeta_midctx_hyperextrasteps_ep3_lolr",
+  "base": "/root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f",
+  "data": "/root/r698/dpo_duel_reason.jsonl",
+  "examples": 604,
+  "lr": "1e-6",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.1,
+  "max_steps": 10800,
+  "max_len": 8192,
+  "epochs": 3,
+  "gpus": "6,7",
+  "pid": 61214,
+  "parent_signal": "R682 MidCtx MidRank MidBeta UltraExtra / R657 Mega ~0.62x \u2014 HyperExtra steps=10800 (\u2260 UltraExtra 7200; \u2260 Mega 3600; \u2260 R692 MidCtx MidRank LoBeta UltraExtra; \u2260 R684 MidCtx MidRank HiBeta UltraExtra; \u2260 R694 MidCtx HiRank HiBeta HyperExtra; \u2260 Online / \u2260 GRPO)",
+  "decision_rule": "Stage-5 iff fresh n80 paired margin > max(2*SE, 0.002) AND median |z|>=80 AND B pass>=0.30 vs reign34 (v4 k=3)"
+}
+[r698] TRAIN_ARMED pid=61214
+[r698-lean] 2026-08-17T20:19:54Z TRAIN launched pid=61214
+=== gpu ===
+index, memory.used [MiB], utilization.gpu [%]
+0, 168634 MiB, 0 %
+1, 168636 MiB, 0 %
+2, 149636 MiB, 0 %
+3, 149636 MiB, 0 %
+4, 175528 MiB, 0 %
+5, 123926 MiB, 93 %
+6, 0 MiB, 0 %
+7, 0 MiB, 0 %
+    PID     ELAPSED CMD
+  61214 441077234-00:02:08 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f --data /root/r698/dpo_duel_reason.jsonl --out-dir /root/r698/train --max-len 8192 --epochs 3 --lr 1e-6 --lora-r 32 --lora-alpha 128 --beta 0.1 --max-steps 10800
+[p3727-r698-launch] 2026-08-17T20:19:57Z DONE
