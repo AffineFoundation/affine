@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 85663.33179500113 | p3754 |
-| Lium balance | **$85663.33179500113** | p3754 |
-| cumulative mining spend | ~$117,638 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$75663** (balance − $10,000 floor) | $UTC |
+| $UTC | 85582.36221824915 | p3755 |
+| Lium balance | **$85582.36221824915** | p3755 |
+| cumulative mining spend | ~$117,719 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$75582** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1260.382 | after R683 reg burn (~τ1.53; kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T23:41:57Z | 85582.36221824915 | p3755 **R719+R720 TRAIN** golden 4–7 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-17T23:34:37Z | 85663.33179500113 | p3754 **R696 REFUTE** + **R718 TRAIN** crown 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-17T23:27:07Z | 85745.25562401353 | p3753 **R693 REFUTE** + **R717 TRAIN** crown 4,5 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-17T23:22:29Z | 85745.25562401353 | p3752 **R715+R716 TRAIN** brave 4–7 (no rent; B300×8=0); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T22:34:00Z | 86152.07244358957 | p3748 **R705 N80 LIVE** crown 4,5 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T22:25:16Z | 86233.67342036712 | p3747 **R703 REFUTE** + **R709 TRAIN** zesty 4,5 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T22:20:49Z | 86233.67342036712 | p3746 **R708 TRAIN** zesty 6,7 (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T22:15:57Z | 86274.26724677208 | p3745 **R703 N80 LIVE** + **R702 REFUTE** (no rent; B300 empty); burn **~$331.45/h** |
