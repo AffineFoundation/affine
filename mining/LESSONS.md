@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3667: **R653 TRAIN** Short MidRank LoBeta ep3×LoLR on idle brave **0,1** (R652 still **2,3**; R634 uplink live) — fill free train GPUs with a distinct Short×ep3 axis when B300 stock empty. **Never `pkill -f`**.
 - p3666: **R651 ARMED** after MERGE_DONE — lunar waiter+lean (`*_wvk7`); host-relay gated **R634 then R647** (never dual-pipe brave); R596 v4 REFUTE harvested. **Never `pkill -f`**.
 - p3665: **R596 v4 n80** — warm chall already on R252 :8002; launch `relaunch_r596_n80_reign34_wvk7_p3665.sh` (new `*_wvk7` outs; assert stamp k=3); teacher GPUs 100% within ~30s; B300 stock still empty. **Never `pkill -f`**.
 - p3664: **fleet v4 sync** — tar-deploy toml+score+terms+dueling+config+chat → all mine-* `affine_pkg`; zesty verify LME>mean; R634 still SCP~19G/5sh. **Never `pkill -f`**.
