@@ -13,8 +13,8 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 86233.67342036712 | p3746 |
-| Lium balance | **$86233.67342036712** | p3746 |
+| $UTC | 86233.67342036712 | p3747 |
+| Lium balance | **$86233.67342036712** | p3747 |
 | cumulative mining spend | ~$117,067 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
 | **available for mining** | **~$76234** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T22:25:16Z | 86233.67342036712 | p3747 **R703 REFUTE** + **R709 TRAIN** zesty 4,5 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T22:20:49Z | 86233.67342036712 | p3746 **R708 TRAIN** zesty 6,7 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T22:15:57Z | 86274.26724677208 | p3745 **R703 N80 LIVE** + **R702 REFUTE** (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T22:10:35Z | 86355.76560593078 | p3744 **R702 N80 LIVE** zesty 6,7 (no rent; B300 empty); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T21:21:46Z | 86722.40238082873 | p3739 **R683 HF PUSH** armed (token refresh; no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T21:17:48Z | 86763.36460387707 | p3738 **R707 TRAIN** + **R683 WIN** harvest (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T21:13:08Z | 86803.6346418794 | p3737 **R705+R706 TRAIN** crown/R252 4,5 (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T21:08:36Z | 86844.27069591514 | p3736 **R704 TRAIN** brave 6,7 (no rent; B300 empty); burn **~$331.45/h** |
