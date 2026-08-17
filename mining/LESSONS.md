@@ -13,6 +13,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - Miner-side terms (L1lift, lpA, calibration r) do **not** enter Reason. Do not train them as objectives.
 - Absolute Reason is only comparable within one duel slice. Use paired margin vs the live king.
 - Confirm `weight_version_key` from `api/v1/contract` every pass (3→4→5→6→**7**). v4 favors **commit** to a teacher mode over hedge-filler.
+- p3664: fleet `affine_pkg` synced to live wvk=7 (k=3/τ=0.03/n=1300) on all 6 mine-*; LME smoke OK — next n80s are v4-isomorphic; pre-p3664 k=1 margins are advisory only.
 - p3663: live **wvk=7**; fleet `run_sim_duel` still stamps **n_teacher_samples=1** — n80 margins are pre-v4 until patched.
 
 ## Strategy under Reason
@@ -23,6 +24,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3664: **fleet v4 sync** — tar-deploy toml+score+terms+dueling+config+chat → all mine-* `affine_pkg`; zesty verify LME>mean; R634 still SCP~19G/5sh. **Never `pkill -f`**.
 - p3663: **R643 REFUTE** m=+0.005608~0.50× (thought✓178 B✓0.513) vs reign34; reap lunar 4,5 by PID; contract fork **wvk=7** (k=3/τ=0.03/n=1300) — patch sims before next submit. **Never `pkill -f`**.
 - p3662: **R643 lean died** after GPUs free — `du -sm $TCACHE` on missing `chall_r643` under `set -o pipefail` (same R648 landmine); fix `du … || true` + `${_pre_sz:-0}` → seed from chall_r640 → CHALL_READY→n80. **Never `pkill -f`**.
 - p3661: **R646 REFUTE** m=−0.003615~−0.49× (thought✓154 B✓0.429); reap golden 4,5 → **R647 ARMED** (Short HiRank MidBeta) gated on R634 SCP; restart **R633** to also wait R647 SCP_READY (never dual-pipe). **Never `pkill -f`**.

@@ -1,0 +1,356 @@
+# Affine chain contract. Single source of truth for the live game.
+# Everything the validator, eval server, and miners need to agree on lives
+# here; secrets come from the environment (doppler), never from this file.
+
+[subnet]
+name = "Affine"
+netuid = 120
+network = "finney"
+# Emission fallback when no king in the chain is registered.
+burn_uid = 0
+# Rolling last-N kings payout (Albedo / Teutonic design): current king + up
+# to N-1 prior distinct kings share emissions equally (1/N each). Unregistered
+# members of the chain are skipped at weight-set time; empty chain → burn_uid.
+king_chain_size = 5
+# Reveals at or below this block are ignored. MUST be set to a recent block
+# at go-live so pre-launch test reveals are not eligible (-1 = unset guard:
+# the validator refuses to start until an operator sets a real value).
+# Set at go-live to a recent finney block (validator refuses to start if <0).
+# Placeholder updated 2026-08-03 from public finney header; bump again at launch.
+min_submission_block = 8767079
+# Bittensor weight-version gate for contract upgrades (bump on breaking
+# scoring/contract changes so stale validators are ignored by consensus).
+# Current: 7 (Reason v4 tempered multi-sample, k=3 / tau=0.03, 2026-08-17,
+# explicit operator directive). History: 1→2 teacher swap (2026-08-10, later
+# reverted to GLM-Air); 2→3 Reason v3 scoring fork; 3→4 min_margin=0.002
+# (2026-08-12); 4→5 min_thought_chars=80 (2026-08-13, empty/cue-thought
+# kings); 5→6 causality_gate=true (2026-08-13, teacher-side B license);
+# 6→7 Reason v4 (2026-08-17, tempered log-mean-exp over k=3 teacher refs).
+#
+# ############################################################################
+# #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
+# #  Not for teacher moves, serving knobs, corpus refreshes, doc passes,     #
+# #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
+# #  names this key may change it. If you think it needs a bump: STOP ASK.   #
+# ############################################################################
+weight_version_key = 7
+
+[wallet]
+name = "default"
+hotkey = "default"
+
+[submission]
+# Reveal payload, timelock-encrypted via Commitments.set_commitment:
+#   affine1|<hf_repo>|<hf_revision_40hex>|<author_hotkey_ss58>
+reveal_prefix = "affine1"
+repo_pattern = '^[^/]+/[Aa]ffine-.+$'
+# Anti-impersonation: repo id must contain the first N AND last M chars of
+# the submitter's coldkey OR hotkey ss58 (case-insensitive; both halves
+# matched independently so a full embedded ss58 also passes; tail carries
+# checksum).
+coldkey_prefix_len = 5
+coldkey_suffix_len = 5
+# Repo hygiene caps enforced before any download of weights.
+#   max_model_size_gb  — cap on .safetensors bytes (the servable weights).
+#   max_total_repo_gb  — cap on TOTAL repo bytes (blocks oversized junk files
+#                        that bypass the safetensors cap and disk-DoS the pod).
+max_model_size_gb = 90.0
+max_total_repo_gb = 100.0
+allow_python_files = false
+allow_auto_map = false
+# Metadata-intake guards on attacker-controlled repos.
+max_repo_files = 5000
+max_config_bytes = 1048576   # 1 MiB; config.json larger than this is rejected
+
+[teacher]
+# Frozen frontier reference C. The eval machine serves this warm.
+# Stay on Air. The 2026-08-10 GLM-5.2 dedicated-teacher push was torn down
+# (pod killed; never cut over). Do not reintroduce base_url / a remote teacher
+# without an explicit operator directive.
+repo = "zai-org/GLM-4.5-Air-FP8"
+port = 8000
+tp = 2
+gpus = "0,1"
+# Second replica on the otherwise-idle GPUs. The teacher does ~2/3 of a duel's
+# forced-logprob work (48 echo calls per turn per side vs 24 per miner), so
+# with king and challenger scored concurrently one GLM is the wall — the
+# replica doubles teacher throughput. Best-effort: if it fails to launch,
+# duels run on the primary alone. Identical weights at temperature-0 echo
+# scoring, so which replica answers a call is score-invariant.
+replica_port = 8003
+replica_gpus = "6,7"
+# Additive teacher-swarm capacity (2026-08-15, explicit operator directive:
+# "gently add it into our eval process"). These OpenAI-compatible endpoints
+# JOIN the duel's teacher pool next to the mandatory local slots — this is
+# NOT the retired base_url full cutover. Fail-open: each URL is probed per
+# duel and skipped when dark, so a dead swarm degrades to local-only.
+# Identical repo at temperature-0 echo scoring → score-invariant; ops knob
+# only, no weight_version_key event. The URL is a localhost reverse-tunnel
+# to the swarm router (ops/teacher-swarm/), which load-balances ~30 rented
+# boxes with canary admission and per-pod self-healing. Listing it 10x
+# weights the pool's uniform turn hash: 10/12 of turns ride the swarm.
+# 4x -> 10x on 2026-08-15 after mid-scoring queue depths showed the local
+# replica saturated (5 running + 8 waiting) while 34 swarm replicas held ~1
+# request each: sticky turns pinned to a queued local slot paced the duel.
+# At 10/12 weighting the locals keep roughly the same absolute turn load
+# as before while the swarm absorbs everything else.
+extra_urls = [
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+]
+
+[miner_serving]
+# King stays warm; challenger is loaded per duel.
+king_port = 8001
+king_gpus = "2,3"
+challenger_port = 8002
+challenger_gpus = "4,5"
+tp = 2
+# Was 32768; corpus prefixes routinely hit ~31k tokens, and sample() asks for
+# max_thought+max_action=1792 more → vLLM 400 "maximum context length" mid-duel
+# (observed 2026-08-09/10, burned as eval_infra_exhausted). 65536 clears the
+# knife-edge; both GLM-Air and Qwen3.6-35B support ≥128k. Ops knob only.
+max_model_len = 65536
+# 0.80 (not the usual 0.85–0.90): teacher-forcing echo+logprobs materializes
+# an fp32 log_softmax over (step_tokens x vocab) OUTSIDE vLLM's budgeted pool
+# — ~5 GB transient at 8192x151k — so the duel pod needs real headroom.
+# 0.85 + 16384 OOM'd the king mid-duel on 268 GiB B300s (2026-08-04).
+gpu_memory_utilization = 0.80
+# Scheduler token budget per engine step for MINER slots (king/challenger).
+# Under reason_only miners only sample — the sole echo they serve is the
+# injectability probe — but that one echo still materializes fp32
+# log_softmax over (chunk x vocab) outside vLLM's budgeted pool. A barely-
+# fitting bf16 challenger (Talucampe037, 2026-08-15) left 6.3 GiB free at
+# 0.80 util and the 8192-chunk probe spike wanted 7.6 GiB → EngineDead
+# crash loop. 4096 halves the spike to ~3.8 GiB so max-size checkpoints
+# survive their probe; miner prefill is sampling-side and decode-dominated,
+# so the smaller chunk is not on the duel critical path (teachers keep
+# their own override below). Ops knob only — no scoring effect.
+max_num_batched_tokens = 4096
+# Teacher slots only: bigger chunks cut the echo queue wait that dominates
+# duel wall time. At 0.80 util the 12288 spike OOM'd teacher2 mid-duel
+# (2026-08-14, 6.93 GiB wanted vs 6.66 free), so teachers also run a lower
+# gpu_memory_utilization — their KV cache sits at ~2-5% full, so trading
+# ~14 GB of unused KV pool for spike headroom costs nothing.
+teacher_max_num_batched_tokens = 12288
+teacher_gpu_memory_utilization = 0.70
+
+[dataset]
+# Unlabeled turn corpus D: append-only shards + an immutable-manifest pointer
+# on the public Hippius bucket. Push data = new shard + new manifest revision;
+# remove data = flip a shard inactive in a new revision (objects are never
+# deleted — old verdicts stay replayable). The eval machine syncs anonymously,
+# verifies the manifest hash resolves at turns/manifests/{hash}.json and every
+# shard sha256, and refuses to duel without a verified corpus (fail-closed).
+# Duel slices are seeded from the reveal-block hash so miners cannot
+# precompute them (private pool: rejected, see RESEARCH_LOG 2026-08-03), and
+# every verdict stamps the manifest sha256 it was scored against.
+# Corpus refresh no longer bumps weight_version_key — that stays reserved for
+# scoring-rule forks. RT-6 mitigations: fresh teacher y_C at duel time,
+# reveal-block slice seeding, and periodic shard refresh/retirement via
+# scripts/corpus_push.py (ρ_late=+0.845 stability: results/rt6_temporal_holdout.json).
+corpus_base_url = "https://s3.hippius.com/affine-sn120"
+manifest_key = "turns/manifest.json"
+# Pod re-checks the manifest pointer this often (between duels, never mid-duel).
+refresh_interval_s = 3600
+
+[duel]
+# Reason v4 — tempered multi-sample (2026-08-17, weight_version_key=7) —
+# + δ crown floor + median thought-length floor + B gate. The contract:
+#   a_i    = lpC(y_i|z_A) − lpC(y_i|∅)          (per teacher ref, k per turn)
+#   Reason = tau · log((1/k) · Σ_i exp(a_i/tau))   (per turn; score = mean)
+#   crown  = paired mean(Reason_c − Reason_k) > max(k_sigma · SE, min_margin)
+#            AND median(len(z.strip())) ≥ min_thought_chars
+#            AND B pass rate ≥ causality_gamma
+# No mix, no clip, no SE floor. The length floor evicts empty / cue kings.
+# B = lpC(y_A|z_A) − lpC(y_A|∅) is the license to play (not the score).
+#
+# Why tempered (v4): the teacher's action distribution is multi-modal, and
+# averaging per-ref Reason in log space punished committed thoughts without
+# bound whenever the single sampled ref landed on another valid mode (the
+# teacher's own thought scores ≈ −0.010/byte against its unpaired rollout).
+# That made neutral filler the equilibrium. The log-mean-exp is dominated by
+# the best-matched ref, so committing to the teacher's dominant next action
+# becomes the optimum. k=1 reduces exactly to v3; tau→∞ recovers the mean.
+#
+# Sample budget: k=3 refs triples teacher sampling+echo work per turn, paid
+# for by n_turns 2080→1300 (duel GPU-seconds roughly flat; crown SE grows
+# ~1.26× from the smaller n but per-turn scores are less noisy under LME).
+n_turns = 1300
+# Crown bar: k=2 (2026-08-11). False-crown under Gaussian null ≈ 2.28%/duel
+# (~1 in 44). Was 3.0 (~0.13%/duel) under the Reason v3 launch default.
+k_sigma = 2.0
+# Absolute crown-margin floor δ (2026-08-12, weight_version_key=4). Calibrated
+# from 148 archived duels (research/results/delta_calibration.{json,txt}):
+# live null SE ≈ 0.0015–0.0029/duel, so the honest crown bar 2·SE ≈ 0.0035
+# sits above δ and real duels never touch it. What it kills is low-variance
+# attackers the z-test cannot see: an ε-copy of the king has SE ≈ 0.0003 and
+# would crown on ±0.0006 noise margins at the same 1-in-44 as anyone else —
+# under the floor that is ~z=6.7 (≈1-in-7.6e10). Also caps SE-compression
+# (A11 family): the crown bar never drops below δ. Merges / freshly trained
+# parity models are policy-accepted (king-equivalent crowns don't regress
+# the ratchet), hence the floor sits at the lowest calibrated point rather
+# than higher. PROVISIONAL under v4 (2026-08-17): the tempered turn score
+# lives on a shifted scale; recalibrate δ from the first ~20 live v4 duels.
+min_margin = 0.002
+# Median stripped thought length, in characters (2026-08-13, wvk=5).
+# Invalid challenger cannot crown. 80 sits above live cue phrases
+# ("Next command:" = 13, "Next bash command:" = 18) and below guass (~290)
+# / teacher (~240). Use the median so one long dump cannot wash a silent
+# miner. Set 0 to disable (pre-fork replay).
+min_thought_chars = 80
+# k teacher reference rollouts per turn (v4, 2026-08-17). Each ref is
+# baselined (lpC(y_i|∅)) and the miner's single thought is echo-scored
+# against every ref; turn_reason() takes the tempered log-mean-exp.
+n_teacher_samples = 3
+n_miner_samples = 1
+# Tempering temperature tau for the per-turn log-mean-exp (v4, 2026-08-17).
+# tau→∞ is the broken hedging mean; tau=1/L (~0.002) is the hard max.
+# 0.03 calibrated externally (AIIan, n=100 turns): commit beats hedge from
+# tau≈0.1 down, decisively at 0.03, while staying warm enough that one
+# lucky ref hit does not dominate (mode-guessing / leakage amplification
+# are the cold-tau failure modes — watched via telemetry, REDTEAM.md).
+tau = 0.03
+# Ops: skip prior-bank and non-Reason forced-logprob echos (telemetry GPU).
+score_bank = false
+reason_only = true
+# Teacher-side causality gate B = lpC(y_A|z_A) − lpC(y_A|∅) (design B).
+# ON as of 2026-08-13, weight_version_key=6. τ/γ match retired v2 A9.
+# Evalsrv adds two teacher echoes per pair (lpC_ya_za, lpC_ya_e).
+# Fill-in (n=80): thermo cue pass 20% (reject); guass CoT pass 45% (license).
+causality_gate = true
+causality_tau = 0.02
+causality_gamma = 0.30
+temperature = 0.8
+max_thought_tokens = 1024
+max_action_tokens = 768
+# Client-side turn pipelines in flight per side (ops knob, no scoring
+# effect). 24 -> 36 on 2026-08-15 with the teacher swarm absorbing echo
+# load: mid-scoring the miner engines ran 5-7 requests with zero queueing,
+# so the extra in-flight turns feed idle sampling capacity.
+concurrency = 36
+# Whole-duel wall clock budget on the eval server before the validator
+# classifies the eval as a transient failure and requeues.
+timeout_s = 7200
+
+[seed_king]
+# Genesis checkpoint crowned when the validator boots with empty state.
+# Production Albedo genesis until AffineFoundation/Affine-genesis is uploaded.
+repo = "dendriteholdings/albedo-qwen3.6-35b-king-genesis"
+revision = "abe89194d6addf82e71f3f1ba9fef94b05404abf"
+
+[bench]
+# Advisory benchmarks run on a dedicated always-on bench machine (never the
+# duel pod). NEVER part of S* or duels. Default suite is a pinned 25-task
+# SWE-rebench lite panel (coding isomorphism axis). tau2_* suites remain
+# supported by the runner if re-added here.
+enabled = true
+suites = ["swe_rebench_lite"]
+num_trials = 1
+# Parallel mini-SWE-agent workers (and swebench eval workers, capped at 8).
+# Rollouts are docker/CPU-bound most of the time; the H200 pair serving the
+# miner sits idle at 2 workers (measured 0% GPU util), so run wide.
+max_concurrency = 12
+# Unused for swe_rebench_lite; kept for tau2_* suites if re-enabled.
+user_llm = "teacher"
+# Which submissions get benched: "accepted" (new kings only) or "all".
+policy = "all"
+
+[bench_serving]
+# GPU layout on the dedicated bench pod (AFFINE_ROLE=bench). One miner slot.
+port = 8002
+gpus = "0,1"
+tp = 2
+# Bench serves plain generation (no echo+logprobs teacher forcing), so the
+# small prefill chunks the duel pod needs do not apply — big chunks keep
+# long-context agent prompts fast.
+max_num_batched_tokens = 16384
+
+[eval_machine]
+# GPU pod hosting duel evalsrv. The provisioner keeps exactly one alive and
+# reprovisions automatically on sustained health failure.
+provider_order = ["lium", "targon"]
+# Preference order: B300 (fastest / most VRAM) → B200 → H200. First match
+# under the price cap wins.
+gpu_types = ["B300", "B200", "H200"]
+gpu_type = "B300"   # legacy single-type field; gpu_types takes precedence
+gpu_count = 8
+# Hard price cap for the whole pod ($/hr). B300 8× sits ~$56–64.
+max_price_per_hour = 70.0
+port = 9000
+health_interval_s = 60
+# Strikes (one per health_interval_s) before terminate + reprovision. Must
+# ride out a routine evalsrv bounce: teacher re-warm takes ~6-7 checks of
+# ok=false, and soft restarts fire every 3rd strike, so 12 gives one full
+# restart + re-warm cycle before the nuclear option (~12 min for a truly
+# dead pod vs 30-60 min to re-rent and re-download weights).
+unhealthy_threshold = 12
+provision_timeout_s = 3600
+# Lium: docker template id to boot (leave empty for provider default).
+lium_template_id = ""
+# Targon: inventory tier + image for the RENTAL workload fallback.
+targon_resource = "h200-xlarge"
+targon_image = "vllm/vllm-openai:latest"
+
+[bench_machine]
+# Always-on dedicated SWE bench pod (separate from the duel eval machine).
+# Sized for one miner TP=2 serve + docker agent/eval — not the 8× duel layout.
+# Prefer H200: currently ~$23/hr for 2× vs B300 8× at ~$64 for the duel pod.
+provider_order = ["lium", "targon"]
+# H100 last-resort: 2×80GB comfortably serves a ~35B king at TP=2, and Lium
+# regularly has 2× H100 when all Blackwell/H200 2× inventory is gone.
+gpu_types = ["H200", "B200", "B300", "H100"]
+gpu_type = "H200"
+gpu_count = 2
+max_price_per_hour = 30.0
+port = 9001
+health_interval_s = 60
+unhealthy_threshold = 5
+provision_timeout_s = 3600
+lium_template_id = ""
+targon_resource = "h200-large"
+targon_image = "vllm/vllm-openai:latest"
+
+[hippius]
+# Website + dashboard state pushed here; miners read it.
+endpoint = "https://s3.hippius.com"
+bucket = "affine-sn120"
+
+[dashboard]
+# Hot-path read API (affine-dash) — separate from Hippius archive.
+api_host = "127.0.0.1"
+api_port = 8787
+# Public URL for llms.txt / absolute links. Official site: https://affine.io
+# (Cloudflare-proxied to this box; sn120.arbos.life stays up as a legacy alias
+# via the Cloudflare tunnel).
+public_host = "affine.io"
+public_base_url = "https://affine.io"
+
+[validator]
+poll_interval_s = 30
+weight_interval_s = 300
+state_dir = "state"
+tick_warn_after_s = 120
+tick_restart_after_s = 2700
+stream_idle_warn_s = 180
+stream_idle_timeout_s = 420
+max_transient_eval_retries = 3
+# A persistent infra fault (dead king, a repo too large for the pod's disk)
+# never burns the miner, but after this many front-requeues the entry is
+# rotated to the queue tail so other submissions still get evaluated instead
+# of the head wedging forever.
+max_infra_front_requeues = 5
+dashboard_flush_min_interval_s = 5.0
+# Refuse to set weights if the metagraph has not refreshed within this many
+# seconds (stale uid→hotkey map would pay the wrong neurons).
+metagraph_max_age_s = 1800
+# Cap on retained finished eval-server job records (bounds pod memory).
+jobs_retention = 200
