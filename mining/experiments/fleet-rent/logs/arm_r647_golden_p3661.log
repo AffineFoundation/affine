@@ -1,0 +1,8 @@
+[p3661-arm-r647] 2026-08-17T13:46:44Z verify brave /tmp/r647_merged complete
+[p3661-arm-r647] 2026-08-17T13:46:45Z brave r647 shards=16
+[p3661-arm-r647] 2026-08-17T13:46:45Z ensure golden 4,5 free; leave R637 :8004
+[p3661-arm-r647] 2026-08-17T13:46:46Z upload wait+lean to golden
+[p3661-arm-r647] 2026-08-17T13:46:48Z start waiter on golden
+[p3661-arm-r647] 2026-08-17T13:46:48Z write gated host-relay (wait R634 frees brave) + start nohup
+[p3661-arm-r647] 2026-08-17T13:46:48Z host_relay_pid=551523
+[p3661-arm-r647] 2026-08-17T13:46:48Z ARMED R647 — gated on R634 SCP; wait→chall→n80
