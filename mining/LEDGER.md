@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 87129.12053348684 | p3730 |
-| Lium balance | **$87129.12053348684** | p3730 |
-| cumulative mining spend | ~$116,170 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$77129** (balance − $10,000 floor) | $UTC |
+| $UTC | 87088.57212436352 | p3731 |
+| Lium balance | **$87088.57212436352** | p3731 |
+| cumulative mining spend | ~$116,211 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$77089** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T20:39:44Z | 87088.57212436352 | p3731 **R691 CHALL→N80** zesty 6,7 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T20:34:21Z | 87129.12053348684 | p3730 **R700 TRAIN** brave 2,3 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T20:30:07Z | 87169.80599688251 | p3729 **R699 TRAIN** brave 0,1 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T20:25:21Z | 87169.80599688251 | p3728 **R675 REFUTE** ~0.97× (no rent; B300 empty); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T20:02:15Z | 87371.47604053513 | p3724 **R695 TRAIN** R252 4,5 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T19:56:50Z | 87413.77000699901 | p3723 **R683 SCP_QUEUED** gate R680 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T19:51:44Z | 87454.8892824822 | p3722 **R686 REFUTE** + **R694 TRAIN** (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T19:41:30Z | 87569.12166206757 | p3721 **R686 CHALL** zesty local (no rent; B300 empty); burn **~$331.45/h** |
