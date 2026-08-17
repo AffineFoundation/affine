@@ -10,15 +10,11 @@ __pycache__/
 ralphs/*
 !ralphs/ralph.sh
 !ralphs/ralphctl.sh
-# mining/ is tracked — the loop's notes and results are the point. Keys,
-# loop plumbing, and model weights are not.
-mining/wallets/
-mining/.env
-mining/MNEMONICS.txt
-mining/.ralph/
-mining/**/*.safetensors
-mining/**/*.bin
-mining/**/*.gguf
+# mining/ is not published. The miner is ours to run, not to hand to the miners
+# we compete with, and the loop's own logs echo the commands it runs — that is
+# how an HF token reached this repo. Nothing under mining/ is tracked: not the
+# notes, not the scripts, not the artifacts.
+mining/
 *.egg-info/
 # exploit-audit runtime artifacts — source (auditd.py, prompt.md) is tracked;
 # workspaces/verdicts are published to Hippius under audits/ + data/audits.json
