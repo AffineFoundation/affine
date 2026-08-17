@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 89862.89758784987 | p3677 |
-| Lium balance | **$89862.90** | p3677 |
-| cumulative mining spend | ~$113,452 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$79863** (balance − $10,000 floor) | $UTC |
+| $UTC | 89823.04036438931 | p3678 |
+| Lium balance | **$89823.04** | p3678 |
+| cumulative mining spend | ~$113,492 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$79823** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T14:56:55Z | 89823.04036438931 | p3678 **R634 REPAIR** missing shard4 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T14:53:05Z | 89862.89758784987 | p3677 **R662 TRAIN** zesty 4,5 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T14:48:33Z | 89903.7512585819 | p3676 **R661 TRAIN** brave 6,7 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T14:45:10Z | 89944.11225839579 | p3675 **R660 TRAIN** brave 4,5 (no rent; B300 empty); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T14:31:17Z | 90024.43853546199 | p3671 **R657 TRAIN** crown 4,5 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T14:27:35Z | 90065.92614516531 | p3670 **R656 TRAIN** crown 2,3 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T14:23:49Z | 90106.27616751971 | p3669 **R655 TRAIN** R252 6,7 (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T14:20:25Z | 90106.27616751971 | p3668 **R654 TRAIN** crown 0,1 (no rent; B300 empty); burn **~$331.45/h** |
