@@ -1,0 +1,43 @@
+Executing on brave-raven-a9
+[p3729-r699-launch] 2026-08-17T20:29:34Z VRAM0+1 used_mib=0 iter=1
+[p3729-r699-launch] 2026-08-17T20:29:34Z tmp_avail_G=567
+[p3729-r699-launch] 2026-08-17T20:29:37Z TRAIN_UP pid=245332 iter=1
+OUTER=245302 WAIT=245408 TRAIN=245332
+=== lean_warm ===
+[r699-lean] 2026-08-17T20:29:34Z start GPUs 0,1
+[r699-lean] data_lines=604
+[r699-lean] wait VRAM0+1 used_mib=0 iter=1
+[r699] 2026-08-17T20:29:35Z examples=604 lr=1e-6 r=32 β=0.1 steps=10800 len=12288 ep=3 gpus=0,1
+{
+  "utc": "2026-08-17T20:29:35Z",
+  "axis": "r252_offline_dpo_hialpha_midrank_midbeta_softctx_hyperextrasteps_ep3_lolr",
+  "base": "/root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f",
+  "data": "/root/r699/dpo_duel_reason.jsonl",
+  "examples": 604,
+  "lr": "1e-6",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.1,
+  "max_steps": 10800,
+  "max_len": 12288,
+  "epochs": 3,
+  "gpus": "0,1",
+  "pid": 245332,
+  "parent_signal": "R675 Soft MidRank MidBeta SoftCtx UltraExtra near-miss ~0.97x \u2014 HyperExtra steps=10800 (\u2260 UltraExtra 7200; \u2260 Mega 3600; \u2260 R698 MidCtx MidRank MidBeta HyperExtra; \u2260 R690 Soft HiRank MidBeta SoftCtx UltraExtra; \u2260 Online / \u2260 GRPO)",
+  "decision_rule": "Stage-5 iff fresh n80 paired margin > max(2*SE, 0.002) AND median |z|>=80 AND B pass>=0.30 vs reign34 (v4 k=3)"
+}
+[r699] TRAIN_ARMED pid=245332
+[r699-lean] 2026-08-17T20:29:35Z TRAIN launched pid=245332
+=== gpu ===
+index, memory.used [MiB], utilization.gpu [%]
+0, 0 MiB, 0 %
+1, 0 MiB, 0 %
+2, 0 MiB, 0 %
+3, 0 MiB, 0 %
+4, 68004 MiB, 0 %
+5, 59870 MiB, 27 %
+6, 175540 MiB, 35 %
+7, 123938 MiB, 34 %
+    PID     ELAPSED CMD
+ 245332 441077231-19:52:00 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f --data /root/r699/dpo_duel_reason.jsonl --out-dir /root/r699/train --max-len 12288 --epochs 3 --lr 1e-6 --lora-r 32 --lora-alpha 128 --beta 0.1 --max-steps 10800
+[p3729-r699-launch] 2026-08-17T20:29:38Z DONE

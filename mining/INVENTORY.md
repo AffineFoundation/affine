@@ -7,10 +7,10 @@
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
 | mine-crown-1 | gentle-orbit-bd (`3d07e519-…`) | 8×B200 | $52.25 | **2026-08-18T19:04Z** | TK · **R693 TRAIN** 4,5 · **R698 TRAIN** 6,7 · **v4 pkg** |
-| mine-r165-awesome-hialpha-1 | lunar-wolf-be (`0f283151-…`) | 8×B200 | $44.00 | **2026-08-18T19:04Z** | TK · **4,5 idle** post-**R675 REFUTE** · keep `/tmp/r675_merged` · **v4 pkg** |
-| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 (`522c84fd-…`) | 8×B200 | $60.00 | **2026-08-18T19:04Z** | TK · R637 :8004 · **R680 SCP** ~44G/11sh · **R683 queued** · **v4 pkg** |
+| mine-r165-awesome-hialpha-1 | lunar-wolf-be (`0f283151-…`) | 8×B200 | $44.00 | **2026-08-18T19:04Z** | TK · **4,5 idle** · keep `/tmp/r675_merged` · **v4 pkg** |
+| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 (`522c84fd-…`) | 8×B200 | $60.00 | **2026-08-18T19:04Z** | TK · R637 :8004 · **R680 SCP** ~48G/12sh · **R683 queued** · **v4 pkg** |
 | mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da (`5e54186c-…`) | 8×B300 | $64.00 | **2026-08-18T19:04Z** | TK · **R694 TRAIN** 4,5 · R691 TRAIN · **v4 pkg** |
-| mine-r226-marsplan-fullft-1 | brave-raven-a9 (`5c019a27-…`) | 8×B200 | $47.20 | **2026-08-18T19:04Z** | R685/R687/R690 · **R696 TRAIN** 4,5 · **R683 MERGE** · **v4 pkg** |
+| mine-r226-marsplan-fullft-1 | brave-raven-a9 (`5c019a27-…`) | 8×B200 | $47.20 | **2026-08-18T19:04Z** | **R699 TRAIN** 0,1 · R696 4,5 · R690 6,7 · **R683 MERGE** · **v4 pkg** |
 | mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c (`61d17753-…`) | 8×B300 | $64.00 | **2026-08-18T19:04Z** | TK · **R695 TRAIN** 4,5 · **R697 TRAIN** 6,7 · **v4 pkg** |
 
 SSH crown: `ssh root@95.133.253.90 -p 40099`
@@ -19,8 +19,8 @@ SSH R262: `ssh root@38.127.229.127 -p 40299`
 SSH R260: `lium exec zesty-comet-da` / `ssh root@86.38.182.95 -p 20299`
 SSH brave: `ssh -p 40127 root@18.118.83.97` / `lium exec brave-raven-a9`
 SSH R252: `ssh -p 40299 root@95.133.252.28` / `lium exec gentle-wolf-8c`
-Host fleet: next=**R699**; B300×8 **empty**; burn **~$331.45/h** · **wvk=7**
-**p3728:** **R675 REFUTE** ~0.97×; lunar 4,5 free; R680~44G/11sh; bal **~$87170**
+Host fleet: next=fill brave **2,3**; B300×8 **empty**; burn **~$331.45/h** · **wvk=7**
+**p3729:** **R699 TRAIN** brave 0,1 pid**245332**; R680~48G/12sh; bal **~$87170**
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval` (eager-fox-27), `affine-teacher2`.
 
@@ -28,6 +28,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-17T20:30:07Z | p3729: **R699 TRAIN** brave 0,1 (post R685/R687 MERGE); B300 empty; bal **~$87170** |
 | 2026-08-17T20:25:21Z | p3728: **R675 REFUTE v4** ~0.97×; reap lunar 4,5; B300 empty; bal **~$87170** |
 | 2026-08-17T20:20:06Z | p3727: **R698 TRAIN** fill idle crown 6,7 after R692 MERGE; B300 empty; bal **~$87251** |
-| 2026-08-17T20:14:30Z | p3726: **R697 TRAIN** fill idle R252 6,7 after R689 MERGE; B300 empty; bal **~$87292** |
