@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3757: reaped idle day-old **r537** chall on lunar **6,7**/:8002 by exact pid (527355) — `ss|awk match()` failed on busybox; use `ss|sed 's/.*pid=//'`; **R721 TRAIN** marsplan Soft MidRank LoBeta MidCtx SuperExtra (β=0.02 r=32 @8192 steps=**14400**) pid**678678** + wait→merge**678850**; pin BASE after mine.env; freed r222/r336/r439/r537 merges; R708/R709 n80 ~56–61/80; B300×8=0; burn ~$331/h. **Never `pkill -f`**.
 - p3756: **R708+R709 MERGE→CHALL→N80 LIVE** on idle zesty **4–7** (both MERGE_DONE 16sh/66G local; no SCP) — R709 Soft MidRank LoBeta SoftCtx UltraExtra **4,5**/:8002 vllm**846127**→sim**850902**; R708 Soft MidRank MidBeta SoftCtx UltraExtra **6,7**/:8003 vllm**846548**→sim**850781** (`*_wvk7` fail-closed k=3; Triton seed chall_r702/r691 n_star=26); B300×8=0; burn ~$331/h. **Never `pkill -f`**.
 - p3755: filled golden idle **4–7** after R683 LOST leftovers — reap chall :8003/:8004 by pidfile (r683=521698, r637=377314); freed 6 old `/tmp/*_merged`; **R719 TRAIN** MidCtx MidRank MidBeta SuperExtra (β=0.1 r=32 @8192 steps=**14400**) pid**526570** + **R720 TRAIN** Short MidRank MidBeta SuperExtra (β=0.1 r=32 @6144) pid**526573** + wait→merge; kept=604; B300×8=0; burn ~$331/h. **Never `pkill -f`**.
 - p3754: **R696 REFUTE v4** m=−0.00271~**−0.41×** (thought✓140.5 B✓0.438 k=3) Short MidRank LoBeta UltraExtra fails LME; reap crown 6,7 by pidfile → keep `/tmp/r696_merged`; **R718 TRAIN** Soft HiRank LoBeta SoftCtx SuperExtra (β=0.02 r=64 @12288 steps=**14400**; amplify R691 UltraExtra REFUTE; ≠ R717 MidRank LoBeta SuperExtra / ≠ R715 MidBeta / ≠ R716 HiBeta) pid**98310** + wait→merge; kept=604; B300×8=0; burn ~$331/h. **Never `pkill -f`**.
@@ -147,5 +148,3 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - `/root/mine.env` must **export** vars; bare `HF_TOKEN=` does not reach python child.
 - After LoRA: merge → graft visual → reload chall → fresh n80; engines **`max_model_len=65536`**.
 - B300 serve: `CUDA_HOME=…/nvidia/cu13` + `VLLM_USE_FLASHINFER_*=0`.
-- SCP shard count can hit 16 while a shard is still growing — wait for tar EOF / done marker, not `ls | wc`.
-- crown `/root` cipher ENOSPC — purge finished merges/`r*_hf` before next pull.
