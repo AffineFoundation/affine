@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3680: **R663 TRAIN** Long HiRank LoBeta ep3×LoLR on idle crown **0,1** (amplify R648 ~0.68× best Long near-miss; ≠ R662 Long MidRank / ≠ R656 Short HiRank) — fill free crown GPUs after R654 MERGE while R634 n80 + R647 SCP live; kept=604. **Never `pkill -f`**.
 - p3679: **R634 SCP_READY** 15:13Z (16sh/66G; shard4 self-healed mid-tar) → lean :8003; **R647 SCP** auto-started; repair PID stuck after READY because `pgrep -af "tar xf"|grep r634_merged` **self-matches the remote check argv** — kill repair by PID only once SCP_READY+chall live. **Never `pkill -f`**.
 - p3678: **R634 SCP hole** — dest reached shard14 while **model-00004 missing** (index lists it; source has full 3.96G); tar `test n≥16` would never write SCP_READY — arm post-tar **repair** (wait recv exit → patch missing only → write `r634_scp_ready.done`); do not dual-pipe during live tar. **Never `pkill -f`**.
 - p3677: **R662 TRAIN** Long MidRank LoBeta ep3×LoLR on idle zesty **4,5** (amplify R643 ~0.50× / R579 ~0.46×; first LongCtx ep3×LoLR; ≠ R653 Short / ≠ R648 HiRank) — fill free TKC train slots while R634 SCP→chall owns 6,7; reap before R633 chall needs 4,5; R634~52G/12sh; kept=604. **Never `pkill -f`**.
@@ -47,7 +48,6 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p3659: **R641** SCP_READY then lean **purged** seeded Triton 170M→724K (same R640 landmine) — kill-by-PID, patch lean **REUSE if n_so≥25 & ≥100M / wipe+seed NO purge**, reseed from `/root/.triton/cache/chall`, CHALL_READY→**n80** pid724905. **Never `pkill -f`**.
 - p3658: **R648 REFUTE** m=+0.005039~0.68× (thought✓148 B✓0.506); reap golden :8003 by PID → **R646 ARMED** Long HiRank MidBeta; **R631 DEFER** again (~6G slow; free brave uplink). **Never `pkill -f`**.
 - p3657: **R648 lean died** after "GPUs free" — `du -sm $TCACHE` on missing `chall_r648` under `set -o pipefail` exits before seed; fix `du … || true` + `${_sz:-0}`; then wipe+seed from chall_r645 → CHALL_READY→n80. **Never `pkill -f`**.
-- p3656: **R652 TRAIN** Soft HiRank LoBeta ep3×LoLR on idle brave **2,3** while R651 owns **0,1** and R648 uplink still live — fill free GPUs with a distinct Soft×ep3 axis when B300 stock empty. **Never `pkill -f`**.
 - p3655: **R631 SCP STALL** @~12G/3sh flat while **R648** brave→golden uplink live — kill dead R631 ends by PID, purge dest, **defer repipe until R648 SCP_READY** (do not dual-pipe brave). **Never `pkill -f`**.
 - p3654: **R645 REFUTE** m=−0.001633~−0.29× (thought✓153 B✓0.436); Soft MidRank HiBeta ep2×LoLR fails; reap golden :8003 by PID → **R648 ARMED** Long HiRank LoBeta (brave→golden); leave R637 :8004. **Never `pkill -f`**.
 - p3653: **R645 n80 LIVE** after Triton REUSE — CHALL_READY→n80 in ~4m; king sampling progress within ~75s (not the R640 0%-CPU hang). **Never `pkill -f`**.
