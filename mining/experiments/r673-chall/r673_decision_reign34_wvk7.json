@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-17T19:26:35Z",
+  "hypo": "R673",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign34",
+  "margin": -0.004280118369768778,
+  "se": 0.0023455843711033837,
+  "z": -1.8247556653676766,
+  "n": 80,
+  "bar": 0.004691168742206767,
+  "thought_median": 142.0,
+  "b_pass": 0.3514644351464435,
+  "wins": false,
+  "note": "p3715 chall+v4-n80 crown 4,5; Soft MidRank LoBeta SoftCtx UltraExtra ep3 LoLR; vs reign34 wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}
