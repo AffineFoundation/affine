@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3677: **R662 TRAIN** Long MidRank LoBeta ep3×LoLR on idle zesty **4,5** (amplify R643 ~0.50× / R579 ~0.46×; first LongCtx ep3×LoLR; ≠ R653 Short / ≠ R648 HiRank) — fill free TKC train slots while R634 SCP→chall owns 6,7; reap before R633 chall needs 4,5; R634~52G/12sh; kept=604. **Never `pkill -f`**.
 - p3676: **R661 TRAIN** MidCtx HiRank MidBeta ep3×LoLR on idle brave **6,7** (amplify R644 ~−0.07× / R597 ~0.49×; ≠ R655 LoBeta / ≠ R657 MidRank MidBeta / ≠ R660 MidRank HiBeta) — fill last free brave GPUs while R634 SCP uplink live (train ≠ dual-pipe); R634~47G/12sh; kept=225. **Never `pkill -f`**.
 - p3675: **R660 TRAIN** MidCtx MidRank HiBeta ep3×LoLR on idle brave **4,5** (amplify R650 ~0.47× / R625 @5e-6; ≠ R654 LoBeta / ≠ R657 MidBeta / ≠ R659 Short HiBeta) — fill free train GPUs while R634 SCP uplink live (train ≠ dual-pipe); R634~47G/11sh; kept=225. **Never `pkill -f`**.
 - p3674: **R659 TRAIN** Short MidRank HiBeta ep3×LoLR on idle brave **2,3** (amplify R622 ~0.85×; anti-overfit R627 ep3@5e-6 / R632 ep2×LoLR; ≠ R653 LoBeta / ≠ R658 MidBeta) — fill free train GPUs while R634 SCP uplink live (train ≠ dual-pipe); R634~43G/10sh. **Never `pkill -f`**.
