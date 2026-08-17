@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3695: **R675 TRAIN** Soft MidRank MidBeta UltraExtra (steps=7200) on idle R252 **6,7** after R667 MERGE (amplify R635 ~−0.31× / R593 ~0.70×; ≠ R673 Soft LoBeta UltraExtra / ≠ R651 Soft MidRank HiBeta); R653~8sh/34G; R655~9sh/34G; B300 empty. **Never `pkill -f`**.
 - p3694: **R674 TRAIN** Long MidRank LoBeta UltraExtra (steps=7200) on idle zesty **4,5** after R662 MERGE (amplify R643 ~0.50×; ≠ R673 Soft UltraExtra / ≠ R662 Mega 3600); R653~4sh/18G; R655~8sh/35G; R252 **6,7 free**; B300 empty. **Never `pkill -f`**.
 - p3693: **R652 REFUTE v4** m=−0.001408~−0.33× (thought✓167 B✓0.354 k=3) — Soft HiRank LoBeta ep3×LoLR fails LME; reap golden 4,5; **R653 SCP** brave→golden (R655 R252→lunar untouched). B300 empty. **Never `pkill -f`**.
 - p3692: **R673 TRAIN** Soft MidRank LoBeta UltraExtra (steps=7200) on idle crown **6,7** after R666 MERGE (amplify R637 ~1.45×; ≠ Mega 3600); **R652 n80 LIVE** ~28/80 after CHALL_READY 16:34Z; API waiter PASS=3692; R655~25G/7sh; B300 empty. **Never `pkill -f`**.

@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 88932.60495805209 | p3694 |
-| Lium balance | **$88932.60495805209** | p3694 |
-| cumulative mining spend | ~$114,342 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$78933** (balance − $10,000 floor) | $UTC |
+| $UTC | 88891.92650988192 | p3695 |
+| Lium balance | **$88891.92650988192** | p3695 |
+| cumulative mining spend | ~$114,383 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$78892** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T16:51:10Z | 88891.92650988192 | p3695 **R675 TRAIN** R252 6,7 Soft MidRank MidBeta UltraExtra (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T16:47:51Z | 88932.60495805209 | p3694 **R674 TRAIN** zesty 4,5 UltraExtra Long MidRank LoBeta (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T16:43:34Z | 88972.87103187863 | p3693 **R652 REFUTE** + **R653 SCP** brave→golden (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T16:36:51Z | 89014.5473246602 | p3692 **R673 TRAIN** crown 6,7 + API waiter p3692 (no rent; B300 empty); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T15:58:49Z | 89338.21618472386 | p3688 **R651 REFUTE** + **R655 SCP** R252→lunar (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T15:49:45Z | 89418.86732571699 | p3687 **R633 SCP** brave→golden (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T15:45:08Z | 89458.69272416751 | p3686 **R651 REPAIR** shard4 trunc (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T15:41:51Z | 89458.69272416751 | p3685 **R669 TRAIN** brave 0,1 (no rent; B300 empty); burn **~$331.45/h** |
