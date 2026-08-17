@@ -1,0 +1,18 @@
+{
+  "hyp": "R675",
+  "pass": 3728,
+  "utc": "2026-08-17T20:24:14Z",
+  "verdict": "REFUTE",
+  "margin": 0.0035016086146718917,
+  "se": 0.0018003167463989862,
+  "z": 1.9449958579099198,
+  "bar": 0.0036006334927979724,
+  "ratio": 0.9724979289549599,
+  "thought_med": 163.0,
+  "b_pass": 0.5194805194805194,
+  "k": 3,
+  "tau": 0.03,
+  "n_paired": 76,
+  "challenger_wins": false,
+  "note": "near-miss ~0.972x bar; Soft MidRank MidBeta SoftCtx UltraExtra; chall reaped lunar 4,5"
+}

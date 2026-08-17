@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 87251.23687742968 | p3727 |
-| Lium balance | **$87251.23687742968** | p3727 |
-| cumulative mining spend | ~$116,048 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$77251** (balance − $10,000 floor) | $UTC |
+| $UTC | 87169.80599688251 | p3728 |
+| Lium balance | **$87169.80599688251** | p3728 |
+| cumulative mining spend | ~$116,129 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$77170** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T20:25:21Z | 87169.80599688251 | p3728 **R675 REFUTE** ~0.97× (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T20:20:06Z | 87251.23687742968 | p3727 **R698 TRAIN** crown 6,7 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T20:14:30Z | 87291.75608994192 | p3726 **R697 TRAIN** R252 6,7 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T20:07:52Z | 87332.8407842355 | p3725 **R696 TRAIN** brave 4,5 (no rent; B300 empty); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T19:41:30Z | 87569.12166206757 | p3721 **R686 CHALL** zesty local (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T19:36:59Z | 87569.12166206757 | p3720 **R693 TRAIN** crown 4,5 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T19:32:04Z | 87616.9897861287 | p3719 **R680 SCP** zesty→golden (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T19:28:13Z | 87658.41023194946 | p3718 **R679+R673 REFUTE** + **R692 TRAIN** (no rent; B300 empty); burn **~$331.45/h** |
