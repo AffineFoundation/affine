@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3681: **R634 REFUTE v4** m=+0.000497~0.08× (thought✓155 B✓0.314 k=3) — Short HiRank LoBeta ep2×LoLR fails LME; pipeline.done+reap chall by PID; **R664 TRAIN** Long MidRank MidBeta ep3×LoLR on idle crown **2,3** (amplify R641 ~0.31×; ≠ R662 LoBeta / ≠ R663 HiRank LoBeta); R647~51G; B300 empty. **Never `pkill -f`**.
 - p3680: **R663 TRAIN** Long HiRank LoBeta ep3×LoLR on idle crown **0,1** (amplify R648 ~0.68× best Long near-miss; ≠ R662 Long MidRank / ≠ R656 Short HiRank) — fill free crown GPUs after R654 MERGE while R634 n80 + R647 SCP live; kept=604. **Never `pkill -f`**.
 - p3679: **R634 SCP_READY** 15:13Z (16sh/66G; shard4 self-healed mid-tar) → lean :8003; **R647 SCP** auto-started; repair PID stuck after READY because `pgrep -af "tar xf"|grep r634_merged` **self-matches the remote check argv** — kill repair by PID only once SCP_READY+chall live. **Never `pkill -f`**.
 - p3678: **R634 SCP hole** — dest reached shard14 while **model-00004 missing** (index lists it; source has full 3.96G); tar `test n≥16` would never write SCP_READY — arm post-tar **repair** (wait recv exit → patch missing only → write `r634_scp_ready.done`); do not dual-pipe during live tar. **Never `pkill -f`**.

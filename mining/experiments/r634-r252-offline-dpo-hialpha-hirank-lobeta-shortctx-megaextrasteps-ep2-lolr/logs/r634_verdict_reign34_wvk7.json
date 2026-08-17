@@ -1,0 +1,72 @@
+{
+  "challenger_wins": false,
+  "rejection_reason": null,
+  "margin": 0.0004965154948323886,
+  "se": 0.0029830745797020455,
+  "z": 0.1664442110200213,
+  "k_sigma": 2.0,
+  "min_margin": 0.002,
+  "n_paired_turns": 78,
+  "ranking_formula": "Reason(turn) = tau\u00b7log(mean_i exp((lpC(y_i|z_A) \u2212 lpC(y_i|\u2205))/tau))",
+  "duel_params": {
+    "n_turns": 80,
+    "k_sigma": 2.0,
+    "min_margin": 0.002,
+    "min_thought_chars": 80,
+    "causality_gate": true,
+    "causality_gamma": 0.3,
+    "tau": 0.03,
+    "n_teacher_samples": 3,
+    "n_miner_samples": 1
+  },
+  "king": {
+    "reason": 0.009022269952885575,
+    "n_turns": 80,
+    "n_pairs": 233,
+    "gate_pass_rate": 0.0,
+    "bank_frac": null,
+    "calib_ratio": null,
+    "baseline_abs": null,
+    "mean_l1lift": null,
+    "mean_eta": -0.24580037560996204,
+    "mean_len_z": 222.6137339055794,
+    "median_len_z": 196.0,
+    "mean_len_y": 337.4334763948498,
+    "mean_b": 0.023664282756548107,
+    "b_gate_pass_rate": 0.33476394849785407,
+    "len_z_delta": -33.55781421157542,
+    "len_y_delta": -21.892883437786224
+  },
+  "challenger": {
+    "reason": 0.009664629661560885,
+    "n_turns": 80,
+    "n_pairs": 239,
+    "gate_pass_rate": 0.0,
+    "bank_frac": null,
+    "calib_ratio": null,
+    "baseline_abs": null,
+    "mean_l1lift": null,
+    "mean_eta": -0.19007909455327243,
+    "mean_len_z": 161.44351464435147,
+    "median_len_z": 155.0,
+    "mean_len_y": 352.68200836820085,
+    "mean_b": 0.020144840995034764,
+    "b_gate_pass_rate": 0.3138075313807531,
+    "len_z_delta": -94.72803347280336,
+    "len_y_delta": -6.644351464435147
+  },
+  "teacher": {
+    "mean_len_z": 256.1715481171548,
+    "mean_len_y": 359.326359832636
+  },
+  "duel_seconds": 414.9009698299924,
+  "slice": {
+    "seed": 3467940368550702416,
+    "n": 80,
+    "digest": "7a920041731322554a743f00ad5cb443477ea91d7b7f19ef54b0eb506607e108",
+    "block_hash": "7445dddcb9922b72f00b4e62f5f179595c537a28f6c97944bb6b127d6d83816a",
+    "corpus_epoch": 11,
+    "manifest_sha256": "9360a83749c79d215be7666d28151e7c2083f4efbe5a3f8b4e76acd44481f014"
+  }
+}
+

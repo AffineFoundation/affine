@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 89660.83348912947 | p3680 |
-| Lium balance | **$89660.83** | p3680 |
-| cumulative mining spend | ~$113,654 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$79661** (balance − $10,000 floor) | $UTC |
+| $UTC | 89620.56896854432 | p3681 |
+| Lium balance | **$89620.57** | p3681 |
+| cumulative mining spend | ~$113,694 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$79621** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T15:24:45Z | 89620.56896854432 | p3681 **R634 REFUTE** + **R664 TRAIN** (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T15:18:40Z | 89660.83348912947 | p3680 **R663 TRAIN** crown 0,1 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T15:14:14Z | 89701.95981428088 | p3679 **R634 SCP_READY→chall** + **R647 SCP** (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T14:56:55Z | 89823.04036438931 | p3678 **R634 REPAIR** missing shard4 (no rent; B300 empty); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T14:40:48Z | 89944.11225839579 | p3674 **R659 TRAIN** brave 2,3 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T14:36:50Z | 89984.86832843628 | p3673 **R634 v4 ARM** lean+wait (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T14:34:05Z | 90024.43853546199 | p3672 **R658 TRAIN** crown 6,7 (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T14:31:17Z | 90024.43853546199 | p3671 **R657 TRAIN** crown 4,5 (no rent; B300 empty); burn **~$331.45/h** |

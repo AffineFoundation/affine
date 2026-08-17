@@ -2,7 +2,7 @@
 Rewritten every pass. Do not append.
 
 ## Stage
-**Stage 5 · FORK wvk=7 Reason v4 · R596 REFUTE · R663/R662/R661/R660/R659/R658/R657/R656/R655/R654/R653 TRAIN · R652 MERGE_DONE · R634 n80 · R647 SCP · R651 wait**.
+**Stage 5 · FORK wvk=7 Reason v4 · R634 REFUTE · R664/R663/R662/R661/R660/R659/R658/R657/R656/R655/R654/R653 TRAIN/MERGE · R647 SCP · R651 wait**.
 King=reign34 · r252 reign33 earning. Burn floor **≥$833/h** on mine-* 8×B300.
 
 ## Live facts
@@ -15,21 +15,21 @@ King=reign34 · r252 reign33 earning. Burn floor **≥$833/h** on mine-* 8×B300
 | king | **`cryptoDev23/Affine-5Dku3dYp9j-hk8161`** @ `55b7ffe0…` **reign 34** |
 | our reign | **r252** reign33 / uid90 / earning |
 | miner burn | **~$331.45/h** · floor $833/h · **gap -$501.55/h** |
-| B300 stock | **empty** (no 8×B300/B200; only 1×B200) |
-| Lium bal | **~$89661** · floor $10k OK |
+| B300 stock | **empty** (only 1×B200) |
+| Lium bal | **~$89621** · floor $10k OK |
 | submissions | **9** · r252 CROWNED r33 · r596 chal-00822 · r637 chal-00829 |
-| **p3680** | **R663 TRAIN** crown 0,1 Long HiRank LoBeta ep3×LoLR · **R634 n80** 27/80 · **R647 SCP**~26G/7sh |
+| **p3681** | **R634 REFUTE** m=+0.000497~**0.08×** (thought✓155 B✓0.314 k=3) · **R664 TRAIN** crown 2,3 · R647 SCP~51G |
 
 ## Running
 
 | name | huid | $/h | role |
 |---|---|---|---|
-| mine-crown-1 | gentle-orbit-bd | $52.25 | **R663** 0,1 · **R656** MERGE · **R657** merge 4,5 · **R658** 6,7 · R654 MERGE |
+| mine-crown-1 | gentle-orbit-bd | $52.25 | **R664** 2,3 · **R663** 0,1 · R654/R656/R657 MERGE · **R658** 6,7 |
 | mine-r165-awesome-hialpha-1 | lunar-wolf-be | $44.00 | TK · R537 :8002 · **R651 wait** 4,5/:8003 |
-| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | $60.00 | TK · **R647 SCP**~26G/7sh · R637 :8004 |
-| mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da | $64.00 | TK · **R634 n80** :8003 · **R662 TRAIN** 4,5 |
+| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | $60.00 | TK · **R647 SCP**~51G · R637 :8004 |
+| mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da | $64.00 | TK · **R634 REAPED** 6,7 free · **R662 TRAIN** 4,5 |
 | mine-r226-marsplan-fullft-1 | brave-raven-a9 | $47.20 | **R653/R659/R660/R661 TRAIN** · **R647 uplink** · R652 MERGE |
-| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | $64.00 | TK · R596 :8002 · **R655** MERGE 6,7 free |
+| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | $64.00 | TK · R596 :8002 · **R655** MERGE · 6,7 free |
 
 SSH: crown `…90:40099` · R165 `…118:20299` · R262 `…127:40299` · R260 `…95:20299` · brave `18.118.83.97:40127` · R252 `95.133.252.28:40299`
 
@@ -37,7 +37,7 @@ SSH: crown `…90:40099` · R165 `…118:20299` · R262 `…127:40299` · R260 `
 Under $833/h — **no 8×B300/B200**. Pre-p3664 n80s stamped k=1 — ignore for submit. **Never `pkill -f`**. Stake ~29.5α (~τ1.68) below τ5 sweep. **Do not** dual-pipe brave while R647 SCP live. **R662** occupies zesty 4,5 until merge — reap before **R633** chall.
 
 ## Next action
-1. Harvest **R634** v4 n80 (`*_wvk7`, assert k=3) when done on zesty :8003.
-2. After **R647** SCP_READY → lean golden 4,5/:8003; then **R651** (lunar); arm **R652** SCP when uplink free.
-3. Watch **R663/R662/R661/R660/R659/R658/R657** → merge; Stage-5 only if v4 stamp k=3 clears bar.
-4. Blind rent **R337** when 8×B300/B200 appears; fill crown 2,3 / R252 6,7 if still idle.
+1. After **R647** SCP_READY → lean golden 4,5/:8003; then **R651** (lunar); arm **R652/R654/R655/R656/R657** SCP when uplink free.
+2. Watch **R664/R663/R662/R661/R660/R659/R658** → merge; Stage-5 only if v4 stamp k=3 clears bar.
+3. Fill crown **4,5** / R252 **6,7** / zesty **6,7** if still idle with a distinct axis.
+4. Blind rent **R337** when 8×B300/B200 appears.

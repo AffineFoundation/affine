@@ -1,0 +1,17 @@
+{
+  "exp": "R634",
+  "king": "reign34",
+  "wvk": 7,
+  "margin": 0.0004965154948323886,
+  "se": 0.0029830745797020455,
+  "z": 0.1664442110200213,
+  "bar": 0.005966149159404091,
+  "x": 0.08322210551001065,
+  "thought_median": 155.0,
+  "b_pass": 0.3138075313807531,
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "challenger_wins": false,
+  "decision": "REFUTE",
+  "n_paired": 78
+}

@@ -1,10 +1,23 @@
 # R634 result
 
-## Status (p3679)
-- **SCP_READY** `2026-08-17T15:13:00Z` on zesty — 16/16 shards · 66G · shard4 = 3962207584 (matched source). Mid-SCP hole self-healed as live tar rewrote shard4 then 15–16.
-- **v4 lean chall LIVE** GPUs **6,7** / `:8003` pid**772101** (p3673 waiter; Triton seed REUSE; outs `*_wvk7` fail-closed k=3).
-- p3678 repair waited correctly through tar; after READY it stuck on **self-matching** `pgrep -af "tar xf" | grep r634_merged` (remote check argv contains both strings) → killed PID **724571** only (SCP already done; chall up).
-- **R647** host-relay auto-started brave→golden once R634 uplink freed (~4G at p3679 close).
+## Decision (p3681) — REFUTE v4
+| field | value |
+|---|---|
+| margin | **+0.000497** |
+| SE | 0.002983 |
+| z | 0.166 |
+| bar | max(2·SE, δ)=**0.005966** |
+| × bar | **~0.083×** |
+| thought median | 155 ✓ (≥80) |
+| B pass | 0.314 ✓ (≥0.30) |
+| stamp | k=3 · τ=0.03 · n_paired=78 · wvk7 |
+| wins | **false** |
+
+Artifacts: `logs/r634_decision_reign34_wvk7.json`, `logs/r634_verdict_reign34_wvk7.json`.
+Short HiRank LoBeta ep2×LoLR fails v4 LME vs reign34. Pipeline.done written; chall :8003 reaped (zesty 6,7 free). R656 (same axis ep3) still queued for screen.
 
 ## Decision rule (pre-registered)
 Crown iff paired mean(Reason_c−Reason_k) > max(2·SE, 0.002) **and** median |z|≥80 **and** B pass≥0.30 on fresh v4 (k=3, τ=0.03) slice vs reign34.
+
+## Prior (p3679)
+- SCP_READY 15:13Z · v4 lean chall LIVE 6,7/:8003 · R647 uplink freed after.
