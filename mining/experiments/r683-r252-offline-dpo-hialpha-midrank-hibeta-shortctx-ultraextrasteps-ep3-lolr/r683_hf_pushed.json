@@ -1,0 +1,17 @@
+{
+  "utc": "2026-08-17T21:21:56Z",
+  "repo": "unconst/Affine-5czsc2fc98-r683-r252-odpo-midrank-hibeta-shortctx-ultraextra-ep3-lolr-merged",
+  "revision": "f3314c7cdc174cc4b0331bc6125c21e9b45ddbe1",
+  "elapsed_s": 14.646005392074585,
+  "merge_dir": "/tmp/r683_merged",
+  "whoami": "unconst",
+  "n80_margin": 0.002137002820357482,
+  "n80_se": 0.0009433265826316925,
+  "n80_z": 2.265390226145935,
+  "n80_bar": 0.002,
+  "n80_thought_median": 172.0,
+  "n80_b_pass": 0.3037974683544304,
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03
+}
