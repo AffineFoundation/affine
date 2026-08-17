@@ -22,6 +22,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3657: **R648 lean died** after "GPUs free" — `du -sm $TCACHE` on missing `chall_r648` under `set -o pipefail` exits before seed; fix `du … || true` + `${_sz:-0}`; then wipe+seed from chall_r645 → CHALL_READY→n80. **Never `pkill -f`**.
 - p3656: **R652 TRAIN** Soft HiRank LoBeta ep3×LoLR on idle brave **2,3** while R651 owns **0,1** and R648 uplink still live — fill free GPUs with a distinct Soft×ep3 axis when B300 stock empty. **Never `pkill -f`**.
 - p3655: **R631 SCP STALL** @~12G/3sh flat while **R648** brave→golden uplink live — kill dead R631 ends by PID, purge dest, **defer repipe until R648 SCP_READY** (do not dual-pipe brave). **Never `pkill -f`**.
 - p3654: **R645 REFUTE** m=−0.001633~−0.29× (thought✓153 B✓0.436); Soft MidRank HiBeta ep2×LoLR fails; reap golden :8003 by PID → **R648 ARMED** Long HiRank LoBeta (brave→golden); leave R637 :8004. **Never `pkill -f`**.
