@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 88798.04014378539 | p3699 |
-| Lium balance | **$88798.04014378539** | p3699 |
-| cumulative mining spend | ~$114,505 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$78798** (balance − $10,000 floor) | $UTC |
+| $UTC | 88757.17006429855 | p3700 |
+| Lium balance | **$88757.17006429855** | p3700 |
+| cumulative mining spend | ~$114,546 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$78757** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T17:15:14Z | 88757.17006429855 | p3700 **R677+R678 TRAIN** crown 2–5 UltraExtra (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T17:11:30Z | 88798.04014378539 | p3699 **R653 REFUTE** + **R663 SCP** crown→golden (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T17:05:37Z | 88798.04014378539 | p3698 **R676 TRAIN** crown 0,1 UltraExtra Long HiRank LoBeta (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T17:00:34Z | 88879.64636172207 | p3697 **R653 SCP_READY→CHALL** (no rent; B300 empty); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T16:43:34Z | 88972.87103187863 | p3693 **R652 REFUTE** + **R653 SCP** brave→golden (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T16:36:51Z | 89014.5473246602 | p3692 **R673 TRAIN** crown 6,7 + API waiter p3692 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T16:31:56Z | 89053.83944436345 | p3691 **R652 SCP_READY→CHALL** + API waiter p3691 (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T16:17:35Z | 89176.17995128914 | p3690 **R633 REFUTE** + **R652 SCP** brave→golden (no rent; B300 empty); burn **~$331.45/h** |
