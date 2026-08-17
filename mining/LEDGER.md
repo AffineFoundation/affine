@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 89014.5473246602 | p3692 |
-| Lium balance | **$89014.5473246602** | p3692 |
-| cumulative mining spend | ~$114,260 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$79015** (balance − $10,000 floor) | $UTC |
+| $UTC | 88972.87103187863 | p3693 |
+| Lium balance | **$88972.87103187863** | p3693 |
+| cumulative mining spend | ~$114,302 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$78973** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T16:43:34Z | 88972.87103187863 | p3693 **R652 REFUTE** + **R653 SCP** brave→golden (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T16:36:51Z | 89014.5473246602 | p3692 **R673 TRAIN** crown 6,7 + API waiter p3692 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T16:31:56Z | 89053.83944436345 | p3691 **R652 SCP_READY→CHALL** + API waiter p3691 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T16:17:35Z | 89176.17995128914 | p3690 **R633 REFUTE** + **R652 SCP** brave→golden (no rent; B300 empty); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T15:45:08Z | 89458.69272416751 | p3686 **R651 REPAIR** shard4 trunc (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T15:41:51Z | 89458.69272416751 | p3685 **R669 TRAIN** brave 0,1 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T15:39:37Z | 89499.30125277331 | p3684 **R647 REFUTE** + **R668 TRAIN** zesty 6,7 (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T15:34:06Z | 89538.95342149827 | p3683 **R667 TRAIN** R252 6,7 (no rent; B300 empty); burn **~$331.45/h** |
