@@ -1,0 +1,71 @@
+Executing on gentle-wolf-8c
+total 18760
+drwxrwxr-x  2 1001 1001     4096 Aug 17 21:17 .
+drwx------ 46 1001 1001     8192 Aug 17 21:17 ..
+-rw-r--r--  1 1001 1001 19007210 Aug 17 21:16 dpo_duel_reason.jsonl
+-rwxrwxr-x  1 1001 1001     1605 Aug 17 21:17 lean_merge_r252_gpus67_p3738.sh
+-rwxrwxr-x  1 1001 1001     2981 Aug 17 21:17 lean_train_r252_gpus67_p3738.sh
+-rwxrwxr-x  1 1001 1001      542 Aug 17 21:17 p3738_launch_r707_r25267.sh
+-rwxrwxr-x  1 1001 1001     2982 Aug 17 21:16 start_r707.sh
+-rw-rw-r--  1 1001 1001     8420 Aug 17 21:16 train_dpo.py
+-rwxrwxr-x  1 1001 1001     1521 Aug 17 21:17 wait_r707_train_then_merge_p3738.sh
+4, 47164 MiB
+5, 44682 MiB
+6, 0 MiB
+7, 0 MiB
+launched lean=280470 wait=280579
+===PIDS===
+280470
+280579
+280500
+===LEAN===
+[r707-lean] 2026-08-17T21:17:26Z start GPUs 6,7
+[r707-lean] data_lines=604
+[r707-lean] wait VRAM6+7 used_mib=0 iter=1
+[r707] 2026-08-17T21:17:27Z examples=604 lr=1e-6 r=64 β=0.02 steps=10800 len=8192 ep=3 gpus=6,7
+{
+  "utc": "2026-08-17T21:17:27Z",
+  "axis": "r252_offline_dpo_hialpha_hirank_lobeta_midctx_hyperextrasteps_ep3_lolr",
+  "base": "/root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f",
+  "data": "/root/r707/dpo_duel_reason.jsonl",
+  "examples": 604,
+  "lr": "1e-6",
+  "lora_r": 64,
+  "lora_alpha": 128,
+  "beta": 0.02,
+  "max_steps": 10800,
+  "max_len": 8192,
+  "epochs": 3,
+  "gpus": "6,7",
+  "pid": 280500,
+  "parent_signal": "R697 MidCtx HiRank LoBeta UltraExtra MERGE \u2014 HyperExtra steps=10800 (\u2260 UltraExtra 7200; \u2260 Mega 3600; \u2260 R706 Short HiRank MidBeta HyperExtra; \u2260 R694 MidCtx HiRank HiBeta HyperExtra; \u2260 R689 MidCtx HiRank MidBeta UltraExtra; \u2260 Online / \u2260 GRPO)",
+  "decision_rule": "Stage-5 iff fresh n80 paired margin > max(2*SE, 0.002) AND median |z|>=80 AND B pass>=0.30 vs reign34 (v4 k=3)"
+}
+[r707] TRAIN_ARMED pid=280500
+[r707-lean] 2026-08-17T21:17:27Z TRAIN launched pid=280500
+===TRAIN===
+[dpo] kept=225/604 budget_chars=16384
+{
+  "experiment": "s4-h138-f43-tok-dpo-l2",
+  "family": "F43",
+  "method": "offline_dpo_l2",
+  "base": "/root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f",
+  "data": "/root/r707/dpo_duel_reason.jsonl",
+  "n_rows": 225,
+  "lr": 1e-06,
+  "lora_r": 64,
+  "lora_alpha": 128,
+  "beta": 0.02,
+  "max_steps": 10800,
+  "cuda_visible": "6,7",
+  "started_utc": "2026-08-17T21:17:34Z"
+}
+[dpo] loading base /root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+===WAIT===
+[p3738-r707-wait] 2026-08-17T21:17:28Z armed wait R707 → merge GPUs 6,7
+[p3738-r707-wait] 2026-08-17T21:17:28Z waiting train_alive=1 adapter_ok=0 step=?
+root      279573       1  0 21:12 ?        00:07:16 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f --data /root/r706/dpo_duel_reason.jsonl --out-dir /root/r706/train --max-len 6144 --epochs 3 --lr 1e-6 --lora-r 64 --lora-alpha 128 --beta 0.1 --max-steps 10800
+root      280500       1  0 21:17 ?        00:00:17 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f --data /root/r707/dpo_duel_reason.jsonl --out-dir /root/r707/train --max-len 8192 --epochs 3 --lr 1e-6 --lora-r 64 --lora-alpha 128 --beta 0.02 --max-steps 10800
+root      280579       1  0 21:17 ?        00:00:00 bash /root/mining_src/r707-r252-offline-dpo-hialpha-hirank-lobeta-midctx-hyperextrasteps-ep3-lolr/wait_r707_train_then_merge_p3738.sh

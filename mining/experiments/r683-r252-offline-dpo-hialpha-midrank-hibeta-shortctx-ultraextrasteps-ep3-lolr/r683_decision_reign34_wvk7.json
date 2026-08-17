@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-17T21:16:24Z",
+  "hypo": "R683",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign34",
+  "margin": 0.002137002820357482,
+  "se": 0.0009433265826316925,
+  "z": 2.265390226145935,
+  "n": 79,
+  "bar": 0.002,
+  "thought_median": 172.0,
+  "b_pass": 0.3037974683544304,
+  "wins": true,
+  "note": "p3723 chall+v4-n80 golden 4,5; Short MidRank HiBeta UltraExtra ep3 LoLR; vs reign34 wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}

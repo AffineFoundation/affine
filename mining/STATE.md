@@ -2,7 +2,7 @@
 Rewritten every pass. Do not append.
 
 ## Stage
-**Stage 5 · wvk=7 Reason v4 · R706 TRAIN · R705 TRAIN · R704 TRAIN · R703 TRAIN · R702 TRAIN · R701 TRAIN · R700 TRAIN · R699 TRAIN · R698 MERGE · R697 MERGE · R696 TRAIN · R683 N80 · R680 REFUTE**.
+**Stage 5 · wvk=7 Reason v4 · R683 WIN · R707 TRAIN · R706 TRAIN · R705 TRAIN · R704–R698 TRAIN/MERGE**.
 King=reign34 · r252 reign33. Burn floor **≥$833/h**.
 
 ## Live facts
@@ -12,21 +12,22 @@ King=reign34 · r252 reign33. Burn floor **≥$833/h**.
 | crown | margin > max(2·SE, 0.002) **and** `|z|≥80` **and** B≥0.30 |
 | king | `cryptoDev23/Affine-5Dku3dYp9j-hk8161`@`55b7ffe0…` reign34 |
 | burn | **~$331.45/h** · gap **−$501.55/h** · B300/B200 stock **empty** |
-| Lium | **~$86804** · floor $10k OK · stake ~29.5α (<τ5) |
-| **p3737** | **R705+R706 TRAIN** crown/R252 idle 4,5 · **R683 N80** ~44/80 · R252 **6,7 idle** |
+| Lium | **~$86763** · floor $10k OK · stake ~29.5α (<τ5) |
+| **R683** | **WIN v4** m=**+0.002137** SE=0.000943 z=2.27 n=79 bar=0.002 (~**1.07×**) thought✓172 B✓0.304 k=3 · `/tmp/r683_merged` golden · **hf_ok=false** |
+| **p3738** | **R707 TRAIN** R252 6,7 pid**280500** · R683 WIN harvest |
 
 ## Running
 | name | huid | $/h | role |
 |---|---|---|---|
 | mine-crown-1 | gentle-orbit-bd | $52.25 | TK · **R705 TRAIN** 4,5 · R698 MERGE 6,7 |
 | mine-r165-awesome-hialpha-1 | lunar-wolf-be | $44.00 | TK · **R701 TRAIN** 4,5 · keep `/tmp/r675_merged` |
-| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | $60.00 | TK · **R683 N80** 4,5/:8003 ~44/80 · R637 :8004 |
+| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | $60.00 | TK · **R683 WIN** keep `/tmp/r683_merged` :8003 · R637 :8004 |
 | mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da | $64.00 | TK · **R703 TRAIN** 4,5 · **R702 TRAIN** 6,7 |
 | mine-r226-marsplan-fullft-1 | brave-raven-a9 | $47.20 | **R699** 0,1 · **R700** 2,3 · R696 4,5 · **R704 TRAIN** 6,7 |
-| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | $64.00 | **R706 TRAIN** 4,5 · **6,7 idle** (R697 MERGE) |
+| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | $64.00 | **R706 TRAIN** 4,5 · **R707 TRAIN** 6,7 |
 
 ## Blocked
 No 8×B300/B200. Never `pkill -f`. Pre-p3664 k=1 n80s invalid for submit.
 
 ## Next action
-1. R683 N80→verdict (harvest/refute). 2. Fill R252 idle 6,7 (R707 HyperExtra of R697). 3. Harvest merges→SCP. 4. Rent B300 when stock.
+1. **Stage 5 R683:** HF card + push → fresh hotkey → `submit.py --check` → submit. 2. Rent B300 when stock. 3. Harvest other merges.
