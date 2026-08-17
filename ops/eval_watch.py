@@ -25,7 +25,7 @@ SNAP_URL = "https://affine.io/api/v1/snapshot"
 HIST_URL = "https://affine.io/api/v1/history"
 EVAL_SSH = ["ssh", "-o", "ConnectTimeout=10", "-o",
             "StrictHostKeyChecking=accept-new",
-            "-p", "40300", "root@152.236.142.234"]
+            "-p", "40298", "root@69.63.236.165"]
 
 POLL_S = 120
 DUEL_BUDGET_S = 70 * 60      # alert if one duel runs past this

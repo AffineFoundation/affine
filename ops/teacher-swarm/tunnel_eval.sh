@@ -3,8 +3,8 @@
 # The evalsrv teacher pool reaches the swarm through this — nothing public.
 # Loop forever; ssh exits on link death and we redial. Run via swarmctl.
 set -u
-EVAL_HOST=${EVAL_HOST:-152.236.142.234}
-EVAL_PORT=${EVAL_PORT:-40300}
+EVAL_HOST=${EVAL_HOST:-69.63.236.165}
+EVAL_PORT=${EVAL_PORT:-40298}
 while true; do
   ssh -N \
     -o StrictHostKeyChecking=accept-new \
