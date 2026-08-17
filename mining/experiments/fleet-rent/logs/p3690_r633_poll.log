@@ -1,0 +1,106 @@
+tick=0 alive=True king=29 chall=29 utc=16:10:11Z
+tick=1 alive=True king=38 chall=37 utc=16:10:26Z
+tick=2 alive=True king=41 chall=41 utc=16:10:41Z
+tick=3 alive=True king=48 chall=46 utc=16:10:56Z
+tick=4 alive=True king=50 chall=48 utc=16:11:11Z
+tick=5 alive=True king=52 chall=51 utc=16:11:26Z
+tick=6 alive=True king=57 chall=56 utc=16:11:41Z
+tick=7 alive=True king=68 chall=68 utc=16:11:56Z
+tick=8 alive=True king=70 chall=70 utc=16:12:11Z
+tick=9 alive=True king=71 chall=72 utc=16:12:26Z
+tick=10 alive=True king=75 chall=76 utc=16:12:41Z
+tick=11 alive=True king=75 chall=76 utc=16:12:56Z
+tick=12 alive=True king=75 chall=77 utc=16:13:11Z
+tick=13 alive=True king=76 chall=78 utc=16:13:26Z
+tick=14 alive=True king=76 chall=78 utc=16:13:41Z
+tick=15 alive=True king=77 chall=78 utc=16:13:56Z
+tick=16 alive=True king=77 chall=78 utc=16:14:11Z
+tick=17 alive=True king=79 chall=79 utc=16:14:26Z
+tick=18 alive=True king=79 chall=79 utc=16:14:41Z
+tick=19 alive=True king=79 chall=79 utc=16:14:56Z
+tick=20 alive=True king=79 chall=80 utc=16:15:11Z
+DONE 2026-08-17T16:15:26Z
+{
+  "elapsed_s": 451.0658197402954,
+  "king_repo": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "king_rev": "55b7ffe003d078a8a131673f677b2584548a502e",
+  "chall_repo": "/tmp/r633_merged",
+  "block_hash": "98c110a75f221c1042b648714c4183bfa9866f3ddd653cab4ec096aa8350d6c8",
+  "hotkey": "local-r633-reign34-wvk7",
+  "verdict": {
+    "challenger_wins": false,
+    "rejection_reason": null,
+    "margin": -0.008175970689198342,
+    "se": 0.0034940404407986865,
+    "z": -2.3399759755870013,
+    "k_sigma": 2.0,
+    "min_margin": 0.002,
+    "n_paired_turns": 73,
+    "ranking_formula": "Reason(turn) = tau\u00b7log(mean_i exp((lpC(y_i|z_A) \u2212 lpC(y_i|\u2205))/tau))",
+    "duel_params": {
+      "n_turns": 80,
+      "k_sigma": 2.0,
+      "min_margin": 0.002,
+      "min_thought_chars": 80,
+      "causality_gate": true,
+      "causality_gamma": 0.3,
+      "tau": 0.03,
+      "n_teacher_samples": 3,
+      "n_miner_samples": 1
+    },
+    "king": {
+      "reason": 0.02026099075598289,
+      "n_turns": 80,
+      "n_pairs": 227,
+      "gate_pass_rate": 0.0,
+      "bank_frac": null,
+      "calib_ratio": null,
+      "baseline_abs": null,
+      "mean_l1lift": null,
+      "mean_eta": -0.5722411068899436,
+      "mean_len_z": 235.9339207048458,
+      "median_len_z": 196.0,
+      "mean_len_y": 271.5726872246696,
+      "mean_b": 0.029504895396153554,
+      "b_gate_pass_rate": 0.43612334801762115,
+      "len_z_delta": -99.88616297716257,
+      "len_y_delta": -271.1469780472969
+    },
+    "challenger": {
+      "reason": 0.013739330678611047,
+      "n_turns": 80,
+      "n_pairs": 227,
+      "gate_pass_rate": 0.0,
+      "bank_frac": null,
+      "calib_ratio": null,
+      "baseline_abs": null,
+      "mean_l1lift": null,
+      "mean_eta": -0.7301532970144878,
+      "mean_len_z": 168.52422907488986,
+      "median_len_z": 150.0,
+      "mean_len_y": 263.82819383259914,
+      "mean_b": 0.03350033917333798,
+      "b_gate_pass_rate": 0.3964757709251101,
+      "len_z_delta": -167.2958546071185,
+      "len_y_delta": -278.89147143936736
+    },
+    "teacher": {
+      "mean_len_z": 335.8200836820084,
+      "mean_len_y": 542.7196652719665
+    },
+    "duel_seconds": 451.06476035001106,
+    "slice": {
+      "seed": 16297024828307770079,
+      "n": 80,
+      "digest": "e52c20b9fee64e9cab76c82313f4ef864c947a8cdd9d538cff8acbe8ee1fbb29",
+      "block_hash": "98c110a75f221c1042b648714c4183bfa9866f3ddd653cab4ec096aa8350d6c8",
+      "corpus_epoch": 11,
+      "manifest_sha256": "9360a83749c79d215be7666d28151e7c2083f4efbe5a3f8b4e76acd44481f014"
+    }
+  },
+  "h4": {
+    "chall_r": null,
+    "chall_baseline_abs": null,
+    "king_baseline_abs": null
+  }
+}

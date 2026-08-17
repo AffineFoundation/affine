@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3690: **R633 REFUTE v4** m=−0.008176~−1.17× (thought✓150 B✓0.396 k=3) — Soft HiRank MidBeta ep3×LoLR fails hard under LME; reap golden 4,5; kill stale R638 waiter (polled **zesty** for R633 done but n80 ran on **golden**); **R652 SCP** brave→golden (R655 R252→lunar untouched). B300 empty. **Never `pkill -f`**.
 - p3689: **R670/R671/R672 TRAIN** on idle brave **2–7** after R659–R661 MERGE (Short/MidCtx HiRank HiBeta ep3×LoLR + marsplan Soft MidRank LoBeta transfer of R637); **R633 SCP_READY→chall** golden :8003; mine.env `BASE=r252` overwrites non-king starts — pin BASE **after** sourcing mine.env. B300 empty. **Never `pkill -f`**.
 - p3688: **R651 REFUTE v4** m=+0.000535~0.12× (thought✓153 B✓0.477 k=3) — Soft MidRank HiBeta ep3×LoLR fails LME; reap lunar 4,5 by PID; **R655 SCP** R252→lunar (brave R633 uplink untouched — no dual-pipe). B300 empty. **Never `pkill -f`**.
 - p3687: **R633 stuck gate** — host_relay waited for `/root/logs/r634_reign34_pipeline.done` but live marker is `r634_reign34_wvk7_pipeline.done` / `r634_pipeline.done` ⇒ forever `scp_only`; kill relay by PID; retarget **brave→golden** 4,5/:8003 (zesty 4,5=R662 TRAIN); R651 lean already loading. **Never `pkill -f`**.

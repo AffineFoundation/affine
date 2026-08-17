@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-17T16:15:48Z",
+  "hypo": "R633",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign34",
+  "margin": -0.008175970689198342,
+  "se": 0.0034940404407986865,
+  "z": -2.3399759755870013,
+  "n": 73,
+  "bar": 0.006988080881597373,
+  "thought_median": 150.0,
+  "b_pass": 0.3964757709251101,
+  "wins": false,
+  "note": "p3687 chall+v4-n80 golden 4,5; Soft HiRank MidBeta Mega ep3 LoLR; vs reign34 wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}
