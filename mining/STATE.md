@@ -2,7 +2,7 @@
 Rewritten every pass. Do not append.
 
 ## Stage
-**Stage 5 · FORK wvk=7 Reason v4 · R596 REFUTE · R659/R658/R657/R656/R655/R654/R653 TRAIN · R652 MERGE_DONE · R634 SCP+v4-armed · R647/R651 wait**.
+**Stage 5 · FORK wvk=7 Reason v4 · R596 REFUTE · R660/R659/R658/R657/R656/R655/R654/R653 TRAIN · R652 MERGE_DONE · R634 SCP+v4-armed · R647/R651 wait**.
 King=reign34 · r252 reign33 earning. Burn floor **≥$833/h** on mine-* 8×B300.
 
 ## Live facts
@@ -18,7 +18,7 @@ King=reign34 · r252 reign33 earning. Burn floor **≥$833/h** on mine-* 8×B300
 | B300 stock | **empty** (no 8×B300/B200; only 1×B200) |
 | Lium bal | **~$89944** · floor $10k OK |
 | submissions | **9** · r252 CROWNED r33 · r596 chal-00822 · r637 chal-00829 |
-| **p3674** | **R659 TRAIN** brave 2,3 Short MidRank HiBeta ep3×LoLR; R634 SCP~43G/10sh |
+| **p3675** | **R660 TRAIN** brave 4,5 MidCtx MidRank HiBeta ep3×LoLR; R634 SCP~47G/11sh |
 
 ## Running
 
@@ -27,8 +27,8 @@ King=reign34 · r252 reign33 earning. Burn floor **≥$833/h** on mine-* 8×B300
 | mine-crown-1 | gentle-orbit-bd | $52.25 | **R654** 0,1 · **R656** 2,3 · **R657** 4,5 · **R658** 6,7 |
 | mine-r165-awesome-hialpha-1 | lunar-wolf-be | $44.00 | TK · R537 :8002 · **R651 wait** 4,5/:8003 |
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | $60.00 | TK · **R647 wait** · R637 :8004 |
-| mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da | $64.00 | TK · **R634 SCP**~43G/10sh → **v4** 6,7/:8003 |
-| mine-r226-marsplan-fullft-1 | brave-raven-a9 | $47.20 | **R653** 0,1 · **R659** 2,3 · **R652 MERGE_DONE** (4–7 free) |
+| mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da | $64.00 | TK · **R634 SCP**~47G/11sh → **v4** 6,7/:8003 |
+| mine-r226-marsplan-fullft-1 | brave-raven-a9 | $47.20 | **R653** 0,1 · **R659** 2,3 · **R660** 4,5 · **R652 MERGE_DONE** (6,7 free) |
 | mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | $64.00 | TK · R596 :8002 · **R655** train 6,7 |
 
 SSH: crown `…90:40099` · R165 `…118:20299` · R262 `…127:40299` · R260 `…95:20299` · brave `18.118.83.97:40127` · R252 `95.133.252.28:40299`
@@ -38,6 +38,6 @@ Under $833/h — **no 8×B300/B200**. Pre-p3664 n80s stamped k=1 — ignore for 
 
 ## Next action
 1. Finish **R634** SCP→**v4** chall+n80 (`*_wvk7`, assert k=3); then **R647** brave→golden; then **R651** brave→lunar.
-2. After R634 frees brave uplink: arm **R652** SCP (MERGE_DONE) or fill brave 4–7 with a distinct train axis.
-3. Watch **R659/R658/R657/R656/R655/R654/R653** → merge; Stage-5 only if v4 stamp k=3 clears bar.
+2. After R634 frees brave uplink: arm **R652** SCP (MERGE_DONE) or fill brave 6–7 with a distinct train axis.
+3. Watch **R660/R659/R658/R657/R656/R655/R654/R653** → merge; Stage-5 only if v4 stamp k=3 clears bar.
 4. Blind rent **R337** when 8×B300/B200 appears.

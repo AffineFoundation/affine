@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3675: **R660 TRAIN** MidCtx MidRank HiBeta ep3×LoLR on idle brave **4,5** (amplify R650 ~0.47× / R625 @5e-6; ≠ R654 LoBeta / ≠ R657 MidBeta / ≠ R659 Short HiBeta) — fill free train GPUs while R634 SCP uplink live (train ≠ dual-pipe); R634~47G/11sh; kept=225. **Never `pkill -f`**.
 - p3674: **R659 TRAIN** Short MidRank HiBeta ep3×LoLR on idle brave **2,3** (amplify R622 ~0.85×; anti-overfit R627 ep3@5e-6 / R632 ep2×LoLR; ≠ R653 LoBeta / ≠ R658 MidBeta) — fill free train GPUs while R634 SCP uplink live (train ≠ dual-pipe); R634~43G/10sh. **Never `pkill -f`**.
 - p3673: **R634 v4 ARM** before SCP finishes — replace pre-wvk7 lean (no k=3 assert / wrong Soft MidBeta card / Triton purge) with `*_wvk7` outs + fail-closed `n_teacher_samples==3` + Triton REUSE; restart wait by PID (not `pkill -f`); R652 MERGE_DONE but do not dual-pipe brave while R634 SCP live. **Never `pkill -f`**.
 - p3672: **R658 TRAIN** Short MidRank MidBeta ep3×LoLR on idle crown **6,7** (amplify R592 ~0.65×; ≠ R653 LoBeta / ≠ R631 ep2 / ≠ R656 HiRank) — fill last free crown GPUs when B300 stock empty; R634~38G/9sh. **Never `pkill -f`**.
