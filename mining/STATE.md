@@ -2,7 +2,7 @@
 Rewritten every pass. Do not append.
 
 ## Stage
-**Stage 5 · FORK wvk=7 Reason v4 · R655 SCP · R633 SCP · R669/R668/R667/R665/R666/R664/R663/R662/R661/R660/R659 MERGE/TRAIN · R654–R658/R653/R652 MERGE · R651/R647/R634 REFUTE**.
+**Stage 5 · FORK wvk=7 Reason v4 · R633 CHALL · R655 SCP · R670/R671/R672 TRAIN · R669/R668/R667/R665/R666/R664/R663/R662 MERGE/TRAIN · R654–R661 MERGE · R651/R647/R634 REFUTE**.
 King=reign34 · r252 reign33 earning. Burn floor **≥$833/h** on mine-* 8×B300.
 
 ## Live facts
@@ -15,10 +15,10 @@ King=reign34 · r252 reign33 earning. Burn floor **≥$833/h** on mine-* 8×B300
 | king | **`cryptoDev23/Affine-5Dku3dYp9j-hk8161`** @ `55b7ffe0…` **reign 34** |
 | our reign | **r252** reign33 / uid90 / earning |
 | miner burn | **~$331.45/h** · floor $833/h · **gap -$501.55/h** |
-| B300 stock | **empty** (waiters HEAD R337; only consumer 8×) |
-| Lium bal | **~$89338** · floor $10k OK |
+| B300 stock | **empty** (waiter HEAD R337; only consumer 8×) |
+| Lium bal | **~$89257** · floor $10k OK |
 | submissions | **9** · r252 CROWNED r33 · r596 chal-00822 · r637 chal-00829 |
-| **p3688** | **R651 REFUTE** m=+0.000535~0.12× · **R655 SCP** R252→lunar pid**860692** · R633~51G/11sh |
+| **p3689** | **R670/R671/R672 TRAIN** brave 2–7 · **R633 SCP_READY→chall** :8003 · R655~5G |
 
 ## Running
 
@@ -26,18 +26,18 @@ King=reign34 · r252 reign33 earning. Burn floor **≥$833/h** on mine-* 8×B300
 |---|---|---|---|
 | mine-crown-1 | gentle-orbit-bd | $52.25 | **R665** 4,5 · **R666** 6,7 · **R664** 2,3 · **R663** 0,1 · R654–R658 MERGE |
 | mine-r165-awesome-hialpha-1 | lunar-wolf-be | $44.00 | TK · R537 :8002 · **R655 SCP→chall** 4,5/:8003 |
-| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | $60.00 | TK · R637 :8004 · **R633 SCP→chall** 4,5/:8003 |
+| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | $60.00 | TK · R637 :8004 · **R633 CHALL** 4,5/:8003 loading |
 | mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da | $64.00 | TK · **R662 TRAIN** 4,5 · **R668 TRAIN** 6,7 |
-| mine-r226-marsplan-fullft-1 | brave-raven-a9 | $47.20 | **R669/R659/R660/R661 TRAIN** · R633 uplink · R652/R653 MERGE |
+| mine-r226-marsplan-fullft-1 | brave-raven-a9 | $47.20 | **R669** 0,1 · **R670** 2,3 · **R671** 4,5 · **R672** 6,7 · R633 uplink done |
 | mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | $64.00 | TK · R596 :8002 · **R667 TRAIN** 6,7 · **R655 uplink** |
 
 SSH: crown `…90:40099` · R165 `…118:20299` · R262 `…127:40299` · R260 `…95:20299` · brave `18.118.83.97:40127` · R252 `95.133.252.28:40299`
 
 ## Blocked
-Under $833/h — **no 8×B300/B200**. Pre-p3664 n80s stamped k=1 — ignore for submit. **Never `pkill -f`**. Stake ~29.5α (~τ1.68) below τ5 sweep. **Do not** dual-pipe brave while R633 SCP live.
+Under $833/h — **no 8×B300/B200**. Pre-p3664 n80s stamped k=1 — ignore for submit. **Never `pkill -f`**. Stake ~29.5α (~τ1.68) below τ5 sweep. **Do not** dual-pipe brave while any uplink live.
 
 ## Next action
-1. Watch **R655 SCP** → `r655_scp_ready.done` → lunar lean 4,5/:8003 v4 n80 (`*_wvk7`; fail if k≠3); harvest.
-2. Watch **R633 SCP** → `r633_scp_ready.done` → golden lean 4,5/:8003 v4 n80; then arm **R652/R653** SCP (serial on brave).
-3. Watch **R669/R668/R667/R665/R666/R664/R663/R662/R661/R660/R659** → merge; Stage-5 only if v4 stamp k=3 clears bar.
+1. Watch **R633 CHALL→n80** (`*_wvk7`; fail if k≠3) → harvest; then arm **R652/R653** SCP (serial on brave).
+2. Watch **R655 SCP** → `r655_scp_ready.done` → lunar lean 4,5/:8003 v4 n80; harvest.
+3. Watch **R670/R671/R672/R669/R668/R667/R665/R666/R664/R663/R662** → merge; Stage-5 only if v4 stamp k=3 clears bar.
 4. Blind rent **R337** when 8×B300/B200 appears (waiter live).
