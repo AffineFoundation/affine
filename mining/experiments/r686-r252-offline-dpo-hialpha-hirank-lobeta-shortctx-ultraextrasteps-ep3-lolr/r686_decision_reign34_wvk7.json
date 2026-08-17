@@ -1,0 +1,29 @@
+{
+  "utc": "2026-08-17T19:48:41Z",
+  "hypo": "R686",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign34",
+  "margin": -0.0030424122774649572,
+  "se": 0.002851415043512528,
+  "z": -1.0669833156653155,
+  "n": 77,
+  "bar": 0.005702830087025056,
+  "thought_median": 154.0,
+  "b_pass": 0.379746835443038,
+  "wins": false,
+  "note": "p3721 chall+v4-n80 zesty 4,5; Short HiRank LoBeta UltraExtra ep3 LoLR; vs reign34 wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}
+
