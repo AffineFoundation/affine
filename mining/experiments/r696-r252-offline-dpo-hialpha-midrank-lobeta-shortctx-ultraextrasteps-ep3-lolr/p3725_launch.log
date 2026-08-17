@@ -1,0 +1,45 @@
+Executing on brave-raven-a9
+-rw-r--r-- 1 root root 2.5K Aug 17 20:07 /tmp/p3725_launch_r696_brave45.sh
+-rw-r--r-- 1 root root 3.8M Aug 17 20:07 /tmp/r696_exp_p3725.tar.gz
+[p3725-r696-launch] 2026-08-17T20:07:11Z VRAM4+5 used_mib=0 iter=1
+[p3725-r696-launch] 2026-08-17T20:07:11Z tmp_avail_G=700
+[p3725-r696-launch] 2026-08-17T20:07:14Z TRAIN_UP pid=241280 iter=1
+OUTER=241250 WAIT=241356 TRAIN=241280
+=== lean_warm ===
+[r696-lean] 2026-08-17T20:07:11Z start GPUs 4,5
+[r696-lean] data_lines=604
+[r696-lean] wait VRAM4+5 used_mib=0 iter=1
+[r696] 2026-08-17T20:07:11Z examples=604 lr=1e-6 r=32 β=0.02 steps=7200 len=6144 ep=3 gpus=4,5
+{
+  "utc": "2026-08-17T20:07:11Z",
+  "axis": "r252_offline_dpo_hialpha_midrank_lobeta_shortctx_ultraextrasteps_ep3_lolr",
+  "base": "/root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f",
+  "data": "/root/r696/dpo_duel_reason.jsonl",
+  "examples": 604,
+  "lr": "1e-6",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.02,
+  "max_steps": 7200,
+  "max_len": 6144,
+  "epochs": 3,
+  "gpus": "4,5",
+  "pid": 241280,
+  "parent_signal": "R653 Short MidRank LoBeta Mega ep3 ~0.31x / R590 ~0.50x \u2014 UltraExtra steps=7200 (\u2260 Mega 3600; \u2260 R688 Short MidRank MidBeta UltraExtra; \u2260 R683 Short MidRank HiBeta UltraExtra; \u2260 R686 Short HiRank LoBeta UltraExtra; \u2260 R695 Short HiRank MidBeta UltraExtra; \u2260 Online / \u2260 GRPO)",
+  "decision_rule": "Stage-5 iff fresh n80 paired margin > max(2*SE, 0.002) AND median |z|>=80 AND B pass>=0.30 vs reign34 (v4 k=3)"
+}
+[r696] TRAIN_ARMED pid=241280
+[r696-lean] 2026-08-17T20:07:11Z TRAIN launched pid=241280
+=== gpu ===
+index, memory.used [MiB], utilization.gpu [%]
+0, 82282 MiB, 60 %
+1, 161030 MiB, 0 %
+2, 175440 MiB, 31 %
+3, 123840 MiB, 32 %
+4, 0 MiB, 0 %
+5, 0 MiB, 0 %
+6, 175540 MiB, 42 %
+7, 123938 MiB, 0 %
+    PID     ELAPSED CMD
+ 241280 441077231-19:52:00 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f --data /root/r696/dpo_duel_reason.jsonl --out-dir /root/r696/train --max-len 6144 --epochs 3 --lr 1e-6 --lora-r 32 --lora-alpha 128 --beta 0.02 --max-steps 7200
+[p3725-r696-launch] 2026-08-17T20:07:14Z DONE
