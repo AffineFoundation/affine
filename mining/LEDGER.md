@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 88309.64973851852 | p3707 |
-| Lium balance | **$88309.64973851852** | p3707 |
-| cumulative mining spend | ~$114,994 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$78310** (balance − $10,000 floor) | $UTC |
+| $UTC | 88268.48564071755 | p3708 |
+| Lium balance | **$88268.48564071755** | p3708 |
+| cumulative mining spend | ~$115,035 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$78268** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T18:13:37Z | 88268.48564071755 | p3708 **R685 TRAIN** brave 0,1 UltraExtra (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T18:07:06Z | 88309.64973851852 | p3707 **R684 TRAIN** R252 6,7 UltraExtra (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T18:03:36Z | 88348.46163591537 | p3706 **R655 REFUTE** + **R675 SCP** (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T17:57:30Z | 88390.81176785109 | p3705 **R655 N80** + **R682/R683 TRAIN** (no rent; B300 empty); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T17:20:22Z | 88716.21528076984 | p3701 **R679 TRAIN** brave 2,3 UltraExtra (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T17:15:14Z | 88757.17006429855 | p3700 **R677+R678 TRAIN** crown 2–5 UltraExtra (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T17:11:30Z | 88798.04014378539 | p3699 **R653 REFUTE** + **R663 SCP** crown→golden (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T17:05:37Z | 88798.04014378539 | p3698 **R676 TRAIN** crown 0,1 UltraExtra Long HiRank LoBeta (no rent; B300 empty); burn **~$331.45/h** |
