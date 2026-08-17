@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 87902.7516655513 | p3714 |
-| Lium balance | **$87902.7516655513** | p3714 |
-| cumulative mining spend | ~$115,400 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$77903** (balance − $10,000 floor) | $UTC |
+| $UTC | 87821.36483452916 | p3715 |
+| Lium balance | **$87821.36483452916** | p3715 |
+| cumulative mining spend | ~$115,480 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$77821** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1261.907 | after unstake+fund (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-17T19:07:40Z | 87821.36483452916 | p3715 **TTL+24h** + **R681 REFUTE** + **R673 TK** (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T18:57:49Z | 87902.7516655513 | p3714 **R681 CHALL** + **R679 SCP** (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T18:51:17Z | 87943.3856544509 | p3713 **R687+R688 TRAIN** brave 2–5 (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T18:47:03Z | 87984.17573676819 | p3712 **R686 TRAIN** zesty 4,5 (no rent; B300 empty); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T18:13:37Z | 88268.48564071755 | p3708 **R685 TRAIN** brave 0,1 UltraExtra (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T18:07:06Z | 88309.64973851852 | p3707 **R684 TRAIN** R252 6,7 UltraExtra (no rent; B300 empty); burn **~$331.45/h** |
 | 2026-08-17T18:03:36Z | 88348.46163591537 | p3706 **R655 REFUTE** + **R675 SCP** (no rent; B300 empty); burn **~$331.45/h** |
-| 2026-08-17T17:57:30Z | 88390.81176785109 | p3705 **R655 N80** + **R682/R683 TRAIN** (no rent; B300 empty); burn **~$331.45/h** |
