@@ -3,16 +3,17 @@
 Hard-won knowledge, one line each. **Cap 150 lines.** Detail → `experiments/`.
 S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not strategy.
 
-## Scoring (Reason v3 + δ + thought-len + B, weight_version_key=6)
-- **Reason = lpC(y_C|z_A) − lpC(y_C|∅)** per pair; miner score = mean. Formerly called Λ2.
-- **Crown = submit gate (wvk=6, 2026-08-13):** paired mean(Reason_c − Reason_k) >
+## Scoring (Reason v4 tempered multi-sample + δ + thought-len + B, weight_version_key=7)
+- **Per-ref a_i = lpC(y_i|z_A) − lpC(y_i|∅)**; turn Reason = **τ·log(mean_i exp(a_i/τ))** (LME; τ=0.03, k=3). Score = mean over turns. k=1 ≡ v3.
+- **Crown (wvk=7, 2026-08-17):** paired mean(Reason_c − Reason_k) >
   **max(k_sigma · SE, min_margin)** with live `k_sigma=2.0` and **δ=`min_margin=0.002`**,
   **and** median stripped `len(z_A) ≥ min_thought_chars=80`, **and** teacher-side B
-  pass rate ≥ `causality_gamma=0.30` (B=`lpC(y_A|z_A)−lpC(y_A|∅)` ≥ τ=0.02, no leakage).
+  pass rate ≥ `causality_gamma=0.30` (B=`lpC(y_A|z_A)−lpC(y_A|∅)` ≥ 0.02, no leakage).
 - Miner-side causality / bank / r / baseline / L1lift are telemetry only — not the B license.
 - Miner-side terms (L1lift, lpA, calibration r) do **not** enter Reason. Do not train them as objectives.
 - Absolute Reason is only comparable within one duel slice. Use paired margin vs the live king.
-- Confirm `weight_version_key` from `api/v1/contract` every pass (3→4→5→**6**).
+- Confirm `weight_version_key` from `api/v1/contract` every pass (3→4→5→6→**7**). v4 favors **commit** to a teacher mode over hedge-filler.
+- p3663: live **wvk=7**; fleet `run_sim_duel` still stamps **n_teacher_samples=1** — n80 margins are pre-v4 until patched.
 
 ## Strategy under Reason
 - Shape `z_A` so the frozen teacher likes its own `y_C` more with the thought than without.
@@ -22,6 +23,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3663: **R643 REFUTE** m=+0.005608~0.50× (thought✓178 B✓0.513) vs reign34; reap lunar 4,5 by PID; contract fork **wvk=7** (k=3/τ=0.03/n=1300) — patch sims before next submit. **Never `pkill -f`**.
 - p3662: **R643 lean died** after GPUs free — `du -sm $TCACHE` on missing `chall_r643` under `set -o pipefail` (same R648 landmine); fix `du … || true` + `${_pre_sz:-0}` → seed from chall_r640 → CHALL_READY→n80. **Never `pkill -f`**.
 - p3661: **R646 REFUTE** m=−0.003615~−0.49× (thought✓154 B✓0.429); reap golden 4,5 → **R647 ARMED** (Short HiRank MidBeta) gated on R634 SCP; restart **R633** to also wait R647 SCP_READY (never dual-pipe). **Never `pkill -f`**.
 - p3660: **R641 REFUTE** m=+0.001550~0.31× (thought✓169 B✓0.418); kill stuck **R634** host-relay waiting forever on **R631 DEFER** — bypass gate when R641 ready + GPUs 6,7 free; brave→zesty SCP. **Never `pkill -f`**.
