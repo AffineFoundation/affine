@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3671: **R657 TRAIN** MidCtx MidRank MidBeta ep3×LoLR on idle crown **4,5** (amplify R642 ~0.62×; ≠ R654 LoBeta / ≠ R635 Soft MidBeta) — fill free crown GPUs when B300 stock empty; R634~36G. **Never `pkill -f`**.
 - p3670: **R656 TRAIN** Short HiRank LoBeta ep3×LoLR on idle crown **2,3** (amplify R617 ~0.64×; ≠ R653 MidRank / ≠ R634 ep2 / ≠ R628 @5e-6) — fill free crown GPUs when B300 stock empty; R634~34G/8sh. **Never `pkill -f`**.
 - p3669: **R655 TRAIN** MidCtx HiRank LoBeta ep3×LoLR on idle R252 **6,7** (amplify R649 ~0.50×; ≠ R654 MidRank) — fill free TKC train slots when B300 stock empty; R634~32G/8sh. **Never `pkill -f`**.
 - p3668: **R654 TRAIN** MidCtx MidRank LoBeta ep3×LoLR on idle crown **0,1** (R653/R652 on brave; R634~30G/7sh) — fill free crown GPUs with MidCtx×ep3 sibling of R637 when B300 stock empty. **Never `pkill -f`**.
