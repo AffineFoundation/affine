@@ -1,13 +1,17 @@
-# R686 — Short HiRank LoBeta UltraExtra ep3×LoLR
+# R686 result — REFUTE v4 (p3722)
 
-**Status (p3721):** MERGE_DONE → **CHALL loading** on zesty 4,5/:8003 (local, no SCP).
+Short HiRank LoBeta UltraExtra ep3×LoLR vs reign34 (wvk=7, k=3, τ=0.03).
 
-| field | value |
+| metric | value |
 |---|---|
-| axis | Short HiRank LoBeta UltraExtra (β=0.02 r=64 @6144 steps=7200) |
-| base | `unconst/Affine-5czsc2fc98-r252-merged` @ `b42d6245…` |
-| train/merge | zesty GPUs 4,5 · merge.done 2026-08-17T19:36:56Z · 16sh/66G |
-| chall | lean `*_wvk7` p3721 · vllm pid**808442** · Triton seed chall_r674 n_star=26 |
-| decision | Stage-5 iff fresh n80 margin > max(2·SE, 0.002) AND \|z\|≥80 AND B≥0.30 vs reign34 |
+| margin | **−0.003042** |
+| SE | 0.002851 |
+| z | −1.07 |
+| n | 77 |
+| bar max(2·SE, δ) | 0.005703 |
+| ratio | **−0.53×** |
+| thought median | 154 ✓ (≥80) |
+| B pass | 0.380 ✓ (≥0.30) |
+| wins | false |
 
-R680 SCP zesty→golden still owns uplink — local chall avoids dual-pipe.
+Decision: REFUTE — fails crown bar. Challenger reaped zesty 4,5 → slot to R694.
