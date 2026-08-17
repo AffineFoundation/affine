@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3697: **R653 SCP_READY→CHALL** — 16sh/67G exact (size-check repair found already-complete; mid-write shard15 self-healed); lean v4 `*_wvk7` + fail-closed k=3 on golden 4,5/:8003 (vllm pid429790 loading); R655~10sh/40G + repair; B300 empty. **Never `pkill -f`**.
 - p3696: **R653 mid-SCP missing shard4** while later shards present (same R651/R634 hole) — arm post-tar **size-check repair** vs source bytes for all 16 shards (not n≥16 alone); same for R655 (trunc shard1); independent uplinks OK (brave≠R252). B300 empty. **Never `pkill -f`**.
 - p3695: **R675 TRAIN** Soft MidRank MidBeta UltraExtra (steps=7200) on idle R252 **6,7** after R667 MERGE (amplify R635 ~−0.31× / R593 ~0.70×; ≠ R673 Soft LoBeta UltraExtra / ≠ R651 Soft MidRank HiBeta); R653~8sh/34G; R655~9sh/34G; B300 empty. **Never `pkill -f`**.
 - p3694: **R674 TRAIN** Long MidRank LoBeta UltraExtra (steps=7200) on idle zesty **4,5** after R662 MERGE (amplify R643 ~0.50×; ≠ R673 Soft UltraExtra / ≠ R662 Mega 3600); R653~4sh/18G; R655~8sh/35G; R252 **6,7 free**; B300 empty. **Never `pkill -f`**.
