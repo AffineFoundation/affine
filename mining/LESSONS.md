@@ -148,4 +148,3 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - Never edit a running bash script on the pod. Write `.new`, swap after exit.
 - `/root/mine.env` must **export** vars; bare `HF_TOKEN=` does not reach python child.
 - After LoRA: merge → graft visual → reload chall → fresh n80; engines **`max_model_len=65536`**.
-- B300 serve: `CUDA_HOME=…/nvidia/cu13` + `VLLM_USE_FLASHINFER_*=0`.
