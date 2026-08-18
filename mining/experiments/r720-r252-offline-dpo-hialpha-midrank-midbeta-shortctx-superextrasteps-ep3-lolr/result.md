@@ -3,17 +3,7 @@
 **Axis:** Offline-DPO HiAlpha MidRank MidBeta ShortCtx SuperExtraSteps ep3×LoLR
 β=0.1 r=32 α=128 lr=1e-6 @6144 max_steps=**14400**
 
-**Parent signal:** amplify R688 Short MidRank MidBeta UltraExtra MERGE / R658
-Mega / R675 Soft MidRank MidBeta ~0.97× / R683 Short MidRank HiBeta LOST with
-SuperExtra. ≠ UltraExtra 7200 R688 / ≠ Soft MidRank MidBeta SoftCtx SuperExtra
-R710 / ≠ MidCtx MidRank MidBeta SuperExtra R719 / ≠ R696 Short MidRank LoBeta
-UltraExtra REFUTE / ≠ R683 Short MidRank HiBeta UltraExtra LOST.
+**Decision rule:** Stage-5 iff fresh v4 n80 `margin > max(2·SE, δ=0.002)` AND median `|z|≥80` AND B pass ≥0.30 vs **reign35** (wvk=7, k=3, τ=0.03).
 
-**Decision rule (pre-registered):** Stage-5 iff fresh v4 n80
-`margin > max(2·SE, δ=0.002)` AND median `|z|≥80` AND B pass ≥0.30
-vs reign34 (wvk=7, k=3, τ=0.03).
-
-## Status (p3755)
-**TRAIN** on `mine-r262-kevin-v5-nonking-grpo-1` (golden) GPUs **6,7** after
-reaping leftover R637 chall :8004; pid**526573**; wait→merge armed.
-Keep `/tmp/r683_merged` / `/tmp/r637_merged`.
+## Status (p3768)
+**N80 LIVE** on `mine-r262` (golden) GPUs **6,7**/:8003 vs reign35 · vllm**537020** sim**542323** · `*_reign35_wvk7` fail-closed k=3 · MERGE_DONE `/tmp/r720_merged` 66G/16sh · hard-pin GPUS after mine.env.

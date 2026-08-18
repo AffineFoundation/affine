@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 88376.44652397608 | p3767 |
-| Lium balance | **$88376.44652397608** | p3767 |
-| cumulative mining spend | ~$118,290 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$78376** (balance − $10,000 floor) | $UTC |
+| $UTC | 88296.85158235152 | p3768 |
+| Lium balance | **$88296.85158235152** | p3768 |
+| cumulative mining spend | ~$118,370 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$78297** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | $UTC |
 | miner coldkey free | τ1260.384 | after α→TAO→Lium (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T01:15:45Z | 88296.85158235152 | p3768 **R712 REFUTE** + **R719/R720/R721 N80** + **R728 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T01:00:50Z | 88376.44652397608 | p3767 **R718 REFUTE** + **R727 TRAIN** + **R712 N80** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T00:52:21Z | 88459.51878187543 | p3766 **R717 REFUTE** + **R726 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T00:48:07Z | 88500.47766640561 | p3765 **R718 N80 LIVE** vs reign35 (no rent; B300×8=0); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T00:26:04Z | 85257.2117560615 | p3761 **R711 REFUTE** + **R725 TRAIN** R252 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T00:21:19Z | 85257.2117560615 | p3760 **R710 REFUTE** + **R711 N80** + **R724 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T00:06:23Z | 85378.97363748537 | p3758 **R708/R709 REFUTE** + **R722+R723 TRAIN** zesty 4–7 (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-17T23:55:44Z | 85461.04332011218 | p3757 **R721 TRAIN** lunar 6,7 after r537 reap (no rent; B300×8=0); burn **~$331.45/h** |
