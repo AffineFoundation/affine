@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3911: R337/R338 teacher-only post_train would n80 vs **marsplan** (≠ reign35) and collide R830/R831 on 4–5 → kill post_train by exact PID → **merge-only** + host **relay→lunar** slot-claimer vs reign35; B300 waiter already armed HEAD R339. **Never `pkill -f`**.
 - p3910: p3908 TTL+24h missed R337/R338 (Removal 14:05Z/15:01Z) while UltraLoLR fills need ≥20h → API `schedule-removal` +24h → **17:35:23Z**; p3909 trains lacked wait→merge → arm TRAIN→merge on GPUs 2–5 (R337/R338 teacher-only ⇒ post-merge host-relay→TKC for n80). B300×8=0. **Never `pkill -f`**.
 - p3909: R337/R338 GPUs **2–5 idle** while online-DPO on 6–7 → fill with Offline-DPO **R796** (POD_DEAD reclaim Mid Mid MidCtx) + **R830** Soft Mid Mid Soft HiRank SoftCtx + **R831** ShortCtx Soft Mid Mid Soft + **R832** MidCtx Soft Mid Mid Soft; B300×8=0. **Never `pkill -f`**.
 - p3908: five mine-* Removal **19:04Z** (~1.7h) mid UltraLoLR TRAIN → API `POST /pods/{id}/schedule-removal` +24h (`X-API-KEY`, BASE=`https://lium.io/api`) → Removal **2026-08-19T17:23:22Z**; celiumcompute.ai times out; Bearer 401. B300×8=0. **Never `pkill -f`**.
