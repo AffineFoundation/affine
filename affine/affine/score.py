@@ -1,24 +1,45 @@
-"""Frozen production scoring rule: Reason (v3, 2026-08-10).
+"""Frozen production scoring rule: Reason v4 — tempered multi-sample
+(2026-08-17, weight_version_key=7).
 
 Shared between root validator and eval server. Any change here is a chain fork
 (bump [subnet].weight_version_key).
 
 Reason(A; C, D):
-  Per pair:   Reason = lpC(y_C | z_A) − lpC(y_C | ∅)
-  Per miner:  score  = mean(Reason) over all pairs
+  Per ref i:  a_i  = lpC(y_i | z_A) − lpC(y_i | ∅)     (per-byte, k refs/turn)
+  Per turn:   Reason = tau · log( (1/k) · Σ_i exp(a_i / tau) )
+  Per miner:  score  = mean(turn Reason) over turns
   Duel:       challenger wins iff
               paired mean(Reason_c − Reason_k) > max(k_sigma · SE, min_margin)
               AND median(len(z_A.strip())) ≥ min_thought_chars
               AND (if causality_gamma > 0) B pass rate ≥ causality_gamma
               with SE = stdev(diffs) / sqrt(n) over paired turns.
 
-Scoring hyperparameters: n_turns, k_sigma, min_margin (δ),
-min_thought_chars, and the B license (causality_gamma). There is no mix,
-no clip, and no lpA gates. The length floor (2026-08-13, weight_version_key=5)
-evicts empty / cue-thought kings. Teacher-side B (2026-08-13,
-weight_version_key=6) is the license to play: thoughts must cause the
-miner's own action as judged by the teacher. Live dueling.py passes
-causality_gamma from toml when causality_gate is on.
+Scoring hyperparameters: n_turns, k_sigma, min_margin (δ), tau,
+n_teacher_samples (k), min_thought_chars, and the B license
+(causality_gamma). There is no mix, no clip, and no lpA gates.
+
+Why tempered (v4, 2026-08-17): the teacher's action distribution is
+multi-modal — resampling a turn yields different, equally valid actions.
+Averaging per-ref Reason in log space punishes a miss without bound, so a
+thought that commits to one valid mode has negative expected score whenever
+the reference lands on another mode (measured: the teacher's own thought,
+unpaired from its rollout, scores ≈ −0.010/byte, n=509). The equilibrium
+under that rule is non-committal filler. The tempered log-mean-exp is
+dominated by the best-matched reference instead of the worst: a missed mode
+zeroes its own share but cannot drag the turn below the credit from a hit,
+so committing to the teacher's dominant next action becomes the optimum.
+k=1 reduces to the v3 per-pair Reason exactly (any tau); tau→∞ recovers the
+plain mean. tau = 0.03 calibrated externally (AIIan, n=100 turns): the flip
+from hedge-wins to commit-wins happens near tau=0.1 and is decisive by 0.03,
+while cold tau amplifies mode-guessing/leakage — both monitored via
+telemetry. min_margin = 0.002 is provisional at the new score scale and is
+recalibrated from the first ~20 live v4 duels.
+
+The length floor (2026-08-13, weight_version_key=5) evicts empty /
+cue-thought kings. Teacher-side B (2026-08-13, weight_version_key=6) is the
+license to play: thoughts must cause the miner's own action as judged by the
+teacher. Live dueling.py passes causality_gamma from toml when
+causality_gate is on.
 
 δ (min_margin = 0.002, added 2026-08-12, weight_version_key=4) exists for one
 reason: the z-test is relative to the challenger's own noise, so an ε-copy of
@@ -70,6 +91,9 @@ from dataclasses import dataclass
 DEFAULT_K_SIGMA = 2.0
 DEFAULT_MIN_MARGIN = 0.002
 DEFAULT_MIN_THOUGHT_CHARS = 80
+# Tempering temperature for the per-turn log-mean-exp over k references
+# (v4, 2026-08-17). tau <= 0 or None means plain mean (v3 replay).
+DEFAULT_TEMPER_TAU = 0.03
 # Teacher-side causality gate B (off unless causality_gamma > 0).
 # B = lpC(y_A|z_A) − lpC(y_A|∅). Same τ/γ as retired v2 miner-side A9.
 DEFAULT_CAUSALITY_TAU = 0.02
@@ -150,12 +174,36 @@ def b_gate_pass(pair: dict, tau: float = DEFAULT_CAUSALITY_TAU,
 
 
 def reason(pair: dict) -> float:
-    """Reason = lpC(y_C|z_A) − lpC(y_C|∅). The score."""
+    """Per-reference Reason a_i = lpC(y_i|z_A) − lpC(y_i|∅) (per byte)."""
     return pair["lpC_yc_za"] - pair["lpC_yc_e"]
 
 
 # Historical name (Λ2) kept for research scripts and old artifact replay.
 lambda2 = reason
+
+
+def turn_reason(pairs: list[dict],
+                tau: float | None = DEFAULT_TEMPER_TAU) -> float:
+    """Turn score: tempered log-mean-exp of per-ref Reason (v4, 2026-08-17).
+
+        turn = tau · log( (1/k) · Σ_i exp(a_i / tau) )
+
+    Dominated by the best-matched reference, so a thought that commits to one
+    valid teacher mode is not dragged negative by references that landed on
+    another mode. Exact identities: k=1 returns a_1 for any tau; tau <= 0 or
+    None returns the plain mean (v3 replay rule). Computed max-shifted for
+    numerical stability.
+    """
+    a = [reason(p) for p in pairs]
+    if not a:
+        return float("-inf")
+    if tau is None or tau <= 0:
+        return st.mean(a)
+    if len(a) == 1:
+        return a[0]
+    m = max(a)
+    return m + tau * math.log(
+        st.mean(math.exp((ai - m) / tau) for ai in a))
 
 
 def l1_lift(pair: dict) -> float | None:
@@ -222,7 +270,7 @@ def _mean_optional(vals: list[float | None]) -> float | None:
 @dataclass
 class MinerScore:
     miner: str
-    reason: float                     # the score: mean per-pair Reason
+    reason: float                     # the score: mean per-turn tempered Reason
     n_pairs: int
     n_turns: int
     # -- telemetry (measured, never scored) --
@@ -240,11 +288,19 @@ class MinerScore:
 
 
 def score_miner(rows: list[dict],
-                bank_frac: float | None = None) -> MinerScore:
-    """Score one miner: mean Reason + telemetry. No gating of any kind."""
+                bank_frac: float | None = None,
+                tau: float | None = DEFAULT_TEMPER_TAU) -> MinerScore:
+    """Score one miner: mean per-turn tempered Reason + telemetry.
+
+    Each row is one turn holding k pairs (one per teacher reference); the
+    turn score is turn_reason(pairs, tau) and the miner score is the mean
+    over turns. With k=1 (or tau <= 0) this is identical to the v3
+    mean-per-pair rule, so pre-fork rows replay unchanged. No gating.
+    """
     if not rows:
         return MinerScore("?", float("-inf"), 0, 0)
-    pairs = [p for r in rows if r.get("valid") and "pairs" in r for p in r["pairs"]]
+    valid = [r for r in rows if r.get("valid") and "pairs" in r]
+    pairs = [p for r in valid for p in r["pairs"]]
     if not pairs:
         return MinerScore(rows[0].get("miner", "?"), float("-inf"), 0, 0)
     gpass = [gate_pass(p) for p in pairs]
@@ -258,7 +314,7 @@ def score_miner(rows: list[dict],
     z_lens = [len((p.get("z_a") or "").strip()) for p in pairs]
     return MinerScore(
         miner=rows[0].get("miner", "?"),
-        reason=st.mean(reason(p) for p in pairs),
+        reason=st.mean(turn_reason(r["pairs"], tau) for r in valid),
         n_pairs=len(pairs),
         n_turns=len({r["turn_id"] for r in rows}),
         gate_pass_rate=(st.mean(gpass_f) if gpass_f else 0.0),
@@ -290,6 +346,7 @@ class DuelResult:
     thought_floor_blocked: bool = False
     causality_gamma: float = DEFAULT_CAUSALITY_GAMMA
     causality_blocked: bool = False
+    tau: float | None = DEFAULT_TEMPER_TAU
 
 
 def duel(challenger_rows: list[dict], king_rows: list[dict],
@@ -298,25 +355,29 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
          min_thought_chars: int = DEFAULT_MIN_THOUGHT_CHARS,
          causality_gamma: float = DEFAULT_CAUSALITY_GAMMA,
          challenger_bank_frac: float | None = None,
-         king_bank_frac: float | None = None) -> DuelResult:
-    """Paired duel on per-turn mean Reason: wins iff
+         king_bank_frac: float | None = None,
+         tau: float | None = DEFAULT_TEMPER_TAU) -> DuelResult:
+    """Paired duel on per-turn tempered Reason: wins iff
     mean > max(k_sigma·SE, min_margin) AND the challenger's median stripped
     thought length is ≥ min_thought_chars AND (if causality_gamma > 0) the
     challenger's teacher-side B pass rate is ≥ causality_gamma.
 
-    The δ floor stops ε-copies / SE-compression; the length floor evicts
-    empty/cue thoughts (A9). B is the starting-line license: thoughts must
-    cause the miner's own action, as judged by the teacher. Bank fracs are
-    accepted only to thread telemetry. min_thought_chars ≤ 0 disables the
-    length floor; causality_gamma ≤ 0 disables B (pre-fork replay / try)."""
-    cs = score_miner(challenger_rows, challenger_bank_frac)
-    ks = score_miner(king_rows, king_bank_frac)
+    Each turn's score on each side is turn_reason(pairs, tau) — tempered
+    log-mean-exp over the k teacher references (k=1 or tau <= 0 recovers the
+    v3 plain mean for pre-fork replay). The δ floor stops ε-copies /
+    SE-compression; the length floor evicts empty/cue thoughts (A9). B is
+    the starting-line license: thoughts must cause the miner's own action,
+    as judged by the teacher. Bank fracs are accepted only to thread
+    telemetry. min_thought_chars ≤ 0 disables the length floor;
+    causality_gamma ≤ 0 disables B (pre-fork replay / try)."""
+    cs = score_miner(challenger_rows, challenger_bank_frac, tau=tau)
+    ks = score_miner(king_rows, king_bank_frac, tau=tau)
     c_by = {r["turn_id"]: r for r in challenger_rows if r.get("valid") and "pairs" in r}
     k_by = {r["turn_id"]: r for r in king_rows if r.get("valid") and "pairs" in r}
     diffs = []
     for tid in sorted(set(c_by) & set(k_by)):
-        rc = st.mean(reason(p) for p in c_by[tid]["pairs"])
-        rk = st.mean(reason(p) for p in k_by[tid]["pairs"])
+        rc = turn_reason(c_by[tid]["pairs"], tau)
+        rk = turn_reason(k_by[tid]["pairs"], tau)
         diffs.append(rc - rk)
     n = len(diffs)
     if n < 2:
@@ -345,4 +406,5 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
         thought_floor_blocked=blocked,
         causality_gamma=causality_gamma,
         causality_blocked=causality_blocked,
+        tau=tau,
     )

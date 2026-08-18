@@ -300,9 +300,9 @@ def _mean_bank(rows: list[dict]) -> float | None:
     return sum(vals) / len(vals) if vals else None
 
 
-def _miner_summary(rows: list[dict]) -> dict:
+def _miner_summary(rows: list[dict], tau: float | None) -> dict:
     """Per-side summary: the score (reason) plus measured-not-scored telemetry."""
-    s = score_miner(rows, bank_frac=_mean_bank(rows))
+    s = score_miner(rows, bank_frac=_mean_bank(rows), tau=tau)
     return {
         "reason": s.reason if math.isfinite(s.reason) else None,
         "n_turns": s.n_turns, "n_pairs": s.n_pairs,
@@ -432,6 +432,7 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     causality_gate = bool(duel_cfg.get("causality_gate", False))
     causality_gamma = (
         float(duel_cfg.get("causality_gamma", 0.30)) if causality_gate else 0.0)
+    tau = float(duel_cfg.get("tau", 0.0)) or None  # tau <= 0 → v3 plain mean
     result = score_duel(
         chall_rows, king_rows,
         k_sigma=float(duel_cfg["k_sigma"]),
@@ -439,10 +440,11 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         min_thought_chars=min_thought,
         causality_gamma=causality_gamma,
         challenger_bank_frac=_mean_bank(chall_rows),
-        king_bank_frac=_mean_bank(king_rows))
+        king_bank_frac=_mean_bank(king_rows),
+        tau=tau)
 
-    king_sum = _miner_summary(king_rows)
-    chall_sum = _miner_summary(chall_rows)
+    king_sum = _miner_summary(king_rows, tau)
+    chall_sum = _miner_summary(chall_rows, tau)
     teacher_sum = _teacher_lengths(refs_used)
     _len_deltas(king_sum, teacher_sum)
     _len_deltas(chall_sum, teacher_sum)
@@ -459,7 +461,9 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         "k_sigma": result.k_sigma,
         "min_margin": result.min_margin,
         "n_paired_turns": result.n_paired_turns,
-        "ranking_formula": "Reason = lpC(y_C|z_A) − lpC(y_C|∅)",
+        "ranking_formula": (
+            "Reason(turn) = tau·log(mean_i exp((lpC(y_i|z_A) − lpC(y_i|∅))/tau))"
+            if tau else "Reason = lpC(y_C|z_A) − lpC(y_C|∅)"),
         "duel_params": {
             "n_turns": int(duel_cfg["n_turns"]),
             "k_sigma": float(duel_cfg["k_sigma"]),
@@ -467,6 +471,7 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "min_thought_chars": min_thought,
             "causality_gate": causality_gate,
             "causality_gamma": causality_gamma,
+            "tau": tau,
             "n_teacher_samples": int(duel_cfg["n_teacher_samples"]),
             "n_miner_samples": int(duel_cfg["n_miner_samples"]),
         },

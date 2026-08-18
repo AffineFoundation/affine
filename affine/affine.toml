@@ -20,11 +20,12 @@ king_chain_size = 5
 min_submission_block = 8767079
 # Bittensor weight-version gate for contract upgrades (bump on breaking
 # scoring/contract changes so stale validators are ignored by consensus).
-# Current: 6 (teacher-side B causality gate, 2026-08-13, explicit operator
-# directive). History: 1→2 teacher swap (2026-08-10, later reverted to
-# GLM-Air); 2→3 Reason v3 scoring fork; 3→4 min_margin=0.002 (2026-08-12);
-# 4→5 min_thought_chars=80 (2026-08-13, empty/cue-thought kings);
-# 5→6 causality_gate=true (2026-08-13, teacher-side B license).
+# Current: 7 (Reason v4 tempered multi-sample, k=3 / tau=0.03, 2026-08-17,
+# explicit operator directive). History: 1→2 teacher swap (2026-08-10, later
+# reverted to GLM-Air); 2→3 Reason v3 scoring fork; 3→4 min_margin=0.002
+# (2026-08-12); 4→5 min_thought_chars=80 (2026-08-13, empty/cue-thought
+# kings); 5→6 causality_gate=true (2026-08-13, teacher-side B license);
+# 6→7 Reason v4 (2026-08-17, tempered log-mean-exp over k=3 teacher refs).
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -32,7 +33,7 @@ min_submission_block = 8767079
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 6
+weight_version_key = 7
 
 [wallet]
 name = "default"
@@ -162,22 +163,28 @@ manifest_key = "turns/manifest.json"
 refresh_interval_s = 3600
 
 [duel]
-# Reason v3 + δ crown floor + median thought-length floor + B gate
-# (2026-08-13, weight_version_key=6). The scoring contract:
-#   Reason = lpC(y_C|z_A) − lpC(y_C|∅)   (per pair; miner score = mean)
+# Reason v4 — tempered multi-sample (2026-08-17, weight_version_key=7) —
+# + δ crown floor + median thought-length floor + B gate. The contract:
+#   a_i    = lpC(y_i|z_A) − lpC(y_i|∅)          (per teacher ref, k per turn)
+#   Reason = tau · log((1/k) · Σ_i exp(a_i/tau))   (per turn; score = mean)
 #   crown  = paired mean(Reason_c − Reason_k) > max(k_sigma · SE, min_margin)
 #            AND median(len(z.strip())) ≥ min_thought_chars
 #            AND B pass rate ≥ causality_gamma
 # No mix, no clip, no SE floor. The length floor evicts empty / cue kings.
 # B = lpC(y_A|z_A) − lpC(y_A|∅) is the license to play (not the score).
 #
-# Sample budget (2026-08-11): Reason-only / no bank / 1+1 samples, with the
-# freed teacher-echo budget reinvested into n_turns (80→2080) so crown SE
-# shrinks as 1/√n. Live GPU work per pair is miner sample + lpC(y_C|z_A);
-# lpC(y_C|z_C)/∅ come from teacher refs. Retired S* v2 lpA/bank echoes are
-# off (reason_only/score_bank) — η and lengths remain. Pre-fork verdicts
-# stay replayable under the `gates` block they stamped.
-n_turns = 2080
+# Why tempered (v4): the teacher's action distribution is multi-modal, and
+# averaging per-ref Reason in log space punished committed thoughts without
+# bound whenever the single sampled ref landed on another valid mode (the
+# teacher's own thought scores ≈ −0.010/byte against its unpaired rollout).
+# That made neutral filler the equilibrium. The log-mean-exp is dominated by
+# the best-matched ref, so committing to the teacher's dominant next action
+# becomes the optimum. k=1 reduces exactly to v3; tau→∞ recovers the mean.
+#
+# Sample budget: k=3 refs triples teacher sampling+echo work per turn, paid
+# for by n_turns 2080→1300 (duel GPU-seconds roughly flat; crown SE grows
+# ~1.26× from the smaller n but per-turn scores are less noisy under LME).
+n_turns = 1300
 # Crown bar: k=2 (2026-08-11). False-crown under Gaussian null ≈ 2.28%/duel
 # (~1 in 44). Was 3.0 (~0.13%/duel) under the Reason v3 launch default.
 k_sigma = 2.0
@@ -191,7 +198,8 @@ k_sigma = 2.0
 # (A11 family): the crown bar never drops below δ. Merges / freshly trained
 # parity models are policy-accepted (king-equivalent crowns don't regress
 # the ratchet), hence the floor sits at the lowest calibrated point rather
-# than higher.
+# than higher. PROVISIONAL under v4 (2026-08-17): the tempered turn score
+# lives on a shifted scale; recalibrate δ from the first ~20 live v4 duels.
 min_margin = 0.002
 # Median stripped thought length, in characters (2026-08-13, wvk=5).
 # Invalid challenger cannot crown. 80 sits above live cue phrases
@@ -199,8 +207,18 @@ min_margin = 0.002
 # / teacher (~240). Use the median so one long dump cannot wash a silent
 # miner. Set 0 to disable (pre-fork replay).
 min_thought_chars = 80
-n_teacher_samples = 1
+# k teacher reference rollouts per turn (v4, 2026-08-17). Each ref is
+# baselined (lpC(y_i|∅)) and the miner's single thought is echo-scored
+# against every ref; turn_reason() takes the tempered log-mean-exp.
+n_teacher_samples = 3
 n_miner_samples = 1
+# Tempering temperature tau for the per-turn log-mean-exp (v4, 2026-08-17).
+# tau→∞ is the broken hedging mean; tau=1/L (~0.002) is the hard max.
+# 0.03 calibrated externally (AIIan, n=100 turns): commit beats hedge from
+# tau≈0.1 down, decisively at 0.03, while staying warm enough that one
+# lucky ref hit does not dominate (mode-guessing / leakage amplification
+# are the cold-tau failure modes — watched via telemetry, REDTEAM.md).
+tau = 0.03
 # Ops: skip prior-bank and non-Reason forced-logprob echos (telemetry GPU).
 score_bank = false
 reason_only = true
@@ -244,7 +262,9 @@ max_concurrency = 12
 # Unused for swe_rebench_lite; kept for tau2_* suites if re-enabled.
 user_llm = "teacher"
 # Which submissions get benched: "accepted" (new kings only) or "all".
-policy = "all"
+# 2026-08-18 operator directive: kings only — challenger churn was growing
+# the queue faster than the bench pod drains it.
+policy = "accepted"
 
 [bench_serving]
 # GPU layout on the dedicated bench pod (AFFINE_ROLE=bench). One miner slot.

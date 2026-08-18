@@ -95,6 +95,11 @@ def _write_agent_config(model_repo: str, model_port: int, path: Path) -> None:
         # fail its 25 tasks in minutes, not ride litellm backoff into the
         # suite-level timeout with zero trajectories.
         "num_retries": 2,
+        # Bound runaway generations: without a cap, a looping model can emit
+        # up to the 65k context per step and ride 25 tasks x 50 steps into
+        # the 7200s suite timeout with zero score (observed 3x on 2026-08-17).
+        # Honest agent steps are well under 8k tokens.
+        "max_tokens": 8192,
     })
     path.write_text(yaml.safe_dump(cfg, sort_keys=False))
 

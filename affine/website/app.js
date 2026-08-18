@@ -45,7 +45,7 @@ import {
   resolveReign,
   setReignLookup,
   short,
-} from "./charts.js?v=70";
+} from "./charts.js?v=72";
 
 const $ = (id) => document.getElementById(id);
 
@@ -1545,8 +1545,11 @@ function sidesTableHtml(duel) {
   // recorded them (pre-fork, or early v3 before the echoes were switched off
   // on 2026-08-11) — never as a wall of "—".
   const has = (...vals) => vals.some((v) => v != null);
+  const tau = Number(params.tau || 0);
   const rows = [
-    sideRow("Reason", "the score: mean lpC(y_C|z_A) − lpC(y_C|∅)",
+    sideRow("Reason", tau > 0
+      ? `the score: mean per-turn τ·log-mean-exp of lpC(y_i|z_A) − lpC(y_i|∅) over k=${params.n_teacher_samples ?? 3} teacher refs (τ=${tau})`
+      : "the score: mean lpC(y_C|z_A) − lpC(y_C|∅)",
       chReason, kgReason, "higher wins"),
     sideRow("η sufficiency", "Λ2(z_A)/Λ2(z_C) — how much of GLM's own thinking z_A replaces",
       ch.mean_eta, kg.mean_eta, "telemetry"),
@@ -1887,7 +1890,10 @@ function duelPageHtml(duel, series, logLines) {
           <li><strong>The math is replayable.</strong> Teacher-force the pinned
             teacher (see the contract) over the published texts to reproduce
             the logprobs, then recompute
-            <code>Reason = lpC(y_C|z_A) − lpC(y_C|∅)</code> and the paired
+            ${Number(params.tau || 0) > 0
+              ? `<code>a_i = lpC(y_i|z_A) − lpC(y_i|∅)</code> per teacher ref,
+            the turn score <code>τ·log(mean_i exp(a_i/τ))</code> (τ = ${esc(String(params.tau))})`
+              : `<code>Reason = lpC(y_C|z_A) − lpC(y_C|∅)</code>`} and the paired
             <code>z = mean(Reason_c − Reason_k) / SE</code>. The exact scoring
             code ships in the repo — see <a href="/llms.txt" target="_blank" rel="noopener">llms.txt</a>
             → <code>code/affine/score.py</code>.</li>
