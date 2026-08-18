@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 86196.43516098657 | p3884 |
-| Lium balance | **$86196.43516098657** | p3884 |
+| $UTC | 87867.77158460244 | p3885 |
+| Lium balance | **$87867.77158460244** | p3885 |
 | cumulative mining spend | ~$120,940 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$76196** (balance − $10,000 floor) | $UTC |
+| **available for mining** | **~$77868** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$378.50/h** · vs floor $833/h · gap **−$454.50/h** · B300×8=0 | p3884 |
-| miner coldkey free | τ1260.384 | kept ≥τ50 |
-| miner stake | **~59α ≈ τ3.33** (r252; below ~τ5) | p3870 |
+| miner burn (7 pods) | **~$378.50/h** · vs floor $833/h · gap **−$454.50/h** · B300×8=0 | p3885 |
+| miner coldkey free | τ1260.426 | kept ≥τ50 |
+| miner stake | **~17α ≈ τ0.96** (r252; after 160α sweep) | p3885 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T14:54:30Z | 87867.77158460244 | p3885 **α→TAO→Lium**: unstake **160α** r252 → +τ~8.94 free; `lium fund` Metadata bug → `btcli transfer` **τ8.9** to Lium ck; bal **+$1791**; burn **~$378.50/h** |
 | 2026-08-18T14:44:06Z | 86196.43516098657 | p3884 **R801 SIZE_OK→lean :8003** (no rent; B300×8=0); burn **~$378.50/h** |
 | 2026-08-18T14:34:39Z | 86274.96614972026 | p3883 **R800 REFUTE→R809+R810 TRAIN** (no rent; B300×8=0); burn **~$378.50/h** |
 | 2026-08-18T14:26:40Z | 86316.3625179578 | p3882 **R800 SIZE_OK→n80** + **R801 SIGSTOP+tail×6**; burn **~$378.50/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T13:45:00Z | 86652.1763535039 | p3877 **R795 REFUTE→R808 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T13:37:42Z | 86687.77787836925 | p3876 **R802/R794/R784 REFUTE→R806+R807** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T13:28:57Z | 86758.32564159477 | p3875 **R784 SIZE_OK+stamp+lean** (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-18T13:21:06Z | 86793.49405850221 | p3874 **R784 SIGSTOP+tail+meta** (no rent; B300×8=0); burn **~$331.45/h** |

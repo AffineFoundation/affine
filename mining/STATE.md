@@ -2,7 +2,7 @@
 Rewritten every pass. Do not append.
 
 ## Stage
-**Stage 4/5 · wvk=7 Reason v4 · KING reign35 · R801 N80 LOAD · R809/R810 TRAIN · R337 WAIT_SIM · R808/R807/R806/R805/R804 TRAIN**.
+**Stage 4/5 · wvk=7 Reason v4 · KING reign35 · R801 REFUTE · R811+R812 TRAIN · R809/R810 TRAIN · R337 WAIT_SIM · R808/R807/R806/R805/R804 TRAIN**.
 King=**reign35** tammy · burn floor **≥$833/h**.
 
 ## Live facts
@@ -11,13 +11,13 @@ King=**reign35** tammy · burn floor **≥$833/h**.
 | contract | wvk=**7** · k=**3** · τ=**0.03** · n=**1300** · δ=0.002 · thought≥80 · B γ=0.30 · k_σ=2.0 |
 | king | `tammyfritz/Affine-5hmwhnfbix-tammy2`@`7e5fd5f8…` **reign35** |
 | burn | **~$378.50/h** · gap **−$454.50/h** · B300×8 stock **0** · lone 8×B200=`fbb1135f` **bl** |
-| Lium | **~$86196** · free τ**1260+** · stake ~59α≈τ3.33 (below ~τ5) |
-| **p3884** | **R801** SIZE_OK stamp → lean chall **:8003** LOAD (vLLM pid**263586**) |
+| Lium | **~$87868** · free τ**1260+** · stake ~17α≈τ0.96 (swept 160α→τ8.9→Lium) |
+| **p3885** | **R801 REFUTE** ~0.072× → free :8003 → **R811+R812 TRAIN** crown 4–7 |
 
 ## Running
 | name | huid | $/h | role |
 |---|---|---|---|
-| mine-crown-1 | gentle-orbit-bd | $52.25 | TK · **R801 N80** 6,7/:8003 LOAD · 4,5 free |
+| mine-crown-1 | gentle-orbit-bd | $52.25 | TK · **R811+R812 TRAIN** 4–7 (merge waiters armed) |
 | mine-r165-awesome-hialpha-1 | lunar-wolf-be | $44.00 | TK · **R807+R808 TRAIN** 4–7 |
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | $60.00 | TK · **R804 TRAIN** |
 | mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da | $64.00 | TK · **R796+R797** (SSH :20299 **dead**) |
@@ -29,4 +29,4 @@ King=**reign35** tammy · burn floor **≥$833/h**.
 No rentable 8×B300; lone 8×B200 blacklisted. Zesty SSH :20299 refused. Never `pkill -f`.
 
 ## Next action
-1. **R801** wait chall ready → score n80 vs reign35 (v4). 2. Watch **R809/R810** train→merge→host-relay. 3. Watch **R337**. 4. Rent when B300 appears. 5. Recover zesty. 6. Sweep α at ≥~τ5.
+1. Watch **R811/R812** train→merge→local n80 vs reign35. 2. Watch **R809/R810**. 3. Watch **R337**. 4. Rent when B300 appears. 5. Recover zesty. 6. Re-sweep α at ≥~τ5.
