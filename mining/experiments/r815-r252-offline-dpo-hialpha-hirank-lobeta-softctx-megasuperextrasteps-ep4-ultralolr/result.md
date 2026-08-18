@@ -1,3 +1,6 @@
 # R815 result
-Status: **TRAIN p3886** R252 GPUs **4,5** pid**478000** · wait→merge+n80 :8002 armed.
-After R781 REFUTE ~−0.14×; parent R758 Soft Hi Hi Soft Mega LoLR REFUTE ~−0.46× → UltraLoLR.
+**REFUTE v4** p3903 vs reign35 tammy wvk7 k=3 τ=0.03
+- margin=**−0.002007** SE=0.003312 z=−0.606 n=79 bar=0.006624 (~**−0.30×**)
+- thought✓ median |z|=**167** · B✓ pass=**0.385**
+- chall reaped R252 4,5/:8002 → slot **R820 TRAIN**
+- artifact: `r815_sim_result_reign35_wvk7.json`
