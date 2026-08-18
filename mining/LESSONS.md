@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3869: **R792 REFUTE** ~−0.38× + **R781 REFUTE** ~−0.14× same pass → free challs by exact PID → **R804** MidCtx Hi Mid UltraLoLR golden 4,5 + **R805** Soft Hi Hi Soft UltraLoLR R252 4,5; fix chall `GPUS=` pin after rename (6,7→4,5). **Never `pkill -f`**.
+- p3868: **R781** SIZE_OK all 17 vs brave → stamp; STOP parent ignores SIGTERM while state=T — **kill −9 by exact PID** (never CONT); lean chall :8002 loading after stamp. **Never `pkill -f`**.
 - p3867: **R781** finish = size-verify all 16+vis vs brave **before** stamp; mid/tail count-only stamps unsafe (p3863); kill STOP parent then stamp. **Never `pkill -f`**.
 - p3866: **R781** mid accel (11–12) after **SIGSTOP** p3848 parent — busy-skip live `.tmp`; kill STOP parent after size-ok (**never CONT**). **Never `pkill -f`**.
 - p3865: **R781** SCP accel = main×4 (05–12) + **tail×3** (13–16+vis) + **meta** (config/tok); partition shards to avoid dual-write; `lium ls --format json` B200×8=0 while table may show bl ghost. **Never `pkill -f`**.

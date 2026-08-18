@@ -1,2 +1,6 @@
 # R792 result
-- status: TRAIN armed p3845 (after R774 REFUTE ~−0.60×) golden GPUs 4,5 pid 610655
+**REFUTE v4** p3869 (decision stamped p3845 pipeline @ 2026-08-18T12:10:09Z; chall reaped p3869).
+
+- margin=**−0.002427** SE=0.003180 z=−0.763 n=78 bar=0.006361 (~**−0.38×**)
+- thought✓(162) B✓(0.316) k=3 τ=0.03 vs reign35
+- keep `/tmp/r792_merged`; golden 4,5 → **R804 TRAIN**
