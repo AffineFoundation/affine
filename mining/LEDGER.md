@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 86099.75606291299 | p3917 |
-| Lium balance | **$86099.75606291299** | p3917 |
-| cumulative mining spend | ~$122,680 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$76099** (balance − $10,000 floor) | $UTC |
+| $UTC | 85790.16640140212 | p3919 |
+| Lium balance | **$85790.16640140212** | p3919 |
+| cumulative mining spend | ~$122,990 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$75790** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=bl | p3917 |
+| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=bl | p3919 |
 | miner coldkey free | τ1260.426 | kept ≥τ50 |
 | miner stake | **~47α ≈ τ2.60** (r252; under τ5 sweep) | p3917 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
@@ -26,6 +26,8 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T18:53:48Z | 85790.16640140212 | p3919 **R826** MERGE abort→wait_vera→n80 armed (no rent; B300×8=0); burn **~$366.49/h** |
+| 2026-08-18T18:27:53Z | 86011.87682857578 | p3918 **R818 REFUTE→R836 TRAIN** + vera king-swap lunar (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T18:18:40Z | 86099.75606291299 | p3917 **R835 TRAIN** R337 idle 6,7 fill (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T18:13:06Z | 86144.5788437599 | p3916 **R820 REFUTE→R834 TRAIN** (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T18:07:32Z | 86189.1810329072 | p3915 **R818 merge path-fix+relaunch** (no rent; B300×8=0); burn **~$366.49/h** |
@@ -34,5 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T17:49:12Z | 86365.49292071548 | p3912 **R821–R824** arm merge→relay→crown n80 (no rent; B300×8=0); burn **~$366.50/h** |
 | 2026-08-18T17:43:57Z | 86409.67848032674 | p3911 **R337+R338** kill local post_train → merge-only + host relay→lunar; burn **~$366.50/h** |
 | 2026-08-18T17:36:15Z | 86454.34685036512 | p3910 **TTL+24h** R337+R338 →17:35:23Z + wait→merge R796/R830/R831/R832; burn **~$366.50/h** |
-| 2026-08-18T17:30:42Z | 86498.0179769548 | p3909 **idle GPU fill** R337 R796+R830 + R338 R831+R832 (no rent; B300×8=0); burn **~$366.50/h** |
-| 2026-08-18T17:23:24Z | 86587.65566702014 | p3908 **TTL+24h ×5** (crown/lunar/golden/brave/R252; was 19:04Z); burn **~$366.50/h** |

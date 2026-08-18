@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3919: **R826 MERGE_DONE** but lean_chall **abort** (king :8001 still tammy while vera shard1 DL ~32GB@~23MB/s) — one-shot `r826_n80_launched` left GPUs 4,5 idle; arm **wait_vera_swap→clear stamp→relaunch n80** (pid823390); wait_vera swap still armed. B300×8=0. **Never `pkill -f`**.
+- p3918: **R818 REFUTE v4** m=−0.004099~**−0.63×** (thought✓211 B✓0.479 k=3) vs **stale reign35** — live crown **reign36** `vera6/…-t6`@`8e3f1695` (~18:20Z); reap :8003 → **R836** Mid Mid MidCtx UltraLoLR TRAIN; **vera king-swap** lunar (vera is **2-shard** — hub_ok≥16 false-fail; waiter arms SWAP after SIZE_OK). Crown/golden still tammy. B300×8=0. **Never `pkill -f`**.
 - p3917: R337 GPUs **6,7 idle** post online-DPO merge → **R835** marsplan MidCtx Hi Hi UltraLoLR TRAIN (pid28926) + wait→merge + host-relay→lunar; **R818** n80 ~22/80. B300×8=0. **Never `pkill -f`**.
 - p3916: **R820 REFUTE v4** m=−0.003077~**−0.67×** causality_fail (thought✓147.5 B✗0.2375 k=3) → reap :8002 by exact PID → **R834** Short Hi Hi UltraLoLR R252 4,5; **R818** MERGE→n80 LOAD :8003. B300×8=0. **Never `pkill -f`**.
 - p3915: **R818 TRAIN_DONE** but wait→merge pointed at **`hirank-hibeta-softctx`** EXP (≠ live `midrank-hibeta-midctx`) → `No such file` + idle GPUs 6,7 ~20m → patch wait + relaunch lean_merge (pid811292); **R820** n80 LIVE ~24/80. B300×8=0. **Never `pkill -f`**.

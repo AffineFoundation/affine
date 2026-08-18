@@ -6,9 +6,9 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | gentle-orbit-bd | 8×B200 | $52.25 | **2026-08-19T17:23Z** | TK · **R829+R827 TRAIN** |
-| mine-r165-awesome-hialpha-1 | lunar-wolf-be | 8×B200 | $44.00 | **2026-08-19T17:23Z** | TK · **R826 TRAIN** + **R818 N80** |
-| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | 8×B200 | $60.00 | **2026-08-19T17:23Z** | TK · **R825 TRAIN** + **R828 TRAIN** |
+| mine-crown-1 | gentle-orbit-bd | 8×B200 | $52.25 | **2026-08-19T17:23Z** | TK · **R829+R827 TRAIN** · king=tammy |
+| mine-r165-awesome-hialpha-1 | lunar-wolf-be | 8×B200 | $44.00 | **2026-08-19T17:23Z** | TK · **R826 n80 WAITER** + **R836 TRAIN** · vera DL |
+| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | 8×B200 | $60.00 | **2026-08-19T17:23Z** | TK · **R825+R828 TRAIN** · king=tammy |
 | mine-r226-marsplan-fullft-1 | brave-raven-a9 | 8×B200 | $47.20 | **2026-08-19T17:23Z** | **R821–R824 TRAIN** + **p3912 relay** |
 | mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | 8×B300 | $64.00 | **2026-08-19T17:23Z** | **R834+R833 TRAIN** |
 | mine-r337-marsplan-online-dpo-hilr-1 | gentle-shark-35 | 8×B300 | $47.04 | **2026-08-19T17:35Z** | **R835 TRAIN** 6–7 + **R796+R830** |
@@ -22,7 +22,7 @@ SSH R252: `ssh -p 40299 root@95.133.252.28`
 SSH R337: `ssh root@86.38.182.67 -p 20295`
 SSH R338: `ssh root@86.38.182.55 -p 20299`
 Host fleet: **7 mine-*** · B300×8 rentable **0** · lone 8×B200 **bl** · burn **~$366.49/h** · **wvk=7**
-**p3917:** R337 idle 6,7→**R835 TRAIN**; R818 n80 ~22/80; B300×8=0; mine=7; bal **~$86100**
+**p3919:** R826 MERGE abort→armed wait_vera→n80; B300×8=0; mine=7; bal **~$85790**
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval`, `affine-teacher2`.
 
@@ -30,6 +30,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
-| 2026-08-18T18:18:40Z | p3917: **R835 TRAIN** R337 6,7 MidCtx Hi Hi UltraLoLR; R818 n80 ~22/80; B300×8=0 |
-| 2026-08-18T18:13:06Z | p3916: **R820 REFUTE** → **R834 TRAIN** R252 4,5; R818 MERGE→n80 LOAD; B300×8=0 |
-| 2026-08-18T18:07:32Z | p3915: **R818** wait→merge wrong EXP → **MERGE LIVE** lunar 6,7; R820 n80 **24/80**; B300×8=0 |
+| 2026-08-18T18:53:48Z | p3919: **R826** n80 abort (tammy) → **wait_vera→n80** armed; vera DL ~32GB; B300×8=0 |
+| 2026-08-18T18:27:53Z | p3918: **R818 REFUTE**→**R836 TRAIN** + **vera king-swap** lunar; B300×8=0 |
+| 2026-08-18T18:18:40Z | p3917: **R835 TRAIN** R337 idle 6,7 fill; R818 n80 ~22/80; B300×8=0 |
