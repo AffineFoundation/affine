@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 86687.77787836925 | p3876 |
-| Lium balance | **$86687.77787836925** | p3876 |
-| cumulative mining spend | ~$120,448 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$76688** (balance − $10,000 floor) | $UTC |
+| $UTC | 86652.1763535039 | p3877 |
+| Lium balance | **$86652.1763535039** | p3877 |
+| cumulative mining spend | ~$120,484 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$76652** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | p3876 |
+| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | p3877 |
 | miner coldkey free | τ1260.384 | kept ≥τ50 |
 | miner stake | **~59α ≈ τ3.33** (r252; below ~τ5) | p3870 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T13:45:00Z | 86652.1763535039 | p3877 **R795 REFUTE→R808 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T13:37:42Z | 86687.77787836925 | p3876 **R802/R794/R784 REFUTE→R806+R807** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T13:28:57Z | 86758.32564159477 | p3875 **R784 SIZE_OK+stamp+lean** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T13:21:06Z | 86793.49405850221 | p3874 **R784 SIGSTOP+tail+meta** (no rent; B300×8=0); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T12:55:32Z | 84602.9651961965 | p3870 **R798+R799 REFUTE→R784+R783 relay** + brave ENOSPC rematch R794/R795 (no rent); burn **~$331.45/h** |
 | 2026-08-18T12:47:25Z | 84723.99904669935 | p3869 **R792+R781 REFUTE→R804+R805 TRAIN** (no rent; B300×8=0 bl B200); burn **~$331.45/h** |
 | 2026-08-18T12:39:05Z | 84765.45268969834 | p3868 **R781** SIZE_OK+stamp + N80 chall loading (no rent; B300×8=0 bl B200); burn **~$331.45/h** |
-| 2026-08-18T12:34:55Z | 84804.69856410786 | p3867 **R781** finish size-verify armed (no rent; B300×8=0); burn **~$331.45/h** |
