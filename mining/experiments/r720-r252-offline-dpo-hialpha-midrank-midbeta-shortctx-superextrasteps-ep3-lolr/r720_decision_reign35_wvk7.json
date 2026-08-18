@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-18T01:25:42Z",
+  "hypo": "R720",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign35",
+  "margin": -0.0011246630778654252,
+  "se": 0.0017098499161693867,
+  "z": -0.6577554364449903,
+  "n": 77,
+  "bar": 0.0034196998323387734,
+  "thought_median": 145.0,
+  "b_pass": 0.4025974025974026,
+  "wins": false,
+  "note": "p3768 golden 6,7; Short MidRank MidBeta SuperExtra ep3\u00d7LoLR (\u03b2=0.1 r=32 @6144 steps=14400; amplify R688/R675/R683).; vs reign35",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}
