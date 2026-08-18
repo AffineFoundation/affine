@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3833: **R770 REFUTE** m=+0.000078~**0.028×** (thought✓155 B✓0.40) → **R782** tammy Soft MidRank LoBeta SoftCtx Mega on R252 6,7; **R781** tammy Soft HiRank HiBeta SoftCtx Mega filled idle brave 2,3; R761 relay ~9G. **Never `pkill -f`**.
 - p3832: **R769 REFUTE** m=−0.006410~**−0.79×** → **R780** tammy Soft MidRank HiBeta SoftCtx Mega on idle brave 0,1; R761 relay continues. **Never `pkill -f`**.
 - p3831: **α→TAO→Lium** r252 88.56α→τ5.0231→+$1015 Lium; `lium fund` still broken → `btcli wallet transfer --dest` (not `--destination`). **Never `pkill -f`**.
 - p3830: **R761+R762 MERGE_DONE** sat idle on brave (no n80 armed) → **host-relay R761→R252** queue after **R769 N80**; R762 next. **Never `pkill -f`**.
