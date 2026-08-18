@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3865: **R781** SCP accel = main×4 (05–12) + **tail×3** (13–16+vis) + **meta** (config/tok); partition shards to avoid dual-write; `lium ls --format json` B200×8=0 while table may show bl ghost. **Never `pkill -f`**.
 - p3864: **R780 REFUTE v4** m=+0.001591~**0.17×** (thought✓177 B✓0.407) Soft MidRank HiBeta SoftCtx Mega LoLR — positive but far below max(2·SE,δ); free :8002 by exact chall PID; lone API 8×B200 still `fbb1135f` **bl**. **Never `pkill -f`**.
 - p3863: **R780** `stamp_check` count-only SCP_READY while shard **08** truncated → vLLM load dies @~41%; size-verify all shards before lean; kill STOP'd parent by PID (not CONT) to unblock R781 `pgrep -f` wait. **Never `pkill -f`**.
 - p3862: **R780** dual-write on shard **13** (p3848+tail) corrupts `.tmp`; EOF-kill → partial over good final — size-checked `.fixing`; SIGSTOP before freeing slots. **Never `pkill -f`**.
