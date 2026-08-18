@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3895: p3893 finish → **R337+R338 SIZE_OK+BOOT_OK** (25/25 blobs · 16 shards · LOCAL_CACHE_SKIP → bootstrap teacher DL); empty `wait ''` on free_to_pipe=0 is harmless under `set -e` only if not last cmd — keep `for pid in "${pids[@]:-}"; do [[ -n $pid ]] && wait "$pid"; done`. B300×8=0. **Never `pkill -f`**.
 - p3894: while p3893 blob pipes run, **prestage** lunar `refs/snapshots/trees` → R337/R338 (cfg✓ 16 shards) so finish_dest meta tar is near-instant; R337 **23/25** +2 partials · R338 **20/25** +5 partials; B300×8=0. **Never `pkill -f`**.
 - p3893: p3892 ×6 batch-wait left R338 with ~14 FREE while 2 partials ran → kill **parents only** → **continuous×8** dual fill (busy-skip `.partial`/claim); B300×8=0 + lone 8×B200=`fbb1135f` **bl** so no rent; waiter HEAD **R339**. **Never `pkill -f`**.
 - p3892: p3891 ×4 batch-wait blocked on 2×~4.5G → kill **parent only** (keep in-flight SSH) → **dual×6** R337-rest+R338 (busy-skip `.partial`); inflight FINALs size-ok; waiter HEAD **R339**. **Never `pkill -f`**.
