@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3875: R784 finish = wait finals (no `.tmp`) then **byte-match all 16+vis vs brave** before `r784_scp_ready.done`; waiter arms lean :8002; R783×4 relay only after R784 stamped. **Never `pkill -f`**.
+- p3874: R784 mid-pipe accel = **SIGSTOP** p3871 parent (exact PID) → tail+meta free shards (busy-skip `.tmp`) → **kill −9** STOP'd parent after SIZE_OK (never CONT) → arm **R783-only** parallel (parent dies before `relay_hypo r783`). **Never `pkill -f`**.
 - p3873: p3871 stamp wrote `/root/logs/r${hypo}_…` with hypo=`r784` → **`rr784_scp_ready.done`** while waiters poll **`r784_…`** — size-verify fixer must write `${hypo}_scp_ready.done` (no extra `r`). **Never `pkill -f`**.
 - p3872: lunar idle REFUTE challs (R790/R789) still hold GPUs — kill by exact PID then **host-relay MERGE_DONE** brave→lunar **×2** (leave R784×4 bandwidth); arm wait→n80 before pipes. **Never `pkill -f`**.
 - p3871: sequential `tar cf|xf` brave→crown for dual 66G merges is too slow (~1 shard/5min) — kill tar by exact PID, keep size-matched shards, **parallel×4** size-checked SSH pipes; stamp only after all 16+vis match. **Never `pkill -f`**.
