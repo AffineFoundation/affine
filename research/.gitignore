@@ -2,6 +2,8 @@
 # affine/affine.toml. Headline freeze tables under results/ are committed; bulky
 # intermediate pair dumps are not.
 data/turns_minicoder.jsonl
+# Local mirrors of the live Hippius corpus — never publish.
+data/live_corpus/
 .hf/
 hf/
 
@@ -26,3 +28,6 @@ results/archive_tau2_bash/
 results/ref_*.jsonl
 results/judge_same_turns_calls.jsonl
 results/prefix_idents.json
+
+# Engy / ad-hoc probe dumps (scripts stay tracked; data stays local).
+results/engy_*
