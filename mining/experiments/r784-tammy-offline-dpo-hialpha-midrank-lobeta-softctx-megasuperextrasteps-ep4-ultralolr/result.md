@@ -1,2 +1,1 @@
-# R784 result
-- status: TRAIN armed p3837 brave GPUs 6,7
+p3870: host-relay brave→crown :8002 after R798 REFUTE — SCP in progress.

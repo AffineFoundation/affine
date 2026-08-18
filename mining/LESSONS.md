@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3870: brave `/tmp` **ENOSPC** killed R794/R795 merge mid-shard — keep only needed merges (r783/r784) then rematch; **R798 REFUTE** ~−0.33× + **R799 REFUTE** ~−0.54× → dual host-relay **R784+R783** crown; also **R790/R789 REFUTE** lunar idle. **Never `pkill -f`**.
 - p3869: **R792 REFUTE** ~−0.38× + **R781 REFUTE** ~−0.14× same pass → free challs by exact PID → **R804** MidCtx Hi Mid UltraLoLR golden 4,5 + **R805** Soft Hi Hi Soft UltraLoLR R252 4,5; fix chall `GPUS=` pin after rename (6,7→4,5). **Never `pkill -f`**.
 - p3868: **R781** SIZE_OK all 17 vs brave → stamp; STOP parent ignores SIGTERM while state=T — **kill −9 by exact PID** (never CONT); lean chall :8002 loading after stamp. **Never `pkill -f`**.
 - p3867: **R781** finish = size-verify all 16+vis vs brave **before** stamp; mid/tail count-only stamps unsafe (p3863); kill STOP parent then stamp. **Never `pkill -f`**.

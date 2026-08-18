@@ -1,1 +1,1 @@
-TRAIN armed p3850 brave GPUs 2,3 — wait→merge (host-relay n80).
+p3870: ENOSPC rematch queued after R794; host-relay next.
