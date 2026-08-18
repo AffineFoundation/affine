@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3850: brave GPUs **0–3 idle** while 4–7 train → fill with **R794+R795** UltraLoLR Soft Hi Mid Soft (marsplan/r252); R785 n80 healthy ~50/80. **Never `pkill -f`**.
 - p3849: **R785 TRAIN→MERGE→N80 LIVE** zesty :8002 (1036 steps = ep4×259 rows; `max_steps=19200` never binds under `epoch < ceil(epochs)`). Future Mega axes need `epochs ≥ ceil(max_steps/n_rows)` or drop epoch cap. **Never `pkill -f`**.
 - p3848: **R780+R781 MERGE_DONE** (66G/16/vis) on brave with **no n80 waiter** → arm host-relay chain after R768/R780 (parallel×4); leave R767 pipes alone. **Never `pkill -f`**.
 - p3847: **R762 REFUTE** m=−0.00050 ~−0.16× (thought✓169 B✓0.328 k=3) → free 4,5 by pidfile; **R767** solo-tar ~4G/66G → **parallel×4** (same as R762 p3843). **Never `pkill -f`**.
