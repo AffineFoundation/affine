@@ -1,1 +1,2 @@
-p3870: ENOSPC rematch armed; host-relay after R798/R799 REFUTE — watch crown n80.
+# R794 result
+- status: RELAY p3872 brave→lunar (after R790 REFUTE free); wait→n80 armed
