@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3838: **R761 tar stall** ~23G/66G in 45m (partial shard-07) → kill exact PIDs + **parallel×4 size-checked host pipes** pid**3181794** (KEEP 5 complete shards); B300×8=0. **Never `pkill -f`**.
 - p3837: **R768 MERGE_DONE idle** brave 6,7 → **host-relay after R767** pid**3171890** + **R784** tammy Soft MidRank LoBeta SoftCtx Mega UltraLoLR=5e-7 TRAIN filled 6,7; R761 ~22G. **Never `pkill -f`**.
 - p3836: **R767 MERGE_DONE idle** brave 4,5 → **host-relay after R762** pid**3158038** + **R783** tammy Soft HiRank LoBeta SoftCtx Mega TRAIN filled 4,5; R761 ~21G. **Never `pkill -f`**.
 - p3835: R252 :40299 **sshfail** mid-relay → **R762 resume hardened** (lium exec + host-log DONE + SSH retry) pid**3144518**; R761 tar pipe still alive ~17G. **Never `pkill -f`**.
