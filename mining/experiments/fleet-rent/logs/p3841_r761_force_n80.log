@@ -1,0 +1,11 @@
+[p3841-r761-n80] 2026-08-18T09:18:07Z upload+force launch
+Executing on gentle-wolf-8c
+STALE_LAUNCHED clearing used=0
+LAUNCHED pid=392206
+[p3830-r761] 2026-08-18T09:18:09Z START R761 chall+v4-n80 R252 GPUs=4,5 merge=/tmp/r761_merged vs king=tammyfritz/Affine-5hmwhnfbix-tammy2@7e5fd5f87e82606c32d59c3d2350e3ddfe49c4b5
+[p3830-r761] 2026-08-18T09:18:09Z reuse merge shards=16
+[p3830-r761] 2026-08-18T09:18:09Z TEACHER+KING warm poll=1
+[p3830-r761] 2026-08-18T09:18:09Z pre-chall king id=tammyfritz/Affine-5hmwhnfbix-tammy2
+[p3830-r761] reap gpu=[4, 5] kill=[]
+392206 bash /root/mining_src/r761-chall/lean_chall_n80_r252_gpus45_p3830.sh
+[p3841-r761-n80] 2026-08-18T09:18:12Z ok attempt=1

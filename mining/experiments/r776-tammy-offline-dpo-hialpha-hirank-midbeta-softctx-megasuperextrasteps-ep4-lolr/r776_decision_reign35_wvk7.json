@@ -1,0 +1,18 @@
+{
+  "utc": "2026-08-18T09:15:48Z",
+  "exp": "r776",
+  "verdict": "REFUTE",
+  "margin": -0.002204257052506185,
+  "se": 0.003960420920567076,
+  "z": -0.5565714091295545,
+  "n": 79,
+  "bar": 0.007920841841134152,
+  "bar_mult": -0.27828570456477725,
+  "thought_median": 180.0,
+  "b_pass": 0.35443037974683544,
+  "k": 3,
+  "tau": 0.03,
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2@7e5fd5f87e82606c32d59c3d2350e3ddfe49c4b5",
+  "next": "R788 UltraLoLR TRAIN crown 6,7",
+  "pass": 3841
+}
