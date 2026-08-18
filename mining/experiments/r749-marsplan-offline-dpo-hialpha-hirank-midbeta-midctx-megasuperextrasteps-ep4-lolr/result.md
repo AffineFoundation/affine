@@ -1,4 +1,5 @@
 # R749 result
-
-- **Status:** TRAIN armed p3792 lunar GPUs 6,7 after R738 REFUTE
-- **Parent:** R738 m=−0.000813 SE=0.003744 z=−0.217 n=78 bar=0.007489 (~−0.11×) thought✓215 B✓0.464
+- **status:** REFUTE v4 p3809
+- **margin:** −0.004052 · SE=0.003781 · z=−1.072 · n=78 · bar=0.007563 (~**−0.54×**)
+- **gates:** thought✓ 207 · B✓ 0.392 · k=3 · τ=0.03 · wins=false
+- **next:** slot → **R764** marsplan MidRank MidBeta MidCtx MegaSuperExtra ep4 (lunar 6,7)

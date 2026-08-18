@@ -6,8 +6,8 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | gentle-orbit-bd (`3d07e519-…`) | 8×B200 | $52.25 | **2026-08-18T19:04Z** | TK · **R758 TRAIN** · **R753 N80** |
-| mine-r165-awesome-hialpha-1 | lunar-wolf-be (`0f283151-…`) | 8×B200 | $44.00 | **2026-08-18T19:04Z** | TK · **R752 TRAIN** · **R749 N80** |
+| mine-crown-1 | gentle-orbit-bd (`3d07e519-…`) | 8×B200 | $52.25 | **2026-08-18T19:04Z** | TK · **R758+R763 TRAIN** |
+| mine-r165-awesome-hialpha-1 | lunar-wolf-be (`0f283151-…`) | 8×B200 | $44.00 | **2026-08-18T19:04Z** | TK · **R752+R764 TRAIN** |
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 (`522c84fd-…`) | 8×B200 | $60.00 | **2026-08-18T19:04Z** | TK · **R755+R756 TRAIN** |
 | mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da (`5e54186c-…`) | 8×B300 | $64.00 | **2026-08-18T19:04Z** | TK · **R757+R754 TRAIN** |
 | mine-r226-marsplan-fullft-1 | brave-raven-a9 (`5c019a27-…`) | 8×B200 | $47.20 | **2026-08-18T19:04Z** | **R761+R762 TRAIN** SoftCtx Mega |
@@ -19,8 +19,8 @@ SSH R262: `ssh root@38.127.229.127 -p 40299`
 SSH R260: `lium exec zesty-comet-da` / `ssh root@86.38.182.95 -p 20299`
 SSH brave: `ssh -p 40127 root@18.118.83.97` / `lium exec brave-raven-a9`
 SSH R252: `lium exec gentle-wolf-8c` (direct :40299 flaky)
-Host fleet: **R761+R762 TRAIN** brave idle fill; R749+R753 **N80 LIVE**; B300×8 **0**; burn **~$331.45/h** · **wvk=7**
-**p3808:** brave idle→**R761 Soft Midβ SoftCtx Mega** 0,1 pid**276621** + **R762 Soft Hiβ SoftCtx Mega** 2,3 pid**276622** wait→merge; bal **~$87088.37**
+Host fleet: **R753+R749 REFUTE→R763+R764 TRAIN**; B300×8 **0**; burn **~$331.45/h** · **wvk=7**
+**p3809:** R753 REFUTE→**R763 Soft HiRank MidBeta SoftCtx Mega** crown 6,7 pid**156142**; R749 REFUTE→**R764 marsplan MidRank MidBeta MidCtx Mega** lunar 6,7 pid**721285**; wait→merge+n80 both; bal **~$87005.70**
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval` (eager-fox-27), `affine-teacher2`.
 
@@ -28,6 +28,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-18T05:55:23Z | p3809: **R753+R749 REFUTE**→**R763+R764 TRAIN** wait→merge+n80; B300×8=0; bal **~$87005.70** |
 | 2026-08-18T05:47:40Z | p3808: **brave idle→R761+R762 TRAIN** SoftCtx MegaSuperExtra; R749+R753 N80 LIVE; B300×8=0; bal **~$87088.37** |
 | 2026-08-18T05:41:12Z | p3807: **R751 REFUTE**→**R760 TRAIN** 6,7 pid**348814** + wait→merge+n80; R759 kept; B300×8=0; bal **~$87128.67** |
-| 2026-08-18T05:36:22Z | p3806: **R749+R752+R753 wait→n80 ARMED**; R751~59/80; B300×8=0; bal **~$87170.07** |
