@@ -25,13 +25,14 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p3782: **R737 MERGE_DONE** crown 6,7 + **R729 MERGE_DONE** golden 4,5 sat idle → armed **2× lean v4 n80** (R737 :8003 chall**129126** / R729 :8002 chall**549212**) vs reign35; R730 MERGE kept 6,7; R715 ~35G/66G; B300×8=0. **Never `pkill -f`**.
-- p3781: **R734+R735 MERGE_DONE idle** on R252 (wait→merge stopped at merge) + **R731 MERGE_DONE** lunar 4,5 free → armed **3× v4 n80** (R734 :8002 / R735 :8003 / R731 lunar :8002) vs reign35; R715 relay ~31G/66G; α~τ3.41 skip; B300×8=0. **Never `pkill -f`**.
-- p3780: **R732 REFUTE v4** m=−0.006690~**−0.39×** (thought✓206 B✓0.459 k=3) MidCtx MidRank MidBeta HyperExtra; reap zesty 4,5 by pidfile → keep `/tmp/r732_merged`; **R740 TRAIN** MidCtx HiRank MidBeta HyperExtra (β=0.1 r=64 @8192 steps=**10800**) zesty 4,5 pid**878520** + wait→merge; R739 TRAIN kept 6,7; R715 relay ~26G/66G; B300×8=0; burn ~$331/h. **Never `pkill -f`**.
-- p3779: **R733 REFUTE v4** m=−0.000192~**−0.025×** (thought✓213 B✓0.50 k=3) MidCtx MidRank HiBeta HyperExtra near-parity; reap zesty 6,7 by pidfile → keep `/tmp/r733_merged`; **R739 TRAIN** MidCtx HiRank HiBeta HyperExtra (β=0.3 r=64 @8192 steps=**10800**) zesty 6,7 pid**877334** + wait→merge; **R732 MERGE→CHALL→N80 LIVE** zesty **4,5**/:8002; B300×8=0. **Never `pkill -f`**.
-- p3778: **R728 REFUTE v4** m=−0.01005~**−1.07×** (thought✓204 B✓0.377 k=3); **R738 TRAIN** lunar 6,7; B300×8=0. **Never `pkill -f`**.
-- p3776: **brave TP=2 teacher NCCL hang** — do not cold-TK brave; **R715 host-relay** brave→crown. **Never `pkill -f`**.
-- p3771–p3775: R722–R727 REFUTE cascade + HyperExtra/MidBeta sibling trains; detail → `archive/lessons_ops_pre_p3770.md`.
-- p3763: **α→TAO→Lium** r252 **295.20α → τ16.73** then transfer→Lium ck; bal **$85135→$88582**; free τ**1260.38**. **Never `pkill -f`**.
-- p3762: **king flip reign34→reign35** `tammyfritz/Affine-5hmwhnfbix-tammy2`@`7e5fd5f8…`; next n80 **must** pin tammy. **Never `pkill -f`**.
+- p3783: **R731 REFUTE v4** m=−0.005499~**−0.73×** (thought✓217 B✓0.405 k=3); reap lunar 4,5 → **R741 TRAIN** HiRank LoBeta HyperExtra pid**703789**; **R730 MERGE_DONE** → lean n80 golden **6,7**/:8003 chall**552681**; R715~41G; B300×8=0. **Never `pkill -f`**.
+- p3782: **R737+R729** lean v4 n80 armed after MERGE_DONE idle; R730 MERGE kept; R715~35G; B300×8=0. **Never `pkill -f`**.
+- p3781: **R734+R735+R731** v4 n80 armed; R715~31G; B300×8=0. **Never `pkill -f`**.
+- p3780: **R732 REFUTE** ~−0.39× → **R740 TRAIN**; B300×8=0. **Never `pkill -f`**.
+- p3779: **R733 REFUTE** ~−0.025× → **R739 TRAIN**; B300×8=0. **Never `pkill -f`**.
+- p3778: **R728 REFUTE** ~−1.07× → **R738 TRAIN**; B300×8=0. **Never `pkill -f`**.
+- p3776: **brave TP=2 teacher NCCL hang** — do not cold-TK brave; **R715 host-relay**. **Never `pkill -f`**.
+- p3771–p3775: R722–R727 REFUTE cascade; detail → `archive/lessons_ops_pre_p3770.md`.
+- p3763: **α→TAO→Lium** r252 **295.20α → τ16.73**; bal **$85135→$88582**; free τ**1260.38**. **Never `pkill -f`**.
+- p3762: **king flip reign34→reign35** `tammyfritz/…tammy2`@`7e5fd5f8…`. **Never `pkill -f`**.
 

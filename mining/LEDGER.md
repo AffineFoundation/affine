@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 87399.91547054957 | p3782 |
-| Lium balance | **$87399.91547054957** | p3782 |
-| cumulative mining spend | ~$119,180 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$77484** (balance − $10,000 floor) | $UTC |
+| $UTC | 87361.49501985962 | p3783 |
+| Lium balance | **$87361.49501985962** | p3783 |
+| cumulative mining spend | ~$119,218 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$77361** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | $UTC |
 | miner coldkey free | τ1260.384 | after α→TAO→Lium (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T03:07:30Z | 87361.49501985962 | p3783 **R731 REFUTE** + **R730 N80** + **R741 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T03:01:00Z | 87399.91547054957 | p3782 **R737+R729 N80 ARMING** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T02:54:57Z | 87483.78874678482 | p3781 **R734+R735+R731 N80 LIVE** (no rent; B300×8=0); α~τ3.41 skip sweep; burn **~$331.45/h** |
 | 2026-08-18T02:50:20Z | 87483.78874678482 | p3780 **R732 REFUTE** + **R740 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
@@ -35,5 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T02:20:06Z | 87768.97715059611 | p3776 **brave NCCL abort** + **R715 relay→crown** (freed R736; no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T02:09:00Z | 87849.86205615434 | p3775 **R727 REFUTE** + **R737 TRAIN** crown 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T02:01:52Z | 87887.57828641804 | p3774 **R726 REFUTE** + **R736 TRAIN** crown 4,5 (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-18T01:56:59Z | 87931.00583067711 | p3773 **brave cold TK+R715/R716** armed (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-18T01:50:09Z | 88012.08748004797 | p3772 **R726+R727 MERGE→CHALL→N80 LIVE** crown 4–7 (no rent; B300×8=0); burn **~$331.45/h** |
