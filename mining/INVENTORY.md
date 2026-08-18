@@ -19,8 +19,8 @@ SSH R262: `ssh root@38.127.229.127 -p 40299`
 SSH R260: `lium exec zesty-comet-da` / `ssh root@86.38.182.95 -p 20299`
 SSH brave: `ssh -p 40127 root@18.118.83.97` / `lium exec brave-raven-a9`
 SSH R252: `lium exec gentle-wolf-8c` (direct :40299 flaky)
-Host fleet: **R744 N80** + **R752 TRAIN** + TRAIN cascade + R716 RELAY; B300×8 **0**; burn **~$331.45/h** · **wvk=7**
-**p3794:** R741 REFUTE → R752 TRAIN; R744 MERGE→N80 LIVE; bal **~$86710**
+Host fleet: **R744 N80** + TRAIN cascade + R716 RELAY; B300×8 **0**; burn **~$331.45/h** · **wvk=7**
+**p3795:** α→TAO→Lium r252 **89.96α → τ5.11**; bal **~$87698**; R744 ~60/80
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval` (eager-fox-27), `affine-teacher2`.
 
@@ -28,6 +28,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-18T04:32:00Z | p3795: **α→TAO→Lium** r252 **89.96α→τ5.11**; bal **~$86668→$87698**; B300×8=0; R744 ~60/80 |
 | 2026-08-18T04:27:49Z | p3794: **R741 REFUTE** → **R752 TRAIN** lunar 4,5; **R744 N80 LIVE** crown 6,7; B300×8=0; bal **~$86710** |
 | 2026-08-18T04:21:38Z | p3793: **R742+R743 REFUTE** → **R750+R751 TRAIN** R252 4,5+6,7; B300×8=0; bal **~$86751** |
-| 2026-08-18T04:12:30Z | p3792: **R738 REFUTE** → **R749 TRAIN** lunar 6,7; **R741 wait→n80** armed; B300×8=0; bal **~$86873** |
