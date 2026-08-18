@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 87075.80785219138 | p3787 |
-| Lium balance | **$87075.80785219138** | p3787 |
-| cumulative mining spend | ~$119,501 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$77076** (balance − $10,000 floor) | $UTC |
+| $UTC | 86994.53446327084 | p3788 |
+| Lium balance | **$86994.53446327084** | p3788 |
+| cumulative mining spend | ~$119,582 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$76995** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | $UTC |
 | miner coldkey free | τ1260.384 | after α→TAO→Lium (kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T03:50:41Z | 86994.53446327084 | p3788 **R739 REFUTE** → **R747 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T03:45:43Z | 87075.80785219138 | p3787 **R715 REFUTE** + **R740 N80** + **R716 RELAY** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T03:40:08Z | 87116.53062567447 | p3786 **R739 MERGE→N80 LIVE** zesty 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T03:36:13Z | 87116.53062567447 | p3785 **R715 SCP→N80 LIVE** crown (no rent; B300×8=0); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T02:50:20Z | 87483.78874678482 | p3780 **R732 REFUTE** + **R740 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T02:43:06Z | 87564.47293212486 | p3779 **R733 REFUTE** + **R739 TRAIN** + **R732 N80** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T02:35:57Z | 87605.39797360613 | p3778 **R728 REFUTE** + **R738 TRAIN** + **R733 N80** (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-18T02:26:50Z | 87686.41647949364 | p3777 **R728 N80 LIVE** lunar 6,7 + R736 wait reaped (no rent; B300×8=0); burn **~$331.45/h** |
