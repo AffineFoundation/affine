@@ -1,9 +1,18 @@
 # R759 result
-Status: **N80 LIVE p3816** (after TRAIN p3805 / MERGE@06:37Z).
 
-- Pod: `mine-r252-vera-t4-nonking-grpo-1` (gentle-wolf-8c) GPUs **4,5**
-- Axis: r252 ShortCtx HiRank HiBeta MegaSuperExtra ep4×LoLR β=0.3 r=64 @6144 steps=19200 (actual ~884 steps)
-- Train done **06:35:54Z** · merge `/tmp/r759_merged` · chall vLLM **354925** :8002 CHALL_READY **06:40:03Z**
-- Sim: `run_sim_duel.py` pid **357410** → `/root/affine_data/r759_sim_result_reign35_wvk7.json` (n=80, wvk7, reign35)
-- Sibling: R760 TRAIN kept on GPUs **6,7**
-- Decision: Stage-5 iff paired margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30
+## Decision — REFUTE (p3817)
+
+| metric | value |
+|---|---|
+| margin | **−0.001882** |
+| SE | 0.001987 |
+| z | −0.947 |
+| n | 78 |
+| bar `max(2·SE, δ)` | 0.003973 |
+| margin/bar | **~−0.47×** |
+| thought median | 160.5 ✓ (≥80) |
+| B pass | 0.385 ✓ (≥0.30) |
+| k / τ | 3 / 0.03 |
+| king | reign35 `tammyfritz/…tammy2`@`7e5fd5f8…` |
+
+Artifact: `r759_sim_result_reign35_wvk7.json` · next axis **R769** Short MidRank HiBeta Mega on R252 4,5.

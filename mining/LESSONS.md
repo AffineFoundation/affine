@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3817: **R759 REFUTE v4** m=−0.001882~**−0.47×** → **R769** Short MidRank HiBeta Mega; keep R760 MERGE 6,7. **Never `pkill -f`**.
 - p3816: **R759 MERGE→N80 LIVE** R252 4,5/:8002 (Short HiRank HiBeta Mega) vs reign35; leave R760 TRAIN 6,7. **Never `pkill -f`**.
 - p3815: API `_load_executor_blacklist` took whole line incl. `# comment` ⇒ `fbb1135f…` never matched; strip to first token + sync `.env`; restart API by pid only. **Never `pkill -f`**.
 - p3814: **brave idle GPUs 4–7** → **R767+R768 SoftCtx Loβ Mega** (wait→merge; host-relay n80); B300×8=0. **Never `pkill -f`**.
