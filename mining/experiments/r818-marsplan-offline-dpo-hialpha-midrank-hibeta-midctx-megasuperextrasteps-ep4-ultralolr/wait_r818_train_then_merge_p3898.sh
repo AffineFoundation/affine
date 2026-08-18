@@ -3,7 +3,7 @@ set -euo pipefail
 log() { echo "[p3898-r818-wait] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 TRAIN_PID_FILE=/root/logs/r818_train.pid
 ADAPTER=/root/r818/train/adapter
-MERGE_SCRIPT=/root/mining_src/r818-marsplan-offline-dpo-hialpha-hirank-hibeta-softctx-megasuperextrasteps-ep4-ultralolr/lean_merge_lunar_gpus67_p3898.sh
+MERGE_SCRIPT=/root/mining_src/r818-marsplan-offline-dpo-hialpha-midrank-hibeta-midctx-megasuperextrasteps-ep4-ultralolr/lean_merge_lunar_gpus67_p3898.sh
 LAUNCHED=/root/logs/r818_merge_launched.p3898
 mkdir -p /root/logs
 [[ -f "$LAUNCHED" ]] && { log "already launched"; exit 0; }

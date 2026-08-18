@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 86229.33608798779 | p3914 |
-| Lium balance | **$86229.33608798779** | p3914 |
-| cumulative mining spend | ~$122,550 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$76229** (balance − $10,000 floor) | $UTC |
+| $UTC | 86189.1810329072 | p3915 |
+| Lium balance | **$86189.1810329072** | p3915 |
+| cumulative mining spend | ~$122,590 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$76189** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=bl | p3914 |
+| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=bl | p3915 |
 | miner coldkey free | τ1260.426 | kept ≥τ50 |
-| miner stake | **~47α ≈ τ2.60** (r252; under τ5 sweep) | p3914 |
+| miner stake | **~47α ≈ τ2.60** (r252; under τ5 sweep) | p3915 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T18:07:32Z | 86189.1810329072 | p3915 **R818 merge path-fix+relaunch** (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T18:03:49Z | 86229.33608798779 | p3914 **R820 n80 pathfix+relaunch** (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T17:57:06Z | 86279.02973445617 | p3913 **R819 REFUTE→R833 TRAIN** + **R820 merge kick** (no rent; B300×8=0); burn **~$366.50/h** |
 | 2026-08-18T17:49:12Z | 86365.49292071548 | p3912 **R821–R824** arm merge→relay→crown n80 (no rent; B300×8=0); burn **~$366.50/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T17:23:24Z | 86587.65566702014 | p3908 **TTL+24h ×5** (crown/lunar/golden/brave/R252; was 19:04Z); burn **~$366.50/h** |
 | 2026-08-18T17:17:54Z | 86631.68526722309 | p3907 **R810+R813 REFUTE→R829+R827+R828 TRAIN** (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T17:07:28Z | 86720.48934197395 | p3906 **R817 REFUTE→R826 TRAIN** + **R810 n80 LIVE** (no rent; B300×8=0); burn **~$366.49/h** |
-| 2026-08-18T17:00:56Z | 86810.93653610324 | p3905 **R814 REFUTE→R825 TRAIN** + **R810 wave2 ACCEL** (no rent; B300×8=0); burn **~$366.49/h** |
