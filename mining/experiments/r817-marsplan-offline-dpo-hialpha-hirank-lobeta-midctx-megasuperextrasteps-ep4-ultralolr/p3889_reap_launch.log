@@ -1,0 +1,17 @@
+dpo_duel_reason.jsonl
+lean_chall_n80_lunar_gpus45_p3889.sh
+lean_merge_lunar_gpus45_p3889.sh
+lean_train_lunar_gpus45_p3889.sh
+p3889_reap_r807_launch_r817_lunar.sh
+plan.md
+result.md
+start_r817.sh
+train_dpo.py
+wait_r817_merge_then_n80_p3889.sh
+[p3889-reap-r807] 2026-08-18T15:24:22Z START reap R807 chall :8002 on 4,5; leave R808 on 6,7; keep /tmp/r807_merged
+[p3889-reap-r807] 2026-08-18T15:24:22Z kill pid=787162 (r807 vllm :8002)
+[p3889-reap-r807] 2026-08-18T15:24:25Z wait free used45=0 iter=1
+[p3889-reap-r807] 2026-08-18T15:24:25Z launch R817 TRAIN 4,5 + wait→merge + wait→n80 (:8002); leave R808
+[p3889-reap-r807] 2026-08-18T15:24:26Z R817 lean=790121 wait=790156 n80w=790157
+[p3889-reap-r807] 2026-08-18T15:24:26Z TRAIN_OK pid=790150
+python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--marsplan0624--affine-5gedzafcvg-queen/snapshots/556d02a2adfa9bd42a02de3c766f98be7e44ca46 --data /root/r817/dpo_duel_reason.jsonl --out-dir /root/r817/train --max-len 8192 --epochs 4 --lr 5e-7 --lora-r 64 --lora-alpha 128 --beta 0.02 --max-steps 19200 

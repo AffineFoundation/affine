@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3889: **R807 REFUTE v4** m=−0.002793~**−0.23×** (thought✓213.5 B✓0.4625 k=3) MidCtx Hi Mid UltraLoLR → free :8002 by exact PID → **R817** MidCtx Hi Lo UltraLoLR lunar 4,5; leave R808 TRAIN 6,7. **Never `pkill -f`**.
+- p3888: **R806 REFUTE v4** m=−0.000703~**−0.19×** (thought✓142 B✓0.366 k=3) Soft Mid Hi Soft UltraLoLR → free :8003 by exact PID → **R816** Short Mid Hi UltraLoLR R252 6,7; **parallel lunar→R338** + kill-guard so p3887 cannot wipe after R337. **Never `pkill -f`**.
 - p3887: **R337+R338** bootstrap dies on `marsplan0624/…queen`@`556d02a2` **404/gated** on pod IP — lunar still has local 66G cache; **host-relay tar** lunar→new pods + `p3887_LOCAL_CACHE_SKIP` before relaunch; invent missing **R338** calm-lion ($52). **Never `pkill -f`**.
 - p3886: **R803** m=+0.004706~**0.60×** + **R804** m=+0.003174~**0.44×** + **R805** m=−0.005499~**−0.78×** v4 REFUTE (all thought/B✓ k=3) → free challs by exact PID → **R813** MidCtx Hi Hi UltraLoLR + **R814** MidCtx Hi Lo UltraLoLR golden + **R815** Soft Hi Lo Soft UltraLoLR R252; leave R806 TRAIN. **Never `pkill -f`**.
 - p3885: **R801 REFUTE v4** m=+0.000285~**0.072×** (thought✓168 B✓0.380 k=3) Soft Hi Hi Soft UltraLoLR near-parity → free :8003 by exact PID → **R811** MidCtx Mid Hi UltraLoLR + **R812** MidCtx Hi Hi UltraLoLR crown TRAIN; also **160α→τ8.9→Lium** (`lium fund` Metadata bug → `btcli transfer`). **Never `pkill -f`**.
