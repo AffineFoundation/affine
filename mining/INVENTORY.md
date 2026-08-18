@@ -11,7 +11,7 @@
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 (`522c84fd-…`) | 8×B200 | $60.00 | **2026-08-18T19:04Z** | TK · **R745+R746 TRAIN** |
 | mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da (`5e54186c-…`) | 8×B300 | $64.00 | **2026-08-18T19:04Z** | TK · **R748+R747 TRAIN** |
 | mine-r226-marsplan-fullft-1 | brave-raven-a9 (`5c019a27-…`) | 8×B200 | $47.20 | **2026-08-18T19:04Z** | **idle** NCCL-blacklist; R716 source |
-| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c (`61d17753-…`) | 8×B300 | $64.00 | **2026-08-18T19:04Z** | TK · **R743+R742 TRAIN** |
+| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c (`61d17753-…`) | 8×B300 | $64.00 | **2026-08-18T19:04Z** | TK · **R743 MERGE→n80** 4,5 · **R742 N80** 6,7/:8003 |
 
 SSH crown: `ssh root@95.133.253.90 -p 40099`
 SSH R165: `lium exec lunar-wolf-be` / `ssh -p 20299 root@150.136.46.118`
@@ -19,8 +19,8 @@ SSH R262: `ssh root@38.127.229.127 -p 40299`
 SSH R260: `lium exec zesty-comet-da` / `ssh root@86.38.182.95 -p 20299`
 SSH brave: `ssh -p 40127 root@18.118.83.97` / `lium exec brave-raven-a9`
 SSH R252: `ssh -p 40299 root@95.133.252.28` / `lium exec gentle-wolf-8c`
-Host fleet: **R738 N80 LIVE** + **R716 RELAY** + 8× TRAIN; B300×8 **0**; burn **~$331.45/h** · **wvk=7**
-**p3790:** R738 MERGE@03:42Z idle → lean chall/:8003; R716 shards ~3/16; bal **~$86954**
+Host fleet: **R738+R742 N80** + **R716 RELAY** + **R743 MERGE→n80** + TRAIN; B300×8 **0**; burn **~$331.45/h** · **wvk=7**
+**p3791:** R742 MERGE@04:05Z → lean chall/:8003; R743 wait→n80 armed; bal **~$86873**
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval` (eager-fox-27), `affine-teacher2`.
 
@@ -28,6 +28,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-18T04:06:09Z | p3791: **R742 MERGE→N80 LIVE** R252 6,7/:8003; **R743 wait→n80** armed; B300×8=0; bal **~$86873** |
 | 2026-08-18T03:59:40Z | p3790: **R738 MERGE→N80 LIVE** lunar 6,7/:8003 chall pid**706677**; B300×8=0; bal **~$86954** |
 | 2026-08-18T03:55:36Z | p3789: **R740 REFUTE** → **R748 TRAIN** zesty 4,5; R716 shards 2/16; bal **~$86954** |
-| 2026-08-18T03:50:41Z | p3788: **R739 REFUTE** → **R747 TRAIN** zesty 6,7; R740~59/80; B300×8=0; bal **~$86995** |
