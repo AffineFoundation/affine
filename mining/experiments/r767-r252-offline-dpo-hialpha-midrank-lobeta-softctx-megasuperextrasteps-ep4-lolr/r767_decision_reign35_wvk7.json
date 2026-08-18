@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-18T10:51:32Z",
+  "hypo": "R767",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign35",
+  "margin": 0.0022157066004254724,
+  "se": 0.002349864514861661,
+  "z": 0.9429082342459704,
+  "n": 76,
+  "bar": 0.004699729029723322,
+  "thought_median": 173.0,
+  "b_pass": 0.4805194805194805,
+  "wins": false,
+  "note": "p3836 chall+v4-n80 R252 4,5; r252 Soft MidRank LoBeta SoftCtx MegaSuperExtra ep4\u00d7LoLR; vs reign35 tammy wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}

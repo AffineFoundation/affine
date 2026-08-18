@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-18T10:50:10Z",
+  "hypo": "R787",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign35",
+  "margin": -0.008048632307691735,
+  "se": 0.005019858574447799,
+  "z": -1.603358379190416,
+  "n": 73,
+  "bar": 0.010039717148895597,
+  "thought_median": 212.0,
+  "b_pass": 0.4533333333333333,
+  "wins": false,
+  "note": "p3841 chall+v4-n80 zesty 6,7; marsplan SoftCtx MidRank HiBeta MegaSuperExtra ep4\u00d7UltraLoLR; vs reign35 tammy wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}

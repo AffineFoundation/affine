@@ -1,3 +1,16 @@
-# R787 result — TRAIN (post R777 REFUTE)
+# R787 result
 
-Parent **R777 REFUTE** m=−0.007961 ~−0.72× → UltraLoLR=5e-7 sibling armed on zesty GPUs 6,7 (p3841). Wait merge+n80.
+| field | value |
+|---|---|
+| status | **REFUTE v4** p3853 |
+| margin | **−0.008049** |
+| SE | 0.005020 |
+| z | −1.603 |
+| n | 73 |
+| bar | 0.010040 (~**−0.80×**) |
+| thought_median | 212 ✓ |
+| B pass | 0.453 ✓ |
+| stamp | k=3 τ=0.03 wvk=7 vs reign35 |
+| next | freed zesty 6,7 → **R797** MidCtx Mid Hi UltraLoLR TRAIN |
+
+Artifact: `r787_sim_result_reign35_wvk7.json` / `r787_decision_reign35_wvk7.json`
