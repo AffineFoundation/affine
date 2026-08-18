@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 83399.21902244067 | p3950 |
-| Lium balance | **$83399.21902244067** | p3950 |
-| cumulative mining spend | ~$125,342 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$73399** (balance − $10,000 floor) | $UTC |
+| $UTC | 83222.2182449106 | p3951 |
+| Lium balance | **$83222.2182449106** | p3951 |
+| cumulative mining spend | ~$125,475 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$73266** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=**bl** | p3950 |
+| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=**bl** | p3951 |
 | miner coldkey free | τ1260.426 | kept ≥τ50 |
 | miner stake | **~47α ≈ τ2.60** (r252; under τ5 sweep) | p3917 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
@@ -26,6 +26,8 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T23:42:46Z | 83222.2182449106 | p3951 vera SIZE_OK+SWAP; R846/R847 REFUTE→R861/R862 TRAIN (no rent; B200 bl); burn **~$366.49/h** |
+| 2026-08-18T23:35:32Z | 83266.35464915654 | p3951 vera part0/1 resume mid-pass (no rent; B200 bl); burn **~$366.49/h** |
 | 2026-08-18T23:23:30Z | 83399.21902244067 | p3950 **R830 REFUTE→R860 TRAIN** + vera part1 resume (no rent; B200 bl); burn **~$366.49/h** |
 | 2026-08-18T23:12:10Z | 83487.08773814619 | p3949 **R830 EngineDead→RELOAD** :8003 (no rent; B200×8 listed); burn **~$366.49/h** |
 | 2026-08-18T23:08:14Z | 83531.53502103833 | p3948 R252 vera **part1 resume** + SIZE_OK concat (no rent; B300=0 B200=0); burn **~$366.49/h** |
@@ -35,4 +37,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T22:42:09Z | 83755.23600551371 | p3944 **R841 REFUTE→R838 RELOAD+R858 TRAIN** (no rent; B300=0 bl B200); burn **~$366.49/h** |
 | 2026-08-18T22:36:07Z | 83797.3662421743 | p3943 **R842 EngineDead→RELOAD** :8003 (no rent; B300=0); burn **~$366.49/h** |
 | 2026-08-18T22:31:39Z | 83840.39110268108 | p3942 **R852–R857 TRAIN** fill R337/R338 idle 2–7 (no rent; B300=0 B200=0); burn **~$366.49/h** |
-| 2026-08-18T22:25:41Z | 83885.69899273105 | p3941 **R830 host-relay×4** R337→lunar + n80 claimer (no rent; B300=0 bl B200); burn **~$366.49/h** |
