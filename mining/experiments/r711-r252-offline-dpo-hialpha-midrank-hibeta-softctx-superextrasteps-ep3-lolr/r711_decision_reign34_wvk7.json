@@ -1,0 +1,29 @@
+Executing on gentle-wolf-8c
+{
+  "utc": "2026-08-18T00:22:50Z",
+  "hypo": "R711",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign34",
+  "margin": -0.0015196068970284881,
+  "se": 0.003129647840458971,
+  "z": -0.48555204115413636,
+  "n": 72,
+  "bar": 0.006259295680917942,
+  "thought_median": 163.5,
+  "b_pass": 0.42105263157894735,
+  "wins": false,
+  "note": "p3760 chall+v4-n80 R252 6,7; Soft MidRank HiBeta SoftCtx SuperExtra ep3 LoLR; vs reign34 wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}
