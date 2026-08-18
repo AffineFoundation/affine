@@ -6,8 +6,8 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | gentle-orbit-bd | 8×B200 | $52.25 | **2026-08-19T17:23Z** | TK **vera** · **R839+R840 n80 LOAD** |
-| mine-r165-awesome-hialpha-1 | lunar-wolf-be | 8×B200 | $44.00 | **2026-08-19T17:23Z** | TK **vera** · **R837 n80** · **R842 TRAIN** |
+| mine-crown-1 | gentle-orbit-bd | 8×B200 | $52.25 | **2026-08-19T17:23Z** | TK **vera** · **R839+R840 n80 LIVE** |
+| mine-r165-awesome-hialpha-1 | lunar-wolf-be | 8×B200 | $44.00 | **2026-08-19T17:23Z** | TK **vera** · **R843+R842 TRAIN** |
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | 8×B200 | $60.00 | **2026-08-19T17:23Z** | TK **vera LIVE** · **R838+R841 TRAIN** |
 | mine-r226-marsplan-fullft-1 | brave-raven-a9 | 8×B200 | $47.20 | **2026-08-19T17:23Z** | **R821–R823** + relay |
 | mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | 8×B300 | $64.00 | **2026-08-19T17:23Z** | **R834+R833 TRAIN** |
@@ -22,7 +22,7 @@ SSH R252: `ssh -p 40299 root@95.133.252.28`
 SSH R337: `ssh root@86.38.182.67 -p 20295`
 SSH R338: `ssh root@86.38.182.55 -p 20299`
 Host fleet: **7 mine-*** · B300×8 rentable **0** · lone 8×B200 **bl** · burn **~$366.49/h** · **wvk=7**
-**p3932:** crown ENOSPC→rm 14×66G merges→R839/R840 chall LOAD; R837~79/80; B300×8=0; mine=7; bal **~$84330**
+**p3933:** **R837 REFUTE**→**R843 TRAIN** lunar 4,5; R839~20/80 R840~30/80; B300×8=0; mine=7; bal **~$84285**
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval`, `affine-teacher2`.
 
@@ -30,6 +30,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-18T21:41:24Z | p3933: **R837 REFUTE** reap→**R843 TRAIN**; R839/R840 n80 LIVE; B300×8=0 |
 | 2026-08-18T21:36:42Z | p3932: crown disk free + **R839:8002/R840:8003 LOAD**; R837~79/80; B300×8=0 |
 | 2026-08-18T21:30:39Z | p3931: golden **vera SWAP_OK** :8001 (CUDA_HOME fix); R838/R841 TRAIN ok; B300×8=0 |
-| 2026-08-18T20:17:40Z | p3928: **R836 REFUTE** reap→**R842 TRAIN**; lunar→golden vera DIRECT×6 LIVE; B300×8=0 |
