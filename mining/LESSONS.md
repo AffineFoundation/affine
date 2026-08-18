@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3797: **R747 MERGE→N80 LIVE** zesty 6,7 :8003 (train.done→merge 16sh→chall**892881**); leave R748 on 4,5; R716 ~11/16; B300×8=0. **Never `pkill -f`**.
 - p3796: **R744 REFUTE v4** m=−0.001936~**−0.43×** (thought✓135 B✓0.363 k=3) MidCtx HiRank MidBeta SuperExtra → reap chall → **R753 TRAIN** MegaSuperExtra ep4 crown 6,7; R716 relay ~11/16. **Never `pkill -f`**.
 - p3795: **α→TAO→Lium** r252 **89.96α → τ5.1067** (stake crossed ~τ5); `lium fund` `Subtensor.transfer` miss → **`btcli wallet transfer`** to Lium ck `5FqAC…zsThe`; bal **$86668→$87698**; free τ**1260.38**. **Never `pkill -f`**.
 - p3794: **R741 REFUTE v4** m=−0.00452~**−0.53×** (thought✓205 B✓0.534 k=3) MidCtx HiRank LoBeta HyperExtra → reap chall → **R752 TRAIN** MegaSuperExtra ep4 lunar 4,5; **R744 MERGE sat idle ~20m** → same-pass lean chall/:8003 + v4 n80 crown 6,7. **Never `pkill -f`**.
