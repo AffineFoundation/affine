@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 85257.2117560615 | p3761 |
-| Lium balance | **$85257.2117560615** | p3761 |
-| cumulative mining spend | ~$118,044 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$75257** (balance − $10,000 floor) | $UTC |
+| $UTC | 85217.1590028673 | p3762 |
+| Lium balance | **$85217.1590028673** | p3762 |
+| cumulative mining spend | ~$118,084 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$75217** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1260.382 | after R683 reg burn (~τ1.53; kept ≥τ50) |
-| miner stake | **~29.52 α** on r252 (~τ1.68; below τ5 sweep) | 2026-08-17 |
+| miner stake | **~295.20 α** on r252 (~τ16.75; **≥τ5 → sweep next pass**) | p3762 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T00:32:21Z | 85217.1590028673 | p3762 **reign35** retarget (no rent; B300×8=0); burn **~$331.45/h**; α~295≈τ16.7 pending sweep |
 | 2026-08-18T00:26:04Z | 85257.2117560615 | p3761 **R711 REFUTE** + **R725 TRAIN** R252 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T00:21:19Z | 85257.2117560615 | p3760 **R710 REFUTE** + **R711 N80** + **R724 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T00:06:23Z | 85378.97363748537 | p3758 **R708/R709 REFUTE** + **R722+R723 TRAIN** zesty 4–7 (no rent; B300×8=0); burn **~$331.45/h** |
