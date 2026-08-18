@@ -1,0 +1,13 @@
+Executing on zesty-comet-da
+[p3758-relaunch] 2026-08-18T00:05:47Z VRAM4,5 used=0
+[p3758-relaunch] 2026-08-18T00:05:47Z VRAM6,7 used=0
+[p3758-relaunch] 2026-08-18T00:05:50Z wait a=1 b=1 i=1
+R722=852663 R723=852667
+r722 0.1 4,5 852663 556d02a2adfa9bd42a02de3c766f98be7e44ca46
+r723 0.3 6,7 852667 556d02a2adfa9bd42a02de3c766f98be7e44ca46
+index, memory.used [MiB]
+4, 0 MiB
+5, 0 MiB
+6, 0 MiB
+7, 0 MiB
+[p3758-relaunch] 2026-08-18T00:05:50Z DONE

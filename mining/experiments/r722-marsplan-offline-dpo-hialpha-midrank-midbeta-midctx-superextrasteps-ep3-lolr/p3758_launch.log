@@ -1,0 +1,138 @@
+Executing on zesty-comet-da
+[p3758-pod] 2026-08-18T00:00:45Z kill r709 chall pid=846127
+[p3758-pod] 2026-08-18T00:00:47Z kill r708 chall pid=846548
+[p3758-pod] 2026-08-18T00:00:49Z VRAM4,5 used_mib=0 iter=1
+[p3758-pod] 2026-08-18T00:00:50Z VRAM6,7 used_mib=0 iter=1
+[p3758-pod] 2026-08-18T00:00:50Z tmp_avail_G=820
+r708 xbar 0.116
+r709 xbar 0.267
+[p3758-pod] 2026-08-18T00:00:54Z wait trains a=0 b=0 iter=1
+[p3758-pod] 2026-08-18T00:00:56Z wait trains a=0 b=0 iter=2
+[p3758-pod] 2026-08-18T00:00:58Z wait trains a=0 b=0 iter=3
+[p3758-pod] 2026-08-18T00:01:00Z wait trains a=0 b=0 iter=4
+[p3758-pod] 2026-08-18T00:01:02Z wait trains a=0 b=0 iter=5
+[p3758-pod] 2026-08-18T00:01:04Z wait trains a=0 b=0 iter=6
+[p3758-pod] 2026-08-18T00:01:06Z wait trains a=0 b=0 iter=7
+[p3758-pod] 2026-08-18T00:01:08Z wait trains a=0 b=0 iter=8
+[p3758-pod] 2026-08-18T00:01:10Z wait trains a=0 b=0 iter=9
+[p3758-pod] 2026-08-18T00:01:12Z wait trains a=0 b=0 iter=10
+[p3758-pod] 2026-08-18T00:01:14Z wait trains a=0 b=0 iter=11
+[p3758-pod] 2026-08-18T00:01:16Z wait trains a=0 b=0 iter=12
+[p3758-pod] 2026-08-18T00:01:18Z wait trains a=0 b=0 iter=13
+[p3758-pod] 2026-08-18T00:01:20Z wait trains a=0 b=0 iter=14
+[p3758-pod] 2026-08-18T00:01:22Z wait trains a=0 b=0 iter=15
+[p3758-pod] 2026-08-18T00:01:24Z wait trains a=0 b=0 iter=16
+[p3758-pod] 2026-08-18T00:01:26Z wait trains a=0 b=0 iter=17
+[p3758-pod] 2026-08-18T00:01:28Z wait trains a=0 b=0 iter=18
+[p3758-pod] 2026-08-18T00:01:30Z wait trains a=0 b=0 iter=19
+[p3758-pod] 2026-08-18T00:01:32Z wait trains a=0 b=0 iter=20
+[p3758-pod] 2026-08-18T00:01:34Z wait trains a=0 b=0 iter=21
+[p3758-pod] 2026-08-18T00:01:36Z wait trains a=0 b=0 iter=22
+[p3758-pod] 2026-08-18T00:01:38Z wait trains a=0 b=0 iter=23
+[p3758-pod] 2026-08-18T00:01:40Z wait trains a=0 b=0 iter=24
+[p3758-pod] 2026-08-18T00:01:42Z wait trains a=0 b=0 iter=25
+[p3758-pod] 2026-08-18T00:01:44Z wait trains a=0 b=0 iter=26
+[p3758-pod] 2026-08-18T00:01:46Z wait trains a=0 b=0 iter=27
+[p3758-pod] 2026-08-18T00:01:48Z wait trains a=0 b=0 iter=28
+[p3758-pod] 2026-08-18T00:01:50Z wait trains a=0 b=0 iter=29
+[p3758-pod] 2026-08-18T00:01:52Z wait trains a=0 b=0 iter=30
+[p3758-pod] 2026-08-18T00:01:54Z wait trains a=0 b=0 iter=31
+[p3758-pod] 2026-08-18T00:01:56Z wait trains a=0 b=0 iter=32
+[p3758-pod] 2026-08-18T00:01:58Z wait trains a=0 b=0 iter=33
+[p3758-pod] 2026-08-18T00:02:00Z wait trains a=0 b=0 iter=34
+[p3758-pod] 2026-08-18T00:02:02Z wait trains a=0 b=0 iter=35
+[p3758-pod] 2026-08-18T00:02:04Z wait trains a=0 b=0 iter=36
+[p3758-pod] 2026-08-18T00:02:06Z wait trains a=0 b=0 iter=37
+[p3758-pod] 2026-08-18T00:02:08Z wait trains a=0 b=0 iter=38
+[p3758-pod] 2026-08-18T00:02:10Z wait trains a=0 b=0 iter=39
+[p3758-pod] 2026-08-18T00:02:12Z wait trains a=0 b=0 iter=40
+[p3758-pod] 2026-08-18T00:02:14Z wait trains a=0 b=0 iter=41
+[p3758-pod] 2026-08-18T00:02:16Z wait trains a=0 b=0 iter=42
+[p3758-pod] 2026-08-18T00:02:18Z wait trains a=0 b=0 iter=43
+[p3758-pod] 2026-08-18T00:02:20Z wait trains a=0 b=0 iter=44
+[p3758-pod] 2026-08-18T00:02:22Z wait trains a=0 b=0 iter=45
+[p3758-pod] 2026-08-18T00:02:24Z wait trains a=0 b=0 iter=46
+[p3758-pod] 2026-08-18T00:02:26Z wait trains a=0 b=0 iter=47
+[p3758-pod] 2026-08-18T00:02:28Z wait trains a=0 b=0 iter=48
+[p3758-pod] 2026-08-18T00:02:30Z wait trains a=0 b=0 iter=49
+[p3758-pod] 2026-08-18T00:02:32Z wait trains a=0 b=0 iter=50
+[p3758-pod] 2026-08-18T00:02:34Z wait trains a=0 b=0 iter=51
+[p3758-pod] 2026-08-18T00:02:36Z wait trains a=0 b=0 iter=52
+[p3758-pod] 2026-08-18T00:02:38Z wait trains a=0 b=0 iter=53
+[p3758-pod] 2026-08-18T00:02:40Z wait trains a=0 b=0 iter=54
+[p3758-pod] 2026-08-18T00:02:42Z wait trains a=0 b=0 iter=55
+[p3758-pod] 2026-08-18T00:02:44Z wait trains a=0 b=0 iter=56
+[p3758-pod] 2026-08-18T00:02:46Z wait trains a=0 b=0 iter=57
+[p3758-pod] 2026-08-18T00:02:48Z wait trains a=0 b=0 iter=58
+[p3758-pod] 2026-08-18T00:02:50Z wait trains a=0 b=0 iter=59
+[p3758-pod] 2026-08-18T00:02:52Z wait trains a=0 b=0 iter=60
+[p3758-pod] 2026-08-18T00:02:54Z wait trains a=0 b=0 iter=61
+[p3758-pod] 2026-08-18T00:02:56Z wait trains a=0 b=0 iter=62
+[p3758-pod] 2026-08-18T00:02:58Z wait trains a=0 b=0 iter=63
+[p3758-pod] 2026-08-18T00:03:00Z wait trains a=0 b=0 iter=64
+[p3758-pod] 2026-08-18T00:03:02Z wait trains a=0 b=0 iter=65
+[p3758-pod] 2026-08-18T00:03:04Z wait trains a=0 b=0 iter=66
+[p3758-pod] 2026-08-18T00:03:06Z wait trains a=0 b=0 iter=67
+[p3758-pod] 2026-08-18T00:03:08Z wait trains a=0 b=0 iter=68
+[p3758-pod] 2026-08-18T00:03:10Z wait trains a=0 b=0 iter=69
+[p3758-pod] 2026-08-18T00:03:12Z wait trains a=0 b=0 iter=70
+[p3758-pod] 2026-08-18T00:03:14Z wait trains a=0 b=0 iter=71
+[p3758-pod] 2026-08-18T00:03:16Z wait trains a=0 b=0 iter=72
+[p3758-pod] 2026-08-18T00:03:18Z wait trains a=0 b=0 iter=73
+[p3758-pod] 2026-08-18T00:03:20Z wait trains a=0 b=0 iter=74
+[p3758-pod] 2026-08-18T00:03:22Z wait trains a=0 b=0 iter=75
+[p3758-pod] 2026-08-18T00:03:24Z wait trains a=0 b=0 iter=76
+[p3758-pod] 2026-08-18T00:03:26Z wait trains a=0 b=0 iter=77
+[p3758-pod] 2026-08-18T00:03:28Z wait trains a=0 b=0 iter=78
+[p3758-pod] 2026-08-18T00:03:30Z wait trains a=0 b=0 iter=79
+[p3758-pod] 2026-08-18T00:03:32Z wait trains a=0 b=0 iter=80
+[p3758-pod] 2026-08-18T00:03:34Z wait trains a=0 b=0 iter=81
+[p3758-pod] 2026-08-18T00:03:36Z wait trains a=0 b=0 iter=82
+[p3758-pod] 2026-08-18T00:03:38Z wait trains a=0 b=0 iter=83
+[p3758-pod] 2026-08-18T00:03:40Z wait trains a=0 b=0 iter=84
+[p3758-pod] 2026-08-18T00:03:42Z wait trains a=0 b=0 iter=85
+[p3758-pod] 2026-08-18T00:03:44Z wait trains a=0 b=0 iter=86
+[p3758-pod] 2026-08-18T00:03:46Z wait trains a=0 b=0 iter=87
+[p3758-pod] 2026-08-18T00:03:48Z wait trains a=0 b=0 iter=88
+[p3758-pod] 2026-08-18T00:03:50Z wait trains a=0 b=0 iter=89
+[p3758-pod] 2026-08-18T00:03:52Z wait trains a=0 b=0 iter=90
+[p3758-pod] 2026-08-18T00:03:54Z wait trains a=0 b=0 iter=91
+[p3758-pod] 2026-08-18T00:03:56Z wait trains a=0 b=0 iter=92
+[p3758-pod] 2026-08-18T00:03:58Z wait trains a=0 b=0 iter=93
+[p3758-pod] 2026-08-18T00:04:00Z wait trains a=0 b=0 iter=94
+[p3758-pod] 2026-08-18T00:04:02Z wait trains a=0 b=0 iter=95
+[p3758-pod] 2026-08-18T00:04:04Z wait trains a=0 b=0 iter=96
+[p3758-pod] 2026-08-18T00:04:06Z wait trains a=0 b=0 iter=97
+[p3758-pod] 2026-08-18T00:04:08Z wait trains a=0 b=0 iter=98
+[p3758-pod] 2026-08-18T00:04:10Z wait trains a=0 b=0 iter=99
+[p3758-pod] 2026-08-18T00:04:12Z wait trains a=0 b=0 iter=100
+[p3758-pod] 2026-08-18T00:04:14Z wait trains a=0 b=0 iter=101
+[p3758-pod] 2026-08-18T00:04:16Z wait trains a=0 b=0 iter=102
+[p3758-pod] 2026-08-18T00:04:18Z wait trains a=0 b=0 iter=103
+[p3758-pod] 2026-08-18T00:04:20Z wait trains a=0 b=0 iter=104
+[p3758-pod] 2026-08-18T00:04:22Z wait trains a=0 b=0 iter=105
+[p3758-pod] 2026-08-18T00:04:24Z wait trains a=0 b=0 iter=106
+[p3758-pod] 2026-08-18T00:04:26Z wait trains a=0 b=0 iter=107
+[p3758-pod] 2026-08-18T00:04:28Z wait trains a=0 b=0 iter=108
+[p3758-pod] 2026-08-18T00:04:30Z wait trains a=0 b=0 iter=109
+[p3758-pod] 2026-08-18T00:04:32Z wait trains a=0 b=0 iter=110
+[p3758-pod] 2026-08-18T00:04:34Z wait trains a=0 b=0 iter=111
+[p3758-pod] 2026-08-18T00:04:36Z wait trains a=0 b=0 iter=112
+[p3758-pod] 2026-08-18T00:04:38Z wait trains a=0 b=0 iter=113
+[p3758-pod] 2026-08-18T00:04:40Z wait trains a=0 b=0 iter=114
+[p3758-pod] 2026-08-18T00:04:42Z wait trains a=0 b=0 iter=115
+[p3758-pod] 2026-08-18T00:04:44Z wait trains a=0 b=0 iter=116
+[p3758-pod] 2026-08-18T00:04:46Z wait trains a=0 b=0 iter=117
+[p3758-pod] 2026-08-18T00:04:48Z wait trains a=0 b=0 iter=118
+[p3758-pod] 2026-08-18T00:04:50Z wait trains a=0 b=0 iter=119
+[p3758-pod] 2026-08-18T00:04:52Z wait trains a=0 b=0 iter=120
+[p3758-pod] 2026-08-18T00:04:54Z FATAL
+[r722-lean] 2026-08-18T00:00:50Z start GPUs 4,5
+[r722-lean] data_lines=604
+[r722-lean] wait VRAM4+5 used_mib=0 iter=1
+FATAL bad BASE=/root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f
+[r723-lean] 2026-08-18T00:00:50Z start GPUs 6,7
+[r723-lean] data_lines=604
+[r723-lean] wait VRAM6+7 used_mib=0 iter=1
+FATAL bad BASE=/root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f
+Command failed (exit code: 1)
