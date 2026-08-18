@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 85865.37038654275 | p3848 |
-| Lium balance | **$85865.37038654275** | p3848 |
-| cumulative mining spend | ~$121,277 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$75865** (balance − $10,000 floor) | $UTC |
+| $UTC | 85823.99575186541 | p3849 |
+| Lium balance | **$85823.99575186541** | p3849 |
+| cumulative mining spend | ~$121,318 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$75824** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | p3848 |
+| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | p3849 |
 | miner coldkey free | τ1260.384 | kept ≥τ50 |
-| miner stake | **~59α ≈ τ3.33** (r252; below ~τ5) | p3848 |
+| miner stake | **~59α ≈ τ3.33** (r252; below ~τ5) | p3849 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T10:26:53Z | 85823.99575186541 | p3849 **R785 MERGE→N80 LIVE** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T10:20:20Z | 85865.37038654275 | p3848 **R780+R781 MERGE→WAIT_RELAY** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T10:13:32Z | 85946.06458805887 | p3847 **R762 REFUTE→R767 parallel×4** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T10:05:05Z | 86024.67792603628 | p3846 **R782 REFUTE→R793** + **R762 N80 LIVE** (no rent; B300×8=0); burn **~$331.45/h** |
@@ -35,5 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T09:25:48Z | 86312.25161547569 | p3842 **R761 visual graft→N80 LIVE** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T09:18:25Z | 86393.6582669515 | p3841 **R777+R776 REFUTE→R787+R788**; **R761 N80** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T09:06:53Z | 86475.17678012644 | p3840 **R775 REFUTE→R786 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-18T08:56:14Z | 86556.26578071532 | p3839 **R772 REFUTE→R785 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-18T08:48:30Z | 86627.13950871985 | p3838 **R761 parallel×4 resume** (no rent; B300×8=0); burn **~$331.45/h** |
