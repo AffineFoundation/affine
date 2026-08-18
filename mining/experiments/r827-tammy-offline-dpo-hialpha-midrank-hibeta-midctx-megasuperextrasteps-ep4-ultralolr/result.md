@@ -1,2 +1,9 @@
-TRAIN pending p3907 — MidCtx MidRank HiBeta UltraLoLR on crown 6,7 (R803→king) after R810 REFUTE ~0.45×.
-Decision: Stage-5 iff fresh n80 margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30.
+# R827 result — REFUTE v4 (p3926)
+
+- vs: **reign36** `vera6/affine-5g4yy75zuz-t6`@`8e3f1695…` (after vera SIZE_OK+SWAP)
+- margin=**+0.001807** SE=0.004555 z=0.397 n=80
+- bar=max(2·SE,δ)=**0.009110** → **0.20×**
+- thought✓ median |z|=144.5 · B✓ pass=0.4125 · k=3 τ=0.03
+- artifact: `/root/affine_data/r827_sim_result_reign36_wvk7.json`
+- chall reaped crown 6,7 (exact PID) · merge kept `/tmp/r827_merged`
+- next slot: **R840 Soft Mid Mid Soft HiRank MidBeta SoftCtx UltraLoLR** TRAIN p3926

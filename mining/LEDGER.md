@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 85437.26310785863 | p3925 |
-| Lium balance | **$85437.26310785863** | p3925 |
-| cumulative mining spend | ~$123,344 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$75437** (balance − $10,000 floor) | $UTC |
+| $UTC | 85214.70160046287 | p3926 |
+| Lium balance | **$85214.70160046287** | p3926 |
+| cumulative mining spend | ~$123,567 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$75215** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=bl | p3925 |
+| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=bl | p3926 |
 | miner coldkey free | τ1260.426 | kept ≥τ50 |
 | miner stake | **~47α ≈ τ2.60** (r252; under τ5 sweep) | p3917 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T19:56:07Z | 85214.70160046287 | p3926 **R829+R827 REFUTE→R838/R839/R840** (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T19:32:58Z | 85437.26310785863 | p3925 **R824 REFUTE→R829 n80** (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T19:27:18Z | 85480.71660609606 | p3924 **R826 REFUTE→R837** + vera DIRECT×4 (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T19:16:56Z | 85569.33043218106 | p3923 **crown vera** lunar→crown shard1 relay (no rent; B300×8=0); burn **~$366.49/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T18:53:48Z | 85790.16640140212 | p3919 **R826** MERGE abort→wait_vera→n80 armed (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T18:27:53Z | 86011.87682857578 | p3918 **R818 REFUTE→R836 TRAIN** + vera king-swap lunar (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T18:18:40Z | 86099.75606291299 | p3917 **R835 TRAIN** R337 idle 6,7 fill (no rent; B300×8=0); burn **~$366.49/h** |
-| 2026-08-18T18:13:06Z | 86144.5788437599 | p3916 **R820 REFUTE→R834 TRAIN** (no rent; B300×8=0); burn **~$366.49/h** |
