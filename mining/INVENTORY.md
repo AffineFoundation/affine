@@ -6,10 +6,10 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | gentle-orbit-bd | 8×B200 | $52.25 | **2026-08-19T17:23Z** | TK **vera** · **R839+R840 n80 LIVE** |
+| mine-crown-1 | gentle-orbit-bd | 8×B200 | $52.25 | **2026-08-19T17:23Z** | TK **vera** · **R846+R847 TRAIN** |
 | mine-r165-awesome-hialpha-1 | lunar-wolf-be | 8×B200 | $44.00 | **2026-08-19T17:23Z** | TK **vera** · **R843+R842 TRAIN** |
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | 8×B200 | $60.00 | **2026-08-19T17:23Z** | TK **vera LIVE** · **R838+R841 TRAIN** |
-| mine-r226-marsplan-fullft-1 | brave-raven-a9 | 8×B200 | $47.20 | **2026-08-19T17:23Z** | **R821–R823** merges idle |
+| mine-r226-marsplan-fullft-1 | brave-raven-a9 | 8×B200 | $47.20 | **2026-08-19T17:23Z** | **idle 0–7** (merges staged) |
 | mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | 8×B300 | $64.00 | **2026-08-19T17:23Z** | **R844+R845 TRAIN** (king tammy) |
 | mine-r337-marsplan-online-dpo-hilr-1 | gentle-shark-35 | 8×B300 | $47.04 | **2026-08-19T17:35Z** | **R835 TRAIN** + **R796+R830** |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-lion-9f | 8×B300 | $52.00 | **2026-08-19T17:35Z** | **R338 merge-only** + **R831+R832** |
@@ -22,7 +22,7 @@ SSH R252: `ssh -p 40299 root@95.133.252.28`
 SSH R337: `ssh root@86.38.182.67 -p 20295`
 SSH R338: `ssh root@86.38.182.55 -p 20299`
 Host fleet: **7 mine-*** · B300×8 rentable **0** · lone 8×B200 **bl** · burn **~$366.49/h** · **wvk=7**
-**p3934:** **R833/R834 REFUTE**→**R844+R845 TRAIN** R252; R839~73/80 R840~79/80; B300×8=0; mine=7; bal **~$84240**
+**p3935:** **R839/R840 REFUTE**→**R846+R847 TRAIN** crown; B300×8=0; mine=7; bal **~$84152**
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval`, `affine-teacher2`.
 
@@ -30,6 +30,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-18T21:56:32Z | p3935: **R839/R840 REFUTE** reap→**R846+R847 TRAIN** vera SoftCtx; B300×8=0 |
 | 2026-08-18T21:48:33Z | p3934: **R833/R834 REFUTE** reap→**R844+R845 TRAIN**; R839/R840 n80 LIVE; B300×8=0 |
 | 2026-08-18T21:41:24Z | p3933: **R837 REFUTE** reap→**R843 TRAIN**; R839/R840 n80 LIVE; B300×8=0 |
-| 2026-08-18T21:36:42Z | p3932: crown disk free + **R839:8002/R840:8003 LOAD**; R837~79/80; B300×8=0 |
