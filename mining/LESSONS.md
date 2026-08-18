@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3790: **R738 MERGE_DONE@03:42Z** sat idle ~17m while R741 TRAIN — launch **lean chall/:8003 + v4 n80** same pass (lunar 6,7); R716 relay still ~3/16. **Never `pkill -f`**.
 - p3789: **R740 REFUTE v4** m=−0.008677~**−0.48×** (thought✓237 B✓0.481 k=3) marsplan MidCtx HiRank MidBeta HyperExtra; MidCtx SuperExtra already **R738** — reap chall → **R748 TRAIN** SoftCtx SuperExtra zesty 4,5 (R747 kept 6,7). **Never `pkill -f`**.
 - p3788: **R739 REFUTE v4** m=−0.013112~**−1.01×** (thought✓195.5 B✓0.538 k=3) marsplan MidCtx HiRank HiBeta HyperExtra; reap chall → **R747 TRAIN** SuperExtra zesty 6,7 (R740 n80 kept 4,5). **Never `pkill -f`**.
 - p3787: **R715 REFUTE v4** m=−0.001787~**−0.42×** (thought✓138 B✓0.460 k=3) Soft HiRank MidBeta SoftCtx SuperExtra; reap chall → **R740 MERGE→N80** zesty 4,5/:8002 + **R716 host-relay** brave→crown. **Never `pkill -f`**.
