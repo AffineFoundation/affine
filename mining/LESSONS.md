@@ -25,13 +25,13 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p3862: **R780** dual-write on shard **13** (p3848+tail) corrupts `.tmp`; killing source mid-pipe makes dest `cat` EOF→`mv` a **partial over a good final** — use size-checked `.fixing` then `mv` only if `stat==want`; SIGSTOP p3848 parent before freeing slots or it dual-launches 14+. **Never `pkill -f`**.
-- p3861: **R780** pipe stall on shard **11** (~18MB/5m) → kill ssh PIDs only (not `pkill -f`); launch **tail accel** 13–16+vis while p3848 owns 08/10/11/12; flaky `dest_size` can false-mismatch a good shard. **Never `pkill -f`**.
+- p3863: **R780** `stamp_check` count-only SCP_READY while shard **08** truncated → vLLM load dies @~41%; size-verify all shards before lean; kill STOP'd parent by PID (not CONT) to unblock R781 `pgrep -f` wait. **Never `pkill -f`**.
+- p3862: **R780** dual-write on shard **13** (p3848+tail) corrupts `.tmp`; EOF-kill → partial over good final — size-checked `.fixing`; SIGSTOP before freeing slots. **Never `pkill -f`**.
+- p3861: **R780** pipe stall on shard **11** → kill ssh PIDs only; **tail accel** 13–16+vis. **Never `pkill -f`**.
 - p3860: **R791/R793 REFUTE** → **R803+R802** UltraLoLR; leave :8002 for R780. **Never `pkill -f`**.
 - p3859: brave idle **4–7** → **R800+R801**. **Never `pkill -f`**.
 - p3858: **R768 REFUTE** → **R780 meta accel**. **Never `pkill -f`**.
-- p3857–p3854: SCP→n80 / parallel×4 / MidCtx UltraLoLR cascade. **Never `pkill -f`**.
-- p3853–p3850: REFUTE→next UltraLoLR; brave fill. **Never `pkill -f`**.
+- p3857–p3850: SCP→n80 / UltraLoLR cascade / brave fill. **Never `pkill -f`**.
 - p3849: Mega axes need `epochs ≥ ceil(max_steps/n_rows)`. **Never `pkill -f`**.
 - p3848: **R780+R781 MERGE_DONE** → host-relay. **Never `pkill -f`**.
 - p3844: dual challs need distinct ports. **Never `pkill -f`**.
