@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3845: **R779 REFUTE** ~0.40× → **R790** UltraLoLR; **R773/R774 REFUTE** ~−0.57/−0.60× → **R791/R792** UltraLoLR; keep siblings on free GPU pairs. **Never `pkill -f`**.
 - p3844: **R773+R774** both `:8003` → 404 model-not-found; fix **R774:8002 / R773:8003** then parallel n80; **R778 REFUTE** ~0.19× → **R789** UltraLoLR. **Never `pkill -f`**.
 - p3843: **R761 REFUTE** m=+0.000505~**0.079×** → **R762** parallel×4 relay (incl. `model-visual-restored`); lone 8×B200=`fbb1135f` **bl**. **Never `pkill -f`**.
 - p3842: **R761** host-relay drop `model-visual-restored` → vLLM ValueError → graft+relaunch CHALL_READY. **Never `pkill -f`**.

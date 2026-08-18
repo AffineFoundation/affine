@@ -1,6 +1,3 @@
-# R773 — TRAIN
-
-**Status:** TRAIN p3822 · golden GPUs **6,7** after R756 REFUTE
-**Axis:** MidCtx MidRank MidBeta MegaSuperExtra ep4 (β=0.1 r=32 @8192 steps=19200)
-**Parent:** R756 REFUTE m=−0.000941 ~−0.18× Short→MidCtx MidRank MidBeta
-**Decision:** margin > max(2·SE, 0.002) **and** thought≥80 **and** B≥0.30 (v4 k=3)
+# R773 result
+- **REFUTE v4** p3845 vs reign35: m=−0.004457 SE=0.003896 z=−1.144 n=79 bar=0.007791 (~**−0.57×**) thought✓(172) B✓(0.342) k=3/τ=0.03
+- chall reaped golden 6,7 → **R791** UltraLoLR TRAIN
