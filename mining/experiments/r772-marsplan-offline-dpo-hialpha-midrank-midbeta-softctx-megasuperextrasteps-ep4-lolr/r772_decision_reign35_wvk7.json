@@ -1,0 +1,18 @@
+{
+  "utc": "2026-08-18T08:55:25Z",
+  "exp": "r772",
+  "verdict": "REFUTE",
+  "margin": -0.004584367909586632,
+  "se": 0.003986392431205691,
+  "z": -1.1500041676027573,
+  "n": 78,
+  "bar": 0.007972784862411382,
+  "bar_mult": -0.5750020838013786,
+  "thought_median": 237.0,
+  "b_pass": 0.5256410256410257,
+  "k": 3,
+  "tau": 0.03,
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2@7e5fd5f87e82606c32d59c3d2350e3ddfe49c4b5",
+  "next": "R785 UltraLoLR TRAIN zesty 4,5",
+  "pass": 3839
+}
