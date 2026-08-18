@@ -2,7 +2,7 @@
 Rewritten every pass. Do not append.
 
 ## Stage
-**Stage 4/5 · wvk=7 Reason v4 · KING reign35 · R762 REFUTE · R767 PARALLEL RELAY · R793 TRAIN · R790/R791/R792/R789/R785–R788 TRAIN**.
+**Stage 4/5 · wvk=7 Reason v4 · KING reign35 · R767 PARALLEL · R780/R781 WAIT_RELAY · R793/R785–R792 TRAIN**.
 King=**reign35** tammy · burn floor **≥$833/h**.
 
 ## Live facts
@@ -11,8 +11,8 @@ King=**reign35** tammy · burn floor **≥$833/h**.
 | contract | wvk=**7** · k=**3** · τ=**0.03** · n=**1300** · δ=0.002 · thought≥80 · B γ=0.30 · k_σ=2.0 |
 | king | `tammyfritz/Affine-5hmwhnfbix-tammy2`@`7e5fd5f8…` **reign35** |
 | burn | **~$331.45/h** · gap **−$501.55/h** · B300×8 stock **0** · lone 8×B200=`fbb1135f` **bl** |
-| Lium | **~$85946** · free τ**1260+** · stake ~59α≈τ3.33 (below ~τ5) |
-| **p3847** | **R762 REFUTE** m=−0.00050 ~−0.16× (thought✓169 B✓0.328 k=3) → free 4,5; **R767** solo-tar stall → **parallel×4** pid3386027 |
+| Lium | **~$85865** · free τ**1260+** · stake ~59α≈τ3.33 (below ~τ5) |
+| **p3848** | **R780+R781 MERGE_DONE** (66G/16/vis) idle on brave → armed **WAIT_RELAY** after R768/R780 (pids **3405444**/**3405447**) |
 
 ## Running
 | name | huid | $/h | role |
@@ -21,11 +21,11 @@ King=**reign35** tammy · burn floor **≥$833/h**.
 | mine-r165-awesome-hialpha-1 | lunar-wolf-be | $44.00 | TK · **R790+R789 TRAIN** |
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | $60.00 | TK · **R792:4,5 + R791:6,7 TRAIN** |
 | mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da | $64.00 | TK · **R785+R787 TRAIN** |
-| mine-r226-marsplan-fullft-1 | brave-raven-a9 | $47.20 | **R784+R783+R780+R781 TRAIN**; R768 WAIT_RELAY |
-| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | $64.00 | **R767 PARALLEL RELAY** → n80 4,5 · **R793 TRAIN** 6,7 |
+| mine-r226-marsplan-fullft-1 | brave-raven-a9 | $47.20 | **R784+R783 TRAIN**; R780/R781 MERGE→**WAIT_RELAY**; R768 WAIT_RELAY |
+| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | $64.00 | **R767 PARALLEL RELAY** ×4 · **R793 TRAIN** 6,7 |
 
 ## Blocked
 No rentable non-bl 8×B300/B200. R252 :40299 flaky — prefer SSH. Never `pkill -f`. Dual challs need distinct ports.
 
 ## Next action
-1. Watch **R767** parallel→SCP_READY→n80 (GPUs 4,5 free; waiter armed). 2. Then R768 relay. 3. Watch **R793** train→merge→n80. 4. Watch UltraLoLR **R785–R792**. 5. Rent when B300/B200×8 appears. 6. Sweep α at ≥~τ5.
+1. Watch **R767** parallel→SCP_READY→n80 (GPUs 4,5). 2. Then R768→R780→R781 relay chain. 3. Watch **R793** train→merge→n80. 4. Watch UltraLoLR **R785–R792**. 5. Rent when B300/B200×8 appears. 6. Sweep α at ≥~τ5.

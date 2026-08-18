@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3848: **R780+R781 MERGE_DONE** (66G/16/vis) on brave with **no n80 waiter** → arm host-relay chain after R768/R780 (parallel×4); leave R767 pipes alone. **Never `pkill -f`**.
 - p3847: **R762 REFUTE** m=−0.00050 ~−0.16× (thought✓169 B✓0.328 k=3) → free 4,5 by pidfile; **R767** solo-tar ~4G/66G → **parallel×4** (same as R762 p3843). **Never `pkill -f`**.
 - p3846: **R782 REFUTE** ~0.21× → **R793** r252 Soft Mid Mid Soft UltraLoLR (R784 already covers R782 UltraLoLR); **R762 SCP_READY**→**N80 LIVE**; R252 prefer SSH over lium exec. **Never `pkill -f`**.
 - p3845: **R779 REFUTE** ~0.40× → **R790** UltraLoLR; **R773/R774 REFUTE** ~−0.57/−0.60× → **R791/R792** UltraLoLR. **Never `pkill -f`**.

@@ -1,2 +1,1 @@
-# R781 result
-Status: **TRAIN** p3833 brave GPUs 2,3 pid 290571 (steps live). Wait→merge; host-relay n80 later.
+p3848: MERGE_DONE → WAIT_RELAY armed (host_relay_r781_parallel_after_r780_p3848.sh pid 3405447).
