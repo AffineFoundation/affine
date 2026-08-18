@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3781: **R734+R735 MERGE_DONE idle** on R252 (wait→merge stopped at merge) + **R731 MERGE_DONE** lunar 4,5 free → armed **3× v4 n80** (R734 :8002 / R735 :8003 / R731 lunar :8002) vs reign35; R715 relay ~31G/66G; α~τ3.41 skip; B300×8=0. **Never `pkill -f`**.
 - p3780: **R732 REFUTE v4** m=−0.006690~**−0.39×** (thought✓206 B✓0.459 k=3) MidCtx MidRank MidBeta HyperExtra; reap zesty 4,5 by pidfile → keep `/tmp/r732_merged`; **R740 TRAIN** MidCtx HiRank MidBeta HyperExtra (β=0.1 r=64 @8192 steps=**10800**) zesty 4,5 pid**878520** + wait→merge; R739 TRAIN kept 6,7; R715 relay ~26G/66G; B300×8=0; burn ~$331/h. **Never `pkill -f`**.
 - p3779: **R733 REFUTE v4** m=−0.000192~**−0.025×** (thought✓213 B✓0.50 k=3) MidCtx MidRank HiBeta HyperExtra near-parity; reap zesty 6,7 by pidfile → keep `/tmp/r733_merged`; **R739 TRAIN** MidCtx HiRank HiBeta HyperExtra (β=0.3 r=64 @8192 steps=**10800**) zesty 6,7 pid**877334** + wait→merge; **R732 MERGE→CHALL→N80 LIVE** zesty **4,5**/:8002; B300×8=0. **Never `pkill -f`**.
 - p3778: **R728 REFUTE v4** m=−0.01005~**−1.07×** (thought✓204 B✓0.377 k=3); **R738 TRAIN** lunar 6,7; B300×8=0. **Never `pkill -f`**.
