@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3902: **R816 REFUTE v4** m=−0.005841~**−0.63×** (thought✓173 B✓0.4625 k=3) → free :8003 by exact PID → **R819** Short Mid Lo UltraLoLR R252 6,7; R815 n80 LIVE :8002; R809 relay mid. B300×8=0. **Never `pkill -f`**.
 - p3901: **R811 REFUTE v4** m=−0.002922~**−0.37×** (thought✓188 B✓0.570 k=3) + **R812 REFUTE v4** m=+0.002381~**0.46×** (thought✓137.5 B✓0.35 k=3) → free crown challs by exact PID → **R809** SIGSTOP p3900 parent + **tail×6** (busy-skip `.tmp`); waiter already armed. B300×8=0. **Never `pkill -f`**.
 - p3900: R809 **MERGE_DONE** ~16:07Z (brave NCCL-bl) with **no** host-relay → arm `host_relay_r809_fast_p3900` + crown **slot-waiter** (claims first free :8002/:8003 after R811/R812); R816 n80 LIVE R252. Ship merge→relay/n80 with TRAIN. B300×8=0. **Never `pkill -f`**.
 - p3899: R811+R812 **MERGE_DONE** ~16:02Z with **no** `wait_merge_then_n80` → GPUs 4–7 idle ~20m; arm dual lean_chall → **N80 LIVE** :8002/:8003 (R811~29/80 R812~2/80). Always ship merge→n80 waiter with TRAIN. B300×8=0. **Never `pkill -f`**.

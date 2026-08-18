@@ -6,11 +6,11 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | gentle-orbit-bd | 8×B200 | $52.25 | **2026-08-18T19:04Z** | TK · **R809 wait** · 4–7 free |
+| mine-crown-1 | gentle-orbit-bd | 8×B200 | $52.25 | **2026-08-18T19:04Z** | TK · **R809 wait** · relay mid |
 | mine-r165-awesome-hialpha-1 | lunar-wolf-be | 8×B200 | $44.00 | **2026-08-18T19:04Z** | TK · **R817+R818 TRAIN** |
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | 8×B200 | $60.00 | **2026-08-18T19:04Z** | TK · **R813+R814 TRAIN** |
 | mine-r226-marsplan-fullft-1 | brave-raven-a9 | 8×B200 | $47.20 | **2026-08-18T19:04Z** | **R809 RELAY** · **R810 TRAIN** |
-| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | 8×B300 | $64.00 | **2026-08-18T19:04Z** | **R815 TRAIN** · **R816 N80** |
+| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | 8×B300 | $64.00 | **2026-08-18T19:04Z** | **R815 N80** · **R819 TRAIN** |
 | mine-r337-marsplan-online-dpo-hilr-1 | gentle-shark-35 | 8×B300 | $47.04 | **2026-08-19T14:05Z** | **R337 TRAIN** online-DPO |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-lion-9f | 8×B300 | $52.00 | **2026-08-19T15:01Z** | **R338 TRAIN** online-DPO BigG |
 
@@ -22,7 +22,7 @@ SSH R252: `ssh -p 40299 root@95.133.252.28`
 SSH R337: `ssh root@86.38.182.67 -p 20295`
 SSH R338: `ssh root@86.38.182.55 -p 20299`
 Host fleet: **7 mine-*** · B300×8 rentable **0** · lone 8×B200 **bl** · burn **~$366.49/h** · **wvk=7**
-**p3901:** R811+R812 REFUTE→free crown; R809 SIGSTOP+×6 accel; R816~39/80; mine=7; burn **~$366.49/h**; bal **~$87029**
+**p3902:** R816 REFUTE→R819 TRAIN; R815 N80 LIVE; R809 relay mid; mine=7; burn **~$366.49/h**; bal **~$86986**
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval`, `affine-teacher2`.
 
@@ -30,6 +30,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-18T16:39:54Z | p3902: **R816 REFUTE~−0.63×** → free :8003 → **R819 TRAIN**; R815 n80 LIVE; R809 mid |
 | 2026-08-18T16:34:45Z | p3901: **R811 REFUTE~−0.37× + R812 REFUTE~0.46×** free crown; **R809** tail×6 accel LIVE |
 | 2026-08-18T16:28:51Z | p3900: **R809 MERGE→host-relay+wait-slot**; R816 n80 LIVE; R811~64/80 R812~36/80 |
-| 2026-08-18T16:21:56Z | p3899: **R811+R812 MERGE→dual n80 LIVE** :8002/:8003; mine=7; burn **~$366.49/h** |
