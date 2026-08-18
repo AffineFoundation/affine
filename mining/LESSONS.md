@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3812: **R754 REFUTE v4** m=−0.008616~**−0.91×** (thought✓238 B✓0.50 k=3) → reap zesty 6,7 → **R766** MidRank HiBeta MidCtx Mega; R337 `golden-lion-72` SSH :20296 **refused** (pod RUNNING). **Never `pkill -f`**.
 - p3811: **R752 REFUTE v4** m=+0.000418~**0.07×** (thought✓227 B✓0.453 k=3) → reap lunar 4,5 → **R765** MidRank LoBeta MidCtx Mega (amplify R721 ~−0.05×); R337 cache copy still ~4.6/66G. **Never `pkill -f`**.
 - p3810: **R337** `golden-lion-72` 8×B200 claimed by fleet waiter; marsplan HF **gated on pod IP** (host token OK) — copy cache from live pod then skip `snapshot_download`; retarget KING→reign35. **Never `pkill -f`**.
 - p3809: **R753 REFUTE v4 near-miss** m=+0.000428~**0.14×** (thought✓156.5 B✓0.538 k=3) + **R749 REFUTE v4** m=−0.00405~**−0.54×** (thought✓207 B✓0.392 k=3) → dual reap → **R763** Soft HiRank MidBeta SoftCtx Mega crown 6,7 + **R764** marsplan MidRank MidBeta MidCtx Mega lunar 6,7 (both wait→merge+n80). **Never `pkill -f`**.

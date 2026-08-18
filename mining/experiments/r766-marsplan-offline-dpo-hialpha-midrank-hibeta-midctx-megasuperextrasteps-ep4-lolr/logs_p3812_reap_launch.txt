@@ -1,0 +1,6 @@
+[p3812-reap-r754] 2026-08-18T06:18:01Z START reap R754 chall; keep /tmp/r754_merged; leave R757 TRAIN on 4,5
+[p3812-reap-r754] 2026-08-18T06:18:01Z kill pid=906179 (r754 vllm pidf=/root/logs/vllm_chall_r754.pid)
+[p3812-reap-r754] 2026-08-18T06:18:03Z wait free used67=0 iter=1
+[p3812-reap-r754] 2026-08-18T06:18:03Z launch R766 TRAIN 6,7 + wait→merge + wait→n80
+[p3812-reap-r754] 2026-08-18T06:18:05Z R766 lean=909697 wait=909807 wait_n80=909808
+[p3812-reap-r754] 2026-08-18T06:18:05Z R757 TRAIN still alive pid=902286 OK
