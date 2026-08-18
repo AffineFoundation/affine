@@ -25,20 +25,18 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3829: **R765 REFUTE** m=−0.005388~**−0.72×** → **R779** marsplan Soft HiRank LoBeta SoftCtx Mega (≠ R778 Soft MidRank); R778 TRAIN kept lunar 6,7. **Never `pkill -f`**.
 - p3828: **R764 REFUTE** m=+0.000788~**0.12×** → **R778** marsplan Soft MidRank LoBeta SoftCtx Mega; R765 N80 kept lunar 4,5. **Never `pkill -f`**.
-- p3827: **R763 REFUTE** m=+0.000158~**0.038×** → **R776** tammy Soft HiRank MidBeta SoftCtx Mega; **R766 REFUTE** m=−0.00211~**−0.30×** → **R777** Soft MidRank HiBeta SoftCtx Mega. **Never `pkill -f`**.
-- p3823: Freed **R771** (same MidCtx HiRank HiBeta Mega axis as R755 REFUTE) → **R775** tammy Soft MidRank MidBeta SoftCtx Mega; hard-pin BASE after `mine.env` or r252 poisons king-parent. R763+R766 N80 LIVE. **Never `pkill -f`**.
-- p3822: **R755–R758 REFUTE** (R756~−0.18×; R755~−0.30×; R757~−0.33×; R758~−0.46×) → **R771–R774 TRAIN**; R771≈R755 (freed p3823). **Never `pkill -f`**.
-- p3819: **R760 REFUTE v4** m=−0.004627~**−0.68×** → **R770**; CLI 8×B200 = bl ghost (`bl_skip=1`). **Never `pkill -f`**.
-- p3818: **R760 N80 LIVE** R252 6,7/:8002 vs reign35. **Never `pkill -f`**.
-- p3817: **R759 REFUTE v4** m=−0.001882~**−0.47×** → **R769**. **Never `pkill -f`**.
+- p3827: **R763 REFUTE** m=+0.000158~**0.038×** → **R776**; **R766 REFUTE** m=−0.00211~**−0.30×** → **R777**. **Never `pkill -f`**.
+- p3823: Freed **R771** (≈R755) → **R775** tammy Soft MidRank MidBeta SoftCtx Mega; hard-pin BASE after `mine.env`. **Never `pkill -f`**.
+- p3822: **R755–R758 REFUTE** → **R771–R774 TRAIN**. **Never `pkill -f`**.
+- p3819: **R760 REFUTE** m=−0.004627~**−0.68×** → **R770**; CLI 8×B200 = bl ghost (`bl_skip=1`). **Never `pkill -f`**.
+- p3817: **R759 REFUTE** m=−0.001882~**−0.47×** → **R769**. **Never `pkill -f`**.
 - p3815: API blacklist must strip `# comment`; restart API by pid only. **Never `pkill -f`**.
-- p3814: **brave idle GPUs 4–7** → **R767+R768**; B300×8=0. **Never `pkill -f`**.
+- p3814: **brave idle GPUs 4–7** → **R767+R768**. **Never `pkill -f`**.
 - p3813: **R337 REAPED** SSH-DEAD → bl `fbb1135f…`. **Never `pkill -f`**.
-- p3812: **R754 REFUTE** → **R766**. **Never `pkill -f`**.
 - p3811: **R752 REFUTE** → **R765**. **Never `pkill -f`**.
 - p3809: **R753+R749 REFUTE** → **R763+R764**. **Never `pkill -f`**.
-- p3808: **brave idle** → **R761+R762**. **Never `pkill -f`**.
 - p3795: **α→TAO→Lium** via `btcli wallet transfer` if `lium fund` fails. **Never `pkill -f`**.
 - p3776: **brave TP=2 teacher NCCL hang** — **host-relay**. **Never `pkill -f`**.
 - p3762: **king flip reign34→reign35** `tammyfritz/…tammy2`@`7e5fd5f8…`. **Never `pkill -f`**.
