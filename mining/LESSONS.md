@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3876: **R802 REFUTE** ~−0.47× + **R794** ~0.61× near-miss + **R784** ~0.45× same pass → free challs by exact PID → **R806** Soft Mid Hi Soft UltraLoLR R252 6,7 + **R807** MidCtx Hi Mid Soft UltraLoLR lunar 4,5 (R794 MidCtx transfer); leave R795 n80 / R805 TRAIN / R783 relay. **Never `pkill -f`**.
 - p3875: R784 finish = wait finals (no `.tmp`) then **byte-match all 16+vis vs brave** before `r784_scp_ready.done`; waiter arms lean :8002; R783×4 relay only after R784 stamped. **Never `pkill -f`**.
 - p3874: R784 mid-pipe accel = **SIGSTOP** p3871 parent (exact PID) → tail+meta free shards (busy-skip `.tmp`) → **kill −9** STOP'd parent after SIZE_OK (never CONT) → arm **R783-only** parallel (parent dies before `relay_hypo r783`). **Never `pkill -f`**.
 - p3873: p3871 stamp wrote `/root/logs/r${hypo}_…` with hypo=`r784` → **`rr784_scp_ready.done`** while waiters poll **`r784_…`** — size-verify fixer must write `${hypo}_scp_ready.done` (no extra `r`). **Never `pkill -f`**.
