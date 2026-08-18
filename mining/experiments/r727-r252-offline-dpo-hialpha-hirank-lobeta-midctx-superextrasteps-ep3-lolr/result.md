@@ -1,17 +1,20 @@
-# R727 — N80 LIVE (p3772)
+# R727 result — MidCtx HiRank LoBeta SuperExtra vs reign35 (wvk7)
 
-After R718 SoftCtx SuperExtra REFUTE ~−0.40×: move HiRank LoBeta onto **MidCtx** SuperExtra.
+**Verdict: REFUTE v4** (p3775 confirmed; sim finished p3772 @ 2026-08-18T02:01:36Z)
 
-| knob | value |
+| field | value |
 |---|---|
-| base | `unconst/Affine-5czsc2fc98-r252-merged`@`b42d6245…` |
-| method | Offline-DPO · HiAlpha · HiRank · LoBeta · MidCtx · SuperExtra · ep3 · LoLR |
-| β / r / α / lr | 0.02 / 64 / 128 / 1e-6 |
-| max_len / steps | 8192 / 14400 |
-| data | MidCtx pairs (604 lines) |
-| status | train.done 01:48Z → **MERGE_DONE** `/tmp/r727_merged` · **N80 LIVE** crown **6,7**/:8003 vs reign35 · vllm**120684** sim**122955** · `*_reign35_wvk7` · Triton seed chall_r726 n_star=30 |
-| decision | Stage-5 iff n80 margin > max(2·SE, 0.002) ∧ thought≥80 ∧ B≥0.30 vs **reign35** (v4 k=3) |
+| margin | **−0.007815** |
+| SE | 0.004338 |
+| bar | max(2·SE, δ)=**0.008677** |
+| ratio | **~−0.90×** |
+| z | −1.801 |
+| n | 80 |
+| thought median | **136** ✓ (≥80) |
+| B pass | **0.454** ✓ (≥0.30) |
+| k / τ | 3 / 0.03 |
+| king | reign35 tammy |
 
-≠ SoftCtx SuperExtra R718 / ≠ MidRank MidCtx LoBeta R726 / ≠ Soft HiRank SoftCtx R715/R716.
+Challenger Reason 0.01494 vs king 0.02276. Thought/B clear; margin fails bar.
 
-Check: `lium exec gentle-orbit-bd "tail -40 /root/logs/p3772_r727_chall_n80_wvk7.log; cat /root/affine_data/r727_decision_reign35_wvk7.json 2>/dev/null"`
+**Next:** reap crown 6,7 → **R737 TRAIN** MidCtx HiRank MidBeta HyperExtra (β=0.1 r=64 @8192 steps=10800).
