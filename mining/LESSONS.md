@@ -25,11 +25,10 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p3784: **R734/R735/R737/R729/R730 REFUTE v4** (−1.14/−0.08/−0.90/−0.49/−0.57×; all thought+B✓ k=3); **R735 near-parity** → **R742–R746 TRAIN** (R252/crown/golden); R715~48G/12sh; B300×8=0. **Never `pkill -f`**.
-- p3783: **R731 REFUTE v4** m=−0.005499~**−0.73×** (thought✓217 B✓0.405 k=3); reap lunar 4,5 → **R741 TRAIN**; R730→n80; R715~41G; B300×8=0. **Never `pkill -f`**.
-- p3782: **R737+R729** lean v4 n80 armed after MERGE_DONE idle; R715~35G; B300×8=0. **Never `pkill -f`**.
-- p3781: **R734+R735+R731** v4 n80 armed; R715~31G; B300×8=0. **Never `pkill -f`**.
-- p3778–p3780: R728/R733/R732 REFUTE → R738/R739/R740 TRAIN; B300×8=0. **Never `pkill -f`**.
+- p3785: **R715 host-relay DONE** (~76m tar ~66G) → crown SCP_READY@03:35Z → **lean chall/:8002 + v4 n80** vs reign35 (wait126681→lean134970 chall135106); B300×8=0. **Never `pkill -f`**.
+- p3784: **R734/R735/R737/R729/R730 REFUTE v4** (−1.14/−0.08/−0.90/−0.49/−0.57×; all thought+B✓ k=3); **R735 near-parity** → **R742–R746 TRAIN**; B300×8=0. **Never `pkill -f`**.
+- p3783: **R731 REFUTE v4** m=−0.005499~**−0.73×** → **R741 TRAIN**; B300×8=0. **Never `pkill -f`**.
+- p3778–p3782: R728/R733/R732 REFUTE → R738–R740 TRAIN; n80 cascade; B300×8=0. **Never `pkill -f`**.
 - p3776: **brave TP=2 teacher NCCL hang** — do not cold-TK brave; **R715 host-relay**. **Never `pkill -f`**.
 - p3771–p3775: R722–R727 REFUTE cascade; detail → `archive/lessons_ops_pre_p3770.md`.
 - p3763: **α→TAO→Lium** r252 **295.20α → τ16.73**; bal **$85135→$88582**; free τ**1260.38**. **Never `pkill -f`**.
