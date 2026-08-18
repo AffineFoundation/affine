@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 87209.36908915383 | p3805 |
-| Lium balance | **$87209.36908915383** | p3805 |
+| $UTC | 87170.06851375397 | p3806 |
+| Lium balance | **$87170.06851375397** | p3806 |
 | cumulative mining spend | ~$119,000 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$77209** (balance − $10,000 floor) | $UTC |
+| **available for mining** | **~$77170** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | p3805 |
+| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | p3806 |
 | miner coldkey free | τ1260.384 | after α→TAO→Lium (kept ≥τ50) |
-| miner stake | **~29.52α ≈τ1.68** on r252 (below τ5 sweep) | p3805 |
+| miner stake | **~29.52α ≈τ1.68** on r252 (below τ5 sweep) | p3806 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T05:36:22Z | 87170.06851375397 | p3806 **R749+R752+R753 wait→n80 ARMED** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T05:31:52Z | 87209.36908915383 | p3805 **R750 REFUTE** → **R759 TRAIN** + **R751 n80 LIVE** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T05:23:55Z | 87291.25110727787 | p3804 **R748+R716 REFUTE** → **R757+R758 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T05:18:26Z | 87332.50039745866 | p3803 **R750 MERGE idle→n80 LIVE** R252 4,5 (no rent; B300×8=0); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T04:55:46Z | 87495.17507268496 | p3799 **R747 REFUTE** → **R754 TRAIN** + **R746 N80 LIVE** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T04:45:54Z | 87576.51574428375 | p3798 **R745 MERGE→n80 ARMED** golden 4,5 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T04:42:11Z | 87617.13271789509 | p3797 **R747 MERGE→N80 LIVE** zesty 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-18T04:36:31Z | 87697.93050158377 | p3796 **R744 REFUTE** → **R753 TRAIN** crown 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
