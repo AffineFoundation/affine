@@ -86,7 +86,9 @@ class TeacherCfg:
 @dataclass(frozen=True)
 class DuelCfg:
     # Scoring contract: n_turns is the duel slice size, k_sigma the crown
-    # significance bar, min_margin the δ crown floor.
+    # significance bar, min_margin the δ crown floor, tau the tempering
+    # temperature of the per-turn log-mean-exp over the k teacher refs
+    # (v4, 2026-08-17; tau <= 0 means v3 plain mean).
     n_turns: int
     k_sigma: float
     min_margin: float
@@ -106,6 +108,8 @@ class DuelCfg:
     causality_gate: bool = False
     causality_tau: float = 0.02
     causality_gamma: float = 0.30
+    # Tempered multi-sample Reason (v4, weight_version_key=7, 2026-08-17).
+    tau: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -278,6 +282,7 @@ def _duel(raw: dict) -> DuelCfg:
         causality_gate=bool(d.get("causality_gate", False)),
         causality_tau=float(d.get("causality_tau", 0.02)),
         causality_gamma=float(d.get("causality_gamma", 0.30)),
+        tau=float(d.get("tau", 0.0)),
     )
 
 

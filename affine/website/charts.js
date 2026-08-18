@@ -178,14 +178,24 @@ function duelCidAttr(p) {
 }
 
 /**
- * X axis: crownings are named moments; every other duel is a bare tick.
- * Reign numerals are dropped when two crowns land closer than the label is
- * wide — back-to-back crownings otherwise smear into one glyph run.
+ * X axis: crownings are annotations, not axis ticks. Every duel gets a bare
+ * tick; each crown keeps a gold tick at its exact x, then a staggered callout:
+ * a thin dashed stem drops to one of three levels, elbows sideways, and ends
+ * in the reign numeral. Staggering is greedy — lowest free level wins — so
+ * back-to-back crownings read as a small cascade instead of smearing into
+ * one glyph run. Charts must reserve CROWN_AXIS_PAD below the axis line.
  */
-const CROWN_LABEL_GAP = 18;
+export const CROWN_AXIS_PAD = 44;
+const CALLOUT_TOP = 9;      // px below the axis where level 0 sits
+const CALLOUT_STEP = 11;    // px between stagger levels
+const CALLOUT_LEVELS = 3;
+const CALLOUT_ELBOW = 7;    // horizontal dashed run before the numeral
+const CALLOUT_CHAR_W = 5.6; // ≈ monospace advance at font-size 9
+const CALLOUT_GAP = 8;      // min clearance between neighbours on a level
 
-function duelAxisMarks(points, xAt, yBase) {
-  let lastLabelX = -Infinity;
+function duelAxisMarks(points, xAt, yBase, width) {
+  // busy[L] = rightmost x already occupied on stagger level L.
+  const busy = new Array(CALLOUT_LEVELS).fill(-Infinity);
   return points.map((p, i) => {
     const x = xAt(i);
     if (p?.event !== "crowned") {
@@ -193,12 +203,27 @@ function duelAxisMarks(points, xAt, yBase) {
         stroke="rgba(229,229,229,0.22)" stroke-width="1"/>`;
     }
     const label = p.reign_number != null ? romanNumeral(p.reign_number + 1) : "#?";
-    const show = x - lastLabelX >= CROWN_LABEL_GAP;
-    if (show) lastLabelX = x;
-    return `<line x1="${x}" x2="${x}" y1="${yBase}" y2="${yBase + 6}"
-        stroke="${GOLD}" stroke-width="1"/>
-      ${show ? `<text x="${x}" y="${yBase + 18}" text-anchor="middle" fill="${GOLD}"
-        font-family="${MONO}" font-size="10">${esc(label)}</text>` : ""}`;
+    const w = CALLOUT_ELBOW + 3 + label.length * CALLOUT_CHAR_W;
+    // Flip the elbow leftward when the label would run off the right edge.
+    const flip = width != null && x + w > width - 4;
+    const start = flip ? x - w : x;
+    const end = flip ? x : x + w;
+    let lvl = -1;
+    for (let L = 0; L < CALLOUT_LEVELS; L++) {
+      if (start - busy[L] >= CALLOUT_GAP) { lvl = L; break; }
+    }
+    const tick = `<line x1="${x}" x2="${x}" y1="${yBase}" y2="${yBase + 4}"
+      stroke="${GOLD}" stroke-width="1"/>`;
+    if (lvl < 0) return tick; // three deep already — keep the tick, drop the text
+    busy[lvl] = end;
+    const y = yBase + CALLOUT_TOP + lvl * CALLOUT_STEP;
+    const ex = flip ? x - CALLOUT_ELBOW : x + CALLOUT_ELBOW;
+    return `${tick}
+      <path d="M ${x} ${yBase + 4} V ${y} H ${ex}" fill="none"
+        stroke="${GOLD}" stroke-width="1" stroke-dasharray="2 2" opacity="0.35"/>
+      <text x="${flip ? ex - 3 : ex + 3}" y="${y + 3}" fill="${GOLD}" opacity="0.9"
+        text-anchor="${flip ? "end" : "start"}" font-family="${MONO}"
+        font-size="9">${esc(label)}</text>`;
   }).join("");
 }
 
@@ -225,7 +250,7 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
   const padL = 56;
   const padR = 24;
   const padT = 28;
-  const padB = 36;
+  const padB = CROWN_AXIS_PAD;
   const n = Math.max(points.length, 1);
   const slot = (width - padL - padR) / n;
   // Scale bars down with the slot so dense histories keep a visible gap
@@ -287,7 +312,7 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
         opacity="${crowned ? 1 : 0.92}"/>
     </g>`;
   }).join("");
-  const axis = duelAxisMarks(points, xAt, height - padB);
+  const axis = duelAxisMarks(points, xAt, height - padB, width - padR + 12);
 
   svg.setAttribute("width", String(width));
   svg.setAttribute("height", String(height));
@@ -317,7 +342,7 @@ export function drawDuelMargin(svg, history, { width: widthOpt, height: heightOp
   const padL = 56;
   const padR = 24;
   const padT = 28;
-  const padB = 36;
+  const padB = CROWN_AXIS_PAD;
   const n = Math.max(points.length, 1);
   const slot = (width - padL - padR) / n;
   const barW = Math.max(1.5, Math.min(slot * 0.6, 64, slot - 1.5));
@@ -378,7 +403,7 @@ export function drawDuelMargin(svg, history, { width: widthOpt, height: heightOp
         opacity="${crowned ? 1 : 0.92}"/>
     </g>`;
   }).join("");
-  const axis = duelAxisMarks(points, xAt, height - padB);
+  const axis = duelAxisMarks(points, xAt, height - padB, width - padR + 12);
 
   svg.setAttribute("width", String(width));
   svg.setAttribute("height", String(height));
@@ -401,7 +426,7 @@ export function drawDuelScores(svg, history,
   const padL = 56;
   const padR = 24;
   const padT = 28;
-  const padB = 36;
+  const padB = CROWN_AXIS_PAD;
   const n = Math.max(points.length, 1);
   const slot = (width - padL - padR) / n;
   const xAt = (i) => padL + slot * (i + 0.5);
@@ -491,7 +516,7 @@ export function drawDuelScores(svg, history,
         fill="${gold}" opacity="${crowned ? 1 : 0.85}"/>
     </g>`;
   }).join("");
-  const axis = duelAxisMarks(points, xAt, height - padB);
+  const axis = duelAxisMarks(points, xAt, height - padB, width - padR + 12);
 
   svg.innerHTML = `${grid}
     ${area ? `<path d="${area}" fill="rgba(243,196,73,0.08)"/>` : ""}
@@ -545,16 +570,20 @@ export const GATE_METRICS = [
   {
     id: "reason",
     title: "Reason (sides)",
-    caption: "per-side mean lpC(y_C|z_A) − lpC(y_C|∅) — the score",
-    detail: `<p><code>Reason = lpC(y_C|z_A) − lpC(y_C|∅)</code>: how much the
-      miner's thought helps <em>the teacher</em> predict its own action. The
-      teacher is the anchor — the miner is never judged by another model's
-      opinion of its prose, only by whether its reasoning measurably transfers
-      into the teacher.</p>
-      <p>This is the whole score. Positive means the thought carried real
-      information about what to do next; near zero means it was decoration.
-      The hero chart shows the best side per duel; this pane shows both
-      sides.</p>`,
+    caption: "per-side mean tempered Reason over k=3 teacher refs — the score",
+    detail: `<p><code>a_i = lpC(y_i|z_A) − lpC(y_i|∅)</code> per teacher
+      reference, then per turn
+      <code>Reason = τ·log(mean_i exp(a_i/τ))</code> (k=3, τ=0.03, since
+      2026-08-17): how much the miner's thought helps <em>the teacher</em>
+      predict its own action, credited against the best-matching of three
+      fresh teacher rollouts. The teacher is the anchor — the miner is never
+      judged by another model's opinion of its prose, only by whether its
+      reasoning measurably transfers into the teacher.</p>
+      <p>This is the whole score. The tempered log-mean-exp means committing
+      to one valid teacher mode is not punished when the other references
+      land elsewhere — filler earns ≈ 0 and loses duels. Positive means the
+      thought carried real information about what to do next. The hero chart
+      shows the best side per duel; this pane shows both sides.</p>`,
     fmt: fmtScore,
     lines: [{ label: "", at: () => 0, faint: true }],
     series: [
@@ -759,12 +788,14 @@ export const HERO_CHARTS = [
       duel, oldest to newest. It is the level the subnet is currently
       distilling at: it steps up when a stronger model takes the crown and
       drifts with slice difficulty in between.</p>
-      <p><code>Reason = lpC(y_C|z_A) − lpC(y_C|∅)</code>: how much the miner's
-      thought raises the frozen teacher's likelihood of reproducing its own
-      action, measured on SWE-style trajectories. The miner's own weights
-      never enter the ranked quantity. This single term is the entire score —
-      raw Λ2 tracked swe-rebench as well as the retired mix on the research
-      panel (Spearman <code>+0.847</code> vs <code>+0.844</code> @ 15).</p>`,
+      <p>Since 2026-08-17 (v4): <code>a_i = lpC(y_i|z_A) − lpC(y_i|∅)</code>
+      against each of k=3 fresh teacher references, aggregated per turn as
+      <code>τ·log(mean_i exp(a_i/τ))</code> with τ=0.03 — credit flows from
+      the best-matching reference, so committing to one valid teacher mode is
+      rewarded instead of punished. The miner's own weights never enter the
+      ranked quantity. This single term is the entire score — raw Λ2 tracked
+      swe-rebench as well as the retired mix on the research panel (Spearman
+      <code>+0.847</code> vs <code>+0.844</code> @ 15).</p>`,
     draw: (svg, history, opts) => drawDuelScores(svg, history, opts),
   },
   {
@@ -821,7 +852,7 @@ export function drawGateMetric(svg, points, metric,
   const padL = 46;
   const padR = 12;
   const padT = 12;
-  const padB = 22;
+  const padB = CROWN_AXIS_PAD;
 
   svg.setAttribute("width", String(width));
   svg.setAttribute("height", String(height));
@@ -916,7 +947,7 @@ export function drawGateMetric(svg, points, metric,
     </g>`;
   }).join("")).join("");
 
-  const axis = duelAxisMarks(points, xAt, height - padB);
+  const axis = duelAxisMarks(points, xAt, height - padB, width - padR + 12);
 
   svg.innerHTML = `${grid}${crowns}${thresholds}${paths}${dots}${axis}`;
 }

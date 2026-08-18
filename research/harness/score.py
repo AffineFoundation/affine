@@ -1,10 +1,20 @@
-"""Scoring rule: Reason (v3, 2026-08-10) — research twin of
-affine/affine/score.py.
+"""Scoring rule: Reason v4 — tempered multi-sample (2026-08-17,
+weight_version_key=7) — research twin of affine/affine/score.py.
 
-  Per pair:   Reason = lpC(y_C | z_A) − lpC(y_C | ∅)
-  Per miner:  score  = mean(Reason)
+  Per ref i:  a_i  = lpC(y_i | z_A) − lpC(y_i | ∅)     (k refs per turn)
+  Per turn:   Reason = tau · log( (1/k) · Σ_i exp(a_i / tau) )
+  Per miner:  score  = mean(turn Reason)
   Duel:       paired mean(Reason_c − Reason_k) > max(k_sigma · SE, min_margin)
               AND median(len(z_A.strip())) ≥ min_thought_chars
+
+Live k=3, tau=0.03. k=1 (or tau <= 0) reduces exactly to the v3 mean rule,
+so v3-era verdicts (single ref per turn) replay unchanged through this same
+code path. Rationale: log-space averaging against one sampled reference
+punishes committed thoughts without bound whenever the reference lands on
+another valid teacher mode; the tempered log-mean-exp is dominated by the
+best-matched reference, flipping the equilibrium from hedge-filler to
+commit (external calibration by AIIan, n=100: flip near tau=0.1, decisive
+at 0.03).
 
 No mix, no clip, no SE floor. min_margin (δ = 0.002, added
 2026-08-12, weight_version_key=4) is an absolute crown floor that kills
@@ -35,6 +45,9 @@ DEFAULT_V3_MIN_MARGIN = 0.002
 DEFAULT_MIN_THOUGHT_CHARS = 80
 DEFAULT_CAUSALITY_TAU = 0.02
 DEFAULT_CAUSALITY_GAMMA = 0.0
+# Tempering temperature for the per-turn log-mean-exp over k references
+# (v4, 2026-08-17). tau <= 0 or None means plain mean (v3 replay).
+DEFAULT_TEMPER_TAU = 0.03
 
 # Telemetry constants (non-consensus).
 TELEMETRY_TAU = 0.02
@@ -103,6 +116,25 @@ def reason(pair: dict) -> float:
 lambda2 = reason  # historical name (Λ2)
 
 
+def turn_reason(pairs: list[dict],
+                tau: float | None = DEFAULT_TEMPER_TAU) -> float:
+    """Turn score: tempered log-mean-exp of per-ref Reason (v4, 2026-08-17).
+
+    k=1 returns a_1 for any tau; tau <= 0 or None returns the plain mean
+    (v3 replay rule). Max-shifted for numerical stability.
+    """
+    a = [reason(p) for p in pairs]
+    if not a:
+        return float("-inf")
+    if tau is None or tau <= 0:
+        return st.mean(a)
+    if len(a) == 1:
+        return a[0]
+    m = max(a)
+    return m + tau * math.log(
+        st.mean(math.exp((ai - m) / tau) for ai in a))
+
+
 def l1_lift(pair: dict) -> float:
     """Telemetry: lpA(y_C|z_A) − lpA(y_C|∅) (not scored)."""
     return pair["lpA_yc_za"] - pair["lpA_yc_e"]
@@ -138,11 +170,15 @@ class MinerScore:
 
 
 def score_miner(rows: list[dict],
-                bank_frac: float | None = None) -> MinerScore:
-    """v3: mean Reason + telemetry. No gating."""
+                bank_frac: float | None = None,
+                tau: float | None = DEFAULT_TEMPER_TAU) -> MinerScore:
+    """v4: mean per-turn tempered Reason + telemetry. No gating.
+
+    k=1 rows (v3 era) score identically to the old mean-per-pair rule."""
     if not rows:
         return MinerScore("?", float("-inf"), 0, 0)
-    pairs = [p for r in rows if r.get("valid") and "pairs" in r for p in r["pairs"]]
+    valid = [r for r in rows if r.get("valid") and "pairs" in r]
+    pairs = [p for r in valid for p in r["pairs"]]
     if not pairs:
         return MinerScore(rows[0].get("miner", "?"), float("-inf"), 0, 0)
     z_lens = [len((p.get("z_a") or "").strip()) for p in pairs]
@@ -152,7 +188,7 @@ def score_miner(rows: list[dict],
     b_finite = [v for v in b_vals if v is not None and math.isfinite(v)]
     return MinerScore(
         miner=rows[0].get("miner", "?"),
-        reason=st.mean(reason(p) for p in pairs),
+        reason=st.mean(turn_reason(r["pairs"], tau) for r in valid),
         n_pairs=len(pairs),
         n_turns=len({r["turn_id"] for r in rows}),
         gate_pass_rate=st.mean(1.0 if gate_pass(p) else 0.0 for p in pairs),
@@ -183,6 +219,7 @@ class DuelResult:
     thought_floor_blocked: bool = False
     causality_gamma: float = DEFAULT_CAUSALITY_GAMMA
     causality_blocked: bool = False
+    tau: float | None = DEFAULT_TEMPER_TAU
 
 
 def duel(challenger_rows: list[dict], king_rows: list[dict],
@@ -191,21 +228,24 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
          min_thought_chars: int = DEFAULT_MIN_THOUGHT_CHARS,
          causality_gamma: float = DEFAULT_CAUSALITY_GAMMA,
          challenger_bank_frac: float | None = None,
-         king_bank_frac: float | None = None) -> DuelResult:
-    """v3 paired duel: wins iff mean > max(k_sigma·SE, min_margin)
+         king_bank_frac: float | None = None,
+         tau: float | None = DEFAULT_TEMPER_TAU) -> DuelResult:
+    """v4 paired duel on per-turn tempered Reason: wins iff
+    mean > max(k_sigma·SE, min_margin)
     AND median stripped thought length ≥ min_thought_chars
     AND (if causality_gamma > 0) B pass rate ≥ causality_gamma.
     Pass min_margin=0.0 to replay pre-δ (weight_version_key=3) verdicts.
     Pass min_thought_chars=0 to disable the length floor (pre-fork replay).
-    Pass causality_gamma=0 to disable B (live default)."""
-    cs = score_miner(challenger_rows, challenger_bank_frac)
-    ks = score_miner(king_rows, king_bank_frac)
+    Pass causality_gamma=0 to disable B. tau <= 0 (or k=1 rows) recovers
+    the v3 plain-mean rule exactly."""
+    cs = score_miner(challenger_rows, challenger_bank_frac, tau=tau)
+    ks = score_miner(king_rows, king_bank_frac, tau=tau)
     c_by = {r["turn_id"]: r for r in challenger_rows if r.get("valid") and "pairs" in r}
     k_by = {r["turn_id"]: r for r in king_rows if r.get("valid") and "pairs" in r}
     diffs = []
     for tid in sorted(set(c_by) & set(k_by)):
-        rc = st.mean(reason(p) for p in c_by[tid]["pairs"])
-        rk = st.mean(reason(p) for p in k_by[tid]["pairs"])
+        rc = turn_reason(c_by[tid]["pairs"], tau)
+        rk = turn_reason(k_by[tid]["pairs"], tau)
         diffs.append(rc - rk)
     n = len(diffs)
     if n < 2:
@@ -234,6 +274,7 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
         thought_floor_blocked=blocked,
         causality_gamma=causality_gamma,
         causality_blocked=causality_blocked,
+        tau=tau,
     )
 
 
