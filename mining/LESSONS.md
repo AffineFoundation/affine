@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3880: **R783 REFUTE v4** m=+0.001063~**0.12×** (thought✓191.5 B✓0.423 k=3) Soft Hi Lo Soft Mega LoLR → free 6,7 by exact PID → **R801** UltraLoLR host-relay **after** R800.done (no dual-pipe); arm wait→n80 :8003. **Never `pkill -f`**.
 - p3879: R783 SIZE_OK→stamp→n80; p3878 R800 defer stuck in **per-file SSH inventory** — kill parent by exact PID **before** any `.tmp`, then **fast×4** (skip crown inventory when dest empty); if dual-write appears kill **all** writer PIDs + `rm -rf` before relaunch. **Never `pkill -f`**.
 - p3878: **R800 MERGE_DONE** (16+vis) while R783 mid-relay → **defer** host-relay until `r783_scp_ready.done` + no `.tmp` (no dual-pipe), then SIZE_OK stamp → n80 crown **4,5/:8002**; leave R783 **6,7**. **Never `pkill -f`**.
 - p3877: **R795 REFUTE v4** m=+0.000224~**0.045×** (thought✓153.5 B✓0.4125 k=3) Soft Hi Mid Soft UltraLoLR near-parity → free chall by exact PID → **R808** Soft Hi Hi Soft UltraLoLR marsplan lunar 6,7 (R794 Midβ Soft near-miss → HiBeta Soft); leave R807 TRAIN 4,5 / R783 relay. **Never `pkill -f`**.

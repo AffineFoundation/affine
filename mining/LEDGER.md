@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 86546.22539237943 | p3879 |
-| Lium balance | **$86546.22539237943** | p3879 |
-| cumulative mining spend | ~$120,590 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$76546** (balance − $10,000 floor) | $UTC |
+| $UTC | 86509.29770981436 | p3880 |
+| Lium balance | **$86509.29770981436** | p3880 |
+| cumulative mining spend | ~$120,627 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$76509** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | p3879 |
+| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | p3880 |
 | miner coldkey free | τ1260.384 | kept ≥τ50 |
 | miner stake | **~59α ≈ τ3.33** (r252; below ~τ5) | p3870 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
@@ -26,8 +26,8 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T14:04:46Z | 86509.29770981436 | p3880 **R783 REFUTE→R801 armed** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T13:59:16Z | 86546.22539237943 | p3879 **R783 n80 + R800 fast×4** (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-18T13:50:00Z | 86616.26349716759 | p3878 **R800 MERGE→defer relay after R783** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T13:45:00Z | 86652.1763535039 | p3877 **R795 REFUTE→R808 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T13:37:42Z | 86687.77787836925 | p3876 **R802/R794/R784 REFUTE→R806+R807** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T13:28:57Z | 86758.32564159477 | p3875 **R784 SIZE_OK+stamp+lean** (no rent; B300×8=0); burn **~$331.45/h** |
