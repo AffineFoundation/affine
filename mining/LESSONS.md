@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3859: brave idle **4–7** → **R800+R801** UltraLoLR (R780/R781 siblings); R791+R793 **N80 LIVE**; lone 8×B200=`fbb1135f` still **bl**. **Never `pkill -f`**.
+- p3858: **R768 REFUTE** ~−1.09× (thought✓163 B✓0.385) → prefree 4,5 → **R780 meta accel** SSH-only cfg✓ while weight parallel×4; R252 prefer SSH over flaky lium. **Never `pkill -f`**.
 - p3857: **R768 SCP→N80 LIVE** — pre-free REFUTE chall by pidfile before stamp so lean starts on empty GPUs 4,5 (no 90s drain). **Never `pkill -f`**.
 - p3856: **R768 meta accel** while weight parallel×4 — `config.json`+small meta on R252 early (stamp-ready once shards≥16); leave weight pipes alone. **Never `pkill -f`**.
 - p3855: **R786 REFUTE** ~0.13× + **R788 REFUTE** ~−0.46× (thought/B✓) → free crown 4–7 → **R798+R799** MidCtx UltraLoLR. Soft UltraLoLR near-miss still under bar. **Never `pkill -f`**.
