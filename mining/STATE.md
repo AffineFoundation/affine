@@ -2,7 +2,7 @@
 Rewritten every pass. Do not append.
 
 ## Stage
-**Stage 4/5 · wvk=7 Reason v4 · KING reign35 · R738+R742 N80 LIVE · R716 RELAY · R743 MERGE→N80 · R741/R744–R748 TRAIN**.
+**Stage 4/5 · wvk=7 Reason v4 · KING reign35 · R742+R743 N80 LIVE · R741 MERGE→N80 armed · R716 RELAY · R749 TRAIN · R744–R748 TRAIN**.
 King=**reign35** tammy · burn floor **≥$833/h**.
 
 ## Live facts
@@ -12,24 +12,25 @@ King=**reign35** tammy · burn floor **≥$833/h**.
 | king | `tammyfritz/Affine-5hmwhnfbix-tammy2`@`7e5fd5f8…` **reign35** |
 | burn | **~$331.45/h** · gap **−$501.55/h** · B300×8 stock **0** · B200×8 **0** |
 | Lium | **~$86873** · free τ**1260.38** · r252 stake below ~τ5 sweep |
-| **R738** | **N80 LIVE** lunar 6,7/:8003 sim pid**708673** · progress king2/chall1 |
-| **R742** | **N80 LIVE** R252 6,7/:8003 chall pid**330739** · MERGE@04:05Z → lean **p3791** |
-| **R743** | **MERGE** R252 4,5 → wait→n80/:8002 armed **p3791** |
-| **R716** | **RELAY LIVE** brave→crown · shards **~4**/16 · wait→lean 4,5/:8002 |
-| **R741/R744–R748** | **TRAIN** (lunar/crown/golden/zesty) |
+| **R738** | **REFUTE v4** m=**−0.000813**~**−0.11×** (thought✓215 B✓0.464 n=78) · chall reaped · → **R749** |
+| **R749** | **TRAIN LIVE** lunar 6,7 pid**709798** · MegaSuperExtra 19200 ep4 · wait→merge armed |
+| **R741** | **MERGE LIVE** lunar 4,5 → **wait→n80/:8002** armed **p3792** |
+| **R742/R743** | **N80 LIVE** R252 6,7/:8003 + 4,5/:8002 |
+| **R716** | **RELAY LIVE** brave→crown · shards in-flight · wait→lean 4,5/:8002 |
+| **R744–R748** | **TRAIN** (crown/golden/zesty) |
 
 ## Running
 | name | huid | $/h | role |
 |---|---|---|---|
 | mine-crown-1 | gentle-orbit-bd | $52.25 | TK · **R716 RELAY→n80** 4,5 · **R744 TRAIN** 6,7 |
-| mine-r165-awesome-hialpha-1 | lunar-wolf-be | $44.00 | TK · **R741 TRAIN** 4,5 · **R738 N80** 6,7/:8003 |
+| mine-r165-awesome-hialpha-1 | lunar-wolf-be | $44.00 | TK · **R741 MERGE→n80** 4,5 · **R749 TRAIN** 6,7 |
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | $60.00 | TK · **R745 TRAIN** 4,5 · **R746 TRAIN** 6,7 |
 | mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da | $64.00 | TK · **R748 TRAIN** 4,5 · **R747 TRAIN** 6,7 |
 | mine-r226-marsplan-fullft-1 | brave-raven-a9 | $47.20 | **idle** NCCL-blacklist; source R716 |
-| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | $64.00 | TK · **R743 MERGE→n80** 4,5 · **R742 N80** 6,7/:8003 |
+| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | $64.00 | TK · **R743 N80** 4,5/:8002 · **R742 N80** 6,7/:8003 |
 
 ## Blocked
 No 8×B300/B200 (waiters armed). Never `pkill -f`. Brave **do not** cold-TK — remote n80 only.
 
 ## Next action
-1. Await **R738**/**R742** n80→decision. 2. Await **R743** MERGE→n80 + **R716 SCP_READY→N80**. 3. Train→merge→n80 **R741/R744–R748**. 4. Rent B300 when stock.
+1. Await **R742**/**R743**/**R741** n80→decision. 2. Await **R716 SCP_READY→N80**. 3. Train→merge→n80 **R749/R744–R748**. 4. Rent B300 when stock.

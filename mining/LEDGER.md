@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 86873.14562863595 | p3791 |
-| Lium balance | **$86873.14562863595** | p3791 |
+| $UTC | 86873.14562863595 | p3792 |
+| Lium balance | **$86873.14562863595** | p3792 |
 | cumulative mining spend | ~$119,704 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
 | **available for mining** | **~$76873** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | $UTC |
+| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | p3792 |
 | miner coldkey free | τ1260.384 | after α→TAO→Lium (kept ≥τ50) |
 | miner stake | **~60.1α / τ3.41** r252 (below ~τ5 sweep) | p3781 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T04:12:30Z | 86873.14562863595 | p3792 **R738 REFUTE** → **R749 TRAIN** lunar 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T04:06:09Z | 86873.14562863595 | p3791 **R742 MERGE→N80 LIVE** R252 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T03:59:40Z | 86954.00486330794 | p3790 **R738 MERGE→N80 LIVE** lunar 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T03:55:36Z | 86954.00486330794 | p3789 **R740 REFUTE** → **R748 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T03:36:13Z | 87116.53062567447 | p3785 **R715 SCP→N80 LIVE** crown (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T03:17:30Z | 87279.71714707588 | p3784 **R734/R735/R737/R729/R730 REFUTE** → **R742–R746 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T03:07:30Z | 87361.49501985962 | p3783 **R731 REFUTE** + **R730 N80** + **R741 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-18T02:54:57Z | 87483.78874678482 | p3781 **R734+R735+R731 N80 LIVE** (no rent; B300×8=0); α~τ3.41 skip sweep; burn **~$331.45/h** |
