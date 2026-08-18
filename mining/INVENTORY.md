@@ -6,8 +6,8 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | gentle-orbit-bd | 8×B200 | $52.25 | **2026-08-18T19:04Z** | TK · **R810 W2 RELAY** → n80 |
-| mine-r165-awesome-hialpha-1 | lunar-wolf-be | 8×B200 | $44.00 | **2026-08-18T19:04Z** | TK · **R817 n80** + **R818 TRAIN** |
+| mine-crown-1 | gentle-orbit-bd | 8×B200 | $52.25 | **2026-08-18T19:04Z** | TK · **R810 n80 LIVE** :8003 |
+| mine-r165-awesome-hialpha-1 | lunar-wolf-be | 8×B200 | $44.00 | **2026-08-18T19:04Z** | TK · **R826 TRAIN** + **R818 TRAIN** |
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | 8×B200 | $60.00 | **2026-08-18T19:04Z** | TK · **R825 TRAIN** + **R813 LOAD** |
 | mine-r226-marsplan-fullft-1 | brave-raven-a9 | 8×B200 | $47.20 | **2026-08-18T19:04Z** | **R821–R824 TRAIN** |
 | mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | 8×B300 | $64.00 | **2026-08-18T19:04Z** | **R820+R819 TRAIN** |
@@ -22,7 +22,7 @@ SSH R252: `ssh -p 40299 root@95.133.252.28`
 SSH R337: `ssh root@86.38.182.67 -p 20295`
 SSH R338: `ssh root@86.38.182.55 -p 20299`
 Host fleet: **7 mine-*** · B300×8 rentable **0** · lone 8×B200 **bl** · burn **~$366.49/h** · **wvk=7**
-**p3905:** R814 REFUTE→R825 TRAIN; R810 wave2 ACCEL; R817 n80~45/80; mine=7; burn **~$366.49/h**; bal **~$86811**
+**p3906:** R817 REFUTE→R826 TRAIN; R810 n80 LIVE; mine=7; burn **~$366.49/h**; bal **~$86720**
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval`, `affine-teacher2`.
 
@@ -30,6 +30,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
-| 2026-08-18T17:00:56Z | p3905: **R814 REFUTE~−0.08×** → **R825 TRAIN** β=0.1; **R810** SIGSTOP+wave2×6; B300×8=0 |
+| 2026-08-18T17:07:28Z | p3906: **R817 REFUTE~0.11×** → **R826 TRAIN**; **R810** SIZE_OK→stamp→**n80 LIVE** :8003; B300×8=0 |
+| 2026-08-18T17:00:56Z | p3905: **R814 REFUTE~−0.08×** → **R825 TRAIN**; **R810** SIGSTOP+wave2×6; B300×8=0 |
 | 2026-08-18T16:53:58Z | p3904: **R809 REFUTE~−0.39×** free :8002; **R810** ×6 ACCEL; brave **R821–R824 TRAIN**; B300×8=0 |
-| 2026-08-18T16:46:11Z | p3903: **R815 REFUTE~−0.30×** → **R820 TRAIN**; **R809 SIZE_OK→chall**; **R810 defer RELAY**; B300×8=0 |
