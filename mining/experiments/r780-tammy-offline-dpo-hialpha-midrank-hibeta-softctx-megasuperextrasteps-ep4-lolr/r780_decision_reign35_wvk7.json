@@ -1,0 +1,19 @@
+{
+  "utc": "2026-08-18T12:19:00Z",
+  "pass": 3864,
+  "hyp": "R780",
+  "decision": "REFUTE",
+  "challenger_wins": false,
+  "margin": 0.0015906963926597246,
+  "se": 0.004716210229553591,
+  "z": 0.33728275781512196,
+  "bar": 0.009432420459107181,
+  "margin_over_bar": 0.16864137890756098,
+  "n_paired": 76,
+  "thought_median": 177.0,
+  "b_pass": 0.4067796610169492,
+  "k": 3,
+  "tau": 0.03,
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2@7e5fd5f87e82606c32d59c3d2350e3ddfe49c4b5",
+  "note": "positive but below max(2SE,delta); thought/B clear; freed :8002 for R781"
+}
