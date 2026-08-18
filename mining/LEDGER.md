@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 87517.23900568223 | p3892 |
-| Lium balance | **$87517.23900568223** | p3892 |
-| cumulative mining spend | ~$121,291 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$77517** (balance − $10,000 floor) | $UTC |
+| $UTC | 87385.05519315449 | p3894 |
+| Lium balance | **$87385.05519315449** | p3894 |
+| cumulative mining spend | ~$121,423 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$77385** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 | p3892 |
+| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=bl | p3894 |
 | miner coldkey free | τ1260.426 | kept ≥τ50 |
 | miner stake | **~17α ≈ τ0.96** (r252; after 160α sweep) | p3885 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
@@ -26,6 +26,8 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T15:51:37Z | 87385.05519315449 | p3894 **meta prestage** R337/R338 (no rent; B300×8=0; B200×8 bl); burn **~$366.49/h** |
+| 2026-08-18T15:46:07Z | 87429.0587525648 | p3893 **continuous×8 fill** R337/R338 (no rent; B300×8=0; B200×8 bl); burn **~$366.49/h** |
 | 2026-08-18T15:40:18Z | 87517.23900568223 | p3892 **dual accel** R337/R338 (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T15:35:34Z | 87517.23900568223 | p3891 **parallel accel** R337/R338 (no rent; B300×8=0; bl B200×8 only); burn **~$366.50/h** |
 | 2026-08-18T15:29:38Z | 87606.27218338831 | p3890 **reap zesty** SSH-dead (−$64/h); burn **~$366.49/h**; waiter HEAD R339 |
@@ -34,6 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T15:09:25Z | 87783.41160172987 | p3887 **R337+R338** marsplan cache relay + **R806 N80**; invent R338 ($52); burn **~$430.49/h** |
 | 2026-08-18T15:03:30Z | 87867.77158460244 | p3886 **R803/R804/R805 REFUTE→R813+R814+R815 TRAIN** (no rent; B300×8=0); burn **~$378.50/h** |
 | 2026-08-18T14:54:30Z | 87867.77158460244 | p3885 **α→TAO→Lium**: unstake **160α** r252 → +τ~8.94 free; `lium fund` Metadata bug → `btcli transfer` **τ8.9** to Lium ck; bal **+$1791**; burn **~$378.50/h** |
-| 2026-08-18T14:44:06Z | 86196.43516098657 | p3884 **R801 SIZE_OK→lean :8003** (no rent; B300×8=0); burn **~$378.50/h** |
-| 2026-08-18T14:34:39Z | 86274.96614972026 | p3883 **R800 REFUTE→R809+R810 TRAIN** (no rent; B300×8=0); burn **~$378.50/h** |
-| 2026-08-18T14:26:40Z | 86316.3625179578 | p3882 **R800 SIZE_OK→n80** + **R801 SIGSTOP+tail×6**; burn **~$378.50/h** |

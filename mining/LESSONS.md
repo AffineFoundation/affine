@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3894: while p3893 blob pipes run, **prestage** lunar `refs/snapshots/trees` → R337/R338 (cfg✓ 16 shards) so finish_dest meta tar is near-instant; R337 **23/25** +2 partials · R338 **20/25** +5 partials; B300×8=0. **Never `pkill -f`**.
+- p3893: p3892 ×6 batch-wait left R338 with ~14 FREE while 2 partials ran → kill **parents only** → **continuous×8** dual fill (busy-skip `.partial`/claim); B300×8=0 + lone 8×B200=`fbb1135f` **bl** so no rent; waiter HEAD **R339**. **Never `pkill -f`**.
 - p3892: p3891 ×4 batch-wait blocked on 2×~4.5G → kill **parent only** (keep in-flight SSH) → **dual×6** R337-rest+R338 (busy-skip `.partial`); inflight FINALs size-ok; waiter HEAD **R339**. **Never `pkill -f`**.
 - p3891: serial lunar→R337/R338 `tar cf|xf` ~1GB/min → kill exact ssh/tar PIDs → **parallel×4 size-checked blob pipes** + meta tar refs/snapshots/trees → SIZE_OK→LOCAL_CACHE_SKIP bootstrap; lone API 8×B200 still `fbb1135f` **bl**. **Never `pkill -f`**.
 - p3890: **zesty-comet-da** SSH :20299 refused (host:22 ≠ container); `lium reboot` fail → **`lium rm` mine-r260** + blacklist executor `358a9c60…` (same pattern as p3813 golden-lion); R796/R797 lost with pod; waiter HEAD **R339**. **Never `pkill -f`**.
