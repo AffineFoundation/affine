@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 86273.9742137993 | p3823 |
-| Lium balance | **$86273.9742137993** | p3823 |
-| cumulative mining spend | ~$119,855 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$76274** (balance − $10,000 floor) | $UTC |
+| $UTC | 86192.12473401024 | p3827 |
+| Lium balance | **$86192.12473401024** | p3827 |
+| cumulative mining spend | ~$119,937 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$76192** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | p3823 |
+| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | p3827 |
 | miner coldkey free | τ1260.384 | after α→TAO→Lium (kept ≥τ50) |
 | miner stake | **~59.04α ≈τ3.35** on r252 (below τ5 sweep) | p3815 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T07:36:58Z | 86192.12473401024 | p3827 **R763+R766 REFUTE→R776+R777 TRAIN** (no rent; bl_skip=1); burn **~$331.45/h** |
 | 2026-08-18T07:26:52Z | 86273.9742137993 | p3823 **R771→R775 TRAIN** + R763/R766 N80 (no rent; bl_skip=1); burn **~$331.45/h** |
 | 2026-08-18T07:16:38Z | 86355.30645199752 | p3822 **R755–R758 REFUTE→R771–R774 TRAIN** (no rent; bl_skip=1); burn **~$331.45/h** |
 | 2026-08-18T07:00:31Z | 86518.22213129186 | p3819 **R760 REFUTE→R770 TRAIN** (no rent; bl_skip=1); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T06:35:20Z | 86721.17406911239 | p3815 **API BL fix** fbb1135f (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T06:29:54Z | 86762.78364134047 | p3814 **brave idle→R767+R768 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T06:24:30Z | 86802.95725626276 | p3813 **R337 REAPED** SSH-dead (−$45.60/h); burn **~$331.45/h**; B300×8=0 |
-| 2026-08-18T06:18:22Z | 86844.13102679935 | p3812 **R754 REFUTE→R766 TRAIN** (no rent; B300×8=0); burn **~$377.05/h** |
