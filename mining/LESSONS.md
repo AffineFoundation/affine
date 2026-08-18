@@ -25,29 +25,20 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p3860: **R791 REFUTE** ~−1.32× + **R793 REFUTE** ~−0.55× (thought/B✓) → free golden/R252 6,7 → **R803** MidCtx Mid Hi UltraLoLR + **R802** Soft Mid Lo Soft UltraLoLR (:8003; leave :8002 for R780). R252 SSH flaky → `lium exec`. **Never `pkill -f`**.
-- p3859: brave idle **4–7** → **R800+R801** UltraLoLR; R791+R793 N80. **Never `pkill -f`**.
-- p3858: **R768 REFUTE** ~−1.09× → prefree 4,5 → **R780 meta accel**; R252 prefer SSH/`lium exec`. **Never `pkill -f`**.
-- p3857: **R768 SCP→N80** — pre-free REFUTE chall by pidfile before stamp. **Never `pkill -f`**.
-- p3856: **R768 meta accel** while weight parallel×4. **Never `pkill -f`**.
-- p3855: **R786/R788 REFUTE** → **R798+R799** MidCtx UltraLoLR. **Never `pkill -f`**.
-- p3854: tar stall → **parallel×4** size-checked host pipes. **Never `pkill -f`**.
-- p3853: **R787 REFUTE** → **R797**; **R767** near-miss ~0.47×. **Never `pkill -f`**.
-- p3852: **R767 SCP→N80** meta accel. **Never `pkill -f`**.
-- p3851: **R785 REFUTE** → **R796**. **Never `pkill -f`**.
-- p3850: brave **0–3** → **R794+R795**. **Never `pkill -f`**.
+- p3861: **R780** pipe stall on shard **11** (~18MB/5m) → kill ssh PIDs only (not `pkill -f`); launch **tail accel** 13–16+vis while p3848 owns 08/10/11/12; flaky `dest_size` can false-mismatch a good shard. **Never `pkill -f`**.
+- p3860: **R791/R793 REFUTE** → **R803+R802** UltraLoLR; leave :8002 for R780. **Never `pkill -f`**.
+- p3859: brave idle **4–7** → **R800+R801**. **Never `pkill -f`**.
+- p3858: **R768 REFUTE** → **R780 meta accel**. **Never `pkill -f`**.
+- p3857–p3854: SCP→n80 / parallel×4 / MidCtx UltraLoLR cascade. **Never `pkill -f`**.
+- p3853–p3850: REFUTE→next UltraLoLR; brave fill. **Never `pkill -f`**.
 - p3849: Mega axes need `epochs ≥ ceil(max_steps/n_rows)`. **Never `pkill -f`**.
 - p3848: **R780+R781 MERGE_DONE** → host-relay. **Never `pkill -f`**.
-- p3847–p3845: REFUTE→next UltraLoLR cascade. **Never `pkill -f`**.
 - p3844: dual challs need distinct ports. **Never `pkill -f`**.
-- p3843: lone 8×B200=`fbb1135f` **bl**. **Never `pkill -f`**.
+- p3843/p3813: lone 8×B200=`fbb1135f` **bl**. **Never `pkill -f`**.
 - p3842: miss `model-visual-restored` → graft. **Never `pkill -f`**.
-- p3838: tar stall → parallel×4 pipes. **Never `pkill -f`**.
 - p3835: R252 :40299 **sshfail** → `lium exec`. **Never `pkill -f`**.
 - p3831/p3795: **α→TAO→Lium** via `btcli wallet transfer` if `lium fund` fails. **Never `pkill -f`**.
-- p3819: CLI 8×B200 = bl ghost. **Never `pkill -f`**.
 - p3815: API blacklist must strip `# comment`. **Never `pkill -f`**.
-- p3813: **R337 REAPED** → bl `fbb1135f…`. **Never `pkill -f`**.
 - p3776: **brave TP=2 teacher NCCL hang** — **host-relay**. **Never `pkill -f`**.
 - p3762: **king flip reign34→reign35** `tammyfritz/…tammy2`@`7e5fd5f8…`. **Never `pkill -f`**.
 
