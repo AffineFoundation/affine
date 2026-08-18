@@ -25,23 +25,21 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p3803: **R750 MERGE sat idle ~2m** (train.done 05:12 / MERGE_DONE 05:14; only wait→merge, no wait→n80) → same-pass lean chall/:8002 + v4 n80 R252 4,5 chall**340440** sim**343001**; leave R751 TRAIN 6,7; R716 relay already N80 ~30/80. **Never `pkill -f`**.
-- p3802: **R748 MERGE sat idle ~9m** (train.done 05:00 / MERGE_DONE 05:02; no wait→n80 armed at launch) → same-pass lean chall/:8002 + v4 n80 zesty 4,5 chall**898839**; leave R754 TRAIN 6,7. **Never `pkill -f`**.
-- p3801: **R746 REFUTE v4 near-parity** m=−0.00049~**−0.14×** (thought✓145 B✓0.381 k=3) → reap → **R756 TRAIN** MegaSuperExtra ep4 golden 6,7 (wait→merge+n80 armed); R755 TRAIN kept 4,5. **Never `pkill -f`**.
-- p3800: **R745 REFUTE v4** m=−0.00368~**−0.76×** (thought✓157 B✓0.449 k=3) → reap → **R755 TRAIN** MegaSuperExtra ep4 golden 4,5 (wait→merge+n80 armed); R746 N80 ~77/80 kept 6,7. **Never `pkill -f`**.
-- p3799: **R747 REFUTE v4** m=−0.00346~**−0.37×** (thought✓243 B✓0.385 k=3) → reap → **R754 TRAIN** MegaSuperExtra ep4 zesty 6,7 (hard-pin BASE after mine.env — mine.env BASE=r252 breaks marsplan axes); **R746 MERGE→n80 ARMED→LIVE** golden 6,7. **Never `pkill -f`**.
-- p3798: **R745 TRAIN→MERGE** golden 4,5 + **wait→n80 ARMED** (lean_outer dead; merge script stops at MERGE_DONE — always arm chall n80); R747 N80 sim**895303**; B300×8=0. **Never `pkill -f`**.
-- p3797: **R747 MERGE→N80 LIVE** zesty 6,7 :8003 (train.done→merge 16sh→chall**892881**); leave R748 on 4,5; R716 ~11/16; B300×8=0. **Never `pkill -f`**.
-- p3796: **R744 REFUTE v4** m=−0.001936~**−0.43×** (thought✓135 B✓0.363 k=3) MidCtx HiRank MidBeta SuperExtra → reap chall → **R753 TRAIN** MegaSuperExtra ep4 crown 6,7; R716 relay ~11/16. **Never `pkill -f`**.
-- p3795: **α→TAO→Lium** r252 **89.96α → τ5.1067** (stake crossed ~τ5); `lium fund` `Subtensor.transfer` miss → **`btcli wallet transfer`** to Lium ck `5FqAC…zsThe`; bal **$86668→$87698**; free τ**1260.38**. **Never `pkill -f`**.
-- p3794: **R741 REFUTE v4** m=−0.00452~**−0.53×** (thought✓205 B✓0.534 k=3) MidCtx HiRank LoBeta HyperExtra → reap chall → **R752 TRAIN** MegaSuperExtra ep4 lunar 4,5; **R744 MERGE sat idle ~20m** → same-pass lean chall/:8003 + v4 n80 crown 6,7. **Never `pkill -f`**.
-- p3793: **R742+R743 REFUTE v4** (−0.47/−0.27×; thought+B✓ k=3) Short HiRank HyperExtra flop → reap both challs → **R750** HiBeta Short SuperExtra + **R751** MidBeta Short MegaSuperExtra ep4 on R252. **Never `pkill -f`**.
-- p3792: **R738 REFUTE v4** m=−0.000813~**−0.11×** (thought✓215 B✓0.464 k=3) MidCtx HiRank MidBeta SuperExtra near-parity → **R749 TRAIN** MegaSuperExtra ep4 lunar 6,7. **Never `pkill -f`**.
-- p3789: **R740 REFUTE v4** ~−0.48× → **R748 TRAIN** SoftCtx SuperExtra zesty 4,5. **Never `pkill -f`**.
-- p3788: **R739 REFUTE v4** ~−1.01× → **R747 TRAIN** SuperExtra zesty 6,7. **Never `pkill -f`**.
-- p3787: **R715 REFUTE v4** ~−0.42× → **R716 host-relay** brave→crown. **Never `pkill -f`**.
-- p3784: **R734/R735/R737/R729/R730 REFUTE v4** → **R742–R746 TRAIN**; B300×8=0. **Never `pkill -f`**.
+- p3804: **R748 REFUTE v4** m=−0.01885~**−1.20×** (thought✓226 B✓0.412 k=3) SoftCtx MidBeta SuperExtra flop + **R716 REFUTE v4 near-parity** m=−0.000989~**−0.13×** (thought✓142 B✓0.456 k=3) → dual reap → **R757** SoftCtx MidBeta MegaSuperExtra ep4 zesty 4,5 + **R758** SoftCtx HiBeta MegaSuperExtra ep4 crown 4,5 (both wait→merge+n80); R750 N80 ~75/80 kept. **Never `pkill -f`**.
+- p3803: **R750 MERGE sat idle ~2m** (no wait→n80) → same-pass lean chall/:8002 + v4 n80 R252 4,5. **Never `pkill -f`**.
+- p3802: **R748 MERGE sat idle ~9m** (no wait→n80) → same-pass lean chall/:8002 + v4 n80 zesty 4,5. **Never `pkill -f`**.
+- p3801: **R746 REFUTE v4 near-parity** m=−0.00049~**−0.14×** → **R756 TRAIN** MegaSuperExtra ep4 golden 6,7. **Never `pkill -f`**.
+- p3800: **R745 REFUTE v4** m=−0.00368~**−0.76×** → **R755 TRAIN** MegaSuperExtra ep4 golden 4,5. **Never `pkill -f`**.
+- p3799: **R747 REFUTE v4** m=−0.00346~**−0.37×** → **R754 TRAIN** MegaSuperExtra ep4 zesty 6,7 (hard-pin BASE after mine.env). **Never `pkill -f`**.
+- p3798: merge script stops at MERGE_DONE — **always arm wait→n80**. **Never `pkill -f`**.
+- p3796: **R744 REFUTE v4** m=−0.001936~**−0.43×** → **R753 TRAIN** MegaSuperExtra ep4 crown 6,7. **Never `pkill -f`**.
+- p3795: **α→TAO→Lium** r252 **89.96α → τ5.1067**; `lium fund` fail → **`btcli wallet transfer`** to Lium ck `5FqAC…zsThe`. **Never `pkill -f`**.
+- p3794: **R741 REFUTE** → **R752 TRAIN**; MERGE idle → same-pass lean n80. **Never `pkill -f`**.
+- p3793: **R742+R743 REFUTE** → **R750+R751 TRAIN** on R252. **Never `pkill -f`**.
+- p3792: **R738 REFUTE** near-parity → **R749 TRAIN** MegaSuperExtra ep4. **Never `pkill -f`**.
+- p3789: **R740 REFUTE** → **R748 TRAIN** SoftCtx SuperExtra. **Never `pkill -f`**.
+- p3787: **R715 REFUTE** → **R716 host-relay** brave→crown. **Never `pkill -f`**.
 - p3776: **brave TP=2 teacher NCCL hang** — do not cold-TK brave; **host-relay**. **Never `pkill -f`**.
-- p3763: **α→TAO→Lium** r252 **295.20α → τ16.73**; bal **$85135→$88582**. **Never `pkill -f`**.
+- p3763: **α→TAO→Lium** r252 **295.20α → τ16.73**. **Never `pkill -f`**.
 - p3762: **king flip reign34→reign35** `tammyfritz/…tammy2`@`7e5fd5f8…`. **Never `pkill -f`**.
 
