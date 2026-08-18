@@ -7,7 +7,7 @@
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
 | mine-crown-1 | gentle-orbit-bd | 8×B200 | $52.25 | **2026-08-19T17:23Z** | TK **vera** · **R846+R847 TRAIN** |
-| mine-r165-awesome-hialpha-1 | lunar-wolf-be | 8×B200 | $44.00 | **2026-08-19T17:23Z** | TK **vera** · **R843 TRAIN** · **R842 n80** · R830 claimer |
+| mine-r165-awesome-hialpha-1 | lunar-wolf-be | 8×B200 | $44.00 | **2026-08-19T17:23Z** | TK **vera** · **R843 TRAIN** · **R842 n80 RELOAD** · R830 claimer |
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | 8×B200 | $60.00 | **2026-08-19T17:23Z** | TK **vera LIVE** · **R838 TRAIN** · **R841 MERGE** |
 | mine-r226-marsplan-fullft-1 | brave-raven-a9 | 8×B200 | $47.20 | **2026-08-19T17:23Z** | **R848–R851 TRAIN** 0–7 |
 | mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | 8×B300 | $64.00 | **2026-08-19T17:23Z** | **R844+R845 TRAIN** · vera PARALLEL |
@@ -21,8 +21,8 @@ SSH brave: `ssh -p 40127 root@18.118.83.97`
 SSH R252: **host:40299 TIMEOUT** — use `lium exec gentle-wolf-8c` / `lium scp`
 SSH R337: `ssh root@86.38.182.67 -p 20295`
 SSH R338: `ssh root@86.38.182.55 -p 20299`
-Host fleet: **7 mine-*** · B300×8=0 · B200×8=0 · burn **~$366.49/h** · **wvk=7**
-**p3942:** R852–R857 TRAIN LIVE on idle 2–7; R830 relay mid; mine=7
+Host fleet: **7 mine-*** · B300×8=0 · B200×8 listed · burn **~$366.49/h** · **wvk=7**
+**p3943:** R842 EngineDead→RELOAD :8003; R830 ~40G; mine=7
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval`, `affine-teacher2`.
 
@@ -30,6 +30,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
-| 2026-08-18T22:31:39Z | p3942: **R852–R857 TRAIN** fill R337/R338 idle 2–7 + wait→merge; B300=0 B200=0 |
-| 2026-08-18T22:25:41Z | p3941: **R830 host-relay×4** R337→lunar + slot-claimer vs reign36; B300=0 bl B200 |
-| 2026-08-18T22:19:51Z | p3940: **parallel×4** stuck vera resume; 6 streams; B300=0 bl B200 |
+| 2026-08-18T22:36:07Z | p3943: **R842 EngineDead→RELOAD** lean_chall :8003 GPUs 6,7; B300=0 |
+| 2026-08-18T22:31:39Z | p3942: **R852–R857 TRAIN** fill R337/R338 idle 2–7; B300=0 B200=0 |
+| 2026-08-18T22:25:41Z | p3941: **R830 host-relay×4** R337→lunar + slot-claimer; B300=0 bl B200 |
