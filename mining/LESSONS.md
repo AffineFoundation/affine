@@ -25,31 +25,26 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p3841: **R777 REFUTE** m=−0.00796~**−0.72×** (thought✓266 B✓0.466) → **R787** UltraLoLR TRAIN zesty 6,7; **R776 REFUTE** m=−0.00220~**−0.28×** (thought✓180 B✓0.354) → **R788** UltraLoLR TRAIN crown 6,7; **R761 SCP_READY** stale `chall_n80_launched` with dead lean → clear + force-launch lean `:8002`. **Never `pkill -f`**.
-- p3840: **R775 REFUTE** m=+0.00197~**0.28×** (thought✓190 B✓0.439 k=3) → reap crown 4,5 → **R786** tammy Soft MidRank MidBeta SoftCtx Mega **UltraLoLR=5e-7** TRAIN; R776 N80 kept 6,7; R761 parallel continues. **Never `pkill -f`**.
-- p3839: **R772 REFUTE** m=−0.00458~**−0.57×** (thought✓237 B✓0.526 k=3) → reap zesty 4,5 → **R785** marsplan Soft MidRank MidBeta SoftCtx Mega **UltraLoLR=5e-7** TRAIN; R777 kept 6,7; R761 parallel continues. **Never `pkill -f`**.
-- p3838: **R761 tar stall** ~23G/66G in 45m (partial shard-07) → kill exact PIDs + **parallel×4 size-checked host pipes** pid**3181794** (KEEP 5 complete shards); B300×8=0. **Never `pkill -f`**.
-- p3837: **R768 MERGE_DONE idle** brave 6,7 → **host-relay after R767** pid**3171890** + **R784** tammy Soft MidRank LoBeta SoftCtx Mega UltraLoLR=5e-7 TRAIN filled 6,7; R761 ~22G. **Never `pkill -f`**.
-- p3836: **R767 MERGE_DONE idle** brave 4,5 → **host-relay after R762** pid**3158038** + **R783** tammy Soft HiRank LoBeta SoftCtx Mega TRAIN filled 4,5; R761 ~21G. **Never `pkill -f`**.
-- p3835: R252 :40299 **sshfail** mid-relay → **R762 resume hardened** (lium exec + host-log DONE + SSH retry) pid**3144518**; R761 tar pipe still alive ~17G. **Never `pkill -f`**.
-- p3834: **R762 MERGE idle** → armed **resume-after-R761** host-relay pid**3129501** (solo uplink; n80 R252 4,5 after R761 decision); R761 ~13G. **Never `pkill -f`**.
-- p3833: **R770 REFUTE** m=+0.000078~**0.028×** (thought✓155 B✓0.40) → **R782** tammy Soft MidRank LoBeta SoftCtx Mega on R252 6,7; **R781** tammy Soft HiRank HiBeta SoftCtx Mega filled idle brave 2,3; R761 relay ~9G. **Never `pkill -f`**.
-- p3832: **R769 REFUTE** m=−0.006410~**−0.79×** → **R780** tammy Soft MidRank HiBeta SoftCtx Mega on idle brave 0,1; R761 relay continues. **Never `pkill -f`**.
-- p3831: **α→TAO→Lium** r252 88.56α→τ5.0231→+$1015 Lium; `lium fund` still broken → `btcli wallet transfer --dest` (not `--destination`). **Never `pkill -f`**.
-- p3830: **R761+R762 MERGE_DONE** sat idle on brave (no n80 armed) → **host-relay R761→R252** queue after **R769 N80**; R762 next. **Never `pkill -f`**.
-- p3829: **R765 REFUTE** m=−0.005388~**−0.72×** → **R779** marsplan Soft HiRank LoBeta SoftCtx Mega (≠ R778 Soft MidRank); R778 TRAIN kept lunar 6,7. **Never `pkill -f`**.
-- p3828: **R764 REFUTE** m=+0.000788~**0.12×** → **R778** marsplan Soft MidRank LoBeta SoftCtx Mega; R765 N80 kept lunar 4,5. **Never `pkill -f`**.
-- p3827: **R763 REFUTE** m=+0.000158~**0.038×** → **R776**; **R766 REFUTE** m=−0.00211~**−0.30×** → **R777**. **Never `pkill -f`**.
-- p3823: Freed **R771** (≈R755) → **R775** tammy Soft MidRank MidBeta SoftCtx Mega; hard-pin BASE after `mine.env`. **Never `pkill -f`**.
-- p3822: **R755–R758 REFUTE** → **R771–R774 TRAIN**. **Never `pkill -f`**.
-- p3819: **R760 REFUTE** m=−0.004627~**−0.68×** → **R770**; CLI 8×B200 = bl ghost (`bl_skip=1`). **Never `pkill -f`**.
-- p3817: **R759 REFUTE** m=−0.001882~**−0.47×** → **R769**. **Never `pkill -f`**.
-- p3815: API blacklist must strip `# comment`; restart API by pid only. **Never `pkill -f`**.
-- p3814: **brave idle GPUs 4–7** → **R767+R768**. **Never `pkill -f`**.
+- p3843: **R761 REFUTE** m=+0.000505~**0.079×** → **R762** parallel×4 relay (incl. `model-visual-restored`); lone 8×B200=`fbb1135f` **bl**. **Never `pkill -f`**.
+- p3842: **R761** host-relay drop `model-visual-restored` → vLLM ValueError → graft+relaunch CHALL_READY. **Never `pkill -f`**.
+- p3841: **R777/R776 REFUTE** → **R787/R788** UltraLoLR. **Never `pkill -f`**.
+- p3840: **R775 REFUTE** ~0.28× → **R786** UltraLoLR. **Never `pkill -f`**.
+- p3839: **R772 REFUTE** → **R785** UltraLoLR. **Never `pkill -f`**.
+- p3838: **R761 tar stall** → **parallel×4 size-checked host pipes**. **Never `pkill -f`**.
+- p3837: **R768 MERGE idle** → host-relay + **R784** TRAIN. **Never `pkill -f`**.
+- p3836: **R767 MERGE idle** → host-relay + **R783** TRAIN. **Never `pkill -f`**.
+- p3835: R252 :40299 **sshfail** → **R762 hardened** resume. **Never `pkill -f`**.
+- p3833: **R770 REFUTE** → **R782** + **R781** TRAIN. **Never `pkill -f`**.
+- p3832: **R769 REFUTE** → **R780** TRAIN. **Never `pkill -f`**.
+- p3831/p3795: **α→TAO→Lium** via `btcli wallet transfer` if `lium fund` fails. **Never `pkill -f`**.
+- p3829: **R765 REFUTE** → **R779** TRAIN. **Never `pkill -f`**.
+- p3828: **R764 REFUTE** → **R778** TRAIN. **Never `pkill -f`**.
+- p3827: **R763/R766 REFUTE** → **R776/R777**. **Never `pkill -f`**.
+- p3822: **R755–R758 REFUTE** → **R771–R774**. **Never `pkill -f`**.
+- p3819: **R760 REFUTE** → **R770**; CLI 8×B200 = bl ghost. **Never `pkill -f`**.
+- p3815: API blacklist must strip `# comment`. **Never `pkill -f`**.
 - p3813: **R337 REAPED** SSH-DEAD → bl `fbb1135f…`. **Never `pkill -f`**.
-- p3811: **R752 REFUTE** → **R765**. **Never `pkill -f`**.
-- p3809: **R753+R749 REFUTE** → **R763+R764**. **Never `pkill -f`**.
-- p3795: **α→TAO→Lium** via `btcli wallet transfer` if `lium fund` fails. **Never `pkill -f`**.
 - p3776: **brave TP=2 teacher NCCL hang** — **host-relay**. **Never `pkill -f`**.
 - p3762: **king flip reign34→reign35** `tammyfritz/…tammy2`@`7e5fd5f8…`. **Never `pkill -f`**.
+
 
