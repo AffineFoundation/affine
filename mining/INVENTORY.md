@@ -6,11 +6,11 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | gentle-orbit-bd (`3d07e519-…`) | 8×B200 | $52.25 | **2026-08-18T19:04Z** | TK · **R801 ACCEL** → n80 6,7 · 4,5 free |
+| mine-crown-1 | gentle-orbit-bd (`3d07e519-…`) | 8×B200 | $52.25 | **2026-08-18T19:04Z** | TK · **R801 N80** 6,7/:8003 LOAD · 4,5 free |
 | mine-r165-awesome-hialpha-1 | lunar-wolf-be (`0f283151-…`) | 8×B200 | $44.00 | **2026-08-18T19:04Z** | TK · **R807+R808 TRAIN** |
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 (`522c84fd-…`) | 8×B200 | $60.00 | **2026-08-18T19:04Z** | TK · **R804 TRAIN** |
 | mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da (`5e54186c-…`) | 8×B300 | $64.00 | **2026-08-18T19:04Z** | TK · **R796+R797** (SSH dead) |
-| mine-r226-marsplan-fullft-1 | brave-raven-a9 (`5c019a27-…`) | 8×B200 | $47.20 | **2026-08-18T19:04Z** | **R809+R810 TRAIN** · R801 src |
+| mine-r226-marsplan-fullft-1 | brave-raven-a9 (`5c019a27-…`) | 8×B200 | $47.20 | **2026-08-18T19:04Z** | **R809+R810 TRAIN** |
 | mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c (`61d17753-…`) | 8×B300 | $64.00 | **2026-08-18T19:04Z** | **R805+R806 TRAIN** |
 | mine-r337-marsplan-online-dpo-hilr-1 | gentle-shark-35 | 8×B300 | $47.04 | (check) | **R337** form wait sim |
 
@@ -22,7 +22,7 @@ SSH brave: `ssh -p 40127 root@18.118.83.97`
 SSH R252: `lium exec gentle-wolf-8c` / `ssh -p 40299 root@95.133.252.28`
 SSH R337: `lium exec gentle-shark-35`
 Host fleet: **7 mine-*** · B300×8 rentable **0** · burn **~$378.50/h** · **wvk=7**
-**p3883:** R800 REFUTE→R809+R810 brave TRAIN; R801 ACCEL mid; bal **~$86275**
+**p3884:** R801 SIZE_OK→lean :8003 LOAD; R809/R810 TRAIN; bal **~$86196**
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval` (eager-fox-27), `affine-teacher2`.
 
@@ -30,6 +30,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-18T14:44:06Z | p3884: **R801** SIZE_OK stamp → lean **:8003** LOAD; B300×8=0; bal **~$86196** |
 | 2026-08-18T14:34:39Z | p3883: **R800 REFUTE** ~−0.46× → free 4,5 → **R809+R810 TRAIN** brave; R801 ACCEL; B300×8=0; bal **~$86275** |
 | 2026-08-18T14:26:40Z | p3882: **R800** SIZE_OK→n80 + **R801** SIGSTOP+tail×6; B300×8=0; bal **~$86316** |
-| 2026-08-18T14:10:12Z | p3881: **R800** SIGSTOP+tail×6→stamp; +**R337** in inventory; B300×8=0; bal **~$86476** |
