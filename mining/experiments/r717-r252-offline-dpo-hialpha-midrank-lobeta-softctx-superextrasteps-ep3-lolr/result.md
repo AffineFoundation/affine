@@ -10,3 +10,9 @@ REFUTE with steps=14400 (≠ UltraExtra 7200; ≠ marsplan R712; ≠ Mid/HiBeta
 SuperExtra R710/R711).
 
 **Launch:** p3753 crown GPUs 4,5 after R693 REFUTE (~0.72×).
+
+**Status p3764:** MERGE_DONE → chall :8002 + v4 n80 **LIVE** vs **reign35**
+`tammyfritz/Affine-5hmwhnfbix-tammy2`@`7e5fd5f8…` (king flip mid-train).
+vllm pid**105449** · sim pid**108044** · artifacts
+`/root/affine_data/r717_*_reign35_wvk7.json` · Triton seed chall_r705 n_star=30.
+Harvest next pass.
