@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 87867.77158460244 | p3885 |
-| Lium balance | **$87867.77158460244** | p3885 |
-| cumulative mining spend | ~$120,940 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$77868** (balance − $10,000 floor) | $UTC |
+| $UTC | 87783.41160172987 | p3887 |
+| Lium balance | **$87783.41160172987** | p3887 |
+| cumulative mining spend | ~$121,024 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$77783** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$378.50/h** · vs floor $833/h · gap **−$454.50/h** · B300×8=0 | p3886 |
+| miner burn (8 pods) | **~$430.49/h** · vs floor $833/h · gap **−$402.51/h** · B300×8=0 | p3887 |
 | miner coldkey free | τ1260.426 | kept ≥τ50 |
 | miner stake | **~17α ≈ τ0.96** (r252; after 160α sweep) | p3885 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T15:09:25Z | 87783.41160172987 | p3887 **R337+R338** marsplan cache relay + **R806 N80**; invent R338 ($52); burn **~$430.49/h** |
 | 2026-08-18T15:03:30Z | 87867.77158460244 | p3886 **R803/R804/R805 REFUTE→R813+R814+R815 TRAIN** (no rent; B300×8=0); burn **~$378.50/h** |
 | 2026-08-18T14:54:30Z | 87867.77158460244 | p3885 **α→TAO→Lium**: unstake **160α** r252 → +τ~8.94 free; `lium fund` Metadata bug → `btcli transfer` **τ8.9** to Lium ck; bal **+$1791**; burn **~$378.50/h** |
 | 2026-08-18T14:44:06Z | 86196.43516098657 | p3884 **R801 SIZE_OK→lean :8003** (no rent; B300×8=0); burn **~$378.50/h** |
@@ -35,5 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T14:04:46Z | 86509.29770981436 | p3880 **R783 REFUTE→R801 armed** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T13:59:16Z | 86546.22539237943 | p3879 **R783 n80 + R800 fast×4** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T13:45:00Z | 86652.1763535039 | p3877 **R795 REFUTE→R808 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-18T13:37:42Z | 86687.77787836925 | p3876 **R802/R794/R784 REFUTE→R806+R807** (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-18T13:28:57Z | 86758.32564159477 | p3875 **R784 SIZE_OK+stamp+lean** (no rent; B300×8=0); burn **~$331.45/h** |
