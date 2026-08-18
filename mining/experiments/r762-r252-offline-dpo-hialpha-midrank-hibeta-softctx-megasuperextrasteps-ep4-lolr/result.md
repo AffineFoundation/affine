@@ -1,1 +1,1 @@
-MERGE_DONE on brave (p3808). p3834 armed resume-after-R761 (SSH-only poll → sshfail). p3835: hardened host-relay wait (lium exec + R761 host-log DONE + SSH/tar retry) pid 3144518; n80 R252 4,5 after R761 decision.
+MERGE_DONE on brave (p3808). p3834–p3846: relay→N80 LIVE. **p3847 REFUTE** vs reign35 wvk7: m=−0.000495 se=0.00155 bar=0.00310 (~−0.16×) thought✓169 B✓0.328 k=3 τ=0.03 — slot freed; next=R767 parallel×4.
