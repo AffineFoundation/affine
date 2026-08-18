@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3914: **R820 MERGE_DONE** but wait→n80 pointed at **`midrank`** EXP (same class as p3913 merge bug) → `No such file` + idle GPUs 4,5 → patch wait `midrank`→`hirank` + relaunch lean_chall **:8002** LOAD (pid519401). B300×8=0. **Never `pkill -f`**.
 - p3913: **R819 REFUTE v4** m=−0.006243~**−1.57×** (thought✓150 B✓0.315 k=3) → free :8003 by exact PID → **R833** Short Mid Mid Soft UltraLoLR R252 6,7; **R820** wait→merge had wrong EXP path `midrank`≠`hirank` → kick correct `lean_merge` (MERGE LIVE). B300×8=0. **Never `pkill -f`**.
 - p3912: brave **R821–R824** had train→merge only (no host-relay→crown) → arm wait→merge→**flock** relay→crown slot-claimer (fix LEAN path; claim after R827/R829); B300×8=0. **Never `pkill -f`**.
 - p3911: R337/R338 teacher-only post_train would n80 vs **marsplan** (≠ reign35) and collide R830/R831 on 4–5 → kill post_train by exact PID → **merge-only** + host **relay→lunar** slot-claimer vs reign35; B300 waiter already armed HEAD R339. **Never `pkill -f`**.

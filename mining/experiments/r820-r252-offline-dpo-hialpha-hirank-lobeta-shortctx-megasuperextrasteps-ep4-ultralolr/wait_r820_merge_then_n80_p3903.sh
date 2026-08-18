@@ -2,7 +2,7 @@
 set -euo pipefail
 log() { echo "[p3903-r820-n80-wait] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 MERGE_DONE=/root/logs/r820_merge.done
-CHALL=/root/mining_src/r820-r252-offline-dpo-hialpha-midrank-lobeta-shortctx-megasuperextrasteps-ep4-ultralolr/lean_chall_n80_r252_gpus45_p3903.sh
+CHALL=/root/mining_src/r820-r252-offline-dpo-hialpha-hirank-lobeta-shortctx-megasuperextrasteps-ep4-ultralolr/lean_chall_n80_r252_gpus45_p3903.sh
 LAUNCHED=/root/logs/r820_n80_launched.p3903
 mkdir -p /root/logs
 [[ -f "$LAUNCHED" ]] && { log "already launched"; exit 0; }
