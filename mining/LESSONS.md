@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3836: **R767 MERGE_DONE idle** brave 4,5 → **host-relay after R762** pid**3158038** + **R783** tammy Soft HiRank LoBeta SoftCtx Mega TRAIN filled 4,5; R761 ~21G. **Never `pkill -f`**.
+- p3835: R252 :40299 **sshfail** mid-relay → **R762 resume hardened** (lium exec + host-log DONE + SSH retry) pid**3144518**; R761 tar pipe still alive ~17G. **Never `pkill -f`**.
 - p3834: **R762 MERGE idle** → armed **resume-after-R761** host-relay pid**3129501** (solo uplink; n80 R252 4,5 after R761 decision); R761 ~13G. **Never `pkill -f`**.
 - p3833: **R770 REFUTE** m=+0.000078~**0.028×** (thought✓155 B✓0.40) → **R782** tammy Soft MidRank LoBeta SoftCtx Mega on R252 6,7; **R781** tammy Soft HiRank HiBeta SoftCtx Mega filled idle brave 2,3; R761 relay ~9G. **Never `pkill -f`**.
 - p3832: **R769 REFUTE** m=−0.006410~**−0.79×** → **R780** tammy Soft MidRank HiBeta SoftCtx Mega on idle brave 0,1; R761 relay continues. **Never `pkill -f`**.

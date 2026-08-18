@@ -1,1 +1,1 @@
-TRAIN DONE + MERGE DONE on brave (p3808). p3834: resume-after-R761 host-relay armed (pid 3129491); n80 queued on R252 GPUs 4,5 after R761 decision.
+MERGE_DONE on brave (p3808). p3834 armed resume-after-R761 (SSH-only poll → sshfail). p3835: hardened host-relay wait (lium exec + R761 host-log DONE + SSH/tar retry) pid 3144518; n80 R252 4,5 after R761 decision.

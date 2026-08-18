@@ -1,5 +1,2 @@
-# R767 result — pass 3814
-
-**Status:** TRAIN armed on brave GPUs 4,5 (pid **279888**).
-**Axis:** Soft MidRank LoBeta SoftCtx MegaSuperExtra ep4 (β=0.02, r=32, @12288, 19200).
-**Waiters:** wait→merge only (host-relay n80 later). Never `pkill -f`.
+# R767 result
+Status: **WAIT_RELAY** p3836 after R762 (MERGE_DONE 2026-08-18T08:30:45Z, 16 shards). Host-relay pid 3158038. n80 on R252 4,5 after R762 decision. Idle 4,5 → R783 TRAIN.

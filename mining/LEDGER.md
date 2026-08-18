@@ -13,19 +13,21 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 86841.09060717696 | p3834 |
-| Lium balance | **$86841.09060717696** | p3834 |
-| cumulative mining spend | ~$120,303 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$76841** (balance − $10,000 floor) | $UTC |
+| $UTC | 86720.33945337946 | p3836 |
+| Lium balance | **$86720.33945337946** | p3836 |
+| cumulative mining spend | ~$120,424 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$76720** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | p3834 |
+| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | p3836 |
 | miner coldkey free | τ1260.384 | kept ≥τ50 |
-| miner stake | **0** | p3834 |
+| miner stake | **29.52α ≈ τ1.68** (r252; below ~τ5) | p3836 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T08:36:20Z | 86720.33945337946 | p3836 **R767 ARMED** + **R783 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
+| 2026-08-18T08:31:01Z | 86759.05271647852 | p3835 **R762 hardened** resume (no rent; bl_skip=1); burn **~$331.45/h** |
 | 2026-08-18T08:24:51Z | 86841.09060717696 | p3834 **R762 ARMED** resume-after-R761 (no rent; bl_skip=1); burn **~$331.45/h** |
 | 2026-08-18T08:20:32Z | 86841.09060717696 | p3833 **R770 REFUTE→R782** + **R781 TRAIN** (no rent; bl_skip=1); burn **~$331.45/h** |
 | 2026-08-18T08:10:37Z | 86922.14503131087 | p3832 **R769 REFUTE→R780 TRAIN** brave 0,1 (no rent; bl_skip=1); burn **~$331.45/h** |
@@ -34,5 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T07:52:10Z | 86070.38051473569 | p3829 **R765 REFUTE→R779 TRAIN** (no rent; bl_skip=1); burn **~$331.45/h** |
 | 2026-08-18T07:42:05Z | 86151.45157002847 | p3828 **R764 REFUTE→R778 TRAIN** (no rent; bl_skip=1); burn **~$331.45/h** |
 | 2026-08-18T07:36:58Z | 86192.12473401024 | p3827 **R763+R766 REFUTE→R776+R777 TRAIN** (no rent; bl_skip=1); burn **~$331.45/h** |
-| 2026-08-18T07:26:52Z | 86273.9742137993 | p3823 **R771→R775 TRAIN** + R763/R766 N80 (no rent; bl_skip=1); burn **~$331.45/h** |
-| 2026-08-18T07:16:38Z | 86355.30645199752 | p3822 **R755–R758 REFUTE→R771–R774 TRAIN** (no rent; bl_skip=1); burn **~$331.45/h** |
