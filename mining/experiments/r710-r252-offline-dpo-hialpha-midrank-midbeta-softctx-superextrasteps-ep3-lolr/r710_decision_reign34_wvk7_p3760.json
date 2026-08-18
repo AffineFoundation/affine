@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-18T00:18:02Z",
+  "hypo": "R710",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign34",
+  "margin": -0.003626753052463827,
+  "se": 0.002454072958901547,
+  "z": -1.4778505420177794,
+  "n": 76,
+  "bar": 0.004908145917803094,
+  "thought_median": 177.0,
+  "b_pass": 0.4810126582278481,
+  "wins": false,
+  "note": "p3759 chall+v4-n80 R252 4,5; Soft MidRank MidBeta SoftCtx SuperExtra ep3 LoLR; vs reign34 wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}

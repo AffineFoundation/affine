@@ -13,10 +13,10 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 85337.91300692644 | p3759 |
-| Lium balance | **$85337.91300692644** | p3759 |
-| cumulative mining spend | ~$117,963 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$75338** (balance − $10,000 floor) | $UTC |
+| $UTC | 85257.2117560615 | p3760 |
+| Lium balance | **$85257.2117560615** | p3760 |
+| cumulative mining spend | ~$118,044 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$75257** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
 | miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** | $UTC |
 | miner coldkey free | τ1260.382 | after R683 reg burn (~τ1.53; kept ≥τ50) |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T00:21:19Z | 85257.2117560615 | p3760 **R710 REFUTE** + **R711 N80** + **R724 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T00:13:02Z | 85337.91300692644 | p3759 **R710 N80 LIVE** R252 4,5 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T00:06:23Z | 85378.97363748537 | p3758 **R708/R709 REFUTE** + **R722+R723 TRAIN** zesty 4–7 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-17T23:55:44Z | 85461.04332011218 | p3757 **R721 TRAIN** lunar 6,7 after r537 reap (no rent; B300×8=0); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-17T23:27:07Z | 85745.25562401353 | p3753 **R693 REFUTE** + **R717 TRAIN** crown 4,5 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-17T23:22:29Z | 85745.25562401353 | p3752 **R715+R716 TRAIN** brave 4–7 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-17T23:17:07Z | 85786.49413103018 | p3751 **R693 N80 LIVE** crown 4,5 (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-17T23:12:57Z | 85826.5515667286 | p3750 **R713+R714 TRAIN** brave 0–3 (no rent; B300×8=0); burn **~$331.45/h** |
