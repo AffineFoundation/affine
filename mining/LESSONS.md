@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3909: R337/R338 GPUs **2–5 idle** while online-DPO on 6–7 → fill with Offline-DPO **R796** (POD_DEAD reclaim Mid Mid MidCtx) + **R830** Soft Mid Mid Soft HiRank SoftCtx + **R831** ShortCtx Soft Mid Mid Soft + **R832** MidCtx Soft Mid Mid Soft; B300×8=0. **Never `pkill -f`**.
 - p3908: five mine-* Removal **19:04Z** (~1.7h) mid UltraLoLR TRAIN → API `POST /pods/{id}/schedule-removal` +24h (`X-API-KEY`, BASE=`https://lium.io/api`) → Removal **2026-08-19T17:23:22Z**; celiumcompute.ai times out; Bearer 401. B300×8=0. **Never `pkill -f`**.
 - p3907: **R810 REFUTE v4** m=+0.002088~**0.45×** (thought✓169.5 B✓0.525 k=3) + **R813 REFUTE v4** m=−0.002050~**−0.29×** (thought✓157.5 B✓0.4 k=3) → free crown/golden challs by exact PID → **R829** Soft MidRank Lo Soft UltraLoLR + **R827** MidCtx Mid Hi UltraLoLR crown + **R828** Soft Mid Mid Soft UltraLoLR golden. B300×8=0. **Never `pkill -f`**.
 - p3906: **R817 REFUTE v4** m=+0.000677~**0.11×** (thought✓210 B✓0.515 k=3) → free :8002 by exact PID → **R826** MidCtx MidRank LoBeta UltraLoLR lunar 4,5; **R810** SIZE_OK stamp→lean **n80 LIVE** :8003. B300×8=0. **Never `pkill -f`**.
