@@ -1,1 +1,3 @@
-p3828: R764 REFUTE ~0.12× → R778 TRAIN armed lunar GPUs 6,7 (pid 736925; β=0.02 @12288 Soft MidRank LoBeta Mega). Wait→merge+n80 armed. R765 N80 kept 4,5.
+# R778 result (p3844)
+**REFUTE v4** vs reign35 tammy · m=+0.002354 SE=0.006304 z=0.373 n=75 bar=0.012608 (~**0.19×**) thought✓(234) B✓(0.455) k=3/τ=0.03.
+Slot reaped lunar 6,7 → **R789** UltraLoLR TRAIN.

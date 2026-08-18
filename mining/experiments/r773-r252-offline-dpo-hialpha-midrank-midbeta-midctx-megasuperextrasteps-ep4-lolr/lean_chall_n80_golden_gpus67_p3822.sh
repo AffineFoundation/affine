@@ -2,7 +2,7 @@
 # p3822: R773 MERGE_DONE → chall :8003 + v4 n80 on golden GPUs 6,7 vs reign35 tammy (wvk=7 k=3 τ=0.03).
 # Axis: MidCtx MidRank MidBeta MegaSuperExtra ep4×LoLR (β=0.1 r=32 @8192 steps=19200; after R756 REFUTE).
 # Never --no-save-original-format. Never pkill -f.
-# Do not touch teacher 0,1 or king 2,3. Sibling R745 chall may use GPUs 4,5; do not touch T/K or R745.
+# Do not touch teacher 0,1 or king 2,3. Sibling R774 uses :8002 on 4,5 (p3844 port split).
 set -euo pipefail
 
 source /root/venv/bin/activate

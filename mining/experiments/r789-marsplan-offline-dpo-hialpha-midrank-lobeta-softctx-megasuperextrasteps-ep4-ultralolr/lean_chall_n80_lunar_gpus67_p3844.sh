@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# p3822: R774 MERGE_DONE → chall :8002 + v4 n80 on golden GPUs 4,5 vs reign35 tammy (wvk=7 k=3 τ=0.03).
-# Axis: MidCtx MidRank LoBeta MegaSuperExtra ep4×LoLR (β=0.02 r=32 @8192 steps=19200; after R755 REFUTE).
+# p3844: R789 MERGE_DONE → chall :8003 + v4 n80 on lunar GPUs 6,7 vs reign35 tammy (wvk=7 k=3 τ=0.03).
+# Axis: marsplan MidCtx MidRank MidBeta MegaSuperExtra ep4×UltraLoLR (β=0.1 r=64 @8192 steps=19200; R749 SuperExtra→Mega)
 # Never --no-save-original-format. Never pkill -f.
-# Do not touch teacher 0,1 or king 2,3. Sibling R773 uses :8003 on 6,7 — ports must not collide (p3844).
+# Do not touch teacher 0,1 or king 2,3. Sibling R752 TRAIN uses 4,5; do not touch T/K or R752.
 set -euo pipefail
 
 source /root/venv/bin/activate
@@ -13,10 +13,9 @@ if [[ -f /root/mine.env ]]; then
   set +a
 fi
 
-# p3822 hard-pin (mine.env must not override axis GPUs/port)
-# p3844: was 8003 — collided with R773 :8003 on same host → 404 model-not-found
-GPUS=4,5
-CHALL_PORT=8002
+# p3778 hard-pin (mine.env must not override axis GPUs/port)
+GPUS=6,7
+CHALL_PORT=8003
 export CUDA_VISIBLE_DEVICES=$GPUS
 
 export HF_HOME=${HF_HOME:-/root/hf}
@@ -49,21 +48,20 @@ fi
 KING_REPO=tammyfritz/Affine-5hmwhnfbix-tammy2
 KING_REV=7e5fd5f87e82606c32d59c3d2350e3ddfe49c4b5
 TEACHER_REPO=zai-org/GLM-4.5-Air-FP8
-MERGE_DIR=/tmp/r774_merged
-# GPUS/CHALL_PORT hard-pinned above after mine.env
+MERGE_DIR=/tmp/r789_merged
 export CUDA_VISIBLE_DEVICES=$GPUS
 UTIL=${UTIL:-0.72}
-LOG=/root/logs/p3822_r774_chall_n80_wvk7.log
-CHALL_LOG=/root/logs/vllm_chall_r774_p3822.log
-PIDF=/root/logs/vllm_chall_r774.pid
-TCACHE=/root/.triton/cache/chall_r774
-SIM_N80=/root/affine_data/r774_sim_result_reign35_wvk7.json
-PROG=/root/affine_data/r774_sim_progress_reign35_wvk7.json
-SIM_DEC=/root/affine_data/r774_decision_reign35_wvk7.json
+LOG=/root/logs/p3844_r789_chall_n80_wvk7.log
+CHALL_LOG=/root/logs/vllm_chall_r789_p3844.log
+PIDF=/root/logs/vllm_chall_r789.pid
+TCACHE=/root/.triton/cache/chall_r789
+SIM_N80=/root/affine_data/r789_sim_result_reign35_wvk7.json
+PROG=/root/affine_data/r789_sim_progress_reign35_wvk7.json
+SIM_DEC=/root/affine_data/r789_decision_reign35_wvk7.json
 mkdir -p /root/logs /root/affine_data
 
 : >"$LOG"
-log() { echo "[p3822-r774] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*" | tee -a "$LOG"; }
+log() { echo "[p3844-r789] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*" | tee -a "$LOG"; }
 
 stop_pid() {
   local pid=$1
@@ -98,7 +96,7 @@ hub_ok() {
   [[ -f "$path/config.json" ]] && [[ "${n:-0}" -ge 16 ]]
 }
 
-log "START R774 chall+v4-n80 golden GPUs=$GPUS merge=$MERGE_DIR vs king=$KING_REPO@$KING_REV"
+log "START R789 chall+v4-n80 lunar GPUs=$GPUS merge=$MERGE_DIR vs king=$KING_REPO@$KING_REV"
 hub_ok "$MERGE_DIR" || { log "FATAL merge incomplete"; exit 1; }
 n=$(ls "$MERGE_DIR"/model-*-of-*.safetensors | wc -l)
 log "reuse merge shards=$n"
@@ -106,7 +104,7 @@ log "reuse merge shards=$n"
 cat >"$MERGE_DIR/README.md" <<'EOF'
 ---
 license: apache-2.0
-base_model: unconst/Affine-5czsc2fc98-r252-merged
+base_model: marsplan0624/affine-5gedzafcvg-queen
 tags:
   - affine
   - sn120
@@ -114,17 +112,17 @@ tags:
   - reason-v4
 ---
 
-# Affine-5czsc2fc98-r774-r252-odpo-midrank-lobeta-midctx-megasuperextra-ep4-lolr-merged
+# Affine-5czsc2fc98-r789-marsplan-odpo-midrank-midbeta-midctx-superextra-ep3-ultralolr-merged
 
 ## Training story
 
-- **Base / parent king:** `unconst/Affine-5czsc2fc98-r252-merged` @ `b42d6245d77fe30885ea8a90387771e1bc465e0f` (SN120 reign-33).
+- **Base / parent:** `marsplan0624/affine-5gedzafcvg-queen` @ `556d02a2adfa9bd42a02de3c766f98be7e44ca46` (non-king).
 - **Method:** Offline DPO on teacher-anchored Reason pairs. Optimized for Reason (teacher-side only).
-- **Data:** duel-derived Reason preference pairs; experiment
-  `mining/experiments/r774-r252-offline-dpo-hialpha-midrank-lobeta-midctx-megasuperextrasteps-ep4-lolr/`.
-- **Hyperparameters:** lr=`1e-6` (LoLR), LoRA r=`64` / α=`128`, β=`0.02`, max_len=`8192`, epochs=`4`, max_steps=`19200` (MegaSuperExtra).
-- **Hardware:** train+merge on `mine-r262-kevin-v5-nonking-grpo-1` (golden-comet-78) GPUs **4,5**; n80 same box :8002 (no SCP — local MERGE_DONE). Sibling R773 :8003 on 6,7.
-- **Axis note:** MidCtx MidRank LoBeta MegaSuperExtra ep4×LoLR (R746 Short MidRank LoBeta SuperExtra REFUTE ~−0.14× → Mega amplify; ≠ SuperExtra R746; ≠ LoBeta Mega R751; ≠ HiBeta SuperExtra R750; ≠ Online; ≠ GRPO R583).
+- **Data:** duel-derived Reason preference pairs; MidCtx×MidRank MidBeta SuperExtra; experiment
+  `mining/experiments/r789-marsplan-offline-dpo-hialpha-midrank-midbeta-midctx-superextrasteps-ep3-ultralolr/`.
+- **Hyperparameters:** lr=`5e-7` (UltraLoLR), LoRA r=`64` / α=`128`, β=`0.1`, max_len=`8192`, epochs=`4`, max_steps=`19200` (MegaSuperExtra).
+- **Hardware:** train+merge on `mine-r165-awesome-hialpha-1` (lunar) GPUs **6,7**; n80 same box :8003 (no SCP — local MERGE_DONE). Leave R752 on 4,5.
+- **Axis note:** marsplan MidCtx MidRank MidBeta MegaSuperExtra (R749 SuperExtra near-parity REFUTE ~−0.11× → Mega amplify). ≠ SuperExtra ep3 R749; ≠ SoftCtx SuperExtra R748; ≠ HiBeta SuperExtra R747; ≠ HyperExtra MidBeta R740; ≠ Online; ≠ GRPO.
 - **Decision rule:** paired margin > max(2·SE, δ=0.002) **and** median thought ≥80 **and** B pass ≥0.30 vs **reign35** tammyfritz (v4 k=3 τ=0.03).
 
 This card is the training write-up required before any Stage-5 submit.
@@ -147,27 +145,26 @@ if ! echo "$kid" | grep -qiE 'tammyfritz|5hmwhnfbix|tammy2'; then
   exit 5
 fi
 
-for stale in /root/logs/vllm_chall_r730.pid /root/logs/vllm_chall_r720.pid \
-  /root/logs/vllm_chall_r774.pid /root/logs/vllm_chall_r774_p3822.pid \
+for stale in /root/logs/vllm_chall_r728.pid /root/logs/vllm_chall_r731.pid /root/logs/vllm_chall_r721.pid /root/logs/vllm_chall_r712.pid \
   "$PIDF"; do
   stop_pidfile "$stale" "stale chall"
 done
 while read -r pid; do
   [[ "$pid" =~ ^[0-9]+$ ]] || continue
   stop_pid "$pid" "stale chall argv"
-done < <(ps -eo pid=,args= | awk '/vllm serve .*\/tmp\/r(756|746|730)_merged/ && !/awk/ {print $1}')
+done < <(ps -eo pid=,args= | awk '/vllm serve .*\/tmp\/r789_merged/ && !/awk/ {print $1}')
 
 CHALL_PORT="$CHALL_PORT" GPUS="$GPUS" python3 - <<'PY' | tee -a "$LOG"
 import os, signal, subprocess, time, re
 port = os.environ.get("CHALL_PORT", "8003")
-want = {int(x) for x in os.environ.get("GPUS", "4,5").split(",") if x.strip()}
+want = {int(x) for x in os.environ.get("GPUS", "6,7").split(",") if x.strip()}
 try:
     out = subprocess.check_output(["ss", "-lptn", f"sport = :{port}"], text=True, stderr=subprocess.DEVNULL)
 except Exception:
     out = ""
 pids = set(int(x) for x in re.findall(r"pid=(\d+)", out))
 for pid in sorted(pids):
-    print(f"[p3822-r774] kill :{port} listener pid={pid}", flush=True)
+    print(f"[p3844-r789] kill :{port} listener pid={pid}", flush=True)
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -211,17 +208,20 @@ for pid in gpu_pids:
     except Exception:
         cmd = ""
     if "train_online_dpo" in cmd or "train_dpo" in cmd or "train_full" in cmd or "train_reason_grpo" in cmd:
-        print(f"[p3822-r774] SKIP train pid={pid}", flush=True)
+        print(f"[p3844-r789] SKIP train pid={pid}", flush=True)
         continue
-    if "r755" in cmd or "r755_merged" in cmd or "r755/" in cmd or ("merge_lora" in cmd and "r774" not in cmd):
-        print(f"[p3822-r774] SKIP sibling r755 pid={pid}", flush=True)
+    if "r765" in cmd or "r765_merged" in cmd:
+        print(f"[p3844-r789] SKIP R765 pid={pid}", flush=True)
+        continue
+    if "r765" in cmd or "r765_merged" in cmd or "train_dpo" in cmd:
+        print(f"[p3844-r789] SKIP sibling/train pid={pid}", flush=True)
         continue
     if any(tok in cmd for tok in ["GLM-4.5-Air", ":8000", ":8001"]):
-        if "r774_merged" not in cmd:
-            print(f"[p3822-r774] SKIP TK pid={pid}", flush=True)
+        if "r789_merged" not in cmd:
+            print(f"[p3844-r789] SKIP TK pid={pid}", flush=True)
             continue
     kill_set.add(pid)
-print(f"[p3822-r774] reap gpu={sorted(want)} kill={sorted(kill_set)}", flush=True)
+print(f"[p3844-r789] reap gpu={sorted(want)} kill={sorted(kill_set)}", flush=True)
 for pid in kill_set:
     try:
         os.kill(pid, signal.SIGTERM)
@@ -233,22 +233,20 @@ for pid in kill_set:
         os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
-print("[p3822-r774] chall GPUs reaped", flush=True)
+print("[p3844-r789] chall GPUs reaped", flush=True)
 PY
 
 for i in $(seq 1 60); do
-  used=$(nvidia-smi -i 4,5 --query-gpu=memory.used --format=csv,noheader,nounits | awk '{s+=$1} END{print s+0}')
+  used=$(nvidia-smi -i 6,7 --query-gpu=memory.used --format=csv,noheader,nounits | awk '{s+=$1} END{print s+0}')
   if [[ "${used:-999999}" -lt 2000 ]]; then
-    log "GPUs 4,5 free (poll $i used_mib=$used)"
+    log "GPUs 6,7 free (poll $i used_mib=$used)"
     break
   fi
   sleep 2
 done
 
 _seed_src=""
-for cand in /root/.triton/cache/chall_r730 /root/.triton/cache/chall_r720 \
-  /root/.triton/cache/chall_r745 /root/.triton/cache/chall_r774 \
-  /root/.triton/cache/chall /root/.triton/cache/king; do
+for cand in /root/.triton/cache/chall_r728 /root/.triton/cache/chall_r731 /root/.triton/cache/chall_r721 /root/.triton/cache/chall_r712 /root/.triton/cache/chall /root/.triton/cache/king; do
   _n=$(find "$cand" -name '__triton_launcher*.so' 2>/dev/null | wc -l || true)
   if [[ "${_n:-0}" -ge 8 ]]; then
     _seed_src=$cand
@@ -312,7 +310,7 @@ curl -sf -m 5 "http://127.0.0.1:${CHALL_PORT}/v1/models" >/dev/null
 
 BLOCK_HASH=$(python3 - <<'PY'
 import hashlib, time
-print(hashlib.sha256(f"r774-reign35-wvk7-p3822-{time.time()}".encode()).hexdigest())
+print(hashlib.sha256(f"r789-reign35-wvk7-p3844-{time.time()}".encode()).hexdigest())
 PY
 )
 log "launch n80 vs $KING_REPO block_hash=${BLOCK_HASH:0:16}… (HF_TOKEN unset; hub ids)"
@@ -329,14 +327,14 @@ nohup env -u HF_TOKEN -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE \
   --chall-rev local \
   --chall-port "$CHALL_PORT" \
   --n-turns 80 \
-  --hotkey local-r774-reign35-wvk7 \
+  --hotkey local-r789-reign35-wvk7 \
   --block-hash "$BLOCK_HASH" \
   --out "$SIM_N80" \
   --progress-out "$PROG" \
   --save-artifact \
   >>"$LOG" 2>&1 &
 SIM_PID=$!
-echo "$SIM_PID" > /root/logs/r774_sim_wvk7.pid
+echo "$SIM_PID" > /root/logs/r789_sim_wvk7.pid
 log "n80 pid=$SIM_PID — waiting for result"
 
 while kill -0 "$SIM_PID" 2>/dev/null; do
@@ -363,7 +361,7 @@ except Exception:
     bar = None
 dec={
   "utc": __import__("time").strftime("%Y-%m-%dT%H:%M:%SZ", __import__("time").gmtime()),
-  "hypo": "R774",
+  "hypo": "R789",
   "contract": "wvk7",
   "n_teacher_samples": dp.get("n_teacher_samples"),
   "tau": dp.get("tau"),
@@ -376,7 +374,7 @@ dec={
   "thought_median": chal.get("median_len_z"),
   "b_pass": chal.get("b_gate_pass_rate"),
   "wins": v.get("challenger_wins") if v else d.get("wins"),
-  "note": "p3822 chall+v4-n80 golden 4,5; MidCtx MidRank LoBeta MegaSuperExtra ep4×LoLR (β=0.02 r=32 @8192 steps=19200; after R746).; vs reign35 tammy wvk7",
+  "note": "p3844 chall+v4-n80 lunar 6,7; marsplan MidCtx MidRank MidBeta SuperExtra ep3×UltraLoLR; vs reign35 tammy wvk7",
   "hf_ok": False,
   "raw_keys": sorted(d.keys())[:40],
 }
@@ -390,5 +388,5 @@ else
   log "FATAL missing sim result"
   exit 1
 fi
-date -u +%Y-%m-%dT%H:%M:%SZ > /root/logs/r774_reign35_wvk7_pipeline.done
-log "DONE R774 v4 n80 vs reign35 on golden 4,5"
+date -u +%Y-%m-%dT%H:%M:%SZ > /root/logs/r789_reign35_wvk7_pipeline.done
+log "DONE R789 v4 n80 vs reign35 on lunar 6,7"
