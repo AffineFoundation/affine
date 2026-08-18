@@ -1,16 +1,20 @@
 """Per-turn instrumentation: teacher references + forced-logprob calls.
 
 Per turn x, with teacher C and miner A:
-  teacher rollouts  R_C = {(z_C^i, y_C^i)}  i = 1..n
-  miner rollouts    R_A = {(z_A^j, y_A^j)}  j = 1..n
+  teacher rollouts  R_C = {(z_C^i, y_C^i)}  i = 1..k   (k = n_teacher_samples)
+  miner rollouts    R_A = {(z_A^j, y_A^j)}  j = 1..n_miner_samples
 
-Pairing (i, j) is diagonal to keep the call count linear. All lp* come from
-echo+logprobs teacher forcing, never from tempered sampling logprobs.
+Production pairing (Reason-only, v4 2026-08-17): every teacher reference is
+kept and scored against the miner rollout (with 1 miner sample per turn that
+is k pairs sharing one z_A/y_A) — turn_reason() then takes the tempered
+log-mean-exp over the k per-ref Reasons. B-license echoes (lpC(y_A|z_A),
+lpC(y_A|∅)) depend only on the miner rollout, so they run once per distinct
+rollout, not once per pair. All lp* come from echo+logprobs teacher forcing,
+never from tempered sampling logprobs.
 
-Production (Reason-only): each pair records z_A/y_A plus the components the
-score needs — lpC(y_C|z_A) and the teacher-ref lpC(y_C|z_C)/lpC(y_C|∅).
-Optional full_terms / score_bank keep the retired S* v2 telemetry echoes for
-offline replay; they are off in live duels.
+Legacy full_terms / score_bank replay keeps the old diagonal
+min(refs, rollouts) truncation so archived telemetry stays comparable; it is
+off in live duels.
 """
 
 from __future__ import annotations
@@ -40,16 +44,11 @@ _FULL_CALLS = [
     ("lpC_ya_zc", "teacher", "zc", "ya"),
 ]
 
-# Score path: Reason = lpC(y_C|z_A) − lpC(y_C|∅); empty/own come from refs.
+# Score path: Reason = lpC(y_i|z_A) − lpC(y_i|∅); empty/own come from refs.
+# One echo per (ref, rollout) pair. B echoes are handled separately (once
+# per distinct miner rollout) inside miner_terms.
 _REASON_CALLS = [
     ("lpC_yc_za", "teacher", "za", "yc"),
-]
-
-# Reason + teacher-side B (lpC of the miner's own action with/without z).
-_REASON_PLUS_B_CALLS = [
-    ("lpC_yc_za", "teacher", "za", "yc"),
-    ("lpC_ya_za", "teacher", "za", "ya"),
-    ("lpC_ya_e", "teacher", "", "ya"),
 ]
 
 
@@ -139,9 +138,12 @@ async def miner_terms(teacher: TeacherClient, miner: VllmModel, prefix: list[dic
                       rollouts: list[tuple[str, str]] | None = None) -> dict:
     """Compute the pair record for one miner on one turn.
 
-    reason_only (production): sample the miner, echo lpC(y_C|z_A) on the
-    teacher, stamp η from teacher-ref denominators. No lpA / bank GPU work.
-    causality_gate adds lpC(y_A|z_A) and lpC(y_A|∅) for the B license.
+    reason_only (production, v4): sample the miner, echo lpC(y_i|z_A) on the
+    teacher against EVERY teacher ref (k pairs per turn), stamp η from
+    teacher-ref denominators. No lpA / bank GPU work. causality_gate adds
+    lpC(y_A|z_A) and lpC(y_A|∅) once per distinct miner rollout (the B
+    license does not depend on the ref). Legacy full_terms keeps the old
+    diagonal min(refs, rollouts) truncation for replay comparability.
     sticky_key pins teacher echoes for this turn to one replica (prefix cache).
 
     If ``rollouts`` is provided (already sampled), skip miner sampling — used
@@ -154,47 +156,71 @@ async def miner_terms(teacher: TeacherClient, miner: VllmModel, prefix: list[dic
     if not rollouts or not ref:
         return {"valid": False}
 
-    m = min(len(ref), len(rollouts))
-    ref, rollouts = ref[:m], rollouts[:m]
-
-    calls = _FULL_CALLS
     if reason_only:
-        calls = _REASON_PLUS_B_CALLS if causality_gate else _REASON_CALLS
+        # v4 pairing: keep all k refs; cycle miner rollouts across them
+        # (with the production 1 miner sample, every ref shares one z_A/y_A).
+        midx = [i % len(rollouts) for i in range(len(ref))]
+        calls = _REASON_CALLS
+    else:
+        m = min(len(ref), len(rollouts))
+        ref, rollouts = ref[:m], rollouts[:m]
+        midx = list(range(m))
+        calls = _FULL_CALLS
+    n_pairs = len(ref)
+
     tasks = []
-    for i in range(m):
+    for i in range(n_pairs):
         ctx = {"zc": ref[i]["z"], "yc": ref[i]["y"],
-               "za": rollouts[i][0], "ya": rollouts[i][1], "": EMPTY_THOUGHTS}
+               "za": rollouts[midx[i]][0], "ya": rollouts[midx[i]][1],
+               "": EMPTY_THOUGHTS}
         for _, model, z_key, y_key in calls:
             if model == "miner":
                 tasks.append(miner.score_action(prefix, ctx[z_key], ctx[y_key]))
             else:
                 tasks.append(teacher.score_action(
                     prefix, ctx[z_key], ctx[y_key], sticky_key=sticky_key))
+    # B echoes once per distinct miner rollout (ref-independent).
+    b_rollouts = sorted(set(midx)) if (reason_only and causality_gate) else []
+    for j in b_rollouts:
+        tasks.append(teacher.score_action(
+            prefix, rollouts[j][0], rollouts[j][1], sticky_key=sticky_key))
+        tasks.append(teacher.score_action(
+            prefix, EMPTY_THOUGHTS, rollouts[j][1], sticky_key=sticky_key))
     res = await asyncio.gather(*tasks)
+
+    b_by_rollout: dict[int, dict[str, float]] = {}
+    base = n_pairs * len(calls)
+    for t, j in enumerate(b_rollouts):
+        b_by_rollout[j] = {
+            "lpC_ya_za": res[base + 2 * t]["lp_per_byte"],
+            "lpC_ya_e": res[base + 2 * t + 1]["lp_per_byte"],
+        }
 
     bank_vals = None
     if score_bank:
         bank_vals = await asyncio.gather(*[
-            _bank_lift(teacher, prefix, ref[i]["y"], rollouts[i][0],
+            _bank_lift(teacher, prefix, ref[i]["y"], rollouts[midx[i]][0],
                        sticky_key=sticky_key)
-            for i in range(m)
+            for i in range(n_pairs)
         ])
 
     pairs = []
-    for i in range(m):
+    for i in range(n_pairs):
         lp = {name: res[i * len(calls) + j]["lp_per_byte"]
               for j, (name, *_) in enumerate(calls)}
+        lp.update(b_by_rollout.get(midx[i], {}))
         lp["lpC_yc_zc"] = ref[i]["lp_own"]
         lp["lpC_yc_e"] = ref[i]["lp_empty"]
-        lp["z_a"] = rollouts[i][0]
-        lp["y_a"] = rollouts[i][1]
+        lp["z_a"] = rollouts[midx[i]][0]
+        lp["y_a"] = rollouts[midx[i]][1]
         lp["eta"] = eta(lp)
         if bank_vals is not None:
             lp["L2_bank"] = bank_vals[i]
         pairs.append(lp)
 
-    out: dict = {"pairs": pairs, "valid": True, "n_pairs": m}
+    out: dict = {"pairs": pairs, "valid": True, "n_pairs": n_pairs}
     if bank_vals is not None:
-        out["bank_frac"] = sum(1.0 if v > 0 else 0.0 for v in bank_vals) / m
-        out["L2_bank"] = sum(bank_vals) / m
+        out["bank_frac"] = (
+            sum(1.0 if v > 0 else 0.0 for v in bank_vals) / n_pairs)
+        out["L2_bank"] = sum(bank_vals) / n_pairs
     return out

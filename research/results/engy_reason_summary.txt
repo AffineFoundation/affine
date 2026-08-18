@@ -1,0 +1,75 @@
+Engy-teacher Reason exploration — 2026-08-18
+=============================================
+
+Question: we are being Goodharted (RT-7: live Spearman(margin, swe) = -0.42).
+Can a Reason-like score computed with an EXTERNAL teacher nobody optimized
+against (engy `glm-5.2` via api.engy.ai) differentiate models so that a higher
+score predicts higher swe-rebench?
+
+Method (mirrors production Reason v4 byte-exactly):
+  a_i  = lpC'(y_i | z_A) - lpC'(y_i | EMPTY)      per-byte, per teacher ref
+  turn = 0.03 * log(mean_i exp(a_i / 0.03))       tempered LME, k = 3 fresh refs
+  miner = mean(turn)
+  - prompts rendered through zai-org/GLM-5.2's own chat template
+  - teacher-forced spans scored via completions echo + logprob_start_len
+    (token-id prompts; local tokenizer ids verified == server ids)
+  - thoughts z_A are the STORED miner thoughts from existing artifacts —
+    no model was re-run; only the teacher changed.
+
+Panels
+------
+1. Albedo (non-adversarial): 10 kings x 200 shared turns from
+   ekings_v2_all.jsonl, swe-rebench 58.2 .. 11.6 (KING_BENCH).
+2. Live (adversarial): 60 SN120 models (challengers + kings incl. genesis)
+   from published duel artifacts (evals/chal-*.json.gz), ~30 stored thoughts
+   each, swe_lite from data/benchmarks.json.
+
+Results
+-------
+Albedo panel (n = 10 kings):
+  Spearman(Reason_engy LME t=0.03, swe) = +0.770  (perm p = 0.013)
+  Spearman(Reason_engy plain mean, swe) = +0.794  (perm p = 0.009)
+  Reproduces the +0.758 freeze measured under our own GLM-4.5-Air teacher.
+  => second-teacher robustness confirmed again (cf. Qwen3-32B +0.943 n=6),
+     now with a bigger remote teacher accessed only through a public API.
+
+Live panel (n = 60 models):
+  Spearman(Reason_engy, swe_lite) = -0.067  (perm p = 0.61)   — flat
+  Same-model baseline, live duel margins (production teacher):
+                                   -0.146  (perm p = 0.27)   — also flat
+  genesis (swe 0.24, the only real capability outlier) ranks #1 of 60.
+  Mean Reason_engy by swe level: 0.24 -> +0.066 | 0.12 -> +0.037 |
+  0.08 -> +0.048 | 0.04 -> +0.050 | 0.00 -> +0.048  (flat within the pack).
+
+Reading
+-------
+- The engy teacher removes the similarity-to-incumbent channel by
+  construction (nobody trained against it), and it ranks true capability
+  gaps correctly (Albedo spread, genesis on the live board).
+- It still does NOT order the live pack by swe. Two reasons, not separable
+  on this data: (a) swe_lite at 25 tasks has 0.04 granularity and known
+  repeat noise (genesis measured 0/25 and 5/25 on the same revision), so
+  most pairwise swe differences inside the pack are unmeasured; (b) the pack
+  is ~uniformly Goodharted fine-tunes of the same base with genuinely
+  similar coding ability — there may be no true ordering to recover.
+- On this snapshot the production margin baseline is also ~0 (-0.15 n.s.),
+  weaker than RT-7's -0.42 (older n=29 snapshot with three 0/75 kings);
+  the inversion has decayed toward noise as the board churned.
+
+Verdict
+-------
+An engy-teacher Reason is a faithful distillation meter and a viable
+independent second teacher (echo scoring works; ~$0.5-1 per 1300-turn duel
+side at glm-5.2 prices, prompt caching included). It is NOT a swe oracle for
+the current live pack: it cannot rank models whose swe differences are
+themselves noise. Its value is as a Goodhart audit — a paired second-teacher
+margin that an incumbent optimized against C1 cannot inherit for free.
+
+Artifacts
+---------
+  research/scripts/engy_reason_probe.py       harness + albedo panel
+  research/scripts/engy_reason_live.py        live panel (artifacts + corpus)
+  research/results/engy_reason_albedo_n200.json   per-king table
+  research/results/engy_reason_live_table.json    per-model table
+  research/results/engy_refs_{albedo_n200,live}.jsonl   teacher refs (k=3)
+  research/results/engy_scores_{albedo_n200,live}.jsonl lp records

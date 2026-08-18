@@ -7,15 +7,62 @@ Experiment IDs RT-n; results go to RESEARCH_LOG.md as they land.
 **Status key:** **CONFIRMED** = attack works in isolation; **CLOSED** = production scoring blocks it;
 **OPEN** = not yet tested or low-priority residual.
 
-**Production (2026-08-13, Reason v3 + δ + thought-length floor + B gate, `weight_version_key=6`):**
-score = mean Reason = mean(lpC(y_C|z_A) − lpC(y_C|∅)); crown iff paired
+**Production (2026-08-17, Reason v4 tempered multi-sample + δ + thought-length
+floor + B gate, `weight_version_key=7`):** per turn the teacher samples k=3
+refs; a_i = lpC(y_i|z_A) − lpC(y_i|∅); turn score = τ·log(mean_i exp(a_i/τ)),
+τ=0.03; miner score = mean over 1300 turns. Crown iff paired
 mean(Reason_c − Reason_k) > max(2·SE, 0.002) **and** median(len(z.strip())) ≥ 80
-**and** B pass rate ≥ 0.30. B = lpC(y_A|z_A) − lpC(y_A|∅); pair passes if
+**and** B pass rate ≥ 0.30. B = lpC(y_A|z_A) − lpC(y_A|∅); a rollout passes if
 B ≥ 0.02 and no leakage. No lpA gates, no L1 mix. Length floor (wvk=5) plus
-B (wvk=6) close A9; live fill-in n80: thermo cue 20% fail, guass CoT 45% pass.
-Everything below that references gates, clip, r-band, baseline band, or the
-pre-δ 3σ-only rule describes a retired snapshot and is kept as the
-experimental record.
+B (wvk=6) close A9's silence/cue variants; the tempered LME (wvk=7) closes the
+hedge-filler equilibrium (A13). Everything below that references gates, clip,
+r-band, baseline band, or the pre-δ 3σ-only rule describes a retired snapshot
+and is kept as the experimental record.
+
+## 2026-08-17 — Reason v4: tempered multi-sample closes the hedging equilibrium (A13); two new watch items
+
+**The attack v4 closes (A13 — hedge-filler equilibrium).** The teacher's
+next-action distribution is multi-modal: resampling a turn yields different,
+equally valid actions. v3 scored the miner's thought against ONE sampled
+reference and averaged per-turn Reasons in log space, so a thought that
+commits to a valid mode had negative expected score whenever the reference
+landed on another mode — measured on the teacher itself: its own thought,
+unpaired from its rollout, scores ≈ −0.010/byte (n=509). Any baseline term
+independent of z_A cancels in both the miner's argmax and the paired duel,
+so no baseline tweak could fix it. The rational strategy was substantive-
+looking, non-committal filler that lifts everything slightly and bets on
+nothing — long enough for the length floor, causal enough for B. That was
+the observed board equilibrium.
+
+**The fix.** k=3 refs per turn, per-ref a_i, tempered log-mean-exp with
+τ=0.03. For any τ<∞ the LME is dominated by the best-matched reference: a
+likelihood ratio is bounded below by 0, so a missed mode zeroes its own
+share but cannot drag the turn below the credit from a hit. The objective is
+linear in the miner-induced action distribution, so the optimum is decisive
+commitment to the teacher's highest-lift mode. Filler earns ≈ 0 under every
+τ and now loses duels. Limits: k=1 ≡ v3 exactly (any τ); τ→∞ ≡ the broken
+mean; τ=1/L (~0.002) is the hard max. Calibration (AIIan, n=100 turns):
+commit−hedge flips positive at τ=0.1, +0.0129 at τ=0.03. Smoke test carries
+the flip as an invariant (`turn_reason.commit_wins_tempered` /
+`duel.v3_mean_would_reject`).
+
+**New watch items (both monotone in τ — τ is the dial):**
+- **RT-9 — mode-guessing.** Under cold τ one hit of k suffices, so blindly
+  committing to the statistically modal action (guessable from surface cues:
+  error → rerun, edit → test) scores without genuine reasoning. Defense:
+  τ=0.03 kept warm (nearer the a_i spread than 1/L), length floor, B, post-
+  crown audit. Monitor: per-turn a_i spread + which-ref-dominates telemetry.
+- **RT-10 — leakage amplification.** A reference action copied/paraphrased
+  into z_A produces an exponentially dominant term — leakage pays more under
+  LME than under the mean. Defense: B's leakage check fails the license;
+  fresh per-duel refs mean the miner cannot know y_i at submit time; audit.
+  Harden the n-gram/paraphrase detector if bank telemetry moves.
+
+**Also shipped with the fork:** n_turns 2080→1300 (k=3 triples teacher
+sampling+echo per turn; duel GPU-seconds roughly flat), B echoes deduped once
+per rollout (ref-independent), δ=0.002 marked provisional at the new score
+scale — recalibrate from the first ~20 live v4 duels. k=1 archived verdicts
+replay bit-identically through the v4 code path (verified on 4 artifacts).
 
 ## 2026-08-13 — A9 live on the board: median thought-length floor
 

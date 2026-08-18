@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import statistics as _st
 import sys
 import tempfile
 from pathlib import Path
@@ -35,8 +36,8 @@ from affine.config import load_config  # noqa: E402
 
 cfg = load_config()
 check("config.typed_duel",
-      cfg.duel.n_turns == 2080 and cfg.duel.k_sigma == 2.0
-      and cfg.duel.n_teacher_samples == 1 and cfg.duel.n_miner_samples == 1
+      cfg.duel.n_turns == 1300 and cfg.duel.k_sigma == 2.0
+      and cfg.duel.n_teacher_samples == 3 and cfg.duel.n_miner_samples == 1
       and cfg.duel.reason_only is True and cfg.duel.score_bank is False)
 # δ crown floor (2026-08-12, weight_version_key=4); the v2 SE floor stays gone.
 check("config.delta_floor",
@@ -45,7 +46,9 @@ check("config.thought_floor", cfg.duel.min_thought_chars == 80)
 check("config.causality_gate_on",
       cfg.duel.causality_gate is True and cfg.duel.causality_gamma == 0.30
       and cfg.duel.causality_tau == 0.02)
-check("config.v6_fork_key", cfg.weight_version_key >= 6)
+# Reason v4: tempered multi-sample (2026-08-17, weight_version_key=7).
+check("config.v4_temper", cfg.duel.tau == 0.03)
+check("config.v7_fork_key", cfg.weight_version_key >= 7)
 check("config.submission_caps",
       cfg.submission.max_total_repo_gb > cfg.submission.max_model_size_gb)
 check("config.min_submission_block_set", cfg.min_submission_block >= 0)
@@ -91,6 +94,66 @@ def rows_for(miner: str, per_turn: list[float], lift: float = 1.0,
                     "pairs": [pair]})
     return out
 
+
+# -- score: tempered turn aggregation (v4) ------------------------------------
+def _tpairs(vals: list[float]) -> list[dict]:
+    return [{"lpC_yc_za": v, "lpC_yc_e": 0.0} for v in vals]
+
+
+# k=1 identity for any tau (v3-era rows replay unchanged).
+check("turn_reason.k1_identity",
+      score.turn_reason(_tpairs([-0.013]), 0.03) == -0.013
+      and score.turn_reason(_tpairs([-0.013]), None) == -0.013)
+# tau <= 0 → plain mean (explicit v3 replay path).
+_a = [-0.03, 0.01, -0.01]
+check("turn_reason.tau0_is_mean",
+      score.turn_reason(_tpairs(_a), 0) == _st.mean(_a)
+      and score.turn_reason(_tpairs(_a), None) == _st.mean(_a))
+# LME sits strictly between the mean and the max, monotone toward the max
+# as tau cools (colder tau ⇒ the best-matched ref dominates harder).
+_v = score.turn_reason(_tpairs(_a), 0.03)
+check("turn_reason.between_mean_and_max",
+      _st.mean(_a) < _v < max(_a), f"v={_v}")
+check("turn_reason.monotone_in_tau",
+      score.turn_reason(_tpairs(_a), 0.01) > _v
+      > score.turn_reason(_tpairs(_a), 0.1))
+# Commit-vs-hedge flip: a thought that nails 1-of-3 modes (big positive on
+# the hit, misses punished on the others) must beat neutral filler under
+# tau=0.03 even though it LOSES under the plain mean — Allan's flip.
+_commit = _tpairs([0.06, -0.04, -0.05])   # mean −0.01: hedge wins under v3
+_hedge = _tpairs([0.002, 0.001, 0.0015])  # small uniform lift, mean ≈ +0.0015
+check("turn_reason.hedge_wins_plain_mean",
+      score.turn_reason(_commit, 0) < score.turn_reason(_hedge, 0))
+check("turn_reason.commit_wins_tempered",
+      score.turn_reason(_commit, 0.03) > score.turn_reason(_hedge, 0.03),
+      f"commit={score.turn_reason(_commit, 0.03):.5f} "
+      f"hedge={score.turn_reason(_hedge, 0.03):.5f}")
+
+
+def rows_multi(miner: str, per_turn: list[list[float]]) -> list[dict]:
+    """k pairs per turn sharing one honest z_A/y_A (production v4 shape)."""
+    thought = ("I need to inspect the repository structure and read the "
+               "relevant source file before making a change.")
+    out = []
+    for i, vals in enumerate(per_turn):
+        pairs = [{"lpC_yc_za": v, "lpC_yc_e": 0.0, "lpC_yc_zc": 1.0,
+                  "z_a": thought, "y_a": "ls -la"} for v in vals]
+        out.append({"turn_id": f"t{i}", "miner": miner, "valid": True,
+                    "pairs": pairs})
+    return out
+
+
+# k=3 duel end-to-end: a committer beats a hedger under tau=0.03.
+_committer = rows_multi("commit", [[0.06, -0.04 + 0.002 * (i % 3), -0.05]
+                                   for i in range(20)])
+_hedger = rows_multi("hedge", [[0.002, 0.001 + 0.0002 * (i % 3), 0.0015]
+                               for i in range(20)])
+r_v4 = score.duel(_committer, _hedger, tau=0.03, causality_gamma=0.0)
+check("duel.v4_commit_beats_hedge", r_v4.challenger_wins and r_v4.tau == 0.03,
+      f"margin={r_v4.margin:.4f} z={r_v4.z:.1f}")
+r_v3 = score.duel(_committer, _hedger, tau=None, causality_gamma=0.0)
+check("duel.v3_mean_would_reject", not r_v3.challenger_wins,
+      f"margin={r_v3.margin:.4f}")
 
 # RT-4 copy null: identical per-turn scores → margin exactly 0 → no crown.
 king = rows_for("king", [0.05 * ((i % 5) - 2) for i in range(20)])
