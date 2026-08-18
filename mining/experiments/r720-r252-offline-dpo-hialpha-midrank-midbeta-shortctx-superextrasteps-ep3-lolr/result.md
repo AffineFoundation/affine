@@ -5,5 +5,6 @@
 
 **Decision rule:** Stage-5 iff fresh v4 n80 `margin > max(2·SE, δ=0.002)` AND median `|z|≥80` AND B pass ≥0.30 vs **reign35** (wvk=7, k=3, τ=0.03).
 
-## Status (p3768)
-**N80 LIVE** on `mine-r262` (golden) GPUs **6,7**/:8003 vs reign35 · vllm**537020** sim**542323** · `*_reign35_wvk7` fail-closed k=3 · MERGE_DONE `/tmp/r720_merged` 66G/16sh · hard-pin GPUS after mine.env.
+## Status (p3770)
+**REFUTE v4** vs reign35 · m=**−0.001125** SE=0.001710 z=−0.658 n=77 bar=0.003420 (~**−0.33×**) thought✓(145) B✓(0.403) k=3/τ=0.03.
+Chall reaped golden 6,7/:8003 by pidfile; keep `/tmp/r720_merged`. Slot → **R730 TRAIN** Short HiRank MidBeta SuperExtra.
