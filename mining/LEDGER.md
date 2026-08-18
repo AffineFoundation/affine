@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 87495.17507268496 | p3799 |
-| Lium balance | **$87495.17507268496** | p3799 |
+| $UTC | 87452.51481070807 | p3800 |
+| Lium balance | **$87452.51481070807** | p3800 |
 | cumulative mining spend | ~$119,000 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$77577** (balance − $10,000 floor) | $UTC |
+| **available for mining** | **~$77452** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (6 pods) | **~31.45/h** · vs floor 33/h · gap **−01.55/h** · B300×8=0 | p3799 |
+| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | p3800 |
 | miner coldkey free | τ1260.384 | after α→TAO→Lium (kept ≥τ50) |
 | miner stake | **0** (r252 swept p3795) | p3795 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
@@ -26,7 +26,8 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
-| 2026-08-18T04:55:46Z | 87495.17507268496 | p3799 **R747 REFUTE** → **R754 TRAIN** + **R746 N80 LIVE** (no rent; B300×8=0); burn **~31.45/h** |
+| 2026-08-18T05:01:51Z | 87452.51481070807 | p3800 **R745 REFUTE** → **R755 TRAIN** golden 4,5 (no rent; B300×8=0); burn **~$331.45/h** |
+| 2026-08-18T04:55:46Z | 87495.17507268496 | p3799 **R747 REFUTE** → **R754 TRAIN** + **R746 N80 LIVE** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T04:45:54Z | 87576.51574428375 | p3798 **R745 MERGE→n80 ARMED** golden 4,5 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T04:42:11Z | 87617.13271789509 | p3797 **R747 MERGE→N80 LIVE** zesty 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T04:36:31Z | 87697.93050158377 | p3796 **R744 REFUTE** → **R753 TRAIN** crown 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
@@ -35,5 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T04:21:38Z | 86750.52887741415 | p3793 **R742+R743 REFUTE** → **R750+R751 TRAIN** R252 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T04:12:30Z | 86873.14562863595 | p3792 **R738 REFUTE** → **R749 TRAIN** lunar 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T04:06:09Z | 86873.14562863595 | p3791 **R742 MERGE→N80 LIVE** R252 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-18T03:59:40Z | 86954.00486330794 | p3790 **R738 MERGE→N80 LIVE** lunar 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-18T03:55:36Z | 86954.00486330794 | p3789 **R740 REFUTE** → **R748 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
