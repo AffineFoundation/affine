@@ -1,13 +1,10 @@
-# R842 — marsplan SoftCtx MidRank MidBeta UltraLoLR
+# R842 result — REFUTE v4 vs reign36
 
-**Decision rule:** Stage-5 iff fresh v4 n80 paired margin > max(2·SE, δ=0.002) AND median |z|≥80 AND B≥0.30 vs reign36 vera.
-
-| field | value |
-|---|---|
-| base | `marsplan0624/affine-5gedzafcvg-queen`@`556d02a2` |
-| method | Offline DPO · Soft Mid Mid Soft data @12288 |
-| knobs | β=0.1 α=128 r=32 lr=5e-7 ep=4 steps=19200 UltraLoLR |
-| parent | R836 MidCtx Mid Mid REFUTE m=−0.00576 ~−0.85× → SoftCtx transfer |
-| status | **n80 RELOAD p3943** lunar :8003 GPUs 6,7 · MERGE_DONE · prior EngineDead mid-probe ~22:30Z |
-
-**p3943:** Chall died on `sample_tokens` RPC timeout during probe; one-shot `r842_n80_launched.p3928` left GPUs idle. Cleared stamp + relaunched `lean_chall_n80_lunar_gpus67_p3928.sh` (pid in `/root/logs/p3943_r842_chall_n80.pid`).
+- **utc:** 2026-08-18T22:55:46Z (decision)
+- **contract:** wvk=7 · k=3 · τ=0.03
+- **king:** `vera6/affine-5g4yy75zuz-t6`@`8e3f1695…` reign36
+- **margin:** −0.007680 · SE=0.003586 · z=−2.141 · n=79
+- **bar:** max(2·SE, δ)=0.007173 (~**−1.07×**)
+- **thought_median:** 213 ✓ · **b_pass:** 0.443 ✓
+- **wins:** false
+- **p3947:** reap lunar :8003 exact CVD=6,7 → R830 claimer CLAIM 6,7:8003 LOAD
