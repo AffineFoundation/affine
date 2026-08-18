@@ -1,0 +1,17 @@
+{
+  "utc": "2026-08-18T20:06:00Z",
+  "hyp": "R828",
+  "status": "REFUTE_v4",
+  "vs": "stale_reign35_tammy",
+  "margin": -0.007278221202429706,
+  "se": 0.004574421634976966,
+  "z": -1.591069163100081,
+  "bar": 0.009148843269953933,
+  "ratio": -0.7955345815500405,
+  "thought_med": 152.0,
+  "b_pass": 0.31932773109243695,
+  "k": 3,
+  "tau": 0.03,
+  "n": 79,
+  "next": "R841 Soft Mid Mid Soft MidRank HiBeta SoftCtx UltraLoLR TRAIN golden 6,7"
+}

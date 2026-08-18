@@ -1,2 +1,4 @@
-TRAIN pending p3907 — Soft Mid Mid Soft UltraLoLR on golden 6,7 after R813 REFUTE.
-Decision: Stage-5 iff fresh n80 margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30.
+# R828 result
+**REFUTE v4** (p3927) vs **stale reign35 tammy** (live=reign36 vera).
+m=**−0.007278** SE=0.004574 z=−1.591 n=79 bar=0.009149 (~**−0.80×**) thought✓(152) B✓(0.319) k=3/τ=0.03.
+Chall reaped golden 6,7 → **R841** Soft Mid Mid Soft MidRank HiBeta SoftCtx UltraLoLR TRAIN.

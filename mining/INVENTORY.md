@@ -7,8 +7,8 @@
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
 | mine-crown-1 | gentle-orbit-bd | 8×B200 | $52.25 | **2026-08-19T17:23Z** | TK **vera** · **R839+R840 TRAIN** |
-| mine-r165-awesome-hialpha-1 | lunar-wolf-be | 8×B200 | $44.00 | **2026-08-19T17:23Z** | TK · **R837+R836 TRAIN** |
-| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | 8×B200 | $60.00 | **2026-08-19T17:23Z** | TK · **R838 TRAIN** 4,5 · **R828 TRAIN** 6,7 |
+| mine-r165-awesome-hialpha-1 | lunar-wolf-be | 8×B200 | $44.00 | **2026-08-19T17:23Z** | TK **vera** · **R837 TRAIN** · **R836 n80 LIVE** |
+| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | 8×B200 | $60.00 | **2026-08-19T17:23Z** | TK tammy · **R838+R841 TRAIN** |
 | mine-r226-marsplan-fullft-1 | brave-raven-a9 | 8×B200 | $47.20 | **2026-08-19T17:23Z** | **R821–R823** + relay |
 | mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | 8×B300 | $64.00 | **2026-08-19T17:23Z** | **R834+R833 TRAIN** |
 | mine-r337-marsplan-online-dpo-hilr-1 | gentle-shark-35 | 8×B300 | $47.04 | **2026-08-19T17:35Z** | **R835 TRAIN** + **R796+R830** |
@@ -22,7 +22,7 @@ SSH R252: `ssh -p 40299 root@95.133.252.28`
 SSH R337: `ssh root@86.38.182.67 -p 20295`
 SSH R338: `ssh root@86.38.182.55 -p 20299`
 Host fleet: **7 mine-*** · B300×8 rentable **0** · lone 8×B200 **bl** · burn **~$366.49/h** · **wvk=7**
-**p3926:** R829+R827 REFUTE→R838/R839/R840 TRAIN; vera SWAPPED; B300×8=0; mine=7; bal **~$85215**
+**p3927:** R828 REFUTE→R841 TRAIN; R836 n80 LIVE vs vera; B300×8=0; mine=7; bal **~$85126**
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval`, `affine-teacher2`.
 
@@ -30,6 +30,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-18T20:06:15Z | p3927: **R828 REFUTE** reap→**R841 TRAIN**; R836 n80 LIVE vs vera; B300×8=0 |
 | 2026-08-18T19:56:07Z | p3926: **R829+R827 REFUTE** reap→**R838** golden + **R839/R840** crown; vera SIZE_OK+SWAP; B300×8=0 |
 | 2026-08-18T19:34:06Z | p3925: **R824 REFUTE→R829 n80 LIVE** crown :8002; vera ~62%; golden 4,5 FREE; B300×8=0 |
-| 2026-08-18T19:27:18Z | p3924: **R826 REFUTE→R837** + vera DIRECT×4 + lunar TK relaunch; R825 REFUTE reap; B300×8=0 |
