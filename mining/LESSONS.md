@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3898: **R808 REFUTE v4** m=+0.001377~**0.16×** (thought✓220 B✓0.432 k=3) Soft Hi Hi Soft UltraLoLR → free :8003 by exact PID → **R818** MidCtx MidRank HiBeta UltraLoLR (R797 reclaim) lunar 6,7; R337+R338 both **online-DPO TRAIN**. B300×8=0. **Never `pkill -f`**.
 - p3897: after lunar teacher blob SIZE_OK, bootstrap must **skip** `snapshot_download` — patch `p3897_TEACHER_LOCAL_CACHE_SKIP` (stamp+local snap `config.json`); else HF DL restarts. R337 **SIZE_OK+BOOT**→prewarm. B300×8=0. **Never `pkill -f`**.
 - p3896: HF teacher DL slow on R337/R338 → kill exact HF/bootstrap PIDs → **lunar→dual continuous×8 size-checked teacher blob fill** (`p3896_teacher_parallel_fill…`); **R808** chall EngineDead (RPC `sample_tokens` timeout) mid-n80 → lean **RELOAD** :8003 (merge kept). B300×8=0. **Never `pkill -f`**.
 - p3895: p3893 finish → **R337+R338 SIZE_OK+BOOT_OK** (25/25 blobs · 16 shards · LOCAL_CACHE_SKIP → bootstrap teacher DL); empty `wait ''` on free_to_pipe=0 is harmless under `set -e` only if not last cmd — keep `for pid in "${pids[@]:-}"; do [[ -n $pid ]] && wait "$pid"; done`. B300×8=0. **Never `pkill -f`**.

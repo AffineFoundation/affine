@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 87252.3682908381 | p3897 |
-| Lium balance | **$87252.3682908381** | p3897 |
-| cumulative mining spend | ~$121,556 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$77252** (balance − $10,000 floor) | $UTC |
+| $UTC | 87208.00088174417 | p3898 |
+| Lium balance | **$87208.00088174417** | p3898 |
+| cumulative mining spend | ~$121,600 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$77208** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=bl | p3897 |
+| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=bl | p3898 |
 | miner coldkey free | τ1260.426 | kept ≥τ50 |
 | miner stake | **~17α ≈ τ0.96** (r252; after 160α sweep) | p3885 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T16:15:26Z | 87208.00088174417 | p3898 **R808 REFUTE→R818 TRAIN**; R337+R338 TRAIN (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T16:09:06Z | 87252.3682908381 | p3897 **teacher skip+R337 BOOT**; R808 n80 ~26/80 (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T16:01:00Z | 87292.315750923 | p3896 **R808 RELOAD** + **teacher host-relay** R337/R338 (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T15:55:49Z | 87340.40925428995 | p3895 **R337+R338 SIZE_OK+BOOT** (p3893 DONE; no rent; B300×8=0); burn **~$366.49/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T15:35:34Z | 87517.23900568223 | p3891 **parallel accel** R337/R338 (no rent; B300×8=0; bl B200×8 only); burn **~$366.50/h** |
 | 2026-08-18T15:29:38Z | 87606.27218338831 | p3890 **reap zesty** SSH-dead (−$64/h); burn **~$366.49/h**; waiter HEAD R339 |
 | 2026-08-18T15:24:26Z | 87651.04616224977 | p3889 **R807 REFUTE→R817 TRAIN** lunar 4,5; burn **~$430.49/h** |
-| 2026-08-18T15:17:57Z | 87694.75838897185 | p3888 **R806 REFUTE→R816 TRAIN** + parallel R338 relay; burn **~$430.49/h** |
