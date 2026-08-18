@@ -10,7 +10,7 @@
 | mine-r165-awesome-hialpha-1 | lunar-wolf-be | 8×B200 | $44.00 | **2026-08-19T17:23Z** | TK **vera** · **R843+R860 TRAIN** |
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | 8×B200 | $60.00 | **2026-08-19T17:23Z** | TK **vera** · **R859+R858 TRAIN** |
 | mine-r226-marsplan-fullft-1 | brave-raven-a9 | 8×B200 | $47.20 | **2026-08-19T17:23Z** | **R848–R851 TRAIN** 0–7 |
-| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | 8×B300 | $64.00 | **2026-08-19T17:23Z** | **R844+R845 MERGE** · vera **SIZE_OK+SWAP** |
+| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | 8×B300 | $64.00 | **2026-08-19T17:23Z** | **R844+R845 MERGE** · vera **SWAP LOADING** |
 | mine-r337-marsplan-online-dpo-hilr-1 | gentle-shark-35 | 8×B300 | $47.04 | **2026-08-19T17:35Z** | **R852–R854 TRAIN** 2–7 |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-lion-9f | 8×B300 | $52.00 | **2026-08-19T17:35Z** | **R855–R857 TRAIN** 2–7 |
 
@@ -21,8 +21,8 @@ SSH brave: `ssh -p 40127 root@18.118.83.97`
 SSH R252: **host:40299 TIMEOUT** — use `lium exec gentle-wolf-8c` / `lium scp`
 SSH R337: `ssh root@86.38.182.67 -p 20295`
 SSH R338: `ssh root@86.38.182.55 -p 20299`
-Host fleet: **7 mine-*** · B300×8=0 · B200×8=**1 listed=bl** · burn **~$366.49/h** · **wvk=7**
-**p3951:** vera SIZE_OK+SWAP; R846/R847 REFUTE→R861/R862 TRAIN; mine=7
+Host fleet: **7 mine-*** · B300×8=0 · B200×8=0 · burn **~$366.49/h** · **wvk=7**
+**p3952:** R252 named-shard HUB_OK → vera SWAP LOADING; mine=7
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval`, `affine-teacher2`.
 
@@ -30,6 +30,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-18T23:49:27Z | p3952: R252 hash→named shard links + vera SWAP LOADING; B300/B200×8=0 |
 | 2026-08-18T23:42:46Z | p3951: vera SIZE_OK+SWAP; R846/R847 REFUTE→R861/R862 TRAIN; B200 bl-skip |
 | 2026-08-18T23:23:30Z | p3950: **R830 REFUTE→R860 TRAIN** lunar 6,7; vera part1 resume; B200 bl-skip |
-| 2026-08-18T23:12:10Z | p3949: **R830 EngineDead→RELOAD** lunar :8003; B200×8 listed (not rented); B300=0 |
