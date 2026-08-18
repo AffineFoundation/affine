@@ -2,7 +2,7 @@
 Rewritten every pass. Do not append.
 
 ## Stage
-**Stage 4/5 · wvk=7 Reason v4 · KING reign36 · R848–R851 TRAIN brave · R846/R847 TRAIN crown · R844/R845/R838/R841/R842/R843 TRAIN · golden/lunar/crown vera LIVE · R252 vera DIRECT~19%**.
+**Stage 4/5 · wvk=7 Reason v4 · KING reign36 · R848–R851 TRAIN brave · R846/R847 TRAIN crown · R844/R845/R838/R841/R842/R843 TRAIN · golden/lunar/crown vera LIVE · R252 vera RESUME**.
 King=**reign36** vera6 · burn floor **≥$833/h**.
 
 ## Live facts
@@ -10,9 +10,9 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 |---|---|
 | contract | wvk=**7** · k=**3** · τ=**0.03** · n=**1300** · δ=0.002 · thought≥80 · B γ=0.30 · k_σ=2.0 |
 | king | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695…` **reign36** (crown+lunar+golden :8001 LIVE; R252 still **tammy** until SWAP) |
-| burn | **~$366.49/h** · gap **−$466.51/h** · B300×8 stock **0** · lone 8×B200=`fbb1135f` **bl** |
-| Lium | **~$84063.36209805681** · free τ**1260+** · stake ~47α≈τ2.60 |
-| **p3938** | hung launch SSH killed; **lunar worker LIVE** (~12.2/65.4 GiB ~19% @~47 MB/s · ETA~20m); host **SIZE_OK poll** + **swap waiter** armed |
+| burn | **~$366.49/h** · gap **−$466.51/h** · B300×8 stock **0** · B200×8 stock **0** |
+| Lium | **~$83974.58** · free τ**1260+** · stake ~47α≈τ2.60 |
+| **p3939** | 4/6 DIRECT chunks SSH-timeout; **resume×2** armed on lunar (keep live part0/1); **lium-exec swap waiter** (host:40299 dead); ~14 GiB/~65 GiB |
 
 ## Running
 | name | huid | $/h | role |
@@ -21,12 +21,12 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | mine-r165-awesome-hialpha-1 | lunar-wolf-be | $44.00 | TK **vera** · **R843 TRAIN** 4–5 · **R842 TRAIN** 6–7 |
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | $60.00 | TK **vera LIVE** · **R838 TRAIN** 4,5 · **R841 TRAIN** 6,7 |
 | mine-r226-marsplan-fullft-1 | brave-raven-a9 | $47.20 | **R848–R851 TRAIN** 0–7 + wait→merge |
-| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | $64.00 | **R844+R845 TRAIN** · vera DIRECT→swap |
+| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | $64.00 | **R844+R845 TRAIN** · vera RESUME→swap |
 | mine-r337-marsplan-online-dpo-hilr-1 | gentle-shark-35 | $47.04 | **R835 TRAIN** 6–7 · **R796+R830** |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-lion-9f | $52.00 | **R338** merge-only · **R831+R832** |
 
 ## Blocked
-No rentable 8×B300 (fleet waiter armed HEAD **R339**). Lone API 8×B200 blacklisted. Marsplan HF gated — host-relay only. R252 n80 waiters **fail-closed until vera SWAP_OK**. Never `pkill -f`. **Never kill Worker_TP without CVD/parent check**.
+No rentable 8×B300/B200 (fleet waiter armed HEAD **R339**). Marsplan HF gated — host-relay only. R252 n80 waiters **fail-closed until vera SWAP_OK**. Host→R252:40299 times out — use **`lium exec`/`lium scp`**. Never `pkill -f`. **Never kill Worker_TP without CVD/parent check**.
 
 ## Next action
-1. R252 **SIZE_OK→SWAP_OK** (poll `.ralph/p3938_*` + p3937 swap waiter; ETA~20m). 2. R848–R851 TRAIN→merge→host-relay→n80. 3. R846/R847 TRAIN→merge→n80. 4. R844/R845 n80 after vera. 5. Rent when B300. 6. Alpha→TAO→Lium if stake ≥~τ5.
+1. R252 **SIZE_OK→SWAP_OK** (poll `.ralph/p3939_*` resume+lium swap; ETA hours @~5 MB/s). 2. R848–R851 TRAIN→merge→host-relay→n80. 3. R846/R847 TRAIN→merge→n80. 4. R844/R845 n80 after vera. 5. Rent when B300. 6. Alpha→TAO→Lium if stake ≥~τ5.

@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 84063.36209805681 | p3938 |
-| Lium balance | **$84063.36209805681** | p3938 |
-| cumulative mining spend | ~$124,678 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$74063** (balance − $10,000 floor) | $UTC |
+| $UTC | 83974.57584080889 | p3939 |
+| Lium balance | **$83974.57584080889** | p3939 |
+| cumulative mining spend | ~$124,767 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$73975** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=bl | p3938 |
+| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=0 | p3939 |
 | miner coldkey free | τ1260.426 | kept ≥τ50 |
 | miner stake | **~47α ≈ τ2.60** (r252; under τ5 sweep) | p3917 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T22:15:54Z | 83974.57584080889 | p3939 R252 vera DIRECT resume+lium swap (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T22:10:17Z | 84063.36209805681 | p3938 unstick R252 vera DIRECT poll (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T22:07:47Z | 84063.36209805681 | p3937 **lunar→R252 vera DIRECT×6** + swap waiter (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T22:02:18Z | 84105.04586341498 | p3936 **brave R848–R851 TRAIN** (no rent; B300×8=0); burn **~$366.49/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T21:30:46Z | 84371.87754707636 | p3931 golden **vera SWAP_OK** (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T20:17:40Z | 85038.21538459286 | p3928 **R836 REFUTE→R842 TRAIN** + golden vera DIRECT (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T20:06:15Z | 85126.43956326392 | p3927 **R828 REFUTE→R841 TRAIN** + R836 n80 LIVE (no rent; B300×8=0); burn **~$366.49/h** |
-| 2026-08-18T19:56:07Z | 85214.70160046287 | p3926 **R829+R827 REFUTE→R838/R839/R840** (no rent; B300×8=0); burn **~$366.49/h** |
