@@ -36,5 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T18:27:53Z | 86011.87682857578 | p3918 **R818 REFUTE→R836 TRAIN** + vera king-swap lunar (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T18:18:40Z | 86099.75606291299 | p3917 **R835 TRAIN** R337 idle 6,7 fill (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T18:13:06Z | 86144.5788437599 | p3916 **R820 REFUTE→R834 TRAIN** (no rent; B300×8=0); burn **~$366.49/h** |
-| 2026-08-18T18:07:32Z | 86189.1810329072 | p3915 **R818 merge path-fix+relaunch** (no rent; B300×8=0); burn **~$366.49/h** |
-| 2026-08-18T18:03:49Z | 86229.33608798779 | p3914 **R820 n80 pathfix+relaunch** (no rent; B300×8=0); burn **~$366.49/h** |
