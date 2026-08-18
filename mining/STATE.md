@@ -2,7 +2,7 @@
 Rewritten every pass. Do not append.
 
 ## Stage
-**Stage 4/5 · wvk=7 Reason v4 · KING reign35 · R810 N80 LIVE · R826 TRAIN · R825 TRAIN · R821–R824 TRAIN · R820+R819 TRAIN · R813 LOAD · R818 TRAIN · R337+R338 TRAIN**.
+**Stage 4/5 · wvk=7 Reason v4 · KING reign35 · R827+R829 TRAIN · R828 TRAIN · R826 TRAIN · R825 TRAIN · R821–R824 TRAIN · R820+R819 TRAIN · R818 TRAIN · R337+R338 TRAIN**.
 King=**reign35** tammy · burn floor **≥$833/h**.
 
 ## Live facts
@@ -11,15 +11,15 @@ King=**reign35** tammy · burn floor **≥$833/h**.
 | contract | wvk=**7** · k=**3** · τ=**0.03** · n=**1300** · δ=0.002 · thought≥80 · B γ=0.30 · k_σ=2.0 |
 | king | `tammyfritz/Affine-5hmwhnfbix-tammy2`@`7e5fd5f8…` **reign35** |
 | burn | **~$366.49/h** · gap **−$466.51/h** · B300×8 stock **0** · lone 8×B200=`fbb1135f` **bl** |
-| Lium | **~$86720** · free τ**1260+** · stake ~47α≈τ2.60 |
-| **p3906** | **R817 REFUTE ~0.11×** → **R826 TRAIN**; **R810** SIZE_OK→stamp→**n80 LIVE** :8003 |
+| Lium | **~$86632** · free τ**1260+** · stake ~47α≈τ2.60 |
+| **p3907** | **R810 REFUTE ~0.45×** + **R813 REFUTE ~−0.29×** → crown **R829+R827 TRAIN** · golden **R828 TRAIN** |
 
 ## Running
 | name | huid | $/h | role |
 |---|---|---|---|
-| mine-crown-1 | gentle-orbit-bd | $52.25 | TK · **R810 n80 LIVE** :8003 GPUs 6,7 |
+| mine-crown-1 | gentle-orbit-bd | $52.25 | TK · **R829 TRAIN** 4–5 · **R827 TRAIN** 6–7 |
 | mine-r165-awesome-hialpha-1 | lunar-wolf-be | $44.00 | TK · **R826 TRAIN** 4–5 · **R818 TRAIN** 6–7 |
-| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | $60.00 | TK · **R825 TRAIN** 4–5 · **R813 LOAD** :8003 |
+| mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | $60.00 | TK · **R825 TRAIN** 4–5 · **R828 TRAIN** 6–7 |
 | mine-r226-marsplan-fullft-1 | brave-raven-a9 | $47.20 | **R821–R824 TRAIN** 0–7 |
 | mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | $64.00 | **R820 TRAIN** 4–5 · **R819 TRAIN** 6–7 |
 | mine-r337-marsplan-online-dpo-hilr-1 | gentle-shark-35 | $47.04 | **R337 online-DPO TRAIN** G=4 |
@@ -29,4 +29,4 @@ King=**reign35** tammy · burn floor **≥$833/h**.
 No rentable 8×B300. Lone API 8×B200 blacklisted. Marsplan HF gated — host-relay only. Never `pkill -f`.
 
 ## Next action
-1. Harvest R810 n80 → submit iff crown else free→next. 2. Harvest R826/R825/R820/R819/R813/R818 when ready. 3. Rent when B300 (waiter HEAD **R339**). 4. α sweep at ≥~τ5.
+1. Harvest R827/R829/R828/R826/R825/R820/R819/R818 when ready → submit iff crown else free→next. 2. Rent when B300 (waiter HEAD **R339**). 3. α sweep at ≥~τ5.

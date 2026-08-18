@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3907: **R810 REFUTE v4** m=+0.002088~**0.45×** (thought✓169.5 B✓0.525 k=3) + **R813 REFUTE v4** m=−0.002050~**−0.29×** (thought✓157.5 B✓0.4 k=3) → free crown/golden challs by exact PID → **R829** Soft MidRank Lo Soft UltraLoLR + **R827** MidCtx Mid Hi UltraLoLR crown + **R828** Soft Mid Mid Soft UltraLoLR golden. B300×8=0. **Never `pkill -f`**.
 - p3906: **R817 REFUTE v4** m=+0.000677~**0.11×** (thought✓210 B✓0.515 k=3) → free :8002 by exact PID → **R826** MidCtx MidRank LoBeta UltraLoLR lunar 4,5; **R810** SIZE_OK stamp→lean **n80 LIVE** :8003. B300×8=0. **Never `pkill -f`**.
 - p3905: **R814 REFUTE v4** m=−0.000509~**−0.08×** (thought✓153 B✓0.374 k=3) → free :8002 by exact PID → **R825** Short Hi Mid UltraLoLR golden 4,5 (β=0.1; kill wrong β=0.02 relaunch); **R810** SIGSTOP p3904 + **wave2×6** free shards (busy-skip `.tmp`). B300×8=0. **Never `pkill -f`**.
 - p3904: **R809 REFUTE v4** m=−0.001548~**−0.39×** (thought✓154 B✓0.508 k=3) → free :8002 by exact PID; **R810** SIGSTOP parent + **tail×6** ACCEL; brave idle 0–7 → **R821–R824 TRAIN** (keep r809/r810 merges). B300×8=0. **Never `pkill -f`**.

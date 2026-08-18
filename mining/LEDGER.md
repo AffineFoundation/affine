@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 86720.48934197395 | p3906 |
-| Lium balance | **$86720.48934197395** | p3906 |
-| cumulative mining spend | ~$122,089 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$76720** (balance − $10,000 floor) | $UTC |
+| $UTC | 86631.68526722309 | p3907 |
+| Lium balance | **$86631.68526722309** | p3907 |
+| cumulative mining spend | ~$122,178 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$76632** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=bl | p3906 |
+| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=bl | p3907 |
 | miner coldkey free | τ1260.426 | kept ≥τ50 |
-| miner stake | **~47α ≈ τ2.60** (r252; under τ5 sweep) | p3906 |
+| miner stake | **~47α ≈ τ2.60** (r252; under τ5 sweep) | p3907 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T17:17:54Z | 86631.68526722309 | p3907 **R810+R813 REFUTE→R829+R827+R828 TRAIN** (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T17:07:28Z | 86720.48934197395 | p3906 **R817 REFUTE→R826 TRAIN** + **R810 n80 LIVE** (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T17:00:56Z | 86810.93653610324 | p3905 **R814 REFUTE→R825 TRAIN** + **R810 wave2 ACCEL** (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T16:53:58Z | 86853.04195928285 | p3904 **R809 REFUTE** + **R810 ACCEL** + brave **R821–R824 TRAIN** (no rent; B300×8=0); burn **~$366.49/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T16:28:51Z | 87074.8193336013 | p3900 **R809 host-relay LIVE** + crown wait-slot (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T16:21:56Z | 87163.28237809529 | p3899 **R811+R812 dual n80 LIVE** crown (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T16:15:26Z | 87208.00088174417 | p3898 **R808 REFUTE→R818 TRAIN**; R337+R338 TRAIN (no rent; B300×8=0); burn **~$366.49/h** |
-| 2026-08-18T16:09:06Z | 87252.3682908381 | p3897 **teacher skip+R337 BOOT**; R808 n80 ~26/80 (no rent; B300×8=0); burn **~$366.49/h** |
