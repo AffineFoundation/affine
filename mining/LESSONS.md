@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3814: **brave idle GPUs 4–7** → same-pass **R767 Soft MidRank Loβ SoftCtx Mega** 4,5 + **R768 Soft HiRank Loβ SoftCtx Mega** 6,7 (wait→merge only; host-relay n80); B300×8 stock still 0. **Never `pkill -f`**.
 - p3813: **R337 REAPED** `golden-lion-72` SSH-DEAD (mapped :20296 refused; host :22 pubkey-denied; `lium reboot` fail) → `lium rm` mine-* only; bl executor `fbb1135f…`; clear rented/bootstrapped stamps; waiters **6/25** HEAD=R337 requeue. **Never `pkill -f`**.
 - p3812: **R754 REFUTE v4** m=−0.008616~**−0.91×** (thought✓238 B✓0.50 k=3) → reap zesty 6,7 → **R766** MidRank HiBeta MidCtx Mega; R337 `golden-lion-72` SSH :20296 **refused** (pod RUNNING). **Never `pkill -f`**.
 
