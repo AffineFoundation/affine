@@ -1,2 +1,1 @@
-# R782 result
-Status: **TRAIN** p3833 R252 GPUs 6,7 pid 376330 after R770 REFUTE. Wait→merge→local n80 armed. Leave 4,5 for R761.
+REFUTE v4 · m=+0.001111 SE=0.002612 z=0.425 n=78 bar=0.005224 (~0.21×) thought✓(194) B✓(0.466) k=3/τ=0.03 vs reign35 · p3846 · chall reaped R252 6,7 · keep /tmp/r782_merged · slot → R793 TRAIN (R761 Soft Mid Mid Soft UltraLoLR; R784 already covers R782 UltraLoLR on brave)

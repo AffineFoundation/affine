@@ -25,23 +25,20 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p3845: **R779 REFUTE** ~0.40× → **R790** UltraLoLR; **R773/R774 REFUTE** ~−0.57/−0.60× → **R791/R792** UltraLoLR; keep siblings on free GPU pairs. **Never `pkill -f`**.
-- p3844: **R773+R774** both `:8003` → 404 model-not-found; fix **R774:8002 / R773:8003** then parallel n80; **R778 REFUTE** ~0.19× → **R789** UltraLoLR. **Never `pkill -f`**.
-- p3843: **R761 REFUTE** m=+0.000505~**0.079×** → **R762** parallel×4 relay (incl. `model-visual-restored`); lone 8×B200=`fbb1135f` **bl**. **Never `pkill -f`**.
-- p3842: **R761** host-relay drop `model-visual-restored` → vLLM ValueError → graft+relaunch CHALL_READY. **Never `pkill -f`**.
+- p3846: **R782 REFUTE** ~0.21× → **R793** r252 Soft Mid Mid Soft UltraLoLR (R784 already covers R782 UltraLoLR); **R762 SCP_READY**→**N80 LIVE**; R252 prefer SSH over lium exec. **Never `pkill -f`**.
+- p3845: **R779 REFUTE** ~0.40× → **R790** UltraLoLR; **R773/R774 REFUTE** ~−0.57/−0.60× → **R791/R792** UltraLoLR. **Never `pkill -f`**.
+- p3844: **R773+R774** both `:8003` → fix **R774:8002 / R773:8003**; **R778 REFUTE** → **R789**. **Never `pkill -f`**.
+- p3843: **R761 REFUTE** ~0.079× → **R762** parallel×4 relay; lone 8×B200=`fbb1135f` **bl**. **Never `pkill -f`**.
+- p3842: **R761** miss `model-visual-restored` → vLLM ValueError → graft. **Never `pkill -f`**.
 - p3841: **R777/R776 REFUTE** → **R787/R788** UltraLoLR. **Never `pkill -f`**.
-- p3840: **R775 REFUTE** ~0.28× → **R786** UltraLoLR. **Never `pkill -f`**.
+- p3840: **R775 REFUTE** → **R786** UltraLoLR. **Never `pkill -f`**.
 - p3839: **R772 REFUTE** → **R785** UltraLoLR. **Never `pkill -f`**.
 - p3838: **R761 tar stall** → **parallel×4 size-checked host pipes**. **Never `pkill -f`**.
-- p3837: **R768 MERGE idle** → host-relay + **R784** TRAIN. **Never `pkill -f`**.
-- p3836: **R767 MERGE idle** → host-relay + **R783** TRAIN. **Never `pkill -f`**.
+- p3837/p3836: R768/R767 MERGE idle → host-relay + R784/R783 TRAIN. **Never `pkill -f`**.
 - p3835: R252 :40299 **sshfail** → **R762 hardened** resume. **Never `pkill -f`**.
-- p3833: **R770 REFUTE** → **R782** + **R781** TRAIN. **Never `pkill -f`**.
-- p3832: **R769 REFUTE** → **R780** TRAIN. **Never `pkill -f`**.
+- p3833/p3832: **R770/R769 REFUTE** → **R782/R780** TRAIN. **Never `pkill -f`**.
 - p3831/p3795: **α→TAO→Lium** via `btcli wallet transfer` if `lium fund` fails. **Never `pkill -f`**.
-- p3829: **R765 REFUTE** → **R779** TRAIN. **Never `pkill -f`**.
-- p3828: **R764 REFUTE** → **R778** TRAIN. **Never `pkill -f`**.
-- p3827: **R763/R766 REFUTE** → **R776/R777**. **Never `pkill -f`**.
+- p3829/p3828/p3827: **R765/R764/R763/R766 REFUTE** → **R779/R778/R776/R777**. **Never `pkill -f`**.
 - p3822: **R755–R758 REFUTE** → **R771–R774**. **Never `pkill -f`**.
 - p3819: **R760 REFUTE** → **R770**; CLI 8×B200 = bl ghost. **Never `pkill -f`**.
 - p3815: API blacklist must strip `# comment`. **Never `pkill -f`**.
