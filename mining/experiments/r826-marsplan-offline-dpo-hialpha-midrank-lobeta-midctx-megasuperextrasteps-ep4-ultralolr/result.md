@@ -1,5 +1,9 @@
-# R826 results
+# R826 result — REFUTE v4 (p3924)
 
-- **TRAIN p3906** lunar GPUs 4,5 after R817 REFUTE → **MERGE_DONE** 2026-08-18T18:33Z `/tmp/r826_merged` (16 shards).
-- **n80 p3906 abort** 18:33:50Z — `:8001` still `tammyfritz/…tammy2` while reign36 vera prefetch incomplete (2-shard; shard1 DL).
-- **p3919:** armed `wait_vera_swap_then_r826_n80_p3919.sh` (lunar pid823390) — on retarget DONE + king id vera6 → clear launch stamp → relaunch lean_chall :8002 GPUs 4,5 vs reign36 wvk=7.
+- vs: reign36 `vera6/affine-5g4yy75zuz-t6`@`8e3f1695…` (wvk=7 k=3 τ=0.03)
+- margin=**−0.009333** SE=0.008516 z=−1.096 n=79
+- bar=max(2·SE,δ)=**0.01703** → **−0.55×**
+- thought✓ median |z|=209 · B✓ pass=0.409
+- chall_reason=0.00510 · king_reason=0.01423
+- artifact: `/root/affine_data/r826_sim_result_reign36_wvk7.json`
+- next: free :8002 → **R837** SoftCtx MidRank LoBeta UltraLoLR

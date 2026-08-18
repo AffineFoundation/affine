@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 85569.33043218106 | p3923 |
-| Lium balance | **$85569.33043218106** | p3923 |
-| cumulative mining spend | ~$123,212 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$75569** (balance − $10,000 floor) | $UTC |
+| $UTC | 85480.71660609606 | p3924 |
+| Lium balance | **$85480.71660609606** | p3924 |
+| cumulative mining spend | ~$123,301 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$75481** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=bl | p3923 |
+| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=bl | p3924 |
 | miner coldkey free | τ1260.426 | kept ≥τ50 |
 | miner stake | **~47α ≈ τ2.60** (r252; under τ5 sweep) | p3917 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T19:27:18Z | 85480.71660609606 | p3924 **R826 REFUTE→R837** + vera DIRECT×4 (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T19:16:56Z | 85569.33043218106 | p3923 **crown vera** lunar→crown shard1 relay (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T19:12:04Z | 85614.22251381294 | p3922 **R825** Triton seed+relaunch (no rent; B300×8=0); burn **~$366.49/h** |
 | 2026-08-18T19:05:42Z | 85658.12817005384 | p3921 **R823 REFUTE** reap + crown vera retarget (no rent; B300×8=0); burn **~$366.49/h** |

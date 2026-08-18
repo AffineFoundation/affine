@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# p3906: R826 MERGE_DONE → chall :8002 + v4 n80 on lunar GPUs 4,5 vs reign35 tammy (wvk=7 k=3 τ=0.03).
+# p3906: R826 MERGE_DONE → chall :8002 + v4 n80 on lunar GPUs 4,5 vs reign36 tammy (wvk=7 k=3 τ=0.03).
 # Axis: marsplan SoftCtx MidRank LoBeta MegaSuperExtra ep4×UltraLoLR (β=0.1 r=64 @12288 steps=19200; R757 Soft Hi Mid Soft Mega→UltraLoLR)
 # Never --no-save-original-format. Never pkill -f.
 # Do not touch teacher 0,1 or king 2,3. Sibling R795 n80 uses 6,7; do not touch T/K or R795.
@@ -45,8 +45,8 @@ if [[ -x "${_CU13}/bin/nvcc" && -f "${_CU13}/include/cuda_fp16.h" ]]; then
   export LIBRARY_PATH="${CUDA_HOME}/lib:${CUDA_HOME}/lib64:${LIBRARY_PATH:-}"
 fi
 
-KING_REPO=tammyfritz/Affine-5hmwhnfbix-tammy2
-KING_REV=7e5fd5f87e82606c32d59c3d2350e3ddfe49c4b5
+KING_REPO=vera6/affine-5g4yy75zuz-t6
+KING_REV=8e3f1695e058837ed80fec3238ff439fdc2d0f0e
 TEACHER_REPO=zai-org/GLM-4.5-Air-FP8
 MERGE_DIR=/tmp/r826_merged
 export CUDA_VISIBLE_DEVICES=$GPUS
@@ -55,9 +55,9 @@ LOG=/root/logs/p3906_r826_chall_n80_wvk7.log
 CHALL_LOG=/root/logs/vllm_chall_r826_p3906.log
 PIDF=/root/logs/vllm_chall_r826.pid
 TCACHE=/root/.triton/cache/chall_r826
-SIM_N80=/root/affine_data/r826_sim_result_reign35_wvk7.json
-PROG=/root/affine_data/r826_sim_progress_reign35_wvk7.json
-SIM_DEC=/root/affine_data/r826_decision_reign35_wvk7.json
+SIM_N80=/root/affine_data/r826_sim_result_reign36_wvk7.json
+PROG=/root/affine_data/r826_sim_progress_reign36_wvk7.json
+SIM_DEC=/root/affine_data/r826_decision_reign36_wvk7.json
 mkdir -p /root/logs /root/affine_data
 
 : >"$LOG"
@@ -123,7 +123,7 @@ tags:
 - **Hyperparameters:** lr=`5e-7` (LoLR), LoRA r=`64` / α=`128`, β=`0.02`, max_len=`8192`, epochs=`4`, max_steps=`19200` (MegaSuperExtra).
 - **Hardware:** train+merge on `mine-r165-awesome-hialpha-1` (lunar) GPUs **4,5**; n80 same box :8002 (no SCP — local MERGE_DONE). Leave R749 TRAIN on 6,7.
 - **Axis note:** marsplan SoftCtx MidRank LoBeta MegaSuperExtra (R741 HyperExtra REFUTE ~−0.53× → Mega amplify). ≠ HyperExtra R741; ≠ SuperExtra MidRank LoBeta R728; ≠ LoBeta MegaSuperExtra R749; ≠ Online; ≠ GRPO.
-- **Decision rule:** paired margin > max(2·SE, δ=0.002) **and** median thought ≥80 **and** B pass ≥0.30 vs **reign35** tammyfritz (v4 k=3 τ=0.03).
+- **Decision rule:** paired margin > max(2·SE, δ=0.002) **and** median thought ≥80 **and** B pass ≥0.30 vs **reign36** tammyfritz (v4 k=3 τ=0.03).
 
 This card is the training write-up required before any Stage-5 submit.
 EOF
@@ -140,8 +140,8 @@ curl -sf -m 5 http://127.0.0.1:8000/v1/models >/dev/null
 curl -sf -m 5 http://127.0.0.1:8001/v1/models >/dev/null
 kid=$(curl -sf -m 3 http://127.0.0.1:8001/v1/models | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0]['id'])")
 log "pre-chall king id=$kid"
-if ! echo "$kid" | grep -qiE 'tammyfritz|5hmwhnfbix|tammy2'; then
-  log "ERROR king not reign35 tammy ($kid) — abort"
+if ! echo "$kid" | grep -qiE 'vera6|5g4yy75zuz|t6'; then
+  log "ERROR king not reign36 tammy ($kid) — abort"
   exit 5
 fi
 
@@ -307,7 +307,7 @@ curl -sf -m 5 "http://127.0.0.1:${CHALL_PORT}/v1/models" >/dev/null
 
 BLOCK_HASH=$(python3 - <<'PY'
 import hashlib, time
-print(hashlib.sha256(f"r826-reign35-wvk7-p3906-{time.time()}".encode()).hexdigest())
+print(hashlib.sha256(f"r826-reign36-wvk7-p3906-{time.time()}".encode()).hexdigest())
 PY
 )
 log "launch n80 vs $KING_REPO block_hash=${BLOCK_HASH:0:16}… (HF_TOKEN unset; hub ids)"
@@ -324,7 +324,7 @@ nohup env -u HF_TOKEN -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE \
   --chall-rev local \
   --chall-port "$CHALL_PORT" \
   --n-turns 80 \
-  --hotkey local-r826-reign35-wvk7 \
+  --hotkey local-r826-reign36-wvk7 \
   --block-hash "$BLOCK_HASH" \
   --out "$SIM_N80" \
   --progress-out "$PROG" \
@@ -362,7 +362,7 @@ dec={
   "contract": "wvk7",
   "n_teacher_samples": dp.get("n_teacher_samples"),
   "tau": dp.get("tau"),
-  "king": "reign35",
+  "king": "reign36",
   "margin": margin,
   "se": se,
   "z": v.get("z") if v else d.get("z"),
@@ -371,7 +371,7 @@ dec={
   "thought_median": chal.get("median_len_z"),
   "b_pass": chal.get("b_gate_pass_rate"),
   "wins": v.get("challenger_wins") if v else d.get("wins"),
-  "note": "p3906 chall+v4-n80 lunar 4,5; marsplan SoftCtx MidRank LoBeta HyperExtra ep3×LoLR; vs reign35 tammy wvk7",
+  "note": "p3906 chall+v4-n80 lunar 4,5; marsplan SoftCtx MidRank LoBeta HyperExtra ep3×LoLR; vs reign36 tammy wvk7",
   "hf_ok": False,
   "raw_keys": sorted(d.keys())[:40],
 }
@@ -385,5 +385,5 @@ else
   log "FATAL missing sim result"
   exit 1
 fi
-date -u +%Y-%m-%dT%H:%M:%SZ > /root/logs/r826_reign35_wvk7_pipeline.done
-log "DONE R826 v4 n80 vs reign35 on lunar 4,5"
+date -u +%Y-%m-%dT%H:%M:%SZ > /root/logs/r826_reign36_wvk7_pipeline.done
+log "DONE R826 v4 n80 vs reign36 on lunar 4,5"
