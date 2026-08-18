@@ -1,6 +1,7 @@
-# R730 result — REFUTE v4 (p3784)
+# R746 result — REFUTE v4 (p3801)
 
-- **margin** = −0.003333 · **SE** = 0.002948 · **z** = −1.130 · **n** = 76
-- **bar** = max(2·SE, δ) = 0.005897 · **×bar** ≈ **−0.57×**
-- thought median = 169.5 ✓ · B pass = 0.385 ✓ · k=3 τ=0.03 ✓
-- next = **R746** Short HiRank LoBeta SuperExtra TRAIN on golden 6,7
+- **margin** = −0.000490 · **SE** = 0.001736 · **z** = −0.282 · **n** = 77
+- **bar** = max(2·SE, δ) = 0.003471 · **×bar** ≈ **−0.14×** (near-parity)
+- thought median = 145 ✓ · B pass = 0.381 ✓ · k=3 τ=0.03 ✓
+- king = reign35 tammy @ `7e5fd5f8…`
+- next = **R756** Short HiRank LoBeta MegaSuperExtra ep4 TRAIN on golden 6,7

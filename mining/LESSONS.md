@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3801: **R746 REFUTE v4 near-parity** m=−0.00049~**−0.14×** (thought✓145 B✓0.381 k=3) → reap → **R756 TRAIN** MegaSuperExtra ep4 golden 6,7 (wait→merge+n80 armed); R755 TRAIN kept 4,5. **Never `pkill -f`**.
 - p3800: **R745 REFUTE v4** m=−0.00368~**−0.76×** (thought✓157 B✓0.449 k=3) → reap → **R755 TRAIN** MegaSuperExtra ep4 golden 4,5 (wait→merge+n80 armed); R746 N80 ~77/80 kept 6,7. **Never `pkill -f`**.
 - p3799: **R747 REFUTE v4** m=−0.00346~**−0.37×** (thought✓243 B✓0.385 k=3) → reap → **R754 TRAIN** MegaSuperExtra ep4 zesty 6,7 (hard-pin BASE after mine.env — mine.env BASE=r252 breaks marsplan axes); **R746 MERGE→n80 ARMED→LIVE** golden 6,7. **Never `pkill -f`**.
 - p3798: **R745 TRAIN→MERGE** golden 4,5 + **wait→n80 ARMED** (lean_outer dead; merge script stops at MERGE_DONE — always arm chall n80); R747 N80 sim**895303**; B300×8=0. **Never `pkill -f`**.
