@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3883: **R800 REFUTE v4** m=−0.004259~**−0.46×** (thought✓152.5 B✓0.4125 k=3) Soft Mid Hi Soft UltraLoLR → free 4,5 by exact PID → **R809** MidCtx Mid Lo UltraLoLR + **R810** Soft Hi Lo Soft UltraLoLR brave TRAIN (fill idle); leave R801 ACCEL→n80 6,7. **Never `pkill -f`**.
+- p3882: **R800** p3881 accel → SIZE_OK stamp → lean n80 :8002 LIVE (~20/80); unblocked **R801** fast×4 then **SIGSTOP** p3880 + **tail×6** 05–16+meta (busy-skip 01–04.tmp) → SIZE_OK→stamp→n80 :8003. **Never `pkill -f`**.
 - p3881: **R800** mid-pipe (4/16 + 05–08.tmp) → **SIGSTOP** p3879 parent → **tail×6** 09–16+vis+meta (busy-skip .tmp) → SIZE_OK→kill −9 STOP'd parent→stamp + write `p3879.done` for R801; rediscovered **R337** B300 (was missing from inventory). **Never `pkill -f`**.
 - p3880: **R783 REFUTE v4** m=+0.001063~**0.12×** (thought✓191.5 B✓0.423 k=3) Soft Hi Lo Soft Mega LoLR → free 6,7 by exact PID → **R801** UltraLoLR host-relay **after** R800.done (no dual-pipe); arm wait→n80 :8003. **Never `pkill -f`**.
 - p3879: R783 SIZE_OK→stamp→n80; p3878 R800 defer stuck in **per-file SSH inventory** — kill parent by exact PID **before** any `.tmp`, then **fast×4** (skip crown inventory when dest empty); if dual-write appears kill **all** writer PIDs + `rm -rf` before relaunch. **Never `pkill -f`**.
