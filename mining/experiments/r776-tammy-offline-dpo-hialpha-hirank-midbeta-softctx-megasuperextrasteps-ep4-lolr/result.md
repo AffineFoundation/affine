@@ -1,3 +1,5 @@
-# R776 result
-- **status:** TRAIN p3827 (after R763 REFUTE ~0.038×)
-- **parent signal:** R763 Soft HiRank MidBeta SoftCtx Mega near-parity → king-parent Soft HiRank MidBeta SoftCtx Mega
+# R776 result — REFUTE v4
+
+m=-0.002204 SE=0.003960 z=-0.557 n=79 bar=0.007921 (~-0.28×) thought✓(180.0) B✓(0.354) k=3
+
+Next: **R788** UltraLoLR crown 6,7 (p3841).

@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3841: **R777 REFUTE** m=−0.00796~**−0.72×** (thought✓266 B✓0.466) → **R787** UltraLoLR TRAIN zesty 6,7; **R776 REFUTE** m=−0.00220~**−0.28×** (thought✓180 B✓0.354) → **R788** UltraLoLR TRAIN crown 6,7; **R761 SCP_READY** stale `chall_n80_launched` with dead lean → clear + force-launch lean `:8002`. **Never `pkill -f`**.
 - p3840: **R775 REFUTE** m=+0.00197~**0.28×** (thought✓190 B✓0.439 k=3) → reap crown 4,5 → **R786** tammy Soft MidRank MidBeta SoftCtx Mega **UltraLoLR=5e-7** TRAIN; R776 N80 kept 6,7; R761 parallel continues. **Never `pkill -f`**.
 - p3839: **R772 REFUTE** m=−0.00458~**−0.57×** (thought✓237 B✓0.526 k=3) → reap zesty 4,5 → **R785** marsplan Soft MidRank MidBeta SoftCtx Mega **UltraLoLR=5e-7** TRAIN; R777 kept 6,7; R761 parallel continues. **Never `pkill -f`**.
 - p3838: **R761 tar stall** ~23G/66G in 45m (partial shard-07) → kill exact PIDs + **parallel×4 size-checked host pipes** pid**3181794** (KEEP 5 complete shards); B300×8=0. **Never `pkill -f`**.

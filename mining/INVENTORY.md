@@ -6,12 +6,12 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | gentle-orbit-bd (`3d07e519-…`) | 8×B200 | $52.25 | **2026-08-18T19:04Z** | TK · **R786 TRAIN** + **R776 N80** |
+| mine-crown-1 | gentle-orbit-bd (`3d07e519-…`) | 8×B200 | $52.25 | **2026-08-18T19:04Z** | TK · **R786+R788 TRAIN** |
 | mine-r165-awesome-hialpha-1 | lunar-wolf-be (`0f283151-…`) | 8×B200 | $44.00 | **2026-08-18T19:04Z** | TK · **R779+R778 TRAIN** |
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 (`522c84fd-…`) | 8×B200 | $60.00 | **2026-08-18T19:04Z** | TK · **R774+R773 TRAIN** |
-| mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da (`5e54186c-…`) | 8×B300 | $64.00 | **2026-08-18T19:04Z** | TK · **R785 TRAIN** + **R777 N80** |
-| mine-r226-marsplan-fullft-1 | brave-raven-a9 (`5c019a27-…`) | 8×B200 | $47.20 | **2026-08-18T19:04Z** | **R784+R783+R780+R781 TRAIN**; R761 parallel |
-| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c (`61d17753-…`) | 8×B300 | $64.00 | **2026-08-18T19:04Z** | **R782 TRAIN** + **R761 PARALLEL** |
+| mine-r260-elonmasky-ckp777-nonking-grpo-1 | zesty-comet-da (`5e54186c-…`) | 8×B300 | $64.00 | **2026-08-18T19:04Z** | TK · **R785+R787 TRAIN** |
+| mine-r226-marsplan-fullft-1 | brave-raven-a9 (`5c019a27-…`) | 8×B200 | $47.20 | **2026-08-18T19:04Z** | **R784+R783+R780+R781 TRAIN**; R762+relay |
+| mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c (`61d17753-…`) | 8×B300 | $64.00 | **2026-08-18T19:04Z** | **R782 TRAIN** + **R761 N80** |
 
 SSH crown: `ssh root@95.133.253.90 -p 40099`
 SSH R165: `lium exec lunar-wolf-be` / `ssh -p 20299 root@150.136.46.118`
@@ -20,7 +20,7 @@ SSH R260: `lium exec zesty-comet-da` / `ssh root@86.38.182.95 -p 20299`
 SSH brave: `ssh -p 40127 root@18.118.83.97` / `lium exec brave-raven-a9`
 SSH R252: `lium exec gentle-wolf-8c` (direct :40299 flaky) / `ssh -p 40299 root@95.133.252.28`
 Host fleet: **6 mine-*** · B300×8 rentable **0** · burn **~$331.45/h** · **wvk=7**
-**p3840:** R775 REFUTE→R786 TRAIN; R761 parallel continues; bal **~$86475**
+**p3841:** R777+R776 REFUTE→R787+R788 TRAIN; R761 N80 LIVE; bal **~$86394**
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval` (eager-fox-27), `affine-teacher2`.
 
@@ -28,6 +28,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-18T09:18:25Z | p3841: **R777/R776 REFUTE→R787/R788 TRAIN**; **R761 N80** force-launch; B300×8=0; bal **~$86394** |
 | 2026-08-18T09:06:53Z | p3840: **R775 REFUTE→R786 TRAIN** crown 4,5; R776/R777 N80 LIVE; B300×8=0; bal **~$86475** |
 | 2026-08-18T08:56:00Z | p3839: **R772 REFUTE→R785 TRAIN** zesty 4,5; R761 parallel live; bal **~$86556** |
-| 2026-08-18T08:48:30Z | p3838: **R761 parallel×4 resume** (killed slow tar PIDs); B300×8=0; bal **~$86627** |
