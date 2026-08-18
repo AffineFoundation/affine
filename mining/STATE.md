@@ -12,7 +12,7 @@ King=**reign35** tammy · burn floor **≥$833/h**.
 | king | `tammyfritz/Affine-5hmwhnfbix-tammy2`@`7e5fd5f8…` **reign35** |
 | burn | **~$331.45/h** · gap **−$501.55/h** · B300×8 stock **0** (bl_skip=1; B200 ghost fbb1135f) |
 | Lium | **~$86841** · free τ**1260.38** · stake **0** |
-| **p3834** | **R762 ARMED** resume-after-R761 host-relay pid**3129491**; R761 ~13G/66G; R781/R782 TRAIN |
+| **p3834** | **R762 ARMED** resume-after-R761 host-relay pid**3129501**; R761 ~13G/66G; R781/R782 TRAIN |
 | **R761** | **RELAY** brave→R252 (~3/16 shards) + waiter GPUs **4,5** |
 | **R762** | **WAIT_RELAY** after R761 SCP → n80 4,5 after R761 decision |
 

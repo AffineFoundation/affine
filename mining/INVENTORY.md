@@ -20,7 +20,7 @@ SSH R260: `lium exec zesty-comet-da` / `ssh root@86.38.182.95 -p 20299`
 SSH brave: `ssh -p 40127 root@18.118.83.97` / `lium exec brave-raven-a9`
 SSH R252: `lium exec gentle-wolf-8c` (direct :40299 flaky) / `ssh -p 40299 root@95.133.252.28`
 Host fleet: **6 mine-*** · B300×8 rentable **0** · burn **~$331.45/h** · **wvk=7**
-**p3834:** R762 resume-after-R761 armed pid**3129491**; R761 ~13G; bal **~$86841**
+**p3834:** R762 resume-after-R761 armed pid**3129501**; R761 ~13G; bal **~$86841**
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval` (eager-fox-27), `affine-teacher2`.
 
@@ -28,6 +28,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
-| 2026-08-18T08:24:51Z | p3834: **R762 ARMED** resume-after-R761 host-relay pid**3129491**; R761 ~13G/3shards; B300×8=0; bal **~$86841** |
+| 2026-08-18T08:24:51Z | p3834: **R762 ARMED** resume-after-R761 host-relay pid**3129501**; R761 ~13G/3shards; B300×8=0; bal **~$86841** |
 | 2026-08-18T08:20:32Z | p3833: **R770 REFUTE→R782 TRAIN** R252 6,7; **R781 TRAIN** brave 2,3; R761 RELAY ~9.3G; B300×8=0; bal **~$86841** |
 | 2026-08-18T08:10:37Z | p3832: **R769 REFUTE→R780 TRAIN** brave 0,1; R761 RELAY ~6G; B300×8=0; bal **~$86922** |
