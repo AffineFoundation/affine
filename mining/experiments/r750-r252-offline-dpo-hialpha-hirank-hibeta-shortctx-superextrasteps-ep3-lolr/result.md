@@ -1,9 +1,7 @@
 # R750 result
-Status: **N80 LIVE p3803** after MERGE sat idle (train.done 05:12 / MERGE_DONE 05:14; no wait→n80 at launch).
+Status: **REFUTE v4 near-parity p3805**
 
-- Pod: `mine-r252-vera-t4-nonking-grpo-1` (gentle-wolf-8c) GPUs **4,5** :8002
-- Merge: `/tmp/r750_merged` 16 shards
-- Chall: pid **340440** · sim pid **343001**
-- King: reign35 `tammyfritz/Affine-5hmwhnfbix-tammy2`@`7e5fd5f8…` wvk=7 k=3 τ=0.03
-- Sibling: R751 TRAIN kept on GPUs **6,7**
-- Decision: Stage-5 iff paired margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30
+- margin=**−0.000909** SE=0.002902 z=−0.313 n=78 bar=0.005804 (~**−0.16×**)
+- thought✓(153) B✓(0.377) k=3/τ=0.03 vs reign35 tammy
+- Pod: `mine-r252-vera-t4-nonking-grpo-1` GPUs **4,5** chall pid340440 sim343001
+- Keep `/tmp/r750_merged`; slot → **R759 TRAIN** MegaSuperExtra ep4 (same pass)
