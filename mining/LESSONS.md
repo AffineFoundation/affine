@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3892: p3891 ×4 batch-wait blocked on 2×~4.5G → kill **parent only** (keep in-flight SSH) → **dual×6** R337-rest+R338 (busy-skip `.partial`); inflight FINALs size-ok; waiter HEAD **R339**. **Never `pkill -f`**.
+- p3891: serial lunar→R337/R338 `tar cf|xf` ~1GB/min → kill exact ssh/tar PIDs → **parallel×4 size-checked blob pipes** + meta tar refs/snapshots/trees → SIZE_OK→LOCAL_CACHE_SKIP bootstrap; lone API 8×B200 still `fbb1135f` **bl**. **Never `pkill -f`**.
 - p3890: **zesty-comet-da** SSH :20299 refused (host:22 ≠ container); `lium reboot` fail → **`lium rm` mine-r260** + blacklist executor `358a9c60…` (same pattern as p3813 golden-lion); R796/R797 lost with pod; waiter HEAD **R339**. **Never `pkill -f`**.
 - p3889: **R807 REFUTE v4** m=−0.002793~**−0.23×** (thought✓213.5 B✓0.4625 k=3) MidCtx Hi Mid UltraLoLR → free :8002 by exact PID → **R817** MidCtx Hi Lo UltraLoLR lunar 4,5; leave R808 TRAIN 6,7. **Never `pkill -f`**.
 - p3888: **R806 REFUTE v4** m=−0.000703~**−0.19×** (thought✓142 B✓0.366 k=3) Soft Mid Hi Soft UltraLoLR → free :8003 by exact PID → **R816** Short Mid Hi UltraLoLR R252 6,7; **parallel lunar→R338** + kill-guard so p3887 cannot wipe after R337. **Never `pkill -f`**.
