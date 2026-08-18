@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3808: **brave idle 8×GPU** → same-pass **R761 Soft Midβ SoftCtx Mega** 0,1 + **R762 Soft Hiβ SoftCtx Mega** 2,3 (wait→merge only; host-relay n80); R713/R714 already merged idle; R749+R753 N80 LIVE. **Never `pkill -f`**.
 - p3807: **R751 REFUTE v4** m=−0.00119~**−0.25×** (thought✓171 B✓0.435 k=3) → reap → **R760** Short MidRank MidBeta MegaSuperExtra ep4 R252 6,7 (wait→merge+n80); R759 TRAIN kept 4,5. **Never `pkill -f`**.
 - p3806: **R749+R752+R753** launched with wait→merge only — **armed wait→n80 same-pass** (lunar 6,7/4,5 + crown 6,7) before MERGE_DONE; R751 n80 ~59/80 kept. **Never `pkill -f`**.
 - p3805: **R750 REFUTE v4 near-parity** m=−0.000909~**−0.16×** (thought✓153 B✓0.377 k=3) → reap → **R759** Short HiRank HiBeta MegaSuperExtra ep4 R252 4,5 (wait→merge+n80); **R751 MERGE sat idle** (no wait→n80 at launch) → same-pass lean chall/:8002 GPUs 6,7. **Never `pkill -f`**.
