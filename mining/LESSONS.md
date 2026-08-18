@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3830: **R761+R762 MERGE_DONE** sat idle on brave (no n80 armed) → **host-relay R761→R252** queue after **R769 N80**; R762 next. **Never `pkill -f`**.
 - p3829: **R765 REFUTE** m=−0.005388~**−0.72×** → **R779** marsplan Soft HiRank LoBeta SoftCtx Mega (≠ R778 Soft MidRank); R778 TRAIN kept lunar 6,7. **Never `pkill -f`**.
 - p3828: **R764 REFUTE** m=+0.000788~**0.12×** → **R778** marsplan Soft MidRank LoBeta SoftCtx Mega; R765 N80 kept lunar 4,5. **Never `pkill -f`**.
 - p3827: **R763 REFUTE** m=+0.000158~**0.038×** → **R776**; **R766 REFUTE** m=−0.00211~**−0.30×** → **R777**. **Never `pkill -f`**.

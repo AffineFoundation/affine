@@ -1,1 +1,1 @@
-TRAIN launched p3808 brave GPUs 0,1 pid 276621 Soft MidRank MidBeta SoftCtx MegaSuperExtra ep4; wait→merge armed (host-relay n80).
+TRAIN DONE + MERGE DONE on brave (p3808). p3830: host-relay brave→R252; n80 queued after R769 N80 on GPUs 4,5. R762 MERGE still idle on brave (next relay).
