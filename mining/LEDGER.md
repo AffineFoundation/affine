@@ -18,7 +18,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | cumulative mining spend | ~$120,940 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
 | **available for mining** | **~$77868** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$378.50/h** · vs floor $833/h · gap **−$454.50/h** · B300×8=0 | p3885 |
+| miner burn (7 pods) | **~$378.50/h** · vs floor $833/h · gap **−$454.50/h** · B300×8=0 | p3886 |
 | miner coldkey free | τ1260.426 | kept ≥τ50 |
 | miner stake | **~17α ≈ τ0.96** (r252; after 160α sweep) | p3885 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T15:03:30Z | 87867.77158460244 | p3886 **R803/R804/R805 REFUTE→R813+R814+R815 TRAIN** (no rent; B300×8=0); burn **~$378.50/h** |
 | 2026-08-18T14:54:30Z | 87867.77158460244 | p3885 **α→TAO→Lium**: unstake **160α** r252 → +τ~8.94 free; `lium fund` Metadata bug → `btcli transfer` **τ8.9** to Lium ck; bal **+$1791**; burn **~$378.50/h** |
 | 2026-08-18T14:44:06Z | 86196.43516098657 | p3884 **R801 SIZE_OK→lean :8003** (no rent; B300×8=0); burn **~$378.50/h** |
 | 2026-08-18T14:34:39Z | 86274.96614972026 | p3883 **R800 REFUTE→R809+R810 TRAIN** (no rent; B300×8=0); burn **~$378.50/h** |
