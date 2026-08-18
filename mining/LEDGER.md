@@ -13,8 +13,8 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 87116.53062567447 | p3785 |
-| Lium balance | **$87116.53062567447** | p3785 |
+| $UTC | 87116.53062567447 | p3786 |
+| Lium balance | **$87116.53062567447** | p3786 |
 | cumulative mining spend | ~$119,460 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
 | **available for mining** | **~$77117** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T03:40:08Z | 87116.53062567447 | p3786 **R739 MERGE→N80 LIVE** zesty 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T03:36:13Z | 87116.53062567447 | p3785 **R715 SCP→N80 LIVE** crown (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T03:17:30Z | 87279.71714707588 | p3784 **R734/R735/R737/R729/R730 REFUTE** → **R742–R746 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T03:07:30Z | 87361.49501985962 | p3783 **R731 REFUTE** + **R730 N80** + **R741 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T02:35:57Z | 87605.39797360613 | p3778 **R728 REFUTE** + **R738 TRAIN** + **R733 N80** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T02:26:50Z | 87686.41647949364 | p3777 **R728 N80 LIVE** lunar 6,7 + R736 wait reaped (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T02:20:06Z | 87768.97715059611 | p3776 **brave NCCL abort** + **R715 relay→crown** (freed R736; no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-18T02:09:00Z | 87849.86205615434 | p3775 **R727 REFUTE** + **R737 TRAIN** crown 6,7 (no rent; B300×8=0); burn **~$331.45/h** |
