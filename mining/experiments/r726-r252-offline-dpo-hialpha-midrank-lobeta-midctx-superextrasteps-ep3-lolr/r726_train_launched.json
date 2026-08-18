@@ -1,0 +1,18 @@
+{
+  "utc": "2026-08-18T00:51:51Z",
+  "axis": "r252_offline_dpo_hialpha_midrank_lobeta_midctx_superextrasteps_ep3_lolr",
+  "base": "/root/hf/hub/models--unconst--Affine-5czsc2fc98-r252-merged/snapshots/b42d6245d77fe30885ea8a90387771e1bc465e0f",
+  "data": "/root/r726/dpo_duel_reason.jsonl",
+  "examples": 604,
+  "lr": "1e-6",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.02,
+  "max_steps": 14400,
+  "max_len": 8192,
+  "epochs": 3,
+  "gpus": "4,5",
+  "pid": 111742,
+  "parent_signal": "R717 Soft MidRank LoBeta SoftCtx SuperExtra REFUTE ~-0.28x \u2192 MidCtx; amplify R692 UltraExtra MidCtx LoBeta / R637 Soft MidRank LoBeta SIGNAL ~1.45x with SuperExtra steps=14400 (\u2260 SoftCtx SuperExtra R717; \u2260 ShortCtx SuperExtra R724; \u2260 UltraExtra 7200 R692; \u2260 marsplan MidCtx LoBeta SuperExtra R721; \u2260 Online / \u2260 GRPO)",
+  "decision_rule": "Stage-5 iff fresh n80 paired margin > max(2*SE, 0.002) AND median |z|>=80 AND B pass>=0.30 vs reign35 (v4 k=3)"
+}

@@ -1,18 +1,18 @@
-# R717 — Soft MidRank LoBeta SoftCtx SuperExtra (r252)
+# R717 — REFUTE v4 (p3766)
 
-**Decision rule (pre-registered):** Stage-5 submit iff fresh v4 n80
-`margin > max(2·SE, δ=0.002)` AND median `|z|≥80` AND B pass ≥0.30
-vs live king (wvk=7, k=3, τ=0.03).
+Soft MidRank LoBeta SoftCtx SuperExtra (β=0.02 r=32 @12288 steps=14400) vs **reign35** tammy.
 
-**Axis:** Offline-DPO HiAlpha MidRank LoBeta SoftCtx SuperExtraSteps
-ep3×LoLR — amplify R637 Soft MidRank LoBeta SoftCtx ~1.45× / R673 UltraExtra
-REFUTE with steps=14400 (≠ UltraExtra 7200; ≠ marsplan R712; ≠ Mid/HiBeta
-SuperExtra R710/R711).
+| field | value |
+|---|---|
+| margin | **−0.0010067** |
+| SE | 0.0018106 |
+| z | −0.556 |
+| bar | max(2·SE, δ)=0.003621 |
+| ×bar | **~−0.28×** |
+| thought median | 134 ✓ (≥80) |
+| B pass | 0.424 ✓ (≥0.30) |
+| n | 80 |
+| k / τ | 3 / 0.03 |
+| king | `tammyfritz/Affine-5hmwhnfbix-tammy2`@`7e5fd5f8…` |
 
-**Launch:** p3753 crown GPUs 4,5 after R693 REFUTE (~0.72×).
-
-**Status p3764:** MERGE_DONE → chall :8002 + v4 n80 **LIVE** vs **reign35**
-`tammyfritz/Affine-5hmwhnfbix-tammy2`@`7e5fd5f8…` (king flip mid-train).
-vllm pid**105449** · sim pid**108044** · artifacts
-`/root/affine_data/r717_*_reign35_wvk7.json` · Triton seed chall_r705 n_star=30.
-Harvest next pass.
+Chall reaped crown 4,5/:8002 by pidfile. Keep `/tmp/r717_merged`. Slot → **R726**.

@@ -1,0 +1,19 @@
+{
+  "utc": "2026-08-18T00:51:51Z",
+  "pass": 3766,
+  "hypo": "R717",
+  "verdict": "REFUTE_v4",
+  "margin": -0.0010066841569312975,
+  "se": 0.0018106442481540235,
+  "z": -0.5559811972769503,
+  "n": 80,
+  "bar": 0.003621288496308047,
+  "thought_median": 134.0,
+  "b_pass": 0.42436974789915966,
+  "mult_of_bar": -0.27799059863847514,
+  "king": "reign35",
+  "wvk": 7,
+  "k": 3,
+  "tau": 0.03,
+  "next": "R726 Soft MidRank LoBeta MidCtx SuperExtra TRAIN crown 4,5"
+}
