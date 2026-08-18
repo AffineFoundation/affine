@@ -13,19 +13,21 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 84886.91239544186 | p3865 |
-| Lium balance | **$84886.91239544186** | p3865 |
-| cumulative mining spend | ~$122,251 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$74887** (balance − $10,000 floor) | $UTC |
+| $UTC | 84804.69856410786 | p3867 |
+| Lium balance | **$84804.69856410786** | p3867 |
+| cumulative mining spend | ~$122,333 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$74805** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | p3865 |
+| miner burn (6 pods) | **~$331.45/h** · vs floor $833/h · gap **−$501.55/h** · B300×8=0 | p3867 |
 | miner coldkey free | τ1260.384 | kept ≥τ50 |
-| miner stake | **~59α ≈ τ3.33** (r252; below ~τ5) | p3865 |
+| miner stake | **~59α ≈ τ3.33** (r252; below ~τ5) | p3867 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-18T12:34:55Z | 84804.69856410786 | p3867 **R781** finish size-verify armed (no rent; B300×8=0); burn **~$331.45/h** |
+| 2026-08-18T12:28:32Z | 84847.00665073033 | p3866 **R781** mid accel 11–12 + STOP parent (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T12:24:03Z | 84886.91239544186 | p3865 **R781** tail+meta accel (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T12:19:10Z | 84928.00730343281 | p3864 **R780 REFUTE** ~0.17× + free :8002 + R781 SCP (no rent; B300×8=0 bl B200); burn **~$331.45/h** |
 | 2026-08-18T12:14:41Z | 84967.65197827487 | p3863 **R780 size-verify→lean relaunch N80 LIVE** + R781 relay (no rent; B300×8=0); burn **~$331.45/h** |
@@ -34,5 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T11:49:32Z | 85172.9144649741 | p3860 **R791+R793 REFUTE→R803+R802 TRAIN** (no rent; B300×8=0); burn **~$331.45/h** |
 | 2026-08-18T11:42:56Z | 85213.47208655027 | p3859 **R800+R801 TRAIN** brave idle 4–7 (no rent; B300×8=0 bl B200); burn **~$331.45/h** |
 | 2026-08-18T11:35:10Z | 85294.83534427937 | p3858 **R768 REFUTE + R780 meta** (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-18T11:26:52Z | 85335.90082259085 | p3857 **R768 SCP→N80 LIVE** (no rent; B300×8=0); burn **~$331.45/h** |
-| 2026-08-18T11:10:15Z | 85498.52382658802 | p3856 **R768 meta accel** cfg✓ (no rent; B300×8=0); burn **~$331.45/h** |
