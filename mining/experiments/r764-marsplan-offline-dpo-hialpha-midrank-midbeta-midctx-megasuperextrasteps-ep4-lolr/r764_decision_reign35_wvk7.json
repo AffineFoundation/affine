@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-18T07:39:30Z",
+  "hypo": "R764",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign35",
+  "margin": 0.0007875050508430057,
+  "se": 0.003259840387306282,
+  "z": 0.24157779439432864,
+  "n": 79,
+  "bar": 0.006519680774612564,
+  "thought_median": 233.0,
+  "b_pass": 0.4225941422594142,
+  "wins": false,
+  "note": "p3809 chall+v4-n80 lunar 6,7; marsplan MidCtx MidRank MidBeta SuperExtra ep3\u00d7LoLR; vs reign35 tammy wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}
