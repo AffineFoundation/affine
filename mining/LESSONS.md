@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4056: R940 **REFUTE** m=+0.002212 ~0.77× (thought✓173 B✓0.3875 k=3) vs reign36 → exact-PID reap :8004 → **R943** HiRank Midβ ShortCtx UltraExtra(28800); p4053 wait_r926 died on SSH timeout (`set -e`) → re-arm ssh-tolerant + SIZE_OK→lean:8003; stock B300=0 BL `8f34559f`. **Never `pkill -f`**.
 - p4055: R252 R3 **REFUTE** m=−0.000104 ~−0.03× (thought✓169 B✓0.55 k=3) vs reign36 → exact-PID reap :8002 → **R942** SoftCtx MidLoβ UltraExtra(28800) on free GPUs **4,5**; stock B300/H200/H100=0 BL `8f34559f`. **Never `pkill -f`**.
 - p4054: R940 TRAIN_DONE+MERGE_DONE sat idle (READY_FOR_N80) while relays occupied 1,3/6,7 — launch chall on free GPUs **4,5 :8004** (not 8003/8002) + seed `chall_r928` (n_so=26). Stock B300=0 BL `8f34559f`. **Never `pkill -f`**.
 - p4053: R933 **REFUTE** m=−0.005798 ~−0.68× (thought✓200 B✓0.45) → exact-PID reap → **R941** SoftCtx MidLoβ MegaSuperExtra; also kill late host-relay overwrite during n80 + arm **wait_r926→lean**. Stock B300=0. **Never `pkill -f`**.
