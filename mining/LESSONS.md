@@ -25,22 +25,23 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p3984: brave R875/R876 **TRAIN_DONE** (no wait→merge) → same-pass **MERGE_DONE** + **TP1** chall+n80 :8002/:8003; R888 king **READY** + GRPO≥27; R865~14/16 R871~4/16; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
-- p3983: R888 idle GPUs → **king TP1 :8001** CVD=4 + **R871 host-relay** R337→R888 (parked MidCtx Loβ MERGE) wait→chall GPU5+n80; R865 ~33G; R888 GRPO step≥7 untouched; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
-- p3982: **R864 REFUTE v4** m=−0.01080~**−1.12×** (thought✓212 B✓0.481 k=3 n=79) vs reign36 — marsplan SoftCtx MidRank Loβ fails; reap lunar 4,5 exact → **R865 host-relay LIVE** R338→lunar (wait→chall+n80); R888 teacher READY + **GRPO TRAIN** pid**7584** step≥2 (CVD=2,3); B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
-- p3981: R888 teacher **crashed** mid-load (`RuntimeError: DeepGEMM backend is not available`) after 79%/47 shards — patch `serve_teacher_tp1_r888.sh` with `VLLM_USE_DEEP_GEMM=0` + flashinfer-MoE offs → relaunch pid**6086**; R864 n80 LIVE. **Never `pkill -f`**.
-- p3980: R888 hub-cache path mismatch (`HF_HOME` vs `HF_HOME/hub`) → migrate + `--cache-dir $HF_HOME/hub` → teacher HF LIVE → GRPO. **Never `pkill -f`**.
+- p3985: R865 **SIZE_OK** (16/16+visual) → chall TP2 :8002 + **n80 LIVE** lunar pid**928274** vs reign36; R875~53/80 R876~30/80; R871~8/16; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
+- p3984: brave R875/R876 **TRAIN_DONE** → **MERGE_DONE** + **TP1** chall+n80 :8002/:8003; R888 king READY + GRPO; B300/8×B200 stock=0. **Never `pkill -f`**.
+- p3983: R888 idle → **king TP1 :8001** + **R871 host-relay** R337→R888; B300/8×B200 stock=0. **Never `pkill -f`**.
+- p3982: **R864 REFUTE v4** m=−0.01080~**−1.12×** → **R865 host-relay**; R888 **GRPO TRAIN**. **Never `pkill -f`**.
+- p3981: R888 teacher DeepGEMM crash → `VLLM_USE_DEEP_GEMM=0` + flashinfer-MoE offs. **Never `pkill -f`**.
+- p3980: R888 hub-cache path mismatch → `--cache-dir $HF_HOME/hub`. **Never `pkill -f`**.
 - p3979: hub **1.28** `huggingface-cli download` no-op → use **`hf download`**. **Never `pkill -f`**.
-- p3978: rent **mine-r888** 8×B200 **$39.20/h** when B300 stock=0 (skip ghost `fbb1135f`); nvidia-smi may show **7**/8 GPUs → TP1 teacher. **Never `pkill -f`**.
-- p3977: **R863 REFUTE v4** m=−0.00584~**−0.63×** → R864 host-relay; brave → **R887** MidLoβ TRAIN. **Never `pkill -f`**.
-- p3976: crown idle challs → **R885/R886** TRAIN; R863 **n80 LIVE**. **Never `pkill -f`**.
+- p3978: rent **mine-r888** 8×B200 when B300=0 (skip `fbb1135f`); may show **7**/8 GPUs → TP1. **Never `pkill -f`**.
+- p3977: **R863 REFUTE v4** ~−0.63× → R864 relay; brave **R887** TRAIN. **Never `pkill -f`**.
+- p3976: crown idle → **R885/R886** TRAIN; R863 n80 LIVE. **Never `pkill -f`**.
 - p3975: R337/R338 idle → **R879–R884** TRAIN swarm. **Never `pkill -f`**.
 - p3974: golden idle → **R877/R878** kevin TRAIN. **Never `pkill -f`**.
 - p3973: **R866 REFUTE** + **B✗0.268** → R863 host-relay. **Never `pkill -f`**.
 - p3972: R338 merge path digits-stripped stall → relaunch correct `gpus23/45/67`. **Never `pkill -f`**.
-- p3971: **R861 LOST** ~0.59×δ; R875/R876/R874 TRAIN; R866 triton+`-i 4,5`. **Never `pkill -f`**.
+- p3971: **R861 LOST** ~0.59×δ; R875/R876/R874 TRAIN. **Never `pkill -f`**.
 - p3970: **R867/R868 REFUTE** → R872/R873 TRAIN; lunar orphan Worker_TP kill exact. **Never `pkill -f`**.
-- p3969: brave flashinfer cu13 JIT fail → chall flags `VLLM_USE_FLASHINFER_SAMPLER=0`. **Never `pkill -f`**.
+- p3969: brave flashinfer cu13 JIT fail → `VLLM_USE_FLASHINFER_SAMPLER=0`. **Never `pkill -f`**.
 - p3968: R252 MERGE_DONE idle → same-pass **CHALL+n80**. **Never `pkill -f`**.
 - p3967: **R861 SUBMITTED**; HF public storage Stage-5 blocker — purge LOST merges first. **Never `pkill -f`**.
 - p3966: **R861 CLEAR v4** ~1.088×; `lium fund` AttributeError → `btcli wallet transfer --dest 5FqAC…`. **Never `pkill -f`**.
@@ -49,35 +50,35 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p3961: rematch MERGE_DONE → cold TK TP1 OFFLINE+eager on FUSE.GOCRYPTFS. **Never `pkill -f`**.
 - p3959: vera hub_ok **min=2** (2-shard; ≥16 false-fail). **Never `pkill -f`**.
 - p3958: mid-HF APPEND keep partials; lone 8×B200=`fbb1135f` **bl**. **Never `pkill -f`**.
-- p3957: R337 GPUs **2–7 idle** post R852/R853 MERGE → **R869** ShortCtx HiRank Loβ + **R870** ShortCtx HiRank Hiβ + **R871** MidCtx MidRank Loβ UltraLoLR TRAIN (wait→merge); SoftHiHi jsonl ≡ Soft Mid Mid Soft (md5); `lium scp` download needs **`-d`**; B300/B200×8 JSON=[]; brave cold TK still prefetching. **Never `pkill -f`**.
-- p3956: **brave idle 0–7** with R848–R851 MERGE_DONE → prune stale HF kings + **cold TK vera prefetch** + arm **R848/R849** lean n80 vs reign36 (R850/R851 parked); R854 relay ~11–15/16; R337 GPUs **2–7 idle** (next fill); B300/B200×8=0. **Never `pkill -f`**.
-- p3955: **R843/R844/R845 REFUTE v4** m=−0.00491~−0.51× / −0.00193~−0.19× / −0.00205~−0.77× (thought✓ B✓ k=3) vs reign36 → reap lunar :8002 + R252 4–7 exact → **R866** loveaffine SoftCtx MidRank Hiβ + **R867** Soft Mid Mid Soft MidRank Midβ SoftCtx + **R868** Soft Hi Hi Soft MidRank Midβ SoftCtx TRAIN; lone 8×B200=`fbb1135f` **bl**. **Never `pkill -f`**.
-- p3954: R854 MERGE parked → **host-relay×4 R337→lunar** + lunar slot-claimer (wait free :8002/:8003); R338 GPUs **2–7 idle** post R855–R857 MERGE → **R863/R864/R865** MidRank SoftCtx UltraLoLR TRAIN (β=0.1/0.02/0.3); B300/B200×8 stock=0 (waiters armed). **Never `pkill -f`**.
-- p3953: **R843 EngineDead** mid-n80 (`__triton_launcher.so` missing; chall_r843 n_so=21 size58 passed REUSE gate ≥1/≥50) → wipe+**cp -a king→chall_r843** (n_so=30) + clear stamp + **RELOAD** lean_chall :8002 (pid**882335**; T+K vera warm); R252 **vera SWAP_OK** :8001 → R844/R845 chall LOAD 4–7; lone 8×B200=`fbb1135f` **bl**. **Never `pkill -f`**.
-- p3951: R252 vera **part0 stall**→resume **SIZE_OK**; part1 dual-write oversize→kill concat + truncate + **exact-eq** concat → **SIZE_OK+SWAP**; **R846/R847 REFUTE v4** m=−0.00184~−0.33× / −0.00115~−0.25× (thought✓ B✓ k=3) vs reign36 → reap crown → **R861** MidRank Midβ + **R862** HiRank Hiβ SoftCtx UltraLoLR TRAIN; B200 bl. **Never `pkill -f`**.
-- p3950: **R830 REFUTE v4** m=−0.001135~**−0.21×** (thought✓234.5 B✓0.436 k=3) vs **reign36** vera — SoftCtx HiRank Midβ marsplan fails live king; reap lunar :8003 exact CVD=6,7 → **R860** cryptoDev23 SoftCtx HiRank Midβ UltraLoLR TRAIN (non-king parent); R252 vera **part1 stall** @9.96G → kill exact pipe + **resume** skip=22398641338 (part0+part1 GROW); lone 8×B200=`fbb1135f` **bl** (skip). **Never `pkill -f`**.
-- p3949: **R830 EngineDead** mid-n80 (`sample_tokens` RPC timeout @23:08Z → chall :8003 down; FATAL missing sim; orphan Worker_TP PPID=1 on 6,7) → clear one-shot stamp + exact reap 870125/870126 → **RELOAD** lean_chall :8003 (pid**873093**; triton n_so=25; T+K vera warm); R843 TRAIN 4,5 untouched; R252 vera part0/1 GROW (~6.8G/~9.8G of 12.4G); B200×8 **listed** (not rented); B300=0. **Never `pkill -f`**.
-- p3948: R252 vera B1_2/3+B2 DONE but **part1 stalled ~8.8G/12.4G** (no sender) + dual part0 writers (stale non-append + resume) → kill exact stale PIDs; **lunar part1 append resume** from 8862400512 + keep part0 append; arm **lium-exec SIZE_OK concat** (parse `SIZES` markers — digit-strip ate `8` from `gentle-wolf-8c`); R830 n80 LIVE lunar :8003; B300=0 B200=0. **Never `pkill -f`**.
-- p3947: **R842 REFUTE v4** m=−0.007680~**−1.07×** (thought✓213 B✓0.443 k=3) vs **reign36** vera — SoftCtx MidRank MidBeta UltraLoLR fails live king; reap lunar :8003 exact CVD=6,7 → **R830** SIZE_OK claimer CLAIM 6,7:8003 LOAD n80; keep `/tmp/r842_merged`; B300×8=0 B200 JSON=[]. **Never `pkill -f`**.
-- p3946: **R838 REFUTE v4** m=−0.004039~**−0.71×** (thought✓165 B✓0.453 k=3) vs **reign36** vera — Soft Mid Mid Soft MidRank LoBeta SoftCtx UltraLoLR fails live king; reap golden :8002 exact CVD=4,5 → **R859** Soft Mid Mid Soft HiRank LoBeta SoftCtx UltraLoLR TRAIN 4,5 (wait→merge→n80); keep `/tmp/r838_merged`; R842 n80 ~78/80; B300×8=0 B200 JSON=[] (table ghost). **Never `pkill -f`**.
-- p3945: **R842 EngineDead again** mid-n80 (`sample_tokens` RPC timeout @22:44Z → chall :8003 down; FATAL missing sim; one-shot stamp would idle GPUs 6,7) → clear stamp + **RELOAD** lean_chall :8003 (pid864494; triton n_so=26; T+K vera warm); **R838 n80 LIVE** golden :8002; B300×8=0 B200×8=0. **Never `pkill -f`**.
-- p3944: **R841 REFUTE v4** m=+0.001665~**0.27×** (thought✓144 B✓0.430 k=3) vs **reign36** vera — Soft Mid Mid Soft MidRank HiBeta SoftCtx UltraLoLR fails live king; **R838** aborted on stale **reign35 tammy** gate despite golden vera LIVE + one-shot stamp → clear stamp + **RELOAD** lean_chall vs vera :8002; reap R841 :8003 exact → **R858** Soft Mid Mid Soft HiRank HiBeta SoftCtx UltraLoLR TRAIN 6,7; B300×8=0 bl-ghost B200. **Never `pkill -f`**.
-- p3943: **R842 EngineDead** mid-probe (`sample_tokens` RPC timeout → chall down; one-shot `r842_n80_launched` left GPUs **6,7 idle** ~5m) → clear stamp + **RELOAD** lean_chall :8003 (triton preseed OK; T+K vera warm); R830 relay ~40G/66G; B300×8=0. **Never `pkill -f`**.
-- p3942: R337/R338 GPUs **2–7 idle** post-merge → **R852–R857 Soft Mid Mid Soft UltraLoLR TRAIN** (HiRank Lo/Hi SoftCtx · MidCtx Hi Mid/Lo · ShortCtx Hi Mid · MidCtx Mid Hi) + wait→merge; R830 host-relay mid (~9G); R842 n80 LIVE lunar :8003; B300×8=0 B200×8=0. **Never `pkill -f`**.
-- p3941: R337/R338 GPUs **2–7 idle** with **MERGE_DONE** but R796/R830/R831/R832 **MISS on lunar** (only R337/R338/R835 relayed) — ship **host-relay×4 + slot-claimer** same pass (R830→lunar vs reign36 vera); new SSH lunar→R252:40299 times out while **ESTAB** dd streams still grow (don't kill); B300×8=0. **Never `pkill -f`**.
-- p3940: p3939 resume **waited** on live part0/1 before stuck chunks → hours idle; kill exact idle resume PID → **parallel×4** append B1_2/3+B2_0/1 now (keep live part0/1); 6 streams grow; lone 8×B200=`fbb1135f` still **bl** (no rent); lium-swap waiter kept; B300×8=0. **Never `pkill -f`**.
-- p3939: lunar→R252 vera DIRECT×6 — **4/6 chunks SSH-timeout** ("server not responding"); host→R252:40299 also dead; keep live part0/1 dd; **resume×2** append on lunar (`.ralph/p3939_vera_r252_resume*`); SIZE_OK→swap via **`lium exec`/`lium scp`** (not direct SSH); ~5 MB/s agg ETA hours; B300×8=0. **Never `pkill -f`**.
-- p3938: p3937 host launch SSH hung (remote `bash -c` held open by nohup session) while lunar worker **already LIVE** ×6 dd — kill exact hung SSH/parent only; arm separate SIZE_OK poll (`.ralph/p3938_poll_*`); swap waiter kept; DIRECT ~19%/~47 MB/s ETA~20m; B300×8=0. **Never `pkill -f`**.
-- p3937: R252 still **tammy** (no vera cache) while R844/R845 n80 fail-closed on `vera6` — launched **lunar→R252 vera DIRECT×6** (p3928 file-worker pattern; host pid686036/686038; SIZE_OK→`retarget_king_vera_reign36_p3918` PREFETCH=0 SWAP) trains 4–7 untouched; B300×8=0. **Never `pkill -f`**.
-- p3936: brave **idle 0–7** → prune REFUTE `/tmp/r823_merged`+`r824_merged` (~131G) → **R848** MidRank Midβ SoftCtx + **R849** HiRank Hiβ SoftCtx + **R850** MidRank Midβ MidCtx + **R851** HiRank Loβ SoftCtx UltraLoLR TRAIN (pids 383529/383648/383768/383950) + wait→merge; keep r821/r822 merges; B300×8=0. **Never `pkill -f`**.
-- p3935: **R839/R840 REFUTE v4** m=+0.00119~**0.15×** / −0.00240~**−0.36×** (thought✓169/163 B✓0.51/0.47 k=3) vs **reign36 vera** — Soft Mid Mid Soft MidRank Hiβ / HiRank Midβ SoftCtx UltraLoLR on tammy fail live king; reap crown :8002/:8003 exact → **R846** vera Soft Mid Mid Soft MidRank HiBeta SoftCtx UltraLoLR + **R847** vera Soft Mid Mid Soft HiRank MidBeta SoftCtx UltraLoLR TRAIN 4–7 (wait→merge→n80); brave still idle 0–7; B300×8=0. **Never `pkill -f`**.
-- p3934: **R833/R834 REFUTE v4** (stale reign35) m=−0.00117~−0.19× / −0.00349~−0.74× thought/B✓ k=3 — idle challs on R252 4–7 ~2.5h post-DONE; reap exact CVD=4,5/6,7 → **R844** Soft Mid Mid Soft HiRank MidBeta SoftCtx + **R845** Soft Hi Hi Soft HiRank MidBeta SoftCtx UltraLoLR TRAIN (wait→merge→n80 **fail-closed until vera king**); R839~73/80 R840~79/80; B300×8=0. **Never `pkill -f`**.
-- p3933: **R837 REFUTE v4** m=+0.000402~**0.07×** (thought✓213 B✓0.354 k=3) vs **reign36 vera** — SoftCtx MidRank LoBeta UltraLoLR near-zero edge; reap lunar :8002 exact (CVD=4,5) → **R843** SoftCtx MidRank HiBeta UltraLoLR TRAIN 4,5 (wait→merge→n80); R839~20/80 R840~30/80; B300×8=0. **Never `pkill -f`**.
-- p3932: crown **ENOSPC** (`/tmp` 100% from ~16×66G `r*_merged`) killed R839/R840 chall (`tempfile.mkdtemp` errno28) despite MERGE_DONE + n80_launched stamps — rm 14 REFUTE merges (~850G, keep live axes) + triton seed→relaunch :8002/:8003 LOAD; prune stale merges before dual chall. B300×8=0. **Never `pkill -f`**.
-- p3931: golden **vera SIZE_OK→:8001 SWAP_OK** (pid703836, id=`vera6/…-t6`) — p3930 kill-tammy launch died `nvcc`/`cuda_home='/usr/local/cuda'`; fix = export `CUDA_HOME`/`CUDA_PATH`/`LD_LIBRARY_PATH` from `/root/venv/.../nvidia/cu13` (teacher env) before `vllm serve` on CVD=2,3; trains 4–7 untouched. B300×8=0. **Never `pkill -f`**.
-- p3928: **R836 REFUTE v4** m=−0.005756~**−0.85×** (thought✓240 B✓0.418 k=3) vs **reign36 vera** — MidCtx Mid Mid UltraLoLR fails live king; reap lunar :8003 exact → **R842** SoftCtx Mid Mid Soft MidRank MidBeta UltraLoLR TRAIN 6,7; **lunar→golden vera DIRECT×6** (file-based worker — nested `nohup`+heredoc false-finished SIZE_OK in ~1s). B300×8=0. **Never `pkill -f`**.
-- p3927: **R828 REFUTE v4** m=−0.007278~**−0.80×** (thought✓152 B✓0.319 k=3) vs stale reign35 tammy — hard loss even vs weaker king; reap :8003 exact → **R841** Soft Mid Mid Soft MidRank HiBeta SoftCtx UltraLoLR TRAIN golden 6,7 (wait→merge→n80 requires golden **vera** swap); **R836 MERGE→n80 LIVE** lunar vs reign36. B300×8=0. **Never `pkill -f`**.
-- p3926: **R829 REFUTE v4** m=+0.001175~**0.35×** (thought✓157 B✓0.5 k=3) vs stale tammy + **R827 REFUTE v4** m=+0.001807~**0.20×** (thought✓144.5 B✓0.4125 k=3) vs **reign36 vera** — vera SIZE_OK+SWAP done; reap :8002/:8003 exact → **R838** Soft Mid Mid Soft MidRank LoBeta UltraLoLR golden 4,5 + **R839** Soft Mid Mid Soft MidRank HiBeta SoftCtx + **R840** Soft Mid Mid Soft HiRank MidBeta SoftCtx crown TRAIN (wait→merge→n80 vs vera). B300×8=0. **Never `pkill -f`**.
+- p3957: SoftHiHi jsonl ≡ Soft Mid Mid Soft (md5); `lium scp` download needs **`-d`**. **Never `pkill -f`**.
+- p3956: brave idle → prune stale HF kings + cold TK vera prefetch. **Never `pkill -f`**.
+- p3955: **R843/R844/R845 REFUTE** → R866/R867/R868 TRAIN; `fbb1135f` **bl**. **Never `pkill -f`**.
+- p3954: host-relay×4 + slot-claimer; R863/R864/R865 SoftCtx UltraLoLR TRAIN. **Never `pkill -f`**.
+- p3953: EngineDead `__triton_launcher.so` → wipe+cp king→chall + RELOAD. **Never `pkill -f`**.
+- p3951: vera part stall → exact-eq concat SIZE_OK+SWAP; R846/R847 REFUTE → R861/R862. **Never `pkill -f`**.
+- p3950: **R830 REFUTE** ~−0.21× → R860 cryptoDev23 SoftCtx HiRank. **Never `pkill -f`**.
+- p3949: EngineDead sample_tokens timeout → clear stamp + RELOAD lean_chall. **Never `pkill -f`**.
+- p3948: part1 stall + dual writers → kill exact; parse `SIZES` (digit-strip ate `8`). **Never `pkill -f`**.
+- p3947: **R842 REFUTE** ~−1.07× → R830 SIZE_OK claimer. **Never `pkill -f`**.
+- p3946: **R838 REFUTE** ~−0.71× → R859 HiRank Loβ TRAIN. **Never `pkill -f`**.
+- p3945: EngineDead again → RELOAD; R838 n80 LIVE. **Never `pkill -f`**.
+- p3944: **R841 REFUTE** ~0.27×; stale reign35 gate → clear stamp + RELOAD vs vera. **Never `pkill -f`**.
+- p3943: EngineDead left GPUs idle → clear stamp + RELOAD. **Never `pkill -f`**.
+- p3942: R337/R338 idle → R852–R857 Soft Mid Mid Soft UltraLoLR TRAIN. **Never `pkill -f`**.
+- p3941: MERGE_DONE but MISS on lunar → host-relay×4 + slot-claimer same pass. **Never `pkill -f`**.
+- p3940: resume waited on live parts → kill idle resume → parallel×4 append. **Never `pkill -f`**.
+- p3939: DIRECT SSH-timeout chunks → resume append; SIZE_OK via `lium exec`/`scp`. **Never `pkill -f`**.
+- p3938: host SSH hung while worker LIVE → kill hung SSH only. **Never `pkill -f`**.
+- p3937: R252 still tammy → lunar→R252 vera DIRECT×6 + SWAP. **Never `pkill -f`**.
+- p3936: brave idle → R848–R851 UltraLoLR TRAIN swarm. **Never `pkill -f`**.
+- p3935: **R839/R840 REFUTE** → R846/R847 vera SoftCtx TRAIN. **Never `pkill -f`**.
+- p3934: R833/R834 stale reign35 → R844/R845 TRAIN fail-closed until vera. **Never `pkill -f`**.
+- p3933: **R837 REFUTE** ~0.07× → R843 SoftCtx MidRank Hiβ. **Never `pkill -f`**.
+- p3932: crown ENOSPC from ~16×66G merges → prune before dual chall. **Never `pkill -f`**.
+- p3931: golden vera SWAP — export CUDA_HOME from cu13 teacher env. **Never `pkill -f`**.
+- p3928: **R836 REFUTE** ~−0.85× → R842 SoftCtx; file-based DIRECT worker. **Never `pkill -f`**.
+- p3927: **R828 REFUTE** vs stale tammy → R841 SoftCtx Hiβ TRAIN. **Never `pkill -f`**.
+- p3926: R829/R827 REFUTE → R838/R839/R840 Soft Mid Mid Soft TRAIN vs vera. **Never `pkill -f`**.
 - p3923: **crown vera** HF shard1 stuck ~16/47GB (~10MB/s) writer pid**311698** — kill exact + wipe `.incomplete` → **lunar→crown** size-checked pipe (47G blob `c6fc46d3…`) host-relay; waiters **311664/311824** kept; SIZE_OK→swap→R827. Lunar **R826 n80 LIVE** vs reign36; golden **R825 n80 LIVE** vs tammy (re-sim vera if clear). B300×8=0. **Never `pkill -f`**.
 - p3922: **R825** lean_chall hung Triton `ImportError` missing `__triton_launcher.so` — seed cands r743… absent on golden → empty `chall_r825`; kill exact PIDs + leftover Worker_TP0 **670733**; `cp -a` **king→chall_r825** (26 .so, key `77WML…` OK) + patch seed→king/chall/r633; relaunch :8002. Lunar vera SIZE_OK king LOAD GPUs2,3. Crown vera ~30GB. B300×8=0. **Never `pkill -f`**.
 - p3921: **R823 REFUTE v4** m=+0.000530~**0.17×** (thought✓176 B✓0.595 k=3) vs **stale reign35** — reap chall pid**306211** → crown GPUs 4–7 free; **vera retarget** PREFETCH + wait→swap + **wait→R827 n80** (EngineDead reclaim vs reign36); `wait_vera` dies on empty blobs/`du` under `pipefail` — tolerate `sz=${sz:-0}`. R825 MERGE_DONE→n80 LOAD golden still **tammy**. Lunar vera ~64G. B300×8=0. **Never `pkill -f`**.
@@ -145,6 +146,5 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p3859: brave idle **4–7** → **R800+R801**. **Never `pkill -f`**.
 - p3849: Mega axes need `epochs ≥ ceil(max_steps/n_rows)`. **Never `pkill -f`**.
 - p3848: **R780+R781 MERGE_DONE** → host-relay. **Never `pkill -f`**.
-- p3844: dual challs need distinct ports. **Never `pkill -f`**.
-- p3843/p3813: lone 8×B200=`fbb1135f` **bl**. **Never `pkill -f`**.
+- p3844/p3843: dual challs need distinct ports; lone 8×B200=`fbb1135f` **bl**. **Never `pkill -f`**.
 
