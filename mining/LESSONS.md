@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3964: brave TP=2 **chall** R848/R849 NCCL-spin ~5m @1068MiB (same as T/K) → SIGKILL exact chall trees → patch lean_chall **GPUS=4/6 TP=1** → **CHALL_READY** ~1.5m + **n80 LIVE** both; stock 0. Brave: **all** vLLM TP=1. **Never `pkill -f`**.
 - p3963: brave TP=2 **king** NCCL-spin ~12m @830MiB (same as teacher) → kill exact king tree (parent wait exits) → **TP=1 GPU1 king READY** ~3.5m + arm R848/R849 lean n80; cold_tk script now TP1 for both T+K; stock 0. **Never `pkill -f`**.
 - p3961: brave rematch **MERGE_DONE** ~141s (66G×2, `weight_identical=false`) → cold TK TP1 OFFLINE+eager teacher LOAD ~34%/47 @~33s/shard on FUSE.GOCRYPTFS; next=READY→king→R848/R849 n80; stock 0. **Never `pkill -f`**.
 - p3960: brave TP=2 teacher **NCCL-spin** post-init (OFFLINE+eager still hung; no weight fds) → `lium reboot` (host-key churn) → `/tmp` merges wiped; adapters OK → **R848/R849 rematch** + cold-TK **TP=1 teacher** + OFFLINE+eager (p3776/r477); stock B300/B200×8=0. **Never `pkill -f`**.

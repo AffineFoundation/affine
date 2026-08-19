@@ -9,7 +9,7 @@
 | mine-crown-1 | gentle-orbit-bd | 8×B200 | $52.25 | **2026-08-19T17:23Z** | TK **vera** · **R861+R862 TRAIN** |
 | mine-r165-awesome-hialpha-1 | lunar-wolf-be | 8×B200 | $44.00 | **2026-08-19T17:23Z** | TK **vera** · **R866+R860 TRAIN** · R854 slot-wait |
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | 8×B200 | $60.00 | **2026-08-19T17:23Z** | TK **vera** · **R859+R858 TRAIN** |
-| mine-r226-marsplan-fullft-1 | brave-raven-a9 | 8×B200 | $47.20 | **2026-08-19T17:23Z** | **TK vera TP1 · R848/R849 n80 LOAD** |
+| mine-r226-marsplan-fullft-1 | brave-raven-a9 | 8×B200 | $47.20 | **2026-08-19T17:23Z** | **TK vera TP1 · R848/R849 n80 LIVE** |
 | mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | 8×B300 | $64.00 | **2026-08-19T17:23Z** | TK **vera LIVE** · **R867+R868 TRAIN** |
 | mine-r337-marsplan-online-dpo-hilr-1 | gentle-shark-35 | 8×B300 | $47.04 | **2026-08-19T17:35Z** | teacher · **R869–R871 TRAIN** |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-lion-9f | 8×B300 | $52.00 | **2026-08-19T17:35Z** | **R863–R865 TRAIN** |
@@ -21,8 +21,8 @@ SSH brave: `ssh -p 40127 root@18.118.83.97` (host-key churn after reboot)
 SSH R252: **host:40299 TIMEOUT** — use `lium exec gentle-wolf-8c` / `lium scp -d`
 SSH R337: `ssh root@86.38.182.67 -p 20295`
 SSH R338: `ssh root@86.38.182.55 -p 20299`
-Host fleet: **7 mine-*** · B300×8=0 · B200×8=0 · burn **~$366.50/h** · **wvk=7**
-**p3963:** brave king TP1 READY + R848/R849 n80 ARMED; mine=7
+Host fleet: **7 mine-*** · B300×8=0 · B200×8=0 · burn **~$366.49/h** · **wvk=7**
+**p3964:** brave R848/R849 TP1 READY + n80 LIVE; mine=7
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval`, `affine-teacher2`.
 
@@ -30,6 +30,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-19T01:51:00Z | p3964: brave chall TP2 NCCL→TP1 READY; R848/R849 n80 LIVE; stock 0 |
 | 2026-08-19T01:45:17Z | p3963: brave TP2 king NCCL→TP1 READY; R848/R849 n80 armed; stock 0 |
 | 2026-08-19T01:05:24Z | p3961: R848/R849 MERGE_DONE; cold TK teacher LOAD ~34%/47; stock 0 |
-| 2026-08-19T00:53:28Z | p3960: brave NCCL→reboot; rematch R848/R849 + cold-TK TP1 waiter; stock 0 |
