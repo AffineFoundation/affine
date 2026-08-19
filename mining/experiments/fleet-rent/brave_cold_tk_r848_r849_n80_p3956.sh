@@ -25,8 +25,12 @@ export VLLM_USE_FLASHINFER_MOE_FP4=0
 export VLLM_USE_DEEP_GEMM=0
 export VLLM_MOE_USE_DEEP_GEMM=0
 export PYTHONPATH=/root/mining_src/affine_pkg:${PYTHONPATH:-}
-export HF_HUB_OFFLINE=0
-export TRANSFORMERS_OFFLINE=0
+# p3960: offline — brave TP=2 teacher hung with CloudFront HF socket post-NCCL
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+export NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}
+export NCCL_CUMEM_ENABLE=${NCCL_CUMEM_ENABLE:-0}
 
 _SITE=$(python - <<'PY'
 import site
@@ -106,9 +110,16 @@ wait_ready() {
 COMMON=(--tensor-parallel-size 2 --max-model-len 65536 --max-num-batched-tokens 8192
   --attention-backend FLASH_ATTN --attention-config.use_trtllm_attention 0
   --compilation-config.pass_config.fuse_allreduce_rms false --moe-backend triton
-  --additional-config '{"gdn_prefill_backend": "triton"}')
+  --additional-config '{"gdn_prefill_backend": "triton"}'
+  --enforce-eager)
+# p3960: brave TP=2 teacher NCCL-spins post-init (p3776/r477); teacher uses TP=1
+TEACHER_COMMON=(--tensor-parallel-size 1 --max-model-len 65536 --max-num-batched-tokens 8192
+  --attention-backend FLASH_ATTN --attention-config.use_trtllm_attention 0
+  --compilation-config.pass_config.fuse_allreduce_rms false --moe-backend triton
+  --additional-config '{"gdn_prefill_backend": "triton"}'
+  --enforce-eager)
 
-log "START cold TK + R848/R849 n80 vs reign36 vera wvk7"
+log "START cold TK + R848/R849 n80 vs reign36 vera wvk7 (p3960 OFFLINE+eager+TP1)"
 hub_ok "$MERGE_848" || { log "FATAL missing $MERGE_848"; exit 1; }
 hub_ok "$MERGE_849" || { log "FATAL missing $MERGE_849"; exit 1; }
 
@@ -123,8 +134,8 @@ want = {
     "KING_LOCAL": "$KING_LOCAL",
     "KING_SERVED_NAME": "$KING_REPO",
     "RESTART_KING": "1",
-    "HF_HUB_OFFLINE": "0",
-    "TRANSFORMERS_OFFLINE": "0",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
     "SKIP_LOCAL_TKC": "0",
 }
 seen = set()
@@ -194,12 +205,12 @@ if [[ -z "$(ls -A /root/.triton/cache/king 2>/dev/null || true)" ]]; then
   fi
 fi
 
-log "launch teacher :8000 GPUs 0,1"
+log "launch teacher :8000 GPU 0 TP=1 (p3960 NCCL workaround)"
 : >"$TEACHER_LOG"
-CUDA_VISIBLE_DEVICES=0,1 TRITON_CACHE_DIR=/root/.triton/cache/teacher \
+CUDA_VISIBLE_DEVICES=0 TRITON_CACHE_DIR=/root/.triton/cache/teacher \
   nohup /root/venv/bin/vllm serve "$TEACHER_REPO" \
-  --port 8000 --gpu-memory-utilization 0.80 \
-  "${COMMON[@]}" >>"$TEACHER_LOG" 2>&1 &
+  --port 8000 --gpu-memory-utilization 0.92 \
+  "${TEACHER_COMMON[@]}" >>"$TEACHER_LOG" 2>&1 &
 echo $! >"$TEACHER_PIDF"
 log "teacher pid=$(cat "$TEACHER_PIDF")"
 wait_ready 8000 teacher "$TEACHER_PIDF" "$TEACHER_LOG"
