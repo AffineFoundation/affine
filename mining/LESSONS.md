@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3978: B300×8 stock=0 but **8×B200 rentable** (not ghost `fbb1135f`) → **mine-r888-grpo-reason-1** gentle-orbit-0d **$39.20/h** TTL24h · vera-king GRPO axis · BOOT pip+HF LIVE (SSH `192.9.163.79:20500`); nvidia-smi shows **7**/8 GPUs — use TP1 teacher; R864 relay mid (~4/16 SIZE_OK); burn **~$405.70/h**. **Never `pkill -f`**.
 - p3977: **R863 REFUTE v4** m=−0.00584~**−0.63×** (thought✓215 B✓0.338 k=3) vs reign36 — marsplan SoftCtx MidRank Midβ fails; reap lunar 4,5 exact → **R864 host-relay LIVE** R338→lunar (wait→chall+n80); brave idle GPUs **2,3** → **R887** tammy SoftCtx MidRank MidLoβ=0.05 TRAIN (pid**31173** + wait→merge); stock B300=0. **Never `pkill -f`**.
 - p3976: crown R861/R862 idle challs (~1.8h post LOST/REFUTE) reaped exact → **R885** vera MidRank Loβ=0.02 SoftCtx + **R886** vera MidRank MidLoβ=0.05 SoftCtx UltraLoLR TRAIN (pids **382024**/**382030** + wait→merge); R863 SIZE_OK→**CHALL_READY+n80 LIVE** lunar :8002 (sim **914871**); stock B300=0. **Never `pkill -f`**.
 - p3975: R337/R338 GPUs **2–7 idle** post R869–R871 / R863–R865 MERGE → **R879** LoRank r16 α64 + **R880** LoLR 1e-6 + **R881** UltraMega 28800 + **R882** MidLoβ 0.05 + **R883** ep5 + **R884** MegaAlpha α256 Soft Mid Mid Soft SoftCtx TRAIN (pids **58580**/**58885**/**59172**/**64214**/**64470**/**64724** + wait→merge); R863 relay ~63G; keep parked merges; stock B300/B200×8=0. **Never `pkill -f`**.
@@ -146,5 +147,4 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p3844: dual challs need distinct ports. **Never `pkill -f`**.
 - p3843/p3813: lone 8×B200=`fbb1135f` **bl**. **Never `pkill -f`**.
 - p3842: miss `model-visual-restored` → graft. **Never `pkill -f`**.
-- p3835: R252 :40299 **sshfail** → `lium exec`. **Never `pkill -f`**.
 
