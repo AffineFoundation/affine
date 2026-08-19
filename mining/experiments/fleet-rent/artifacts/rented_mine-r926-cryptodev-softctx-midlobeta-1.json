@@ -1,0 +1,11 @@
+{
+  "utc": "2026-08-19T19:19:43Z",
+  "pass": 4030,
+  "name": "mine-r926-cryptodev-softctx-midlobeta-1",
+  "huid": "brave-raven-49",
+  "executor_id": "d4093d0c-8d7c-448a-b4e0-a34e44468ea8",
+  "gpu": "8xH100",
+  "price_per_hour": 13.76,
+  "axis": "R926 cryptoDev23 Offline-DPO SoftCtx MidLo\u03b2=0.05 (R896 SoftCtx Lo\u03b2 ~0.49\u00d7 \u2192 MidLo\u03b2 isolate; restart after TTL-loss of R915)",
+  "ttl": "24h"
+}
