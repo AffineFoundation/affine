@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 79377.14684740201 | p4026 |
-| Lium balance | **$79377.14684740201** | p4026 |
-| cumulative mining spend | ~$134,585 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$69377** (balance − $10,000 floor) | $UTC |
+| $UTC | 79312.69880907168 | p4027 |
+| Lium balance | **$79312.69880907168** | p4027 |
+| cumulative mining spend | ~$134,650 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$69313** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (5 pods) | **~$266.26/h** · vs floor $833/h · gap **−$566.74/h** · bl_skip=1 | p4026 |
+| miner burn (5 pods) | **~$266.26/h** · vs floor $833/h · gap **−$566.74/h** · bl_skip=1 | p4027 |
 | miner coldkey free | τ1257.620 | kept ≥τ50 |
-| miner stake | **0α / τ0** (p4019 swept r252) | p4026 |
+| miner stake | **0α / τ0** (p4019 swept r252) | p4027 |
 | registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T18:37:04Z | 79312.69880907168 | p4027 R914 REFUTE→R923 + R337/R338 vera-pivot (no rent; bl-only); burn **~$266.26/h** |
 | 2026-08-19T18:26:56Z | 79377.14684740201 | p4026 crown cold R912+R913 (no rent; bl-only stock); burn **~$266.26/h** |
 | 2026-08-19T18:21:36Z | 79409.0809999166 | p4025 R914 n80 relaunch + R252/R337/R338 bootstrap (no rent; stock 0); burn **~$266.26/h** |
 | 2026-08-19T18:17:23Z | 79441.59615116383 | p4024 fleet rebuild: +crown B300 $64 +R337 $46.8 +R338 $52.25 +R252 $64; tore bl R339 (~$50.56); burn **~$266.26/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-19T09:41:12Z | 83063.67459711197 | p4019 α→τ: unstake r252 all (~206α→τ11.4) + `btcli transfer` τ11.4→Lium ck (lium fund transfer-attr fail); R905–7 n80 arm; burn **~$306.66/h** |
 | 2026-08-19T09:32:48Z | 80846.34869736551 | p4018 R896+R897+R898 REFUTE→R914+R915+R916 TRAIN (no rent; stock 0); burn **~$306.66/h** |
 | 2026-08-19T09:24:12Z | 80930.40995672633 | p4017 R901+R902 REFUTE→R912+R913 TRAIN (no rent; stock 0); burn **~$306.66/h** |
-| 2026-08-19T09:15:30Z | 81010.52235174661 | p4016 lunar R896+R897 + R888 R898 MERGE idle→n80 LOADING (no rent; stock 0); burn **~$306.66/h** |
