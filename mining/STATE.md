@@ -13,7 +13,7 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | burn | **~$405.70/h** · gap **−$427.30/h** · B300×8 stock=0 |
 | Lium | **~$81344** · free τ**1257.6** · stake under τ5 sweep |
 | **R882** | **REFUTE v4** m=**−0.007812** SE=0.003789 z=−2.06 n=80 bar≈0.00758 (~**−1.03×**) thought✓(226) B✓(0.439) · slot→**R884** |
-| **R899** | CHALL_READY :8002 R252 (p4012 relaunch) · n80 should follow |
+| **R899** | **n80 LIVE** p4012c R252 pid**610406** (outer died after CHALL_READY; sim relaunched) |
 | **R884** | chall loading R338 :8002 after R882 reap · n80 waiter armed |
 | **R883** | Triton fail → orphan workers; cleanup may have hit EngineCores — **verify T/K :8000/:8001** next (SSH flapped) |
 
@@ -30,7 +30,7 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | mine-r888-grpo-reason-1 | gentle-orbit-0d | $39.20 | **R898 MERGE** |
 
 ## Blocked
-No B300×8 stock. R338 SSH flapped after EngineCore sweep — next pass: restore teacher/king if down, finish R883/R884 n80. Never `pkill -f`. Never kill `VLLM::EngineCore` by broad match.
+No B300×8 stock. **R338 (`calm-lion-9f` / 86.38.182.55:20299) unreachable** — TCP timeout + `lium exec` timeout while status=RUNNING; sibling R337 SSH also timed out (same /24). Next: retry SSH/exec; if still dead, `lium rm` **only** that `mine-*` and re-rent axis (R883/R884 merges live on disk until then). Never `pkill -f`. Never broad-kill `VLLM::EngineCore`.
 
 ## Next action
-1. SSH R338: confirm :8000/:8001 healthy; if not, restart teacher GPUs0,1 + king 2,3 by pid-safe scripts. 2. Finish R883 (seed Triton from r882) + R884 n80. 3. Poll R899 n80 result. 4. After R882 REFUTE → next train axis when a slot frees. 5. Rent if B300×8 appears.
+1. Retry R338 SSH/`lium exec`; restore T/K if up. 2. Poll R899 n80 (CHALL_READY). 3. If R338 stays dead → tear+replace mine-r338 only. 4. Rent if B300×8 appears.
