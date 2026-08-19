@@ -1,0 +1,17 @@
+{
+  "utc": "2026-08-19T21:44:46Z",
+  "hypo": "R337",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign36",
+  "margin": -0.009386190378533972,
+  "se": 0.004936716757931915,
+  "z": -1.9013021890415336,
+  "n": 79,
+  "bar": 0.00987343351586383,
+  "thought_median": 183.0,
+  "b_pass": 0.41350210970464135,
+  "wins": false,
+  "note": "p4046 Triton-reseed chall+v4-n80 R337 GPUs4,5; online-DPO HiLR vera pivot; vs reign36 wvk7"
+}

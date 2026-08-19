@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 80648.89638980765 | p4046 |
-| Lium balance | **$80648.89638980765** | p4046 |
-| cumulative mining spend | ~$135,868 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$70649** (balance − $10,000 floor) | $UTC |
+| $UTC | 80611.5782672317 | p4047 |
+| Lium balance | **$80611.5782672317** | p4047 |
+| cumulative mining spend | ~$135,905 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$70612** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (8 pods) | **~$329.79/h** · vs floor $833/h · gap **−$503.21/h** · B300=0 · BL-only B200 | p4046 |
+| miner burn (8 pods) | **~$329.79/h** · vs floor $833/h · gap **−$503.21/h** · B300=0 · BL-only B200 | p4047 |
 | miner coldkey free | τ1258.144 | kept ≥τ50 |
 | miner stake | r252 **~29.5α/~τ1.63** (below τ5 sweep) | p4041 |
 | registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T21:48:21Z | 80611.5782672317 | p4047 R929 chall:8003+n80 + R337 REFUTE→**R939 TRAIN** (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
 | 2026-08-19T21:36:03Z | 80648.89638980765 | p4046 R337 Triton-reseed chall→n80 + R927→R337 relay (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
 | 2026-08-19T21:27:05Z | 80724.50194339531 | p4045 rent **mine-r938** 8×H200 `$15.96` SoftCtx Hiβ + R927 MERGE fix (burn **~$329.79/h**) |
 | 2026-08-19T21:16:47Z | 80797.1264194002 | p4044 R924 MERGE→**host-relay→crown n80** (no rent; B300=0 BL B200; H200×8 `$31.92` noted); burn **~$313.82/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-19T20:49:30Z | 81049.50624060768 | p4040 R338 idle GPUs6–7 → **R935 TRAIN** (no rent; BL `8f34559f`); burn **~$313.82/h** |
 | 2026-08-19T20:43:28Z | 81049.50624060768 | p4039 R338 TRAIN_DONE→vera merge→n80 (no rent; BL `8f34559f`+`fbb1135f`); burn **~$313.82/h** |
 | 2026-08-19T20:34:56Z | 81120.16587304366 | p4038 R926 idle GPUs4–7 → R933+R934 TRAIN (no rent; BL `8f34559f`); burn **~$313.82/h** |
-| 2026-08-19T20:29:45Z | 81157.75142185499 | p4037 R923 REFUTE→R932 + R930/R931 idle fill (no rent; BL `8f34559f`); burn **~$313.82/h** |
