@@ -1,5 +1,6 @@
 # R936 result
-- **status:** n80 LIVE p4051 (crown :8002) after MERGE_DONE + lean path fix + Triton reseeds from chall_r928
-- **axis:** vera SoftCtx HiRank Loβ UltraLoLR β=0.02 r=64 @12288
-- **ops:** p4050b looked at MidCtx Midβ path (missing); first chall failed missing `.cubin` from king seed; REUSE chall_r928 (n_so=26 n_cubin=238) → CHALL_READY → n80 pid55472
-- **decision:** pending `/root/affine_data/r936_decision_reign36_wvk7.json`
+
+- **status:** **REFUTE v4** p4052 (after n80 LIVE p4051)
+- **n80 vs reign36** (`vera6/…-t6`@`8e3f1695`): m=**+0.000310** SE=0.002182 z=0.142 n=80 bar≈0.004364 (~**0.07×**) thought✓(156) B✓(0.420) k=3/τ=0.03
+- **ops:** chall:8002 GPUs6,7 exact-PID reaped → slot → **R934** host-relay→crown :8002
+- **decision:** under max(2·SE, δ); do not submit
