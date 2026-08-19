@@ -1,0 +1,1 @@
+p3963: same cold-TK fix; lean n80 ARMED :8003 vs reign36 vera (watch /root/affine_data/r849_sim_*).

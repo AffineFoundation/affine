@@ -1,0 +1,1 @@
+p3963: brave TP2 king NCCL-spin killed (exact PIDs); TP1 GPU1 king READY; lean n80 ARMED :8002 vs reign36 vera (watch /root/affine_data/r848_sim_*).
