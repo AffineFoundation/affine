@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 79000.0507029855 | p4030 |
-| Lium balance | **$79000.0507029855** | p4030 |
-| cumulative mining spend | ~$134,962 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$69000** (balance − $10,000 floor) | $UTC |
+| $UTC | 78965.05059548139 | p4031 |
+| Lium balance | **$78965.05059548139** | p4031 |
+| cumulative mining spend | ~$134,997 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$68965** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$313.82/h** · vs floor $833/h · gap **−$519.18/h** · +H100 R926 | p4030 |
+| miner burn (7 pods) | **~$313.82/h** · vs floor $833/h · gap **−$519.18/h** · stock BL-only | p4031 |
 | miner coldkey free | τ1257.620 | kept ≥τ50 |
-| miner stake | **0α / τ0** (p4019 swept r252) | p4030 |
+| miner stake | **0α / τ0** (p4019 swept r252) | p4031 |
 | registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T19:27:56Z | 78965.05059548139 | p4031 R927 ARMED on R926 GPUs2,3 MidCtx MidLoβ (no rent; only BL 8×B200); burn **~$313.82/h** |
 | 2026-08-19T19:22:56Z | 79000.0507029855 | p4030 rent `mine-r926` 8×H100 $13.76/h SoftCtx MidLoβ + R925 idle-GPU fill; burn **~$313.82/h** |
 | 2026-08-19T18:43:46Z | 79280.45844954444 | p4028 rent `mine-r924` 8×H200 $33.81/h MidCtx Hiβ (no B300/non-bl B200); burn **~$300.06/h** |
 | 2026-08-19T18:37:04Z | 79312.69880907168 | p4027 R914 REFUTE→R923 + R337/R338 vera-pivot (no rent; bl-only); burn **~$266.26/h** |
