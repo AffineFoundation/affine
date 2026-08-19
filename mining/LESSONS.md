@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4045: B300×8=0 + BL B200 only → rent **8×H200** `mine-r938` SoftCtx MidRank Hiβ `$15.96` (`f092246d`→noble-wolf-22); R927 wait FATAL→fix `--adapter …/train/adapter` MERGE_DONE 16shards. **Never `pkill -f`**.
 - p4044: R924 MERGE_DONE → host-relay parallel×4 → crown GPUs **6,7** :8002 chall+v4 n80; B300×8=0 + both 8×B200 BL (`8f34559f`/`fbb1135f`); non-BL 8×H200 `f092246d` @$31.92 available. **Never `pkill -f`**.
 - p4043: R337 TRAIN_DONE but merge aborted on **marsplan** path (404); wait scripts that check flat `…/train/adapter_model.safetensors` FATAL before peft writes `…/train/adapter/` — fix=`--adapter …/adapter` + vera `@8e3f1695` (same as p4039). **Never `pkill -f`**.
 - p4042: R338 **REFUTE** m=−0.003241 ~−0.35× (thought✓218 B✓0.399 k=3) vs reign36 → exact-PID reap chall:8002 → **R937** SoftCtx HiRank Midβ; stock only BL `8f34559f`. **Never `pkill -f`**.
