@@ -25,7 +25,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | UTC | Lium USD | event |
 |---|---|---|
-| 2026-08-19T23:00:22Z | 80049.52448572023 | p4053 R933 n80 protect + R926 wait→lean armed (no rent; B300=0); burn **~$329.79/h** |
+| 2026-08-19T23:00:22Z | 80049.52448572023 | p4053 R933 REFUTE~-0.68×→R941 TRAIN + protect late-relay + wait_r926→lean (no rent; B300=0); burn **~$329.79/h** |
 | 2026-08-19T22:56:20Z | 80049.52448572023 | p4052 R936 REFUTE→R934 relay + R252 Triton recover (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
 | 2026-08-19T22:46:48Z | 80163.02716236464 | p4051 R936 n80 LIVE + R926→crown relay (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
 | 2026-08-19T22:29:07Z | 80275.38971973065 | p4050 R924+R927 REFUTE→R928 n80+R933 relay+R926 rematch (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
