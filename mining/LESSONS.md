@@ -25,18 +25,19 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p3987: R871 SIZE_OK→chall :8002; first n80 died `ModuleNotFoundError: evalsrv.corpus` (stub affine_pkg) → full affine+evalsrv sync + `pyarrow` → **n80 LIVE** pid19488; R888 GRPO step≥50; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
-- p3986: **R875/R876/R865 REFUTE v4** (~0.007× / ~0.304× / ~−0.83×) → reap challs → **R889+R890+R891 TRAIN** same pass; R871~14/16; R888 step≥60; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
-- p3985: R865 **SIZE_OK** (16/16+visual) → chall TP2 :8002 + **n80 LIVE** lunar pid**928274** vs reign36; R875~53/80 R876~30/80; R871~8/16; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
-- p3984: brave R875/R876 **TRAIN_DONE** → **MERGE_DONE** + **TP1** chall+n80 :8002/:8003; R888 king READY + GRPO; B300/8×B200 stock=0. **Never `pkill -f`**.
-- p3983: R888 idle → **king TP1 :8001** + **R871 host-relay** R337→R888; B300/8×B200 stock=0. **Never `pkill -f`**.
-- p3982: **R864 REFUTE v4** m=−0.01080~**−1.12×** → **R865 host-relay**; R888 **GRPO TRAIN**. **Never `pkill -f`**.
+- p3988: R252 R872 **MERGE_DONE** idle → same-pass **chall :8002 + v4 n80 LIVE** pid**584389**; R871~78/80; R888 GRPO step≥92; R873 TRAIN_DONE but lean_merge missing on pod; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
+- p3987: R871 SIZE_OK→chall :8002; first n80 died `ModuleNotFoundError: evalsrv.corpus` (stub affine_pkg) → full affine+evalsrv sync + `pyarrow` → **n80 LIVE** pid19488. **Never `pkill -f`**.
+- p3986: **R875/R876/R865 REFUTE v4** (~0.007× / ~0.304× / ~−0.83×) → **R889+R890+R891 TRAIN**. **Never `pkill -f`**.
+- p3985: R865 **SIZE_OK** → chall+n80 LIVE lunar. **Never `pkill -f`**.
+- p3984: brave R875/R876 **MERGE** + TP1 chall+n80; R888 king+GRPO. **Never `pkill -f`**.
+- p3983: R888 king TP1 + R871 host-relay R337→R888. **Never `pkill -f`**.
+- p3982: **R864 REFUTE** ~−1.12× → R865 relay; R888 GRPO. **Never `pkill -f`**.
 - p3981: R888 teacher DeepGEMM crash → `VLLM_USE_DEEP_GEMM=0` + flashinfer-MoE offs. **Never `pkill -f`**.
 - p3980: R888 hub-cache path mismatch → `--cache-dir $HF_HOME/hub`. **Never `pkill -f`**.
 - p3979: hub **1.28** `huggingface-cli download` no-op → use **`hf download`**. **Never `pkill -f`**.
 - p3978: rent **mine-r888** 8×B200 when B300=0 (skip `fbb1135f`); may show **7**/8 GPUs → TP1. **Never `pkill -f`**.
-- p3977: **R863 REFUTE v4** ~−0.63× → R864 relay; brave **R887** TRAIN. **Never `pkill -f`**.
-- p3976: crown idle → **R885/R886** TRAIN; R863 n80 LIVE. **Never `pkill -f`**.
+- p3977: **R863 REFUTE** ~−0.63× → R864 relay; brave **R887** TRAIN. **Never `pkill -f`**.
+- p3976: crown idle → **R885/R886** TRAIN. **Never `pkill -f`**.
 - p3975: R337/R338 idle → **R879–R884** TRAIN swarm. **Never `pkill -f`**.
 - p3974: golden idle → **R877/R878** kevin TRAIN. **Never `pkill -f`**.
 - p3973: **R866 REFUTE** + **B✗0.268** → R863 host-relay. **Never `pkill -f`**.
