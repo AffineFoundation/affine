@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-19T07:07:52Z",
+  "hypo": "R892",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign36",
+  "margin": -0.011623930016109651,
+  "se": 0.003973561147635965,
+  "z": -2.9253180168185424,
+  "n": 79,
+  "bar": 0.00794712229527193,
+  "thought_median": 165.0,
+  "b_pass": 0.46835443037974683,
+  "wins": false,
+  "note": "p3999 chall+v4-n80 R252 4,5; Soft Mid Mid Soft MidRank LoBeta MidCtx UltraLoLR; vs reign36 vera wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}
