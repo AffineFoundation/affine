@@ -1,0 +1,19 @@
+{
+  "utc": "2026-08-19T20:03:49Z",
+  "hypo": "R912",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign36",
+  "margin": 0.005201727782129771,
+  "se": 0.00487661595028104,
+  "z": 1.0666675077888785,
+  "n": 79,
+  "bar": 0.00975323190056208,
+  "ratio": 0.5333337538944393,
+  "thought_median": 167.0,
+  "b_pass": 0.5063829787234042,
+  "wins": false,
+  "verdict": "REFUTE",
+  "note": "p4034 n80 after missing run_sim_duel fix; Soft Mid Mid Soft MidRank MidBeta MidCtx UltraLoLR vs reign36"
+}

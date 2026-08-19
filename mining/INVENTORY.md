@@ -6,7 +6,7 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-20T18:12Z** | R912+R913 MERGE · TK DL · SSH `95.133.252.28:40298` |
+| mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-20T18:12Z** | TK · R913 n80 · R928 TRAIN · SSH `95.133.252.28:40298` |
 | mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-20T18:14Z** | R3 GRPO TRAIN · SSH `38.127.229.127:40299` |
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | 8×B200 | $46.80 | **2026-08-20T18:14Z** | vera online-DPO · SSH `150.136.46.118:20300` |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-20T18:14Z** | vera online-DPO BigG · SSH `95.133.253.90:40099` |
@@ -22,6 +22,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-19T20:04:44Z | p4034: R912 REFUTE→R928 TRAIN; R913 n80 RUNNING; fixed missing run_sim_duel+pyarrow; stock 0; burn ~$313.82/h; bal ~$78710 |
+| 2026-08-19T19:47:22Z | p4033: crown TK READY (:8000/:8001) · R912+R913 MERGE→n80 chall launched (:8003/:8002); stock only BL 8×B200; burn ~$313.82/h; bal ~$78820 |
 | 2026-08-19T19:38:37Z | p4032: crown cold TK teacher DL + R912/R913 n80 waiters; R927 TRAIN after 16-shard+evalsrv harden; R926 TRAIN; stock only BL 8×B200; burn ~$313.82/h; bal ~$78892 |
-| 2026-08-19T19:27:56Z | p4031: R927 ARMED on R926 GPUs2,3 MidCtx MidLoβ (wait cryptoDev DL); stock only BL 8×B200 `fbb1135f`; burn ~$313.82/h; bal ~$78965 |
-| 2026-08-19T19:22:56Z | p4030: R925 TRAIN on R924 GPUs2,3; rented `mine-r926` 8×H100 $13.76 SoftCtx MidLoβ bootstrap; burn ~$313.82/h; bal ~$79000 |

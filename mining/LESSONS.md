@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4034: cold crown n80 died — missing `s4-h2-merge/run_sim_duel.py` + no pyarrow; fix=upload sim + `ensurepip`+pyarrow + corpus sync. R912 **REFUTE** ~0.53× → R928 HiRank Midβ MidCtx. Chall relaunch needs CUDA_HOME=cu13 (lean_chall has it). **Never `pkill -f`**.
+- p4033: crown cold TK finished → teacher :8000 + king :8001 READY; R912/R913 MERGE_DONE → dual n80 chall launched (:8003/:8002). Waiter `king id=?` is expected until king READY — next 30s poll fires. Stock still BL-only 8×B200. **Never `pkill -f`**.
 - p4032: R927 premature TRAIN failed `ModuleNotFoundError: evalsrv` + partial shards; harden arm to require **16** `model-*-of-*.safetensors` **and** live `from evalsrv.chat import THINK_OPEN` before lean; crown cold TK (teacher DL GPU0 + king GPU2) + arm MERGE→n80 while R912/R913 merge. **Never `pkill -f`**.
 - p4031: sole 8×B200 is **BL** `fbb1135f` → skip; fill idle R926 H100 GPUs **2,3** with R927 MidCtx MidLoβ; stub empty `affine_pkg` → upload fleet-v4-sync; arm waits `cryptodev_dl.done`+weight shards (not bare `config.json`). **Never `pkill -f`**.
 - p4030: B300/B200×8 empty → rent **8×H100** `$13.76` for R926 SoftCtx MidLoβ restart; fill idle H200 GPUs **2,3** with R925 HiRank MidCtx MidLoβ (R901 0.64×). `lium scp` rejects dirs — use `lium rsync` or tar+scp. **Never `pkill -f`**.
