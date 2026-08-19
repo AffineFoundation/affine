@@ -78,10 +78,11 @@ stop_pidfile() {
   rm -f "$pidf"
 }
 
+# min shards: merges=16; vera king is 2-shard (hub_ok≥16 false-fails → HF re-prefetch stall).
 hub_ok() {
-  local path=$1 n
+  local path=$1 min=${2:-16} n
   n=$(ls "$path"/model-*-of-*.safetensors 2>/dev/null | wc -l || true)
-  [[ -f "$path/config.json" ]] && [[ "${n:-0}" -ge 16 ]]
+  [[ -f "$path/config.json" ]] && [[ "${n:-0}" -ge "$min" ]]
 }
 
 wait_ready() {
@@ -143,24 +144,12 @@ p.write_text("\n".join(out) + "\n")
 print("[p3956] mine.env KING→vera reign36")
 PY
 
-if ! hub_ok "$KING_LOCAL"; then
-  log "prefetch $KING_REPO@$KING_REV"
-  python3 - <<PY
-from huggingface_hub import snapshot_download
-import os
-path = snapshot_download(
-    repo_id="$KING_REPO",
-    revision="$KING_REV",
-    token=os.environ.get("HF_TOKEN"),
-)
-print("[p3956] snapshot_download ok", path, flush=True)
-PY
+# Prefer local lunar→brave SIZE_OK cache (p3958). Do NOT HF-prefetch if 2 shards present —
+# marsplan/vera HF is gated/slow and idle-stalls GPUs (p3956/p3958).
+if ! hub_ok "$KING_LOCAL" 2; then
+  log "FATAL vera missing/incomplete at $KING_LOCAL (need ≥2 named shards; wait SIZE_OK)"
+  exit 2
 fi
-if [[ ! -d "$KING_LOCAL" ]]; then
-  alt=$(find /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1 || true)
-  [[ -n "${alt:-}" ]] && KING_LOCAL=$alt
-fi
-hub_ok "$KING_LOCAL" || { log "FATAL vera missing at $KING_LOCAL"; exit 2; }
 log "vera shards=$(ls "$KING_LOCAL"/model-*-of-*.safetensors | wc -l) path=$KING_LOCAL"
 
 if [[ ! -f "$KING_LOCAL/preprocessor_config.json" && -f "$KING_LOCAL/processor_config.json" ]]; then
