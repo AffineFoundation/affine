@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3989: **R871 REFUTE v4** ~−0.85× → reap R888 GPU5; R873 wait called missing `lean_merge_*gpus45*` (real file `gpus67`) + chall script hardcoded **GPUS=4,5** despite name — fixed→**6,7 :8003**; R872 n80 died vLLM RPC timeout → relaunch :8002; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3988: R252 R872 **MERGE_DONE** idle → same-pass **chall :8002 + v4 n80 LIVE** pid**584389**; R871~78/80; R888 GRPO step≥92; R873 TRAIN_DONE but lean_merge missing on pod; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3987: R871 SIZE_OK→chall :8002; first n80 died `ModuleNotFoundError: evalsrv.corpus` (stub affine_pkg) → full affine+evalsrv sync + `pyarrow` → **n80 LIVE** pid19488. **Never `pkill -f`**.
 - p3986: **R875/R876/R865 REFUTE v4** (~0.007× / ~0.304× / ~−0.83×) → **R889+R890+R891 TRAIN**. **Never `pkill -f`**.
@@ -147,4 +148,3 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p3861: **R780** pipe stall on shard **11** → kill ssh PIDs only; **tail accel** 13–16+vis. **Never `pkill -f`**.
 - p3860: **R791/R793 REFUTE** → **R803+R802** UltraLoLR; leave :8002 for R780. **Never `pkill -f`**.
 - p3859: brave idle **4–7** → **R800+R801**. **Never `pkill -f`**.
-
