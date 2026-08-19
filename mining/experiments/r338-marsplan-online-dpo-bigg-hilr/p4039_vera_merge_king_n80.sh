@@ -249,7 +249,7 @@ nohup env -u HF_TOKEN -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE \
   AFFINE_DATA_DIR="${AFFINE_DATA_DIR}" \
   /root/venv/bin/python3 /root/mining_src/s4-h2-merge/run_sim_duel.py \
   --teacher-repo "$TEACHER_REPO" \
-  --king-repo "$KING_REPO" \
+  --king-repo "$kid" \
   --king-rev "$KING_REV" \
   --chall-repo "$MERGED" \
   --chall-rev local \
