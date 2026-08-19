@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 81049.50624060768 | p4039 |
-| Lium balance | **$81049.50624060768** | p4039 |
+| $UTC | 81049.50624060768 | p4040 |
+| Lium balance | **$81049.50624060768** | p4040 |
 | cumulative mining spend | ~$135,466 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
 | **available for mining** | **~$71050** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$313.82/h** · vs floor $833/h · gap **−$519.18/h** · stock BL-only | p4039 |
+| miner burn (7 pods) | **~$313.82/h** · vs floor $833/h · gap **−$519.18/h** · stock BL-only | p4040 |
 | miner coldkey free | τ1258.144 | kept ≥τ50 |
-| miner stake | r252 **~29.5α/~τ1.63** (below τ5 sweep) | p4039 |
+| miner stake | r252 **~29.5α/~τ1.63** (below τ5 sweep) | p4040 |
 | registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T20:49:30Z | 81049.50624060768 | p4040 R338 idle GPUs6–7 → **R935 TRAIN** (no rent; BL `8f34559f`); burn **~$313.82/h** |
 | 2026-08-19T20:43:28Z | 81049.50624060768 | p4039 R338 TRAIN_DONE→vera merge→n80 (no rent; BL `8f34559f`+`fbb1135f`); burn **~$313.82/h** |
 | 2026-08-19T20:34:56Z | 81120.16587304366 | p4038 R926 idle GPUs4–7 → R933+R934 TRAIN (no rent; BL `8f34559f`); burn **~$313.82/h** |
 | 2026-08-19T20:29:45Z | 81157.75142185499 | p4037 R923 REFUTE→R932 + R930/R931 idle fill (no rent; BL `8f34559f`); burn **~$313.82/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-19T19:47:22Z | 78819.91686205856 | p4033 crown TK READY + R912/R913 n80 chall launch (no rent; only BL 8×B200); burn **~$313.82/h** |
 | 2026-08-19T19:38:37Z | 78892.41047967844 | p4032 crown TK DL + R912/R913 MERGE→n80 arm + R926/R927 TRAIN (no rent; only BL 8×B200); burn **~$313.82/h** |
 | 2026-08-19T19:27:56Z | 78965.05059548139 | p4031 R927 ARMED on R926 GPUs2,3 MidCtx MidLoβ (no rent; only BL 8×B200); burn **~$313.82/h** |
-| 2026-08-19T19:22:56Z | 79000.0507029855 | p4030 rent `mine-r926` 8×H100 $13.76/h SoftCtx MidLoβ + R925 idle-GPU fill; burn **~$313.82/h** |
