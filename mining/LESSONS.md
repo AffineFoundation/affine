@@ -25,11 +25,10 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4024: **TTL collapse** (~17:23Z) killed 5 mine-* → only R888 left; rented **8×B300 crown** + **3×8×B200** (R337/R338/R252); tore bl **`8f34559f` R339** same pass; rearmed fleet+bootstrap waiters; R914 MERGE OK but n80 FATAL ConnectError → relaunch; burn **~$266.26/h**. **Never `pkill -f`**.
-- p4022: **R903–R907 all REFUTE** → **R918–R921 TRAIN**; stock=0; burn **~$306.66/h**. **Never `pkill -f`**.
+- p4025: **stale `.bootstrapped` after re-rent** skipped R252/R337/R338; `mine-crown-1` falls to `needs_axis_uploader` (no case) → clear markers + manual upload; **R914 n80 relaunched** on R888. **Never `pkill -f`**.
+- p4024: **TTL collapse** (~17:23Z) killed 5 mine-* → rented **8×B300 crown** + **3×8×B200**; tore bl **`8f34559f` R339**; R914 MERGE OK / n80 ConnectError. **Never `pkill -f`**.
+- p4022: **R903–R907 all REFUTE** → **R918–R921 TRAIN**; stock=0. **Never `pkill -f`**.
 - p4021: golden MERGE idle→n80; **R910 REFUTE** ~0.13× → **R917 TRAIN**. **Never `pkill -f`**.
 - p4020: brave **TP=2** chall hang → **TP=1**; never reap bare `VLLM::EngineCore`. **Never `pkill -f`**.
-- p4019: α r252→τ11.4→Lium via `btcli transfer` (`lium fund` transfer-attr fail). **Never `pkill -f`**.
-- p4018–p4014: REFUTE→TRAIN swarm; merge idle needs merge→n80 waiter. **Never `pkill -f`**.
-- p4012–p3900: stamp LAUNCHED after `test -x`; peer rsync; GRPO; R861 LOST; Alpha→TAO→Lium; never `pkill -f`.
+- p4019–p3900: α→τ→Lium; REFUTE→TRAIN; stamp after `test -x`; never `pkill -f`.
 
