@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3981: R888 teacher **crashed** mid-load (`RuntimeError: DeepGEMM backend is not available`) after 79%/47 shards — patch `serve_teacher_tp1_r888.sh` with `VLLM_USE_DEEP_GEMM=0` + flashinfer-MoE offs → relaunch pid**6086** TRITON Fp8 MoE LOAD; wait**2712** kept → GRPO; R864 **CHALL_READY+n80 LIVE** ~31/80 (sim**921159**); B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3980: R888 king HF **OK** but bootstrap died — `hf download --cache-dir $HF_HOME` writes `models--*` at HF_HOME root (no `hub/`); snaps expected under `$HF_HOME/hub/` → migrate + `--cache-dir $HF_HOME/hub` → teacher HF LIVE (pid**2813**) + wait→TP1 teacher→GRPO TRAIN (boot**2587**/wait**2712**); R864 relay ~15/16; B300 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3979: R888 BOOT **dead** after pip — hub **1.28** `huggingface-cli download` is a hard no-op → patch bootstrap to **`hf download`** (venv PATH) + skip-pip if versions OK → relaunch LIVE king mid (pid**1844**/1993); R864 relay ~8–12/16; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3978: B300×8 stock=0 but **8×B200 rentable** (not ghost `fbb1135f`) → **mine-r888-grpo-reason-1** gentle-orbit-0d **$39.20/h** TTL24h · vera-king GRPO axis · BOOT pip+HF LIVE (SSH `192.9.163.79:20500`); nvidia-smi shows **7**/8 GPUs — use TP1 teacher; R864 relay mid (~4/16 SIZE_OK); burn **~$405.70/h**. **Never `pkill -f`**.
@@ -142,7 +143,6 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p3861: **R780** pipe stall on shard **11** → kill ssh PIDs only; **tail accel** 13–16+vis. **Never `pkill -f`**.
 - p3860: **R791/R793 REFUTE** → **R803+R802** UltraLoLR; leave :8002 for R780. **Never `pkill -f`**.
 - p3859: brave idle **4–7** → **R800+R801**. **Never `pkill -f`**.
-- p3858: **R768 REFUTE** → **R780 meta accel**. **Never `pkill -f`**.
 - p3849: Mega axes need `epochs ≥ ceil(max_steps/n_rows)`. **Never `pkill -f`**.
 - p3848: **R780+R781 MERGE_DONE** → host-relay. **Never `pkill -f`**.
 - p3844: dual challs need distinct ports. **Never `pkill -f`**.

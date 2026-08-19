@@ -28,10 +28,25 @@ if curl -sf --max-time 3 http://127.0.0.1:8000/v1/models >/dev/null 2>&1; then
 fi
 
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+# DeepGEMM / flashinfer MoE crash on this 7-GPU B200 image (p3981) — force triton path.
 export VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}
+export VLLM_ALLREDUCE_USE_FLASHINFER=${VLLM_ALLREDUCE_USE_FLASHINFER:-0}
+export VLLM_USE_FLASHINFER_MOE_FP16=${VLLM_USE_FLASHINFER_MOE_FP16:-0}
+export VLLM_USE_FLASHINFER_MOE_FP8=${VLLM_USE_FLASHINFER_MOE_FP8:-0}
+export VLLM_USE_FLASHINFER_MOE_FP4=${VLLM_USE_FLASHINFER_MOE_FP4:-0}
+export VLLM_USE_DEEP_GEMM=${VLLM_USE_DEEP_GEMM:-0}
+export VLLM_MOE_USE_DEEP_GEMM=${VLLM_MOE_USE_DEEP_GEMM:-0}
 LOG=/root/logs/r888_teacher.nohup
 : >"$LOG"
-nohup /root/venv/bin/vllm serve "$TEACHER_LOCAL" \
+nohup env \
+  VLLM_USE_FLASHINFER_SAMPLER="$VLLM_USE_FLASHINFER_SAMPLER" \
+  VLLM_ALLREDUCE_USE_FLASHINFER="$VLLM_ALLREDUCE_USE_FLASHINFER" \
+  VLLM_USE_FLASHINFER_MOE_FP16="$VLLM_USE_FLASHINFER_MOE_FP16" \
+  VLLM_USE_FLASHINFER_MOE_FP8="$VLLM_USE_FLASHINFER_MOE_FP8" \
+  VLLM_USE_FLASHINFER_MOE_FP4="$VLLM_USE_FLASHINFER_MOE_FP4" \
+  VLLM_USE_DEEP_GEMM="$VLLM_USE_DEEP_GEMM" \
+  VLLM_MOE_USE_DEEP_GEMM="$VLLM_MOE_USE_DEEP_GEMM" \
+  /root/venv/bin/vllm serve "$TEACHER_LOCAL" \
   --port 8000 \
   --tensor-parallel-size 1 \
   --max-model-len 65536 \
@@ -46,4 +61,4 @@ nohup /root/venv/bin/vllm serve "$TEACHER_LOCAL" \
   --enforce-eager \
   >>"$LOG" 2>&1 &
 echo $! | tee /root/logs/r888_teacher.pid
-echo "[r888-teacher] launched pid=$(cat /root/logs/r888_teacher.pid) CVD=$CUDA_VISIBLE_DEVICES TP=1"
+echo "[r888-teacher] launched pid=$(cat /root/logs/r888_teacher.pid) CVD=$CUDA_VISIBLE_DEVICES TP=1 deep_gemm=0"
