@@ -2,8 +2,8 @@
 set -euo pipefail
 log() { echo "[p3976-r886-n80-wait] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 MERGE_DONE=/root/logs/r886_merge.done
-CHALL=/root/mining_src/r886-vera-offline-dpo-hialpha-hirank-midbeta-softctx-megasuperextrasteps-ep4-ultralolr/lean_chall_n80_crown_gpus67_p3976.sh
-LAUNCHED=/root/logs/r886_n80_launched.p3976
+CHALL=/root/mining_src/r886-vera-offline-dpo-hialpha-midrank-midlobeta-softctx-megasuperextrasteps-ep4-ultralolr/lean_chall_n80_crown_gpus67_p3976.sh
+LAUNCHED=/root/logs/r886_n80_launched.p4002
 mkdir -p /root/logs
 [[ -f "$LAUNCHED" ]] && { log "already launched"; exit 0; }
 log "armed wait R886 MERGE → n80 GPUs 6,7 (require vera king)"
@@ -14,9 +14,9 @@ while true; do
     if [[ "${n:-0}" -ge 16 ]] && [[ "$kid" == *vera6* ]]; then
       log "MERGE_READY shards=$n king=$kid — launch chall+n80"
       date -u +%Y-%m-%dT%H:%M:%SZ >"$LAUNCHED"
-      nohup bash "$CHALL" >/root/logs/p3976_r886_chall_n80_wvk7.log 2>&1 &
-      echo $! >/root/logs/p3976_r886_chall_n80.pid
-      log "chall pid=$(cat /root/logs/p3976_r886_chall_n80.pid)"
+      nohup bash "$CHALL" >/root/logs/p4002_r886_chall_n80_wvk7.log 2>&1 &
+      echo $! >/root/logs/p4002_r886_chall_n80.pid
+      log "chall pid=$(cat /root/logs/p4002_r886_chall_n80.pid)"
       exit 0
     fi
     log "waiting shards=${n:-0} king=${kid:-none}"

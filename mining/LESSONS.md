@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4002: **R885+R886 MERGE_DONE** sat idle on crown (GPUs 4–7 free) — wait→n80 CHALL paths wrong (R885 `p3976.sh` missing / only `p3935.sh`; R886 pointed at `hirank-midbeta` dir) → fix + dual lean chall+v4 n80 :8002/:8003 (`p4002_r885_r886_n80_armed.done`); golden R877/R878 + brave R889/R890 still MERGE idle w/ **no** lean_chall. **Never `pkill -f`**.
 - p4001: **R892 REFUTE v4** ~−1.46× (thought✓165 B✓0.468) + **R893 REFUTE v4** ~−1.07× (thought✓166.5 B✓0.483) → exact-PID reap R252 4–7 → **R899 MidLoβ MidCtx + R900 MidLoβ SoftCtx TRAIN**+wait→merge→n80 (`p4001_r899_r900_armed.done`); B300/8×B200 stock=0; burn **~$405.70/h**. Fix sed CHALL path (`midlobeta` not leftover `lobeta`/`hibeta`). **Never `pkill -f`**.
 - p4000: R888 idle GPUs **5,6** → **R898** vera ShortCtx@6144 TRAIN+wait→merge (`p4000_r898_armed.done`); R892+R893 n80 armed. B300/8×B200 stock=0. **Never `pkill -f`**.
 - p3999: R892+R893 TRAIN_DONE sat idle → MERGE+wait n80 (`p3999_r892_r893_armed.done`). Always ship wait→merge→n80 with TRAIN. **Never `pkill -f`**.
