@@ -12,7 +12,7 @@
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-20T18:14Z** | vera online-DPO BigG · SSH `95.133.253.90:40099` |
 | mine-r888-grpo-reason-1 | gentle-orbit-0d | 8×B200† | $39.20 | **2026-08-20T03:34Z** | T+king · **R932 TRAIN** · SSH `192.9.163.79:20500` |
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | 8×H200 | $33.81 | **2026-08-20T18:41Z** | R924+R925+R930+R931 TRAIN · SSH `31.22.104.113:40300` |
-| mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | 8×H100 | $13.76 | **2026-08-20T19:18Z** | R926+R927 TRAIN · SSH `93.120.231.186:32301` |
+| mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | 8×H100 | $13.76 | **2026-08-20T19:18Z** | R926+R927+**R933+R934** TRAIN · SSH `93.120.231.186:32301` |
 
 †nvidia-smi shows **7** GPUs. Host fleet: **7 mine-*** · burn **~$313.82/h** · **wvk=7**
 
@@ -22,6 +22,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-19T20:34:56Z | p4038: stock BL-only `8f34559f`; fill R926 idle GPUs **4–7** → **R933+R934 TRAIN**; burn ~$313.82/h |
 | 2026-08-19T20:29:45Z | p4037: R923 REFUTE~0.56×→R932 TRAIN; R930+R931 idle-GPU fill on R924; stock BL-only; burn ~$313.82/h |
 | 2026-08-19T20:20:36Z | p4036: R923 CHALL_READY→n80 RUNNING pid42129; α→τ→Lium τ12.5; bal ~$81194; stock BL-only |
-| 2026-08-19T20:12:45Z | p4035: R913 REFUTE→R929 TRAIN; R923 MERGE+n80 arm; stock BL-only; burn ~$313.82/h |

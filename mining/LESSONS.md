@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4038: B300×8=0 + sole 8×B200 still BL `8f34559f` → fill R926 idle H100 GPUs **4–7** with **R933** ShortCtx MidLoβ + **R934** MidCtx Loβ; `lium scp TARGET local remote`. **Never `pkill -f`**.
 - p4037: R923 **REFUTE** ~0.56× (m=+0.001172 SE=0.001042 thought✓175 B✓0.315) → exact-PID reap chall :8002 → **R932** HiRank Hiβ ShortCtx; stock BL-only → fill R924 idle GPUs **4–7** with **R930/R931**. **Never `pkill -f`**.
 - p4036: `lium fund` fails (`Subtensor` has no `transfer`) — fallback `btcli wallet transfer` τ→ Lium ck `5FqACMt…zsThe`; r252 236α/~τ13→τ12.5→Lium (+~$2.6k). R923 chall READY→n80 RUNNING. Stock BL-only. **Never `pkill -f`**.
 - p4035: R913 **REFUTE** ~−0.17× → R929 HiRank ShortCtx MidLoβ; R923 TRAIN_DONE but merge failed `--adapter …/train` (peft wants `…/train/adapter`) — relaunch merge+n80 arm. Stock only BL `fbb1135f`. **Never `pkill -f`**.
@@ -38,8 +39,5 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p4026: **`mine-crown-1` has no wait_bootstrap case** → manual cold pack (`p4026_crown_cold_r912_r913.sh`) + Soft Mid Mid Soft from local r886; API stock `bl_skip=1` only. **Never `pkill -f`**.
 - p4025: **stale `.bootstrapped` after re-rent** skipped R252/R337/R338; `mine-crown-1` falls to `needs_axis_uploader` (no case) → clear markers + manual upload; **R914 n80 relaunched** on R888. **Never `pkill -f`**.
 - p4024: **TTL collapse** (~17:23Z) killed 5 mine-* → rented **8×B300 crown** + **3×8×B200**; tore bl **`8f34559f` R339**; R914 MERGE OK / n80 ConnectError. **Never `pkill -f`**.
-- p4022: **R903–R907 all REFUTE** → **R918–R921 TRAIN**; stock=0. **Never `pkill -f`**.
-- p4021: golden MERGE idle→n80; **R910 REFUTE** ~0.13× → **R917 TRAIN**. **Never `pkill -f`**.
-- p4020: brave **TP=2** chall hang → **TP=1**; never reap bare `VLLM::EngineCore`. **Never `pkill -f`**.
-- p4019–p3900: α→τ→Lium; REFUTE→TRAIN; stamp after `test -x`; never `pkill -f`.
+- p4022–p3900: REFUTE→TRAIN; α→τ→Lium; stamp after `test -x`; never `pkill -f`.
 
