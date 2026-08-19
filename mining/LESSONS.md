@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4026: **`mine-crown-1` has no wait_bootstrap case** → manual cold pack (`p4026_crown_cold_r912_r913.sh`) + Soft Mid Mid Soft from local r886; API stock `bl_skip=1` only. **Never `pkill -f`**.
 - p4025: **stale `.bootstrapped` after re-rent** skipped R252/R337/R338; `mine-crown-1` falls to `needs_axis_uploader` (no case) → clear markers + manual upload; **R914 n80 relaunched** on R888. **Never `pkill -f`**.
 - p4024: **TTL collapse** (~17:23Z) killed 5 mine-* → rented **8×B300 crown** + **3×8×B200**; tore bl **`8f34559f` R339**; R914 MERGE OK / n80 ConnectError. **Never `pkill -f`**.
 - p4022: **R903–R907 all REFUTE** → **R918–R921 TRAIN**; stock=0. **Never `pkill -f`**.
