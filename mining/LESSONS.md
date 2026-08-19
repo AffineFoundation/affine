@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4004: **R886 REFUTE v4** ~0.27× + **R885 REFUTE v4** ~−0.05× (vera SoftCtx β-isolates) → reap exact chall PIDs → **R901** MidCtx MidLoβ TRAIN crown 6,7 + **R902** MidCtx Loβ TRAIN crown 4,5; **R887 MERGE idle** brave GPU2 → lean_chall+v4 n80 :8004 TP1 (`p4004_*_armed.done`); B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p4003: **R877+R878 MERGE_DONE** golden + **R889+R890 MERGE_DONE** brave sat idle (no lean_chall scripts) → ship p4003 lean_chall+v4 n80 (`p4003_r877_r878_n80_armed.done`, `p4003_r889_r890_n80_armed.done`); brave TP1 GPU4/6; R887 still MERGE idle GPUs 2,3; R885/R886 n80 mid (~22–23/80); B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p4002: **R885+R886 MERGE_DONE** sat idle on crown — wait→n80 CHALL paths wrong → fix + dual lean chall+v4 n80 (`p4002_r885_r886_n80_armed.done`). **Never `pkill -f`**.
 - p4001: **R892 REFUTE v4** ~−1.46× + **R893 REFUTE v4** ~−1.07× → **R899+R900 TRAIN** R252 (`p4001_r899_r900_armed.done`). **Never `pkill -f`**.
