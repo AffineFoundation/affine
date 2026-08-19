@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3974: golden R858/R859 idle challs reaped (exact :8002/:8003 CVD=4–7) → **R877** kevin Soft Mid Mid Soft MidRank Midβ SoftCtx UltraLoLR + **R878** kevin Soft Mid Mid Soft HiRank Midβ SoftCtx UltraLoLR TRAIN (pids **736484**/**736481** + wait→merge); R863 host-relay ~27G LIVE; lone 8×B200=`fbb1135f` **bl**. **Never `pkill -f`**.
+- p3973: **R866 REFUTE v4** m=−0.01192~**−1.61×** + **B✗0.268** causality_fail (thought✓198 k=3) vs reign36 — loveaffine SoftCtx MidRank Hiβ fails license; reap lunar :8002 exact CVD=4,5 → **R863 MERGE_DONE host-relay→lunar** + wait→n80 (R874 TRAIN 6,7 untouched); stock B300/B200×8=[]. **Never `pkill -f`**.
 - p3972: R338 R863–R865 TRAIN_DONE but merge outer dead — p3954 outer invoked missing `lean_merge_r86x_gpus_p3954.sh` (digits stripped) → no `/tmp/r86*_merged` ~80m; clear stamps + relaunch correct `gpus23/45/67` → **MERGE LIVE** (pids **62086**/**62088**/**62092**); R866 n80 ~74/80; stock 0. **Never `pkill -f`**.
 - p3971: **R861 LOST** ~0.59×δ; R850/R851/R860 REFUTE → R875/R876/R874 TRAIN; R866 triton+`-i 4,5` fix → chall LOAD. **Never `pkill -f`**.
 - p3970: **R867/R868 REFUTE v4** m=−0.00616~**−1.43×** / −0.01039~**−1.22×** (thought✓ B✓ k=3) vs reign36 → reap R252 4–7 exact → **R872** MidCtx + **R873** ShortCtx Soft Mid Mid Soft MidRank Midβ TRAIN; lunar R860 orphan Worker_TP PPID=1 on 6,7 + R866 MERGE idle 4,5 → kill exact orphans → **R866+R860 CHALL_READY + n80 LIVE**; R861 scoring ~1034/1300; lone 8×B200=`fbb1135f` **bl**. **Never `pkill -f`**.
@@ -144,7 +146,4 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p3835: R252 :40299 **sshfail** → `lium exec`. **Never `pkill -f`**.
 - p3831/p3795: **α→TAO→Lium** via `btcli wallet transfer` if `lium fund` fails. **Never `pkill -f`**.
 - p3815: API blacklist must strip `# comment`. **Never `pkill -f`**.
-- p3776: **brave TP=2 teacher NCCL hang** — **host-relay**. **Never `pkill -f`**.
-- p3762: **king flip reign34→reign35** `tammyfritz/…tammy2`@`7e5fd5f8…`. **Never `pkill -f`**.
-
 
