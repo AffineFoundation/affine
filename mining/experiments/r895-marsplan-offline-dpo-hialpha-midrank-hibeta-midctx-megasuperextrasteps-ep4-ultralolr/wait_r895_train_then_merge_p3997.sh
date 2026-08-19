@@ -4,7 +4,7 @@ set -euo pipefail
 log() { echo "[p3997-r895-wait] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 TRAIN_PID_FILE=/root/logs/r895_train.pid
 ADAPTER=/root/r895/train/adapter
-MERGE_SCRIPT=/root/mining_src/r895-marsplan-offline-dpo-hialpha-midrank-hibeta-midctx-megasuperextrasteps-ep4-ultralolr/lean_merge_r895_gpus67_p3997.sh
+MERGE_SCRIPT=/root/mining_src/r895-marsplan-offline-dpo-hialpha-midrank-hibeta-midctx-megasuperextrasteps-ep4-ultralolr/lean_merge_r895_gpus45_p3997.sh
 LAUNCHED=/root/logs/r895_merge_launched.p3997
 mkdir -p /root/logs
 [[ -f "$LAUNCHED" ]] && { log "already launched"; exit 0; }

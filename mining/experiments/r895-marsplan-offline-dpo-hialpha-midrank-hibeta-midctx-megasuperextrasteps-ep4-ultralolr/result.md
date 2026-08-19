@@ -1,9 +1,3 @@
-# R895 — pass 3997
-
-**Status:** **TRAIN LIVE** R337 GPUs 4,5 · wait→merge armed.
-
-**Axis:** marsplan Soft Mid Mid Soft MidRank HiBeta MidCtx UltraLoLR (β=0.3 r=32 α=128 lr=5e-7 @8192 ep4).
-
-**Parent signal:** R796 MidCtx MidRank Midβ REFUTE ~−0.33× → Hiβ isolate.
-
-**Decision rule:** Stage-5 iff fresh v4 n80 margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 (fail-closed k=3).
+# R895 result
+- **p4007:** TRAIN done; wait script bug pointed at missing `lean_merge_r895_gpus67_…` (actual `…gpus45_…`). Re-armed merge on GPUs **4,5** + `wait_r895_merge_then_n80_p4007.sh` → chall :8002. Fixed wait path in repo.
+- Decision rule: same live crown rule as R894.

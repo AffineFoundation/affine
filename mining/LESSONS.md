@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4007: R337 **R894 MERGE_DONE idle** + **R895** wait pointed at missing `lean_merge_r895_gpus67_…` (actual `…gpus45_…`) → merge-repair GPUs **4,5** + dual **R894 n80 :8003 / R895 wait→n80 :8002** (`p4007_r894_r895_armed.done`); B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p4006: **R890 REFUTE v4** ~−0.73× + **R887 REFUTE v4** ~−0.31× + **R889 REFUTE v4** ~−1.05× (tammy ShortCtx Hiβ / SoftCtx MidLoβ / MidCtx MidLoβ) → reap exact chall PIDs → **R905** Loβ ShortCtx TRAIN brave 6,7 + **R906** MidLoβ ShortCtx TRAIN 2,3 + **R907** Loβ MidCtx TRAIN 4,5 (`p4006_r905_armed.done` + `p4006_r906_r907_armed.done`); B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p4005: **R877 REFUTE v4** ~−1.11× + **R878 REFUTE v4** ~−1.04× → **R903+R904** TRAIN golden. **Never `pkill -f`**.
 - p4004: **R886/R885 REFUTE** → **R901+R902** TRAIN crown. **Never `pkill -f`**.
