@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 80902.65320280581 | p4042 |
-| Lium balance | **$80902.65320280581** | p4042 |
-| cumulative mining spend | ~$135,613 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$70903** (balance − $10,000 floor) | $UTC |
+| $UTC | 80868.13321982036 | p4043 |
+| Lium balance | **$80868.13321982036** | p4043 |
+| cumulative mining spend | ~$135,648 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$70868** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$313.82/h** · vs floor $833/h · gap **−$519.18/h** · stock BL-only | p4042 |
+| miner burn (7 pods) | **~$313.82/h** · vs floor $833/h · gap **−$519.18/h** · stock BL-only | p4043 |
 | miner coldkey free | τ1258.144 | kept ≥τ50 |
 | miner stake | r252 **~29.5α/~τ1.63** (below τ5 sweep) | p4041 |
 | registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T21:10:19Z | 80868.13321982036 | p4043 R337 vera MERGE→n80 + R924 merge fix (no rent; BL-only); burn **~$313.82/h** |
 | 2026-08-19T21:03:07Z | 80902.65320280581 | p4042 R338 REFUTE→reap chall→**R937 TRAIN** (no rent; BL `8f34559f`); burn **~$313.82/h** |
 | 2026-08-19T20:55:52Z | 80941.58836310239 | p4041 R338 n80 relaunch (king local-id) + crown idle GPUs1,3 → **R936 TRAIN** (no rent; BL-only); burn **~$313.82/h** |
 | 2026-08-19T20:49:30Z | 81049.50624060768 | p4040 R338 idle GPUs6–7 → **R935 TRAIN** (no rent; BL `8f34559f`); burn **~$313.82/h** |
