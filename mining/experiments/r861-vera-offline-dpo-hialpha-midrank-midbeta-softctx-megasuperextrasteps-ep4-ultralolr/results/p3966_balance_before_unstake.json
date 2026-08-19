@@ -1,0 +1,17 @@
+{
+  "wallet": "miner",
+  "coldkey": "5CZscRf3nZmGspyqs2ZvFXSjnnondpjNU5QbJWVFFT92FC98",
+  "free": "τ1,260.425839701",
+  "free_tao": 1260.425839701,
+  "stake_positions": 1,
+  "stake_subnets": 1,
+  "stake_value": "τ15.661192468",
+  "stake_value_tao": 15.661192468,
+  "total_value": "τ1,276.087032169",
+  "total_value_tao": 1276.087032169,
+  "stake_value_basis": "spot price; excludes slippage/fees of an actual unstake",
+  "block": 8875680,
+  "locked_value": "τ0.000000000",
+  "locked_value_tao": 0.0,
+  "locked_subnets": 0
+}

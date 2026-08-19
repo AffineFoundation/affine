@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-19T01:24:35Z",
+  "hypo": "R861",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign36",
+  "margin": 0.0036649340661737573,
+  "se": 0.0016835224859552778,
+  "z": 2.176943935556745,
+  "n": 80,
+  "bar": 0.0033670449719105555,
+  "thought_median": 141.5,
+  "b_pass": 0.5375,
+  "wins": true,
+  "note": "p3935 chall+v4-n80 crown 4,5; vera Soft Mid Mid Soft MidRank MidBeta SoftCtx UltraLoLR; vs reign36 vera wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}
