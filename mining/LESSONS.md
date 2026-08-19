@@ -25,7 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4008: R338 SSH moved **20209→20299** (`lium describe`); **R882+R883+R884 MERGE_DONE** idle with free GPUs 2–7 → local vera king DL + dual n80 (skip lunar host-relay; lunar TRAIN-busy); `cache_dir=/root/hf` lands at `/root/hf/models--*` not `…/hub/…` — symlink into hub. B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
-- p4007: R337 **R894 MERGE_DONE idle** + **R895** wait path bug → dual **R894+R895 n80**. **Never `pkill -f`**.
-- p4006: **R890+R887+R889 REFUTE** → **R905+R906+R907 TRAIN** brave. **Never `pkill -f`**.
-- p4005–p3900: REFUTE→TRAIN; MERGE idle→n80; GRPO; R861 LOST; host-relay; Alpha→TAO→Lium; Marsplan gated; never `pkill -f`.
+- p4009: **R894+R895 REFUTE** (~−0.78×/−0.88× MidCtx MidLoβ/Hiβ) → reap challs → **R908 MidLoβ ShortCtx + R909 Midβ ShortCtx TRAIN** R337 4–7; R338 king DL ~91% (incomplete blob growing). B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
+- p4008: R338 SSH **20299**; **R882+R883+R884 MERGE_DONE** → local vera king DL + dual n80; `cache_dir=/root/hf` → `/root/hf/models--*` (hub symlink). **Never `pkill -f`**.
+- p4007: R337 dual **R894+R895 n80**. **Never `pkill -f`**.
+- p4006–p3900: REFUTE→TRAIN; MERGE idle→n80; GRPO; R861 LOST; Alpha→TAO→Lium; Marsplan gated; never `pkill -f`.
