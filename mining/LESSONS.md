@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3986: **R875/R876/R865 REFUTE v4** (~0.007× / ~0.304× / ~−0.83×) → reap challs → **R889+R890+R891 TRAIN** same pass; R871~14/16; R888 step≥60; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3985: R865 **SIZE_OK** (16/16+visual) → chall TP2 :8002 + **n80 LIVE** lunar pid**928274** vs reign36; R875~53/80 R876~30/80; R871~8/16; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3984: brave R875/R876 **TRAIN_DONE** → **MERGE_DONE** + **TP1** chall+n80 :8002/:8003; R888 king READY + GRPO; B300/8×B200 stock=0. **Never `pkill -f`**.
 - p3983: R888 idle → **king TP1 :8001** + **R871 host-relay** R337→R888; B300/8×B200 stock=0. **Never `pkill -f`**.
