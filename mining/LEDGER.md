@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 83040.86065910391 | p3954 |
-| Lium balance | **$83040.86065910391** | p3954 |
-| cumulative mining spend | ~$125,656 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$73040** (balance − $10,000 floor) | $UTC |
+| $UTC | 82956.05656220863 | p3955 |
+| Lium balance | **$82956.05656220863** | p3955 |
+| cumulative mining spend | ~$125,741 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$72956** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300/B200×8 stock=0 · waiters armed | p3954 |
+| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300=0 · B200×8 bl-only · waiters armed | p3955 |
 | miner coldkey free | τ1260.426 | kept ≥τ50 |
 | miner stake | **~47α ≈ τ2.60** (r252; under τ5 sweep) | p3917 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T00:12:39Z | 82956.05656220863 | p3955 R843/R844/R845 REFUTE→R866/R867/R868 TRAIN (no rent; B200 bl); burn **~$366.49/h** |
 | 2026-08-19T00:03:18Z | 83040.86065910391 | p3954 R854 RELAY + R863–R865 TRAIN (no rent; stock 0); burn **~$366.49/h** |
 | 2026-08-18T23:56:33Z | 83088.8705157734 | p3953 R843 triton-seed RELOAD + R252 vera SWAP_OK (no rent; B200 bl); burn **~$366.49/h** |
 | 2026-08-18T23:49:27Z | 83178.07519292047 | p3952 R252 named-shard HUB_OK + vera SWAP LOADING (no rent; stock 0); burn **~$366.49/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-18T23:12:10Z | 83487.08773814619 | p3949 **R830 EngineDead→RELOAD** :8003 (no rent; B200×8 listed); burn **~$366.49/h** |
 | 2026-08-18T23:08:14Z | 83531.53502103833 | p3948 R252 vera **part1 resume** + SIZE_OK concat (no rent; B300=0 B200=0); burn **~$366.49/h** |
 | 2026-08-18T23:02:10Z | 83572.8087297252 | p3947 **R842 REFUTE→R830 CLAIM** lunar :8003 (no rent; B300=0 B200 JSON=[]); burn **~$366.49/h** |
-| 2026-08-18T22:54:10Z | 83664.4306795756 | p3946 **R838 REFUTE→R859 TRAIN** golden 4,5 (no rent; B300=0 B200 JSON=[]); burn **~$366.49/h** |
