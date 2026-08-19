@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 82822.43124536946 | p4020 |
-| Lium balance | **$82822.43124536946** | p4020 |
-| cumulative mining spend | ~$131,140 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$72822** (balance − $10,000 floor) | $UTC |
+| $UTC | 82782.29166695496 | p4021 |
+| Lium balance | **$82782.29166695496** | p4021 |
+| cumulative mining spend | ~$131,180 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$72782** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (6 pods) | **~$306.66/h** · vs floor $833/h · gap **−$526.34/h** · B300/8×B200 stock=0 | p4020 |
+| miner burn (6 pods) | **~$306.66/h** · vs floor $833/h · gap **−$526.34/h** · B300/8×B200 stock=0 | p4021 |
 | miner coldkey free | τ1257.620 | kept ≥τ50 |
-| miner stake | **0α / τ0** (p4019 swept r252) | p4020 |
+| miner stake | **0α / τ0** (p4019 swept r252) | p4021 |
 | registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T10:22:36Z | 82782.29166695496 | p4021 golden R903+R904 MERGE idle→n80; R910 REFUTE→R917 TRAIN (no rent; stock 0); burn **~$306.66/h** |
 | 2026-08-19T10:10:38Z | 82822.43124536946 | p4020 brave TP2 hang→TP1; TK restore; R905–7 n80 LIVE (no rent; stock 0); burn **~$306.66/h** |
 | 2026-08-19T09:41:12Z | 83063.67459711197 | p4019 α→τ: unstake r252 all (~206α→τ11.4) + `btcli transfer` τ11.4→Lium ck (lium fund transfer-attr fail); R905–7 n80 arm; burn **~$306.66/h** |
 | 2026-08-19T09:32:48Z | 80846.34869736551 | p4018 R896+R897+R898 REFUTE→R914+R915+R916 TRAIN (no rent; stock 0); burn **~$306.66/h** |
@@ -35,5 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-19T09:00:30Z | 81088.7874554946 | p4014 R899+R900 REFUTE→R910+R911 TRAIN; tore R337+R338 (−$99.04/h); burn **~$306.66/h** |
 | 2026-08-19T08:52:27Z | 81190.11588804063 | p4013 R900 bad-LAUNCHED→chall :8003 (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T08:37:31Z | 81344.29018578386 | p4012 R899 MERGE→n80 relaunch (no rent; stock 0); burn **~$405.70/h** |
-| 2026-08-19T08:31:09Z | 81393.21198145708 | p4010 R338 king rsync crown→unblocked R882/R883 n80 (no rent; stock 0); burn **~$405.70/h** |
-| 2026-08-19T08:18:10Z | 81545.39811919727 | p4009 R894+R895 REFUTE→R908+R909 TRAIN (no rent; stock 0); burn **~$405.70/h** |

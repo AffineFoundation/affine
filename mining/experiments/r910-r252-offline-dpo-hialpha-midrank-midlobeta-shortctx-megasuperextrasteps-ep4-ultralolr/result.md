@@ -1,6 +1,16 @@
-# R910 — r252 MidLoβ ShortCtx UltraLoLR
+# R910 result (p4021)
 
-**Status:** TRAIN p4014 (after R899 REFUTE causality_fail)
-**Axis:** Soft Mid Mid Soft MidRank MidLoBeta ShortCtx UltraLoLR (β=0.05 r=32 α=128 lr=5e-7 @6144 ep4 steps=19200)
-**Parent signal:** R899 MidCtx MidLoβ causality_fail B=0.2375 m=−0.000597~−0.14× → ShortCtx MidLoβ isolate (≠ MidCtx R899 / ≠ SoftCtx MidLoβ R900 / ≠ Midβ ShortCtx R873 / ≠ Online / ≠ GRPO)
-**Decision rule:** Stage-5 iff fresh v4 n80 margin>max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 vs reign36
+**REFUTE v4** vs reign36 (`vera6/…-t6`@`8e3f1695`).
+
+| metric | value |
+|---|---|
+| margin | +0.000448 |
+| SE | 0.001740 |
+| z | 0.258 |
+| n | 80 |
+| bar max(2·SE, δ) | 0.003479 (~**0.13×**) |
+| thought median | 159 ✓ |
+| B pass | 0.4625 ✓ |
+| k / τ | 3 / 0.03 |
+
+Chall reaped; slot → **R917** ShortCtx Loβ=0.02 TRAIN.
