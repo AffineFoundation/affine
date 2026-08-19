@@ -25,13 +25,11 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4022: **R903–R907 all REFUTE** (kevin SoftCtx Lo/Hiβ −1.66×/−1.10×; tammy ShortCtx/MidCtx −0.33/−0.27/−0.85×) → same-pass **R918–R921 TRAIN** (kevin MidCtx Hi/Loβ + tammy SoftCtx MidLo/Loβ) + merge→n80 waiters; B300/8×B200 stock=0; burn **~$306.66/h**. **Never `pkill -f`**.
-- p4021: golden **R903+R904 MERGE SIZE_OK idle** (train→merge waiters only, no n80 waiter) → lean_chall n80 :8002/:8003 GPUs 4,5/6,7 TP2 READY ~3min; **R910 REFUTE** ~0.13× → **R917 TRAIN** ShortCtx Loβ. Burn **~$306.66/h**. **Never `pkill -f`**.
-- p4020: brave **TP=2** chall hangs after `pynccl` (GPU mem~1GiB, `read_bytes=0`); **TP=1** (R848 pattern) READY ~90s. Also: never reap bare `VLLM::EngineCore` (argv lacks model path → kills TK). Restored TK; **R905+R906+R907 n80 LIVE** TP1 :8002/:8003/:8004. Burn **~$306.66/h**. **Never `pkill -f`**.
-- p4019: brave **R905+R906+R907** MERGE SIZE_OK idle (train→merge waiters only) → lean_chall n80 :8002/8003/8004 GPUs 6,7/2,3/4,5; α r252 all→τ11.4→Lium via `btcli transfer` (`lium fund` Subtensor.transfer fail). Burn **~$306.66/h**. **Never `pkill -f`**.
-- p4018: **R896 REFUTE** m=+0.004393~**0.49×**; **R897** −1.11×; **R898** −0.21× → **R914+R915+R916 TRAIN**. **Never `pkill -f`**.
-- p4017: **R901 REFUTE** ~0.64×; **R902** −0.78× → **R912+R913 TRAIN**. **Never `pkill -f`**.
-- p4015: train→merge waiters alone leave **MERGE SIZE_OK idle** — always ship **merge→n80** waiter or launch lean_chall same pass. **Never `pkill -f`**.
-- p4014: **R899** B✗; **R900** −0.49× → **R910+R911 TRAIN**. **Never `pkill -f`**.
-- p4012–p4013: stamp LAUNCHED only after `test -x "$CHALL"`; never kill EngineCore by broad argv. **Never `pkill -f`**.
-- p4010–p3900: peer rsync; REFUTE→TRAIN; MERGE idle→n80; GRPO; R861 LOST; Alpha→TAO→Lium; never `pkill -f`.
+- p4024: **TTL collapse** (~17:23Z) killed 5 mine-* → only R888 left; rented **8×B300 crown** + **3×8×B200** (R337/R338/R252); tore bl **`8f34559f` R339** same pass; rearmed fleet+bootstrap waiters; R914 MERGE OK but n80 FATAL ConnectError → relaunch; burn **~$266.26/h**. **Never `pkill -f`**.
+- p4022: **R903–R907 all REFUTE** → **R918–R921 TRAIN**; stock=0; burn **~$306.66/h**. **Never `pkill -f`**.
+- p4021: golden MERGE idle→n80; **R910 REFUTE** ~0.13× → **R917 TRAIN**. **Never `pkill -f`**.
+- p4020: brave **TP=2** chall hang → **TP=1**; never reap bare `VLLM::EngineCore`. **Never `pkill -f`**.
+- p4019: α r252→τ11.4→Lium via `btcli transfer` (`lium fund` transfer-attr fail). **Never `pkill -f`**.
+- p4018–p4014: REFUTE→TRAIN swarm; merge idle needs merge→n80 waiter. **Never `pkill -f`**.
+- p4012–p3900: stamp LAUNCHED after `test -x`; peer rsync; GRPO; R861 LOST; Alpha→TAO→Lium; never `pkill -f`.
+
