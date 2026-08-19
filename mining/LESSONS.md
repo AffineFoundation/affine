@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4013: R900 same bad-LAUNCHED pattern — waiter path `…midrank-hibeta-midctx…` (real `…midrank-midlobeta-softctx…`); merge SIZE_OK idle on GPUs6,7. Cleared stamp → launched real lean_chall :8003. R337+R338 both TCP-dead (86.38.182.x). **Never `pkill -f`**.
 - p4012: R899 MERGE sat idle — waiter stamped `LAUNCHED` then `bash` failed on typo path `…midrank-lobeta…` (real dir `…midrank-midlobeta…`). Clear bad LAUNCHED, launch real `lean_chall`; stamp LAUNCHED only after `test -x "$CHALL"`. **R882 REFUTE** m=−0.007812~−1.03×. Never kill `VLLM::EngineCore` by broad argv match (swept teacher/king). R338 SSH flapped after cleanup. **Never `pkill -f`**.
 - p4010: R338 HF king DL stalled on last ~50G shard — **stop by pid**, rsync blob from crown → R338 @~287MB/s → KING_READY. Prefer peer rsync over public HF. **Never `pkill -f`**.
 - p4009: **R894+R895 REFUTE** → **R908+R909 TRAIN** R337; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
