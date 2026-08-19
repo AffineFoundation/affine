@@ -3,11 +3,13 @@
 # Axis: vera6 reign36 × GRPO-on-Reason HiAlpha (≠ Offline-DPO fleet; ≠ R583 r252 base).
 # Pod reports 7×B200 visible (config 8×) — teacher TP1 + train 2-GPU.
 # p3979: huggingface-cli is dead on hub 1.28 — use `hf download` (venv PATH).
+# p3980: `hf download --cache-dir $HF_HOME` writes models--* at HF_HOME root (no hub/);
+#        snaps must live under $HF_HOME/hub/ — migrate flat layout + cache-dir=hub.
 set -euo pipefail
 LOG=/root/logs/bootstrap_r888.log
-mkdir -p /root/logs /root/hf /root/affine_data /root/r888 /root/mining_src/r3-reason-grpo
+mkdir -p /root/logs /root/hf/hub /root/affine_data /root/r888 /root/mining_src/r3-reason-grpo
 exec > >(tee -a "$LOG") 2>&1
-echo "[r888-boot] $(date -u +%Y-%m-%dT%H:%M:%SZ) start host=$(hostname) pass=${PASS:-3979}"
+echo "[r888-boot] $(date -u +%Y-%m-%dT%H:%M:%SZ) start host=$(hostname) pass=${PASS:-3980}"
 
 if [[ -f /root/mine.env ]]; then
   set -a; # shellcheck disable=SC1091
@@ -25,6 +27,17 @@ echo "[r888-boot] GPU_COUNT=$NGPU"
 test "$NGPU" -ge 4
 test -s /root/r888/winner_za_high_l1.jsonl
 test -f /root/mining_src/r3-reason-grpo/train_reason_grpo.py
+
+# p3980: migrate accidental flat cache (models--* under HF_HOME) into hub/
+mkdir -p "$HF_HOME/hub"
+for d in "$HF_HOME"/models--*; do
+  [[ -d "$d" ]] || continue
+  base=$(basename "$d")
+  if [[ ! -e "$HF_HOME/hub/$base" ]]; then
+    echo "[r888-boot] migrate $d -> $HF_HOME/hub/$base"
+    mv "$d" "$HF_HOME/hub/$base"
+  fi
+done
 
 if ! command -v uv >/dev/null 2>&1; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -58,13 +71,13 @@ fi
 
 hf_download() {
   local repo="$1" rev="$2" tag="$3"
-  echo "[r888-boot] HF download $tag $repo@$rev"
-  # hub≥1.28: huggingface-cli download is a hard no-op; use `hf download`.
+  echo "[r888-boot] HF download $tag $repo@$rev -> cache-dir=$HF_HOME/hub"
   if ! command -v hf >/dev/null 2>&1; then
     echo "FATAL: hf CLI missing in PATH=$PATH" >&2
     exit 1
   fi
-  hf download "$repo" --revision "$rev" --cache-dir "$HF_HOME" \
+  # hub≥1.28: use `hf download`; cache-dir MUST be the hub/ dir (models--* live here).
+  hf download "$repo" --revision "$rev" --cache-dir "$HF_HOME/hub" \
     2>&1 | tee "/root/logs/hf_${tag}_r888.log" | tail -40
 }
 
@@ -96,14 +109,14 @@ from pathlib import Path
 meta = {
   "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
   "hypo": "R888",
-  "pass": 3979,
+  "pass": 3980,
   "stage": "BOOT_HF_DONE",
   "king_repo": "$KING_REPO",
   "king_rev": "$KING_REV",
   "teacher_repo": "$TEACHER_REPO",
   "teacher_rev": "$TEACHER_REV",
   "ngpu": int("$NGPU"),
-  "note": "p3979 bootstrap HF done via hf download (cli dead); next=serve teacher TP1 + GRPO train",
+  "note": "p3980 hub-cache path fix + migrate flat models--; next=serve teacher TP1 + GRPO train",
 }
 Path("/root/affine_data/r888_bootstrap_done.json").write_text(json.dumps(meta, indent=2)+"\n")
 print(json.dumps(meta, indent=2))

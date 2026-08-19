@@ -54,7 +54,7 @@ import json, time
 from pathlib import Path
 meta = {
   "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-  "hypo": "R888", "pass": 3978, "family": "grpo-teacher-reason",
+  "hypo": "R888", "pass": 3980, "family": "grpo-teacher-reason",
   "axis": "vera_king_grpo_hialpha_megaextrasteps",
   "pid": int(Path("/root/logs/r888_train.pid").read_text().strip()),
   "base": "$BASE", "base_hub": "vera6/affine-5g4yy75zuz-t6", "base_rev": "$KING_REV",
@@ -62,7 +62,7 @@ meta = {
   "lr": 5e-6, "lora_r": 16, "lora_alpha": 128, "group_size": 4,
   "max_len": 6144, "max_steps": 1800, "epochs": 12,
   "gpus": "$CUDA_VISIBLE_DEVICES",
-  "note": "p3978 R888 vera reign36 king×GRPO-Reason HiAlpha; ≠ Offline-DPO; ≠ R583 r252",
+  "note": "p3980 R888 after hub-cache fix; vera reign36 king×GRPO-Reason HiAlpha; ≠ Offline-DPO",
 }
 Path("/root/affine_data/r888_train_launched.json").write_text(json.dumps(meta, indent=2)+"\n")
 print(json.dumps(meta, indent=2))

@@ -13,10 +13,10 @@
 | mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | 8×B300 | $64.00 | **2026-08-19T17:23Z** | TK **vera** · **R872+R873 TRAIN** |
 | mine-r337-marsplan-online-dpo-hilr-1 | gentle-shark-35 | 8×B300 | $47.04 | **2026-08-19T17:35Z** | teacher · **R879–R881 TRAIN** |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-lion-9f | 8×B300 | $52.00 | **2026-08-19T17:35Z** | **R882–R884 TRAIN** · R864 src |
-| mine-r888-grpo-reason-1 | gentle-orbit-0d | 8×B200† | $39.20 | **2026-08-20T03:34Z** | **R888 HF** `hf download` · SSH `192.9.163.79:20500` |
+| mine-r888-grpo-reason-1 | gentle-orbit-0d | 8×B200† | $39.20 | **2026-08-20T03:34Z** | **R888** teacher HF→TP1→GRPO · SSH `192.9.163.79:20500` |
 
 †nvidia-smi shows **7** GPUs. Host fleet: **8 mine-*** · burn **~$405.70/h** · **wvk=7**
-**p3979:** R888 BOOT unstuck (`hf download` LIVE); R864 relay mid (~8–12/16); B300/8×B200 stock=0
+**p3980:** R888 hub-cache fix + teacher HF LIVE; R864 ~15/16; B300/8×B200 stock=0
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval`, `affine-teacher2`.
 
@@ -24,6 +24,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
-| 2026-08-19T03:42:58Z | p3979: R888 fix `hf download` + relaunch BOOT; burn ~$405.70/h; bal $84223 |
+| 2026-08-19T03:48:49Z | p3980: R888 migrate king→hub + teacher HF LIVE + wait→TP1→TRAIN; burn ~$405.70/h; bal $84177 |
+| 2026-08-19T03:42:58Z | p3979: R888 BOOT unstuck (`hf download` LIVE); burn ~$405.70/h; bal $84223 |
 | 2026-08-19T03:37:09Z | p3978: rent mine-r888-grpo-reason-1 gentle-orbit-0d $39.20/h + BOOT; burn ~$405.70/h |
-| 2026-08-19T03:30:31Z | p3977: R863 REFUTE→R864 relay; brave idle→R887 TRAIN; stock 0 |
