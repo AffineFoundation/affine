@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3997: **R835 REFUTE v4** ~−1.19× (thought✓191 B✓0.470) + **R796 REFUTE v4** ~−0.33× (thought✓201 B✓0.429) → reap → **R894 MidLoβ + R895 Hiβ MidCtx TRAIN**; lunar **R891 MERGE→n80** + **R874 Triton wipe+seed n_so=30 RELOAD n80** LIVE; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3996: **R852 REFUTE v4** ~−0.81× (thought✓250 B✓0.464) + **R853 REFUTE v4** ~−0.63× (thought✓203 B✓0.429) → reap → **R835+R796 MidCtx n80 LIVE**; double-arm reap killed first READY pair — guard with `p3996b_*_armed.done` before re-launch; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3995: **R880 REFUTE v4** ~−1.26× → **R852 n80**; **R881 REFUTE v4** ~−0.59× → **R853 n80**; Triton seed + skip smoke; B300 stock=0. **Never `pkill -f`**.
 - p3994: **R879 REFUTE v4** ~−1.19× → **R880 n80**; **R869 REFUTE v4** ~−0.32× → **R881 n80**; Triton seed from working chall; B300 stock=0. **Never `pkill -f`**.
