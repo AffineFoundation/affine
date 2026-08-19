@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4032: R927 premature TRAIN failed `ModuleNotFoundError: evalsrv` + partial shards; harden arm to require **16** `model-*-of-*.safetensors` **and** live `from evalsrv.chat import THINK_OPEN` before lean; crown cold TK (teacher DL GPU0 + king GPU2) + arm MERGE→n80 while R912/R913 merge. **Never `pkill -f`**.
 - p4031: sole 8×B200 is **BL** `fbb1135f` → skip; fill idle R926 H100 GPUs **2,3** with R927 MidCtx MidLoβ; stub empty `affine_pkg` → upload fleet-v4-sync; arm waits `cryptodev_dl.done`+weight shards (not bare `config.json`). **Never `pkill -f`**.
 - p4030: B300/B200×8 empty → rent **8×H100** `$13.76` for R926 SoftCtx MidLoβ restart; fill idle H200 GPUs **2,3** with R925 HiRank MidCtx MidLoβ (R901 0.64×). `lium scp` rejects dirs — use `lium rsync` or tar+scp. **Never `pkill -f`**.
 - p4028: B300×8=0 + only bl `8f34559f` B200 → rented **8×H200** `mine-r924` MidCtx Hiβ ($33.81) to cut burn gap; replace when B300 appears. **Never `pkill -f`**.

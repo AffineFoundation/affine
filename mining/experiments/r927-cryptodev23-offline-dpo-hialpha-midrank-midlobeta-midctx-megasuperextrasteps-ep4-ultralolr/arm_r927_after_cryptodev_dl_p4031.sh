@@ -13,17 +13,31 @@ for i in $(seq 1 360); do
   [[ -x /root/venv/bin/python3 ]] && venv_ok=1
   [[ -f /root/logs/cryptodev_dl.done ]] && dl_ok=1
   [[ -f /root/mining_src/affine_pkg/evalsrv/chat.py ]] && pkg_ok=1
-  # require at least one large weight shard present
-  if [[ -e "$BASE/config.json" ]] && ls "$BASE"/model*.safetensors >/dev/null 2>&1; then base_ok=1; fi
-  echo "[arm-r927-p4031] $(date -u +%Y-%m-%dT%H:%M:%SZ) wait venv=$venv_ok dl=$dl_ok pkg=$pkg_ok base=$base_ok iter=$i"
-  if [[ "$venv_ok" -eq 1 && "$dl_ok" -eq 1 && "$pkg_ok" -eq 1 && "$base_ok" -eq 1 ]]; then break; fi
+  # require full weight pack (16 shards) — partial DL caused p4031 premature TRAIN fail
+  n_shards=0
+  if [[ -e "$BASE/config.json" ]]; then
+    n_shards=$(ls "$BASE"/model-*-of-*.safetensors 2>/dev/null | wc -l || true)
+  fi
+  [[ "${n_shards:-0}" -ge 16 ]] && base_ok=1
+  # fail-closed: evalsrv import must work (p4031 premature ModuleNotFoundError)
+  import_ok=0
+  if [[ "$venv_ok" -eq 1 && "$pkg_ok" -eq 1 ]]; then
+    if /root/venv/bin/python3 -c "import sys; sys.path.insert(0,'/root/mining_src/affine_pkg'); from evalsrv.chat import THINK_OPEN" >/dev/null 2>&1; then
+      import_ok=1
+    fi
+  fi
+  echo "[arm-r927-p4031] $(date -u +%Y-%m-%dT%H:%M:%SZ) wait venv=$venv_ok dl=$dl_ok pkg=$pkg_ok base=$base_ok shards=$n_shards import=$import_ok iter=$i"
+  if [[ "$venv_ok" -eq 1 && "$dl_ok" -eq 1 && "$pkg_ok" -eq 1 && "$base_ok" -eq 1 && "$import_ok" -eq 1 ]]; then break; fi
   sleep 30
 done
 [[ -x /root/venv/bin/python3 ]] || { echo FATAL no venv; exit 1; }
 [[ -f /root/logs/cryptodev_dl.done ]] || { echo FATAL no cryptodev_dl.done; exit 1; }
 [[ -f /root/mining_src/affine_pkg/evalsrv/chat.py ]] || { echo FATAL no affine_pkg evalsrv; exit 1; }
 [[ -e "$BASE/config.json" ]] || { echo FATAL no cryptoDev base; exit 1; }
-ls "$BASE"/model*.safetensors >/dev/null || { echo FATAL no weight shards; exit 1; }
+n_shards=$(ls "$BASE"/model-*-of-*.safetensors 2>/dev/null | wc -l || true)
+[[ "${n_shards:-0}" -ge 16 ]] || { echo FATAL incomplete cryptoDev shards=$n_shards want>=16; exit 1; }
+/root/venv/bin/python3 -c "import sys; sys.path.insert(0,'/root/mining_src/affine_pkg'); from evalsrv.chat import THINK_OPEN" \
+  || { echo FATAL evalsrv import failed; exit 1; }
 test -s /root/mining_src/$EXP/dpo_duel_reason.jsonl
 test -f /root/mining_src/$EXP/train_dpo.py
 test -f /root/mining_src/$EXP/merge_lora.py

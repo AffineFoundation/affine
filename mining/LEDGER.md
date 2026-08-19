@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 78965.05059548139 | p4031 |
-| Lium balance | **$78965.05059548139** | p4031 |
-| cumulative mining spend | ~$134,997 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$68965** (balance − $10,000 floor) | $UTC |
+| $UTC | 78892.41047967844 | p4032 |
+| Lium balance | **$78892.41047967844** | p4032 |
+| cumulative mining spend | ~$135,070 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$68892** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$313.82/h** · vs floor $833/h · gap **−$519.18/h** · stock BL-only | p4031 |
+| miner burn (7 pods) | **~$313.82/h** · vs floor $833/h · gap **−$519.18/h** · stock BL-only | p4032 |
 | miner coldkey free | τ1257.620 | kept ≥τ50 |
-| miner stake | **0α / τ0** (p4019 swept r252) | p4031 |
+| miner stake | **0α / τ0** (p4019 swept r252) | p4032 |
 | registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T19:38:37Z | 78892.41047967844 | p4032 crown TK DL + R912/R913 MERGE→n80 arm + R926/R927 TRAIN (no rent; only BL 8×B200); burn **~$313.82/h** |
 | 2026-08-19T19:27:56Z | 78965.05059548139 | p4031 R927 ARMED on R926 GPUs2,3 MidCtx MidLoβ (no rent; only BL 8×B200); burn **~$313.82/h** |
 | 2026-08-19T19:22:56Z | 79000.0507029855 | p4030 rent `mine-r926` 8×H100 $13.76/h SoftCtx MidLoβ + R925 idle-GPU fill; burn **~$313.82/h** |
 | 2026-08-19T18:43:46Z | 79280.45844954444 | p4028 rent `mine-r924` 8×H200 $33.81/h MidCtx Hiβ (no B300/non-bl B200); burn **~$300.06/h** |
@@ -35,5 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-19T18:17:23Z | 79441.59615116383 | p4024 fleet rebuild: +crown B300 $64 +R337 $46.8 +R338 $52.25 +R252 $64; tore bl R339 (~$50.56); burn **~$266.26/h** |
 | 2026-08-19T10:36:28Z | 82619.80256348639 | p4022 R903–7 REFUTE→R918–21 TRAIN (no rent; stock 0); burn **~$306.66/h** |
 | 2026-08-19T10:22:36Z | 82782.29166695496 | p4021 golden R903+R904 MERGE idle→n80; R910 REFUTE→R917 TRAIN (no rent; stock 0); burn **~$306.66/h** |
-| 2026-08-19T10:10:38Z | 82822.43124536946 | p4020 brave TP2 hang→TP1; TK restore; R905–7 n80 LIVE (no rent; stock 0); burn **~$306.66/h** |
-| 2026-08-19T09:41:12Z | 83063.67459711197 | p4019 α→τ: unstake r252 all (~206α→τ11.4) + `btcli transfer` τ11.4→Lium ck (lium fund transfer-attr fail); R905–7 n80 arm; burn **~$306.66/h** |
