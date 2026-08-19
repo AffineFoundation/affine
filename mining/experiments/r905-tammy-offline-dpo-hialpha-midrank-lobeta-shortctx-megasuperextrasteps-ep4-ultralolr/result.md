@@ -1,7 +1,16 @@
-# R905 — tammy ShortCtx Loβ UltraLoLR
+# R905 result — REFUTE (p4022)
 
-**Status (p4019):** MERGE SIZE_OK idle → lean_chall n80 **LOADING** on brave-raven-a9 GPUs **6,7** :8002 (outer pid 59330, chall 59649) vs reign36 vera wvk=7.
+v4 n80 vs reign36 · k=3 τ=0.03
 
-**Axis:** Offline-DPO Soft Mid Mid Soft HiAlpha MidRank Loβ ShortCtx MegaSuperExtra ep4×UltraLoLR · β=0.02 · r=32 · α=128 · lr=5e-7 · @6144 · base `tammyfritz/…tammy2`@`7e5fd5f8`.
+| field | value |
+|---|---|
+| margin | **−0.001838** |
+| SE | 0.002773 |
+| z | −0.663 |
+| n | 79 |
+| bar | 0.005546 |
+| ratio | **−0.33×** |
+| thought median | 171 ✓ |
+| B pass | 0.443 ✓ |
 
-**Decision rule:** crown iff margin > max(2·SE, 0.002) AND thought≥80 AND B≥0.30 on fresh v4 slice (k=3, τ=0.03).
+**Decision:** REFUTE. Chall reaped. SoftCtx Loβ covered by **R921**.

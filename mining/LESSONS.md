@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4022: **R903–R907 all REFUTE** (kevin SoftCtx Lo/Hiβ −1.66×/−1.10×; tammy ShortCtx/MidCtx −0.33/−0.27/−0.85×) → same-pass **R918–R921 TRAIN** (kevin MidCtx Hi/Loβ + tammy SoftCtx MidLo/Loβ) + merge→n80 waiters; B300/8×B200 stock=0; burn **~$306.66/h**. **Never `pkill -f`**.
 - p4021: golden **R903+R904 MERGE SIZE_OK idle** (train→merge waiters only, no n80 waiter) → lean_chall n80 :8002/:8003 GPUs 4,5/6,7 TP2 READY ~3min; **R910 REFUTE** ~0.13× → **R917 TRAIN** ShortCtx Loβ. Burn **~$306.66/h**. **Never `pkill -f`**.
 - p4020: brave **TP=2** chall hangs after `pynccl` (GPU mem~1GiB, `read_bytes=0`); **TP=1** (R848 pattern) READY ~90s. Also: never reap bare `VLLM::EngineCore` (argv lacks model path → kills TK). Restored TK; **R905+R906+R907 n80 LIVE** TP1 :8002/:8003/:8004. Burn **~$306.66/h**. **Never `pkill -f`**.
 - p4019: brave **R905+R906+R907** MERGE SIZE_OK idle (train→merge waiters only) → lean_chall n80 :8002/8003/8004 GPUs 6,7/2,3/4,5; α r252 all→τ11.4→Lium via `btcli transfer` (`lium fund` Subtensor.transfer fail). Burn **~$306.66/h**. **Never `pkill -f`**.
