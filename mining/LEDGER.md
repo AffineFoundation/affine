@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 81393.21198145708 | p4010 |
-| Lium balance | **$81393.21198145708** | p4010 |
-| cumulative mining spend | ~$130,353 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$71393** (balance − $10,000 floor) | $UTC |
+| $UTC | 81344.29018578386 | p4012 |
+| Lium balance | **$81344.29018578386** | p4012 |
+| cumulative mining spend | ~$130,402 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$71344** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (8 pods) | **~$405.70/h** · vs floor $833/h · gap **−$427.30/h** · B300/8×B200 stock=0 | p4010 |
+| miner burn (8 pods) | **~$405.70/h** · vs floor $833/h · gap **−$427.30/h** · B300/8×B200 stock=0 | p4012 |
 | miner coldkey free | τ1257.618 | kept ≥τ50 |
 | miner stake | **~59α / τ3.25** (under τ5 sweep) | p3985 |
 | registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T08:37:31Z | 81344.29018578386 | p4012 R899 MERGE→n80 relaunch (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T08:31:09Z | 81393.21198145708 | p4010 R338 king rsync crown→unblocked R882/R883 n80 (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T08:18:10Z | 81545.39811919727 | p4009 R894+R895 REFUTE→R908+R909 TRAIN (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T08:05:57Z | 81648.62234334697 | p4008 R338 MERGE idle→local king+R882/R883 n80 arm (no rent; stock 0); burn **~$405.70/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-19T07:32:04Z | 82003.1950291492 | p4004 R885+R886 REFUTE→R901+R902 TRAIN + R887 n80 (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T07:24:10Z | 82106.76996975813 | p4003 R877+R878+R889+R890 MERGE idle→dual n80 (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T07:17:35Z | 82158.64292318153 | p4002 R885+R886 MERGE idle→dual n80 crown (no rent; stock 0); burn **~$405.70/h** |
-| 2026-08-19T07:12:46Z | 82209.8471142238 | p4001 R892+R893 REFUTE→R899+R900 TRAIN (no rent; stock 0); burn **~$405.70/h** |

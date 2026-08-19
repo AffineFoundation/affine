@@ -17,10 +17,15 @@ while true; do
         sleep 30
         continue
       fi
+      if [[ ! -x "$CHALL" ]]; then
+        log "FATAL missing CHALL script $CHALL — do not stamp LAUNCHED"
+        sleep 60
+        continue
+      fi
       log "MERGE_READY shards=$n king=$kid — launch chall+n80"
-      date -u +%Y-%m-%dT%H:%M:%SZ >"$LAUNCHED"
       nohup bash "$CHALL" >/root/logs/p4001_r899_chall_n80.outer.nohup 2>&1 &
       echo $! >/root/logs/p4001_r899_chall_n80.outer.pid
+      date -u +%Y-%m-%dT%H:%M:%SZ >"$LAUNCHED"
       log "chall outer pid=$(cat /root/logs/p4001_r899_chall_n80.outer.pid)"
       exit 0
     fi

@@ -25,7 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4010: R338 HF king DL stalled on last ~50G shard — **stop by pid**, rsync blob `c6fc46…` from crown (`95.133.253.90:40099`) → R338 (`86.38.182.55:20299`) @~287MB/s → KING_READY :8001 + R882 chall :8002. Prefer peer rsync over public HF when another mine-* already has the snap. **Never `pkill -f`**.
+- p4012: R899 MERGE sat idle — waiter stamped `LAUNCHED` then `bash` failed on typo path `…midrank-lobeta…` (real dir `…midrank-midlobeta…`). Clear bad LAUNCHED, launch real `lean_chall`; stamp LAUNCHED only after `test -x "$CHALL"`. R883 :8003 Triton SO miss — wipe/seed cache next. **Never `pkill -f`**.
+- p4010: R338 HF king DL stalled on last ~50G shard — **stop by pid**, rsync blob from crown → R338 @~287MB/s → KING_READY. Prefer peer rsync over public HF. **Never `pkill -f`**.
 - p4009: **R894+R895 REFUTE** → **R908+R909 TRAIN** R337; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
-- p4008: R338 SSH **20299**; R882/R883/R884 MERGE_DONE → dual n80 waiters; hub symlink `/root/hf/hub/models--vera6→/root/hf/models--vera6`. **Never `pkill -f`**.
-- p4007–p3900: REFUTE→TRAIN; MERGE idle→n80; GRPO; R861 LOST; Alpha→TAO→Lium; Marsplan gated; never `pkill -f`.
+- p4008–p3900: R338 SSH **20299**; REFUTE→TRAIN; MERGE idle→n80; GRPO; R861 LOST; Alpha→TAO→Lium; Marsplan gated; never `pkill -f`.

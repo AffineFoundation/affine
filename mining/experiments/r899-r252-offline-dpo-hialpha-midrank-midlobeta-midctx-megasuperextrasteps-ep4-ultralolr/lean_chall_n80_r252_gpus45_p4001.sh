@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # p4001: R899 MERGE_DONE sat idle → chall :8002 + v4 n80 on R252 GPUs 4,5 vs reign36 vera (wvk=7 k=3 τ=0.03).
-# Axis: r252 Soft Mid Mid Soft MidRank MidLoBeta MidCtx MegaSuperExtra ep4×UltraLoLR (β=0.02 r=32 @8192 steps=19200)
+# Axis: r252 Soft Mid Mid Soft MidRank MidLoBeta MidCtx MegaSuperExtra ep4×UltraLoLR (β=0.05 r=32 @8192 steps=19200)
 # Never --no-save-original-format. Never pkill -f.
 # Do not touch teacher 0,1 or king 2,3. GPUs 6,7 reserved for R873 merge when script ready — do not touch.
 set -euo pipefail
@@ -106,10 +106,10 @@ cat >"$MERGE_DIR/README.md" <<'CARD'
 - **Base:** `unconst/Affine-5czsc2fc98-r252-merged` @ `b42d6245…`
 - **Method:** Offline DPO on Reason duel pairs (teacher-ref preferred)
 - **Axis:** Soft Mid Mid Soft HiAlpha MidRank MidLoBeta MidCtx MegaSuperExtra ep4 UltraLoLR
-- **Knobs:** lr=5e-7, LoRA r=32 / α=128, β=0.02, max_len=8192, epochs=4, max_steps=19200
+- **Knobs:** lr=5e-7, LoRA r=32 / α=128, β=0.05, max_len=8192, epochs=4, max_steps=19200
 - **Hardware:** R252 8×B300 GPUs 4,5
-- **Experiment:** `mining/experiments/r899-r252-offline-dpo-hialpha-midrank-lobeta-midctx-megasuperextrasteps-ep4-ultralolr/`
-- **Parent signal:** R872 MidCtx Midβ REFUTE ~−0.93× → Loβ isolate
+- **Experiment:** `mining/experiments/r899-r252-offline-dpo-hialpha-midrank-midlobeta-midctx-megasuperextrasteps-ep4-ultralolr/`
+- **Parent signal:** R892 MidCtx Loβ REFUTE ~−1.46× + R893 MidCtx Hiβ ~−1.07× → MidLoβ MidCtx isolate
 CARD
 
 for i in $(seq 1 90); do
