@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 81193.74944032084 | p4036 |
-| Lium balance | **$81193.74944032084** | p4036 |
-| cumulative mining spend | ~$135,321 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$71194** (balance − $10,000 floor) | $UTC |
+| $UTC | 81157.75142185499 | p4037 |
+| Lium balance | **$81157.75142185499** | p4037 |
+| cumulative mining spend | ~$135,357 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$71158** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$313.82/h** · vs floor $833/h · gap **−$519.18/h** · stock BL-only | p4036 |
+| miner burn (7 pods) | **~$313.82/h** · vs floor $833/h · gap **−$519.18/h** · stock BL-only | p4037 |
 | miner coldkey free | τ1258.144 | kept ≥τ50 |
 | miner stake | **0** (r252 α→τ→Lium swept p4036) | p4036 |
 | registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T20:29:45Z | 81157.75142185499 | p4037 R923 REFUTE→R932 + R930/R931 idle fill (no rent; BL `8f34559f`); burn **~$313.82/h** |
 | 2026-08-19T20:20:20Z | 81193.74944032084 | p4036 α→τ→Lium: unstake r252 all (236α/~τ13) + `btcli transfer` τ12.5 → Lium ck (lium fund broken); burn **~$313.82/h** |
 | 2026-08-19T20:10:15Z | 78641.06598231226 | p4035 R913 REFUTE→R929 TRAIN + R923 MERGE fix (no rent; BL `fbb1135f`); burn **~$313.82/h** |
 | 2026-08-19T20:02:56Z | 78709.90182762625 | p4034 R912 REFUTE→R928 TRAIN + R913 n80 (no rent; stock 0); burn **~$313.82/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-19T19:22:56Z | 79000.0507029855 | p4030 rent `mine-r926` 8×H100 $13.76/h SoftCtx MidLoβ + R925 idle-GPU fill; burn **~$313.82/h** |
 | 2026-08-19T18:43:46Z | 79280.45844954444 | p4028 rent `mine-r924` 8×H200 $33.81/h MidCtx Hiβ (no B300/non-bl B200); burn **~$300.06/h** |
 | 2026-08-19T18:37:04Z | 79312.69880907168 | p4027 R914 REFUTE→R923 + R337/R338 vera-pivot (no rent; bl-only); burn **~$266.26/h** |
-| 2026-08-19T18:26:56Z | 79377.14684740201 | p4026 crown cold R912+R913 (no rent; bl-only stock); burn **~$266.26/h** |

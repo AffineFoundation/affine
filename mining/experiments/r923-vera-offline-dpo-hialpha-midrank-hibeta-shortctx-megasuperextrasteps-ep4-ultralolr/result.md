@@ -1,8 +1,19 @@
-# R923 — vera ShortCtx Hiβ UltraLoLR
+# R923 result — REFUTE vs reign36 (wvk=7)
 
-**Status:** **n80 RUNNING p4036** R888 :8002 CHALL_READY · sim pid**42129** → `/root/affine_data/r923_sim_result_reign36_wvk7.json`
-**Axis:** Soft Mid Mid Soft MidRank HiBeta ShortCtx UltraLoLR (β=0.3 r=32 α=128 lr=5e-7 @6144 ep4 steps=19200)
-**Parent:** R914 ShortCtx Loβ ~0.14× → Hiβ isolate
-**Ops note p4035:** prior wait used `--adapter /root/r923/train` (peft miss); fixed → `/root/r923/train/adapter`; MERGE_DONE 16 shards; Triton seeded
-**Ops note p4036:** chall READY 20:18:55Z · n80 launched 20:18:56Z block_hash=`bf97f76a…` vs reign36 vera
-**Decision rule:** Stage-5 iff fresh v4 n80 margin>max(2·SE,0.002) AND thought≥80 AND B≥0.30 vs reign36
+**UTC:** 2026-08-19T20:27Z · **pass 4037** · pod `mine-r888-grpo-reason-1` gentle-orbit-0d
+
+| field | value |
+|---|---|
+| margin | **+0.001172** |
+| SE | 0.001042 |
+| bar | max(2·SE, δ)=**0.002083** |
+| ratio | **~0.56×** |
+| z | 1.125 |
+| n | 80 |
+| thought median | **175** ✓ (≥80) |
+| B pass | **0.315** ✓ (≥0.30) |
+| k / τ | 3 / 0.03 |
+| challenger_wins | False |
+
+**Verdict:** REFUTE — clears thought/B but margin under 2·SE and under δ floor.
+**Next:** free chall GPUs 5,6 → **R932** HiRank Hiβ ShortCtx isolate (≠ MidRank R923).

@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4037: R923 **REFUTE** ~0.56× (m=+0.001172 SE=0.001042 thought✓175 B✓0.315) → exact-PID reap chall :8002 → **R932** HiRank Hiβ ShortCtx; stock BL-only → fill R924 idle GPUs **4–7** with **R930/R931**. **Never `pkill -f`**.
 - p4036: `lium fund` fails (`Subtensor` has no `transfer`) — fallback `btcli wallet transfer` τ→ Lium ck `5FqACMt…zsThe`; r252 236α/~τ13→τ12.5→Lium (+~$2.6k). R923 chall READY→n80 RUNNING. Stock BL-only. **Never `pkill -f`**.
 - p4035: R913 **REFUTE** ~−0.17× → R929 HiRank ShortCtx MidLoβ; R923 TRAIN_DONE but merge failed `--adapter …/train` (peft wants `…/train/adapter`) — relaunch merge+n80 arm. Stock only BL `fbb1135f`. **Never `pkill -f`**.
 - p4034: cold crown n80 died — missing `s4-h2-merge/run_sim_duel.py` + no pyarrow; fix=upload sim + `ensurepip`+pyarrow + corpus sync. R912 **REFUTE** ~0.53× → R928 HiRank Midβ MidCtx. Chall relaunch needs CUDA_HOME=cu13 (lean_chall has it). **Never `pkill -f`**.
