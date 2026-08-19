@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4054: R940 TRAIN_DONE+MERGE_DONE sat idle (READY_FOR_N80) while relays occupied 1,3/6,7 — launch chall on free GPUs **4,5 :8004** (not 8003/8002) + seed `chall_r928` (n_so=26). Stock B300=0 BL `8f34559f`. **Never `pkill -f`**.
 - p4053: R933 **REFUTE** m=−0.005798 ~−0.68× (thought✓200 B✓0.45) → exact-PID reap → **R941** SoftCtx MidLoβ MegaSuperExtra; also kill late host-relay overwrite during n80 + arm **wait_r926→lean**. Stock B300=0. **Never `pkill -f`**.
 - p4052: R936 **REFUTE** m=+0.000310 ~0.07× (thought✓156 B✓0.42) → exact-PID reap → **R934** host-relay→crown GPUs**6,7**; R252 king hung missing `__triton_launcher*.so` → exact-PID reap + FORCE seed from crown king (n_so=26) → king reload→R3 n80. Stock BL-only. **Never `pkill -f`**.
 - p4051: R936 MERGE_DONE but lean path typo’d MidCtx Midβ → Triton wipe+seed from **king** missing `.cubin` → engine fail; fix=reseed from **chall_r928** (n_so=26 n_cubin=238) + REUSE skip-wipe → chall:8002 **n80 LIVE**; R926 rematch→host-relay crown GPUs**1,3** :8003. Stock BL-only. **Never `pkill -f`**.
