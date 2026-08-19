@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3983: R888 idle GPUs → **king TP1 :8001** CVD=4 + **R871 host-relay** R337→R888 (parked MidCtx Loβ MERGE) wait→chall GPU5+n80; R865 ~33G; R888 GRPO step≥7 untouched; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3982: **R864 REFUTE v4** m=−0.01080~**−1.12×** (thought✓212 B✓0.481 k=3 n=79) vs reign36 — marsplan SoftCtx MidRank Loβ fails; reap lunar 4,5 exact → **R865 host-relay LIVE** R338→lunar (wait→chall+n80); R888 teacher READY + **GRPO TRAIN** pid**7584** step≥2 (CVD=2,3); B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3981: R888 teacher **crashed** mid-load (`RuntimeError: DeepGEMM backend is not available`) after 79%/47 shards — patch `serve_teacher_tp1_r888.sh` with `VLLM_USE_DEEP_GEMM=0` + flashinfer-MoE offs → relaunch pid**6086**; R864 n80 LIVE. **Never `pkill -f`**.
 - p3980: R888 hub-cache path mismatch (`HF_HOME` vs `HF_HOME/hub`) → migrate + `--cache-dir $HF_HOME/hub` → teacher HF LIVE → GRPO. **Never `pkill -f`**.

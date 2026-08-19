@@ -11,12 +11,12 @@
 | mine-r262-kevin-v5-nonking-grpo-1 | golden-comet-78 | 8×B200 | $60.00 | **2026-08-19T17:23Z** | TK **vera** · **R877+R878 TRAIN** |
 | mine-r226-marsplan-fullft-1 | brave-raven-a9 | 8×B200 | $47.20 | **2026-08-19T17:23Z** | TK vera TP1 · **R875+R876+R887 TRAIN** |
 | mine-r252-vera-t4-nonking-grpo-1 | gentle-wolf-8c | 8×B300 | $64.00 | **2026-08-19T17:23Z** | TK **vera** · **R872+R873 TRAIN** |
-| mine-r337-marsplan-online-dpo-hilr-1 | gentle-shark-35 | 8×B300 | $47.04 | **2026-08-19T17:35Z** | teacher · **R879–R881 TRAIN** |
+| mine-r337-marsplan-online-dpo-hilr-1 | gentle-shark-35 | 8×B300 | $47.04 | **2026-08-19T17:35Z** | teacher · **R879–R881 TRAIN** · R871 src |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-lion-9f | 8×B300 | $52.00 | **2026-08-19T17:35Z** | **R882–R884 TRAIN** · R865 src |
-| mine-r888-grpo-reason-1 | gentle-orbit-0d | 8×B200† | $39.20 | **2026-08-20T03:34Z** | **R888 GRPO TRAIN** pid7584 · SSH `192.9.163.79:20500` |
+| mine-r888-grpo-reason-1 | gentle-orbit-0d | 8×B200† | $39.20 | **2026-08-20T03:34Z** | T+king LOAD · R888 GRPO · R871 relay · SSH `192.9.163.79:20500` |
 
 †nvidia-smi shows **7** GPUs. Host fleet: **8 mine-*** · burn **~$405.70/h** · **wvk=7**
-**p3982:** R864 REFUTE→reap; R865 host-relay LIVE; R888 GRPO step≥2; B300/8×B200 stock=0
+**p3983:** R888 king TP1 :8001 + R871 host-relay R337→R888 LIVE; R865 ~33G; B300/8×B200 stock=0
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval`, `affine-teacher2`.
 
@@ -24,6 +24,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-19T04:12:52Z | p3983: R888 idle→king TP1+R871 relay; R865~33G; R888 GRPO ok; burn ~$405.70/h; bal $83939 |
 | 2026-08-19T04:03:52Z | p3982: R864 REFUTE m=−0.01080~−1.12×; reap lunar 4,5; R865 relay LIVE; R888 GRPO TRAIN; burn ~$405.70/h; bal $84033 |
 | 2026-08-19T03:57:50Z | p3981: R864 n80 LIVE + R888 DeepGEMM fix/relaunch; burn ~$405.70/h; bal $84082 |
-| 2026-08-19T03:48:49Z | p3980: R888 hub-cache fix + teacher HF LIVE; burn ~$405.70/h; bal $84177 |
