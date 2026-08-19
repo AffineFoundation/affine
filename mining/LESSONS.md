@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4030: B300/B200×8 empty → rent **8×H100** `$13.76` for R926 SoftCtx MidLoβ restart; fill idle H200 GPUs **2,3** with R925 HiRank MidCtx MidLoβ (R901 0.64×). `lium scp` rejects dirs — use `lium rsync` or tar+scp. **Never `pkill -f`**.
 - p4028: B300×8=0 + only bl `8f34559f` B200 → rented **8×H200** `mine-r924` MidCtx Hiβ ($33.81) to cut burn gap; replace when B300 appears. **Never `pkill -f`**.
 - p4027: **marsplan0624/…queen gated** (403 even with `canReadGatedRepos`) — old rev `556d02a2` 404; pivot online-DPO to **vera** `8e3f1695`. **R914 REFUTE** ~0.14× → **R923** ShortCtx Hiβ. **Never `pkill -f`**.
 - p4026: **`mine-crown-1` has no wait_bootstrap case** → manual cold pack (`p4026_crown_cold_r912_r913.sh`) + Soft Mid Mid Soft from local r886; API stock `bl_skip=1` only. **Never `pkill -f`**.
