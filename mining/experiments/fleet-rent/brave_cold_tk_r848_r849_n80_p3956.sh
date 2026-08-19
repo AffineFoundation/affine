@@ -107,19 +107,22 @@ wait_ready() {
   [[ "$ready" -eq 1 ]] || { log "ERROR $name not ready"; tail -80 "$logf" | tee -a "$LOG"; exit 1; }
 }
 
+# p3963: brave TP=2 king also NCCL-spins (same as teacher p3960) — king uses TP=1 on GPU1
+# Challengers still TP=2 on 4,5 / 6,7 (COMMON unused for TK after p3963).
 COMMON=(--tensor-parallel-size 2 --max-model-len 65536 --max-num-batched-tokens 8192
   --attention-backend FLASH_ATTN --attention-config.use_trtllm_attention 0
   --compilation-config.pass_config.fuse_allreduce_rms false --moe-backend triton
   --additional-config '{"gdn_prefill_backend": "triton"}'
   --enforce-eager)
-# p3960: brave TP=2 teacher NCCL-spins post-init (p3776/r477); teacher uses TP=1
+# p3960/p3963: brave TP≥2 NCCL-spins post-init; teacher+king use TP=1
 TEACHER_COMMON=(--tensor-parallel-size 1 --max-model-len 65536 --max-num-batched-tokens 8192
   --attention-backend FLASH_ATTN --attention-config.use_trtllm_attention 0
   --compilation-config.pass_config.fuse_allreduce_rms false --moe-backend triton
   --additional-config '{"gdn_prefill_backend": "triton"}'
   --enforce-eager)
+KING_COMMON=("${TEACHER_COMMON[@]}")
 
-log "START cold TK + R848/R849 n80 vs reign36 vera wvk7 (p3960 OFFLINE+eager+TP1)"
+log "START cold TK + R848/R849 n80 vs reign36 vera wvk7 (p3960/p3963 OFFLINE+eager+TP1 teacher+king)"
 hub_ok "$MERGE_848" || { log "FATAL missing $MERGE_848"; exit 1; }
 hub_ok "$MERGE_849" || { log "FATAL missing $MERGE_849"; exit 1; }
 
@@ -215,12 +218,12 @@ echo $! >"$TEACHER_PIDF"
 log "teacher pid=$(cat "$TEACHER_PIDF")"
 wait_ready 8000 teacher "$TEACHER_PIDF" "$TEACHER_LOG"
 
-log "launch king :8001 GPUs 2,3 $KING_REPO@$KING_REV"
+log "launch king :8001 GPU 1 TP=1 $KING_REPO@$KING_REV (p3963 NCCL workaround)"
 : >"$KING_LOG"
-CUDA_VISIBLE_DEVICES=2,3 TRITON_CACHE_DIR=/root/.triton/cache/king \
+CUDA_VISIBLE_DEVICES=1 TRITON_CACHE_DIR=/root/.triton/cache/king \
   nohup /root/venv/bin/vllm serve "$KING_LOCAL" \
   --port 8001 --gpu-memory-utilization 0.80 \
-  "${COMMON[@]}" --served-model-name "$KING_REPO" >>"$KING_LOG" 2>&1 &
+  "${KING_COMMON[@]}" --served-model-name "$KING_REPO" >>"$KING_LOG" 2>&1 &
 echo $! >"$KING_PIDF"
 log "king pid=$(cat "$KING_PIDF")"
 wait_ready 8001 king "$KING_PIDF" "$KING_LOG"
