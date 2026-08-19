@@ -1,9 +1,4 @@
-# R889 — pass 3986
-
-**Status:** **TRAIN LIVE** brave GPUs 4,5 pid**39661** · wait→merge armed.
-
-**Axis:** tammy Soft Mid Mid Soft MidRank MidLoBeta MidCtx UltraLoLR (β=0.05 r=32 α=128 lr=5e-7 @8192 ep4).
-
-**Parent signal:** R875 MidCtx Hiβ ~0.007× + R850 MidCtx Midβ ~0.04× → MidLoβ MidCtx isolate.
-
-**Decision rule:** Stage-5 iff fresh v4 n80 margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 (fail-closed k=3).
+# R889 result — REFUTE v4 (p4006)
+- vs reign36 vera6 · wvk=7 · k=3 · τ=0.03 · n=77
+- margin=−0.006378 SE=0.003031 bar=0.006061 (~−1.05×) thought✓172 B✓0.455
+- slot → R907 TRAIN (Loβ MidCtx) brave GPUs 4,5
