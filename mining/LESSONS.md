@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3987: R871 SIZE_OK→chall :8002; first n80 died `ModuleNotFoundError: evalsrv.corpus` (stub affine_pkg) → full affine+evalsrv sync + `pyarrow` → **n80 LIVE** pid19488; R888 GRPO step≥50; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3986: **R875/R876/R865 REFUTE v4** (~0.007× / ~0.304× / ~−0.83×) → reap challs → **R889+R890+R891 TRAIN** same pass; R871~14/16; R888 step≥60; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3985: R865 **SIZE_OK** (16/16+visual) → chall TP2 :8002 + **n80 LIVE** lunar pid**928274** vs reign36; R875~53/80 R876~30/80; R871~8/16; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3984: brave R875/R876 **TRAIN_DONE** → **MERGE_DONE** + **TP1** chall+n80 :8002/:8003; R888 king READY + GRPO; B300/8×B200 stock=0. **Never `pkill -f`**.
@@ -146,6 +147,4 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p3860: **R791/R793 REFUTE** → **R803+R802** UltraLoLR; leave :8002 for R780. **Never `pkill -f`**.
 - p3859: brave idle **4–7** → **R800+R801**. **Never `pkill -f`**.
 - p3849: Mega axes need `epochs ≥ ceil(max_steps/n_rows)`. **Never `pkill -f`**.
-- p3848: **R780+R781 MERGE_DONE** → host-relay. **Never `pkill -f`**.
-- p3844/p3843: dual challs need distinct ports; lone 8×B200=`fbb1135f` **bl**. **Never `pkill -f`**.
 
