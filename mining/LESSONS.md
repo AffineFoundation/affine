@@ -25,10 +25,10 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4018: **R896 REFUTE** m=+0.004393~**0.49×** (thought✓188.5 B✓0.397) best cryptoDev SoftCtx under 2·SE; **R897 REFUTE** m=−0.008512~−1.11×; **R898 REFUTE** m=−0.000578~−0.21× → exact-PID reap → **R914 ShortCtx Loβ + R915 SoftCtx MidLoβ + R916 MidCtx Loβ TRAIN**. Burn **~$306.66/h**. **Never `pkill -f`**.
-- p4017: **R901 REFUTE** m=+0.002527~**0.64×** (thought✓156 B✓0.438) — best recent vera MidLoβ MidCtx signal (positive under 2·SE); **R902 REFUTE** m=−0.003048~−0.78× → exact-PID reap chall → **R912 MidCtx Midβ + R913 ShortCtx MidLoβ TRAIN** (+ merge→n80 waiters). Burn **~$306.66/h**. **Never `pkill -f`**.
-- p4016: lunar R896+R897 + R888 R898 MERGE SIZE_OK idle→lean_chall n80; R898 Triton seed `king_r888`→`chall_r898`. Crown R901/R902 n80 LIVE. **Never `pkill -f`**.
+- p4019: brave **R905+R906+R907** MERGE SIZE_OK idle (train→merge waiters only) → lean_chall n80 :8002/8003/8004 GPUs 6,7/2,3/4,5; α r252 all→τ11.4→Lium via `btcli transfer` (`lium fund` Subtensor.transfer fail). Burn **~$306.66/h**. **Never `pkill -f`**.
+- p4018: **R896 REFUTE** m=+0.004393~**0.49×**; **R897** −1.11×; **R898** −0.21× → **R914+R915+R916 TRAIN**. **Never `pkill -f`**.
+- p4017: **R901 REFUTE** ~0.64×; **R902** −0.78× → **R912+R913 TRAIN**. **Never `pkill -f`**.
 - p4015: train→merge waiters alone leave **MERGE SIZE_OK idle** — always ship **merge→n80** waiter or launch lean_chall same pass. **Never `pkill -f`**.
-- p4014: **R899 REFUTE** causality_fail B=0.2375; **R900 REFUTE** m=−0.004297~−0.49× → **R910+R911 TRAIN**. Tore SSH-dead R337+R338. **Never `pkill -f`**.
-- p4012–p4013: bad-LAUNCHED from typo path / stamp-before-exec — stamp LAUNCHED only after `test -x "$CHALL"`; never kill EngineCore by broad argv. **Never `pkill -f`**.
-- p4010–p3900: peer rsync over HF; REFUTE→TRAIN; MERGE idle→n80; GRPO; R861 LOST; Alpha→TAO→Lium; never `pkill -f`.
+- p4014: **R899** B✗; **R900** −0.49× → **R910+R911 TRAIN**. **Never `pkill -f`**.
+- p4012–p4013: stamp LAUNCHED only after `test -x "$CHALL"`; never kill EngineCore by broad argv. **Never `pkill -f`**.
+- p4010–p3900: peer rsync; REFUTE→TRAIN; MERGE idle→n80; GRPO; R861 LOST; Alpha→TAO→Lium; never `pkill -f`.
