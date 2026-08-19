@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 84272.94766383574 | p3978 |
-| Lium balance | **$84272.94766383574** | p3978 |
-| cumulative mining spend | ~$127,472 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$74273** (balance − $10,000 floor) | $UTC |
+| $UTC | 84223.41138091912 | p3979 |
+| Lium balance | **$84223.41138091912** | p3979 |
+| cumulative mining spend | ~$127,522 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$74223** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (8 pods) | **~$405.70/h** · vs floor $833/h · gap **−$427.30/h** · B300 stock=0 · +R888 $39.20 | p3978 |
+| miner burn (8 pods) | **~$405.70/h** · vs floor $833/h · gap **−$427.30/h** · B300/8×B200 stock=0 | p3979 |
 | miner coldkey free | τ1257.618 | kept ≥τ50 |
-| miner stake | **0** | p3978 |
+| miner stake | **0** | p3979 |
 | registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T03:42:58Z | 84223.41138091912 | p3979 R888 BOOT unstuck (`hf download` LIVE); no rent; burn **~$405.70/h** |
 | 2026-08-19T03:37:09Z | 84272.94766383574 | p3978 rent **mine-r888** gentle-orbit-0d 8×B200 **$39.20/h** + BOOT; burn **~$405.70/h** |
 | 2026-08-19T03:30:31Z | 84361.58418370338 | p3977 R863 REFUTE→R864 relay + brave R887 TRAIN (no rent; stock 0); burn **~$366.50/h** |
 | 2026-08-19T03:22:16Z | 84404.79358358723 | p3976 crown idle→R885/R886 TRAIN + R863 n80 LIVE (no rent; stock 0); burn **~$366.50/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-19T02:50:36Z | 84714.56148858926 | p3972 R338 R863–R865 MERGE relaunch (no rent; stock 0); burn **~$366.50/h** |
 | 2026-08-19T02:44:45Z | 84759.77225874645 | p3971 R850/R851/R860 REFUTE→next TRAIN; R861 LOST; R866 reload (no rent; stock 0); burn **~$366.50/h** |
 | 2026-08-19T02:33:40Z | 84845.05777011802 | p3970 R867/R868 REFUTE→R872/R873 + lunar R866/R860 n80 (no rent; bl B200); burn **~$366.49/h** |
-| 2026-08-19T02:24:18Z | 84936.87014900277 | p3969 brave R850/R851 n80 LIVE (flashinfer fix; no rent); burn **~$366.49/h** |
