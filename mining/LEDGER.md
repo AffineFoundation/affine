@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 83036.45406233937 | p3993 |
-| Lium balance | **$83036.45406233937** | p3993 |
-| cumulative mining spend | ~$128,711 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$73036** (balance − $10,000 floor) | $UTC |
+| $UTC | 82845.3017869402 | p3995 |
+| Lium balance | **$82845.3017869402** | p3995 |
+| cumulative mining spend | ~$128,903 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$72845** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (8 pods) | **~$405.70/h** · vs floor $833/h · gap **−$427.30/h** · B300/8×B200 stock=0 | p3993 |
+| miner burn (8 pods) | **~$405.70/h** · vs floor $833/h · gap **−$427.30/h** · B300/8×B200 stock=0 | p3995 |
 | miner coldkey free | τ1257.618 | kept ≥τ50 |
 | miner stake | **~59α / τ3.25** (under τ5 sweep) | p3985 |
 | registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
@@ -26,6 +26,8 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T06:09:38Z | 82845.3017869402 | p3995 R880+R881 REFUTE→R852+R853 n80 (no rent; stock 0); burn **~$405.70/h** |
+| 2026-08-19T05:56:07Z | 82989.53496329929 | p3994 R879+R869 REFUTE→R880+R881 n80 (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T05:46:32Z | 83036.45406233937 | p3993 R870 REFUTE→R879 n80 + R869 Triton reload n80 (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T05:29:42Z | 83227.21664753786 | p3992 R854 REFUTE→R874 MERGE+wait n80 (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T05:24:47Z | 83273.06867031682 | p3991 R872/R873 REFUTE→R892/R893 TRAIN + R337 vera DL/wait R869/R870 (no rent; stock 0); burn **~$405.70/h** |
@@ -34,5 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-19T05:00:43Z | 83462.04019233573 | p3988 R872 MERGE→chall+n80 LIVE R252 (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T04:53:27Z | 83559.0238706292 | p3987 R871 SIZE_OK→chall+n80 LIVE (affine_pkg sync; no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T04:38:17Z | 83701.36494035226 | p3986 R875/R876/R865 REFUTE→R889/R890/R891 TRAIN (no rent; stock 0); burn **~$405.70/h** |
-| 2026-08-19T04:28:18Z | 83796.4606360361 | p3985 R865 SIZE_OK→n80 LIVE lunar (no rent; stock 0); burn **~$405.70/h** |
-| 2026-08-19T04:19:59Z | 83890.22387945114 | p3984 R875+R876 MERGE brave (no rent; stock 0); burn **~$405.70/h** |
