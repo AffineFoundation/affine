@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3999: **R892+R893 TRAIN_DONE@900** (~06:30Z) sat **~25m idle** with no merge waiter → dual **MERGE LIVE** R252 4–7 + wait→n80 :8002/:8003 (`p3999_r892_r893_armed.done`); B300/8×B200 stock=0; burn **~$405.70/h**. Always ship wait→merge→n80 with TRAIN. **Never `pkill -f`**.
 - p3998: **R891 REFUTE v4** ~−0.93× (thought✓234 B✓0.541) + **R874 REFUTE v4** ~−0.22× near-miss (thought✓201 B✓0.425) → exact-PID reap lunar 4–7 → **R896 Loβ + R897 Hiβ SoftCtx TRAIN** (cryptoDev MidRank β-isolate); B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3997: **R835 REFUTE v4** ~−1.19× + **R796 REFUTE v4** ~−0.33× → **R894+R895 TRAIN**; lunar R891+R874 n80; B300 stock=0. **Never `pkill -f`**.
 - p3996–p3993: REFUTE→reap→n80/TRAIN swarm; Triton seed; skip smoke; B300 stock=0; double-arm guard `*_armed.done`. **Never `pkill -f`**.
