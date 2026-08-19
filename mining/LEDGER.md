@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 82070.67046012853 | p3964 |
-| Lium balance | **$82070.67046012853** | p3964 |
+| $UTC | 82070.67046012853 | p3965 |
+| Lium balance | **$82070.67046012853** | p3965 |
 | cumulative mining spend | ~$126,626 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
 | **available for mining** | **~$72070** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=0 · waiters armed | p3964 |
+| miner burn (7 pods) | **~$366.49/h** · vs floor $833/h · gap **−$466.51/h** · B300×8=0 · B200×8=`fbb1135f` bl · waiters armed | p3965 |
 | miner coldkey free | τ1260.426 | kept ≥τ50 |
 | miner stake | **~47α ≈ τ2.60** (r252; under τ5 sweep) | p3917 |
 | registrations / submissions | **10** / **10** (… **r637** chal-00829; **r683** chal-00860 **LOST**) | |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T01:55:00Z | 82070.67046012853 | p3965 R849 corpus-race→n80 relaunch (no rent; B200 bl); burn **~$366.49/h** |
 | 2026-08-19T01:51:00Z | 82070.67046012853 | p3964 brave R848/R849 TP1 READY + n80 LIVE (no rent; stock 0); burn **~$366.49/h** |
 | 2026-08-19T01:45:17Z | 82160.03102885015 | p3963 brave king TP1 READY + R848/R849 n80 armed (no rent; stock 0); burn **~$366.50/h** |
 | 2026-08-19T01:05:24Z | 82511.06348158202 | p3961 R848/R849 MERGE_DONE + cold TK LOAD (no rent; stock 0); burn **~$366.50/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-19T00:23:58Z | 82867.33586451829 | p3957 R337 idle→R869–R871 TRAIN (no rent; stock 0); burn **~$366.49/h** |
 | 2026-08-19T00:18:30Z | 82956.05656220863 | p3956 brave cold TK+R848/R849 n80 (no rent; stock 0); burn **~$366.49/h** |
 | 2026-08-19T00:12:39Z | 82956.05656220863 | p3955 R843/R844/R845 REFUTE→R866/R867/R868 TRAIN (no rent; B200 bl); burn **~$366.49/h** |
-| 2026-08-19T00:03:18Z | 83040.86065910391 | p3954 R854 RELAY + R863–R865 TRAIN (no rent; stock 0); burn **~$366.49/h** |
