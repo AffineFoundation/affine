@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3991: **R872 REFUTE v4** ~−0.93× + **R873 REFUTE** ~−0.94× **B✗0.282** → reap R252 → **R892/R893 MidCtx Loβ/Hiβ TRAIN**; R337 had **5 MERGE_DONE** (R869/R870/R879–R881) but **no vera king** (stale marsplan mine.env) → same-pass **vera HF DL + wait→king→R869/R870 n80**; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3990: lunar R854 **SIZE_OK** sat idle while R874 TRAIN_DONE@1036 left GPUs **6,7** free (no merge wait armed) → same-pass **chall :8002 + v4 n80 LOAD**; R872~61/80 R873~29/80; R888 GRPO≥110 GPU5 still free; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3989: **R871 REFUTE v4** ~−0.85× → reap R888 GPU5; R873 wait called missing `lean_merge_*gpus45*` (real file `gpus67`) + chall script hardcoded **GPUS=4,5** despite name — fixed→**6,7 :8003**; R872 n80 died vLLM RPC timeout → relaunch :8002; burn **~$405.70/h**. **Never `pkill -f`**.
 - p3988: R252 R872 **MERGE_DONE** idle → same-pass **chall :8002 + v4 n80 LIVE** pid**584389**; R871~78/80; R888 GRPO step≥92; R873 TRAIN_DONE but lean_merge missing on pod; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
