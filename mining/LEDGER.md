@@ -13,12 +13,12 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 83273.06867031682 | p3991 |
-| Lium balance | **$83273.06867031682** | p3991 |
-| cumulative mining spend | ~$128,474 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$73273** (balance − $10,000 floor) | $UTC |
+| $UTC | 83227.21664753786 | p3992 |
+| Lium balance | **$83227.21664753786** | p3992 |
+| cumulative mining spend | ~$128,520 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$73227** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (8 pods) | **~$405.70/h** · vs floor $833/h · gap **−$427.30/h** · B300/8×B200 stock=0 | p3991 |
+| miner burn (8 pods) | **~$405.70/h** · vs floor $833/h · gap **−$427.30/h** · B300/8×B200 stock=0 | p3992 |
 | miner coldkey free | τ1257.618 | kept ≥τ50 |
 | miner stake | **~59α / τ3.25** (under τ5 sweep) | p3985 |
 | registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
@@ -26,6 +26,7 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T05:29:42Z | 83227.21664753786 | p3992 R854 REFUTE→R874 MERGE+wait n80 (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T05:24:47Z | 83273.06867031682 | p3991 R872/R873 REFUTE→R892/R893 TRAIN + R337 vera DL/wait R869/R870 (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T05:14:36Z | 83369.55475127233 | p3990 R854 SIZE_OK→chall+n80 lunar 6,7 (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T05:08:49Z | 83417.38974895934 | p3989 R871 REFUTE + R873 MERGE→n80 + R872 relaunch (no rent; stock 0); burn **~$405.70/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-19T04:28:18Z | 83796.4606360361 | p3985 R865 SIZE_OK→n80 LIVE lunar (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T04:19:59Z | 83890.22387945114 | p3984 R875+R876 MERGE brave (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T04:12:52Z | 83938.99680950548 | p3983 R888 king TP1 + R871 host-relay (no rent; stock 0); burn **~$405.70/h** |
-| 2026-08-19T04:03:52Z | 84032.521883819 | p3982 R864 REFUTE→R865 relay + R888 GRPO TRAIN (no rent; stock 0); burn **~$405.70/h** |
