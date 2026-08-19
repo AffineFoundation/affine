@@ -25,10 +25,10 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p3995: **R880 REFUTE v4** ~−1.26× (thought✓263 B✓0.455) → reap :8003 → **R852 n80 LIVE** (parked HiRank Loβ SoftCtx); **R881 REFUTE v4** ~−0.59× (thought✓216 B✓0.521) → reap :8002 → **R853 n80 LIVE** (parked HiRank Hiβ SoftCtx); Triton seed working chall (r881→r852, r852→r853) + skip smoke; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
-- p3994: **R879 REFUTE v4** ~−1.19× (thought✓191 B✓0.405) → reap :8003 → **R880 n80 LIVE**; **R869 REFUTE v4** ~−0.32× (thought✓218 B✓0.382) → reap :8002 → **R881 n80 LIVE**; Triton seed from **working chall** (r869→r880, r880→r881) + skip smoke; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
-- p3993: **R870 REFUTE v4** ~0.034× → reap→**R879 n80**; R869 EngineDead → seed from **working chall_r879** + skip smoke → n80; R874 EngineDead empty chall; B300 stock=0. **Never `pkill -f`**.
-- p3992–p3986: REFUTE→reap→MERGE/TRAIN swarm; R337 KING_READY; Triton seed from working chall; skip smoke urllib; B300 stock=0. **Never `pkill -f`**.
+- p3996: **R852 REFUTE v4** ~−0.81× (thought✓250 B✓0.464) + **R853 REFUTE v4** ~−0.63× (thought✓203 B✓0.429) → reap → **R835+R796 MidCtx n80 LIVE**; double-arm reap killed first READY pair — guard with `p3996b_*_armed.done` before re-launch; B300/8×B200 stock=0; burn **~$405.70/h**. **Never `pkill -f`**.
+- p3995: **R880 REFUTE v4** ~−1.26× → **R852 n80**; **R881 REFUTE v4** ~−0.59× → **R853 n80**; Triton seed + skip smoke; B300 stock=0. **Never `pkill -f`**.
+- p3994: **R879 REFUTE v4** ~−1.19× → **R880 n80**; **R869 REFUTE v4** ~−0.32× → **R881 n80**; Triton seed from working chall; B300 stock=0. **Never `pkill -f`**.
+- p3993–p3986: REFUTE→reap→n80/TRAIN swarm; Triton seed; skip smoke; B300 stock=0. **Never `pkill -f`**.
 - p3985–p3970: SIZE_OK→n80; GRPO; DeepGEMM/flashinfer offs; R861 LOST; dual n80 stagger. **Never `pkill -f`**.
 - p3967–p3931: CLEAR/SUBMIT; TP1 brave; EngineDead→wipe+cp king→chall; SoftCtx swarm; crown ENOSPC prune; CUDA_HOME cu13. **Never `pkill -f`**.
 - p3928–p3921: SoftCtx REFUTE swarm; Triton `__triton_launcher.so` seed from king/working chall; vera retarget. **Never `pkill -f`**.
