@@ -25,7 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p3971: **R861 LOST** m=+0.001182~**0.59×δ** (thought✓169 B✓0.416 k=3 n=1288) vs reign36 — n80 1.088×≠live δ; **R850/R851/R860 REFUTE** ~0.04×/−0.09×/−1.28× → brave **R875/R876** + lunar **R874** TRAIN; R866 EngineDead (triton `.so`) + sed left `nvidia-smi -i 6,7` wait → patch `-i 4,5` + king triton seed → **chall LOAD** :8002; stock B300/B200×8=[]. **Never `pkill -f`**.
+- p3972: R338 R863–R865 TRAIN_DONE but merge outer dead — p3954 outer invoked missing `lean_merge_r86x_gpus_p3954.sh` (digits stripped) → no `/tmp/r86*_merged` ~80m; clear stamps + relaunch correct `gpus23/45/67` → **MERGE LIVE** (pids **62086**/**62088**/**62092**); R866 n80 ~74/80; stock 0. **Never `pkill -f`**.
+- p3971: **R861 LOST** ~0.59×δ; R850/R851/R860 REFUTE → R875/R876/R874 TRAIN; R866 triton+`-i 4,5` fix → chall LOAD. **Never `pkill -f`**.
 - p3970: **R867/R868 REFUTE v4** m=−0.00616~**−1.43×** / −0.01039~**−1.22×** (thought✓ B✓ k=3) vs reign36 → reap R252 4–7 exact → **R872** MidCtx + **R873** ShortCtx Soft Mid Mid Soft MidRank Midβ TRAIN; lunar R860 orphan Worker_TP PPID=1 on 6,7 + R866 MERGE idle 4,5 → kill exact orphans → **R866+R860 CHALL_READY + n80 LIVE**; R861 scoring ~1034/1300; lone 8×B200=`fbb1135f` **bl**. **Never `pkill -f`**.
 - p3969: brave R850/R851 MERGE_DONE but chall EngineDead — flashinfer ninja JIT vs cu13 headers (`CUDA toolkit headers incompatible`); rematch bash stuck on health poll w/ GPUs **4–7 idle** → kill exact rematch PIDs → relaunch chall+n80 with teacher/king flags (`VLLM_USE_FLASHINFER_SAMPLER=0` + sibling disables) → **CHALL_READY + n80 LIVE** (pids **26237**/**26318** chall, **28897**/**28899** sim). Stock B300/B200×8=[]. **Never `pkill -f`**.
 - p3968: R252 MERGE_DONE R867/R868 sat idle GPUs **4–7** ~30m with warm T+K vera → **CHALL_READY + n80 LIVE** same pass (`lium scp`+`lium exec`; chall **570416**/**570424** :8002/:8003; sim **574899**/**574920**). Brave R850/R851 MERGE_DONE but GPUs 4–7 idle after chall spawn — next pass check reload. Stock B300/B200×8 JSON=[]. **Never `pkill -f`**.
@@ -135,7 +136,6 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p3860: **R791/R793 REFUTE** → **R803+R802** UltraLoLR; leave :8002 for R780. **Never `pkill -f`**.
 - p3859: brave idle **4–7** → **R800+R801**. **Never `pkill -f`**.
 - p3858: **R768 REFUTE** → **R780 meta accel**. **Never `pkill -f`**.
-- p3857–p3850: SCP→n80 / UltraLoLR cascade / brave fill. **Never `pkill -f`**.
 - p3849: Mega axes need `epochs ≥ ceil(max_steps/n_rows)`. **Never `pkill -f`**.
 - p3848: **R780+R781 MERGE_DONE** → host-relay. **Never `pkill -f`**.
 - p3844: dual challs need distinct ports. **Never `pkill -f`**.
