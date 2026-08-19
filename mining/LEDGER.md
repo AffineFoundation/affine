@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 83063.67459711197 | p4019 |
-| Lium balance | **$83063.67459711197** | p4019 |
-| cumulative mining spend | ~$130,899 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$73064** (balance − $10,000 floor) | $UTC |
+| $UTC | 82822.43124536946 | p4020 |
+| Lium balance | **$82822.43124536946** | p4020 |
+| cumulative mining spend | ~$131,140 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$72822** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (6 pods) | **~$306.66/h** · vs floor $833/h · gap **−$526.34/h** · B300/8×B200 stock=0 | p4019 |
+| miner burn (6 pods) | **~$306.66/h** · vs floor $833/h · gap **−$526.34/h** · B300/8×B200 stock=0 | p4020 |
 | miner coldkey free | τ1257.620 | kept ≥τ50 |
-| miner stake | **0α / τ0** (p4019 swept r252) | p4019 |
+| miner stake | **0α / τ0** (p4019 swept r252) | p4020 |
 | registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T10:10:38Z | 82822.43124536946 | p4020 brave TP2 hang→TP1; TK restore; R905–7 n80 LIVE (no rent; stock 0); burn **~$306.66/h** |
 | 2026-08-19T09:41:12Z | 83063.67459711197 | p4019 α→τ: unstake r252 all (~206α→τ11.4) + `btcli transfer` τ11.4→Lium ck (lium fund transfer-attr fail); R905–7 n80 arm; burn **~$306.66/h** |
 | 2026-08-19T09:32:48Z | 80846.34869736551 | p4018 R896+R897+R898 REFUTE→R914+R915+R916 TRAIN (no rent; stock 0); burn **~$306.66/h** |
 | 2026-08-19T09:24:12Z | 80930.40995672633 | p4017 R901+R902 REFUTE→R912+R913 TRAIN (no rent; stock 0); burn **~$306.66/h** |

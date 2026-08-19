@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4020: brave **TP=2** chall hangs after `pynccl` (GPU mem~1GiB, `read_bytes=0`); **TP=1** (R848 pattern) READY ~90s. Also: never reap bare `VLLM::EngineCore` (argv lacks model path → kills TK). Restored TK; **R905+R906+R907 n80 LIVE** TP1 :8002/:8003/:8004. Burn **~$306.66/h**. **Never `pkill -f`**.
 - p4019: brave **R905+R906+R907** MERGE SIZE_OK idle (train→merge waiters only) → lean_chall n80 :8002/8003/8004 GPUs 6,7/2,3/4,5; α r252 all→τ11.4→Lium via `btcli transfer` (`lium fund` Subtensor.transfer fail). Burn **~$306.66/h**. **Never `pkill -f`**.
 - p4018: **R896 REFUTE** m=+0.004393~**0.49×**; **R897** −1.11×; **R898** −0.21× → **R914+R915+R916 TRAIN**. **Never `pkill -f`**.
 - p4017: **R901 REFUTE** ~0.64×; **R902** −0.78× → **R912+R913 TRAIN**. **Never `pkill -f`**.
