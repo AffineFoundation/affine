@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 83938.99680950548 | p3983 |
-| Lium balance | **$83938.99680950548** | p3983 |
-| cumulative mining spend | ~$127,807 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$73939** (balance − $10,000 floor) | $UTC |
+| $UTC | 83890.22387945114 | p3984 |
+| Lium balance | **$83890.22387945114** | p3984 |
+| cumulative mining spend | ~$127,856 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$73890** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (8 pods) | **~$405.70/h** · vs floor $833/h · gap **−$427.30/h** · B300/8×B200 stock=0 | p3983 |
+| miner burn (8 pods) | **~$405.70/h** · vs floor $833/h · gap **−$427.30/h** · B300/8×B200 stock=0 | p3984 |
 | miner coldkey free | τ1257.618 | kept ≥τ50 |
-| miner stake | **~59α / τ3.25** (under τ5 sweep) | p3983 |
+| miner stake | **~59α / τ3.25** (under τ5 sweep) | p3984 |
 | registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T04:19:59Z | 83890.22387945114 | p3984 R875+R876 MERGE brave (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T04:12:52Z | 83938.99680950548 | p3983 R888 king TP1 + R871 host-relay (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T04:03:52Z | 84032.521883819 | p3982 R864 REFUTE→R865 relay + R888 GRPO TRAIN (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T03:57:50Z | 84081.87473993482 | p3981 R864 n80 LIVE + R888 DeepGEMM fix/relaunch (no rent; stock 0); burn **~$405.70/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-19T03:30:31Z | 84361.58418370338 | p3977 R863 REFUTE→R864 relay + brave R887 TRAIN (no rent; stock 0); burn **~$366.50/h** |
 | 2026-08-19T03:22:16Z | 84404.79358358723 | p3976 crown idle→R885/R886 TRAIN + R863 n80 LIVE (no rent; stock 0); burn **~$366.50/h** |
 | 2026-08-19T03:14:19Z | 84494.05190643293 | p3975 R337/R338 idle→R879–R884 TRAIN (no rent; stock 0); burn **~$366.50/h** |
-| 2026-08-19T03:03:50Z | 84578.4925971328 | p3974 golden R858/R859→R877/R878 TRAIN (no rent; B200 bl); burn **~$366.50/h** |
