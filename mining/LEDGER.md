@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 84081.87473993482 | p3981 |
-| Lium balance | **$84081.87473993482** | p3981 |
-| cumulative mining spend | ~$127,664 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$74082** (balance − $10,000 floor) | $UTC |
+| $UTC | 84032.521883819 | p3982 |
+| Lium balance | **$84032.521883819** | p3982 |
+| cumulative mining spend | ~$127,713 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$74033** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (8 pods) | **~$405.70/h** · vs floor $833/h · gap **−$427.30/h** · B300/8×B200 stock=0 | p3981 |
+| miner burn (8 pods) | **~$405.70/h** · vs floor $833/h · gap **−$427.30/h** · B300/8×B200 stock=0 | p3982 |
 | miner coldkey free | τ1257.618 | kept ≥τ50 |
-| miner stake | **0** | p3981 |
+| miner stake | **0** | p3982 |
 | registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
 
 ## Recent movements
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-19T04:03:52Z | 84032.521883819 | p3982 R864 REFUTE→R865 relay + R888 GRPO TRAIN (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T03:57:50Z | 84081.87473993482 | p3981 R864 n80 LIVE + R888 DeepGEMM fix/relaunch (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T03:48:49Z | 84176.63823396455 | p3980 R888 hub-cache fix + teacher HF LIVE (no rent; stock 0); burn **~$405.70/h** |
 | 2026-08-19T03:42:58Z | 84223.41138091912 | p3979 R888 BOOT unstuck (`hf download` LIVE); no rent; burn **~$405.70/h** |
@@ -35,4 +36,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-19T03:14:19Z | 84494.05190643293 | p3975 R337/R338 idle→R879–R884 TRAIN (no rent; stock 0); burn **~$366.50/h** |
 | 2026-08-19T03:03:50Z | 84578.4925971328 | p3974 golden R858/R859→R877/R878 TRAIN (no rent; B200 bl); burn **~$366.50/h** |
 | 2026-08-19T02:56:40Z | 84627.75041430761 | p3973 R866 REFUTE→R863 host-relay (no rent; stock 0); burn **~$366.50/h** |
-| 2026-08-19T02:50:36Z | 84714.56148858926 | p3972 R338 R863–R865 MERGE relaunch (no rent; stock 0); burn **~$366.50/h** |

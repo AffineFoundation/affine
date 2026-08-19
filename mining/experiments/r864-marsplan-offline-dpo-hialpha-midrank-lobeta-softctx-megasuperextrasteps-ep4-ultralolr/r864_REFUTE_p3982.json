@@ -1,0 +1,17 @@
+{
+  "utc": "2026-08-19T04:03:12Z",
+  "hypo": "R864",
+  "verdict": "REFUTE",
+  "margin": -0.01079745647776849,
+  "se": 0.004806756442179336,
+  "z": -2.246308213792715,
+  "bar": 0.009613512884358673,
+  "margin_over_bar": -1.1231541068963575,
+  "thought_median": 212.0,
+  "b_pass": 0.4810126582278481,
+  "n_paired": 79,
+  "k": 3,
+  "tau": 0.03,
+  "note": "p3982: marsplan SoftCtx MidRank Lo\u03b2 UltraLoLR ~\u22121.12\u00d7 vs reign36 (thought\u2713 B\u2713 k=3); slot\u2192R865 Hi\u03b2 SoftCtx host-relay n80",
+  "pass": 3982
+}
