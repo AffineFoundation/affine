@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4051: R936 MERGE_DONE but lean path typo’d MidCtx Midβ → Triton wipe+seed from **king** missing `.cubin` → engine fail; fix=reseed from **chall_r928** (n_so=26 n_cubin=238) + REUSE skip-wipe → chall:8002 **n80 LIVE**; R926 rematch→host-relay crown GPUs**1,3** :8003. Stock BL-only. **Never `pkill -f`**.
+- p4050: R924 **REFUTE** m=−0.00249 ~−1.00× + R927 **REFUTE** m=−0.00986 ~−1.18× → exact-PID reap → **R928** TRAIN_DONE idle merge→chall:8002 + **R933** MERGE_DONE host-relay→R337; R926 rematch merge (wait FATAL before adapter). Stock BL-only `8f34559f`. **Never `pkill -f`**.
 - p4049: host-relay `wait -n` can set `fail=1` after all PIPE ok — **verify SIZE_OK on dst** then stamp+lean (R924 16/16); R252 chall shm-hang ~70m → exact-PID reap + king swap justice→vera + chall GPUs6,7 `--enforce-eager`; R927 relay→:8003 n80. Stock BL-only `8f34559f`. **Never `pkill -f`**.
 - p4048: R929 **REFUTE** m=+0.004247 SE=0.003106 bar≈0.006212 ~**0.68×** (thought✓189 B✓0.371 k=3) vs reign36 → exact-PID reap chall:8003 → **R940** HiRank Midβ ShortCtx; stock BL-only `8f34559f`. **Never `pkill -f`**.
 - p4047: R929 MERGE_DONE sat idle on crown → chall:8003 GPUs4,5 + v4 n80 (port≠R924 :8002); R337 **REFUTE** m=−0.009386 ~−0.95× → exact-PID reap chall → **R939** SoftCtx Midβ UltraExtra(28800); stock BL-only `8f34559f`. **Never `pkill -f`**.

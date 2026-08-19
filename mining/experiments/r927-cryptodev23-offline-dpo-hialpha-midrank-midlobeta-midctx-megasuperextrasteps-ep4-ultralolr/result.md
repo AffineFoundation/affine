@@ -1,6 +1,8 @@
-# R927 result
+# R927 — cryptoDev MidRank MidLoβ MidCtx UltraLoLR
 
-- **p4031–p4044:** TRAIN_DONE 900 steps; wait FATAL (flat `train/adapter_model.safetensors` missing — peft wrote `train/adapter/`).
-- **p4045:** adapter-path fix merge → `/tmp/r927_merged` **16 shards** @ 2026-08-19T21:25:21Z on `mine-r926` brave-raven-49.
-- **p4046:** host-relay parallel×4 → `mine-r337` `/tmp/r927_merged` · lean chall :8003 GPUs **6,7** armed after stamp (`host_relay_r927_to_r337_p4046.sh` outer **664644**).
-- **Next:** poll stamp→CHALL_READY→v4 n80 vs reign36.
+**Status:** **REFUTE v4 p4050** vs reign36
+**Axis:** Soft Mid Mid Soft HiAlpha MidRank MidLoBeta MidCtx MegaSuperExtra ep4×UltraLoLR
+**Knobs:** β=0.05 r=32 α=128 lr=5e-7 @8192 epochs=4 max_steps=19200
+**n80:** m=**−0.009860** SE=0.004188 z=−2.354 n=79 bar≈0.008376 (~**−1.18×**) thought✓(208) B✓(0.419) k=3/τ=0.03
+**Artifact:** `/root/affine_data/r927_sim_result_reign36_wvk7.json`
+**Decision:** REFUTE. Chall reaped. Slot → **R933** host-relay→R337 n80 (MERGE_DONE idle).
