@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p3961: brave rematch **MERGE_DONE** ~141s (66G×2, `weight_identical=false`) → cold TK TP1 OFFLINE+eager teacher LOAD ~34%/47 @~33s/shard on FUSE.GOCRYPTFS; next=READY→king→R848/R849 n80; stock 0. **Never `pkill -f`**.
 - p3960: brave TP=2 teacher **NCCL-spin** post-init (OFFLINE+eager still hung; no weight fds) → `lium reboot` (host-key churn) → `/tmp` merges wiped; adapters OK → **R848/R849 rematch** + cold-TK **TP=1 teacher** + OFFLINE+eager (p3776/r477); stock B300/B200×8=0. **Never `pkill -f`**.
 - p3959: p3958 host SIZE_OK poller **hung** on post-nohup SSH → kill exact PIDs → **vera SIZE_OK** (B1=49.7G B2=20.5G) + patch cold-TK **hub_ok min=2** (vera 2-shard; ≥16 false-fail→HF stall) → teacher:8000 LOAD → R848/R849; B200 bl. **Never `pkill -f`**.
 - p3958: brave **idle 0–7** mid-HF vera (~17G/49G + 18G/20G) → kill exact prefetch PIDs → **lunar→brave APPEND×4** keep partials (`.ralph/p3958_vera_brave_*`); SIZE_OK→relaunch cold TK R848/R849; R854 **SIZE_OK** lunar slot-wait (R860/R866 TRAIN); B200=`fbb1135f` **bl**. **Never `pkill -f`**.
