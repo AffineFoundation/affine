@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4018: **R896 REFUTE** m=+0.004393~**0.49×** (thought✓188.5 B✓0.397) best cryptoDev SoftCtx under 2·SE; **R897 REFUTE** m=−0.008512~−1.11×; **R898 REFUTE** m=−0.000578~−0.21× → exact-PID reap → **R914 ShortCtx Loβ + R915 SoftCtx MidLoβ + R916 MidCtx Loβ TRAIN**. Burn **~$306.66/h**. **Never `pkill -f`**.
 - p4017: **R901 REFUTE** m=+0.002527~**0.64×** (thought✓156 B✓0.438) — best recent vera MidLoβ MidCtx signal (positive under 2·SE); **R902 REFUTE** m=−0.003048~−0.78× → exact-PID reap chall → **R912 MidCtx Midβ + R913 ShortCtx MidLoβ TRAIN** (+ merge→n80 waiters). Burn **~$306.66/h**. **Never `pkill -f`**.
 - p4016: lunar R896+R897 + R888 R898 MERGE SIZE_OK idle→lean_chall n80; R898 Triton seed `king_r888`→`chall_r898`. Crown R901/R902 n80 LIVE. **Never `pkill -f`**.
 - p4015: train→merge waiters alone leave **MERGE SIZE_OK idle** — always ship **merge→n80** waiter or launch lean_chall same pass. **Never `pkill -f`**.
