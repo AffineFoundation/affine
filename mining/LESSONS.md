@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4016: lunar R896+R897 + R888 R898 MERGE SIZE_OK idle→lean_chall n80 (same p4015 pattern); R898 had empty Triton — seed `king_r888`→`chall_r898` (26 `.so`) mid-boot. Crown R901/R902 n80 LIVE. **Never `pkill -f`**.
 - p4015: train→merge waiters alone leave **MERGE SIZE_OK idle** (R901/R902 crown; also lunar R896/R897 + R898) — always ship **merge→n80** waiter or launch lean_chall same pass. Crown R901+R902 n80 LOADING :8003/:8002. **Never `pkill -f`**.
 - p4014: **R899 REFUTE** causality_fail B=0.2375 m=−0.000597; **R900 REFUTE** m=−0.004297~−0.49× → exact-PID reap → **R910 ShortCtx + R911 HiRank SoftCtx TRAIN**. Tore SSH-dead R337+R338. Burn **~$306.66/h**. **Never `pkill -f`**.
 - p4013: R900 same bad-LAUNCHED pattern — waiter path `…midrank-hibeta-midctx…` (real `…midrank-midlobeta-softctx…`); merge SIZE_OK idle on GPUs6,7. Cleared stamp → launched real lean_chall :8003. R337+R338 both TCP-dead (86.38.182.x). **Never `pkill -f`**.
