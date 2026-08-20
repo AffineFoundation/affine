@@ -13,4 +13,6 @@ Parent: R957 UltraLoLR REFUTE m=−0.002960 ~−0.79× → **HiLR isolate**.
 ## p4092
 - TRAIN_DONE 1036 steps @05:06Z → MERGE_DONE `/tmp/r967_merged` @05:08Z sat idle (GPUs 1,3 free)
 - Armed chall:8004 + **v4 n80 LIVE** (Triton seed chall_r965; sim pid**121844**)
-- Progress @05:17Z ~14/80
+
+## p4094 verdict (v4 k=3 τ=0.03)
+**REFUTE** m=**−0.002955** SE=0.002859 z=−1.034 n=79 bar≈0.005718 (~**−0.52×**) thought✓191 B✓0.407 vs reign36 → slot → **R972** SoftCtx LoRank Midβ Ultra HiLR
