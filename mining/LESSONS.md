@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4083: R957 **MERGE_DONE sat idle** on warm crown (GPUs 1,3 free; T:8000 K:8001; R965/R966 TRAIN 4–7) → chall:8002+**v4 n80 LIVE** (Triton seed chall_r956 n_so=26); R938 ~999/1300; R926 K still loading; B300×8=0. **Never `pkill -f`**.
 - p4082: R956 **REFUTE** m=+0.001034 ~0.30× (thought✓162 B✓0.367 k=3) + R958 **REFUTE** m=−0.000454 ~−0.18× (thought✓166 B✓0.45 k=3) → exact-PID reap :8002/:8004 → **R965** ShortCtx Midβ Ultra **HiLR** + **R966** MidCtx MidLoβ Ultra **HiLR** TRAIN crown 4,5/6,7; R957 TRAIN_DONE→MERGE; R938 ~767/1300; B300×8=0 BL `8f34559f`. **Never `pkill -f`**.
 - p4081: R955 **REFUTE** m=−0.00556 ~−0.54× (thought✓168 B✓0.425 k=3) → exact-PID reap → **R964** SoftCtx MidRank Hiβ Ultra **HiLR** TRAIN R338 6,7; R926 teacher Triton miss → **FORCE seed crown** teacher cache (n_so=8) + H100-TP2 relaunch; R938 ~496/1300; B300×8=0. **Never `pkill -f`**.
 - p4080: crown R956+R958 + R338 R955 **MERGE_DONE sat idle** → dual/triple chall+**v4 n80 LIVE**; R957/R959 TRAIN kept; sole 8×B200 still BL `fbb1135f`. **Never `pkill -f`**.
