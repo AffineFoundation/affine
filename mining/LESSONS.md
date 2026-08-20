@@ -25,11 +25,9 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4139: **R993** REFUTE m=+0.002678 ~0.58× thought✓156 B✓0.377 → reap :8004 → **R1006 MidLR TRAIN** crown 1,3 + MERGE→n80; R994/R995 n80 kept. **Never `pkill -f`**.
-- p4138: **R999+R1000** MERGE_READY idle → armed **MERGE→n80** r338 :8002/:8003. **Never `pkill -f`**.
-- p4137: **R993+R994+R995** armed **MERGE→n80** crown. **Never `pkill -f`**.
-- p4136: **R986** REFUTE ~0.41× → **R1005** TRAIN R924 + MERGE→n80. **Never `pkill -f`**.
-- p4135–p4133: MERGE→n80 / REFUTE→UltraLoLR isolates. **Never `pkill -f`**.
+- p4140: **R999** REFUTE m=+0.002047 ~0.60× thought✓183 B✓0.547 → **R1007 MidLR**; **R1000** REFUTE m=−0.000317 ~−0.15× → **R1008 MidLR**; exact-PID reap :8002/:8003. **Never `pkill -f`**.
+- p4139: **R993** REFUTE m=+0.002678 ~0.58× → **R1006 MidLR TRAIN** crown 1,3. **Never `pkill -f`**.
+- p4138–p4133: MERGE→n80 / REFUTE→UltraLoLR/MidLR isolates. **Never `pkill -f`**.
 - p4132–p4122: pre-arm MERGE→n80; HiLR→UltraLoLR/MidLR. **Never `pkill -f`**.
 - p4121: cryptoDev HF `model.language_model.*` layout OK — vLLM mapper remaps. **Never `pkill -f`**.
 - p4119/18: cryptoDev merge needs `--save-original-format` + visual-only missing. **Never `pkill -f`**.
