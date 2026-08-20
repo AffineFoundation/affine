@@ -7,7 +7,7 @@
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
 | mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-20T18:12Z** | TK · **R1019 TRAIN** 1,3 + R1009+R1010 n80 · SSH `95.133.252.28:40298` |
-| mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-20T18:14Z** | TK · **R998 n80** :8003 + R1014 TRAIN · SSH `38.127.229.127:40299` |
+| mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-20T18:14Z** | TK · **R1020 TRAIN** 6,7 + R1014 TRAIN 4,5 · SSH `38.127.229.127:40299` |
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | 8×B200 | $46.80 | **2026-08-20T18:14Z** | TK · **R1004+R1011 TRAIN** · SSH `150.136.46.118:20300` |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-20T18:14Z** | TK · **R1018+R1017 TRAIN** · SSH `95.133.253.90:40099` |
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | 8×H200 | $33.81 | **2026-08-20T18:41Z** | **R1016+R1015+R1005 TRAIN** · SSH `31.22.104.113:40300` |
@@ -22,6 +22,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-20T13:05:59Z | p4154: **R998 REFUTE**→**R1020 TRAIN** r252 6,7 pid119314 + MERGE→n80; B300×8=0 |
 | 2026-08-20T13:01:06Z | p4153: **R1006 reap**→**R1019 TRAIN** crown 1,3 pid181332 + MERGE→n80; R1009/R1010 n80 kept; B300×8=0 |
 | 2026-08-20T12:55:36Z | p4152: **R998 MERGE→n80** r252 6,7 :8003 pid114993; R1006 n80 mid; B300×8=0 BL-only |
-| 2026-08-20T12:49:10Z | p4151: **R1018 TRAIN** r338 4,5 pid104157; R1008 **chal-00961**; B300×8=0 BL-only |
