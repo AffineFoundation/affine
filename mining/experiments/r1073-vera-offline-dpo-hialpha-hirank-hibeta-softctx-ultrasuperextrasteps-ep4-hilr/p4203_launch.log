@@ -1,0 +1,60 @@
+stop 107289 (/root/logs/vllm_chall_r1045.pid)
+reap done
+wait free used_mib=0 iter=1
+{
+  "utc": "2026-08-20T20:40:10Z",
+  "axis": "R1045",
+  "pass": 4203,
+  "margin": 0.0017101485934370533,
+  "se": 0.0010221120381940145,
+  "z": 1.6731517969974614,
+  "n": 80,
+  "thought_med": 167.0,
+  "b_pass": 0.4393305439330544,
+  "bar": 0.002044224076388029,
+  "duel_params": {
+    "n_turns": 80,
+    "k_sigma": 2.0,
+    "min_margin": 0.002,
+    "min_thought_chars": 80,
+    "causality_gate": true,
+    "causality_gamma": 0.3,
+    "tau": 0.03,
+    "n_teacher_samples": 3,
+    "n_miner_samples": 1
+  },
+  "challenger_wins": false
+}
+TRAIN_PID=111418
+[r1073-lean] data_lines=604
+[r1073-lean] wait VRAM6+7 used_mib=0 iter=1
+{
+  "utc": "2026-08-20T20:40:10Z",
+  "axis": "r1073-vera-offline-dpo-hialpha-hirank-hibeta-softctx-ultrasuperextrasteps-ep4-hilr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "2e-6",
+  "lora_r": 64,
+  "lora_alpha": 128,
+  "beta": 0.3,
+  "max_len": 12288,
+  "epochs": 4,
+  "max_steps": 28800,
+  "gpus": "6,7",
+  "parent_signal": "R1045 SoftCtx HiRank Hi\u03b2 Ultra MidLR REFUTE m=+0.001710 SE=0.001022 z=1.673 n=80 bar\u22480.002044 (~0.84\u00d7) thought\u2713167 B\u27130.439 k=3 \u2192 HiLR isolate; \u2260 MidLR R1045 / \u2260 Ultra HiLR R968 / \u2260 ShortCtx HiRank Hi\u03b2 Ultra MidLR R1052 / \u2260 ShortCtx HiRank Hi\u03b2 Ultra HiLR R1071 / \u2260 SoftCtx MidRank Hi\u03b2 Ultra HiLR R1050 / \u2260 Online / \u2260 GRPO",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1073-lean] TRAIN launched pid=111418 BASE=/root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e
+[r1073-lean] wait→merge armed pid=111423
+[r1073-lean] MERGE→n80 waiter armed pid=111425
+LISTEN 0      2048         0.0.0.0:8003       0.0.0.0:*    users:(("python3",pid=106303,fd=44))         
+LISTEN 0      2048         0.0.0.0:8000       0.0.0.0:*    users:(("vllm",pid=14869,fd=44))             
+LISTEN 0      2048         0.0.0.0:8001       0.0.0.0:*    users:(("vllm",pid=16788,fd=44))             
+0, 141811 MiB
+1, 127023 MiB
+2, 130179 MiB
+3, 127023 MiB
+4, 72293 MiB
+5, 64135 MiB
+6, 0 MiB
+7, 0 MiB
+p4203 R1073 launch exit=0
