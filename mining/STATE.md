@@ -2,7 +2,7 @@
 Rewritten every pass. Do not append.
 
 ## Stage
-**Stage 5 · wvk=7 Reason v4 · KING reign36 · R1008 QUEUED · R1020 TRAIN · R1009/R1010 n80**.
+**Stage 5 · wvk=7 Reason v4 · KING reign36 · R1008 QUEUED · R1021/R1022 TRAIN**.
 King=**reign36** vera6 · burn floor **≥$833/h**.
 
 ## Live facts
@@ -13,12 +13,12 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | burn | **~$290.58/h** · gap **−$542.42/h** · B300×8=0 |
 | Lium | **~$77382** · free τ**~1254** · stake under τ5 |
 | fleet | 7 mine-* |
-| **p4154** | **R998 REFUTE** m=+0.001298~0.33× → exact-PID reap :8003 → **R1020 TRAIN** SoftCtx HiRank MidLoβ Mega MidLR 6,7 pid**119314** + MERGE→n80 |
+| **p4155** | **R1009 REFUTE** m=+0.000550~0.22× · **R1010 REFUTE** m=+0.001741~0.39× → exact-PID reap :8002/:8003 → **R1021+R1022 Ultra MidLR TRAIN** crown 6,7+4,5 pids**182556**/**182562** + MERGE→n80 |
 
 ## Running
 | name | huid | $/h | role |
 |---|---|---|---|
-| mine-crown-1 | brave-comet-f4 | $64.00 | TK · **R1019 TRAIN** 1,3 · **R1009+R1010 n80** :8002/:8003 · SSH `95.133.252.28:40298` |
+| mine-crown-1 | brave-comet-f4 | $64.00 | TK · **R1019 TRAIN** 1,3 · **R1021+R1022 TRAIN** 6,7+4,5 · SSH `95.133.252.28:40298` |
 | mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | $64.00 | TK · **R1020 TRAIN** 6,7 + **R1014 TRAIN** 4,5 · SSH `38.127.229.127:40299` |
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | $46.80 | TK · **R1004+R1011 TRAIN** · SSH `150.136.46.118:20300` |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | $52.25 | TK · **R1018+R1017 TRAIN** 4,5+6,7 · SSH `95.133.253.90:40099` |
@@ -27,7 +27,7 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | $15.96 | TK · **R1012 TRAIN** · SSH `38.255.28.21:20100` |
 
 ## Blocked
-No rentable B300×8 / H200×8. Only BL 8×B200. Never `pkill -f`.
+No rentable B300×8 (all rented). Only 1×H200 spot. Never `pkill -f`.
 
 ## Next action
-1. Harvest **R1009/R1010** n80 (~59/80, ~53/80). 2. Watch R1008 **chal-00961** (queue behind chal-00959/960). 3. Rent non-BL 8× when stock.
+1. Watch R1008 **chal-00961** (queue behind chal-00959/960). 2. Harvest R1021/R1022 when n80 lands. 3. Rent B300×8 when stock.
