@@ -1,0 +1,31 @@
+Warning: Permanently added '[38.255.28.21]:20100' (ED25519) to the list of known hosts.
+Warning: Permanently added '[38.255.28.21]:20100' (ED25519) to the list of known hosts.
+stop 45419 (/root/logs/vllm_chall_r1079.pid)
+reap done
+wait free used_mib=0 iter=1
+TRAIN_PID=47620
+[r1082-lean] 2026-08-20T23:07:43Z start GPUs 2,3 ShortCtx HiRank Midβ HyperExtra MidLR
+[r1082-lean] data_lines=604
+[r1082-lean] wait VRAM2+3 used_mib=0 iter=1
+{
+  "utc": "2026-08-20T23:07:43Z",
+  "axis": "r1082-vera-offline-dpo-hialpha-hirank-midbeta-shortctx-hypersuperextrasteps-ep4-midlr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "1e-6",
+  "lora_r": 64,
+  "lora_alpha": 128,
+  "beta": 0.1,
+  "max_len": 6144,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "2,3",
+  "parent_signal": "R1079 ShortCtx HiRank MidLo\u03b2 HyperExtra MidLR REFUTE m=-0.001769 ~-0.75\u00d7 thought\u2713158.5 B\u27130.410 k=3 \u2192 Mid\u03b2 isolate (\u03b2 0.05\u21920.1); \u2260 MidLo\u03b2 R1079 / \u2260 MidRank Mid\u03b2 Hyper MidLR R1078 / \u2260 Ultra HiLR R1062 / \u2260 Online / \u2260 GRPO",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1082-lean] TRAIN launched pid=47620
+[r1082-lean] waiters armed
+47620 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1082/dpo_duel_reason.jsonl --out-dir /root/r1082/train --max-len 6144 --epochs 4 --lr 1e-6 --lora-r 64 --lora-alpha 128 --beta 0.1 --max-steps 38400
+0, 140359 MiB
+1, 130179 MiB
+2, 33583 MiB
+3, 33583 MiB

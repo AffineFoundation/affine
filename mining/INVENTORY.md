@@ -14,9 +14,9 @@
 | mine-r340-marsplan-online-dpo-hirank-bigg-1 | gentle-orbit-4a | 8×B200 | $37.60 | **2026-08-21T21:24Z** | **R340 TRAIN** · SSH `18.118.83.97:40127` |
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | 8×H200 | $33.81 | **2026-08-21T13:26Z** | TK · **R1074 REFUTE** + R1073 TRAIN · SSH `31.22.104.113:40300` |
 | mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | 8×H100 | $13.76 | **2026-08-21T13:26Z** | TK · **R1080 TRAIN** · SSH `93.120.231.186:32301` |
-| mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | 8×H200 | $15.96 | **2026-08-21T13:26Z** | TK · **R1079 n80 LIVE** · SSH `38.255.28.21:20100` |
+| mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | 8×H200 | $15.96 | **2026-08-21T13:26Z** | TK · **R1082 TRAIN** · SSH `38.255.28.21:20100` |
 
-Host fleet: **9 mine-*** · burn **~$392.18/h** · **wvk=7**
+Host fleet: **9 mine-*** · burn **~$392.18/h** · **wvk=7** · B200×8 stock=**1**
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval`, `affine-teacher2`, `swarm-t-h200-4x-1`.
 
@@ -24,6 +24,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-20T23:07:43Z | p4216: **R1079 REFUTE** ~−0.75× → **R1082 TRAIN** pid47620 GPUs2,3; B200×8 stock=1; B300×8=0 |
 | 2026-08-20T23:03:35Z | p4215: **R1075 REFUTE** ~0.53× → **R1081 TRAIN** pid162736 GPUs6,7; R1079 n80~66/80; R340≥10; B300×8=0 |
 | 2026-08-20T22:56:47Z | p4214: **R1051 REFUTE** ~0.27× → **R1080 TRAIN** pid145066 GPUs3,4; R340 step≥6; R1064 Qpos3; B300×8=0 |
-| 2026-08-20T22:39:38Z | p4213: **R1060 REFUTE**; **R340** train+post waiter; R1051 n80 ~5/80; R1064 queued; B300×8=0 |
