@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 79511.85967453076 | p4060 |
-| Lium balance | **$79511.85967453076** | p4060 |
+| $UTC | 80880.8878608843 | p4061 |
+| Lium balance | **$80880.8878608843** | p4061 |
 | cumulative mining spend | ~$137,005 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$69512** (balance − $10,000 floor) | $UTC |
+| **available for mining** | **~$70881** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (8 pods) | **~$329.79/h** · vs floor $833/h · gap **−$503.21/h** · B300=0 · BL-only B200 | p4060 |
-| miner coldkey free | τ1258.144 | kept ≥τ50 |
-| miner stake | r252 **~29.5α/~τ1.63** (below τ5 sweep) | p4041 |
+| miner burn (8 pods) | **~$329.79/h** · vs floor $833/h · gap **−$503.21/h** · B300=0 · BL-only B200 | p4061 |
+| miner coldkey free | τ1258.232 | kept ≥τ50 |
+| miner stake | **0** (p4061 swept r252 118α) | p4061 |
 | registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-20T00:15:11Z | 80880.8878608843 | p4061 **α→τ→Lium**: r252 unstake ALL 118α→+τ6.589 free; `lium fund` fail (`Subtensor.transfer`); `btcli transfer` τ6.5→Lium ck (+~$1407.6); R932 rematch MERGE→chall (no rent; B300=0 BL); burn **~$329.79/h** |
 | 2026-08-20T00:07:14Z | 79511.85967453076 | p4060 R935 REFUTE~0.065×→reap→**R948 TRAIN** + R925 host-relay→R252 (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
 | 2026-08-19T23:59:43Z | 79589.11288047479 | p4059 R937 REFUTE~0.27×→reap→**R947 TRAIN**+**R935 n80** + R924 R925/R930 MERGE (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
 | 2026-08-19T23:50:13Z | 79664.99313959652 | p4058 R934 REFUTE~-0.34×→reap→**R946 TRAIN**+**R937 n80** (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-19T22:56:20Z | 80049.52448572023 | p4052 R936 REFUTE→R934 relay + R252 Triton recover (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
 | 2026-08-19T22:46:48Z | 80163.02716236464 | p4051 R936 n80 LIVE + R926→crown relay (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
 | 2026-08-19T22:29:07Z | 80275.38971973065 | p4050 R924+R927 REFUTE→R928 n80+R933 relay+R926 rematch (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
-| 2026-08-19T22:03:11Z | 80459.59433719006 | p4049 R927 n80 + R924 false-fail→chall + R252 recover (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
