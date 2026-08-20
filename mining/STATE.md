@@ -2,7 +2,7 @@
 Rewritten every pass. Do not append.
 
 ## Stage
-**Stage 5 · wvk=7 Reason v4 · KING reign36 · R1008 QUEUED · trains R1012–R1024**.
+**Stage 5 · wvk=7 Reason v4 · KING reign36 · R1008 QUEUED · trains R1012–R1025**.
 King=**reign36** vera6 · burn floor **≥$833/h**.
 
 ## Live facts
@@ -11,9 +11,9 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | contract | wvk=**7** · k=**3** · τ=**0.03** · n=**1300** · δ=0.002 · thought≥80 · B γ=0.30 · k_σ=2.0 |
 | king | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695…` **reign36** |
 | burn | **~$290.58/h** · gap **−$542.42/h** · B300×8=0 |
-| Lium | **~$79088** · free τ**~1251** · stake **0** (p4157 swept) |
-| fleet | 7 mine-* |
-| **p4157** | **α→TAO→Lium**: r252 **147.6α→τ8.25** → Lium (+**~$1811**; bal **77277→79088**); `lium fund` fail→`btcli` xfer `8886285-0023`; B200 stock=BL-only |
+| Lium | **~$78947** · free τ**~1251** · stake **0** |
+| fleet | 7 mine-* · TTL **→2026-08-21T13:26:53Z** |
+| **p4159** | **r926 teacher TP4→TP2** freed GPUs5,6 → **R1025 TRAIN** pid**77945** + MERGE→n80; B300×8=0; sole B200=`8f34559f` BL; R1008 **chal-00961** q#1 |
 
 ## Running
 | name | huid | $/h | role |
@@ -23,11 +23,11 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | $46.80 | TK · **R1023+R1024 TRAIN** · SSH `150.136.46.118:20300` |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | $52.25 | TK · **R1018+R1017 TRAIN** · SSH `95.133.253.90:40099` |
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | $33.81 | **R1016+R1015+R1005 TRAIN** · SSH `31.22.104.113:40300` |
-| mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | $13.76 | T+K · **R1013 TRAIN** · SSH `93.120.231.186:32301` |
+| mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | $13.76 | T+K · **R1013+R1025 TRAIN** · SSH `93.120.231.186:32301` |
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | $15.96 | TK · **R1012 TRAIN** · SSH `38.255.28.21:20100` |
 
 ## Blocked
-No rentable B300×8. Catalog 8×B200 = **BL-only** (`8f34559f`, `fbb1135f`). Never `pkill -f`.
+No rentable B300×8. Catalog 8×B200 = **BL-only** (`8f34559f`). Never `pkill -f`.
 
 ## Next action
-1. Watch R1008 **chal-00961**. 2. Harvest R1012–R1024 n80s when they land. 3. Rent B300×8 (else non-BL B200) when stock. 4. Re-sweep α when r252 accrues ≥~τ5.
+1. Watch R1008 **chal-00961** (after chal-00960). 2. Harvest R1012–R1025 n80s when they land. 3. Rent B300×8 (else non-BL B200) when stock. 4. Re-sweep α when r252 accrues ≥~τ5.
