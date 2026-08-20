@@ -13,6 +13,6 @@
 - p4179: TRAIN launched GPUs4,5 pid110242 + MERGE→n80 waiter
 - 2026-08-20T19:09Z train.done · 19:13Z merge.done → `/tmp/r1047_merged` (16 shards)
 - Waiter failed: wrong LEAN path `…-ep4-midlr/…` (real dir is `…-ep4-hilr/…`)
-- **p4192:** fixed path; launched lean chall+n80 pid**113895** / vllm chall pid**114126** port**8003**
+- **p4192:** fixed path; first chall Triton `.so` miss → preseed REUSE (83MB/23 `.so`) → relaunch lean pid**117582** / chall pid**117903** port**8003**
 
 Decision rule: Stage-5 iff margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 (k=3, τ=0.03) vs reign36.
