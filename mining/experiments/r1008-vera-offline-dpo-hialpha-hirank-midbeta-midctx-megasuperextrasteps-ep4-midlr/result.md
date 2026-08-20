@@ -1,13 +1,18 @@
-# R1008 — plan / result log
+# R1008 — MidCtx HiRank Midβ Mega MidLR
 
-## Decision rule
-Stage-5 iff fresh v4 n80 margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 vs reign36.
+**Status (p4150):** **CROWN_OK → SUBMITTED** chal pending reveal.
 
-## Axis
-vera Offline-DPO HiAlpha **HiRank(r=64)** Midβ Soft→MidCtx **Mega** SuperExtra ep4 **MidLR(lr=1e-6)** @8192 max_steps=**19200** β=0.1 α=128
-Parent: R1000 MidCtx HiRank Midβ Mega UltraLoLR REFUTE m=-0.000317 ~-0.15× → **MidLR isolate**.
+| metric | value |
+|---|---|
+| margin | **+0.005917** |
+| SE | 0.002233 |
+| z | 2.650 |
+| bar | **0.004466** (~**1.325×**) |
+| thought | **165** ✓ |
+| B | **0.433** ✓ |
+| n / k / τ | 80 / 3 / 0.03 |
 
-## p4140
-- exact-PID reap R1000 chall:8003
-- TRAIN on `mine-r338` GPUs **4,5**
-- wait→merge + MERGE→n80 waiter armed
+## Stage 5
+- HF `unconst/Affine-5czsc2fc98-r1008-vera-odpo-hirank-midbeta-midctx-megaextra-ep4-midlr-merged`@`ff915370…`
+- hotkey `r1008` `5GvDN949…jj3K3` reg **8886082-0013**
+- submit block `0x22005d7d…3640` · reveal **31475534**

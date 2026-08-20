@@ -1,0 +1,8 @@
+R1008 Stage5 p4150
+- HF: unconst/Affine-5czsc2fc98-r1008-vera-odpo-hirank-midbeta-midctx-megaextra-ep4-midlr-merged @ ff9153704c9d7c94d58aecf211e93bdb5c4238bb
+- hotkey r1008 `5GvDN949S96Qgs6eRatzzHd141JRFnPqJkSwqW626Udjj3K3` reg extrinsic **8886082-0013**
+- --check OK
+- submitted blockhash `0x22005d7da5b2c40bd4575c81738b7d2eceac9b829d78fec339c8e9633e7d3640`
+- reveal opens drand round **31475534**
+- n80: margin=+0.005917 SE=0.002233 bar≈0.004466 (~1.325×) thought✓165 B✓0.433 k=3 vs reign36
+- note: needed JSON r1008pub.txt + cryptoType=1 on keyfile for submit_call
