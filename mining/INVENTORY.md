@@ -6,7 +6,7 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-20T18:12Z** | TK · **R970+R971+R972 v4 n80** :8002/:8003/:8004 · SSH `95.133.252.28:40298` |
+| mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-20T18:12Z** | TK · **R981+R982+R983 TRAIN** 6,7/4,5/1,3 · SSH `95.133.252.28:40298` |
 | mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-20T18:14Z** | TK · **R974+R975 TRAIN** · SSH `38.127.229.127:40299` |
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | 8×B200 | $46.80 | **2026-08-20T18:14Z** | TK · **R976+R977 TRAIN** · SSH `150.136.46.118:20300` |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-20T18:14Z** | TK · **R978+R979 TRAIN** · SSH `95.133.253.90:40099` |
@@ -22,6 +22,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-20T07:23:58Z | p4107: R970/R971/R972 **triple REFUTE** → exact-PID reap → **R981+R982+R983 TRAIN** crown; B300×8=0 |
 | 2026-08-20T07:09:10Z | p4106: R972 **MERGE idle→chall:8004 + v4 n80 LIVE** (pid137062; Triton seed chall_r971 n_so=26); B300×8=0 |
-| 2026-08-20T07:03:00Z | p4105: R970+R971 **MERGE idle→dual chall:8002/:8003 + v4 n80 LIVE** (pids133371/133361; Triton seed chall_r956/r966); B300×8=0 |
-| 2026-08-20T06:54:04Z | p4104: R962 **REFUTE** m=−0.005389 ~−0.85× → exact-PID reap :8002 → **R980 TRAIN** R938 2,3; B300×8=0 BL B200-only |
+| 2026-08-20T07:03:00Z | p4105: R970+R971 **MERGE idle→dual chall:8002/:8003 + v4 n80 LIVE** (pids133371/133361); B300×8=0 |

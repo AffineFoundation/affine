@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 79558.88096457942 | p4106 |
-| Lium balance | **$79558.88096457942** | p4106 |
-| cumulative mining spend | ~$140,015 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$69559** (balance − $10,000 floor) | $UTC |
+| $UTC | 79453.25306676926 | p4107 |
+| Lium balance | **$79453.25306676926** | p4107 |
+| cumulative mining spend | ~$140,121 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$69453** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$290.58/h** · vs floor $833/h · gap **−$542.42/h** · B300×8=0 · 8×B200 BL-only | p4106 |
+| miner burn (7 pods) | **~$290.58/h** · vs floor $833/h · gap **−$542.42/h** · B300×8=0 · 8×B200 BL-only | p4107 |
 | miner coldkey free | τ~1254 | kept ≥τ50 |
 | miner stake | **τ0** | p4103 · swept |
 | registrations / submissions | **13** / **13** (… **r959** **chal-00957** queued) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-20T07:23:58Z | 79453.25306676926 | p4107 R970+R971+R972 **REFUTE**→**R981+R982+R983 TRAIN** (no rent; B300×8=0); burn **~$290.58/h** |
 | 2026-08-20T07:09:10Z | 79558.88096457942 | p4106 R972 MERGE idle→**v4 n80 LIVE** crown :8004 (no rent; B300×8=0); burn **~$290.58/h** |
 | 2026-08-20T07:03:00Z | 79592.21556005151 | p4105 R970+R971 MERGE idle→**dual v4 n80 LIVE** crown :8002/:8003 (no rent; B300×8=0); burn **~$290.58/h** |
 | 2026-08-20T06:45:14Z | 79733.2927284628 | p4103 α147.6/~τ8.27→**τ8**→Lium (`lium fund` Subtensor.transfer fail → `btcli`→`5FqACMt…zsThe`); +~$1724; burn **~$290.58/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-20T06:11:30Z | 78255.8977189032 | p4098 R337 dual n80 + R944 REFUTE→**R973 TRAIN** (no rent; B300×8=0); burn **~$290.58/h** |
 | 2026-08-20T06:02:18Z | 78288.12338375958 | p4097 R252 R960+R951 MERGE idle→**dual v4 n80** (no rent; B300×8=0); burn **~$290.58/h** |
 | 2026-08-20T05:52:32Z | 78360.81475617203 | p4096 R944 teacher OOM→**TP4@0.85**→**v4 n80 LIVE** (no rent; B300×8=0); burn **~$290.58/h** |
-| 2026-08-20T05:41:09Z | 78431.60659591865 | p4095 R944 teacher→**v4 n80 LIVE** (no rent; B300×8=0; R888 gone); burn **~$290.58/h** |
