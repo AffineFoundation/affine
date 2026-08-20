@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-20T21:15:53Z",
+  "hypo": "R1062",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign36",
+  "margin": 0.0020513840317557697,
+  "se": 0.005772084115840494,
+  "z": 0.35539745966731473,
+  "n": 79,
+  "bar": 0.011544168231680987,
+  "thought_median": 194.0,
+  "b_pass": 0.45569620253164556,
+  "wins": false,
+  "note": "p4191 chall+v4-n80 R938 GPUs2,3; ShortCtx HiRank MidLo\u03b2 Ultra HiLR; vs reign36 vera wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}

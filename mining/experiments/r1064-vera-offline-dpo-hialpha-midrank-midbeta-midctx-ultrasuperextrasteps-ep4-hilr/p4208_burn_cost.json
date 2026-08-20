@@ -1,0 +1,5 @@
+Usage: btcli subnet burn-cost [OPTIONS] {netuid}
+Try 'btcli subnet burn-cost -h' for help.
+╭─ Error ──────────────────────────────────────────────────────────────────────╮
+│ No such option: --netuid                                                     │
+╰──────────────────────────────────────────────────────────────────────────────╯

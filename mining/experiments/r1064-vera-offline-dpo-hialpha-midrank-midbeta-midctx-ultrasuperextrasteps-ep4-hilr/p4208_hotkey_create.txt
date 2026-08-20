@@ -1,0 +1,6 @@
+Usage: btcli wallet new-hotkey [OPTIONS]
+Try 'btcli wallet new-hotkey -h' for help.
+╭─ Error ──────────────────────────────────────────────────────────────────────╮
+│ No such option: --wallet-name (Possible options: --wallet, --wallet-hotkey,  │
+│ --wallet-path)                                                               │
+╰──────────────────────────────────────────────────────────────────────────────╯

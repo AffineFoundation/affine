@@ -1,0 +1,2 @@
+committing: affine1|unconst/Affine-5czsc2fc98-r1064-vera-odpo-midrank-midbeta-midctx-ultraextra-ep4-hilr-merged|03affd41ac7c256eadc8376da828b5dab033a2c0|5EkHrq6nrQd8VoYEoMVKWu3M2BaHSfKd1MqXh1WNANQKmRW8
+submitted in block 0x04922d41b6f4d3927d8ace750c8bba63577028290e019adc07ef33799946fd6c; reveal opens at drand round 31485871 (~3 min). Watch the queue on the dashboard.
