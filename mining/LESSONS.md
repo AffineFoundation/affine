@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4175: **R1025 chall OOM** mid-n80 util0.72@65536 → rearm GPUs5,6 util**0.65**+`expandable_segments`+batched4096 → :8003 UP · n80 pid**118288**; teacher TP4+king untouched. **Never `pkill -f`**.
 - p4174: **R1031+R1035+R1036 REFUTE** → exact-PID crown reap → **R1041 Mega HiLR / R1042 ShortCtx Mega MidLR / R1043 Ultra HiLR TRAIN** pids**210163/210161/210151**; R1025 n80 ConnectError (chall :8003 died); B300/B200×8=0. **Never `pkill -f`**.
 - p4171: **R339** marsplan@556d02a2 404 → pin **vera6**@`8e3f1695` + relaunch; burn ~$354.58/h. **Never `pkill -f`**.
 - p4170: **R1020 REFUTE** B✗0.2875 → **R1040 Mega HiLR TRAIN** r252. **Never `pkill -f`**.
