@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4192: **R1047+R1048 MERGE idle** — waiter LEAN path typos (`…-ep4-midlr` / `…softctx-mega…`) vs real dirs → fixed + launched v4 n80 r337 :8003/:8002; B300×8=0. **Never `pkill -f`**.
 - p4191: **R1044 REFUTE** m=+0.000182 ~0.07× thought✓167 B✓0.416 k=3 → exact-PID reap :8002 → **R1062** ShortCtx HiRank MidLoβ Ultra HiLR TRAIN GPUs2,3 pid**39567** + MERGE→n80; B300×8=0. **Never `pkill -f`**.
 - p4190: **R1049 REFUTE** m=−0.001495 ~−0.16× thought✓214 B✓0.557 k=3 → exact-PID reap :8003 → **R1061** MidCtx HiRank Midβ Mega HiLR TRAIN GPUs4,5 pid**139614** + MERGE→n80; B300×8=0. **Never `pkill -f`**.
 - p4189: r926 teacher **TP4→TP2** (exact-PID reap GPUs0,1,3,4; king+R1051 kept) → **R1060** SoftCtx MidRank Midβ Mega HiLR TRAIN GPUs3,4 pid**123676** + MERGE→n80; B300×8=0. **Never `pkill -f`**.

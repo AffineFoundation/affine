@@ -30,7 +30,7 @@ for i in $(seq 1 120); do
 done
 curl -sf -m 5 http://127.0.0.1:8000/v1/models >/dev/null
 curl -sf -m 5 http://127.0.0.1:8001/v1/models >/dev/null
-LEAN=/root/mining_src/r1047-vera-offline-dpo-hialpha-midrank-midlobeta-midctx-ultrasuperextrasteps-ep4-midlr/lean_chall_n80_r337_gpus45_p4179.sh
+LEAN=/root/mining_src/r1047-vera-offline-dpo-hialpha-midrank-midlobeta-midctx-ultrasuperextrasteps-ep4-hilr/lean_chall_n80_r337_gpus45_p4179.sh
 [[ -x "$LEAN" ]] || chmod +x "$LEAN"
 bash "$LEAN"
 date -u +%Y-%m-%dT%H:%M:%SZ >/root/logs/p4179_r1047_merge_then_n80_armed.done
