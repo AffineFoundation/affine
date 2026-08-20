@@ -25,17 +25,17 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4221: **R1077 REFUTE** m=+0.001670 ~0.32× (thought✓168 B✓0.361) → reap r338 :8002 → **R1088** SoftCtx MidRank Hiβ Hyper MidLR; **R1073 REFUTE** m=−0.009593 ~−0.94× (thought✓188 B✓0.3625) → reap r924 :8002 → **R1089** SoftCtx HiRank Hiβ Hyper MidLR. B300/B200×8=0. **Never `pkill -f`**.
-- p4220: **R1077** merge.done but n80 stuck — waiter `EXP=` pointed at wrong Ultra path; lean from Hyper path → n80 LIVE. **R1072 REFUTE** ~−0.05× → **R1087**. B300/B200×8=0. **Never `pkill -f`**.
-- p4219: **R1070+R1071 REFUTE** → **R1085+R1086 TRAIN**; R1073 MERGE→n80. B300/B200×8=0. **Never `pkill -f`**.
-- p4218: **R1074 REFUTE** ~0.02× → **R1084** Hyper MidLR. B300/B200×8=0. **Never `pkill -f`**.
-- p4217: **R1078 REFUTE** ~−0.71× → **R1083** SoftCtx MidRank Midβ Hyper MidLR. **Never `pkill -f`**.
-- p4216: **R1079 REFUTE** ~−0.75× → **R1082** ShortCtx HiRank Midβ Hyper MidLR. **Never `pkill -f`**.
-- p4215: **R1075 REFUTE** ~0.53× → **R1081** ShortCtx HiRank Midβ Ultra HiLR. **Never `pkill -f`**.
-- p4214: **R1051 REFUTE** ~0.27× → **R1080** cryptoDev ShortCtx Hiβ Ultra MidLR. **Never `pkill -f`**.
-- p4213: **R1060 REFUTE** ~−1.66×; **R340** TP2 hung → **TP1** teacher GPU0. **Never `pkill -f`**.
-- p4209: **CLI rent B200** `mine-r340`@$37.60/h; R1064 **chal-00974**. Host-key churn — `ssh-keygen -R` + accept-new. **Never `pkill -f`**.
-- p4208: **R1064 CROWN_OK** ~1.021× → SUBMIT reveal **31485871**. B300×8=0. **Never `pkill -f`**.
-- p4207–p4200: α→TAO→Lium + LOST/REFUTE→TRAIN cascade; TTL→**2026-08-21T13:26Z**. **Never `pkill -f`**.
+- p4222: **R1076 REFUTE** m=−0.001981 ~−0.17× (thought✓195 B✓0.459) → reap r252 :8002 → **R1090** SoftCtx HiRank MidLoβ Hyper MidLR. B300/B200×8=0. **Never `pkill -f`**.
+- p4221: **R1077 REFUTE** ~0.32× → **R1088**; **R1073 REFUTE** ~−0.94× → **R1089**. B300/B200×8=0. **Never `pkill -f`**.
+- p4220: **R1077** n80 stuck wrong EXP path; **R1072 REFUTE** → **R1087**. **Never `pkill -f`**.
+- p4219: **R1070+R1071 REFUTE** → **R1085+R1086**. **Never `pkill -f`**.
+- p4218: **R1074 REFUTE** ~0.02× → **R1084**. **Never `pkill -f`**.
+- p4217: **R1078 REFUTE** ~−0.71× → **R1083**. **Never `pkill -f`**.
+- p4216: **R1079 REFUTE** ~−0.75× → **R1082**. **Never `pkill -f`**.
+- p4215: **R1075 REFUTE** ~0.53× → **R1081**. **Never `pkill -f`**.
+- p4214: **R1051 REFUTE** ~0.27× → **R1080**. **Never `pkill -f`**.
+- p4213: **R1060 REFUTE** ~−1.66×; **R340** TP2→TP1. **Never `pkill -f`**.
+- p4209: **CLI rent B200** `mine-r340`; R1064 **chal-00974**. **Never `pkill -f`**.
+- p4208: **R1064 CROWN_OK** ~1.021× → SUBMIT reveal **31485871**. **Never `pkill -f`**.
 
 
