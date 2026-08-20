@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4067: R931 **REFUTE** m≈1.1e-6 ~0.0002× (thought✓159 B✓0.443 k=3) vs reign36 → exact-PID reap :8003 → **R952** SoftCtx HiRank Hiβ UltraExtra on R924 6,7; R938 MERGE_DONE 4×H200 idle → **cold-TK** (upload `run_sim_duel.py`+affine_pkg; teacher DL→:8000/:8001→chall:8002); R930 ~50/80; stock B300=0 BL `8f34559f`. **Never `pkill -f`**.
 - p4066: R930 chall READY then probe Triton miss (`__triton_launcher*.so`) on **king-seed** (n_so=14) → HTTP 500; **FORCE seed from live sibling chall_r931** (n_so=26 n_cubin≈219) → probe_ok → n80 LIVE; R931 already ~64/80. Prefer live-chall Triton over king when repairing mid-duel. Stock B300=0 BL `8f34559f`. **Never `pkill -f`**.
 - p4065: R925 **REFUTE** m=−2.1e-6 ~−0.001× (thought✓164 B✓0.483 k=3) vs reign36 → exact-PID reap :8002 → **R951** SoftCtx HiRank MidLoβ UltraExtra on R252 6,7; R924 king READY→R930 chall; stock B300=0 BL `8f34559f`. **Never `pkill -f`**.
 - p4064: R939 **REFUTE** m=−0.001402 ~−0.36× + R932 **REFUTE** m=−0.002178 ~−0.77× vs reign36 → exact-PID reap :8002 → **R949** SoftCtx Loβ UltraExtra on R337 4,5 + **R950** ShortCtx MidRank Hiβ UltraExtra on R888 5,6; R925 n80 ~30/80; stock B300=0 BL `8f34559f`. **Never `pkill -f`**.
