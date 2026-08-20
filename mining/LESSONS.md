@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4065: R925 **REFUTE** m=−2.1e-6 ~−0.001× (thought✓164 B✓0.483 k=3) vs reign36 → exact-PID reap :8002 → **R951** SoftCtx HiRank MidLoβ UltraExtra on R252 6,7; R924 king READY→R930 chall; stock B300=0 BL `8f34559f`. **Never `pkill -f`**.
 - p4064: R939 **REFUTE** m=−0.001402 ~−0.36× + R932 **REFUTE** m=−0.002178 ~−0.77× vs reign36 → exact-PID reap :8002 → **R949** SoftCtx Loβ UltraExtra on R337 4,5 + **R950** ShortCtx MidRank Hiβ UltraExtra on R888 5,6; R925 n80 ~30/80; stock B300=0 BL `8f34559f`. **Never `pkill -f`**.
 - p4063: R924 8×H200 all-idle with R930/R931 MERGE_DONE — **cold-TK on-box** (teacher DL→:8000/:8001→dual chall+n80) beats waiting for relay; ensurepip+pyarrow before sim; stock B300=0 BL `8f34559f`. **Never `pkill -f`**.
 - p4062: R939 MERGE_DONE sat idle on R337 while R941 trained 6,7 — launch chall on free GPUs **4,5 :8002** (Triton seed from king); R932/R925 still mid; stock B300=0 sole 8×B200 BL `8f34559f`. **Never `pkill -f`**.
