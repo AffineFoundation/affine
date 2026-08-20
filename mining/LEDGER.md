@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 76955.07838363957 | p4222 |
-| Lium balance | **$76955.07838363957** | p4222 |
-| cumulative mining spend | ~$146,207 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$66955** (balance − $10,000 floor) | $UTC |
+| $UTC | 76878.35999003961 | p4223 |
+| Lium balance | **$76878.35999003961** | p4223 |
+| cumulative mining spend | ~$146,284 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$66878** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (9 pods) | **~$392.18/h** · vs floor $833/h · gap **−$440.82/h** · B300×8=0 · B200×8 stock=0 | p4222 |
+| miner burn (9 pods) | **~$392.18/h** · vs floor $833/h · gap **−$440.82/h** · B300×8=0 · B200×8 stock=0 | p4223 |
 | miner coldkey free | τ~1246.7 | kept ≥τ50 |
-| miner stake | **r252 ~59α ≈ τ3.36** (<τ5 sweep bar) | p4222 |
+| miner stake | **r252 ~59α ≈ τ3.36** (<τ5 sweep bar) | p4223 |
 | registrations / submissions | **16** / **16** (… **r1064 chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-20T23:50:27Z | 76878.35999003961 | p4223 crown **R1066/67/69 REFUTE→R1091+R1092+R1093 TRAIN** (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-20T23:44:33Z | 76955.07838363957 | p4222 **R1076 REFUTE→R1090 TRAIN** r252 (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-20T23:38:54Z | 76992.19135559093 | p4221 **R1077+R1073 REFUTE→R1088+R1089 TRAIN** (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-20T23:31:35Z | 77030.03737675142 | p4220 **R1077 n80** + **R1072 REFUTE→R1087 TRAIN** (no rent; B300/B200×8=0); burn **~$392.18/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-20T22:39:38Z | 77447.08707491565 | p4213 **R1060 REFUTE** + **R340 train waiter** (no rent); burn **~$392.18/h**; B300×8=0 |
 | 2026-08-20T22:05:55Z | 77750.53055178167 | p4211 **R1060 teacher TP4+n80** (no rent); burn **~$392.18/h**; B300×8=0 |
 | 2026-08-20T21:42:59Z | 77861.33248074811 | p4210 **R1060 teacher+n80** + **R340 vera pin**; burn **~$392.18/h**; B300×8=0 |
-| 2026-08-20T21:30:46Z | 77929.83713089161 | p4209 **rent B200** `mine-r340`@$37.60/h (gentle-orbit-4a TTL→21:24Z) + R1060 n80 relaunch; burn **~$392.18/h**; B300×8=0 |

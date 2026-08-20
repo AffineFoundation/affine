@@ -6,7 +6,7 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-21T13:26Z** | TK · R1066/67/69 REFUTE idle · SSH `95.133.252.28:40298` |
+| mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-21T13:26Z** | TK · **R1091+R1092+R1093** · SSH `95.133.252.28:40298` |
 | mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-21T13:26Z** | TK · **R1090+R1081** · SSH `38.127.229.127:40299` |
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | 8×B200 | $46.80 | **2026-08-21T13:26Z** | TK · **R1083 TRAIN** · SSH `150.136.46.118:20300` |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-21T13:26Z** | TK · **R1087+R1088 TRAIN** · SSH `95.133.253.90:40099` |
@@ -24,6 +24,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-20T23:50:27Z | p4223: crown **R1066/67/69 REFUTE** → reap :8004/:8002/:8003 → **R1091+R1092+R1093 TRAIN**; B300/B200×8=0 |
 | 2026-08-20T23:44:33Z | p4222: **R1076 REFUTE** ~−0.17× → **R1090 TRAIN** r252; B300/B200×8=0 |
 | 2026-08-20T23:38:54Z | p4221: **R1077+R1073 REFUTE** → **R1088** r338 + **R1089** r924 TRAIN; B300/B200×8=0 |
-| 2026-08-20T23:31:35Z | p4220: **R1077** n80 LIVE (wrong EXP path); **R1072 REFUTE** → **R1087 TRAIN**; B300/B200×8=0 |

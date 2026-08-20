@@ -1,3 +1,7 @@
+# R1069 REFUTE v4 (p4223 recorded)
+
+**Status:** REFUTE · m=-0.005219 SE=0.002471 bar=0.004943 (~-1.06×) thought✓210.5 B✓0.538 wins=false → **R1093** Hyper MidLR on crown.
+
 # R1069 — MidCtx MidRank Loβ Ultra HiLR
 
 **Status (p4199):** **TRAIN** on `mine-crown-1` GPUs 4,5 after R1059 REFUTE reap :8003.

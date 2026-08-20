@@ -1,0 +1,6 @@
+stop 242962 (/root/logs/vllm_chall_r1066.pid)
+stop 242461 (/root/logs/vllm_chall_r1067.pid)
+stop 248373 (/root/logs/vllm_chall_r1069.pid)
+VRAM1+3+4+5+6+7 used_mib=0
+REAP_OK
+bash: line 176: syntax error near unexpected token `parent'

@@ -1,3 +1,7 @@
+# R1066 REFUTE v4 (p4223 recorded)
+
+**Status:** REFUTE · m=+0.004551 SE=0.002342 bar=0.004683 (~0.97×) thought✓174 B✓0.403 wins=false → **R1091** Hyper MidLR on crown.
+
 # R1066 — MidCtx LoRank Hiβ Ultra HiLR
 
 **Parent:** R1057 MidCtx LoRank Midβ Ultra HiLR REFUTE p4197
