@@ -13,20 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 77347.28439804418 | p4155 |
-| Lium balance | **$77347.28439804418** | p4155 |
-| cumulative mining spend | ~$142,046 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$67347** (balance − $10,000 floor) | $UTC |
+| $UTC | 77312.23165756813 | p4156 |
+| Lium balance | **$77312.23165756813** | p4156 |
+| cumulative mining spend | ~$142,081 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$67312** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$290.58/h** · vs floor $833/h · gap **−$542.42/h** · B300×8=0 (all rented) | p4155 |
-| miner coldkey free | τ~1254 | kept ≥τ50 |
-| miner stake | under τ5 | p4155 |
+| miner burn (7 pods) | **~$290.58/h** · vs floor $833/h · gap **−$542.42/h** · B300×8=0 (all rented) | p4156 |
+| miner coldkey free | τ~1251 | kept ≥τ50 |
+| miner stake | α~147.6 (~τ8.3) on r252 — next: α→TAO→Lium | p4156 |
 | registrations / submissions | **14** / **14** (… **r1008** **QUEUED chal-00961**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-20T13:18:36Z | 77312.23165756813 | p4156 **R1004+R1011 REFUTE→R1023+R1024 TRAIN** r337; no rent; burn **~$290.58/h** |
 | 2026-08-20T13:11:52Z | 77347.28439804418 | p4155 **R1009+R1010 REFUTE→R1021+R1022 TRAIN** crown; no rent; burn **~$290.58/h** |
-| 2026-08-20T13:05:59Z | 77381.86330522862 | p4154 **R998 REFUTE→R1020 TRAIN** r252 6,7; no rent; burn **~$290.58/h** |
 | 2026-08-20T13:01:06Z | 77415.10014079697 | p4153 **R1006 reap→R1019 TRAIN** crown 1,3; no rent; burn **~$290.58/h** |
 | 2026-08-20T12:55:36Z | 77487.18027820435 | p4152 **R998 MERGE→n80** r252 6,7; no rent; burn **~$290.58/h** |
 | 2026-08-20T12:49:10Z | 77522.6237510875 | p4151 **R1018 Hiβ TRAIN** r338 4,5; R1008 **chal-00961**; burn **~$290.58/h** |

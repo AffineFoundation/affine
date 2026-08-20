@@ -2,7 +2,7 @@
 Rewritten every pass. Do not append.
 
 ## Stage
-**Stage 5 · wvk=7 Reason v4 · KING reign36 · R1008 QUEUED · R1021/R1022 TRAIN**.
+**Stage 5 · wvk=7 Reason v4 · KING reign36 · R1008 QUEUED · R1023/R1024 TRAIN**.
 King=**reign36** vera6 · burn floor **≥$833/h**.
 
 ## Live facts
@@ -11,23 +11,23 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | contract | wvk=**7** · k=**3** · τ=**0.03** · n=**1300** · δ=0.002 · thought≥80 · B γ=0.30 · k_σ=2.0 |
 | king | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695…` **reign36** |
 | burn | **~$290.58/h** · gap **−$542.42/h** · B300×8=0 |
-| Lium | **~$77382** · free τ**~1254** · stake under τ5 |
+| Lium | **~$77347** · free τ**~1251** · stake α~147.6 (~τ8.3) on r252 |
 | fleet | 7 mine-* |
-| **p4155** | **R1009 REFUTE** m=+0.000550~0.22× · **R1010 REFUTE** m=+0.001741~0.39× → exact-PID reap :8002/:8003 → **R1021+R1022 Ultra MidLR TRAIN** crown 6,7+4,5 pids**182556**/**182562** + MERGE→n80 |
+| **p4156** | **R1004 REFUTE** m=+0.002056~0.57× · **R1011 REFUTE** m=+0.004668~0.46× → exact-PID reap r337 :8002/:8003 → **R1023+R1024 Ultra MidLR TRAIN** 6,7+4,5 pids**92389**/**92386** + MERGE→n80 |
 
 ## Running
 | name | huid | $/h | role |
 |---|---|---|---|
 | mine-crown-1 | brave-comet-f4 | $64.00 | TK · **R1019 TRAIN** 1,3 · **R1021+R1022 TRAIN** 6,7+4,5 · SSH `95.133.252.28:40298` |
 | mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | $64.00 | TK · **R1020 TRAIN** 6,7 + **R1014 TRAIN** 4,5 · SSH `38.127.229.127:40299` |
-| mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | $46.80 | TK · **R1004+R1011 TRAIN** · SSH `150.136.46.118:20300` |
+| mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | $46.80 | TK · **R1023+R1024 TRAIN** 6,7+4,5 · SSH `150.136.46.118:20300` |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | $52.25 | TK · **R1018+R1017 TRAIN** 4,5+6,7 · SSH `95.133.253.90:40099` |
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | $33.81 | **R1016+R1015+R1005 TRAIN** · SSH `31.22.104.113:40300` |
 | mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | $13.76 | T+K · **R1013 TRAIN** · SSH `93.120.231.186:32301` |
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | $15.96 | TK · **R1012 TRAIN** · SSH `38.255.28.21:20100` |
 
 ## Blocked
-No rentable B300×8 (all rented). Only 1×H200 spot. Never `pkill -f`.
+No rentable B300×8 (all rented). 8×B200 stock exists but this pass filled idle r337 after REFUTE. Never `pkill -f`.
 
 ## Next action
-1. Watch R1008 **chal-00961** (queue behind chal-00959/960). 2. Harvest R1021/R1022 when n80 lands. 3. Rent B300×8 when stock.
+1. Watch R1008 **chal-00961** (queue after chal-00960). 2. Harvest R1021–R1024 when n80 lands. 3. α→TAO→Lium (~τ8.3 on r252). 4. Rent B300×8 when stock (else B200 to close burn gap).
