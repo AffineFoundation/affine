@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 78538.22416222448 | p4184 |
-| Lium balance | **$78538.22416222448** | p4184 |
-| cumulative mining spend | ~$144,047 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$68538** (balance − $10,000 floor) | $UTC |
+| $UTC | 78504.03992438196 | p4185 |
+| Lium balance | **$78504.03992438196** | p4185 |
+| cumulative mining spend | ~$144,081 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$68504** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (8 pods) | **~$354.58/h** · vs floor $833/h · gap **−$478.42/h** · B300×8=0 | p4184 |
+| miner burn (8 pods) | **~$354.58/h** · vs floor $833/h · gap **−$478.42/h** · B300×8=0 | p4185 |
 | miner coldkey free | τ~1249 | kept ≥τ50 |
-| miner stake | **0** | p4184 |
+| miner stake | **0** | p4185 |
 | registrations / submissions | **15** / **15** (… **r1032 QUEUED chal-00967**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-20T18:24:06Z | 78504.03992438196 | p4185 **R1055 TRAIN** r252 GPUs4,5 (no rent; burn **~$354.58/h**) |
 | 2026-08-20T18:19:07Z | 78538.22416222448 | p4184 **R1041+R1042 v4 n80 LIVE** crown (no rent; burn **~$354.58/h**) |
 | 2026-08-20T18:14:53Z | 78573.6981541571 | p4183 **R1054 TRAIN** r924 idle GPUs1,3 (no rent; burn **~$354.58/h**) |
 | 2026-08-20T18:09:12Z | 78607.94799935882 | p4182 **R339 REFUTE→R1052+R1053 TRAIN** r339 (no rent; burn **~$354.58/h**) |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-20T17:30:16Z | 77425.74534212131 | p4177 **R1032 SUBMITTED** (HF purge LOST ~261GB; burn **~$354.58/h**) |
 | 2026-08-20T17:25:30Z | 77425.74534212131 | p4177 **R1032 CROWN_OK→HF push** (no rent; burn **~$354.58/h**) |
 | 2026-08-20T17:20:52Z | 77425.74534212131 | p4176 **R1029 REFUTE→R1044 TRAIN** (no rent; burn **~$354.58/h**) |
-| 2026-08-20T17:15:15Z | 77495.99119784811 | p4175 **R1025 chall rearm+n80** (no rent; burn **~$354.58/h**) |
