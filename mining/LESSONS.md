@@ -25,10 +25,10 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4198: **R1046 REFUTE** m=−0.000756 ~−0.22× thought✓185 B✓0.40 k=3 → exact-PID reap :8004 → **R1068** ShortCtx HiRank MidLoβ Mega MidLR TRAIN GPUs4,5 pid**104833**; R1059 n80 LIVE 31/80; skip blacklisted `cosmic-raven-04` ($44.8/h fake 8×B200). **Never `pkill -f`**.
 - p4197: **R1057 REFUTE** m=+0.000103 ~0.015× thought✓207 B✓0.588 k=3 + **R1056 REFUTE** m=+0.007351 ~0.72× thought✓189 B✓0.526 → exact-PID reap :8004/:8002 → **R1066** MidCtx LoRank Hiβ Ultra HiLR TRAIN pid**234730** + **R1067** ShortCtx MidLoβ Ultra HiLR TRAIN pid**235700**; R1059 MERGE; B300×8=0. **Never `pkill -f`**.
-- p4196: **R1050 REFUTE** m=−0.003658 ~−0.44× thought✓189 B✓0.530 k=3 → exact-PID reap :8002 → **R1065** ShortCtx MidRank Hiβ Ultra HiLR TRAIN GPUs6,7 pid**147232** + MERGE→n80 (R1032 crown lane+HiLR; SoftCtx HiLR flopped); B300×8=0. **Never `pkill -f`**.
-- p4195: **R1050** merge✓ then chall died — Triton **REUSE** of fat partial `chall_r1050` (n_so=24/83MB) hid a missing `__triton_launcher.so`; FORCE wipe+seed from `chall_r978` (n_so=26) → **n80 LIVE** :8002 pid**146119**; seed lists must prefer live pod caches (r978/r338), not stale r969/r953. B300×8=0 (only blacklisted cosmic-raven-04). **Never `pkill -f`**.
-- p4194: **R1047 REFUTE** m=+0.002013 ~0.19× thought✓193 B✓0.548 k=3 → exact-PID reap :8003 → **R1064** MidCtx MidRank Midβ Ultra HiLR TRAIN GPUs4,5 pid**121458** + MERGE→n80; R1063 kept on 6,7; B300×8=0. **Never `pkill -f`**.
-- p4193: **R1048 REFUTE** m=+0.000677 ~0.18× thought✓199 B✓0.452 k=3 → exact-PID reap :8002 → **R1063** ShortCtx MidRank Midβ Ultra HiLR TRAIN GPUs6,7 pid**120682** + MERGE→n80; skip blacklisted `cosmic-raven-04` (fake 8×B200); B300×8=0. **Never `pkill -f`**.
-- p4192–p4150: REFUTE→TRAIN cascade; TTL→**2026-08-21T13:26Z**; B300 waiters armed. **Never `pkill -f`**.
+- p4196: **R1050 REFUTE** m=−0.003658 ~−0.44× thought✓189 B✓0.530 k=3 → exact-PID reap :8002 → **R1065** ShortCtx MidRank Hiβ Ultra HiLR TRAIN GPUs6,7 pid**147232** + MERGE→n80; B300×8=0. **Never `pkill -f`**.
+- p4195: **R1050** Triton REUSE crash → FORCE seed `chall_r978` → **n80 LIVE** :8002; skip cosmic-raven-04. **Never `pkill -f`**.
+- p4194–p4150: REFUTE→TRAIN cascade; TTL→**2026-08-21T13:26Z**; B300 waiters armed. **Never `pkill -f`**.
+
 
