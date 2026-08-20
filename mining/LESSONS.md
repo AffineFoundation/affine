@@ -25,18 +25,17 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4220: **R1077** merge.done but n80 stuck — waiter `EXP=` pointed at `…ultrasuperextrasteps-ep4-hilr` (missing lean) while real dir is `…hypersuperextrasteps-ep4-midlr`; launch lean from correct path → n80 LIVE. **R1072 REFUTE** ~−0.05× → **R1087** Hyper MidLR. B300/B200×8=0. **Never `pkill -f`**.
-- p4219: **R1070+R1071 REFUTE** left idle on r339 (challs :8002/:8003) — reap exact-PID → **R1085** MidCtx MidRank Hiβ Hyper MidLR GPUs4,5 + **R1086** ShortCtx HiRank Hiβ Hyper MidLR GPUs6,7; R1073 MERGE→n80 LIVE. B300/B200×8=0. **Never `pkill -f`**.
-- p4218: **R1074 REFUTE** m=+0.000107 ~0.02× (thought✓217 B✓0.354) → reap chall :8003 exact-PID → **R1084** vera ShortCtx LoRank Hiβ HyperExtra MidLR TRAIN GPUs1,3; R1073 train.done@1036. B300/B200×8=0. **Never `pkill -f`**.
-- p4217: **R1078 REFUTE** m=−0.004523 ~−0.71× (thought✓185 B✓0.481) → reap chall :8002 exact-PID → **R1083** vera SoftCtx MidRank Midβ HyperExtra MidLR TRAIN GPUs6,7 (@12288). B300/B200×8=0 (ghost B200 cleared). **Never `pkill -f`**.
-- p4216: **R1079 REFUTE** m=−0.001769 ~−0.75× (thought✓158.5 B✓0.410) → reap chall :8002 exact-PID → **R1082** vera ShortCtx HiRank Midβ HyperExtra MidLR TRAIN GPUs2,3 (β 0.05→0.1). B200×8 stock=1 (B300=0). **Never `pkill -f`**.
-- p4215: **R1075 REFUTE** m=+0.003180 ~0.53× (thought✓209 B✓0.418) → reap chall :8003 exact-PID → **R1081** vera ShortCtx HiRank Midβ Ultra HiLR TRAIN GPUs6,7 (keep R1076 on 4,5). Also note R1078 ~−0.71× / R1074 ~0.02× await cascade. **Never `pkill -f`**.
-- p4214: **R1051 REFUTE** m=+0.00155 ~0.27× (thought✓223 B✓0.405) → reap chall :8002 exact-PID → **R1080** cryptoDev ShortCtx Hiβ Ultra MidLR TRAIN GPUs3,4 (teacher TP4 0,1,5,6 kept). **Never `pkill -f`**.
-- p4213: **R1060 REFUTE** m=−0.01516 ~−1.66×; **R340** TP2 teacher hung at NCCL after pynccl → **TP1** teacher GPU0 works; train pid16805. **Never `pkill -f`**.
-- p4211: **R1060** teacher OOM@util0.85 TP2 mid-n80; util0.70 TP2 **KV-fail**@65536 (need 5.75GiB, have 2.11) → **TP4 util0.80** on free GPUs**0,1,5,6** (keep king2 + chall3,4) then v4 n80. **Never `pkill -f`**.
-- p4210: **R1060** n80 died (teacher :8000 gone; chall ConnectError) — restore teacher TP2 GPUs**0,1** only (keep king GPU2 + chall 3,4) then relaunch n80; **R340** marsplan@556d02a2 404 → pin **vera**@8e3f1695 (same p4171). **Never `pkill -f`**.
-- p4209: **CLI rent B200** `eager-orbit-61`→`mine-r340`@$37.60/h (API waiter bl_skip ghost); stamp needs `"name"` key; **R1060** chall ConnectError→relaunch n80 LIVE; R1064 **chal-00974**. Host-key churn on recycled IP:port — `ssh-keygen -R` + accept-new. **Never `pkill -f`**.
-- p4208: **R1064 CROWN_OK** m=+0.006632 ~1.021× → HF→reg→SUBMIT reveal **31485871**; **R1062 REFUTE** ~0.18× → **R1079** r938. B300×8=0. **Never `pkill -f`**.
-- p4207–p4200: α→TAO→Lium + LOST/REFUTE→TRAIN cascade; TTL→**2026-08-21T13:26Z**; B300 waiters armed. **Never `pkill -f`**.
+- p4221: **R1077 REFUTE** m=+0.001670 ~0.32× (thought✓168 B✓0.361) → reap r338 :8002 → **R1088** SoftCtx MidRank Hiβ Hyper MidLR; **R1073 REFUTE** m=−0.009593 ~−0.94× (thought✓188 B✓0.3625) → reap r924 :8002 → **R1089** SoftCtx HiRank Hiβ Hyper MidLR. B300/B200×8=0. **Never `pkill -f`**.
+- p4220: **R1077** merge.done but n80 stuck — waiter `EXP=` pointed at wrong Ultra path; lean from Hyper path → n80 LIVE. **R1072 REFUTE** ~−0.05× → **R1087**. B300/B200×8=0. **Never `pkill -f`**.
+- p4219: **R1070+R1071 REFUTE** → **R1085+R1086 TRAIN**; R1073 MERGE→n80. B300/B200×8=0. **Never `pkill -f`**.
+- p4218: **R1074 REFUTE** ~0.02× → **R1084** Hyper MidLR. B300/B200×8=0. **Never `pkill -f`**.
+- p4217: **R1078 REFUTE** ~−0.71× → **R1083** SoftCtx MidRank Midβ Hyper MidLR. **Never `pkill -f`**.
+- p4216: **R1079 REFUTE** ~−0.75× → **R1082** ShortCtx HiRank Midβ Hyper MidLR. **Never `pkill -f`**.
+- p4215: **R1075 REFUTE** ~0.53× → **R1081** ShortCtx HiRank Midβ Ultra HiLR. **Never `pkill -f`**.
+- p4214: **R1051 REFUTE** ~0.27× → **R1080** cryptoDev ShortCtx Hiβ Ultra MidLR. **Never `pkill -f`**.
+- p4213: **R1060 REFUTE** ~−1.66×; **R340** TP2 hung → **TP1** teacher GPU0. **Never `pkill -f`**.
+- p4209: **CLI rent B200** `mine-r340`@$37.60/h; R1064 **chal-00974**. Host-key churn — `ssh-keygen -R` + accept-new. **Never `pkill -f`**.
+- p4208: **R1064 CROWN_OK** ~1.021× → SUBMIT reveal **31485871**. B300×8=0. **Never `pkill -f`**.
+- p4207–p4200: α→TAO→Lium + LOST/REFUTE→TRAIN cascade; TTL→**2026-08-21T13:26Z**. **Never `pkill -f`**.
 
 
