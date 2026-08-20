@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-20T15:49:11Z",
+  "hypo": "R1020",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign36",
+  "margin": 0.00173352161631643,
+  "se": 0.002489159365608119,
+  "z": 0.6964285373881308,
+  "n": 80,
+  "bar": 0.004978318731216238,
+  "thought_median": 169.5,
+  "b_pass": 0.2875,
+  "wins": false,
+  "note": "p4154 chall+v4-n80 R252 6,7 :8003; HiAlpha HiRank MidLoBeta SoftCtx MegaSuperExtra ep4 MidLR (\u03b2=0.05 r=64 @12288 steps=19200); vs reign36 vera wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}
