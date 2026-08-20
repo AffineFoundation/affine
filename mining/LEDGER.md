@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 78046.91753114443 | p4170 |
-| Lium balance | **$78046.91753114443** | p4170 |
-| cumulative mining spend | ~$143,119 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$68047** (balance − $10,000 floor) | $UTC |
+| $UTC | 78013.00468153591 | p4171 |
+| Lium balance | **$78013.00468153591** | p4171 |
+| cumulative mining spend | ~$143,153 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$68013** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$290.58/h** · vs floor $833/h · gap **−$542.42/h** · B300×8=0 | p4170 |
+| miner burn (8 pods) | **~$354.58/h** · vs floor $833/h · gap **−$478.42/h** · B300×8=0 | p4171 |
 | miner coldkey free | τ~1251 | kept ≥τ50 |
-| miner stake | **0** | p4170 |
+| miner stake | **0** | p4171 |
 | registrations / submissions | **14** / **14** (… **r1008 LOST** chal-00961) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-20T15:57:20Z | 78013.00468153591 | p4171 **R339** vera-pin relaunch (fleet 8; burn **~$354.58/h**; no new rent) |
 | 2026-08-20T15:51:54Z | 78046.91753114443 | p4170 **R1020 REFUTE→R1040 TRAIN** (no rent; burn **~$290.58/h**) |
 | 2026-08-20T15:41:27Z | 78115.76692594572 | p4169 **R1027+R1013 REFUTE→R1039 TRAIN** (no rent; burn **~$290.58/h**) |
 | 2026-08-20T15:31:04Z | 78219.22891395625 | p4168 **R1008 LOST** + **R1028 REFUTE→R1038 TRAIN** (no rent; burn **~$290.58/h**) |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-20T14:47:49Z | 78493.98998733789 | p4164 **R1014+R1019 REFUTE→R1030+R1031 TRAIN** + R1021/R1022 n80 rearm (no rent; burn **~$290.58/h**) |
 | 2026-08-20T14:10:00Z | 78771.9775783544 | p4162 **R1012+R1018 REFUTE→R1029+R1028 TRAIN** (no rent; burn **~$290.58/h**) |
 | 2026-08-20T14:02:40Z | 78804.35363596232 | p4161 **R1017 REFUTE→R1027 TRAIN** r338 (no rent; burn **~$290.58/h**) |
-| 2026-08-20T13:52:26Z | 78876.17344599341 | p4160 **R1005 REFUTE→R1026 TRAIN** r924 (no rent; burn **~$290.58/h**) |
