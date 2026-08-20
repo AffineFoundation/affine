@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4106: R972 **MERGE_DONE sat idle** on warm crown (GPUs1,3 free; T:8000 K:8001; R970/R971 n80 :8002/:8003) → chall:8004+**v4 n80 LIVE** (Triton seed chall_r971 n_so=26; probe_ok) pid137062; B300×8=0. **Never `pkill -f`**.
 - p4105: R970+R971 **MERGE_DONE sat idle** on warm crown (GPUs4–7 free; T:8000 K:8001; R972 TRAIN 1,3) → dual chall+**v4 n80 LIVE** (:8002/:8003, Triton seed chall_r956/r966 n_so=26) pid133371/133361; B300×8=0. **Never `pkill -f`**.
 - p4104: R962 **REFUTE** m=−0.005389 ~−0.85× (thought✓193 B✓0.477 k=3) → exact-PID reap :8002 → **R980 SoftCtx HiRank Midβ Ultra HiLR** TRAIN R938 2,3 pid19136; catalog 8×B200 both BL (`fbb1135f`/`8f34559f`); B300/H200/H100×8=0. **Never `pkill -f`**.
 - p4103: r252 α147.6/~τ8.27→τ8→Lium (+~$1.7k; `lium fund` still no `Subtensor.transfer` → `btcli`→`5FqACMt…zsThe`); idle R959 chall:8002 exact-PID reap → **R979 SoftCtx HiRank Midβ Mega HiLR** TRAIN R338 4,5 pid64111; R962 ~34/80; B300×8=0. **Never `pkill -f`**.
