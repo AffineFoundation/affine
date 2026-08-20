@@ -1,0 +1,7 @@
+R938 Stage5 p4071
+- HF: unconst/Affine-5czsc2fc98-r938-vera-odpo-midrank-hibeta-softctx-megaextra-ep4-ultralolr-merged @ 8ef1b06acfe849cc179fbc6e21c2db7561ce4092
+- --check OK
+- submitted blockhash 0x2ef608bec18a1476b81914539deecb2f753e8b145f19453cddc16d0e9e9ee65a
+- reveal opens drand round 31462190
+- n80: margin=+0.004951 SE=0.002064 bar≈0.004127 (~1.20×) thought✓163 B✓0.308 k=3 vs reign36
+- note: keyfile needed temporary cryptoType:1 for submit_call; stripped after for Lium
