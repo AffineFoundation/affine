@@ -25,21 +25,10 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4181: **α→TAO→Lium** r252 88.56α→τ**6.634** (`lium fund` Subtensor.transfer fail → `btcli wallet transfer --dest 5FqACMt…zsThe`) Lium **$77186→$78640**; **R339** Online-DPO DONE@189/300 → MERGE OK → chall:8002 CUDA4,5 loading → n80 armed; B300×8=0. **Never `pkill -f`**.
-- p4180: **R1038 REFUTE** m=−0.002795 ~−0.67×; **R1039 REFUTE** m=+2.37e-5 ~0.006× → exact-PID reap r338 :8002/:8003 → **R1049 Mega HiLR MidCtx HiRank MidLoβ** + **R1050 SoftCtx MidRank Hiβ Ultra HiLR** TRAIN pids**133218/133331**; **R1051 cryptoDev SoftCtx MidRank Midβ Mega MidLR** r926 pid**119797**; R1032=chal-00967; B300×8=0. **Never `pkill -f`**.
-- p4179: **R1025 REFUTE** m=+0.000156 ~0.028×; **R1037 REFUTE** m=−0.005212 ~−0.79× → exact-PID reap r337 :8002/:8003 → **R1047 Ultra HiLR MidCtx MidLoβ** + **R1048 ShortCtx MidRank Midβ Ultra MidLR** TRAIN pids**110242/110354**; R1032=**chal-00967**; r338 still idle; B300×8=0. **Never `pkill -f`**.
-- p4178: **R1045+R1046 TRAIN** on free r924 GPUs **6,7/4,5** pids**98194/98084** (R1026→Ultra SoftCtx HiRank Hiβ; R1033→Mega MidCtx HiRank MidLoβ); R1025 n80~50/80; R1032 not queued yet; B300×8=0. **Never `pkill -f`**.
-- p4177: **R1032 CROWN_OK** m=+0.005461 ~1.049× → HF quota fail → purged LOST r861/938/959/1008 (~261GB) → HF@`62dfb322` → reg **8887516-0019** → **SUBMITTED** reveal **31481268**. **Never `pkill -f`**.
-- p4176: **R1029 REFUTE** m=−0.001637 ~−0.29× → exact-PID reap chall:8002 → **R1044 ShortCtx HiRank MidLoβ Ultra MidLR TRAIN** r938 GPUs2,3 pid**35545**; `lium scp` broken → direct `scp -P`. **Never `pkill -f`**.
-- p4175: **R1025 chall OOM** mid-n80 util0.72@65536 → rearm GPUs5,6 util**0.65**+`expandable_segments`+batched4096 → :8003 UP · n80 pid**118288**; teacher TP4+king untouched. **Never `pkill -f`**.
-- p4174: **R1031+R1035+R1036 REFUTE** → exact-PID crown reap → **R1041 Mega HiLR / R1042 ShortCtx Mega MidLR / R1043 Ultra HiLR TRAIN** pids**210163/210161/210151**; R1025 n80 ConnectError (chall :8003 died); B300/B200×8=0. **Never `pkill -f`**.
-- p4171: **R339** marsplan@556d02a2 404 → pin **vera6**@`8e3f1695` + relaunch; burn ~$354.58/h. **Never `pkill -f`**.
-- p4170: **R1020 REFUTE** B✗0.2875 → **R1040 Mega HiLR TRAIN** r252. **Never `pkill -f`**.
-- p4169: **R1027 REFUTE**→**R1039**; **R1013 REFUTE** chall reaped. **Never `pkill -f`**.
-- p4168: **R1008 LOST** chal-00961; **R1028 REFUTE**→**R1038**. **Never `pkill -f`**.
-- p4167–p4159: REFUTE→next TRAIN cascade (R1037…R1025); TTL→**2026-08-21T13:26Z**. **Never `pkill -f`**.
-- p4157: α→TAO→Lium r252→τ8.2526 → Lium +~$1811. **Never `pkill -f`**.
-- p4150: **R1008 CROWN_OK**→SUBMITTED→**LOST** p4168. **Never `pkill -f`**.
-- p4147: check executor_blacklist before `lium up`. **Never `pkill -f`**.
-- p4109: `lium fund` fail → `btcli`→`5FqACMt…zsThe`. **Never `pkill -f`**.
+- p4182: **R339 REFUTE** m=+0.001071 SE=0.001119 z=0.957 n=79 bar≈0.002238 (~**0.48×**) thought✓170 B✓0.329 k=3 → exact-PID reap :8002 → fill idle **R1052 ShortCtx HiRank Hiβ Ultra MidLR** GPUs6,7 pid**15792** + **R1053 MidCtx MidRank Hiβ Ultra HiLR** GPUs4,5 pid**16529**; form writer path missing (wrote decision from sim json); B300×8=0. **Never `pkill -f`**.
+- p4181: **α→TAO→Lium** r252→τ**6.634** → Lium **+$1454**; **R339** MERGE→chall:8002→n80 armed. **Never `pkill -f`**.
+- p4180: **R1038+R1039 REFUTE** → **R1049+R1050+R1051 TRAIN**. **Never `pkill -f`**.
+- p4179: **R1025+R1037 REFUTE** → **R1047+R1048 TRAIN**; R1032=**chal-00967**. **Never `pkill -f`**.
+- p4177: **R1032 CROWN_OK**→SUBMITTED chal-00967. **Never `pkill -f`**.
+- p4174–p4150: REFUTE→TRAIN cascade; TTL→**2026-08-21T13:26Z**; `lium scp`→`scp -P`; `lium fund`→`btcli`→`5FqACMt…zsThe`. **Never `pkill -f`**.
 

@@ -2,7 +2,7 @@
 Rewritten every pass. Do not append.
 
 ## Stage
-**Stage 5 · wvk=7 Reason v4 · KING reign36 · R1032 QUEUED chal-00967**.
+**Stage 4/5 · wvk=7 Reason v4 · KING reign36 · R1032 QUEUED chal-00967**.
 King=**reign36** vera6 · burn floor **≥$833/h**.
 
 ## Live facts
@@ -11,9 +11,9 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | contract | wvk=**7** · k=**3** · τ=**0.03** · n=**1300** · δ=0.002 · thought≥80 · B γ=0.30 · k_σ=2.0 |
 | king | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695…` **reign36** |
 | burn | **~$354.58/h** · gap **−$478.42/h** · B300×8=0 · B200×8=0 |
-| Lium | **~$78640** · free τ**~1249** · stake **0** |
+| Lium | **~$78608** · free τ**~1249** · stake **0** |
 | fleet | 8 mine-* · TTL **→2026-08-21T13:26:53Z** (r339 soft **14:56Z**) |
-| **p4181** | **α→TAO→Lium** r252 88.56α→τ**6.634**→Lium **+$1454** · **R339** MERGE→chall :8002 loading→n80 · R1032=chal-00967 |
+| **p4182** | **R339 REFUTE** m=+0.001071 ~**0.48×** → reap :8002 → **R1052+R1053 TRAIN** r339 GPUs6,7/4,5 · R1032=chal-00967 |
 
 ## Running
 | name | huid | $/h | role |
@@ -22,7 +22,7 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | $64.00 | TK · **R1040 TRAIN** · SSH `38.127.229.127:40299` |
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | $46.80 | TK · **R1047+R1048 TRAIN** · SSH `150.136.46.118:20300` |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | $52.25 | TK · **R1049+R1050 TRAIN** · SSH `95.133.253.90:40099` |
-| mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | $64.00 | **R339 MERGE→n80** chall:8002 · SSH `23.153.44.20:40299` |
+| mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | $64.00 | TK · **R1052+R1053 TRAIN** · SSH `23.153.44.20:40299` |
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | $33.81 | TK · **R1045+R1046 TRAIN** · SSH `31.22.104.113:40300` |
 | mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | $13.76 | TK · **R1051 TRAIN** · SSH `93.120.231.186:32301` |
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | $15.96 | TK · **R1044 TRAIN** · SSH `38.255.28.21:20100` |
@@ -31,4 +31,4 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 No rentable B300×8 / B200×8 / H200×8. Never `pkill -f`.
 
 ## Next action
-1. Watch R339 n80 (form-decision armed v4). 2. Watch R1032 chal-00967. 3. Harvest any finished n80 → next axis. 4. Rent B300×8 when stock. 5. Reinvest α when stake rebuilds.
+1. Watch R1052/R1053 → MERGE→n80. 2. Watch R1032 chal-00967 (ahead chal-00965..966). 3. Harvest finished trains (R1040 near done). 4. Rent B300×8 when stock. 5. Reinvest α when stake rebuilds.
