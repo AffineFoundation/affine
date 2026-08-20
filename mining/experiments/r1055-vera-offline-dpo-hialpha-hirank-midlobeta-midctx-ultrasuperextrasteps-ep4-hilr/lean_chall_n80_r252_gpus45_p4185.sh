@@ -125,10 +125,10 @@ while read -r pid; do
   stop_pid "$pid" "stale chall argv"
 done < <(ps -eo pid=,args= | awk '/vllm serve .*\/tmp\/r1055_merged/ && !/awk/ {print $1}')
 
-CHALL_PORT=8002
+CHALL_PORT="$CHALL_PORT" GPUS="$GPUS" python3 - <<'PY' | tee -a "$LOG"
 import os, signal, subprocess, time, re
-port = os.environ.get("CHALL_PORT", "8003")
-want = {int(x) for x in os.environ.get("GPUS", "1,3").split(",") if x.strip()}
+port = os.environ.get("CHALL_PORT", "8002")
+want = {int(x) for x in os.environ.get("GPUS", "4,5").split(",") if x.strip()}
 try:
     out = subprocess.check_output(["ss", "-lptn", f"sport = :{port}"], text=True, stderr=subprocess.DEVNULL)
 except Exception:
@@ -202,9 +202,9 @@ print("[p4185-r1055] chall GPUs reaped", flush=True)
 PY
 
 for i in $(seq 1 60); do
-  used=$(nvidia-smi -i 1,3 --query-gpu=memory.used --format=csv,noheader,nounits | awk '{s+=$1} END{print s+0}')
+  used=$(nvidia-smi -i 4,5 --query-gpu=memory.used --format=csv,noheader,nounits | awk '{s+=$1} END{print s+0}')
   if [[ "${used:-999999}" -lt 2000 ]]; then
-    log "GPUs 1,3 free (poll $i used_mib=$used)"
+    log "GPUs 4,5 free (poll $i used_mib=$used)"
     break
   fi
   sleep 2

@@ -137,7 +137,7 @@ while read -r pid; do
   stop_pid "$pid" "stale chall argv"
 done < <(ps -eo pid=,args= | awk '/vllm serve .*\/tmp\/r1070_merged/ && !/awk/ {print $1}')
 
-CHALL_PORT=8002
+CHALL_PORT="$CHALL_PORT" GPUS="$GPUS" python3 - <<'PY' | tee -a "$LOG"
 import os, signal, subprocess, time, re
 port = os.environ.get("CHALL_PORT", "8002")
 want = {int(x) for x in os.environ.get("GPUS", "4,5").split(",") if x.strip()}

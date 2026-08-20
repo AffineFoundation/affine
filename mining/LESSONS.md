@@ -25,9 +25,9 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4202: **R1061 REFUTE** m=+0.001790 ~0.15× thought✓191 B✓0.45 → exact-PID reap r338 :8003 → **R1072 TRAIN** (Mega→Ultra MidCtx HiRank Midβ HiLR); R1065 untouched; only B200 ghost=blacklisted cosmic-raven-04. **Never `pkill -f`**.
+- p4203: **R1045 REFUTE** m=+0.001710 ~0.84× + **R1054 REFUTE** m=−0.000287 ~−0.14× → **R1073/R1074 TRAIN** r924; **R1055** lean_chall missing `python3 <<'PY'` opener (`import: command not found`) → fix+relaunch chall :8002; also patch R1070 same landmine. B300×8=0 bl cosmic-raven-04. **Never `pkill -f`**.
+- p4202: **R1061 REFUTE** m=+0.001790 ~0.15× → **R1072 TRAIN**; B300×8=0. **Never `pkill -f`**.
 - p4201: **R1052 REFUTE** m=−0.001866 ~−0.40× → **R1071 TRAIN**; B300×8=0. **Never `pkill -f`**.
-- p4200: **R1052** Triton hang orphan EngineCore → FORCE seed chall_r1053 → n80 LIVE. **Never `pkill -f`**.
-- p4199–p4150: REFUTE→TRAIN cascade; TTL→**2026-08-21T13:26Z**; B300 waiters armed. **Never `pkill -f`**.
+- p4200–p4150: REFUTE→TRAIN cascade; TTL→**2026-08-21T13:26Z**; B300 waiters armed. **Never `pkill -f`**.
 
 
