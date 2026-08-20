@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4181: **α→TAO→Lium** r252 88.56α→τ**6.634** (`lium fund` Subtensor.transfer fail → `btcli wallet transfer --dest 5FqACMt…zsThe`) Lium **$77186→$78640**; **R339** Online-DPO DONE@189/300 → MERGE OK → chall:8002 CUDA4,5 loading → n80 armed; B300×8=0. **Never `pkill -f`**.
 - p4180: **R1038 REFUTE** m=−0.002795 ~−0.67×; **R1039 REFUTE** m=+2.37e-5 ~0.006× → exact-PID reap r338 :8002/:8003 → **R1049 Mega HiLR MidCtx HiRank MidLoβ** + **R1050 SoftCtx MidRank Hiβ Ultra HiLR** TRAIN pids**133218/133331**; **R1051 cryptoDev SoftCtx MidRank Midβ Mega MidLR** r926 pid**119797**; R1032=chal-00967; B300×8=0. **Never `pkill -f`**.
 - p4179: **R1025 REFUTE** m=+0.000156 ~0.028×; **R1037 REFUTE** m=−0.005212 ~−0.79× → exact-PID reap r337 :8002/:8003 → **R1047 Ultra HiLR MidCtx MidLoβ** + **R1048 ShortCtx MidRank Midβ Ultra MidLR** TRAIN pids**110242/110354**; R1032=**chal-00967**; r338 still idle; B300×8=0. **Never `pkill -f`**.
 - p4178: **R1045+R1046 TRAIN** on free r924 GPUs **6,7/4,5** pids**98194/98084** (R1026→Ultra SoftCtx HiRank Hiβ; R1033→Mega MidCtx HiRank MidLoβ); R1025 n80~50/80; R1032 not queued yet; B300×8=0. **Never `pkill -f`**.
