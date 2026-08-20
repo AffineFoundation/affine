@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4169: **R1027 REFUTE** m=+0.000400~0.058× thought✓161 B✓0.375 k=3 → exact-PID reap r338 :8002 → **R1039 SoftCtx MidRank Hiβ Ultra MidLR TRAIN** GPUs6,7 pid**123833**; **R1013 REFUTE** m=−0.001596~−0.19× thought✓228 B✓0.519 → chall reaped (R1025 MERGE); B300/B200×8=0. **Never `pkill -f`**.
 - p4168: **R1008 LOST** chal-00961 m=+0.000468~0.23×δ (n80 was +0.005917~1.325×); **R1028 REFUTE** m=+0.001248~0.23× thought✓156 B✓0.314 → exact-PID reap r338 :8003 → **R1038 MidCtx HiRank MidLoβ Mega UltraLoLR TRAIN** GPUs4,5 pid**119904**; R1013 n80 32/80; B300×8=0. **Never `pkill -f`**.
 - p4167: **R1023 REFUTE**→**R1037 TRAIN**; r926 teacher OOM→util0.88/max_len32768 **R1013 n80**. **Never `pkill -f`**.
 - p4166: **R1016+R1024+R1021+R1022 REFUTE**→**R1033–R1036 TRAIN**. **Never `pkill -f`**.

@@ -1,12 +1,16 @@
-# R1027 — SoftCtx MidRank Hiβ Mega MidLR
+# R1027 result (p4169)
 
-**Status (p4161):** **TRAIN** on `mine-r338` GPUs 6,7 after R1017 REFUTE. MERGE→n80 waiter armed.
+**REFUTE v4** vs reign36 (`vera6/affine-5g4yy75zuz-t6`@`8e3f1695`).
 
-| knob | value |
+| field | value |
 |---|---|
-| base | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695` |
-| β / α / r / lr | 0.3 / 128 / 32 / **1e-6** |
-| max_len / steps | 12288 SoftCtx / **19200** Mega |
-| parent | R1017 MidCtx MidRank Hiβ Ultra MidLR REFUTE m=+0.000341 ~0.08× |
+| margin | +0.000400 |
+| SE | 0.003474 |
+| z | 0.115 |
+| n | 78 |
+| bar | max(2·SE, δ)=0.006948 (~0.058×) |
+| thought median | 161 ✓ |
+| B pass | 0.375 ✓ |
+| k / τ | 3 / 0.03 |
 
-**Decision rule:** Stage-5 iff fresh v4 n80 margin > max(2·SE, 0.002) AND thought≥80 AND B≥0.30 vs reign36.
+Next: **R1039** SoftCtx MidRank Hiβ Ultra MidLR (steps=28800) on r338 GPUs 6,7.
