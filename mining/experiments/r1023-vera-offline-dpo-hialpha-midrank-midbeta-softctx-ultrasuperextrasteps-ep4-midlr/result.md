@@ -1,4 +1,17 @@
-# R1023 — SoftCtx MidRank Midβ Ultra MidLR
-Parent: R1004 Ultra UltraLoLR REFUTE m=+0.002056 ~0.57× thought✓167 B✓0.375 (p4156).
-Axis: vera Offline-DPO HiAlpha MidRank Midβ SoftCtx UltraSuperExtra ep4 MidLR (lr=1e-6, r=32, α=128, β=0.1, @12288, max_steps=28800).
-Pod: mine-r337 GPUs 6,7 + MERGE→n80.
+# R1023 result (p4167 harvest)
+
+**Verdict: REFUTE** vs reign36 under wvk=7 Reason v4.
+
+| field | value |
+|---|---|
+| margin | +0.002311 |
+| SE | 0.002367 |
+| z | 0.977 |
+| n | 79 |
+| bar = max(2·SE, δ) | ≈0.004733 |
+| ratio | ~0.49× |
+| thought median | 161 ✓ |
+| B pass | 0.555 ✓ |
+| k / τ | 3 / 0.03 |
+
+Next: **R1037** SoftCtx MidRank Midβ Mega MidLR (Ultra→Mega isolate) on `mine-r337` GPUs 6,7.
