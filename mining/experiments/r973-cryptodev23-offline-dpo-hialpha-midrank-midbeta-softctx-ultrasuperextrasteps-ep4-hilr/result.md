@@ -1,3 +1,4 @@
+# R973 result
 
-## p4120
-- p4119b rematch MERGE `--save-original-format` finished but **KEY_LAYOUT REFUSE**: sample keys still `model.language_model.*` (bad_sample=19). sof alone insufficient for cryptoDev→vLLM; next=explicit key remap then chall+n80.
+- p4119b rematch MERGE `--save-original-format` finished; false **KEY_LAYOUT REFUSE** on sample keys `model.language_model.*` (same as king/R944).
+- p4121: skip remap — vLLM mapper remaps HF→`language_model.model.*`/`visual.*`. Served `/tmp/r973_merged` GPUs 3,4 :8002 → **v4 n80 LIVE** (pid 68117, bh `bb7afe8b…`, launched 2026-08-20T09:19:27Z). Decision pending.
