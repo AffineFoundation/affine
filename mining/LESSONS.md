@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4096: R944 n80 **DEAD** again — teacher **EngineDead** mid-duel **CUDA OOM** at TP2/`gpu_mem=0.88` under k=3 load (K:8001+chall:8002@0.65 kept; GPUs0,1,5–7 free) → FORCE seed n_so=7 + relaunch teacher **TP=4 GPUs0,1,5,6 @0.85** `max_num_batched_tokens=4096` → probe_ok → **v4 n80 LIVE** pid58462; B300×8=0 hist-BL B200 only. **Never `pkill -f`**.
 - p4095: R944 n80 **DEAD** (teacher :8000 gone mid-duel after p4091; K:8001+chall:8002@0.65 still up) → FORCE seed teacher Triton (n_so=7) + relaunch **TP=2 GPUs0,1 @ gpu_mem=0.88** → probe_ok → **v4 n80 LIVE** pid55267; R888 absent from fleet; B300×8=0. **Never `pkill -f`**.
 - p4094: R967 **REFUTE** m=−0.002955 ~−0.52× (thought✓191 B✓0.407 k=3) → exact-PID reap :8004 → **R972 SoftCtx LoRank Midβ Ultra HiLR** TRAIN crown 1,3; R970+R971 kept; B300×8=0. **Never `pkill -f`**.
 - p4093: R966 **REFUTE** m=−0.006979 ~−0.73× (thought✓192 B✓0.439 k=3) + R965 **REFUTE** m=−0.001530 ~−0.34× (thought✓203 B✓0.405 k=3) → exact-PID reap :8003/:8002 → **R970 SoftCtx MidLoβ Ultra HiLR** + **R971 SoftCtx Midβ Ultra HiLR** TRAIN crown 6,7/4,5; R967 n80 kept; B300×8=0. **Never `pkill -f`**.
