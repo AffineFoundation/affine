@@ -6,8 +6,8 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-21T13:26Z** | TK · **R1041+R1042+R1043 TRAIN** · SSH `95.133.252.28:40298` |
-| mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-21T13:26Z** | TK · **R1040 TRAIN** ~step1015 · SSH `38.127.229.127:40299` |
+| mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-21T13:26Z** | TK · **R1041+R1042 n80** · **R1043 TRAIN** · SSH `95.133.252.28:40298` |
+| mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-21T13:26Z** | TK · **R1040 TRAIN** · SSH `38.127.229.127:40299` |
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | 8×B200 | $46.80 | **2026-08-21T13:26Z** | TK · **R1047+R1048 TRAIN** · SSH `150.136.46.118:20300` |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-21T13:26Z** | TK · **R1049+R1050 TRAIN** · SSH `95.133.253.90:40099` |
 | mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | 8×B200 | soft **2026-08-21T14:56Z** | TK · **R1052+R1053 TRAIN** · SSH `23.153.44.20:40299` |
@@ -23,6 +23,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-20T18:19:07Z | p4184: crown **R1041+R1042** MERGE→chall→**v4 n80 LIVE** pids **219229**/**219093**; B300×8=0 |
 | 2026-08-20T18:14:53Z | p4183: idle **r924 GPUs1,3** → **R1054 TRAIN** LoRank ShortCtx Hiβ Ultra MidLR pid**99857**; B300×8=0 |
 | 2026-08-20T18:09:12Z | p4182: **R339 REFUTE** ~0.48× → reap :8002 → **R1052+R1053 TRAIN** r339; B300×8=0 |
-| 2026-08-20T18:01:06Z | p4181: α→TAO→Lium r252→τ6.634→**+$1454**; **R339** train DONE→MERGE→chall:8002 loading; B300×8=0 |
