@@ -11,3 +11,7 @@ Parent: R965 ShortCtx MidRank Midβ Ultra HiLR REFUTE m=−0.001530 ~−0.34× �
 - TRAIN on `mine-crown-1` GPUs **4,5** after exact-PID reap R965 chall:8002
 
 - TRAIN LIVE pid**123664** @2026-08-20T05:23:23Z
+
+## p4105
+- MERGE_DONE sat idle → chall:8002 + **v4 n80 LIVE** crown GPUs **4,5** (Triton seed chall_r956 n_so=26)
+- n80 pid**133371** @2026-08-20T07:01:39Z · corpus epoch13 ready
