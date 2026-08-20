@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 79280.51598051493 | p4118 |
-| Lium balance | **$79280.51598051493** | p4118 |
-| cumulative mining spend | ~$140,613 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$69281** (balance − $10,000 floor) | $UTC |
+| $UTC | 79102.00594525364 | p4119 |
+| Lium balance | **$79102.00594525364** | p4119 |
+| cumulative mining spend | ~$140,791 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$69102** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$290.58/h** · vs floor $833/h · gap **−$542.42/h** · B300×8=0 | p4118 |
+| miner burn (7 pods) | **~$290.58/h** · vs floor $833/h · gap **−$542.42/h** · B300×8=0 | p4119 |
 | miner coldkey free | τ~1254 | kept ≥τ50 |
-| miner stake | **α29.5/~τ1.66** r252 (under τ5) | p4118 |
+| miner stake | **α29.5/~τ1.66** r252 (under τ5) | p4119 |
 | registrations / submissions | **13** / **13** (… **r959** **chal-00957** queued) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-20T09:00:57Z | 79102.00594525364 | p4119 R973 visual/key-layout fail→**p4119b REMERGE sof** R926 (no rent; B300×8=0 BL); burn **~$290.58/h** |
 | 2026-08-20T08:40:26Z | 79280.51598051493 | p4118 R973 rematch MERGE→n80 arm R926 (no rent; B300×8=0 BL); burn **~$290.58/h** |
 | 2026-08-20T08:34:07Z | 79314.36242093888 | p4117 R978+R979 **REFUTE**→**R990+R991 TRAIN** R338 (no rent; B300×8=0); burn **~$290.58/h** |
 | 2026-08-20T08:27:44Z | 79350.48888484738 | p4116 R977 **REFUTE**→**R989 TRAIN** + R979 **v4 n80 LIVE** (no rent; B300×8=0); burn **~$290.58/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-20T08:07:05Z | 79491.02912985809 | p4112 R976 **REFUTE**→**R987 TRAIN** R337 4,5 (no rent; B300×8=0); burn **~$290.58/h** |
 | 2026-08-20T08:03:20Z | 79523.63494790575 | p4111 R968 **REFUTE**→**R986 TRAIN** + R976+R974 **dual v4 n80 LIVE** (no rent; B300×8=0); burn **~$290.58/h** |
 | 2026-08-20T07:51:52Z | 79631.33711728545 | p4110 R969 **REFUTE**→**R985 TRAIN** + R968 **v4 n80 LIVE** (no rent; B300×8=0 BL); burn **~$290.58/h** |
-| 2026-08-20T07:36:27Z | 79701.84131069944 | p4109 α29.5/~τ1.66 r252→**τ1.65**→Lium (`lium fund` Subtensor.transfer fail → `btcli`→`5FqACMt…zsThe`); +~$354; R984 TRAIN; burn **~$290.58/h** |
