@@ -25,16 +25,11 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4189: r926 teacher **TP4→TP2** (exact-PID reap GPUs0,1,3,4; king+R1051 kept) → **R1060** SoftCtx MidRank Midβ Mega HiLR TRAIN GPUs3,4 pid**123676** + MERGE→n80; B300×8=0. **Never `pkill -f`**.
 - p4188: **R1043 REFUTE** m=−0.015244 ~−1.21× thought✓201 B✓0.4625 k=3 → exact-PID reap :8003 → **R1059** ShortCtx MidRank Loβ Ultra HiLR TRAIN GPUs4,5 pid**226033** + MERGE→n80; B300×8=0. **Never `pkill -f`**.
 - p4187: crown **R1043** MERGE→chall:8003 CHALL_READY→**v4 n80 LIVE** sim pid**224993** vs reign36; R1056/R1057 TRAIN continue; B300×8=0; waiters armed. **Never `pkill -f`**.
 - p4186: **R1041 REFUTE** m=−0.000825 ~−0.12× · **R1042 REFUTE** m=+0.001196 ~0.24× · **R1040 REFUTE** m=+0.000946 ~0.15× (all thought✓ B✓ k=3) → exact-PID reap → **R1056+R1057+R1058 TRAIN**; B300×8=0. **Never `pkill -f`**.
 - p4185: r252 stale R1030 chall :8002 exact-PID reap → **R1055** MidCtx HiRank MidLoβ Ultra HiLR TRAIN GPUs4,5 pid**140082** + MERGE→n80; B300×8=0. **Never `pkill -f`**.
-- p4184: crown **R1041+R1042** TRAIN→MERGE→chall→**v4 n80 LIVE** vs reign36; B300×8=0. **Never `pkill -f`**.
-- p4183: filled idle **r924 GPUs1,3** → **R1054**; B300×8=0. **Never `pkill -f`**.
-- p4182: **R339 REFUTE** → **R1052+R1053 TRAIN**; B300×8=0. **Never `pkill -f`**.
-- p4181: **α→TAO→Lium** r252→τ**6.634** → Lium **+$1454**. **Never `pkill -f`**.
-- p4180: **R1038+R1039 REFUTE** → **R1049+R1050+R1051 TRAIN**. **Never `pkill -f`**.
-- p4179: **R1025+R1037 REFUTE** → **R1047+R1048 TRAIN**; R1032=**chal-00967**. **Never `pkill -f`**.
-- p4177: **R1032 CROWN_OK**→SUBMITTED chal-00967. **Never `pkill -f`**.
-- p4174–p4150: REFUTE→TRAIN cascade; TTL→**2026-08-21T13:26Z**; `lium scp`→`scp -P`; `lium fund`→`btcli`→`5FqACMt…zsThe`. **Never `pkill -f`**.
+- p4184–p4177: REFUTE→TRAIN / CROWN_OK cascade; TTL→**2026-08-21T13:26Z**; `lium scp`→`scp -P`; `lium fund`→`btcli`→`5FqACMt…zsThe`. **Never `pkill -f`**.
+- p4174–p4150: REFUTE→TRAIN cascade; B300 waiters armed. **Never `pkill -f`**.
 
