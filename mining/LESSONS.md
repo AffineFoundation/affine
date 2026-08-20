@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4128: **R984** REFUTE m=−0.004011 ~−0.37× (thought✓199.5 B✓0.466 k=3) vs reign36 → exact-PID reap :8002 → **R985 MERGE idle→v4 n80** R924 4,5 + **R1001 MidRank Hiβ ShortCtx Mega UltraLoLR** TRAIN 1,3 pid55472; B300×8=0. **Never `pkill -f`**.
 - p4127: **R987** REFUTE m=+0.001638 ~0.26× + **R975** m=−0.003966 ~−0.52× + **R990** m=−0.002884 ~−0.31× + **R991** m=+0.004522 ~0.89× (all thought✓ B✓ k=3) → exact-PID reap → **R997/R998/R999/R1000 UltraLoLR TRAIN** + **R988 MERGE idle→v4 n80** arm R252 :8002; B300×8=0 BL-only 8×B200. **Never `pkill -f`**.
 - p4126: five MERGE_DONE sat idle (R975 R252 6,7; R987 R337 4,5; R990+R991 R338 6,7/4,5; R984 R924 1,3) → dual/multi chall+**v4 n80 LIVE** (Triton seed chall_r942/r949/r964/r978/r969); wait scripts stop at MERGE — next pass must arm lean. B300×8=0. **Never `pkill -f`**.
 - p4125: R973 **REFUTE** m=−0.008977 ~−1.36× (thought✓227 B✓0.377 k=3) vs reign36 → exact-PID reap :8002 → **R996 SoftCtx HiRank Midβ Ultra UltraLoLR** TRAIN R926 3,4 pid69037 (HiRank isolate after MidRank Midβ Ultra HiLR R973 + MidRank Midβ Ultra UltraLoLR R944 both fail). **Never `pkill -f`**.
