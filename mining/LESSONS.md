@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4144: **R996** train+merge done sat idle (wait script stopped at MERGE) → armed chall:8002+v4 n80 on r926 GPUs3,4; R992~67/80; B300×8=0. **Never `pkill -f`**.
 - p4143: **R997** REFUTE m=−0.000793 ~−0.17× (thought✓195 B✓0.5) → **R1011 MidLR TRAIN** r337 4,5; R992 n80 still LIVE; B300×8=0. **Never `pkill -f`**.
 - p4142: **R992** train+merge done sat idle (no MERGE→n80 waiter) → armed chall:8002+v4 n80 on r938 GPUs2,3; skip BL `8f34559f`. **Never `pkill -f`**.
 - p4141: **R994** REFUTE m=+0.001140 ~0.30× → **R1009 MidLR**; **R995** REFUTE m=−0.001045 ~−0.30× → **R1010 MidLR**; **R959 LOST** chal-00957. **Never `pkill -f`**.
@@ -35,4 +36,4 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p4119/18: cryptoDev merge needs `--save-original-format` + visual-only missing. **Never `pkill -f`**.
 - p4109: `lium fund` Subtensor.transfer fail → `btcli`→`5FqACMt…zsThe`. **Never `pkill -f`**.
 - p4101: R959 **CROWN_OK**→**SUBMITTED** chal-00957 (later **LOST** p4141). **Never `pkill -f`**.
-- p4096–p3900: SoftCtx/MidCtx UltraExtra + BL stock + REFUTE→TRAIN; never `pkill -f`.
+
