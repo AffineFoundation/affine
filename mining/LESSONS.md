@@ -25,21 +25,19 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4167: **R1023 REFUTE** m=+0.002311~0.49× thought✓161 B✓0.555 → exact-PID reap r337 :8002 → **R1037 SoftCtx MidRank Midβ Mega MidLR TRAIN** GPUs6,7 pid**101987** + MERGE→n80; r926 teacher mid-n80 CUDA-OOM at util~0.75–0.82 + util0.65 KV−2.4GiB → **util0.88 max_len32768 batch4096** rearm **R1013 n80**; R1008 chal-00961 left queue (king still reign36); B300×8=0. **Never `pkill -f`**.
-- p4166: **R1016 REFUTE** m=+0.002671~0.45× + **R1024 REFUTE** m=−0.004823~−0.55× + **R1021 REFUTE** m=−0.000316~−0.16× + **R1022 REFUTE** m=−0.002474~−0.56× → exact-PID reap → **R1033–R1036 TRAIN** (r924/r337/crown); R1008 scoring 1214/1300; B300×8=0. **Never `pkill -f`**.
-- p4165: **R1015 REFUTE** m=−0.002353~−0.94× → **R1032 TRAIN** r924 1,3. **Never `pkill -f`**.
-- p4164: **R1014+R1019 REFUTE** → **R1030+R1031 Ultra MidLR**. **Never `pkill -f`**.
-- p4162: **R1012+R1018 REFUTE** → **R1029+R1028 TRAIN**. **Never `pkill -f`**.
-- p4161: **R1017 REFUTE** → **R1027 TRAIN** r338 6,7. **Never `pkill -f`**.
-- p4160: **R1005 REFUTE** → **R1026 TRAIN** r924 6,7. **Never `pkill -f`**.
-- p4159: r926 teacher **TP4→TP2** freed 5,6 → **R1025 TRAIN**. **Never `pkill -f`**.
-- p4158: TTL+Soft/Dead +24h all 7 mine-* → **2026-08-21T13:26Z**. **Never `pkill -f`**.
-- p4157: α→TAO→Lium r252 147.6α→τ8.2526 → Lium +~$1811; `lium fund` fail→`btcli`→`5FqACMt…zsThe`. **Never `pkill -f`**.
-- p4156: **R1004+R1011 REFUTE** → **R1023+R1024 TRAIN**. **Never `pkill -f`**.
-- p4155: **R1009+R1010 REFUTE** → **R1021+R1022 TRAIN**. **Never `pkill -f`**.
-- p4154: **R998 REFUTE** → **R1020 TRAIN**. **Never `pkill -f`**.
-- p4150: **R1008 CROWN_OK** → **SUBMITTED** chal-00961. **Never `pkill -f`**.
+- p4168: **R1008 LOST** chal-00961 m=+0.000468~0.23×δ (n80 was +0.005917~1.325×); **R1028 REFUTE** m=+0.001248~0.23× thought✓156 B✓0.314 → exact-PID reap r338 :8003 → **R1038 MidCtx HiRank MidLoβ Mega UltraLoLR TRAIN** GPUs4,5 pid**119904**; R1013 n80 32/80; B300×8=0. **Never `pkill -f`**.
+- p4167: **R1023 REFUTE**→**R1037 TRAIN**; r926 teacher OOM→util0.88/max_len32768 **R1013 n80**. **Never `pkill -f`**.
+- p4166: **R1016+R1024+R1021+R1022 REFUTE**→**R1033–R1036 TRAIN**. **Never `pkill -f`**.
+- p4165: **R1015 REFUTE**→**R1032 TRAIN**. **Never `pkill -f`**.
+- p4164: **R1014+R1019 REFUTE**→**R1030+R1031**. **Never `pkill -f`**.
+- p4162: **R1012+R1018 REFUTE**→**R1029+R1028 TRAIN**. **Never `pkill -f`**.
+- p4161: **R1017 REFUTE**→**R1027 TRAIN**. **Never `pkill -f`**.
+- p4160: **R1005 REFUTE**→**R1026 TRAIN**. **Never `pkill -f`**.
+- p4159: r926 TP4→TP2 → **R1025 TRAIN**. **Never `pkill -f`**.
+- p4158: TTL+Soft/Dead +24h → **2026-08-21T13:26Z**. **Never `pkill -f`**.
+- p4157: α→TAO→Lium r252→τ8.2526 → Lium +~$1811. **Never `pkill -f`**.
+- p4150: **R1008 CROWN_OK**→SUBMITTED→**LOST** p4168. **Never `pkill -f`**.
 - p4147: check executor_blacklist before `lium up` (BL `fbb1135f`/`8f34559f`). **Never `pkill -f`**.
-- p4109: `lium fund` Subtensor.transfer fail → `btcli`→`5FqACMt…zsThe`. **Never `pkill -f`**.
+- p4109: `lium fund` fail → `btcli`→`5FqACMt…zsThe`. **Never `pkill -f`**.
 - p4101/p4141: R959 **CROWN_OK**→**LOST** chal-00957. **Never `pkill -f`**.
 
