@@ -25,12 +25,10 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4208: **R1064 CROWN_OK** m=+0.006632 ~1.021× (z=2.04 n=79 thought✓201 B✓0.521) → HF `03affd41…` → reg **8888667-0007** → **SUBMIT** reveal **31485871**; **R1062 REFUTE** ~0.18× → **R1079** MidLR+HyperExtra38400 r938. B300×8=0. **Never `pkill -f`**.
-- p4207: **α→TAO→Lium** 59α→τ3.36 (`lium fund` transfer-attr bug → `btcli transfer` Lium ck); **R1063 REFUTE** m=−0.000921 ~−0.16× thought✓195 B✓0.430 → **R1078** MidLR+HyperExtra38400 r337; R1062/R1064 n80 late. B300×8=0. **Never `pkill -f`**.
-- p4206: **R1032 LOST** near-δ m=+0.001428 ~0.71× (z=2.77 cleared 2·SE; failed δ=0.002) thought✓177 B✓0.463; **R1065 REFUTE** causality_fail B=0.292 → **R1077** MidLR+HyperExtra38400; R1062 n80 LIVE after ENOSPC merge retry. Skip bl cosmic-raven-04. **Never `pkill -f`**.
-- p4205: **R1062 merge ENOSPC** at shard 12/16 on r938 — purge stale `/tmp/*_merged` before re-merge. B300×8=0. **Never `pkill -f`**.
-- p4204: **R1058 REFUTE** ~0.41× + **R1055 REFUTE** ~0.16× → **R1075/R1076 TRAIN** r252. B300×8=0. **Never `pkill -f`**.
-- p4203: **R1045/R1054 REFUTE→R1073/R1074**; lean_chall missing `python3 <<'PY'` opener. bl cosmic-raven-04. **Never `pkill -f`**.
-- p4200–p4150: REFUTE→TRAIN cascade; TTL→**2026-08-21T13:26Z**; B300 waiters armed. **Never `pkill -f`**.
+- p4209: **CLI rent B200** `eager-orbit-61`→`mine-r340`@$37.60/h (API waiter bl_skip ghost); stamp needs `"name"` key; **R1060** chall ConnectError→relaunch n80 LIVE; R1064 **chal-00974**. Host-key churn on recycled IP:port — `ssh-keygen -R` + accept-new. **Never `pkill -f`**.
+- p4208: **R1064 CROWN_OK** m=+0.006632 ~1.021× → HF→reg→SUBMIT reveal **31485871**; **R1062 REFUTE** ~0.18× → **R1079** r938. B300×8=0. **Never `pkill -f`**.
+- p4207: **α→TAO→Lium** 59α→τ3.36 (`lium fund` bug → `btcli transfer`); **R1063 REFUTE** → **R1078** r337. B300×8=0. **Never `pkill -f`**.
+- p4206: **R1032 LOST** near-δ ~0.71×; **R1065** B✗0.292 → **R1077**; skip bl cosmic-raven-04. **Never `pkill -f`**.
+- p4205–p4200: ENOSPC purge; REFUTE→TRAIN cascade; TTL→**2026-08-21T13:26Z**; B300 waiters armed. **Never `pkill -f`**.
 
 

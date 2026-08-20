@@ -1,0 +1,31 @@
+SOFT_DEADLINE_SET 2026-08-21T20:29:41Z
+R340_REBUILT_TAR /tmp/mine-r340-stack.tar.gz
+-rw-rw-r-- 1 const const 485K Aug 20 21:29 /tmp/mine-r340-stack.tar.gz
+Warning: Permanently added '[18.118.83.97]:40127' (ED25519) to the list of known hosts.
+HF_OK unconst/Affine-5czsc2fc98-r340-online-dpo-merged
+HF_OK unconst/Affine-5czsc2fc98-r340-online-dpo-lora
+R340_DEADLINES soft=2026-08-21T20:29:41Z dead=2026-08-21T20:59:41Z axis=marsplan_online_dpo_hirank_bigg
+STACK_UPLOAD_OK
+PIPELINE_PID=971
+[bootstrap-r340] 2026-08-20T21:29:47Z start host=1c0a14077142
+GPU 0: NVIDIA B200 (UUID: GPU-eb8e642a-cbc4-e6a1-6edf-bdac0877d7ac)
+GPU 1: NVIDIA B200 (UUID: GPU-929f1363-e03a-17b4-4730-ebd6d0fb98a4)
+GPU 2: NVIDIA B200 (UUID: GPU-c1671be9-60bd-50b9-ea43-92187aadb199)
+GPU 3: NVIDIA B200 (UUID: GPU-32d52634-db3b-6cb0-ced3-84a841c7ce1e)
+GPU 4: NVIDIA B200 (UUID: GPU-ec0f34e0-3e06-09ff-95f4-4d6065e316ae)
+GPU 5: NVIDIA B200 (UUID: GPU-8708dac2-7424-2cec-4aca-f3340c7dc7e6)
+GPU 6: NVIDIA B200 (UUID: GPU-e004b432-e97e-1e75-d6ea-db442cea70f1)
+GPU 7: NVIDIA B200 (UUID: GPU-aa079d14-88c1-438e-ce5d-cf88273f57e7)
+[bootstrap-r340] GPU_COUNT=8
+downloading uv 0.12.5 x86_64-unknown-linux-gnu
+installing to /root/.local/bin
+  uv
+  uvx
+everything's installed!
+Using CPython 3.12.3 interpreter at: /usr/bin/python3.12
+Creating virtual environment at: venv
+Activate with: source venv/bin/activate
+    PID     ELAPSED CMD
+    971 441077226-20:37:20 bash /root/mining_src/s4-h139-f44-tok-online-dpo-l2/bootstrap_h139.sh
+8
+UPLOAD_AND_LAUNCH_OK pod=mine-r340-marsplan-online-dpo-hirank-bigg-1 2026-08-20T21:29:52Z

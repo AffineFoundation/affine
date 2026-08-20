@@ -1,0 +1,17 @@
+{
+  "utc": "2026-08-20T21:29:35Z",
+  "pass": 4209,
+  "name": "mine-r340-marsplan-online-dpo-hirank-bigg-1",
+  "axis": "R340",
+  "gpu": "B200",
+  "note": "marsplan\u00d7Online-DPO\u00d7HiRank\u00d7BigG r=64 \u03b2=0.1 \u03b1=32 G=8 lr=5e-6 temp=1.2 @6144 max_steps=300 (R339 HiRank G=4 + R336/R338 BigG compound; \u2260 R339 G=4 / \u2260 R338 G=8@2e-5)",
+  "ttl": "24h",
+  "mode": "manual-cli-rent-p4209",
+  "executor_id": "8f34559f-30e7-40d2-bc80-629b0903742a",
+  "huid": "gentle-orbit-4a",
+  "id": "40bf05f6-33cb-42e6-be6c-2e04bb5d8cc2",
+  "price_per_hour": 37.6,
+  "ip": "18.118.83.97",
+  "ssh_port": 40127,
+  "ttl_until": "2026-08-21T21:24:24Z"
+}
