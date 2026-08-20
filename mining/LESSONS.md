@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4123: R983 **REFUTE** m=−0.008220 ~−0.87× (thought✓199 B✓0.4625 k=3) vs reign36 → exact-PID reap :8004 → **R993 SoftCtx LoRank Midβ Mega UltraLoLR** TRAIN crown 1,3 pid151338 (UltraLoLR isolate after Mega HiLR fail; R959-pattern on LoRank). **Never `pkill -f`**.
 - p4122: R980 **REFUTE** m=−0.007289 ~−1.63× (thought✓188.5 B✓0.438 k=3) vs reign36 → exact-PID reap :8002 → **R992 SoftCtx HiRank Midβ Mega MidLR** TRAIN R938 2,3 pid23220 (MidLR between R959 Mega UltraLoLR CROWN and R979 Mega HiLR REFUTE). **Never `pkill -f`**.
 - p4121: R973 p4119b **false** key_layout REFUSE — HF `model.language_model.*`/`model.visual.*`/`lm_head.*` is correct (same as king+R944); vLLM `hf_to_vllm_mapper` remaps → serve merge as-is → **chall:8002 + v4 n80 LIVE**. Do not remap those prefixes. **Never `pkill -f`**.
 - p4120: R973 rematch MERGE **with `--save-original-format`** still emits `model.language_model.*` / `model.visual.*` (sample bad=19) → mistaken key_layout REFUSE (fixed p4121). Crown R981–R983 + R938 R980 MERGE idle→**v4 n80 LIVE**. **Never `pkill -f`**.

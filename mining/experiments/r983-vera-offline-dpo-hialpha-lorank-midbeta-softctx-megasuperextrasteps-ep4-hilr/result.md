@@ -15,3 +15,8 @@ Parent: R972 SoftCtx LoRank Midβ Ultra HiLR REFUTE m=−0.011802 ~−0.89× →
 - MERGE_DONE sat idle → chall+**v4 n80 LIVE** on crown (scripts `lean_chall_n80_crown_*_p4120.sh`)
 - Ports: r981:8002 GPUs6,7 · r982:8003 GPUs4,5 · r983:8004 GPUs1,3
 - Launched 2026-08-20T09:09:35Z
+
+## p4123 — REFUTE
+- v4 n80 vs reign36: m=**−0.008220** SE=0.004721 z=−1.741 n=80 bar≈0.009442 (~**−0.87×**)
+- thought✓(199) B✓(0.4625) k=3 τ=0.03
+- chall:8004 exact-PID reap **143006** → slot → **R993** SoftCtx LoRank Midβ Mega UltraLoLR
