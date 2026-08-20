@@ -1,0 +1,59 @@
+Warning: Permanently added '[23.153.44.20]:40299' (ED25519) to the list of known hosts.
+stop 30302 (/root/logs/vllm_chall_r1070.pid)
+stop 31046 (/root/logs/vllm_chall_r1071.pid)
+reap done
+wait free used_mib=0 iter=1
+R1085_TRAIN_PID=35589
+R1086_TRAIN_PID=35586
+[r1085-lean] 2026-08-20T23:24:04Z start GPUs 4,5 MidCtx MidRank Hiβ Hyper MidLR
+[r1085-lean] data_lines=604
+[r1085-lean] wait VRAM4+5 used_mib=0 iter=1
+{
+  "utc": "2026-08-20T23:24:04Z",
+  "axis": "r1085-vera-offline-dpo-hialpha-midrank-hibeta-midctx-hypersuperextrasteps-ep4-midlr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "1e-6",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.3,
+  "max_len": 8192,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "4,5",
+  "parent_signal": "R1070 MidCtx MidRank Hi\u03b2 Mega HiLR REFUTE m=-0.000814 ~-0.08\u00d7 thought\u2713195.5 B\u27130.4625 k=3 \u2192 HyperExtra MidLR isolate; \u2260 Mega HiLR R1070 / \u2260 Ultra HiLR R1053 / \u2260 Ultra MidLR R1017 / \u2260 Mega MidLR R1007 / \u2260 Online / \u2260 GRPO",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1085-lean] TRAIN launched pid=35589
+[r1085-lean] waiters armed
+[r1086-lean] 2026-08-20T23:24:04Z start GPUs 6,7 ShortCtx HiRank Hiβ Hyper MidLR
+[r1086-lean] data_lines=604
+[r1086-lean] wait VRAM6+7 used_mib=0 iter=1
+{
+  "utc": "2026-08-20T23:24:04Z",
+  "axis": "r1086-vera-offline-dpo-hialpha-hirank-hibeta-shortctx-hypersuperextrasteps-ep4-midlr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "1e-6",
+  "lora_r": 64,
+  "lora_alpha": 128,
+  "beta": 0.3,
+  "max_len": 6144,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "6,7",
+  "chall_port": 8003,
+  "parent_signal": "R1071 ShortCtx HiRank Hi\u03b2 Ultra HiLR REFUTE m=+0.001183 ~0.25\u00d7 thought\u2713183 B\u27130.5125 k=3 \u2192 HyperExtra MidLR isolate; \u2260 Ultra HiLR R1071 / \u2260 Ultra MidLR R1052 / \u2260 MidRank ShortCtx Hi\u03b2 Ultra MidLR R1032 CROWN / \u2260 MidRank ShortCtx Hi\u03b2 Hyper MidLR R1077 / \u2260 Online / \u2260 GRPO",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1086-lean] TRAIN launched pid=35586
+[r1086-lean] waiters armed
+35586 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1086/dpo_duel_reason.jsonl --out-dir /root/r1086/train --max-len 6144 --epochs 4 --lr 1e-6 --lora-r 64 --lora-alpha 128 --beta 0.3 --max-steps 38400
+35589 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1085/dpo_duel_reason.jsonl --out-dir /root/r1085/train --max-len 8192 --epochs 4 --lr 1e-6 --lora-r 32 --lora-alpha 128 --beta 0.3 --max-steps 38400
+0, 176462 MiB, 0 %
+1, 176462 MiB, 0 %
+2, 149404 MiB, 0 %
+3, 149404 MiB, 0 %
+4, 33682 MiB, 1 %
+5, 33682 MiB, 0 %
+6, 33682 MiB, 3 %
+7, 33682 MiB, 2 %
+p4219 R1085+R1086 launch exit=0

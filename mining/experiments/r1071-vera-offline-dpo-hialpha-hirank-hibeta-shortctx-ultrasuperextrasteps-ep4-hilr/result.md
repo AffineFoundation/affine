@@ -12,3 +12,4 @@
 ≠ MidLR R1052 / ≠ MidRank ShortCtx Hiβ Ultra HiLR R1065 / ≠ SoftCtx HiRank Hiβ Ultra MidLR R1045 / ≠ R1032 CROWN MidRank / ≠ Online / ≠ GRPO
 
 **Decision rule:** Stage-5 iff fresh v4 n80 margin > max(2·SE, 0.002) AND thought≥80 AND B≥0.30 vs reign36.
+**REFUTE v4 p4201:** m=+0.001183 ~0.25× thought✓183 B✓0.5125 → **R1086**

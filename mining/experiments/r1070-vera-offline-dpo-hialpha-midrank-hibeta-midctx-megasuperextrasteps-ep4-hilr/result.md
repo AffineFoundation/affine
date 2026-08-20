@@ -10,3 +10,4 @@
 | parent | R1053 MidCtx MidRank Hiβ Ultra HiLR REFUTE m=−0.000766 ~−0.21× thought✓216 B✓0.4125 k=3 → Mega isolate |
 
 **Decision rule:** Stage-5 iff fresh v4 n80 margin > max(2·SE, 0.002) AND thought≥80 AND B≥0.30 vs reign36.
+**REFUTE v4 p4199:** m=−0.000814 ~−0.08× thought✓195.5 B✓0.4625 → **R1085**
