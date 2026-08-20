@@ -1,13 +1,7 @@
-# R943 — vera HiRank Midβ ShortCtx UltraExtra
+# R943 n80 vs reign36 (wvk=7) — REFUTE
 
-## Axis
-Offline-DPO · base `vera6/affine-5g4yy75zuz-t6`@`8e3f1695` · β=0.1 · α=128 · r=64 · lr=5e-7 · max_len=6144 · epochs=4 · **max_steps=28800** Soft Mid Mid Soft→ShortCtx
-
-## Parent signal
-R940 HiRank Midβ ShortCtx MegaExtra(19200) REFUTE m=+0.002212 ~0.77× (thought✓173 B✓0.3875) → UltraExtra isolate same recipe.
-
-## Decision rule
-Stage-5 iff fresh v4 n80 margin > max(2·SE, 0.002) AND thought≥80 AND B≥0.30 vs reign36.
-
-## Status
-**TRAIN p4056** crown GPUs **4,5** pid**66065** · wait→merge armed.
+- **margin** = −0.002846 · **SE** = 0.001651 · **z** = −1.724 · n_paired = 79
+- bar = max(2·SE, δ) ≈ 0.003301 · ratio ≈ **−0.86×**
+- thought median = 172 ≥ 80 ✓ · B pass = 0.367 ≥ 0.30 ✓ · k=3 τ=0.03
+- challenger_wins = false
+- Next: **R956** ShortCtx MidRank Midβ UltraExtra on crown GPUs 4,5 (p4072)
