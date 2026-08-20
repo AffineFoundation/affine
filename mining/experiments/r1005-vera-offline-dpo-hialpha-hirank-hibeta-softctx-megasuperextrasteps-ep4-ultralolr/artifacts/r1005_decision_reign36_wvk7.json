@@ -1,0 +1,17 @@
+{
+  "hypo": "R1005",
+  "verdict": "REFUTE_v4",
+  "margin": 0.0034965582957642953,
+  "se": 0.0029997492683150806,
+  "z": 1.1656168509471012,
+  "bar": 0.005999498536630161,
+  "ratio": 0.583,
+  "thought_median": 171.5,
+  "b_pass": 0.425,
+  "n": 80,
+  "k": 3,
+  "tau": 0.03,
+  "king": "reign36 vera6@8e3f1695",
+  "utc": "2026-08-20T13:47:59Z",
+  "next": "R1026 SoftCtx HiRank Hi\u03b2 Mega MidLR isolate (lr=1e-6)"
+}

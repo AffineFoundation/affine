@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4160: **R1005 REFUTE** m=+0.003497~0.58× thought✓171.5 B✓0.425 → exact-PID reap r924 :8002 → **R1026 SoftCtx HiRank Hiβ Mega MidLR TRAIN** GPUs6,7 pid**78745** + MERGE→n80; B300×8=0 BL-only. **Never `pkill -f`**.
 - p4159: r926 H100 teacher was **TP4 on 0,1,5,6** with GPU7 idle + R1013 on 3,4 — shrink **TP4→TP2 on 0,1** (exact-PID reap workers; keep king:8001) frees **5,6** → **R1025 SoftCtx MidRank Midβ Ultra MidLR TRAIN** pid**77945** + MERGE→n80; B300×8=0 BL-only. **Never `pkill -f`**.
 - p4158: TTL+Soft/Dead extend all 7 mine-* via `POST /pods/{id}/schedule-removal` → **2026-08-21T13:26Z** (+24h); Soft was **~17:21Z** (would kill trains before old TTL); B300×8=0; sole B200=`8f34559f` BL. **Never `pkill -f`**.
 - p4157: α→TAO→Lium r252 **147.6α→τ8.2526** → Lium +**~$1811** (bal **~$79088**); `lium fund` still `Subtensor.transfer` miss → `btcli`→`5FqACMt…zsThe`; catalog 8×B200=BL-only (`8f34559f`,`fbb1135f`); B300×8=0. **Never `pkill -f`**.
