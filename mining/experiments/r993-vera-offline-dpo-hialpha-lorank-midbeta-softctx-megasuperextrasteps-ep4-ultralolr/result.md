@@ -11,3 +11,9 @@ Parent: R983 SoftCtx LoRank Midβ Mega HiLR REFUTE m=−0.008220 ~−0.87× → 
 - exact-PID reap R983 chall:8004 pid**143006**
 - TRAIN on `mine-crown-1` GPUs **1,3** pid**151338** @2026-08-20T09:28:01Z
 - wait→merge armed pid**151343**
+
+## p4137
+- TRAIN_DONE @2026-08-20T10:58:49Z steps=**1036** adapter `/root/r993/train/adapter`
+- MERGE live on GPUs **1,3** (merge_lora pid**154773**) → `/tmp/r993_merged`
+- **MERGE→n80** waiter armed pid**155035** → lean chall **:8004** GPUs 1,3 vs reign36 wvk7
+- scripts: `wait_r993_merge_then_n80_p4137.sh` + `lean_chall_n80_crown_r993_gpus13_p4137.sh`

@@ -25,8 +25,9 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4136: **R986** REFUTE m=+0.002837 ~0.41× (thought✓174 B✓0.429) → exact-PID reap :8002 → **R1005** SoftCtx HiRank Hiβ Mega UltraLoLR TRAIN R924 6,7 + MERGE→n80; R959 760/1300; B300×8=0. **Never `pkill -f`**.
-- p4135: **R1001+R1003** train→merge only → armed **MERGE→n80** R924 :8003/:8004; B300×8=0. **Never `pkill -f`**.
+- p4137: **R993+R994+R995** train→merge only → armed **MERGE→n80** crown :8004/:8002/:8003; R993 TRAIN_DONE→MERGE live (steps=1036); R959 857/1300; B300×8=0. **Never `pkill -f`**.
+- p4136: **R986** REFUTE m=+0.002837 ~0.41× → **R1005** TRAIN R924 + MERGE→n80. **Never `pkill -f`**.
+- p4135: **R1001+R1003** MERGE→n80 R924 :8003/:8004. **Never `pkill -f`**.
 - p4134: **R997** MERGE→n80 R337 :8003. **Never `pkill -f`**.
 - p4133: **R989** REFUTE ~−0.57× → **R1004** TRAIN + MERGE→n80. **Never `pkill -f`**.
 - p4132–p4131: pre-arm **MERGE→n80** (wait scripts stop at MERGE). **Never `pkill -f`**.
@@ -35,5 +36,4 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p4119/18: cryptoDev merge needs `--save-original-format` + visual-only missing. **Never `pkill -f`**.
 - p4109: `lium fund` Subtensor.transfer fail → `btcli`→`5FqACMt…zsThe`. **Never `pkill -f`**.
 - p4101: R959 **CROWN_OK**→**SUBMITTED** chal-00957. **Never `pkill -f`**.
-- p4096–p4061: n80 Triton/exact-PID/peft-adapter landmines. **Never `pkill -f`**.
-- p4058–p3900: SoftCtx/MidCtx UltraExtra + BL stock + REFUTE→TRAIN; never `pkill -f`.
+- p4096–p3900: SoftCtx/MidCtx UltraExtra + BL stock + REFUTE→TRAIN; never `pkill -f`.
