@@ -1,5 +1,16 @@
 # R992 — SoftCtx HiRank Midβ Mega MidLR
 
-**Status (p4142):** MERGE done @2026-08-20T11:25:24Z → **chall:8002 + v4 n80 LIVE** on `mine-r938` GPUs 2,3 (outer pid 24427, chall pid 24541). Prior pass left train→merge only; no MERGE→n80 waiter — armed this pass.
+**Status (p4145):** **REFUTE v4** vs reign36.
 
-**Decision rule:** Stage-5 iff fresh v4 n80 margin > max(2·SE, 0.002) AND thought≥80 AND B≥0.30 vs reign36.
+| field | value |
+|---|---|
+| margin | **+0.001984** |
+| SE | 0.001979 |
+| z | 1.003 |
+| bar | max(2·SE, δ)=**0.003957** (~**0.50×**) |
+| thought median | **177.5** ✓ |
+| B pass | **0.4375** ✓ |
+| n | 80 · k=3 · τ=0.03 |
+| slice | block_hash `028ab1d8…` · digest `a68ea70a…` |
+
+**Decision:** no Stage-5. Freed GPUs 2,3 → **R1012** SoftCtx HiRank Midβ **Ultra** MidLR (steps 28800 isolate).
