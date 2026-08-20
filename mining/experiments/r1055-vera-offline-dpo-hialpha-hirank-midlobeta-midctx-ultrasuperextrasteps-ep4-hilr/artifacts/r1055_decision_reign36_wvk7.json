@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-20T20:47:52Z",
+  "hypo": "R1055",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign36",
+  "margin": 0.0006935559306519333,
+  "se": 0.0022138903753746255,
+  "z": 0.3132747395112428,
+  "n": 80,
+  "bar": 0.004427780750749251,
+  "thought_median": 200.5,
+  "b_pass": 0.3875,
+  "wins": false,
+  "note": "p4185 chall+v4-n80 R924 GPUs4,5; ShortCtx LoRank Hi\u03b2 Ultra MidLR (\u03b2=0.3 r=16 lr=1e-6 @6144 steps=28800); vs reign36 vera wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}

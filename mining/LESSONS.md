@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4204: **R1058 REFUTE** m=+0.002737 ~0.41× + **R1055 REFUTE** m=+0.000694 ~0.16× → **R1075/R1076 TRAIN** r252; decision JSON `note` can be stale (trust `chall_repo` + knobs). B300×8=0. **Never `pkill -f`**.
 - p4203: **R1045 REFUTE** m=+0.001710 ~0.84× + **R1054 REFUTE** m=−0.000287 ~−0.14× → **R1073/R1074 TRAIN** r924; **R1055** lean_chall missing `python3 <<'PY'` opener (`import: command not found`) → fix+relaunch chall :8002; also patch R1070 same landmine. B300×8=0 bl cosmic-raven-04. **Never `pkill -f`**.
 - p4202: **R1061 REFUTE** m=+0.001790 ~0.15× → **R1072 TRAIN**; B300×8=0. **Never `pkill -f`**.
 - p4201: **R1052 REFUTE** m=−0.001866 ~−0.40× → **R1071 TRAIN**; B300×8=0. **Never `pkill -f`**.

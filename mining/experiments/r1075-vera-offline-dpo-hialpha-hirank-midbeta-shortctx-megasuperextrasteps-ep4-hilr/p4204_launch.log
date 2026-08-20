@@ -1,0 +1,28 @@
+stop 148205 (/root/logs/vllm_chall_r1058.pid)
+reap done
+wait free used_mib=0 iter=1
+TRAIN_PID=155413
+[r1075-lean] 2026-08-20T20:50:33Z start GPUs 6,7 ShortCtx HiRank Midβ Mega HiLR
+[r1075-lean] data_lines=604
+[r1075-lean] wait VRAM6+7 used_mib=0 iter=1
+{
+  "utc": "2026-08-20T20:50:34Z",
+  "axis": "r1075-vera-offline-dpo-hialpha-hirank-midbeta-shortctx-megasuperextrasteps-ep4-hilr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "2e-6",
+  "lora_r": 64,
+  "lora_alpha": 128,
+  "beta": 0.1,
+  "max_len": 6144,
+  "epochs": 4,
+  "max_steps": 19200,
+  "gpus": "6,7",
+  "chall_port": 8003,
+  "parent_signal": "R1058 ShortCtx HiRank MidLo\u03b2 Mega HiLR REFUTE m=+0.002737 ~0.41\u00d7 thought\u2713217 B\u27130.475 k=3 \u2192 Mid\u03b2 isolate; \u2260 MidLo\u03b2 R1058 / \u2260 MidCtx Mid\u03b2 Mega HiLR R1061 / \u2260 MidRank MidLo\u03b2 Mega HiLR R1056 / \u2260 SoftCtx Mega HiLR R1040 / \u2260 Online / \u2260 GRPO",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1075-lean] TRAIN pid=155413
+[r1075-lean] waiters armed
+155413 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1075/dpo_duel_reason.jsonl --out-dir /root/r1075/train --max-len 6144 --epochs 4 --lr 2e-6 --lora-r 64 --lora-alpha 128 --beta 0.1 --max-steps 19200
+6, 0 MiB
+7, 0 MiB
