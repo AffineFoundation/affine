@@ -6,13 +6,11 @@ Stage-5 iff fresh **v4** n80 margin > max(2·SE, δ=0.002) **and** thought≥80 
 ## Axis
 vera Offline-DPO HiAlpha **LoRank(r=16)** Hiβ SoftCtx Ultra SuperExtra ep4 **HiLR(lr=2e-6)** @12288 max_steps=28800
 Parent: R957 UltraLoLR REFUTE m=−0.002960 ~−0.79× → **HiLR isolate**.
-≠ UltraLoLR R957 / ≠ SoftCtx MidRank Hiβ Ultra R945 / ≠ SoftCtx MidRank Hiβ Mega R938 / ≠ SoftCtx HiRank Hiβ Ultra R952 / ≠ Online / ≠ GRPO
 
 ## p4084
-- Launched on `mine-crown-1` GPUs **1,3** after R957 chall reap
-- train pid **110940** · wait→merge armed
-- data: Soft Mid Mid Soft `dpo_duel_reason.jsonl` (604→259 kept)
-- Artifacts on pod: `/root/affine_data/r967_train_launched.json` `/root/logs/r967_train.nohup`
+- TRAIN crown GPUs 1,3
 
-## Verdict
-*(pending TRAIN→MERGE→n80)*
+## p4092
+- TRAIN_DONE 1036 steps @05:06Z → MERGE_DONE `/tmp/r967_merged` @05:08Z sat idle (GPUs 1,3 free)
+- Armed chall:8004 + **v4 n80 LIVE** (Triton seed chall_r965; sim pid**121844**)
+- Progress @05:17Z ~14/80
