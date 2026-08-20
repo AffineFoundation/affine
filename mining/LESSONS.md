@@ -25,12 +25,12 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4140: **R999** REFUTE m=+0.002047 ~0.60× thought✓183 B✓0.547 → **R1007 MidLR**; **R1000** REFUTE m=−0.000317 ~−0.15× → **R1008 MidLR**; exact-PID reap :8002/:8003. **Never `pkill -f`**.
+- p4141: **R994** REFUTE m=+0.001140 ~0.30× → **R1009 MidLR**; **R995** REFUTE m=−0.001045 ~−0.30× → **R1010 MidLR**; **R959 LOST** chal-00957 m=−0.000659 ~−0.33×; exact-PID reap :8002/:8003. **Never `pkill -f`**.
+- p4140: **R999** REFUTE m=+0.002047 ~0.60× → **R1007 MidLR**; **R1000** REFUTE m=−0.000317 ~−0.15× → **R1008 MidLR**. **Never `pkill -f`**.
 - p4139: **R993** REFUTE m=+0.002678 ~0.58× → **R1006 MidLR TRAIN** crown 1,3. **Never `pkill -f`**.
-- p4138–p4133: MERGE→n80 / REFUTE→UltraLoLR/MidLR isolates. **Never `pkill -f`**.
-- p4132–p4122: pre-arm MERGE→n80; HiLR→UltraLoLR/MidLR. **Never `pkill -f`**.
+- p4138–p4122: MERGE→n80 / REFUTE→UltraLoLR/MidLR isolates. **Never `pkill -f`**.
 - p4121: cryptoDev HF `model.language_model.*` layout OK — vLLM mapper remaps. **Never `pkill -f`**.
 - p4119/18: cryptoDev merge needs `--save-original-format` + visual-only missing. **Never `pkill -f`**.
 - p4109: `lium fund` Subtensor.transfer fail → `btcli`→`5FqACMt…zsThe`. **Never `pkill -f`**.
-- p4101: R959 **CROWN_OK**→**SUBMITTED** chal-00957. **Never `pkill -f`**.
+- p4101: R959 **CROWN_OK**→**SUBMITTED** chal-00957 (later **LOST** p4141). **Never `pkill -f`**.
 - p4096–p3900: SoftCtx/MidCtx UltraExtra + BL stock + REFUTE→TRAIN; never `pkill -f`.
