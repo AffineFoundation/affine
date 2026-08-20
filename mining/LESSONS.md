@@ -25,13 +25,14 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4188: **R1043 REFUTE** m=−0.015244 ~−1.21× thought✓201 B✓0.4625 k=3 → exact-PID reap :8003 → **R1059** ShortCtx MidRank Loβ Ultra HiLR TRAIN GPUs4,5 pid**226033** + MERGE→n80; B300×8=0. **Never `pkill -f`**.
 - p4187: crown **R1043** MERGE→chall:8003 CHALL_READY→**v4 n80 LIVE** sim pid**224993** vs reign36; R1056/R1057 TRAIN continue; B300×8=0; waiters armed. **Never `pkill -f`**.
 - p4186: **R1041 REFUTE** m=−0.000825 ~−0.12× · **R1042 REFUTE** m=+0.001196 ~0.24× · **R1040 REFUTE** m=+0.000946 ~0.15× (all thought✓ B✓ k=3) → exact-PID reap → **R1056+R1057+R1058 TRAIN**; B300×8=0. **Never `pkill -f`**.
-- p4185: r252 stale R1030 chall :8002 exact-PID reap → **R1055** MidCtx HiRank MidLoβ Ultra HiLR TRAIN GPUs4,5 pid**140082** + MERGE→n80; R1040 MERGE→chall LIVE; R1041/R1042 n80 still running; B300×8=0. **Never `pkill -f`**.
-- p4184: crown **R1041+R1042** TRAIN→MERGE→chall→**v4 n80 LIVE** (:8004 pid**219229** / :8002 pid**219093**) vs reign36; R1043 ~step870; R1032=chal-00967 (eval chal-00965 scoring); B300×8=0. **Never `pkill -f`**.
-- p4183: B300/B200/H200×8 stock **0**; filled idle **r924 GPUs1,3** → **R1054 ShortCtx LoRank Hiβ Ultra MidLR** (R1032 CROWN LoRank isolate) pid**99857** + MERGE→n80 :8003; R1040 ~step1015/19200; R1032=chal-00967 (eval chal-00965). **Never `pkill -f`**.
-- p4182: **R339 REFUTE** m=+0.001071 SE=0.001119 z=0.957 n=79 bar≈0.002238 (~**0.48×**) thought✓170 B✓0.329 k=3 → exact-PID reap :8002 → fill idle **R1052 ShortCtx HiRank Hiβ Ultra MidLR** GPUs6,7 pid**15792** + **R1053 MidCtx MidRank Hiβ Ultra HiLR** GPUs4,5 pid**16529**; form writer path missing (wrote decision from sim json); B300×8=0. **Never `pkill -f`**.
-- p4181: **α→TAO→Lium** r252→τ**6.634** → Lium **+$1454**; **R339** MERGE→chall:8002→n80 armed. **Never `pkill -f`**.
+- p4185: r252 stale R1030 chall :8002 exact-PID reap → **R1055** MidCtx HiRank MidLoβ Ultra HiLR TRAIN GPUs4,5 pid**140082** + MERGE→n80; B300×8=0. **Never `pkill -f`**.
+- p4184: crown **R1041+R1042** TRAIN→MERGE→chall→**v4 n80 LIVE** vs reign36; B300×8=0. **Never `pkill -f`**.
+- p4183: filled idle **r924 GPUs1,3** → **R1054**; B300×8=0. **Never `pkill -f`**.
+- p4182: **R339 REFUTE** → **R1052+R1053 TRAIN**; B300×8=0. **Never `pkill -f`**.
+- p4181: **α→TAO→Lium** r252→τ**6.634** → Lium **+$1454**. **Never `pkill -f`**.
 - p4180: **R1038+R1039 REFUTE** → **R1049+R1050+R1051 TRAIN**. **Never `pkill -f`**.
 - p4179: **R1025+R1037 REFUTE** → **R1047+R1048 TRAIN**; R1032=**chal-00967**. **Never `pkill -f`**.
 - p4177: **R1032 CROWN_OK**→SUBMITTED chal-00967. **Never `pkill -f`**.

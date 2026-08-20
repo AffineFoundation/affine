@@ -1,0 +1,84 @@
+{
+  "elapsed_s": 395.15542817115784,
+  "king_repo": "vera6/affine-5g4yy75zuz-t6",
+  "king_rev": "8e3f1695e058837ed80fec3238ff439fdc2d0f0e",
+  "chall_repo": "/tmp/r1043_merged",
+  "block_hash": "56ba4c661567c3588fa8a3bd52605bbf6e6606e42a23455fe2830e22a397ac15",
+  "hotkey": "local-r1043-reign36-wvk7",
+  "verdict": {
+    "challenger_wins": false,
+    "rejection_reason": null,
+    "margin": -0.015244246980825549,
+    "se": 0.006278562329072496,
+    "z": -2.427983697834455,
+    "k_sigma": 2.0,
+    "min_margin": 0.002,
+    "n_paired_turns": 80,
+    "ranking_formula": "Reason(turn) = tau\u00b7log(mean_i exp((lpC(y_i|z_A) \u2212 lpC(y_i|\u2205))/tau))",
+    "duel_params": {
+      "n_turns": 80,
+      "k_sigma": 2.0,
+      "min_margin": 0.002,
+      "min_thought_chars": 80,
+      "causality_gate": true,
+      "causality_gamma": 0.3,
+      "tau": 0.03,
+      "n_teacher_samples": 3,
+      "n_miner_samples": 1
+    },
+    "king": {
+      "reason": 0.011636781406183249,
+      "n_turns": 80,
+      "n_pairs": 240,
+      "gate_pass_rate": 0.0,
+      "bank_frac": null,
+      "calib_ratio": null,
+      "baseline_abs": null,
+      "mean_l1lift": null,
+      "mean_eta": 13.608919359969393,
+      "mean_len_z": 185.1625,
+      "median_len_z": 168.5,
+      "mean_len_y": 258.5375,
+      "mean_b": 0.030013781461321776,
+      "b_gate_pass_rate": 0.3875,
+      "len_z_delta": -52.39583333333334,
+      "len_y_delta": -130.43333333333334
+    },
+    "challenger": {
+      "reason": -0.0036074655746422993,
+      "n_turns": 80,
+      "n_pairs": 240,
+      "gate_pass_rate": 0.0,
+      "bank_frac": null,
+      "calib_ratio": null,
+      "baseline_abs": null,
+      "mean_l1lift": null,
+      "mean_eta": 10.853514320144372,
+      "mean_len_z": 224.8875,
+      "median_len_z": 201.0,
+      "mean_len_y": 221.0875,
+      "mean_b": 0.03735998518591915,
+      "b_gate_pass_rate": 0.4625,
+      "len_z_delta": -12.670833333333348,
+      "len_y_delta": -167.88333333333335
+    },
+    "teacher": {
+      "mean_len_z": 237.55833333333334,
+      "mean_len_y": 388.97083333333336
+    },
+    "duel_seconds": 395.1549923599814,
+    "slice": {
+      "seed": 15341526701957811058,
+      "n": 80,
+      "digest": "b85f518e5e549e1643af4d9046277beac2ca69a9a9a0201563a3ab45843283be",
+      "block_hash": "56ba4c661567c3588fa8a3bd52605bbf6e6606e42a23455fe2830e22a397ac15",
+      "corpus_epoch": 13,
+      "manifest_sha256": "09d8c168d6452422b19d04650b4fe607b601c30b11ca785f16a97d50b4c4af0d"
+    }
+  },
+  "h4": {
+    "chall_r": null,
+    "chall_baseline_abs": null,
+    "king_baseline_abs": null
+  }
+}
