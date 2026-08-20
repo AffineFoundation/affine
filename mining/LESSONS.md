@@ -25,21 +25,13 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4150: **R1008 CROWN_OK** m=+0.005917 ~1.325× (thought✓165 B✓0.433) → **SUBMITTED** reveal **31475534**; **R1003 REFUTE** ~0.40×→**R1016**; **R1007 REFUTE** ~0.76×→**R1017**; submit needs JSON `*pub.txt` + `cryptoType=1`. **Never `pkill -f`**.
-- p4149: **R1001 REFUTE** m=−0.001264 ~−0.36× (thought✓168 B✓0.5) → **R1015 MidLR TRAIN** r924 1,3 pid70313; B300×8=0 BL-only. **Never `pkill -f`**.
-- p4148: **R996 REFUTE** m=−0.004865 ~−0.76× (thought✓220 B✓0.435) → **R1013 MidLR TRAIN** r926 3,4; **R1002 REFUTE** m=−0.002933 ~−0.78× (thought✓185 B✓0.35) → **R1014 MidLR TRAIN** r252 4,5; B300×8=0. **Never `pkill -f`**.
-- p4147: `lium ls` showed non-BL `fbb1135f` 8×B200 — **already on executor_blacklist**; rented anyway → **nvidia-smi=3×B200** ($/h≈3×) → **rm** same pass. Always `cat artifacts/executor_blacklist.txt` before `lium up`. **Never `pkill -f`**.
-- p4146: **R1002** train.done→MERGE sat (wait stops at merge_ready) → armed **MERGE→n80** r252 GPUs4,5; R996 n80~17/80; B300×8=0. **Never `pkill -f`**.
-- p4145: **R992** REFUTE m=+0.001984 ~0.50× (thought✓177.5 B✓0.4375) → **R1012 Ultra MidLR TRAIN** r938 2,3; R996 n80 ARMED; B300×8=0. **Never `pkill -f`**.
-- p4144: **R996** train+merge done sat idle (wait script stopped at MERGE) → armed chall:8002+v4 n80 on r926 GPUs3,4; R992~67/80; B300×8=0. **Never `pkill -f`**.
-- p4143: **R997** REFUTE m=−0.000793 ~−0.17× (thought✓195 B✓0.5) → **R1011 MidLR TRAIN** r337 4,5; R992 n80 still LIVE; B300×8=0. **Never `pkill -f`**.
-- p4142: **R992** train+merge done sat idle (no MERGE→n80 waiter) → armed chall:8002+v4 n80 on r938 GPUs2,3; skip BL `8f34559f`. **Never `pkill -f`**.
-- p4141: **R994** REFUTE m=+0.001140 ~0.30× → **R1009 MidLR**; **R995** REFUTE m=−0.001045 ~−0.30× → **R1010 MidLR**; **R959 LOST** chal-00957. **Never `pkill -f`**.
-- p4140: **R999** REFUTE m=+0.002047 ~0.60× → **R1007 MidLR**; **R1000** REFUTE m=−0.000317 ~−0.15× → **R1008 MidLR**. **Never `pkill -f`**.
-- p4139: **R993** REFUTE m=+0.002678 ~0.58× → **R1006 MidLR TRAIN** crown 1,3. **Never `pkill -f`**.
-- p4138–p4122: MERGE→n80 / REFUTE→UltraLoLR/MidLR isolates. **Never `pkill -f`**.
+- p4151: filled r338 GPUs4,5 with **R1018** MidCtx HiRank Hiβ Mega MidLR (β=0.3 r=64 lr=1e-6 @8192 steps=19200) pid**104157** + MERGE→n80; R1008 **QUEUED chal-00961**; B300×8=0 BL-only `8f34559f`. **Never `pkill -f`**.
+- p4150: **R1008 CROWN_OK** m=+0.005917 ~1.325× → **SUBMITTED** reveal **31475534**; **R1003 REFUTE**→**R1016**; **R1007 REFUTE**→**R1017**; submit needs JSON `*pub.txt` + `cryptoType=1`. **Never `pkill -f`**.
+- p4149: **R1001 REFUTE** → **R1015 MidLR TRAIN** r924 1,3; B300×8=0 BL-only. **Never `pkill -f`**.
+- p4148: **R996+R1002 REFUTE** → **R1013+R1014 MidLR TRAIN**. **Never `pkill -f`**.
+- p4147: BL `fbb1135f` advertised 8× but nvidia-smi=3× → always check executor_blacklist before `lium up`. **Never `pkill -f`**.
+- p4146–p4139: MERGE→n80 waiters + MidLR isolates after REFUTE. **Never `pkill -f`**.
 - p4121: cryptoDev HF `model.language_model.*` layout OK — vLLM mapper remaps. **Never `pkill -f`**.
-- p4119/18: cryptoDev merge needs `--save-original-format` + visual-only missing. **Never `pkill -f`**.
 - p4109: `lium fund` Subtensor.transfer fail → `btcli`→`5FqACMt…zsThe`. **Never `pkill -f`**.
-- p4101: R959 **CROWN_OK**→**SUBMITTED** chal-00957 (later **LOST** p4141). **Never `pkill -f`**.
+- p4101/p4141: R959 **CROWN_OK**→**LOST** chal-00957. **Never `pkill -f`**.
 
