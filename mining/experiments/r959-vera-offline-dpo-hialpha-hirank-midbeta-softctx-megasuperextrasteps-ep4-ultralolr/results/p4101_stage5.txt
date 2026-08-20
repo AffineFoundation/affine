@@ -1,0 +1,8 @@
+R959 Stage5 p4101
+- HF: unconst/Affine-5czsc2fc98-r959-vera-odpo-hirank-midbeta-softctx-megaextra-ep4-ultralolr-merged @ 3b427b1678d53890655c27f0e43166a4cc6a6d65
+- hotkey r959 `5DkVMypUxctB5wAbNPhL1K5LsEafSseywCoGJFHDHurxzoXJ` reg extrinsic **8884228-0003** burn ≈τ2.61
+- --check OK
+- submitted blockhash `0x458b118a70d2198b0b4e216d7b8e2331ba055430a711c565dced74de9cb53cda`
+- reveal opens drand round **31468125**
+- n80: margin=+0.006384 SE=0.002605 bar≈0.005210 (~1.23×) thought✓173 B✓0.406 k=3 vs reign36
+- note: r959pub.txt needed JSON keyfile (not bare ss58) for submit_call

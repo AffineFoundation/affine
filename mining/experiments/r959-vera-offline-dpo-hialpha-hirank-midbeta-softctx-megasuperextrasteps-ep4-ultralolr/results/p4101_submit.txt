@@ -1,0 +1,66 @@
+committing: affine1|unconst/Affine-5czsc2fc98-r959-vera-odpo-hirank-midbeta-softctx-megaextra-ep4-ultralolr-merged|3b427b1678d53890655c27f0e43166a4cc6a6d65|5DkVMypUxctB5wAbNPhL1K5LsEafSseywCoGJFHDHurxzoXJ
+Traceback (most recent call last):
+  File "/home/const/subnet120/.venv/lib/python3.12/site-packages/bittensor/_substrate.py", line 619, in submit
+    extrinsic = await self.raw.create_signed_extrinsic(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/const/subnet120/.venv/lib/python3.12/site-packages/bittensor/_transport/interface.py", line 500, in create_signed_extrinsic
+    nonce = await self._nonces.next_for(keypair.ss58_address)
+                                        ^^^^^^^^^^^^^^^^^^^^
+  File "/home/const/subnet120/.venv/lib/python3.12/site-packages/bittensor/signing.py", line 201, in ss58_address
+    return self._public().ss58_address
+           ^^^^^^^^^^^^^^
+  File "/home/const/subnet120/.venv/lib/python3.12/site-packages/bittensor/signing.py", line 181, in _public
+    return self._wallet.hotkeypub
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/const/subnet120/.venv/lib/python3.12/site-packages/bittensor/wallet.py", line 96, in hotkeypub
+    self._hotkeypub = self._hotkeypub_file.get_keypair()
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/const/subnet120/.venv/lib/python3.12/site-packages/bittensor/keyfiles.py", line 177, in get_keypair
+    return deserialize_keypair_from_keyfile_data(data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+bittensor_core.KeyfileError: failed to parse keyfile data
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/const/subnet120/mining/experiments/r959-vera-offline-dpo-hialpha-hirank-midbeta-softctx-megasuperextrasteps-ep4-ultralolr/results/submit.py", line 231, in <module>
+    main()
+  File "/home/const/subnet120/mining/experiments/r959-vera-offline-dpo-hialpha-hirank-midbeta-softctx-megasuperextrasteps-ep4-ultralolr/results/submit.py", line 224, in main
+    res = subtensor.submit_call(call, wallet, signer="hotkey")
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/const/subnet120/.venv/lib/python3.12/site-packages/bittensor/sync.py", line 403, in submit_call
+    return self._call(self._client.submit_call(call, wallet, **kwargs))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/const/subnet120/.venv/lib/python3.12/site-packages/bittensor/sync.py", line 276, in _call
+    return loop.call(coro)
+           ^^^^^^^^^^^^^^^
+  File "/home/const/subnet120/.venv/lib/python3.12/site-packages/bittensor/sync.py", line 91, in call
+    return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/concurrent/futures/_base.py", line 456, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/home/const/subnet120/.venv/lib/python3.12/site-packages/bittensor/client.py", line 453, in submit_call
+    return await self._executor.submit_call(call, wallet, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/const/subnet120/.venv/lib/python3.12/site-packages/bittensor/executor.py", line 827, in submit_call
+    return await self.substrate.submit(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/const/subnet120/.venv/lib/python3.12/site-packages/bittensor/_substrate.py", line 627, in submit
+    return self._failed_submit(error, keypair.ss58_address)
+                                      ^^^^^^^^^^^^^^^^^^^^
+  File "/home/const/subnet120/.venv/lib/python3.12/site-packages/bittensor/signing.py", line 201, in ss58_address
+    return self._public().ss58_address
+           ^^^^^^^^^^^^^^
+  File "/home/const/subnet120/.venv/lib/python3.12/site-packages/bittensor/signing.py", line 181, in _public
+    return self._wallet.hotkeypub
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/const/subnet120/.venv/lib/python3.12/site-packages/bittensor/wallet.py", line 96, in hotkeypub
+    self._hotkeypub = self._hotkeypub_file.get_keypair()
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/const/subnet120/.venv/lib/python3.12/site-packages/bittensor/keyfiles.py", line 177, in get_keypair
+    return deserialize_keypair_from_keyfile_data(data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+bittensor_core.KeyfileError: failed to parse keyfile data
