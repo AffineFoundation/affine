@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 77105.78209632596 | p4219 |
-| Lium balance | **$77105.78209632596** | p4219 |
-| cumulative mining spend | ~$146,056 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$67106** (balance − $10,000 floor) | $UTC |
+| $UTC | 77030.03737675142 | p4220 |
+| Lium balance | **$77030.03737675142** | p4220 |
+| cumulative mining spend | ~$146,132 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$67030** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (9 pods) | **~$392.18/h** · vs floor $833/h · gap **−$440.82/h** · B300×8=0 · B200×8 stock=0 | p4219 |
+| miner burn (9 pods) | **~$392.18/h** · vs floor $833/h · gap **−$440.82/h** · B300×8=0 · B200×8 stock=0 | p4220 |
 | miner coldkey free | τ~1246.7 | kept ≥τ50 |
-| miner stake | **r252 ~59α ≈ τ3.36** (<τ5 sweep bar) | p4219 |
+| miner stake | **r252 ~59α ≈ τ3.36** (<τ5 sweep bar) | p4220 |
 | registrations / submissions | **16** / **16** (… **r1064 chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-20T23:31:35Z | 77030.03737675142 | p4220 **R1077 n80** + **R1072 REFUTE→R1087 TRAIN** (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-20T23:24:34Z | 77105.78209632596 | p4219 **R1070+R1071 REFUTE→R1085+R1086 TRAIN** r339 (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-20T23:17:43Z | 77143.55926132479 | p4218 **R1074 REFUTE→R1084 TRAIN** (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-20T23:13:22Z | 77181.46319228882 | p4217 **R1078 REFUTE→R1083 TRAIN** (no rent; B300/B200×8=0); burn **~$392.18/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-20T21:30:46Z | 77929.83713089161 | p4209 **rent B200** `mine-r340`@$37.60/h (gentle-orbit-4a TTL→21:24Z) + R1060 n80 relaunch; burn **~$392.18/h**; B300×8=0 |
 | 2026-08-20T21:20:43Z | 77999.62278046655 | p4208 **R1064 Stage-5**: reg + submit reveal **31485871**; **R1062 REFUTE→R1079**; burn **~$354.58/h**; B300×8=0 |
 | 2026-08-20T21:07:30Z | 78103.54768824481 | p4207 **α→TAO→Lium**: unstake r252 **59.04α** → `btcli transfer` τ**3.36** Lium · bal **77358→78103** (+~$745) |
-| 2026-08-20T21:13:38Z | 78070.45781489636 | p4207 post-burn snapshot (fleet still ~$354.58/h; no rent; B300×8=0) |

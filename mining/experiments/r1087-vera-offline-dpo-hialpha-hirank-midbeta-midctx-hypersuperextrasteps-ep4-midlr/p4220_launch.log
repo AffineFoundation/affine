@@ -1,0 +1,38 @@
+stop 158499 (/root/logs/vllm_chall_r1072.pid)
+reap done
+wait free used_mib=0 iter=1
+TRAIN_PID=166147
+[r1087-lean] 2026-08-20T23:31:11Z start GPUs 4,5 MidCtx HiRank Midβ Hyper MidLR
+[r1087-lean] data_lines=604
+[r1087-lean] wait VRAM4+5 used_mib=0 iter=1
+{
+  "utc": "2026-08-20T23:31:11Z",
+  "axis": "r1087-vera-offline-dpo-hialpha-hirank-midbeta-midctx-hypersuperextrasteps-ep4-midlr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "1e-6",
+  "lora_r": 64,
+  "lora_alpha": 128,
+  "beta": 0.1,
+  "max_len": 8192,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "4,5",
+  "chall_port": 8003,
+  "parent_signal": "R1072 MidCtx HiRank Mid\u03b2 Ultra HiLR REFUTE m=-0.000198 ~-0.05\u00d7 thought\u2713173.5 B\u27130.425 k=3 \u2192 HyperExtra MidLR isolate",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1087-lean] TRAIN launched pid=166147 BASE=/root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e
+[r1087-lean] wait→merge armed pid=166152
+[r1087-lean] MERGE→n80 waiter armed pid=166155
+166147 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1087/dpo_duel_reason.jsonl --out-dir /root/r1087/train --max-len 8192 --epochs 4 --lr 1e-6 --lora-r 64 --lora-alpha 128 --beta 0.1 --max-steps 38400
+163383 /root/venv/bin/python3 /root/venv/bin/vllm serve /tmp/r1077_merged --port 8002 --tensor-parallel-size 2 --max-model-len 65536 --gpu-memory-utilization 0.72 --max-num-batched-tokens 8192 --attention-backend FLASH_ATTN --attention-config.use_trtllm_attention 0 --compilation-config.pass_config.fuse_allreduce_rms false --moe-backend triton --additional-config {"gdn_prefill_backend": "triton"} --enforce-eager
+165636 /root/venv/bin/python3 /root/mining_src/s4-h2-merge/run_sim_duel.py --teacher-repo zai-org/GLM-4.5-Air-FP8 --king-repo /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --king-rev 8e3f1695e058837ed80fec3238ff439fdc2d0f0e --chall-repo /tmp/r1077_merged --chall-rev local --chall-port 8002 --n-turns 80 --hotkey local-r1077-reign36-wvk7 --block-hash 36db7474f1bffa4e70c1938e7f3b71787532b925be058af1e076b240a7e8c003 --out /root/affine_data/r1077_sim_result_reign36_wvk7.json --progress-out /root/affine_data/r1077_sim_progress_reign36_wvk7.json --save-artifact
+0, 166632 MiB
+1, 166632 MiB
+2, 134924 MiB
+3, 134922 MiB
+4, 33688 MiB
+5, 33682 MiB
+6, 160230 MiB
+7, 160230 MiB
+p4220 R1087 launch exit=0
