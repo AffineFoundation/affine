@@ -1,0 +1,31 @@
+stop 102123 (/root/logs/vllm_chall_r1046.pid)
+reap done
+wait free used_mib=0 iter=1
+OUTER_PID=104811
+TRAIN_PID=104833
+[r1068-lean] 2026-08-20T20:03:24Z start GPUs 4,5 ShortCtx HiRank MidLoβ Mega MidLR
+[r1068-lean] data_lines=604
+[r1068-lean] wait VRAM4+5 used_mib=0 iter=1
+{
+  "utc": "2026-08-20T20:03:25Z",
+  "axis": "r1068-vera-offline-dpo-hialpha-hirank-midlobeta-shortctx-megasuperextrasteps-ep4-midlr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "1e-6",
+  "lora_r": 64,
+  "lora_alpha": 128,
+  "beta": 0.05,
+  "max_len": 6144,
+  "epochs": 4,
+  "max_steps": 19200,
+  "gpus": "4,5",
+  "parent_signal": "R1046 MidCtx HiRank MidLo\u03b2 Mega MidLR REFUTE m=-0.000756 ~-0.22\u00d7 thought\u2713185 B\u27130.40 k=3 \u2192 ShortCtx isolate",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1068-lean] TRAIN launched pid=104833
+[r1068-lean] waiters armed
+1, 72127 MiB, 2 %
+3, 63969 MiB, 0 %
+4, 0 MiB, 0 %
+5, 0 MiB, 0 %
+6, 73523 MiB, 18 %
+7, 129825 MiB, 35 %
