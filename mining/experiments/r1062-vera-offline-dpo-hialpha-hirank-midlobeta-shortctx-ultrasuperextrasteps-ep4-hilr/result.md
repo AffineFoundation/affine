@@ -1,20 +1,8 @@
-# R1062 — ShortCtx HiRank MidLoβ Ultra HiLR (p4191)
+# R1062 — pass notes
 
-## Claim
-R1044 ShortCtx HiRank MidLoβ Ultra MidLR REFUTE m=+0.000182 ~0.07×
-(thought✓167 B✓0.416 k=3) → MidLR→HiLR isolate on same ShortCtx Ultra lane.
-
-## Knobs
-- base: `vera6/affine-5g4yy75zuz-t6`@`8e3f1695`
-- Offline-DPO Soft Mid Mid Soft→ShortCtx
-- β=0.05 · α=128 · r=64 · lr=**2e-6** · max_len=6144 · epochs=4 · max_steps=28800
-
-## ≠
-MidLR R1044 / ShortCtx Mega HiLR R1058 / SoftCtx Ultra MidLR R1029 /
-MidCtx Ultra HiLR R1055 / SoftCtx Mega HiLR R1040 / Online / GRPO
-
-## Decision rule
-Stage-5 iff fresh v4 n80 margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 vs reign36.
-
-## Status
-TRAIN armed p4191 on `mine-r938` GPUs 2,3 after exact-PID reap of R1044 chall :8002.
+## p4205 (2026-08-20T20:56Z)
+- train.done @20:43Z (884 steps, adapter OK).
+- First merge hit **ENOSPC** writing shard 12/16 of `/tmp/r1062_merged`.
+- Root cause: ~8 leftover `/tmp/*_merged` (~66G each) on 509G overlay (r938 4×H200).
+- Action: deleted stale merges + old `/root/r*` workdirs + train checkpoints; relaunched merge pid **41047**; arm writes `r1062_merge.done` / `r1062_merge_ready` for existing n80 waiter.
+- Decision rule unchanged: fresh v4 n80 vs reign36; submit iff margin > max(2·SE, δ=0.002) ∧ thought≥80 ∧ B≥0.30.
