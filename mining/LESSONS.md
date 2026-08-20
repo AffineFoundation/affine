@@ -25,10 +25,10 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4205: **R1062 merge ENOSPC** at shard 12/16 on r938 (4×H200) — ~8 stale `/tmp/*_merged` (~66G each) filled overlay; purge old merges+ckpt before re-merge; n80 waiter already armed on `merge_ready`. B300×8=0. **Never `pkill -f`**.
-- p4204: **R1058 REFUTE** m=+0.002737 ~0.41× + **R1055 REFUTE** m=+0.000694 ~0.16× → **R1075/R1076 TRAIN** r252; decision JSON `note` can be stale (trust `chall_repo` + knobs). B300×8=0. **Never `pkill -f`**.
-- p4203: **R1045 REFUTE** m=+0.001710 ~0.84× + **R1054 REFUTE** m=−0.000287 ~−0.14× → **R1073/R1074 TRAIN** r924; **R1055** lean_chall missing `python3 <<'PY'` opener (`import: command not found`) → fix+relaunch chall :8002; also patch R1070 same landmine. B300×8=0 bl cosmic-raven-04. **Never `pkill -f`**.
-- p4202: **R1061 REFUTE** m=+0.001790 ~0.15× → **R1072 TRAIN**; B300×8=0. **Never `pkill -f`**.
+- p4206: **R1032 LOST** near-δ m=+0.001428 ~0.71× (z=2.77 cleared 2·SE; failed δ=0.002) thought✓177 B✓0.463; **R1065 REFUTE** causality_fail B=0.292 → **R1077** MidLR+HyperExtra38400; R1062 n80 LIVE after ENOSPC merge retry. Skip bl cosmic-raven-04. **Never `pkill -f`**.
+- p4205: **R1062 merge ENOSPC** at shard 12/16 on r938 — purge stale `/tmp/*_merged` before re-merge. B300×8=0. **Never `pkill -f`**.
+- p4204: **R1058 REFUTE** ~0.41× + **R1055 REFUTE** ~0.16× → **R1075/R1076 TRAIN** r252. B300×8=0. **Never `pkill -f`**.
+- p4203: **R1045/R1054 REFUTE→R1073/R1074**; lean_chall missing `python3 <<'PY'` opener. bl cosmic-raven-04. **Never `pkill -f`**.
 - p4200–p4150: REFUTE→TRAIN cascade; TTL→**2026-08-21T13:26Z**; B300 waiters armed. **Never `pkill -f`**.
 
 
