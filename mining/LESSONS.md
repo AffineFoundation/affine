@@ -25,41 +25,14 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4132: **R989 MERGE_DONE idle** (wait stopped at MERGE) → immediate lean chall:8002 + v4 n80 R337 GPUs6,7 (CHALL_READY→n80 pid79352); R959 chal-00957 **scoring** 81/1300; B300×8=0 BL-only. **Never `pkill -f`**.
-- p4131: wait scripts stop at MERGE — **pre-arm MERGE→lean n80 waiters** (R986 on R924 GPUs6,7 pid59306); R973 REFUTE m=−0.008977 ~−1.36× confirmed (acted p4125→R996); B300×8=0 BL-only. **Never `pkill -f`**.
-- p4130: **R985** REFUTE m=+0.002374 ~0.45× (thought✓199 B✓0.456 k=3) vs reign36 → exact-PID reap :8002 → **R1003 MidCtx HiRank Midβ Ultra UltraLoLR** TRAIN R924 4,5 pid58584 (R1001 1,3 + R986 6,7 kept); B300×8=0 (1×B300 only). **Never `pkill -f`**.
-- p4129: **R988** REFUTE m=−0.005355 ~−0.91× (thought✓203 B✓0.523 k=3) vs reign36 → exact-PID reap :8002 → **R1002 MidCtx MidRank MidLoβ Mega UltraLoLR** TRAIN R252 4,5 pid105909 (R998 6,7 kept); R985 n80 early; B300×8=0. **Never `pkill -f`**.
-- p4128: **R984** REFUTE m=−0.004011 ~−0.37× → **R985 n80** + **R1001** TRAIN R924; B300×8=0. **Never `pkill -f`**.
-- p4127: **R987/R975/R990/R991** REFUTE → **R997–R1000 UltraLoLR TRAIN** + **R988 n80**; B300×8=0 BL. **Never `pkill -f`**.
-- p4126: five MERGE idle→v4 n80; wait scripts stop at MERGE — next pass must arm lean. **Never `pkill -f`**.
-- p4125–p4122: HiLR REFUTE→UltraLoLR/MidLR isolates on crown/R938/R926 (R994–R996/R992/R993). **Never `pkill -f`**.
-- p4121: cryptoDev HF `model.language_model.*` layout OK — vLLM mapper remaps; do not remap. **Never `pkill -f`**.
-- p4119/18: cryptoDev merge needs `--save-original-format` + visual-only missing; never merge on teacher GPUs. **Never `pkill -f`**.
-- p4117–p4110: Mega/Ultra HiLR REFUTE chain → MidCtx isolates + UltraLoLR follow-ups; MERGE idle→lean n80. **Never `pkill -f`**.
+- p4133: **R989** REFUTE m=−0.008603 ~−0.57× (thought✓183.5 B✓0.40 k=3) vs reign36 → exact-PID reap :8002 → **R1004 SoftCtx MidRank Midβ Ultra UltraLoLR** TRAIN R337 6,7 pid80231 + MERGE→n80 waiter (R997 4,5 kept); R959 scoring 287/1300; B300×8=0. **Never `pkill -f`**.
+- p4132: **R989 MERGE_DONE idle** → lean chall:8002 + v4 n80 R337; B300×8=0 BL-only. **Never `pkill -f`**.
+- p4131: wait scripts stop at MERGE — **pre-arm MERGE→lean n80 waiters**. **Never `pkill -f`**.
+- p4130–p4122: HiLR REFUTE→UltraLoLR/MidLR isolates (R1003–R992). **Never `pkill -f`**.
+- p4121: cryptoDev HF `model.language_model.*` layout OK — vLLM mapper remaps. **Never `pkill -f`**.
+- p4119/18: cryptoDev merge needs `--save-original-format` + visual-only missing. **Never `pkill -f`**.
 - p4109: `lium fund` Subtensor.transfer fail → `btcli`→`5FqACMt…zsThe`. **Never `pkill -f`**.
 - p4101: R959 **CROWN_OK**→**SUBMITTED** chal-00957. **Never `pkill -f`**.
-- p4096/95/90/87/86: n80 deaths — exact-PID + FORCE Triton seed + TP/gpu_mem. **Never `pkill -f`**.
-- p4085: R938 **LOST** chal-00949 m=−0.000615 ~−0.31× vs reign36. **Never `pkill -f`**.
-- p4076: catalog 8×B200 BL; UUID→1×B200 mislabel → **rm**. **Never `pkill -f`**.
-- p4066: chall Triton miss on king-seed → FORCE seed from live sibling chall. **Never `pkill -f`**.
-- p4061: peft writes `…/train/adapter/` not flat adapter path. **Never `pkill -f`**.
-- p4058–p4042: SoftCtx/MidCtx UltraExtra + host-relay + Triton seed landmines (SIZE_OK, chall_r928 seed, never `pkill -f`). Stock often BL-only. **Never `pkill -f`**.
-- p4041: R338 n80 404 `model vera6/… does not exist` when king served from **local path** — pass `--king-repo`=`/v1/models` id (not hub string); fill crown idle GPUs **1,3** → **R936** SoftCtx HiRank Loβ; stock still BL `8f34559f`/`fbb1135f`. **Never `pkill -f`**.
-- p4040: B300×8=0 + sole 8×B200 BL `8f34559f` → fill R338 idle GPUs **6,7** with **R935** HiRank Loβ MidCtx while chall:8002 loads; `lium scp` flaky → plain `scp -P`. **Never `pkill -f`** (matches SSH cmdline).
-- p4039: R338 online-DPO TRAIN_DONE (189 steps) but post_train merge aborted — `mine.env`/pipe still pinned **marsplan queen** path after p4027 vera pivot; fix=merge `--base` vera `8e3f1695` + pin mine.env + king:8001 + chall:8002 + v4 n80. **Never `pkill -f`**.
-- p4038: B300×8=0 + sole 8×B200 still BL `8f34559f` → fill R926 idle H100 GPUs **4–7** with **R933** ShortCtx MidLoβ + **R934** MidCtx Loβ; `lium scp TARGET local remote`. **Never `pkill -f`**.
-- p4037: R923 **REFUTE** ~0.56× (m=+0.001172 SE=0.001042 thought✓175 B✓0.315) → exact-PID reap chall :8002 → **R932** HiRank Hiβ ShortCtx; stock BL-only → fill R924 idle GPUs **4–7** with **R930/R931**. **Never `pkill -f`**.
-- p4036: `lium fund` fails (`Subtensor` has no `transfer`) — fallback `btcli wallet transfer` τ→ Lium ck `5FqACMt…zsThe`; r252 236α/~τ13→τ12.5→Lium (+~$2.6k). R923 chall READY→n80 RUNNING. Stock BL-only. **Never `pkill -f`**.
-- p4035: R913 **REFUTE** ~−0.17× → R929 HiRank ShortCtx MidLoβ; R923 TRAIN_DONE but merge failed `--adapter …/train` (peft wants `…/train/adapter`) — relaunch merge+n80 arm. Stock only BL `fbb1135f`. **Never `pkill -f`**.
-- p4034: cold crown n80 died — missing `s4-h2-merge/run_sim_duel.py` + no pyarrow; fix=upload sim + `ensurepip`+pyarrow + corpus sync. R912 **REFUTE** ~0.53× → R928 HiRank Midβ MidCtx. Chall relaunch needs CUDA_HOME=cu13 (lean_chall has it). **Never `pkill -f`**.
-- p4033: crown cold TK finished → teacher :8000 + king :8001 READY; R912/R913 MERGE_DONE → dual n80 chall launched (:8003/:8002). Waiter `king id=?` is expected until king READY — next 30s poll fires. Stock still BL-only 8×B200. **Never `pkill -f`**.
-- p4032: R927 premature TRAIN failed `ModuleNotFoundError: evalsrv` + partial shards; harden arm to require **16** `model-*-of-*.safetensors` **and** live `from evalsrv.chat import THINK_OPEN` before lean; crown cold TK (teacher DL GPU0 + king GPU2) + arm MERGE→n80 while R912/R913 merge. **Never `pkill -f`**.
-- p4031: sole 8×B200 is **BL** `fbb1135f` → skip; fill idle R926 H100 GPUs **2,3** with R927 MidCtx MidLoβ; stub empty `affine_pkg` → upload fleet-v4-sync; arm waits `cryptodev_dl.done`+weight shards (not bare `config.json`). **Never `pkill -f`**.
-- p4030: B300/B200×8 empty → rent **8×H100** `$13.76` for R926 SoftCtx MidLoβ restart; fill idle H200 GPUs **2,3** with R925 HiRank MidCtx MidLoβ (R901 0.64×). `lium scp` rejects dirs — use `lium rsync` or tar+scp. **Never `pkill -f`**.
-- p4028: B300×8=0 + only bl `8f34559f` B200 → rented **8×H200** `mine-r924` MidCtx Hiβ ($33.81) to cut burn gap; replace when B300 appears. **Never `pkill -f`**.
-- p4027: **marsplan0624/…queen gated** (403 even with `canReadGatedRepos`) — old rev `556d02a2` 404; pivot online-DPO to **vera** `8e3f1695`. **R914 REFUTE** ~0.14× → **R923** ShortCtx Hiβ. **Never `pkill -f`**.
-- p4026: **`mine-crown-1` has no wait_bootstrap case** → manual cold pack (`p4026_crown_cold_r912_r913.sh`) + Soft Mid Mid Soft from local r886; API stock `bl_skip=1` only. **Never `pkill -f`**.
-- p4025: **stale `.bootstrapped` after re-rent** skipped R252/R337/R338; `mine-crown-1` falls to `needs_axis_uploader` (no case) → clear markers + manual upload; **R914 n80 relaunched** on R888. **Never `pkill -f`**.
-- p4024: **TTL collapse** (~17:23Z) killed 5 mine-* → rented **8×B300 crown** + **3×8×B200**; tore bl **`8f34559f` R339**; R914 MERGE OK / n80 ConnectError. **Never `pkill -f`**.
+- p4096–p4061: n80 Triton/exact-PID/peft-adapter landmines. **Never `pkill -f`**.
+- p4058–p4022: SoftCtx/MidCtx UltraExtra + host-relay + BL stock + TTL collapse + queen gated→vera. **Never `pkill -f`**.
 - p4022–p3900: REFUTE→TRAIN; α→τ→Lium; stamp after `test -x`; never `pkill -f`.
-
