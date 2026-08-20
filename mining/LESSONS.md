@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4186: **R1041 REFUTE** m=−0.000825 ~−0.12× · **R1042 REFUTE** m=+0.001196 ~0.24× · **R1040 REFUTE** m=+0.000946 ~0.15× (all thought✓ B✓ k=3) → exact-PID reap → **R1056+R1057+R1058 TRAIN**; B300×8=0. **Never `pkill -f`**.
 - p4185: r252 stale R1030 chall :8002 exact-PID reap → **R1055** MidCtx HiRank MidLoβ Ultra HiLR TRAIN GPUs4,5 pid**140082** + MERGE→n80; R1040 MERGE→chall LIVE; R1041/R1042 n80 still running; B300×8=0. **Never `pkill -f`**.
 - p4184: crown **R1041+R1042** TRAIN→MERGE→chall→**v4 n80 LIVE** (:8004 pid**219229** / :8002 pid**219093**) vs reign36; R1043 ~step870; R1032=chal-00967 (eval chal-00965 scoring); B300×8=0. **Never `pkill -f`**.
 - p4183: B300/B200/H200×8 stock **0**; filled idle **r924 GPUs1,3** → **R1054 ShortCtx LoRank Hiβ Ultra MidLR** (R1032 CROWN LoRank isolate) pid**99857** + MERGE→n80 :8003; R1040 ~step1015/19200; R1032=chal-00967 (eval chal-00965). **Never `pkill -f`**.
