@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 79572.35041310577 | p4080 |
-| Lium balance | **$79572.35041310577** | p4080 |
-| cumulative mining spend | ~$138,313 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$69572** (balance − $10,000 floor) | $UTC |
+| $UTC | 79537.00037931421 | p4081 |
+| Lium balance | **$79537.00037931421** | p4081 |
+| cumulative mining spend | ~$138,348 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$69537** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (8 pods) | **~$329.78/h** · vs floor $833/h · gap **−$503.22/h** · B300×8=0 BL `fbb1135f` | p4080 |
+| miner burn (8 pods) | **~$329.78/h** · vs floor $833/h · gap **−$503.22/h** · B300×8=0 BL `fbb1135f` | p4081 |
 | miner coldkey free | τ~1256 | kept ≥τ50 · −τ2.20 reg burn r938 (p4070) |
-| miner stake | **~τ3.31** (59α r252) | p4080 · below ~τ5 sweep |
+| miner stake | **~τ3.31** (59α r252) | p4081 · below ~τ5 sweep |
 | registrations / submissions | **12** / **12** (… **r938** scoring chal-00949) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-20T03:10:20Z | 79537.00037931421 | p4081 R955 REFUTE→**R964 TRAIN** + R926 FORCE Triton cold-TK (no rent; B300×8=0); burn **~$329.78/h** |
 | 2026-08-20T03:02:40Z | 79572.35041310577 | p4080 R956+R958+R955 MERGE idle→**v4 n80 LIVE** (no rent; B300×8=0 BL); burn **~$329.78/h** |
 | 2026-08-20T02:54:40Z | 79651.93867731644 | p4079 R949 REFUTE→**R963 TRAIN** (no rent; B300×8=0); burn **~$329.78/h** |
 | 2026-08-20T02:47:03Z | 79689.98979538587 | p4078 R949 MERGE idle→**v4 n80 LIVE** on R337 (no rent; B300×8=0); burn **~$329.79/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-20T02:07:14Z | 79997.75663291932 | p4074 R942 REFUTE→**R960 TRAIN** + R926 **cold-TK** (no rent; B300×8=0); burn **~$329.79/h** |
 | 2026-08-20T01:58:52Z | 80075.0736562743 | p4073 R942 MERGE idle→**v4 n80 LIVE** on R252 (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
 | 2026-08-20T01:47:09Z | 80151.37183644611 | p4072 R943/R945/R946/R947 REFUTE→**R956–R959 TRAIN** (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
-| 2026-08-20T01:40:03Z | 80229.25954109519 | p4071 R938 **SUBMITTED** (HF@`8ef1b06a` reveal 31462190) + R941/R948 REFUTE→R954/R955 TRAIN + R947 n80 (no rent; B300=0); burn **~$329.79/h** |
