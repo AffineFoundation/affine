@@ -10,3 +10,8 @@ Parent: R970 SoftCtx MidRank MidLoβ Ultra HiLR REFUTE m=−0.002056 ~−0.21× 
 ## p4107
 - TRAIN on `mine-crown-1` GPUs **6,7** after exact-PID reap R970 chall:8003
 - TRAIN LIVE pid**137928** @2026-08-20T07:23:27Z
+
+## p4120
+- MERGE_DONE sat idle → chall+**v4 n80 LIVE** on crown (scripts `lean_chall_n80_crown_*_p4120.sh`)
+- Ports: r981:8002 GPUs6,7 · r982:8003 GPUs4,5 · r983:8004 GPUs1,3
+- Launched 2026-08-20T09:09:35Z

@@ -10,3 +10,8 @@ Parent: R972 SoftCtx LoRank Midβ Ultra HiLR REFUTE m=−0.011802 ~−0.89× →
 ## p4107
 - TRAIN on `mine-crown-1` GPUs **1,3** after exact-PID reap R972 chall:8004
 - TRAIN LIVE pid**137915** @2026-08-20T07:23:27Z
+
+## p4120
+- MERGE_DONE sat idle → chall+**v4 n80 LIVE** on crown (scripts `lean_chall_n80_crown_*_p4120.sh`)
+- Ports: r981:8002 GPUs6,7 · r982:8003 GPUs4,5 · r983:8004 GPUs1,3
+- Launched 2026-08-20T09:09:35Z
