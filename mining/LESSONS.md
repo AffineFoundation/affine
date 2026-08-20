@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4077: R926 8×H100 cold-TK teacher **OOM** at TP=1/`gpu_mem=0.90` (GLM-Air-FP8 needs >~79GB) → relaunch **teacher TP=2 on GPUs0,1** + king GPU2 + chall 3,4 (`p4077_…_h100tp2.sh`); skip HF re-download when local; B300×8=0 BL `fbb1135f`. **Never `pkill -f`**.
+- p4076: sole catalog 8×B200 `fbb1135f` is **BL**; `lium up` UUID→**1×B200** mislabel@$5.6 (`golden-matrix-5a`) → **rm**; R938 post-submit idle chall:8002 exact-PID reap → **R962** MidRank Midβ SoftCtx Ultra **HiLR 2e-6** TRAIN GPUs 2,3 (T+K kept); R926 teacher :8000 mid; B300×8=0. **Never `pkill -f`**.
 - p4075b: R950 **REFUTE** m=+0.00412 ~0.72× (thought✓175 B✓0.443 k=3) vs reign36 → exact-PID reap :8002 → **R961** MidRank Midβ ShortCtx Ultra TRAIN on R888 5,6; B300×8=0. **Never `pkill -f`**.
 - p4075: R950 **MERGE_DONE sat idle** on warm R888 (GPUs 5,6 free; T:8000 K:8001) → chall:8002+**v4 n80 LIVE** (Triton seed chall_r932 n_so=26); R926 cold-TK still king DL; B300×8=0. **Never `pkill -f`**.
 - p4074: R942 **REFUTE** m=+0.00340 ~0.48× (thought✓178 B✓0.40 k=3) vs reign36 → exact-PID reap :8002 → **R960** MidCtx MidRank MidLoβ Ultra; R926 all-idle MERGE → **cold-TK** (upload sim+affine; king DL→T:8000/:8001→chall:8002 R944); B300×8=0 (only 1×B300). **Never `pkill -f`**.
