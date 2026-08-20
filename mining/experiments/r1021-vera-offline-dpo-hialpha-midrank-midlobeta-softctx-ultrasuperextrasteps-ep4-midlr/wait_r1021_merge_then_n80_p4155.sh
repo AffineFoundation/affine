@@ -39,7 +39,7 @@ curl -sf -m 5 http://127.0.0.1:8000/v1/models >/dev/null
 curl -sf -m 5 http://127.0.0.1:8001/v1/models >/dev/null
 echo "[p4155-r1021-n80] TK warm → lean_chall"
 
-LEAN="/root/mining_src/r1021-vera-offline-dpo-hialpha-midrank-midlobeta-softctx-megasuperextrasteps-ep4-midlr/lean_chall_n80_crown_r1021_gpus67_p4155.sh"
+LEAN="/root/mining_src/r1021-vera-offline-dpo-hialpha-midrank-midlobeta-softctx-ultrasuperextrasteps-ep4-midlr/lean_chall_n80_crown_r1021_gpus67_p4155.sh"
 [[ -x "$LEAN" ]] || chmod +x "$LEAN"
 bash "$LEAN"
 date -u +%Y-%m-%dT%H:%M:%SZ >/root/logs/p4155_r1021_merge_then_n80_armed.done

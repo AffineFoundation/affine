@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4164: **R1014 REFUTE** m=−0.005437~−1.08× thought✓184 B✓0.435 + **R1019 REFUTE** m=+0.003346~0.95× thought✓165 B✓0.307 → exact-PID reap → **R1030 Ultra MidLR** r252 4,5 pid**125919** + **R1031 Ultra MidLR** crown 1,3 pid**189504**; R1021/R1022 waiters had **mega≠ultra** LEAN path → fixed + n80 rearm :8002/:8003; r926 teacher ConnectError mid-n80 → rearm util**0.82**/max_len**57344**. **Never `pkill -f`**.
 - p4162: **R1012 REFUTE** m=+0.002536~0.54× thought✓171.5 B✓0.475 + **R1018 REFUTE** m=+6.11e-5~0.02× thought✓160 B✓0.429 → exact-PID reap r938 :8002 + r338 :8003 → **R1029 SoftCtx HiRank MidLoβ Ultra MidLR** pid**31208** + **R1028 MidCtx HiRank MidLoβ Mega MidLR** pid**114034** + MERGE→n80; B300×8=0 BL-only. **Never `pkill -f`**.
 - p4161: **R1017 REFUTE** m=+0.000341~0.08× thought✓165 B✓0.426 → exact-PID reap r338 :8002 → **R1027 SoftCtx MidRank Hiβ Mega MidLR TRAIN** GPUs6,7 pid**112797** + MERGE→n80 (kept R1018 n80 :8003); B300×8=0 BL-only. **Never `pkill -f`**.
 - p4160: **R1005 REFUTE** m=+0.003497~0.58× thought✓171.5 B✓0.425 → exact-PID reap r924 :8002 → **R1026 SoftCtx HiRank Hiβ Mega MidLR TRAIN** GPUs6,7 pid**78745** + MERGE→n80; B300×8=0 BL-only. **Never `pkill -f`**.

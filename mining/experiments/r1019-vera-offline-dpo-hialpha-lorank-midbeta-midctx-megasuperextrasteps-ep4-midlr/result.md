@@ -1,12 +1,11 @@
 # R1019 — MidCtx LoRank Midβ Mega MidLR (B-fix)
 
-**Status (p4153):** **TRAIN** on `mine-crown-1` GPUs 1,3 after R1006 REFUTE (causality_fail). MERGE→n80 waiter armed.
+**Status (p4164):** **REFUTE v4** vs reign36 (near-miss).
 
-| knob | value |
+| metric | value |
 |---|---|
-| base | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695` |
-| β / α / r / lr | **0.1** / 128 / **16** / **1e-6** |
-| max_len / steps | **8192** MidCtx / **19200** Mega |
-| parent | R1006 SoftCtx LoRank Midβ Mega MidLR REFUTE m=+0.001417 ~0.71× B✗0.2875 |
+| margin / SE / z / n | **+0.003346** / 0.001769 / 1.891 / 80 |
+| bar / mult | 0.003539 / **~0.95×** |
+| thought / B / k/τ | ✓165 / ✓0.307 / 3 / 0.03 |
 
-**Decision rule:** Stage-5 iff fresh v4 n80 margin > max(2·SE, 0.002) AND thought≥80 AND B≥0.30 vs reign36.
+→ **R1031** MidCtx LoRank Midβ Ultra MidLR (Ultra isolate after knife-edge).
