@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4116: R977 **REFUTE** m=−0.004384 ~−0.71× (thought✓199 B✓0.5625 k=3) → exact-PID reap :8002 → **R989 SoftCtx MidRank Midβ Ultra HiLR** TRAIN R337 6,7 pid70560 (R987 TRAIN 4,5 kept); R979 MERGE idle→chall:8003+**v4 n80 LIVE** R338 4,5 (Triton seed chall_r978); B300×8=0. **Never `pkill -f`**.
 - p4115: R978 **MERGE_DONE sat idle** on warm R338 GPUs6,7 → chall:8002+**v4 n80 LIVE** (Triton seed chall_r964); R979 MERGE idle on 4,5 (next); R977 n80 ~76/80; B300×8=0. **Never `pkill -f`**.
 - p4114: R977 **MERGE_DONE sat idle** on warm R337 GPUs6,7 → chall:8002+**v4 n80 LIVE** (Triton seed chall_r954); R978 also MERGE idle on R338 6,7 (next); B300×8=0. **Never `pkill -f`**.
 - p4113: R974 **REFUTE** m=−0.004988 ~−0.51× (thought✓199 B✓0.4625 k=3) → exact-PID reap :8002 → **R988 MidCtx MidRank MidLoβ Mega HiLR** TRAIN R252 4,5 pid94775 (R975 TRAIN 6,7 kept); B300×8=0. **Never `pkill -f`**.
