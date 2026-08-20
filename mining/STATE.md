@@ -10,10 +10,10 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 |---|---|
 | contract | wvk=**7** · k=**3** · τ=**0.03** · n=**1300** · δ=0.002 · thought≥80 · B γ=0.30 · k_σ=2.0 |
 | king | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695…` **reign36** |
-| burn | **~$392.18/h** · gap **−$440.82/h** · B300×8=0 · B200×8 stock thin |
-| Lium | **~$77930** · free τ**~1247** · stake **0** |
+| burn | **~$392.18/h** · gap **−$440.82/h** · B300×8=0 · B200×8 stock empty |
+| Lium | **~$77861** · free τ**~1247** · stake **0** |
 | fleet | **9** mine-* · TTL fleet **→2026-08-21T13:26Z** · r340 **→21:24Z** · r339 soft **14:56Z** |
-| **p4209** | **Rented B200** `mine-r340` + upload OK · **R1060 n80 LIVE** after chall crash · R1064 **chal-00974** |
+| **p4210** | **R1060**: teacher :8000 restored + **n80 LIVE** pid**135948** · **R340** marsplan404→**vera pin** bootstrap LIVE |
 
 ## Running
 | name | huid | $/h | role |
@@ -23,13 +23,13 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | $46.80 | TK · **R1078 TRAIN** · SSH `150.136.46.118:20300` |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | $52.25 | TK · **R1072+R1077 TRAIN** · SSH `95.133.253.90:40099` |
 | mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | $64.00 | TK · **R1070+R1071 TRAIN** · SSH `23.153.44.20:40299` |
-| mine-r340-marsplan-online-dpo-hirank-bigg-1 | gentle-orbit-4a | $37.60 | **R340 BOOTSTRAP** · SSH `18.118.83.97:40127` |
+| mine-r340-marsplan-online-dpo-hirank-bigg-1 | gentle-orbit-4a | $37.60 | **R340 BOOTSTRAP vera** · SSH `18.118.83.97:40127` |
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | $33.81 | TK · **R1073+R1074+R1068 TRAIN** · SSH `31.22.104.113:40300` |
-| mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | $13.76 | TK · **R1060 n80 LIVE** :8002 · SSH `93.120.231.186:32301` |
+| mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | $13.76 | TK · **R1060 n80 LIVE** :8000/:8001/:8002 · SSH `93.120.231.186:32301` |
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | $15.96 | TK · **R1079 TRAIN** · SSH `38.255.28.21:20100` |
 
 ## Blocked
-No rentable B300×8. Waiters armed. Never `pkill -f`.
+No rentable B300×8 / B200×8. Waiters armed. Never `pkill -f`.
 
 ## Next action
-1. Watch R1064 **chal-00974** duel. 2. R1060 n80→CROWN/REFUTE. 3. Finish R340 TK+train. 4. Rent B300×8 when stock.
+1. R1060 n80→CROWN/REFUTE (sim pid135948). 2. Watch R1064 **chal-00974** (queue behind chal-00968 scoring). 3. R340 → train after vera+teacher. 4. Rent B300×8 when stock.

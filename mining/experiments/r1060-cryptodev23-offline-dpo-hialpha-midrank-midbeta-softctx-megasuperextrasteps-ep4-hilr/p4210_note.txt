@@ -1,0 +1,4 @@
+## p4210
+- Teacher :8000 was down (only king:8001 + chall:8002). Restored TP2 on GPUs0,1; kept chall.
+- n80 relaunched pid=135948 bh=a78943a5… vs reign36 wvk7.
+- Check: `tail -f /root/logs/p4210_r1060_chall_n80_wvk7.log` / `/root/affine_data/r1060_sim_progress_reign36_wvk7.json`

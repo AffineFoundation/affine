@@ -1,0 +1,3 @@
+## p4210
+- marsplan@556d02a2 RevisionNotFound → pin vera6@8e3f1695 (same R339/p4171).
+- bootstrap+start+post_train overlays updated; pipeline relaunched pid1820.
