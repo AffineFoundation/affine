@@ -1,0 +1,19 @@
+{
+  "utc": "2026-08-20T18:08:55Z",
+  "hypo": "R339",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign36",
+  "margin": 0.0010710954792744083,
+  "se": 0.0011187630344775745,
+  "z": 0.9573926258428574,
+  "n": 79,
+  "bar": 0.002237526068955149,
+  "thought_median": 170.0,
+  "b_pass": 0.3291139240506329,
+  "wins": false,
+  "verdict": "REFUTE",
+  "mult": 0.4786963129214287,
+  "note": "p4182 form-decision writer missing; computed from r339_sim_result.json vs reign36 v4 k=3"
+}
