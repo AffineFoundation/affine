@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4138: **R999+R1000** MERGE_READY idle → armed **MERGE→n80** r338 :8002/:8003 (pids 87190/87205; chall 87537/87548); R993 n80 ~31/80 crown; B300×8=0. **Never `pkill -f`**.
 - p4137: **R993+R994+R995** train→merge only → armed **MERGE→n80** crown :8004/:8002/:8003; R993 TRAIN_DONE→MERGE live (steps=1036); R959 857/1300; B300×8=0. **Never `pkill -f`**.
 - p4136: **R986** REFUTE m=+0.002837 ~0.41× → **R1005** TRAIN R924 + MERGE→n80. **Never `pkill -f`**.
 - p4135: **R1001+R1003** MERGE→n80 R924 :8003/:8004. **Never `pkill -f`**.
