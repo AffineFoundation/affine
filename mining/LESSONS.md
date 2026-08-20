@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4117: R978 **REFUTE** m=−0.003060 ~−0.55× (thought✓187 B✗0.297 causality_fail k=3) → exact-PID reap :8002 → **R990 MidCtx MidRank Hiβ Mega HiLR** TRAIN R338 6,7 pid73874; R979 **REFUTE** m=−0.013218 ~−1.09× (thought✓197 B✓0.502 k=3) → exact-PID reap :8003 → **R991 MidCtx HiRank Midβ Mega HiLR** TRAIN R338 4,5 pid74782 (R990 kept); B300×8=0. **Never `pkill -f`**.
 - p4116: R977 **REFUTE** m=−0.004384 ~−0.71× (thought✓199 B✓0.5625 k=3) → exact-PID reap :8002 → **R989 SoftCtx MidRank Midβ Ultra HiLR** TRAIN R337 6,7 pid70560 (R987 TRAIN 4,5 kept); R979 MERGE idle→chall:8003+**v4 n80 LIVE** R338 4,5 (Triton seed chall_r978); B300×8=0. **Never `pkill -f`**.
 - p4115: R978 **MERGE_DONE sat idle** on warm R338 GPUs6,7 → chall:8002+**v4 n80 LIVE** (Triton seed chall_r964); R979 MERGE idle on 4,5 (next); R977 n80 ~76/80; B300×8=0. **Never `pkill -f`**.
 - p4114: R977 **MERGE_DONE sat idle** on warm R337 GPUs6,7 → chall:8002+**v4 n80 LIVE** (Triton seed chall_r954); R978 also MERGE idle on R338 6,7 (next); B300×8=0. **Never `pkill -f`**.
@@ -47,7 +48,6 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p4096/95/90/87/86: R944 n80 deaths — teacher OOM/Triton/affine_pkg; repair=exact-PID + FORCE Triton seed + TP/gpu_mem. **Never `pkill -f`**.
 - p4085: R938 **LOST** chal-00949 m=−0.000615 ~−0.31× vs reign36. **Never `pkill -f`**.
 - p4076: catalog 8×B200 BL; UUID→1×B200 mislabel → **rm**. **Never `pkill -f`**.
-- p4070: R938 **CROWN_OK** m=+0.004951 ~1.20× B knife-edge 0.308≥0.30 → submit. **Never `pkill -f`**.
 - p4066: chall Triton miss on king-seed → FORCE seed from live sibling chall. **Never `pkill -f`**.
 - p4061: peft writes `…/train/adapter/` not flat adapter path; `lium fund` Subtensor.transfer fail → btcli→`5FqACMt…zsThe`. **Never `pkill -f`**.
 - p4058: R934 **REFUTE** m=−0.002638 ~−0.34× (thought✓188 B✓0.434 k=3) vs reign36 → exact-PID reap :8002 → **R946** MidCtx Midβ UltraExtra on crown 6,7 + **R937** MERGE_DONE idle→n80 on R338 4,5; R924 wait FATAL looked for flat adapter while `…/train/adapter` exists — next pass remerge. Stock B300=0 BL `8f34559f`. **Never `pkill -f`**.
