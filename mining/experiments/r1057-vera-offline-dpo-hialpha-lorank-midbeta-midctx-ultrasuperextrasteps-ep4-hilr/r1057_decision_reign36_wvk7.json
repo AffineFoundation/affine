@@ -1,0 +1,24 @@
+{
+  "utc": "2026-08-20T19:55:05Z",
+  "axis": "R1057",
+  "pass": 4197,
+  "margin": 0.0001028856430178388,
+  "se": 0.0034191023909195995,
+  "z": 0.030091419107857356,
+  "n": 80,
+  "thought_med": 207.0,
+  "b_pass": 0.5875,
+  "bar": 0.006838204781839199,
+  "duel_params": {
+    "n_turns": 80,
+    "k_sigma": 2.0,
+    "min_margin": 0.002,
+    "min_thought_chars": 80,
+    "causality_gate": true,
+    "causality_gamma": 0.3,
+    "tau": 0.03,
+    "n_teacher_samples": 3,
+    "n_miner_samples": 1
+  },
+  "challenger_wins": false
+}
