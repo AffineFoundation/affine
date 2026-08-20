@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4218: **R1074 REFUTE** m=+0.000107 ~0.02× (thought✓217 B✓0.354) → reap chall :8003 exact-PID → **R1084** vera ShortCtx LoRank Hiβ HyperExtra MidLR TRAIN GPUs1,3; R1073 train.done@1036. B300/B200×8=0. **Never `pkill -f`**.
 - p4217: **R1078 REFUTE** m=−0.004523 ~−0.71× (thought✓185 B✓0.481) → reap chall :8002 exact-PID → **R1083** vera SoftCtx MidRank Midβ HyperExtra MidLR TRAIN GPUs6,7 (@12288). B300/B200×8=0 (ghost B200 cleared). **Never `pkill -f`**.
 - p4216: **R1079 REFUTE** m=−0.001769 ~−0.75× (thought✓158.5 B✓0.410) → reap chall :8002 exact-PID → **R1082** vera ShortCtx HiRank Midβ HyperExtra MidLR TRAIN GPUs2,3 (β 0.05→0.1). B200×8 stock=1 (B300=0). **Never `pkill -f`**.
 - p4215: **R1075 REFUTE** m=+0.003180 ~0.53× (thought✓209 B✓0.418) → reap chall :8003 exact-PID → **R1081** vera ShortCtx HiRank Midβ Ultra HiLR TRAIN GPUs6,7 (keep R1076 on 4,5). Also note R1078 ~−0.71× / R1074 ~0.02× await cascade. **Never `pkill -f`**.

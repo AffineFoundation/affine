@@ -1,0 +1,35 @@
+stop 117271 (/root/logs/vllm_chall_r1074.pid)
+reap done
+wait free used_mib=0 iter=1
+TRAIN_PID=120693
+[r1084-lean] 2026-08-20T23:17:19Z start GPUs 1,3 ShortCtx LoRank Hiβ Hyper MidLR
+[r1084-lean] data_lines=604
+[r1084-lean] wait VRAM1+3 used_mib=0 iter=1
+{
+  "utc": "2026-08-20T23:17:20Z",
+  "axis": "r1084-vera-offline-dpo-hialpha-lorank-hibeta-shortctx-hypersuperextrasteps-ep4-midlr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "1e-6",
+  "lora_r": 16,
+  "lora_alpha": 128,
+  "beta": 0.3,
+  "max_len": 6144,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "1,3",
+  "chall_port": 8003,
+  "parent_signal": "R1074 ShortCtx LoRank Hi\u03b2 Ultra HiLR REFUTE m=+0.000107 ~0.02\u00d7 thought\u2713217 B\u27130.354 k=3 \u2192 HyperExtra MidLR isolate; \u2260 Ultra HiLR R1074 / \u2260 Ultra MidLR R1054 / \u2260 SoftCtx Ultra HiLR R967 / \u2260 MidCtx Ultra HiLR R1066 / \u2260 Online / \u2260 GRPO",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1084-lean] TRAIN launched pid=120693
+[r1084-lean] waiters armed
+120693 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1084/dpo_duel_reason.jsonl --out-dir /root/r1084/train --max-len 6144 --epochs 4 --lr 1e-6 --lora-r 16 --lora-alpha 128 --beta 0.3 --max-steps 38400
+0, 141811 MiB
+1, 0 MiB
+2, 130179 MiB
+3, 0 MiB
+4, 131781 MiB
+5, 131781 MiB
+6, 73479 MiB
+7, 129825 MiB
+p4218 R1084 launch exit=0
