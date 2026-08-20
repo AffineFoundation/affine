@@ -9,6 +9,7 @@ Parent: **R1032 CROWN_OK** m=+0.005461 ~1.049× (QUEUED chal-00967). Isolates **
 | lr / max_len / steps | 1e-6 / **6144** / 28800 |
 | pod | `mine-r339-…` GPUs **6,7** · chall :**8003** (R339 n80 keeps :8002) |
 | launched | p4182 TRAIN + MERGE→n80 waiter |
+| p4200 | Triton hang (orphan EngineCore + missing `.so`) → FORCE seed `chall_r1053` n_so=26 → **CHALL_READY** + **v4 n80 LIVE** sim pid**27596** @**2026-08-20T20:18:50Z** (5/80 when logged) |
 
 ≠ MidRank R1032 CROWN / ≠ ShortCtx MidRank Midβ Ultra MidLR R1048 / ≠ ShortCtx MidRank MidLoβ Ultra R1035 / ≠ SoftCtx HiRank Hiβ Ultra MidLR R1045 / ≠ Online R339 / ≠ GRPO
 

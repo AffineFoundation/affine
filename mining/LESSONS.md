@@ -25,9 +25,9 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4199: **R1059 REFUTE** m=−0.000889 ~−0.12× thought✓202.5 B✓0.5125 k=3 → exact-PID reap crown :8003 → **R1069** MidCtx MidRank Loβ Ultra HiLR TRAIN pid**240048**; **R1053 REFUTE** m=−0.000766 ~−0.21× thought✓216 B✓0.4125 → reap r339 :8002 → **R1070** MidCtx MidRank Hiβ Mega HiLR TRAIN pid**24092**; B300×8=0. **Never `pkill -f`**.
-- p4198: **R1046 REFUTE** m=−0.000756 ~−0.22× thought✓185 B✓0.40 k=3 → exact-PID reap :8004 → **R1068** ShortCtx HiRank MidLoβ Mega MidLR TRAIN GPUs4,5 pid**104833**; skip blacklisted `cosmic-raven-04`. **Never `pkill -f`**.
-- p4197: **R1057 REFUTE** m=+0.000103 ~0.015× + **R1056 REFUTE** m=+0.007351 ~0.72× → **R1066+R1067 TRAIN**; B300×8=0. **Never `pkill -f`**.
-- p4196–p4150: REFUTE→TRAIN cascade; TTL→**2026-08-21T13:26Z**; B300 waiters armed. **Never `pkill -f`**.
+- p4200: **R1052** chall hung — orphan `VLLM::EngineCore` (parent killed, workers still on GPUs6,7) + missing `__triton_launcher.so`; exact-PID kill EngineCore/workers → FORCE seed from `chall_r1053` (n_so=26) → CHALL_READY + **v4 n80 LIVE** pid**27596**; R1070 untouched. **Never `pkill -f`**.
+- p4199: **R1059 REFUTE** m=−0.000889 ~−0.12× → **R1069 TRAIN**; **R1053 REFUTE** → **R1070 TRAIN**; B300×8=0. **Never `pkill -f`**.
+- p4198: **R1046 REFUTE** → **R1068 TRAIN**; skip blacklisted `cosmic-raven-04`. **Never `pkill -f`**.
+- p4197–p4150: REFUTE→TRAIN cascade; TTL→**2026-08-21T13:26Z**; B300 waiters armed. **Never `pkill -f`**.
 
 
