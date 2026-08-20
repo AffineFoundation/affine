@@ -25,11 +25,12 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4151: filled r338 GPUs4,5 with **R1018** MidCtx HiRank Hiβ Mega MidLR (β=0.3 r=64 lr=1e-6 @8192 steps=19200) pid**104157** + MERGE→n80; R1008 **QUEUED chal-00961**; B300×8=0 BL-only `8f34559f`. **Never `pkill -f`**.
-- p4150: **R1008 CROWN_OK** m=+0.005917 ~1.325× → **SUBMITTED** reveal **31475534**; **R1003 REFUTE**→**R1016**; **R1007 REFUTE**→**R1017**; submit needs JSON `*pub.txt` + `cryptoType=1`. **Never `pkill -f`**.
+- p4152: **R998** train→merge only (no merge→n80 waiter) sat MERGE_DONE ~22m with GPUs6,7 idle — always arm MERGE→n80 with TRAIN; launched lean :8003 chall pid**114993**. **Never `pkill -f`**.
+- p4151: filled r338 GPUs4,5 with **R1018** MidCtx HiRank Hiβ Mega MidLR pid**104157** + MERGE→n80; R1008 **chal-00961**; B300×8=0 BL-only. **Never `pkill -f`**.
+- p4150: **R1008 CROWN_OK** m=+0.005917 ~1.325× → **SUBMITTED** reveal **31475534**; **R1003**→**R1016**; **R1007**→**R1017**. **Never `pkill -f`**.
 - p4149: **R1001 REFUTE** → **R1015 MidLR TRAIN** r924 1,3; B300×8=0 BL-only. **Never `pkill -f`**.
 - p4148: **R996+R1002 REFUTE** → **R1013+R1014 MidLR TRAIN**. **Never `pkill -f`**.
-- p4147: BL `fbb1135f` advertised 8× but nvidia-smi=3× → always check executor_blacklist before `lium up`. **Never `pkill -f`**.
+- p4147: BL `fbb1135f` advertised 8× but nvidia-smi=3× → check executor_blacklist before `lium up`. **Never `pkill -f`**.
 - p4146–p4139: MERGE→n80 waiters + MidLR isolates after REFUTE. **Never `pkill -f`**.
 - p4121: cryptoDev HF `model.language_model.*` layout OK — vLLM mapper remaps. **Never `pkill -f`**.
 - p4109: `lium fund` Subtensor.transfer fail → `btcli`→`5FqACMt…zsThe`. **Never `pkill -f`**.
