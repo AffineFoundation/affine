@@ -1,0 +1,5 @@
+✓ transfer τ8.000000000 to 5FqACMtcegZxxopgu1g7TgyrnyD8skurr9QDPLPhxNQzsThe
+        fee  τ0.000166251
+      block  0xc36051f0391a91b55ed226f64a3d7920ecf708e4ff62064ec09f493c1b59f07c
+  extrinsic  8884289-0019
+   explorer  https://taomarketcap.com/extrinsics/8884289-0019

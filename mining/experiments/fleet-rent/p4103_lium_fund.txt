@@ -1,0 +1,3 @@
+Current balance: 78008.8567284628 USD
+Waiting for bittensor...
+Transfer failed: 'Subtensor' object has no attribute 'transfer'

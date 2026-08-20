@@ -1,0 +1,9 @@
+warning: removes the entire stake from this hotkey on this subnet
+✓ unstake ALL alpha from r252 (5Fxumb3kHWht1ZEKybi23UYJMZRsQiDFn9A7sCpMKUAFJkB7)
+on netuid 120 (fails if price moves >5.00%) [MEV-shielded]
+                   fee  τ0.001290238
+                 block  0x833b5340089f117b7e30e8c322561186a366c0afe8289620d072812fe24f3e0b
+             extrinsic  8884287-0006
+              explorer  https://taomarketcap.com/extrinsics/8884287-0006
+              shielded  True
+  inner_extrinsic_hash  0xb2a981853b5dc186e09e76cc84b9489ee3e8070a5967bba106023bf5bc8dc4ab
