@@ -13,18 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 80420.49329828919 | p4068 |
-| Lium balance | **$80420.49329828919** | p4068 |
-| cumulative mining spend | ~$137,464 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$70420** (balance − $10,000 floor) | $UTC |
+| $UTC | 80265.29896601572 | p4070 |
+| Lium balance | **$80265.29896601572** | p4070 |
+| cumulative mining spend | ~$137,620 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$70265** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (8 pods) | **~$329.79/h** · vs floor $833/h · gap **−$503.21/h** · B300=0 · BL-only B200 | p4068 |
-| miner coldkey free | τ1258.232 | kept ≥τ50 |
-| miner stake | **0** (p4061 swept r252 118α) | p4061 |
-| registrations / submissions | **11** / **11** (… **r861** **LOST** chal-00934) | |
+| miner burn (8 pods) | **~$329.79/h** · vs floor $833/h · gap **−$503.21/h** · B300=0 | p4070 |
+| miner coldkey free | τ1256.035 | kept ≥τ50 · −τ2.20 reg burn r938 |
+| miner stake | **~τ1.65** (1 position) | p4070 |
+| registrations / submissions | **12** / **11** (… **r938** reg pending submit) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-20T01:30:43Z | 80265.29896601572 | p4070 R938 CROWN_OK→reg `8882722-0013` (−τ2.20 free) + HF push + R941/R948 n80 (no rent; B300=0); burn **~$329.79/h** |
+| 2026-08-20T01:20:14Z | 80381.71756557153 | p4069 crown R943/R945/R946 MERGE→triple n80 (no rent; B300=0 BL-only); burn **~$329.79/h** |
 | 2026-08-20T01:11:52Z | 80420.49329828919 | p4068 R930 REFUTE~−0.56×→reap→**R953 TRAIN** (no rent; B300=0 BL-only); burn **~$329.79/h** |
 | 2026-08-20T01:03:01Z | 80494.7096402942 | p4067 R931 REFUTE~0.0002×→reap→**R952 TRAIN** + R938 **cold-TK** (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
 | 2026-08-20T00:56:43Z | 80535.97300565851 | p4066 R930 Triton miss→FORCE seed chall_r931→**R930+R931 n80 LIVE** (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
@@ -33,5 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-20T00:29:44Z | 80766.09024527614 | p4063 R924 idle→**cold-TK+R930/R931 dual n80** (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
 | 2026-08-20T00:19:08Z | 80842.40593092538 | p4062 R939 MERGE→chall:8002+n80 on R337 (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
 | 2026-08-20T00:15:11Z | 80880.8878608843 | p4061 **α→τ→Lium**: r252 unstake ALL 118α→+τ6.589 free; `lium fund` fail; `btcli transfer` τ6.5→Lium ck (+~$1407.6); R932 rematch; burn **~$329.79/h** |
-| 2026-08-20T00:07:14Z | 79511.85967453076 | p4060 R935 REFUTE~0.065×→reap→**R948 TRAIN** + R925 host-relay→R252 (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
-| 2026-08-19T23:59:43Z | 79589.11288047479 | p4059 R937 REFUTE~0.27×→reap→**R947 TRAIN**+**R935 n80** + R924 R925/R930 MERGE (no rent; B300=0 BL `8f34559f`); burn **~$329.79/h** |
