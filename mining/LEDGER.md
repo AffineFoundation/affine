@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 77671.96871299978 | p4200 |
-| Lium balance | **$77671.96871299978** | p4200 |
-| cumulative mining spend | ~$144,811 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$67672** (balance − $10,000 floor) | $UTC |
+| $UTC | 77638.20394121204 | p4201 |
+| Lium balance | **$77638.20394121204** | p4201 |
+| cumulative mining spend | ~$144,845 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$67638** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (8 pods) | **~$354.58/h** · vs floor $833/h · gap **−$478.42/h** · B300×8=0 | p4200 |
+| miner burn (8 pods) | **~$354.58/h** · vs floor $833/h · gap **−$478.42/h** · B300×8=0 | p4201 |
 | miner coldkey free | τ~1249 | kept ≥τ50 |
-| miner stake | **~29.5α / τ1.67** (r252) | p4200 |
+| miner stake | **~29.5α / τ1.67** (r252) | p4201 |
 | registrations / submissions | **15** / **15** (… **r1032 SCORING chal-00967**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-20T20:26:42Z | 77638.20394121204 | p4201 **R1052 REFUTE→R1071 TRAIN** r339 (no rent; burn **~$354.58/h**; B300×8=0 B200×8=0) |
 | 2026-08-20T20:20:42Z | 77671.96871299978 | p4200 **R1052 Triton-reseed n80 LIVE** r339 (no rent; burn **~$354.58/h**; B300×8=0) |
 | 2026-08-20T20:10:54Z | 77776.96455726952 | p4199 **R1059+R1053 REFUTE→R1069+R1070 TRAIN** (no rent; burn **~$354.58/h**; B300×8=0) |
 | 2026-08-20T20:04:05Z | 77808.4949953878 | p4198 **R1046 REFUTE→R1068 TRAIN** r924 (no rent; burn **~$354.58/h**; skip cosmic-raven-04) |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-20T19:33:01Z | 78019.79528051746 | p4194 **R1047 REFUTE→R1064 TRAIN** r337 (no rent; burn **~$354.58/h**) |
 | 2026-08-20T19:28:48Z | 78055.74658711975 | p4193 **R1048 REFUTE→R1063 TRAIN** r337 (no rent; burn **~$354.58/h**) |
 | 2026-08-20T19:19:42Z | 78124.01685769501 | p4192 **R1047+R1048 n80 LIVE** r337 (no rent; burn **~$354.58/h**) |
-| 2026-08-20T19:15:13Z | 78160.58367926377 | p4191 **R1044 REFUTE→R1062 TRAIN** r938 (no rent; burn **~$354.58/h**) |
