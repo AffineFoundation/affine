@@ -1,15 +1,17 @@
 # R1049 — MidCtx HiRank MidLoβ Mega HiLR
 
-Parent: **R1038 REFUTE** m=−0.002795 ~−0.67× (thought✓179.5 B✓0.3375 k=3).
+## Claim
+Mega HiLR isolate after R1038 MidCtx HiRank MidLoβ Mega UltraLoLR REFUTE.
 
-Isolates **HiLR** (lr=`2e-6`) on the MidCtx+HiRank+MidLoβ+Mega lane after UltraLoLR flop.
+## Knobs
+- base: `vera6/affine-5g4yy75zuz-t6`@`8e3f1695`
+- Offline-DPO Soft Mid Mid Soft→MidCtx
+- β=0.05 · α=128 · r=64 · lr=2e-6 · max_len=8192 · epochs=4 · max_steps=19200
 
-| knob | value |
-|---|---|
-| base | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695` |
-| β / r / α | 0.05 / 64 / 128 |
-| lr / max_len / steps | **2e-6** / 8192 / 19200 |
-| pod | `mine-r338-…` GPUs **4,5** |
-| launched | p4180 TRAIN pid**133218** + MERGE→n80 waiter |
+## Decision rule
+Stage-5 iff fresh v4 n80 margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 vs reign36.
 
-Decision rule: Stage-5 iff fresh v4 n80 margin > max(2·SE, 0.002) AND thought≥80 AND B≥0.30 vs reign36.
+## Status
+**REFUTE v4 (p4190)** on `mine-r338` vs reign36:
+m=**−0.001495** SE=0.004770 z=−0.313 n=79 bar≈0.009540 (~**−0.16×**)
+thought✓(214) B✓(0.557) k=3/τ=0.03 · chall reaped → **R1061** Midβ isolate.
