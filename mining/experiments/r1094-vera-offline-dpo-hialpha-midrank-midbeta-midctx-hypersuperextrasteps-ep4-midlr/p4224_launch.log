@@ -1,0 +1,38 @@
+stop 126493 (/root/logs/vllm_chall_r1064.pid)
+reap done
+wait free used_mib=0 iter=1
+TRAIN_PID=135918
+[r1094-lean] 2026-08-20T23:55:43Z start GPUs 4,5 MidCtx MidRank Midβ HyperExtra MidLR
+[r1094-lean] data_lines=604
+[r1094-lean] wait VRAM4+5 used_mib=0 iter=1
+{
+  "utc": "2026-08-20T23:55:43Z",
+  "axis": "r1094-vera-offline-dpo-hialpha-midrank-midbeta-midctx-hypersuperextrasteps-ep4-midlr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "1e-6",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.1,
+  "max_len": 8192,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "4,5",
+  "parent_signal": "R1064 MidCtx MidRank Mid\u03b2 Ultra HiLR CROWN_OK ~1.021\u00d7 QUEUED chal-00974 \u2192 HyperExtra MidLR isolate on idle r337 :8003; \u2260 Ultra HiLR R1064 / \u2260 MidCtx HiRank Mid\u03b2 Hyper R1087 / \u2260 MidCtx MidRank Hi\u03b2 Hyper R1085 / \u2260 MidCtx MidRank Lo\u03b2 Hyper R1093 / \u2260 SoftCtx MidRank Mid\u03b2 Hyper R1083 / \u2260 Online / \u2260 GRPO",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1094-lean] TRAIN launched pid=135918
+[r1094-lean] waiters armed
+135918 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1094/dpo_duel_reason.jsonl --out-dir /root/r1094/train --max-len 8192 --epochs 4 --lr 1e-6 --lora-r 32 --lora-alpha 128 --beta 0.1 --max-steps 38400
+134546 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1083/dpo_duel_reason.jsonl --out-dir /root/r1083/train --max-len 12288 --epochs 4 --lr 1e-6 --lora-r 32 --lora-alpha 128 --beta 0.1 --max-steps 38400
+State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+LISTEN 0      2048         0.0.0.0:8000      0.0.0.0:*    users:(("vllm",pid=11345,fd=44))
+State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+LISTEN 0      2048         0.0.0.0:8001      0.0.0.0:*    users:(("python3",pid=16148,fd=44))
+0, 0 %, 167140 MiB
+1, 0 %, 167140 MiB
+2, 0 %, 134924 MiB
+3, 0 %, 134926 MiB
+4, 0 %, 0 MiB
+5, 0 %, 0 MiB
+6, 48 %, 175432 MiB
+7, 0 %, 129606 MiB
