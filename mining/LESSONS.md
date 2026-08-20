@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4214: **R1051 REFUTE** m=+0.00155 ~0.27× (thought✓223 B✓0.405) → reap chall :8002 exact-PID → **R1080** cryptoDev ShortCtx Hiβ Ultra MidLR TRAIN GPUs3,4 (teacher TP4 0,1,5,6 kept). **Never `pkill -f`**.
+- p4213: **R1060 REFUTE** m=−0.01516 ~−1.66×; **R340** TP2 teacher hung at NCCL after pynccl → **TP1** teacher GPU0 works; train pid16805. **Never `pkill -f`**.
 - p4211: **R1060** teacher OOM@util0.85 TP2 mid-n80; util0.70 TP2 **KV-fail**@65536 (need 5.75GiB, have 2.11) → **TP4 util0.80** on free GPUs**0,1,5,6** (keep king2 + chall3,4) then v4 n80. **Never `pkill -f`**.
 - p4210: **R1060** n80 died (teacher :8000 gone; chall ConnectError) — restore teacher TP2 GPUs**0,1** only (keep king GPU2 + chall 3,4) then relaunch n80; **R340** marsplan@556d02a2 404 → pin **vera**@8e3f1695 (same p4171). **Never `pkill -f`**.
 - p4209: **CLI rent B200** `eager-orbit-61`→`mine-r340`@$37.60/h (API waiter bl_skip ghost); stamp needs `"name"` key; **R1060** chall ConnectError→relaunch n80 LIVE; R1064 **chal-00974**. Host-key churn on recycled IP:port — `ssh-keygen -R` + accept-new. **Never `pkill -f`**.

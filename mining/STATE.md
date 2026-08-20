@@ -11,9 +11,9 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | contract | wvk=**7** · k=**3** · τ=**0.03** · n=**1300** · δ=0.002 · thought≥80 · B γ=0.30 · k_σ=2.0 |
 | king | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695…` **reign36** |
 | burn | **~$392.18/h** · gap **−$440.82/h** · B300×8=0 · B200×8 stock empty |
-| Lium | **~$77751** · free τ**~1247** · stake **0** |
+| Lium | **~$77296** · free τ**~1247** · stake **0** |
 | fleet | **9** mine-* · TTL fleet **→2026-08-21T13:26Z** · r340 **→21:24Z** · r339 soft **14:56Z** |
-| **p4211** | **R1060**: teacher OOM@0.85 → util0.70 KV-fail → **TP4 util0.80** GPUs**0,1,5,6** + **n80 LIVE** pid**141658** · **R340** vera+teacher DL done → serving |
+| **p4214** | **R1051 REFUTE** ~0.27× → **R1080 TRAIN** · **R340** step≥6 |
 
 ## Running
 | name | huid | $/h | role |
@@ -23,13 +23,13 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | $46.80 | TK · **R1078 TRAIN** · SSH `150.136.46.118:20300` |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | $52.25 | TK · **R1072+R1077 TRAIN** · SSH `95.133.253.90:40099` |
 | mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | $64.00 | TK · **R1070+R1071 TRAIN** · SSH `23.153.44.20:40299` |
-| mine-r340-marsplan-online-dpo-hirank-bigg-1 | gentle-orbit-4a | $37.60 | **R340 BOOTSTRAP** teacher serve→train · SSH `18.118.83.97:40127` |
+| mine-r340-marsplan-online-dpo-hirank-bigg-1 | gentle-orbit-4a | $37.60 | **R340 TRAIN** pid16805 step≥6 GPUs6,7 · SSH `18.118.83.97:40127` |
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | $33.81 | TK · **R1073+R1074+R1068 TRAIN** · SSH `31.22.104.113:40300` |
-| mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | $13.76 | TK · **R1060 n80 LIVE** :8000TP4/:8001/:8002 · SSH `93.120.231.186:32301` |
+| mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | $13.76 | TK · **R1080 TRAIN** pid**145066** GPUs3,4 + merge→n80 waiters · SSH `93.120.231.186:32301` |
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | $15.96 | TK · **R1079 TRAIN** · SSH `38.255.28.21:20100` |
 
 ## Blocked
 No rentable B300×8 / B200×8. Waiters armed. Never `pkill -f`.
 
 ## Next action
-1. R1060 n80→CROWN/REFUTE (sim pid141658; result `/root/affine_data/r1060_sim_result_reign36_wvk7.json`). 2. Watch R1064 **chal-00974** (queue behind chal-00968 scoring ~1082/1300). 3. R340 → train after teacher warm. 4. Rent B300×8 when stock.
+1. R1080 → train.done→merge→n80. 2. R340 Online-DPO continue→merge→n80. 3. Watch R1064 **chal-00974** (queue pos3; current_eval chal-00970). 4. Rent B300×8 when stock.
