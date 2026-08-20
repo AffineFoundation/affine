@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4148: **R996 REFUTE** m=−0.004865 ~−0.76× (thought✓220 B✓0.435) → **R1013 MidLR TRAIN** r926 3,4; **R1002 REFUTE** m=−0.002933 ~−0.78× (thought✓185 B✓0.35) → **R1014 MidLR TRAIN** r252 4,5; B300×8=0. **Never `pkill -f`**.
 - p4147: `lium ls` showed non-BL `fbb1135f` 8×B200 — **already on executor_blacklist**; rented anyway → **nvidia-smi=3×B200** ($/h≈3×) → **rm** same pass. Always `cat artifacts/executor_blacklist.txt` before `lium up`. **Never `pkill -f`**.
 - p4146: **R1002** train.done→MERGE sat (wait stops at merge_ready) → armed **MERGE→n80** r252 GPUs4,5; R996 n80~17/80; B300×8=0. **Never `pkill -f`**.
 - p4145: **R992** REFUTE m=+0.001984 ~0.50× (thought✓177.5 B✓0.4375) → **R1012 Ultra MidLR TRAIN** r938 2,3; R996 n80 ARMED; B300×8=0. **Never `pkill -f`**.
