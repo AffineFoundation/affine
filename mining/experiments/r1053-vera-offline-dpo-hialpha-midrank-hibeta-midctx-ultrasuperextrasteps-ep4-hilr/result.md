@@ -1,13 +1,13 @@
 # R1053 — MidCtx MidRank Hiβ Ultra HiLR
 
-Parent: **R339 REFUTE** m=+0.001071 ~0.48× (Online-DPO) + **R1017** MidCtx MidRank Hiβ Ultra MidLR ~0.08× → **HiLR** isolate.
+**Status (p4199):** **REFUTE v4** vs reign36 → exact-PID reap :8002 → **R1070**.
 
 | knob | value |
 |---|---|
 | base | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695` |
-| β / r / α | 0.3 / 32 / 128 |
-| lr / max_len / steps | **2e-6** / **8192** / 28800 |
-| pod | `mine-r339` GPUs **4,5** · chall :**8002** |
-| launched | p4182 after R339 REFUTE reap |
+| β / α / r / lr | **0.3** / 128 / **32** / **2e-6** |
+| max_len / steps | **8192** / **28800** |
 
-Decision rule: Stage-5 iff fresh v4 n80 margin > max(2·SE, 0.002) AND thought≥80 AND B≥0.30 vs reign36.
+**n80 (p4199):** m=**−0.000766** SE=0.001830 z=−0.419 n=79 bar≈0.003660 (~**−0.21×**) thought✓(216) B✓(0.4125) k=3/τ=0.03 · `challenger_wins=false`.
+
+**Decision rule:** Stage-5 iff fresh v4 n80 margin > max(2·SE, 0.002) AND thought≥80 AND B≥0.30 vs reign36.
