@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4179: **R1025 REFUTE** m=+0.000156 ~0.028×; **R1037 REFUTE** m=−0.005212 ~−0.79× → exact-PID reap r337 :8002/:8003 → **R1047 Ultra HiLR MidCtx MidLoβ** + **R1048 ShortCtx MidRank Midβ Ultra MidLR** TRAIN pids**110242/110354**; R1032=**chal-00967**; r338 still idle; B300×8=0. **Never `pkill -f`**.
 - p4178: **R1045+R1046 TRAIN** on free r924 GPUs **6,7/4,5** pids**98194/98084** (R1026→Ultra SoftCtx HiRank Hiβ; R1033→Mega MidCtx HiRank MidLoβ); R1025 n80~50/80; R1032 not queued yet; B300×8=0. **Never `pkill -f`**.
 - p4177: **R1032 CROWN_OK** m=+0.005461 ~1.049× → HF quota fail → purged LOST r861/938/959/1008 (~261GB) → HF@`62dfb322` → reg **8887516-0019** → **SUBMITTED** reveal **31481268**. **Never `pkill -f`**.
 - p4176: **R1029 REFUTE** m=−0.001637 ~−0.29× → exact-PID reap chall:8002 → **R1044 ShortCtx HiRank MidLoβ Ultra MidLR TRAIN** r938 GPUs2,3 pid**35545**; `lium scp` broken → direct `scp -P`. **Never `pkill -f`**.
