@@ -1,0 +1,6 @@
+p4211 (2026-08-20T22:05Z): R1060 n80 died — teacher OOM mid-score at util0.85 TP2.
+util0.70 TP2 fails KV@65536 (need 5.75GiB, have 2.11). Fix: teacher TP4
+CUDA_VISIBLE_DEVICES=0,1,5,6 util=0.80 max_model_len=65536 batched=4096
+(keep king GPU2 :8001 + chall GPUs3,4 :8002). Script on pod:
+p4211c_r926_teacher_tp4_rearm_r1060_n80.sh
+n80 LIVE pid=141658 out=/root/affine_data/r1060_sim_result_reign36_wvk7.json

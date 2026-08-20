@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 77861.33248074811 | p4210 |
-| Lium balance | **$77861.33248074811** | p4210 |
-| cumulative mining spend | ~$145,301 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$67861** (balance − $10,000 floor) | $UTC |
+| $UTC | 77750.53055178167 | p4211 |
+| Lium balance | **$77750.53055178167** | p4211 |
+| cumulative mining spend | ~$145,412 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$67751** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (9 pods) | **~$392.18/h** · vs floor $833/h · gap **−$440.82/h** · B300×8=0 | p4210 |
+| miner burn (9 pods) | **~$392.18/h** · vs floor $833/h · gap **−$440.82/h** · B300×8=0 | p4211 |
 | miner coldkey free | τ~1246.7 | kept ≥τ50 |
-| miner stake | **0** | p4210 |
+| miner stake | **0** | p4211 |
 | registrations / submissions | **16** / **16** (… **r1064 chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-20T22:05:55Z | 77750.53055178167 | p4211 **R1060 teacher TP4+n80** (no rent); burn **~$392.18/h**; B300×8=0 |
 | 2026-08-20T21:42:59Z | 77861.33248074811 | p4210 **R1060 teacher+n80** + **R340 vera pin**; burn **~$392.18/h**; B300×8=0 |
 | 2026-08-20T21:30:46Z | 77929.83713089161 | p4209 **rent B200** `mine-r340`@$37.60/h (gentle-orbit-4a TTL→21:24Z) + R1060 n80 relaunch; burn **~$392.18/h**; B300×8=0 |
 | 2026-08-20T21:20:43Z | 77999.62278046655 | p4208 **R1064 Stage-5**: reg + submit reveal **31485871**; **R1062 REFUTE→R1079**; burn **~$354.58/h**; B300×8=0 |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-20T20:56:05Z | 77429.71489411636 | p4205 **R1062 ENOSPC→clean+merge retry** r938; B300×8=0 |
 | 2026-08-20T20:51:22Z | 77463.66005192383 | p4204 **R1058+R1055 REFUTE→R1075+R1076 TRAIN** r252; B300×8=0 |
 | 2026-08-20T20:42:15Z | 77533.2656349733 | p4203 **R1045+R1054 REFUTE→R1073+R1074**; B300×8=0 |
-| 2026-08-20T20:32:45Z | 77601.74605555866 | p4202 **R1061 REFUTE→R1072 TRAIN** r338; B300×8=0 |

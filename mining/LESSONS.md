@@ -25,11 +25,11 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4211: **R1060** teacher OOM@util0.85 TP2 mid-n80; util0.70 TP2 **KV-fail**@65536 (need 5.75GiB, have 2.11) → **TP4 util0.80** on free GPUs**0,1,5,6** (keep king2 + chall3,4) then v4 n80. **Never `pkill -f`**.
 - p4210: **R1060** n80 died (teacher :8000 gone; chall ConnectError) — restore teacher TP2 GPUs**0,1** only (keep king GPU2 + chall 3,4) then relaunch n80; **R340** marsplan@556d02a2 404 → pin **vera**@8e3f1695 (same p4171). **Never `pkill -f`**.
 - p4209: **CLI rent B200** `eager-orbit-61`→`mine-r340`@$37.60/h (API waiter bl_skip ghost); stamp needs `"name"` key; **R1060** chall ConnectError→relaunch n80 LIVE; R1064 **chal-00974**. Host-key churn on recycled IP:port — `ssh-keygen -R` + accept-new. **Never `pkill -f`**.
 - p4208: **R1064 CROWN_OK** m=+0.006632 ~1.021× → HF→reg→SUBMIT reveal **31485871**; **R1062 REFUTE** ~0.18× → **R1079** r938. B300×8=0. **Never `pkill -f`**.
 - p4207: **α→TAO→Lium** 59α→τ3.36 (`lium fund` bug → `btcli transfer`); **R1063 REFUTE** → **R1078** r337. B300×8=0. **Never `pkill -f`**.
-- p4206: **R1032 LOST** near-δ ~0.71×; **R1065** B✗0.292 → **R1077**; skip bl cosmic-raven-04. **Never `pkill -f`**.
-- p4205–p4200: ENOSPC purge; REFUTE→TRAIN cascade; TTL→**2026-08-21T13:26Z**; B300 waiters armed. **Never `pkill -f`**.
+- p4206–p4200: LOST/REFUTE→TRAIN cascade; TTL→**2026-08-21T13:26Z**; B300 waiters armed. **Never `pkill -f`**.
 
 
