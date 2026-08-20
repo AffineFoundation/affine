@@ -25,9 +25,10 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4169: **R1027 REFUTE** m=+0.000400~0.058× thought✓161 B✓0.375 k=3 → exact-PID reap r338 :8002 → **R1039 SoftCtx MidRank Hiβ Ultra MidLR TRAIN** GPUs6,7 pid**123833**; **R1013 REFUTE** m=−0.001596~−0.19× thought✓228 B✓0.519 → chall reaped (R1025 MERGE); B300/B200×8=0. **Never `pkill -f`**.
-- p4168: **R1008 LOST** chal-00961 m=+0.000468~0.23×δ (n80 was +0.005917~1.325×); **R1028 REFUTE** m=+0.001248~0.23× thought✓156 B✓0.314 → exact-PID reap r338 :8003 → **R1038 MidCtx HiRank MidLoβ Mega UltraLoLR TRAIN** GPUs4,5 pid**119904**; R1013 n80 32/80; B300×8=0. **Never `pkill -f`**.
-- p4167: **R1023 REFUTE**→**R1037 TRAIN**; r926 teacher OOM→util0.88/max_len32768 **R1013 n80**. **Never `pkill -f`**.
+- p4170: **R1020 REFUTE** m=+0.001734~0.35× thought✓169.5 B✗**0.2875** (causality_fail) k=3 → exact-PID reap r252 :8003 → **R1040 SoftCtx HiRank MidLoβ Mega HiLR TRAIN** GPUs6,7 pid**132110**; R1025 n80 armed; B300/B200×8=0. **Never `pkill -f`**.
+- p4169: **R1027 REFUTE** m=+0.000400~0.058× thought✓161 B✓0.375 k=3 → exact-PID reap r338 :8002 → **R1039 SoftCtx MidRank Hiβ Ultra MidLR TRAIN** GPUs6,7 pid**123833**; **R1013 REFUTE** m=−0.001596~−0.19× → chall reaped; B300/B200×8=0. **Never `pkill -f`**.
+- p4168: **R1008 LOST** chal-00961; **R1028 REFUTE**→**R1038 TRAIN** r338 4,5. **Never `pkill -f`**.
+- p4167: **R1023 REFUTE**→**R1037 TRAIN**; r926 teacher OOM→util0.88 **R1013 n80**. **Never `pkill -f`**.
 - p4166: **R1016+R1024+R1021+R1022 REFUTE**→**R1033–R1036 TRAIN**. **Never `pkill -f`**.
 - p4165: **R1015 REFUTE**→**R1032 TRAIN**. **Never `pkill -f`**.
 - p4164: **R1014+R1019 REFUTE**→**R1030+R1031**. **Never `pkill -f`**.
@@ -38,7 +39,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p4158: TTL+Soft/Dead +24h → **2026-08-21T13:26Z**. **Never `pkill -f`**.
 - p4157: α→TAO→Lium r252→τ8.2526 → Lium +~$1811. **Never `pkill -f`**.
 - p4150: **R1008 CROWN_OK**→SUBMITTED→**LOST** p4168. **Never `pkill -f`**.
-- p4147: check executor_blacklist before `lium up` (BL `fbb1135f`/`8f34559f`). **Never `pkill -f`**.
+- p4147: check executor_blacklist before `lium up`. **Never `pkill -f`**.
 - p4109: `lium fund` fail → `btcli`→`5FqACMt…zsThe`. **Never `pkill -f`**.
 - p4101/p4141: R959 **CROWN_OK**→**LOST** chal-00957. **Never `pkill -f`**.
 
