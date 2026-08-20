@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4157: α→TAO→Lium r252 **147.6α→τ8.2526** → Lium +**~$1811** (bal **~$79088**); `lium fund` still `Subtensor.transfer` miss → `btcli`→`5FqACMt…zsThe`; catalog 8×B200=BL-only (`8f34559f`,`fbb1135f`); B300×8=0. **Never `pkill -f`**.
 - p4156: **R1004 REFUTE** m=+0.002056~0.57× + **R1011 REFUTE** m=+0.004668~0.46× → exact-PID reap r337 :8002/:8003 → **R1023 SoftCtx Midβ Ultra MidLR** + **R1024 MidCtx Loβ Ultra MidLR** TRAIN pids**92389**/**92386** + MERGE→n80. **Never `pkill -f`**.
 - p4155: **R1009 REFUTE** m=+0.000550~0.22× + **R1010 REFUTE** m=+0.001741~0.39× → exact-PID reap crown :8002/:8003 → **R1021+R1022 SoftCtx Ultra MidLR TRAIN** GPUs6,7+4,5 pids**182556**/**182562** + MERGE→n80. **Never `pkill -f`**.
 - p4154: **R998 REFUTE** m=+0.001298~0.33× thought✓171.5 B✓0.4125 → exact-PID reap r252 :8003 → **R1020 SoftCtx HiRank MidLoβ Mega MidLR TRAIN** GPUs6,7 pid**119314** + MERGE→n80. **Never `pkill -f`**.
