@@ -1,0 +1,29 @@
+[p4104] 2026-08-20T06:53:49Z start
+[p4104] kill pid=16230 (/root/logs/vllm_chall_r962.pid)
+[p4104] reap gpu=[2, 3] kill=[]
+[p4104] GPUs 2,3 reaped
+[p4104] wait free 2,3 used_mib=0 iter=1
+[p4104] R980 lean launched outer_pid=19112
+[r980-lean] 2026-08-20T06:53:54Z start GPUs 2,3 SoftCtx HiRank Midβ Ultra HiLR
+[r980-lean] data_lines=604
+[r980-lean] wait VRAM2+3 used_mib=0 iter=1
+{
+  "utc": "2026-08-20T06:53:54Z",
+  "axis": "r980-vera-offline-dpo-hialpha-hirank-midbeta-softctx-ultrasuperextrasteps-ep4-hilr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "2e-6",
+  "lora_r": 64,
+  "lora_alpha": 128,
+  "beta": 0.1,
+  "max_len": 12288,
+  "epochs": 4,
+  "max_steps": 28800,
+  "gpus": "2,3",
+  "parent_signal": "R962 SoftCtx MidRank Mid\u03b2 Ultra HiLR REFUTE m=-0.005389 ~-0.85\u00d7 (thought\u2713193 B\u27130.477 k=3) \u2192 SoftCtx HiRank Mid\u03b2 Ultra HiLR isolate; \u2260 MidRank R962 / \u2260 MidLo\u03b2 SoftCtx HiRank Ultra HiLR R975 / \u2260 Mega UltraLoLR R959 / \u2260 Mega HiLR R979 / \u2260 SoftCtx HiRank Mid\u03b2 Ultra UltraLoLR R947 / \u2260 Online / \u2260 GRPO",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r980-lean] TRAIN launched pid=19136 BASE=/root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e
+[r980-lean] wait→merge armed pid=19141
+    PID 
+  19136 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r980/dpo_duel_reason.jsonl --out-dir /root/r980/train --max-len 12288 --epochs 4 --lr 2e-6 --lora-r 64 --lora-alpha 128 --beta 0.1 --max-steps 28800
+[p4104] DONE 2026-08-20T06:54:04Z

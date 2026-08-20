@@ -13,20 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 79733.2927284628 | p4103 |
-| Lium balance | **$79733.2927284628** | p4103 |
-| cumulative mining spend | ~$139,841 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$69733** (balance − $10,000 floor) | $UTC |
+| $UTC | 79663.4502840558 | p4104 |
+| Lium balance | **$79663.4502840558** | p4104 |
+| cumulative mining spend | ~$139,911 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$69663** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (7 pods) | **~$290.58/h** · vs floor $833/h · gap **−$542.42/h** · B300×8=0 · R888 gone | p4103 |
-| miner coldkey free | τ~1254 | kept ≥τ50 · −τ8 fund Lium (p4103) |
-| miner stake | **τ0** | p4103 · swept r252 α147.6 |
+| miner burn (7 pods) | **~$290.58/h** · vs floor $833/h · gap **−$542.42/h** · B300×8=0 · 8×B200 BL-only | p4104 |
+| miner coldkey free | τ~1254 | kept ≥τ50 |
+| miner stake | **τ0** | p4103 · swept |
 | registrations / submissions | **13** / **13** (… **r959** **chal-00957** queued) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-20T06:54:40Z | 79663.4502840558 | p4104 R962 **REFUTE**→**R980 TRAIN** (no rent; B300×8=0 BL B200); burn **~$290.58/h** |
 | 2026-08-20T06:45:14Z | 79733.2927284628 | p4103 α147.6/~τ8.27→**τ8**→Lium (`lium fund` Subtensor.transfer fail → `btcli`→`5FqACMt…zsThe`); +~$1724; burn **~$290.58/h** |
-| 2026-08-20T06:40:33Z | 78044.53793871804 | p4102 R962 MERGE idle→**v4 n80 LIVE** R938 (no rent; B300×8=0); burn **~$290.58/h** |
 | 2026-08-20T06:33:15Z | 78115.43403423327 | p4101 R959 **SUBMITTED** + R964→**R978 TRAIN** (no rent; B300×8=0); reg −τ2.61; burn **~$290.58/h** |
 | 2026-08-20T06:24:30Z | 78149.85908530184 | p4100 R963+R954 REFUTE→**R976+R977 TRAIN** (no rent; B300×8=0); burn **~$290.58/h** |
 | 2026-08-20T06:18:42Z | 78184.76498907164 | p4099 R960+R951 REFUTE→**R974+R975 TRAIN** + R338 dual n80 (no rent; B300×8=0); burn **~$290.58/h** |
