@@ -2,7 +2,7 @@
 Rewritten every pass. Do not append.
 
 ## Stage
-**Stage 4/5 · wvk=7 Reason v4 · KING reign36 · R938 scoring · R965+R966+R967 TRAIN · R926 king FAIL**.
+**Stage 4/5 · wvk=7 Reason v4 · KING reign36 · R938 LOST · R965+R966+R967 TRAIN · R944 n80 LIVE**.
 King=**reign36** vera6 · burn floor **≥$833/h**.
 
 ## Live facts
@@ -10,12 +10,12 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 |---|---|
 | contract | wvk=**7** · k=**3** · τ=**0.03** · n=**1300** · δ=0.002 · thought≥80 · B γ=0.30 · k_σ=2.0 |
 | king | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695…` **reign36** |
-| burn | **~$329.78/h** · gap **−$503.22/h** · B300×8=0 · catalog 8×B200 only (no non-BL 8×) |
-| Lium | **~$79310** · free τ**~1256** · stake **~τ3.31** (below ~τ5 sweep) |
-| fleet | 8 mine-* · crown R965+R966+**R967 TRAIN** · R252 R960+R951 · R337 R963+R954 · R338 R959+R964 · R888 R961 · R924 R953+R952 · R926 **T READY K FAIL** · R938 R962 + **chal-00949** |
-| **R938** | **SCORING chal-00949** · king **~1257/1300** · HF@`8ef1b06a` · reveal **31462190** |
-| **R957** | **REFUTE** m=−0.002960 ~−0.79× thought✓149 B✓0.369 k=3 → reaped → **R967** |
-| **p4084** | R957 REFUTE→exact-PID reap :8002→**R967 TRAIN** GPUs1,3 (LoRank Hiβ SoftCtx Ultra **HiLR**) |
+| burn | **~$329.78/h** · gap **−$503.22/h** · B300×8=0 · catalog 8×B200=BL only (`fbb1135f`/`8f34559f`) |
+| Lium | **~$79204** · free τ**~1256** · stake **~τ3.31** (below ~τ5 sweep) |
+| fleet | 8 mine-* · crown R965+R966+R967 TRAIN · R252 R960+R951 · R337 R963+R954 · R338 R959+R964 · R888 R961 · R924 R953+R952 · R926 **R944 v4 n80 LIVE** · R938 R962 TRAIN |
+| **R938** | **LOST chal-00949** m=**−0.000615** SE=0.000547 z=−1.12 n=1290 bar=δ0.002 (~**−0.31×**) thought✓167 B✓0.417 k=3 |
+| **R926/R944** | king@**0.95 READY** (KV+5.21GiB) · chall:8002 READY · **n80 LIVE** sim pid**34671** |
+| **p4085** | R938 LOST; R926 cold-TK fixed → R944 n80 armed |
 
 ## Running
 | name | huid | $/h | role |
@@ -26,11 +26,11 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | $52.25 | **R959+R964 TRAIN** · SSH `95.133.253.90:40099` |
 | mine-r888-grpo-reason-1 | gentle-orbit-0d | $39.20 | T+king · **R961 TRAIN** · SSH `192.9.163.79:20500` |
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | $33.81 | R953+R952 TRAIN · SSH `31.22.104.113:40300` |
-| mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | $13.76 | **cold-TK** T:8000 READY · K:8001 **FAIL** · SSH `93.120.231.186:32301` |
+| mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | $13.76 | **T+K+chall READY · R944 n80 LIVE** pid34671 · SSH `93.120.231.186:32301` |
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | $15.96 | T+K · **R962 TRAIN** · SSH `38.255.28.21:20100` |
 
 ## Blocked
-No rentable B300×8; no non-BL 8×B200 in catalog. Never `pkill -f`.
+No rentable B300×8; sole catalog 8×B200s are BL. Never `pkill -f`.
 
 ## Next action
-1. Watch R938 **chal-00949** (king ~1257/1300 → verdict). 2. Poll R965/R966/R967→MERGE→n80. 3. R926 king FAIL→Triton seed+relaunch K:8001→chall R944 n80. 4. Rent B300×8 when non-BL stock. 5. α→τ→Lium when stake ≥~τ5.
+1. Poll R944 **n80** → CROWN_OK/REFUTE (`/root/affine_data/r944_sim_*_reign36_wvk7.json`). 2. Poll R965/R966/R967→MERGE→n80. 3. Rent B300×8 when non-BL stock. 4. α→τ→Lium when stake ≥~τ5.
