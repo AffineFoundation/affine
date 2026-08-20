@@ -1,4 +1,7 @@
-# R973 result
+# R973 result (p4131 confirm; acted p4125→R996)
 
-- p4119b rematch MERGE `--save-original-format` finished; false **KEY_LAYOUT REFUSE** on sample keys `model.language_model.*` (same as king/R944).
-- p4121: skip remap — vLLM mapper remaps HF→`language_model.model.*`/`visual.*`. Served `/tmp/r973_merged` GPUs 3,4 :8002 → **v4 n80 LIVE** (pid 68117, bh `bb7afe8b…`, launched 2026-08-20T09:19:27Z). Decision pending.
+- **REFUTE v4** vs reign36 · m=-0.008977 SE=0.003304 z=-2.717 n=79
+- bar=max(2·SE,δ)=0.006608 · ratio≈-1.36×
+- thought✓ median_len_z=227.0 · B✓ b_gate_pass_rate=0.377
+- duel_params k=3 τ=0.03
+- Follow-up already live: **R996** SoftCtx HiRank Midβ Ultra UltraLoLR on R926 GPUs 3,4
