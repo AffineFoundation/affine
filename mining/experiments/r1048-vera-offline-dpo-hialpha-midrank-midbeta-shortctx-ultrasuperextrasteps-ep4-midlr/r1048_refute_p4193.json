@@ -1,0 +1,16 @@
+{
+  "utc": "2026-08-20T19:28:24Z",
+  "axis": "R1048",
+  "status": "REFUTE",
+  "margin": 0.0006768106862455652,
+  "se": 0.001911553206422823,
+  "z": 0.35406322145336044,
+  "n_paired": 80,
+  "bar": 0.003823106412845646,
+  "thought_med": 199.0,
+  "b_pass": 0.45188284518828453,
+  "k": 3,
+  "tau": 0.03,
+  "wins": false,
+  "next": "R1063 ShortCtx MidRank Mid\u03b2 Ultra HiLR"
+}
