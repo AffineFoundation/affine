@@ -226,7 +226,7 @@ for i in $(seq 1 60); do
 done
 
 _seed_src=""
-for cand in /root/.triton/cache/chall_r969 /root/.triton/cache/chall_r953 /root/.triton/cache/chall_r952 /root/.triton/cache/king /root/.triton/cache/chall; do
+for cand in /root/.triton/cache/chall_r978 /root/.triton/cache/chall_r964 /root/.triton/cache/chall_r959 /root/.triton/cache/chall_r955 /root/.triton/cache/chall_r948 /root/.triton/cache/chall_r338 /root/.triton/cache/king /root/.triton/cache/chall; do
   if [[ -d "$cand" ]]; then
     _n=$(find "$cand" -name '__triton_launcher*.so' 2>/dev/null | wc -l || true)
     if [[ "${_n:-0}" -ge 1 ]]; then
@@ -237,7 +237,7 @@ for cand in /root/.triton/cache/chall_r969 /root/.triton/cache/chall_r953 /root/
 done
 _pre_n=$(find "$TCACHE" -name '__triton_launcher*.so' 2>/dev/null | wc -l || true)
 _pre_sz=$(du -sm "$TCACHE" 2>/dev/null | awk '{print $1}' || echo 0)
-if [[ "${_pre_n:-0}" -ge 1 && "${_pre_sz:-0}" -ge 50 ]]; then
+if [[ "${FORCE_TRITON_RESEED:-0}" != "1" && "${_pre_n:-0}" -ge 1 && "${_pre_sz:-0}" -ge 50 ]]; then
   log "REUSE preseed $TCACHE n_so=$_pre_n size_mb=$_pre_sz — skip wipe"
 else
   if [[ -n "$_seed_src" ]]; then
@@ -308,7 +308,7 @@ log "triton n_so=$_nso after probe"
 
 BLOCK_HASH=$(python3 - <<'PY'
 import hashlib, time
-print(hashlib.sha256(f"r1050-reign36-wvk7-p4180-{time.time()}".encode()).hexdigest())
+print(hashlib.sha256(f"r1050-reign36-wvk7-p4195-{time.time()}".encode()).hexdigest())
 PY
 )
 KING_ID=$(curl -sf -m 5 http://127.0.0.1:8001/v1/models | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0]['id'])")
@@ -335,7 +335,7 @@ nohup env -u HF_TOKEN -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE \
 SIM_PID=$!
 echo "$SIM_PID" > /root/logs/r1050_sim_wvk7.pid
 log "n80 pid=$SIM_PID — waiting for result"
-date -u +%Y-%m-%dT%H:%M:%SZ > /root/logs/r1050_n80_launched.p4180
+date -u +%Y-%m-%dT%H:%M:%SZ > /root/logs/r1050_n80_launched.p4195
 
 while kill -0 "$SIM_PID" 2>/dev/null; do
   sleep 30
@@ -374,7 +374,7 @@ dec={
   "thought_median": chal.get("median_len_z"),
   "b_pass": chal.get("b_gate_pass_rate"),
   "wins": v.get("challenger_wins") if v else d.get("wins"),
-  "note": "p4180 chall+v4-n80 r338 6,7 :8002; HiAlpha MidRank HiBeta SoftCtx UltraSuperExtra ep4 HiLR (β=0.3 r=32 @12288 steps=28800 lr=2e-6); vs reign36 vera wvk7",
+  "note": "p4195 chall+v4-n80 r338 6,7 :8002; HiAlpha MidRank HiBeta SoftCtx UltraSuperExtra ep4 HiLR (β=0.3 r=32 @12288 steps=28800 lr=2e-6); vs reign36 vera wvk7",
   "hf_ok": False,
   "raw_keys": sorted(d.keys())[:40],
 }

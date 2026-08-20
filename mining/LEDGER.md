@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 78019.79528051746 | p4194 |
-| Lium balance | **$78019.79528051746** | p4194 |
-| cumulative mining spend | ~$144,463 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$68020** (balance − $10,000 floor) | $UTC |
+| $UTC | 77985.20940231917 | p4195 |
+| Lium balance | **$77985.20940231917** | p4195 |
+| cumulative mining spend | ~$144,498 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$67985** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (8 pods) | **~$354.58/h** · vs floor $833/h · gap **−$478.42/h** · B300×8=0 | p4194 |
+| miner burn (8 pods) | **~$354.58/h** · vs floor $833/h · gap **−$478.42/h** · B300×8=0 | p4195 |
 | miner coldkey free | τ~1249 | kept ≥τ50 |
-| miner stake | **~29.5α / τ1.67** (r252) | p4194 |
+| miner stake | **~29.5α / τ1.67** (r252) | p4195 |
 | registrations / submissions | **15** / **15** (… **r1032 QUEUED chal-00967**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-20T19:39:09Z | 77985.20940231917 | p4195 **R1050 Triton-reseed n80 LIVE** r338 (no rent; burn **~$354.58/h**) |
 | 2026-08-20T19:33:01Z | 78019.79528051746 | p4194 **R1047 REFUTE→R1064 TRAIN** r337 (no rent; burn **~$354.58/h**) |
 | 2026-08-20T19:28:48Z | 78055.74658711975 | p4193 **R1048 REFUTE→R1063 TRAIN** r337 (no rent; burn **~$354.58/h**) |
 | 2026-08-20T19:19:42Z | 78124.01685769501 | p4192 **R1047+R1048 n80 LIVE** r337 (no rent; burn **~$354.58/h**) |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-20T18:48:46Z | 78331.50815923551 | p4188 **R1043 REFUTE→R1059 TRAIN** crown (no rent; burn **~$354.58/h**) |
 | 2026-08-20T18:40:10Z | 78400.5826534614 | p4187 **R1043 v4 n80 LIVE** crown :8003 (no rent; burn **~$354.58/h**) |
 | 2026-08-20T18:37:27Z | 78400.5826534614 | p4186 **R1041+R1042+R1040 REFUTE→R1056+R1057+R1058 TRAIN** (no rent; burn **~$354.58/h**) |
-| 2026-08-20T18:24:06Z | 78504.03992438196 | p4185 **R1055 TRAIN** r252 GPUs4,5 (no rent; burn **~$354.58/h**) |
