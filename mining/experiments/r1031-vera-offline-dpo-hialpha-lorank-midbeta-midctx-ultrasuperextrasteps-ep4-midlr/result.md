@@ -1,12 +1,17 @@
-# R1031 — MidCtx LoRank Midβ Ultra MidLR
+# R1031 result
 
-**Status (p4164):** **TRAIN** on `mine-crown-1` GPUs 1,3 after R1019 REFUTE ~0.95×. MERGE→n80 waiter armed.
+**REFUTE v4** vs reign36 (`vera6/…-t6`@`8e3f1695`) on `mine-crown-1` GPUs 1,3 :8004.
 
-| knob | value |
+| field | value |
 |---|---|
-| base | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695` |
-| β / α / r / lr | **0.1** / 128 / **16** / **1e-6** |
-| max_len / steps | **8192** MidCtx / **28800** Ultra |
-| parent | R1019 Mega MidLR REFUTE m=+0.003346 ~0.95× |
+| margin | **+0.001897** |
+| SE | 0.002988 |
+| z | 0.635 |
+| n | 79 |
+| bar | ≈0.005977 (~**0.32×**) |
+| thought_median | 194 ✓ |
+| B pass | 0.470 ✓ |
+| k / τ | 3 / 0.03 |
+| when | 2026-08-20T16:04:47Z (p4173 harvest note) |
 
-**Decision rule:** Stage-5 iff fresh v4 n80 margin > max(2·SE, 0.002) AND thought≥80 AND B≥0.30 vs reign36.
+Axis was MidCtx LoRank Midβ Ultra MidLR (from R1019 Mega MidLR ~0.95×). Chall `:8004` still warm — next pass: exact-PID reap → follow-on (e.g. MidCtx LoRank Midβ Ultra UltraLoLR or Mega HiLR isolate).

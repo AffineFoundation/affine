@@ -25,19 +25,12 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4171: **R339** new 8×B200 idle — bootstrap **RevisionNotFound** marsplan@556d02a2 → pin **vera6**@`8e3f1695` (p4043 pattern) + relaunch pid**1868** DL; R1025 n80 ~34/80; burn ~$354.58/h; B300/B200×8=0. **Never `pkill -f`**.
-- p4170: **R1020 REFUTE** m=+0.001734~0.35× thought✓169.5 B✗**0.2875** (causality_fail) k=3 → exact-PID reap r252 :8003 → **R1040 SoftCtx HiRank MidLoβ Mega HiLR TRAIN** GPUs6,7 pid**132110**; R1025 n80 armed; B300/B200×8=0. **Never `pkill -f`**.
-- p4169: **R1027 REFUTE** m=+0.000400~0.058× thought✓161 B✓0.375 k=3 → exact-PID reap r338 :8002 → **R1039 SoftCtx MidRank Hiβ Ultra MidLR TRAIN** GPUs6,7 pid**123833**; **R1013 REFUTE** m=−0.001596~−0.19× → chall reaped; B300/B200×8=0. **Never `pkill -f`**.
-- p4168: **R1008 LOST** chal-00961; **R1028 REFUTE**→**R1038 TRAIN** r338 4,5. **Never `pkill -f`**.
-- p4167: **R1023 REFUTE**→**R1037 TRAIN**; r926 teacher OOM→util0.88 **R1013 n80**. **Never `pkill -f`**.
-- p4166: **R1016+R1024+R1021+R1022 REFUTE**→**R1033–R1036 TRAIN**. **Never `pkill -f`**.
-- p4165: **R1015 REFUTE**→**R1032 TRAIN**. **Never `pkill -f`**.
-- p4164: **R1014+R1019 REFUTE**→**R1030+R1031**. **Never `pkill -f`**.
-- p4162: **R1012+R1018 REFUTE**→**R1029+R1028 TRAIN**. **Never `pkill -f`**.
-- p4161: **R1017 REFUTE**→**R1027 TRAIN**. **Never `pkill -f`**.
-- p4160: **R1005 REFUTE**→**R1026 TRAIN**. **Never `pkill -f`**.
-- p4159: r926 TP4→TP2 → **R1025 TRAIN**. **Never `pkill -f`**.
-- p4158: TTL+Soft/Dead +24h → **2026-08-21T13:26Z**. **Never `pkill -f`**.
+- p4174: **R1031+R1035+R1036 REFUTE** → exact-PID crown reap → **R1041 Mega HiLR / R1042 ShortCtx Mega MidLR / R1043 Ultra HiLR TRAIN** pids**210163/210161/210151**; R1025 n80 ConnectError (chall :8003 died); B300/B200×8=0. **Never `pkill -f`**.
+- p4171: **R339** marsplan@556d02a2 404 → pin **vera6**@`8e3f1695` + relaunch; burn ~$354.58/h. **Never `pkill -f`**.
+- p4170: **R1020 REFUTE** B✗0.2875 → **R1040 Mega HiLR TRAIN** r252. **Never `pkill -f`**.
+- p4169: **R1027 REFUTE**→**R1039**; **R1013 REFUTE** chall reaped. **Never `pkill -f`**.
+- p4168: **R1008 LOST** chal-00961; **R1028 REFUTE**→**R1038**. **Never `pkill -f`**.
+- p4167–p4159: REFUTE→next TRAIN cascade (R1037…R1025); TTL→**2026-08-21T13:26Z**. **Never `pkill -f`**.
 - p4157: α→TAO→Lium r252→τ8.2526 → Lium +~$1811. **Never `pkill -f`**.
 - p4150: **R1008 CROWN_OK**→SUBMITTED→**LOST** p4168. **Never `pkill -f`**.
 - p4147: check executor_blacklist before `lium up`. **Never `pkill -f`**.

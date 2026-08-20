@@ -1,12 +1,17 @@
-# R1035 — ShortCtx MidRank MidLoβ Ultra MidLR
+# R1035 result
 
-**Status (p4166):** **TRAIN** on `mine-crown-1` GPUs 6,7 after R1021 REFUTE. MERGE→n80 waiter armed. pid**196551**.
+**REFUTE v4** vs reign36 (`vera6/…-t6`@`8e3f1695`) on `mine-crown-1` GPUs 6,7 :8002.
 
-| knob | value |
+| field | value |
 |---|---|
-| base | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695` |
-| β / α / r / lr | **0.05** / 128 / **32** / **1e-6** |
-| max_len / steps | **6144** ShortCtx / **28800** Ultra |
-| parent | R1021 SoftCtx MidRank MidLoβ Ultra MidLR REFUTE ~−0.16× |
+| margin | **−0.006514** |
+| SE | 0.005147 |
+| z | −1.266 |
+| n | 79 |
+| bar | ≈0.01029 (~**−0.63×**) |
+| thought_median | 180 ✓ |
+| B pass | 0.392 ✓ |
+| k / τ | 3 / 0.03 |
+| when | 2026-08-20T16:21:10Z (p4173 harvest) |
 
-**Decision rule:** Stage-5 iff fresh v4 n80 margin > max(2·SE, 0.002) AND thought≥80 AND B≥0.30 vs reign36.
+Axis was ShortCtx MidRank MidLoβ Ultra MidLR (from R1021 SoftCtx MidLoβ Ultra MidLR). Chall `:8002` still warm at harvest — next pass: exact-PID reap → follow-on isolate (Mega MidLR or UltraLoLR).
