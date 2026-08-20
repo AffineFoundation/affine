@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 77295.57023236528 | p4214 |
-| Lium balance | **$77295.57023236528** | p4214 |
-| cumulative mining spend | ~$145,866 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$67296** (balance − $10,000 floor) | $UTC |
+| $UTC | 77256.23720762525 | p4215 |
+| Lium balance | **$77256.23720762525** | p4215 |
+| cumulative mining spend | ~$145,905 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$67256** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (9 pods) | **~$392.18/h** · vs floor $833/h · gap **−$440.82/h** · B300×8=0 | p4214 |
+| miner burn (9 pods) | **~$392.18/h** · vs floor $833/h · gap **−$440.82/h** · B300×8=0 | p4215 |
 | miner coldkey free | τ~1246.7 | kept ≥τ50 |
-| miner stake | **0** | p4214 |
+| miner stake | **r252 ~59α ≈ τ3.36** (<τ5 sweep bar) | p4215 |
 | registrations / submissions | **16** / **16** (… **r1064 chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-20T23:03:35Z | 77256.23720762525 | p4215 **R1075 REFUTE→R1081 TRAIN** (no rent); burn **~$392.18/h**; B300×8=0 |
 | 2026-08-20T22:56:47Z | 77295.57023236528 | p4214 **R1051 REFUTE→R1080 TRAIN** (no rent); burn **~$392.18/h**; B300×8=0 |
 | 2026-08-20T22:39:38Z | 77447.08707491565 | p4213 **R1060 REFUTE** + **R340 train waiter** (no rent); burn **~$392.18/h**; B300×8=0 |
 | 2026-08-20T22:05:55Z | 77750.53055178167 | p4211 **R1060 teacher TP4+n80** (no rent); burn **~$392.18/h**; B300×8=0 |
