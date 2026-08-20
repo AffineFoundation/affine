@@ -1,0 +1,2 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+pre-flight OK. Would commit: affine1|unconst/Affine-5czsc2fc98-r1032-vera-odpo-midrank-hibeta-shortctx-ultraextra-ep4-midlr-merged|62dfb322fdce5873543bd92692ab4ecc3e13f941|5DyVW9mb6mbAkNdD9xjenzsVXnTUWosrKp9q3AetWJnDbXeC

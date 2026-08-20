@@ -13,18 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 77425.74534212131 | p4176 |
-| Lium balance | **$77425.74534212131** | p4176 |
+| $UTC | 77425.74534212131 | p4177 |
+| Lium balance | **$77425.74534212131** | p4177 |
 | cumulative mining spend | ~$143,740 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
 | **available for mining** | **~$67426** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (8 pods) | **~$354.58/h** · vs floor $833/h · gap **−$478.42/h** · B300×8=0 | p4176 |
+| miner burn (8 pods) | **~$354.58/h** · vs floor $833/h · gap **−$478.42/h** · B300×8=0 | p4177 |
 | miner coldkey free | τ~1251 | kept ≥τ50 |
-| miner stake | **0** | p4176 |
-| registrations / submissions | **14** / **14** (… **r1008 LOST** chal-00961) | |
+| miner stake | **0** | p4177 |
+| registrations / submissions | **15** / **15** (… **r1032 SUBMITTED** reveal 31481268) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-20T17:30:16Z | 77425.74534212131 | p4177 **R1032 SUBMITTED** (HF purge LOST ~261GB; burn **~$354.58/h**) |
+| 2026-08-20T17:25:30Z | 77425.74534212131 | p4177 **R1032 CROWN_OK→HF push** (no rent; burn **~$354.58/h**) |
 | 2026-08-20T17:20:52Z | 77425.74534212131 | p4176 **R1029 REFUTE→R1044 TRAIN** (no rent; burn **~$354.58/h**) |
 | 2026-08-20T17:15:15Z | 77495.99119784811 | p4175 **R1025 chall rearm+n80** (no rent; burn **~$354.58/h**) |
 | 2026-08-20T17:05:15Z | 77559.67864424792 | p4174 **R1031+R1035+R1036 REFUTE→R1041–43 TRAIN** (no rent; burn **~$354.58/h**) |
