@@ -1,0 +1,30 @@
+stop 149063 (/root/logs/vllm_chall_r1061.pid)
+reap done
+wait free used_mib=0 iter=1
+TRAIN_PID=151995
+[r1072-lean] 2026-08-20T20:32:13Z start GPUs 4,5 MidCtx HiRank Midβ Ultra HiLR
+[r1072-lean] data_lines=604
+[r1072-lean] wait VRAM4+5 used_mib=0 iter=1
+{
+  "utc": "2026-08-20T20:32:13Z",
+  "axis": "r1072-vera-offline-dpo-hialpha-hirank-midbeta-midctx-ultrasuperextrasteps-ep4-hilr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "2e-6",
+  "lora_r": 64,
+  "lora_alpha": 128,
+  "beta": 0.1,
+  "max_len": 8192,
+  "epochs": 4,
+  "max_steps": 28800,
+  "gpus": "4,5",
+  "chall_port": 8003,
+  "parent_signal": "R1061 MidCtx HiRank Mid\u03b2 Mega HiLR REFUTE m=+0.001790 ~0.15\u00d7 thought\u2713191 B\u27130.45 k=3 \u2192 Ultra isolate",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1072-lean] TRAIN launched pid=151995 BASE=/root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e
+[r1072-lean] wait→merge armed pid=152000
+[r1072-lean] MERGE→n80 waiter armed pid=152003
+151995 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1072/dpo_duel_reason.jsonl --out-dir /root/r1072/train --max-len 8192 --epochs 4 --lr 2e-6 --lora-r 64 --lora-alpha 128 --beta 0.1 --max-steps 28800
+4, 4 MiB
+5, 4 MiB
+ 147232 441077231-17:56:48
