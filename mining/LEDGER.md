@@ -13,19 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 78400.5826534614 | p4186 |
-| Lium balance | **$78400.5826534614** | p4186 |
+| $UTC | 78400.5826534614 | p4187 |
+| Lium balance | **$78400.5826534614** | p4187 |
 | cumulative mining spend | ~$144,081 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$68504** (balance − $10,000 floor) | $UTC |
+| **available for mining** | **~$68400** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (8 pods) | **~54.58/h** · vs floor 33/h · gap **−78.42/h** · B300×8=0 | p4186 |
+| miner burn (8 pods) | **~$354.58/h** · vs floor $833/h · gap **−$478.42/h** · B300×8=0 | p4187 |
 | miner coldkey free | τ~1249 | kept ≥τ50 |
 | miner stake | **0** | p4185 |
 | registrations / submissions | **15** / **15** (… **r1032 QUEUED chal-00967**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
-| 2026-08-20T18:37:27Z | 78400.5826534614 | p4186 **R1041+R1042+R1040 REFUTE→R1056+R1057+R1058 TRAIN** (no rent; burn **~54.58/h**) |
+| 2026-08-20T18:40:10Z | 78400.5826534614 | p4187 **R1043 v4 n80 LIVE** crown :8003 (no rent; burn **~$354.58/h**) |
+| 2026-08-20T18:37:27Z | 78400.5826534614 | p4186 **R1041+R1042+R1040 REFUTE→R1056+R1057+R1058 TRAIN** (no rent; burn **~$354.58/h**) |
 | 2026-08-20T18:24:06Z | 78504.03992438196 | p4185 **R1055 TRAIN** r252 GPUs4,5 (no rent; burn **~$354.58/h**) |
 | 2026-08-20T18:19:07Z | 78538.22416222448 | p4184 **R1041+R1042 v4 n80 LIVE** crown (no rent; burn **~$354.58/h**) |
 | 2026-08-20T18:14:53Z | 78573.6981541571 | p4183 **R1054 TRAIN** r924 idle GPUs1,3 (no rent; burn **~$354.58/h**) |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-20T17:47:01Z | 77254.9071929293 | p4179 **R1025+R1037 REFUTE→R1047+R1048 TRAIN** r337 (no rent; burn **~$354.58/h**) |
 | 2026-08-20T17:34:04Z | 77356.82265472399 | p4178 **R1045+R1046 TRAIN** r924 (no rent; burn **~$354.58/h**) |
 | 2026-08-20T17:30:16Z | 77425.74534212131 | p4177 **R1032 SUBMITTED** (HF purge LOST ~261GB; burn **~$354.58/h**) |
-| 2026-08-20T17:25:30Z | 77425.74534212131 | p4177 **R1032 CROWN_OK→HF push** (no rent; burn **~$354.58/h**) |

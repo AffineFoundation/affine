@@ -6,7 +6,7 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-21T13:26Z** | TK · **R1056+R1057+R1043 TRAIN** · SSH `95.133.252.28:40298` |
+| mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-21T13:26Z** | TK · **R1043 n80 LIVE** :8003 · **R1056+R1057 TRAIN** · SSH `95.133.252.28:40298` |
 | mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-21T13:26Z** | TK · **R1055+R1058 TRAIN** · SSH `38.127.229.127:40299` |
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | 8×B200 | $46.80 | **2026-08-21T13:26Z** | TK · **R1047+R1048 TRAIN** · SSH `150.136.46.118:20300` |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-21T13:26Z** | TK · **R1049+R1050 TRAIN** · SSH `95.133.253.90:40099` |
@@ -23,6 +23,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-20T18:40:10Z | p4187: crown **R1043** chall:8003→**v4 n80 LIVE** pid**224993**; B300×8=0 |
 | 2026-08-20T18:37:27Z | p4186: **R1041+R1042+R1040 REFUTE** → **R1056+R1057+R1058 TRAIN**; B300×8=0 |
-| 2026-08-20T18:24:06Z | p4185: r252 stale R1030 :8002 exact-PID reap → **R1055 TRAIN** GPUs4,5; R1040 MERGE→chall; B300×8=0 |
-| 2026-08-20T18:19:07Z | p4184: crown **R1041+R1042** MERGE→chall→**v4 n80 LIVE** pids **219229**/**219093**; B300×8=0 |
+| 2026-08-20T18:24:06Z | p4185: r252 stale R1030 :8002 exact-PID reap → **R1055 TRAIN**; B300×8=0 |
