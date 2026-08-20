@@ -1,0 +1,4 @@
+p4086: p4085 armed n80 pid34671 but died on ModuleNotFoundError: evalsrv.corpus (thin affine_pkg had only chat/dueling/terms).
+Synced full affine_pkg (corpus+vllm_client+affine.corpus+score wvk7) to mine-r926.
+Relaunched v4 n80 pid35231 → /root/affine_data/r944_sim_reign36_wvk7.json
+Corpus sync OK epoch=13 schema=2. Engines T:8000 K:8001 chall:8002 stayed READY.
