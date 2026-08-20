@@ -17,3 +17,9 @@ Parent: R983 SoftCtx LoRank Midβ Mega HiLR REFUTE m=−0.008220 ~−0.87× → 
 - MERGE live on GPUs **1,3** (merge_lora pid**154773**) → `/tmp/r993_merged`
 - **MERGE→n80** waiter armed pid**155035** → lean chall **:8004** GPUs 1,3 vs reign36 wvk7
 - scripts: `wait_r993_merge_then_n80_p4137.sh` + `lean_chall_n80_crown_r993_gpus13_p4137.sh`
+
+## p4139 — v4 n80 REFUTE
+- result: `/root/affine_data/r993_sim_result_reign36_wvk7.json`
+- m=**+0.002678** SE=0.002303 z=1.163 n=80 bar≈0.004607 (~**0.58×**)
+- thought✓(med156) B✓(0.377) k=3/τ=0.03 vs reign36
+- challenger_wins=False → **REFUTE** → reap chall:8004 → **R1006 MidLR** isolate

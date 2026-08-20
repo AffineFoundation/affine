@@ -25,14 +25,12 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4138: **R999+R1000** MERGE_READY idle → armed **MERGE→n80** r338 :8002/:8003 (pids 87190/87205; chall 87537/87548); R993 n80 ~31/80 crown; B300×8=0. **Never `pkill -f`**.
-- p4137: **R993+R994+R995** train→merge only → armed **MERGE→n80** crown :8004/:8002/:8003; R993 TRAIN_DONE→MERGE live (steps=1036); R959 857/1300; B300×8=0. **Never `pkill -f`**.
-- p4136: **R986** REFUTE m=+0.002837 ~0.41× → **R1005** TRAIN R924 + MERGE→n80. **Never `pkill -f`**.
-- p4135: **R1001+R1003** MERGE→n80 R924 :8003/:8004. **Never `pkill -f`**.
-- p4134: **R997** MERGE→n80 R337 :8003. **Never `pkill -f`**.
-- p4133: **R989** REFUTE ~−0.57× → **R1004** TRAIN + MERGE→n80. **Never `pkill -f`**.
-- p4132–p4131: pre-arm **MERGE→n80** (wait scripts stop at MERGE). **Never `pkill -f`**.
-- p4130–p4122: HiLR REFUTE→UltraLoLR/MidLR isolates. **Never `pkill -f`**.
+- p4139: **R993** REFUTE m=+0.002678 ~0.58× thought✓156 B✓0.377 → reap :8004 → **R1006 MidLR TRAIN** crown 1,3 + MERGE→n80; R994/R995 n80 kept. **Never `pkill -f`**.
+- p4138: **R999+R1000** MERGE_READY idle → armed **MERGE→n80** r338 :8002/:8003. **Never `pkill -f`**.
+- p4137: **R993+R994+R995** armed **MERGE→n80** crown. **Never `pkill -f`**.
+- p4136: **R986** REFUTE ~0.41× → **R1005** TRAIN R924 + MERGE→n80. **Never `pkill -f`**.
+- p4135–p4133: MERGE→n80 / REFUTE→UltraLoLR isolates. **Never `pkill -f`**.
+- p4132–p4122: pre-arm MERGE→n80; HiLR→UltraLoLR/MidLR. **Never `pkill -f`**.
 - p4121: cryptoDev HF `model.language_model.*` layout OK — vLLM mapper remaps. **Never `pkill -f`**.
 - p4119/18: cryptoDev merge needs `--save-original-format` + visual-only missing. **Never `pkill -f`**.
 - p4109: `lium fund` Subtensor.transfer fail → `btcli`→`5FqACMt…zsThe`. **Never `pkill -f`**.
