@@ -5,6 +5,11 @@
 # pod replacement here), and writes state/state.json for the router.
 #
 # Operator directive 2026-08-15: rent as many machines as we can; B300s ok.
+#
+# 2026-08-21 (explicit operator directive): the miner-teacher pool this
+# swarm was replaced by vanished in the platform-level mine-* wipe. New
+# footprint: exactly ONE 8x B200 box (types.b200-8x, target=1); every other
+# type target set to 0. ~$40-48/h, restores swarm-assisted duel pace.
 
 [swarm]
 model = "zai-org/GLM-4.5-Air-FP8"
@@ -37,7 +42,7 @@ match = "RTX PRO 6000 Blackwell Server"
 gpu_count = 8
 tp = 2
 replicas = 4
-target = 6
+target = 0
 max_price = 15.0
 est_tps = 0.6               # measured duel-real c12 (2xTP4 layout)
 
@@ -46,7 +51,7 @@ match = "RTX PRO 6000 Blackwell Server"
 gpu_count = 4
 tp = 2
 replicas = 2
-target = 1
+target = 0
 max_price = 8.0
 est_tps = 0.25
 
@@ -55,16 +60,31 @@ match = "B300"
 gpu_count = 1
 tp = 1
 replicas = 1
-target = 3
+target = 0
 max_price = 8.5
 est_tps = 0.63
+
+[types.b200-8x]              # 8x179 GB: 8 TP1 replicas — max throughput/box
+# (2026-08-21 operator directive). TP1 fits GLM-Air-FP8 per the b200-1x
+# calibration (0.80 util); 8 independent replicas beat TP-sharding for the
+# duel's many small echo requests. NOTE: executor fbb1135f is a known dud
+# (1/8 GPUs, blacklisted by the mining loop 2026-08-21) — blacklist.txt
+# has it if the manager ever lands there.
+match = "B200"
+gpu_count = 8
+tp = 1
+replicas = 8
+target = 1
+max_price = 48.0
+est_tps = 4.0                # prior: 8x the measured 0.5 of b200-1x
+gpu_util = 0.80
 
 [types.b200-1x]              # 179 GB single GPU: tight but fits at 0.80 util
 match = "B200"
 gpu_count = 1
 tp = 1
 replicas = 1
-target = 1
+target = 0
 max_price = 7.0
 est_tps = 0.5
 gpu_util = 0.80
@@ -74,7 +94,7 @@ match = "H100"
 gpu_count = 8
 tp = 2
 replicas = 4
-target = 1
+target = 0
 max_price = 14.0
 est_tps = 0.8
 
@@ -85,7 +105,7 @@ match = "H200"
 gpu_count = 8
 tp = 2
 replicas = 4
-target = 1
+target = 0
 max_price = 27.0
 est_tps = 2.4
 adopt = ["affine-teacher2"]
@@ -95,7 +115,7 @@ match = "H200"
 gpu_count = 4
 tp = 2
 replicas = 2
-target = 1
+target = 0
 max_price = 17.0
 est_tps = 1.0
 
@@ -104,7 +124,7 @@ match = "RTX 5090"
 gpu_count = 8
 tp = 8
 replicas = 1
-target = 20
+target = 0
 max_price = 5.6
 est_tps = 0.12               # measured duel-real (bench_5090_tp8_c24_real)
 gpu_util = 0.66
@@ -119,7 +139,7 @@ match = "RTX 6000 Ada"
 gpu_count = 8
 tp = 8
 replicas = 1
-target = 2
+target = 0
 max_price = 6.0
 est_tps = 0.3
 max_num_batched_tokens = 4096
@@ -129,7 +149,7 @@ match = "L40S"
 gpu_count = 8
 tp = 8
 replicas = 1
-target = 1
+target = 0
 max_price = 5.0
 est_tps = 0.25
 max_num_batched_tokens = 4096
