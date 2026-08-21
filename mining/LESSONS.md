@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4284: **R1143 REFUTE** ~**0.61×** → **R1163** MidLR; **R1151 REFUTE** ~**−0.02×** + **R1152 REFUTE** ~**−0.83×** → **R1164/R1165** MidLR; **R1145** n80 died on broken Triton `.so` when seed preferred stale `chall_r1145` — wipe+seed from **king** first. **Never `pkill -f`**.
 - p4283: **R1147 REFUTE** m=+0.001654 SE=0.001158 ~**0.71×** (thought✓162 B✓0.425 k=3) → exact-PID reap crown :8004 → **R1162** SoftCtx LoRank Loβ MidLR TRAIN; r338 waiters died on **wrong LEAN path** (lorank-midlobeta-shortctx copy-paste ≠ hirank-lobeta-softctx / lorank-lobeta-midctx) → relaunch n80 after merge.done. **Never `pkill -f`**.
 - p4282: **R1146 REFUTE** ~**−0.16×** + **R1148 REFUTE** ~**−1.03×** → **R1160/R1161** TRAIN; sole B200 **fbb1135f** BL. **Never `pkill -f`**.
 - p4281: blind `lium up --gpu` bypasses executor_blacklist → re-hit **fbb1135f**; R1158 waiter = **node-id + ngpu≥8**. **Never `pkill -f`**.

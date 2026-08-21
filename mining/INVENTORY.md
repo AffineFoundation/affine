@@ -9,8 +9,8 @@
 | mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-21T13:26Z** | TK · **R1160+61+62 TRAIN** |
 | mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-21T13:26Z** | TK · **R1138+R1153 TRAIN** |
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | 8×B200 | $46.80 | **2026-08-21T13:26Z** | TK · **R1149+R1150 TRAIN** |
-| mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-21T13:26Z** | TK · **R1151+R1152 n80** |
-| mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | 8×B200 | soft **2026-08-21T15:50Z** | TK · **R1143+R1145 n80** |
+| mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-21T13:26Z** | TK · **R1164+R1165 TRAIN** |
+| mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | 8×B200 | soft **2026-08-21T15:50Z** | TK · **R1163 TRAIN + R1145 n80** |
 | mine-r340-marsplan-online-dpo-hirank-bigg-1 | gentle-orbit-4a | 8×B200 | $37.60 | **2026-08-21T21:24Z** | TK · **R1156+R1142+R1144 TRAIN** |
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | 8×H200 | $33.81 | **2026-08-21T13:26Z** | TK · **R1159 TRAIN** +R1154+55 |
 | mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | 8×H100 | $13.76 | **2026-08-21T13:26Z** | TK · **R1157 TRAIN** |
@@ -24,6 +24,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-21T08:46:03Z | p4284: **R1143/R1151/R1152 REFUTE**→**R1163/64/65** MidLR; **R1145** Triton-reseed n80; burn **~$392.19/h** |
 | 2026-08-21T08:36:45Z | p4283: **R1147 REFUTE**→**R1162** TRAIN; r338 **R1151+R1152** n80 relaunch (path typo); burn **~$392.19/h** |
-| 2026-08-21T08:26:00Z | p4282: **R1146+R1148 REFUTE** → **R1160+R1161** TRAIN; R1147 n80 :8004; burn **~$392.19/h** |
-| 2026-08-21T08:10:30Z | p4281: tore **brave-matrix-2a** + **eager-lion-45** (1/8 GPU, exec **fbb1135f**); BL note; R1158 waiter=node-id+ngpu≥8 |
+| 2026-08-21T08:26:00Z | p4282: **R1146+R1148 REFUTE** → **R1160+R1161** TRAIN; burn **~$392.19/h** |

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# p4271: R1145 MERGE_DONE → chall :8003 + v4 n80 on R339 GPUs 6,7 vs reign36 vera (wvk=7 k=3 τ=0.03).
-# Axis: vera Soft Mid Mid Soft HiAlpha LoRank Midβ ShortCtx HyperSuperExtra ep4 UltraLoLR (β=0.1 r=16 lr=5e-7 @6144 steps=38400)
-# Parent: R1127 ShortCtx LoRank Midβ Hyper HiLR REFUTE m=-0.001642 ~-0.25× → UltraLoLR isolate
+# p4284: R1164 MERGE_DONE → chall :8003 + v4 n80 on R339 GPUs 4,5 vs reign36 vera (wvk=7 k=3 τ=0.03).
+# Axis: vera Soft Mid Mid Soft HiAlpha LoRank Midβ ShortCtx HyperSuperExtra ep4 MidLR (β=0.1 r=16 lr=1e-6 @6144 steps=38400)
+# Parent: R1127 ShortCtx LoRank Midβ Hyper HiLR REFUTE m=-0.001642 ~-0.25× → MidLR isolate
 # Never --no-save-original-format. Never pkill -f.
 # Do not touch teacher:8000 / king:8001 / R1143 on :8002 GPUs4,5.
 set -euo pipefail
@@ -14,7 +14,7 @@ if [[ -f /root/mine.env ]]; then
   set +a
 fi
 
-GPUS=6,7
+GPUS=4,5
 CHALL_PORT=8003
 export CUDA_VISIBLE_DEVICES=$GPUS
 
@@ -48,20 +48,20 @@ fi
 KING_REPO=vera6/affine-5g4yy75zuz-t6
 KING_REV=8e3f1695e058837ed80fec3238ff439fdc2d0f0e
 TEACHER_REPO=zai-org/GLM-4.5-Air-FP8
-MERGE_DIR=/tmp/r1145_merged
+MERGE_DIR=/tmp/r1164_merged
 export CUDA_VISIBLE_DEVICES=$GPUS
 UTIL=${UTIL:-0.72}
-LOG=/root/logs/p4271_r1145_chall_n80_wvk7.log
-CHALL_LOG=/root/logs/vllm_chall_r1145_p4271.log
-PIDF=/root/logs/vllm_chall_r1145.pid
-TCACHE=/root/.triton/cache/chall_r1145
-SIM_N80=/root/affine_data/r1145_sim_result_reign36_wvk7.json
-PROG=/root/affine_data/r1145_sim_progress_reign36_wvk7.json
-SIM_DEC=/root/affine_data/r1145_decision_reign36_wvk7.json
+LOG=/root/logs/p4284_r1164_chall_n80_wvk7.log
+CHALL_LOG=/root/logs/vllm_chall_r1164_p4284.log
+PIDF=/root/logs/vllm_chall_r1164.pid
+TCACHE=/root/.triton/cache/chall_r1164
+SIM_N80=/root/affine_data/r1164_sim_result_reign36_wvk7.json
+PROG=/root/affine_data/r1164_sim_progress_reign36_wvk7.json
+SIM_DEC=/root/affine_data/r1164_decision_reign36_wvk7.json
 mkdir -p /root/logs /root/affine_data
 
 : >"$LOG"
-log() { echo "[p4271-r1145] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*" | tee -a "$LOG"; }
+log() { echo "[p4284-r1164] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*" | tee -a "$LOG"; }
 
 stop_pid() {
   local pid=$1
@@ -96,21 +96,21 @@ hub_ok() {
   [[ -f "$path/config.json" ]] && [[ "${n:-0}" -ge 16 ]]
 }
 
-log "START R1145 chall+v4-n80 R339 GPUs=$GPUS merge=$MERGE_DIR vs king=$KING_REPO@$KING_REV"
+log "START R1164 chall+v4-n80 R339 GPUs=$GPUS merge=$MERGE_DIR vs king=$KING_REPO@$KING_REV"
 hub_ok "$MERGE_DIR" || { log "FATAL merge incomplete"; exit 1; }
 n=$(ls "$MERGE_DIR"/model-*-of-*.safetensors | wc -l)
 log "reuse merge shards=$n"
 
 cat >"$MERGE_DIR/README.md" <<'CARD'
-# R1145 merged challenger (local)
+# R1164 merged challenger (local)
 
 - **Base:** `vera6/affine-5g4yy75zuz-t6` @ `8e3f1695…` (live reign36 king)
 - **Method:** Offline DPO on Reason duel pairs (teacher-side)
-- **Axis:** HiAlpha LoRank MidBeta ShortCtx HyperSuperExtra ep4 HiLR (β=0.1 r=16 lr=2e-6 @12288 steps=38400)
-- **Knobs:** lr=2e-6, LoRA r=32 / α=128, β=0.1, max_len=12288, epochs=4, max_steps=38400
-- **Hardware:** mine-r339 8×B200 GPUs 6,7 TP2 :8003
-- **Experiment:** `mining/experiments/r1145-vera-offline-dpo-hialpha-lorank-midbeta-shortctx-hypersuperextrasteps-ep4-hilr/`
-- **Parent signal:** R1106 SoftCtx MidRank Midβ Hyper HiLR REFUTE ~0.29× → LoRank isolate
+- **Axis:** HiAlpha SoftCtx HiRank Loβ Hyper MidLR (β=0.02 r=64 lr=1e-6 @12288 steps=38400)
+- **Knobs:** lr=1e-6, LoRA r=64 / α=128, β=0.02, max_len=12288, epochs=4, max_steps=38400
+- **Hardware:** mine-r338 8×B200 GPUs 4,5 TP2 :8003
+- **Experiment:** `mining/experiments/r1164-vera-offline-dpo-hialpha-hirank-lobeta-softctx-hypersuperextrasteps-ep4-ultralolr/`
+- **Parent signal:** R1135 SoftCtx HiRank Loβ Hyper HiLR REFUTE m=+0.000174 SE=0.002777 ~0.03× thought✓214 B✓0.479 k=3 → MidLR isolate
 CARD
 
 for i in $(seq 1 90); do
@@ -136,7 +136,7 @@ done
 while read -r pid; do
   [[ "$pid" =~ ^[0-9]+$ ]] || continue
   stop_pid "$pid" "stale chall argv"
-done < <(ps -eo pid=,args= | awk '/vllm serve .*\/tmp/r1145_merged/ && !/awk/ {print $1}')
+done < <(ps -eo pid=,args= | awk '/vllm serve .*\/tmp/r1164_merged/ && !/awk/ {print $1}')
 
 CHALL_PORT="$CHALL_PORT" GPUS="$GPUS" python3 - <<'PY' | tee -a "$LOG"
 import os, signal, subprocess, time, re
@@ -148,7 +148,7 @@ except Exception:
     out = ""
 pids = set(int(x) for x in re.findall(r"pid=(\d+)", out))
 for pid in sorted(pids):
-    print(f"[p4271-r1145] kill :{port} listener pid={pid}", flush=True)
+    print(f"[p4284-r1164] kill :{port} listener pid={pid}", flush=True)
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -192,17 +192,17 @@ for pid in gpu_pids:
     except Exception:
         cmd = ""
     if "train_online_dpo" in cmd or "train_dpo" in cmd or "train_full" in cmd or "train_reason_grpo" in cmd:
-        print(f"[p4271-r1145] SKIP train pid={pid}", flush=True)
+        print(f"[p4284-r1164] SKIP train pid={pid}", flush=True)
         continue
     if "r769" in cmd or "r769_merged" in cmd or "/root/r769" in cmd:
-        print(f"[p4271-r1145] SKIP sibling train pid={pid}", flush=True)
+        print(f"[p4284-r1164] SKIP sibling train pid={pid}", flush=True)
         continue
     if any(tok in cmd for tok in ["GLM-4.5-Air", ":8000", ":8001"]):
-        if "r1145_merged" not in cmd:
-            print(f"[p4271-r1145] SKIP TK pid={pid}", flush=True)
+        if "r1164_merged" not in cmd:
+            print(f"[p4284-r1164] SKIP TK pid={pid}", flush=True)
             continue
     kill_set.add(pid)
-print(f"[p4271-r1145] reap gpu={sorted(want)} kill={sorted(kill_set)}", flush=True)
+print(f"[p4284-r1164] reap gpu={sorted(want)} kill={sorted(kill_set)}", flush=True)
 for pid in kill_set:
     try:
         os.kill(pid, signal.SIGTERM)
@@ -214,13 +214,13 @@ for pid in kill_set:
         os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
-print("[p4271-r1145] chall GPUs reaped", flush=True)
+print("[p4284-r1164] chall GPUs reaped", flush=True)
 PY
 
 for i in $(seq 1 60); do
-  used=$(nvidia-smi -i 6,7 --query-gpu=memory.used --format=csv,noheader,nounits | awk '{s+=$1} END{print s+0}')
+  used=$(nvidia-smi -i 4,5 --query-gpu=memory.used --format=csv,noheader,nounits | awk '{s+=$1} END{print s+0}')
   if [[ "${used:-999999}" -lt 2000 ]]; then
-    log "GPUs 6,7 free (poll $i used_mib=$used)"
+    log "GPUs 4,5 free (poll $i used_mib=$used)"
     break
   fi
   sleep 2
@@ -290,7 +290,7 @@ curl -sf -m 5 "http://127.0.0.1:${CHALL_PORT}/v1/models" >/dev/null
 
 BLOCK_HASH=$(python3 - <<'PY'
 import hashlib, time
-print(hashlib.sha256(f"r1145-reign36-wvk7-p4271-{time.time()}".encode()).hexdigest())
+print(hashlib.sha256(f"r1164-reign36-wvk7-p4284-{time.time()}".encode()).hexdigest())
 PY
 )
 # p4041: when king is local-path served, hub string 404s — pass /v1/models id
@@ -309,16 +309,16 @@ nohup env -u HF_TOKEN -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE \
   --chall-rev local \
   --chall-port "$CHALL_PORT" \
   --n-turns 80 \
-  --hotkey local-r1145-reign36-wvk7 \
+  --hotkey local-r1164-reign36-wvk7 \
   --block-hash "$BLOCK_HASH" \
   --out "$SIM_N80" \
   --progress-out "$PROG" \
   --save-artifact \
   >>"$LOG" 2>&1 &
 SIM_PID=$!
-echo "$SIM_PID" > /root/logs/r1145_sim_wvk7.pid
+echo "$SIM_PID" > /root/logs/r1164_sim_wvk7.pid
 log "n80 pid=$SIM_PID — waiting for result"
-date -u +%Y-%m-%dT%H:%M:%SZ > /root/logs/r1145_n80_launched.p4271
+date -u +%Y-%m-%dT%H:%M:%SZ > /root/logs/r1164_n80_launched.p4284
 
 while kill -0 "$SIM_PID" 2>/dev/null; do
   sleep 30
@@ -344,7 +344,7 @@ except Exception:
     bar = None
 dec={
   "utc": __import__("time").strftime("%Y-%m-%dT%H:%M:%SZ", __import__("time").gmtime()),
-  "hypo": "R1145",
+  "hypo": "R1164",
   "contract": "wvk7",
   "n_teacher_samples": dp.get("n_teacher_samples"),
   "tau": dp.get("tau"),
@@ -357,7 +357,7 @@ dec={
   "thought_median": chal.get("median_len_z"),
   "b_pass": chal.get("b_gate_pass_rate"),
   "wins": v.get("challenger_wins") if v else d.get("wins"),
-  "note": "p4271 chall+v4-n80 R339 6,7 :8003; HiAlpha LoRank Midβ ShortCtx HyperSuperExtra ep4 HiLR (β=0.1 r=16 lr=2e-6 @12288 steps=38400); vs reign36 vera wvk7",
+  "note": "p4284 chall+v4-n80 r338 4,5 :8003; HiAlpha SoftCtx HiRank Loβ Hyper MidLR (β=0.02 r=64 lr=1e-6 @12288 steps=38400); vs reign36 vera wvk7",
   "hf_ok": False,
   "raw_keys": sorted(d.keys())[:40],
 }
@@ -371,5 +371,5 @@ else
   log "FATAL missing sim result"
   exit 1
 fi
-date -u +%Y-%m-%dT%H:%M:%SZ > /root/logs/r1145_reign36_wvk7_pipeline.done
-log "DONE R1145 v4 n80 vs reign36 on R339 6,7"
+date -u +%Y-%m-%dT%H:%M:%SZ > /root/logs/r1164_reign36_wvk7_pipeline.done
+log "DONE R1164 v4 n80 vs reign36 on r338 4,5"

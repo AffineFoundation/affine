@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-21T08:33:28Z",
+  "hypo": "R1143",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign36",
+  "margin": 0.0027505202015394143,
+  "se": 0.002263752369553245,
+  "z": 1.2150269784509309,
+  "n": 79,
+  "bar": 0.00452750473910649,
+  "thought_median": 172.0,
+  "b_pass": 0.45569620253164556,
+  "wins": false,
+  "note": "p4270 chall+v4-n80 R339 6,7 :8002; HiAlpha LoRank Mid\u03b2 MidCtx HyperSuperExtra ep4 UltraLoLR (\u03b2=0.1 r=16 lr=5e-7 @12288 steps=38400); vs reign36 vera wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}
