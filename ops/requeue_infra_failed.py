@@ -46,6 +46,17 @@ VICTIMS = [
         "revision": "c134112b3c563d93c796fb438d56d575aa7ac464",
         "from_challenge": "chal-00994",
     },
+    # 2026-08-21 ~21:10Z: an orphan enroll_miners.py (pre-pm2 copy, survived
+    # the pm2 stop) kept publishing backends=[] over the manager's state
+    # every ~2 min; each 5-7s empty window 503'd duel turns. chal-00996
+    # burned all 4 attempts across these windows. Orphan killed; router now
+    # ignores transient-empty reloads (EMPTY_GRACE_S).
+    {
+        "hotkey": "5E1aVXfTvMh4bmZD63WqmBtBs6SQF1Hj8ak7tuL9QBm1dFSG",
+        "repo": "ammazon/Affine-5dvqtektxx-sbs-v12",
+        "revision": "70b3956325117850d1580b54555fdabc537b7761",
+        "from_challenge": "chal-00996",
+    },
 ]
 
 
