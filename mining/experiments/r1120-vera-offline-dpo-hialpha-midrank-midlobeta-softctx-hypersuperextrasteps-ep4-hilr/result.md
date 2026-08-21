@@ -1,4 +1,4 @@
-# R1120 p4266
-- MERGE done → TP2 chall stalled (VRAM≈1GiB).
-- Re-armed TP1 GPU1 :8002 pid 58072; CHALL_READY ~90s; n80 pid 59507 vs reign36 wvk7.
-- Next: poll n80 → submit if crown-clear, else next axis.
+# R1120 result (p4267)
+**REFUTE v4** vs reign36 · m=**−0.013799** SE=0.004529 z=−3.047 n=80 bar≈0.009059 (~**−1.52×**)
+thought✓(209) B✓(0.521) k=3/τ=0.03 · SoftCtx MidRank MidLoβ Hyper HiLR
+→ next axis **R1142** SoftCtx MidRank MidLoβ Hyper UltraLoLR (lr 2e-6→5e-7)

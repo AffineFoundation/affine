@@ -11,9 +11,9 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | contract | wvk=**7** · k=**3** · τ=**0.03** · n=**1300** · δ=0.002 · thought≥80 · B γ=0.30 · k_σ=2.0 |
 | king | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695…` **reign36** |
 | burn | **~$392.19/h** · gap **−$440.81/h** · B300×8=0 · **B200×8 stock=0** |
-| Lium | **~$75295** · free τ**~1247** · stake **r252 ≈τ1.69** (<τ5 paygo) |
+| Lium | **~$75215** · free τ**~1247** · stake **r252 ≈τ1.69** (<τ5 paygo) |
 | fleet | **9** mine-* · TTL fleet **→2026-08-21T13:26Z** · r340 **→21:24Z** · r339 soft **14:56Z** |
-| **p4266** | **R1120** TP2 NCCL stall → **TP1** chall :8002 GPU1 pid**58072** CHALL_READY + **n80** pid**59507** |
+| **p4267** | **R1120 REFUTE** ~−1.52× → **R1142** TRAIN r340 GPUs1,2 pid**60510**; **R1128** MERGE live |
 | eval | phase **duel chal-00977** · **R1064 LOST** m=−0.000659 z=−0.77 n=1286 |
 
 ## Running
@@ -24,7 +24,7 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | $46.80 | TK · **R1137+R1125 TRAIN** · SSH `150.136.46.118:20300` |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | $52.25 | TK · **R1135+R1136 TRAIN** · SSH `95.133.253.90:40099` |
 | mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | $64.00 | TK · **R1126+R1127 TRAIN** · SSH `23.153.44.20:40299` |
-| mine-r340-marsplan-online-dpo-hirank-bigg-1 | gentle-orbit-4a | $37.60 | TK · **R1120 N80 TP1** + **R1141 TRAIN** + **R1128 TRAIN** · SSH `18.118.83.97:40127` |
+| mine-r340-marsplan-online-dpo-hirank-bigg-1 | gentle-orbit-4a | $37.60 | TK · **R1142+R1141 TRAIN** + **R1128 MERGE** · SSH `18.118.83.97:40127` |
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | $33.81 | TK · **R1131+R1132+R1139 TRAIN** · SSH `31.22.104.113:40300` |
 | mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | $13.76 | TK · **R1130 TRAIN** · SSH `93.120.231.186:32301` |
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | $15.96 | TK · **R1140 TRAIN** · SSH `38.255.28.21:20100` |
@@ -33,4 +33,4 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 No rentable B300×8 / B200×8. Waiters armed. `lium fund` broken → `btcli wallet transfer` to Lium coldkey.
 
 ## Next action
-1. Rent B300×8/B200×8 if stock. 2. Poll **R1120** n80→submit/next axis. 3. Keep **R1141**/**R1128** trains.
+1. Rent B300×8/B200×8 if stock. 2. Poll **R1128** MERGE→n80→submit/next. 3. Keep **R1142**/**R1141** trains.

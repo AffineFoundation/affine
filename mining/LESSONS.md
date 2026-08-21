@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4267: **R1120 REFUTE** m=−0.013799 SE=0.004529 ~**−1.52×** (thought✓209 B✓0.521 k=3) → exact-PID reap r340 :8002 → **R1142** SoftCtx MidRank MidLoβ Hyper UltraLoLR TRAIN pid**60510** GPUs1,2; touch `r1128_train.done` unblocked MERGE (waiter slept 60s past DONE). B300/B200×8=0. **Never `pkill -f`**.
 - p4266: **R1120** TP2 NCCL stall (VRAM≈1GiB, :8002 never listens ~3m post-pynccl) → exact-PID reap lean+API+engine+workers → **TP1** chall GPU1 util0.90 pid**58072** CHALL_READY ~90s + n80 pid**59507**; R1141+R1128 TRAIN OK. Prefer TP1 after first TP2 stall on r340. **Never `pkill -f`**.
 - p4265: **R1121 REFUTE** m=+0.002685 SE=0.003287 ~**0.41×** (thought✓208.5 B✓0.4375 k=3) → exact-PID reap r340 :8003 → **R1141** MidCtx UltraLoLR TRAIN pid**55900** GPUs3,4; R1120 TRAIN DONE→MERGE live; B300/B200×8=0. Positive margin below 2·SE is still REFUTE. **Never `pkill -f`**.
 - p4264: **R1121** TP2 NCCL stall again (VRAM≈1GiB) → exact-PID reap → **TP1** chall on GPU3 util0.90 CHALL_READY ~90s + n80; **R1114 REFUTE** ~0.09×→**R1139** MidCtx TRAIN r924; **R1118 REFUTE** ~−0.26×→**R1140** UltraLoLR TRAIN r938. Lean awk `/tmp/r…_merged/` breaks (regex `/` cut). Prefer TP1 after two TP2 stalls. **Never `pkill -f`**.
@@ -41,7 +42,6 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p4253: **R1106 REFUTE** m=+0.002112 ~0.29× (thought✓195 B✓0.477 k=3) → exact-PID reap r337 :8002 → **R1125** SoftCtx LoRank Midβ Hyper HiLR TRAIN (r=16; ShortCtx MidRank Midβ Hyper HiLR R1119 already on GPUs4,5). B300/B200×8=0. **Never `pkill -f`**.
 - p4252: **R1105 REFUTE** m=+0.001862 ~0.51× (thought✓179 B✓0.3375 k=3) + **R1102 REFUTE** m=−0.004769 ~−0.56× (thought✓189 B✓0.4875 k=3) → exact-PID reap r252 :8003 + r338 :8002 → **R1123** ShortCtx HiRank MidLoβ Hyper HiLR TRAIN + **R1124** ShortCtx MidRank Hiβ Hyper HiLR TRAIN. B300/B200×8=0. **Never `pkill -f`**.
 - p4251: **R1096+R1097 REFUTE** (m=−0.000713 ~−0.19× / m=−0.002077 ~−0.45×) + **R1111 REFUTE** m=+0.003700 ~0.68× → **R1120+R1121+R1122** TRAIN. B300/B200×8=0. **Never `pkill -f`**.
-- p4250: **R1107 REFUTE** m=+0.004879 ~0.66× → **R1119** TRAIN r337. B300/B200×8=0. **Never `pkill -f`**.
 - p4228: paygo α→TAO→Lium via `btcli wallet transfer` (lium fund broken). **Never `pkill -f`**.
 
 
