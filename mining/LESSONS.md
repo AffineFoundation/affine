@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4278: **R1141 REFUTE** m=−0.001574 SE=0.001812 ~**−0.43×** (thought✓192 B✓0.479 k=3) → MidLoβ LR family exhausted (R1097 MidLR / R1121 HiLR +0.41× / R1141 UltraLoLR) → exact-PID reap r340 :8003 → **R1156** Midβ UltraLoLR TRAIN pid**72365** GPUs3,4; **R1130** ~40/80. B300/B200×8=0. **Never `pkill -f`**.
 - p4277: **R1131 REFUTE** m=−0.003611 SE=0.002915 ~**−0.62×** (thought✓179 B✓0.434 k=3) → exact-PID reap r924 :8004 → **R1155** UltraLoLR TRAIN pid**160572** GPUs4,5; **R1130** n80 ~33/80 TP1 util0.93 still live. B300/B200×8=0. **Never `pkill -f`**.
 - p4276: **R1130** p4275 TP1 util**0.85** FATAL — Available KV **−2.71 GiB** after 65.53 GiB load on H100; re-arm **TP1 util0.93 GPU7** CHALL_READY + n80 pid**168327**. On H100 MoE@65k, util≤0.85 can fail *at init* (not only mid-duel). **R1132 REFUTE** m=−0.014872 ~**−1.23×** → exact-PID reap r924 :8003 → **R1154** UltraLoLR TRAIN. B300/B200×8=0. **Never `pkill -f`**.
 - p4275: **R1130** n80 FATAL = TP2 util**0.72** OOM on prompt-logprobs (+7.58GiB) → ConnectError; exact-PID reap r926 → **TP1 util0.85** chall pid**165122** :8002 GPU3 (later FATAL KV −2.71). B300/B200×8=0. **Never `pkill -f`**.
