@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4287: **R1153 REFUTE** m=+0.002569 SE=0.002314 ~**0.56×** (thought✓155 B✓0.397 k=3) → free GPUs6,7 → **R1167** ShortCtx HiRank MidLoβ MidLR TRAIN pid**208531**; **R1138 REFUTE** ~**−0.70×** still holding idle :8002 → MidLR next; sole B200 still **fbb1135f** BL. **Never `pkill -f`**.
 - p4286: **R1145 REFUTE** m=−0.001512 SE=0.002307 ~**−0.33×** (thought✓166 B✓0.428 k=3) → exact-PID reap :8003 → **R1166** ShortCtx LoRank Midβ MidLR TRAIN; sole ls B200 still **fbb1135f** BL. **Never `pkill -f`**.
 - p4285: **R1145** p4284 reseed still died — `/v1/models` OK then first sample hit half-written Triton launcher; fix = **always wipe+seed** (never REUSE chall_*) + **probe `/v1/completions` before n80** + exact-PID reap zombie workers; PROBE_OK→n80 LIVE. **Never `pkill -f`**.
 - p4284: **R1143 REFUTE** ~**0.61×** → **R1163** MidLR; **R1151 REFUTE** ~**−0.02×** + **R1152 REFUTE** ~**−0.83×** → **R1164/R1165** MidLR; **R1145** n80 died on broken Triton `.so` when seed preferred stale `chall_r1145` — wipe+seed from **king** first. **Never `pkill -f`**.
