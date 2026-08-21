@@ -1,0 +1,47 @@
+[p4258] sync r1130-cryptodev23-offline-dpo-hialpha-midrank-midlobeta-midctx-hypersuperextrasteps-ep4-hilr → mine-r926
+[p4258] exact-PID reap R1115 :8002 pid=156721
+reap pid=156721 cmd=/root/venv/bin/python3 /root/venv/bin/vllm serve /tmp/r1115_merged --port 8002 --tensor-parallel-size 2 --max-model-len 65536 --gpu-memory-utilization 0.72 --max-num-batched-tokens 8192 --attention-backend FLASH_ATTN --attention-config.use_trtllm_attention 0 --compilation-config.pass_config.fuse_allreduce_rms false --moe-backend triton --additional-config {"gdn_prefill_backend": "triton"} --enforce-eager 
+kill set: 156721 157128 157129 157499 157501
+reaped R1115
+VRAM3,4 used_mib=0 iter=1
+TEACHER_OK
+KING_OK
+TRAIN_r1130_PID=160370
+[r1130-lean] 2026-08-21T04:32:30Z start GPUs 3,4 MidCtx MidRank MidLoβ Hyper HiLR
+[r1130-lean] data_lines=604
+[r1130-lean] wait VRAM3+4 used_mib=0 iter=1
+{
+  "utc": "2026-08-21T04:32:31Z",
+  "axis": "r1130-cryptodev23-offline-dpo-hialpha-midrank-midlobeta-midctx-hypersuperextrasteps-ep4-hilr",
+  "base": "cryptoDev23/Affine-5Dku3dYp9j-hk8161@55b7ffe0",
+  "lr": "2e-6",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.05,
+  "max_len": 8192,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "3,4",
+  "chall_port": 8002,
+  "parent_signal": "R1115 ShortCtx MidRank Hi\u03b2 Hyper HiLR REFUTE m=-0.017658 ~-1.58\u00d7 thought\u2713253 B\u27130.4625 k=3 \u2192 MidCtx+MidLo\u03b2 isolate",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1130-lean] TRAIN launched pid=160370
+[r1130-lean] waiters armed
+{
+  "utc": "2026-08-21T04:32:31Z",
+  "axis": "r1130-cryptodev23-offline-dpo-hialpha-midrank-midlobeta-midctx-hypersuperextrasteps-ep4-hilr",
+  "base": "cryptoDev23/Affine-5Dku3dYp9j-hk8161@55b7ffe0",
+  "lr": "2e-6",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.05,
+  "max_len": 8192,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "3,4",
+  "chall_port": 8002,
+  "parent_signal": "R1115 ShortCtx MidRank Hi\u03b2 Hyper HiLR REFUTE m=-0.017658 ~-1.58\u00d7 thought\u2713253 B\u27130.4625 k=3 \u2192 MidCtx+MidLo\u03b2 isolate",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+R1130_TRAIN_OK

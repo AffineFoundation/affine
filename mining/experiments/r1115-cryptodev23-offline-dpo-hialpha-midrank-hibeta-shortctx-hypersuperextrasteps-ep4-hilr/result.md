@@ -11,3 +11,6 @@ cryptoDev23 ShortCtx MidRank Hiβ Hyper HiLR · β=0.3 r=32 α=128 lr=2e-6 @6144
 ≠ MidLR R1098 / ≠ Ultra MidLR R1080 / ≠ SoftCtx Mega MidLR R1051 / ≠ SoftCtx Mega HiLR R1060 /
 ≠ SoftCtx Ultra MidLR R1025 / ≠ vera ShortCtx MidRank Hiβ Hyper MidLR R1077 /
 ≠ vera ShortCtx MidRank Hiβ Hyper HiLR R1109 / ≠ Online / ≠ GRPO
+
+## Result (p4258)
+**REFUTE v4** · m=**−0.017658** SE=0.005598 z=−3.155 n=80 bar≈0.011195 (~**−1.58×**) thought✓(253) B✓(0.4625) k=3/τ=0.03 vs reign36 → **R1130** MidCtx MidRank MidLoβ Hyper HiLR.
