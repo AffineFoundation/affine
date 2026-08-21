@@ -25,17 +25,10 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4345: r338 **R1225+R1226** TRAIN+MERGE done (~900 steps) idle GPUs4–7 → lean chall **:8002/:8003** + **v4 n80 ARMED** (leave T/K 0–3). **Never `pkill -f`**.
-- p4344: r1214 idle GPUs **5,6,7** → **R1249** Soft LoRank Loβ Mega Ultra (5) + **R1250** Mid LoRank Hiβ Mega Ultra (6) + **R1251** Short MidRank Hiβ Mega HiLR (7); pod full (0–7). **Never `pkill -f`**.
-- p4343: r1214 idle GPUs **0,1,3–7** (R1218 single-GPU on 2; multi-GPU CUDA unsupported) → **R1245** Soft MidRank Midβ Mega Ultra (0) + **R1246** Mid MidRank Hiβ Mega HiLR (1) + **R1247** Mid HiRank Midβ Mega HiLR (3) + **R1248** Soft HiRank Midβ Mega MidLR (4); leave 5–7. **Never `pkill -f`**.
-- p4342: r1158 idle GPUs **1,4–7** (teacher+GRPO on 0,2,3) → scp DPO trainer+data → **R1242** Short Midβ Mega HiLR (4,5) + **R1243** Short Midβ Mega Ultra (6,7) + **R1244** Soft Loβ Mega HiLR (1); leave T+GRPO. **Never `pkill -f`**.
-- p4341: **R1207 REFUTE** m=+0.001811~0.44× (thought✓174 B✓0.397) → SoftCtx HiRank MidLoβ Mega LR triad exhausted (R1020/R1040/R1207) → exact-PID chall reap 243737/:8003 → **R1241** SoftCtx LoRank MidLoβ Mega UltraLoLR (6,7); leave T/K + **R1232** TRAIN 4,5. **Never `pkill -f`**.
-- p4340: **R1215 REFUTE** m=−0.001713~−0.30× / **R1216 REFUTE** m=−0.003574~−0.63× (thought✓ B✓) → exact-PID chall reap 372808/:8004 + 372799/:8002 → **R1239** MidCtx MidRank Loβ Mega HiLR (1,3) + **R1240** Soft MidRank Hiβ Mega HiLR (6,7); leave T/K + **R1238** TRAIN 4,5. **Never `pkill -f`**.
-- p4339: **R1217 REFUTE** m=+0.004629~0.89× → exact-PID chall reap → **R1238** ShortCtx LoRank Hiβ Mega UltraLoLR; r1191 → **R1235+36+37 TRAIN**. **Never `pkill -f`**.
-- p4338: **R1208/10/11 REFUTE** → exact-PID reap → **R1232+33+34 TRAIN**. **Never `pkill -f`**.
-- p4337: r340 GPUs6,7 idle → **R1231** Short HiRank Midβ Mega HiLR while crown n80 mid. **Never `pkill -f`**.
-- p4336: crown MERGE_DONE idle → lean chall + **v4 n80 LIVE** R1215/16/17. **Never `pkill -f`**.
-- p4335–p4325: REFUTE→reap→Mega cascade; Soft MidRank Loβ Mega MidLR=**R1010** do not re-run; free-poll GPU must match `GPUS=`; never `sed` CHALL_PORT launch line. **Never `pkill -f`**.
+- p4346: **R1225 REFUTE** m=+0.006423~0.90× / **R1226 REFUTE** m=−0.002089~−1.00× → exact-PID chall reap 268618/:8002 + 268182/:8003 → **R1252** MidCtx MidLoβ Mega HiLR (6,7) + **R1253** MidCtx Loβ Mega UltraLoLR (4,5); leave T/K. **Never `pkill -f`**.
+- p4345: r338 **R1225+R1226** MERGE → lean chall **:8002/:8003** + **v4 n80**. **Never `pkill -f`**.
+- p4344–p4335: REFUTE→reap→Mega cascade on r1214/r1158/r252/crown/r1191/r340/r339; Soft MidRank Loβ Mega MidLR=**R1010** do not re-run; SoftCtx HiRank MidLoβ Mega LR triad exhausted (R1020/R1040/R1207). **Never `pkill -f`**.
+- p4335–p4325: free-poll GPU must match `GPUS=`; never `sed` CHALL_PORT launch line. **Never `pkill -f`**.
 - p4324–p4300: H100 OOM→H200; Hyper/Mega cascade; teacher OOM@util0.90→TP1≤0.85; HF full⇒SKIP_HF_PUSH; fleet Removal via schedule-removal. **Never `pkill -f`**.
 - p4307/p4303: rent non-BL **H200×8** when B300/B200 empty. **Never `pkill -f`**.
 - p4298: lean free-poll own CUDA GPUs; probe model id from `/v1/models`. **Never `pkill -f`**.
