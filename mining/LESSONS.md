@@ -25,17 +25,13 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4287: **R1153 REFUTE** m=+0.002569 SE=0.002314 ~**0.56×** (thought✓155 B✓0.397 k=3) → free GPUs6,7 → **R1167** ShortCtx HiRank MidLoβ MidLR TRAIN pid**208531**; **R1138 REFUTE** ~**−0.70×** still holding idle :8002 → MidLR next; sole B200 still **fbb1135f** BL. **Never `pkill -f`**.
-- p4286: **R1145 REFUTE** m=−0.001512 SE=0.002307 ~**−0.33×** (thought✓166 B✓0.428 k=3) → exact-PID reap :8003 → **R1166** ShortCtx LoRank Midβ MidLR TRAIN; sole ls B200 still **fbb1135f** BL. **Never `pkill -f`**.
-- p4285: **R1145** p4284 reseed still died — `/v1/models` OK then first sample hit half-written Triton launcher; fix = **always wipe+seed** (never REUSE chall_*) + **probe `/v1/completions` before n80** + exact-PID reap zombie workers; PROBE_OK→n80 LIVE. **Never `pkill -f`**.
-- p4284: **R1143 REFUTE** ~**0.61×** → **R1163** MidLR; **R1151 REFUTE** ~**−0.02×** + **R1152 REFUTE** ~**−0.83×** → **R1164/R1165** MidLR; **R1145** n80 died on broken Triton `.so` when seed preferred stale `chall_r1145` — wipe+seed from **king** first. **Never `pkill -f`**.
-- p4283: **R1147 REFUTE** m=+0.001654 SE=0.001158 ~**0.71×** (thought✓162 B✓0.425 k=3) → exact-PID reap crown :8004 → **R1162** SoftCtx LoRank Loβ MidLR TRAIN; r338 waiters died on **wrong LEAN path** (lorank-midlobeta-shortctx copy-paste ≠ hirank-lobeta-softctx / lorank-lobeta-midctx) → relaunch n80 after merge.done. **Never `pkill -f`**.
-- p4282: **R1146 REFUTE** ~**−0.16×** + **R1148 REFUTE** ~**−1.03×** → **R1160/R1161** TRAIN; sole B200 **fbb1135f** BL. **Never `pkill -f`**.
-- p4281: blind `lium up --gpu` bypasses executor_blacklist → re-hit **fbb1135f**; R1158 waiter = **node-id + ngpu≥8**. **Never `pkill -f`**.
-- p4280: **R1139 REFUTE** ~**−0.26×** → **R1159**; r1158 1/8 GPU after DL. **Never `pkill -f`**.
-- p4279: **R1130 REFUTE** ~**−0.40×** → **R1157**; softctx path typo on midctx n80. **Never `pkill -f`**.
-- p4278: **R1141 REFUTE** ~**−0.43×** → **R1156**. **Never `pkill -f`**.
-- p4277–p4272: UltraLoLR cascade after HiLR REFUTEs (R1155…R1146). **Never `pkill -f`**.
+- p4288: **R1138 REFUTE** ~**−0.70×** → do **not** MidLR-re-run (R1090 already SoftCtx HiRank MidLoβ MidLR REFUTE) → **R1168** SoftCtx HiRank Hiβ UltraLoLR TRAIN pid**209542** GPUs4,5; empty cmdline race on dying chall pid is OK if GPUs freed. **Never `pkill -f`**.
+- p4287: **R1153 REFUTE** ~**0.56×** → **R1167** ShortCtx HiRank MidLoβ MidLR TRAIN; sole B200 **fbb1135f** BL. **Never `pkill -f`**.
+- p4286: **R1145 REFUTE** ~**−0.33×** → **R1166** MidLR. **Never `pkill -f`**.
+- p4285: always wipe+seed Triton + probe `/v1/completions` before n80. **Never `pkill -f`**.
+- p4284–p4282: MidLR cascade after UltraLoLR REFUTEs (R1163…R1160). **Never `pkill -f`**.
+- p4281: blind `lium up --gpu` bypasses blacklist → **fbb1135f**; waiter = node-id+ngpu≥8. **Never `pkill -f`**.
+- p4280–p4272: UltraLoLR cascade after HiLR REFUTEs. **Never `pkill -f`**.
 - p4269: TP1 util**0.90** OOM → util≤0.85 on B200. **Never `pkill -f`**.
 - p4268: TP2 NCCL stall → prefer TP1. **Never `pkill -f`**.
 - p4265: positive margin below 2·SE still REFUTE. **Never `pkill -f`**.

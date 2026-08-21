@@ -7,7 +7,7 @@
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
 | mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-21T13:26Z** | TK · **R1160+61+62 TRAIN** |
-| mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-21T13:26Z** | TK · **R1167 TRAIN** + R1138 idle |
+| mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-21T13:26Z** | TK · **R1167+R1168 TRAIN** |
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | 8×B200 | $46.80 | **2026-08-21T13:26Z** | TK · **R1149+R1150 TRAIN** |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-21T13:26Z** | TK · **R1164+R1165 TRAIN** |
 | mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | 8×B200 | soft **2026-08-21T15:50Z** | TK · **R1163+R1166 TRAIN** |
@@ -24,6 +24,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-21T09:15:18Z | p4288: **R1138 REFUTE**→**R1168** SoftCtx HiRank Hiβ UltraLoLR TRAIN pid**209542** GPUs4,5; burn **~$392.19/h** |
 | 2026-08-21T09:09:39Z | p4287: **R1153 REFUTE**→**R1167** MidLR TRAIN pid**208531**; R1138 REFUTE noted idle :8002; burn **~$392.19/h** |
 | 2026-08-21T09:03:33Z | p4286: **R1145 REFUTE**→**R1166** TRAIN; **R1153** ~0.56× REFUTE noted; burn **~$392.19/h** |
-| 2026-08-21T08:55:51Z | p4285: **R1145** Triton fix+PROBE_OK n80 LIVE (pid74507); reap zombie 70045/46; burn **~$392.19/h** |

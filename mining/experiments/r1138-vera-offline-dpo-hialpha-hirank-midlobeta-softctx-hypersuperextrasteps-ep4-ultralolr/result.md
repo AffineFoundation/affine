@@ -11,3 +11,4 @@ Stage-5 iff fresh v4 n80 (k=3, τ=0.03) paired margin > max(2·SE, δ=0.002) AND
 
 ## Status
 - p4262: TRAIN LIVE on `mine-r252` GPUs 4,5 after exact-PID reap R1110 :8002
+- **p4287/p4288 REFUTE v4** m=**−0.004205** SE=0.002985 z=−1.409 n=80 bar≈0.005969 (~**−0.70×**) thought✓(166) B✓(0.439) k=3/τ=0.03 vs **reign36** · MidLoβ SoftCtx LR family exhausted (R1090 MidLR / R1110 HiLR / R1138 UltraLoLR) → **R1168** SoftCtx HiRank Hiβ UltraLoLR (not MidLR re-run)
