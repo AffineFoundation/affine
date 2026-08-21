@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4330: r924 idle challs after R1198/99/1200 REFUTE → exact-PID reap :8002/:8003/:8004 (leave T:8000 K:8001) → Mega **R1222** ShortCtx HiRank Loβ MidLR / **R1223** ShortCtx MidRank Loβ HiLR / **R1224** MidCtx HiRank Loβ HiLR TRAIN; no non-BL 8× stock. **Never `pkill -f`**.
+- p4329: **R1209 REFUTE** m=+4e-5~0.007× (thought✓155 B✓0.444) → **R1221** ShortCtx MidRank Loβ Mega MidLR on r1191; **R1198/99/1200 REFUTE** (~0.34×/0.62×/−0.31×); r1214 multi-GPU `device_map=auto` → CUDA `operation not supported` — **single-GPU** TRAIN works; FullFT pod lacked **peft** → `pip install peft` + `/root/venv/bin/python3` before Offline-DPO. **Never `pkill -f`**.
 - p4328: tarball nested `affine_pkg/affine_pkg/evalsrv` → flatten before train (`ModuleNotFoundError: evalsrv`); **R1187 REFUTE** m=−0.00715~−0.65× → **R1220** SoftCtx MidRank MidLoβ Mega MidLR; **R1218** relaunch pid**3091**. **Never `pkill -f`**.
 - p4327: reap **R1197** orphan chall exact-PID → **R1219** SoftCtx LoRank Hiβ Mega HiLR (β=0.3 r=16 lr=2e-6 @12288) on r938 GPUs2,3; r938 is **4×H200** not 8×; R1187 n80 **58/80**. **Never `pkill -f`**.
 - p4326: blank **r1214** BOOT → **R1218** MidCtx MidRank Midβ Mega HiLR (not MidLR SoftCtx=R1010); R1187 n80 healthy **28/80** at mlen65536. **Never `pkill -f`**.

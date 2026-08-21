@@ -6,3 +6,6 @@ Parent: **R1184** MidCtx MidRank Midβ Hyper UltraLoLR REFUTE ~−0.11×; **R120
 Axis: β=0.1 r=32 α=128 lr=**2e-6** @8192 Mega max_steps=19200 on H200 GPUs 0,1.
 Decision: Stage-5 iff fresh v4 n80 margin>max(2·SE,δ=0.002) AND thought≥80 AND B≥0.30 vs reign36.
 Pod: SSH `216.48.189.107:19050` · $24.80/h
+
+## Ops p4329
+Multi-GPU `device_map=auto` on this H200 host → `torch.AcceleratorError: CUDA error: operation not supported` (accelerate hook `send_to_device`). **TORCHDYNAMO_DISABLE** alone insufficient. **Single-GPU** `CUDA_VISIBLE_DEVICES=2` TRAIN **LIVE** pid**4440** (dpo steps ≥1).

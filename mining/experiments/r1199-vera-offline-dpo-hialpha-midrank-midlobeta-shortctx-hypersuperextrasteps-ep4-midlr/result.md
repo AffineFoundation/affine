@@ -9,3 +9,6 @@ Decision rule: Stage-5 iff fresh v4 n80 margin > max(2·SE, δ=0.002) AND though
 
 Axis: vera Offline-DPO HiAlpha MidRank MidLoβ ShortCtx HyperSuperExtra ep4 **MidLR** (β=0.05 r=32 α=128 lr=**1e-6** @6144 max_steps=38400)
 ≠ UltraLoLR R1161 / ≠ HiLR R1101 / ≠ MidCtx MidRank MidLoβ MidLR R1095 / ≠ SoftCtx MidLoβ MidLR R1096 / ≠ Online / ≠ GRPO
+
+## Result p4329 vs reign36 (v4 wvk=7)
+**REFUTE** m=**+0.006258** SE=0.005050 ~**0.62×** thought✓(186) B✓(0.477) k=3/τ=0.03 → Mega Mid/Hi already
