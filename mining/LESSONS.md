@@ -25,19 +25,13 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4251: **R1096+R1097 REFUTE** (m=−0.000713 ~−0.19× / m=−0.002077 ~−0.45× thought✓ B✓ k=3) + **R1111 REFUTE** m=+0.003700 ~0.68× → exact-PID reap r340 :8002/:8003 + r338 :8003 → **R1120+R1121** Soft/MidCtx MidLoβ Hyper HiLR TRAIN + **R1122** MidCtx HiRank Loβ Hyper HiLR TRAIN. B300/B200×8=0. **Never `pkill -f`**.
-- p4250: **R1107 REFUTE** m=+0.004879 ~0.66× (thought✓181 B✓0.456 k=3) vs reign36 → exact-PID reap r337 :8003 → **R1119** ShortCtx MidRank Midβ Hyper HiLR TRAIN pid**149858** (SoftCtx R1106 still on 6,7). B300/B200×8=0. **Never `pkill -f`**.
-- p4249: r340 exact-PID teacher **8192→65536** TP1 util**0.72** (KV concurrency ~2.06×) → **R1096** SoftCtx chall :8002 util**0.55** (0.72 OOM'd) + dual n80 armed; R1097 :8003 kept. B300/B200×8=0. **Never `pkill -f`**.
-- p4248: **R1099 REFUTE** m=−0.001230 ~−0.40× (thought✓179.5 B✓0.438 k=3) vs reign36 → exact-PID reap r938 :8002 → **R1118** SoftCtx HiRank Midβ Hyper HiLR TRAIN pid**55117**. r340 **R1096** chall OOM @util0.72/TP1 max_len65k; **R1097** n80 died teacher `max_model_len=8192` (need 65536) — :8003 still up. B300/B200×8=0. **Never `pkill -f`**.
-- p4247: r340 **R1096/R1097** dual TP2 hung @ pynccl — seed wrong Triton path; **TP1** + NCCL_P2P/IB_DISABLE → CHALL_READY; serialize R1097 after `:8002`. **Never `pkill -f`**.
-- p4246: **R1103+R1104 REFUTE** → reap crown → **R1116+R1117** SoftCtx Hyper HiLR TRAIN. B300/B200×8=0. **Never `pkill -f`**.
-- p4245: r340 lean stubs → real chall+v4 n80 :8002/:8003. Check lean is not a stub. **Never `pkill -f`**.
-- p4244: **R1098 REFUTE** → **R1115** TRAIN r926. **Never `pkill -f`**.
-- p4243: **R1089 REFUTE** → **R1114** TRAIN r924. **Never `pkill -f`**.
-- p4242: **R1084 REFUTE** → **R1113** TRAIN r924. **Never `pkill -f`**.
-- p4241: **R1095 REFUTE** → **R1112** TRAIN r924. **Never `pkill -f`**.
-- p4240: **R1100 REFUTE** → **R1111** TRAIN r338. **Never `pkill -f`**.
-- p4239: **R1090 REFUTE** → **R1110** TRAIN r252. **Never `pkill -f`**.
+- p4252: **R1105 REFUTE** m=+0.001862 ~0.51× (thought✓179 B✓0.3375 k=3) + **R1102 REFUTE** m=−0.004769 ~−0.56× (thought✓189 B✓0.4875 k=3) → exact-PID reap r252 :8003 + r338 :8002 → **R1123** ShortCtx HiRank MidLoβ Hyper HiLR TRAIN + **R1124** ShortCtx MidRank Hiβ Hyper HiLR TRAIN. B300/B200×8=0. **Never `pkill -f`**.
+- p4251: **R1096+R1097 REFUTE** (m=−0.000713 ~−0.19× / m=−0.002077 ~−0.45×) + **R1111 REFUTE** m=+0.003700 ~0.68× → **R1120+R1121+R1122** TRAIN. B300/B200×8=0. **Never `pkill -f`**.
+- p4250: **R1107 REFUTE** m=+0.004879 ~0.66× → **R1119** TRAIN r337. B300/B200×8=0. **Never `pkill -f`**.
+- p4249: r340 teacher **8192→65536** TP1 util**0.72** → R1096 chall util**0.55**. **Never `pkill -f`**.
+- p4248: **R1099 REFUTE** → **R1118** TRAIN r938. B300/B200×8=0. **Never `pkill -f`**.
+- p4247: r340 dual TP2 hung @ pynccl → **TP1** + NCCL_P2P/IB_DISABLE. **Never `pkill -f`**.
+- p4246: **R1103+R1104 REFUTE** → **R1116+R1117** TRAIN crown. **Never `pkill -f`**.
 - p4228: paygo α→TAO→Lium via `btcli wallet transfer` (lium fund broken). **Never `pkill -f`**.
 
 
