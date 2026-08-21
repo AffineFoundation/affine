@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4310: **R1177 ~−0.57× / R1180 ~0.24× REFUTE** → MidCtx MidRank Loβ UltraLoLR (**R1194**) + MidCtx HiRank Loβ UltraLoLR (**R1195**) same pass on r338; **R1174/R1179** orphans still pending; sole 8×B200=`fbb1135f` BL. **Never `pkill -f`**.
 - p4309: **R1171 ~0.03× / R1172 ~−0.52× REFUTE** → SoftCtx MidRank Midβ UltraLoLR (**R1192**) + ShortCtx HiRank Loβ MidLR (**R1193**) same pass on r337; also noted **R1174/R1177/R1179/R1180/R1169 REFUTE** orphans still holding GPU — next pass. Stock B300/B200/H200 empty. **Never `pkill -f`**.
 - p4308: fleet Removal **13:26Z→22T13:30Z** via `POST /pods/{id}/schedule-removal` (8 pods) + Soft/Dead in `mine.env`; recent wait/lean scripts do **not** Soft-abort (env Soft unused) — still retarget Soft for any post that sources `mine.env`. **Never `pkill -f`**.
 - p4307: non-BL **H200×8** `eager-fox-11`/`4eb39f3b…` rented while fleet waiter only polls B300/B200 — **R1191** vera FullFT TRAIN pid**2434**; burn **~$456/h**. **Never `pkill -f`**.

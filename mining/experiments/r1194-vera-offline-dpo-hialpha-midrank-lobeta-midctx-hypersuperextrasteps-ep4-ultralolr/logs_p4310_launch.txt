@@ -1,0 +1,51 @@
+[p4310] sync R1194+R1195 → mine-r338
+gpus 4-7 cleared
+[p4310] wait free GPUs4-7 used=0 iter=1
+R1177 annotated wins False margin -0.0024407140399846324
+R1180 annotated wins False margin 0.0015138896117900546
+[p4310] launched
+    PID     ELAPSED CMD
+ 243122 441077231-17:10:56 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1194/dpo_duel_reason.jsonl --out-dir /root/r1194/train --max-len 8192 --epochs 4 --lr 5e-7 --lora-r 32 --lora-alpha 128 --beta 0.02 --max-steps 38400
+    PID     ELAPSED CMD
+ 243160 441077231-17:10:56 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1195/dpo_duel_reason.jsonl --out-dir /root/r1195/train --max-len 8192 --epochs 4 --lr 5e-7 --lora-r 64 --lora-alpha 128 --beta 0.02 --max-steps 38400
+0, 166632 MiB, 0 %
+1, 166632 MiB, 0 %
+2, 134926 MiB, 0 %
+3, 134924 MiB, 0 %
+4, 0 MiB, 0 %
+5, 0 MiB, 0 %
+6, 0 MiB, 0 %
+7, 0 MiB, 0 %
+{
+  "utc": "2026-08-21T12:18:25Z",
+  "axis": "r1194-vera-offline-dpo-hialpha-midrank-lobeta-midctx-hypersuperextrasteps-ep4-ultralolr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "5e-7",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.02,
+  "max_len": 8192,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "6,7",
+  "chall_port": 8002,
+  "parent_signal": "R1177 MidCtx LoRank Hi\u03b2 UltraLoLR REFUTE m=-0.002441 SE=0.002156 ~-0.57\u00d7; MidCtx LoRank Hi\u03b2 LR exhausted R1091 Mid/R1103 Hi/R1177 Ultra \u2192 MidRank Lo\u03b2 UltraLoLR MidCtx isolate",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+{
+  "utc": "2026-08-21T12:18:25Z",
+  "axis": "r1195-vera-offline-dpo-hialpha-hirank-lobeta-midctx-hypersuperextrasteps-ep4-ultralolr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "5e-7",
+  "lora_r": 64,
+  "lora_alpha": 128,
+  "beta": 0.02,
+  "max_len": 8192,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "4,5",
+  "chall_port": 8003,
+  "parent_signal": "R1180 MidCtx HiRank Lo\u03b2 MidLR REFUTE m=+0.001514 SE=0.003187 ~0.24\u00d7; SoftCtx HiRank Lo\u03b2 LR exhausted R1135/R1164/R1151; MidCtx HiLR R1122 \u2192 MidCtx UltraLoLR isolate",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[p4310] done
