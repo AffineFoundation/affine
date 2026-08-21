@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4345: r338 **R1225+R1226** TRAIN+MERGE done (~900 steps) idle GPUs4–7 → lean chall **:8002/:8003** + **v4 n80 ARMED** (leave T/K 0–3). **Never `pkill -f`**.
 - p4344: r1214 idle GPUs **5,6,7** → **R1249** Soft LoRank Loβ Mega Ultra (5) + **R1250** Mid LoRank Hiβ Mega Ultra (6) + **R1251** Short MidRank Hiβ Mega HiLR (7); pod full (0–7). **Never `pkill -f`**.
 - p4343: r1214 idle GPUs **0,1,3–7** (R1218 single-GPU on 2; multi-GPU CUDA unsupported) → **R1245** Soft MidRank Midβ Mega Ultra (0) + **R1246** Mid MidRank Hiβ Mega HiLR (1) + **R1247** Mid HiRank Midβ Mega HiLR (3) + **R1248** Soft HiRank Midβ Mega MidLR (4); leave 5–7. **Never `pkill -f`**.
 - p4342: r1158 idle GPUs **1,4–7** (teacher+GRPO on 0,2,3) → scp DPO trainer+data → **R1242** Short Midβ Mega HiLR (4,5) + **R1243** Short Midβ Mega Ultra (6,7) + **R1244** Soft Loβ Mega HiLR (1); leave T+GRPO. **Never `pkill -f`**.

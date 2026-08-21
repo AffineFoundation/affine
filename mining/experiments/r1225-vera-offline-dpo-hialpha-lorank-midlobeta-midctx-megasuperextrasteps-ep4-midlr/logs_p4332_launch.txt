@@ -1,0 +1,29 @@
+[p4332] sync R1225+R1226 → mine-r338
+already gone pid=255946
+reap pid=258976 cmd=
+kill set: 258976
+reaped
+gpu-clear done
+[p4332] VRAM4+5+6+7 used_mib=0 iter=1
+LISTEN 0      2048         0.0.0.0:8000       0.0.0.0:*    users:(("vllm",pid=4979,fd=44))             
+LISTEN 0      2048         0.0.0.0:8001       0.0.0.0:*    users:(("python3",pid=15443,fd=44))         
+[p4332] launching R1225/26
+=== launch status ===
+r1225 train.pid=262311
+}
+[r1225-lean] TRAIN pid=262311
+[r1225-lean] merge waiter armed
+r1226 train.pid=262320
+}
+[r1226-lean] TRAIN pid=262320
+[r1226-lean] merge waiter armed
+0, 166632 MiB, 0 %
+1, 166632 MiB, 0 %
+2, 134926 MiB, 0 %
+3, 134924 MiB, 0 %
+4, 33682 MiB, 4 %
+5, 33682 MiB, 0 %
+6, 33682 MiB, 4 %
+7, 33682 MiB, 0 %
+[p4332] DONE
+[p4332] host script finished

@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 69660.6239975641 | p4344 |
-| Lium balance | **$69660.6239975641** | p4344 |
-| cumulative mining spend | ~$154,541 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$59661** (balance − $10,000 floor) | $UTC |
+| $UTC | 69617.42012295741 | p4345 |
+| Lium balance | **$69617.42012295741** | p4345 |
+| cumulative mining spend | ~$154,584 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$59617** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (12 pods) | **~$480.99/h** · vs floor $833/h · gap **−$352.01/h** | p4344 |
+| miner burn (12 pods) | **~$480.99/h** · vs floor $833/h · gap **−$352.01/h** | p4345 |
 | miner coldkey free | τ~1246.73 | kept ≥τ50 |
 | miner stake | **r252 ≈29.52α ≈τ1.69** (<τ5 paygo) | p4235 |
 | registrations / submissions | **16** / **16** (… **r1064 LOST chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-21T17:42:21Z | 69617.42012295741 | p4345 r338 **R1225+R1226** chall+**v4 n80 ARMED** (no rent; 8× empty); burn **~$480.99/h** |
 | 2026-08-21T17:38:21Z | 69660.6239975641 | p4344 r1214 GPUs5–7→**R1249+50+51 TRAIN** (no rent; 8× empty); burn **~$480.99/h** |
 | 2026-08-21T17:31:29Z | 69703.93398903248 | p4343 r1214 idle→**R1245+46+47+48 TRAIN** (no rent; 8× empty); burn **~$480.99/h** |
 | 2026-08-21T17:23:58Z | 69793.46582687192 | p4342 r1158 idle→**R1242+43+44 TRAIN** (no rent; 8× empty); burn **~$480.99/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-21T16:50:49Z | 70058.00646126471 | p4338 **R1208/10/11 REFUTE**→**R1232+33+34 TRAIN** (no rent; 8× empty); burn **~$480.99/h** |
 | 2026-08-21T16:44:50Z | 70146.07737916226 | p4337 **R1231 TRAIN** on r340 GPUs6,7 (no rent; 8× empty); burn **~$480.99/h** |
 | 2026-08-21T16:40:56Z | 70146.07737916226 | p4336 crown **R1215+16+17** n80 ARMED (no rent; 8× empty); burn **~$480.99/h** |
-| 2026-08-21T16:35:00Z | 70234.65365733988 | p4335 **R1202+R1203 REFUTE**→**R1229+R1230 TRAIN** (no rent; 8× empty); burn **~$480.99/h** |
