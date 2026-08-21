@@ -25,7 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4261: **R1122 REFUTE** m=−0.006233 ~−0.57× + **R1124 REFUTE** m=−0.003058 ~−0.68× → R1135+R1136 TRAIN r338; **R1119 REFUTE** m=+0.001412 ~0.19× → R1137 MidLR TRAIN r337; r338 disk **91%→13%** + r924 **91%→16%** stale-merge purge. **R1110 REFUTE** m=−0.006349 still idle on r252:8002 — next pass. **Never `pkill -f`**.
+- p4262: **R1110 REFUTE** m=−0.006349 ~−0.62× → exact-PID reap r252 :8002 → **R1138** SoftCtx HiRank MidLoβ Hyper UltraLoLR TRAIN pid**192576** GPUs4,5; R1123 OK; rm `/tmp/r1110_merged`; B300/B200×8=0. **Never `pkill -f`**.
+- p4261: **R1122 REFUTE** m=−0.006233 ~−0.57× + **R1124 REFUTE** m=−0.003058 ~−0.68× → R1135+R1136 TRAIN r338; **R1119 REFUTE** m=+0.001412 ~0.19× → R1137 MidLR TRAIN r337; r338 disk **91%→13%** + r924 **91%→16%** stale-merge purge. **Never `pkill -f`**.
 - p4260: **R1112 REFUTE** m=−0.001311 ~−0.12× + **R1113 REFUTE** m=−0.000686 ~−0.07× (thought✓199 B✓0.42/0.40 k=3) → R1131+R1132 TRAIN r924; **R1116 REFUTE** m=−0.005310 ~−0.58× + **R1117 REFUTE** m=−0.009354 ~−1.08× → R1133+R1134 TRAIN crown; purge stale merges same pass. **Never `pkill -f`**.
 - p4259: crown overlay **/tmp 100%** (48×~66G stale `r*_merged`) → R1116/R1117 chall vLLM **Errno 28** after MERGE; rm stale (keep active) → **3.0T free** → re-arm n80 :8004/:8003 + `TMPDIR=/root/tmp`. Purge old merges every pass. **Never `pkill -f`**.
 - p4259b: **R1064 LOST** chal-00974 m=**−0.000659** SE=0.000858 z=−0.77 n=1286 thought✓197 B✓0.462 vs reign36 (n80 was +0.006632 ~1.021×) — knife-edge n80 not live-predictive.

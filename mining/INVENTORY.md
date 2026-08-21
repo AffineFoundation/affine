@@ -7,7 +7,7 @@
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
 | mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-21T13:26Z** | TK · **R1133+34+R1129 TRAIN** |
-| mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-21T13:26Z** | TK · **R1123 TRAIN** · R1110 REFUTE idle |
+| mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-21T13:26Z** | TK · **R1123+R1138 TRAIN** |
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | 8×B200 | $46.80 | **2026-08-21T13:26Z** | TK · **R1137+R1125 TRAIN** |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-21T13:26Z** | TK · **R1135+R1136 TRAIN** |
 | mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | 8×B200 | soft **2026-08-21T14:56Z** | TK · **R1126+R1127 TRAIN** |
@@ -24,6 +24,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-21T05:18:49Z | p4262: **R1110→R1138** UltraLoLR TRAIN r252 GPUs4,5; R1123 OK; B300/B200×8=0 |
 | 2026-08-21T05:14:33Z | p4261: **R1122+24→R1135+36** r338; **R1119→R1137** r337; purge r338+r924 merges; B300/B200×8=0 |
 | 2026-08-21T05:01:37Z | p4260: **R1112+13 REFUTE→R1131+32** r924; **R1116+17 REFUTE→R1133+34** crown; B300/B200×8=0 |
-| 2026-08-21T04:41:54Z | p4259: crown **/tmp ENOSPC** → rm **48** stale merges → **R1116+R1117 n80** :8004/:8003; R1064 LOST; B300/B200×8=0 |
