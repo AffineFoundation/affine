@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4231: **R1087 REFUTE** m=−0.002218 ~−0.44× (thought✓198 B✓0.427 k=3) vs reign36 → exact-PID reap r338 :8003 → **R1100** MidCtx HiRank Midβ Hyper HiLR TRAIN pid**172799**. B300/B200×8=0. **Never `pkill -f`**.
 - p4230: **R1082 REFUTE** m=+0.000172 ~0.019× (thought✓187 B✓0.405 k=3) vs reign36 → exact-PID reap r938 :8002 → **R1099** SoftCtx HiRank Midβ Hyper MidLR TRAIN pid**51170**. B300/B200×8=0. **Never `pkill -f`**.
 - p4229: **R1080 REFUTE** m=−0.002477 ~−0.74× (thought✓213 B✓0.464 k=3) vs reign36 → exact-PID reap r926 :8002 → **R1098** ShortCtx Hiβ Hyper MidLR TRAIN pid**150616**. B300/B200×8=0. **Never `pkill -f`**.
 - p4228: paygo **r252 88.56α≈τ5.06** ≥τ5 bar → `btcli stake remove --amount-alpha all` OK; `lium fund` fails → **`btcli wallet transfer`** to Lium coldkey → Lium **~$77760**; R1080 MERGE→chall:8002. B300/B200×8=0. **Never `pkill -f`**.
