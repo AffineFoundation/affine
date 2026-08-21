@@ -1,4 +1,11 @@
 # R1158 — result notes
-- p4279: rented `mine-r1158-vera-reason-grpo-1` (`brave-matrix-2a`) **8×B200** @$5.60/h TTL→2026-08-22T07:45Z.
-- p4280: bootstrap LIVE — pip/king/teacher DL ✓ but **nvidia-smi=1** (Device Minor 6).
-- p4281: teacher DL done, still 1 GPU → tore brave-matrix; blind re-rent returned **same** exec **fbb1135f-cffe-4962-9389-150ec0e0852b**@192.9.163.79 (`eager-lion-45`, API `gpu_count=1`) → tore again. Lesson: **blind `lium up --gpu` ignores executor_blacklist**. Waiter now rents by **node id** + verifies **ngpu≥8** (ssh+API) before bootstrap. Fleet QUEUE HEAD=R1158. Slot open until real 8× stock.
+
+## Status
+- **p4303:** rented **8×H200** `mine-r1158-vera-reason-grpo-1` / `eager-matrix-57` @$32/h by **node id** `e350ebc9-8012-4789-ac47-7a573d70bf9a` (`golden-orbit-7b`). API+ssh **ngpu=8**. TTL→**2026-08-22T11:23Z**. SSH `204.12.163.23:20301`. Bootstrap LIVE pid**1234** (pip OK → HF king download). B300/B200 empty post-BL; H200 OK per STATE.
+- p4281: teacher DL done, still 1 GPU → tore brave-matrix; blind re-rent returned **same** exec **fbb1135f-cffe-4962-9389-150ec0e0852b**@192.9.163.79 (`eager-lion-45`, API `gpu_count=1`) → tore again. Lesson: **blind `lium up --gpu` ignores executor_blacklist**. Waiter now rents by **node id** + verifies **ngpu≥8** (ssh+API) before bootstrap.
+
+## Axis
+vera6 reign36 × Reason-GRPO HiAlpha (≠ Offline-DPO UltraLoLR fleet; ≠ Online-DPO marsplan). Base `vera6/affine-5g4yy75zuz-t6`@`8e3f1695`.
+
+## Decision
+Stage-5 iff fresh v4 n80 margin>max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 vs reign36.

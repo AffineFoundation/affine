@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4303: B300/B200 empty post-BL → rented non-BL **H200×8** `golden-orbit-7b`/`e350ebc9…` for **R1158** by node id (ssh_gpus=8); waiters that only poll B300/B200 miss H200 — rent H200 same pass when under burn floor. **Never `pkill -f`**.
 - p4302: **R1167 ~−0.15× REFUTE** (m=−0.000534 SE=0.001785 thought✓171 B✓0.394) ShortCtx HiRank MidLoβ LR exhausted → **R1186** MidCtx MidLR same pass; H200×8 non-BL available while B200 BL-only. **Never `pkill -f`**.
 - p4301: **R1166 ~0.45× REFUTE** (m=+0.002389 SE=0.002645 thought✓181 B✓0.423) ShortCtx LoRank Midβ LR exhausted → **R1185** MidLoβ MidLR same pass; sole ls B200=`fbb1135f` BL. **Never `pkill -f`**.
 - p4300: **R1166** p4286 lean **TP2** util0.72 stalled ~38 GiB cutlass → kill-by-pid; relaunch **TP1 util0.85 GPU6** :8003 → CHALL_READY+probe+n80. Prefer TP1 on B200. **Never `pkill -f`**.

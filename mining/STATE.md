@@ -10,11 +10,11 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 |---|---|
 | contract | wvk=**7** · k=**3** · τ=**0.03** · n=**1300** · δ=0.002 · thought≥80 · B γ=0.30 · k_σ=2.0 |
 | king | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695…` **reign36** |
-| burn | **~$392.19/h** · gap **−$440.81/h** · B300×8=0 · B200×8=0 (only BL `fbb1135f`) · H200×8=1 non-BL |
-| Lium | **~$72903** · free τ**~1247** · stake **r252 ≈τ1.69** (<τ5 paygo) |
-| fleet | **9** mine-* · TTL fleet **→2026-08-21T13:26Z** · r340 **→21:24Z** · r339 **→15:50Z** |
-| **p4302** | **R1167 REFUTE ~−0.15×** → **R1186 TRAIN** r252 GPUs6,7 pid**216502** |
-| eval | phase **duel** · chal-00983 |
+| burn | **~$424.19/h** · gap **−$408.81/h** · B300×8=0 · B200×8=0 · H200×8=0 (just rented) |
+| Lium | **~$72868** · free τ**~1247** · stake **r252 ≈τ1.69** (<τ5 paygo) |
+| fleet | **10** mine-* · TTL fleet **→2026-08-21T13:26Z** · r340 **→21:24Z** · r339 **→15:50Z** · r1158 **→22T11:23Z** |
+| **p4303** | rented **R1158** 8×H200 `eager-matrix-57`@$32 (node `golden-orbit-7b` / `e350ebc9…`) · BOOTSTRAP LIVE |
+| eval | phase **duel** · chal-00984 |
 
 ## Running
 | name | huid | $/h | role |
@@ -28,9 +28,10 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | $33.81 | TK · **R1169+R1173+R1178 TRAIN** · SSH `31.22.104.113:40300` |
 | mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | $13.76 | TK · **R1170 n80** · SSH `93.120.231.186:32301` |
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | $15.96 | TK · **R1174 TRAIN** · SSH `38.255.28.21:20100` |
+| mine-r1158-vera-reason-grpo-1 | eager-matrix-57 | $32.00 | **R1158 BOOTSTRAP** (vera×Reason-GRPO) · SSH `204.12.163.23:20301` |
 
 ## Blocked
-No rentable B300×8 / B200×8 after blacklist (sole B200=`fbb1135f`). H200×8 `golden-orbit-7b`@$32 available for R1158 if needed. **R1158** waiters armed (node-id+ngpu≥8). Never blind `lium up --gpu`.
+No rentable B300×8 / B200×8 (BL-only when present). **R1158** now on H200×8 — keep fleet waiters for more 8×. Never blind `lium up --gpu`.
 
 ## Next action
-1. Harvest **R1186** / **R1170** / **R1176** / other MERGE→n80 when ready. 2. Keep **R1158** waiters; rent real 8× if stock ≠ BL (H200 OK if no B200/B300). 3. Fleet TTL **13:26Z** — extend before kill. 4. After any REFUTE → next axis same pass.
+1. Poll **R1158** BOOT→teacher→train (`/root/logs/bootstrap_r1158.log`). 2. Harvest **R1186** / **R1170** / MERGE→n80 when ready. 3. Fleet TTL **13:26Z** — extend before kill. 4. Rent next non-BL 8× if stock appears (still −$409/h vs floor).
