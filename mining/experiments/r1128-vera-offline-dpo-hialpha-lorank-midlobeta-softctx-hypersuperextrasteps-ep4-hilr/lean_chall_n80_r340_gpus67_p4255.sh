@@ -136,7 +136,7 @@ done
 while read -r pid; do
   [[ "$pid" =~ ^[0-9]+$ ]] || continue
   stop_pid "$pid" "stale chall argv"
-done < <(ps -eo pid=,args= | awk '/vllm serve .*\/tmp/r1128_merged/ && !/awk/ {print $1}')
+done < <(ps -eo pid=,args= | awk 'index($0,"vllm serve") && index($0,"/tmp/r1128_merged") && !/awk/ {print $1}')
 
 CHALL_PORT="$CHALL_PORT" GPUS="$GPUS" python3 - <<'PY' | tee -a "$LOG"
 import os, signal, subprocess, time, re
@@ -218,7 +218,7 @@ print("[p4255-r1128] chall GPUs reaped", flush=True)
 PY
 
 for i in $(seq 1 60); do
-  used=$(nvidia-smi -i 1,2 --query-gpu=memory.used --format=csv,noheader,nounits | awk '{s+=$1} END{print s+0}')
+  used=$(nvidia-smi -i 6,7 --query-gpu=memory.used --format=csv,noheader,nounits | awk '{s+=$1} END{print s+0}')
   if [[ "${used:-999999}" -lt 2000 ]]; then
     log "GPUs 6,7 free (poll $i used_mib=$used)"
     break

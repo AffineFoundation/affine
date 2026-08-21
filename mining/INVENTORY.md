@@ -11,7 +11,7 @@
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | 8×B200 | $46.80 | **2026-08-21T13:26Z** | TK · **R1137+R1125 TRAIN** |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-21T13:26Z** | TK · **R1135+R1136 TRAIN** |
 | mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | 8×B200 | soft **2026-08-21T14:56Z** | TK · **R1126+R1127 TRAIN** |
-| mine-r340-marsplan-online-dpo-hirank-bigg-1 | gentle-orbit-4a | 8×B200 | $37.60 | **2026-08-21T21:24Z** | TK · **R1142+R1141 TRAIN** · R1128 MERGE |
+| mine-r340-marsplan-online-dpo-hirank-bigg-1 | gentle-orbit-4a | 8×B200 | $37.60 | **2026-08-21T21:24Z** | TK · **R1142+R1141 TRAIN** · R1128 N80 |
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | 8×H200 | $33.81 | **2026-08-21T13:26Z** | TK · **R1131+32+R1139 TRAIN** |
 | mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | 8×H100 | $13.76 | **2026-08-21T13:26Z** | TK · **R1130 TRAIN** |
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | 8×H200 | $15.96 | **2026-08-21T13:26Z** | TK · **R1140 TRAIN** |
@@ -24,6 +24,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-21T06:14:45Z | p4268: **R1128** MERGE→wrong-GPU poll→TP2 stall→**TP1** :8004 GPU6 CHALL_READY + n80 pid**65193**; B300/B200×8=0 |
 | 2026-08-21T06:04:00Z | p4267: **R1120 REFUTE** ~−1.52×→**R1142** TRAIN r340 GPUs1,2; R1128 MERGE; B300/B200×8=0 |
 | 2026-08-21T05:54:14Z | p4266: **R1120** TP2 stall→TP1 :8002 GPU1 CHALL_READY + n80; B300/B200×8=0 |
-| 2026-08-21T05:44:49Z | p4265: **R1121 REFUTE** ~0.41×→**R1141** TRAIN r340 GPUs3,4; R1120 MERGE; B300/B200×8=0 |
