@@ -1,5 +1,4 @@
-# R1173 — TRAIN LIVE (p4292)
+# R1173 — REFUTE v4 (p4311)
 
-- Parent: R1155 UltraLoLR REFUTE ~0.91× → MidLR isolate
-- knobs: β=0.05 r=16 α=128 lr=1e-6 @8192 steps=38400 MidCtx LoRank MidLoβ Hyper
-- pod: mine-r924 GPUs 4,5 pid 174003 + MERGE→n80 waiters
+MidCtx LoRank MidLoβ MidLR vs reign36: m=+0.000964 SE=0.005119 ~0.09× thought✓192 B✓0.5625.
+Orphan :8004 on r924 (with R1169 :8003). Next axis pending.

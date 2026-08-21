@@ -1,5 +1,4 @@
-# R1174 — TRAIN LIVE (p4292)
+# R1174 — REFUTE v4 (p4309)
 
-- Parent: R1140 SoftCtx UltraLoLR REFUTE ~−0.04×; SoftCtx LR exhausted → ShortCtx UltraLoLR
-- knobs: β=0.1 r=64 α=128 lr=5e-7 @6144 steps=38400 ShortCtx HiRank Midβ Hyper
-- pod: mine-r938 GPUs 2,3 pid 63998 + MERGE→n80 waiters
+- ShortCtx HiRank Midβ UltraLoLR vs reign36: m=+0.000168 SE=0.002578 ~0.03× thought✓189 B✓0.427
+- Midβ LR exhausted (R1082 Mid / R1105 Hi / R1174 Ultra) → **R1197** ShortCtx HiRank Loβ UltraLoLR (p4311 reap :8002)
