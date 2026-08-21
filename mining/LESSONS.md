@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4327: reap **R1197** orphan chall exact-PID → **R1219** SoftCtx LoRank Hiβ Mega HiLR (β=0.3 r=16 lr=2e-6 @12288) on r938 GPUs2,3; r938 is **4×H200** not 8×; R1187 n80 **58/80**. **Never `pkill -f`**.
 - p4326: blank **r1214** BOOT → **R1218** MidCtx MidRank Midβ Mega HiLR (not MidLR SoftCtx=R1010); R1187 n80 healthy **28/80** at mlen65536. **Never `pkill -f`**.
 - p4325: SoftCtx MidRank Loβ Mega MidLR = **R1010 REFUTE ~0.39×** — do not re-run (R1214 MidLR was a dup); SoftCtx chall **mlen32768** ContextLengthError on ~31k prompts → **TP2 util0.55 mlen65536**; crown orphan R1188/89/96 → Mega **R1215 SoftCtx MidRank Loβ HiLR** / **R1216 SoftCtx LoRank Hiβ Ultra** / **R1217 ShortCtx LoRank Hiβ MidLR**. **Never `pkill -f`**.
 - p4324: **R1187** H100: TP2 util0.72 OOM → TP1 util0.80 no KV → **TP2 util0.65 mlen32768** n80 (later ctx-fail); rented H200×8 **r1214**. **Never `pkill -f`**.
