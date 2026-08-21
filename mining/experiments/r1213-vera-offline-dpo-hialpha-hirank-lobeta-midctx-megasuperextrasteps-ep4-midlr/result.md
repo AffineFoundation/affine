@@ -8,3 +8,7 @@
 | parent | R1195 MidCtx HiRank Loβ Hyper UltraLoLR REFUTE m=+0.000479 SE=0.001718 ~0.14x; MidCtx HiRank Loβ Mega MidLR never tried (Mega UltraLoLR R935 REFUTE) → Mega MidLR isolate |
 | status | **TRAIN LIVE p4323** |
 | decision | Stage-5 iff fresh v4 n80 margin>max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 vs reign36 |
+
+## p4331 REFUTE
+m=−0.002095 SE=0.001715 ~−0.61× thought✓195 B✓0.5625 n=80 vs reign36. Idle chall :8003 pending reap.
+
