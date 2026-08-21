@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 69438.44137351667 | p4346 |
-| Lium balance | **$69438.44137351667** | p4346 |
-| cumulative mining spend | ~$154,763 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$59438** (balance − $10,000 floor) | $UTC |
+| $UTC | 69351.62773670067 | p4347 |
+| Lium balance | **$69351.62773670067** | p4347 |
+| cumulative mining spend | ~$154,850 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$59352** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (12 pods) | **~$480.99/h** · vs floor $833/h · gap **−$352.01/h** | p4346 |
+| miner burn (12 pods) | **~$480.99/h** · vs floor $833/h · gap **−$352.01/h** | p4347 |
 | miner coldkey free | τ~1246.73 | kept ≥τ50 |
 | miner stake | **r252 ≈29.52α ≈τ1.69** (<τ5 paygo) | p4235 |
 | registrations / submissions | **16** / **16** (… **r1064 LOST chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-21T18:14:02Z | 69351.62773670067 | p4347 r924 teacher revive + **R1222+23+24** chall+**v4 n80** (no rent; 8× empty); burn **~$480.99/h** |
 | 2026-08-21T18:04:15Z | 69438.44137351667 | p4346 **R1225+R1226 REFUTE**→**R1252+R1253 TRAIN** (no rent; 8× empty); burn **~$480.99/h** |
 | 2026-08-21T17:42:21Z | 69617.42012295741 | p4345 r338 **R1225+R1226** chall+**v4 n80 ARMED** (no rent; 8× empty); burn **~$480.99/h** |
 | 2026-08-21T17:38:21Z | 69660.6239975641 | p4344 r1214 GPUs5–7→**R1249+50+51 TRAIN** (no rent; 8× empty); burn **~$480.99/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-21T17:09:16Z | 69928.2277703054 | p4340 **R1215+R1216 REFUTE**→**R1239+R1240 TRAIN** (no rent; 8× empty); burn **~$480.99/h** |
 | 2026-08-21T17:01:22Z | 69963.16526674588 | p4339 **R1217 REFUTE**→**R1238** + r1191 **R1235+36+37 TRAIN** (no rent; 8× empty); burn **~$480.99/h** |
 | 2026-08-21T16:50:49Z | 70058.00646126471 | p4338 **R1208/10/11 REFUTE**→**R1232+33+34 TRAIN** (no rent; 8× empty); burn **~$480.99/h** |
-| 2026-08-21T16:44:50Z | 70146.07737916226 | p4337 **R1231 TRAIN** on r340 GPUs6,7 (no rent; 8× empty); burn **~$480.99/h** |

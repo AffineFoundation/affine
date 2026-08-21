@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4347: r924 teacher **OOM@util0.90** (retune 16:53Z) left MERGE_DONE R1222/23/24 idle → revive :8000 GPU0 **util0.85+enforce-eager** then arm chall :8002/:8003/:8004 + v4 n80; leave king:8001. **Never `pkill -f`**.
 - p4346: **R1225 REFUTE** m=+0.006423~0.90× / **R1226 REFUTE** m=−0.002089~−1.00× → exact-PID chall reap 268618/:8002 + 268182/:8003 → **R1252** MidCtx MidLoβ Mega HiLR (6,7) + **R1253** MidCtx Loβ Mega UltraLoLR (4,5); leave T/K. **Never `pkill -f`**.
 - p4345: r338 **R1225+R1226** MERGE → lean chall **:8002/:8003** + **v4 n80**. **Never `pkill -f`**.
 - p4344–p4335: REFUTE→reap→Mega cascade on r1214/r1158/r252/crown/r1191/r340/r339; Soft MidRank Loβ Mega MidLR=**R1010** do not re-run; SoftCtx HiRank MidLoβ Mega LR triad exhausted (R1020/R1040/R1207). **Never `pkill -f`**.
