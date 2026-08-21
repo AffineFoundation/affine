@@ -1,11 +1,16 @@
-# R1082 — ShortCtx HiRank Midβ HyperExtra MidLR
+# R1082 n80 vs reign36 — REFUTE (p4230)
 
-**Status:** TRAIN p4216 on `mine-r938` GPUs **2,3** after R1079 REFUTE.
+| field | value |
+|---|---|
+| margin | **+0.000172** |
+| SE | 0.004629 |
+| z | 0.037 |
+| n | 77 |
+| bar max(2·SE, δ) | ≈0.009258 |
+| mult | ~**0.019×** |
+| thought median | 187 ✓ |
+| B pass | 0.405 ✓ |
+| k / τ | 3 / 0.03 |
+| wins | false |
 
-**Parent:** R1079 ShortCtx HiRank MidLoβ HyperExtra MidLR REFUTE
-m=−0.001769 SE=0.001183 z=−1.495 n=78 bar≈0.002366 (~−0.75×)
-thought✓158.5 B✓0.410 k=3/τ=0.03 vs reign36 → Midβ isolate (β 0.05→0.1).
-
-**Knobs:** base `vera6/affine-5g4yy75zuz-t6`@`8e3f1695`, β=**0.1**, α=128, r=64, lr=1e-6, max_len=6144, epochs=4, max_steps=38400.
-
-**Decision rule:** Stage-5 iff fresh v4 n80 margin > max(2·SE, 0.002) AND thought≥80 AND B≥0.30 vs reign36.
+Axis: vera ShortCtx HiRank Midβ HyperExtra MidLR. Next: **R1099 SoftCtx** isolate (p4230).

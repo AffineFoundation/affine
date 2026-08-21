@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4230: **R1082 REFUTE** m=+0.000172 ~0.019× (thought✓187 B✓0.405 k=3) vs reign36 → exact-PID reap r938 :8002 → **R1099** SoftCtx HiRank Midβ Hyper MidLR TRAIN pid**51170**. B300/B200×8=0. **Never `pkill -f`**.
 - p4229: **R1080 REFUTE** m=−0.002477 ~−0.74× (thought✓213 B✓0.464 k=3) vs reign36 → exact-PID reap r926 :8002 → **R1098** ShortCtx Hiβ Hyper MidLR TRAIN pid**150616**. B300/B200×8=0. **Never `pkill -f`**.
 - p4228: paygo **r252 88.56α≈τ5.06** ≥τ5 bar → `btcli stake remove --amount-alpha all` OK; `lium fund` fails → **`btcli wallet transfer`** to Lium coldkey → Lium **~$77760**; R1080 MERGE→chall:8002. B300/B200×8=0. **Never `pkill -f`**.
 - p4227: r340 king GPU5 **died** (no `nvcc`/`CUDA_HOME`) → relaunch `CUDA_HOME=$venv/…/nvidia/cu13` + `VLLM_USE_FLASHINFER_SAMPLER=0` → **:8001 KING_OK**. B300/B200×8=0. **Never `pkill -f`**.
@@ -42,6 +43,5 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p4215: **R1075 REFUTE** → **R1081**. **Never `pkill -f`**.
 - p4214: **R1051 REFUTE** → **R1080**. **Never `pkill -f`**.
 - p4209: **CLI rent B200** `mine-r340`; R1064 **chal-00974**. **Never `pkill -f`**.
-- p4208: **R1064 CROWN_OK** ~1.021× → SUBMIT reveal **31485871**. **Never `pkill -f`**.
 
 
