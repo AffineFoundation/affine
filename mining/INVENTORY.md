@@ -6,7 +6,7 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-21T13:26Z** | TK · **R1103+04 n80** |
+| mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-21T13:26Z** | TK · **R1116+17 TRAIN** |
 | mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-21T13:26Z** | TK · **R1110+R1105 TRAIN** |
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | 8×B200 | $46.80 | **2026-08-21T13:26Z** | TK · **R1106+R1107 TRAIN** |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-21T13:26Z** | TK · **R1111+R1102 TRAIN** |
@@ -24,6 +24,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-21T02:55:27Z | p4246: **R1103+R1104 REFUTE** → reap crown :8004/:8003 → **R1116+R1117 TRAIN** pid**276878**/**276881**; B300/B200×8=0 |
 | 2026-08-21T02:48:24Z | p4245: r340 stub lean → reap orphan r340 :8002 pid**24856** → **R1096+R1097** real chall outer pid**29288**/**29334**; B300/B200×8=0 |
 | 2026-08-21T02:42:19Z | p4244: **R1098 REFUTE** → reap r926 :8002 → **R1115 TRAIN** pid**155259**; B300/B200×8=0; chal-00974 load |
-| 2026-08-21T02:36:46Z | p4243: **R1089 REFUTE** → reap r924 :8002 → **R1114 TRAIN** pid**138299** (R1113+R1112 intact); B300/B200×8=0 |
