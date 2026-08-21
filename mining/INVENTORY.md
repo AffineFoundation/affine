@@ -7,7 +7,7 @@
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
 | mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-21T13:26Z** | TK · **R1103+04+01 TRAIN** |
-| mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-21T13:26Z** | TK · **R1090 TRAIN** · **R1081 REFUTE** |
+| mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-21T13:26Z** | TK · **R1090+R1105 TRAIN** |
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | 8×B200 | $46.80 | **2026-08-21T13:26Z** | TK · **R1083 chall** · **R1094 TRAIN** |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-21T13:26Z** | TK · **R1100+R1102 TRAIN** |
 | mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | 8×B200 | soft **2026-08-21T14:56Z** | TK · **R1085+R1086 TRAIN** |
@@ -24,6 +24,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-21T01:32:48Z | p4235: **R1081 REFUTE** → reap r252 :8003 → **R1105 TRAIN** pid**174547**; B300/B200×8=0 |
 | 2026-08-21T01:27:31Z | p4234: **R1091+R1093 REFUTE** → reap crown :8004/:8003 → **R1103+R1104 TRAIN** pid**266741**/**266744**; B300/B200×8=0 |
 | 2026-08-21T01:21:21Z | p4233: **R1088 REFUTE** → reap r338 :8002 → **R1102 TRAIN** pid**177102**; B300/B200×8=0 |
-| 2026-08-21T01:14:50Z | p4232: **R1092 REFUTE** → reap crown :8002 → **R1101 TRAIN** pid**265606**; B300/B200×8=0 |

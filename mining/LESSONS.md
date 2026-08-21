@@ -25,7 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4234: **R1091 REFUTE** m=+0.003552 ~0.46× (thought✓165 B✓0.355) + **R1093 REFUTE** m=+0.000646 ~0.10× (thought✓179 B✓0.438) vs reign36 → exact-PID reap crown :8004/:8003 → **R1103+R1104** Hyper HiLR TRAIN pid**266741**/**266744** (R1101 intact). Idle: r252 R1081. B300/B200×8=0. **Never `pkill -f`**.
+- p4235: **R1081 REFUTE** m=+0.001560 ~0.40× (thought✓193 B✓0.597 k=3) vs reign36 → exact-PID reap r252 :8003 → **R1105** ShortCtx HiRank Midβ Hyper HiLR TRAIN pid**174547** (R1090 intact). B300/B200×8=0. **Never `pkill -f`**.
+- p4234: **R1091 REFUTE** m=+0.003552 ~0.46× (thought✓165 B✓0.355) + **R1093 REFUTE** m=+0.000646 ~0.10× (thought✓179 B✓0.438) vs reign36 → exact-PID reap crown :8004/:8003 → **R1103+R1104** Hyper HiLR TRAIN pid**266741**/**266744** (R1101 intact). B300/B200×8=0. **Never `pkill -f`**.
 - p4233: **R1088 REFUTE** m=+0.001775 ~0.69× (thought✓168 B✓0.45 k=3) vs reign36 → exact-PID reap r338 :8002 → **R1102** SoftCtx MidRank Hiβ Hyper HiLR TRAIN pid**177102**. B300/B200×8=0. **Never `pkill -f`**.
 - p4232: **R1092 REFUTE** m=−0.000115 ~−0.03× (thought✓197 B✓0.380 k=3) vs reign36 → exact-PID reap crown :8002 → **R1101** ShortCtx MidRank MidLoβ Hyper HiLR TRAIN pid**265606**. B300/B200×8=0. **Never `pkill -f`**.
 - p4231: **R1087 REFUTE** m=−0.002218 ~−0.44× (thought✓198 B✓0.427 k=3) vs reign36 → exact-PID reap r338 :8003 → **R1100** MidCtx HiRank Midβ Hyper HiLR TRAIN pid**172799**. B300/B200×8=0. **Never `pkill -f`**.
@@ -33,6 +34,5 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p4229: **R1080 REFUTE** m=−0.002477 ~−0.74× (thought✓213 B✓0.464 k=3) vs reign36 → exact-PID reap r926 :8002 → **R1098** ShortCtx Hiβ Hyper MidLR TRAIN pid**150616**. B300/B200×8=0. **Never `pkill -f`**.
 - p4228: paygo **r252 88.56α≈τ5.06** ≥τ5 bar → `btcli stake remove --amount-alpha all` OK; `lium fund` fails → **`btcli wallet transfer`** to Lium coldkey → Lium **~$77760**. **Never `pkill -f`**.
 - p4227: r340 king GPU5 **died** (no `nvcc`/`CUDA_HOME`) → relaunch `CUDA_HOME=$venv/…/nvidia/cu13` → **:8001 KING_OK**. **Never `pkill -f`**.
-- p4209: **CLI rent B200** `mine-r340`. **Never `pkill -f`**.
 
 

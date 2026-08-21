@@ -1,6 +1,6 @@
 # R1081 — ShortCtx HiRank Midβ Ultra HiLR
 
-**Status (p4234):** **REFUTE v4** vs reign36 · m=+0.001560 SE=0.001943 z=0.803 n=79 bar≈0.003886 (~0.40×) thought✓193 B✓0.597 k=3 · idle chall :8003 on `mine-r252` — next pass reap.
+**Status (p4235):** **REFUTE v4** vs reign36 · m=+0.001560 SE=0.001943 z=0.803 n=79 bar≈0.003886 (~0.40×) thought✓193 B✓0.597 k=3 · reaped :8003 → **R1105**.
 
 | field | value |
 |---|---|
