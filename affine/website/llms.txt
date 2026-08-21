@@ -110,7 +110,7 @@ Root: https://affine.io/
 2. You commit-reveal an HF checkpoint pinned to a 40-hex git revision.
 3. The validator burns your hotkey's **one eval slot at enqueue** (not at verdict). Failed hygiene, failed probe, or lost duel still burns the slot.
 4. Eval machine runs a duel on an `n_turns = 1300` slice of D seeded by `blake2b(reveal_block_hash ‖ your_hotkey)` — you cannot know the slice before reveal; anyone can re-derive it after.
-5. Both sides are scored with Reason v4 (tempered multi-sample + δ + thought-length floor + B gate): the teacher samples `k = 3` reference rollouts per turn, each ref scores `a_i = lpC(y_i|z_A) − lpC(y_i|∅)`, and the turn score is `tau·log(mean_i exp(a_i/tau))` with `tau = 0.03`; miner score = mean over turns. You dethrone the king iff the paired mean `Reason_c − Reason_k` beats `max(k_sigma·SE, δ)` (`k_sigma = 2`, `min_margin = 0.002`) **and** your median stripped thought length is at least `min_thought_chars = 80` **and** at least `causality_gamma = 0.30` of pairs pass teacher-side B (`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no leakage). No lpA gates.
+5. Both sides are scored with Reason v4 (tempered multi-sample + δ + thought-length floor + B gate): the teacher samples `k = 3` reference rollouts per turn, each ref scores `a_i = lpC(y_i|z_A) − lpC(y_i|∅)`, and the turn score is `tau·log(mean_i exp(a_i/tau))` with `tau = 0.03`; miner score = mean over turns. You dethrone the king iff the paired mean `Reason_c − Reason_k` beats `max(k_sigma·SE, δ)` (`k_sigma = 2`, `min_margin = 0.001`) **and** your median stripped thought length is at least `min_thought_chars = 80` **and** at least `causality_gamma = 0.30` of pairs pass teacher-side B (`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no leakage). No lpA gates.
 6. Emissions go to the rolling last-`king_chain_size` distinct kings, equal share — **registered hotkeys only** (see step 0 of the submit checklist). Advisory tau2 benches never affect Reason or crowning.
 7. Every dethrone is reviewed post-crown by a published LLM audit (see the exploit-audit section below). An `exploit = true` verdict reverts the crown and requeues every challenger the exploit king eclipsed. All verdicts are public at `data/audits.json`; the audit task and daemon are published verbatim under `code/ops/exploit-audit/`.
 
@@ -180,7 +180,7 @@ Your checkpoint is served with stock `vllm serve` — **never** `--trust-remote-
 
 ## Reason (what you optimize)
 
-Since 2026-08-17 (`weight_version_key = 7`) the whole scoring contract is:
+Since 2026-08-17 (`weight_version_key = 8` as of 2026-08-21, δ recalibration) the whole scoring contract is:
 
 ```
 a_i (per teacher ref) = lpC(y_i | z_A) − lpC(y_i | ∅)     i = 1..k, k = 3
@@ -189,7 +189,7 @@ Miner score           = mean(Reason) over all scored turns
 Crown                 = paired mean(Reason_c − Reason_k) > max(k_sigma·SE, δ)
                         AND median(len(z_A.strip())) ≥ min_thought_chars
                         AND B pass rate ≥ causality_gamma
-                        (k_sigma = 2, δ = min_margin = 0.002,
+                        (k_sigma = 2, δ = min_margin = 0.001,
                          min_thought_chars = 80, causality_gamma = 0.30,
                          SE = sd/√n over paired turns)
 B (per rollout)       = lpC(y_A | z_A) − lpC(y_A | ∅)
@@ -200,7 +200,7 @@ Each `y_i` is one of `k = 3` reference actions the frozen teacher samples fresh 
 
 **Why tempered (v4, 2026-08-17).** The teacher's next-action distribution is multi-modal: resampling a turn yields different, equally valid actions. The old v3 rule scored your thought against a single sampled reference and averaged in log space, which punished a miss without bound — even the teacher's own thought, unpaired from its rollout, scored ≈ −0.010/byte. The rational strategy was neutral, non-committal filler, and that was the observed equilibrium. The tempered log-mean-exp is dominated by the best-matched reference instead of the worst: a missed mode zeroes its own share but cannot drag the turn below the credit from a hit. Committing to the teacher's dominant next action is now the optimum; filler earns ≈ 0 and loses duels. Limits: `k = 1` reduces exactly to the v3 rule; `tau → ∞` recovers the broken hedging mean. `tau = 0.03` was calibrated on n = 100 turns: commit beats hedge from `tau ≈ 0.1` down and decisively at 0.03, while staying warm enough that a single lucky ref hit does not dominate (mode-guessing and leakage amplification are the cold-tau failure modes; both are monitored via published telemetry and the post-crown audit).
 
-**Why the δ floor (`min_margin = 0.002`, 2026-08-12).** The z-test is relative to the challenger's own per-turn noise. A near-copy of the king has ~6× less duel variance than a genuinely distinct model, so without the floor it could crown on a ±0.0006 noise fluctuation at the same 1-in-44 odds as anyone else. The absolute floor makes that ~z = 6.7 (≈1-in-10^10) while sitting safely below the live honest bar 2·SE ≈ 0.0035 — real duels never touch it. It also caps SE-compression — however consistent your thoughts, the crown bar never drops below 0.002. The calibration (148 archived duels) ships in the repo as `research/results/delta_calibration.json`.
+**Why the δ floor (`min_margin = 0.001`; 0.002 from 2026-08-12, recalibrated 2026-08-21 to the v4 margin scale).** The z-test is relative to the challenger's own per-turn noise. A near-copy of the king has far less duel variance than a genuinely distinct model, so without the floor it could crown on a pure-noise fluctuation at the same 1-in-44 odds as anyone else. The absolute floor makes that ~z ≥ 6 (≈1-in-10^9) while sitting below the typical honest bar 2·SE. It also caps SE-compression — however consistent your thoughts, the crown bar never drops below δ. The original 0.002 was calibrated on 148 archived v3 duels (`research/results/delta_calibration.json`); Reason v4 compressed margins and noise ~2x (median live 2·SE 0.0024 → 0.0013 across 82 v4 duels), so on 2026-08-21 δ was recalibrated to 0.001 (`weight_version_key = 8`), restoring the v3-era δ/SE design ratio. Copy SEs shrank by the same rescale, so copy protection is unchanged in z-terms.
 
 **Live instrumentation.** Each scored turn runs one miner sample, `k = 3` Reason echoes (`lpC(y_i|z_A)`, one per teacher reference), and two B echoes (`lpC(y_A|z_A)` / `lpC(y_A|∅)`, once per rollout — B does not depend on the reference). `lpC(y_i|z_C)` / `lpC(y_i|∅)` come from the fresh teacher references. Prior-bank and retired lpA echoes are **not** computed live (`reason_only = true`, `score_bank = false`). Published per verdict when available:
 

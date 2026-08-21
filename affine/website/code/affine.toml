@@ -96,18 +96,14 @@ replica_gpus = "6,7"
 # request each: sticky turns pinned to a queued local slot paced the duel.
 # At 10/12 weighting the locals keep roughly the same absolute turn load
 # as before while the swarm absorbs everything else.
-extra_urls = [
-  "http://127.0.0.1:9100/v1",
-  "http://127.0.0.1:9100/v1",
-  "http://127.0.0.1:9100/v1",
-  "http://127.0.0.1:9100/v1",
-  "http://127.0.0.1:9100/v1",
-  "http://127.0.0.1:9100/v1",
-  "http://127.0.0.1:9100/v1",
-  "http://127.0.0.1:9100/v1",
-  "http://127.0.0.1:9100/v1",
-  "http://127.0.0.1:9100/v1",
-]
+# EMPTIED 2026-08-21 ~19:25Z (ops, no wvk event): the entire miner-teacher
+# pool vanished from Lium ~18:55Z (all mine-* pods terminated at platform
+# level, cause under investigation — possibly balance exhaustion). With the
+# router at zero backends every duel 503'd mid-turn ("fail-open" only
+# probes at duel start) and chal-00994 was burned as eval_infra_exhausted.
+# Local-only duels (~45-50 min) until a teacher pool exists again; restore
+# the 10x router listing when backends are back.
+extra_urls = []
 
 [miner_serving]
 # King stays warm; challenger is loaded per duel.
