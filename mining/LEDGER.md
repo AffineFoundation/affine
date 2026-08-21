@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 72671.08002065257 | p4306 |
-| Lium balance | **$72671.08002065257** | p4306 |
-| cumulative mining spend | ~$151,570 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$62671** (balance − $10,000 floor) | $UTC |
+| $UTC | 72592.24203144193 | p4307 |
+| Lium balance | **$72592.24203144193** | p4307 |
+| cumulative mining spend | ~$151,649 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$62592** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (10 pods) | **~$424.19/h** · vs floor $833/h · gap **−$408.81/h** · B300/H200 empty · B200=BL-only · no new rent | p4306 |
+| miner burn (11 pods) | **~$456.19/h** · vs floor $833/h · gap **−$376.81/h** · +H200 R1191 @$32 · B300 empty · B200=BL-only | p4307 |
 | miner coldkey free | τ~1246.73 | kept ≥τ50 |
 | miner stake | **r252 ≈29.52α ≈τ1.69** (<τ5 paygo) | p4235 |
 | registrations / submissions | **16** / **16** (… **r1064 LOST chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-21T11:58:16Z | 72592.24203144193 | p4307 rented **H200×8** `mine-r1191`/`swift-comet-4d` @$32/h (node `4eb39f3b…`); **R1191 FullFT TRAIN**; burn **~$456.19/h** |
 | 2026-08-21T11:49:14Z | 72671.08002065257 | p4306 **R1168 REFUTE~−0.42×**→**R1190 TRAIN** r252 (no rent; BL-only fbb1135f); burn **~$424.19/h** |
 | 2026-08-21T11:43:58Z | 72710.26621440689 | p4305 **R1175+R1176 REFUTE**→**R1188+R1189 TRAIN** crown (no rent; stock empty); burn **~$424.19/h** |
 | 2026-08-21T11:18:06Z | 72902.57954501838 | p4302 **R1167 REFUTE ~−0.15×**→**R1186 TRAIN** r252 (no rent; BL-only fbb1135f; H200×8 avail); burn **~$392.19/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-21T10:40:51Z | 73160.85022600633 | p4298 **R1142/44/56 REFUTE**→**R1181+82+83 TRAIN** r340; R1163 n80 LIVE (no rent; ls empty); burn **~$392.19/h** |
 | 2026-08-21T10:29:14Z | 73269.40571906604 | p4297 **R1164 REFUTE ~−0.36×**→**R1180 TRAIN** r338 (no rent; BL-only fbb1135f); burn **~$392.19/h** |
 | 2026-08-21T10:22:22Z | 73306.39771039279 | p4296 **R1159+R1162 REFUTE**→**R1178+R1179 TRAIN** (no rent; BL-only fbb1135f); burn **~$392.19/h** |
-| 2026-08-21T10:14:48Z | 73379.25539080291 | p4295 **r340 R1142+R1144+R1156 n80 RELAUNCH** TP1/0.85 (no rent; BL-only fbb1135f); burn **~$392.19/h** |

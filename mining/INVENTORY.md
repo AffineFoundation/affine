@@ -16,8 +16,9 @@
 | mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | 8×H100 | $13.76 | **2026-08-21T13:26Z** | TK · **R1187 TRAIN** |
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | 8×H200 | $15.96 | **2026-08-21T13:26Z** | TK · **R1174 TRAIN** |
 | mine-r1158-vera-reason-grpo-1 | eager-matrix-57 | 8×H200 | $32.00 | **2026-08-22T11:23Z** | teacher + **R1158 GRPO TRAIN** |
+| mine-r1191-vera-fullft-1 | swift-comet-4d | 8×H200 | $32.00 | **2026-08-22T11:53Z** | **R1191 FullFT TRAIN** pid**2434** |
 
-Host fleet: **10 mine-*** · burn **~$424.19/h** · **wvk=7** · B300/H200 empty · sole B200=`fbb1135f` BL · waiters armed
+Host fleet: **11 mine-*** · burn **~$456.19/h** · **wvk=7** · B300/H200 empty · sole B200=`fbb1135f` BL · waiters armed
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval`, `affine-chat`, `swarm-t-h200-4x-1`.
 
@@ -25,6 +26,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-21T11:58:16Z | p4307: rented non-BL **H200×8** `swift-comet-4d` → **R1191 FullFT TRAIN** pid**2434**; burn **~$456.19/h** |
 | 2026-08-21T11:49:14Z | p4306: **R1168 REFUTE~−0.42×** → reap :8002 → **R1190 TRAIN** r252 pid**221526**; sole B200 BL; burn **~$424.19/h** |
 | 2026-08-21T11:43:58Z | p4305: **R1175 REFUTE~−0.24×** + **R1176 REFUTE~−0.29×** → **R1188+R1189 TRAIN**; R1168 n80~25/80; burn **~$424.19/h** |
-| 2026-08-21T11:35:48Z | p4304: **R1158** teacher+GRPO TRAIN pid**5163**; **R1170 REFUTE~0.57×**→**R1187 TRAIN** r926; burn **~$424.19/h** |

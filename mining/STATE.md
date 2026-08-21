@@ -10,11 +10,11 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 |---|---|
 | contract | wvk=**7** · k=**3** · τ=**0.03** · n=**1300** · δ=0.002 · thought≥80 · B γ=0.30 · k_σ=2.0 |
 | king | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695…` **reign36** |
-| burn | **~$424.19/h** · gap **−$408.81/h** · B300×8=0 · B200×8=BL-only · H200×8=0 |
-| Lium | **~$72671** · free τ**~1247** · stake **r252 ≈τ1.69** (<τ5 paygo) |
-| fleet | **10** mine-* · TTL fleet **→2026-08-21T13:26Z** · r340 **→21:24Z** · r339 **→15:50Z** · r1158 **→22T11:23Z** |
-| **p4306** | **R1168 REFUTE ~−0.42×** → **R1190 TRAIN** r252 GPUs4,5 pid**221526**; R1186 TRAIN 6,7 |
-| eval | phase **scoring** · chal `5FNc…` chal-00984 |
+| burn | **~$456.19/h** · gap **−$376.81/h** · B300×8=0 · B200×8=BL-only · H200×8=0 left |
+| Lium | **~$72592** · free τ**~1247** · stake **r252 ≈τ1.69** (<τ5 paygo) |
+| fleet | **11** mine-* · TTL fleet **→2026-08-21T13:26Z** · r340 **→21:24Z** · r339 **→15:50Z** · r1158 **→22T11:23Z** · r1191 **→22T11:53Z** |
+| **p4307** | rented **H200×8** `mine-r1191` → **R1191 FullFT TRAIN** pid**2434**; trains R1190/R1186/R1188/89/R1158 still LIVE |
+| eval | phase **duel** · chal `chal-00984` |
 
 ## Running
 | name | huid | $/h | role |
@@ -29,9 +29,10 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | $13.76 | TK · **R1187 TRAIN** · SSH `93.120.231.186:32301` |
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | $15.96 | TK · **R1174 TRAIN** · SSH `38.255.28.21:20100` |
 | mine-r1158-vera-reason-grpo-1 | eager-matrix-57 | $32.00 | teacher:8000 + **R1158 GRPO TRAIN** · SSH `204.12.163.23:20301` |
+| mine-r1191-vera-fullft-1 | swift-comet-4d | $32.00 | **R1191 FullFT TRAIN** pid**2434** · SSH `69.63.236.163:40299` |
 
 ## Blocked
-No rentable B300×8 / H200×8; sole B200=`fbb1135f` BL. Never blind `lium up --gpu`. Fleet waiter armed.
+No rentable B300×8 / H200×8 left; sole B200=`fbb1135f` BL. Never blind `lium up --gpu`. Fleet waiter armed (B300/B200 only).
 
 ## Next action
-1. Poll **R1190** train→merge→n80 + **R1186** / **R1188/89** / **R1158** GRPO. 2. Fleet TTL **13:26Z** — extend before kill. 3. Rent next non-BL 8× if stock appears (still −$409/h vs floor).
+1. Poll **R1191** FullFT→post_train n80 + **R1190/R1186/R1188/89** / **R1158** GRPO. 2. Fleet TTL **13:26Z** — extend before kill. 3. Rent next non-BL 8× if stock appears (still −$377/h vs floor).

@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4307: non-BL **H200×8** `eager-fox-11`/`4eb39f3b…` rented while fleet waiter only polls B300/B200 — **R1191** vera FullFT TRAIN pid**2434**; burn **~$456/h**. **Never `pkill -f`**.
 - p4306: **R1168 ~−0.42× REFUTE** (m=−0.001512 SE=0.001782 thought✓163 B✓0.418) SoftCtx HiRank Hiβ UltraLoLR → SoftCtx HiRank Hiβ LR exhausted → **R1190** ShortCtx UltraLoLR same pass; empty cmdline chall ⇒ UUID-clear GPUs4,5; sole B200=`fbb1135f` BL. **Never `pkill -f`**.
 - p4305: **R1175 ~−0.24× / R1176 ~−0.29× REFUTE** (thought✓ B✓) UltraLoLR → MidLR SoftCtx LoRank Hiβ (**R1188**) + Hiβ MidCtx MidRank UltraLoLR (**R1189**; MidLoβ LR exhausted) same pass; stock B300/B200/H200 empty. **Never `pkill -f`**.
 - p4304: **R1158** BOOT_HF_DONE → teacher TP1 :8000 + GRPO TRAIN GPUs2,3 same pass; **R1170 ~0.57× REFUTE** (m=+0.004094 SE=0.003599 thought✓200 B✓0.399) MidCtx MidLR → **R1187** SoftCtx MidLR same pass; sole B200=`fbb1135f` BL. **Never `pkill -f`**.

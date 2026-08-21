@@ -1,0 +1,18 @@
+{
+  "pass": 4307,
+  "utc": "2026-08-21T11:58:16Z",
+  "name": "mine-r1191-vera-fullft-1",
+  "huid": "swift-comet-4d",
+  "pod_id": "85dfcc2e-ea25-4927-9f88-6966108e1fb1",
+  "node_id": "4eb39f3b-3714-42f0-93eb-f81238c07834",
+  "node_huid": "eager-fox-11",
+  "gpu": "8\u00d7H200",
+  "price_per_hour": 32.0,
+  "ssh": "69.63.236.163:40299",
+  "ttl_until": "2026-08-22T11:53:11Z",
+  "ssh_gpus": 8,
+  "api_gpus": 8,
+  "axis": "R1191",
+  "train_pid": 2434,
+  "note": "B300/B200 empty; rented non-BL H200\u00d78 by node id (fleet waiter only polls B300/B200). FullFT TRAIN LIVE."
+}
