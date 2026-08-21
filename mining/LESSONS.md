@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4265: **R1121 REFUTE** m=+0.002685 SE=0.003287 ~**0.41×** (thought✓208.5 B✓0.4375 k=3) → exact-PID reap r340 :8003 → **R1141** MidCtx UltraLoLR TRAIN pid**55900** GPUs3,4; R1120 TRAIN DONE→MERGE live; B300/B200×8=0. Positive margin below 2·SE is still REFUTE. **Never `pkill -f`**.
 - p4264: **R1121** TP2 NCCL stall again (VRAM≈1GiB) → exact-PID reap → **TP1** chall on GPU3 util0.90 CHALL_READY ~90s + n80; **R1114 REFUTE** ~0.09×→**R1139** MidCtx TRAIN r924; **R1118 REFUTE** ~−0.26×→**R1140** UltraLoLR TRAIN r938. Lean awk `/tmp/r…_merged/` breaks (regex `/` cut). Prefer TP1 after two TP2 stalls. **Never `pkill -f`**.
 - p4263: **R1121** MERGE done but chall vLLM stuck ~6m after NCCL (workers Rl, VRAM≈1GiB, :8003 never listens) → exact-PID reap lean+API+engine+workers → re-arm lean_chall :8003 pid**51771**; also purge r926 11×66G (70%→1%) + r252 12×66G. **Never `pkill -f`**.
 - p4262: **R1110 REFUTE** m=−0.006349 ~−0.62× → exact-PID reap r252 :8002 → **R1138** SoftCtx HiRank MidLoβ Hyper UltraLoLR TRAIN pid**192576** GPUs4,5; R1123 OK; rm `/tmp/r1110_merged`; B300/B200×8=0. **Never `pkill -f`**.
