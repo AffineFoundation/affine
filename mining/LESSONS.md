@@ -25,24 +25,22 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4278: **R1141 REFUTE** m=−0.001574 SE=0.001812 ~**−0.43×** (thought✓192 B✓0.479 k=3) → MidLoβ LR family exhausted (R1097 MidLR / R1121 HiLR +0.41× / R1141 UltraLoLR) → exact-PID reap r340 :8003 → **R1156** Midβ UltraLoLR TRAIN pid**72365** GPUs3,4; **R1130** ~40/80. B300/B200×8=0. **Never `pkill -f`**.
-- p4277: **R1131 REFUTE** m=−0.003611 SE=0.002915 ~**−0.62×** (thought✓179 B✓0.434 k=3) → exact-PID reap r924 :8004 → **R1155** UltraLoLR TRAIN pid**160572** GPUs4,5; **R1130** n80 ~33/80 TP1 util0.93 still live. B300/B200×8=0. **Never `pkill -f`**.
-- p4276: **R1130** p4275 TP1 util**0.85** FATAL — Available KV **−2.71 GiB** after 65.53 GiB load on H100; re-arm **TP1 util0.93 GPU7** CHALL_READY + n80 pid**168327**. On H100 MoE@65k, util≤0.85 can fail *at init* (not only mid-duel). **R1132 REFUTE** m=−0.014872 ~**−1.23×** → exact-PID reap r924 :8003 → **R1154** UltraLoLR TRAIN. B300/B200×8=0. **Never `pkill -f`**.
-- p4275: **R1130** n80 FATAL = TP2 util**0.72** OOM on prompt-logprobs (+7.58GiB) → ConnectError; exact-PID reap r926 → **TP1 util0.85** chall pid**165122** :8002 GPU3 (later FATAL KV −2.71). B300/B200×8=0. **Never `pkill -f`**.
-- p4274: **R1123 REFUTE** m=−0.000808 ~**−0.11×** (thought✓201 B✓0.447 k=3) → exact-PID reap r252 :8003 → **R1153** UltraLoLR TRAIN pid**198900** GPUs6,7; **R1130** n80 FATAL noted. B300/B200×8=0. **Never `pkill -f`**.
-- p4273: r337 **R1125+R1137 REFUTE**→exact-PID reap :8002/:8003 → **R1149+R1150** UltraLoLR TRAIN pids**166378/166373**; r338 **R1135+R1136 REFUTE**→reap → **R1151+R1152** UltraLoLR TRAIN pids**212204/212198**. B300/B200×8=0. **Never `pkill -f`**.
-- p4272: crown **R1129+R1133+R1134 REFUTE** (~−0.24× / +0.24× / −0.32×) → exact-PID reap :8002/:8004/:8003 → **R1146+R1147+R1148** UltraLoLR TRAIN pids**305741/305738/305731**. B300/B200×8=0. **Never `pkill -f`**.
-- p4271: **R1127 REFUTE** m=−0.001642 SE=0.003235 ~**−0.25×** (thought✓193 B✓0.473 k=3) → exact-PID reap r339 :8003 → **R1145** ShortCtx LoRank Midβ Hyper UltraLoLR TRAIN pid**62090** GPUs6,7; R1143 still on 4,5. B300/B200×8=0. **Never `pkill -f`**.
-- p4270: **R1126 REFUTE** ~**−0.38×** → **R1143** UltraLoLR; **R1128 REFUTE** ~**−0.78×** → **R1144** UltraLoLR; **R1127** TP1 util0.85 n80. **Never `pkill -f`**.
-- p4269: **R1128** TP1 util**0.90** OOM on prompt-logprobs → **TP1 util0.85**. Prefer util≤0.85 for TP1 chall+logprobs on B200. **Never `pkill -f`**.
-- p4268: **R1128** lean_chall polled wrong GPUs → TP2 NCCL stall → **TP1**. Prefer TP1 after first TP2 stall on r340. **Never `pkill -f`**.
-- p4267: **R1120 REFUTE** ~**−1.52×** → **R1142** UltraLoLR. **Never `pkill -f`**.
-- p4265: **R1121 REFUTE** ~**0.41×** (below 2·SE) → **R1141** UltraLoLR. Positive margin below bar is still REFUTE. **Never `pkill -f`**.
+- p4279: **R1130 REFUTE** m=−0.003061 SE=0.003818 ~**−0.40×** (thought✓256 B✓0.377 k=3) → exact-PID reap r926 :8002 → **R1157** UltraLoLR TRAIN pid**169520** GPUs3,4; **R1139** merge ready but n80 waiter died on **softctx path typo** (dir is midctx) → re-arm lean chall :8002 GPUs6,7; **rent** `mine-r1158` 8×B200 $5.60/h (waiter `ls-empty` false-negative — `lium up --gpu B200 -c 8` succeeded). B300×8=0. **Never `pkill -f`**.
+- p4278: **R1141 REFUTE** m=−0.001574 SE=0.001812 ~**−0.43×** (thought✓192 B✓0.479 k=3) → MidLoβ LR family exhausted → **R1156** Midβ UltraLoLR TRAIN. **Never `pkill -f`**.
+- p4277: **R1131 REFUTE** ~**−0.62×** → **R1155** UltraLoLR. **Never `pkill -f`**.
+- p4276: **R1130** TP1 util**0.85** FATAL KV −2.71 GiB on H100 → **TP1 util0.93**; **R1132 REFUTE** → **R1154**. **Never `pkill -f`**.
+- p4275: **R1130** TP2 util**0.72** OOM → **TP1 util0.85**. **Never `pkill -f`**.
+- p4274: **R1123 REFUTE** ~**−0.11×** → **R1153** UltraLoLR. **Never `pkill -f`**.
+- p4273: r337/r338 REFUTE→**R1149–R1152** UltraLoLR. **Never `pkill -f`**.
+- p4272: crown REFUTE→**R1146–R1148** UltraLoLR. **Never `pkill -f`**.
+- p4271: **R1127 REFUTE** → **R1145** UltraLoLR. **Never `pkill -f`**.
+- p4270: **R1126+R1128 REFUTE** → **R1143+R1144**. **Never `pkill -f`**.
+- p4269: TP1 util**0.90** OOM → prefer util≤0.85 on B200. **Never `pkill -f`**.
+- p4268: TP2 NCCL stall → prefer TP1. **Never `pkill -f`**.
+- p4265: positive margin below 2·SE still REFUTE. **Never `pkill -f`**.
 - p4264: lean awk `/tmp/r…_merged/` breaks (regex `/` cut). **Never `pkill -f`**.
-- p4262: **R1110 REFUTE** ~−0.62× → **R1138** UltraLoLR. **Never `pkill -f`**.
-- p4259: crown **/tmp ENOSPC** from stale merges → purge + `TMPDIR=/root/tmp`. **Never `pkill -f`**.
-- p4259b: **R1064 LOST** chal-00974 m=**−0.000659** (n80 was +0.006632 ~1.021×) — knife-edge n80 not live-predictive.
-- p4254–p4261: REFUTE→next-axis TRAIN same pass; fill idle GPU pairs. **Never `pkill -f`**.
+- p4259: crown **/tmp ENOSPC** → purge + `TMPDIR=/root/tmp`. **Never `pkill -f`**.
+- p4259b: **R1064 LOST** knife-edge n80 not live-predictive.
 - p4228: paygo α→TAO→Lium via `btcli wallet transfer` (lium fund broken). **Never `pkill -f`**.
 
 
