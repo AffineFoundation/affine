@@ -208,7 +208,14 @@ async def health():
 
 @app.get("/v1/models")
 async def models():
+    # evalsrv's per-duel fail-open probe hits this route. It must fail when
+    # the pool is empty, otherwise the probe admits the router into the duel
+    # teacher pool and every turn pinned to it 503s mid-duel — that exact
+    # sequence burned chal-00994 on 2026-08-21 when the miner pool vanished.
     router.reload_state()
+    healthy = [b for b in router.backends.values() if b.healthy]
+    if not healthy:
+        return JSONResponse({"error": "no healthy teacher backends"}, 503)
     return {"object": "list",
             "data": [{"id": router.model, "object": "model",
                       "owned_by": "teacher-swarm"}]}
