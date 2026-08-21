@@ -1,0 +1,34 @@
+[p4257] sync r1129-vera-offline-dpo-hialpha-lorank-midlobeta-shortctx-hypersuperextrasteps-ep4-hilr → mine-crown-1
+[p4257] exact-PID reap R1101 chall :8002 pid=279494 (GPUs 6,7)
+reap pid=279494 cmd=/root/venv/bin/python3 /root/venv/bin/vllm serve /tmp/r1101_merged --port 8002 --tensor-parallel-size 2 --max-model-len 65536 --gpu-memory-utilization 0.72 --max-num-batched-tokens 8192 --attention-backend FLASH_ATTN --attention-config.use_trtllm_attention 0 --compilation-config.pass_config.fuse_allreduce_rms false --moe-backend triton --additional-config {"gdn_prefill_backend": "triton"} --enforce-eager 
+kill set: 279494 279888 279889 280199 280200
+reaped R1101 chall
+VRAM6+7=0 iter=1
+TEACHER_OK
+KING_OK
+ 276878 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1116/dpo_duel_reason.jsonl --out-dir /root/r1116/train --max-len 12288 --epochs 4 --lr 2e-6 --lora-r 16 --lora-alpha 128 --beta 0.3 --max-steps 38400
+ 276881 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1117/dpo_duel_reason.jsonl --out-dir /root/r1117/train --max-len 12288 --epochs 4 --lr 2e-6 --lora-r 32 --lora-alpha 128 --beta 0.02 --max-steps 38400
+282683
+TRAIN_PID=282708
+[r1129-lean] 2026-08-21T04:23:17Z start GPUs 6,7 ShortCtx LoRank MidLoβ Hyper HiLR
+[r1129-lean] data_lines=604
+[r1129-lean] wait VRAM6+7 used_mib=0 iter=1
+{
+  "utc": "2026-08-21T04:23:17Z",
+  "axis": "r1129-vera-offline-dpo-hialpha-lorank-midlobeta-shortctx-hypersuperextrasteps-ep4-hilr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "2e-6",
+  "lora_r": 16,
+  "lora_alpha": 128,
+  "beta": 0.05,
+  "max_len": 6144,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "6,7",
+  "chall_port": 8002,
+  "parent_signal": "R1101 ShortCtx MidRank MidLo\u03b2 Hyper HiLR REFUTE m=-0.002673 ~-0.48\u00d7 thought\u2713193 B\u27130.60 k=3 \u2192 LoRank isolate; \u2260 MidRank R1101 / \u2260 HiRank MidLo\u03b2 ShortCtx R1123 / \u2260 SoftCtx LoRank MidLo\u03b2 R1128 / \u2260 Online / \u2260 GRPO",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1129-lean] TRAIN pid=282708
+[r1129-lean] waiters armed
+[p4257] R1129 armed
