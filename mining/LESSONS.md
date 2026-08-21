@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4351: live **reign37** `0pentensor/…awesome-v16`@`fb6cc85e` @18:33Z; **R1238 REFUTE** m=−0.00449~−0.88× / **R1239 REFUTE** m=−0.00569~−0.91× vs *reign36* → exact-PID reap; crown **retarget+prefetch** + **R1240** n80 wait-arm vs new king (stale-vera n80s do not license Stage-5). **Never `pkill -f`**.
 - p4350: r340 **R1230+R1231** MERGE idle GPUs3/6 → lean chall :8002/:8003 + **v4 n80**; r337 **R1234** MERGE GPU6 → :8002 n80; **R1227 REFUTE** m=+0.000446~0.09× / **R1228 REFUTE** m≈0 → exact-PID reap → **R1254+R1255 TRAIN**. **Never `pkill -f`**.
 - p4349: crown **R1238+R1239** MERGE_DONE idle on free GPU1/3 → lean chall :8002/:8003 TP1 util0.85 + **v4 n80**; leave T/K + R1240 TRAIN 6,7. **Never `pkill -f`**.
 - p4348: r339 **R1227+R1228** TRAIN_DONE/MERGE idle on free GPUs4–7 → lean chall :8002/:8003 + **v4 n80** (R1228 wait-arm after merge); leave T/K. **Never `pkill -f`**.

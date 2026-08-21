@@ -1,5 +1,7 @@
-# R1240 — SoftCtx MidRank Hiβ Mega HiLR
-- Status: TRAIN launching p4340 on mine-crown-1 GPUs 6,7
-- Parent: R1215 Soft MidRank Loβ Mega HiLR REFUTE m=-0.001713 ~-0.30× → Hiβ isolate
-- Knobs: β=0.3 r=32 α=128 lr=2e-6 @12288 Mega max_steps=19200 epochs=4
-- Decision: Stage-5 iff v4 n80 margin>max(2·SE,δ=0.002) AND thought≥80 AND B≥0.30 vs reign36
+# R1240 result (p4351)
+
+MERGE_DONE → **chall+v4 n80 ARMED** vs live **reign37** (`0pentensor/…awesome-v16`@`fb6cc85e`) on crown GPU4 :8004.
+
+- Axis: Soft MidRank Hiβ Mega HiLR (β=0.3 r=32 lr=2e-6 @12288)
+- Waiting king retarget (prefetch+swap) before n80 launch.
+- Decision rule: Stage-5 iff margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 vs **reign37**.

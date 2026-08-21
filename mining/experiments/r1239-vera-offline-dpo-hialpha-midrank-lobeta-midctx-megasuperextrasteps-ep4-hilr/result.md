@@ -1,5 +1,7 @@
-# R1239 — MidCtx MidRank Loβ Mega HiLR
-- Status: TRAIN launching p4340 on mine-crown-1 GPUs 1,3
-- Parent: R1215 Soft MidRank Loβ Mega HiLR REFUTE m=-0.001713 ~-0.30×; R1212 Mid MidRank Loβ Mega MidLR ~0.15×
-- Knobs: β=0.02 r=32 α=128 lr=2e-6 @8192 Mega max_steps=19200 epochs=4
-- Decision: Stage-5 iff v4 n80 margin>max(2·SE,δ=0.002) AND thought≥80 AND B≥0.30 vs reign36
+# R1239 result (p4351)
+
+**REFUTE v4** vs **reign36** (vera6) — pre-flip; **not Stage-5**.
+
+- margin=**−0.005686** SE=0.003112 z=−1.83 n=80 bar≈0.006225 (~**−0.91×**)
+- thought✓201 B✓0.463 k=3 τ=0.03
+- Live king flipped to **reign37** @18:33Z; chall reaped p4351.
