@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4297: **R1164 ~−0.36× REFUTE** SoftCtx HiRank Loβ LR exhausted → **R1180** MidCtx HiRank Loβ MidLR same pass on r338 GPUs4,5; reap :8003 by token. **Never `pkill -f`**.
+- p4296: **R1159 ~−0.71× / R1162 ~−0.67× REFUTE** → MidLR / MidRank next same pass; empty `/proc/pid/cmdline` on finished chall ⇒ **skip tok-check, UUID-clear GPUs** (do not FATAL). **Never `pkill -f`**.
 - p4295: **r340 R1142/R1144** TP2 NCCL-stall orphans (~1GiB, never CHALL_READY) + **R1156** TP1 util0.90 OOM on logprobs → kill-by-pid, relaunch **TP1 util0.85** + FORCE Triton + `/v1/completions` probe. **Never `pkill -f`**.
 - p4294: **R1165 ~0.39× REFUTE** — MidCtx LoRank Loβ LR family exhausted (Hi/Mid/Ultra) → Hiβ UltraLoLR same pass; positive margin below bar still REFUTE. **Never `pkill -f`**.
 - p4293: **R1160 ~−0.51× / R1161 ~−0.17× REFUTE** — ShortCtx LoRank Hiβ + MidRank MidLoβ LR families exhausted → SoftCtx/MidCtx UltraLoLR same pass; decision `note` may be wrong (trust train_launched). **Never `pkill -f`**.
