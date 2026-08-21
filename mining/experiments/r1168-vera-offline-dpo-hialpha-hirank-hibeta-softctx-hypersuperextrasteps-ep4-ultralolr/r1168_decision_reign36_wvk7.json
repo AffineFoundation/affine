@@ -1,0 +1,21 @@
+{
+  "utc": "2026-08-21T11:48:23Z",
+  "hyp": "R1168",
+  "decision": "REFUTE",
+  "clear": false,
+  "refute": true,
+  "margin": -0.001512404768278061,
+  "se": 0.0017817842104498832,
+  "z": -0.8488147775741,
+  "n": 79,
+  "bar": 0.0035635684208997665,
+  "ratio_vs_bar": -0.42440738878705,
+  "thought_median": 163.0,
+  "b_pass": 0.4177215189873418,
+  "k": 3,
+  "tau": 0.03,
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "king_rev": "8e3f1695e058837ed80fec3238ff439fdc2d0f0e",
+  "pass": "p4306",
+  "next": "R1190 ShortCtx HiRank Hi\u03b2 UltraLoLR"
+}
