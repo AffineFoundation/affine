@@ -1,5 +1,6 @@
-# R1157 — result notes
-- Parent: **R1130 REFUTE** m=−0.003061 ~−0.40× → UltraLoLR isolate (lr 2e-6→5e-7).
-- Axis: cryptoDev MidRank MidLoβ MidCtx Hyper UltraLoLR @8192 steps=38400 β=0.05 r=32 α=128.
-- p4279: TRAIN LIVE on `mine-r926` GPUs3,4 pid**169520** + MERGE→n80 waiters.
-- Check: `ssh -p 32301 root@93.120.231.186` → `/root/logs/r1157_train.nohup`, `/root/affine_data/r1157_train_launched.json`.
+# R1157 REFUTE (p4291 harvest)
+
+v4 n80 vs reign36 (wvk=7 k=3 τ=0.03) on mine-r926 GPUs3,4 :
+- margin=**-0.008800** SE=0.003450 z=-2.551 n=75 bar≈0.006899 (~**-1.28×**)
+- thought_median=190 ✓ B_pass=0.413 ✓
+- wins=false → **REFUTE** → next axis **R1170** MidLR isolate (same pass)

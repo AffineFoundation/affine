@@ -1,8 +1,6 @@
-# R1154 — ShortCtx LoRank Loβ Hyper UltraLoLR
-Parent: R1132 REFUTE m=-0.014872 ~-1.23× (p4276). Knobs: β=0.02 r=16 α=128 lr=5e-7 @6144 steps=38400.
+# R1154 REFUTE (p4291 harvest)
 
-## p4289
-- train.done → merge DONE (16 shards + visual restore) on `mine-r924` GPUs1,3
-- Triton wipe+seed from king (n_so=26) → chall :8003 pid**166684** util=0.72
-- probe_ok → **n80 LIVE** pid**169229** @**2026-08-21T09:23:37Z** vs reign36 wvk7
-- out: `/root/affine_data/r1154_sim_result_reign36_wvk7.json`
+v4 n80 vs reign36 (wvk=7 k=3 τ=0.03) on mine-r924 GPUs1,3 :
+- margin=**-0.000395** SE=0.002338 z=-0.169 n=80 bar≈0.004675 (~**-0.08×**)
+- thought_median=178.5 ✓ B_pass=0.5125 ✓
+- wins=false → **REFUTE** → next axis **R1169** MidLR isolate (same pass)

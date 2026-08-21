@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-21T09:34:07Z",
+  "hypo": "R1154",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign36",
+  "margin": -0.0003952324326438855,
+  "se": 0.0023375007290033934,
+  "z": -0.1690833409118957,
+  "n": 80,
+  "bar": 0.004675001458006787,
+  "thought_median": 178.5,
+  "b_pass": 0.5125,
+  "wins": false,
+  "note": "p4276 chall+v4-n80 R924 GPUs1,3; ShortCtx LoRank Lo\u03b2 Hyper HiLR (\u03b2=0.02 r=16 lr=2e-6 @6144 steps=38400); vs reign36 vera wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}
