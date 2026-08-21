@@ -1,0 +1,40 @@
+stop 114191 (/root/logs/vllm_chall_r1068.pid)
+reap done
+wait free used_mib=0 iter=1
+TRAIN_PID=125347
+[r1095-lean] 2026-08-21T00:03:00Z start GPUs 4,5 MidCtx MidRank MidLoβ HyperExtra MidLR
+[r1095-lean] data_lines=604
+[r1095-lean] wait VRAM4+5 used_mib=0 iter=1
+{
+  "utc": "2026-08-21T00:03:01Z",
+  "axis": "r1095-vera-offline-dpo-hialpha-midrank-midlobeta-midctx-hypersuperextrasteps-ep4-midlr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "1e-6",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.05,
+  "max_len": 8192,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "4,5",
+  "parent_signal": "R1068 idle REFUTE chall reap on r924 :8004; MidCtx MidRank MidLo\u03b2 Hyper MidLR isolate of R1047 Ultra HiLR ~0.19\u00d7 lane; \u2260 Ultra HiLR R1047 / \u2260 MidCtx Mid\u03b2 Hyper R1094 / \u2260 ShortCtx MidLo\u03b2 Hyper R1092 / \u2260 SoftCtx HiRank MidLo\u03b2 Hyper R1090 / \u2260 MidCtx Lo\u03b2 Hyper R1093 / \u2260 Online / \u2260 GRPO",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1095-lean] TRAIN launched pid=125347
+[r1095-lean] waiters armed
+125347 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1095/dpo_duel_reason.jsonl --out-dir /root/r1095/train --max-len 8192 --epochs 4 --lr 1e-6 --lora-r 32 --lora-alpha 128 --beta 0.05 --max-steps 38400
+120693 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1084/dpo_duel_reason.jsonl --out-dir /root/r1084/train --max-len 6144 --epochs 4 --lr 1e-6 --lora-r 16 --lora-alpha 128 --beta 0.3 --max-steps 38400
+124406 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1089/dpo_duel_reason.jsonl --out-dir /root/r1089/train --max-len 12288 --epochs 4 --lr 1e-6 --lora-r 64 --lora-alpha 128 --beta 0.3 --max-steps 38400
+State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+LISTEN 0      2048         0.0.0.0:8000      0.0.0.0:*    users:(("vllm",pid=14869,fd=44))
+State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+LISTEN 0      2048         0.0.0.0:8001      0.0.0.0:*    users:(("vllm",pid=16788,fd=44))
+State Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+0, 0 %, 141811 MiB
+1, 29 %, 72127 MiB
+2, 0 %, 130181 MiB
+3, 0 %, 63969 MiB
+4, 0 %, 33583 MiB
+5, 0 %, 33583 MiB
+6, 0 %, 64627 MiB
+7, 47 %, 56519 MiB
