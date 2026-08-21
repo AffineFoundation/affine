@@ -25,7 +25,9 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4259: crown overlay **/tmp 100%** (48×~66G stale `r*_merged`) → R1116/R1117 chall vLLM **Errno 28** after MERGE; rm stale (keep active) → **3.0T free** → re-arm n80 :8004/:8003 + `TMPDIR=/root/tmp`. Purge old merges every pass. **Never `pkill -f`**.
 - p4258: **R1115 REFUTE** m=−0.017658 ~−1.58× (thought✓253 B✓0.4625 k=3) → exact-PID reap r926 :8002 → **R1130** MidCtx MidRank MidLoβ Hyper HiLR TRAIN pid**160370**; B300/B200×8=0. cryptoDev ShortCtx Hiβ Hyper HiLR toxic. **Never `pkill -f`**.
+- p4259b: **R1064 LOST** chal-00974 m=**−0.000659** SE=0.000858 z=−0.77 n=1286 thought✓197 B✓0.462 vs reign36 (n80 was +0.006632 ~1.021×) — knife-edge n80 not live-predictive.
 - p4257: **R1101 REFUTE** m=−0.002673 ~−0.48× (thought✓193 B✓0.60 k=3) → exact-PID reap crown :8002 → **R1129** ShortCtx LoRank MidLoβ Hyper HiLR TRAIN pid**282708**; R1115 N80~62/80; B300/B200×8=0. **Never `pkill -f`**.
 - p4256: R1101 MERGE done 02:23Z but n80 waiter died (`lean_chall_n80_r338_gpus45…` missing; real=`lean_chall_n80_crown_r1101_gpus67…`) → crown GPUs6,7 idle ~2h → **re-arm n80** chall pid**279494** :8002; R1115 N80 loading r926. Audit wait→lean paths after MERGE. **Never `pkill -f`**.
 - p4255: R340 Online-DPO **aborted** left idle GPUs6,7 → **R1128** SoftCtx LoRank MidLoβ Hyper HiLR TRAIN r340 pid**48086**; R1115 **MERGE** r926; B300/B200×8=0. Fill idle pairs same pass. **Never `pkill -f`**.
