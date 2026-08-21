@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4341: **R1207 REFUTE** m=+0.001811~0.44× (thought✓174 B✓0.397) → SoftCtx HiRank MidLoβ Mega LR triad exhausted (R1020/R1040/R1207) → exact-PID chall reap 243737/:8003 → **R1241** SoftCtx LoRank MidLoβ Mega UltraLoLR (6,7); leave T/K + **R1232** TRAIN 4,5. **Never `pkill -f`**.
 - p4340: **R1215 REFUTE** m=−0.001713~−0.30× / **R1216 REFUTE** m=−0.003574~−0.63× (thought✓ B✓) → exact-PID chall reap 372808/:8004 + 372799/:8002 → **R1239** MidCtx MidRank Loβ Mega HiLR (1,3) + **R1240** Soft MidRank Hiβ Mega HiLR (6,7); leave T/K + **R1238** TRAIN 4,5. **Never `pkill -f`**.
 - p4339: **R1217 REFUTE** m=+0.004629~0.89× → exact-PID chall reap → **R1238** ShortCtx LoRank Hiβ Mega UltraLoLR; r1191 → **R1235+36+37 TRAIN**. **Never `pkill -f`**.
 - p4338: **R1208/10/11 REFUTE** → exact-PID reap → **R1232+33+34 TRAIN**. **Never `pkill -f`**.
