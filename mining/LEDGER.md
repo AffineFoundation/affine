@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 71918.43893303456 | p4315 |
-| Lium balance | **$71918.43893303456** | p4315 |
-| cumulative mining spend | ~$152,323 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$61918** (balance − $10,000 floor) | $UTC |
+| $UTC | 71875.24907455561 | p4316 |
+| Lium balance | **$71875.24907455561** | p4316 |
+| cumulative mining spend | ~$152,366 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$61875** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (11 pods) | **~$456.19/h** · vs floor $833/h · gap **−$376.81/h** · no rent (B300/B200/H200×8 empty) | p4315 |
+| miner burn (11 pods) | **~$456.19/h** · vs floor $833/h · gap **−$376.81/h** · no rent (B300/B200/H200×8 empty) | p4316 |
 | miner coldkey free | τ~1246.73 | kept ≥τ50 |
 | miner stake | **r252 ≈29.52α ≈τ1.69** (<τ5 paygo) | p4235 |
 | registrations / submissions | **16** / **16** (… **r1064 LOST chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-21T13:22:04Z | 71875.24907455561 | p4316 **r340** R1181/82/83 lean chall LOAD (no rent; stock empty); burn **~$456.19/h** |
 | 2026-08-21T13:17:06Z | 71918.43893303456 | p4315 **R1191** pyarrow+T/K TP1→**n80** pid23563 (no rent; stock empty); burn **~$456.19/h** |
 | 2026-08-21T12:47:37Z | 72170.79631532395 | p4314 **R1191** merge→local TKC (HF public storage full; no rent; BL-only fbb1135f); burn **~$456.19/h** |
 | 2026-08-21T12:42:24Z | 72212.54610234637 | p4313 **R1178 REFUTE~−0.58×**→**R1200 TRAIN** r924 (no rent; stock empty); burn **~$456.19/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-21T12:11:49Z | 72464.16180389075 | p4309 **R1171+R1172 REFUTE**→**R1192+R1193 TRAIN** r337 (no rent; stock empty); burn **~$456.19/h** |
 | 2026-08-21T12:03:27Z | 72545.22105578687 | p4308 fleet TTL +24h (8 pods→22T13:30Z) + Soft/Dead retarget; no rent; burn **~$456.19/h** |
 | 2026-08-21T11:58:16Z | 72592.24203144193 | p4307 rented **H200×8** `mine-r1191`/`swift-comet-4d` @$32/h (node `4eb39f3b…`); **R1191 FullFT TRAIN**; burn **~$456.19/h** |
-| 2026-08-21T11:49:14Z | 72671.08002065257 | p4306 **R1168 REFUTE~−0.42×**→**R1190 TRAIN** r252 (no rent; BL-only fbb1135f); burn **~$424.19/h** |
