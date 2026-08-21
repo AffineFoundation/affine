@@ -25,7 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4272: crown **R1129+R1133+R1134 REFUTE** (~−0.24× / +0.24× / −0.32×) → exact-PID reap :8002/:8004/:8003 → **R1146+R1147+R1148** UltraLoLR TRAIN pids**305741/305738/305731**; r337 R1125+R1137 + r338 R1135+R1136 also REFUTE idle (next). B300/B200×8=0. **Never `pkill -f`**.
+- p4273: r337 **R1125+R1137 REFUTE**→exact-PID reap :8002/:8003 → **R1149+R1150** UltraLoLR TRAIN pids**166378/166373**; r338 **R1135+R1136 REFUTE**→reap → **R1151+R1152** UltraLoLR TRAIN pids**212204/212198**. B300/B200×8=0. **Never `pkill -f`**.
+- p4272: crown **R1129+R1133+R1134 REFUTE** (~−0.24× / +0.24× / −0.32×) → exact-PID reap :8002/:8004/:8003 → **R1146+R1147+R1148** UltraLoLR TRAIN pids**305741/305738/305731**. B300/B200×8=0. **Never `pkill -f`**.
 - p4271: **R1127 REFUTE** m=−0.001642 SE=0.003235 ~**−0.25×** (thought✓193 B✓0.473 k=3) → exact-PID reap r339 :8003 → **R1145** ShortCtx LoRank Midβ Hyper UltraLoLR TRAIN pid**62090** GPUs6,7; R1143 still on 4,5. B300/B200×8=0. **Never `pkill -f`**.
 - p4270: **R1126 REFUTE** ~**−0.38×** → **R1143** UltraLoLR; **R1128 REFUTE** ~**−0.78×** → **R1144** UltraLoLR; **R1127** TP1 util0.85 n80. **Never `pkill -f`**.
 - p4269: **R1128** TP1 util**0.90** OOM on prompt-logprobs → **TP1 util0.85**. Prefer util≤0.85 for TP1 chall+logprobs on B200. **Never `pkill -f`**.
