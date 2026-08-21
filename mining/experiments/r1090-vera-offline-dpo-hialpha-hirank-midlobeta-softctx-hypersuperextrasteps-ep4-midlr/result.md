@@ -10,3 +10,4 @@ Stage-5 iff fresh v4 n80 (k=3, τ=0.03) paired margin > max(2·SE, δ=0.002) AND
 
 ## Status
 - p4222: TRAIN LIVE on `mine-r252` GPUs 4,5 after reap R1076 :8002
+- **p4239 REFUTE v4** m=**−0.001520** SE=0.001362 z=−1.117 n=80 bar≈0.002723 (~**−0.56×**) thought✓(187) B✓(0.466) k=3/τ=0.03 vs **reign36** · → **R1110** Hyper HiLR
