@@ -1,0 +1,55 @@
+[p4294] sync R1177 → mine-r338
+gpus 6-7 cleared
+[p4294] wait free GPUs6,7 used=0 iter=1
+    PID     ELAPSED CMD
+ 221925 441077231-18:28:48 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1164/dpo_duel_reason.jsonl --out-dir /root/r1164/train --max-len 12288 --epochs 4 --lr 1e-6 --lora-r 64 --lora-alpha 128 --beta 0.02 --max-steps 38400
+=== verify ===
+    PID     ELAPSED CMD
+ 228481 441077231-17:11:28 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1177/dpo_duel_reason.jsonl --out-dir /root/r1177/train --max-len 8192 --epochs 4 --lr 5e-7 --lora-r 16 --lora-alpha 128 --beta 0.3 --max-steps 38400
+    PID     ELAPSED CMD
+ 221925 441077231-18:29:20 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1164/dpo_duel_reason.jsonl --out-dir /root/r1164/train --max-len 12288 --epochs 4 --lr 1e-6 --lora-r 64 --lora-alpha 128 --beta 0.02 --max-steps 38400
+{
+  "utc": "2026-08-21T10:04:01Z",
+  "axis": "r1177-vera-offline-dpo-hialpha-lorank-hibeta-midctx-hypersuperextrasteps-ep4-ultralolr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "5e-7",
+  "lora_r": 16,
+  "lora_alpha": 128,
+  "beta": 0.3,
+  "max_len": 8192,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "6,7",
+  "chall_port": 8002,
+  "parent_signal": "R1165 MidCtx LoRank Lo\u03b2 MidLR REFUTE m=+0.001335 SE=0.001711 ~0.39\u00d7 thought\u2713180 B\u27130.443 \u2192 Hi\u03b2 UltraLoLR isolate (Lo\u03b2 LR exhausted; Hi\u03b2 Mid/HiLR already REFUTE)",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1177-lean] 2026-08-21T10:04:00Z start GPUs 6,7 MidCtx LoRank Hiβ Hyper UltraLoLR
+[r1177-lean] data_lines=604
+[r1177-lean] wait VRAM used_mib=0 iter=1
+{
+  "utc": "2026-08-21T10:04:01Z",
+  "axis": "r1177-vera-offline-dpo-hialpha-lorank-hibeta-midctx-hypersuperextrasteps-ep4-ultralolr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "5e-7",
+  "lora_r": 16,
+  "lora_alpha": 128,
+  "beta": 0.3,
+  "max_len": 8192,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "6,7",
+  "chall_port": 8002,
+  "parent_signal": "R1165 MidCtx LoRank Lo\u03b2 MidLR REFUTE m=+0.001335 SE=0.001711 ~0.39\u00d7 thought\u2713180 B\u27130.443 \u2192 Hi\u03b2 UltraLoLR isolate (Lo\u03b2 LR exhausted; Hi\u03b2 Mid/HiLR already REFUTE)",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1177-lean] TRAIN pid=228481
+[r1177-lean] waiters armed
+0, 0 %, 166632 MiB
+1, 0 %, 166632 MiB
+2, 0 %, 134924 MiB
+3, 0 %, 134922 MiB
+4, 0 %, 175530 MiB
+5, 60 %, 123928 MiB
+6, 0 %, 33706 MiB
+7, 4 %, 33694 MiB
