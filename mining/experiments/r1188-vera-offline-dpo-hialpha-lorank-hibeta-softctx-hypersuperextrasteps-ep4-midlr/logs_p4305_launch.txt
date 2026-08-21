@@ -1,0 +1,57 @@
+[p4305] sync R1188+R1189 → mine-crown-1
+gpus 4-7 cleared
+[p4305] wait free GPUs4-7 used=0 iter=1
+[p4305] R1188+R1189 lean launched
+[r1188-lean] data_lines=604
+[r1188-lean] wait VRAM used_mib=0 iter=1
+{
+  "utc": "2026-08-21T11:43:39Z",
+  "axis": "r1188-vera-offline-dpo-hialpha-lorank-hibeta-softctx-hypersuperextrasteps-ep4-midlr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "1e-6",
+  "lora_r": 16,
+  "lora_alpha": 128,
+  "beta": 0.3,
+  "max_len": 12288,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "6,7",
+  "chall_port": 8002,
+  "parent_signal": "R1175 SoftCtx LoRank Hi\u03b2 Hyper UltraLoLR REFUTE m=-0.000904 SE=0.001885 ~-0.24\u00d7 thought\u2713177.5 B\u27130.35 k=3 \u2192 MidLR",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1188-lean] TRAIN pid=345773
+[r1188-lean] waiters armed
+[r1189-lean] data_lines=604
+[r1189-lean] wait VRAM used_mib=0 iter=1
+{
+  "utc": "2026-08-21T11:43:39Z",
+  "axis": "r1189-vera-offline-dpo-hialpha-midrank-hibeta-midctx-hypersuperextrasteps-ep4-ultralolr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "5e-7",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.3,
+  "max_len": 8192,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "4,5",
+  "chall_port": 8003,
+  "parent_signal": "R1176 MidCtx MidRank MidLo\u03b2 Hyper UltraLoLR REFUTE m=-0.001683 SE=0.002900 ~-0.29\u00d7 thought\u2713162 B\u27130.3375; MidCtx MidRank MidLo\u03b2 LR exhausted (R1095 MidLR/R1112 HiLR/R1176 Ultra) \u2192 Hi\u03b2 UltraLoLR",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1189-lean] TRAIN pid=345810
+[r1189-lean] waiters armed
+ 345773 441077230-18:35:12 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1188/dpo_duel_reason.jsonl --out-dir /root/r1188/train --max-len 12288 --epochs 4 --lr 1e-6 --lora-r 16 --lora-alpha 128 --beta 0.3 --max-steps 38400
+ 345778 441077230-18:35:12 bash /root/mining_src/r1188-vera-offline-dpo-hialpha-lorank-hibeta-softctx-hypersuperextrasteps-ep4-midlr/wait_r1188_train_then_merge_p4305.sh
+ 345810 441077230-18:35:12 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1189/dpo_duel_reason.jsonl --out-dir /root/r1189/train --max-len 8192 --epochs 4 --lr 5e-7 --lora-r 32 --lora-alpha 128 --beta 0.3 --max-steps 38400
+ 345815 441077230-18:35:12 bash /root/mining_src/r1189-vera-offline-dpo-hialpha-midrank-hibeta-midctx-hypersuperextrasteps-ep4-ultralolr/wait_r1189_train_then_merge_p4305.sh
+0, 268282 MiB
+1, 175432 MiB
+2, 248150 MiB
+3, 123830 MiB
+4, 0 MiB
+5, 0 MiB
+6, 0 MiB
+7, 0 MiB
+[p4305] DONE

@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4305: **R1175 ~−0.24× / R1176 ~−0.29× REFUTE** (thought✓ B✓) UltraLoLR → MidLR SoftCtx LoRank Hiβ (**R1188**) + Hiβ MidCtx MidRank UltraLoLR (**R1189**; MidLoβ LR exhausted) same pass; stock B300/B200/H200 empty. **Never `pkill -f`**.
 - p4304: **R1158** BOOT_HF_DONE → teacher TP1 :8000 + GRPO TRAIN GPUs2,3 same pass; **R1170 ~0.57× REFUTE** (m=+0.004094 SE=0.003599 thought✓200 B✓0.399) MidCtx MidLR → **R1187** SoftCtx MidLR same pass; sole B200=`fbb1135f` BL. **Never `pkill -f`**.
 - p4303: B300/B200 empty post-BL → rented non-BL **H200×8** `golden-orbit-7b`/`e350ebc9…` for **R1158** by node id (ssh_gpus=8); waiters that only poll B300/B200 miss H200 — rent H200 same pass when under burn floor. **Never `pkill -f`**.
 - p4302: **R1167 ~−0.15× REFUTE** (m=−0.000534 SE=0.001785 thought✓171 B✓0.394) ShortCtx HiRank MidLoβ LR exhausted → **R1186** MidCtx MidLR same pass; H200×8 non-BL available while B200 BL-only. **Never `pkill -f`**.
