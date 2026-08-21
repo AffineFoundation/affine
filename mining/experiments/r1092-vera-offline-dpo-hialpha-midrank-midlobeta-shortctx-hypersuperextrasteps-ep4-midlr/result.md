@@ -1,9 +1,18 @@
-# R1092 — ShortCtx MidRank MidLoβ Hyper MidLR
+# R1092 — REFUTE (p4232)
 
-**Status (p4223):** **TRAIN** on `mine-crown-1` GPUs 6,7 after R1067 REFUTE reap :8002.
+v4 n80 vs reign36 on `mine-crown-1` GPUs 6,7 :8002 (wvk=7 k=3 τ=0.03).
 
-| field | value |
+| metric | value |
 |---|---|
-| parent | R1067 ShortCtx MidRank MidLoβ Ultra HiLR REFUTE m=-0.003970 ~-0.74× thought✓199 B✓0.492 k=3 → HyperExtra MidLR isolate; ≠ Ultra HiLR R1067 / ≠ ShortCtx MidRank MidLoβ Mega MidLR R1042 / ≠ ShortCtx HiRank MidLoβ Hyper MidLR R1079 / ≠ ShortCtx MidRank MidLoβ Mega HiLR R1056 / ≠ Online / ≠ GRPO |
-| knobs | β=0.05 α=128 r=32 lr=1e-6 @6144 Soft Mid Mid Soft→ctx **max_steps=38400** |
-| Decision rule | Stage-5 iff fresh v4 n80 margin > max(2·SE, 0.002) AND thought≥80 AND B≥0.30 vs reign36 |
+| margin | **−0.000115** |
+| SE | 0.001944 |
+| z | −0.059 |
+| n | 79 |
+| bar max(2·SE, δ) | 0.003889 (~**−0.03×**) |
+| thought median | 197 ✓ |
+| B pass | 0.380 ✓ |
+| challenger_wins | false |
+
+**Axis:** vera Offline-DPO HiAlpha MidRank MidLoβ ShortCtx HyperSuperExtra ep4 MidLR (β=0.05 r=32 α=128 lr=1e-6 @6144 steps=38400).
+
+**Next:** R1101 Hyper HiLR isolate on same lane (lr=2e-6) — crown GPUs 6,7 TRAIN pid**265606**.
