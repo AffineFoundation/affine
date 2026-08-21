@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4299: **R1163 ~0.18× REFUTE** MidCtx LoRank Midβ MidLR → MidRank UltraLoLR same pass on r339 GPUs4,5; reap :8002 by token. **Never `pkill -f`**.
 - p4298: lean free-poll must use **own** CUDA GPUs (R1163 polled 6,7 while chall on 4,5 → 120s stall); probe `/v1/completions` needs **model id from `/v1/models`** (not `default`→404); TP1 util0.85. **Never `pkill -f`**.
 - p4297: **R1164 ~−0.36× REFUTE** SoftCtx HiRank Loβ LR exhausted → **R1180** MidCtx HiRank Loβ MidLR same pass on r338 GPUs4,5; reap :8003 by token. **Never `pkill -f`**.
 - p4296: **R1159 ~−0.71× / R1162 ~−0.67× REFUTE** → MidLR / MidRank next same pass; empty `/proc/pid/cmdline` on finished chall ⇒ **skip tok-check, UUID-clear GPUs** (do not FATAL). **Never `pkill -f`**.
