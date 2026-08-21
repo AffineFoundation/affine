@@ -1,0 +1,58 @@
+[p4312] sync R1198+R1199 → mine-r924
+gpus 1,3,4,5 cleared
+[p4312-r924] wait free GPUs1,3 used=0 GPUs4,5 used=0 iter=1
+State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+LISTEN 0      2048         0.0.0.0:8002      0.0.0.0:*    users:(("python3",pid=186789,fd=44))
+root      186789  186687  0 12:24 ?        00:02:32 /root/venv/bin/python3 /root/venv/bin/vllm serve /tmp/r1178_merged --port 8002 --tensor-parallel-size 2 --max-model-len 65536 --gpu-memory-utilization 0.72 --max-num-batched-tokens 8192 --attention-backend FLASH_ATTN --attention-config.use_trtllm_attention 0 --compilation-config.pass_config.fuse_allreduce_rms false --moe-backend triton --additional-config {"gdn_prefill_backend": "triton"} --enforce-eager
+root      188541  186687  0 12:26 ?        00:00:40 /root/venv/bin/python3 /root/mining_src/s4-h2-merge/run_sim_duel.py --teacher-repo zai-org/GLM-4.5-Air-FP8 --king-repo vera6/affine-5g4yy75zuz-t6 --king-rev 8e3f1695e058837ed80fec3238ff439fdc2d0f0e --chall-repo /tmp/r1178_merged --chall-rev local --chall-port 8002 --n-turns 80 --hotkey local-r1178-reign36-wvk7 --block-hash 4e86afa352566171a17c311a0c6ee035c9caeaab02c8407a7c2258e24924ca49 --out /root/affine_data/r1178_sim_result_reign36_wvk7.json --progress-out /root/affine_data/r1178_sim_progress_reign36_wvk7.json --save-artifact
+r1169 annotated margin 0.0009837011678396233
+r1173 annotated margin 0.000964217994704209
+[p4312-r924] launched
+R1198_PID=189113
+R1199_PID=189151
+    PID     ELAPSED CMD
+ 189113 441077232-18:10:40 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1198/dpo_duel_reason.jsonl --out-dir /root/r1198/train --max-len 6144 --epochs 4 --lr 1e-6 --lora-r 32 --lora-alpha 128 --beta 0.02 --max-steps 38400
+    PID     ELAPSED CMD
+ 189151 441077232-18:10:40 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1199/dpo_duel_reason.jsonl --out-dir /root/r1199/train --max-len 6144 --epochs 4 --lr 1e-6 --lora-r 32 --lora-alpha 128 --beta 0.05 --max-steps 38400
+{
+  "utc": "2026-08-21T12:33:27Z",
+  "axis": "r1198-vera-offline-dpo-hialpha-midrank-lobeta-shortctx-hypersuperextrasteps-ep4-midlr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "1e-6",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.02,
+  "max_len": 6144,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "1,3",
+  "chall_port": 8003,
+  "parent_signal": "R1169 ShortCtx LoRank Lo\u03b2 MidLR REFUTE m=+0.000984 SE=0.001544 ~0.32\u00d7; ShortCtx LoRank Lo\u03b2 LR exhausted R1154/R1169/R1132 \u2192 MidRank Lo\u03b2 MidLR isolate (\u2260 Ultra R1148 / \u2260 Hi R1134)",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+{
+  "utc": "2026-08-21T12:33:28Z",
+  "axis": "r1199-vera-offline-dpo-hialpha-midrank-midlobeta-shortctx-hypersuperextrasteps-ep4-midlr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "1e-6",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.05,
+  "max_len": 6144,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "4,5",
+  "chall_port": 8004,
+  "parent_signal": "R1173 MidCtx LoRank MidLo\u03b2 MidLR REFUTE m=+0.000964 SE=0.005119 ~0.09\u00d7; MidCtx LoRank MidLo\u03b2 LR exhausted R1155/R1173/R1131 \u2192 ShortCtx MidRank MidLo\u03b2 MidLR isolate (\u2260 Ultra R1161 / \u2260 Hi R1101)",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+0, 141811 MiB, 100 %
+1, 0 MiB, 0 %
+2, 130181 MiB, 15 %
+3, 0 MiB, 0 %
+4, 0 MiB, 0 %
+5, 0 MiB, 0 %
+6, 131515 MiB, 14 %
+7, 131515 MiB, 52 %
+R1178 {'utc': '2026-08-21T12:33:23Z', 'hotkey': 'local-r1178-reign36-wvk7', 'chall_repo': '/tmp/r1178_merged', 'n_turns': 80, 'king': 46, 'king_total': 80, 'challenger': 45, 'challenger_total': 80}
+[p4312] DONE launch
