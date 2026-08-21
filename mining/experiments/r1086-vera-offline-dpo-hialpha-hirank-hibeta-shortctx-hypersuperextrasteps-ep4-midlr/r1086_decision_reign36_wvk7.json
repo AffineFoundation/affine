@@ -1,0 +1,28 @@
+{
+  "utc": "2026-08-21T01:21:57Z",
+  "hypo": "R1086",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign36",
+  "margin": 0.0001536371784792077,
+  "se": 0.001461242804437428,
+  "z": 0.10514144399045122,
+  "n": 80,
+  "bar": 0.002922485608874856,
+  "thought_median": 171.0,
+  "b_pass": 0.35294117647058826,
+  "wins": false,
+  "note": "p4219 chall+v4-n80 r339 6,7 :8003; HiAlpha HiRank HiBeta ShortCtx HyperSuperExtra ep4 HiLR (\u03b2=0.3 r=64 @6144 steps=28800 lr=2e-6); vs reign36 vera wvk7",
+  "hf_ok": false,
+  "raw_keys": [
+    "block_hash",
+    "chall_repo",
+    "elapsed_s",
+    "h4",
+    "hotkey",
+    "king_repo",
+    "king_rev",
+    "verdict"
+  ]
+}
