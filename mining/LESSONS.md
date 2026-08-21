@@ -25,20 +25,14 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4282: **R1146 REFUTE** m=−0.001219 SE=0.003902 ~**−0.16×** (thought✓162 B✓0.438 k=3) + **R1148 REFUTE** m=−0.003190 SE=0.001552 ~**−1.03×** (thought✓161 B✓0.474 k=3) → exact-PID reap crown :8002/:8003 → **R1160** Hiβ UltraLoLR + **R1161** MidLoβ UltraLoLR TRAIN; sole `lium ls` 8×B200 still **fbb1135f** BL — do not rent. **Never `pkill -f`**.
-- p4281: **r1158** teacher DL ✓ then still **1/8 GPU** → `lium rm` brave-matrix-2a; blind re-rent hit **same** exec **fbb1135f**@192.9.163.79 (eager-lion-45, API gpu_count=1) → tear again; **blind `lium up --gpu` bypasses executor_blacklist** — R1158 waiter now **node-id + ngpu≥8 gate**; fleet QUEUE HEAD=R1158. **Never `pkill -f`**.
-- p4280: **R1139 REFUTE** m=−0.002210 SE=0.004226 ~**−0.26×** (thought✓211 B✓0.470 k=3) → exact-PID reap r924 :8002 pid**162026** → **R1159** UltraLoLR TRAIN pid**164539** GPUs6,7; **r1158** bootstrap LIVE (pip✓ king✓ teacher DL) but pod exposes **1/8 B200** (Device Minor 6) — tear after DL if still 1. **Never `pkill -f`**.
-- p4279: **R1130 REFUTE** m=−0.003061 SE=0.003818 ~**−0.40×** (thought✓256 B✓0.377 k=3) → exact-PID reap r926 :8002 → **R1157** UltraLoLR TRAIN pid**169520** GPUs3,4; **R1139** merge ready but n80 waiter died on **softctx path typo** (dir is midctx) → re-arm lean chall :8002 GPUs6,7; **rent** `mine-r1158` 8×B200 $5.60/h (waiter `ls-empty` false-negative — `lium up --gpu B200 -c 8` succeeded). B300×8=0. **Never `pkill -f`**.
-- p4278: **R1141 REFUTE** m=−0.001574 SE=0.001812 ~**−0.43×** (thought✓192 B✓0.479 k=3) → MidLoβ LR family exhausted → **R1156** Midβ UltraLoLR TRAIN. **Never `pkill -f`**.
-- p4277: **R1131 REFUTE** ~**−0.62×** → **R1155** UltraLoLR. **Never `pkill -f`**.
-- p4276: **R1130** TP1 util**0.85** FATAL KV −2.71 GiB on H100 → **TP1 util0.93**; **R1132 REFUTE** → **R1154**. **Never `pkill -f`**.
-- p4275: **R1130** TP2 util**0.72** OOM → **TP1 util0.85**. **Never `pkill -f`**.
-- p4274: **R1123 REFUTE** ~**−0.11×** → **R1153** UltraLoLR. **Never `pkill -f`**.
-- p4273: r337/r338 REFUTE→**R1149–R1152** UltraLoLR. **Never `pkill -f`**.
-- p4272: crown REFUTE→**R1146–R1148** UltraLoLR. **Never `pkill -f`**.
-- p4271: **R1127 REFUTE** → **R1145** UltraLoLR. **Never `pkill -f`**.
-- p4270: **R1126+R1128 REFUTE** → **R1143+R1144**. **Never `pkill -f`**.
-- p4269: TP1 util**0.90** OOM → prefer util≤0.85 on B200. **Never `pkill -f`**.
+- p4283: **R1147 REFUTE** m=+0.001654 SE=0.001158 ~**0.71×** (thought✓162 B✓0.425 k=3) → exact-PID reap crown :8004 → **R1162** SoftCtx LoRank Loβ MidLR TRAIN; r338 waiters died on **wrong LEAN path** (lorank-midlobeta-shortctx copy-paste ≠ hirank-lobeta-softctx / lorank-lobeta-midctx) → relaunch n80 after merge.done. **Never `pkill -f`**.
+- p4282: **R1146 REFUTE** ~**−0.16×** + **R1148 REFUTE** ~**−1.03×** → **R1160/R1161** TRAIN; sole B200 **fbb1135f** BL. **Never `pkill -f`**.
+- p4281: blind `lium up --gpu` bypasses executor_blacklist → re-hit **fbb1135f**; R1158 waiter = **node-id + ngpu≥8**. **Never `pkill -f`**.
+- p4280: **R1139 REFUTE** ~**−0.26×** → **R1159**; r1158 1/8 GPU after DL. **Never `pkill -f`**.
+- p4279: **R1130 REFUTE** ~**−0.40×** → **R1157**; softctx path typo on midctx n80. **Never `pkill -f`**.
+- p4278: **R1141 REFUTE** ~**−0.43×** → **R1156**. **Never `pkill -f`**.
+- p4277–p4272: UltraLoLR cascade after HiLR REFUTEs (R1155…R1146). **Never `pkill -f`**.
+- p4269: TP1 util**0.90** OOM → util≤0.85 on B200. **Never `pkill -f`**.
 - p4268: TP2 NCCL stall → prefer TP1. **Never `pkill -f`**.
 - p4265: positive margin below 2·SE still REFUTE. **Never `pkill -f`**.
 - p4264: lean awk `/tmp/r…_merged/` breaks (regex `/` cut). **Never `pkill -f`**.

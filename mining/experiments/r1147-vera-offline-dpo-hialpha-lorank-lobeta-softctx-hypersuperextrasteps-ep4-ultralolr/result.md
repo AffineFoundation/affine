@@ -1,4 +1,6 @@
-# r1147 — TRAIN LIVE p4272
-Parent: R1133 SoftCtx LoRank Loβ Hyper HiLR REFUTE m=+0.001894 SE=0.003910 ~0.24× thought✓193 B✓0.538 k=3
-Axis: SoftCtx LoRank Loβ Hyper UltraLoLR (lr=5e-7 r=16 β=0.02 @12288 steps=38400)
-Pod: mine-crown-1 GPUs 1,3 chall :8004
+# R1147 — REFUTE v4 (p4283)
+- margin=+0.001654 SE=0.001158 z=1.429 n=80 bar≈0.002315 (~**0.71×**)
+- thought✓(162) B✓(0.425) k=3 τ=0.03 vs reign36
+- SoftCtx LoRank Loβ UltraLoLR (β=0.02 r=16 lr=5e-7 @12288)
+- Parent R1133 HiLR was ~0.24×; UltraLoLR improved but still below bar
+- Next: **R1162** MidLR isolate (lr=1e-6)

@@ -19,5 +19,6 @@ for i in $(seq 1 120); do
 done
 curl -sf -m 5 http://127.0.0.1:8000/v1/models >/dev/null
 curl -sf -m 5 http://127.0.0.1:8001/v1/models >/dev/null
-LEAN=/root/mining_src/r1152-vera-offline-dpo-hialpha-lorank-midlobeta-shortctx-hypersuperextrasteps-ep4-ultralolr/lean_chall_n80_r338_gpus67_p4273.sh
+# p4283: path was wrong (lorank-midlobeta-shortctx copy-paste) → real axis dir below
+LEAN=/root/mining_src/r1152-vera-offline-dpo-hialpha-lorank-lobeta-midctx-hypersuperextrasteps-ep4-ultralolr/lean_chall_n80_r338_gpus67_p4273.sh
 chmod +x "$LEAN"; bash "$LEAN"
