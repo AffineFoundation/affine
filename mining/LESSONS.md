@@ -25,22 +25,22 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4228: paygo **r252 88.56α≈τ5.06** ≥τ5 bar → `btcli stake remove --amount-alpha all` OK; `lium fund` fails (`Subtensor.transfer` missing) → **`btcli wallet transfer --dest 5FqACMtcegZxxopgu1g7TgyrnyD8skurr9QDPLPhxNQzsThe -a 5.05`** → Lium **$76651→$77760**; R1080 train.done→MERGE→chall:8002 loading. B300/B200×8=0. **Never `pkill -f`**.
-- p4227: r340 king GPU5 **died** (`flashinfer` JIT: no `nvcc` / `CUDA_HOME`) — relaunch with `CUDA_HOME=$venv/…/nvidia/cu13` + `VLLM_USE_FLASHINFER_SAMPLER=0` → **:8001 KING_OK** (pid20858); patch waiter `start_king_gpu5_p4226.sh`. B300/B200×8=0. **Never `pkill -f`**.
-- p4226: crown SSH **recovered**; r340 idle GPUs1–4 (R340 Online only on 6,7) → **R1096** SoftCtx MidRank MidLoβ Hyper MidLR + **R1097** MidCtx HiRank MidLoβ Hyper MidLR TRAIN + king GPU5; B300/B200×8=0. **Never `pkill -f`**.
-- p4225: R1068 idle REFUTE chall r924 :8004 → exact-PID reap GPUs4,5 → **R1095** MidCtx MidRank MidLoβ Hyper MidLR TRAIN; **mine-crown-1 SSH timeout** (lium exec too) — recover before R1091–93 merge. B300/B200×8=0. **Never `pkill -f`**.
-- p4224: R1064 **QUEUED chal-00974** idle chall r337 :8003 → exact-PID reap GPUs4,5 → **R1094** MidCtx MidRank Midβ Hyper MidLR TRAIN (R1064 Ultra HiLR backup). B300/B200×8=0. **Never `pkill -f`**.
-- p4223: crown **R1066** ~0.97× / **R1067** ~−0.74× / **R1069** ~−1.06× REFUTE idle → reap :8004/:8002/:8003 → **R1091+R1092+R1093** Hyper MidLR TRAIN. B300/B200×8=0. **Never `pkill -f`**.
-- p4222: **R1076 REFUTE** m=−0.001981 ~−0.17× (thought✓195 B✓0.459) → reap r252 :8002 → **R1090** SoftCtx HiRank MidLoβ Hyper MidLR. B300/B200×8=0. **Never `pkill -f`**.
-- p4221: **R1077 REFUTE** ~0.32× → **R1088**; **R1073 REFUTE** ~−0.94× → **R1089**. B300/B200×8=0. **Never `pkill -f`**.
-- p4220: **R1077** n80 stuck wrong EXP path; **R1072 REFUTE** → **R1087**. **Never `pkill -f`**.
+- p4229: **R1080 REFUTE** m=−0.002477 ~−0.74× (thought✓213 B✓0.464 k=3) vs reign36 → exact-PID reap r926 :8002 → **R1098** ShortCtx Hiβ Hyper MidLR TRAIN pid**150616**. B300/B200×8=0. **Never `pkill -f`**.
+- p4228: paygo **r252 88.56α≈τ5.06** ≥τ5 bar → `btcli stake remove --amount-alpha all` OK; `lium fund` fails → **`btcli wallet transfer`** to Lium coldkey → Lium **~$77760**; R1080 MERGE→chall:8002. B300/B200×8=0. **Never `pkill -f`**.
+- p4227: r340 king GPU5 **died** (no `nvcc`/`CUDA_HOME`) → relaunch `CUDA_HOME=$venv/…/nvidia/cu13` + `VLLM_USE_FLASHINFER_SAMPLER=0` → **:8001 KING_OK**. B300/B200×8=0. **Never `pkill -f`**.
+- p4226: crown SSH **recovered**; r340 idle GPUs1–4 → **R1096+R1097** Hyper MidLR TRAIN + king GPU5. B300/B200×8=0. **Never `pkill -f`**.
+- p4225: R1068 idle → **R1095** TRAIN; crown SSH timeout (recovered p4226). B300/B200×8=0. **Never `pkill -f`**.
+- p4224: R1064 **QUEUED chal-00974** idle → **R1094** TRAIN. B300/B200×8=0. **Never `pkill -f`**.
+- p4223: crown **R1066/67/69 REFUTE** → **R1091+R1092+R1093**. B300/B200×8=0. **Never `pkill -f`**.
+- p4222: **R1076 REFUTE** → **R1090**. B300/B200×8=0. **Never `pkill -f`**.
+- p4221: **R1077+R1073 REFUTE** → **R1088+R1089**. B300/B200×8=0. **Never `pkill -f`**.
+- p4220: **R1072 REFUTE** → **R1087**. **Never `pkill -f`**.
 - p4219: **R1070+R1071 REFUTE** → **R1085+R1086**. **Never `pkill -f`**.
-- p4218: **R1074 REFUTE** ~0.02× → **R1084**. **Never `pkill -f`**.
-- p4217: **R1078 REFUTE** ~−0.71× → **R1083**. **Never `pkill -f`**.
-- p4216: **R1079 REFUTE** ~−0.75× → **R1082**. **Never `pkill -f`**.
-- p4215: **R1075 REFUTE** ~0.53× → **R1081**. **Never `pkill -f`**.
-- p4214: **R1051 REFUTE** ~0.27× → **R1080**. **Never `pkill -f`**.
-- p4213: **R1060 REFUTE** ~−1.66×; **R340** TP2→TP1. **Never `pkill -f`**.
+- p4218: **R1074 REFUTE** → **R1084**. **Never `pkill -f`**.
+- p4217: **R1078 REFUTE** → **R1083**. **Never `pkill -f`**.
+- p4216: **R1079 REFUTE** → **R1082**. **Never `pkill -f`**.
+- p4215: **R1075 REFUTE** → **R1081**. **Never `pkill -f`**.
+- p4214: **R1051 REFUTE** → **R1080**. **Never `pkill -f`**.
 - p4209: **CLI rent B200** `mine-r340`; R1064 **chal-00974**. **Never `pkill -f`**.
 - p4208: **R1064 CROWN_OK** ~1.021× → SUBMIT reveal **31485871**. **Never `pkill -f`**.
 

@@ -13,7 +13,7 @@
 | mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | 8×B200 | soft **2026-08-21T14:56Z** | TK · **R1085+R1086** · SSH `23.153.44.20:40299` |
 | mine-r340-marsplan-online-dpo-hirank-bigg-1 | gentle-orbit-4a | 8×B200 | $37.60 | **2026-08-21T21:24Z** | **R340+R1096+R1097** · king:8001 · SSH `18.118.83.97:40127` |
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | 8×H200 | $33.81 | **2026-08-21T13:26Z** | TK · **R1084+R1089+R1095** · SSH `31.22.104.113:40300` |
-| mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | 8×H100 | $13.76 | **2026-08-21T13:26Z** | TK · **R1080 n80** :8002 · SSH `93.120.231.186:32301` |
+| mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | 8×H100 | $13.76 | **2026-08-21T13:26Z** | TK · **R1098 TRAIN** · SSH `93.120.231.186:32301` |
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | 8×H200 | $15.96 | **2026-08-21T13:26Z** | TK · **R1082** · SSH `38.255.28.21:20100` |
 
 Host fleet: **9 mine-*** · burn **~$392.18/h** · **wvk=7** · B200×8 stock=**0** · B300×8=**0**
@@ -24,6 +24,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-21T00:47:41Z | p4229: **R1080 REFUTE** → reap r926 :8002 → **R1098 TRAIN** pid**150616**; B300/B200×8=0 |
 | 2026-08-21T00:26:03Z | p4228: paygo r252→Lium; R1080 MERGE→chall:8002; r340 hostkey refresh; B300/B200×8=0 |
 | 2026-08-21T00:17:41Z | p4227: r340 king GPU5 nvcc/CUDA_HOME fail → relaunch **:8001 KING_OK** pid**20858**; B300/B200×8=0 |
-| 2026-08-21T00:09:45Z | p4226: crown SSH OK; r340 idle GPUs1–4 → **R1096+R1097 TRAIN** + king GPU5; B300/B200×8=0 |
