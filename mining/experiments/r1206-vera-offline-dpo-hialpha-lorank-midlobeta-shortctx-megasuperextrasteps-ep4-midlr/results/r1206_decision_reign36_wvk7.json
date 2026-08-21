@@ -1,0 +1,18 @@
+{
+  "utc": "2026-08-21T16:26:20Z",
+  "pass": 4334,
+  "exp": "R1206",
+  "decision": "REFUTE",
+  "margin": -0.0013892052953076576,
+  "se": 0.0014675222137974994,
+  "z": -0.9466332313381605,
+  "bar": 0.002935044427594999,
+  "bar_frac": -0.47331661566908023,
+  "thought_med": 161.0,
+  "b_pass": 0.3875,
+  "n": 80,
+  "k": 3,
+  "tau": 0.03,
+  "king": "reign36 vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "next": "R1228 ShortCtx LoRank MidLo\u03b2 Mega HiLR"
+}
