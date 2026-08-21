@@ -1,6 +1,3 @@
-# R1108 — Hyper HiLR isolate from R1085
+# R1108 — MidCtx MidRank Hiβ Hyper HiLR
 
-- **Parent:** R1085 MidCtx MidRank Hiβ Hyper MidLR REFUTE m=−0.002495 ~−0.82× thought✓171 B✓0.496 (p4238)
-- **Axis:** MidCtx MidRank Hiβ Hyper HiLR β=0.3 r=32 lr=2e-6 @8192 steps=38400
-- **Host:** mine-r339 GPUs 4,5 → chall :8002 · TRAIN pid 43401
-- **Decision:** Stage-5 iff fresh v4 n80 margin>max(2·SE,0.002) AND thought≥80 AND B≥0.30 vs reign36
+**REFUTE v4 (p4254)** vs reign36 · m=**−0.001278** SE=0.003147 z=−0.406 n=80 bar≈0.006293 (~**−0.20×**) thought✓(202) B✓(0.525) k=3/τ=0.03 → **R1126** MidCtx LoRank Midβ Hyper HiLR
