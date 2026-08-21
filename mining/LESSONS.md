@@ -25,7 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4239: **R1090 REFUTE** m=−0.001520 ~−0.56× (thought✓187 B✓0.466 k=3) vs reign36 → exact-PID reap r252 :8002 → **R1110** SoftCtx HiRank MidLoβ Hyper HiLR TRAIN pid**180255** (R1105 TRAIN GPUs6,7 intact). Also noted **R1100 REFUTE** m=−0.002847 ~−0.26× idle r338 :8003. B300/B200×8=0. **Never `pkill -f`**.
+- p4240: **R1100 REFUTE** m=−0.002847 ~−0.26× (thought✓196 B✓0.462 k=3) vs reign36 → exact-PID reap r338 :8003 → **R1111** MidCtx HiRank Hiβ Hyper HiLR TRAIN pid**182821** (R1102 TRAIN GPUs6,7 intact). B300/B200×8=0. **Never `pkill -f`**.
+- p4239: **R1090 REFUTE** m=−0.001520 ~−0.56× (thought✓187 B✓0.466 k=3) vs reign36 → exact-PID reap r252 :8002 → **R1110** SoftCtx HiRank MidLoβ Hyper HiLR TRAIN pid**180255** (R1105 TRAIN GPUs6,7 intact). B300/B200×8=0. **Never `pkill -f`**.
 - p4238: **R1085 REFUTE** m=−0.002495 ~−0.82× (thought✓171 B✓0.496) + **R1086 REFUTE** m=+0.000154 ~0.05× (thought✓171 B✓0.353) vs reign36 → exact-PID reap r339 :8002/:8003 → **R1108+R1109** Hyper HiLR TRAIN pid**43401**/**43394**. B300/B200×8=0. **Never `pkill -f`**.
 - p4237: **R1094 REFUTE** m=−0.001575 ~−0.55× (thought✓165 B✓0.423 k=3) vs reign36 → exact-PID reap r337 :8003 → **R1107** MidCtx MidRank Midβ Hyper HiLR TRAIN pid**144238** (R1106 TRAIN GPUs6,7 intact). B300/B200×8=0. **Never `pkill -f`**.
 - p4236: **R1083 REFUTE** m=+0.001741 ~0.53× (thought✓168 B✓0.369 k=3) vs reign36 → exact-PID reap r337 :8002 → **R1106** SoftCtx MidRank Midβ Hyper HiLR TRAIN pid**143414** (R1094 n80 :8003 intact). B300/B200×8=0. **Never `pkill -f`**.
@@ -33,8 +34,6 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p4234: **R1091 REFUTE** m=+0.003552 ~0.46× (thought✓165 B✓0.355) + **R1093 REFUTE** m=+0.000646 ~0.10× (thought✓179 B✓0.438) vs reign36 → exact-PID reap crown :8004/:8003 → **R1103+R1104** Hyper HiLR TRAIN pid**266741**/**266744** (R1101 intact). B300/B200×8=0. **Never `pkill -f`**.
 - p4233: **R1088 REFUTE** m=+0.001775 ~0.69× (thought✓168 B✓0.45 k=3) vs reign36 → exact-PID reap r338 :8002 → **R1102** SoftCtx MidRank Hiβ Hyper HiLR TRAIN pid**177102**. B300/B200×8=0. **Never `pkill -f`**.
 - p4232: **R1092 REFUTE** m=−0.000115 ~−0.03× (thought✓197 B✓0.380 k=3) vs reign36 → exact-PID reap crown :8002 → **R1101** ShortCtx MidRank MidLoβ Hyper HiLR TRAIN pid**265606**. B300/B200×8=0. **Never `pkill -f`**.
-- p4231: **R1087 REFUTE** m=−0.002218 ~−0.44× (thought✓198 B✓0.427 k=3) vs reign36 → exact-PID reap r338 :8003 → **R1100** MidCtx HiRank Midβ Hyper HiLR TRAIN pid**172799**. B300/B200×8=0. **Never `pkill -f`**.
-- p4230: **R1082 REFUTE** m=+0.000172 ~0.019× (thought✓187 B✓0.405 k=3) vs reign36 → exact-PID reap r938 :8002 → **R1099** SoftCtx HiRank Midβ Hyper MidLR TRAIN pid**51170**. B300/B200×8=0. **Never `pkill -f`**.
 - p4228: paygo **r252 88.56α≈τ5.06** ≥τ5 bar → `btcli stake remove --amount-alpha all` OK; `lium fund` fails → **`btcli wallet transfer`** to Lium coldkey → Lium **~$77760**. **Never `pkill -f`**.
 
 
