@@ -1,6 +1,6 @@
 # R1083 — SoftCtx MidRank Midβ HyperExtra MidLR
 
-**Status (p4217):** TRAIN armed on `mine-r337` GPUs6,7 after R1078 REFUTE.
+**Status:** **REFUTE v4** p4236 vs reign36 · → **R1106** Hyper HiLR
 
 | knob | value |
 |---|---|
@@ -9,8 +9,11 @@
 | ctx / steps | SoftCtx `@12288` / HyperExtra `38400` |
 | parent | R1078 ShortCtx MidRank Midβ Hyper MidLR REFUTE m=−0.004523 ~−0.71× → SoftCtx isolate |
 
-## Timeline
-- p4217: R1078 REFUTE (thought✓185 B✓0.481 k=3) → exact-PID reap :8002 → TRAIN launch
-- B300/B200×8 stock=0 this pass (ghost B200 cleared); waiters stay armed
+## n80 (wvk=7 k=3 τ=0.03)
+- m=**+0.001741** SE=0.001652 z=1.053 n=79 bar≈0.003305 (~**0.53×**)
+- thought✓(168) B✓(0.369) · `challenger_wins=false`
+- artifact: `r1083_sim_result_reign36_wvk7.json`
 
-Decision rule: Stage-5 iff margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 (k=3, τ=0.03) vs reign36.
+## Timeline
+- p4217: R1078 REFUTE → TRAIN launch on `mine-r337` GPUs6,7
+- p4236: REFUTE → exact-PID reap :8002 → **R1106** SoftCtx MidRank Midβ Hyper HiLR TRAIN pid**143414**
