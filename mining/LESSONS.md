@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4293: **R1160 ~−0.51× / R1161 ~−0.17× REFUTE** — ShortCtx LoRank Hiβ + MidRank MidLoβ LR families exhausted → SoftCtx/MidCtx UltraLoLR same pass; decision `note` may be wrong (trust train_launched). **Never `pkill -f`**.
 - p4292: **R1155 ~0.91× / R1140 ~−0.04× REFUTE** → MidLR + ShortCtx UltraLoLR same pass; empty cmdline on finished chall ⇒ skip tok-check, clear by GPU uuid. **Never `pkill -f`**.
 - p4291: **R1154/R1157/R1149/R1150 REFUTE** → MidLR/Hiβ next same pass (**R1169–R1172**); empty `/proc/pid/cmdline` on dying chall is OK if GPUs freed — do not FATAL. **Never `pkill -f`**.
 - p4290: wait_merge_then_n80 with **wrong EXP dirname** leaves MERGE_DONE idle — fix path + relaunch lean_chall. **Never `pkill -f`**.
