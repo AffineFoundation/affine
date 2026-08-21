@@ -10,10 +10,10 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 |---|---|
 | contract | wvk=**7** · k=**3** · τ=**0.03** · n=**1300** · δ=0.002 · thought≥80 · B γ=0.30 · k_σ=2.0 |
 | king | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695…` **reign36** |
-| burn | **~$456.19/h** · gap **−$376.81/h** · B300×8=0 · B200×8=0 · H200×8=0 (4×/1× only) |
-| Lium | **~$71287** · free τ**~1247** · stake **r252 ≈τ1.69** (<τ5 paygo) |
-| fleet | **11** mine-* · TTL fleet **→2026-08-22T13:30Z** |
-| **p4323** | Reaped R1192/93 (r337) + R1194/95 (r338) → **R1210–13 Mega TRAIN**; R1187 n80 armed then **FATAL missing sim** (chall down) |
+| burn | **~$480.99/h** · gap **−$352.01/h** · B300×8=0 · B200×8=0 · H200×8 stock empty post-rent |
+| Lium | **~$71116** · free τ**~1247** · stake **r252 ≈τ1.69** (<τ5 paygo) |
+| fleet | **12** mine-* · TTL fleet **→2026-08-22T13:30Z** · r1214 Removal **→22T14:43Z** |
+| **p4324** | **R1187** n80 **ARMED** (TP2 util0.65 mlen32768 after TP1/0.80 KV-fail + prior TP2/0.72 logprob OOM); rented **r1214** 8×H200 |
 | eval | phase **duel** · chal `chal-00988` |
 
 ## Running
@@ -26,13 +26,14 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | $64.00 | TK · **R1205+R1206 TRAIN** · SSH `23.153.44.20:40299` |
 | mine-r340-marsplan-online-dpo-hirank-bigg-1 | gentle-orbit-4a | $37.60 | TK · **R1202+R1203+R1204 TRAIN** · SSH `18.118.83.97:40127` |
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | $33.81 | TK · **R1198+R1199+R1200 TRAIN** · SSH `31.22.104.113:40300` |
-| mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | $13.76 | TK · **R1187 n80 FAIL** (relaunch next) · SSH `93.120.231.186:32301` |
+| mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | $13.76 | TK · **R1187 n80 LIVE** pid**187352** · SSH `93.120.231.186:32301` |
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | $15.96 | TK · **R1197 REFUTE** orphan chall · SSH `38.255.28.21:20100` |
 | mine-r1158-vera-reason-grpo-1 | eager-matrix-57 | $32.00 | teacher:8000 + **R1158 GRPO TRAIN** · SSH `204.12.163.23:20301` |
 | mine-r1191-vera-fullft-1 | swift-comet-4d | $32.00 | **R1209 FullFT UltraLoLR TRAIN** · SSH `69.63.236.163:40299` |
+| mine-r1214-vera-softctx-midrank-lobeta-mega-1 | brave-shark-4d | $24.80 | **BOOT pending** SoftCtx MidRank Loβ Mega MidLR · SSH `216.48.189.107:19050` |
 
 ## Blocked
-No rentable non-BL 8×B300 / B200 / H200. HF **public storage full** (SKIP_HF_PUSH=1). Hyper Offline-DPO Soft/Mid/Short×rank×β×lr grid **108/108 full**.
+No rentable non-BL 8×B300 / B200 / H200 (just took last H200×8). HF **public storage full** (SKIP_HF_PUSH=1). Hyper Offline-DPO Soft/Mid/Short×rank×β×lr grid **108/108 full**.
 
 ## Next action
-1. Fix **R1187** chall+n80 on r926 (sim FATAL). 2. Reap **R1188/89/96** (crown) + **R1197** (r938) → Mega next. 3. Poll R1210–13 / R1209 / Mega R1202–08. 4. Rent non-BL 8× if stock.
+1. Poll **R1187** n80 → stamp/submit or REFUTE→next. 2. **BOOT R1214** train on brave-shark. 3. Reap **R1188/89/96** (crown) + **R1197** (r938) → Mega. 4. Rent non-BL 8× if stock.
