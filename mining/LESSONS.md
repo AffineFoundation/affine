@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4241: **R1095 REFUTE** m=−0.001309 ~−0.53× (thought✓165 B✓0.526 k=3) vs reign36 → exact-PID reap r924 :8004 → **R1112** MidCtx MidRank MidLoβ Hyper HiLR TRAIN pid**136444** (R1089 n80 :8002 intact; R1084 idle REFUTE still on :8003). B300/B200×8=0. **Never `pkill -f`**.
 - p4240: **R1100 REFUTE** m=−0.002847 ~−0.26× (thought✓196 B✓0.462 k=3) vs reign36 → exact-PID reap r338 :8003 → **R1111** MidCtx HiRank Hiβ Hyper HiLR TRAIN pid**182821** (R1102 TRAIN GPUs6,7 intact). B300/B200×8=0. **Never `pkill -f`**.
 - p4239: **R1090 REFUTE** m=−0.001520 ~−0.56× (thought✓187 B✓0.466 k=3) vs reign36 → exact-PID reap r252 :8002 → **R1110** SoftCtx HiRank MidLoβ Hyper HiLR TRAIN pid**180255** (R1105 TRAIN GPUs6,7 intact). B300/B200×8=0. **Never `pkill -f`**.
 - p4238: **R1085 REFUTE** m=−0.002495 ~−0.82× (thought✓171 B✓0.496) + **R1086 REFUTE** m=+0.000154 ~0.05× (thought✓171 B✓0.353) vs reign36 → exact-PID reap r339 :8002/:8003 → **R1108+R1109** Hyper HiLR TRAIN pid**43401**/**43394**. B300/B200×8=0. **Never `pkill -f`**.
