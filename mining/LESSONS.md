@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4260: **R1112 REFUTE** m=−0.001311 ~−0.12× + **R1113 REFUTE** m=−0.000686 ~−0.07× (thought✓199 B✓0.42/0.40 k=3) → R1131+R1132 TRAIN r924; **R1116 REFUTE** m=−0.005310 ~−0.58× + **R1117 REFUTE** m=−0.009354 ~−1.08× → R1133+R1134 TRAIN crown; purge stale merges same pass. **Never `pkill -f`**.
 - p4259: crown overlay **/tmp 100%** (48×~66G stale `r*_merged`) → R1116/R1117 chall vLLM **Errno 28** after MERGE; rm stale (keep active) → **3.0T free** → re-arm n80 :8004/:8003 + `TMPDIR=/root/tmp`. Purge old merges every pass. **Never `pkill -f`**.
 - p4258: **R1115 REFUTE** m=−0.017658 ~−1.58× (thought✓253 B✓0.4625 k=3) → exact-PID reap r926 :8002 → **R1130** MidCtx MidRank MidLoβ Hyper HiLR TRAIN pid**160370**; B300/B200×8=0. cryptoDev ShortCtx Hiβ Hyper HiLR toxic. **Never `pkill -f`**.
 - p4259b: **R1064 LOST** chal-00974 m=**−0.000659** SE=0.000858 z=−0.77 n=1286 thought✓197 B✓0.462 vs reign36 (n80 was +0.006632 ~1.021×) — knife-edge n80 not live-predictive.

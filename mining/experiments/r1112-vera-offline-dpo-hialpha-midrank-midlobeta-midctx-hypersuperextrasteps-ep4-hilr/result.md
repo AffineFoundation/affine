@@ -1,12 +1,16 @@
-# R1112 — MidCtx MidRank MidLoβ HyperExtra HiLR
+# R1112 result (p4260)
 
-**Status (p4241):** TRAIN armed on `mine-r924` GPUs4,5 after R1095 REFUTE chall reap.
+**REFUTE v4** vs reign36 (`vera6/…-t6`@`8e3f1695`).
 
-| knob | value |
+| field | value |
 |---|---|
-| base | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695` |
-| β / α / r / lr | **0.05** / 128 / **32** / **2e-6** |
-| ctx / steps | MidCtx `@8192` / HyperExtra `38400` |
-| parent | R1095 MidCtx MidRank MidLoβ Hyper MidLR REFUTE m=−0.001309 ~−0.53× → HiLR isolate |
+| margin | **−0.001311** |
+| SE | 0.005336 |
+| z | −0.246 |
+| n | 79 |
+| bar | max(2·SE, δ) ≈ **0.010672** (~**−0.12×**) |
+| thought median | 199 ✓ |
+| B pass | 0.418 ✓ |
+| k / τ | 3 / 0.03 |
 
-Decision rule: Stage-5 iff margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 (k=3, τ=0.03) vs reign36.
+Next: **R1131** MidCtx LoRank MidLoβ Hyper HiLR on r924 GPUs4,5.

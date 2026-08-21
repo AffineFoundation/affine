@@ -1,11 +1,16 @@
-# R1113 — ShortCtx LoRank Hiβ Hyper HiLR
+# R1113 result (p4260)
 
-**Parent:** R1084 ShortCtx LoRank Hiβ Hyper MidLR REFUTE p4242
-m=−0.003045 ~−0.99× thought✓193 B✓0.400 k=3 vs reign36.
+**REFUTE v4** vs reign36 (`vera6/…-t6`@`8e3f1695`).
 
-**Axis:** vera Offline-DPO HiAlpha LoRank Hiβ ShortCtx Hyper HiLR
-β=0.3 r=16 α=128 lr=2e-6 @6144 steps=38400 epochs=4
+| field | value |
+|---|---|
+| margin | **−0.000686** |
+| SE | 0.004689 |
+| z | −0.146 |
+| n | 80 |
+| bar | max(2·SE, δ) ≈ **0.009378** (~**−0.07×**) |
+| thought median | 199 ✓ |
+| B pass | 0.403 ✓ |
+| k / τ | 3 / 0.03 |
 
-**Decision rule:** Stage-5 iff fresh v4 n80 margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 vs reign36.
-
-**Pod:** mine-r924 GPUs 1,3 + MERGE→n80 waiter :8003 (p4242).
+Next: **R1132** ShortCtx LoRank Loβ Hyper HiLR on r924 GPUs1,3.
