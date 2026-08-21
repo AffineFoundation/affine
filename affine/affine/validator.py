@@ -44,7 +44,7 @@ from .dashboard import Dashboard
 from .eval_client import (EvalBusyError, EvalClient, InfraFaultError,
                           TransientEvalError)
 from .hippius import Hippius
-from .provisioner import BenchMachineManager, EvalMachineManager
+from .provisioner import BenchMachineManager, ChatMachineManager, EvalMachineManager
 from .state import QueueEntry, State, now_iso
 
 log = logging.getLogger("affine.validator")
@@ -100,6 +100,7 @@ class Validator:
         repo_root = Path(__file__).resolve().parents[1]
         self.machine = EvalMachineManager(cfg, self.state, repo_root)
         self.bench_machine = BenchMachineManager(cfg, self.state, repo_root)
+        self.chat_machine = ChatMachineManager(cfg, self.state, repo_root)
         self.eval_client = EvalClient(
             self.machine.local_url,
             duel_timeout_s=cfg.duel.timeout_s,
@@ -611,6 +612,9 @@ class Validator:
 
         machine_healthy = self.machine.ensure()
         bench_healthy = self.bench_machine.ensure()
+        # Public chat pod: keep it alive, but nothing downstream waits on it —
+        # a sick chat pod must never stall duels or weight-setting.
+        self.chat_machine.ensure()
         self._scan_and_enqueue()
 
         if self._duel_task is not None and self._duel_task.done():

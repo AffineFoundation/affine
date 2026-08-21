@@ -178,6 +178,7 @@ class Config:
     bench: BenchCfg = field(repr=False)
     eval_machine: EvalMachineCfg = field(repr=False)
     bench_machine: EvalMachineCfg = field(repr=False)
+    chat_machine: EvalMachineCfg = field(repr=False)
     validator: ValidatorCfg = field(repr=False)
 
     # -- promoted scalar values ---------------------------------------------
@@ -221,6 +222,11 @@ class Config:
     @property
     def miner_serving(self) -> dict:
         return self.raw["miner_serving"]
+
+    @property
+    def chat(self) -> dict:
+        """Public chat pod serving + abuse-limit knobs. Optional section."""
+        return self.raw.get("chat") or {}
 
     @property
     def seed_king(self) -> dict:
@@ -311,6 +317,10 @@ def _bench_machine(raw: dict) -> EvalMachineCfg:
     return _machine_cfg(raw["bench_machine"])
 
 
+def _chat_machine(raw: dict) -> EvalMachineCfg:
+    return _machine_cfg(raw["chat_machine"])
+
+
 def _validator(raw: dict) -> ValidatorCfg:
     v = raw["validator"]
     return ValidatorCfg(
@@ -353,5 +363,6 @@ def load_config(path: str | Path | None = None) -> Config:
                        user_llm=str(b["user_llm"]), policy=str(b["policy"])),
         eval_machine=_eval_machine(raw),
         bench_machine=_bench_machine(raw),
+        chat_machine=_chat_machine(raw),
         validator=_validator(raw),
     )

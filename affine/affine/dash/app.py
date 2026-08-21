@@ -6,12 +6,15 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
+
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..config import Config, load_config
@@ -380,6 +383,197 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     @app.get("/api/v1/health")
     def api_health():
         return {"ok": True, "version": contract_payload(cfg)["version"]}
+
+    # -- public king chat (proxied to the chat pod over its SSH tunnel) ---------
+    # The browser never sees the pod or the token; the dash adds both. Freely
+    # accessible — abuse control is per-IP rate + a global in-flight cap so
+    # one visitor cannot monopolize the single chat GPU pod.
+    chat_cfg = cfg.chat
+    chat_base = f"http://127.0.0.1:{cfg.chat_machine.port}"
+    chat_headers = ({"X-Affine-Token": cfg.secrets.eval_token}
+                    if cfg.secrets.eval_token else {})
+    chat_rate = int(chat_cfg.get("rate_limit_per_min", 10))
+    chat_max_active = int(chat_cfg.get("max_concurrency", 4))
+    chat_active = {"n": 0}
+    chat_ip_hits: dict[str, list[float]] = {}
+
+    def _chat_ip(request: Request) -> str:
+        # Cloudflare fronts affine.io; fall back for the tunnel / local paths.
+        return (request.headers.get("cf-connecting-ip")
+                or (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+                or (request.client.host if request.client else "unknown"))
+
+    def _chat_rate_ok(ip: str) -> bool:
+        now = time.monotonic()
+        if len(chat_ip_hits) > 2000:
+            for k in [k for k, v in chat_ip_hits.items()
+                      if not v or now - v[-1] > 120]:
+                chat_ip_hits.pop(k, None)
+        hits = [t for t in chat_ip_hits.get(ip, []) if now - t < 60.0]
+        if len(hits) >= chat_rate:
+            chat_ip_hits[ip] = hits
+            return False
+        hits.append(now)
+        chat_ip_hits[ip] = hits
+        return True
+
+    @app.get("/api/v1/chat/status")
+    async def api_chat_status():
+        """Pod health for the UI: serving / loading / offline + which king."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(f"{chat_base}/health",
+                                     headers=chat_headers)
+            body = r.json() if r.status_code == 200 else {}
+        except Exception:
+            body = {}
+        payload = {
+            "ok": bool(body.get("ok")) and body.get("state") == "serving",
+            "state": body.get("state") or "offline",
+            "king": body.get("king"),
+        }
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/v1/chat")
+    async def api_chat(request: Request):
+        if not _chat_rate_ok(_chat_ip(request)):
+            return JSONResponse(
+                {"error": "rate_limited",
+                 "detail": f"limit is {chat_rate} messages/minute"},
+                status_code=429, headers={"Retry-After": "30"})
+        if chat_active["n"] >= chat_max_active:
+            return JSONResponse(
+                {"error": "busy",
+                 "detail": "the model is busy — try again shortly"},
+                status_code=429, headers={"Retry-After": "10"})
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "bad_json"}, status_code=400)
+        payload = {k: body.get(k) for k in
+                   ("messages", "temperature", "max_tokens")
+                   if body.get(k) is not None}
+
+        chat_active["n"] += 1
+        streaming = False
+        client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0))
+        try:
+            upstream = await client.send(
+                client.build_request("POST", f"{chat_base}/chat",
+                                     json=payload, headers=chat_headers),
+                stream=True)
+            if upstream.status_code != 200:
+                detail = (await upstream.aread()).decode("utf-8", "replace")
+                await upstream.aclose()
+                status = upstream.status_code
+                return JSONResponse(
+                    {"error": "unavailable" if status == 503 else "upstream",
+                     "detail": detail[:300]},
+                    status_code=status if status in (400, 503) else 502)
+
+            async def relay():
+                try:
+                    async for chunk in upstream.aiter_bytes():
+                        yield chunk
+                finally:
+                    chat_active["n"] -= 1
+                    await upstream.aclose()
+                    await client.aclose()
+
+            streaming = True
+            return StreamingResponse(relay(), media_type="text/event-stream",
+                                     headers={
+                                         "Cache-Control": "no-cache",
+                                         "X-Accel-Buffering": "no",
+                                     })
+        except Exception as e:
+            log.warning("chat proxy failed: %s: %s", type(e).__name__, e)
+            return JSONResponse(
+                {"error": "offline",
+                 "detail": "chat pod unreachable — it may be starting up"},
+                status_code=503)
+        finally:
+            if not streaming:
+                chat_active["n"] -= 1
+                await client.aclose()
+
+    # -- public OpenAI-compatible wire (same pod, same abuse limits) ------------
+    # Any OpenAI client can talk to the king: base_url https://affine.io/v1,
+    # model "affine-king", any API key (ignored — limits are per-IP). The dash
+    # swaps in the real pod token server-side.
+
+    @app.get("/v1/models")
+    async def v1_models():
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.get(f"{chat_base}/v1/models",
+                                     headers=chat_headers)
+            return JSONResponse(r.json(), status_code=r.status_code,
+                                headers={"Cache-Control": "no-store"})
+        except Exception:
+            return JSONResponse(
+                {"object": "list", "data": [],
+                 "error": "chat pod unreachable"}, status_code=503)
+
+    @app.post("/v1/chat/completions")
+    async def v1_chat_completions(request: Request):
+        if not _chat_rate_ok(_chat_ip(request)):
+            return JSONResponse(
+                {"error": {"message":
+                           f"rate limited: {chat_rate} requests/minute",
+                           "type": "rate_limit_exceeded"}},
+                status_code=429, headers={"Retry-After": "30"})
+        if chat_active["n"] >= chat_max_active:
+            return JSONResponse(
+                {"error": {"message": "the model is busy — try again shortly",
+                           "type": "overloaded"}},
+                status_code=429, headers={"Retry-After": "10"})
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse(
+                {"error": {"message": "invalid JSON",
+                           "type": "invalid_request_error"}}, status_code=400)
+
+        chat_active["n"] += 1
+        streaming = False
+        client = httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=10.0))
+        try:
+            upstream = await client.send(
+                client.build_request("POST", f"{chat_base}/v1/chat/completions",
+                                     json=body, headers=chat_headers),
+                stream=True)
+            if not body.get("stream"):
+                content = await upstream.aread()
+                await upstream.aclose()
+                return Response(
+                    content=content, status_code=upstream.status_code,
+                    media_type=upstream.headers.get("content-type",
+                                                    "application/json"))
+
+            async def relay():
+                try:
+                    async for chunk in upstream.aiter_bytes():
+                        yield chunk
+                finally:
+                    chat_active["n"] -= 1
+                    await upstream.aclose()
+                    await client.aclose()
+
+            streaming = True
+            return StreamingResponse(relay(), media_type="text/event-stream",
+                                     status_code=upstream.status_code,
+                                     headers={"Cache-Control": "no-cache",
+                                              "X-Accel-Buffering": "no"})
+        except Exception as e:
+            log.warning("v1 proxy failed: %s: %s", type(e).__name__, e)
+            return JSONResponse(
+                {"error": {"message": "chat pod unreachable",
+                           "type": "service_unavailable"}}, status_code=503)
+        finally:
+            if not streaming:
+                chat_active["n"] -= 1
+                await client.aclose()
 
     if WEBSITE_DIR.is_dir():
         app.mount("/", StaticFiles(directory=str(WEBSITE_DIR), html=True),

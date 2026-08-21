@@ -51,6 +51,7 @@ log = logging.getLogger("affine.provisioner")
 
 EVAL_POD_NAME = "affine-eval"
 BENCH_POD_NAME = "affine-bench"
+CHAT_POD_NAME = "affine-chat"
 REMOTE_DIR = "/root/affine"
 REMOTE_ENV_FILE = "/root/affine/.eval_env"
 REMOTE_TAR = "/tmp/affine-src.tar.gz"
@@ -1025,4 +1026,16 @@ def BenchMachineManager(cfg, state, repo_root: Path) -> MachineManager:
         pod_name=BENCH_POD_NAME,
         role="bench",
         label="bench",
+    )
+
+
+def ChatMachineManager(cfg, state, repo_root: Path) -> MachineManager:
+    """Always-on public chat pod serving the current king (never scores)."""
+    return MachineManager(
+        cfg, state, repo_root,
+        em=cfg.chat_machine,
+        state_attr="chat_machine",
+        pod_name=CHAT_POD_NAME,
+        role="chat",
+        label="chat",
     )

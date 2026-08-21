@@ -55,6 +55,10 @@ if [ "$ROLE" = "bench" ]; then
   uv pip install "swebench @ git+https://github.com/SWE-rebench/SWE-bench-fork" 2>&1 \
     | tee -a /root/logs/pip_bench.log | tail -20
   mkdir -p /root/bench
+elif [ "$ROLE" = "chat" ]; then
+  # Public king-chat pod: serves the current king only — no corpus, no
+  # bench deps. chatsrv polls the public snapshot for king changes itself.
+  :
 else
   # 2. Turn corpus D: manifest + shard sync from the public bucket. Fail-closed:
   #    the sync verifies the manifest hash against its immutable published copy
@@ -69,10 +73,14 @@ fi
 #    server (crash, SIGTERM, CUDA self-kill) aborts this whole script and the
 #    restart loop never runs — exactly the always-online failure mode this
 #    loop exists to prevent.
+SERVER_MODULE=evalsrv.server
+if [ "$ROLE" = "chat" ]; then
+  SERVER_MODULE=evalsrv.chatsrv
+fi
 while true; do
-  echo "[bootstrap] $(date -u) launching evalsrv role=$ROLE"
+  echo "[bootstrap] $(date -u) launching $SERVER_MODULE role=$ROLE"
   code=0
-  python -m evalsrv.server >> /root/logs/evalsrv.log 2>&1 || code=$?
-  echo "[bootstrap] $(date -u) evalsrv exited code=$code; restarting in 10s"
+  python -m "$SERVER_MODULE" >> /root/logs/evalsrv.log 2>&1 || code=$?
+  echo "[bootstrap] $(date -u) $SERVER_MODULE exited code=$code; restarting in 10s"
   sleep 10
 done

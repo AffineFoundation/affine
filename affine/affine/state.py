@@ -87,6 +87,7 @@ class State:
         self._id_counter = 0
         self.eval_machine: dict = {}   # duel provisioner {provider, id, host, url, ...}
         self.bench_machine: dict = {}  # dedicated SWE bench provisioner record
+        self.chat_machine: dict = {}   # public king-chat pod provisioner record
         # Newest-last ring of reveal intake decisions (dashboard "intake" panel).
         self.intake: list[dict] = []
         # Permanent dedupe of (hotkey:block) so trimmed ring rows are not
@@ -191,6 +192,7 @@ class State:
             self._id_counter = int(d.get("id_counter", 0))
             self.eval_machine = d.get("eval_machine", {})
             self.bench_machine = d.get("bench_machine", {})
+            self.chat_machine = d.get("chat_machine", {})
             self.intake = list(d.get("intake") or [])[-INTAKE_MAX:]
             decided = d.get("intake_decided")
             if isinstance(decided, list) and decided:
@@ -245,6 +247,7 @@ class State:
                 "id_counter": self._id_counter,
                 "eval_machine": self.eval_machine,
                 "bench_machine": self.bench_machine,
+                "chat_machine": self.chat_machine,
                 "flushed_at": now_iso(),
             }
             tmp = self._state_path.with_suffix(".json.tmp")
