@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 75483.71254345735 | p4263 |
-| Lium balance | **$75483.71254345735** | p4263 |
-| cumulative mining spend | ~$148,753 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$65484** (balance − $10,000 floor) | $UTC |
+| $UTC | 75408.89117020546 | p4264 |
+| Lium balance | **$75408.89117020546** | p4264 |
+| cumulative mining spend | ~$148,828 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$65409** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (9 pods) | **~$392.19/h** · vs floor $833/h · gap **−$440.81/h** · B300×8=0 · B200×8 stock=0 | p4263 |
+| miner burn (9 pods) | **~$392.19/h** · vs floor $833/h · gap **−$440.81/h** · B300×8=0 · B200×8 stock=0 | p4264 |
 | miner coldkey free | τ~1246.73 | kept ≥τ50 |
 | miner stake | **r252 ≈29.52α ≈τ1.69** (<τ5 paygo) | p4235 |
 | registrations / submissions | **16** / **16** (… **r1064 LOST chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-21T05:38:25Z | 75408.89117020546 | p4264 **R1121** TP1 n80 re-arm; **R1114→R1139** + **R1118→R1140** TRAIN (no rent; B300/B200×8=0); burn **~$392.19/h** |
 | 2026-08-21T05:26:39Z | 75483.71254345735 | p4263 **R1121** stuck chall→n80 re-arm r340; purge r926+r252 merges (no rent; B300/B200×8=0); burn **~$392.19/h** |
 | 2026-08-21T05:18:49Z | 75560.11677698362 | p4262 **R1110→R1138** UltraLoLR TRAIN r252 (no rent; B300/B200×8=0); burn **~$392.19/h** |
 | 2026-08-21T05:13:30Z | 75597.57419847416 | p4261 **R1122+24→R1135+36** + **R1119→R1137** (no rent; B300/B200×8=0); burn **~$392.19/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-21T04:23:46Z | 75977.46937066205 | p4257 **R1101 REFUTE→R1129 TRAIN** crown GPUs6,7 (no rent; B300/B200×8=0); burn **~$392.19/h** |
 | 2026-08-21T04:11:26Z | 76053.07660059455 | p4256 **R1101 n80 re-arm** crown GPUs6,7 (no rent; B300/B200×8=0); R1115 N80 load; burn **~$392.19/h** |
 | 2026-08-21T04:05:53Z | 76089.88955349677 | p4255 **R1128 TRAIN** r340 GPUs6,7 (no rent; B300/B200×8=0); R1115 MERGE; burn **~$392.19/h** |
-| 2026-08-21T04:00:22Z | 76166.6817233292 | p4254 **R1108+R1109 REFUTE→R1126+R1127 TRAIN** r339 (no rent; B300/B200×8=0); burn **~$392.18/h** |
