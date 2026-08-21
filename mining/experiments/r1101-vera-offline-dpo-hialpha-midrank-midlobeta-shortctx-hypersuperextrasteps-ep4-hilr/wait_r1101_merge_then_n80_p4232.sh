@@ -21,13 +21,14 @@ for i in $(seq 1 120); do
   tp=$(cat /root/logs/r1101_train.pid 2>/dev/null || true)
   if [[ -n "${tp:-}" ]] && kill -0 "$tp" 2>/dev/null; then echo "[p4232-r1101-n80] train still alive pid=$tp iter=$i"; sleep 30; continue; fi
   used=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -i 6,7 | awk '{s+=$1} END{print s+0}')
-  echo "[p4232-r1101-n80] wait free GPUs4,5 used_mib=$used iter=$i"
+  echo "[p4232-r1101-n80] wait free GPUs6,7 used_mib=$used iter=$i"
   [[ "$used" -lt 40960 ]] && break
   sleep 10
 done
 curl -sf -m 5 http://127.0.0.1:8000/v1/models >/dev/null
 curl -sf -m 5 http://127.0.0.1:8001/v1/models >/dev/null
-LEAN=/root/mining_src/$EXP/lean_chall_n80_r338_gpus45_p4232.sh
+# p4256 fix: p4232 waiter pointed at missing r338_gpus45 script; real lean is crown GPUs6,7
+LEAN=/root/mining_src/$EXP/lean_chall_n80_crown_r1101_gpus67_p4232.sh
 chmod +x "$LEAN"
 bash "$LEAN"
 date -u +%Y-%m-%dT%H:%M:%SZ >/root/logs/p4232_r1101_merge_then_n80_armed.done
