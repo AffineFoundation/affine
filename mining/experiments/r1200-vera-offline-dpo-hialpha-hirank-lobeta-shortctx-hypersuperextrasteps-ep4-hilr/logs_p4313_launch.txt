@@ -1,0 +1,41 @@
+[p4313] sync R1200 → mine-r924
+gpus 6,7 cleared
+[p4313-r924] wait free GPUs6,7 used=0 iter=1
+    PID     ELAPSED CMD
+ 189113 441077232-18:19:12 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1198/dpo_duel_reason.jsonl --out-dir /root/r1198/train --max-len 6144 --epochs 4 --lr 1e-6 --lora-r 32 --lora-alpha 128 --beta 0.02 --max-steps 38400
+    PID     ELAPSED CMD
+ 189151 441077232-18:19:12 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1199/dpo_duel_reason.jsonl --out-dir /root/r1199/train --max-len 6144 --epochs 4 --lr 1e-6 --lora-r 32 --lora-alpha 128 --beta 0.05 --max-steps 38400
+R1178 decision -0.003297566960826324 bar 0.005717364925429166
+[p4313-r924] launched
+R1200_PID=190717
+    PID     ELAPSED CMD
+ 190717 441077232-18:10:40 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1200/dpo_duel_reason.jsonl --out-dir /root/r1200/train --max-len 6144 --epochs 4 --lr 2e-6 --lora-r 64 --lora-alpha 128 --beta 0.02 --max-steps 38400
+{
+  "utc": "2026-08-21T12:42:02Z",
+  "axis": "r1200-vera-offline-dpo-hialpha-hirank-lobeta-shortctx-hypersuperextrasteps-ep4-hilr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "2e-6",
+  "lora_r": 64,
+  "lora_alpha": 128,
+  "beta": 0.02,
+  "max_len": 6144,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "6,7",
+  "chall_port": 8002,
+  "parent_signal": "R1178 MidCtx HiRank Hi\u03b2 MidLR REFUTE m=-0.003298 SE=0.002859 ~-0.58\u00d7 thought\u2713159 B\u27130.452 k=3; MidCtx HiRank Hi\u03b2 LR exhausted R1139/R1159/R1178 \u2192 ShortCtx HiRank Lo\u03b2 HiLR (last free Hyper cell)",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+0, 141811 MiB, 0 %
+1, 47041 MiB, 0 %
+2, 130181 MiB, 0 %
+3, 44565 MiB, 34 %
+4, 47041 MiB, 0 %
+5, 44565 MiB, 29 %
+6, 0 MiB, 0 %
+7, 0 MiB, 0 %
+ 189113
+R1198_OK
+ 189151
+R1199_OK
+[p4313] DONE launch
