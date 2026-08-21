@@ -1,5 +1,3 @@
-# R1159 — in progress
-
-**TRAIN LIVE p4280** on `mine-r924` GPUs 6,7 after R1139 REFUTE (~−0.26×).
-MidCtx HiRank Hiβ Hyper UltraLoLR (β=0.3 r=64 lr=5e-7 @8192 steps=38400).
-pid**164539** · MERGE→n80 waiters armed.
+# R1159 result
+**REFUTE v4** p4296 vs reign36 · m=**-0.001718** SE=0.002419 z=-0.710 n=78 bar≈0.004838 (~**-0.71×**) thought✓(176) B✓(0.487) k=3/τ=0.03
+→ **R1178** MidCtx HiRank Hiβ MidLR (lr 5e-7→1e-6) on r924 GPUs 6,7
