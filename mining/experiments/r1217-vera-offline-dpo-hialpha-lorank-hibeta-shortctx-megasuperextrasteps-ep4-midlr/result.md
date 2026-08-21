@@ -1,5 +1,6 @@
-# R1217 — ShortCtx LoRank Hiβ Mega MidLR (p4325)
+# R1217 REFUTE v4 (p4339)
 
-Parent **R1188** SoftCtx LoRank Hiβ Hyper MidLR REFUTE ~0.26×; SoftCtx Mega Mid=R1203 → ShortCtx Mega MidLR isolate.
-Axis: β=0.3 r=16 α=128 lr=**1e-6** @6144 Mega max_steps=19200 on crown GPUs 4,5.
-Decision: Stage-5 iff fresh v4 n80 margin>max(2·SE,δ=0.002) AND thought≥80 AND B≥0.30 vs reign36.
+- **Axis:** vera×Offline-DPO×HiAlpha×LoRank×HiBeta×ShortCtx×Mega×ep4×MidLR
+- **n80 vs reign36:** m=**+0.004629** SE=0.002602 z=1.78 n=79 bar≈0.005205 (~**0.89×**) thought✓(183) B✓(0.494) k=3/τ=0.03
+- **challenger_wins:** false (below 2·SE bar)
+- **Next:** Mega UltraLoLR isolate → **R1238** (Mega HiLR already R1230 TRAIN)
