@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 76053.07660059455 | p4256 |
-| Lium balance | **$76053.07660059455** | p4256 |
-| cumulative mining spend | ~$148,184 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$66053** (balance − $10,000 floor) | $UTC |
+| $UTC | 75977.46937066205 | p4257 |
+| Lium balance | **$75977.46937066205** | p4257 |
+| cumulative mining spend | ~$148,260 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$65977** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (9 pods) | **~$392.19/h** · vs floor $833/h · gap **−$440.81/h** · B300×8=0 · B200×8 stock=0 | p4256 |
+| miner burn (9 pods) | **~$392.19/h** · vs floor $833/h · gap **−$440.81/h** · B300×8=0 · B200×8 stock=0 | p4257 |
 | miner coldkey free | τ~1246.73 | kept ≥τ50 |
 | miner stake | **r252 ≈29.52α ≈τ1.69** (<τ5 paygo) | p4235 |
 | registrations / submissions | **16** / **16** (… **r1064 chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-21T04:23:46Z | 75977.46937066205 | p4257 **R1101 REFUTE→R1129 TRAIN** crown GPUs6,7 (no rent; B300/B200×8=0); burn **~$392.19/h** |
 | 2026-08-21T04:11:26Z | 76053.07660059455 | p4256 **R1101 n80 re-arm** crown GPUs6,7 (no rent; B300/B200×8=0); R1115 N80 load; burn **~$392.19/h** |
 | 2026-08-21T04:05:53Z | 76089.88955349677 | p4255 **R1128 TRAIN** r340 GPUs6,7 (no rent; B300/B200×8=0); R1115 MERGE; burn **~$392.19/h** |
 | 2026-08-21T04:00:22Z | 76166.6817233292 | p4254 **R1108+R1109 REFUTE→R1126+R1127 TRAIN** r339 (no rent; B300/B200×8=0); burn **~$392.18/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-21T03:27:46Z | 76394.86134379286 | p4250 **R1107 REFUTE→R1119 TRAIN** r337 (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-21T03:22:26Z | 76431.02864894563 | p4249 r340 **teacher65536 + R1096/R1097 n80 re-arm** (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-21T03:12:58Z | 76507.99142783767 | p4248 **R1099 REFUTE→R1118 TRAIN** r938 (no rent; B300/B200×8=0); burn **~$392.18/h** |
-| 2026-08-21T03:03:20Z | 76580.80583604088 | p4247 r340 **Triton-seed+serialize R1096/R1097** (no rent; B300/B200×8=0); burn **~$392.18/h** |
