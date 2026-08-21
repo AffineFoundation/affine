@@ -1,0 +1,37 @@
+[p4304] sync R1187 → mine-r926
+gpus 3-4 cleared
+[p4304] wait free GPUs3,4 used=0 iter=1
+[p4304] R1187 lean launched
+[r1187-lean] 2026-08-21T11:35:48Z start GPUs 3,4 SoftCtx MidRank MidLoβ Hyper MidLR
+[r1187-lean] data_lines=604
+[r1187-lean] wait VRAM3+4 used_mib=0 iter=1
+{
+  "utc": "2026-08-21T11:35:48Z",
+  "pass": 4304,
+  "axis": "r1187-cryptodev23-offline-dpo-hialpha-midrank-midlobeta-softctx-hypersuperextrasteps-ep4-midlr",
+  "base": "cryptoDev23/Affine-5Dku3dYp9j-hk8161@55b7ffe0",
+  "lr": "1e-6",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.05,
+  "max_len": 12288,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "3,4",
+  "chall_port": 8002,
+  "parent_signal": "R1170 MidCtx MidRank MidLo\u03b2 Hyper MidLR REFUTE m=+0.004094 SE=0.003599 ~0.57\u00d7 thought\u2713200 B\u27130.399 k=3 \u2192 SoftCtx MidLR isolate",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1187-lean] TRAIN launched pid=178571
+[r1187-lean] waiters armed
+ 178571 441077233-23:14:40 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--cryptoDev23--Affine-5Dku3dYp9j-hk8161/snapshots/55b7ffe003d078a8a131673f677b2584548a502e --data /root/r1187/dpo_duel_reason.jsonl --out-dir /root/r1187/train --max-len 12288 --epochs 4 --lr 1e-6 --lora-r 32 --lora-alpha 128 --beta 0.05 --max-steps 38400
+ 178576 441077233-23:14:40 bash /root/mining_src/r1187-cryptodev23-offline-dpo-hialpha-midrank-midlobeta-softctx-hypersuperextrasteps-ep4-midlr/wait_r1187_train_then_merge_p4304.sh
+0, 71555 MiB
+1, 71555 MiB
+2, 78377 MiB
+3, 0 MiB
+4, 0 MiB
+5, 71555 MiB
+6, 71555 MiB
+7, 0 MiB
+[p4304] DONE

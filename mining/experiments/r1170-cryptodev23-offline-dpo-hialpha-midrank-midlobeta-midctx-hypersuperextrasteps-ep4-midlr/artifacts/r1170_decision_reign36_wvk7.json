@@ -1,0 +1,18 @@
+{
+  "utc": "2026-08-21T11:31:17Z",
+  "hypo": "R1170",
+  "contract": "wvk7",
+  "n_teacher_samples": 3,
+  "tau": 0.03,
+  "king": "reign36",
+  "margin": 0.004093521456087186,
+  "se": 0.0035986443812170265,
+  "z": 1.1375176378786274,
+  "n": 80,
+  "bar": 0.007197288762434053,
+  "thought_median": 200.0,
+  "b_pass": 0.39915966386554624,
+  "wins": false,
+  "note": "p4291 chall+v4-n80 R926 GPUs3,4; cryptoDev MidCtx MidRank MidLo\u03b2 Hyper HiLR; vs reign36 vera wvk7",
+  "hf_ok": false
+}
