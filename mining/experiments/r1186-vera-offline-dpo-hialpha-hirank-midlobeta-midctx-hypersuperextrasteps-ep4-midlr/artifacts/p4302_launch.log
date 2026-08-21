@@ -1,0 +1,32 @@
+[p4302] sync R1186 → mine-r252
+gpus 6-7 cleared
+[p4302] wait free GPUs6,7 used=0 iter=1
+[p4302] R1186 lean launched
+[r1186-lean] 2026-08-21T11:17:42Z start GPUs 6,7 MidCtx HiRank MidLoβ Hyper MidLR
+[r1186-lean] data_lines=604
+[r1186-lean] wait VRAM6+7 used_mib=0 iter=1
+{
+  "utc": "2026-08-21T11:17:43Z",
+  "axis": "r1186-vera-offline-dpo-hialpha-hirank-midlobeta-midctx-hypersuperextrasteps-ep4-midlr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "1e-6",
+  "lora_r": 64,
+  "lora_alpha": 128,
+  "beta": 0.05,
+  "max_len": 8192,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "6,7",
+  "chall_port": 8003,
+  "parent_signal": "R1167 ShortCtx HiRank MidLo\u03b2 MidLR REFUTE m=-0.000534 SE=0.001785 ~-0.15\u00d7 thought\u2713171 B\u27130.394 \u2192 MidCtx MidLR (R1153 Ultra / R1123 Hi already)",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1186-lean] TRAIN pid=216502
+[r1186-lean] waiters armed
+ 216502 441077229-16:31:28 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1186/dpo_duel_reason.jsonl --out-dir /root/r1186/train --max-len 8192 --epochs 4 --lr 1e-6 --lora-r 64 --lora-alpha 128 --beta 0.05 --max-steps 38400
+ 216507 441077229-16:31:28 bash /root/mining_src/r1186-vera-offline-dpo-hialpha-hirank-midlobeta-midctx-hypersuperextrasteps-ep4-midlr/wait_r1186_train_then_merge_p4302.sh
+4, 175540 MiB
+5, 125648 MiB
+6, 0 MiB
+7, 0 MiB
+[p4302] DONE

@@ -1,13 +1,18 @@
-# R1167 — ShortCtx HiRank MidLoβ HyperExtra MidLR
+# R1167 — ShortCtx HiRank MidLoβ Hyper MidLR
 
-**Status (p4287):** TRAIN on `mine-r252` GPUs**6,7** after R1153 REFUTE.
+**Status (p4302):** **REFUTE v4** vs reign36.
 
-| knob | value |
+| field | value |
 |---|---|
-| base | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695` |
-| β / α / r / lr | **0.05** / 128 / **64** / **1e-6** |
-| ctx / steps | ShortCtx `@6144` / HyperExtra `38400` |
-| parent | ShortCtx HiRank MidLoβ Hyper UltraLoLR **R1153 REFUTE** m=+0.002569 SE=0.002314 ~**0.56×** thought✓155 B✓0.397 → **MidLR isolate** |
+| margin | **−0.000534** |
+| SE | 0.001785 |
+| z | −0.299 |
+| n | 79 |
+| bar | max(2·SE, δ) ≈ **0.003570** (~**−0.15×**) |
+| thought | ✓ 171 |
+| B | ✓ 0.394 |
+| stamp | k=3 τ=0.03 wvk=7 |
+| knobs | β=0.05 α=128 r=64 lr=1e-6 @6144 Soft Mid Mid Soft→ShortCtx max_steps=38400 |
 
-Decision rule: Stage-5 iff margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 (k=3, τ=0.03) vs reign36.
-≠ UltraLoLR R1153 / ≠ HiLR R1123 / ≠ SoftCtx HiRank MidLoβ UltraLoLR R1138 / ≠ MidCtx HiRank MidLoβ UltraLoLR R1141 / ≠ ShortCtx MidRank MidLoβ UltraLoLR R1161 / ≠ Online / ≠ GRPO
+## Axes ≠ / next
+ShortCtx HiRank MidLoβ LR exhausted (R1153 Ultra / R1167 Mid / R1123 Hi) → **R1186** MidCtx MidLR isolate.
