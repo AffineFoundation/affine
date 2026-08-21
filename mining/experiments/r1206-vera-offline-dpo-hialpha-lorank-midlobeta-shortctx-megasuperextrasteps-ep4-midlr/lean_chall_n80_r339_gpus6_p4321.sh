@@ -219,9 +219,9 @@ print("[p4321-r1206] chall GPUs reaped", flush=True)
 PY
 
 for i in $(seq 1 60); do
-  used=$(nvidia-smi -i 4 --query-gpu=memory.used --format=csv,noheader,nounits | awk '{s+=$1} END{print s+0}')
+  used=$(nvidia-smi -i $GPUS --query-gpu=memory.used --format=csv,noheader,nounits | awk '{s+=$1} END{print s+0}')
   if [[ "${used:-999999}" -lt 2000 ]]; then
-    log "GPU 4 free (poll $i used_mib=$used)"
+    log "GPU $GPUS free (poll $i used_mib=$used)"
     break
   fi
   sleep 2
