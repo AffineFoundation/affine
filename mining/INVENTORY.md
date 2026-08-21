@@ -15,7 +15,7 @@
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | 8×H200 | $33.81 | **2026-08-22T13:30Z** | TK · **R1222+23+24 TRAIN** |
 | mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | 8×H100 | $13.76 | **2026-08-22T13:30Z** | TK · **R1220 TRAIN** |
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | 4×H200 | $15.96 | **2026-08-22T13:30Z** | TK · **R1219 TRAIN** |
-| mine-r1158-vera-reason-grpo-1 | eager-matrix-57 | 8×H200 | $32.00 | **2026-08-22T13:30Z** | teacher + **R1158 GRPO** |
+| mine-r1158-vera-reason-grpo-1 | eager-matrix-57 | 8×H200 | $32.00 | **2026-08-22T13:30Z** | T+GRPO + **R1242+43+44 TRAIN** |
 | mine-r1191-vera-fullft-1 | swift-comet-4d | 8×H200 | $32.00 | **2026-08-22T13:30Z** | **R1221+R1235+36+37 TRAIN** |
 | mine-r1214-vera-softctx-midrank-lobeta-mega-1 | brave-shark-4d | 8×H200 | $24.80 | **2026-08-22T14:43Z** | **R1218 TRAIN** GPU2 |
 
@@ -27,6 +27,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-21T17:23:58Z | p4342: r1158 idle→**R1242+R1243+R1244 TRAIN**; burn **~$480.99/h** |
 | 2026-08-21T17:17:14Z | p4341: **R1207 REFUTE**→chall reap→**R1241 TRAIN**; burn **~$480.99/h** |
 | 2026-08-21T17:09:16Z | p4340: **R1215+R1216 REFUTE**→chall reap→**R1239+R1240 TRAIN**; burn **~$480.99/h** |
-| 2026-08-21T17:01:22Z | p4339: **R1217 REFUTE**→**R1238 TRAIN**; r1191 idle→**R1235+36+37 TRAIN**; burn **~$480.99/h** |
