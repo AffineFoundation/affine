@@ -1,0 +1,72 @@
+stop 260208 (/root/logs/vllm_chall_r1091.pid)
+stop 259409 (/root/logs/vllm_chall_r1093.pid)
+reap done
+wait free 1,3 used_mib=0 iter=1
+wait free 4,5 used_mib=0 iter=1
+TK warm
+r1103 train.pid=266741
+r1104 train.pid=266744
+[r1103-lean] wait VRAM1,3 used_mib=0 iter=1
+{
+  "utc": "2026-08-21T01:26:54Z",
+  "axis": "r1103-vera-offline-dpo-hialpha-lorank-hibeta-midctx-hypersuperextrasteps-ep4-hilr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "2e-6",
+  "lora_r": 16,
+  "lora_alpha": 128,
+  "beta": 0.3,
+  "max_len": 8192,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "1,3",
+  "chall_port": 8004,
+  "parent_signal": "R1091 MidCtx LoRank Hi\u03b2 Hyper MidLR REFUTE m=+0.003552 ~0.46\u00d7 thought\u2713165 B\u27130.355 k=3 \u2192 HyperExtra HiLR isolate; \u2260 MidLR R1091 / \u2260 Ultra HiLR R1066 / \u2260 ShortCtx LoRank Hi\u03b2 Hyper MidLR R1084 / \u2260 MidCtx LoRank Mid\u03b2 Ultra HiLR R1057 / \u2260 SoftCtx LoRank Hi\u03b2 Ultra HiLR R967 / \u2260 Online / \u2260 GRPO",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1103-lean] TRAIN launched pid=266741 BASE=/root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e
+[r1103-lean] wait→merge armed pid=266752
+[r1103-lean] MERGE→n80 waiter armed pid=266761
+[r1104-lean] wait VRAM4,5 used_mib=0 iter=1
+{
+  "utc": "2026-08-21T01:26:54Z",
+  "axis": "r1104-vera-offline-dpo-hialpha-midrank-lobeta-midctx-hypersuperextrasteps-ep4-hilr",
+  "base": "vera6/affine-5g4yy75zuz-t6@8e3f1695",
+  "lr": "2e-6",
+  "lora_r": 32,
+  "lora_alpha": 128,
+  "beta": 0.02,
+  "max_len": 8192,
+  "epochs": 4,
+  "max_steps": 38400,
+  "gpus": "4,5",
+  "chall_port": 8003,
+  "parent_signal": "R1093 MidCtx MidRank Lo\u03b2 Hyper MidLR REFUTE m=+0.000646 ~0.10\u00d7 thought\u2713179 B\u27130.438 k=3 \u2192 HyperExtra HiLR isolate; \u2260 MidLR R1093 / \u2260 Ultra HiLR R1069 / \u2260 MidCtx MidRank Lo\u03b2 Ultra MidLR R1024 / \u2260 SoftCtx MidRank Lo\u03b2 Ultra HiLR R1043 / \u2260 ShortCtx MidRank Lo\u03b2 Ultra HiLR R1059 / \u2260 Online / \u2260 GRPO",
+  "decision_rule": "Stage-5 iff fresh v4 n80 margin>max(2*SE,0.002) AND thought>=80 AND B>=0.30 vs reign36"
+}
+[r1104-lean] TRAIN launched pid=266744 BASE=/root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e
+[r1104-lean] wait→merge armed pid=266751
+[r1104-lean] MERGE→n80 waiter armed pid=266755
+ 266741 441077230-18:35:44 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1103/dpo_duel_reason.jsonl --out-dir /root/r1103/train --max-len 8192 --epochs 4 --lr 2e-6 --lora-r 16 --lora-alpha 128 --beta 0.3 --max-steps 38400
+ 266744 441077230-18:35:44 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1104/dpo_duel_reason.jsonl --out-dir /root/r1104/train --max-len 8192 --epochs 4 --lr 2e-6 --lora-r 32 --lora-alpha 128 --beta 0.02 --max-steps 38400
+ 266751 441077230-18:35:44 bash /root/mining_src/r1104-vera-offline-dpo-hialpha-midrank-lobeta-midctx-hypersuperextrasteps-ep4-hilr/wait_r1104_train_then_merge_p4234.sh
+ 266752 441077230-18:35:44 bash /root/mining_src/r1103-vera-offline-dpo-hialpha-lorank-hibeta-midctx-hypersuperextrasteps-ep4-hilr/wait_r1103_train_then_merge_p4234.sh
+ 266755 441077230-18:35:44 bash /root/mining_src/r1104-vera-offline-dpo-hialpha-midrank-lobeta-midctx-hypersuperextrasteps-ep4-hilr/wait_r1104_merge_then_n80_p4234.sh
+ 266756 441077230-18:35:44 tee -a /root/logs/r1104_wait_merge.nohup
+ 266758 441077230-18:35:44 tee -a /root/logs/r1103_wait_merge.nohup
+ 266761 441077230-18:35:44 bash /root/mining_src/r1103-vera-offline-dpo-hialpha-lorank-hibeta-midctx-hypersuperextrasteps-ep4-hilr/wait_r1103_merge_then_n80_p4234.sh
+ 266767 441077230-18:35:44 tee -a /root/logs/p4234_r1104_merge_then_n80.nohup
+ 266771 441077230-18:35:44 tee -a /root/logs/p4234_r1103_merge_then_n80.nohup
+0, 268282 MiB, 0 %
+1, 33698 MiB, 3 %
+2, 248150 MiB, 0 %
+3, 33682 MiB, 0 %
+4, 33698 MiB, 3 %
+5, 33682 MiB, 0 %
+6, 59948 MiB, 7 %
+7, 54100 MiB, 22 %
+ 265606 441077230-18:47:28 python3 /root/mining_src/s4-h138-f43-tok-dpo-l2/train_dpo.py --base /root/hf/hub/models--vera6--affine-5g4yy75zuz-t6/snapshots/8e3f1695e058837ed80fec3238ff439fdc2d0f0e --data /root/r1101/dpo_duel_reason.jsonl --out-dir /root/r1101/train --max-len 6144 --epochs 4 --lr 2e-6 --lora-r 32 --lora-alpha 128 --beta 0.05 --max-steps 38400
+ 265611 441077230-18:47:28 bash /root/mining_src/r1101-vera-offline-dpo-hialpha-midrank-midlobeta-shortctx-hypersuperextrasteps-ep4-hilr/wait_r1101_train_then_merge_p4232.sh
+ 265613 441077230-18:47:28 bash /root/mining_src/r1101-vera-offline-dpo-hialpha-midrank-midlobeta-shortctx-hypersuperextrasteps-ep4-hilr/wait_r1101_merge_then_n80_p4232.sh
+ 265614 441077230-18:47:28 tee -a /root/logs/r1101_wait_merge.nohup
+ 265620 441077230-18:47:28 tee -a /root/logs/p4232_r1101_merge_then_n80.nohup
+ARMED

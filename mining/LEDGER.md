@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 77341.24265060782 | p4233 |
-| Lium balance | **$77341.24265060782** | p4233 |
-| cumulative mining spend | ~$146,895 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$67341** (balance − $10,000 floor) | $UTC |
+| $UTC | 77304.26142111408 | p4234 |
+| Lium balance | **$77304.26142111408** | p4234 |
+| cumulative mining spend | ~$146,932 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$67304** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (9 pods) | **~$392.18/h** · vs floor $833/h · gap **−$440.82/h** · B300×8=0 · B200×8 stock=0 | p4233 |
+| miner burn (9 pods) | **~$392.18/h** · vs floor $833/h · gap **−$440.82/h** · B300×8=0 · B200×8 stock=0 | p4234 |
 | miner coldkey free | τ~1246.73 | kept ≥τ50 |
-| miner stake | **0** | p4233 |
+| miner stake | **r252 ≈29.52α ≈τ1.69** (<τ5 paygo) | p4234 |
 | registrations / submissions | **16** / **16** (… **r1064 chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-21T01:27:31Z | 77304.26142111408 | p4234 **R1091+R1093 REFUTE→R1103+R1104 TRAIN** crown (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-21T01:21:21Z | 77341.24265060782 | p4233 **R1088 REFUTE→R1102 TRAIN** r338 (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-21T01:14:50Z | 77490.73249001587 | p4232 **R1092 REFUTE→R1101 TRAIN** crown (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-21T01:00:40Z | 77532.65637994057 | p4231 **R1087 REFUTE→R1100 TRAIN** r338 (no rent; B300/B200×8=0); burn **~$392.18/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-21T00:17:41Z | 76687.7937237571 | p4227 r340 king GPU5 **CUDA_HOME fix → :8001 OK** (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-21T00:09:45Z | 76764.50041797689 | p4226 r340 idle GPUs→**R1096+R1097 TRAIN** + king GPU5 (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-21T00:03:01Z | 76798.78422598669 | p4225 r924 **R1068 idle :8004→R1095 TRAIN** (no rent; B300/B200×8=0); crown SSH timeout; burn **~$392.18/h** |
-| 2026-08-20T23:56:33Z | 76840.31469554348 | p4224 r337 **R1064 idle :8003→R1094 TRAIN** (no rent; B300/B200×8=0); burn **~$392.18/h** |
