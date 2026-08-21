@@ -1,10 +1,6 @@
-# R1144 — SoftCtx LoRank MidLoβ Hyper UltraLoLR
+# R1144 result — p4298
 
-**Status (p4270):** **TRAIN LIVE** on `mine-r340` GPUs 6,7 after R1128 REFUTE reap.
-
-| field | value |
-|---|---|
-| parent | R1128 SoftCtx LoRank MidLoβ Hyper HiLR REFUTE ~−0.78× → UltraLoLR isolate |
-| knobs | β=0.05 α=128 r=**16** lr=**5e-7** @12288 Soft Mid Mid Soft **max_steps=38400** |
-| train pid | **68547** · SSH `18.118.83.97:40127` |
-| decision | Stage-5 iff fresh v4 n80 margin>max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 vs reign36 |
+**REFUTE v4** vs reign36 (`vera6/…-t6`@`8e3f1695`)
+- margin=**−0.005130** SE=0.003610 z=−1.421 n=77 bar≈0.007221 (~**−0.71×**)
+- thought✓(168) B✓(0.373) k=3 τ=0.03
+- → **R1183** SoftCtx LoRank MidLoβ MidLR

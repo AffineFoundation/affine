@@ -3,7 +3,8 @@
 # Axis: vera Soft Mid Mid Soft HiAlpha LoRank Midβ MidCtx HyperSuperExtra ep4 MidLR (β=0.1 r=16 lr=1e-6 @8192 steps=38400)
 # Parent: R1108 MidCtx MidRank Hiβ Hyper MidLR REFUTE m=-0.001278 ~-0.20× → LoRank+Midβ isolate
 # Never --no-save-original-format. Never pkill -f.
-# Do not touch teacher:8000 / king:8001 / R1127 on :8003 GPUs6,7.
+# Do not touch teacher:8000 / king:8001 / R1166 train on GPUs 6,7.
+# p4298: free-poll wrongly used -i 6,7 (sibling train) → 120s stall; awk /tmp/…/ cut; TP2 NCCL risk → TP1 util0.85 GPU4.
 set -euo pipefail
 
 source /root/venv/bin/activate
@@ -14,7 +15,7 @@ if [[ -f /root/mine.env ]]; then
   set +a
 fi
 
-GPUS=4,5
+GPUS=4
 CHALL_PORT=8002
 export CUDA_VISIBLE_DEVICES=$GPUS
 
@@ -50,7 +51,7 @@ KING_REV=8e3f1695e058837ed80fec3238ff439fdc2d0f0e
 TEACHER_REPO=zai-org/GLM-4.5-Air-FP8
 MERGE_DIR=/tmp/r1163_merged
 export CUDA_VISIBLE_DEVICES=$GPUS
-UTIL=${UTIL:-0.72}
+UTIL=${UTIL:-0.85}
 LOG=/root/logs/p4284_r1163_chall_n80_wvk7.log
 CHALL_LOG=/root/logs/vllm_chall_r1163_p4284.log
 PIDF=/root/logs/vllm_chall_r1163.pid
@@ -108,7 +109,7 @@ cat >"$MERGE_DIR/README.md" <<'CARD'
 - **Method:** Offline DPO on Reason duel pairs (teacher-side)
 - **Axis:** HiAlpha LoRank MidBeta MidCtx HyperSuperExtra ep4 MidLR (β=0.1 r=16 lr=1e-6 @8192 steps=38400)
 - **Knobs:** lr=1e-6, LoRA r=16 / α=128, β=0.1, max_len=8192, epochs=4, max_steps=38400
-- **Hardware:** mine-r339 8×B200 GPUs 4,5 TP2 :8002
+- **Hardware:** mine-r339 8×B200 GPU 4 TP1 util0.85 :8002
 - **Experiment:** `mining/experiments/r1163-vera-offline-dpo-hialpha-lorank-midbeta-midctx-hypersuperextrasteps-ep4-midlr/`
 - **Parent signal:** R1106 SoftCtx MidRank Midβ Hyper MidLR REFUTE ~0.29× → LoRank isolate
 CARD
@@ -136,12 +137,12 @@ done
 while read -r pid; do
   [[ "$pid" =~ ^[0-9]+$ ]] || continue
   stop_pid "$pid" "stale chall argv"
-done < <(ps -eo pid=,args= | awk '/vllm serve .*\/tmp/r1163_merged/ && !/awk/ {print $1}')
+done < <(ps -eo pid=,args= | awk '/vllm serve/ && /r1163_merged/ && !/awk/ {print $1}')
 
 CHALL_PORT="$CHALL_PORT" GPUS="$GPUS" python3 - <<'PY' | tee -a "$LOG"
 import os, signal, subprocess, time, re
 port = os.environ.get("CHALL_PORT", "8002")
-want = {int(x) for x in os.environ.get("GPUS", "6,7").split(",") if x.strip()}
+want = {int(x) for x in os.environ.get("GPUS", "4").split(",") if x.strip()}
 try:
     out = subprocess.check_output(["ss", "-lptn", f"sport = :{port}"], text=True, stderr=subprocess.DEVNULL)
 except Exception:
@@ -218,9 +219,9 @@ print("[p4284-r1163] chall GPUs reaped", flush=True)
 PY
 
 for i in $(seq 1 60); do
-  used=$(nvidia-smi -i 6,7 --query-gpu=memory.used --format=csv,noheader,nounits | awk '{s+=$1} END{print s+0}')
+  used=$(nvidia-smi -i 4 --query-gpu=memory.used --format=csv,noheader,nounits | awk '{s+=$1} END{print s+0}')
   if [[ "${used:-999999}" -lt 2000 ]]; then
-    log "GPUs 4,5 free (poll $i used_mib=$used)"
+    log "GPU 4 free (poll $i used_mib=$used)"
     break
   fi
   sleep 2
@@ -261,7 +262,7 @@ unset HF_TOKEN
 : >"$CHALL_LOG"
 nohup /root/venv/bin/python3 /root/venv/bin/vllm serve "$MERGE_DIR" \
   --port "$CHALL_PORT" \
-  --tensor-parallel-size 2 \
+  --tensor-parallel-size 1 \
   --max-model-len 65536 \
   --gpu-memory-utilization "$UTIL" \
   --max-num-batched-tokens 8192 \
@@ -274,7 +275,7 @@ nohup /root/venv/bin/python3 /root/venv/bin/vllm serve "$MERGE_DIR" \
   >"$CHALL_LOG" 2>&1 &
 echo $! >"$PIDF"
 CHALL_PID=$(cat "$PIDF")
-log "chall pid=$CHALL_PID port=$CHALL_PORT"
+log "chall pid=$CHALL_PID port=$CHALL_PORT TP1 util=$UTIL GPU=$GPUS"
 
 for i in $(seq 1 240); do
   if curl -sf -m 3 "http://127.0.0.1:${CHALL_PORT}/v1/models" >/dev/null 2>&1; then
@@ -287,6 +288,28 @@ for i in $(seq 1 240); do
   sleep 5
 done
 curl -sf -m 5 "http://127.0.0.1:${CHALL_PORT}/v1/models" >/dev/null
+
+# p4298/p4295: probe one completion before n80
+log "probe sample before n80"
+if ! CHALL_PORT="$CHALL_PORT" python3 - <<'PY'
+import json, os, urllib.request
+port = os.environ["CHALL_PORT"]
+models = json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=30))
+mid = models["data"][0]["id"]
+req = urllib.request.Request(
+    f"http://127.0.0.1:{port}/v1/completions",
+    data=json.dumps({"model": mid, "prompt": "Next command:\n", "max_tokens": 8, "temperature": 0}).encode(),
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+with urllib.request.urlopen(req, timeout=120) as r:
+    body = json.load(r)
+text = ((body.get("choices") or [{}])[0]).get("text") or ""
+print("probe_ok", mid, repr(text[:80]), flush=True)
+PY
+then
+  log "FATAL probe failed"; tail -n 80 "$CHALL_LOG" | tee -a "$LOG"; exit 1
+fi
 
 BLOCK_HASH=$(python3 - <<'PY'
 import hashlib, time

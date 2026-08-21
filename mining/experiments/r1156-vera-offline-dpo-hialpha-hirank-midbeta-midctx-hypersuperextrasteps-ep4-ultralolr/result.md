@@ -1,7 +1,6 @@
-# R1156 — result notes
+# R1156 result — p4298
 
-## p4278 (2026-08-21T07:32Z) — TRAIN LIVE
-- Parent: R1141 MidCtx HiRank MidLoβ UltraLoLR REFUTE m=−0.001574 ~−0.43×
-- Axis: MidCtx HiRank **Midβ** Hyper UltraLoLR β=**0.1** α=128 r=64 lr=5e-7 @8192 steps=38400
-- Pod: mine-r340 · GPUs 3,4 · train pid **72365** · MERGE→n80 waiters armed
-- Decision rule: crown iff margin > max(2·SE, 0.002) AND thought≥80 AND B≥0.30 under wvk7 k=3 τ=0.03 vs reign36
+**REFUTE v4** vs reign36 (`vera6/…-t6`@`8e3f1695`)
+- margin=**−0.000139** SE=0.001770 z=−0.079 n=77 bar≈0.003541 (~**−0.04×**)
+- thought✓(159) B✓(0.423) k=3 τ=0.03
+- → **R1182** MidCtx HiRank Midβ MidLR
