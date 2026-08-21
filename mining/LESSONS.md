@@ -25,33 +25,13 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4339: **R1217 REFUTE** m=+0.004629~0.89× (thought✓183 B✓0.494) → exact-PID chall reap GPU4 → **R1238** ShortCtx LoRank Hiβ Mega UltraLoLR (crown 4,5; Mega HiLR=R1230 TRAIN); r1191 GPUs2–7 idle → **R1235** Short LoRank Midβ Mega MidLR + **R1236** Soft LoRank Loβ Mega MidLR + **R1237** MidCtx LoRank Loβ Mega HiLR; leave R1215/16 n80. Fill idle pairs same pass. **Never `pkill -f`**.
-- p4338: **R1208 REFUTE** m=+0.004661~0.70× / **R1210** ~0.20× / **R1211** ~−0.69× idle challs → exact-PID reap → **R1232** MidCtx LoRank Hiβ Mega HiLR (r252 4,5) + **R1233** SoftCtx HiRank Loβ Mega HiLR + **R1234** ShortCtx MidRank Midβ Mega UltraLoLR (r337 4–7); crown n80 mid; R1207 MERGE concurrent OK on other GPUs. **Never `pkill -f`**.
-- p4337: while crown **R1215/16/17** n80 mid (~34/80), r340 GPUs**6,7** idle → **R1231** ShortCtx HiRank Midβ Mega HiLR (R1204~0.40×→HiLR) pid**114276**; leave R1229/30 + T/K. Fill free pair GPUs same pass — do not wait for n80. **Never `pkill -f`**.
-- p4336: crown **R1215/16/17** MERGE_DONE sat idle (`wait_*_merge_then_n80` exits at "lean_chall next pass") → lean chall TP1 util0.85 mlen65536 :8004/:8002/:8003 + **v4 n80 LIVE** (pids 378545/378524/378587); leave T:8000 K:8001. **Never `pkill -f`**.
-- p4335: **R1202 REFUTE** m=−0.001638~−0.50× / **R1203 REFUTE** m=−0.001873~−0.41× (thought✓ B✓) → exact-PID chall reap GPU1+3 → **R1229** SoftCtx LoRank MidLoβ Mega HiLR TRAIN GPUs1,2 + **R1230** ShortCtx LoRank Hiβ Mega HiLR TRAIN GPUs3,4; leave T:8000 K:8001. **Never `pkill -f`**.
-- p4334: **R1206 REFUTE** m=−0.001389~−0.47× (thought✓161 B✓0.388) → exact-PID chall reap GPU6 → **R1228** ShortCtx LoRank MidLoβ Mega HiLR TRAIN GPUs6,7; leave R1227 on 4,5 + T/K. **Never `pkill -f`**.
-- p4333: **R1206** MERGE_DONE sat in free-poll on hardcoded `nvidia-smi -i 4` while chall was `GPUS=6` (GPU4 busy w/ R1227) → exact-PID stop + patch free-poll to `$GPUS` → chall:8003 + **v4 n80 LIVE**. Free-poll GPU index must match `GPUS=`. **Never `pkill -f`**.
-- p4332: r338 R1212/13 idle chall exact-PID reap→**R1225** MidCtx LoRank MidLoβ Mega MidLR + **R1226** MidCtx LoRank Loβ Mega MidLR; **R1205 REFUTE** m=−0.00080~−0.24×→**R1227** ShortCtx MidRank Midβ Mega HiLR; **R1204 REFUTE** m=+0.00187~0.40×; r340 **R1202+R1203** MERGE_DONE orphans (wait script wrong **hyper** path) → patch lean_chall GPUS≠6 + arm n80 :8002/:8003 — do **not** `sed -i 's/^CHALL_PORT=.*/…/'` (destroys `CHALL_PORT="$CHALL_PORT" python3` launch line). **Never `pkill -f`**.
-- p4331: **R1204** MERGE_DONE sat idle because wait script looked for **wrong EXP dirname** (`…lorank-midlobeta-softctx-hyper…` vs real `…hirank-midbeta-shortctx-mega…`); fixed path + armed chall:8004 **v4 n80 LIVE**; **R1212** REFUTE m=+0.00068~0.15× / **R1213** REFUTE m=−0.00210~−0.61× idle challs still on r338. **Never `pkill -f`**.
-- p4330: r924 idle challs after R1198/99/1200 REFUTE → exact-PID reap :8002/:8003/:8004 (leave T:8000 K:8001) → Mega **R1222** ShortCtx HiRank Loβ MidLR / **R1223** ShortCtx MidRank Loβ HiLR / **R1224** MidCtx HiRank Loβ HiLR TRAIN; no non-BL 8× stock. **Never `pkill -f`**.
-- p4329: **R1209 REFUTE** m=+4e-5~0.007× (thought✓155 B✓0.444) → **R1221** ShortCtx MidRank Loβ Mega MidLR on r1191; **R1198/99/1200 REFUTE** (~0.34×/0.62×/−0.31×); r1214 multi-GPU `device_map=auto` → CUDA `operation not supported` — **single-GPU** TRAIN works; FullFT pod lacked **peft** → `pip install peft` + `/root/venv/bin/python3` before Offline-DPO. **Never `pkill -f`**.
-- p4328: tarball nested `affine_pkg/affine_pkg/evalsrv` → flatten before train (`ModuleNotFoundError: evalsrv`); **R1187 REFUTE** m=−0.00715~−0.65× → **R1220** SoftCtx MidRank MidLoβ Mega MidLR; **R1218** relaunch pid**3091**. **Never `pkill -f`**.
-- p4327: reap **R1197** orphan chall exact-PID → **R1219** SoftCtx LoRank Hiβ Mega HiLR (β=0.3 r=16 lr=2e-6 @12288) on r938 GPUs2,3; r938 is **4×H200** not 8×; R1187 n80 **58/80**. **Never `pkill -f`**.
-- p4326: blank **r1214** BOOT → **R1218** MidCtx MidRank Midβ Mega HiLR (not MidLR SoftCtx=R1010); R1187 n80 healthy **28/80** at mlen65536. **Never `pkill -f`**.
-- p4325: SoftCtx MidRank Loβ Mega MidLR = **R1010 REFUTE ~0.39×** — do not re-run (R1214 MidLR was a dup); SoftCtx chall **mlen32768** ContextLengthError on ~31k prompts → **TP2 util0.55 mlen65536**; crown orphan R1188/89/96 → Mega **R1215 SoftCtx MidRank Loβ HiLR** / **R1216 SoftCtx LoRank Hiβ Ultra** / **R1217 ShortCtx LoRank Hiβ MidLR**. **Never `pkill -f`**.
-- p4324: **R1187** H100: TP2 util0.72 OOM → TP1 util0.80 no KV → **TP2 util0.65 mlen32768** n80 (later ctx-fail); rented H200×8 **r1214**. **Never `pkill -f`**.
-- p4323: reaped R1192/93+R1194/95 → Mega **R1210–13**; R1187 FATAL missing sim. **Never `pkill -f`**.
-- p4322: **R1187** wait midctx typo → lean chall; stamped R1192–97 REFUTE orphans. **Never `pkill -f`**.
-- p4321: **R1201 REFUTE** ~−0.46× → **R1209** UltraLoLR; orphans → Mega **R1205–08**. **Never `pkill -f`**.
-- p4320: teacher OOM@util0.90 → serve_three TP1 util≤0.85. **Never `pkill -f`**.
-- p4319: **R1181/82/83 REFUTE** → Mega **R1202–04**; Hyper Soft/Mid/Short×rank×β×lr **108/108 full**. **Never `pkill -f`**.
-- p4317: **R1191 ~0.02× REFUTE** → **R1201** HiLR; HF full ⇒ `SKIP_HF_PUSH=1` + `SKIP_LOCAL_TKC=0`. **Never `pkill -f`**.
-- p4316: r340 merge_ready stamp + lean chall LOAD. **Never `pkill -f`**.
-- p4315: R1191 pyarrow + T/K TP1 flashinfer-off; `run_sim_duel --n-turns`. **Never `pkill -f`**.
-- p4314: HF push abort → `SKIP_LOCAL_TKC=0` + `SKIP_MERGE=1` local n80. **Never `pkill -f`**.
-- p4313–p4300: Hyper/Mega cascade after REFUTEs; TP1 prefer; sole B200 BL `fbb1135f`. **Never `pkill -f`**.
-- p4308: fleet Removal via `POST /pods/{id}/schedule-removal`. **Never `pkill -f`**.
+- p4340: **R1215 REFUTE** m=−0.001713~−0.30× / **R1216 REFUTE** m=−0.003574~−0.63× (thought✓ B✓) → exact-PID chall reap 372808/:8004 + 372799/:8002 → **R1239** MidCtx MidRank Loβ Mega HiLR (1,3) + **R1240** Soft MidRank Hiβ Mega HiLR (6,7); leave T/K + **R1238** TRAIN 4,5. **Never `pkill -f`**.
+- p4339: **R1217 REFUTE** m=+0.004629~0.89× → exact-PID chall reap → **R1238** ShortCtx LoRank Hiβ Mega UltraLoLR; r1191 → **R1235+36+37 TRAIN**. **Never `pkill -f`**.
+- p4338: **R1208/10/11 REFUTE** → exact-PID reap → **R1232+33+34 TRAIN**. **Never `pkill -f`**.
+- p4337: r340 GPUs6,7 idle → **R1231** Short HiRank Midβ Mega HiLR while crown n80 mid. **Never `pkill -f`**.
+- p4336: crown MERGE_DONE idle → lean chall + **v4 n80 LIVE** R1215/16/17. **Never `pkill -f`**.
+- p4335–p4325: REFUTE→reap→Mega cascade; Soft MidRank Loβ Mega MidLR=**R1010** do not re-run; free-poll GPU must match `GPUS=`; never `sed` CHALL_PORT launch line. **Never `pkill -f`**.
+- p4324–p4300: H100 OOM→H200; Hyper/Mega cascade; teacher OOM@util0.90→TP1≤0.85; HF full⇒SKIP_HF_PUSH; fleet Removal via schedule-removal. **Never `pkill -f`**.
 - p4307/p4303: rent non-BL **H200×8** when B300/B200 empty. **Never `pkill -f`**.
 - p4298: lean free-poll own CUDA GPUs; probe model id from `/v1/models`. **Never `pkill -f`**.
 - p4296/p4291: empty cmdline on finished chall ⇒ UUID-clear GPUs (do not FATAL). **Never `pkill -f`**.

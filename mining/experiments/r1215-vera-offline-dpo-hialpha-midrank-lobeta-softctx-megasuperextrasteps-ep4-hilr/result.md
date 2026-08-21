@@ -1,5 +1,3 @@
-# R1215 — SoftCtx MidRank Loβ Mega HiLR (p4325)
-
-Parent **R1196** SoftCtx MidRank Loβ Hyper UltraLoLR REFUTE ~0.33×; SoftCtx MidRank Loβ Mega MidLR **R1010~0.39×** already — **not** re-run MidLR (R1214 retarget).
-Axis: β=0.02 r=32 α=128 lr=**2e-6** @12288 Mega max_steps=19200 on crown GPUs 1,3.
-Decision: Stage-5 iff fresh v4 n80 margin>max(2·SE,δ=0.002) AND thought≥80 AND B≥0.30 vs reign36.
+# R1215 — SoftCtx MidRank Loβ Mega HiLR
+- **REFUTE v4** p4340 vs reign36: m=**-0.001713** SE=0.002866 z=-0.60 n=78 bar≈0.005732 (~**-0.30×**) thought✓(189) B✓(0.435) k=3/τ=0.03
+- chall reaped exact-PID 372808 → **R1239** MidCtx MidRank Loβ Mega HiLR + **R1240** Soft MidRank Hiβ Mega HiLR
