@@ -64,6 +64,7 @@ uv pip install \
   "safetensors" \
   "numpy" \
   "scipy" \
+  "pyarrow" \
   2>&1 | tee /root/logs/pip_r1191.log | tail -40
 
 python - <<'PY'

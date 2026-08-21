@@ -16,9 +16,9 @@
 | mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | 8×H100 | $13.76 | **2026-08-22T13:30Z** | TK · **R1187 TRAIN** |
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | 8×H200 | $15.96 | **2026-08-22T13:30Z** | TK · **R1197 TRAIN** |
 | mine-r1158-vera-reason-grpo-1 | eager-matrix-57 | 8×H200 | $32.00 | **2026-08-22T11:23Z** | teacher + **R1158 GRPO** |
-| mine-r1191-vera-fullft-1 | swift-comet-4d | 8×H200 | $32.00 | **2026-08-22T11:53Z** | **R1191 TKC→n80** |
+| mine-r1191-vera-fullft-1 | swift-comet-4d | 8×H200 | $32.00 | **2026-08-22T11:53Z** | **R1191 n80** pid**23563** |
 
-Host fleet: **11 mine-*** · burn **~$456.19/h** · **wvk=7** · B300/H200×8 empty · B200=`fbb1135f` BL · waiters armed
+Host fleet: **11 mine-*** · burn **~$456.19/h** · **wvk=7** · B300/B200/H200×8 empty · waiters armed
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval`, `affine-chat`, `swarm-t-h200-4x-1`.
 
@@ -26,6 +26,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-21T13:17:06Z | p4315: **R1191** pyarrow+T/K TP1 relaunch → n80 pid**23563**; stock empty; burn **~$456.19/h** |
 | 2026-08-21T12:47:37Z | p4314: **R1191** HF-push abort → **local TKC** `SKIP_LOCAL_TKC=0` pid**6151** (T+K loading); stock BL-only B200; burn **~$456.19/h** |
 | 2026-08-21T12:42:24Z | p4313: **R1178 REFUTE ~−0.58×** reaped r924 :8002 → **R1200 TRAIN** pid**190717** GPUs6,7; R1198/99 OK; stock empty; burn **~$456.19/h** |
-| 2026-08-21T12:33:28Z | p4312: **R1169+R1173 REFUTE** reaped r924 → **R1198+R1199 TRAIN** (pids **189113/189151**); R1178 n80 ~52/80; BL-only B200; burn **~$456.19/h** |

@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4315: **R1191** n80 abort=`ModuleNotFoundError: pyarrow` + T/K died (triton race / missing `VLLM_USE_FLASHINFER_SAMPLER=0`) while chall OK — `uv pip install pyarrow`; relaunch T+K **TP1 util0.90 `--enforce-eager`** with flashinfer sampler off (keep chall); `run_sim_duel` needs `--n-turns`/`--progress-out`/`--king-repo` (not `--n`/`--progress`/`--hyp`). **Never `pkill -f`**.
 - p4314: **R1191** merge OK then HF push abort (public storage full) left GPUs idle — on good H200 set **`SKIP_LOCAL_TKC=0` + `SKIP_MERGE=1`** and resume pipe for local serve_three/n80; do not wait on HF salvage. Sole 8×B200 still BL `fbb1135f`. **Never `pkill -f`**.
 - p4313: **R1178 ~−0.58× REFUTE** (m=−0.003298 SE=0.002859 thought✓159 B✓0.452) MidCtx HiRank Hiβ MidLR → MidCtx HiRank Hiβ LR exhausted R1139/R1159/R1178 → last free Hyper cell **R1200** ShortCtx HiRank Loβ HiLR same pass. **Never `pkill -f`**.
 - p4312: **R1169 ~0.32× / R1173 ~0.09× REFUTE** reaped r924 :8003/:8004 → ShortCtx MidRank Loβ MidLR (**R1198**) + ShortCtx MidRank MidLoβ MidLR (**R1199**) same pass; R1178 n80 left on GPUs6,7; sole B200=`fbb1135f` BL. **Never `pkill -f`**.

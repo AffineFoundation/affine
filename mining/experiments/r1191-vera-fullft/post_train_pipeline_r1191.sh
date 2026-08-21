@@ -238,11 +238,15 @@ for attempt in $(seq 1 "$N80_MAX_ATTEMPTS"); do
   log "launch n80 sim attempt $attempt/$N80_MAX_ATTEMPTS block_hash=${bh:0:16}… → $SIM_N80"
   set +e
   python3 /root/mining_src/s4-h2-merge/run_sim_duel.py \
-    --n 80 \
+    --n-turns 80 \
     --block-hash "$bh" \
     --out "$SIM_N80" \
-    --progress "$PROG" \
-    --hyp R1191 \
+    --progress-out "$PROG" \
+    --king-repo "$KING_REPO" \
+    --king-rev "$KING_REV" \
+    --chall-repo "$MERGED" \
+    --teacher-repo "${TEACHER_REPO:-zai-org/GLM-4.5-Air-FP8}" \
+    --hotkey "local-r1191-sim" \
     >>"$LOG" 2>&1
   sim_rc=$?
   set -e
