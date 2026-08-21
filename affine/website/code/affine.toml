@@ -20,12 +20,14 @@ king_chain_size = 5
 min_submission_block = 8767079
 # Bittensor weight-version gate for contract upgrades (bump on breaking
 # scoring/contract changes so stale validators are ignored by consensus).
-# Current: 7 (Reason v4 tempered multi-sample, k=3 / tau=0.03, 2026-08-17,
-# explicit operator directive). History: 1→2 teacher swap (2026-08-10, later
-# reverted to GLM-Air); 2→3 Reason v3 scoring fork; 3→4 min_margin=0.002
+# Current: 8 (min_margin 0.002→0.001, v4-scale δ recalibration, 2026-08-21,
+# explicit dated operator directive). History: 1→2 teacher swap (2026-08-10,
+# later reverted to GLM-Air); 2→3 Reason v3 scoring fork; 3→4 min_margin=0.002
 # (2026-08-12); 4→5 min_thought_chars=80 (2026-08-13, empty/cue-thought
 # kings); 5→6 causality_gate=true (2026-08-13, teacher-side B license);
-# 6→7 Reason v4 (2026-08-17, tempered log-mean-exp over k=3 teacher refs).
+# 6→7 Reason v4 (2026-08-17, tempered log-mean-exp over k=3 teacher refs);
+# 7→8 min_margin 0.002→0.001 (2026-08-21, δ recalibrated to the v4 margin
+# scale; see [duel] min_margin comment).
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -33,7 +35,7 @@ min_submission_block = 8767079
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 7
+weight_version_key = 8
 
 [wallet]
 name = "default"
@@ -198,9 +200,16 @@ k_sigma = 2.0
 # (A11 family): the crown bar never drops below δ. Merges / freshly trained
 # parity models are policy-accepted (king-equivalent crowns don't regress
 # the ratchet), hence the floor sits at the lowest calibrated point rather
-# than higher. PROVISIONAL under v4 (2026-08-17): the tempered turn score
-# lives on a shifted scale; recalibrate δ from the first ~20 live v4 duels.
-min_margin = 0.002
+# than higher.
+# 0.002→0.001 (2026-08-21, wvk 7→8, explicit dated operator directive): the
+# v4 tempered turn score compressed margins and noise ~2x (82 live v4 duels:
+# median 2·SE ≈ 0.0013 vs ≈ 0.0024 at v3 scale), leaving the old absolute δ
+# ~1.5x ABOVE the statistical bar — two challengers passed the 2σ test and
+# were blocked by δ alone (chal-00967 z=2.77, chal-00883 z=2.13). 0.001
+# restores the v3-era design ratio (δ ≈ 0.8x the typical 2·SE bar); an
+# ε-copy's SE shrank by the same rescale, so copy protection in z-terms is
+# unchanged. Forward-only: no retroactive re-verdicts.
+min_margin = 0.001
 # Median stripped thought length, in characters (2026-08-13, wvk=5).
 # Invalid challenger cannot crown. 80 sits above live cue phrases
 # ("Next command:" = 13, "Next bash command:" = 18) and below guass (~290)
@@ -358,7 +367,9 @@ poll_interval_s = 60
 max_output_tokens = 1024
 max_input_chars = 16000
 # Dash-side abuse limits: sliding per-IP messages/minute + global in-flight.
-rate_limit_per_min = 10
+# 30/min (was 10, 2026-08-20): agent clients (arbos tool loops) make several
+# wire calls per user turn; the concurrency cap below is the real GPU guard.
+rate_limit_per_min = 30
 max_concurrency = 4
 
 [hippius]
