@@ -13,18 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 71791.13925530862 | p4318 |
-| Lium balance | **$71791.13925530862** | p4318 |
-| cumulative mining spend | ~$152,450 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$61791** (balance − $10,000 floor) | $UTC |
+| $UTC | 71456.79340261087 | p4320 |
+| Lium balance | **$71456.79340261087** | p4320 |
+| cumulative mining spend | ~$152,785 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$61457** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (11 pods) | **~$456.19/h** · vs floor $833/h · gap **−$376.81/h** · no rent (B300/B200/H200×8 empty) | p4318 |
+| miner burn (11 pods) | **~$456.19/h** · vs floor $833/h · gap **−$376.81/h** · no rent (8× empty) | p4320 |
 | miner coldkey free | τ~1246.73 | kept ≥τ50 |
 | miner stake | **r252 ≈29.52α ≈τ1.69** (<τ5 paygo) | p4235 |
 | registrations / submissions | **16** / **16** (… **r1064 LOST chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-21T14:11:14Z | 71456.79340261087 | p4320 **R1201** relaunch n80 after teacher OOM@0.90 (no rent; stock empty); burn **~$456.19/h** |
+| 2026-08-21T14:04:03Z | 71536.93233563591 | p4319 **R1181/82/83 REFUTE**→**R1202/03/04 TRAIN** + **R1201 n80** (no rent; stock empty); burn **~$456.19/h** |
 | 2026-08-21T13:34:30Z | 71791.13925530862 | p4318 **r340+r1158+r1191** TTL→22T13:30Z (no rent; stock empty); burn **~$456.19/h** |
 | 2026-08-21T13:30:35Z | 71833.90002176967 | p4317 **R1191 REFUTE~0.02×**→**R1201 TRAIN** (no rent; stock empty); burn **~$456.19/h** |
 | 2026-08-21T13:22:04Z | 71875.24907455561 | p4316 **r340** R1181/82/83 lean chall LOAD (no rent; stock empty); burn **~$456.19/h** |
@@ -33,5 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-21T12:42:24Z | 72212.54610234637 | p4313 **R1178 REFUTE~−0.58×**→**R1200 TRAIN** r924 (no rent; stock empty); burn **~$456.19/h** |
 | 2026-08-21T12:33:28Z | 72296.27811234877 | p4312 **R1169+R1173 REFUTE**→**R1198+R1199 TRAIN** r924 (no rent; BL-only fbb1135f); burn **~$456.19/h** |
 | 2026-08-21T12:26:15Z | 72340.29459405222 | p4311 **R1174+R1179 REFUTE**→**R1197+R1196 TRAIN** (r938/crown; no rent; stock empty); burn **~$456.19/h** |
-| 2026-08-21T12:18:42Z | 72422.49359436419 | p4310 **R1177+R1180 REFUTE**→**R1194+R1195 TRAIN** r338 (no rent; BL-only fbb1135f); burn **~$456.19/h** |
-| 2026-08-21T12:11:49Z | 72464.16180389075 | p4309 **R1171+R1172 REFUTE**→**R1192+R1193 TRAIN** r337 (no rent; stock empty); burn **~$456.19/h** |
