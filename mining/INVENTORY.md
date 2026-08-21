@@ -6,7 +6,7 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-22T13:30Z** | TK · **R1215+16+17 TRAIN** |
+| mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-22T13:30Z** | TK · **R1215/16/17 n80 LIVE** |
 | mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-22T13:30Z** | TK · **R1207+R1208 TRAIN** |
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | 8×B200 | $46.80 | **2026-08-22T13:30Z** | TK · **R1210+R1211 TRAIN** |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-22T13:30Z** | TK · **R1225+R1226 TRAIN** |
@@ -27,6 +27,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-21T16:40:56Z | p4336: crown **R1215+16+17** MERGE idle → chall :8004/:8002/:8003 + **v4 n80 LIVE**; burn **~$480.99/h** |
 | 2026-08-21T16:35:00Z | p4335: **R1202+R1203 REFUTE** → chall reap → **R1229+R1230 TRAIN**; burn **~$480.99/h** |
 | 2026-08-21T16:27:19Z | p4334: **R1206 REFUTE** → chall reap → **R1228 TRAIN** GPUs6,7; R1202/03 ~62/57; burn **~$480.99/h** |
-| 2026-08-21T16:20:31Z | p4333: **R1206** free-poll GPU4→`$GPUS` · chall:8003 + **v4 n80 LIVE** pid102793; R1202/03 ~32/80; burn **~$480.99/h** |
