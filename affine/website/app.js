@@ -1309,6 +1309,229 @@ function datasetOpen() {
   return location.hash === "#dataset";
 }
 
+/* ---------- chat page (#chat) ---------- */
+
+const chatState = {
+  messages: [],   // {role, content, reasoning?, error?}
+  busy: false,
+  status: null,   // /api/v1/chat/status payload
+  timer: null,
+};
+
+function chatOpen() {
+  return location.hash === "#chat";
+}
+
+function closeChatPage() {
+  if (window.history.length > 1) window.history.back();
+  else location.hash = "";
+}
+
+function openChatPage() {
+  renderChatLog();
+  refreshChatStatus();
+  if (!chatState.timer) {
+    chatState.timer = setInterval(refreshChatStatus, 10000);
+  }
+  $("chat-input")?.focus();
+}
+
+function stopChatStatusPolling() {
+  if (chatState.timer) {
+    clearInterval(chatState.timer);
+    chatState.timer = null;
+  }
+}
+
+async function refreshChatStatus() {
+  if (!chatOpen()) return;
+  try {
+    const r = await fetch("/api/v1/chat/status");
+    chatState.status = r.ok ? await r.json() : null;
+  } catch {
+    chatState.status = null;
+  }
+  renderChatStatus();
+}
+
+function renderChatStatus() {
+  const meta = $("chat-page-meta");
+  const banner = $("chat-banner");
+  const send = $("chat-send");
+  if (!meta || !banner) return;
+  const st = chatState.status;
+  const serving = Boolean(st?.ok);
+  const king = st?.king || {};
+  if (serving) {
+    const reign = king.reign_number != null ? `reign ${king.reign_number} · ` : "";
+    meta.textContent = `${reign}${modelDisplayName(king.repo) || king.repo || ""}`;
+    banner.hidden = true;
+  } else {
+    meta.textContent = st?.state || "offline";
+    banner.hidden = false;
+    banner.textContent =
+      st?.state === "loading" || st?.state === "waiting_for_king"
+        ? "a new king is being loaded onto the chat GPU — this takes a few minutes after a crown"
+        : "the chat model is offline right now — it restarts automatically, try again in a bit";
+  }
+  if (send) send.disabled = !serving || chatState.busy;
+}
+
+function chatMsgHtml(m) {
+  const think = m.reasoning
+    ? `<details class="chat-think"><summary>thought</summary><div>${esc(m.reasoning)}</div></details>`
+    : "";
+  const cls = `chat-msg chat-${m.role}${m.error ? " chat-error" : ""}`;
+  const body = m.content || (m.role === "assistant" && chatState.busy ? "…" : "");
+  return `<div class="${cls}">${think}<div class="chat-msg-body">${esc(body)}</div></div>`;
+}
+
+function renderChatLog() {
+  const log = $("chat-log");
+  if (!log) return;
+  const intro = chatState.messages.length
+    ? ""
+    : `<div class="chat-intro">Talk directly to the reigning SN120 king — the
+       live model this dashboard crowns. Conversations are not stored
+       server-side and replies stream straight from the GPU pod serving
+       it.</div>`;
+  log.innerHTML = intro + chatState.messages.map(chatMsgHtml).join("");
+  log.scrollTop = log.scrollHeight;
+}
+
+/** Cheap incremental update of the last (streaming) message only. */
+function renderChatLast() {
+  const log = $("chat-log");
+  if (!log || !log.lastElementChild) return;
+  const last = chatState.messages[chatState.messages.length - 1];
+  if (!last) return;
+  const el = log.lastElementChild;
+  const html = chatMsgHtml(last);
+  // Replace outerHTML wholesale — messages are small and this keeps the
+  // think/details structure consistent without a vdom.
+  el.outerHTML = html;
+  const nearBottom =
+    log.scrollHeight - log.scrollTop - log.clientHeight < 160;
+  if (nearBottom) log.scrollTop = log.scrollHeight;
+}
+
+async function sendChatMessage() {
+  const input = $("chat-input");
+  const text = (input?.value || "").trim();
+  if (!text || chatState.busy) return;
+  if (!chatState.status?.ok) {
+    refreshChatStatus();
+    return;
+  }
+  input.value = "";
+  input.style.height = "auto";
+  chatState.messages.push({ role: "user", content: text });
+  const reply = { role: "assistant", content: "", reasoning: "" };
+  chatState.messages.push(reply);
+  chatState.busy = true;
+  renderChatLog();
+  renderChatStatus();
+  try {
+    const history = chatState.messages
+      .slice(0, -1)
+      .filter((m) => !m.error && m.content)
+      .map((m) => ({ role: m.role, content: m.content }));
+    const r = await fetch("/api/v1/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: history }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      reply.error = true;
+      reply.content =
+        err.detail || err.error ||
+        (r.status === 429 ? "slow down — rate limit reached"
+                          : "the king is unavailable right now");
+      return;
+    }
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const evt = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        for (const line of evt.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          const data = line.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+          let j;
+          try { j = JSON.parse(data); } catch { continue; }
+          if (j.error) {
+            reply.error = true;
+            reply.content = reply.content || String(j.error);
+            continue;
+          }
+          const delta = j.choices?.[0]?.delta || {};
+          if (delta.reasoning_content) reply.rc = (reply.rc || "") + delta.reasoning_content;
+          if (delta.content) reply.raw = (reply.raw || "") + delta.content;
+          // Kings trained for thought-duels emit reasoning inline, closed by
+          // </think> — fold it into the collapsible thought block so the
+          // visible reply is just the answer. Until the closer arrives the
+          // text stays visible (non-thinking kings never emit it).
+          let think = reply.rc || "";
+          let text = reply.raw || "";
+          const close = text.indexOf("</think>");
+          if (close >= 0) {
+            think += text.slice(0, close).replace(/^<think>\s*/, "");
+            text = text.slice(close + 8).replace(/^\s+/, "");
+          } else if (text.startsWith("<think>")) {
+            think += text.slice(7);
+            text = "";
+          }
+          reply.reasoning = think;
+          reply.content = text;
+        }
+        renderChatLast();
+      }
+    }
+    if (!reply.content && !reply.reasoning && !reply.error) {
+      reply.error = true;
+      reply.content = "the king returned nothing — try rephrasing";
+    }
+  } catch {
+    reply.error = true;
+    reply.content = reply.content
+      ? reply.content + " ⚠ (connection lost mid-reply)"
+      : "connection lost — try again";
+  } finally {
+    chatState.busy = false;
+    renderChatLast();
+    renderChatStatus();
+    $("chat-input")?.focus();
+  }
+}
+
+function wireChatPage() {
+  $("chat-form")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    sendChatMessage();
+  });
+  const input = $("chat-input");
+  input?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage();
+    }
+  });
+  // Grow the chat bar with its content (up to the CSS max-height).
+  input?.addEventListener("input", () => {
+    input.style.height = "auto";
+    input.style.height = `${input.scrollHeight}px`;
+  });
+  $("chat-back")?.addEventListener("click", closeChatPage);
+}
+
 function metricsOpen() {
   return location.hash === "#metrics";
 }
@@ -1322,16 +1545,27 @@ function route() {
   const cid = duelHashCid();
   const ds = datasetOpen();
   const mx = metricsOpen();
+  const ch = chatOpen();
   const auditReign = auditHashReign();
   const page = $("duel-page");
   const dsPage = $("dataset-page");
   const mxPage = $("metrics-page");
   const auPage = $("audits-page");
+  const chPage = $("chat-page");
   if (!page) return;
   // All full-screen pages reuse the duel-open body state (hides the main
   // dashboard); exactly one of them can be visible.
   document.body.classList.toggle(
-    "duel-open", Boolean(cid) || ds || mx || auditReign != null);
+    "duel-open", Boolean(cid) || ds || mx || ch || auditReign != null);
+  if (chPage) {
+    chPage.hidden = !ch;
+    if (ch) {
+      window.scrollTo(0, 0);
+      openChatPage();
+    } else {
+      stopChatStatusPolling();
+    }
+  }
   if (auPage) {
     auPage.hidden = auditReign == null;
     if (auditReign != null) {
@@ -2072,6 +2306,7 @@ function wire() {
   $("audits-back")?.addEventListener("click", closeAuditsPage);
   $("metrics-back")?.addEventListener("click", closeMetricsPage);
   wireDatasetPage();
+  wireChatPage();
   window.addEventListener("hashchange", route);
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
@@ -2080,6 +2315,7 @@ function wire() {
     else if (auditHashReign() != null) closeAuditsPage();
     else if (datasetOpen()) closeDatasetPage();
     else if (metricsOpen()) closeMetricsPage();
+    else if (chatOpen()) closeChatPage();
   });
 }
 

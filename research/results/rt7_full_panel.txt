@@ -1,0 +1,66 @@
+RT-7 on the FULL local panel — Reason v4 vs swe_rebench_lite
+==================================================================
+n = 158 repos (vs n=29 in rt7_live_isomorphism, which joined the
+    last-100 presentation files). 385 duels loaded, 170 repos benched.
+    36 repos had extra duels; most recent kept.
+Reason recomputed uniformly with production v4, tau=0.03.
+Binary split: 83 repos solved >=1 instance, 75 solved 0.
+
+STRATIFIED (the numbers to use)
+  --------------------------------------------------------------
+  statistic                             value    perm p
+  AUC(margin, solved>=1) | king        +0.553    0.3727
+  AUC(S, solved>=1) | epoch            +0.469    0.5873
+  Spearman(margin, swe) | king         -0.065    0.4921
+  Spearman(S, swe) | epoch             -0.086    0.3325
+
+  strata used: S 7 epochs covering 145 repos; margin 7 kings covering 132 repos
+  (strata smaller than 8 repos are dropped)
+
+NAIVE POOLED — CONFOUNDED, shown only so nobody re-derives it
+  --------------------------------------------------------------
+  Spearman(S, swe)      pooled  +0.282   vs stratified -0.086
+  Spearman(margin, swe) pooled  +0.067   vs stratified -0.065
+
+  Simpson's paradox. The shared confound is corpus epoch:
+    Spearman(epoch, S)      = -0.431  (later slices are harder)
+    Spearman(epoch, swe)    = -0.144  (later models slightly weaker)
+    Spearman(epoch, margin) = -0.028
+  Both decline with epoch, which fakes a positive pooled association.
+
+PER-STRATUM detail (S by corpus epoch)
+    n= 35   rho(S, swe) = -0.285
+    n= 30   rho(S, swe) = -0.478
+    n= 25   rho(S, swe) = +0.279
+    n= 23   rho(S, swe) = -0.019
+    n= 12   rho(S, swe) = +0.013
+    n= 11   rho(S, swe) = +0.400
+    n=  9   rho(S, swe) = +0.502
+
+  prior: rt7_live Spearman(margin,swe) = -0.421 at n=29 (pooled, unstratified)
+  prior: freeze Albedo panel Spearman  = +0.758 at n=30 (non-adversarial panel)
+
+How to read AUC: 0.5 is chance. Below 0.5 means the metric ranks models
+that resolve NOTHING above models that resolve something — the RT-7
+inversion. Above 0.5 means real signal about coding ability. A value
+near 0.5 with a large p means the metric is simply uninformative here,
+which is a weaker claim than inversion but still disqualifying.
+
+Field: 197 resolved / 4725 attempted pooled; best repo 0.20.
+
+Bench repeatability (measured): 24 of 170 repos have >1 run; worst spread 6/25 instances.
+  Pooling runs is why this panel is a better instrument than the
+  latest-run-per-repo view in benchmarks.json. Note repeat runs are not
+  randomly assigned (kings get re-benched), so that subset is selected.
+
+Caveats:
+  - Stratifying by epoch does not fully fix absolute S: every duel draws its
+    OWN slice, so difficulty varies within an epoch too. Margin is immune to
+    slice difficulty by construction and is the statistic to trust.
+  - Margin's own confound is the opponent, hence stratification by king. It
+    still measures 'better than the king of the day', not absolute ability.
+  - swe_rebench_lite is 25 tasks. Outcome noise attenuates Spearman toward
+    zero, so a significant result is a conservative floor; a null result is
+    NOT evidence of no effect, only of no detectable effect at this power.
+  - Repos are benched under policy=all, so the panel is not selected on
+    duel outcome.
