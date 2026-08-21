@@ -1,16 +1,10 @@
-# R1094 — MidCtx MidRank Midβ HyperExtra MidLR
+# R1094 — MidCtx MidRank Midβ Hyper MidLR
 
-**Status (p4224):** TRAIN armed on `mine-r337` GPUs4,5 after R1064 idle chall reap (QUEUED chal-00974).
+**Status (p4237):** **REFUTE v4** vs reign36 → slot → **R1107** Hyper HiLR.
 
-| knob | value |
+| field | value |
 |---|---|
-| base | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695` |
-| β / α / r / lr | **0.1** / 128 / **32** / **1e-6** |
-| ctx / steps | MidCtx `@8192` / HyperExtra `38400` |
-| parent | R1064 MidCtx MidRank Midβ Ultra HiLR CROWN_OK ~1.021× → Hyper MidLR isolate |
-
-## Timeline
-- p4224: R1064 still QUEUED chal-00974; idle :8003 chall reaped → TRAIN launch
-- B300/B200×8 stock=0 this pass; waiters stay armed
-
-Decision rule: Stage-5 iff margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 (k=3, τ=0.03) vs reign36.
+| margin | **−0.001575** SE=0.001443 z=−1.091 n=78 bar≈0.002887 (~**−0.55×**) |
+| thought / B | ✓165 / ✓0.423 (k=3 τ=0.03) |
+| knobs | β=0.1 α=128 r=32 lr=1e-6 @8192 Soft Mid Mid Soft→MidCtx **max_steps=38400** |
+| next | R1107 MidCtx MidRank Midβ Hyper **HiLR** (lr=2e-6) on r337 GPUs 4,5 |

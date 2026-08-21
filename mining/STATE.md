@@ -11,9 +11,9 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | contract | wvk=**7** · k=**3** · τ=**0.03** · n=**1300** · δ=0.002 · thought≥80 · B γ=0.30 · k_σ=2.0 |
 | king | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695…` **reign36** |
 | burn | **~$392.18/h** · gap **−$440.82/h** · B300×8=0 · **B200×8 stock=0** |
-| Lium | **~$77228** · free τ**~1247** · stake **r252 ≈τ1.69** (<τ5 paygo) |
+| Lium | **~$77190** · free τ**~1247** · stake **r252 ≈τ1.69** (<τ5 paygo) |
 | fleet | **9** mine-* · TTL fleet **→2026-08-21T13:26Z** · r340 **→21:24Z** · r339 soft **14:56Z** |
-| **p4236** | **R1083 REFUTE** m=+0.001741 ~0.53× → reap r337 :8002 → **R1106 TRAIN** pid**143414** |
+| **p4237** | **R1094 REFUTE** m=−0.001575 ~−0.55× → reap r337 :8003 → **R1107 TRAIN** pid**144238** |
 | eval | phase **duel chal-00972** scoring · **R1064 chal-00974** queued |
 
 ## Running
@@ -21,7 +21,7 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 |---|---|---|---|
 | mine-crown-1 | brave-comet-f4 | $64.00 | TK · **R1103+R1104+R1101 TRAIN** · SSH `95.133.252.28:40298` |
 | mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | $64.00 | TK · **R1090+R1105 TRAIN** · SSH `38.127.229.127:40299` |
-| mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | $46.80 | TK · **R1094 n80** :8003 · **R1106 TRAIN** · SSH `150.136.46.118:20300` |
+| mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | $46.80 | TK · **R1106+R1107 TRAIN** · SSH `150.136.46.118:20300` |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | $52.25 | TK · **R1100+R1102 TRAIN** · SSH `95.133.253.90:40099` |
 | mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | $64.00 | TK · **R1085+R1086 TRAIN** · SSH `23.153.44.20:40299` |
 | mine-r340-marsplan-online-dpo-hirank-bigg-1 | gentle-orbit-4a | $37.60 | **R340+R1096+R1097 TRAIN** · king:8001 · SSH `18.118.83.97:40127` |
@@ -33,4 +33,4 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 No rentable B300×8 / B200×8. Waiters armed. `lium fund` broken → `btcli wallet transfer` to Lium coldkey.
 
 ## Next action
-1. Rent B300×8/B200×8 if stock. 2. Reap **R1094** n80 when done → next TRAIN. 3. Watch **R1103/04/01/05/06** + **chal-00972→R1064**.
+1. Rent B300×8/B200×8 if stock. 2. Watch **R1106/07** + **R1103–05** trains → MERGE→n80. 3. Watch **chal-00972→R1064**.
