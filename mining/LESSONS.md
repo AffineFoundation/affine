@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4313: **R1178 ~−0.58× REFUTE** (m=−0.003298 SE=0.002859 thought✓159 B✓0.452) MidCtx HiRank Hiβ MidLR → MidCtx HiRank Hiβ LR exhausted R1139/R1159/R1178 → last free Hyper cell **R1200** ShortCtx HiRank Loβ HiLR same pass. **Never `pkill -f`**.
 - p4312: **R1169 ~0.32× / R1173 ~0.09× REFUTE** reaped r924 :8003/:8004 → ShortCtx MidRank Loβ MidLR (**R1198**) + ShortCtx MidRank MidLoβ MidLR (**R1199**) same pass; R1178 n80 left on GPUs6,7; sole B200=`fbb1135f` BL. **Never `pkill -f`**.
 - p4311: **R1174 ~0.03× / R1179 ~−0.31× REFUTE** → ShortCtx HiRank Loβ UltraLoLR (**R1197**) r938 + SoftCtx MidRank Loβ UltraLoLR (**R1196**) crown; also **R1173 ~0.09× REFUTE** orphan r924 (+R1169); stock empty. **Never `pkill -f`**.
 - p4310: **R1177 ~−0.57× / R1180 ~0.24× REFUTE** → MidCtx MidRank Loβ UltraLoLR (**R1194**) + MidCtx HiRank Loβ UltraLoLR (**R1195**) same pass on r338; **R1174/R1179** orphans still pending; sole 8×B200=`fbb1135f` BL. **Never `pkill -f`**.
