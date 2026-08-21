@@ -96,14 +96,29 @@ replica_gpus = "6,7"
 # request each: sticky turns pinned to a queued local slot paced the duel.
 # At 10/12 weighting the locals keep roughly the same absolute turn load
 # as before while the swarm absorbs everything else.
-# EMPTIED 2026-08-21 ~19:25Z (ops, no wvk event): the entire miner-teacher
-# pool vanished from Lium ~18:55Z (all mine-* pods terminated at platform
-# level, cause under investigation — possibly balance exhaustion). With the
-# router at zero backends every duel 503'd mid-turn ("fail-open" only
-# probes at duel start) and chal-00994 was burned as eval_infra_exhausted.
-# Local-only duels (~45-50 min) until a teacher pool exists again; restore
-# the 10x router listing when backends are back.
-extra_urls = []
+# 2026-08-21 history: EMPTIED ~19:25Z after the entire miner-teacher pool
+# vanished from Lium ~18:55Z (all mine-* pods terminated platform-side,
+# cause never established; balance was fine at $71k). With the router at
+# zero backends every duel 503'd mid-turn and chal-00994 was burned as
+# eval_infra_exhausted — root cause was the router's /v1/models answering
+# 200 with an empty pool, so evalsrv's per-duel fail-open probe admitted a
+# dead swarm; fixed in ops/teacher-swarm/router.py (503 when empty).
+# RESTORED ~20:15Z (explicit operator directive): pool is now one dedicated
+# 8x B200 box (swarm-t-b200-8x-1, 8 TP1 GLM-Air-FP8 replicas, $39.60/h)
+# managed by ops/teacher-swarm/manager.py under pm2. 8x weighting: 8 swarm
+# replicas next to the 2 mandatory local slots ≈ 8/10 of turns on the
+# swarm, and a mid-duel pod loss now degrades the next duel to local-only
+# instead of burning challengers.
+extra_urls = [
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+  "http://127.0.0.1:9100/v1",
+]
 
 [miner_serving]
 # King stays warm; challenger is loaded per duel.

@@ -37,6 +37,7 @@ OVERLOAD_FACTOR = 4       # spill if chosen backend has 4x the min in-flight
 # A hung replica must not stall a turn for the engine's full patience:
 # echoes (max_tokens<=1) normally finish in 5-30 s, samples in 20-120 s.
 ECHO_TIMEOUT_S = 240.0
+EMPTY_GRACE_S = 120.0  # empty backend list must persist this long to take effect
 SAMPLE_TIMEOUT_S = 600.0
 AFFINITY_KEY_CHARS = 2048  # prompt prefix length used for affinity hashing
 
@@ -80,6 +81,7 @@ class Router:
         self.backends: dict[str, Backend] = {}
         self.model = ""
         self._state_mtime = 0.0
+        self._empty_since: float | None = None
         self.key = swarm_key()
         self.http = httpx.AsyncClient(
             timeout=httpx.Timeout(SAMPLE_TIMEOUT_S, connect=10.0),
@@ -103,6 +105,20 @@ class Router:
         except (OSError, ValueError):
             return
         self.model = state.get("model") or self.model
+        # Transient-empty guard (2026-08-21: an orphan enroll_miners.py raced
+        # the manager and briefly published backends=[] every ~2 min; each
+        # 5-7s window 503'd mid-duel turns and burned chal-00996's retries).
+        # An empty list only takes effect after persisting EMPTY_GRACE_S —
+        # a real teardown stays empty, a racing writer gets overwritten by
+        # the next good state within one manager cycle.
+        if not state.get("backends") and self.backends:
+            now = time.monotonic()
+            if self._empty_since is None:
+                self._empty_since = now
+            if now - self._empty_since < EMPTY_GRACE_S:
+                return
+        else:
+            self._empty_since = None
         fresh = {}
         for b in state.get("backends", []):
             url = b["url"].rstrip("/")
@@ -156,6 +172,8 @@ class Router:
         key = self.affinity_key(payload, path)
         candidates = self.ranked(key)[:3]  # primary + two retries
         if not candidates:
+            print(f"[router] 503 no-backends: {len(self.backends)} known, "
+                  f"state_mtime={self._state_mtime}", flush=True)
             return JSONResponse({"error": "no teacher backends"}, 503)
         is_sample = int(payload.get("max_tokens") or 0) > 1
         timeout = SAMPLE_TIMEOUT_S if is_sample else ECHO_TIMEOUT_S
@@ -177,6 +195,7 @@ class Router:
                 last_err = f"{b.pod}: {e!r}"
             finally:
                 b.in_flight -= 1
+        print(f"[router] 502 all-failed: {last_err[:300]}", flush=True)
         return JSONResponse({"error": f"all backends failed: {last_err}"}, 502)
 
     # ---- metrics --------------------------------------------------------------
@@ -208,7 +227,14 @@ async def health():
 
 @app.get("/v1/models")
 async def models():
+    # evalsrv's per-duel fail-open probe hits this route. It must fail when
+    # the pool is empty, otherwise the probe admits the router into the duel
+    # teacher pool and every turn pinned to it 503s mid-duel — that exact
+    # sequence burned chal-00994 on 2026-08-21 when the miner pool vanished.
     router.reload_state()
+    healthy = [b for b in router.backends.values() if b.healthy]
+    if not healthy:
+        return JSONResponse({"error": "no healthy teacher backends"}, 503)
     return {"object": "list",
             "data": [{"id": router.model, "object": "model",
                       "owned_by": "teacher-swarm"}]}
