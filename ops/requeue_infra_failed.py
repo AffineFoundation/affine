@@ -37,11 +37,14 @@ STATE_DIR = ROOT / "affine" / "state"
 
 # (hotkey, repo, revision) terminally failed by infra, never by their weights.
 VICTIMS = [
+    # 2026-08-21: teacher-swarm miner pool vanished mid-duel (all mine-* pods
+    # terminated at platform level ~18:55Z); every turn pinned to the router
+    # 503'd and chal-00994 exhausted its 3 retries on pure infra faults.
     {
-        "hotkey": "5GNQKfKWotaYNdSMGatosqfxdtbVm2MKcQwWgUo2TPcpkkkC",
-        "repo": "dent1s2/Affine-5GNQKpkkkC-v1",
-        "revision": "6ceabc8c561e071e3a5f2b28baaa15a3594b16ae",
-        "from_challenge": "chal-00596",
+        "hotkey": "5EqEsdjMKijetPpo6DLUwhJVfsmun21GK8vT5kkkwoRJQMLW",
+        "repo": "afgod1079/Affine-5eqesjqmlw-cp1500",
+        "revision": "c134112b3c563d93c796fb438d56d575aa7ac464",
+        "from_challenge": "chal-00994",
     },
 ]
 

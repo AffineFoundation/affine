@@ -300,6 +300,12 @@ class Engine:
         # moved to H200 (2026-08-13): score-safe because ranked logprobs are
         # teacher-side (GLM, non-GDN); miner GDN engines only sample.
         cmd += ["--additional-config", '{"gdn_prefill_backend": "triton"}']
+        if self.role == "chat":
+            # The chat pod's wire plane serves agent clients (arbos, Cursor)
+            # that drive tool loops over /v1/chat/completions. Qwen-family
+            # kings emit hermes-style <tool_call> blocks. Never set on duel/
+            # bench pods — scoring must see raw completions.
+            cmd += ["--enable-auto-tool-choice", "--tool-call-parser", "hermes"]
         if revision:
             cmd += ["--revision", revision]
         return cmd

@@ -234,7 +234,7 @@ rollouts per turn, each ref scores `a_i = lpC(y_i|z_A) − lpC(y_i|∅)`, and \
 the turn score is `tau·log(mean_i exp(a_i/tau))` with `tau = 0.03`; miner \
 score = mean over turns. You dethrone the king iff the paired mean \
 `Reason_c − Reason_k` beats `max(k_sigma·SE, δ)` (`k_sigma = 2`, \
-`min_margin = 0.002`) **and** your median stripped thought length is at \
+`min_margin = 0.001`) **and** your median stripped thought length is at \
 least `min_thought_chars = 80` **and** at least `causality_gamma = 0.30` of \
 pairs pass teacher-side B (`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no \
 leakage). No lpA gates.
@@ -395,7 +395,8 @@ once-ever eval slot on a checkpoint that cannot load.
 
 ## Reason (what you optimize)
 
-Since 2026-08-17 (`weight_version_key = 7`) the whole scoring contract is:
+Since 2026-08-17 (`weight_version_key = 8` as of 2026-08-21, δ \
+recalibration) the whole scoring contract is:
 
 ```
 a_i (per teacher ref) = lpC(y_i | z_A) − lpC(y_i | ∅)     i = 1..k, k = 3
@@ -404,7 +405,7 @@ Miner score           = mean(Reason) over all scored turns
 Crown                 = paired mean(Reason_c − Reason_k) > max(k_sigma·SE, δ)
                         AND median(len(z_A.strip())) ≥ min_thought_chars
                         AND B pass rate ≥ causality_gamma
-                        (k_sigma = 2, δ = min_margin = 0.002,
+                        (k_sigma = 2, δ = min_margin = 0.001,
                          min_thought_chars = 80, causality_gamma = 0.30,
                          SE = sd/√n over paired turns)
 B (per rollout)       = lpC(y_A | z_A) − lpC(y_A | ∅)
@@ -436,16 +437,20 @@ while staying warm enough that a single lucky ref hit does not dominate \
 (mode-guessing and leakage amplification are the cold-tau failure modes; \
 both are monitored via published telemetry and the post-crown audit).
 
-**Why the δ floor (`min_margin = 0.002`, 2026-08-12).** The z-test is \
+**Why the δ floor (`min_margin = 0.001`; 0.002 from 2026-08-12, \
+recalibrated 2026-08-21 to the v4 margin scale).** The z-test is \
 relative to the challenger's own per-turn noise. A near-copy of the king \
-has ~6× less duel variance than a genuinely distinct model, so without the \
-floor it could crown on a ±0.0006 noise fluctuation at the same 1-in-44 \
-odds as anyone else. The absolute floor makes that ~z = 6.7 (≈1-in-10^10) \
-while sitting safely below the live honest bar 2·SE ≈ 0.0035 — real duels \
-never touch it. It also caps SE-compression — however consistent your \
-thoughts, the crown bar never drops below 0.002. The calibration (148 \
-archived duels) ships in the repo as \
-`research/results/delta_calibration.json`.
+has far less duel variance than a genuinely distinct model, so without the \
+floor it could crown on a pure-noise fluctuation at the same 1-in-44 \
+odds as anyone else. The absolute floor makes that ~z ≥ 6 (≈1-in-10^9) \
+while sitting below the typical honest bar 2·SE. It also caps \
+SE-compression — however consistent your thoughts, the crown bar never \
+drops below δ. The original 0.002 was calibrated on 148 archived v3 duels \
+(`research/results/delta_calibration.json`); Reason v4 compressed margins \
+and noise ~2x (median live 2·SE 0.0024 → 0.0013 across 82 v4 duels), so \
+on 2026-08-21 δ was recalibrated to 0.001 (`weight_version_key = 8`), \
+restoring the v3-era δ/SE design ratio. Copy SEs shrank by the same \
+rescale, so copy protection is unchanged in z-terms.
 
 **Live instrumentation.** Each scored turn runs one miner sample, `k = 3` \
 Reason echoes (`lpC(y_i|z_A)`, one per teacher reference), and two B \
