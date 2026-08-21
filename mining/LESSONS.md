@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4227: r340 king GPU5 **died** (`flashinfer` JIT: no `nvcc` / `CUDA_HOME`) — relaunch with `CUDA_HOME=$venv/…/nvidia/cu13` + `VLLM_USE_FLASHINFER_SAMPLER=0` → **:8001 KING_OK** (pid20858); patch waiter `start_king_gpu5_p4226.sh`. B300/B200×8=0. **Never `pkill -f`**.
 - p4226: crown SSH **recovered**; r340 idle GPUs1–4 (R340 Online only on 6,7) → **R1096** SoftCtx MidRank MidLoβ Hyper MidLR + **R1097** MidCtx HiRank MidLoβ Hyper MidLR TRAIN + king GPU5; B300/B200×8=0. **Never `pkill -f`**.
 - p4225: R1068 idle REFUTE chall r924 :8004 → exact-PID reap GPUs4,5 → **R1095** MidCtx MidRank MidLoβ Hyper MidLR TRAIN; **mine-crown-1 SSH timeout** (lium exec too) — recover before R1091–93 merge. B300/B200×8=0. **Never `pkill -f`**.
 - p4224: R1064 **QUEUED chal-00974** idle chall r337 :8003 → exact-PID reap GPUs4,5 → **R1094** MidCtx MidRank Midβ Hyper MidLR TRAIN (R1064 Ultra HiLR backup). B300/B200×8=0. **Never `pkill -f`**.
