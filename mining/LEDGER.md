@@ -13,20 +13,20 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 72710.26621440689 | p4305 |
-| Lium balance | **$72710.26621440689** | p4305 |
-| cumulative mining spend | ~$151,531 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$62710** (balance − $10,000 floor) | $UTC |
+| $UTC | 72671.08002065257 | p4306 |
+| Lium balance | **$72671.08002065257** | p4306 |
+| cumulative mining spend | ~$151,570 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$62671** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (10 pods) | **~$424.19/h** · vs floor $833/h · gap **−$408.81/h** · B300/B200/H200×8 stock empty · no new rent | p4305 |
+| miner burn (10 pods) | **~$424.19/h** · vs floor $833/h · gap **−$408.81/h** · B300/H200 empty · B200=BL-only · no new rent | p4306 |
 | miner coldkey free | τ~1246.73 | kept ≥τ50 |
 | miner stake | **r252 ≈29.52α ≈τ1.69** (<τ5 paygo) | p4235 |
 | registrations / submissions | **16** / **16** (… **r1064 LOST chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-21T11:49:14Z | 72671.08002065257 | p4306 **R1168 REFUTE~−0.42×**→**R1190 TRAIN** r252 (no rent; BL-only fbb1135f); burn **~$424.19/h** |
 | 2026-08-21T11:43:58Z | 72710.26621440689 | p4305 **R1175+R1176 REFUTE**→**R1188+R1189 TRAIN** crown (no rent; stock empty); burn **~$424.19/h** |
-| 2026-08-21T11:35:48Z | 72788.05287362495 | p4304 **R1158 GRPO TRAIN** + **R1170 REFUTE~0.57×→R1187 TRAIN** (no rent; BL-only fbb1135f); burn **~$424.19/h** |
 | 2026-08-21T11:18:06Z | 72902.57954501838 | p4302 **R1167 REFUTE ~−0.15×**→**R1186 TRAIN** r252 (no rent; BL-only fbb1135f; H200×8 avail); burn **~$392.19/h** |
 | 2026-08-21T11:06:11Z | 72976.14727272597 | p4301 **R1166 REFUTE ~0.45×**→**R1185 TRAIN** r339 (no rent; BL-only fbb1135f); burn **~$392.19/h** |
 | 2026-08-21T10:56:20Z | 73049.71268173814 | p4300 **R1166** TP2 stall→**TP1 n80 LIVE** r339 (no rent; ls empty post-BL); burn **~$392.19/h** |
