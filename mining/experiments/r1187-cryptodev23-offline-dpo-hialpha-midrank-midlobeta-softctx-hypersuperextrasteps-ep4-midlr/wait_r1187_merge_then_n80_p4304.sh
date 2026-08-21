@@ -19,5 +19,5 @@ for i in $(seq 1 120); do
 done
 curl -sf -m 5 http://127.0.0.1:8000/v1/models >/dev/null
 curl -sf -m 5 http://127.0.0.1:8001/v1/models >/dev/null
-LEAN=/root/mining_src/r1187-cryptodev23-offline-dpo-hialpha-midrank-midlobeta-midctx-hypersuperextrasteps-ep4-midlr/lean_chall_n80_r926_gpus34_p4304.sh
+LEAN=/root/mining_src/r1187-cryptodev23-offline-dpo-hialpha-midrank-midlobeta-softctx-hypersuperextrasteps-ep4-midlr/lean_chall_n80_r926_gpus34_p4304.sh
 chmod +x "$LEAN"; bash "$LEAN"
