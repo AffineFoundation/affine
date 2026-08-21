@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4295: **r340 R1142/R1144** TP2 NCCL-stall orphans (~1GiB, never CHALL_READY) + **R1156** TP1 util0.90 OOM on logprobs → kill-by-pid, relaunch **TP1 util0.85** + FORCE Triton + `/v1/completions` probe. **Never `pkill -f`**.
 - p4294: **R1165 ~0.39× REFUTE** — MidCtx LoRank Loβ LR family exhausted (Hi/Mid/Ultra) → Hiβ UltraLoLR same pass; positive margin below bar still REFUTE. **Never `pkill -f`**.
 - p4293: **R1160 ~−0.51× / R1161 ~−0.17× REFUTE** — ShortCtx LoRank Hiβ + MidRank MidLoβ LR families exhausted → SoftCtx/MidCtx UltraLoLR same pass; decision `note` may be wrong (trust train_launched). **Never `pkill -f`**.
 - p4292: **R1155 ~0.91× / R1140 ~−0.04× REFUTE** → MidLR + ShortCtx UltraLoLR same pass; empty cmdline on finished chall ⇒ skip tok-check, clear by GPU uuid. **Never `pkill -f`**.

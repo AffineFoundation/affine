@@ -50,7 +50,7 @@ KING_REV=8e3f1695e058837ed80fec3238ff439fdc2d0f0e
 TEACHER_REPO=zai-org/GLM-4.5-Air-FP8
 MERGE_DIR=/tmp/r1156_merged
 export CUDA_VISIBLE_DEVICES=$GPUS
-UTIL=${UTIL:-0.90}
+UTIL=${UTIL:-0.85}
 LOG=/root/logs/p4278_r1156_chall_n80_wvk7.log
 CHALL_LOG=/root/logs/vllm_chall_r1156_p4278.log
 PIDF=/root/logs/vllm_chall_r1156.pid
@@ -61,7 +61,7 @@ SIM_DEC=/root/affine_data/r1156_decision_reign36_wvk7.json
 mkdir -p /root/logs /root/affine_data
 
 : >"$LOG"
-log() { echo "[p4278-r1156] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*" | tee -a "$LOG"; }
+log() { echo "[p4295-r1156] $(date -u +%Y-%m-%dT%H:%M:%SZ) $*" | tee -a "$LOG"; }
 
 stop_pid() {
   local pid=$1
@@ -148,7 +148,7 @@ except Exception:
     out = ""
 pids = set(int(x) for x in re.findall(r"pid=(\d+)", out))
 for pid in sorted(pids):
-    print(f"[p4278-r1156] kill :{port} listener pid={pid}", flush=True)
+    print(f"[p4295-r1156] kill :{port} listener pid={pid}", flush=True)
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -192,17 +192,17 @@ for pid in gpu_pids:
     except Exception:
         cmd = ""
     if "train_online_dpo" in cmd or "train_dpo" in cmd or "train_full" in cmd or "train_reason_grpo" in cmd:
-        print(f"[p4278-r1156] SKIP train pid={pid}", flush=True)
+        print(f"[p4295-r1156] SKIP train pid={pid}", flush=True)
         continue
     if "r769" in cmd or "r769_merged" in cmd or "/root/r769" in cmd:
-        print(f"[p4278-r1156] SKIP sibling train pid={pid}", flush=True)
+        print(f"[p4295-r1156] SKIP sibling train pid={pid}", flush=True)
         continue
     if any(tok in cmd for tok in ["GLM-4.5-Air", ":8000", ":8001"]):
         if "r1156_merged" not in cmd:
-            print(f"[p4278-r1156] SKIP TK pid={pid}", flush=True)
+            print(f"[p4295-r1156] SKIP TK pid={pid}", flush=True)
             continue
     kill_set.add(pid)
-print(f"[p4278-r1156] reap gpu={sorted(want)} kill={sorted(kill_set)}", flush=True)
+print(f"[p4295-r1156] reap gpu={sorted(want)} kill={sorted(kill_set)}", flush=True)
 for pid in kill_set:
     try:
         os.kill(pid, signal.SIGTERM)
@@ -214,7 +214,7 @@ for pid in kill_set:
         os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
-print("[p4278-r1156] chall GPUs reaped", flush=True)
+print("[p4295-r1156] chall GPUs reaped", flush=True)
 PY
 
 for i in $(seq 1 60); do
@@ -227,7 +227,7 @@ for i in $(seq 1 60); do
 done
 
 _seed_src=""
-for cand in /root/.triton/cache/chall_r1156 /root/.triton/cache/chall_r954 /root/.triton/cache/chall_r949 /root/.triton/cache/chall_r941 /root/.triton/cache/chall_r939 /root/.triton/cache/chall_r340 /root/.triton/cache/king /root/.triton/cache/chall; do
+for cand in /root/.triton/cache/king /root/.triton/cache/chall_r969 /root/.triton/cache/chall_r954 /root/.triton/cache/chall_r949 /root/.triton/cache/chall_r941 /root/.triton/cache/chall_r340 /root/.triton/cache/chall; do
   if [[ -d "$cand" ]]; then
     _n=$(find "$cand" -name '__triton_launcher*.so' 2>/dev/null | wc -l || true)
     if [[ "${_n:-0}" -ge 1 ]]; then
@@ -236,22 +236,18 @@ for cand in /root/.triton/cache/chall_r1156 /root/.triton/cache/chall_r954 /root
     fi
   fi
 done
-_pre_n=$(find "$TCACHE" -name '__triton_launcher*.so' 2>/dev/null | wc -l || true)
-_pre_sz=$(du -sm "$TCACHE" 2>/dev/null | awk '{print $1}' || echo 0)
-if [[ "${_pre_n:-0}" -ge 1 && "${_pre_sz:-0}" -ge 50 ]]; then
-  log "REUSE preseed $TCACHE n_so=$_pre_n size_mb=$_pre_sz — skip wipe"
+rm -rf "$TCACHE"
+mkdir -p "$(dirname "$TCACHE")"
+if [[ -n "$_seed_src" ]]; then
+  log "p4295 FORCE wipe+seed $TCACHE from $_seed_src"
+  cp -a "$_seed_src" "$TCACHE"
 else
-  if [[ -n "$_seed_src" ]]; then
-    log "FORCE wipe+seed $TCACHE from $_seed_src"
-    rm -rf "$TCACHE"
-    mkdir -p "$(dirname "$TCACHE")"
-    cp -a "$_seed_src" "$TCACHE"
-  else
-    log "WARN no triton seed; empty $TCACHE"
-    mkdir -p "$TCACHE"
-  fi
+  log "WARN no triton seed; empty $TCACHE"
+  mkdir -p "$TCACHE"
 fi
-log "skip triton purge; keep seeded tree intact"
+chmod -R a+rX "$TCACHE" 2>/dev/null || true
+_post_n=$(find "$TCACHE" -name '__triton_launcher*.so' 2>/dev/null | wc -l || true)
+log "triton seed n_so=$_post_n"
 
 export CUDA_VISIBLE_DEVICES=$GPUS
 export TRITON_CACHE_DIR=$TCACHE
@@ -287,6 +283,34 @@ for i in $(seq 1 240); do
   sleep 5
 done
 curl -sf -m 5 "http://127.0.0.1:${CHALL_PORT}/v1/models" >/dev/null
+
+# p4295: probe one completion before n80
+log "probe sample before n80"
+if ! CHALL_PORT="$CHALL_PORT" python3 - <<'PY'
+import json, os, urllib.request
+port = os.environ["CHALL_PORT"]
+req = urllib.request.Request(
+    f"http://127.0.0.1:{port}/v1/completions",
+    data=json.dumps({
+        "model": "/tmp/r1156_merged",
+        "prompt": "Next command:\n",
+        "max_tokens": 8,
+        "temperature": 0.0,
+    }).encode(),
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+with urllib.request.urlopen(req, timeout=180) as r:
+    body = json.loads(r.read().decode())
+assert body.get("choices"), body
+print("PROBE_OK", (body["choices"][0].get("text") or "")[:80])
+PY
+then
+  log "FATAL probe sample failed — see $CHALL_LOG"
+  tail -n 80 "$CHALL_LOG" | tee -a "$LOG" || true
+  exit 1
+fi
+log "PROBE_OK — launch n80"
 
 BLOCK_HASH=$(python3 - <<'PY'
 import hashlib, time
