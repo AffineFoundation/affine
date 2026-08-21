@@ -1,3 +1,4 @@
+# p4247: prefer TP1 + seed /tmp/triton_king_gpu5_p4227 on r340 B200 (dual TP2 hung at pynccl)
 #!/usr/bin/env bash
 # p4245: R1097 MERGE_DONE (stub lean replaced) → chall :8003 GPUs3,4 + v4 n80 vs reign36.
 # Axis: vera MidCtx HiRank MidLoβ HyperExtra MidLR (β=0.05 r=64 α=128 lr=1e-6 @8192 steps=38400)
@@ -76,7 +77,7 @@ gpus=3,4; port=8003; tag=r1097
 chall_log=/root/logs/vllm_chall_${tag}_p4245.log
 pidf=/root/logs/vllm_chall_${tag}.pid
 tcache=/root/.triton/cache/chall_${tag}
-for cand in /root/.triton/cache/king /root/.triton/cache/chall_r340 /root/.triton/cache/chall_r1096 /root/.triton/cache/chall_r1100; do
+for cand in /tmp/triton_king_gpu5_p4227 /root/.triton/cache/king /root/.triton/cache/chall_r340 /root/.triton/cache/chall_r1096 /root/.triton/cache/chall_r1100; do
   if [[ -d "$cand" ]] && find "$cand" -name '__triton_launcher*.so' 2>/dev/null | grep -q .; then
     echo "[p4245-r1097] seed triton from $cand"
     rm -rf "$tcache"; cp -a "$cand" "$tcache"; break

@@ -1,14 +1,12 @@
-# R1111 — MidCtx HiRank Hiβ HyperExtra HiLR (from R1100 REFUTE)
+# R1111 — MidCtx HiRank Hiβ HyperExtra HiLR
 
-## Axis
-`vera×Offline-DPO×HiAlpha×HiRank×HiBeta×MidCtx×HyperSuperExtraSteps×epochs=4×HiLR`
-- base `vera6/affine-5g4yy75zuz-t6`@`8e3f1695`
-- β=**0.3** α=128 r=64 lr=**2e-6** @8192 max_steps=**38400**
-- pod `mine-r338` GPUs **4,5** chall :8003
+**Status (p4251):** **REFUTE v4** vs reign36 → **R1122** MidCtx HiRank **Loβ** Hyper HiLR.
 
-## Parent
-R1100 MidCtx HiRank Midβ Hyper HiLR REFUTE p4239
-m=−0.002847 SE=0.005436 z=−0.524 n=78 bar≈0.010872 (~**−0.26×**) thought✓(196) B✓(0.462) k=3 vs reign36
+| knob | value |
+|---|---|
+| base | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695` |
+| β / α / r / lr | **0.3** / 128 / **64** / **2e-6** |
+| ctx / steps | MidCtx `@8192` / HyperExtra `38400` |
+| n80 | m=**+0.003700** SE=0.002729 z=1.356 n=80 bar≈0.005458 (~**0.68×**) thought✓(199) B✓(0.515) k=3/τ=0.03 |
 
-## Decision rule
-Stage-5 iff fresh v4 n80 margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 vs reign36.
+Decision rule: Stage-5 iff margin > max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 (k=3, τ=0.03) vs reign36.
