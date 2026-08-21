@@ -10,3 +10,5 @@
 
 ## Axes ≠
 MidCtx UltraLoLR R1141 / SoftCtx MidLR R1090 / SoftCtx Hiβ UltraLoLR R1168 / ShortCtx MidLR R1167 / Online / GRPO
+
+- **p4321:** REFUTE stamped; slot → R1207 Mega SoftCtx HiRank MidLoβ MidLR p4321

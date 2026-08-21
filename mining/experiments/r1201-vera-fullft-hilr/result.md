@@ -1,11 +1,14 @@
 # R1201 — result notes
 
 ## Status
-- **p4320:** p4319 n80 pid42003 died — teacher OOM on prompt_logprobs at util**0.90**. Kill-by-PID T/K/chall → `serve_three` TP1 **GPUUTIL=0.85** **CHALL_GPUUTIL=0.80** → `/v1/models` + completions+logprobs probe OK → n80 relaunch pid**48168** → `/root/affine_data/r1201_sim_result_reign36_wvk7.json`. SSH `69.63.236.163:40299`.
-- **p4317:** After **R1191 REFUTE ~0.02×**, freed T/K/chall by PID on `mine-r1191` H200; launched **FullFT HiLR** lr=**2e-6** ep=1 @8192 on `winner_za_high_l2` (406). TRAIN done; merge local (`SKIP_HF_PUSH=1`).
+- **p4321 REFUTE v4** vs reign36 · m=**−0.003071** SE=0.003308 z=−0.928 n=80 · bar≈0.006615 (~**−0.46×**)
+  thought✓(med171) B✓(0.55) k=3/τ=0.03 · challenger_wins=false
+  → FullFT MidLR (R1191) + HiLR (R1201) exhausted → **R1209** UltraLoLR same pass.
+- **p4320:** teacher OOM@0.90 → serve_three util0.85/0.80 → n80 pid48168.
+- **p4317:** After R1191 REFUTE ~0.02× → FullFT HiLR TRAIN.
 
 ## Axis
-vera×FullFT×HiLR isolate after MidLR REFUTE. ≠ R1191 MidLR · ≠ Offline-DPO · ≠ Online-DPO · ≠ R1158 GRPO.
+vera×FullFT×HiLR lr=2e-6 @8192 thought-only. ≠ R1191 MidLR · ≠ Offline-DPO · ≠ Online-DPO · ≠ GRPO.
 
 ## Decision
-Stage-5 iff fresh v4 n80 margin>max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 vs reign36.
+Stage-5 iff fresh v4 n80 margin>max(2·SE, δ=0.002) AND thought≥80 AND B≥0.30 vs reign36 — **failed**.
