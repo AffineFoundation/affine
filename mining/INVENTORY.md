@@ -10,7 +10,7 @@
 | mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-21T13:26Z** | TK · **R1090+R1105 TRAIN** |
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | 8×B200 | $46.80 | **2026-08-21T13:26Z** | TK · **R1106+R1107 TRAIN** |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-21T13:26Z** | TK · **R1100+R1102 TRAIN** |
-| mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | 8×B200 | soft **2026-08-21T14:56Z** | TK · **R1085+R1086 TRAIN** |
+| mine-r339-marsplan-online-dpo-hirank-1 | noble-raven-a7 | 8×B200 | soft **2026-08-21T14:56Z** | TK · **R1108+R1109 TRAIN** |
 | mine-r340-marsplan-online-dpo-hirank-bigg-1 | gentle-orbit-4a | 8×B200 | $37.60 | **2026-08-21T21:24Z** | **R340+R1096+R1097** · king:8001 |
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | 8×H200 | $33.81 | **2026-08-21T13:26Z** | TK · **R1084+R1089+R1095 TRAIN** |
 | mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | 8×H100 | $13.76 | **2026-08-21T13:26Z** | TK · **R1098 TRAIN** |
@@ -24,6 +24,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
+| 2026-08-21T01:52:54Z | p4238: **R1085+R1086 REFUTE** → reap r339 :8002/:8003 → **R1108+R1109 TRAIN** pid**43401**/**43394**; B300/B200×8=0 |
 | 2026-08-21T01:42:15Z | p4237: **R1094 REFUTE** → reap r337 :8003 → **R1107 TRAIN** pid**144238**; R1106 intact GPUs6,7; B300/B200×8=0 |
 | 2026-08-21T01:36:59Z | p4236: **R1083 REFUTE** → reap r337 :8002 → **R1106 TRAIN** pid**143414**; R1094 n80 live :8003; B300/B200×8=0 |
-| 2026-08-21T01:32:48Z | p4235: **R1081 REFUTE** → reap r252 :8003 → **R1105 TRAIN** pid**174547**; B300/B200×8=0 |
