@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 74813.88144756506 | p4273 |
-| Lium balance | **$74813.88144756506** | p4273 |
-| cumulative mining spend | ~$149,424 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$64814** (balance − $10,000 floor) | $UTC |
+| $UTC | 74741.02021943031 | p4274 |
+| Lium balance | **$74741.02021943031** | p4274 |
+| cumulative mining spend | ~$149,497 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$64741** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (9 pods) | **~$392.19/h** · vs floor $833/h · gap **−$440.81/h** · B300×8=0 · B200×8 stock=0 | p4273 |
+| miner burn (9 pods) | **~$392.19/h** · vs floor $833/h · gap **−$440.81/h** · B300×8=0 · B200×8 stock=0 | p4274 |
 | miner coldkey free | τ~1246.73 | kept ≥τ50 |
 | miner stake | **r252 ≈29.52α ≈τ1.69** (<τ5 paygo) | p4235 |
 | registrations / submissions | **16** / **16** (… **r1064 LOST chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-21T07:05:50Z | 74741.02021943031 | p4274 r252 **R1123 REFUTE**→**R1153** UltraLoLR TRAIN (no rent; B300/B200×8=0); burn **~$392.19/h** |
 | 2026-08-21T07:00:17Z | 74813.88144756506 | p4273 r337 **R1125+37 REFUTE**→**R1149+50** + r338 **R1135+36 REFUTE**→**R1151+52** TRAIN (no rent; B300/B200×8=0); burn **~$392.19/h** |
 | 2026-08-21T06:52:18Z | 74850.81148337232 | p4272 crown **R1129+33+34 REFUTE**→**R1146+47+48** TRAIN (no rent; B300/B200×8=0); burn **~$392.19/h** |
 | 2026-08-21T06:43:47Z | 74923.61928045264 | p4271 **R1127 REFUTE**→**R1145** TRAIN r339 (no rent; B300/B200×8=0); burn **~$392.19/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-21T06:04:00Z | 75214.7841515009 | p4267 **R1120 REFUTE**→**R1142** UltraLoLR TRAIN r340 (no rent; B300/B200×8=0); burn **~$392.19/h** |
 | 2026-08-21T05:54:14Z | 75295.22889675791 | p4266 **R1120** TP2 stall→**TP1** n80 r340 (no rent; B300/B200×8=0); burn **~$392.19/h** |
 | 2026-08-21T05:44:49Z | 75370.30197069787 | p4265 **R1121 REFUTE**→**R1141** UltraLoLR TRAIN r340 (no rent; B300/B200×8=0); burn **~$392.19/h** |
-| 2026-08-21T05:38:25Z | 75408.89117020546 | p4264 **R1121** TP1 n80 re-arm; **R1114→R1139** + **R1118→R1140** TRAIN (no rent; B300/B200×8=0); burn **~$392.19/h** |
