@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 73599.882785395 | p4291 |
-| Lium balance | **$73599.882785395** | p4291 |
-| cumulative mining spend | ~$150,640 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$63599** (balance − $10,000 floor) | $UTC |
+| $UTC | 73526.47590989307 | p4292 |
+| Lium balance | **$73526.47590989307** | p4292 |
+| cumulative mining spend | ~$150,713 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$63526** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (9 pods) | **~$392.19/h** · vs floor $833/h · gap **−$440.81/h** · B300×8=0 · B200×8=BL-only | p4291 |
+| miner burn (9 pods) | **~$392.19/h** · vs floor $833/h · gap **−$440.81/h** · B300×8=0 · B200×8=BL-only | p4292 |
 | miner coldkey free | τ~1246.73 | kept ≥τ50 |
 | miner stake | **r252 ≈29.52α ≈τ1.69** (<τ5 paygo) | p4235 |
 | registrations / submissions | **16** / **16** (… **r1064 LOST chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-21T09:51:16Z | 73526.47590989307 | p4292 **R1155+R1140 REFUTE**→**R1173+R1174 TRAIN** (no rent; BL-only fbb1135f); burn **~$392.19/h** |
 | 2026-08-21T09:42:56Z | 73599.882785395 | p4291 **R1154/57/49/50 REFUTE**→**R1169+70+71+72 TRAIN** (no rent; BL-only fbb1135f); burn **~$392.19/h** |
 | 2026-08-21T09:31:43Z | 73673.82879972407 | p4290 **R1149+R1150+R1140** n80 relaunch (wrong wait EXP path; no rent; BL-only fbb1135f); burn **~$392.19/h** |
 | 2026-08-21T09:24:05Z | 73748.11966023096 | p4289 **R1154** n80 LIVE (no rent; BL-only fbb1135f); burn **~$392.19/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-21T08:55:51Z | 73932.24437318007 | p4285 **R1145** Triton+probe n80 LIVE (no rent; BL-empty); burn **~$392.19/h** |
 | 2026-08-21T08:46:03Z | 74042.85244905514 | p4284 **R1143/R1151/R1152 REFUTE**→**R1163/64/65** MidLR + **R1145** Triton-reseed n80 (no rent; BL-empty); burn **~$392.19/h** |
 | 2026-08-21T08:36:45Z | 74079.04390478361 | p4283 **R1147 REFUTE**→**R1162** MidLR + r338 **R1151+R1152** n80 relaunch (no rent; B300/B200×8=0); burn **~$392.19/h** |
-| 2026-08-21T08:26:00Z | 74263.05497162674 | p4282 **R1146+R1148 REFUTE**→**R1160+R1161** TRAIN (no rent; sole B200=BL fbb1135f); burn **~$392.19/h** |

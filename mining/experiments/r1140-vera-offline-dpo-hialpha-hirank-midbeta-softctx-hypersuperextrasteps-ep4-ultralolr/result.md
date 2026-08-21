@@ -1,8 +1,7 @@
-# R1140 — SoftCtx HiRank Midβ Hyper UltraLoLR
-Parent: R1118 REFUTE ~−0.26×. Knobs: β=0.1 r=64 α=128 lr=5e-7 @12288 steps=38400.
+# R1140 result (p4292)
 
-## p4290
-- MERGE_DONE sat idle since ~07:40Z: wait script EXP suffix was **hilr** instead of **ultralolr**
-- Fixed path; Triton wipe+seed from king (n_so=26) → chall :8002 pid**61236** GPUs2,3 util=0.72
-- probe_ok → **n80 LIVE** pid**63163** @**2026-08-21T09:30:56Z** vs reign36 wvk7
-- out: `/root/affine_data/r1140_sim_result_reign36_wvk7.json`
+- vs reign36 vera `@8e3f1695`, wvk=7 k=3 τ=0.03
+- margin=**−0.000303** SE=0.004092 z=−0.074 n=80 bar≈0.008183 (~**−0.04×**)
+- thought✓168.5 B✓0.425 — floors clear, margin fail
+- axis: SoftCtx HiRank Midβ Hyper UltraLoLR (β=0.1 r=64 α=128 lr=5e-7 @12288 steps=38400)
+- SoftCtx LR family exhausted (R1099 MidLR / R1118 HiLR / R1140 UltraLoLR) → **R1174** ShortCtx UltraLoLR
