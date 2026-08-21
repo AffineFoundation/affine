@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 76798.78422598669 | p4225 |
-| Lium balance | **$76798.78422598669** | p4225 |
-| cumulative mining spend | ~$146,364 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$66799** (balance − $10,000 floor) | $UTC |
+| $UTC | 76764.50041797689 | p4226 |
+| Lium balance | **$76764.50041797689** | p4226 |
+| cumulative mining spend | ~$146,398 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$66765** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (9 pods) | **~$392.18/h** · vs floor $833/h · gap **−$440.82/h** · B300×8=0 · B200×8 stock=0 | p4225 |
+| miner burn (9 pods) | **~$392.18/h** · vs floor $833/h · gap **−$440.82/h** · B300×8=0 · B200×8 stock=0 | p4226 |
 | miner coldkey free | τ~1246.7 | kept ≥τ50 |
-| miner stake | **r252 ~59α ≈ τ3.36** (<τ5 sweep bar) | p4225 |
+| miner stake | **r252 ~59α ≈ τ3.36** (<τ5 sweep bar) | p4226 |
 | registrations / submissions | **16** / **16** (… **r1064 chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-21T00:09:45Z | 76764.50041797689 | p4226 r340 idle GPUs→**R1096+R1097 TRAIN** + king GPU5 (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-21T00:03:01Z | 76798.78422598669 | p4225 r924 **R1068 idle :8004→R1095 TRAIN** (no rent; B300/B200×8=0); crown SSH timeout; burn **~$392.18/h** |
 | 2026-08-20T23:56:33Z | 76840.31469554348 | p4224 r337 **R1064 idle :8003→R1094 TRAIN** (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-20T23:50:27Z | 76878.35999003961 | p4223 crown **R1066/67/69 REFUTE→R1091+R1092+R1093 TRAIN** (no rent; B300/B200×8=0); burn **~$392.18/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-20T23:24:34Z | 77105.78209632596 | p4219 **R1070+R1071 REFUTE→R1085+R1086 TRAIN** (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-20T23:17:43Z | 77143.55926132479 | p4218 **R1074 REFUTE→R1084 TRAIN** (no rent; B300/B200×8=0); burn **~$392.18/h** |
 | 2026-08-20T23:13:22Z | 77181.46319228882 | p4217 **R1078 REFUTE→R1083 TRAIN** (no rent; B300/B200×8=0); burn **~$392.18/h** |
-| 2026-08-20T22:39:38Z | 77447.08707491565 | p4213 **R1060 REFUTE** + **R340 train waiter** (no rent); burn **~$392.18/h**; B300×8=0 |
