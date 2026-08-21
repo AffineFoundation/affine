@@ -25,24 +25,25 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4269: **R1128** p4268 TP1 chall util**0.90** OOM on prompt-logprobs (~+7.6GiB need, ~2.7 free) → n80 ConnectError; exact-PID reap → **TP1 util0.85** :8004 CHALL_READY ~85s + n80 pid**67441** (alive past probe). Reap scripts must **not** match own basename (self-kill). Prefer util≤0.85 for TP1 chall+logprobs on B200. **Never `pkill -f`**.
 - p4268: **R1128** MERGE done but lean_chall polled **GPUs1,2** (busy R1142) not **6,7** → idle forever; then TP2 NCCL stall VRAM≈1GiB :8004 dead → exact-PID reap → **TP1** chall GPU6 util0.90 pid**63587** CHALL_READY ~85s + n80 pid**65193**. Fix lean poll `-i 6,7` + awk `index()`. Prefer TP1 after first TP2 stall on r340. **Never `pkill -f`**.
-- p4267: **R1120 REFUTE** m=−0.013799 SE=0.004529 ~**−1.52×** (thought✓209 B✓0.521 k=3) → exact-PID reap r340 :8002 → **R1142** SoftCtx MidRank MidLoβ Hyper UltraLoLR TRAIN pid**60510** GPUs1,2; touch `r1128_train.done` unblocked MERGE (waiter slept 60s past DONE). B300/B200×8=0. **Never `pkill -f`**.
-- p4266: **R1120** TP2 NCCL stall (VRAM≈1GiB, :8002 never listens ~3m post-pynccl) → exact-PID reap lean+API+engine+workers → **TP1** chall GPU1 util0.90 pid**58072** CHALL_READY ~90s + n80 pid**59507**; R1141+R1128 TRAIN OK. Prefer TP1 after first TP2 stall on r340. **Never `pkill -f`**.
-- p4265: **R1121 REFUTE** m=+0.002685 SE=0.003287 ~**0.41×** (thought✓208.5 B✓0.4375 k=3) → exact-PID reap r340 :8003 → **R1141** MidCtx UltraLoLR TRAIN pid**55900** GPUs3,4; R1120 TRAIN DONE→MERGE live; B300/B200×8=0. Positive margin below 2·SE is still REFUTE. **Never `pkill -f`**.
-- p4264: **R1121** TP2 NCCL stall again (VRAM≈1GiB) → exact-PID reap → **TP1** chall on GPU3 util0.90 CHALL_READY ~90s + n80; **R1114 REFUTE** ~0.09×→**R1139** MidCtx TRAIN r924; **R1118 REFUTE** ~−0.26×→**R1140** UltraLoLR TRAIN r938. Lean awk `/tmp/r…_merged/` breaks (regex `/` cut). Prefer TP1 after two TP2 stalls. **Never `pkill -f`**.
-- p4263: **R1121** MERGE done but chall vLLM stuck ~6m after NCCL (workers Rl, VRAM≈1GiB, :8003 never listens) → exact-PID reap lean+API+engine+workers → re-arm lean_chall :8003 pid**51771**; also purge r926 11×66G (70%→1%) + r252 12×66G. **Never `pkill -f`**.
-- p4262: **R1110 REFUTE** m=−0.006349 ~−0.62× → exact-PID reap r252 :8002 → **R1138** SoftCtx HiRank MidLoβ Hyper UltraLoLR TRAIN pid**192576** GPUs4,5; R1123 OK; rm `/tmp/r1110_merged`; B300/B200×8=0. **Never `pkill -f`**.
-- p4261: **R1122 REFUTE** m=−0.006233 ~−0.57× + **R1124 REFUTE** m=−0.003058 ~−0.68× → R1135+R1136 TRAIN r338; **R1119 REFUTE** m=+0.001412 ~0.19× → R1137 MidLR TRAIN r337; r338 disk **91%→13%** + r924 **91%→16%** stale-merge purge. **Never `pkill -f`**.
-- p4260: **R1112 REFUTE** m=−0.001311 ~−0.12× + **R1113 REFUTE** m=−0.000686 ~−0.07× (thought✓199 B✓0.42/0.40 k=3) → R1131+R1132 TRAIN r924; **R1116 REFUTE** m=−0.005310 ~−0.58× + **R1117 REFUTE** m=−0.009354 ~−1.08× → R1133+R1134 TRAIN crown; purge stale merges same pass. **Never `pkill -f`**.
-- p4259: crown overlay **/tmp 100%** (48×~66G stale `r*_merged`) → R1116/R1117 chall vLLM **Errno 28** after MERGE; rm stale (keep active) → **3.0T free** → re-arm n80 :8004/:8003 + `TMPDIR=/root/tmp`. Purge old merges every pass. **Never `pkill -f`**.
-- p4259b: **R1064 LOST** chal-00974 m=**−0.000659** SE=0.000858 z=−0.77 n=1286 thought✓197 B✓0.462 vs reign36 (n80 was +0.006632 ~1.021×) — knife-edge n80 not live-predictive.
-- p4257: **R1101 REFUTE** m=−0.002673 ~−0.48× (thought✓193 B✓0.60 k=3) → exact-PID reap crown :8002 → **R1129** ShortCtx LoRank MidLoβ Hyper HiLR TRAIN pid**282708**; R1115 N80~62/80; B300/B200×8=0. **Never `pkill -f`**.
-- p4256: R1101 MERGE done 02:23Z but n80 waiter died (`lean_chall_n80_r338_gpus45…` missing; real=`lean_chall_n80_crown_r1101_gpus67…`) → crown GPUs6,7 idle ~2h → **re-arm n80** chall pid**279494** :8002; R1115 N80 loading r926. Audit wait→lean paths after MERGE. **Never `pkill -f`**.
-- p4255: R340 Online-DPO **aborted** left idle GPUs6,7 → **R1128** SoftCtx LoRank MidLoβ Hyper HiLR TRAIN r340 pid**48086**; R1115 **MERGE** r926; B300/B200×8=0. Fill idle pairs same pass. **Never `pkill -f`**.
-- p4254: **R1108 REFUTE** m=−0.001278 ~−0.20× (thought✓202 B✓0.525 k=3) + **R1109 REFUTE** m=+0.000952 ~0.17× (thought✓194 B✓0.527 k=3) → exact-PID reap r339 :8002+:8003 → **R1126** MidCtx LoRank Midβ Hyper HiLR + **R1127** ShortCtx LoRank Midβ Hyper HiLR TRAIN. B300/B200×8=0. **Never `pkill -f`**.
-- p4253: **R1106 REFUTE** m=+0.002112 ~0.29× (thought✓195 B✓0.477 k=3) → exact-PID reap r337 :8002 → **R1125** SoftCtx LoRank Midβ Hyper HiLR TRAIN (r=16; ShortCtx MidRank Midβ Hyper HiLR R1119 already on GPUs4,5). B300/B200×8=0. **Never `pkill -f`**.
-- p4252: **R1105 REFUTE** m=+0.001862 ~0.51× (thought✓179 B✓0.3375 k=3) + **R1102 REFUTE** m=−0.004769 ~−0.56× (thought✓189 B✓0.4875 k=3) → exact-PID reap r252 :8003 + r338 :8002 → **R1123** ShortCtx HiRank MidLoβ Hyper HiLR TRAIN + **R1124** ShortCtx MidRank Hiβ Hyper HiLR TRAIN. B300/B200×8=0. **Never `pkill -f`**.
-- p4251: **R1096+R1097 REFUTE** (m=−0.000713 ~−0.19× / m=−0.002077 ~−0.45×) + **R1111 REFUTE** m=+0.003700 ~0.68× → **R1120+R1121+R1122** TRAIN. B300/B200×8=0. **Never `pkill -f`**.
+- p4267: **R1120 REFUTE** m=−0.013799 SE=0.004529 ~**−1.52×** (thought✓209 B✓0.521 k=3) → exact-PID reap r340 :8002 → **R1142** SoftCtx MidRank MidLoβ Hyper UltraLoLR TRAIN pid**60510** GPUs1,2; touch `r1128_train.done` unblocked MERGE. B300/B200×8=0. **Never `pkill -f`**.
+- p4266: **R1120** TP2 NCCL stall (VRAM≈1GiB, :8002 never listens) → exact-PID reap → **TP1** chall GPU1 util0.90 + n80; Prefer TP1 after first TP2 stall on r340. **Never `pkill -f`**.
+- p4265: **R1121 REFUTE** m=+0.002685 SE=0.003287 ~**0.41×** → **R1141** MidCtx UltraLoLR TRAIN r340 GPUs3,4. Positive margin below 2·SE is still REFUTE. **Never `pkill -f`**.
+- p4264: **R1121** TP2 stall→TP1; **R1114→R1139** + **R1118→R1140** TRAIN. Lean awk `/tmp/r…_merged/` breaks (regex `/` cut). **Never `pkill -f`**.
+- p4263: **R1121** stuck chall after NCCL → re-arm; purge r926+r252 stale merges. **Never `pkill -f`**.
+- p4262: **R1110 REFUTE** ~−0.62× → **R1138** UltraLoLR TRAIN r252. **Never `pkill -f`**.
+- p4261: **R1122+R1124 REFUTE** → R1135+R1136; **R1119 REFUTE** → R1137; disk purge r338+r924. **Never `pkill -f`**.
+- p4260: **R1112+13 REFUTE** → R1131+R1132; **R1116+17 REFUTE** → R1133+R1134. **Never `pkill -f`**.
+- p4259: crown **/tmp ENOSPC** from stale merges → purge + re-arm n80 + `TMPDIR=/root/tmp`. **Never `pkill -f`**.
+- p4259b: **R1064 LOST** chal-00974 m=**−0.000659** SE=0.000858 z=−0.77 (n80 was +0.006632 ~1.021×) — knife-edge n80 not live-predictive.
+- p4257: **R1101 REFUTE** ~−0.48× → **R1129** TRAIN crown. **Never `pkill -f`**.
+- p4256: R1101 MERGE n80 waiter path mismatch → re-arm. Audit wait→lean paths. **Never `pkill -f`**.
+- p4255: R340 idle GPUs6,7 → **R1128** TRAIN. Fill idle pairs same pass. **Never `pkill -f`**.
+- p4254: **R1108+R1109 REFUTE** → **R1126+R1127** TRAIN r339. **Never `pkill -f`**.
+- p4253: **R1106 REFUTE** → **R1125** TRAIN r337. **Never `pkill -f`**.
+- p4252: **R1105+R1102 REFUTE** → **R1123+R1124** TRAIN. **Never `pkill -f`**.
+- p4251: **R1096+R1097+R1111 REFUTE** → **R1120+R1121+R1122** TRAIN. **Never `pkill -f`**.
 - p4228: paygo α→TAO→Lium via `btcli wallet transfer` (lium fund broken). **Never `pkill -f`**.
 
 

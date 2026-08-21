@@ -24,6 +24,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
-| 2026-08-21T06:14:45Z | p4268: **R1128** MERGE→wrong-GPU poll→TP2 stall→**TP1** :8004 GPU6 CHALL_READY + n80 pid**65193**; B300/B200×8=0 |
+| 2026-08-21T06:21:39Z | p4269: **R1128** p4268 n80 OOM@0.90→**TP1 util0.85** :8004 + n80 pid**67441**; B300/B200×8=0 |
+| 2026-08-21T06:14:45Z | p4268: **R1128** MERGE→wrong-GPU poll→TP2 stall→**TP1** :8004 GPU6 CHALL_READY + n80 pid**65193** |
 | 2026-08-21T06:04:00Z | p4267: **R1120 REFUTE** ~−1.52×→**R1142** TRAIN r340 GPUs1,2; R1128 MERGE; B300/B200×8=0 |
-| 2026-08-21T05:54:14Z | p4266: **R1120** TP2 stall→TP1 :8002 GPU1 CHALL_READY + n80; B300/B200×8=0 |

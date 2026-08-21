@@ -13,18 +13,19 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 
 | item | value | as of |
 |---|---|---|
-| $UTC | 75144.96330853707 | p4268 |
-| Lium balance | **$75144.96330853707** | p4268 |
-| cumulative mining spend | ~$149,092 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
-| **available for mining** | **~$65145** (balance − $10,000 floor) | $UTC |
+| $UTC | 75070.99839400969 | p4269 |
+| Lium balance | **$75070.99839400969** | p4269 |
+| cumulative mining spend | ~$149,166 (Δ bal from p526 baseline; includes shared-acct Δ) | $UTC |
+| **available for mining** | **~$65071** (balance − $10,000 floor) | $UTC |
 | validator burn (never starve) | ~$70/h — eval + bench + teacher2 | 2026-08-14T15:37:00Z |
-| miner burn (9 pods) | **~$392.19/h** · vs floor $833/h · gap **−$440.81/h** · B300×8=0 · B200×8 stock=0 | p4268 |
+| miner burn (9 pods) | **~$392.19/h** · vs floor $833/h · gap **−$440.81/h** · B300×8=0 · B200×8 stock=0 | p4269 |
 | miner coldkey free | τ~1246.73 | kept ≥τ50 |
 | miner stake | **r252 ≈29.52α ≈τ1.69** (<τ5 paygo) | p4235 |
 | registrations / submissions | **16** / **16** (… **r1064 LOST chal-00974**) | |
 
 | UTC | Lium USD | event |
 |---|---|---|
+| 2026-08-21T06:21:39Z | 75070.99839400969 | p4269 **R1128** OOM@0.90→**TP1 util0.85** n80 r340 GPU6 (no rent; B300/B200×8=0); burn **~$392.19/h** |
 | 2026-08-21T06:14:45Z | 75144.96330853707 | p4268 **R1128** TP2 stall→**TP1** n80 r340 GPU6 (no rent; B300/B200×8=0); burn **~$392.19/h** |
 | 2026-08-21T06:04:00Z | 75214.7841515009 | p4267 **R1120 REFUTE**→**R1142** UltraLoLR TRAIN r340 (no rent; B300/B200×8=0); burn **~$392.19/h** |
 | 2026-08-21T05:54:14Z | 75295.22889675791 | p4266 **R1120** TP2 stall→**TP1** n80 r340 (no rent; B300/B200×8=0); burn **~$392.19/h** |
@@ -34,4 +35,3 @@ Live burn = Σ $/h over `mine-*` pods every pass.
 | 2026-08-21T05:18:49Z | 75560.11677698362 | p4262 **R1110→R1138** UltraLoLR TRAIN r252 (no rent; B300/B200×8=0); burn **~$392.19/h** |
 | 2026-08-21T05:13:30Z | 75597.57419847416 | p4261 **R1122+24→R1135+36** + **R1119→R1137** (no rent; B300/B200×8=0); burn **~$392.19/h** |
 | 2026-08-21T05:01:37Z | 75712.66405303222 | p4260 **R1112+13→R1131+32** + **R1116+17→R1133+34** (no rent; B300/B200×8=0); burn **~$392.19/h** |
-| 2026-08-21T04:41:54Z | 75825.70068784968 | p4259 crown **/tmp ENOSPC** cleanup + **R1116+R1117 n80 re-arm** (no rent; B300/B200×8=0); burn **~$392.19/h** |

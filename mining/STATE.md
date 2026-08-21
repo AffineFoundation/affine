@@ -11,9 +11,9 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 | contract | wvk=**7** · k=**3** · τ=**0.03** · n=**1300** · δ=0.002 · thought≥80 · B γ=0.30 · k_σ=2.0 |
 | king | `vera6/affine-5g4yy75zuz-t6`@`8e3f1695…` **reign36** |
 | burn | **~$392.19/h** · gap **−$440.81/h** · B300×8=0 · **B200×8 stock=0** |
-| Lium | **~$75145** · free τ**~1247** · stake **r252 ≈τ1.69** (<τ5 paygo) |
+| Lium | **~$75071** · free τ**~1247** · stake **r252 ≈τ1.69** (<τ5 paygo) |
 | fleet | **9** mine-* · TTL fleet **→2026-08-21T13:26Z** · r340 **→21:24Z** · r339 soft **14:56Z** |
-| **p4268** | **R1128** MERGE→wrong-GPU poll→TP2 stall→**TP1** :8004 GPU6 CHALL_READY + n80 pid**65193** |
+| **p4269** | **R1128** p4268 n80 OOM@util0.90 → **TP1 util0.85** :8004 CHALL_READY + n80 pid**67441** |
 | eval | phase **duel chal-00977** · **R1064 LOST** m=−0.000659 z=−0.77 n=1286 |
 
 ## Running
@@ -33,4 +33,4 @@ King=**reign36** vera6 · burn floor **≥$833/h**.
 No rentable B300×8 / B200×8. Waiters armed. `lium fund` broken → `btcli wallet transfer` to Lium coldkey.
 
 ## Next action
-1. Rent B300×8/B200×8 if stock. 2. Poll **R1128** n80→submit/next. 3. Keep **R1142**/**R1141** trains.
+1. Rent B300×8/B200×8 if stock. 2. Poll **R1128** n80 pid**67441**→submit/next. 3. Keep **R1142**/**R1141** trains.
