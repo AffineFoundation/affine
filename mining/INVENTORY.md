@@ -6,7 +6,7 @@
 
 | name | huid | config | $/h | TTL | role |
 |---|---|---|---|---|---|
-| mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-21T13:26Z** | TK · **R1146+47+48 TRAIN** |
+| mine-crown-1 | brave-comet-f4 | 8×B300 | $64.00 | **2026-08-21T13:26Z** | TK · **R1146+R1148 n80** +R1147 TRAIN |
 | mine-r252-vera-t4-nonking-grpo-1 | brave-wolf-f6 | 8×B200 | $64.00 | **2026-08-21T13:26Z** | TK · **R1138+R1153 TRAIN** |
 | mine-r337-marsplan-online-dpo-hilr-1 | noble-hawk-1f | 8×B200 | $46.80 | **2026-08-21T13:26Z** | TK · **R1149+R1150 TRAIN** |
 | mine-r338-marsplan-online-dpo-bigg-hilr-1 | calm-fox-6a | 8×B200 | $52.25 | **2026-08-21T13:26Z** | TK · **R1151+R1152 TRAIN** |
@@ -15,9 +15,8 @@
 | mine-r924-vera-midctx-hibeta-1 | cosmic-orbit-55 | 8×H200 | $33.81 | **2026-08-21T13:26Z** | TK · **R1159 TRAIN** +R1154+55 |
 | mine-r926-cryptodev-softctx-midlobeta-1 | brave-raven-49 | 8×H100 | $13.76 | **2026-08-21T13:26Z** | TK · **R1157 TRAIN** |
 | mine-r938-vera-softctx-hibeta-1 | noble-wolf-22 | 8×H200 | $15.96 | **2026-08-21T13:26Z** | TK · **R1140 TRAIN** |
-| mine-r1158-vera-reason-grpo-1 | brave-matrix-2a | 8×B200? | $5.60 | **2026-08-22T07:45Z** | BOOT GRPO · **visible 1×B200** |
 
-Host fleet: **10 mine-*** · burn **~$397.79/h** · **wvk=7** · B300×8=0 · B200×8=0
+Host fleet: **9 mine-*** · burn **~$392.19/h** · **wvk=7** · B300×8=0 · B200×8=0 · **R1158 slot open** (waiters)
 
 Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `affine-eval`, `affine-chat`, `swarm-t-h200-4x-1`.
 
@@ -25,6 +24,6 @@ Non-mine (do not touch): `affine-bench`, `affine-datagen`, `affine-teacher`, `af
 
 | when | action |
 |---|---|
-| 2026-08-21T08:00:48Z | p4280: **R1139 REFUTE** ~−0.26× → exact-PID reap :8002 → **R1159** UltraLoLR TRAIN pid**164539** GPUs6,7; **r1158** stack+pip+king DL ✓ teacher DL; burn **~$397.79/h** |
-| 2026-08-21T07:47:51Z | p4279: **R1130 REFUTE** ~−0.40× → **R1157** TRAIN; **R1139** n80 armed; **rent** `mine-r1158` 8×B200 $5.60/h |
-| 2026-08-21T07:32:55Z | p4278: r340 **R1141 REFUTE** ~−0.43× → **R1156** Midβ UltraLoLR TRAIN; r926 **R1130** ~40/80; B300/B200×8=0 |
+| 2026-08-21T08:10:30Z | p4281: tore **brave-matrix-2a** + **eager-lion-45** (1/8 GPU, exec **fbb1135f**); BL note; R1158 waiter=node-id+ngpu≥8; fleet HEAD=R1158; burn **~$392.19/h** |
+| 2026-08-21T08:00:48Z | p4280: **R1139 REFUTE** ~−0.26× → **R1159** UltraLoLR TRAIN; **r1158** bootstrap LIVE (1/8 GPU) |
+| 2026-08-21T07:47:51Z | p4279: **R1130 REFUTE** → **R1157**; **rent** `mine-r1158` 8×B200 $5.60/h (later dud) |

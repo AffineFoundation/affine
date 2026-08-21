@@ -59,7 +59,7 @@ umask 077
   echo "export HF_HOME=/root/hf"
   echo "export HF_XET_HIGH_PERFORMANCE=1"
   echo "export AFFINE_DATA_DIR=/root/affine_data"
-  echo "export PASS=4280"
+  echo "export PASS=${PASS:-4281}"
 } >"$ENV_TMP"
 chmod 600 "$ENV_TMP"
 

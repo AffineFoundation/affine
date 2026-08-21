@@ -3,5 +3,5 @@
 e8d86eec-dcd2-4ffd-b268-d3666459c787
 7b9ee272-513a-480d-a50e-b0c73e409bea
 # p3813 R337 golden-lion-72 SSH map 20296 refused; reboot fail; reaped
-fbb1135f-cffe-4962-9389-150ec0e0852b  # p4147: advertised 8xB200 cosmic-raven-04; nvidia-smi=3xB200; rm brave-fox-5c
+fbb1135f-cffe-4962-9389-150ec0e0852b  # p4147+p4281: 192.9.163.79 advertised 8×B200; nvidia-smi=1–3; NEVER blind lium up --gpu (bypasses BL) — rent by node id only
 358a9c60-6c80-4ad3-970e-9d221a52e977

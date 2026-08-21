@@ -1,5 +1,4 @@
 # R1158 — result notes
 - p4279: rented `mine-r1158-vera-reason-grpo-1` (`brave-matrix-2a`) **8×B200** @$5.60/h TTL→2026-08-22T07:45Z.
-- SSH: `ssh root@192.9.163.79 -p 20532`
-- Axis: vera×Reason-GRPO (distinct from Offline-DPO UltraLoLR fleet).
-- p4280: stack uploaded + `bootstrap_r1158` LIVE — pip **torch/vllm OK**, king `vera6@8e3f1695` DL ✓, teacher GLM-Air DL in progress. Pod still exposes **1/8 GPU** (Device Minor 6) after ~10 min — next pass: finish DL → if still 1× tear+re-rent; if ≥2 serve teacher+`start_r1158` GRPO.
+- p4280: bootstrap LIVE — pip/king/teacher DL ✓ but **nvidia-smi=1** (Device Minor 6).
+- p4281: teacher DL done, still 1 GPU → tore brave-matrix; blind re-rent returned **same** exec **fbb1135f-cffe-4962-9389-150ec0e0852b**@192.9.163.79 (`eager-lion-45`, API `gpu_count=1`) → tore again. Lesson: **blind `lium up --gpu` ignores executor_blacklist**. Waiter now rents by **node id** + verifies **ngpu≥8** (ssh+API) before bootstrap. Fleet QUEUE HEAD=R1158. Slot open until real 8× stock.
