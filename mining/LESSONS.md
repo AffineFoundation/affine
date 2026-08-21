@@ -25,6 +25,7 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4323: reaped orphan R1192/93 (r337) + R1194/95 (r338) → Mega **R1210 SoftCtx HiRank Loβ MidLR** / **R1211 ShortCtx MidRank Midβ MidLR** / **R1212 MidCtx MidRank Loβ MidLR** / **R1213 MidCtx HiRank Loβ MidLR**; R1187 probe_ok then FATAL missing sim — relaunch next. **Never `pkill -f`**.
 - p4322: **R1187** MERGE_DONE@13:37Z idle ~48m — `wait_*_merge_then_n80` LEAN path had **midctx** typo vs SoftCtx EXP dir → chmod miss + waiter exit; patch softctx + relaunch lean chall. Also stamped R1192/93/94/95/96/97 REFUTE (orphan challs pending Mega reap). **Never `pkill -f`**.
 - p4321: **R1201 REFUTE** m=−0.003071 SE=0.003308 ~−0.46× (thought✓171 B✓0.55) FullFT HiLR → UltraLoLR (**R1209**); orphan R1184/85/86/1190 challs → Mega MidLR **R1205–08** same pass. **Never `pkill -f`**.
 - p4320: **R1201** teacher OOM on prompt_logprobs at **GPUUTIL=0.90** (need ≥~4.6GiB free) → kill T/K/chall by PID → `serve_three` **TP1 util T/K=0.85 chall=0.80** + `/v1/completions`+logprobs probe → n80 relaunch. Do not hand-serve at 0.90 on H200 TP1. **Never `pkill -f`**.
