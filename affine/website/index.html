@@ -9,7 +9,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
   <link rel="stylesheet" href="fonts/fonts.css?v=20" />
-  <link rel="stylesheet" href="style.css?v=70" />
+  <link rel="stylesheet" href="style.css?v=71" />
 </head>
 <body>
   <header class="top-nav">
@@ -24,6 +24,10 @@
         <a class="nav-chip" href="#dataset" id="nav-dataset">Dataset</a>
         <a class="nav-chip" href="#audits" id="nav-audits">Audits</a>
         <a class="nav-chip" href="#metrics" id="nav-metrics">Metrics</a>
+        <!-- Chat = your own sandboxed agent running the current king: sign in
+             at chat.affine.io/affine and a personal container is provisioned.
+             The lightweight inline chat is still reachable at #chat. -->
+        <a class="nav-chip nav-chip-chat" href="https://chat.affine.io/affine" id="nav-chat">Chat</a>
       </div>
       <div class="nav-right">
         <a class="nav-icon"
@@ -240,6 +244,32 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=76"></script>
+  <section id="chat-page" class="duel-page chat-page" hidden>
+    <div class="duel-page-inner chat-page-inner">
+      <div class="duel-page-head">
+        <button type="button" class="back-btn" id="chat-back"
+          aria-label="Back to dashboard">←</button>
+        <h2 class="section-title">chat with the king</h2>
+        <span class="section-right" id="chat-page-meta"></span>
+      </div>
+      <div class="chat-banner" id="chat-banner" hidden></div>
+      <div class="chat-log" id="chat-log">
+        <div class="chat-intro">
+          Talk directly to the reigning SN120 king — the live model this
+          dashboard crowns. Conversations are not stored server-side and
+          replies stream straight from the GPU pod serving it.
+        </div>
+      </div>
+      <form class="chat-input-bar" id="chat-form">
+        <textarea id="chat-input" rows="1" maxlength="8000"
+          placeholder="message the king…" autocomplete="off"
+          spellcheck="false"></textarea>
+        <button type="submit" class="chat-send" id="chat-send"
+          aria-label="Send message">send</button>
+      </form>
+    </div>
+  </section>
+
+  <script type="module" src="app.js?v=78"></script>
 </body>
 </html>

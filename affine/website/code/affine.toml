@@ -321,6 +321,46 @@ lium_template_id = ""
 targon_resource = "h200-large"
 targon_image = "vllm/vllm-openai:latest"
 
+[chat_machine]
+# Always-on public chat pod (AFFINE_ROLE=chat): serves the CURRENT KING via
+# vLLM behind the website's /api/v1/chat proxy. Ops-only — never part of
+# scoring. ONE big-VRAM GPU: a 141GB H200 fits the ≤90GB king at TP=1 with
+# KV headroom, costs ~$4/hr (vs ~$23 for the 2×H200 bench layout), and 1×
+# H200 inventory is routinely available when every 2× tier is sold out
+# (observed 2026-08-20). 80GB cards are excluded — no headroom at TP=1.
+provider_order = ["lium", "targon"]
+gpu_types = ["H200", "B300", "B200"]
+gpu_type = "H200"
+gpu_count = 1
+max_price_per_hour = 12.0
+port = 9002
+health_interval_s = 60
+unhealthy_threshold = 5
+provision_timeout_s = 3600
+lium_template_id = ""
+targon_resource = "h200-large"
+targon_image = "vllm/vllm-openai:latest"
+
+[chat]
+# Public chat serving + abuse limits (chat pod + dash proxy). Ops knobs only.
+# vLLM slot on the chat pod: single-GPU TP=1 serve, shorter context — chat
+# doesn't need 64k corpus prefixes and the smaller KV leaves swap headroom.
+port = 8002
+gpus = "0"
+tp = 1
+max_model_len = 16384
+gpu_memory_utilization = 0.90
+max_num_batched_tokens = 16384
+# Where the pod learns the current king (public dash snapshot; polled).
+snapshot_url = "https://affine.io/api/v1/snapshot"
+poll_interval_s = 60
+# Per-reply generation cap and per-request input cap (characters).
+max_output_tokens = 1024
+max_input_chars = 16000
+# Dash-side abuse limits: sliding per-IP messages/minute + global in-flight.
+rate_limit_per_min = 10
+max_concurrency = 4
+
 [hippius]
 # Website + dashboard state pushed here; miners read it.
 endpoint = "https://s3.hippius.com"

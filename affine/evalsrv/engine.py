@@ -213,10 +213,12 @@ class Engine:
         t = self.cfg["teacher"]
         ms = self.cfg["miner_serving"]
         self.role = os.environ.get("AFFINE_ROLE", "duel")
-        if self.role == "bench":
-            # Dedicated bench pod: one miner slot across the rented GPUs.
-            # Teacher/king slots exist for status shape but are never launched.
-            bs = self.cfg.get("bench_serving") or {}
+        if self.role in ("bench", "chat"):
+            # Single-miner-slot pods (SWE bench / public king chat): one slot
+            # across the rented GPUs. Teacher/king slots exist for status
+            # shape but are never launched.
+            section = "bench_serving" if self.role == "bench" else "chat"
+            bs = self.cfg.get(section) or {}
             gpus = str(bs.get("gpus", "0,1"))
             tp = int(bs.get("tp", ms.get("tp", 2)))
             port = int(bs.get("port", ms.get("challenger_port", 8002)))
@@ -250,6 +252,7 @@ class Engine:
         # long-context agent prefills.
         batched_tokens = int(ms["max_num_batched_tokens"])
         gpu_util = ms["gpu_memory_utilization"]
+        max_len = int(ms["max_model_len"])
         if slot.label.startswith("teacher"):
             # Teachers absorb nearly all echo traffic, so they get bigger
             # chunks — but the fp32 log_softmax spike lives OUTSIDE vLLM's
@@ -262,11 +265,19 @@ class Engine:
         if self.role == "bench":
             bs = self.cfg.get("bench_serving") or {}
             batched_tokens = int(bs.get("max_num_batched_tokens", 16384))
+        if self.role == "chat":
+            # Chat serves short interactive contexts, not 64k corpus prefixes:
+            # a smaller KV pool leaves the 2-GPU pod headroom, and no echo
+            # traffic means the higher util + big chunks are safe.
+            cs = self.cfg.get("chat") or {}
+            batched_tokens = int(cs.get("max_num_batched_tokens", 16384))
+            gpu_util = cs.get("gpu_memory_utilization", gpu_util)
+            max_len = int(cs.get("max_model_len", max_len))
         cmd = [
             "vllm", "serve", repo,
             "--port", str(slot.port),
             "--tensor-parallel-size", str(slot.tp),
-            "--max-model-len", str(ms["max_model_len"]),
+            "--max-model-len", str(max_len),
             "--gpu-memory-utilization", str(gpu_util),
             "--max-num-batched-tokens", str(batched_tokens),
             # Avoid FlashInfer JIT (needs a coherent system CUDA toolkit; the
@@ -289,6 +300,12 @@ class Engine:
         # moved to H200 (2026-08-13): score-safe because ranked logprobs are
         # teacher-side (GLM, non-GDN); miner GDN engines only sample.
         cmd += ["--additional-config", '{"gdn_prefill_backend": "triton"}']
+        if self.role == "chat":
+            # The chat pod's wire plane serves agent clients (arbos, Cursor)
+            # that drive tool loops over /v1/chat/completions. Qwen-family
+            # kings emit hermes-style <tool_call> blocks. Never set on duel/
+            # bench pods — scoring must see raw completions.
+            cmd += ["--enable-auto-tool-choice", "--tool-call-parser", "hermes"]
         if revision:
             cmd += ["--revision", revision]
         return cmd
