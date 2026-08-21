@@ -1,0 +1,88 @@
+{
+  "pass": 4308,
+  "target": "2026-08-22T13:30:00Z",
+  "soft": "2026-08-22T12:30:00Z",
+  "dead": "2026-08-22T13:00:00Z",
+  "results": [
+    {
+      "name": "mine-r337-marsplan-online-dpo-hilr-1",
+      "huid": "noble-hawk-1f",
+      "id": "e847a1e4-b403-4145-a304-dec00e5d5b3b",
+      "old": "2026-08-21T13:26:53",
+      "new": "2026-08-22T13:30:00Z",
+      "status": 200,
+      "body": "{\"executor_id\":\"cb5e952f-bcb4-46ff-b7ae-16fc0118b30a\",\"pod_name\":\"mine-r337-marsplan-online-dpo-hilr-1\",\"template_id\":\"9b06faba-9dbc-439f-95e0-9206cb86bc64\",\"ram_total\":2991054632,\"cluster_id\":null,\"j",
+      "ok": true
+    },
+    {
+      "name": "mine-r938-vera-softctx-hibeta-1",
+      "huid": "noble-wolf-22",
+      "id": "86e39b97-93c5-4a5a-9031-26fba759df51",
+      "old": "2026-08-21T13:26:53",
+      "new": "2026-08-22T13:30:00Z",
+      "status": 200,
+      "body": "{\"executor_id\":\"f092246d-5704-4c9e-b57f-7c0710a06deb\",\"pod_name\":\"mine-r938-vera-softctx-hibeta-1\",\"template_id\":\"7c6befbf-516e-4873-a98a-d42956c5a895\",\"ram_total\":1055625106,\"cluster_id\":null,\"jupyte",
+      "ok": true
+    },
+    {
+      "name": "mine-r924-vera-midctx-hibeta-1",
+      "huid": "cosmic-orbit-55",
+      "id": "c9785af8-bfd6-4169-8869-32eda4adc37b",
+      "old": "2026-08-21T13:26:53",
+      "new": "2026-08-22T13:30:00Z",
+      "status": 200,
+      "body": "{\"executor_id\":\"27026af9-da2b-4ee7-be9d-7f98f0198b50\",\"pod_name\":\"mine-r924-vera-midctx-hibeta-1\",\"template_id\":\"5dff252c-20f5-4b0d-9aa9-e1c3441669a9\",\"ram_total\":1493987896,\"cluster_id\":null,\"jupyter",
+      "ok": true
+    },
+    {
+      "name": "mine-crown-1",
+      "huid": "brave-comet-f4",
+      "id": "9ec32d05-dac2-4665-89f8-cd84001f2b7e",
+      "old": "2026-08-21T13:26:53",
+      "new": "2026-08-22T13:30:00Z",
+      "status": 200,
+      "body": "{\"executor_id\":\"ef62269a-44e6-455c-923b-1cd398b28898\",\"pod_name\":\"mine-crown-1\",\"template_id\":\"9c4a1912-c907-4ceb-94ee-af4ae6452c19\",\"ram_total\":2102968804,\"cluster_id\":null,\"jupyter_installation_stat",
+      "ok": true
+    },
+    {
+      "name": "mine-r338-marsplan-online-dpo-bigg-hilr-1",
+      "huid": "calm-fox-6a",
+      "id": "11499768-d5c0-4bef-9dc7-eec514b0d0bb",
+      "old": "2026-08-21T13:26:53",
+      "new": "2026-08-22T13:30:00Z",
+      "status": 200,
+      "body": "{\"executor_id\":\"5900a55f-daa3-4858-988d-ad06029e4a6f\",\"pod_name\":\"mine-r338-marsplan-online-dpo-bigg-hilr-1\",\"template_id\":\"e5e22ce3-83d7-4115-9b28-2fb100423dbd\",\"ram_total\":1401078736,\"cluster_id\":nu",
+      "ok": true
+    },
+    {
+      "name": "mine-r252-vera-t4-nonking-grpo-1",
+      "huid": "brave-wolf-f6",
+      "id": "127b880a-7d23-44f0-a6b4-a979e7727df5",
+      "old": "2026-08-21T13:26:53",
+      "new": "2026-08-22T13:30:00Z",
+      "status": 200,
+      "body": "{\"executor_id\":\"b0daa480-e356-436c-8b9f-249f5613c8aa\",\"pod_name\":\"mine-r252-vera-t4-nonking-grpo-1\",\"template_id\":\"07858540-f569-49c8-8666-1fc6a479ef2b\",\"ram_total\":2370185768,\"cluster_id\":null,\"jupyt",
+      "ok": true
+    },
+    {
+      "name": "mine-r926-cryptodev-softctx-midlobeta-1",
+      "huid": "brave-raven-49",
+      "id": "eda06807-9759-4277-8085-d11fdc5439d2",
+      "old": "2026-08-21T13:26:53",
+      "new": "2026-08-22T13:30:00Z",
+      "status": 200,
+      "body": "{\"executor_id\":\"d4093d0c-8d7c-448a-b4e0-a34e44468ea8\",\"pod_name\":\"mine-r926-cryptodev-softctx-midlobeta-1\",\"template_id\":\"b4859c83-a846-4680-877c-c5d0423551f3\",\"ram_total\":1053993304,\"cluster_id\":null",
+      "ok": true
+    },
+    {
+      "name": "mine-r339-marsplan-online-dpo-hirank-1",
+      "huid": "noble-raven-a7",
+      "id": "82f3df17-0360-4841-99f2-99ea8cf976c9",
+      "old": "2026-08-21T15:50:45.899711",
+      "new": "2026-08-22T13:30:00Z",
+      "status": 200,
+      "body": "{\"executor_id\":\"3a4f340f-18ec-467b-b524-6a3d1db0a55a\",\"pod_name\":\"mine-r339-marsplan-online-dpo-hirank-1\",\"template_id\":\"8e043697-bf78-4fec-8438-15eb4aa95874\",\"ram_total\":2110895720,\"cluster_id\":null,",
+      "ok": true
+    }
+  ]
+}
