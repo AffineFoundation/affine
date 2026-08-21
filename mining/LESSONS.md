@@ -25,6 +25,8 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
+- p4290: wait_merge_then_n80 with **wrong EXP dirname** (e.g. midlobeta-shortctx / hilr) leaves MERGE_DONE idle — fix path + relaunch lean_chall; **R1149+R1150+R1140** recovered. **Never `pkill -f`**.
+- p4289: **R1154** MERGE→Triton wipe+seed→probe→**n80 LIVE** on `mine-r924` :8003; sole B200 ls hit still **fbb1135f** (BL). **Never `pkill -f`**.
 - p4288: **R1138 REFUTE** ~**−0.70×** → do **not** MidLR-re-run (R1090 already SoftCtx HiRank MidLoβ MidLR REFUTE) → **R1168** SoftCtx HiRank Hiβ UltraLoLR TRAIN pid**209542** GPUs4,5; empty cmdline race on dying chall pid is OK if GPUs freed. **Never `pkill -f`**.
 - p4287: **R1153 REFUTE** ~**0.56×** → **R1167** ShortCtx HiRank MidLoβ MidLR TRAIN; sole B200 **fbb1135f** BL. **Never `pkill -f`**.
 - p4286: **R1145 REFUTE** ~**−0.33×** → **R1166** MidLR. **Never `pkill -f`**.

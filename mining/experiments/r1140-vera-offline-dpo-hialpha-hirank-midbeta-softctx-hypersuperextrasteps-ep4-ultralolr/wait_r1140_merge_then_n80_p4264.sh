@@ -2,7 +2,7 @@
 set -euo pipefail
 LOG=/root/logs/p4264_r1140_merge_then_n80.nohup
 mkdir -p /root/logs; exec > >(tee -a "$LOG") 2>&1
-EXP=r1140-vera-offline-dpo-hialpha-hirank-midbeta-softctx-hypersuperextrasteps-ep4-hilr
+EXP=r1140-vera-offline-dpo-hialpha-hirank-midbeta-softctx-hypersuperextrasteps-ep4-ultralolr
 echo "[p4264-r1140-n80] $(date -u +%Y-%m-%dT%H:%M:%SZ) START wait merge_ready"
 for i in $(seq 1 2000); do
   if [[ -f /root/logs/r1140_merge_ready ]] && [[ -f /tmp/r1140_merged/config.json ]]; then
