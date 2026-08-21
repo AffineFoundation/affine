@@ -25,46 +25,26 @@ S\* v2 era (retired 2026-08-10) → `archive/legacy-sstar-v2/` — ops only, not
 - p2399/p2401: mid-pipeline king flip — waiting `post_train` keeps old `KING_*` in process env; patching `mine.env` is not enough — kill-by-pidfile + relaunch **before** train.done (R69/R71/R73 guass→fjq); R67 vs fjq REFUTE m=−0.0115.
 
 ## Ops (still true — details in legacy archive if needed)
-- p4324: **R1187** H100: TP2 util0.72 OOM on prompt_logprobs (~7.6GiB need / 2.85 free) → TP1 util0.80 **no KV** → **TP2 util0.65 mlen32768 bactok4096** CHALL_READY+probe+n80 ARMED (~14.8GiB free/GPU); rented non-BL H200×8 `093a5973…` → **r1214** BOOT. **Never `pkill -f`**.
-- p4323: reaped orphan R1192/93 (r337) + R1194/95 (r338) → Mega **R1210 SoftCtx HiRank Loβ MidLR** / **R1211 ShortCtx MidRank Midβ MidLR** / **R1212 MidCtx MidRank Loβ MidLR** / **R1213 MidCtx HiRank Loβ MidLR**; R1187 probe_ok then FATAL missing sim — relaunch next. **Never `pkill -f`**.
-- p4322: **R1187** MERGE_DONE@13:37Z idle ~48m — `wait_*_merge_then_n80` LEAN path had **midctx** typo vs SoftCtx EXP dir → chmod miss + waiter exit; patch softctx + relaunch lean chall. Also stamped R1192/93/94/95/96/97 REFUTE (orphan challs pending Mega reap). **Never `pkill -f`**.
-- p4321: **R1201 REFUTE** m=−0.003071 SE=0.003308 ~−0.46× (thought✓171 B✓0.55) FullFT HiLR → UltraLoLR (**R1209**); orphan R1184/85/86/1190 challs → Mega MidLR **R1205–08** same pass. **Never `pkill -f`**.
-- p4320: **R1201** teacher OOM on prompt_logprobs at **GPUUTIL=0.90** (need ≥~4.6GiB free) → kill T/K/chall by PID → `serve_three` **TP1 util T/K=0.85 chall=0.80** + `/v1/completions`+logprobs probe → n80 relaunch. Do not hand-serve at 0.90 on H200 TP1. **Never `pkill -f`**.
-- p4319: **R1181/82/83 REFUTE** (~0.65×/~0.16×/~0.56×) → Mega SoftCtx LoRank MidLoβ / SoftCtx LoRank Hiβ / ShortCtx HiRank Midβ MidLR (**R1202–04**) same pass; Hyper Soft/Mid/Short×rank×β×lr grid **108/108 full**. **R1201** pipe raced n80 before ports up + hand TP1 missed `VLLM_USE_DEEP_GEMM=0` → use `serve_three.sh` (exits after DONE_LAUNCH — wait vLLM `/v1/models`, not parent bash). **Never `pkill -f`**.
-- p4317: **R1191 ~0.02× REFUTE** (m=+0.000109 SE=0.002318 thought✓180 B✓0.479) FullFT MidLR ≈ noise → kill T/K/chall by PID → **R1201** FullFT HiLR lr=2e-6 same H200; HF full ⇒ `SKIP_HF_PUSH=1` + `SKIP_LOCAL_TKC=0` (do not default SKIP_LOCAL_TKC=1 from old H121 salvage). **Never `pkill -f`**.
-- p4316: **r340** R1181/82/83 MERGE_DONE but `merge_ready` never stamped (`echo $$(date…)` syntax on pod) + lean_chall missing → waiters idle ~40m; stamp ready + upload TP1 util0.85 lean :8002/:8003/:8004 same pass. **Never `pkill -f`**.
-- p4315: **R1191** n80 abort=`ModuleNotFoundError: pyarrow` + T/K died (triton race / missing `VLLM_USE_FLASHINFER_SAMPLER=0`) while chall OK — `uv pip install pyarrow`; relaunch T+K **TP1 util0.90 `--enforce-eager`** with flashinfer sampler off (keep chall); `run_sim_duel` needs `--n-turns`/`--progress-out`/`--king-repo` (not `--n`/`--progress`/`--hyp`). **Never `pkill -f`**.
-- p4314: **R1191** merge OK then HF push abort (public storage full) left GPUs idle — on good H200 set **`SKIP_LOCAL_TKC=0` + `SKIP_MERGE=1`** and resume pipe for local serve_three/n80; do not wait on HF salvage. Sole 8×B200 still BL `fbb1135f`. **Never `pkill -f`**.
-- p4313: **R1178 ~−0.58× REFUTE** (m=−0.003298 SE=0.002859 thought✓159 B✓0.452) MidCtx HiRank Hiβ MidLR → MidCtx HiRank Hiβ LR exhausted R1139/R1159/R1178 → last free Hyper cell **R1200** ShortCtx HiRank Loβ HiLR same pass. **Never `pkill -f`**.
-- p4312: **R1169 ~0.32× / R1173 ~0.09× REFUTE** reaped r924 :8003/:8004 → ShortCtx MidRank Loβ MidLR (**R1198**) + ShortCtx MidRank MidLoβ MidLR (**R1199**) same pass; R1178 n80 left on GPUs6,7; sole B200=`fbb1135f` BL. **Never `pkill -f`**.
-- p4311: **R1174 ~0.03× / R1179 ~−0.31× REFUTE** → ShortCtx HiRank Loβ UltraLoLR (**R1197**) r938 + SoftCtx MidRank Loβ UltraLoLR (**R1196**) crown; also **R1173 ~0.09× REFUTE** orphan r924 (+R1169); stock empty. **Never `pkill -f`**.
-- p4310: **R1177 ~−0.57× / R1180 ~0.24× REFUTE** → MidCtx MidRank Loβ UltraLoLR (**R1194**) + MidCtx HiRank Loβ UltraLoLR (**R1195**) same pass on r338; **R1174/R1179** orphans still pending; sole 8×B200=`fbb1135f` BL. **Never `pkill -f`**.
-- p4308: fleet Removal **13:26Z→22T13:30Z** via `POST /pods/{id}/schedule-removal` (8 pods) + Soft/Dead in `mine.env`; recent wait/lean scripts do **not** Soft-abort (env Soft unused) — still retarget Soft for any post that sources `mine.env`. **Never `pkill -f`**.
-- p4307: non-BL **H200×8** `eager-fox-11`/`4eb39f3b…` rented while fleet waiter only polls B300/B200 — **R1191** vera FullFT TRAIN pid**2434**; burn **~$456/h**. **Never `pkill -f`**.
-- p4306: **R1168 ~−0.42× REFUTE** (m=−0.001512 SE=0.001782 thought✓163 B✓0.418) SoftCtx HiRank Hiβ UltraLoLR → SoftCtx HiRank Hiβ LR exhausted → **R1190** ShortCtx UltraLoLR same pass; empty cmdline chall ⇒ UUID-clear GPUs4,5; sole B200=`fbb1135f` BL. **Never `pkill -f`**.
-- p4305: **R1175 ~−0.24× / R1176 ~−0.29× REFUTE** (thought✓ B✓) UltraLoLR → MidLR SoftCtx LoRank Hiβ (**R1188**) + Hiβ MidCtx MidRank UltraLoLR (**R1189**; MidLoβ LR exhausted) same pass; stock B300/B200/H200 empty. **Never `pkill -f`**.
-- p4304: **R1158** BOOT_HF_DONE → teacher TP1 :8000 + GRPO TRAIN GPUs2,3 same pass; **R1170 ~0.57× REFUTE** (m=+0.004094 SE=0.003599 thought✓200 B✓0.399) MidCtx MidLR → **R1187** SoftCtx MidLR same pass; sole B200=`fbb1135f` BL. **Never `pkill -f`**.
-- p4303: B300/B200 empty post-BL → rented non-BL **H200×8** `golden-orbit-7b`/`e350ebc9…` for **R1158** by node id (ssh_gpus=8); waiters that only poll B300/B200 miss H200 — rent H200 same pass when under burn floor. **Never `pkill -f`**.
-- p4302: **R1167 ~−0.15× REFUTE** (m=−0.000534 SE=0.001785 thought✓171 B✓0.394) ShortCtx HiRank MidLoβ LR exhausted → **R1186** MidCtx MidLR same pass; H200×8 non-BL available while B200 BL-only. **Never `pkill -f`**.
-- p4301: **R1166 ~0.45× REFUTE** (m=+0.002389 SE=0.002645 thought✓181 B✓0.423) ShortCtx LoRank Midβ LR exhausted → **R1185** MidLoβ MidLR same pass; sole ls B200=`fbb1135f` BL. **Never `pkill -f`**.
-- p4300: **R1166** p4286 lean **TP2** util0.72 stalled ~38 GiB cutlass → kill-by-pid; relaunch **TP1 util0.85 GPU6** :8003 → CHALL_READY+probe+n80. Prefer TP1 on B200. **Never `pkill -f`**.
-- p4299: **R1163 ~0.18× REFUTE** MidCtx LoRank Midβ MidLR → MidRank UltraLoLR same pass on r339 GPUs4,5; reap :8002 by token. **Never `pkill -f`**.
-- p4298: lean free-poll must use **own** CUDA GPUs (R1163 polled 6,7 while chall on 4,5 → 120s stall); probe `/v1/completions` needs **model id from `/v1/models`** (not `default`→404); TP1 util0.85. **Never `pkill -f`**.
-- p4297: **R1164 ~−0.36× REFUTE** SoftCtx HiRank Loβ LR exhausted → **R1180** MidCtx HiRank Loβ MidLR same pass on r338 GPUs4,5; reap :8003 by token. **Never `pkill -f`**.
-- p4296: **R1159 ~−0.71× / R1162 ~−0.67× REFUTE** → MidLR / MidRank next same pass; empty `/proc/pid/cmdline` on finished chall ⇒ **skip tok-check, UUID-clear GPUs** (do not FATAL). **Never `pkill -f`**.
-- p4295: **r340 R1142/R1144** TP2 NCCL-stall orphans (~1GiB, never CHALL_READY) + **R1156** TP1 util0.90 OOM on logprobs → kill-by-pid, relaunch **TP1 util0.85** + FORCE Triton + `/v1/completions` probe. **Never `pkill -f`**.
-- p4294: **R1165 ~0.39× REFUTE** — MidCtx LoRank Loβ LR family exhausted (Hi/Mid/Ultra) → Hiβ UltraLoLR same pass; positive margin below bar still REFUTE. **Never `pkill -f`**.
-- p4293: **R1160 ~−0.51× / R1161 ~−0.17× REFUTE** — ShortCtx LoRank Hiβ + MidRank MidLoβ LR families exhausted → SoftCtx/MidCtx UltraLoLR same pass; decision `note` may be wrong (trust train_launched). **Never `pkill -f`**.
-- p4292: **R1155 ~0.91× / R1140 ~−0.04× REFUTE** → MidLR + ShortCtx UltraLoLR same pass; empty cmdline on finished chall ⇒ skip tok-check, clear by GPU uuid. **Never `pkill -f`**.
-- p4291: **R1154/R1157/R1149/R1150 REFUTE** → MidLR/Hiβ next same pass (**R1169–R1172**); empty `/proc/pid/cmdline` on dying chall is OK if GPUs freed — do not FATAL. **Never `pkill -f`**.
-- p4290: wait_merge_then_n80 with **wrong EXP dirname** leaves MERGE_DONE idle — fix path + relaunch lean_chall. **Never `pkill -f`**.
-- p4289: **R1154** MERGE→Triton wipe+seed→probe→n80; sole B200=**fbb1135f** (BL). **Never `pkill -f`**.
-- p4288: **R1138 REFUTE** ~**−0.70×** → do **not** MidLR-re-run (R1090 already) → Hiβ UltraLoLR. **Never `pkill -f`**.
-- p4287–p4282: MidLR cascade after UltraLoLR REFUTEs. **Never `pkill -f`**.
-- p4285: always wipe+seed Triton + probe `/v1/completions` before n80. **Never `pkill -f`**.
-- p4281: blind `lium up --gpu` bypasses blacklist → **fbb1135f**; waiter = node-id+ngpu≥8. **Never `pkill -f`**.
-- p4280–p4272: UltraLoLR cascade after HiLR REFUTEs. **Never `pkill -f`**.
-- p4269: TP1 util**0.90** OOM → util≤0.85 on B200. **Never `pkill -f`**.
+- p4325: SoftCtx MidRank Loβ Mega MidLR = **R1010 REFUTE ~0.39×** — do not re-run (R1214 MidLR was a dup); SoftCtx chall **mlen32768** ContextLengthError on ~31k prompts → **TP2 util0.55 mlen65536**; crown orphan R1188/89/96 → Mega **R1215 SoftCtx MidRank Loβ HiLR** / **R1216 SoftCtx LoRank Hiβ Ultra** / **R1217 ShortCtx LoRank Hiβ MidLR**. **Never `pkill -f`**.
+- p4324: **R1187** H100: TP2 util0.72 OOM → TP1 util0.80 no KV → **TP2 util0.65 mlen32768** n80 (later ctx-fail); rented H200×8 **r1214**. **Never `pkill -f`**.
+- p4323: reaped R1192/93+R1194/95 → Mega **R1210–13**; R1187 FATAL missing sim. **Never `pkill -f`**.
+- p4322: **R1187** wait midctx typo → lean chall; stamped R1192–97 REFUTE orphans. **Never `pkill -f`**.
+- p4321: **R1201 REFUTE** ~−0.46× → **R1209** UltraLoLR; orphans → Mega **R1205–08**. **Never `pkill -f`**.
+- p4320: teacher OOM@util0.90 → serve_three TP1 util≤0.85. **Never `pkill -f`**.
+- p4319: **R1181/82/83 REFUTE** → Mega **R1202–04**; Hyper Soft/Mid/Short×rank×β×lr **108/108 full**. **Never `pkill -f`**.
+- p4317: **R1191 ~0.02× REFUTE** → **R1201** HiLR; HF full ⇒ `SKIP_HF_PUSH=1` + `SKIP_LOCAL_TKC=0`. **Never `pkill -f`**.
+- p4316: r340 merge_ready stamp + lean chall LOAD. **Never `pkill -f`**.
+- p4315: R1191 pyarrow + T/K TP1 flashinfer-off; `run_sim_duel --n-turns`. **Never `pkill -f`**.
+- p4314: HF push abort → `SKIP_LOCAL_TKC=0` + `SKIP_MERGE=1` local n80. **Never `pkill -f`**.
+- p4313–p4300: Hyper/Mega cascade after REFUTEs; TP1 prefer; sole B200 BL `fbb1135f`. **Never `pkill -f`**.
+- p4308: fleet Removal via `POST /pods/{id}/schedule-removal`. **Never `pkill -f`**.
+- p4307/p4303: rent non-BL **H200×8** when B300/B200 empty. **Never `pkill -f`**.
+- p4298: lean free-poll own CUDA GPUs; probe model id from `/v1/models`. **Never `pkill -f`**.
+- p4296/p4291: empty cmdline on finished chall ⇒ UUID-clear GPUs (do not FATAL). **Never `pkill -f`**.
+- p4290: wrong EXP dirname leaves MERGE_DONE idle. **Never `pkill -f`**.
+- p4285: wipe+seed Triton + probe `/v1/completions` before n80. **Never `pkill -f`**.
+- p4281: blind `lium up --gpu` → BL; waiter = node-id+ngpu≥8. **Never `pkill -f`**.
+- p4269: TP1 util**0.90** OOM → util≤0.85. **Never `pkill -f`**.
 - p4268: TP2 NCCL stall → prefer TP1. **Never `pkill -f`**.
 - p4265: positive margin below 2·SE still REFUTE. **Never `pkill -f`**.
 - p4264: lean awk `/tmp/r…_merged/` breaks (regex `/` cut). **Never `pkill -f`**.

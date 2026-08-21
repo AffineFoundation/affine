@@ -1,3 +1,6 @@
+# R1189 REFUTE v4 (p4325)
+m=+0.006708 SE=0.004715 ~0.71× → Mega Mid/Hi/Ultra already
+
 # R1189 — MidCtx MidRank Hiβ Hyper UltraLoLR (p4305)
 
 Parent **R1176** MidCtx MidRank MidLoβ UltraLoLR REFUTE vs reign36 wvk7:

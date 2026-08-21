@@ -1,3 +1,6 @@
+# R1188 REFUTE v4 (p4325)
+m=+0.000718 SE=0.001374 ~0.26× → R1216+R1217
+
 # R1188 — SoftCtx LoRank Hiβ Hyper MidLR (p4305)
 
 Parent **R1175** SoftCtx LoRank Hiβ UltraLoLR REFUTE vs reign36 wvk7:
