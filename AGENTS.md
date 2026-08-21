@@ -31,7 +31,7 @@ evalsrv package under `affine/`.
 
 ---
 
-## 2. Frozen production scoring — Reason v4 tempered multi-sample + δ + length floor + B gate (2026-08-17, `weight_version_key = 7`)
+## 2. Frozen production scoring — Reason v4 tempered multi-sample + δ + length floor + B gate (2026-08-17; δ recalibrated 2026-08-21, `weight_version_key = 8`)
 
 Implemented in `affine/affine/score.py` (research twin `research/harness/score.py`,
 which also keeps the v2 rule under `legacy_*` for pre-fork replay). Contract knobs in
@@ -48,8 +48,11 @@ Crown = paired mean(Reason_c − Reason_k) > max(k_sigma · SE, min_margin)
 ```
 Scoring hyperparameters: `n_turns = 1300` (was 2080; k=3 refs triple the
 teacher work per turn, budget rebalanced), `k_sigma = 2.0`,
-`min_margin = 0.002` (δ crown floor, 2026-08-12, fork 3→4 — **provisional
-under v4**, recalibrate from the first ~20 live v4 duels),
+`min_margin = 0.001` (δ crown floor: 0.002 at fork 3→4, 2026-08-12;
+recalibrated to the v4 margin scale 2026-08-21, fork 7→8, explicit dated
+operator directive — v4 compressed margins/noise ~2x, median live 2·SE
+0.0024→0.0013, and the stale 0.002 blocked two z-passing challengers;
+0.001 restores the v3-era δ/SE design ratio, forward-only),
 `min_thought_chars = 80` (fork 4→5), `causality_gate = true` (teacher-side
 B, fork 5→6), `n_teacher_samples = k = 3` and `tau = 0.03` (tempered
 multi-sample, 2026-08-17, explicit dated operator directive → fork 6→7),
@@ -76,12 +79,16 @@ empty / cue-thought kings; B is the license against padding. The z-test is
 relative to the slice's own noise (bare `SE = stdev/√n`; false-crown ≈
 2.28%/duel ≈ 1 in 44 at 2σ for a *distinct* zero-edge model). δ exists
 because that test tracks the challenger's own variance: an ε-copy of the
-king (per-duel SE ≈ 0.0003) would crown on ±0.0006 noise at the same
-1-in-44 — under the floor that is ~z=6.7 (≈1-in-7.6e10), and no
-SE-compression (A11) can pull the bar below 0.002. v3-era live 2·SE ≈
-0.0035 > δ; v4 scale pending recalibration (calibration:
-`research/results/delta_calibration.{json,txt}`; merges / fresh parity
-models crowning stays policy-accepted, 2026-08-12). The ranked quantity
+king would crown on pure noise at the same 1-in-44 — under the floor its
+tiny SE turns δ into a ~z≥6 bar, and no SE-compression (A11) can pull the
+crown bar below δ. Scale history: v3-era live 2·SE ≈ 0.0035 with δ=0.002;
+the v4 tempered score compressed margins and noise ~2x (82 live v4 duels:
+median 2·SE ≈ 0.0013), so δ=0.002 sat ABOVE the 2σ bar and alone blocked
+two z-passing challengers (chal-00967 z=2.77, chal-00883 z=2.13) —
+recalibrated to 0.001 on 2026-08-21 (wvk 7→8), restoring the v3 design
+ratio; copy SEs shrank by the same rescale so RT-4 protection is unchanged
+in z-terms (v3 calibration: `research/results/delta_calibration.{json,txt}`;
+merges / fresh parity models crowning stays policy-accepted, 2026-08-12). The ranked quantity
 lives entirely on the teacher side, which retires the whole lpA attack
 surface by construction.
 
@@ -130,7 +137,7 @@ removed; L1 channel unscored):
 | RT-2 / A9 | silent / cue-thought / hedge-filler miner | **CLOSED (v4, 2026-08-17)** | length floor + B license + tempered LME: filler earns ≈ 0 per turn and loses duels — hedging is no longer the optimum, committing is |
 | RT-2c / A2c | paraphrase stuffing | MITIGATED | ties genesis on raw Reason ⇒ cannot dethrone; **bank telemetry monitored** (residual watch item) |
 | RT-soft-pad / A10 | soft-idents pad | CLOSED | abandoned by attacker; single-term score |
-| RT-4 / A4 | king copy | CLOSED | δ = 0.002 floor (2026-08-12): ε-copy needs +0.002 absolute at SE ≈ 0.0003 ⇒ ~z=6.7, ≈1-in-7.6e10 (δ provisional at v4 scale — recalibrate) |
+| RT-4 / A4 | king copy | CLOSED | δ floor (0.002 2026-08-12; 0.001 at v4 scale 2026-08-21): copy SE shrank with the v4 rescale, so an ε-copy still needs ~z≥6 to luck past δ |
 | RT-3 / A3 | L1lift / overconfidence | **DEAD CHANNEL** | L1lift is not scored; lpA never enters the ranked quantity |
 | A11 | short-style I/II FP | MOOT | policy-accepted 2026-08-05; SE-compression variant capped since 2026-08-12 — the crown bar never drops below δ |
 | RT-6 / A6 | dataset sniping | **CLOSED (code, 2026-08-06)** | seed-shuffled strata + per-duel fresh y_i — see §5 |
@@ -195,17 +202,18 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
-- `weight_version_key = 7` (Reason v4 tempered multi-sample, 2026-08-17,
-  explicit dated operator directive; B gate was 6, thought-length floor 5,
-  δ floor 4, Reason v3 was 3). **Do not bump** without an explicit dated
-  operator directive — not for teacher-host moves, serving knobs, corpus
-  refresh, or agent “cleanup.” Leave the integer alone.
+- `weight_version_key = 8` (δ recalibration 0.002→0.001, 2026-08-21,
+  explicit dated operator directive; Reason v4 was 7, B gate 6,
+  thought-length floor 5, δ floor 4, Reason v3 was 3). **Do not bump**
+  without an explicit dated operator directive — not for teacher-host
+  moves, serving knobs, corpus refresh, or agent “cleanup.” Leave the
+  integer alone.
 - teacher: `zai-org/GLM-4.5-Air-FP8` (co-located on eval; 2026-08-10 GLM-5.2
   remote-teacher push torn down, never cut over)
 - seed king: `dendriteholdings/albedo-qwen3.6-35b-king-genesis`
 - turns: sharded corpus with immutable manifest; sha-pinned (see toml `[dataset]`)
-- duel: n_turns=1300, k_sigma=2, min_margin=0.002 (provisional at v4 scale),
-  min_thought_chars=80, causality_gate=true, causality_tau=0.02,
+- duel: n_turns=1300, k_sigma=2, min_margin=0.001 (recalibrated at v4 scale
+  2026-08-21), min_thought_chars=80, causality_gate=true, causality_tau=0.02,
   causality_gamma=0.30, n_teacher_samples=3, n_miner_samples=1, tau=0.03,
   reason_only
  (v2 knobs deleted from `[duel]` 2026-08-10; bank/lpA echoes off 2026-08-11;
@@ -398,16 +406,17 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 ## 12. One-paragraph resume
 
 > Affine SN120: teacher-anchored thought-injection duels. Since 2026-08-17
-> (`weight_version_key=7`) the contract is **Reason v4 tempered multi-sample
+> (`weight_version_key=8` as of 2026-08-21) the contract is **Reason v4 tempered multi-sample
 > + δ floor + thought-length floor + B gate**: per turn the teacher samples
 > k=3 refs, a_i = lpC(y_i|z_A) − lpC(y_i|∅), turn score =
 > 0.03·log(mean_i exp(a_i/0.03)) (LME dominated by the best-matched ref, so
 > committing to one valid teacher mode beats hedge-filler — v3's mean
 > punished misses unboundedly and filler was the equilibrium); score = mean
-> over 1300 turns, crown = paired mean > max(2·SE, 0.002) **and** median
+> over 1300 turns, crown = paired mean > max(2·SE, 0.001) **and** median
 > stripped `|z| ≥ 80` **and** B pass ≥ 0.30 — no lpA gates, no mix.
 > B = lpC(y_A|z_A) − lpC(y_A|∅) is a license. δ kills ε-copies /
-> SE-compression (provisional at v4 scale — recalibrate from live duels);
+> SE-compression (0.001 since 2026-08-21, wvk=8 — recalibrated to the v4
+> margin scale after the stale 0.002 blocked two z-passing challengers);
 > the length floor evicts empty / `"Next command:"` cue kings. New v4 watch
 > items: mode-guessing and leakage amplification (RT-9/RT-10, τ kept warm at
 > 0.03). k=1 replays v3 bit-identically. Everything v2 gated on
