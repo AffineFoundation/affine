@@ -117,8 +117,10 @@ print("[p4351] mine.env KING→0pentensor reign37 RESTART_KING=1 OFFLINE=0")
 PY
 
 hub_ok() {
+  # p4352: index weight_map may include model-visual-restored.safetensors (17 files)
+  # while of-shards stay at 16 — count ALL model*.safetensors, not only *-of-*.
   local n want
-  n=$(ls "$NEW_LOCAL"/model-*-of-*.safetensors 2>/dev/null | wc -l || true)
+  n=$(ls "$NEW_LOCAL"/model*.safetensors 2>/dev/null | wc -l || true)
   want=$(python3 -c "import json; print(len(set(json.load(open('$NEW_LOCAL/model.safetensors.index.json'))['weight_map'].values())))" 2>/dev/null || echo 16)
   [[ -f "$NEW_LOCAL/config.json" ]] && [[ -f "$NEW_LOCAL/model.safetensors.index.json" ]] && [[ "${n:-0}" -ge "${want:-16}" ]]
 }

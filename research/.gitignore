@@ -31,3 +31,13 @@ results/prefix_idents.json
 
 # Engy / ad-hoc probe dumps (scripts stay tracked; data stays local).
 results/engy_*
+
+# Discriminator pair dataset (build_disc_pairs.py, ~240M). Rebuildable from the
+# local eval artifacts, and its turns.jsonl.gz carries prefixes materialized
+# from data/live_corpus/, which is itself never published.
+data/disc_pairs/
+
+# Pod-harvested run artifacts (trackA/B/C tarballs + teacher instance dumps,
+# ~270M, 2026-08-22). Re-pullable from the research pods while they live;
+# scripts that produced them stay tracked.
+data/harvest/

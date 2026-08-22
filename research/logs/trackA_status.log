@@ -1,0 +1,411 @@
+2026-08-21T23:49:46Z | STAGE endpoints_up | teacher Qwen3.8-27B :8001 gpu0 | generator Qwen3.6-35B-A3B :8002 gpu1
+2026-08-21T23:49:46Z | STAGE images_pulled | 150/150 bench docker images, 0 failures
+2026-08-21T23:49:46Z | STAGE infra_done | vLLM via official docker image (local JIT toolchain unfixable: ptxas 9.0 vs PTX 9.3 on sm_103a) | HF cache moved to /opt/hf (/root is gocryptfs, unmountable)
+2026-08-21T23:49:46Z | STAGE panels_built | full=150 instances (incl all 25 lite for comparability) proxy=16 subset | source=nebius/SWE-rebench-leaderboard 860 avail
+2026-08-21T23:49:46Z | TrackA START | pod=calm-raven-5e 8xB300 275GB 256cores | generator=Qwen3.6-35B-A3B teacher=Qwen3.8-27B
+2026-08-21T23:59:13Z | STAGE rollouts_running | teacher Qwen3.8-27B on :8003 gpu2 | 348 turns done 0 unusable ~2.3/s target 9000
+2026-08-21T23:59:42Z | STAGE proxy_bench_done | teacher Qwen3.8-27B proxy16 = 1/16 (6.25%) wall=511s | pipeline VALIDATED per-instance kept 16/16 | WARNING low - full panel needed, proxy never conclusive
+2026-08-22T00:04:38Z | BUGFIX context_window | 14/16 teacher runs died ContextWindowExceededError at max_model_len=32768 -> proxy 1/16 was config artifact NOT ability | model supports 262144, validator uses 65536 | raised to 131072, both benches restarted
+2026-08-22T00:19:15Z | LOOP init | gen=Qwen/Qwen3.6-35B-A3B disc=Qwen/Qwen3-14B k=6 turns/round=16
+2026-08-22T00:19:24Z | LOOP data | turns=27943 teacher_rollouts=4039 usable=4039
+2026-08-22T00:24:07Z | STAGE benches_relaunched | teacher_full + gen_full on identical 150-panel, 48 workers each, 99 agent containers, max_model_len=131072
+2026-08-22T00:24:07Z | STAGE loop_started | gad_loop.py: G=Qwen3.6-35B-A3B(cuda:4,LoRA attn-only) D=Qwen3-14B(cuda:6) sampler=:8004 gpu3 | k=6 turns/round=16 g_cap=8 | teacher_rollouts=4039 usable
+2026-08-22T00:28:24Z | LOOP models_loaded
+2026-08-22T00:33:01Z | LOOP warn | server rejected adapter hot-load; G keeps sampling from the base policy, so training will not compound
+2026-08-22T00:33:01Z | ROUND 1 | valid_rate=0.969 mean_r=0.516 best_r=0.743 g_loss=0.2169 d_loss=2.9946 d_acc=0.125 winners=16 lr=1.00e-05 secs=277 ckpt=round0001 served=no
+2026-08-22T00:35:18Z | ROUND 2 | valid_rate=0.948 mean_r=0.555 best_r=0.688 g_loss=0.1794 d_loss=1.0088 d_acc=0.583 winners=15 lr=1.00e-05 secs=137 ckpt=round0002 served=no
+2026-08-22T00:37:43Z | LOOP rounds 1-2 healthy | valid_rate=0.95-0.97 mean_r=0.52-0.56 d_acc 0.13->0.58 ~137-277s/round | BLOCKER: adapter hot-load rejected, fixing
+2026-08-22T00:37:43Z | RESULT gen_baseline | Qwen3.6-35B-A3B = 20/150 = 13.33% on full panel | per_instance_kept=150 wall=1196s
+2026-08-22T00:38:28Z | ROUND 3 | valid_rate=0.990 mean_r=0.493 best_r=0.536 g_loss=0.2889 d_loss=0.9308 d_acc=0.708 winners=16 lr=1.00e-05 secs=190 ckpt=round0003 served=no
+2026-08-22T00:45:49Z | LOOP init | gen=Qwen/Qwen3.6-35B-A3B disc=Qwen/Qwen3-14B k=6 turns/round=16
+2026-08-22T00:45:54Z | LOOP data | turns=27943 teacher_rollouts=7425 usable=7425
+2026-08-22T00:49:00Z | LOOP models_loaded
+2026-08-22T00:50:03Z | FIX lora_hotswap | vLLM needs VLLM_ALLOW_RUNTIME_LORA_UPDATING=True + /opt/ckpt mounted into container | verified: adapter load HTTP200 + sampling from adapter works (attn-only LoRA on MoE serves fine) | loop restarted clean, rollouts=7425
+2026-08-22T00:52:16Z | ROUND 1 | valid_rate=1.000 mean_r=0.478 best_r=0.719 g_loss=0.2339 d_loss=3.0427 d_acc=0.250 winners=16 lr=1.00e-05 secs=196 ckpt=round0001 served=yes
+2026-08-22T00:55:28Z | ROUND 2 | valid_rate=1.000 mean_r=0.538 best_r=0.786 g_loss=0.2523 d_loss=1.7600 d_acc=0.375 winners=16 lr=1.00e-05 secs=192 ckpt=round0002 served=yes
+2026-08-22T00:58:32Z | ROUND 3 | valid_rate=1.000 mean_r=0.476 best_r=0.550 g_loss=0.2454 d_loss=1.2077 d_acc=0.625 winners=16 lr=1.00e-05 secs=184 ckpt=round0003 served=yes
+2026-08-22T01:01:05Z | LOOP CLOSED served=yes | R1-3: valid_rate=1.000 mean_r 0.48-0.54 best_r 0.55-0.79 d_acc 0.25->0.63 ~190s/round (~19 rounds/hr) | ckpt every round /opt/ckpt/gadA
+2026-08-22T01:01:51Z | ROUND 4 | valid_rate=0.969 mean_r=0.529 best_r=0.581 g_loss=0.2480 d_loss=1.0400 d_acc=0.333 winners=16 lr=1.00e-05 secs=199 ckpt=round0004 served=yes
+2026-08-22T01:02:31Z | BENCH wave | 1 checkpoints over gpus=['1'] workers=16 each
+2026-08-22T01:05:09Z | ROUND 5 | valid_rate=1.000 mean_r=0.480 best_r=0.526 g_loss=0.2828 d_loss=0.7939 d_acc=0.583 winners=16 lr=1.00e-05 secs=198 ckpt=round0005 served=yes
+2026-08-22T01:08:03Z | ROUND 6 | valid_rate=1.000 mean_r=0.494 best_r=0.523 g_loss=0.1971 d_loss=0.6803 d_acc=0.583 winners=16 lr=1.00e-05 secs=174 ckpt=round0006 served=yes
+2026-08-22T01:08:48Z | BENCH wave | 1 checkpoints over gpus=['1', '2', '5', '7'] workers=24 each
+2026-08-22T01:08:48Z | DRIVER start | milestones=[5, 10, 20, 30, 45, 60, 80, 100, 120, 150] gpus=1,2,5,7 panel=panels/panel_full.json
+2026-08-22T01:08:48Z | DRIVER wave | rounds=[5]
+2026-08-22T01:11:02Z | ROUND 7 | valid_rate=1.000 mean_r=0.491 best_r=0.520 g_loss=0.2565 d_loss=0.7295 d_acc=0.667 winners=16 lr=1.00e-05 secs=179 ckpt=round0007 served=yes
+2026-08-22T01:13:39Z | ROUND 8 | valid_rate=0.979 mean_r=0.490 best_r=0.513 g_loss=0.2113 d_loss=0.7212 d_acc=0.583 winners=16 lr=1.00e-05 secs=157 ckpt=round0008 served=yes
+2026-08-22T01:13:42Z | STAGE overnight_driver_started | bench_overnight.py milestones 5,10,20,30,45,60,80,100,120,150 on gpus 1,2,5,7 (4 parallel, 24 workers each) identical 150-panel | freed idle servers: gen :8002 + rollout :8003 had been holding gpu1/gpu2 -> caused OOM on first probe
+2026-08-22T01:16:30Z | ROUND 9 | valid_rate=0.948 mean_r=0.487 best_r=0.512 g_loss=0.2499 d_loss=0.6574 d_acc=0.667 winners=16 lr=1.00e-05 secs=171 ckpt=round0009 served=yes
+2026-08-22T01:19:33Z | ROUND 10 | valid_rate=1.000 mean_r=0.481 best_r=0.500 g_loss=0.2632 d_loss=0.6523 d_acc=0.625 winners=16 lr=1.00e-05 secs=183 ckpt=round0010 served=yes
+2026-08-22T01:22:42Z | ROUND 11 | valid_rate=0.990 mean_r=0.491 best_r=0.505 g_loss=0.2513 d_loss=0.6059 d_acc=0.667 winners=16 lr=1.00e-05 secs=189 ckpt=round0011 served=yes
+2026-08-22T01:25:52Z | STAGE autonomous | watchdog up (1 proc, resumes loop from newest ckpt on crash, restarts sampler if down) | loop R10 | teacher_full 49/150 trajs | driver benching round0005
+2026-08-22T01:25:37Z | ROUND 12 | valid_rate=1.000 mean_r=0.497 best_r=0.511 g_loss=0.2598 d_loss=0.6485 d_acc=0.667 winners=16 lr=1.00e-05 secs=175 ckpt=round0012 served=yes
+2026-08-22T01:30:09Z | LOOP init | gen=Qwen/Qwen3.6-35B-A3B disc=Qwen/Qwen3-14B k=6 turns/round=16
+2026-08-22T01:30:17Z | LOOP data | turns=27943 teacher_rollouts=7425 usable=7425
+2026-08-22T01:33:21Z | LOOP models_loaded
+2026-08-22T01:36:09Z | LOOP init | gen=Qwen/Qwen3.6-35B-A3B disc=Qwen/Qwen3-14B k=6 turns/round=16
+2026-08-22T01:36:18Z | LOOP data | turns=27943 teacher_rollouts=7425 usable=7425
+2026-08-22T01:39:20Z | LOOP models_loaded
+2026-08-22T01:42:10Z | LOOP init | gen=Qwen/Qwen3.6-35B-A3B disc=Qwen/Qwen3-14B k=6 turns/round=16
+2026-08-22T01:42:16Z | LOOP data | turns=27943 teacher_rollouts=7425 usable=7425
+2026-08-22T01:45:10Z | LOOP models_loaded
+2026-08-22T01:48:11Z | LOOP init | gen=Qwen/Qwen3.6-35B-A3B disc=Qwen/Qwen3-14B k=6 turns/round=16
+2026-08-22T01:48:16Z | LOOP data | turns=27943 teacher_rollouts=7425 usable=7425
+2026-08-22T01:51:11Z | LOOP init | gen=Qwen/Qwen3.6-35B-A3B disc=Qwen/Qwen3-14B k=6 turns/round=16
+2026-08-22T01:51:19Z | LOOP data | turns=27943 teacher_rollouts=7425 usable=7425
+2026-08-22T01:54:27Z | LOOP models_loaded
+2026-08-22T01:54:27Z | LOOP resumed | from round0012
+2026-08-22T01:57:01Z | RESULT g_round0005 | score=0.16 resolved=24/150 per_instance=150 wall=2500.7
+2026-08-22T01:57:03Z | BENCH wave complete
+2026-08-22T01:57:03Z | BENCH wave | 1 checkpoints over gpus=['1', '2', '5', '7'] workers=24 each
+2026-08-22T01:57:03Z | DRIVER wave | rounds=[10]
+2026-08-22T01:57:07Z | ROUND 13 | valid_rate=0.990 mean_r=0.398 best_r=0.599 g_loss=0.2493 d_loss=2.7326 d_acc=0.292 winners=16 lr=1.00e-05 secs=160 ckpt=round0013 served=yes
+2026-08-22T02:00:09Z | FIX loop_robustness | (a) NameError glob in resume path crashed loop after every model load -> watchdog was in crash loop, fixed+verified resume from round0012 (b) sampler-down no longer burns rounds: waits 90s without consuming a round number (first loop instance had burned 1000 rounds on ConnectionError)
+2026-08-22T02:00:09Z | DELIVERABLE trajectory_first_point | baseline gen_full 20/150=13.33% | g_round0005 24/150=16.00% d=+2.67pt paired base_only=8 ckpt_only=12 p=0.50 (not significant, expected at 5 rounds) | teacher_full still running 81/150
+2026-08-22T02:00:09Z | NOTE limitation | D LoRA is not checkpointed, so a loop restart resets D (d_acc 0.67->0.29 at round13) and D relearns over ~5 rounds; G training is preserved via --resume
+2026-08-22T02:47:37Z | FINDING weak_discriminator | rounds 20-28 mean_r pinned 0.497 best_r 0.510 (spread 0.013 vs 0.20 at round13) -> D at chance after order-averaging, so which-candidate-to-reinforce signal is ~random = self-distillation not adversarial | ruled out truncation: candidate blocks p90=521 max=1330 tok, 0/300 overflow 3072 | root cause: D starts from random LoRA and sees only 24 pairs/round (~600 total)
+2026-08-22T02:47:37Z | STAGE disc_pretrain_prep | serving G base :8005 gpu5, generating 7425 matched G-base rollouts on same turn_ids as teacher | disc_pretrain.py trains same Judge/format on cached pairs, repo-held-out test, reports acc+AUC | gad_loop gains --disc-init and now checkpoints D each round so restarts keep reward scale
+2026-08-22T02:47:37Z | INCIDENT teacher_bench_killed | my grep-kill pattern self-matched the ssh shell and the teacher bench died at 103/150 with no error; relaunched to /opt/bench/teacher_full2 (no resume, ~3h) | no more pattern-kills, explicit pids only
+2026-08-22T02:00:17Z | ROUND 14 | valid_rate=1.000 mean_r=0.594 best_r=0.741 g_loss=0.2465 d_loss=2.1139 d_acc=0.375 winners=16 lr=1.00e-05 secs=190 ckpt=round0014 served=yes
+2026-08-22T02:03:33Z | ROUND 15 | valid_rate=0.979 mean_r=0.531 best_r=0.624 g_loss=0.2008 d_loss=1.3514 d_acc=0.542 winners=16 lr=1.00e-05 secs=196 ckpt=round0015 served=yes
+2026-08-22T02:06:18Z | ROUND 16 | valid_rate=1.000 mean_r=0.487 best_r=0.538 g_loss=0.2193 d_loss=0.9128 d_acc=0.542 winners=16 lr=1.00e-05 secs=166 ckpt=round0016 served=yes
+2026-08-22T02:09:28Z | ROUND 17 | valid_rate=1.000 mean_r=0.482 best_r=0.518 g_loss=0.2831 d_loss=0.6255 d_acc=0.708 winners=16 lr=1.00e-05 secs=190 ckpt=round0017 served=yes
+2026-08-22T02:12:24Z | ROUND 18 | valid_rate=0.927 mean_r=0.480 best_r=0.503 g_loss=0.2154 d_loss=1.1163 d_acc=0.625 winners=15 lr=1.00e-05 secs=176 ckpt=round0018 served=yes
+2026-08-22T02:16:21Z | ROUND 19 | valid_rate=0.958 mean_r=0.501 best_r=0.524 g_loss=0.3021 d_loss=0.8018 d_acc=0.708 winners=16 lr=1.00e-05 secs=236 ckpt=round0019 served=yes
+2026-08-22T02:19:28Z | ROUND 20 | valid_rate=1.000 mean_r=0.497 best_r=0.510 g_loss=0.2796 d_loss=0.6474 d_acc=0.667 winners=16 lr=1.00e-05 secs=187 ckpt=round0020 served=yes
+2026-08-22T02:22:25Z | ROUND 21 | valid_rate=1.000 mean_r=0.497 best_r=0.513 g_loss=0.1754 d_loss=0.6839 d_acc=0.667 winners=16 lr=1.00e-05 secs=177 ckpt=round0021 served=yes
+2026-08-22T02:25:37Z | ROUND 22 | valid_rate=1.000 mean_r=0.497 best_r=0.510 g_loss=0.2738 d_loss=0.6354 d_acc=0.667 winners=16 lr=1.00e-05 secs=192 ckpt=round0022 served=yes
+2026-08-22T02:28:50Z | ROUND 23 | valid_rate=1.000 mean_r=0.492 best_r=0.504 g_loss=0.2464 d_loss=0.6291 d_acc=0.667 winners=16 lr=1.00e-05 secs=193 ckpt=round0023 served=yes
+2026-08-22T02:31:31Z | ROUND 24 | valid_rate=1.000 mean_r=0.491 best_r=0.500 g_loss=0.2005 d_loss=0.6506 d_acc=0.667 winners=16 lr=1.00e-05 secs=162 ckpt=round0024 served=yes
+2026-08-22T02:34:20Z | ROUND 25 | valid_rate=1.000 mean_r=0.495 best_r=0.509 g_loss=0.2008 d_loss=0.6367 d_acc=0.625 winners=16 lr=1.00e-05 secs=169 ckpt=round0025 served=yes
+2026-08-22T02:37:43Z | ROUND 26 | valid_rate=1.000 mean_r=0.497 best_r=0.510 g_loss=0.2453 d_loss=0.6832 d_acc=0.583 winners=16 lr=1.00e-05 secs=203 ckpt=round0026 served=yes
+2026-08-22T02:39:36Z | RESULT g_round0010 | score=0.1333 resolved=20/150 per_instance=150 wall=2170.7
+2026-08-22T02:39:38Z | BENCH wave complete
+2026-08-22T02:40:46Z | ROUND 27 | valid_rate=1.000 mean_r=0.493 best_r=0.511 g_loss=0.2390 d_loss=0.6973 d_acc=0.667 winners=16 lr=1.00e-05 secs=183 ckpt=round0027 served=yes
+2026-08-22T02:44:22Z | ROUND 28 | valid_rate=1.000 mean_r=0.497 best_r=0.514 g_loss=0.3265 d_loss=0.6365 d_acc=0.667 winners=16 lr=1.00e-05 secs=216 ckpt=round0028 served=yes
+2026-08-22T02:47:25Z | ROUND 29 | valid_rate=1.000 mean_r=0.488 best_r=0.507 g_loss=0.2463 d_loss=0.6648 d_acc=0.667 winners=16 lr=1.00e-05 secs=183 ckpt=round0029 served=yes
+2026-08-22T03:17:14Z | RESULT disc_zero_shot | Qwen3-14B judge, both-format, no training: acc=0.427 auc=0.422 (BELOW chance) mean_p_teacher=0.461 mean_p_gen=0.539 n=300 | untrained judge finds Qwen3.6-35B-A3B MORE reference-like than Qwen3.8-27B teacher | after training train_acc 0.60->0.80 loss 0.66->0.41 = models ARE separable with enough data, in-loop D was just undertrained
+2026-08-22T03:46:50Z | RESULT disc_pretrained | Qwen3-14B both-format judge after 1 epoch on 4000 pairs: held-out acc=0.937 AUC=0.985 mean_p_teacher=0.915 mean_p_gen=0.085 (zero-shot was auc=0.422) | teacher Qwen3.8-27B vs generator Qwen3.6-35B-A3B ARE cleanly separable
+2026-08-22T03:46:50Z | STAGE arm_switch | ARM A (random-init D, stayed at chance) = no-signal control, kept: g_round0005 16.00% g_round0010 13.33% vs base 13.33% | ARM B started: D initialised from disc_pre, ckpt /opt/ckpt/gadB, results prefix b_ | reward selection made RELATIVE (top-1 of k) because a trained D scores every sample ~0.085 and the old absolute floor 0.15 would have rejected every batch and stopped G training entirely
+2026-08-22T04:02:52Z | RESULT armB_signal_live | R1-3 with pre-trained D: mean_r 0.036/0.140/0.123 best_r 0.147/0.340/0.267 -> spread 0.11-0.20 vs armA 0.013, so top-1 selection now carries real information | d_acc 0.79-0.83 valid_rate ~1.0 winners=16/16 every round (relative selection working) | teacher_full2 at 50/150
+2026-08-22T04:22:54Z | RESULT armB_signal_live | R1-3 with pre-trained D: mean_r 0.036/0.140/0.123 best_r 0.147/0.340/0.267 -> spread 0.11-0.20 vs armA 0.013, so top-1 selection now carries real information | d_acc 0.79-0.83 valid_rate ~1.0 winners=16/16 every round (relative selection working) | teacher_full2 at 50/150
+2026-08-22T04:33:56Z | RESULT armB_signal_live | R1-3 with pre-trained D: mean_r 0.036/0.140/0.123 best_r 0.147/0.340/0.267 -> spread 0.11-0.20 vs armA 0.013, so top-1 selection now carries real information | d_acc 0.79-0.83 valid_rate ~1.0 winners=16/16 every round (relative selection working) | teacher_full2 at 50/150
+2026-08-22T04:56:00Z | STAGE reattach | new agent session took over | armB loop ALIVE pid=1629331 at R21 (~20 rounds/hr) | watchdog ALIVE | full-panel driver ALIVE benching b_round0005 (gpus 1,7) | teacher_full2 at 91/150 trajs | verified in code: D updates every round on fresh (G,teacher) pairs + replay buffer 400 (online-D confirmed) | D ckpted per round in /opt/ckpt/gadB/roundNNNN/disc
+2026-08-22T04:04:00Z | ARMB ROUND 4 | valid_rate=0.979 mean_r=0.183 best_r=0.299 g_loss=0.2798 d_loss=0.7309 d_acc=0.708 winners=16 lr=1.00e-05 secs=178 ckpt=round0004 served=yes
+2026-08-22T04:06:47Z | ARMB ROUND 5 | valid_rate=1.000 mean_r=0.190 best_r=0.282 g_loss=0.2951 d_loss=0.4353 d_acc=0.792 winners=16 lr=1.00e-05 secs=167 ckpt=round0005 served=yes
+2026-08-22T04:09:31Z | ARMB ROUND 6 | valid_rate=1.000 mean_r=0.192 best_r=0.297 g_loss=0.2745 d_loss=0.2992 d_acc=0.875 winners=16 lr=1.00e-05 secs=164 ckpt=round0006 served=yes
+2026-08-22T04:12:32Z | ARMB ROUND 7 | valid_rate=1.000 mean_r=0.148 best_r=0.233 g_loss=0.2473 d_loss=0.3053 d_acc=0.875 winners=16 lr=1.00e-05 secs=181 ckpt=round0007 served=yes
+2026-08-22T04:15:00Z | ARMB ROUND 8 | valid_rate=1.000 mean_r=0.067 best_r=0.163 g_loss=0.2043 d_loss=0.3110 d_acc=0.875 winners=16 lr=1.00e-05 secs=148 ckpt=round0008 served=yes
+2026-08-22T04:17:24Z | ARMB ROUND 9 | valid_rate=0.990 mean_r=0.206 best_r=0.420 g_loss=0.2511 d_loss=1.3637 d_acc=0.667 winners=16 lr=1.00e-05 secs=144 ckpt=round0009 served=yes
+2026-08-22T04:20:02Z | ARMB ROUND 10 | valid_rate=1.000 mean_r=0.111 best_r=0.267 g_loss=0.2662 d_loss=0.3895 d_acc=0.833 winners=16 lr=1.00e-05 secs=158 ckpt=round0010 served=yes
+2026-08-22T04:22:27Z | ARMB ROUND 11 | valid_rate=1.000 mean_r=0.057 best_r=0.098 g_loss=0.2242 d_loss=0.1787 d_acc=0.917 winners=16 lr=1.00e-05 secs=145 ckpt=round0011 served=yes
+2026-08-22T04:24:55Z | ARMB ROUND 12 | valid_rate=1.000 mean_r=0.082 best_r=0.165 g_loss=0.2745 d_loss=0.3775 d_acc=0.833 winners=16 lr=1.00e-05 secs=149 ckpt=round0012 served=no
+2026-08-22T04:27:44Z | ARMB ROUND 13 | valid_rate=0.990 mean_r=0.103 best_r=0.255 g_loss=0.2571 d_loss=0.3993 d_acc=0.833 winners=16 lr=1.00e-05 secs=169 ckpt=round0013 served=yes
+2026-08-22T04:30:41Z | ARMB ROUND 14 | valid_rate=1.000 mean_r=0.106 best_r=0.249 g_loss=0.2409 d_loss=0.4777 d_acc=0.875 winners=16 lr=1.00e-05 secs=177 ckpt=round0014 served=yes
+2026-08-22T04:34:07Z | ARMB ROUND 15 | valid_rate=0.958 mean_r=0.044 best_r=0.107 g_loss=0.2357 d_loss=0.0714 d_acc=0.958 winners=16 lr=1.00e-05 secs=206 ckpt=round0015 served=yes
+2026-08-22T04:37:01Z | ARMB ROUND 16 | valid_rate=1.000 mean_r=0.116 best_r=0.262 g_loss=0.2483 d_loss=0.8849 d_acc=0.792 winners=16 lr=1.00e-05 secs=174 ckpt=round0016 served=yes
+2026-08-22T04:40:15Z | ARMB ROUND 17 | valid_rate=1.000 mean_r=0.106 best_r=0.249 g_loss=0.2494 d_loss=0.7736 d_acc=0.708 winners=16 lr=1.00e-05 secs=194 ckpt=round0017 served=yes
+2026-08-22T04:42:59Z | ARMB ROUND 18 | valid_rate=0.938 mean_r=0.091 best_r=0.198 g_loss=0.1977 d_loss=0.1989 d_acc=0.958 winners=15 lr=1.00e-05 secs=164 ckpt=round0018 served=yes
+2026-08-22T04:46:24Z | ARMB ROUND 19 | valid_rate=0.938 mean_r=0.143 best_r=0.244 g_loss=0.2903 d_loss=0.2614 d_acc=0.875 winners=16 lr=1.00e-05 secs=205 ckpt=round0019 served=yes
+2026-08-22T04:49:08Z | ARMB ROUND 20 | valid_rate=1.000 mean_r=0.142 best_r=0.267 g_loss=0.2327 d_loss=0.5620 d_acc=0.833 winners=16 lr=1.00e-05 secs=163 ckpt=round0020 served=yes
+2026-08-22T04:51:51Z | ARMB ROUND 21 | valid_rate=1.000 mean_r=0.088 best_r=0.222 g_loss=0.2257 d_loss=0.4177 d_acc=0.875 winners=16 lr=1.00e-05 secs=163 ckpt=round0021 served=yes
+2026-08-22T04:58:00Z | STAGE proxy_driver_started | bench_overnight.py --prefix bp_ panel=proxy16 milestones every-5-rounds gpus 2,5 base-port 8200 workers 16 | full-panel driver (b_) unchanged on gpus 1,7 milestones 5,10,20,30,45,60,80
+2026-08-22T04:53:48Z | RESULT b_round0005 | score=0.1667 resolved=25/150 per_instance=150 wall=2170.6
+2026-08-22T05:02:00Z | DELIVERABLE armB_first_full_point | b_round0005 25/150=16.67% vs baseline 20/150=13.33% d=+3.33pt paired base_only=8 ckpt_only=13 p=0.38 (best full-panel point of the night so far; armA best was 16.00%) | teacher ceiling still pending (teacher_full2 at 91/150)
+2026-08-22T04:57:37Z | ARMB ROUND 23 | valid_rate=1.000 mean_r=0.075 best_r=0.136 g_loss=0.2208 d_loss=0.2695 d_acc=0.875 winners=16 lr=1.00e-05 secs=182 ckpt=round0023 served=yes
+2026-08-22T05:00:14Z | ARMB ROUND 24 | valid_rate=0.990 mean_r=0.088 best_r=0.161 g_loss=0.2549 d_loss=0.3712 d_acc=0.875 winners=16 lr=1.00e-05 secs=157 ckpt=round0024 served=yes
+2026-08-22T05:03:17Z | ARMB ROUND 25 | valid_rate=0.990 mean_r=0.075 best_r=0.188 g_loss=0.2138 d_loss=0.7385 d_acc=0.875 winners=16 lr=1.00e-05 secs=183 ckpt=round0025 served=yes
+2026-08-22T05:06:08Z | ARMB ROUND 26 | valid_rate=1.000 mean_r=0.023 best_r=0.079 g_loss=0.2495 d_loss=0.2579 d_acc=0.917 winners=16 lr=1.00e-05 secs=171 ckpt=round0026 served=yes
+2026-08-22T05:06:41Z | RESULT bp_round0005 | score=0.1875 resolved=3/16 per_instance=16 wall=303.8
+2026-08-22T05:07:10Z | RESULT bp_round0010 | score=0.25 resolved=4/16 per_instance=16 wall=312.2
+2026-08-22T05:08:58Z | ARMB ROUND 27 | valid_rate=1.000 mean_r=0.107 best_r=0.184 g_loss=0.2350 d_loss=0.7398 d_acc=0.833 winners=16 lr=1.00e-05 secs=171 ckpt=round0027 served=yes
+2026-08-22T05:07:12Z | BENCH wave complete
+2026-08-22T05:07:12Z | DRIVER wave | rounds=[15, 20]
+2026-08-22T05:07:12Z | BENCH wave | 2 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T05:12:51Z | ARMB ROUND 28 | valid_rate=1.000 mean_r=0.099 best_r=0.141 g_loss=0.2864 d_loss=0.5006 d_acc=0.917 winners=16 lr=1.00e-05 secs=233 ckpt=round0028 served=yes
+2026-08-22T05:16:12Z | ARMB ROUND 29 | valid_rate=1.000 mean_r=0.079 best_r=0.240 g_loss=0.2790 d_loss=0.3358 d_acc=0.875 winners=16 lr=1.00e-05 secs=201 ckpt=round0029 served=yes
+2026-08-22T05:18:07Z | RESULT bp_round0020 | score=0.1875 resolved=3/16 per_instance=16 wall=302.2
+2026-08-22T05:19:00Z | RESULT bp_round0015 | score=None resolved=None/None per_instance=16 wall=346.1
+2026-08-22T05:19:03Z | BENCH wave complete
+2026-08-22T05:19:03Z | DRIVER wave | rounds=[25]
+2026-08-22T05:19:03Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T05:19:31Z | ARMB ROUND 30 | valid_rate=0.990 mean_r=0.070 best_r=0.161 g_loss=0.2692 d_loss=0.4160 d_acc=0.917 winners=16 lr=1.00e-05 secs=199 ckpt=round0030 served=yes
+2026-08-22T05:22:29Z | ARMB ROUND 31 | valid_rate=0.969 mean_r=0.089 best_r=0.142 g_loss=0.2319 d_loss=0.3223 d_acc=0.917 winners=16 lr=1.00e-05 secs=178 ckpt=round0031 served=yes
+2026-08-22T05:28:00Z | INCIDENT bp_round0015_report_race | swebench make_run_report crashed: docker 404 inspecting a container a parallel run had already removed -> score=None, per-instance flags empty | remedy: deleted bad json, one-off re-bench of round0015 on gpu5 port 8300 launched | note: race can recur when two harness reports overlap; keeping wave-size 2 (rare enough), retrying on hit
+2026-08-22T05:28:00Z | NOTE proxy_trajectory | bp_round0005=3/16 bp_round0010=4/16 bp_round0020=3/16 (proxy16, noisy, trajectory only) | full driver on b_round0010+b_round0020 now | teacher_full2 at 113/150
+2026-08-22T05:24:59Z | ARMB ROUND 32 | valid_rate=1.000 mean_r=0.058 best_r=0.188 g_loss=0.2405 d_loss=0.5059 d_acc=0.833 winners=16 lr=1.00e-05 secs=149 ckpt=round0032 served=yes
+2026-08-22T05:24:14Z | BENCH wave | 1 checkpoints over gpus=['5'] workers=16 each
+2026-08-22T05:28:06Z | ARMB ROUND 33 | valid_rate=0.979 mean_r=0.032 best_r=0.077 g_loss=0.2420 d_loss=0.1858 d_acc=0.958 winners=16 lr=1.00e-05 secs=188 ckpt=round0033 served=yes
+2026-08-22T05:31:11Z | ARMB ROUND 34 | valid_rate=1.000 mean_r=0.114 best_r=0.179 g_loss=0.2170 d_loss=0.4210 d_acc=0.875 winners=16 lr=1.00e-05 secs=185 ckpt=round0034 served=yes
+2026-08-22T05:32:51Z | RESULT bp_round0025 | score=0.1875 resolved=3/16 per_instance=16 wall=406.2
+2026-08-22T05:32:54Z | BENCH wave complete
+2026-08-22T05:32:54Z | DRIVER wave | rounds=[30]
+2026-08-22T05:32:54Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T05:33:49Z | ARMB ROUND 35 | valid_rate=0.990 mean_r=0.042 best_r=0.122 g_loss=0.2648 d_loss=0.2332 d_acc=0.917 winners=16 lr=1.00e-05 secs=158 ckpt=round0035 served=yes
+2026-08-22T05:34:31Z | RESULT b_round0020 | score=0.0733 resolved=11/150 per_instance=150 wall=2048.8
+2026-08-22T05:35:41Z | RESULT b_round0010 | score=0.1333 resolved=20/150 per_instance=150 wall=2218.6
+2026-08-22T05:35:43Z | BENCH wave complete
+2026-08-22T05:35:43Z | DRIVER wave | rounds=[30]
+2026-08-22T05:35:43Z | BENCH wave | 1 checkpoints over gpus=['1', '7'] workers=24 each
+2026-08-22T05:36:33Z | ARMB ROUND 36 | valid_rate=0.990 mean_r=0.083 best_r=0.224 g_loss=0.2185 d_loss=0.3713 d_acc=0.875 winners=16 lr=1.00e-05 secs=164 ckpt=round0036 served=yes
+2026-08-22T05:36:15Z | RESULT bp_round0015 | score=0.1875 resolved=3/16 per_instance=16 wall=319.2
+2026-08-22T05:36:17Z | BENCH wave complete
+2026-08-22T05:39:36Z | ARMB ROUND 37 | valid_rate=0.990 mean_r=0.177 best_r=0.253 g_loss=0.2481 d_loss=0.9352 d_acc=0.792 winners=16 lr=1.00e-05 secs=183 ckpt=round0037 served=yes
+2026-08-22T05:42:55Z | ARMB ROUND 38 | valid_rate=1.000 mean_r=0.042 best_r=0.099 g_loss=0.2476 d_loss=0.3286 d_acc=0.917 winners=16 lr=1.00e-05 secs=199 ckpt=round0038 served=yes
+2026-08-22T05:45:46Z | ARMB ROUND 39 | valid_rate=1.000 mean_r=0.072 best_r=0.114 g_loss=0.2791 d_loss=0.5131 d_acc=0.875 winners=16 lr=1.00e-05 secs=171 ckpt=round0039 served=yes
+2026-08-22T05:46:42Z | RESULT bp_round0030 | score=0.25 resolved=4/16 per_instance=16 wall=426.3
+2026-08-22T05:46:44Z | BENCH wave complete
+2026-08-22T05:46:44Z | DRIVER wave | rounds=[35]
+2026-08-22T05:46:44Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T05:48:14Z | ARMB ROUND 40 | valid_rate=1.000 mean_r=0.040 best_r=0.120 g_loss=0.1706 d_loss=0.1789 d_acc=0.917 winners=16 lr=1.00e-05 secs=149 ckpt=round0040 served=yes
+2026-08-22T05:51:14Z | ARMB ROUND 41 | valid_rate=1.000 mean_r=0.062 best_r=0.179 g_loss=0.2768 d_loss=0.1412 d_acc=0.917 winners=16 lr=1.00e-05 secs=180 ckpt=round0041 served=yes
+2026-08-22T05:53:52Z | ARMB ROUND 42 | valid_rate=0.990 mean_r=0.089 best_r=0.144 g_loss=0.1901 d_loss=0.2046 d_acc=0.917 winners=16 lr=1.00e-05 secs=158 ckpt=round0042 served=yes
+2026-08-22T05:56:52Z | ARMB ROUND 43 | valid_rate=0.990 mean_r=0.021 best_r=0.067 g_loss=0.2476 d_loss=0.0555 d_acc=0.958 winners=16 lr=1.00e-05 secs=180 ckpt=round0043 served=yes
+2026-08-22T05:57:17Z | RESULT bp_round0035 | score=0.125 resolved=2/16 per_instance=16 wall=310.3
+2026-08-22T05:57:19Z | BENCH wave complete
+2026-08-22T05:57:19Z | DRIVER wave | rounds=[40]
+2026-08-22T05:57:19Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T05:59:54Z | ARMB ROUND 44 | valid_rate=0.979 mean_r=0.016 best_r=0.072 g_loss=0.2741 d_loss=0.2065 d_acc=0.958 winners=16 lr=1.00e-05 secs=182 ckpt=round0044 served=yes
+2026-08-22T06:03:04Z | ARMB ROUND 45 | valid_rate=1.000 mean_r=0.097 best_r=0.185 g_loss=0.2342 d_loss=0.7104 d_acc=0.833 winners=16 lr=1.00e-05 secs=189 ckpt=round0045 served=yes
+2026-08-22T06:05:12Z | ARMB ROUND 46 | valid_rate=1.000 mean_r=0.007 best_r=0.039 g_loss=0.2324 d_loss=0.0471 d_acc=0.958 winners=16 lr=1.00e-05 secs=128 ckpt=round0046 served=yes
+2026-08-22T06:08:00Z | ARMB ROUND 47 | valid_rate=1.000 mean_r=0.101 best_r=0.208 g_loss=0.2987 d_loss=0.9352 d_acc=0.750 winners=16 lr=1.00e-05 secs=168 ckpt=round0047 served=yes
+2026-08-22T06:10:25Z | ARMB ROUND 48 | valid_rate=1.000 mean_r=0.050 best_r=0.083 g_loss=0.2614 d_loss=0.1954 d_acc=0.917 winners=16 lr=1.00e-05 secs=145 ckpt=round0048 served=no
+2026-08-22T06:09:37Z | RESULT bp_round0040 | score=0.1875 resolved=3/16 per_instance=16 wall=356.2
+2026-08-22T06:09:40Z | BENCH wave complete
+2026-08-22T06:09:40Z | DRIVER wave | rounds=[45]
+2026-08-22T06:09:40Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T06:13:10Z | ARMB ROUND 49 | valid_rate=1.000 mean_r=0.075 best_r=0.161 g_loss=0.2855 d_loss=0.2868 d_acc=0.875 winners=16 lr=1.00e-05 secs=165 ckpt=round0049 served=yes
+2026-08-22T06:15:55Z | ARMB ROUND 50 | valid_rate=0.969 mean_r=0.109 best_r=0.202 g_loss=0.2657 d_loss=0.3605 d_acc=0.875 winners=16 lr=1.00e-05 secs=166 ckpt=round0050 served=yes
+2026-08-22T06:18:46Z | ARMB ROUND 51 | valid_rate=0.979 mean_r=0.077 best_r=0.140 g_loss=0.2306 d_loss=0.1935 d_acc=0.875 winners=16 lr=1.00e-05 secs=171 ckpt=round0051 served=yes
+2026-08-22T06:21:34Z | ARMB ROUND 52 | valid_rate=0.979 mean_r=0.030 best_r=0.082 g_loss=0.1762 d_loss=0.0225 d_acc=1.000 winners=16 lr=1.00e-05 secs=168 ckpt=round0052 served=yes
+2026-08-22T06:20:54Z | RESULT bp_round0045 | score=0.125 resolved=2/16 per_instance=16 wall=272.2
+2026-08-22T06:20:56Z | BENCH wave complete
+2026-08-22T06:20:56Z | DRIVER wave | rounds=[50]
+2026-08-22T06:20:56Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T06:24:17Z | ARMB ROUND 53 | valid_rate=0.938 mean_r=0.015 best_r=0.044 g_loss=0.2391 d_loss=0.0105 d_acc=1.000 winners=16 lr=1.00e-05 secs=163 ckpt=round0053 served=yes
+2026-08-22T06:22:46Z | RESULT b_round0030 | score=0.1133 resolved=17/150 per_instance=150 wall=2470.7
+2026-08-22T06:22:48Z | BENCH wave complete
+2026-08-22T06:22:48Z | DRIVER wave | rounds=[45]
+2026-08-22T06:22:48Z | BENCH wave | 1 checkpoints over gpus=['1', '7'] workers=24 each
+2026-08-22T06:26:28Z | ARMB ROUND 54 | valid_rate=0.979 mean_r=0.074 best_r=0.247 g_loss=0.1880 d_loss=0.8214 d_acc=0.875 winners=16 lr=1.00e-05 secs=131 ckpt=round0054 served=yes
+2026-08-22T06:28:21Z | ARMB ROUND 55 | valid_rate=1.000 mean_r=0.012 best_r=0.064 g_loss=0.1936 d_loss=0.3889 d_acc=0.917 winners=16 lr=1.00e-05 secs=113 ckpt=round0055 served=yes
+2026-08-22T06:30:10Z | ARMB ROUND 56 | valid_rate=1.000 mean_r=0.008 best_r=0.017 g_loss=0.2279 d_loss=0.0155 d_acc=1.000 winners=16 lr=1.00e-05 secs=109 ckpt=round0056 served=yes
+2026-08-22T06:32:31Z | RESULT bp_round0050 | score=0.0 resolved=0/16 per_instance=16 wall=322.2
+2026-08-22T06:32:33Z | BENCH wave complete
+2026-08-22T06:32:33Z | DRIVER wave | rounds=[55]
+2026-08-22T06:32:33Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T06:33:07Z | ARMB ROUND 57 | valid_rate=1.000 mean_r=0.014 best_r=0.063 g_loss=0.2145 d_loss=0.3645 d_acc=0.917 winners=16 lr=1.00e-05 secs=177 ckpt=round0057 served=yes
+2026-08-22T06:36:07Z | ARMB ROUND 58 | valid_rate=1.000 mean_r=0.047 best_r=0.177 g_loss=0.1835 d_loss=0.2554 d_acc=0.875 winners=16 lr=1.00e-05 secs=180 ckpt=round0058 served=yes
+2026-08-22T06:39:24Z | ARMB ROUND 59 | valid_rate=1.000 mean_r=0.065 best_r=0.113 g_loss=0.2324 d_loss=0.4639 d_acc=0.875 winners=16 lr=1.00e-05 secs=197 ckpt=round0059 served=yes
+2026-08-22T06:42:07Z | ARMB ROUND 60 | valid_rate=1.000 mean_r=0.074 best_r=0.159 g_loss=0.2071 d_loss=0.1577 d_acc=0.917 winners=16 lr=1.00e-05 secs=163 ckpt=round0060 served=yes
+2026-08-22T06:43:00Z | RESULT bp_round0055 | score=0.25 resolved=4/16 per_instance=16 wall=315.3
+2026-08-22T06:43:03Z | BENCH wave complete
+2026-08-22T06:43:03Z | DRIVER wave | rounds=[60]
+2026-08-22T06:43:03Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T06:45:06Z | ARMB ROUND 61 | valid_rate=1.000 mean_r=0.142 best_r=0.209 g_loss=0.2334 d_loss=0.4616 d_acc=0.875 winners=16 lr=1.00e-05 secs=179 ckpt=round0061 served=yes
+2026-08-22T06:48:14Z | ARMB ROUND 62 | valid_rate=1.000 mean_r=0.131 best_r=0.201 g_loss=0.2314 d_loss=0.3703 d_acc=0.875 winners=16 lr=1.00e-05 secs=188 ckpt=round0062 served=yes
+2026-08-22T06:55:00Z | INCIDENT teacher_full2_timeout | agent phase gets timeout_s//2=12500s inside run_swe_lite and hit it at 149/150 trajs (27B teacher is slow); eval phase never ran | SALVAGE: predictions all on disk, running swebench evaluation standalone on the 149 preds (CPU-only, no GPU contention), will write teacher_full.json with per-instance flags
+2026-08-22T06:56:00Z | FINDING armB_full_trajectory_declining | full-panel: b_round0005=25/150 (16.67%) b_round0010=20/150 (13.33%) b_round0020=11/150 (7.33%) b_round0030=17/150 (11.33%) vs baseline 20/150 (13.33%) | reward spread persists (best-mean ~0.05-0.16) and d_acc ~0.85-0.92, so the GAN loop has signal but G is trading SWE ability for teacher-style mimicry after ~round 5-10 | proxy16 flat ~3/16 through r45, dip 0/16 at r50, 4/16 at r55 | loop continues to extend trajectory (milestones 45,60,80)
+2026-08-22T06:51:29Z | ARMB ROUND 63 | valid_rate=1.000 mean_r=0.094 best_r=0.196 g_loss=0.3369 d_loss=0.3321 d_acc=0.917 winners=16 lr=1.00e-05 secs=195 ckpt=round0063 served=yes
+2026-08-22T06:54:15Z | ARMB ROUND 64 | valid_rate=1.000 mean_r=0.078 best_r=0.149 g_loss=0.2383 d_loss=0.4001 d_acc=0.917 winners=16 lr=1.00e-05 secs=166 ckpt=round0064 served=yes
+2026-08-22T06:54:17Z | RESULT bp_round0060 | score=0.1875 resolved=3/16 per_instance=16 wall=322.2
+2026-08-22T06:54:19Z | BENCH wave complete
+2026-08-22T06:56:41Z | RESULT teacher_full | score=0.3133 resolved=47/150 per_instance=150 wall=257.0 (salvaged eval)
+2026-08-22T07:02:00Z | SWEEP1 procs | loop pid=1629331 ROUND 63 @06:51Z (mean_r=0.094 best_r=0.196 d_acc=0.917 valid=1.0) | watchdog alive | full-driver b_ (gpus 1,7) + proxy-driver bp_ (gpus 2,5) alive | waves ACTIVE (b_round0045 full + bp_round0060 proxy running) -> no wave kick needed
+2026-08-22T07:02:00Z | SWEEP1 refs | G0 full-panel = 20/150 = 13.33% (gen_full.json) | G0 proxy16 = 1/16 = 6.25% (derived: gen_full per_instance restricted to panel_proxy instance_ids; only PennyLaneAI resolved) | TEACHER full-panel STILL MISSING: run1 timed out 12503s with 0 evaluated; run2 has 149/150 trajectories done and a salvage evaluation is RUNNING (pid 3175046 run_id=affine-teachersalvage-1787381544 started 06:52Z, 8 workers) - expect score ~1-2h; teacher_proxy 1/16 is pre-context-fix artifact, do not cite
+2026-08-22T06:57:43Z | ARMB ROUND 65 | valid_rate=0.990 mean_r=0.055 best_r=0.101 g_loss=0.2689 d_loss=0.2099 d_acc=0.875 winners=16 lr=1.00e-05 secs=208 ckpt=round0065 served=yes
+2026-08-22T06:59:19Z | DRIVER wave | rounds=[65]
+2026-08-22T06:59:19Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T07:00:40Z | ARMB ROUND 66 | valid_rate=0.990 mean_r=0.054 best_r=0.123 g_loss=0.2320 d_loss=0.1182 d_acc=0.958 winners=16 lr=1.00e-05 secs=177 ckpt=round0066 served=yes
+2026-08-22T07:01:48Z | RESULT b_round0045 | score=0.1 resolved=15/150 per_instance=150 wall=1948.2
+2026-08-22T07:01:51Z | BENCH wave complete
+2026-08-22T07:01:51Z | DRIVER wave | rounds=[60]
+2026-08-22T07:01:51Z | BENCH wave | 1 checkpoints over gpus=['1', '7'] workers=24 each
+2026-08-22T07:04:33Z | ARMB ROUND 67 | valid_rate=0.990 mean_r=0.119 best_r=0.224 g_loss=0.3605 d_loss=0.1766 d_acc=0.958 winners=16 lr=1.00e-05 secs=233 ckpt=round0067 served=yes
+2026-08-22T07:07:25Z | ARMB ROUND 68 | valid_rate=1.000 mean_r=0.135 best_r=0.279 g_loss=0.2883 d_loss=1.0152 d_acc=0.792 winners=16 lr=1.00e-05 secs=171 ckpt=round0068 served=yes
+2026-08-22T07:10:33Z | ARMB ROUND 69 | valid_rate=1.000 mean_r=0.160 best_r=0.266 g_loss=0.2662 d_loss=0.5943 d_acc=0.792 winners=16 lr=1.00e-05 secs=188 ckpt=round0069 served=yes
+2026-08-22T07:09:57Z | RESULT bp_round0065 | score=0.1875 resolved=3/16 per_instance=16 wall=285.8
+2026-08-22T07:09:59Z | BENCH wave complete
+2026-08-22T07:14:13Z | ARMB ROUND 70 | valid_rate=0.979 mean_r=0.042 best_r=0.071 g_loss=0.2670 d_loss=0.1091 d_acc=0.958 winners=16 lr=1.00e-05 secs=220 ckpt=round0070 served=yes
+2026-08-22T07:14:59Z | DRIVER wave | rounds=[70]
+2026-08-22T07:14:59Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T07:17:29Z | ARMB ROUND 71 | valid_rate=1.000 mean_r=0.125 best_r=0.245 g_loss=0.2581 d_loss=0.8180 d_acc=0.708 winners=16 lr=1.00e-05 secs=197 ckpt=round0071 served=yes
+2026-08-22T07:20:00Z | DELIVERABLE teacher_ceiling | teacher_full SALVAGED: Qwen3.8-27B = 47/150 = 31.33% on identical panel, per_instance=150 | teacher vs baseline paired: base_only=5 teacher_only=32 p<0.0001 -> real +18.00pt gap to close | reference points now complete: baseline 13.33%, teacher 31.33%
+2026-08-22T07:21:00Z | DELIVERABLE armB_trajectory_vs_teacher | frac_of_gap closed: r5 +19% (p=0.38) r10 +0% r20 -33% (p=0.09) r30 -11% | early gain then decline below baseline | GAN pressure after ~r10 makes G WORSE at SWE while D stays beatable-but-strong (d_acc 0.7-0.96 oscillation) | best armB ckpt so far = round0005
+2026-08-22T07:20:23Z | ARMB ROUND 72 | valid_rate=0.990 mean_r=0.021 best_r=0.043 g_loss=0.2094 d_loss=0.0436 d_acc=1.000 winners=16 lr=1.00e-05 secs=173 ckpt=round0072 served=yes
+2026-08-22T07:23:05Z | ARMB ROUND 73 | valid_rate=1.000 mean_r=0.087 best_r=0.127 g_loss=0.2654 d_loss=0.2329 d_acc=0.875 winners=16 lr=1.00e-05 secs=163 ckpt=round0073 served=yes
+2026-08-22T07:25:56Z | ARMB ROUND 74 | valid_rate=1.000 mean_r=0.053 best_r=0.118 g_loss=0.2076 d_loss=0.3739 d_acc=0.875 winners=16 lr=1.00e-05 secs=171 ckpt=round0074 served=yes
+2026-08-22T07:26:49Z | RESULT bp_round0070 | score=0.125 resolved=2/16 per_instance=16 wall=377.7
+2026-08-22T07:26:51Z | BENCH wave complete
+2026-08-22T07:28:27Z | ARMB ROUND 75 | valid_rate=1.000 mean_r=0.122 best_r=0.206 g_loss=0.2579 d_loss=0.3033 d_acc=0.917 winners=16 lr=1.00e-05 secs=151 ckpt=round0075 served=yes
+2026-08-22T07:30:49Z | ARMB ROUND 76 | valid_rate=0.990 mean_r=0.057 best_r=0.110 g_loss=0.2143 d_loss=0.2484 d_acc=0.958 winners=16 lr=1.00e-05 secs=142 ckpt=round0076 served=yes
+2026-08-22T07:31:51Z | DRIVER wave | rounds=[75]
+2026-08-22T07:31:51Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T07:33:19Z | ARMB ROUND 77 | valid_rate=0.990 mean_r=0.100 best_r=0.220 g_loss=0.2286 d_loss=0.8898 d_acc=0.792 winners=16 lr=1.00e-05 secs=150 ckpt=round0077 served=yes
+2026-08-22T07:36:52Z | ARMB ROUND 78 | valid_rate=1.000 mean_r=0.065 best_r=0.134 g_loss=0.3017 d_loss=0.3780 d_acc=0.875 winners=16 lr=1.00e-05 secs=213 ckpt=round0078 served=yes
+2026-08-22T07:39:46Z | ARMB ROUND 79 | valid_rate=1.000 mean_r=0.075 best_r=0.161 g_loss=0.2461 d_loss=0.2432 d_acc=0.875 winners=16 lr=1.00e-05 secs=174 ckpt=round0079 served=yes
+2026-08-22T07:42:53Z | ARMB ROUND 80 | valid_rate=0.990 mean_r=0.186 best_r=0.330 g_loss=0.3087 d_loss=0.4822 d_acc=0.708 winners=16 lr=1.00e-05 secs=188 ckpt=round0080 served=yes
+2026-08-22T07:44:23Z | RESULT b_round0060 | score=0.1467 resolved=22/150 per_instance=150 wall=2230.6
+2026-08-22T07:44:26Z | BENCH wave complete
+2026-08-22T07:44:26Z | DRIVER wave | rounds=[80]
+2026-08-22T07:44:26Z | BENCH wave | 1 checkpoints over gpus=['1', '7'] workers=24 each
+2026-08-22T07:45:58Z | ARMB ROUND 81 | valid_rate=1.000 mean_r=0.022 best_r=0.040 g_loss=0.2646 d_loss=0.0279 d_acc=1.000 winners=16 lr=1.00e-05 secs=185 ckpt=round0081 served=yes
+2026-08-22T07:45:11Z | RESULT bp_round0075 | score=0.25 resolved=4/16 per_instance=16 wall=408.3
+2026-08-22T07:45:13Z | BENCH wave complete
+2026-08-22T07:45:13Z | DRIVER wave | rounds=[80]
+2026-08-22T07:45:13Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T07:48:18Z | ARMB ROUND 82 | valid_rate=0.990 mean_r=0.051 best_r=0.168 g_loss=0.2448 d_loss=0.2723 d_acc=0.875 winners=16 lr=1.00e-05 secs=140 ckpt=round0082 served=yes
+2026-08-22T07:52:00Z | NOTE armB_full_trajectory_update | b_ full-panel vs baseline 13.33%, teacher 31.33%: r5 16.67% (+19% of gap) r10 13.33% r20 7.33% r30 11.33% r45 10.00% r60 14.67% (+7% of gap) | dip r20-45 with recovery at r60, none significant vs baseline (min p=0.09 at the r20 LOW) | d_acc oscillates 0.71-1.00, spread compresses when D peaks (r81 d_acc=1.0 spread=0.018) but recovers in 1-2 rounds - NOT an armA-style permanent collapse, no remedy needed yet | plan: extend b_ milestones to 100,120 after r80 wave, final replication run on best ckpt at end of night
+2026-08-22T07:50:19Z | ARMB ROUND 83 | valid_rate=0.990 mean_r=0.009 best_r=0.043 g_loss=0.2118 d_loss=0.2854 d_acc=0.917 winners=16 lr=1.00e-05 secs=120 ckpt=round0083 served=yes
+2026-08-22T07:53:15Z | ARMB ROUND 84 | valid_rate=1.000 mean_r=0.007 best_r=0.035 g_loss=0.2389 d_loss=0.3228 d_acc=0.917 winners=16 lr=1.00e-05 secs=177 ckpt=round0084 served=yes
+2026-08-22T07:56:01Z | ARMB ROUND 85 | valid_rate=1.000 mean_r=0.119 best_r=0.209 g_loss=0.2722 d_loss=0.2294 d_acc=0.833 winners=16 lr=1.00e-05 secs=166 ckpt=round0085 served=yes
+2026-08-22T07:58:36Z | ARMB ROUND 86 | valid_rate=1.000 mean_r=0.011 best_r=0.032 g_loss=0.2387 d_loss=0.2902 d_acc=0.958 winners=16 lr=1.00e-05 secs=155 ckpt=round0086 served=yes
+2026-08-22T07:57:36Z | RESULT bp_round0080 | score=0.125 resolved=2/16 per_instance=16 wall=330.1
+2026-08-22T07:57:38Z | BENCH wave complete
+2026-08-22T07:57:38Z | DRIVER wave | rounds=[85]
+2026-08-22T07:57:38Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T08:01:42Z | ARMB ROUND 87 | valid_rate=1.000 mean_r=0.128 best_r=0.214 g_loss=0.2454 d_loss=0.6840 d_acc=0.750 winners=16 lr=1.00e-05 secs=186 ckpt=round0087 served=yes
+2026-08-22T08:04:28Z | ARMB ROUND 88 | valid_rate=1.000 mean_r=0.062 best_r=0.146 g_loss=0.2289 d_loss=0.2579 d_acc=0.917 winners=16 lr=1.00e-05 secs=166 ckpt=round0088 served=yes
+2026-08-22T08:06:55Z | ARMB ROUND 89 | valid_rate=1.000 mean_r=0.081 best_r=0.127 g_loss=0.2784 d_loss=0.3155 d_acc=0.833 winners=16 lr=1.00e-05 secs=146 ckpt=round0089 served=yes
+2026-08-22T08:09:49Z | ARMB ROUND 90 | valid_rate=1.000 mean_r=0.075 best_r=0.136 g_loss=0.2580 d_loss=0.4340 d_acc=0.833 winners=16 lr=1.00e-05 secs=174 ckpt=round0090 served=yes
+2026-08-22T08:09:46Z | RESULT bp_round0085 | score=0.125 resolved=2/16 per_instance=16 wall=336.2
+2026-08-22T08:09:49Z | BENCH wave complete
+2026-08-22T08:09:49Z | DRIVER wave | rounds=[90]
+2026-08-22T08:09:49Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T08:12:41Z | ARMB ROUND 91 | valid_rate=0.990 mean_r=0.076 best_r=0.108 g_loss=0.2559 d_loss=0.0824 d_acc=0.917 winners=16 lr=1.00e-05 secs=173 ckpt=round0091 served=yes
+2026-08-22T08:15:32Z | ARMB ROUND 92 | valid_rate=1.000 mean_r=0.090 best_r=0.169 g_loss=0.2002 d_loss=0.2873 d_acc=0.875 winners=16 lr=1.00e-05 secs=171 ckpt=round0092 served=yes
+2026-08-22T08:19:08Z | ARMB ROUND 93 | valid_rate=0.990 mean_r=0.108 best_r=0.177 g_loss=0.3892 d_loss=0.3500 d_acc=0.833 winners=16 lr=1.00e-05 secs=216 ckpt=round0093 served=yes
+2026-08-22T08:19:37Z | RESULT bp_round0090 | score=0.125 resolved=2/16 per_instance=16 wall=215.7
+2026-08-22T08:19:39Z | BENCH wave complete
+2026-08-22T08:21:50Z | ARMB ROUND 94 | valid_rate=1.000 mean_r=0.043 best_r=0.069 g_loss=0.2690 d_loss=0.0442 d_acc=0.958 winners=16 lr=1.00e-05 secs=162 ckpt=round0094 served=yes
+2026-08-22T08:24:51Z | ARMB ROUND 95 | valid_rate=0.969 mean_r=0.083 best_r=0.171 g_loss=0.2665 d_loss=0.3232 d_acc=0.833 winners=16 lr=1.00e-05 secs=180 ckpt=round0095 served=yes
+2026-08-22T08:25:16Z | DRIVER start | milestones=[100, 120, 140] gpus=1,7 panel=panels/panel_full.json
+2026-08-22T08:25:00Z | STAGE extended_driver | full-panel milestones extended: 100,120,140 (prefix b_, gpus 1,7, base-port 8400) | b_round0080 still benching | loop at R94 ~20/hr | proxy done through bp_round0090 (r85 2/16, r90 2/16 - proxy sagging in 80s rounds)
+2026-08-22T08:27:58Z | ARMB ROUND 96 | valid_rate=0.948 mean_r=0.093 best_r=0.161 g_loss=0.2584 d_loss=0.2468 d_acc=0.917 winners=16 lr=1.00e-05 secs=188 ckpt=round0096 served=yes
+2026-08-22T08:29:00Z | RESULT b_round0080 | score=0.1467 resolved=22/150 per_instance=150 wall=2262.6
+2026-08-22T08:29:03Z | BENCH wave complete
+2026-08-22T08:31:17Z | ARMB ROUND 97 | valid_rate=1.000 mean_r=0.082 best_r=0.119 g_loss=0.2152 d_loss=0.3082 d_acc=0.875 winners=16 lr=1.00e-05 secs=199 ckpt=round0097 served=yes
+2026-08-22T08:29:39Z | DRIVER wave | rounds=[95]
+2026-08-22T08:29:39Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T08:34:53Z | ARMB ROUND 98 | valid_rate=1.000 mean_r=0.077 best_r=0.120 g_loss=0.2359 d_loss=0.1528 d_acc=0.917 winners=16 lr=1.00e-05 secs=216 ckpt=round0098 served=yes
+2026-08-22T08:37:43Z | ARMB ROUND 99 | valid_rate=1.000 mean_r=0.052 best_r=0.101 g_loss=0.2289 d_loss=0.2346 d_acc=0.917 winners=16 lr=1.00e-05 secs=170 ckpt=round0099 served=yes
+2026-08-22T08:40:41Z | ARMB ROUND 100 | valid_rate=1.000 mean_r=0.080 best_r=0.173 g_loss=0.2177 d_loss=0.2979 d_acc=0.833 winners=16 lr=1.00e-05 secs=179 ckpt=round0100 served=yes
+2026-08-22T08:40:39Z | RESULT bp_round0095 | score=0.125 resolved=2/16 per_instance=16 wall=358.3
+2026-08-22T08:40:42Z | BENCH wave complete
+2026-08-22T08:40:42Z | DRIVER wave | rounds=[100]
+2026-08-22T08:40:42Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T08:43:55Z | ARMB ROUND 101 | valid_rate=1.000 mean_r=0.057 best_r=0.113 g_loss=0.2809 d_loss=0.0420 d_acc=1.000 winners=16 lr=1.00e-05 secs=194 ckpt=round0101 served=yes
+2026-08-22T08:45:16Z | DRIVER wave | rounds=[100]
+2026-08-22T08:45:16Z | BENCH wave | 1 checkpoints over gpus=['1', '7'] workers=24 each
+2026-08-22T08:47:09Z | ARMB ROUND 102 | valid_rate=1.000 mean_r=0.007 best_r=0.025 g_loss=0.2536 d_loss=0.0445 d_acc=0.958 winners=16 lr=1.00e-05 secs=194 ckpt=round0102 served=yes
+2026-08-22T08:49:57Z | ARMB ROUND 103 | valid_rate=1.000 mean_r=0.051 best_r=0.107 g_loss=0.2006 d_loss=0.2064 d_acc=0.958 winners=16 lr=1.00e-05 secs=168 ckpt=round0103 served=yes
+2026-08-22T08:51:08Z | RESULT bp_round0100 | score=0.1875 resolved=3/16 per_instance=16 wall=294.2
+2026-08-22T08:51:11Z | BENCH wave complete
+2026-08-22T08:52:50Z | ARMB ROUND 104 | valid_rate=0.948 mean_r=0.006 best_r=0.033 g_loss=0.2436 d_loss=0.1830 d_acc=0.917 winners=16 lr=1.00e-05 secs=173 ckpt=round0104 served=yes
+2026-08-22T08:55:40Z | ARMB ROUND 105 | valid_rate=1.000 mean_r=0.000 best_r=0.001 g_loss=0.2478 d_loss=0.0005 d_acc=1.000 winners=16 lr=1.00e-05 secs=170 ckpt=round0105 served=yes
+2026-08-22T08:56:11Z | DRIVER wave | rounds=[105]
+2026-08-22T08:56:11Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T08:58:58Z | ARMB ROUND 106 | valid_rate=1.000 mean_r=0.045 best_r=0.094 g_loss=0.1689 d_loss=0.5862 d_acc=0.917 winners=16 lr=1.00e-05 secs=198 ckpt=round0106 served=yes
+2026-08-22T09:02:16Z | ARMB ROUND 107 | valid_rate=1.000 mean_r=0.021 best_r=0.063 g_loss=0.2202 d_loss=0.4324 d_acc=0.958 winners=16 lr=1.00e-05 secs=198 ckpt=round0107 served=yes
+2026-08-22T09:05:28Z | ARMB ROUND 108 | valid_rate=0.990 mean_r=0.024 best_r=0.099 g_loss=0.3329 d_loss=0.2838 d_acc=0.917 winners=16 lr=1.00e-05 secs=192 ckpt=round0108 served=yes
+2026-08-22T09:08:41Z | ARMB ROUND 109 | valid_rate=0.990 mean_r=0.009 best_r=0.048 g_loss=0.2575 d_loss=0.0998 d_acc=0.958 winners=16 lr=1.00e-05 secs=193 ckpt=round0109 served=yes
+2026-08-22T09:09:33Z | RESULT bp_round0105 | score=0.0625 resolved=1/16 per_instance=16 wall=449.9
+2026-08-22T09:09:35Z | BENCH wave complete
+2026-08-22T09:11:11Z | ARMB ROUND 110 | valid_rate=1.000 mean_r=0.052 best_r=0.102 g_loss=0.2321 d_loss=0.5515 d_acc=0.917 winners=16 lr=1.00e-05 secs=150 ckpt=round0110 served=yes
+2026-08-22T09:14:07Z | ARMB ROUND 111 | valid_rate=0.990 mean_r=0.010 best_r=0.034 g_loss=0.2893 d_loss=0.4689 d_acc=0.917 winners=16 lr=1.00e-05 secs=176 ckpt=round0111 served=yes
+2026-08-22T09:20:00Z | FINDING spread_collapse_D_dominance | rounds 94-110 sustained: mean_r<0.05 typical, best_r<0.1, r105 literally 0.000/0.001 with d_acc=1.0 | OPPOSITE failure mode to armA (there D=chance, reward pinned 0.5; here D=perfect, reward pinned 0) - both kill the top-1 selection gradient | full-panel corroborates: G plateaued 14.67% at r60+r80 after the D got too strong to give usable signal
+2026-08-22T09:21:00Z | REMEDY disc_lr_cut | single intervention for attribution: disc-lr 5e-5 -> 1e-5 (D keeps pre-trained init + round-ckpt resume, only adapts 5x slower so G can catch up) | watchdog launch line edited, loop killed by explicit pid 1629331, watchdog restarts within 180s resuming G+D from round0110 | will judge remedy by whether best_r-mean_r spread reopens over next ~15 rounds
+2026-08-22T09:14:35Z | DRIVER wave | rounds=[110]
+2026-08-22T09:14:35Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T09:18:14Z | SWEEP2 SALVAGE-RESULT teacher | affine-teachersalvage-1787381544 finished: resolved=47/150 (31.33%) completed=79 empty_patch=70 | teacher reference for full panel
+2026-08-22T09:18:14Z | SWEEP2 BENCH-LAUNCH b_round0055 | full 150-instance panel on gpu 7 port 8600 (proxy-peak ckpt, 4/16 at r55); r45 full result already on disk: 15/150=10.0%
+2026-08-22T09:18:14Z | SWEEP2 NOTE prev-remedy-ineffective | disc-lr cut (5e-5->1e-5) edited into watchdog.sh but running watchdog kept old in-memory start_loop: loop restarted 09:16 UTC still has --disc-lr 5e-5; superseded by SWEEP2 rebalance below
+2026-08-22T09:16:29Z | LOOP init | gen=Qwen/Qwen3.6-35B-A3B disc=Qwen/Qwen3-14B k=6 turns/round=16
+2026-08-22T09:16:38Z | LOOP data | turns=27943 teacher_rollouts=7425 usable=7425
+2026-08-22T09:18:09Z | BENCH wave | 1 checkpoints over gpus=['7'] workers=24 each
+2026-08-22T09:19:49Z | LOOP models_loaded
+2026-08-22T09:19:49Z | LOOP loaded disc_init | /opt/ckpt/disc_pre
+2026-08-22T09:19:49Z | LOOP loaded gen_resume | /opt/ckpt/gadB/round0111
+2026-08-22T09:19:49Z | LOOP loaded disc_resume | /opt/ckpt/gadB/round0111/disc
+2026-08-22T09:19:50Z | LOOP resumed | from round0111
+2026-08-22T09:20:54Z | SWEEP2 REBALANCE armB | regime change at ROUND 112 (last old-regime ckpt=round0111): D updates only every 4th round (new --d-every 4, frozen between; trains on rnd%4==0 i.e. 112,116,...), G budget doubled (turns-per-round 16->32 => winners/SFT data 2x, g-steps-cap 8->16 so cap never binds), disc-lr now actually 1e-5 (prev sweep's cut finally in effect) | watchdog+loop restarted cleanly by explicit pid; new watchdog pid=4109804
+2026-08-22T09:23:13Z | LOOP init | gen=Qwen/Qwen3.6-35B-A3B disc=Qwen/Qwen3-14B k=6 turns/round=32
+2026-08-22T09:23:21Z | LOOP data | turns=27943 teacher_rollouts=7425 usable=7425
+2026-08-22T09:27:00Z | ANOMALY concurrent_intervention | an external process (not this agent; likely coordinator) killed+restarted watchdog at 09:20 and stacked further changes onto my disc-lr cut: turns-per-round 16->32, g-steps-cap 8->16, NEW --d-every 4 (D updates every 4th round only) | combined remedy now: stronger G (2x data, 2x steps) + throttled D (lr/5, update 1-in-4 rounds) | attribution of any spread recovery is to the bundle, not a single knob | loop resumed from round0111 pid=4124340, sampler :8004 up, single watchdog confirmed
+2026-08-22T09:26:30Z | LOOP models_loaded
+2026-08-22T09:26:30Z | LOOP loaded disc_init | /opt/ckpt/disc_pre
+2026-08-22T09:26:30Z | LOOP loaded gen_resume | /opt/ckpt/gadB/round0111
+2026-08-22T09:26:30Z | LOOP loaded disc_resume | /opt/ckpt/gadB/round0111/disc
+2026-08-22T09:26:30Z | LOOP resumed | from round0111
+2026-08-22T09:26:29Z | RESULT bp_round0110 | score=None resolved=None/None per_instance=16 wall=342.2
+2026-08-22T09:26:31Z | BENCH wave complete
+2026-08-22T09:27:32Z | RESULT b_round0100 | score=0.1333 resolved=20/150 per_instance=150 wall=2164.1
+2026-08-22T09:27:35Z | BENCH wave complete
+2026-08-22T09:31:54Z | ARMB ROUND 112 | valid_rate=0.979 mean_r=0.022 best_r=0.060 g_loss=0.1959 d_loss=0.0401 d_acc=0.969 winners=32 lr=1.00e-05 secs=325 ckpt=round0112 served=yes
+2026-08-22T09:38:25Z | ARMB ROUND 113 | valid_rate=0.990 mean_r=0.015 best_r=0.027 g_loss=0.2617 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=391 ckpt=round0113 served=yes
+2026-08-22T09:45:05Z | ARMB ROUND 114 | valid_rate=0.990 mean_r=0.043 best_r=0.124 g_loss=0.2222 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=400 ckpt=round0114 served=yes
+2026-08-22T09:51:01Z | ARMB ROUND 115 | valid_rate=1.000 mean_r=0.033 best_r=0.101 g_loss=0.2530 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=355 ckpt=round0115 served=yes
+2026-08-22T09:50:07Z | BENCH wave | 1 checkpoints over gpus=['5'] workers=16 each
+2026-08-22T09:51:31Z | DRIVER wave | rounds=[115]
+2026-08-22T09:51:31Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T09:57:21Z | ARMB ROUND 116 | valid_rate=0.984 mean_r=0.102 best_r=0.218 g_loss=0.2143 d_loss=1.1056 d_acc=0.750 winners=32 lr=1.00e-05 secs=380 ckpt=round0116 served=yes
+2026-08-22T09:52:00Z | NOTE post_remedy_early | R112-114 at 32 turns (~390s/round, ~9/hr): spread 0.038/0.012/0.081 - best_r rising (0.124 at r114 vs 0.034 pre-remedy r111), too early to call | d_loss=nan on non-update rounds is expected under --d-every 4 (D trained r112: d_acc 0.969) | b_round0100 = 20/150 = 13.33% = exactly baseline | bp_round0110 hit the docker report race again -> re-running on gpu5:8300
+2026-08-22T10:00:46Z | RESULT bp_round0110 | score=0.125 resolved=2/16 per_instance=16 wall=337.2
+2026-08-22T10:00:48Z | BENCH wave complete
+2026-08-22T10:02:33Z | ARMB ROUND 117 | valid_rate=1.000 mean_r=0.069 best_r=0.168 g_loss=0.2350 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=313 ckpt=round0117 served=yes
+2026-08-22T10:02:27Z | RESULT b_round0055 | score=0.14 resolved=21/150 per_instance=150 wall=2266.2
+2026-08-22T10:02:29Z | BENCH wave complete
+2026-08-22T10:04:33Z | RESULT bp_round0115 | score=0.125 resolved=2/16 per_instance=16 wall=420.2
+2026-08-22T10:04:36Z | BENCH wave complete
+2026-08-22T10:09:10Z | SWEEP2 RESULT b_round0055 | FULL PANEL score=0.14 resolved=21/150 wall=2266s (artifacts /opt/bench/b_round0055 + /root/work/results/b_round0055.json) | full-panel trajectory now: r30 11.33% r45 10.0% r55 14.0% r60 14.67% r80 14.67% r100 13.33% vs baseline 13.33% teacher-salvage 31.33% => the r55 proxy peak (4/16) was NOT a real gain; all points within noise of baseline
+2026-08-22T10:09:10Z | SWEEP2 HEALTH armA-loop | post-rebalance rounds 112-118 advancing ~5-6min/round; d-every-4 confirmed (d_loss=nan on frozen rounds, D trained r112/r116); EARLY SIGNAL: spread reopened (best_r 0.218/0.168/0.129 vs pre-rebalance <0.1, mean_r up to 0.102) and d_acc dropped to 0.750 at r116 | bench waves still firing (bp_round0115 done 10:04, extended full driver waiting for r120)
+2026-08-22T10:07:49Z | ARMB ROUND 118 | valid_rate=0.995 mean_r=0.054 best_r=0.129 g_loss=0.2519 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=316 ckpt=round0118 served=yes
+2026-08-22T10:14:23Z | ARMB ROUND 119 | valid_rate=0.995 mean_r=0.121 best_r=0.210 g_loss=0.2336 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=394 ckpt=round0119 served=yes
+2026-08-22T10:20:00Z | RESULT remedy_spread_recovery | post-remedy R116-119: mean_r 0.05-0.12 best_r 0.13-0.22 (spread 0.08-0.12) vs pre-remedy R101-111 best_r mostly <0.11 with r105 at 0.001 | D update round r116: d_acc down to 0.750 from 0.95+ - G scores hits against D again | remedy bundle (disc-lr/5 + 2x turns + 2x g-steps + d-every 4) RESTORED the training signal | note: b_round0055=21/150 (14.00%) full-panel appeared from the concurrent operator, consistent with the r60/r80 plateau ~14-15%
+2026-08-22T10:21:29Z | ARMB ROUND 120 | valid_rate=1.000 mean_r=0.078 best_r=0.165 g_loss=0.2602 d_loss=1.0687 d_acc=0.781 winners=32 lr=1.00e-05 secs=426 ckpt=round0120 served=yes
+2026-08-22T10:22:35Z | DRIVER wave | rounds=[120]
+2026-08-22T10:22:35Z | BENCH wave | 1 checkpoints over gpus=['1', '7'] workers=24 each
+2026-08-22T10:24:36Z | DRIVER wave | rounds=[120]
+2026-08-22T10:24:36Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T10:27:59Z | ARMB ROUND 121 | valid_rate=1.000 mean_r=0.073 best_r=0.122 g_loss=0.2950 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=390 ckpt=round0121 served=yes
+2026-08-22T10:33:51Z | ARMB ROUND 122 | valid_rate=0.943 mean_r=0.032 best_r=0.082 g_loss=0.2612 d_loss=nan d_acc=nan winners=31 lr=1.00e-05 secs=352 ckpt=round0122 served=yes
+2026-08-22T10:34:48Z | RESULT bp_round0120 | score=0.125 resolved=2/16 per_instance=16 wall=249.8
+2026-08-22T10:34:50Z | BENCH wave complete
+2026-08-22T10:38:56Z | ARMB ROUND 123 | valid_rate=1.000 mean_r=0.035 best_r=0.105 g_loss=0.2412 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=305 ckpt=round0123 served=yes
+2026-08-22T10:45:19Z | ARMB ROUND 124 | valid_rate=1.000 mean_r=0.038 best_r=0.065 g_loss=0.2790 d_loss=0.3168 d_acc=0.906 winners=32 lr=1.00e-05 secs=382 ckpt=round0124 served=yes
+2026-08-22T10:52:00Z | STAGE final_replication_started | independent full-panel re-run of BEST ckpt b_round0005 (16.67% in run 1) on gpu7 port 8500, tag bfinal_round0005 | tests run-to-run stability of the +3.33pt edge with fresh per-instance artifacts | b_round0120 full-panel in flight on gpu1 (~11:00) | post-remedy spread settling lower again: r120-124 best_r 0.065-0.165, d_acc 0.78-0.91 on update rounds - D dominance creeping back but gradient not zeroed
+2026-08-22T10:49:15Z | BENCH wave | 1 checkpoints over gpus=['7'] workers=24 each
+2026-08-22T10:51:31Z | ARMB ROUND 125 | valid_rate=1.000 mean_r=0.075 best_r=0.163 g_loss=0.2486 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=373 ckpt=round0125 served=yes
+2026-08-22T10:57:36Z | ARMB ROUND 126 | valid_rate=1.000 mean_r=0.028 best_r=0.102 g_loss=0.2722 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=364 ckpt=round0126 served=yes
+2026-08-22T11:03:24Z | ARMB ROUND 127 | valid_rate=0.969 mean_r=0.083 best_r=0.137 g_loss=0.2163 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=348 ckpt=round0127 served=yes
+2026-08-22T11:05:11Z | RESULT b_round0120 | score=0.12 resolved=18/150 per_instance=150 wall=2254.6
+2026-08-22T11:05:14Z | BENCH wave complete
+2026-08-22T11:09:17Z | ARMB ROUND 128 | valid_rate=1.000 mean_r=0.079 best_r=0.146 g_loss=0.2624 d_loss=0.4827 d_acc=0.875 winners=32 lr=1.00e-05 secs=352 ckpt=round0128 served=yes
+2026-08-22T11:15:20Z | ARMB ROUND 129 | valid_rate=0.990 mean_r=0.031 best_r=0.101 g_loss=0.2179 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=364 ckpt=round0129 served=yes
+2026-08-22T11:20:27Z | DRIVER start | milestones=[125, 130, 135, 140] gpus=2,5 panel=panels/panel_proxy.json
+2026-08-22T11:20:27Z | DRIVER wave | rounds=[125]
+2026-08-22T11:20:27Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T11:21:22Z | ARMB ROUND 130 | valid_rate=0.995 mean_r=0.088 best_r=0.187 g_loss=0.2371 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=362 ckpt=round0130 served=yes
+2026-08-22T11:27:45Z | ARMB ROUND 131 | valid_rate=1.000 mean_r=0.071 best_r=0.111 g_loss=0.2728 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=383 ckpt=round0131 served=yes
+2026-08-22T11:32:08Z | RESULT bp_round0125 | score=0.25 resolved=4/16 per_instance=16 wall=328.4
+2026-08-22T11:32:10Z | BENCH wave complete
+2026-08-22T11:32:10Z | DRIVER wave | rounds=[130]
+2026-08-22T11:32:10Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T11:33:32Z | ARMB ROUND 132 | valid_rate=1.000 mean_r=0.051 best_r=0.099 g_loss=0.2240 d_loss=0.5019 d_acc=0.875 winners=32 lr=1.00e-05 secs=347 ckpt=round0132 served=yes
+2026-08-22T11:33:40Z | RESULT bfinal_round0005 | score=0.1467 resolved=22/150 per_instance=150 wall=2352.7
+2026-08-22T11:33:42Z | BENCH wave complete
+2026-08-22T11:40:00Z | RESULT bfinal_round0005 | replication of best ckpt: 22/150 = 14.67% (run1 was 25/150 = 16.67%) -> round0005 true level ~15.7%, edge over baseline +1.3 to +3.3pt, p=0.84/0.38 - within panel noise
+2026-08-22T11:42:00Z | DELIVERABLE trackA_final | ARM B: 132 rounds (loop still running ~9/hr) | references: baseline 13.33%, teacher 31.33% (p<1e-4, gap 18pt) | full-panel G trajectory (150 inst, per-instance kept, all paired): r5 16.67 r10 13.33 r20 7.33 r30 11.33 r45 10.00 r55 14.00 r60 14.67 r80 14.67 r100 13.33 r120 12.00, best=r5 replicated 14.67 | proxy16 flat 2-4/16 no trend | spread eras: R1-9 healthy 0.11-0.21, R10-93 oscillation 0.04-0.16 (d_acc 0.67-0.96), R94-111 D-dominance COLLAPSE (r105 best_r=0.001 d_acc=1.0), post-remedy R116+ restored 0.05-0.12 but D creeping back (d_acc 0.875-0.91) | VERDICT: online-D GAN loop has genuine adversarial signal (unlike armA control) but fooling-D reward is only weakly coupled to SWE ability: small early non-significant lift (+19% of gap at r5), degradation below baseline r20-45, recovery to ~14% plateau, never re-exceeded early peak. As configured, does NOT reliably move the miner base toward the teacher on SWE.
+2026-08-22T11:39:28Z | ARMB ROUND 133 | valid_rate=0.995 mean_r=0.069 best_r=0.185 g_loss=0.2293 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=356 ckpt=round0133 served=yes
+2026-08-22T11:42:14Z | RESULT bp_round0130 | score=0.125 resolved=2/16 per_instance=16 wall=302.2
+2026-08-22T11:42:17Z | BENCH wave complete
+2026-08-22T11:45:33Z | ARMB ROUND 134 | valid_rate=1.000 mean_r=0.044 best_r=0.084 g_loss=0.2565 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=364 ckpt=round0134 served=yes
+2026-08-22T11:51:44Z | ARMB ROUND 135 | valid_rate=1.000 mean_r=0.055 best_r=0.111 g_loss=0.2471 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=371 ckpt=round0135 served=yes
+2026-08-22T11:52:17Z | DRIVER wave | rounds=[135]
+2026-08-22T11:52:17Z | BENCH wave | 1 checkpoints over gpus=['2', '5'] workers=16 each
+2026-08-22T11:57:56Z | ARMB ROUND 136 | valid_rate=0.995 mean_r=0.041 best_r=0.094 g_loss=0.2177 d_loss=0.1909 d_acc=0.906 winners=32 lr=1.00e-05 secs=373 ckpt=round0136 served=yes
+2026-08-22T12:03:24Z | ARMB ROUND 137 | valid_rate=1.000 mean_r=0.011 best_r=0.032 g_loss=0.1994 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=328 ckpt=round0137 served=yes
+2026-08-22T12:03:33Z | RESULT bp_round0135 | score=0.3125 resolved=5/16 per_instance=16 wall=333.7
+2026-08-22T12:03:35Z | BENCH wave complete
+2026-08-22T12:09:11Z | ARMB ROUND 138 | valid_rate=0.995 mean_r=0.032 best_r=0.057 g_loss=0.2948 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=347 ckpt=round0138 served=yes
+2026-08-22T12:15:00Z | ARMB ROUND 139 | valid_rate=1.000 mean_r=0.035 best_r=0.084 g_loss=0.2415 d_loss=nan d_acc=nan winners=32 lr=1.00e-05 secs=348 ckpt=round0139 served=yes
