@@ -1,0 +1,818 @@
+{
+ "generated_at": "2026-08-22T15:02:04.199285+00:00",
+ "source": "live",
+ "log_end": "2026-08-22T15:01:44Z",
+ "run": "Track M",
+ "teacher": "Qwen3.8-27B",
+ "miner_base": "Qwen3.6-35B-A3B",
+ "margin_pp": 0.03,
+ "min_turns": 400,
+ "crown_rule": "challenger fool >= king fool + 0.03 over >= 400 paired turns (reject at 800); D retrained from scratch on full archive + high-fool replay at each crown, held-out gate band 0.6-0.9",
+ "swe_baseline": 13.33,
+ "swe_teacher": 31.33,
+ "quarantine": {
+  "start": "2026-08-22T13:56:18Z",
+  "end": "2026-08-22T14:24:28Z",
+  "dvers": [
+   "v0",
+   "v0noop"
+  ],
+  "note": "judge v0 was a serving no-op (LoRA key mismatch) \u2014 scores in this window were base-model noise"
+ },
+ "current": {
+  "reign": 0,
+  "king": "Qwen/Qwen3.6-35B-A3B",
+  "judge_version": "v0f",
+  "judge_acc": 0.865,
+  "king_fool_rate": 0.2186,
+  "challenger": null,
+  "challenger_fool_rate": null,
+  "reign_started_at": "2026-08-22T14:31:21Z",
+  "paired_turns": 0,
+  "evals_state": "running",
+  "miner_round": 6,
+  "miner_fool_local": 0.2364
+ },
+ "reign_series": [
+  {
+   "t": "2026-08-22T13:59:09Z",
+   "batch": 1,
+   "king": 0.444,
+   "challenger": null,
+   "quarantined": true
+  },
+  {
+   "t": "2026-08-22T14:01:46Z",
+   "batch": 2,
+   "king": 0.355,
+   "challenger": null,
+   "quarantined": true
+  },
+  {
+   "t": "2026-08-22T14:04:25Z",
+   "batch": 3,
+   "king": 0.3629,
+   "challenger": null,
+   "quarantined": true
+  },
+  {
+   "t": "2026-08-22T14:06:27Z",
+   "batch": 4,
+   "king": 0.3631,
+   "challenger": null,
+   "quarantined": true
+  },
+  {
+   "t": "2026-08-22T14:08:07Z",
+   "batch": 5,
+   "king": 0.3906,
+   "challenger": null,
+   "quarantined": true
+  },
+  {
+   "t": "2026-08-22T14:09:15Z",
+   "batch": 6,
+   "king": 0.3281,
+   "challenger": null,
+   "quarantined": true
+  },
+  {
+   "t": "2026-08-22T14:10:22Z",
+   "batch": 7,
+   "king": 0.4067,
+   "challenger": null,
+   "quarantined": true
+  },
+  {
+   "t": "2026-08-22T14:12:48Z",
+   "batch": 8,
+   "king": 0.4209,
+   "challenger": null,
+   "quarantined": true
+  },
+  {
+   "t": "2026-08-22T14:33:48Z",
+   "batch": 1,
+   "king": 0.2462,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:34:05Z",
+   "batch": 2,
+   "king": 0.251,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:34:24Z",
+   "batch": 3,
+   "king": 0.2481,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:34:39Z",
+   "batch": 4,
+   "king": 0.1505,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:34:58Z",
+   "batch": 5,
+   "king": 0.2522,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:35:18Z",
+   "batch": 6,
+   "king": 0.1415,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:35:36Z",
+   "batch": 7,
+   "king": 0.2738,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:35:59Z",
+   "batch": 8,
+   "king": 0.1724,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:36:23Z",
+   "batch": 9,
+   "king": 0.1843,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:36:42Z",
+   "batch": 10,
+   "king": 0.191,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:37:03Z",
+   "batch": 11,
+   "king": 0.2362,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:37:26Z",
+   "batch": 12,
+   "king": 0.1998,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:37:47Z",
+   "batch": 13,
+   "king": 0.183,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:38:04Z",
+   "batch": 14,
+   "king": 0.1933,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:38:21Z",
+   "batch": 15,
+   "king": 0.1956,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:38:36Z",
+   "batch": 16,
+   "king": 0.1791,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:38:58Z",
+   "batch": 17,
+   "king": 0.2481,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:39:18Z",
+   "batch": 18,
+   "king": 0.1979,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:39:36Z",
+   "batch": 19,
+   "king": 0.2027,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:39:59Z",
+   "batch": 20,
+   "king": 0.1735,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:40:25Z",
+   "batch": 21,
+   "king": 0.2499,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:40:42Z",
+   "batch": 22,
+   "king": 0.1239,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:41:06Z",
+   "batch": 23,
+   "king": 0.1684,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:41:28Z",
+   "batch": 24,
+   "king": 0.1642,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:41:52Z",
+   "batch": 25,
+   "king": 0.1607,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:42:05Z",
+   "batch": 26,
+   "king": 0.2346,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:42:25Z",
+   "batch": 27,
+   "king": 0.2698,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:42:46Z",
+   "batch": 28,
+   "king": 0.2079,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:43:04Z",
+   "batch": 29,
+   "king": 0.2885,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:43:21Z",
+   "batch": 30,
+   "king": 0.1715,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:43:40Z",
+   "batch": 31,
+   "king": 0.3076,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:43:54Z",
+   "batch": 32,
+   "king": 0.1712,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:44:16Z",
+   "batch": 33,
+   "king": 0.2589,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:44:32Z",
+   "batch": 34,
+   "king": 0.1556,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:44:51Z",
+   "batch": 35,
+   "king": 0.2351,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:45:11Z",
+   "batch": 36,
+   "king": 0.1852,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:45:29Z",
+   "batch": 37,
+   "king": 0.1979,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:45:52Z",
+   "batch": 38,
+   "king": 0.2461,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:46:13Z",
+   "batch": 39,
+   "king": 0.3084,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:46:36Z",
+   "batch": 40,
+   "king": 0.1765,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:46:54Z",
+   "batch": 41,
+   "king": 0.1713,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:47:18Z",
+   "batch": 42,
+   "king": 0.2238,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:47:37Z",
+   "batch": 43,
+   "king": 0.1773,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:47:53Z",
+   "batch": 44,
+   "king": 0.2568,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:48:17Z",
+   "batch": 45,
+   "king": 0.185,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:48:40Z",
+   "batch": 46,
+   "king": 0.203,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:48:55Z",
+   "batch": 47,
+   "king": 0.2142,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:49:19Z",
+   "batch": 48,
+   "king": 0.1835,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:49:38Z",
+   "batch": 49,
+   "king": 0.186,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:49:50Z",
+   "batch": 50,
+   "king": 0.1493,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:50:17Z",
+   "batch": 51,
+   "king": 0.1959,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:50:33Z",
+   "batch": 52,
+   "king": 0.2905,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:50:56Z",
+   "batch": 53,
+   "king": 0.262,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:51:14Z",
+   "batch": 54,
+   "king": 0.1408,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:51:30Z",
+   "batch": 55,
+   "king": 0.1678,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:51:48Z",
+   "batch": 56,
+   "king": 0.2636,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:52:05Z",
+   "batch": 57,
+   "king": 0.1444,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:52:26Z",
+   "batch": 58,
+   "king": 0.1651,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:52:49Z",
+   "batch": 59,
+   "king": 0.208,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:53:02Z",
+   "batch": 60,
+   "king": 0.2699,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:53:19Z",
+   "batch": 61,
+   "king": 0.1359,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:53:43Z",
+   "batch": 62,
+   "king": 0.1883,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:54:03Z",
+   "batch": 63,
+   "king": 0.2329,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:54:21Z",
+   "batch": 64,
+   "king": 0.235,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:54:38Z",
+   "batch": 65,
+   "king": 0.1682,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:55:00Z",
+   "batch": 66,
+   "king": 0.2862,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:55:18Z",
+   "batch": 67,
+   "king": 0.1555,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:55:39Z",
+   "batch": 68,
+   "king": 0.282,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:56:01Z",
+   "batch": 69,
+   "king": 0.1536,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:56:22Z",
+   "batch": 70,
+   "king": 0.1996,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:56:41Z",
+   "batch": 71,
+   "king": 0.2708,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:57:03Z",
+   "batch": 72,
+   "king": 0.25,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:57:21Z",
+   "batch": 73,
+   "king": 0.2757,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:57:43Z",
+   "batch": 74,
+   "king": 0.1897,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:58:04Z",
+   "batch": 75,
+   "king": 0.2288,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:58:22Z",
+   "batch": 76,
+   "king": 0.1644,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:58:36Z",
+   "batch": 77,
+   "king": 0.2494,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:58:59Z",
+   "batch": 78,
+   "king": 0.259,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:59:21Z",
+   "batch": 79,
+   "king": 0.2282,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:59:42Z",
+   "batch": 80,
+   "king": 0.2002,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:59:59Z",
+   "batch": 81,
+   "king": 0.1183,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T15:00:16Z",
+   "batch": 82,
+   "king": 0.199,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T15:00:37Z",
+   "batch": 83,
+   "king": 0.1698,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T15:00:51Z",
+   "batch": 84,
+   "king": 0.31,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T15:01:10Z",
+   "batch": 85,
+   "king": 0.1067,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T15:01:24Z",
+   "batch": 86,
+   "king": 0.1408,
+   "challenger": null,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T15:01:44Z",
+   "batch": 87,
+   "king": 0.2186,
+   "challenger": null,
+   "quarantined": false
+  }
+ ],
+ "miner_series": [
+  {
+   "t": "2026-08-22T14:03:19Z",
+   "round": 1,
+   "fool_local": 0.4533,
+   "best_fool": 0.5258,
+   "quarantined": true
+  },
+  {
+   "t": "2026-08-22T14:08:23Z",
+   "round": 2,
+   "fool_local": 0.4391,
+   "best_fool": 0.5229,
+   "quarantined": true
+  },
+  {
+   "t": "2026-08-22T14:13:49Z",
+   "round": 3,
+   "fool_local": 0.3429,
+   "best_fool": 0.4811,
+   "quarantined": true
+  },
+  {
+   "t": "2026-08-22T14:37:43Z",
+   "round": 1,
+   "fool_local": 0.1306,
+   "best_fool": 0.2064,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:41:59Z",
+   "round": 2,
+   "fool_local": 0.2243,
+   "best_fool": 0.3431,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:45:53Z",
+   "round": 3,
+   "fool_local": 0.1474,
+   "best_fool": 0.2777,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:50:23Z",
+   "round": 4,
+   "fool_local": 0.1579,
+   "best_fool": 0.2402,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:54:35Z",
+   "round": 5,
+   "fool_local": 0.1778,
+   "best_fool": 0.2909,
+   "quarantined": false
+  },
+  {
+   "t": "2026-08-22T14:59:44Z",
+   "round": 6,
+   "fool_local": 0.2364,
+   "best_fool": 0.3367,
+   "quarantined": false
+  }
+ ],
+ "ratchet": [
+  {
+   "t": "2026-08-22T14:08:07Z",
+   "reign": 0,
+   "dver": "v0",
+   "value": 0.3831,
+   "n": 120,
+   "quarantined": true
+  },
+  {
+   "t": "2026-08-22T14:34:58Z",
+   "reign": 0,
+   "dver": "v0f",
+   "value": 0.2296,
+   "n": 120,
+   "quarantined": false
+  }
+ ],
+ "judges": [
+  {
+   "version": "base (0-shot)",
+   "at": "2026-08-22T14:30:14Z",
+   "held_acc": 0.575,
+   "zero_shot": true,
+   "dver": null,
+   "quarantined": false
+  },
+  {
+   "version": "v0",
+   "at": "2026-08-22T13:56:18Z",
+   "held_acc": 0.575,
+   "train_loss": 0.6022,
+   "matched": 0.395,
+   "zero_shot": false,
+   "dver": "v0",
+   "quarantined": true
+  },
+  {
+   "version": "v0f",
+   "at": "2026-08-22T14:31:21Z",
+   "held_acc": 0.865,
+   "train_loss": 0.6022,
+   "matched": 0.76,
+   "zero_shot": false,
+   "dver": "v0f",
+   "quarantined": false
+  }
+ ],
+ "crowns": [],
+ "swe": []
+}

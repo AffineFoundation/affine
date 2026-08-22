@@ -1,0 +1,15 @@
+[trackP] production spec: G=Qwen3.6-35B-A3B vs T=Qwen3.8-27B, D=27B+LoRA (A/B judge), balanced from round 0 (D every 3rd round, freeze if d_acc>0.85 x3)
+[trackP] pod: trackP (huid eager-comet-81) 8xH200 -- ssh -p 40301 root@86.38.182.105
+[trackP] gpu map: 0=G serve :8001 | 1=T serve :8000 | 2,3=D serve TP2 :8002 | 4,5=D LoRA train | 6,7=G SFT
+[trackP] data: turns.jsonl.gz from trackB pod; teacher rollouts (7174 train / 200 held) copied from trackA pod calm-raven-5e (same 27B teacher, k=1)
+[trackP] pod paths: /root/work (code) /dshare/gad (loop state+logs+adapters) /dshare/hf (HF cache)
+2026-08-22T11:29:15Z [trackP] phaseP starting: bringing up G/T/D servers
+2026-08-22T11:33:59Z [trackP] phaseP starting: bringing up G/T/D servers
+2026-08-22T11:39:59Z [trackP] serving Qwen/Qwen3.6-35B-A3B :8001 gpus=0 image=latest OK
+2026-08-22T11:39:59Z [trackP] serving Qwen/Qwen3.8-27B :8000 gpus=1 image=latest OK
+2026-08-22T11:40:14Z [trackP] serving Qwen/Qwen3.8-27B :8002 gpus=2,3 image=latest OK
+2026-08-22T11:40:14Z [trackP] servers up; launching driver
+2026-08-22T11:40:14Z [trackP] driver launched (pid 14933)
+2026-08-22T11:40:31Z driver up: T=D_base=Qwen/Qwen3.8-27B G=Qwen/Qwen3.6-35B-A3B D=27B+LoRA(vLLM http://127.0.0.1:8002) train_turns=7174 held=200 d_interval=3 gpu_map[G_serve=0 T_serve=1 D_serve=2,3 D_train=4,5 G_sft=6,7]
+2026-08-22T11:49:10Z round=0 ZEROSHOT-JUDGE fool=0.3617 d_acc=0.55 pos_bias=0.4753 matched_acc=0.38 len_bar=0.51 valid=0.995 agree_exact=0.09 agree_tok=0.3146 think_len=601 note=baseline (27B base as judge, no LoRA; cf trackB separate-8B zero-shot 0.64)
+2026-08-22T12:07:57Z [trackP] SUPERSEDED: GAN loop stopped; pod repurposed as KOTH mock EVAL box

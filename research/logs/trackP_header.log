@@ -1,0 +1,5 @@
+[trackP] production spec: G=Qwen3.6-35B-A3B vs T=Qwen3.8-27B, D=27B+LoRA (A/B judge), balanced from round 0 (D every 3rd round, freeze if d_acc>0.85 x3)
+[trackP] pod: trackP (huid eager-comet-81) 8xH200 -- ssh -p 40301 root@86.38.182.105
+[trackP] gpu map: 0=G serve :8001 | 1=T serve :8000 | 2,3=D serve TP2 :8002 | 4,5=D LoRA train | 6,7=G SFT
+[trackP] data: turns.jsonl.gz from trackB pod; teacher rollouts (7174 train / 200 held) copied from trackA pod calm-raven-5e (same 27B teacher, k=1)
+[trackP] pod paths: /root/work (code) /dshare/gad (loop state+logs+adapters) /dshare/hf (HF cache)
