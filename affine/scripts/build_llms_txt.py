@@ -234,7 +234,7 @@ rollouts per turn, each ref scores `a_i = lpC(y_i|z_A) − lpC(y_i|∅)`, and \
 the turn score is `tau·log(mean_i exp(a_i/tau))` with `tau = 0.03`; miner \
 score = mean over turns. You dethrone the king iff the paired mean \
 `Reason_c − Reason_k` beats `max(k_sigma·SE, δ)` (`k_sigma = 2`, \
-`min_margin = 0.001`) **and** your median stripped thought length is at \
+`min_margin = 0.002`) **and** your median stripped thought length is at \
 least `min_thought_chars = 80` **and** at least `causality_gamma = 0.30` of \
 pairs pass teacher-side B (`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no \
 leakage). No lpA gates.
@@ -395,8 +395,8 @@ once-ever eval slot on a checkpoint that cannot load.
 
 ## Reason (what you optimize)
 
-Since 2026-08-17 (`weight_version_key = 8` as of 2026-08-21, δ \
-recalibration) the whole scoring contract is:
+Since 2026-08-17 (`weight_version_key = 9` as of 2026-08-22, δ \
+restored to 0.002) the whole scoring contract is:
 
 ```
 a_i (per teacher ref) = lpC(y_i | z_A) − lpC(y_i | ∅)     i = 1..k, k = 3
@@ -405,7 +405,7 @@ Miner score           = mean(Reason) over all scored turns
 Crown                 = paired mean(Reason_c − Reason_k) > max(k_sigma·SE, δ)
                         AND median(len(z_A.strip())) ≥ min_thought_chars
                         AND B pass rate ≥ causality_gamma
-                        (k_sigma = 2, δ = min_margin = 0.001,
+                        (k_sigma = 2, δ = min_margin = 0.002,
                          min_thought_chars = 80, causality_gamma = 0.30,
                          SE = sd/√n over paired turns)
 B (per rollout)       = lpC(y_A | z_A) − lpC(y_A | ∅)
@@ -437,20 +437,24 @@ while staying warm enough that a single lucky ref hit does not dominate \
 (mode-guessing and leakage amplification are the cold-tau failure modes; \
 both are monitored via published telemetry and the post-crown audit).
 
-**Why the δ floor (`min_margin = 0.001`; 0.002 from 2026-08-12, \
-recalibrated 2026-08-21 to the v4 margin scale).** The z-test is \
+**Why the δ floor (`min_margin = 0.002`; briefly 0.001 on 2026-08-21, \
+reverted 2026-08-22, `weight_version_key = 9`).** The z-test is \
 relative to the challenger's own per-turn noise. A near-copy of the king \
 has far less duel variance than a genuinely distinct model, so without the \
 floor it could crown on a pure-noise fluctuation at the same 1-in-44 \
-odds as anyone else. The absolute floor makes that ~z ≥ 6 (≈1-in-10^9) \
-while sitting below the typical honest bar 2·SE. It also caps \
-SE-compression — however consistent your thoughts, the crown bar never \
-drops below δ. The original 0.002 was calibrated on 148 archived v3 duels \
-(`research/results/delta_calibration.json`); Reason v4 compressed margins \
-and noise ~2x (median live 2·SE 0.0024 → 0.0013 across 82 v4 duels), so \
-on 2026-08-21 δ was recalibrated to 0.001 (`weight_version_key = 8`), \
-restoring the v3-era δ/SE design ratio. Copy SEs shrank by the same \
-rescale, so copy protection is unchanged in z-terms.
+odds as anyone else. The absolute floor makes that ~z ≥ 6 (≈1-in-10^9). \
+It also caps SE-compression — however consistent your thoughts, the crown \
+bar never drops below δ. The 18-hour 0.001 experiment supplied the third \
+reason δ sits deliberately ABOVE the typical 2·SE bar: with δ at the \
+noise floor, four crowns landed in 18 hours at z ≈ 2.1–2.7 with margins \
+0.00116–0.00153, and the winners' duel-measured Reason drifted DOWN \
+across the chain (0.01954 → 0.01809). Near-threshold crowns select for \
+lucky turn slices (winner's curse), so each reign change re-baselined \
+the king slightly lower and the ratchet leaked. δ = 0.002 (~1.5x the \
+median 2·SE of 0.0013 across live v4 duels) is the buffer that absorbs \
+that bias: crowns must clear the noise by enough that a reign change is \
+overwhelmingly a real improvement. Reigns crowned under wvk 8 stand; \
+the revert is forward-only.
 
 **Live instrumentation.** Each scored turn runs one miner sample, `k = 3` \
 Reason echoes (`lpC(y_i|z_A)`, one per teacher reference), and two B \
