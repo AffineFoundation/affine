@@ -215,8 +215,11 @@ class RefCache:
             return raw
 
     async def ensure_scored(self, tid: str, teacher: VllmModel | ModelPool,
-                            prefix: list[dict]) -> list[dict]:
-        """lp_own / lp_empty for the turn's raw teacher rollouts."""
+                            prefix: list[dict],
+                            thought_echo: bool = False) -> list[dict]:
+        """lp_own / lp_empty (+ lp_thought under min(R,G)) for the turn's
+        raw teacher rollouts. The grounding band echoes are cached here so
+        both sides share them — k thought echoes per turn per duel."""
         if tid in self.cache:
             return self.cache[tid]
         async with self._locks[tid]:
@@ -224,18 +227,20 @@ class RefCache:
                 return self.cache[tid]
             raw = self._raw.get(tid) or []
             ref = await score_teacher_rollouts(
-                teacher, prefix, raw, sticky_key=tid)
+                teacher, prefix, raw, thought_echo=thought_echo,
+                sticky_key=tid)
             self.cache[tid] = ref
             return ref
 
     async def get_or_sample(self, tid: str, teacher: VllmModel | ModelPool,
                             prefix: list[dict], n: int, temperature: float,
-                            max_thought: int, max_action: int) -> list[dict]:
+                            max_thought: int, max_action: int,
+                            thought_echo: bool = False) -> list[dict]:
         if tid in self.cache:
             return self.cache[tid]
         await self.ensure_raw(
             tid, teacher, prefix, n, temperature, max_thought, max_action)
-        return await self.ensure_scored(tid, teacher, prefix)
+        return await self.ensure_scored(tid, teacher, prefix, thought_echo)
 
 
 async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel,
@@ -253,6 +258,8 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel,
     score_bank = bool(duel_cfg.get("score_bank", False))
     reason_only = bool(duel_cfg.get("reason_only", True))
     causality_gate = bool(duel_cfg.get("causality_gate", False))
+    # min(R,G) v5: grounding echoes (t_i on refs, m per miner rollout).
+    thought_echo = str(duel_cfg.get("score_mode", "reason")) == "min_rg"
 
     async def one(rec: dict) -> None:
         nonlocal done
@@ -271,7 +278,7 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel,
             # 2) Overlap: teacher own/empty echoes || this miner's sample.
             #    Miner only needs the prefix; ref logprobs only need (z_C, y_C).
             ref, miner_rollouts = await asyncio.gather(
-                refs.ensure_scored(tid, teacher, prefix),
+                refs.ensure_scored(tid, teacher, prefix, thought_echo),
                 sample_miner_rollouts(
                     miner, prefix, n_miner, temperature,
                     max_thought, max_action),
@@ -285,6 +292,7 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel,
                 max_thought, max_action,
                 score_bank=score_bank, reason_only=reason_only,
                 causality_gate=causality_gate,
+                thought_echo=thought_echo,
                 sticky_key=tid, rollouts=miner_rollouts)
         t.update({"turn_id": tid, "miner": miner.cfg.name})
         rows.append(t)
@@ -300,10 +308,14 @@ def _mean_bank(rows: list[dict]) -> float | None:
     return sum(vals) / len(vals) if vals else None
 
 
-def _miner_summary(rows: list[dict], tau: float | None) -> dict:
+def _miner_summary(rows: list[dict], tau: float | None,
+                   score_mode: str = "reason",
+                   band_c: float = 2.0, band_floor: float = 0.002) -> dict:
     """Per-side summary: the score (reason) plus measured-not-scored telemetry."""
-    s = score_miner(rows, bank_frac=_mean_bank(rows), tau=tau)
-    return {
+    s = score_miner(rows, bank_frac=_mean_bank(rows), tau=tau,
+                    score_mode=score_mode, band_c=band_c,
+                    band_floor=band_floor)
+    out = {
         "reason": s.reason if math.isfinite(s.reason) else None,
         "n_turns": s.n_turns, "n_pairs": s.n_pairs,
         # -- telemetry (B pass rate is validity only when causality_gate) --
@@ -315,6 +327,13 @@ def _miner_summary(rows: list[dict], tau: float | None) -> dict:
         "mean_len_y": s.mean_len_y,
         "mean_b": s.mean_b, "b_gate_pass_rate": s.b_gate_pass_rate,
     }
+    if score_mode == "min_rg":
+        # Which-leg-binds telemetry (post-fork watch item): g_bind_frac
+        # near 1.0 means grounding is the binding constraint for this side.
+        out["mean_r_leg"] = s.mean_r_leg
+        out["mean_g_leg"] = s.mean_g_leg
+        out["g_bind_frac"] = s.g_bind_frac
+    return out
 
 
 def _teacher_lengths(refs_used: dict[str, list[dict]]) -> dict:
@@ -433,6 +452,9 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     causality_gamma = (
         float(duel_cfg.get("causality_gamma", 0.30)) if causality_gate else 0.0)
     tau = float(duel_cfg.get("tau", 0.0)) or None  # tau <= 0 → v3 plain mean
+    score_mode = str(duel_cfg.get("score_mode", "reason"))
+    band_c = float(duel_cfg.get("band_c", 2.0))
+    band_floor = float(duel_cfg.get("band_floor", 0.002))
     result = score_duel(
         chall_rows, king_rows,
         k_sigma=float(duel_cfg["k_sigma"]),
@@ -441,13 +463,27 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         causality_gamma=causality_gamma,
         challenger_bank_frac=_mean_bank(chall_rows),
         king_bank_frac=_mean_bank(king_rows),
-        tau=tau)
+        tau=tau,
+        score_mode=score_mode, band_c=band_c, band_floor=band_floor)
 
-    king_sum = _miner_summary(king_rows, tau)
-    chall_sum = _miner_summary(chall_rows, tau)
+    king_sum = _miner_summary(king_rows, tau, score_mode, band_c, band_floor)
+    chall_sum = _miner_summary(chall_rows, tau, score_mode, band_c, band_floor)
     teacher_sum = _teacher_lengths(refs_used)
     _len_deltas(king_sum, teacher_sum)
     _len_deltas(chall_sum, teacher_sum)
+
+    if score_mode == "min_rg":
+        ranking_formula = (
+            "turn = min(R, G); R = tau·log(mean_i exp(a_i/tau)) − mean_i a_i,"
+            " a_i = lpC(y_i|z_A) − lpC(y_i|∅);"
+            " G = min(m − (mu − w), (mu + w) − m),"
+            " m = lpC(z_A|x), mu/sd over lpC(z_C^i|x),"
+            " w = max(band_c·sd, band_floor)")
+    elif tau:
+        ranking_formula = (
+            "Reason(turn) = tau·log(mean_i exp((lpC(y_i|z_A) − lpC(y_i|∅))/tau))")
+    else:
+        ranking_formula = "Reason = lpC(y_C|z_A) − lpC(y_C|∅)"
 
     verdict = {
         "challenger_wins": result.challenger_wins,
@@ -461,9 +497,7 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         "k_sigma": result.k_sigma,
         "min_margin": result.min_margin,
         "n_paired_turns": result.n_paired_turns,
-        "ranking_formula": (
-            "Reason(turn) = tau·log(mean_i exp((lpC(y_i|z_A) − lpC(y_i|∅))/tau))"
-            if tau else "Reason = lpC(y_C|z_A) − lpC(y_C|∅)"),
+        "ranking_formula": ranking_formula,
         "duel_params": {
             "n_turns": int(duel_cfg["n_turns"]),
             "k_sigma": float(duel_cfg["k_sigma"]),
@@ -474,6 +508,9 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "tau": tau,
             "n_teacher_samples": int(duel_cfg["n_teacher_samples"]),
             "n_miner_samples": int(duel_cfg["n_miner_samples"]),
+            "score_mode": score_mode,
+            "band_c": band_c,
+            "band_floor": band_floor,
         },
         "king": king_sum,
         "challenger": chall_sum,
