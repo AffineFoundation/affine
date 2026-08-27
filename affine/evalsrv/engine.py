@@ -531,10 +531,21 @@ class Engine:
             return True
 
     def _probe_extra_teacher(self, base_url: str) -> bool:
-        """Stateless liveness probe of one additive remote teacher endpoint."""
+        """Stateless liveness probe of one additive remote teacher endpoint.
+
+        Verifies the endpoint actually serves the contract teacher repo, not
+        just that it answers: during the 2026-08-27 teacher swap the swarm
+        briefly kept serving the old model, and a 200 from /models alone
+        would have admitted GLM echoes into a Qwen-scored duel pool."""
+        repo = str(self.cfg["teacher"]["repo"])
         try:
             r = httpx.get(f"{base_url}/models", timeout=5.0)
             r.raise_for_status()
+            ids = [m.get("id") for m in r.json().get("data", [])]
+            if repo not in ids:
+                log.warning("extra teacher %s serves %s, not %s; skipping",
+                            base_url, ids[:3], repo)
+                return False
             return True
         except Exception as e:
             log.warning("extra teacher %s dark, skipping: %s", base_url, e)
