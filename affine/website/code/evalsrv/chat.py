@@ -57,6 +57,20 @@ def force_text(repo: str, revision: str | None, prefix_messages: list[dict],
     return inject_prompt(repo, revision, prefix_messages, thoughts) + action
 
 
+def thought_text(repo: str, revision: str | None,
+                 prefix_messages: list[dict], thoughts: str) -> str:
+    """Full text whose THOUGHT span we score via echo+logprobs.
+
+    Same canonical rendering as inject_prompt but WITHOUT the trailing
+    separator, so the scored span is exactly the thought bytes. Used for the
+    grounding leg of min(R, G): m = lpC(z_A|x) and t_i = lpC(z_C^i|x).
+    """
+    return (
+        gen_prompt(repo, revision, prefix_messages)
+        + THINK_CLOSE + "\nTHOUGHT: " + thoughts
+    )
+
+
 def split_rollout(text: str) -> tuple[str, str]:
     """Split a completion (which started inside <think>) into (z, y).
 

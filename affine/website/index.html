@@ -64,8 +64,8 @@
     </div>
   </header>
 
-  <!-- Top charts, 2×2: Reason + Margin (σ) over Margin (abs) + reg price —
-       the scored quantity plus the margin half of the crown rule
+  <!-- Top charts, 2×2: score + Margin (σ) over Margin (abs) + reg price —
+       the scored quantity min(R, G) plus the margin half of the crown rule
        (margin > max(2·SE, δ); also median |z| ≥ 80 and B pass ≥ 0.30) plus
        the price of a seat at the table -->
 
@@ -74,13 +74,13 @@
       <div class="hero-split">
         <div class="hero-pane">
           <div class="hero-pane-head">
-            <h2 class="hero-pane-title">Reason</h2>
+            <h2 class="hero-pane-title">Score min(R, G)</h2>
             <p class="hero-caption">best of king and challenger each duel</p>
             <button type="button" class="expand-btn" data-chart="hero-score"
-              title="expand Reason" aria-label="Expand Reason chart">⤢</button>
+              title="expand score" aria-label="Expand score chart">⤢</button>
           </div>
           <div class="hero-scroll">
-            <svg id="hero-chart-score" role="img" aria-label="Reason king vs challenger"></svg>
+            <svg id="hero-chart-score" role="img" aria-label="Score min(R,G) king vs challenger"></svg>
           </div>
         </div>
         <div class="hero-pane">
@@ -97,7 +97,7 @@
         <div class="hero-pane">
           <div class="hero-pane-head">
             <h2 class="hero-pane-title">Margin (abs)</h2>
-            <p class="hero-caption">mean(Reason_c − Reason_k) per duel · dashed = δ = 0.002 crown floor</p>
+            <p class="hero-caption">paired mean score margin per duel · dashed = δ = 0.002 crown floor</p>
             <button type="button" class="expand-btn" data-chart="hero-margin-abs"
               title="expand Margin (abs)" aria-label="Expand Margin (abs) chart">⤢</button>
           </div>

@@ -12,20 +12,29 @@
 # type target set to 0. ~$40-48/h, restores swarm-assisted duel pace.
 
 [swarm]
-model = "zai-org/GLM-4.5-Air-FP8"
-vllm_version = "0.22.1"          # match production eval pod (flag-compatible)
+# Qwen/Qwen3.8-27B since 2026-08-27 (teacher swap bundled into the wvk-10
+# fork; GLM-4.5-Air-FP8 served eras wvk <= 9). ~51 GB BF16 pull vs GLM's
+# 110 GB — fits TP1 everywhere GLM did, with more KV headroom.
+model = "Qwen/Qwen3.8-27B"
+# 0.22.x cannot load Qwen3.8 (GDN kernels ICE the cutlass-DSL JIT; verified
+# on B200 2026-08-27 with every backend-flag combo + eager). 0.28.0 probed
+# clean on the same box.
+vllm_version = "0.28.0"
 pod_prefix = "swarm-t-"          # manager only ever touches pods with this prefix
 template_id = "345273fa-4818-46f7-a8fa-32f0e331713c"  # Pytorch (Cuda+DinD) cu13.0.2
 budget_usd_hr = 240.0            # hard cap on aggregate swarm $/hr
 ttl_hours = 48                   # per-pod safety-net TTL at rent time
-bootstrap_timeout_min = 50       # venv + 110 GB model pull + engine warmup (slow pipes)
+bootstrap_timeout_min = 50       # venv + model pull + engine warmup (slow pipes)
 unreachable_grace_min = 25   # dark grace after healthy: covers a supervisor engine relaunch
 min_balance_usd = 10000.0        # refuse to rent below this Lium balance
 
 # Serving knobs shared by every replica (mirrors production teacher slots).
+# Chunk 8192, not 12288: the 248,320-token vocab makes the fp32 echo
+# log_softmax spike ~11.4 GiB at 12288 (engine-killer, probed 2026-08-27);
+# 8192 -> 7.6 GiB, stress-probed clean under concurrent 64k echoes.
 max_model_len = 65536
 gpu_memory_utilization = 0.70
-max_num_batched_tokens = 12288
+max_num_batched_tokens = 8192
 
 # --- box types --------------------------------------------------------------
 # match:      substring of Lium machine_name (case-insensitive)
@@ -77,9 +86,11 @@ replicas = 8
 target = 1
 max_price = 48.0
 est_tps = 4.0                # prior: 8x the measured 0.5 of b200-1x
-gpu_util = 0.80
+# 0.80 -> 0.75 with the Qwen3.8 teacher: 0.85 died on the echo spike in the
+# 2026-08-27 probe, 0.75 probed clean; 27B needs no VRAM squeeze anyway.
+gpu_util = 0.75
 
-[types.b200-1x]              # 179 GB single GPU: tight but fits at 0.80 util
+[types.b200-1x]              # 179 GB single GPU
 match = "B200"
 gpu_count = 1
 tp = 1
@@ -87,7 +98,7 @@ replicas = 1
 target = 0
 max_price = 7.0
 est_tps = 0.5
-gpu_util = 0.80
+gpu_util = 0.75              # echo-spike headroom (see [swarm] note)
 
 [types.h100-8x]              # 8x80 GB: 4 replicas TP2, proven arch
 match = "H100"

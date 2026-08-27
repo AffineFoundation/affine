@@ -67,6 +67,8 @@ _SIDE_FIELDS = ("reason", "mean_l1lift", "mean_eta", "mean_len_z",
                 "gate_pass_rate", "b_gate_pass_rate", "mean_b",
                 "bank_frac", "calib_ratio", "baseline_abs",
                 "n_turns", "n_pairs",
+                # min(R,G) v5 leg telemetry
+                "mean_r_leg", "mean_g_leg", "g_bind_frac",
                 # legacy (pre-fork verdicts)
                 "valid", "S", "mean_lambda2", "baseline_band_exceeded")
 

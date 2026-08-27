@@ -32,6 +32,17 @@ fi
 source /root/venv/bin/activate
 # Fail closed on install errors (do not hide behind `| tail`).
 uv pip install -e ".[eval]" 2>&1 | tee /root/logs/pip_eval.log | tail -20
+# Prebuilt flashinfer kernels (2026-08-27, Qwen3.8-27B teacher). vLLM >= 0.28
+# imports flashinfer unconditionally for GDN models, and bare flashinfer-python
+# JIT-compiles at startup — which needs nvcc and dies on pods without a CUDA
+# toolkit ("Could not find nvcc"). The cubin + jit-cache wheels ship the
+# kernels prebuilt (no nvcc); both live on the flashinfer index, not PyPI.
+# Pin to vLLM 0.28.0's required flashinfer-python==0.6.16.post3; the cuXXX
+# suffix must match torch.version.cuda (cu130 for the torch vLLM 0.28 pulls).
+uv pip install "flashinfer-cubin==0.6.16.post3" \
+  --index-url https://flashinfer.ai/whl 2>&1 | tail -3
+uv pip install "flashinfer-jit-cache==0.6.16.post3" \
+  --index-url https://flashinfer.ai/whl/cu130 2>&1 | tail -3
 python - <<'PY'
 import affine, evalsrv
 from affine.config import load_config

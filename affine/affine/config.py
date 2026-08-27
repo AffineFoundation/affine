@@ -110,6 +110,11 @@ class DuelCfg:
     causality_gamma: float = 0.30
     # Tempered multi-sample Reason (v4, weight_version_key=7, 2026-08-17).
     tau: float = 0.0
+    # min(R,G) v5 (weight_version_key=10, 2026-08-27): turn score rule and
+    # grounding band. score_mode="reason" replays pre-fork verdicts.
+    score_mode: str = "reason"
+    band_c: float = 2.0
+    band_floor: float = 0.002
 
 
 @dataclass(frozen=True)
@@ -289,6 +294,9 @@ def _duel(raw: dict) -> DuelCfg:
         causality_tau=float(d.get("causality_tau", 0.02)),
         causality_gamma=float(d.get("causality_gamma", 0.30)),
         tau=float(d.get("tau", 0.0)),
+        score_mode=str(d.get("score_mode", "reason")),
+        band_c=float(d.get("band_c", 2.0)),
+        band_floor=float(d.get("band_floor", 0.002)),
     )
 
 

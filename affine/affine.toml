@@ -15,21 +15,24 @@ king_chain_size = 5
 # Reveals at or below this block are ignored. MUST be set to a recent block
 # at go-live so pre-launch test reveals are not eligible (-1 = unset guard:
 # the validator refuses to start until an operator sets a real value).
-# Set at go-live to a recent finney block (validator refuses to start if <0).
-# Placeholder updated 2026-08-03 from public finney header; bump again at launch.
-min_submission_block = 8767079
+# 2026-08-27 (wvk-10 fork + genesis reset): bumped to the finney tip at
+# reset time so every wvk-9-era reveal is invalidated — miners must submit
+# fresh under min(R,G) + the Qwen3.8-27B teacher.
+min_submission_block = 8938619
 # Bittensor weight-version gate for contract upgrades (bump on breaking
 # scoring/contract changes so stale validators are ignored by consensus).
-# Current: 9 (min_margin 0.001→0.002 REVERT, 2026-08-22, explicit dated
-# operator directive — δ=0.001 leaked the ratchet via winner's-curse crown
-# churn; see [duel] min_margin comment). History: 1→2 teacher swap
+# Current: 10 (min(R,G) v5 scoring fork + genesis reset, 2026-08-27,
+# explicit dated operator directive via the approved release plan — the
+# wvk-9 king crowned on a constant filler suffix and benched 0/50; the new
+# rule scores each turn min(centered Reason, banded Grounding); see [duel]
+# comment + research/docs/MIN_RG_PROPOSAL.md). History: 1→2 teacher swap
 # (2026-08-10, later reverted to GLM-Air); 2→3 Reason v3 scoring fork;
 # 3→4 min_margin=0.002 (2026-08-12); 4→5 min_thought_chars=80 (2026-08-13,
 # empty/cue-thought kings); 5→6 causality_gate=true (2026-08-13,
 # teacher-side B license); 6→7 Reason v4 (2026-08-17, tempered
 # log-mean-exp over k=3 teacher refs); 7→8 min_margin 0.002→0.001
 # (2026-08-21, δ recalibrated to the v4 margin scale); 8→9 min_margin
-# 0.001→0.002 revert (2026-08-22).
+# 0.001→0.002 revert (2026-08-22); 9→10 min(R,G) v5 (2026-08-27).
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -37,7 +40,7 @@ min_submission_block = 8767079
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 9
+weight_version_key = 10
 
 [wallet]
 name = "default"
@@ -68,10 +71,19 @@ max_config_bytes = 1048576   # 1 MiB; config.json larger than this is rejected
 
 [teacher]
 # Frozen frontier reference C. The eval machine serves this warm.
-# Stay on Air. The 2026-08-10 GLM-5.2 dedicated-teacher push was torn down
-# (pod killed; never cut over). Do not reintroduce base_url / a remote teacher
-# without an explicit operator directive.
-repo = "zai-org/GLM-4.5-Air-FP8"
+# Qwen/Qwen3.8-27B since 2026-08-27 (explicit dated operator directive,
+# bundled into the wvk-10 min(R,G) fork + genesis reset; GLM-4.5-Air-FP8
+# served eras wvk <= 9). 27B dense GDN+vision hybrid, thinking-on template
+# that already ends inside <think> — the duel rendering is unchanged.
+# Serving floor: vLLM >= 0.28 (GDN kernels ICE cutlass JIT on 0.22.x).
+# Echo spike scales with vocab (248,320 vs GLM's ~151k): fp32 log_softmax
+# needs chunk x vocab x 4B outside the budgeted pool — teacher chunk/util
+# below are sized for that (8192 -> 7.6 GiB spike, probed clean on B200
+# 2026-08-27 under 12 concurrent 64k echoes).
+# The 2026-08-10 GLM-5.2 dedicated-teacher push was torn down (pod killed;
+# never cut over). Do not reintroduce base_url / a remote teacher without
+# an explicit operator directive.
+repo = "Qwen/Qwen3.8-27B"
 port = 8000
 tp = 2
 gpus = "0,1"
@@ -155,7 +167,11 @@ max_num_batched_tokens = 4096
 # (2026-08-14, 6.93 GiB wanted vs 6.66 free), so teachers also run a lower
 # gpu_memory_utilization — their KV cache sits at ~2-5% full, so trading
 # ~14 GB of unused KV pool for spike headroom costs nothing.
-teacher_max_num_batched_tokens = 12288
+# 12288 -> 8192 with the Qwen3.8-27B teacher (2026-08-27): its 248,320-token
+# vocab makes the fp32 echo spike ~65% larger per chunk token (12288 would
+# want ~11.4 GiB and killed the engine on the probe box; 8192 -> 7.6 GiB,
+# stress-probed clean under concurrent 64k echoes).
+teacher_max_num_batched_tokens = 8192
 teacher_gpu_memory_utilization = 0.70
 
 [dataset]
@@ -178,27 +194,42 @@ manifest_key = "turns/manifest.json"
 refresh_interval_s = 3600
 
 [duel]
-# Reason v4 — tempered multi-sample (2026-08-17, weight_version_key=7) —
-# + δ crown floor + median thought-length floor + B gate. The contract:
-#   a_i    = lpC(y_i|z_A) − lpC(y_i|∅)          (per teacher ref, k per turn)
-#   Reason = tau · log((1/k) · Σ_i exp(a_i/tau))   (per turn; score = mean)
-#   crown  = paired mean(Reason_c − Reason_k) > max(k_sigma · SE, min_margin)
-#            AND median(len(z.strip())) ≥ min_thought_chars
-#            AND B pass rate ≥ causality_gamma
+# min(R,G) v5 — centered Reason + banded Grounding (2026-08-27,
+# weight_version_key=10) — + δ crown floor + median thought-length floor +
+# B gate. The contract:
+#   a_i  = lpC(y_i|z_A) − lpC(y_i|∅)            (per teacher ref, k per turn)
+#   R    = tau·log((1/k)·Σ_i exp(a_i/tau)) − mean_i a_i   (centered Reason)
+#   m    = lpC(z_A|x); t_i = lpC(z_C^i|x)       (thought echoes, same prefix)
+#   G    = min(m − (mu − w), (mu + w) − m)      (banded Grounding)
+#          mu = mean(t_i), w = max(band_c·stdev(t_i), band_floor)
+#   turn = min(R, G)                            (score = mean over turns)
+#   crown = paired mean(turn_c − turn_k) > max(k_sigma · SE, min_margin)
+#           AND median(len(z.strip())) ≥ min_thought_chars
+#           AND B pass rate ≥ causality_gamma
 # No mix, no clip, no SE floor. The length floor evicts empty / cue kings.
 # B = lpC(y_A|z_A) − lpC(y_A|∅) is the license to play (not the score).
 #
-# Why tempered (v4): the teacher's action distribution is multi-modal, and
-# averaging per-ref Reason in log space punished committed thoughts without
-# bound whenever the single sampled ref landed on another valid mode (the
-# teacher's own thought scores ≈ −0.010/byte against its unpaired rollout).
-# That made neutral filler the equilibrium. The log-mean-exp is dominated by
-# the best-matched ref, so committing to the teacher's dominant next action
-# becomes the optimum. k=1 reduces exactly to v3; tau→∞ recovers the mean.
+# Why min(R,G) (v5, 2026-08-27): the wvk-9 king crowned on a CONSTANT filler
+# suffix — a flat, task-independent lift that raises every a_i equally and
+# benches 0/50 on coding. Centering the tempered Reason cancels any
+# reference-independent shift by construction, so only committing to a
+# specific teacher mode pays. The grounding band requires the miner's
+# thought to be the kind of text the task actually induces: filler falls
+# BELOW the band (task doesn't make it likely), parroting/copying rises
+# ABOVE it (too predictable given the task). The min forces both legs at
+# once. Adversarially validated (suffix / parrot / boilerplate attacks,
+# direct GRPO optimization: all fail; held-out teacher thoughts win at
+# z=+2.56 where v4 was blind at z=+0.11); evidence in
+# research/results/minrg_round2/FINDINGS.txt + docs/MIN_RG_PROPOSAL.md.
 #
-# Sample budget: k=3 refs triples teacher sampling+echo work per turn, paid
-# for by n_turns 2080→1300 (duel GPU-seconds roughly flat; crown SE grows
-# ~1.26× from the smaller n but per-turn scores are less noisy under LME).
+# Why tempered (v4, kept as the R aggregation): the teacher's action
+# distribution is multi-modal; the log-mean-exp is dominated by the
+# best-matched ref, so committing beats hedging. k=1 reduces exactly to v3;
+# tau→∞ recovers the mean. Pre-fork verdicts replay via score_mode="reason".
+#
+# Sample budget: k=3 refs per turn; v5 adds k ref-thought echoes (shared by
+# both sides via the per-duel ref cache) + 1 miner-thought echo per side —
+# ~+40% teacher echo work, all sharing the turn-prefix KV via sticky routing.
 n_turns = 1300
 # Crown bar: k=2 (2026-08-11). False-crown under Gaussian null ≈ 2.28%/duel
 # (~1 in 44). Was 3.0 (~0.13%/duel) under the Reason v3 launch default.
@@ -251,6 +282,17 @@ n_miner_samples = 1
 # lucky ref hit does not dominate (mode-guessing / leakage amplification
 # are the cold-tau failure modes — watched via telemetry, REDTEAM.md).
 tau = 0.03
+# Turn-score rule (v5, 2026-08-27, weight_version_key=10). "min_rg" scores
+# each turn min(centered R, banded G); "reason" is the wvk<=9 tempered
+# Reason, kept as the replay path for pre-fork verdicts.
+score_mode = "min_rg"
+# Grounding band half-width: w = max(band_c·stdev(t_i), band_floor) around
+# mu = mean(t_i), t_i = lpC(z_C^i|x) per byte. band_c=2.0 validated across
+# a 1x-4x sweep (honest beats the live filler suffix on 97-100% of turns at
+# every width; research/results/minrg_round2/band_sweep). band_floor keeps
+# the band open when the k=3 reference thoughts happen to agree tightly.
+band_c = 2.0
+band_floor = 0.002
 # Ops: skip prior-bank and non-Reason forced-logprob echos (telemetry GPU).
 score_bank = false
 reason_only = true
@@ -275,9 +317,14 @@ timeout_s = 7200
 
 [seed_king]
 # Genesis checkpoint crowned when the validator boots with empty state.
-# Production Albedo genesis until AffineFoundation/Affine-genesis is uploaded.
-repo = "dendriteholdings/albedo-qwen3.6-35b-king-genesis"
-revision = "abe89194d6addf82e71f3f1ba9fef94b05404abf"
+# min(R,G) era genesis (2026-08-27, wvk 10): untouched Qwen3.6-35B-A3B —
+# the best-benching untouched model on swe_rebench_lite (0.20-0.24) and the
+# exact base the min(R,G) validation campaign was run against. Unpaid
+# (hotkey="") by design; emissions burn until the first registered crown.
+# Previous era genesis: dendriteholdings/albedo-qwen3.6-35b-king-genesis
+# @ abe89194d6addf82e71f3f1ba9fef94b05404abf (archived, era-wvk9).
+repo = "Qwen/Qwen3.6-35B-A3B"
+revision = "995ad96eacd98c81ed38be0c5b274b04031597b0"
 
 [bench]
 # Advisory benchmarks run on a dedicated always-on bench machine (never the

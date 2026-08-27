@@ -56,6 +56,19 @@ if ! /root/swarm-venv/bin/python -c "import vllm" 2>/dev/null; then
   VIRTUAL_ENV=/root/swarm-venv uv pip install "vllm==$VLLM_VERSION" hf_transfer \
     > /root/logs/pip_vllm.log 2>&1 || { tail -5 /root/logs/pip_vllm.log; echo pip > /root/swarm/bootstrap.failed; exit 1; }
 fi
+# Prebuilt flashinfer kernels (2026-08-27, Qwen3.8 teacher): vLLM >= 0.28
+# imports flashinfer for GDN models; without these wheels it JIT-compiles at
+# startup and dies on toolkit-less pods ("Could not find nvcc"). Version pins
+# match vLLM 0.28.0's flashinfer-python==0.6.16.post3; cu130 matches its torch.
+if ! /root/swarm-venv/bin/python -c "import flashinfer_jit_cache" 2>/dev/null; then
+  log "installing prebuilt flashinfer kernels"
+  VIRTUAL_ENV=/root/swarm-venv uv pip install \
+    "flashinfer-cubin==0.6.16.post3" --index-url https://flashinfer.ai/whl \
+    >> /root/logs/pip_vllm.log 2>&1 || { echo pip-cubin > /root/swarm/bootstrap.failed; exit 1; }
+  VIRTUAL_ENV=/root/swarm-venv uv pip install \
+    "flashinfer-jit-cache==0.6.16.post3" --index-url https://flashinfer.ai/whl/cu130 \
+    >> /root/logs/pip_vllm.log 2>&1 || { echo pip-jitcache > /root/swarm/bootstrap.failed; exit 1; }
+fi
 
 # 2. Model snapshot (resumable; skips instantly when already complete).
 log "downloading $MODEL"
