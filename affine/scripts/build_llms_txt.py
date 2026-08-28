@@ -299,7 +299,15 @@ you must beat.
 (`hf auth login` or `HF_TOKEN`), and the pinned revision must be \
 **publicly (anonymously) readable** — private or gated repos are rejected \
 at intake. No `*.py`. No `auto_map` in `config.json`. \
-Safetensors ≤ 90 GB; whole repo ≤ 100 GB; ≤ 5000 files; `config.json` ≤ 1 MiB.
+Safetensors ≤ 90 GB; whole repo ≤ 100 GB; ≤ 5000 files; `config.json` ≤ 1 MiB. \
+**Architecture pin (2026-08-28):** your `config.json` must match the genesis \
+family exactly on every key in `affine.toml [submission.pinned_arch]` — i.e. \
+submit a fine-tune of `Qwen/Qwen3.6-35B-A3B` (same layer/expert/head shape; \
+dtype, rope and token ids stay free). Any other architecture — including the \
+teacher `Qwen/Qwen3.8-27B` itself — is rejected before download \
+(`validate_repo_arch` in `code/affine/model_store.py`). The teacher's own \
+thoughts sit at the top of the meter by construction; a board where uploading \
+the public teacher wins is a dead board, so that play is closed at intake.
 3. Repo id must match `^[^/]+/[Aa]ffine-.+$` **and** embed your identity: \
 the first 5 AND last 5 chars (lowercase) of your coldkey **or** hotkey ss58 \
 must both appear in the repo id — the compact token or the full ss58 both \

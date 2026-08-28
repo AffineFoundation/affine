@@ -70,6 +70,9 @@ class SubmissionCfg:
     allow_auto_map: bool
     max_repo_files: int
     max_config_bytes: int
+    # Nested config.json subset every submission must match exactly
+    # (validate_repo_arch). Empty dict = no restriction.
+    pinned_arch: dict
 
 
 @dataclass(frozen=True)
@@ -273,6 +276,7 @@ def _submission(raw: dict) -> SubmissionCfg:
         allow_auto_map=bool(s["allow_auto_map"]),
         max_repo_files=int(s["max_repo_files"]),
         max_config_bytes=int(s["max_config_bytes"]),
+        pinned_arch=dict(s.get("pinned_arch") or {}),
     )
 
 
