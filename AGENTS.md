@@ -261,6 +261,16 @@ Full writeups: `research/docs/REDTEAM.md`.
   vLLM ≥ 0.28 (GDN kernels ICE cutlass JIT on 0.22.x); echo chunk 8192 /
   util ≤ 0.75 for the 248k-vocab fp32 logprob spike. 2026-08-10 GLM-5.2
   remote-teacher push torn down, never cut over)
+- **architecture pin (2026-08-28, explicit operator directive):** submissions
+ must be genesis-family fine-tunes — `config.json` must match
+ `[submission.pinned_arch]` (Qwen3.6-35B-A3B shape: qwen3_5_moe, 40 layers,
+ 256 experts, vocab 248320, …) on every pinned key; dtype/rope/token ids free.
+ Enforced pre-download at dispatch + prefetch (`validate_repo_arch`). Closes
+ teacher-upload: the frozen teacher tops min(R,G) by construction (its thoughts
+ are in-band on G and best-predict its own actions on R), so an open board
+ converges to "first teacher uploader holds the throne". Found live: 4 of 28
+ queued entries on 2026-08-28 were Qwen3.8-27B-shaped. Admission rule, not a
+ scoring change — no wvk bump; verdicts/replays untouched.
 - seed king: `Qwen/Qwen3.6-35B-A3B` @ `995ad96e` (min(R,G)-era genesis,
   unpaid — emissions burn until a registered miner crowns; the Albedo
   genesis `dendriteholdings/albedo-qwen3.6-35b-king-genesis` seeded eras

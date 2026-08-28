@@ -407,13 +407,16 @@ class Validator:
         """Contract hygiene gates on a repo's metadata; one definition so the
         dispatch gate and the prefetch precheck can never drift."""
         sub = self.cfg.submission
-        return model_store.validate_repo_hygiene(
+        reason = model_store.validate_repo_hygiene(
             info, max_size_gb=sub.max_model_size_gb,
             max_total_repo_gb=sub.max_total_repo_gb,
             allow_python_files=sub.allow_python_files,
             allow_auto_map=sub.allow_auto_map,
             max_repo_files=sub.max_repo_files,
             max_config_bytes=sub.max_config_bytes)
+        if reason is None and sub.pinned_arch:
+            reason = model_store.validate_repo_arch(info, sub.pinned_arch)
+        return reason
 
     async def _prefetch_next(self, nxt: QueueEntry) -> None:
         """Warm the next queued challenger's weights on the pod while the

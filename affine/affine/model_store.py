@@ -224,6 +224,36 @@ def validate_repo_hygiene(info: RepoInfo, *, max_size_gb: float,
     return None
 
 
+def validate_repo_arch(info: RepoInfo, pinned: dict) -> str | None:
+    """Return a rejection reason or None. `pinned` is a nested dict of
+    config.json keys that must match exactly (subset match: keys absent from
+    `pinned` are unconstrained). Pinning the compute-graph shape to the genesis
+    family keeps every crown a fine-tune of the seed model — in particular it
+    excludes uploading the frozen teacher itself, whose thoughts would land
+    in-band on G and top R by construction (it IS the distillation target).
+    Metadata-only; empty `pinned` disables the check."""
+
+    def walk(want: dict, have: object, path: str) -> str | None:
+        if not isinstance(have, dict):
+            return f"config.json {path or '<root>'} is not a table"
+        for key, expect in want.items():
+            where = f"{path}.{key}" if path else key
+            if key not in have:
+                return f"config.json missing pinned key {where}"
+            got = have[key]
+            if isinstance(expect, dict):
+                fault = walk(expect, got, where)
+                if fault:
+                    return fault
+            elif got != expect:
+                return (f"architecture mismatch at {where}: "
+                        f"{got!r} != pinned {expect!r}")
+        return None
+
+    fault = walk(pinned, info.config, "")
+    return f"arch not pinned to the genesis family: {fault}" if fault else None
+
+
 @dataclass
 class CopyVerdict:
     action: str  # "reject" | "crown_earlier"

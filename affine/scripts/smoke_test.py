@@ -59,6 +59,10 @@ check("config.genesis_qwen",
       and len(cfg.seed_king["revision"]) == 40)
 check("config.submission_caps",
       cfg.submission.max_total_repo_gb > cfg.submission.max_model_size_gb)
+# Architecture pin (2026-08-28): submissions must be genesis-family fine-tunes.
+check("config.pinned_arch",
+      cfg.submission.pinned_arch.get("model_type") == "qwen3_5_moe"
+      and cfg.submission.pinned_arch["text_config"]["num_experts"] == 256)
 check("config.min_submission_block_set", cfg.min_submission_block >= 0)
 check("config.corpus_base_url", cfg.dataset.corpus_base_url.startswith("https://"))
 check("config.manifest_key", cfg.dataset.manifest_key.endswith(".json"))
@@ -462,6 +466,43 @@ big_cfg = info(base_files, {"model.safetensors": "d1"}, int(1e9), int(2e9),
 check("hygiene.config_size_cap", model_store.validate_repo_hygiene(
     big_cfg, max_size_gb=90, max_total_repo_gb=100,
     allow_python_files=False, allow_auto_map=False) is not None)
+
+# arch pin (2026-08-28): genesis-family config passes; the teacher (different
+# arch entirely) and a shape-tampered fine-tune are both rejected pre-download.
+genesis_cfg = {
+    "architectures": ["Qwen3_5MoeForConditionalGeneration"],
+    "model_type": "qwen3_5_moe", "tie_word_embeddings": False,
+    "dtype": "bfloat16",  # unpinned key: must stay free
+    "text_config": {"model_type": "qwen3_5_moe_text", "hidden_size": 2048,
+                    "num_hidden_layers": 40, "num_attention_heads": 16,
+                    "num_key_value_heads": 2, "head_dim": 256,
+                    "num_experts": 256, "num_experts_per_tok": 8,
+                    "moe_intermediate_size": 512,
+                    "shared_expert_intermediate_size": 512,
+                    "vocab_size": 248320, "full_attention_interval": 4,
+                    "linear_num_key_heads": 16, "linear_num_value_heads": 32,
+                    "linear_key_head_dim": 128, "linear_value_head_dim": 128,
+                    "rms_norm_eps": 1e-06},  # unpinned key: must stay free
+}
+arch_pin = cfg.submission.pinned_arch
+gen_info = info(base_files, {"model.safetensors": "d1"}, int(1e9), int(2e9),
+                config=genesis_cfg)
+check("arch.genesis_ok", model_store.validate_repo_arch(gen_info, arch_pin) is None)
+
+teacher_cfg = {"architectures": ["Qwen3NextForCausalLM"],
+               "model_type": "qwen3_next", "tie_word_embeddings": False}
+teach_info = info(base_files, {"model.safetensors": "d1"}, int(1e9), int(2e9),
+                  config=teacher_cfg)
+reason = model_store.validate_repo_arch(teach_info, arch_pin)
+check("arch.teacher_rejected",
+      reason is not None and "genesis family" in reason)
+
+tampered = json.loads(json.dumps(genesis_cfg))
+tampered["text_config"]["num_experts"] = 512
+tamper_info = info(base_files, {"model.safetensors": "d1"}, int(1e9), int(2e9),
+                   config=tampered)
+check("arch.tamper_rejected",
+      model_store.validate_repo_arch(tamper_info, arch_pin) is not None)
 
 # copy detection: rename + junk-pad must still flag
 t0 = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
