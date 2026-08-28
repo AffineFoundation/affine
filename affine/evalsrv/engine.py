@@ -1,10 +1,14 @@
 """vLLM process lifecycle on the eval machine.
 
-Three serving slots, GPU allocation from affine.toml:
-  teacher    — frozen reference, launched at boot, always warm.
+Serving slots, GPU allocation from affine.toml:
+  teacher    — frozen reference. Local vLLM when [teacher].base_url is
+               empty; otherwise a remote OpenAI-compatible endpoint (the
+               teacher swarm router) and no local teacher process.
   king       — reigning champion, loaded on first duel, kept warm across
                duels, swapped only when the validator sends a new king ref.
-  challenger — loaded per duel, killed afterwards.
+               Optional king2 replica ([miner_serving].king_replica_gpus).
+  challenger — loaded per duel, killed afterwards. Optional challenger2
+               replica ([miner_serving].challenger_replica_gpus).
 
 Models are served with `vllm serve <repo> --revision <sha>` so the snapshot
 is pinned to the on-chain commitment (TOCTOU). HF cache lives under
@@ -23,6 +27,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -179,10 +184,13 @@ class Engine:
     cfg: dict  # full affine.toml dict
     teacher_slot: Slot = field(init=False)
     # Optional second teacher replica ([teacher].replica_gpus). Best-effort:
-    # duels fall back to the primary alone when it is down.
+    # duels fall back to the primary alone when it is down. Unused when
+    # [teacher].base_url is set (remote cutover).
     teacher2_slot: Slot | None = field(init=False, default=None)
     king_slot: Slot = field(init=False)
+    king2_slot: Slot | None = field(init=False, default=None)
     chall_slot: Slot = field(init=False)
+    chal2_slot: Slot | None = field(init=False, default=None)
     # One reentrant lock owns every keep-set read and cache prune, every slot
     # launch, and every prefetch state transition. Callers run in three thread
     # contexts (FastAPI threadpool, duel/bench job threads, teacher warmup);
@@ -227,18 +235,30 @@ class Engine:
             self.chall_slot = Slot("challenger", port, gpus, tp)
             return
         self.teacher_slot = Slot("teacher", int(t["port"]), t["gpus"], int(t["tp"]))
-        if t.get("replica_gpus"):
+        # Local teacher replica is unused under remote cutover (base_url).
+        if t.get("replica_gpus") and not str(t.get("base_url") or "").strip():
             self.teacher2_slot = Slot("teacher2", int(t.get("replica_port", 8003)),
                                       str(t["replica_gpus"]), int(t["tp"]))
         self.king_slot = Slot("king", int(ms["king_port"]), ms["king_gpus"],
                               int(ms["tp"]))
+        if ms.get("king_replica_gpus"):
+            self.king2_slot = Slot("king2", int(ms.get("king_replica_port", 8003)),
+                                   str(ms["king_replica_gpus"]), int(ms["tp"]))
         self.chall_slot = Slot("challenger", int(ms["challenger_port"]),
                                ms["challenger_gpus"], int(ms["tp"]))
+        if ms.get("challenger_replica_gpus"):
+            self.chal2_slot = Slot(
+                "challenger2", int(ms.get("challenger_replica_port", 8004)),
+                str(ms["challenger_replica_gpus"]), int(ms["tp"]))
 
     def _slots(self) -> list[Slot]:
         slots = [self.teacher_slot, self.king_slot, self.chall_slot]
         if self.teacher2_slot is not None:
             slots.append(self.teacher2_slot)
+        if self.king2_slot is not None:
+            slots.append(self.king2_slot)
+        if self.chal2_slot is not None:
+            slots.append(self.chal2_slot)
         return slots
 
     # -- process control -------------------------------------------------------
@@ -588,13 +608,53 @@ class Engine:
                                   port=0, base_url=u))
         return out
 
+    def _replica_matches(self, slot: Slot, repo: str, revision: str) -> bool:
+        s = slot.served
+        return bool(s and s.repo == repo and s.revision == revision
+                    and slot.ready and self._alive(slot))
+
+    def _heal_replica(self, slot: Slot | None, repo: str, revision: str,
+                      kind: str) -> None:
+        """Best-effort second copy: launch if down, kill if it fails to warm."""
+        if slot is None or self._replica_matches(slot, repo, revision):
+            return
+        self._launch(slot, repo, revision)
+        if not self._wait_ready(slot, timeout_s=1200):
+            log.warning("%s replica failed to warm; running single-%s",
+                        kind, kind)
+            self._kill(slot)
+
+    def _serveds_of(self, primary: Slot, replica: Slot | None) -> list[Served]:
+        out: list[Served] = []
+        if primary.served and primary.ready and self._alive(primary):
+            out.append(primary.served)
+        if (replica is not None and replica.served and replica.ready
+                and self._alive(replica)):
+            out.append(replica.served)
+        return out
+
+    def king_serveds(self) -> list[Served]:
+        return self._serveds_of(self.king_slot, self.king2_slot)
+
+    def challenger_serveds(self) -> list[Served]:
+        return self._serveds_of(self.chall_slot, self.chal2_slot)
+
     def ensure_king(self, repo: str, revision: str) -> bool:
-        s = self.king_slot.served
-        if (s and s.repo == repo and s.revision == revision
-                and self.king_slot.ready and self._alive(self.king_slot)):
+        if self._replica_matches(self.king_slot, repo, revision):
+            self._heal_replica(self.king2_slot, repo, revision, "king")
             return True
         self._launch(self.king_slot, repo, revision)
-        return self._wait_ready(self.king_slot)
+        replica_launched = False
+        if self.king2_slot is not None:
+            self._launch(self.king2_slot, repo, revision)
+            replica_launched = True
+        if not self._wait_ready(self.king_slot):
+            return False
+        if replica_launched and self.king2_slot is not None:
+            if not self._wait_ready(self.king2_slot, timeout_s=1200):
+                log.warning("king replica failed to warm; running single-king")
+                self._kill(self.king2_slot)
+        return True
 
     def _settle_prefetch(self, incoming_repo: str | None) -> None:
         """Bring the prefetch slot to rest before a challenger download.
@@ -627,7 +687,17 @@ class Engine:
                 self._prefetch = None
             self._prune_challenger_cache(keep_repo=repo, keep_revision=revision)
             self._launch(self.chall_slot, repo, revision)
-        return self._wait_ready(self.chall_slot)
+            replica_launched = self.chal2_slot is not None
+            if replica_launched:
+                self._launch(self.chal2_slot, repo, revision)
+        if not self._wait_ready(self.chall_slot):
+            return False
+        if replica_launched and self.chal2_slot is not None:
+            if not self._wait_ready(self.chal2_slot, timeout_s=1200):
+                log.warning("challenger replica failed to warm; "
+                            "running single-challenger")
+                self._kill(self.chal2_slot)
+        return True
 
     def challenger_fits(self, required_bytes: int, repo: str | None = None,
                         revision: str | None = None) -> tuple[bool, float]:
@@ -702,6 +772,8 @@ class Engine:
         # disk identically, and keeping it makes retries of the same
         # checkpoint skip the re-download.
         self._kill(self.chall_slot)
+        if self.chal2_slot is not None:
+            self._kill(self.chal2_slot)
 
     # -- prefetch ---------------------------------------------------------------
     def start_prefetch(self, repo: str, revision: str,
@@ -763,42 +835,73 @@ class Engine:
         t0 = time.time()
         code = ("from huggingface_hub import snapshot_download; "
                 f"snapshot_download(repo_id={repo!r}, revision={revision!r})")
-        try:
-            proc = subprocess.Popen(
-                [sys.executable, "-c", code],
-                env=dict(os.environ, HF_HOME=HF_HOME),
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL, start_new_session=True)
-        except Exception:
-            log.warning("prefetch %s: could not spawn downloader", repo,
-                        exc_info=True)
-            return
-        last_bytes = -1
-        last_progress = time.time()
-        while proc.poll() is None:
-            if cancel.wait(15.0):
-                log.info("prefetch %s cancelled", repo)
-                self._kill_downloader(proc)
+        # hf_transfer (multi-stream Rust downloader) only for this watchdogged
+        # child: single-stream python pulls were observed at 26 MB/s (2647s for
+        # one challenger, 2026-08-28) and its known failure mode — hanging on a
+        # dead TCP connection — is exactly what the stall loop below kills.
+        # The inline vLLM download path has no such watchdog, so it stays on
+        # the slow-but-safe default; with prefetch retrying, it is rarely hit.
+        env = dict(os.environ, HF_HOME=HF_HOME, HF_HUB_ENABLE_HF_TRANSFER="1")
+        for attempt in range(3):
+            if attempt:
+                # Partial blobs resume, so a retry only re-pays the tail.
+                if cancel.wait(10.0 * attempt):
+                    log.info("prefetch %s cancelled", repo)
+                    return
+                log.info("prefetch %s: retry %d", repo, attempt)
+            try:
+                stderr_f = tempfile.TemporaryFile()
+                proc = subprocess.Popen(
+                    [sys.executable, "-c", code], env=env,
+                    stdout=subprocess.DEVNULL, stderr=stderr_f,
+                    stdin=subprocess.DEVNULL, start_new_session=True)
+            except Exception:
+                log.warning("prefetch %s: could not spawn downloader", repo,
+                            exc_info=True)
                 return
-            cur = self._cached_repo_bytes(repo)
-            if cur > last_bytes:
-                last_bytes = cur
-                last_progress = time.time()
-            elif time.time() - last_progress > PREFETCH_STALL_S:
-                log.warning(
-                    "prefetch %s stalled at %.1fGB (no progress for %.0fs); "
-                    "killing downloader", repo, max(cur, 0) / 1e9,
-                    PREFETCH_STALL_S)
-                self._kill_downloader(proc)
+            last_bytes = -1
+            last_progress = time.time()
+            stalled = False
+            while proc.poll() is None:
+                if cancel.wait(15.0):
+                    log.info("prefetch %s cancelled", repo)
+                    self._kill_downloader(proc)
+                    return
+                cur = self._cached_repo_bytes(repo)
+                if cur > last_bytes:
+                    last_bytes = cur
+                    last_progress = time.time()
+                elif time.time() - last_progress > PREFETCH_STALL_S:
+                    log.warning(
+                        "prefetch %s stalled at %.1fGB (no progress for "
+                        "%.0fs); killing downloader", repo,
+                        max(cur, 0) / 1e9, PREFETCH_STALL_S)
+                    self._kill_downloader(proc)
+                    stalled = True
+                    break
+            if not stalled and proc.returncode == 0:
+                log.info("prefetch %s@%s done in %.0fs",
+                         repo, revision[:12], time.time() - t0)
                 return
-        if proc.returncode == 0:
-            log.info("prefetch %s@%s done in %.0fs",
-                     repo, revision[:12], time.time() - t0)
-        else:
-            log.warning("prefetch %s@%s failed after %.0fs (exit %s)",
-                        repo, revision[:12], time.time() - t0, proc.returncode)
+            stderr_f.seek(0)
+            tail = stderr_f.read()[-2000:].decode(errors="replace").strip()
+            log.warning("prefetch %s@%s attempt %d failed after %.0fs "
+                        "(exit %s)%s", repo, revision[:12], attempt,
+                        time.time() - t0,
+                        "stall" if stalled else proc.returncode,
+                        f": ...{tail[-300:]}" if tail else "")
+        log.warning("prefetch %s@%s gave up after 3 attempts; the duel "
+                    "will download inline", repo, revision[:12])
 
     def _alive(self, slot: Slot, http_timeout: float = 3.0) -> bool:
+        # Remote teacher (base_url): no local process — probe the endpoint.
+        if slot.served and slot.served.base_url:
+            try:
+                httpx.get(f"{slot.served.base_url.rstrip('/')}/models",
+                          timeout=http_timeout)
+                return True
+            except httpx.HTTPError:
+                return False
         if slot.proc is None or slot.proc.poll() is not None:
             return False
         try:
@@ -820,6 +923,10 @@ class Engine:
                "challenger": one(self.chall_slot)}
         if self.teacher2_slot is not None:
             out["teacher2"] = one(self.teacher2_slot)
+        if self.king2_slot is not None:
+            out["king2"] = one(self.king2_slot)
+        if self.chal2_slot is not None:
+            out["challenger2"] = one(self.chal2_slot)
         return out
 
     # -- disk hygiene ---------------------------------------------------------------
