@@ -1,0 +1,7 @@
+[trackM] two-box KOTH mock of the production SN120 mechanism: crown-triggered from-scratch D (27B+LoRA A/B judge), FROZEN per reign, published to the miner
+[trackM] EVAL BOX: pod trackP (huid eager-comet-81) 8xH200 -- ssh -p 40301 root@86.38.182.105 | gpu: 0,1=judge/teacher 27B TP2 :8000 | 2=king 35B :8001 | 3=challenger 35B :8003 | 4,5(+2,3 borrowed)=DDP d_train at crowns | 6,7=bench :8006
+[trackM] MINER BOX: pod mockMiner (huid zesty-orbit-c3) 8xB300 -- ssh -p 40301 root@204.9.206.214 | gpu: 0=judge copy 27B :8002 | 4=judge2 :8004 | 1=miner 35B :8001 | 2,3=g_sft | 5-7 idle (downsize candidates)
+[trackM] incident 2026-08-22 14:10Z: judge v0 shipped as a serving NO-OP (PEFT keys model.layers.* vs vLLM language_model.model.*); fixed by remap, adapter-effect guard now enforced at every publish/hot-swap; noise rows quarantined (dver=v0noop), cycle clock restarted at v0f publish 14:37Z
+[trackM] crown rule: challenger fool >= king fool + 0.03 over >= 400 paired turns (reject at 800); D retrained from scratch on full archive + high-fool replay at each crown, held-out gate band 0.6-0.9
+[trackM] paths (eval box): /dshare/koth/{archive.jsonl,VERSION,d_versions/,submissions/,kings/,state.json,status.log}; (miner box): /dshare/koth/{judges/,m_lora/,miner_state.json,status.log}; data /dshare/gad + /root/work/turns.jsonl.gz
+[trackM] data: SE corpus 27943 turns (trackB pod); teacher rollouts 7174 train / 200 held + king0 base rollouts 7725 (copied from trackA pod calm-raven-5e, same 27B teacher)

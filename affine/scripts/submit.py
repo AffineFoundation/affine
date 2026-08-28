@@ -12,9 +12,9 @@ Your one eval slot burns at enqueue, so this client refuses to send a
 submission the validator would reject at intake. Before touching the chain it
 mirrors the validator's own metadata-only checks (affine/model_store.py):
 repo naming + identity, anonymous readability of the pinned revision,
-canonical safetensors layout, no *.py / no auto_map, and the size caps.
-Run with --check to validate everything and print the payload without
-submitting.
+canonical safetensors layout, no *.py / no auto_map, the size caps, and the
+genesis-family architecture pin. Run with --check to validate everything and
+print the payload without submitting.
 
 Requirements the validator enforces (see data/contract.json on the site):
   * repo name matches ^[^/]+/[Aa]ffine-.+$ AND embeds your identity: the
@@ -22,6 +22,9 @@ Requirements the validator enforces (see data/contract.json on the site):
     the compact token (prefix+suffix) or the full ss58 both work
   * repo must be PUBLIC (the validator reads it without your credentials)
   * safetensors in canonical layout; no *.py; no auto_map; under size caps
+  * architecture pinned to the genesis family: config.json must match
+    [submission.pinned_arch] exactly — submit a Qwen/Qwen3.6-35B-A3B
+    fine-tune (dtype/rope/token ids stay free; the teacher itself is banned)
   * one submission per hotkey, ever — a failed eval burns the slot
   * your hotkey must be registered on the subnet to receive emissions
     (btcli subnets register --netuid 120)
@@ -52,6 +55,53 @@ MAX_MODEL_SIZE_GB = 90.0
 MAX_TOTAL_REPO_GB = 100.0
 MAX_REPO_FILES = 5000
 MAX_CONFIG_BYTES = 1 << 20
+
+# Architecture pin (2026-08-28, affine.toml [submission.pinned_arch], mirrored
+# by validate_repo_arch): config.json must match this nested subset exactly —
+# i.e. be a fine-tune of the genesis family Qwen/Qwen3.6-35B-A3B. Keys not
+# listed (dtype, rope, token ids, ...) stay free.
+PINNED_ARCH: dict = {
+    "architectures": ["Qwen3_5MoeForConditionalGeneration"],
+    "model_type": "qwen3_5_moe",
+    "tie_word_embeddings": False,
+    "text_config": {
+        "model_type": "qwen3_5_moe_text",
+        "hidden_size": 2048,
+        "num_hidden_layers": 40,
+        "num_attention_heads": 16,
+        "num_key_value_heads": 2,
+        "head_dim": 256,
+        "num_experts": 256,
+        "num_experts_per_tok": 8,
+        "moe_intermediate_size": 512,
+        "shared_expert_intermediate_size": 512,
+        "vocab_size": 248320,
+        "full_attention_interval": 4,
+        "linear_num_key_heads": 16,
+        "linear_num_value_heads": 32,
+        "linear_key_head_dim": 128,
+        "linear_value_head_dim": 128,
+    },
+}
+
+
+def check_pinned_arch(config: dict, pinned: dict, path: str = "") -> str | None:
+    """Mirror of the validator's validate_repo_arch subset match."""
+    if not isinstance(config, dict):
+        return f"config.json {path or '<root>'} is not a table"
+    for key, expect in pinned.items():
+        where = f"{path}.{key}" if path else key
+        if key not in config:
+            return f"config.json missing pinned key {where}"
+        got = config[key]
+        if isinstance(expect, dict):
+            fault = check_pinned_arch(got, expect, where)
+            if fault:
+                return fault
+        elif got != expect:
+            return (f"architecture mismatch at {where}: "
+                    f"{got!r} != pinned {expect!r}")
+    return None
 
 REPO_PATTERN = re.compile(r"^[^/]+/[Aa]ffine-.+$")
 REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
@@ -141,6 +191,11 @@ def preflight_repo(repo: str, revision: str) -> list[str]:
                             "(custom modeling code is not allowed)")
         if len(json.dumps(config)) > MAX_CONFIG_BYTES:
             problems.append(f"config.json exceeds {MAX_CONFIG_BYTES} bytes cap")
+        arch_fault = check_pinned_arch(config, PINNED_ARCH)
+        if arch_fault:
+            problems.append(
+                f"arch not pinned to the genesis family "
+                f"(must be a Qwen/Qwen3.6-35B-A3B fine-tune): {arch_fault}")
 
     st_files = [f for f in files if f.endswith(".safetensors")]
     if not st_files:

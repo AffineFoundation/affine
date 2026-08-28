@@ -68,40 +68,57 @@ async def sample_teacher_rollouts(
 async def score_teacher_rollouts(
         teacher: TeacherClient, prefix: list[dict],
         rollouts: list[tuple[str, str]], *,
+        thought_echo: bool = False,
         sticky_key: str | None = None) -> list[dict]:
-    """lpC(y|z_C) and lpC(y|∅) for already-sampled teacher rollouts."""
+    """lpC(y|z_C) and lpC(y|∅) for already-sampled teacher rollouts.
+
+    thought_echo (min(R,G) grounding leg): additionally echo each reference
+    thought t_i = lpC(z_C^i|x), stamped as ``lp_thought``. The band the
+    miner's thought is judged against is built from these — shared by both
+    sides via the RefCache, so it costs k echoes per turn per duel.
+    """
     if not rollouts:
         return []
+    thought_tasks = ([
+        teacher.score_thought(prefix, z, sticky_key=sticky_key)
+        for z, _ in rollouts
+    ] if thought_echo else [])
     scored = await asyncio.gather(*[
         teacher.score_action(prefix, z, y, sticky_key=sticky_key)
         for z, y in rollouts
     ], *[
         teacher.score_action(prefix, EMPTY_THOUGHTS, y, sticky_key=sticky_key)
         for z, y in rollouts
-    ])
+    ], *thought_tasks)
     k = len(rollouts)
-    return [
-        {"z": z, "y": y,
-         "lp_own": scored[i]["lp_per_byte"],
-         "lp_empty": scored[k + i]["lp_per_byte"]}
-        for i, (z, y) in enumerate(rollouts)
-    ]
+    out = []
+    for i, (z, y) in enumerate(rollouts):
+        rec = {"z": z, "y": y,
+               "lp_own": scored[i]["lp_per_byte"],
+               "lp_empty": scored[k + i]["lp_per_byte"]}
+        if thought_echo:
+            rec["lp_thought"] = scored[2 * k + i]["lp_per_byte"]
+        out.append(rec)
+    return out
 
 
 async def teacher_reference(teacher: TeacherClient, prefix: list[dict], n: int,
                             temperature: float, max_thought: int,
                             max_action: int, *,
+                            thought_echo: bool = False,
                             sticky_key: str | None = None) -> list[dict]:
     """Sample teacher rollouts once per turn; reused across all miners.
 
-    Returns list of dicts with z, y, lp_own (lpC(y|z_C)) and lp_empty (lpC(y|∅)).
+    Returns list of dicts with z, y, lp_own (lpC(y|z_C)) and lp_empty
+    (lpC(y|∅)) — plus lp_thought (lpC(z_C|x)) when thought_echo is on.
     sticky_key pins all calls for this turn to one teacher replica (prefix cache).
     """
     rollouts = await sample_teacher_rollouts(
         teacher, prefix, n, temperature, max_thought, max_action,
         sticky_key=sticky_key)
     return await score_teacher_rollouts(
-        teacher, prefix, rollouts, sticky_key=sticky_key)
+        teacher, prefix, rollouts, thought_echo=thought_echo,
+        sticky_key=sticky_key)
 
 
 async def sample_miner_rollouts(
@@ -133,7 +150,8 @@ async def miner_terms(teacher: TeacherClient, miner: VllmModel, prefix: list[dic
                       max_thought: int, max_action: int,
                       score_bank: bool = False,
                       reason_only: bool = True,
-                      causality_gate: bool = False, *,
+                      causality_gate: bool = False,
+                      thought_echo: bool = False, *,
                       sticky_key: str | None = None,
                       rollouts: list[tuple[str, str]] | None = None) -> dict:
     """Compute the pair record for one miner on one turn.
@@ -142,8 +160,11 @@ async def miner_terms(teacher: TeacherClient, miner: VllmModel, prefix: list[dic
     teacher against EVERY teacher ref (k pairs per turn), stamp η from
     teacher-ref denominators. No lpA / bank GPU work. causality_gate adds
     lpC(y_A|z_A) and lpC(y_A|∅) once per distinct miner rollout (the B
-    license does not depend on the ref). Legacy full_terms keeps the old
-    diagonal min(refs, rollouts) truncation for replay comparability.
+    license does not depend on the ref). thought_echo (min(R,G) grounding
+    leg, wvk 10) adds m = lpC(z_A|x) once per distinct miner rollout,
+    stamped on each pair as ``lpC_za_x``, with the turn's reference band
+    values copied from the refs as ``lpC_zc_x``. Legacy full_terms keeps the
+    old diagonal min(refs, rollouts) truncation for replay comparability.
     sticky_key pins teacher echoes for this turn to one replica (prefix cache).
 
     If ``rollouts`` is provided (already sampled), skip miner sampling — used
@@ -186,6 +207,11 @@ async def miner_terms(teacher: TeacherClient, miner: VllmModel, prefix: list[dic
             prefix, rollouts[j][0], rollouts[j][1], sticky_key=sticky_key))
         tasks.append(teacher.score_action(
             prefix, EMPTY_THOUGHTS, rollouts[j][1], sticky_key=sticky_key))
+    # Grounding echo m = lpC(z_A|x) once per distinct miner rollout.
+    g_rollouts = sorted(set(midx)) if thought_echo else []
+    for j in g_rollouts:
+        tasks.append(teacher.score_thought(
+            prefix, rollouts[j][0], sticky_key=sticky_key))
     res = await asyncio.gather(*tasks)
 
     b_by_rollout: dict[int, dict[str, float]] = {}
@@ -195,6 +221,10 @@ async def miner_terms(teacher: TeacherClient, miner: VllmModel, prefix: list[dic
             "lpC_ya_za": res[base + 2 * t]["lp_per_byte"],
             "lpC_ya_e": res[base + 2 * t + 1]["lp_per_byte"],
         }
+    m_by_rollout: dict[int, float] = {}
+    g_base = base + 2 * len(b_rollouts)
+    for t, j in enumerate(g_rollouts):
+        m_by_rollout[j] = res[g_base + t]["lp_per_byte"]
 
     bank_vals = None
     if score_bank:
@@ -211,6 +241,9 @@ async def miner_terms(teacher: TeacherClient, miner: VllmModel, prefix: list[dic
         lp.update(b_by_rollout.get(midx[i], {}))
         lp["lpC_yc_zc"] = ref[i]["lp_own"]
         lp["lpC_yc_e"] = ref[i]["lp_empty"]
+        if thought_echo:
+            lp["lpC_za_x"] = m_by_rollout.get(midx[i])
+            lp["lpC_zc_x"] = ref[i].get("lp_thought")
         lp["z_a"] = rollouts[midx[i]][0]
         lp["y_a"] = rollouts[midx[i]][1]
         lp["eta"] = eta(lp)

@@ -1,18 +1,41 @@
-"""Frozen production scoring rule: Reason v4 — tempered multi-sample
-(2026-08-17, weight_version_key=7).
+"""Frozen production scoring rule: min(R, G) v5 — centered Reason + banded
+Grounding (2026-08-27, weight_version_key=10).
 
 Shared between root validator and eval server. Any change here is a chain fork
 (bump [subnet].weight_version_key).
 
-Reason(A; C, D):
-  Per ref i:  a_i  = lpC(y_i | z_A) − lpC(y_i | ∅)     (per-byte, k refs/turn)
-  Per turn:   Reason = tau · log( (1/k) · Σ_i exp(a_i / tau) )
-  Per miner:  score  = mean(turn Reason) over turns
+v5 (score_mode="min_rg", the live rule):
+  Per ref i:  a_i = lpC(y_i | z_A) − lpC(y_i | ∅)      (per-byte, k refs/turn)
+  R leg:      R   = tau·log((1/k)·Σ_i exp(a_i/tau)) − mean_i a_i
+              (centered tempered Reason: flat reference-independent lift
+              cancels; only committing to a specific teacher mode pays)
+  G leg:      m = lpC(z_A | x),  t_i = lpC(z_C^i | x)
+              G = min(m − (mu − w), (mu + w) − m)
+              with mu = mean(t_i), w = max(band_c·stdev(t_i), band_floor)
+              (thought must sit in the likelihood band of the teacher's own
+              thoughts: filler falls below, parroting/copying rises above)
+  Per turn:   turn = min(R, G)
+  Per miner:  score = mean(turn) over turns
   Duel:       challenger wins iff
-              paired mean(Reason_c − Reason_k) > max(k_sigma · SE, min_margin)
+              paired mean(turn_c − turn_k) > max(k_sigma · SE, min_margin)
               AND median(len(z_A.strip())) ≥ min_thought_chars
               AND (if causality_gamma > 0) B pass rate ≥ causality_gamma
               with SE = stdev(diffs) / sqrt(n) over paired turns.
+
+Why v5 (2026-08-27): the wvk-9 king crowned on a constant filler suffix — a
+flat, task-independent lift that raises every a_i equally and benches 0/50
+on coding. Centering zeroes that channel by construction; the grounding band
+makes content-free or copied thoughts unprofitable. Validated adversarially
+(suffix/parrot/boilerplate attacks, GRPO direct optimization: all fail) and
+positively (held-out teacher thoughts win at z=+2.56 where v4 was blind at
+z=+0.11). Full evidence: research/results/minrg_round2/FINDINGS.txt and
+research/docs/MIN_RG_PROPOSAL.md.
+
+History — Reason v4, tempered multi-sample (2026-08-17, wvk 7-9;
+score_mode="reason", the replay path for pre-fork verdicts):
+  Per turn:   Reason = tau · log( (1/k) · Σ_i exp(a_i / tau) )
+  Per miner:  score  = mean(turn Reason) over turns
+  Same duel gates.
 
 Scoring hyperparameters: n_turns, k_sigma, min_margin (δ), tau,
 n_teacher_samples (k), min_thought_chars, and the B license
@@ -94,6 +117,17 @@ DEFAULT_MIN_THOUGHT_CHARS = 80
 # Tempering temperature for the per-turn log-mean-exp over k references
 # (v4, 2026-08-17). tau <= 0 or None means plain mean (v3 replay).
 DEFAULT_TEMPER_TAU = 0.03
+# Turn-score rule selector (v5 min(R,G), 2026-08-27, weight_version_key=10).
+# "reason" = wvk<=9 tempered Reason (replay path); "min_rg" = the live rule:
+#   turn = min( centered R , banded G )
+#   centered R = turn_reason(pairs, tau) − mean_i a_i   (flat lift cancels)
+#   banded  G  = min(m − (mu − w), (mu + w) − m)
+# with m = lpC(z_A|x), t_i = lpC(z_C^i|x), mu/sd over the t_i, and
+# w = max(band_c·sd, band_floor). Filler/boilerplate lands below the band,
+# parroting/copy-paste lands above it; both zero out the turn via the min.
+DEFAULT_SCORE_MODE = "reason"
+DEFAULT_BAND_C = 2.0
+DEFAULT_BAND_FLOOR = 0.002
 # Teacher-side causality gate B (off unless causality_gamma > 0).
 # B = lpC(y_A|z_A) − lpC(y_A|∅). Same τ/γ as retired v2 miner-side A9.
 DEFAULT_CAUSALITY_TAU = 0.02
@@ -206,6 +240,87 @@ def turn_reason(pairs: list[dict],
         st.mean(math.exp((ai - m) / tau) for ai in a))
 
 
+def centered_reason(pairs: list[dict],
+                    tau: float | None = DEFAULT_TEMPER_TAU) -> float:
+    """R leg of min(R,G): tempered Reason minus the plain per-ref mean.
+
+    LME(a − c) = LME(a) − c for any constant c, so subtracting the mean is
+    exactly the tempered log-mean-exp over centered per-ref Reasons. A flat,
+    reference-independent lift (the wvk-9 filler-suffix exploit) shifts every
+    a_i equally and cancels; only committing to a specific reference's mode
+    survives. k=1 centers to exactly 0 (no spread to reward).
+    """
+    a = [reason(p) for p in pairs]
+    if not a:
+        return float("-inf")
+    return turn_reason(pairs, tau) - st.mean(a)
+
+
+def grounding(pairs: list[dict],
+              band_c: float = DEFAULT_BAND_C,
+              band_floor: float = DEFAULT_BAND_FLOOR) -> float | None:
+    """G leg of min(R,G): the miner thought's distance INTO the teacher band.
+
+        m  = lpC(z_A|x)  per byte (miner thought under the teacher, given x)
+        t_i = lpC(z_C^i|x)         (the k reference thoughts, same echo)
+        band = mu ± w,  mu = mean(t_i),  w = max(band_c·stdev(t_i), band_floor)
+        G = min(m − (mu − w), (mu + w) − m)
+
+    Positive iff m sits inside the band; the two-sided form catches filler
+    (below: the task does not make that text likely) AND parroting/copying
+    (above: the text is too predictable given the task). None when the
+    grounding echoes are absent (pre-wvk-10 rows).
+    """
+    ts = [t for p in pairs if (t := p.get("lpC_zc_x")) is not None]
+    ms: dict[str, float] = {}
+    for p in pairs:
+        m = p.get("lpC_za_x")
+        if m is not None:
+            ms[p.get("z_a") or ""] = m
+    if not ts or not ms:
+        return None
+    mu = st.mean(ts)
+    sd = st.stdev(ts) if len(ts) >= 2 else 0.0
+    w = max(band_c * sd, band_floor)
+    m = st.mean(ms.values())
+    return min(m - (mu - w), (mu + w) - m)
+
+
+def turn_min_rg(pairs: list[dict],
+                tau: float | None = DEFAULT_TEMPER_TAU,
+                band_c: float = DEFAULT_BAND_C,
+                band_floor: float = DEFAULT_BAND_FLOOR) -> float:
+    """Turn score under min(R,G) (v5, 2026-08-27, weight_version_key=10).
+
+    min(centered Reason, banded Grounding): the miner is paid the WORSE of
+    "does your thought predict the teacher's specific next action" and "is
+    your thought the kind of text the task actually induces". Maximizing one
+    leg while neglecting the other pays the neglected leg. Fails loudly when
+    grounding echoes are missing — pre-fork rows must replay through
+    turn_reason (score_mode="reason"), never through this rule.
+    """
+    a = [reason(p) for p in pairs]
+    if not a:
+        return float("-inf")
+    g = grounding(pairs, band_c, band_floor)
+    if g is None:
+        raise ValueError(
+            "min_rg scoring requires grounding echoes (lpC_za_x / lpC_zc_x); "
+            "replay pre-fork rows with score_mode='reason'")
+    return min(centered_reason(pairs, tau), g)
+
+
+def turn_score(pairs: list[dict],
+               tau: float | None = DEFAULT_TEMPER_TAU,
+               score_mode: str = DEFAULT_SCORE_MODE,
+               band_c: float = DEFAULT_BAND_C,
+               band_floor: float = DEFAULT_BAND_FLOOR) -> float:
+    """Dispatch the per-turn score by contract score_mode."""
+    if score_mode == "min_rg":
+        return turn_min_rg(pairs, tau, band_c, band_floor)
+    return turn_reason(pairs, tau)
+
+
 def l1_lift(pair: dict) -> float | None:
     """Telemetry: miner-side lift lpA(y_C|z_A) − lpA(y_C|∅) (not scored).
 
@@ -270,7 +385,7 @@ def _mean_optional(vals: list[float | None]) -> float | None:
 @dataclass
 class MinerScore:
     miner: str
-    reason: float                     # the score: mean per-turn tempered Reason
+    reason: float                     # the score: mean per-turn score
     n_pairs: int
     n_turns: int
     # -- telemetry (measured, never scored) --
@@ -285,17 +400,25 @@ class MinerScore:
     mean_len_y: float | None = None    # chars of y_A
     mean_b: float | None = None        # mean teacher-side B (not scored)
     b_gate_pass_rate: float | None = None  # share of pairs passing B+leakage
+    # -- min(R,G) leg telemetry (score_mode="min_rg" only) --
+    mean_r_leg: float | None = None    # mean per-turn centered Reason
+    mean_g_leg: float | None = None    # mean per-turn banded Grounding
+    g_bind_frac: float | None = None   # share of turns where G < R (G binds)
 
 
 def score_miner(rows: list[dict],
                 bank_frac: float | None = None,
-                tau: float | None = DEFAULT_TEMPER_TAU) -> MinerScore:
-    """Score one miner: mean per-turn tempered Reason + telemetry.
+                tau: float | None = DEFAULT_TEMPER_TAU,
+                score_mode: str = DEFAULT_SCORE_MODE,
+                band_c: float = DEFAULT_BAND_C,
+                band_floor: float = DEFAULT_BAND_FLOOR) -> MinerScore:
+    """Score one miner: mean per-turn score + telemetry.
 
     Each row is one turn holding k pairs (one per teacher reference); the
-    turn score is turn_reason(pairs, tau) and the miner score is the mean
-    over turns. With k=1 (or tau <= 0) this is identical to the v3
-    mean-per-pair rule, so pre-fork rows replay unchanged. No gating.
+    turn score is turn_score(pairs, ...) — tempered Reason under
+    score_mode="reason" (wvk<=9 replay: k=1 or tau <= 0 recovers v3
+    exactly), min(centered R, banded G) under score_mode="min_rg" (wvk 10).
+    No gating here.
     """
     if not rows:
         return MinerScore("?", float("-inf"), 0, 0)
@@ -312,9 +435,20 @@ def score_miner(rows: list[dict],
     except KeyError:
         baseline_abs = None
     z_lens = [len((p.get("z_a") or "").strip()) for p in pairs]
+    mean_r_leg = mean_g_leg = g_bind_frac = None
+    if score_mode == "min_rg":
+        r_legs = [centered_reason(r["pairs"], tau) for r in valid]
+        g_legs = [grounding(r["pairs"], band_c, band_floor) for r in valid]
+        have = [(r, g) for r, g in zip(r_legs, g_legs) if g is not None]
+        if have:
+            mean_r_leg = st.mean(r for r, _ in have)
+            mean_g_leg = st.mean(g for _, g in have)
+            g_bind_frac = st.mean(1.0 if g < r else 0.0 for r, g in have)
     return MinerScore(
         miner=rows[0].get("miner", "?"),
-        reason=st.mean(turn_reason(r["pairs"], tau) for r in valid),
+        reason=st.mean(
+            turn_score(r["pairs"], tau, score_mode, band_c, band_floor)
+            for r in valid),
         n_pairs=len(pairs),
         n_turns=len({r["turn_id"] for r in rows}),
         gate_pass_rate=(st.mean(gpass_f) if gpass_f else 0.0),
@@ -328,6 +462,9 @@ def score_miner(rows: list[dict],
         mean_len_y=st.mean(float(len(p.get("y_a", ""))) for p in pairs),
         mean_b=_mean_optional([teacher_causality(p) for p in pairs]),
         b_gate_pass_rate=(st.mean(b_have) if b_have else None),
+        mean_r_leg=mean_r_leg,
+        mean_g_leg=mean_g_leg,
+        g_bind_frac=g_bind_frac,
     )
 
 
@@ -347,6 +484,9 @@ class DuelResult:
     causality_gamma: float = DEFAULT_CAUSALITY_GAMMA
     causality_blocked: bool = False
     tau: float | None = DEFAULT_TEMPER_TAU
+    score_mode: str = DEFAULT_SCORE_MODE
+    band_c: float = DEFAULT_BAND_C
+    band_floor: float = DEFAULT_BAND_FLOOR
 
 
 def duel(challenger_rows: list[dict], king_rows: list[dict],
@@ -356,34 +496,44 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
          causality_gamma: float = DEFAULT_CAUSALITY_GAMMA,
          challenger_bank_frac: float | None = None,
          king_bank_frac: float | None = None,
-         tau: float | None = DEFAULT_TEMPER_TAU) -> DuelResult:
-    """Paired duel on per-turn tempered Reason: wins iff
+         tau: float | None = DEFAULT_TEMPER_TAU,
+         score_mode: str = DEFAULT_SCORE_MODE,
+         band_c: float = DEFAULT_BAND_C,
+         band_floor: float = DEFAULT_BAND_FLOOR) -> DuelResult:
+    """Paired duel on the per-turn score: wins iff
     mean > max(k_sigma·SE, min_margin) AND the challenger's median stripped
     thought length is ≥ min_thought_chars AND (if causality_gamma > 0) the
     challenger's teacher-side B pass rate is ≥ causality_gamma.
 
-    Each turn's score on each side is turn_reason(pairs, tau) — tempered
-    log-mean-exp over the k teacher references (k=1 or tau <= 0 recovers the
-    v3 plain mean for pre-fork replay). The δ floor stops ε-copies /
+    Each turn's score on each side is turn_score(pairs, ...): tempered
+    Reason under score_mode="reason" (k=1 or tau <= 0 recovers the v3 plain
+    mean — pre-fork replay), min(centered R, banded G) under
+    score_mode="min_rg" (wvk 10, 2026-08-27). The δ floor stops ε-copies /
     SE-compression; the length floor evicts empty/cue thoughts (A9). B is
     the starting-line license: thoughts must cause the miner's own action,
     as judged by the teacher. Bank fracs are accepted only to thread
     telemetry. min_thought_chars ≤ 0 disables the length floor;
     causality_gamma ≤ 0 disables B (pre-fork replay / try)."""
-    cs = score_miner(challenger_rows, challenger_bank_frac, tau=tau)
-    ks = score_miner(king_rows, king_bank_frac, tau=tau)
+    cs = score_miner(challenger_rows, challenger_bank_frac, tau=tau,
+                     score_mode=score_mode, band_c=band_c,
+                     band_floor=band_floor)
+    ks = score_miner(king_rows, king_bank_frac, tau=tau,
+                     score_mode=score_mode, band_c=band_c,
+                     band_floor=band_floor)
     c_by = {r["turn_id"]: r for r in challenger_rows if r.get("valid") and "pairs" in r}
     k_by = {r["turn_id"]: r for r in king_rows if r.get("valid") and "pairs" in r}
     diffs = []
     for tid in sorted(set(c_by) & set(k_by)):
-        rc = turn_reason(c_by[tid]["pairs"], tau)
-        rk = turn_reason(k_by[tid]["pairs"], tau)
+        rc = turn_score(c_by[tid]["pairs"], tau, score_mode, band_c, band_floor)
+        rk = turn_score(k_by[tid]["pairs"], tau, score_mode, band_c, band_floor)
         diffs.append(rc - rk)
     n = len(diffs)
     if n < 2:
         return DuelResult(cs.miner, ks.miner, 0.0, float("inf"), 0.0,
                           k_sigma, False, n, min_margin, min_thought_chars,
-                          False, causality_gamma)
+                          False, causality_gamma,
+                          score_mode=score_mode, band_c=band_c,
+                          band_floor=band_floor)
     mean = st.mean(diffs)
     se = st.stdev(diffs) / math.sqrt(n)
     z = mean / se if se > 0 else (math.inf if mean > 0 else 0.0)
@@ -407,4 +557,7 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
         causality_gamma=causality_gamma,
         causality_blocked=causality_blocked,
         tau=tau,
+        score_mode=score_mode,
+        band_c=band_c,
+        band_floor=band_floor,
     )

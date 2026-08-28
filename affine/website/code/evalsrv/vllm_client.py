@@ -15,6 +15,7 @@ from .chat import (
     get_tokenizer,
     inject_prompt,
     split_rollout,
+    thought_text,
 )
 
 
@@ -112,6 +113,11 @@ class ModelPool:
         return await self._pick(sticky_key).score_action(
             prefix_messages, thoughts, action, sticky_key=sticky_key)
 
+    async def score_thought(self, prefix_messages: list[dict], thoughts: str,
+                            *, sticky_key: str | None = None) -> dict:
+        return await self._pick(sticky_key).score_thought(
+            prefix_messages, thoughts, sticky_key=sticky_key)
+
 
 class VllmModel:
     def __init__(self, cfg: Served, client: httpx.AsyncClient, sem: asyncio.Semaphore):
@@ -205,22 +211,17 @@ class VllmModel:
         })
         return extract_action(d["choices"][0]["text"])
 
-    async def score_action(self, prefix_messages: list[dict], thoughts: str,
-                           action: str, *, sticky_key: str | None = None
-                           ) -> dict:
-        """Teacher-force: mean logprob per byte of `action` given (prefix, thoughts).
+    async def _echo_span(self, full: str, span_start: int,
+                         span_bytes: int) -> dict:
+        """Teacher-force echo: mean logprob per byte of full[span_start:].
 
-        echo=True + logprobs, action span located with the tokenizer's offset
+        echo=True + logprobs, span located with the tokenizer's offset
         mapping on the full text (robust to BPE merges across the injection
         boundary); add_special_tokens=False keeps vLLM's tokenization aligned.
         """
-        del sticky_key
         tok = get_tokenizer(self.cfg.repo, self.cfg.revision)
-        full = force_text(self.cfg.repo, self.cfg.revision, prefix_messages,
-                          thoughts, action)
-        action_start = len(full) - len(action)
         enc = tok(full, add_special_tokens=False, return_offsets_mapping=True)
-        n_prompt = sum(1 for s, _ in enc["offset_mapping"] if s < action_start)
+        n_prompt = sum(1 for s, _ in enc["offset_mapping"] if s < span_start)
         d = await self._post({
             "model": self.cfg.repo,
             "prompt": full,
@@ -231,13 +232,38 @@ class VllmModel:
             "add_special_tokens": False,
         })
         lp = d["choices"][0]["logprobs"]["token_logprobs"]
-        # Action-span logprobs: everything after the prompt tokens (last
-        # generated token excluded: echo returns prompt tokens + 1 generated).
+        # Span logprobs: everything after the prompt tokens (last generated
+        # token excluded: echo returns prompt tokens + 1 generated).
         span = [x for x in lp[n_prompt:-1] if x is not None]
-        n_bytes = max(len(action.encode()), 1)
+        n_bytes = max(span_bytes, 1)
         return {
             "sum_lp": sum(span),
             "n_tokens": len(span),
             "n_bytes": n_bytes,
             "lp_per_byte": sum(span) / n_bytes if span else 0.0,
         }
+
+    async def score_action(self, prefix_messages: list[dict], thoughts: str,
+                           action: str, *, sticky_key: str | None = None
+                           ) -> dict:
+        """Mean logprob per byte of `action` given (prefix, thoughts)."""
+        del sticky_key
+        full = force_text(self.cfg.repo, self.cfg.revision, prefix_messages,
+                          thoughts, action)
+        return await self._echo_span(full, len(full) - len(action),
+                                     len(action.encode()))
+
+    async def score_thought(self, prefix_messages: list[dict], thoughts: str,
+                            *, sticky_key: str | None = None) -> dict:
+        """Mean logprob per byte of `thoughts` given the turn prefix x.
+
+        Grounding-leg echo for min(R, G): m = lpC(z_A|x) for the miner's
+        thought, t_i = lpC(z_C^i|x) for each teacher reference thought. Uses
+        the same canonical injected rendering as score_action minus the
+        action, so the scored span is exactly the thought bytes.
+        """
+        del sticky_key
+        full = thought_text(self.cfg.repo, self.cfg.revision, prefix_messages,
+                            thoughts)
+        return await self._echo_span(full, len(full) - len(thoughts),
+                                     len(thoughts.encode()))

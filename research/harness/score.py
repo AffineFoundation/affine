@@ -135,6 +135,71 @@ def turn_reason(pairs: list[dict],
         st.mean(math.exp((ai - m) / tau) for ai in a))
 
 
+# min(R,G) v5 (2026-08-27, weight_version_key=10) — see affine/affine/score.py
+DEFAULT_SCORE_MODE = "reason"
+DEFAULT_BAND_C = 2.0
+DEFAULT_BAND_FLOOR = 0.002
+
+
+def centered_reason(pairs: list[dict],
+                    tau: float | None = DEFAULT_TEMPER_TAU) -> float:
+    """R leg of min(R,G): tempered Reason minus the plain per-ref mean."""
+    a = [reason(p) for p in pairs]
+    if not a:
+        return float("-inf")
+    return turn_reason(pairs, tau) - st.mean(a)
+
+
+def grounding(pairs: list[dict],
+              band_c: float = DEFAULT_BAND_C,
+              band_floor: float = DEFAULT_BAND_FLOOR) -> float | None:
+    """G leg of min(R,G): miner thought's distance into the teacher band.
+
+    m = lpC(z_A|x) vs band mu ± w from t_i = lpC(z_C^i|x),
+    w = max(band_c·stdev(t_i), band_floor). None when echoes are absent.
+    """
+    ts = [t for p in pairs if (t := p.get("lpC_zc_x")) is not None]
+    ms: dict[str, float] = {}
+    for p in pairs:
+        m = p.get("lpC_za_x")
+        if m is not None:
+            ms[p.get("z_a") or ""] = m
+    if not ts or not ms:
+        return None
+    mu = st.mean(ts)
+    sd = st.stdev(ts) if len(ts) >= 2 else 0.0
+    w = max(band_c * sd, band_floor)
+    m = st.mean(ms.values())
+    return min(m - (mu - w), (mu + w) - m)
+
+
+def turn_min_rg(pairs: list[dict],
+                tau: float | None = DEFAULT_TEMPER_TAU,
+                band_c: float = DEFAULT_BAND_C,
+                band_floor: float = DEFAULT_BAND_FLOOR) -> float:
+    """Turn score under min(R,G) v5. Fails loudly without grounding echoes."""
+    a = [reason(p) for p in pairs]
+    if not a:
+        return float("-inf")
+    g = grounding(pairs, band_c, band_floor)
+    if g is None:
+        raise ValueError(
+            "min_rg scoring requires grounding echoes (lpC_za_x / lpC_zc_x); "
+            "replay pre-fork rows with score_mode='reason'")
+    return min(centered_reason(pairs, tau), g)
+
+
+def turn_score(pairs: list[dict],
+               tau: float | None = DEFAULT_TEMPER_TAU,
+               score_mode: str = DEFAULT_SCORE_MODE,
+               band_c: float = DEFAULT_BAND_C,
+               band_floor: float = DEFAULT_BAND_FLOOR) -> float:
+    """Dispatch the per-turn score by contract score_mode."""
+    if score_mode == "min_rg":
+        return turn_min_rg(pairs, tau, band_c, band_floor)
+    return turn_reason(pairs, tau)
+
+
 def l1_lift(pair: dict) -> float:
     """Telemetry: lpA(y_C|z_A) − lpA(y_C|∅) (not scored)."""
     return pair["lpA_yc_za"] - pair["lpA_yc_e"]
@@ -171,10 +236,15 @@ class MinerScore:
 
 def score_miner(rows: list[dict],
                 bank_frac: float | None = None,
-                tau: float | None = DEFAULT_TEMPER_TAU) -> MinerScore:
-    """v4: mean per-turn tempered Reason + telemetry. No gating.
+                tau: float | None = DEFAULT_TEMPER_TAU,
+                score_mode: str = DEFAULT_SCORE_MODE,
+                band_c: float = DEFAULT_BAND_C,
+                band_floor: float = DEFAULT_BAND_FLOOR) -> MinerScore:
+    """Mean per-turn score + telemetry. No gating.
 
-    k=1 rows (v3 era) score identically to the old mean-per-pair rule."""
+    score_mode="reason" (default): v4 tempered Reason; k=1 rows (v3 era)
+    score identically to the old mean-per-pair rule. score_mode="min_rg":
+    the wvk-10 min(centered R, banded G) rule (needs grounding echoes)."""
     if not rows:
         return MinerScore("?", float("-inf"), 0, 0)
     valid = [r for r in rows if r.get("valid") and "pairs" in r]
@@ -188,7 +258,9 @@ def score_miner(rows: list[dict],
     b_finite = [v for v in b_vals if v is not None and math.isfinite(v)]
     return MinerScore(
         miner=rows[0].get("miner", "?"),
-        reason=st.mean(turn_reason(r["pairs"], tau) for r in valid),
+        reason=st.mean(
+            turn_score(r["pairs"], tau, score_mode, band_c, band_floor)
+            for r in valid),
         n_pairs=len(pairs),
         n_turns=len({r["turn_id"] for r in rows}),
         gate_pass_rate=st.mean(1.0 if gate_pass(p) else 0.0 for p in pairs),
@@ -229,23 +301,31 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
          causality_gamma: float = DEFAULT_CAUSALITY_GAMMA,
          challenger_bank_frac: float | None = None,
          king_bank_frac: float | None = None,
-         tau: float | None = DEFAULT_TEMPER_TAU) -> DuelResult:
-    """v4 paired duel on per-turn tempered Reason: wins iff
+         tau: float | None = DEFAULT_TEMPER_TAU,
+         score_mode: str = DEFAULT_SCORE_MODE,
+         band_c: float = DEFAULT_BAND_C,
+         band_floor: float = DEFAULT_BAND_FLOOR) -> DuelResult:
+    """Paired duel on the per-turn score: wins iff
     mean > max(k_sigma·SE, min_margin)
     AND median stripped thought length ≥ min_thought_chars
     AND (if causality_gamma > 0) B pass rate ≥ causality_gamma.
     Pass min_margin=0.0 to replay pre-δ (weight_version_key=3) verdicts.
     Pass min_thought_chars=0 to disable the length floor (pre-fork replay).
     Pass causality_gamma=0 to disable B. tau <= 0 (or k=1 rows) recovers
-    the v3 plain-mean rule exactly."""
-    cs = score_miner(challenger_rows, challenger_bank_frac, tau=tau)
-    ks = score_miner(king_rows, king_bank_frac, tau=tau)
+    the v3 plain-mean rule exactly. score_mode="min_rg" scores each turn
+    min(centered R, banded G) (wvk 10, needs grounding echoes)."""
+    cs = score_miner(challenger_rows, challenger_bank_frac, tau=tau,
+                     score_mode=score_mode, band_c=band_c,
+                     band_floor=band_floor)
+    ks = score_miner(king_rows, king_bank_frac, tau=tau,
+                     score_mode=score_mode, band_c=band_c,
+                     band_floor=band_floor)
     c_by = {r["turn_id"]: r for r in challenger_rows if r.get("valid") and "pairs" in r}
     k_by = {r["turn_id"]: r for r in king_rows if r.get("valid") and "pairs" in r}
     diffs = []
     for tid in sorted(set(c_by) & set(k_by)):
-        rc = turn_reason(c_by[tid]["pairs"], tau)
-        rk = turn_reason(k_by[tid]["pairs"], tau)
+        rc = turn_score(c_by[tid]["pairs"], tau, score_mode, band_c, band_floor)
+        rk = turn_score(k_by[tid]["pairs"], tau, score_mode, band_c, band_floor)
         diffs.append(rc - rk)
     n = len(diffs)
     if n < 2:

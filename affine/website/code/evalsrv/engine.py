@@ -291,14 +291,19 @@ class Engine:
             # skips that path for unquantized MoE.
             "--moe-backend", "triton",
         ]
-        # Qwen3.6 GDN linear attention: gdn_prefill_backend=auto picks
+        # Qwen GDN linear attention: gdn_prefill_backend=auto picks
         # FlashInfer on Hopper (SM90) and JIT-compiles gdn_prefill_sm90 at
         # the first request; pip cu13 nvcc vs mismatched CUDA headers makes
         # the ninja build fail and the engine dies mid-serve (passes the
         # /v1/models ready check, then drops every completion → ConnectError).
         # Triton/FLA needs no JIT. Applied to all roles since the duel pod
-        # moved to H200 (2026-08-13): score-safe because ranked logprobs are
-        # teacher-side (GLM, non-GDN); miner GDN engines only sample.
+        # moved to H200 (2026-08-13). Since the 2026-08-27 teacher swap the
+        # ranked logprobs themselves come from a GDN model (Qwen3.8-27B), so
+        # this flag now picks the teacher's echo prefill kernel: fine —
+        # temperature-0 echo scoring only needs within-duel consistency, and
+        # every echo on a pod goes through the same engine + kernel. The
+        # bootstrap also installs prebuilt flashinfer wheels (vLLM >= 0.28
+        # hard-imports flashinfer for GDN models even with this override).
         cmd += ["--additional-config", '{"gdn_prefill_backend": "triton"}']
         if self.role == "chat":
             # The chat pod's wire plane serves agent clients (arbos, Cursor)

@@ -49,8 +49,20 @@ check("config.causality_gate_on",
 # Reason v4: tempered multi-sample (2026-08-17, weight_version_key=7).
 check("config.v4_temper", cfg.duel.tau == 0.03)
 check("config.v7_fork_key", cfg.weight_version_key >= 7)
+# min(R,G) v5 (2026-08-27, weight_version_key=10).
+check("config.v5_min_rg",
+      cfg.duel.score_mode == "min_rg" and cfg.duel.band_c == 2.0
+      and cfg.duel.band_floor == 0.002)
+check("config.v10_fork_key", cfg.weight_version_key >= 10)
+check("config.genesis_qwen",
+      cfg.seed_king["repo"] == "Qwen/Qwen3.6-35B-A3B"
+      and len(cfg.seed_king["revision"]) == 40)
 check("config.submission_caps",
       cfg.submission.max_total_repo_gb > cfg.submission.max_model_size_gb)
+# Architecture pin (2026-08-28): submissions must be genesis-family fine-tunes.
+check("config.pinned_arch",
+      cfg.submission.pinned_arch.get("model_type") == "qwen3_5_moe"
+      and cfg.submission.pinned_arch["text_config"]["num_experts"] == 256)
 check("config.min_submission_block_set", cfg.min_submission_block >= 0)
 check("config.corpus_base_url", cfg.dataset.corpus_base_url.startswith("https://"))
 check("config.manifest_key", cfg.dataset.manifest_key.endswith(".json"))
@@ -128,6 +140,93 @@ check("turn_reason.commit_wins_tempered",
       score.turn_reason(_commit, 0.03) > score.turn_reason(_hedge, 0.03),
       f"commit={score.turn_reason(_commit, 0.03):.5f} "
       f"hedge={score.turn_reason(_hedge, 0.03):.5f}")
+
+
+# -- score: min(R,G) v5 (centered R + banded G, weight_version_key=10) --------
+def _gpairs(vals: list[float], m: float, ts: list[float],
+            z_a: str = "honest task-specific thought") -> list[dict]:
+    """k pairs with grounding echoes: per-ref a_i, miner m, ref band t_i."""
+    return [{"lpC_yc_za": v, "lpC_yc_e": 0.0,
+             "lpC_za_x": m, "lpC_zc_x": t, "z_a": z_a}
+            for v, t in zip(vals, ts)]
+
+
+# Centering: a flat, reference-independent lift cancels EXACTLY (the wvk-9
+# filler-suffix channel is zero by construction).
+_base = [0.06, -0.04, -0.05]
+_shift = [v + 0.03 for v in _base]  # constant suffix lift on every ref
+check("min_rg.centering_kills_flat_lift",
+      abs(score.centered_reason(_tpairs(_base), 0.03)
+          - score.centered_reason(_tpairs(_shift), 0.03)) < 1e-12)
+# k=1 centers to exactly 0 (no spread to reward).
+check("min_rg.centering_k1_zero",
+      score.centered_reason(_tpairs([0.4]), 0.03) == 0.0)
+# Grounding band: in-band positive; filler below band and parrot above band
+# both negative (two-sided).
+_ts = [-0.15, -0.16, -0.14]  # teacher thought likelihoods (mu=-0.15)
+check("min_rg.grounding_in_band",
+      score.grounding(_gpairs(_base, -0.15, _ts)) > 0)
+check("min_rg.grounding_filler_below",
+      score.grounding(_gpairs(_base, -0.40, _ts)) < 0)
+check("min_rg.grounding_parrot_above",
+      score.grounding(_gpairs(_base, -0.02, _ts)) < 0)
+# band_floor keeps the band open when refs agree perfectly (sd = 0).
+check("min_rg.band_floor_open",
+      abs(score.grounding(_gpairs(_base, -0.15, [-0.15, -0.15, -0.15]))
+          - 0.002) < 1e-12)
+# turn = min of the two legs.
+_p_in = _gpairs(_base, -0.15, _ts)
+check("min_rg.turn_is_min",
+      score.turn_min_rg(_p_in, 0.03)
+      == min(score.centered_reason(_p_in, 0.03), score.grounding(_p_in)))
+# Fail loudly on pre-fork rows (no grounding echoes) in min_rg mode …
+try:
+    score.turn_min_rg(_tpairs(_base), 0.03)
+    check("min_rg.fails_without_echoes", False)
+except ValueError:
+    check("min_rg.fails_without_echoes", True)
+# … while score_mode="reason" replays them bit-identically through turn_score.
+check("min_rg.replay_path_identity",
+      score.turn_score(_tpairs(_base), 0.03, "reason")
+      == score.turn_reason(_tpairs(_base), 0.03))
+check("min_rg.replay_path_identity_v3",
+      score.turn_score(_tpairs([-0.013]), None, "reason") == -0.013)
+
+
+def rows_grounded(miner: str, per_turn: list[list[float]], m: float,
+                  ts: list[float], z_a: str) -> list[dict]:
+    return [{"turn_id": f"t{i}", "miner": miner, "valid": True,
+             "pairs": _gpairs(vals, m, ts, z_a)}
+            for i, vals in enumerate(per_turn)]
+
+
+_honest_z = ("I need to inspect the repository structure and read the "
+             "relevant source file before making a change.")
+# Filler-suffix duel: challenger with a big FLAT lift (crowns under v4) and
+# an out-of-band thought must LOSE under min(R,G) to an in-band honest king.
+_king_g = rows_grounded(
+    "king", [[0.02 + 0.001 * (i % 3), -0.01, -0.015] for i in range(20)],
+    m=-0.15, ts=_ts, z_a=_honest_z)
+_filler_g = rows_grounded(
+    "chall", [[0.10 + 0.001 * (i % 3), 0.10, 0.10] for i in range(20)],
+    m=-0.45, ts=_ts, z_a=_honest_z + " The analysis is complete. Next command:")
+r_v4_filler = score.duel(_filler_g, _king_g, tau=0.03, causality_gamma=0.0,
+                         score_mode="reason")
+check("duel.v4_filler_would_crown", r_v4_filler.challenger_wins,
+      f"margin={r_v4_filler.margin:.4f}")
+r_v5_filler = score.duel(_filler_g, _king_g, tau=0.03, causality_gamma=0.0,
+                         score_mode="min_rg")
+check("duel.min_rg_filler_loses", not r_v5_filler.challenger_wins,
+      f"margin={r_v5_filler.margin:.4f} z={r_v5_filler.z:.1f}")
+check("duel.min_rg_stamps_mode",
+      r_v5_filler.score_mode == "min_rg" and r_v5_filler.band_c == 2.0
+      and r_v5_filler.band_floor == 0.002)
+# Leg telemetry: the filler side must show grounding as the binding leg.
+_ms_filler = score.score_miner(_filler_g, score_mode="min_rg")
+check("score.min_rg_leg_telemetry",
+      _ms_filler.g_bind_frac == 1.0 and _ms_filler.mean_g_leg < 0
+      and _ms_filler.mean_r_leg is not None,
+      f"g_bind={_ms_filler.g_bind_frac} g={_ms_filler.mean_g_leg}")
 
 
 def rows_multi(miner: str, per_turn: list[list[float]]) -> list[dict]:
@@ -367,6 +466,43 @@ big_cfg = info(base_files, {"model.safetensors": "d1"}, int(1e9), int(2e9),
 check("hygiene.config_size_cap", model_store.validate_repo_hygiene(
     big_cfg, max_size_gb=90, max_total_repo_gb=100,
     allow_python_files=False, allow_auto_map=False) is not None)
+
+# arch pin (2026-08-28): genesis-family config passes; the teacher (different
+# arch entirely) and a shape-tampered fine-tune are both rejected pre-download.
+genesis_cfg = {
+    "architectures": ["Qwen3_5MoeForConditionalGeneration"],
+    "model_type": "qwen3_5_moe", "tie_word_embeddings": False,
+    "dtype": "bfloat16",  # unpinned key: must stay free
+    "text_config": {"model_type": "qwen3_5_moe_text", "hidden_size": 2048,
+                    "num_hidden_layers": 40, "num_attention_heads": 16,
+                    "num_key_value_heads": 2, "head_dim": 256,
+                    "num_experts": 256, "num_experts_per_tok": 8,
+                    "moe_intermediate_size": 512,
+                    "shared_expert_intermediate_size": 512,
+                    "vocab_size": 248320, "full_attention_interval": 4,
+                    "linear_num_key_heads": 16, "linear_num_value_heads": 32,
+                    "linear_key_head_dim": 128, "linear_value_head_dim": 128,
+                    "rms_norm_eps": 1e-06},  # unpinned key: must stay free
+}
+arch_pin = cfg.submission.pinned_arch
+gen_info = info(base_files, {"model.safetensors": "d1"}, int(1e9), int(2e9),
+                config=genesis_cfg)
+check("arch.genesis_ok", model_store.validate_repo_arch(gen_info, arch_pin) is None)
+
+teacher_cfg = {"architectures": ["Qwen3NextForCausalLM"],
+               "model_type": "qwen3_next", "tie_word_embeddings": False}
+teach_info = info(base_files, {"model.safetensors": "d1"}, int(1e9), int(2e9),
+                  config=teacher_cfg)
+reason = model_store.validate_repo_arch(teach_info, arch_pin)
+check("arch.teacher_rejected",
+      reason is not None and "genesis family" in reason)
+
+tampered = json.loads(json.dumps(genesis_cfg))
+tampered["text_config"]["num_experts"] = 512
+tamper_info = info(base_files, {"model.safetensors": "d1"}, int(1e9), int(2e9),
+                   config=tampered)
+check("arch.tamper_rejected",
+      model_store.validate_repo_arch(tamper_info, arch_pin) is not None)
 
 # copy detection: rename + junk-pad must still flag
 t0 = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)

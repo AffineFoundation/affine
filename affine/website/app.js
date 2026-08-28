@@ -68,6 +68,7 @@ function liveCrownShort(contract) {
   const bOn = Boolean(duel.causality_gate) || Number(duel.causality_gamma || 0) > 0;
   const bits = [];
   if (wvk != null) bits.push(`wvk ${wvk}`);
+  if (duel.score_mode === "min_rg") bits.push("turn = min(R, G)");
   if (delta != null && Number(delta) > 0) {
     bits.push(`margin > max(${k}·SE, δ=${fmtScore(delta)})`);
   } else {
@@ -186,13 +187,13 @@ function renderMarketBar(d) {
 
 /* ---------- sections ---------- */
 
-// Advisory bench references shown as deltas in the reign table. Baseline is
-// the stock Qwen the Albedo kings are fine-tuned from; genesis is the seed
-// king. Both are matched in the bench payload by label (repo as fallback).
+// Advisory bench references shown as deltas in the reign table. As of the
+// min(R,G) era (wvk 10, 2026-08-27) the genesis IS the stock Qwen base, so
+// baseline and genesis coincide. Matched by label (repo as fallback).
 const BENCH_BASELINE = { label: "baseline", repo: "Qwen/Qwen3.6-35B-A3B" };
 const BENCH_GENESIS = {
   label: "reign-0",
-  repo: "dendriteholdings/albedo-qwen3.6-35b-king-genesis",
+  repo: "Qwen/Qwen3.6-35B-A3B",
 };
 
 // Genesis (reign 0 → Affine-I) is known statically; the rest of the reign
@@ -1729,7 +1730,7 @@ function verdictSummary(duel) {
   const need = [bar != null ? `${k}·SE ≈ ${fmtScore(bar)}` : `${k}·SE`,
     delta != null ? `δ = ${fmtScore(delta)}` : null].filter(Boolean).join(" and ");
   if (duel.event === "crowned" || duel.challenger_wins) {
-    return `${name} beat the king: paired Reason margin ${m} cleared ${need} `
+    return `${name} beat the king: paired score margin ${m} cleared ${need} `
       + `(z = ${fmtZ(duel.z)})${duel.event === "crowned" ? ` — crowned reign #${duel.reign_number ?? "?"}` : ""}.`;
   }
   if (duel.rejection_reason) {
@@ -1739,7 +1740,7 @@ function verdictSummary(duel) {
     }[duel.rejection_reason] || duel.rejection_reason;
     return `${name} was rejected: ${why}.`;
   }
-  return `${name} did not dethrone the king: paired Reason margin ${m} `
+  return `${name} did not dethrone the king: paired score margin ${m} `
     + `(z = ${fmtZ(duel.z)}) needed to clear ${need}.`;
 }
 
@@ -1780,12 +1781,27 @@ function sidesTableHtml(duel) {
   // on 2026-08-11) — never as a wall of "—".
   const has = (...vals) => vals.some((v) => v != null);
   const tau = Number(params.tau || 0);
+  const minRg = params.score_mode === "min_rg";
   const rows = [
-    sideRow("Reason", tau > 0
+    sideRow(minRg ? "min(R, G)" : "Reason", minRg
+      ? `the score: mean per-turn min(centered Reason, banded Grounding) over k=${params.n_teacher_samples ?? 3} teacher refs (τ=${tau}, band_c=${params.band_c ?? 2})`
+      : tau > 0
       ? `the score: mean per-turn τ·log-mean-exp of lpC(y_i|z_A) − lpC(y_i|∅) over k=${params.n_teacher_samples ?? 3} teacher refs (τ=${tau})`
       : "the score: mean lpC(y_C|z_A) − lpC(y_C|∅)",
       chReason, kgReason, "higher wins"),
-    sideRow("η sufficiency", "Λ2(z_A)/Λ2(z_C) — how much of GLM's own thinking z_A replaces",
+    minRg && has(ch.mean_r_leg, kg.mean_r_leg)
+      ? sideRow("R leg (centered)", "mean per-turn centered tempered Reason",
+          ch.mean_r_leg, kg.mean_r_leg, "telemetry")
+      : "",
+    minRg && has(ch.mean_g_leg, kg.mean_g_leg)
+      ? sideRow("G leg (grounding)", "mean per-turn banded Grounding — thought vs the teacher-thought likelihood band",
+          ch.mean_g_leg, kg.mean_g_leg, "telemetry")
+      : "",
+    minRg && has(ch.g_bind_frac, kg.g_bind_frac)
+      ? sideRow("G binds", "share of turns where Grounding is the smaller (binding) leg",
+          ch.g_bind_frac, kg.g_bind_frac, "telemetry", null, null, pct)
+      : "",
+    sideRow("η sufficiency", "Λ2(z_A)/Λ2(z_C) — how much of the teacher's own thinking z_A replaces",
       ch.mean_eta, kg.mean_eta, "telemetry"),
     sideRow("thought chars", "mean length of z_A (chars)",
       ch.mean_len_z, kg.mean_len_z, "telemetry", null, null,

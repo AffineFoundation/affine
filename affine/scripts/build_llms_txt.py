@@ -67,7 +67,7 @@ def _serving_subs() -> dict[str, str]:
 # against affine/. All are published under code/<rel> either way.
 SOURCES: list[tuple[str, str]] = [
     ("affine.toml", "chain contract SSOT — every frozen knob the validator runs"),
-    ("affine/score.py", "Reason v4: the score, the duel decision, and every "
+    ("affine/score.py", "min(R,G) v5: the score, the duel decision, and every "
      "telemetry helper — the scoring code"),
     ("scripts/submit.py", "standalone commit-reveal submission client — this single "
      "file is the whole submit path (trust it over any prose)"),
@@ -101,9 +101,10 @@ HEADER = """\
 # Affine (Bittensor SN120)
 
 > King-of-the-hill subnet. Miners submit HF checkpoints; the validator crowns \
-the reigning king by a single teacher-anchored distillation score — Reason — \
-not an LLM judge. This file is the miner index: submit path, public contract, \
-and links to the exact scoring code the network runs.
+the reigning king by a single teacher-anchored distillation score — \
+min(R, G): centered Reason and banded thought Grounding — not an LLM judge. \
+This file is the miner index: submit path, public contract, and links to the \
+exact scoring code the network runs.
 
 Machine-readable knobs (subset of the contract below) also ship as \
 `data/contract.json` on this site. When in doubt, trust the linked sources \
@@ -128,7 +129,8 @@ root ({BASE}/).
 - Submit checklist — HF layout, repo naming, commit-reveal payload
 - Serving stack — how your checkpoint is loaded; pre-flight before you burn \
 the slot
-- Reason — the one score you optimize (and the telemetry published around it)
+- min(R, G) — the one score you optimize (and the telemetry published \
+around it)
 - Post-crown exploit audit — the auditor, its published verdicts, and how to \
 run the same audit yourself
 - Public data — full field-level description of every published object
@@ -219,7 +221,8 @@ shards/chunks, index, hashes, corpus epoch, `schema_version`
 
 ## How the game works
 
-1. A frozen teacher C (`zai-org/GLM-4.5-Air-FP8`) and a public turn corpus D \
+1. A frozen teacher C (`Qwen/Qwen3.8-27B`; `zai-org/GLM-4.5-Air-FP8` \
+before 2026-08-27) and a public turn corpus D \
 (sharded + manifest-pinned on this site under `turns/`) define the capability \
 axis (SWE-style coding).
 2. You commit-reveal an HF checkpoint pinned to a 40-hex git revision.
@@ -228,16 +231,21 @@ verdict). Failed hygiene, failed probe, or lost duel still burns the slot.
 4. Eval machine runs a duel on an `n_turns = 1300` slice of D seeded by \
 `blake2b(reveal_block_hash ‖ your_hotkey)` — you cannot know the slice before \
 reveal; anyone can re-derive it after.
-5. Both sides are scored with Reason v4 (tempered multi-sample + δ + \
-thought-length floor + B gate): the teacher samples `k = 3` reference \
-rollouts per turn, each ref scores `a_i = lpC(y_i|z_A) − lpC(y_i|∅)`, and \
-the turn score is `tau·log(mean_i exp(a_i/tau))` with `tau = 0.03`; miner \
-score = mean over turns. You dethrone the king iff the paired mean \
-`Reason_c − Reason_k` beats `max(k_sigma·SE, δ)` (`k_sigma = 2`, \
-`min_margin = 0.002`) **and** your median stripped thought length is at \
-least `min_thought_chars = 80` **and** at least `causality_gamma = 0.30` of \
-pairs pass teacher-side B (`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no \
-leakage). No lpA gates.
+5. Both sides are scored with min(R, G) v5 (centered Reason + banded \
+Grounding + δ + thought-length floor + B gate): the teacher samples `k = 3` \
+reference rollouts per turn; each ref scores \
+`a_i = lpC(y_i|z_A) − lpC(y_i|∅)`; the R leg is the tempered log-mean-exp \
+of the `a_i` **minus their plain mean** (`tau = 0.03`; a flat, \
+task-independent lift cancels exactly); the G leg checks your thought's own \
+teacher likelihood `m = lpC(z_A|x)` against the band `mu ± w` built from \
+the teacher's reference thoughts `t_i = lpC(z_C^i|x)` \
+(`w = max(band_c·sd, band_floor)`, `band_c = 2`, `band_floor = 0.002`); the \
+turn score is `min(R, G)`; miner score = mean over turns. You dethrone the \
+king iff the paired mean `turn_c − turn_k` beats `max(k_sigma·SE, δ)` \
+(`k_sigma = 2`, `min_margin = 0.002`) **and** your median stripped thought \
+length is at least `min_thought_chars = 80` **and** at least \
+`causality_gamma = 0.30` of pairs pass teacher-side B \
+(`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no leakage). No lpA gates.
 6. Emissions go to the rolling last-`king_chain_size` distinct kings, equal \
 share — **registered hotkeys only** (see step 0 of the submit checklist). \
 Advisory tau2 benches never affect Reason or crowning.
@@ -291,7 +299,15 @@ you must beat.
 (`hf auth login` or `HF_TOKEN`), and the pinned revision must be \
 **publicly (anonymously) readable** — private or gated repos are rejected \
 at intake. No `*.py`. No `auto_map` in `config.json`. \
-Safetensors ≤ 90 GB; whole repo ≤ 100 GB; ≤ 5000 files; `config.json` ≤ 1 MiB.
+Safetensors ≤ 90 GB; whole repo ≤ 100 GB; ≤ 5000 files; `config.json` ≤ 1 MiB. \
+**Architecture pin (2026-08-28):** your `config.json` must match the genesis \
+family exactly on every key in `affine.toml [submission.pinned_arch]` — i.e. \
+submit a fine-tune of `Qwen/Qwen3.6-35B-A3B` (same layer/expert/head shape; \
+dtype, rope and token ids stay free). Any other architecture — including the \
+teacher `Qwen/Qwen3.8-27B` itself — is rejected before download \
+(`validate_repo_arch` in `code/affine/model_store.py`). The teacher's own \
+thoughts sit at the top of the meter by construction; a board where uploading \
+the public teacher wins is a dead board, so that play is closed at intake.
 3. Repo id must match `^[^/]+/[Aa]ffine-.+$` **and** embed your identity: \
 the first 5 AND last 5 chars (lowercase) of your coldkey **or** hotkey ss58 \
 must both appear in the repo id — the compact token or the full ss58 both \
@@ -393,16 +409,22 @@ once-ever eval slot on a checkpoint that cannot load.
 
 ---
 
-## Reason (what you optimize)
+## min(R, G) (what you optimize)
 
-Since 2026-08-17 (`weight_version_key = 9` as of 2026-08-22, δ \
-restored to 0.002) the whole scoring contract is:
+Since 2026-08-27 (`weight_version_key = 10`) the whole scoring contract is:
 
 ```
 a_i (per teacher ref) = lpC(y_i | z_A) − lpC(y_i | ∅)     i = 1..k, k = 3
-Reason (per turn)     = tau · log( (1/k) · Σ_i exp(a_i / tau) )   tau = 0.03
-Miner score           = mean(Reason) over all scored turns
-Crown                 = paired mean(Reason_c − Reason_k) > max(k_sigma·SE, δ)
+R (per turn)          = tau · log( (1/k) · Σ_i exp(a_i / tau) ) − mean_i a_i
+                        (centered tempered Reason, tau = 0.03)
+m                     = lpC(z_A | x)      (your thought under the teacher)
+t_i                   = lpC(z_C^i | x)    (the k reference thoughts, same echo)
+G (per turn)          = min( m − (mu − w), (mu + w) − m )
+                        mu = mean(t_i), w = max(band_c·sd(t_i), band_floor)
+                        (band_c = 2, band_floor = 0.002)
+Turn score            = min(R, G)
+Miner score           = mean(turn) over all scored turns
+Crown                 = paired mean(turn_c − turn_k) > max(k_sigma·SE, δ)
                         AND median(len(z_A.strip())) ≥ min_thought_chars
                         AND B pass rate ≥ causality_gamma
                         (k_sigma = 2, δ = min_margin = 0.002,
@@ -413,29 +435,44 @@ B (per rollout)       = lpC(y_A | z_A) − lpC(y_A | ∅)
 ```
 
 Each `y_i` is one of `k = 3` reference actions the frozen teacher samples \
-fresh for the turn, `z_A` is your model's thought on the same turn, and all \
-Reason logprobs are teacher-forced on the teacher — **your model's own \
+fresh for the turn, `z_A` is your model's thought on the same turn, and \
+every logprob above is teacher-forced on the teacher — **your model's own \
 logprobs never enter the ranked quantity**. B is a license, not the score: \
 the teacher must find that your thought caused your own action. Empty or \
 cue thoughts (`"Next command:"`) fail both the length floor and B. There is \
 no mix, no clip, and no lpA gates.
 
-**Why tempered (v4, 2026-08-17).** The teacher's next-action distribution \
-is multi-modal: resampling a turn yields different, equally valid actions. \
-The old v3 rule scored your thought against a single sampled reference and \
-averaged in log space, which punished a miss without bound — even the \
-teacher's own thought, unpaired from its rollout, scored ≈ −0.010/byte. The \
-rational strategy was neutral, non-committal filler, and that was the \
-observed equilibrium. The tempered log-mean-exp is dominated by the \
-best-matched reference instead of the worst: a missed mode zeroes its own \
-share but cannot drag the turn below the credit from a hit. Committing to \
-the teacher's dominant next action is now the optimum; filler earns ≈ 0 and \
-loses duels. Limits: `k = 1` reduces exactly to the v3 rule; `tau → ∞` \
-recovers the broken hedging mean. `tau = 0.03` was calibrated on n = 100 \
-turns: commit beats hedge from `tau ≈ 0.1` down and decisively at 0.03, \
-while staying warm enough that a single lucky ref hit does not dominate \
-(mode-guessing and leakage amplification are the cold-tau failure modes; \
-both are monitored via published telemetry and the post-crown audit).
+**Why min(R, G) (v5, 2026-08-27).** The wvk-9 era ended with a king that \
+crowned on a CONSTANT filler suffix appended to every thought — a flat, \
+task-independent lift that raised every `a_i` equally, scored 0/50 on \
+coding, and taught us that raw Reason pays for text that helps the teacher \
+regardless of the task. v5 closes that channel twice over. **Centering** \
+subtracts the per-turn mean of the `a_i` from the tempered log-mean-exp: \
+any reference-independent shift (the filler channel) cancels exactly, so \
+the R leg only pays for committing to a SPECIFIC reference mode over the \
+others. **Grounding** requires your thought to be the kind of text the \
+task actually induces: the teacher scores your thought's own likelihood \
+`m = lpC(z_A|x)` and compares it with the band of its own reference \
+thoughts' likelihoods. Filler falls BELOW the band (the task does not make \
+that text likely); parroting the prompt or copying reference text rises \
+ABOVE it (too predictable given the task); both make G negative. The `min` \
+pays the WORSE leg, so you cannot trade one for the other. Validated \
+adversarially before shipping: the live filler suffix, boilerplate, and \
+parrot attacks all lose to honest thoughts on ≥95% of turns at every band \
+width tested, direct GRPO optimization against min(R,G) found no gradient, \
+and — the positive control — genuine held-out teacher thoughts beat base \
+model thoughts at z = +2.56 under min(R,G) where the old rule was blind \
+(z = +0.11).
+
+**Why tempered (v4, kept as the R aggregation).** The teacher's next-action \
+distribution is multi-modal: resampling a turn yields different, equally \
+valid actions. Averaging per-ref Reason in log space punished a missed mode \
+without bound, making non-committal filler the rational strategy. The \
+tempered log-mean-exp is dominated by the best-matched reference instead of \
+the worst, so committing to the teacher's dominant next action wins. \
+`tau = 0.03` was calibrated on n = 100 turns; mode-guessing and leakage \
+amplification (the cold-tau failure modes) are monitored via published \
+telemetry and the post-crown audit.
 
 **Why the δ floor (`min_margin = 0.002`; briefly 0.001 on 2026-08-21, \
 reverted 2026-08-22, `weight_version_key = 9`).** The z-test is \
@@ -457,16 +494,21 @@ overwhelmingly a real improvement. Reigns crowned under wvk 8 stand; \
 the revert is forward-only.
 
 **Live instrumentation.** Each scored turn runs one miner sample, `k = 3` \
-Reason echoes (`lpC(y_i|z_A)`, one per teacher reference), and two B \
-echoes (`lpC(y_A|z_A)` / `lpC(y_A|∅)`, once per rollout — B does not \
-depend on the reference). `lpC(y_i|z_C)` / `lpC(y_i|∅)` come from the \
-fresh teacher references. Prior-bank and retired lpA echoes are **not** \
-computed live (`reason_only = true`, `score_bank = false`). Published per \
-verdict when available:
+Reason echoes (`lpC(y_i|z_A)`, one per teacher reference), one grounding \
+echo (`m = lpC(z_A|x)`, once per rollout), and two B echoes \
+(`lpC(y_A|z_A)` / `lpC(y_A|∅)`, once per rollout — B does not depend on \
+the reference). `lpC(y_i|z_C)` / `lpC(y_i|∅)` and the band thoughts \
+`t_i = lpC(z_C^i|x)` come from the fresh teacher references (shared by \
+both sides). Prior-bank and retired lpA echoes are **not** computed live \
+(`reason_only = true`, `score_bank = false`). Published per verdict when \
+available:
 
 - sufficiency fraction `η = Λ2(z_A)/Λ2(z_C) = Reason / (lpC(y_C|z_C) − lpC(y_C|∅))` \
 — how much of the teacher's own thinking the miner's thought replaces \
 (climbing η across reigns = capability slope; flat η under crowning = budget burn)
+- per-side leg means and which-leg-binds fraction (`mean_r_leg`, \
+`mean_g_leg`, `g_bind_frac`) — whether Reason or Grounding is the binding \
+constraint for that side
 - teacher-side B mean and pass rate (`mean_b`, `b_gate_pass_rate`)
 - per-side thought/action char lengths + deltas vs the teacher's own \
 rollouts, and the duel's scoring wall clock (`duel_seconds`)
@@ -488,10 +530,11 @@ contract — models are rendered through their own chat template to a string \
 and driven via `/v1/completions`, injection plants thoughts as the canonical \
 assistant body `</think>\\nTHOUGHT: {z}\\n\\n{y}`, and `split_rollout` \
 defines exactly what counts as z (all reasoning text) and y (the last closed \
-bash-fenced block). `evalsrv/terms.py` runs the live Reason echo (`lpC(y_C|z_A)`) plus the B \
-pair (`lpC(y_A|z_A)`, `lpC(y_A|∅)`) and teacher refs; `evalsrv/vllm_client.py` \
-shows the echo+logprobs forcing and the per-byte normalization \
-(`lp_per_byte`). Serve the teacher, \
+bash-fenced block). `evalsrv/terms.py` runs the live Reason echoes (`lpC(y_i|z_A)`), the \
+grounding echoes (`lpC(z_A|x)` and per-ref `lpC(z_C|x)`), and the B pair \
+(`lpC(y_A|z_A)`, `lpC(y_A|∅)`); `evalsrv/vllm_client.py` \
+shows the echo+logprobs forcing (`score_action` / `score_thought`) and the \
+per-byte normalization (`lp_per_byte`). Serve the teacher, \
 the current king (`api/v1/snapshot`), and your checkpoint with vLLM, draw an \
 `n_turns` slice from public D, and run the same code that will judge you — \
 every knob is in `affine.toml` `[duel]`, and `duel` in \
@@ -645,15 +688,18 @@ The manifest hash resolves at `turns/manifests/{hash}.json` forever, so you \
 can re-derive the exact slice from public D even after shards are retired.
   - `turn_ids` — `{traj_id}:{turn_idx}` keys into the public corpus.
   - `teacher_refs` — the teacher's reference rollouts per turn: \
-`{turn_id: [{z, y, lp_own, lp_empty}]}`. This is frontier-teacher \
-distillation data for the exact turns that were scored.
+`{turn_id: [{z, y, lp_own, lp_empty, lp_thought}]}` (`lp_thought` = \
+`lpC(z_C|x)`, the grounding-band component, wvk ≥ 10). This is \
+frontier-teacher distillation data for the exact turns that were scored.
   - `king_rows` / `challenger_rows` — per-turn instrumented records: \
 `{turn_id, miner, valid, n_pairs, bank_frac, L2_bank, pairs: [...]}`. Each \
 pair carries the miner rollout text (`z_a` thoughts, `y_a` action) plus every \
-forced-logprob component Reason and the telemetry are computed from (`lpA_yc_za`, `lpC_yc_za`, \
-`lpA_yc_zc`, `lpA_yc_e`, `lpA_ya_za`, `lpC_ya_za`, `lpA_ya_zc`, `lpA_ya_e`, \
-`lpC_ya_e`, `lpC_ya_zc`, `lpC_yc_zc`, `lpC_yc_e`, `L2_bank`). You can \
-recompute any verdict offline from this file + `affine/score.py`.
+forced-logprob component the score and the telemetry are computed from \
+(`lpC_yc_za`, `lpC_yc_zc`, `lpC_yc_e`, `lpC_ya_za`, `lpC_ya_e`, and — \
+wvk ≥ 10 grounding — `lpC_za_x`, `lpC_zc_x`; pre-fork rows may also carry \
+the retired lpA family `lpA_yc_za`, `lpA_yc_zc`, `lpA_yc_e`, `lpA_ya_za`, \
+`lpA_ya_zc`, `lpA_ya_e`, `L2_bank`). You can recompute any verdict offline \
+from this file + `affine/score.py`.
 
 **Turn corpus D** (the prompts themselves) — on this site:
 

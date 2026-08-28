@@ -1,0 +1,162 @@
+2026-08-22T00:10:00Z [trackB] pod swift-fox-8f 8xH200 @$24.8/hr rented (first pod swift-eagle-d3 was a 5-GPU partial node, terminated). Teacher=Qwen3-32B, G=Qwen3-4B+LoRA, D=Qwen3-8B+LoRA.
+2026-08-22T01:41:50Z [trackB] setup done; starting phase 0 (teacher rollouts)
+2026-08-22T01:57:50Z [trackB] teacher train rollouts attempt 1: 0 turns
+2026-08-22T02:22:20Z [trackB] setup done; starting phase 0 (teacher rollouts)
+2026-08-22T02:42:06Z [trackB] setup done; starting phase 0 (teacher rollouts)
+2026-08-22T02:59:22Z [trackB] teacher train rollouts attempt 1: 0 turns
+2026-08-22T03:00:48Z [trackB] setup done; starting phase 0 (teacher rollouts)
+2026-08-22T03:19:12Z [trackB] teacher train rollouts attempt 1: 0 turns
+2026-08-22T03:37:55Z [trackB] teacher train rollouts attempt 2: 0 turns
+2026-08-22T03:44:12Z [trackB] setup done; starting phase 0 (teacher rollouts)
+2026-08-22T04:21:05Z [trackB] teacher train rollouts attempt 1: 3180 turns
+2026-08-22T04:25:34Z [trackB] teacher held-out rollouts attempt 1: 278 turns
+2026-08-22T04:31:49Z [trackB] loop driver launched
+2026-08-22T04:32:27Z driver up: D=Qwen/Qwen3-8B G=Qwen/Qwen3-4B train_turns=3180 held=200
+2026-08-22T04:34:43Z round=0 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 note=baseline
+2026-08-22T04:35:02Z round=1 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:35:04Z round=1 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=21.5s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=40
+2026-08-22T04:35:24Z round=2 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:35:26Z round=2 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.0s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=20
+2026-08-22T04:35:46Z round=3 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:35:48Z round=3 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=21.5s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=10
+2026-08-22T04:36:08Z round=4 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:36:10Z round=4 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=21.9s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:36:29Z round=5 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:36:31Z round=5 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=21.3s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:36:50Z [babysit_g] 8001 down 3x; restarting
+2026-08-22T04:36:51Z round=6 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:36:55Z round=6 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=24.3s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:37:16Z round=7 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:37:18Z round=7 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.5s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:37:39Z round=8 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:37:41Z round=8 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=23.0s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:38:02Z round=9 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:38:05Z round=9 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=23.9s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:38:25Z round=10 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:38:27Z round=10 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.7s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:38:48Z round=11 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:38:50Z round=11 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.7s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:39:10Z round=12 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:39:13Z round=12 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.5s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:39:34Z round=13 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:39:36Z round=13 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=23.1s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:39:56Z round=14 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:39:59Z round=14 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=23.1s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:40:19Z round=15 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:40:21Z round=15 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.5s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:40:41Z round=16 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:40:43Z round=16 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.1s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:41:03Z round=17 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:41:06Z round=17 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.2s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:41:26Z round=18 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:41:28Z round=18 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.7s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:41:49Z round=19 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:41:51Z round=19 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.8s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:42:13Z round=20 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:42:15Z round=20 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=23.6s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:42:35Z round=21 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:42:37Z round=21 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.7s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:42:57Z round=22 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:45:09Z round=22 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=152.0s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:45:29Z round=23 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:45:31Z round=23 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.0s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:45:51Z round=24 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:45:53Z round=24 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=21.9s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:46:13Z round=25 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:46:15Z round=25 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.2s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:46:35Z round=26 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:46:37Z round=26 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=21.7s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:46:57Z round=27 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:46:59Z round=27 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=21.6s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:47:19Z round=28 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:47:20Z round=28 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=21.7s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:47:41Z round=29 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:47:42Z round=29 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.1s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:47:57Z [babysit_g] 8001 down 3x; restarting
+2026-08-22T04:48:03Z round=30 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:48:05Z round=30 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.7s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:48:27Z round=31 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:48:29Z round=31 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=24.0s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:48:51Z round=32 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:48:53Z round=32 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=23.7s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:49:14Z round=33 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:49:16Z round=33 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=23.0s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:49:36Z round=34 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:49:38Z round=34 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.1s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:49:57Z round=35 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:49:59Z round=35 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=21.6s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:50:20Z round=36 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:50:22Z round=36 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.5s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:50:42Z round=37 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:50:44Z round=37 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.5s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:51:05Z round=38 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:51:07Z round=38 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.7s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:51:27Z round=39 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:51:29Z round=39 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.1s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:51:50Z round=40 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:51:52Z round=40 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.4s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:52:12Z round=41 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:52:14Z round=41 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.5s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:52:35Z round=42 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:52:37Z round=42 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.5s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:52:57Z round=43 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:52:59Z round=43 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.3s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:53:19Z round=44 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:53:21Z round=44 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.3s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:53:41Z round=45 ERROR g_sft exit=1; keeping previous G
+2026-08-22T04:53:43Z round=45 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=21.7s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T04:54:04Z round=46 ERROR g_sft exit=1; keeping previous G
+2026-08-22T05:00:51Z round=46 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=427.5s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T05:02:17Z round=47 ERROR g_sft exit=1; keeping previous G
+2026-08-22T05:02:19Z round=47 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=88.0s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T05:02:38Z round=48 ERROR g_sft exit=1; keeping previous G
+2026-08-22T05:02:41Z round=48 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.2s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T05:03:01Z round=49 ERROR g_sft exit=1; keeping previous G
+2026-08-22T05:03:03Z round=49 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.3s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T05:03:24Z round=50 ERROR g_sft exit=1; keeping previous G
+2026-08-22T05:03:26Z round=50 fool=0.0 d_acc=0.0 len_bar=1.0 valid=0.0 agree_exact=0.0 agree_tok=0.0 think_len=0 think_jacc=0.0 self_jacc=0.0 win_rw=0.0 wall=22.4s note=ROLLBACK(valid=0.0,self_jacc=0.0)->g_steps=8
+2026-08-22T05:03:46Z round=51 ERROR g_sft exit=1; keeping previous G
+2026-08-22T05:03:50Z [trackB] INCIDENT: rounds 0-46 were all-zero. Root cause: vLLM :latest(0.27.1) broken on H200 (engine died under load; /v1/models stayed green so babysitter missed it; even alive it emits degenerate tokens for Qwen3-4B). Fix: G server -> v0.11.0 + eager, babysitter now health-checks a real completion, loop state reset to round 0.
+2026-08-22T05:08:07Z driver up: D=Qwen/Qwen3-8B G=Qwen/Qwen3-4B train_turns=3180 held=200
+2026-08-22T05:13:53Z [trackB] teacher SWE done: {
+  "ok": true,
+  "suite": "swe_rebench_lite",
+  "score": 0.08,
+  "n_resolved": 2,
+  "n_instances": 25,
+  "wall_time_s": 2522.7,
+  "preds_path": "/root/bench/swe-1787373110/preds/preds.json",
+  "run_id": "affine-1787375438",
+  "tag": "teacher",
+  "total_wall_s": 2523.0
+}
+2026-08-22T05:17:55Z round=0 fool=0.4944 d_acc=0.5815 len_bar=0.5543 valid=0.745 agree_exact=0.2283 agree_tok=0.4195 think_len=3180 think_jacc=0.2974 note=baseline
+2026-08-22T05:23:49Z [trackB] G0 SWE done: {
+  "ok": true,
+  "suite": "swe_rebench_lite",
+  "score": 0.08,
+  "n_resolved": 2,
+  "n_instances": 25,
+  "wall_time_s": 459.7,
+  "preds_path": "/root/bench/swe-1787375769/preds/preds.json",
+  "run_id": "affine-1787376165",
+  "tag": "G0",
+  "total_wall_s": 459.8
+}
+2026-08-22T05:24:02Z [trackB] swe watcher launched; phase0 orchestration complete
+2026-08-22T06:06:28Z round=1 fool=0.4846 d_acc=0.7637 len_bar=0.5 valid=0.7925 agree_exact=0.2253 agree_tok=0.4318 think_len=3008 think_jacc=0.293 self_jacc=0.4015 win_rw=0.5186 wall=2913.0s note=ok
+2026-08-22T07:04:22Z round=2 fool=0.2921 d_acc=0.8068 len_bar=0.5284 valid=0.7475 agree_exact=0.2443 agree_tok=0.4207 think_len=3001 think_jacc=0.3006 self_jacc=0.4123 win_rw=0.5045 wall=3474.1s note=ok
+2026-08-22T07:06:29Z driver up: D=Qwen/Qwen3-8B G=Qwen/Qwen3-4B train_turns=3180 held=200
+2026-08-22T08:01:35Z round=3 fool=0.1636 d_acc=0.9061 len_bar=0.5525 valid=0.7512 agree_exact=0.2099 agree_tok=0.4124 think_len=3166 think_jacc=0.2938 self_jacc=0.414 win_rw=0.3505 wall=3304.4s note=ok
+2026-08-22T08:55:13Z round=4 fool=0.0893 d_acc=0.927 len_bar=0.5169 valid=0.7675 agree_exact=0.2191 agree_tok=0.4011 think_len=3020 think_jacc=0.2925 self_jacc=0.4232 win_rw=0.2479 wall=3218.1s note=ok
+2026-08-22T09:36:12Z driver up: D=Qwen/Qwen3-8B G=Qwen/Qwen3-4B train_turns=3180 held=200
+2026-08-22T10:16:43Z round=5 fool=0.1211 d_acc=0.92 len_bar=0.5657 valid=0.7538 agree_exact=0.2286 agree_tok=0.4353 think_len=3099 think_jacc=0.2931 self_jacc=0.4119 win_rw=0.1252 wall=2428.7s note=ok
+2026-08-22T10:35:09Z [trackB] SWE r5: server failed to become healthy
+2026-08-22T10:50:39Z [trackB] SWE r5: server failed to become healthy
+2026-08-22T11:06:10Z [trackB] SWE r5: server failed to become healthy
+2026-08-22T11:11:14Z round=6 fool=0.0483 d_acc=0.9669 len_bar=0.5525 valid=0.745 agree_exact=0.2431 agree_tok=0.4343 think_len=3265 think_jacc=0.2927 self_jacc=0.4252 win_rw=0.1306 wall=3271.1s note=ok
+2026-08-22T11:21:40Z [trackB] SWE r5: server failed to become healthy
+2026-08-22T11:37:10Z [trackB] SWE r5: server failed to become healthy
+2026-08-22T11:52:09Z round=7 fool=0.0487 d_acc=0.9665 len_bar=0.5419 valid=0.755 agree_exact=0.2346 agree_tok=0.4013 think_len=3060 think_jacc=0.2947 self_jacc=0.4155 win_rw=0.0889 wall=2455.3s note=ok
+2026-08-22T11:52:40Z [trackB] SWE r5: server failed to become healthy
+2026-08-22T12:08:10Z [trackB] SWE r5: server failed to become healthy
