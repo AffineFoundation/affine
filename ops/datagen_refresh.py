@@ -16,7 +16,10 @@ daily at 16:00 UTC (host clock is UTC). Each cycle:
      candidates are selected by whole-corpus deficit waterfill (a group over
      its target share defers its surplus turns to work/deferred_turns.jsonl,
      re-considered every cycle) — this also retroactively rebalances the
-     pre-mix corpus, which counts as group "coding";
+     pre-mix corpus, which counts as group "coding"; then enforce the
+     [lang_mix.coding] language targets over the newly selected coding turns
+     only (cumulative counter state["lang_counts"]; the existing corpus is
+     never rebalanced by language);
   4. skip the cycle when fewer than MIN_NEW_TURNS valid new turns accumulated,
      unless the newest unfolded shard is older than STALE_AFTER_S (stalled
      producer -- fold whatever exists to keep the cadence);
@@ -70,6 +73,11 @@ DEFAULT_GROUP = "coding"
 
 DATAGEN_REPO = "unconst/affine-datagen-turns"
 PANEL_PATH = REPO / "affine" / "evalsrv" / "data" / "swe_rebench_lite_ids.json"
+# Official SWE-rebench leaderboard blocklist (2026-09-01): the public board
+# is the external calibration check — its instances/repos must never fold
+# into corpus D. Append-only; unioned with the lite panel in panel_keys().
+OFFICIAL_EXCLUDE_PATH = (REPO / "affine" / "evalsrv" / "data"
+                         / "swe_rebench_official_exclude.json")
 MIN_NEW_TURNS = 200
 STALE_AFTER_S = 48 * 3600
 # Bittensor guild -> SN120 community channel (120・ⴷffine・ⴷ), same venue as
@@ -209,6 +217,9 @@ def _norm(s: str) -> str:
 def panel_keys() -> tuple[set[str], set[str]]:
     ids = set(json.loads(PANEL_PATH.read_text())["instance_ids"])
     repos = {i.rsplit("-", 1)[0].replace("__", "/").lower() for i in ids}
+    official = json.loads(OFFICIAL_EXCLUDE_PATH.read_text())
+    ids |= set(official["instance_ids"])
+    repos |= {r.lower() for r in official["repos"]}
     return ids, repos
 
 
@@ -302,16 +313,39 @@ def prefilter(lines: list[str], published: set[str],
 
 
 # -- mix enforcement -------------------------------------------------------------
-def load_mix() -> tuple[dict[str, float], dict[str, str]]:
-    """([mix] group targets, source name -> group) from the rollouts
-    registry TOML (single source of truth shared with the generation-side
-    scheduler)."""
+
+# Corpus language tags → [lang_mix.coding] buckets (2026-09-01). Systems
+# languages fold into rs, web scripting into tsjs — nearest-bucket policy from
+# the fence-align plan. Anything untagged or unrecognized counts as python
+# (the corpus default) so it stays under the tightest quota.
+LANG_BUCKETS = {
+    "python": "python", "py": "python",
+    "go": "go",
+    "java": "java",
+    "rs": "rs", "rust": "rs", "c": "rs", "cpp": "rs", "c++": "rs",
+    "ts": "tsjs", "js": "tsjs", "typescript": "tsjs", "javascript": "tsjs",
+    "php": "tsjs",
+}
+
+
+def lang_bucket(rec: dict) -> str:
+    return LANG_BUCKETS.get(str(rec.get("language") or "").lower(), "python")
+
+
+def load_mix() -> tuple[dict[str, float], dict[str, str], dict[str, float]]:
+    """([mix] group targets, source name -> group, [lang_mix.coding]
+    language targets) from the rollouts registry TOML (single source of
+    truth shared with the generation-side scheduler)."""
     raw = tomllib.loads(SOURCES_TOML.read_text())
     mix = {g: float(v) for g, v in raw.get("mix", {}).items()}
     if abs(sum(mix.values()) - 1.0) > 0.01:
         fatal(f"[mix] in {SOURCES_TOML} must sum to 1.0")
     src2grp = {name: cfg["group"] for name, cfg in raw.get("source", {}).items()}
-    return mix, src2grp
+    lang_mix = {b: float(v) for b, v in
+                (raw.get("lang_mix", {}).get("coding") or {}).items()}
+    if lang_mix and abs(sum(lang_mix.values()) - 1.0) > 0.01:
+        fatal(f"[lang_mix.coding] in {SOURCES_TOML} must sum to 1.0")
+    return mix, src2grp, lang_mix
 
 
 def enforce_mix(kept: list[str], group_counts: dict[str, int],
@@ -351,6 +385,48 @@ def enforce_mix(kept: list[str], group_counts: dict[str, int],
     deferred = [line for g, pool in pools.items()
                 for line in pool[cursors[g]:]]
     return selected, deferred, added
+
+
+def enforce_lang_mix(selected: list[str], lang_counts: dict[str, int],
+                     lang_mix: dict[str, float], src2grp: dict[str, str],
+                     ) -> tuple[list[str], list[str], dict[str, int]]:
+    """Second waterfill (2026-09-01): [lang_mix.coding] targets over NEWLY
+    folded coding turns, keyed by lang_bucket(rec). Unlike enforce_mix there
+    is no retroactive corpus seed — lang_counts starts at zero on the first
+    lang-aware fold, so the existing (heavily Python) corpus is never
+    rebalanced; only new intake obeys the quota. Non-coding turns pass
+    through untouched; surplus languages defer exactly like group surplus."""
+    if not lang_mix:
+        return selected, [], {}
+    passthrough: list[str] = []
+    pools: dict[str, list[str]] = {}
+    for line in selected:
+        rec = json.loads(line)
+        group = src2grp.get(rec.get("source") or "", DEFAULT_GROUP)
+        if group != "coding":
+            passthrough.append(line)
+            continue
+        pools.setdefault(lang_bucket(rec), []).append(line)
+    counts = {b: int(lang_counts.get(b, 0)) for b in lang_mix}
+    added: dict[str, int] = {}
+    chosen: list[str] = []
+    cursors = {b: 0 for b in pools}
+    while True:
+        cands = [b for b in pools
+                 if cursors[b] < len(pools[b]) and lang_mix.get(b, 0.0) > 0]
+        if not cands:
+            break
+        total = sum(counts.values()) + 1
+        best = max(cands, key=lambda b: lang_mix[b] * total - counts.get(b, 0))
+        if lang_mix[best] * total - counts.get(best, 0) <= 0:
+            break   # every remaining bucket is at/over target
+        chosen.append(pools[best][cursors[best]])
+        cursors[best] += 1
+        counts[best] = counts.get(best, 0) + 1
+        added[best] = added.get(best, 0) + 1
+    deferred = [line for b, pool in pools.items()
+                for line in pool[cursors[b]:]]
+    return passthrough + chosen, deferred, added
 
 
 # -- publish -------------------------------------------------------------------
@@ -574,6 +650,10 @@ def finalize(state: dict, manifest: dict) -> None:
     for group, n in (pending.get("group_added") or {}).items():
         counts[group] = int(counts.get(group, 0)) + int(n)
     state["group_counts"] = counts
+    lcounts = state.get("lang_counts", {})
+    for bucket, n in (pending.get("lang_added") or {}).items():
+        lcounts[bucket] = int(lcounts.get(bucket, 0)) + int(n)
+    state["lang_counts"] = lcounts
     unann = {
         "epoch": int(pending["epoch"]), "n_added": n_added,
         "total": total, "manifest_sha256": hashlib.sha256(raw).hexdigest(),
@@ -635,7 +715,7 @@ def main() -> None:
     log(f"prefilter: kept {len(kept)} / dropped {len(lines) - len(kept)} "
         f"of {len(lines)} ({drops or 'no drops'})")
 
-    mix, src2grp = load_mix()
+    mix, src2grp, lang_mix = load_mix()
     if not state.get("group_counts"):
         # First mix-aware fold: everything already published predates the
         # unified pipeline and counts as the default group.
@@ -651,6 +731,22 @@ def main() -> None:
         kept, state["group_counts"], mix, src2grp)
     log(f"mix enforcement: selected {len(selected)} (+{group_added}), "
         f"deferred {len(deferred)}")
+
+    selected, lang_deferred, lang_added = enforce_lang_mix(
+        selected, state.get("lang_counts") or {}, lang_mix, src2grp)
+    if lang_deferred:
+        deferred = deferred + lang_deferred
+        # The group waterfill counted turns the language quota then took
+        # back; recount from the final selection so group_counts stays exact.
+        group_added = {}
+        for line in selected:
+            rec = json.loads(line)
+            group = src2grp.get(rec.get("source") or "", DEFAULT_GROUP)
+            if group not in mix:
+                group = DEFAULT_GROUP
+            group_added[group] = group_added.get(group, 0) + 1
+    log(f"lang enforcement: selected {len(selected)} (+{lang_added}), "
+        f"deferred {len(lang_deferred)}")
 
     stale = False
     if unfolded:
@@ -679,6 +775,7 @@ def main() -> None:
         "n_turns": len(selected),
         "n_added": len(selected),
         "group_added": group_added,
+        "lang_added": lang_added,
         "folded_keys": [s["key"] for s in unfolded],
     }
     # After the v2 cutover, every fold packs traj chunks + merges the index.

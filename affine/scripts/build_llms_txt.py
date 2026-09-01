@@ -86,6 +86,8 @@ SOURCES: list[tuple[str, str]] = [
      "normalization (lp_per_byte)"),
     ("evalsrv/engine.py", "slot lifecycle + the exact `vllm serve` invocation "
      "your checkpoint is loaded with (_vllm_cmd)"),
+    ("evalsrv/swerunner.py", "advisory lite-bench harness: the derived "
+     "mini-swe-agent config incl. the ```bash action dialect (2026-09-01)"),
     ("pyproject.toml", "eval-pod dependency floors ([eval] extra) — vllm / "
      "transformers are installed fresh at pod provision"),
     ("affine/model_store.py", "checkpoint hygiene rules + weight-copy detection"),
@@ -672,6 +674,13 @@ Poll this to discover new records.
 transcript — every model response and environment observation). This is the \
 ground truth for WHY a bench score happened; scores alone are in \
 `data/benchmarks.json`.
+
+**Bench action dialect (2026-09-01):** the advisory agent prompts for and \
+parses one ```bash fenced block per step — the same fence the duel scores \
+and corpus D stores — and also still accepts mini-swe-agent's native \
+```mswea_bash_command fence. Runs before 2026-09-01 required the mswea \
+fence only, so their `RepeatedFormatError` rates are not comparable to \
+later runs; each artifact's `request` stamps the agent config it ran under.
 
 **Full duel records — the training data** (one immutable object per \
 challenge, published right after the verdict):

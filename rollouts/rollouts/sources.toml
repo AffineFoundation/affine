@@ -11,6 +11,19 @@ coding = 0.60
 terminal = 0.30
 nl2repo = 0.10
 
+# Language targets for NEWLY FOLDED coding turns (2026-09-01). Enforced by
+# ops/datagen_refresh.py as a second waterfill (after the group waterfill)
+# keyed by rec["language"], with cumulative counts in state["lang_counts"].
+# Existing corpus turns are never rebalanced. Tag → bucket aliasing lives in
+# the fold script: rust→rs, js/ts/typescript/javascript→tsjs, cpp/c→rs,
+# php→tsjs, missing/unknown→python.
+[lang_mix.coding]
+python = 0.25
+go = 0.20
+java = 0.20
+rs = 0.20
+tsjs = 0.15
+
 [defaults]
 # Policy ids from policies.toml; sources may override with `policies = [...]`.
 policies = ["glm_textbased"]
@@ -19,13 +32,16 @@ policies = ["glm_textbased"]
 
 [source.swerebench_main]
 # The former main datagen loop (mini-swe-agent on the nebius pool).
+# Retired 2026-09-01 (share 0): old Python-only dump whose 97 repos overlap
+# the 860-task exam — the block stays so source → group mapping keeps
+# resolving for already-staged records.
 group = "coding"
 runner = "mini_swe"
 catalog = "hf_swebench"
 dataset = "nebius/SWE-rebench"
 split = "filtered"
 swe_eval = true          # swebench verdict as rewards.solved telemetry
-share = 3.0
+share = 0.0
 
 [source.scaleswe]
 group = "coding"
@@ -69,7 +85,9 @@ catalog = "hf"
 dataset = "PrimeIntellect/Multi-SWE-RL-Verified"
 split = "train"
 row_meta = "multiswe"
-share = 1.0
+# 1.0 → 3.0 (2026-09-01): absorb the retired swerebench_main share with the
+# multilingual repo-bugfix source closest to the official board's task style.
+share = 3.0
 
 [source.swesmith]
 group = "coding"
