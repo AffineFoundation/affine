@@ -408,6 +408,20 @@ class LiumProvider(Provider):
         if p.returncode != 0 or "EXTRACT_OK" not in (p.stdout or ""):
             raise RuntimeError(
                 f"extract on pod failed: {_redact((p.stderr or p.stdout or '')[-500:])}")
+        # The tar upload above takes minutes. A running validator's health
+        # loop sees the pod dark meanwhile and _soft_restart relaunches the
+        # OLD bootstrap with the OLD .eval_env; that server then owns :9000
+        # and ours crash-loops on exit 3 (live 2026-09-03 15:45: the stage-1
+        # redeploy shipped AFFINE_EVAL_R2_* but the serving process had none).
+        # Re-stop right before writing the env so the launch below is the
+        # only supervisor. A duel that slipped in is requeued by the
+        # validator as an infra fault (no miner burn).
+        restop = ("pkill -f '[e]valsrv/bootstrap.sh' || true; "
+                  "pkill -f '[p]ython -m evalsrv' || true; sleep 3; echo RESTOPPED")
+        p = _ssh_run(ssh, restop, timeout=60)
+        if "RESTOPPED" not in (p.stdout or ""):
+            raise RuntimeError(
+                f"re-stop before env write failed: {_redact((p.stderr or p.stdout or '')[-300:])}")
         with tempfile.NamedTemporaryFile("w", delete=False, prefix="affine-eval-env-") as f:
             f.write(env_file_contents)
             local_env = Path(f.name)
