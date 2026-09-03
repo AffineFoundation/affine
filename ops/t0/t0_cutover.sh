@@ -88,12 +88,17 @@ p = Path("rollouts/rollouts/sources.toml"); s = p.read_text()
 s2 = re.sub(r"(#[^\n]*\n)*\[fold_mix\]\n(?:[a-z0-9_]+ = [^\n]*\n)*\n?", "", s, count=1)
 assert "[fold_mix]" not in s2, "fold_mix block not removed"
 p.write_text(s2); print("removed [fold_mix]")
-# Dashboard banner: static HTML, remove the whole fork-notice div.
+# Dashboard banner: static HTML, remove the whole fork-notice div. Already
+# gone since 2026-09-03 (operator took all banners down; notice lives in
+# llms.txt + Discord) -- idempotent either way.
 p = Path("affine/website/index.html"); s = p.read_text()
-s2 = re.sub(r'\s*<!-- Fork notice \(wvk 10 -> 11.*?<div class="fork-notice" id="fork-notice".*?</a>\s*</div>\s*</div>\n',
-            "\n", s, count=1, flags=re.S)
-assert 'id="fork-notice"' not in s2, "banner not removed"
-p.write_text(s2); print("removed dashboard fork banner")
+if 'id="fork-notice"' in s:
+    s2 = re.sub(r'\s*<!-- Fork notice \(wvk 10 -> 11.*?<div class="fork-notice" id="fork-notice".*?</a>\s*</div>\s*</div>\n',
+                "\n", s, count=1, flags=re.S)
+    assert 'id="fork-notice"' not in s2, "banner not removed"
+    p.write_text(s2); print("removed dashboard fork banner")
+else:
+    print("dashboard fork banner already absent")
 # llms.txt: the notice becomes history.
 p = Path("affine/scripts/build_llms_txt.py"); s = p.read_text()
 s2 = s.replace("## Upcoming fork: wvk 11 — action dialects (notice posted 2026-09-02)",
