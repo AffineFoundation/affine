@@ -271,6 +271,20 @@ Full writeups: `research/docs/REDTEAM.md`.
  converges to "first teacher uploader holds the throne". Found live: 4 of 28
  queued entries on 2026-08-28 were Qwen3.8-27B-shaped. Admission rule, not a
  scoring change — no wvk bump; verdicts/replays untouched.
+- **release stage 1 (2026-09-03 15:47 UTC, explicit dated operator
+ directive; commit `11c4806`):** (a) private R2 mining live —
+ `[submission.r2].enabled = true`, `hf_cutover_block = 8987674`; `affine1`
+ HF reveals above that block are dropped at intake, queued ones still duel;
+ miners activate with an **Ed25519** hotkey (`affine2|activate`), get a
+ sealed credential from `dash.affine.io/mailbox/…`, upload to the private
+ bucket, `affine2|ready`; only crowned models are copied to
+ `models.affine.io`. Validator identity
+ `5Ch9qcQ1X4QBPSVEXaSVmCJY9mPAdj4vRHfaK5opW7DSXucs`. (b) corpus D served
+ from `https://data.affine.io` (`[dataset].corpus_base_url`): same schema-2
+ manifest, same sha, byte-identical `turns/**`; Hippius `turns/**` read-only.
+ Admission + data location only — **no scoring change, wvk stays 10**. The
+ wvk 11 fork (dialects + schema-3 view) is stage 2, 2026-09-09
+ (`ops/t0/t0_cutover.sh`). Ran via `ops/t0/stage1_go_live.sh`.
 - **action dialects (2026-09-01, mechanism only — no contract change):**
   where a turn's action span starts/ends is now a per-turn `action_kind`
   resolved through `affine/dialects.py` (`bash` = one closed ```bash block;
