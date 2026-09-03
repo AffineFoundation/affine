@@ -12,6 +12,9 @@ dependencies = [
     "huggingface_hub>=0.30",
     "pyarrow>=17",
     "pyyaml>=6",
+    # Teacher chat template for affine.toolbake (tokenizer files only, no
+    # weights): tool-use traces are baked into plain prefixes at slice time.
+    "transformers>=4.51",
 ]
 
 [tool.uv.sources]

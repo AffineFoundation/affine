@@ -9,7 +9,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
   <link rel="stylesheet" href="fonts/fonts.css?v=20" />
-  <link rel="stylesheet" href="style.css?v=71" />
+  <link rel="stylesheet" href="style.css?v=72" />
 </head>
 <body>
   <header class="top-nav">
@@ -62,6 +62,36 @@
         <span class="market-item dim">SN120 market…</span>
       </div>
     </div>
+    <!-- Fork notice (wvk 10 -> 11, action dialects). Static by design: the
+         notice must show even when the dashboard API is down. Remove at T0
+         when the toml comment + llms.txt carry the effective block. -->
+    <div class="fork-notice" id="fork-notice" role="note">
+      <div class="fork-notice-inner">
+        <span class="fork-notice-tag">FORK NOTICE</span>
+        <span class="fork-notice-text">
+          wvk 10 → 11 <b>not before 2026-09-09</b>: corpus D admits
+          <code>&lt;tool_call&gt;</code> and <code>\boxed{}</code> turns next to
+          <code>```bash</code>. Same min(R,&nbsp;G) score; miners must be fluent
+          in all three action formats or forfeit those turns.
+        </span>
+        <a class="fork-notice-link" href="./llms.txt">spec: llms.txt § Upcoming fork →</a>
+      </div>
+    </div>
+    <!-- Cutover notice (HF -> private R2 submissions, Ed25519 hotkeys).
+         Static by design; retire once every miner has moved over. -->
+    <div class="fork-notice" id="r2-notice" role="note">
+      <div class="fork-notice-inner">
+        <span class="fork-notice-tag">CUTOVER</span>
+        <span class="fork-notice-text">
+          <b>2026-09-03</b>: submissions move to a <b>private</b> R2 bucket
+          (nobody sees your weights unless you win). Hugging Face
+          <code>affine1</code> commits are dropped at intake, and your hotkey
+          <b>must be Ed25519</b> (<code>submit.py hotkey</code> — btcli's
+          default sr25519 key cannot open the sealed credentials).
+        </span>
+        <a class="fork-notice-link" href="./llms.txt">how: llms.txt § Submit checklist →</a>
+      </div>
+    </div>
   </header>
 
   <!-- Top charts, 2×2: score + Margin (σ) over Margin (abs) + reg price —
@@ -86,7 +116,7 @@
         <div class="hero-pane">
           <div class="hero-pane-head">
             <h2 class="hero-pane-title">Margin (σ)</h2>
-            <p class="hero-caption">paired z vs king · dashed = 2σ dethrone threshold</p>
+            <p class="hero-caption">paired z vs king · dashed = 2σ · losses below −8σ clipped</p>
             <button type="button" class="expand-btn" data-chart="hero-margin"
               title="expand Margin (σ)" aria-label="Expand Margin (σ) chart">⤢</button>
           </div>
@@ -270,6 +300,6 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=78"></script>
+  <script type="module" src="app.js?v=79"></script>
 </body>
 </html>

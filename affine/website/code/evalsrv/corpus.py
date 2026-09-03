@@ -2,11 +2,17 @@
 
 The corpus D is append-only objects plus an immutable-manifest pointer:
 
-  turns/manifest.json              mutable pointer (current manifest bytes)
-  turns/manifests/{sha256}.json    immutable revision the pointer must match
+  <manifest_key>                   mutable pointer (current manifest bytes)
+  <dir>/manifests/{sha256}.json    immutable revision the pointer must match
   turns/shards/*.jsonl.gz          schema v1: per-turn JSONL (legacy)
   turns/chunks/*.jsonl.gz          schema v2: trajectory records
   turns/index/turns_*.parquet      schema v2: turn index for sampling
+  views/<view_spec>/chunks/*.jsonl.gz   schema v3: view records (message
+                                        graph + turn metas) cut from traces
+  views/<view_spec>/index/*.parquet     schema v3: turn index (node_id)
+
+Schema 2 and 3 share one code path: sample the index, fetch the chunk line,
+materialize the prefix (linear `messages` for v2, root->node path for v3).
 
 Sync is fail-closed and anonymous (the bucket is public-read; no Hippius
 credentials ever reach the pod):
@@ -16,7 +22,7 @@ credentials ever reach the pod):
      pointer that was never published as an immutable revision is rejected.
   3. Download any missing active objects, verify each sha256.
   4. schema v1: concatenate active shards into turns.jsonl
-     schema v2: keep parquet index + chunks; duel samples the index.
+     schema v2/v3: keep parquet index + chunks; duel samples the index.
 
 On any failure the previously verified corpus keeps serving and the sync
 reports stale. Refresh runs between duels, never mid-duel (server-side gate).
@@ -47,6 +53,8 @@ from affine.corpus.materialize import materialize_turn
 log = logging.getLogger("evalsrv.corpus")
 
 FETCH_TIMEOUT_S = 300.0
+# Chunk formats an eager sync downloads, per manifest schema.
+CHUNK_FORMATS = {2: "traj_v1", 3: "view_v4"}
 
 
 class CorpusVerificationError(Exception):
@@ -103,6 +111,9 @@ class CorpusSync:
             "corpus_epoch": (int(self.manifest.get("corpus_epoch", 0))
                              if self.manifest else 0),
             "schema_version": self.schema_version,
+            "view_spec": ((self.manifest or {}).get("view_spec") or ""),
+            "corpus_base_url": self.base,
+            "manifest_key": self.manifest_key,
             "synced_at": self.synced_at,
             "stale": self.stale,
             "ready": self.ready,
@@ -142,7 +153,10 @@ class CorpusSync:
             return [json.loads(line) for line in f if line.strip()]
 
     def materialize_turns(self, index_rows: list[dict]) -> list[dict]:
-        """Expand index rows into scorable turn dicts (prefix + reference)."""
+        """Expand index rows into scorable turn dicts (prefix + reference).
+        v2 rows resolve the prefix by `msg_pos` over linear `messages`; v3
+        rows by walking `parent` from the turn's `node_id` (see
+        affine.corpus.materialize)."""
         out: list[dict] = []
         for row in index_rows:
             traj = self._traj_at(row["chunk_key"], int(row["traj_line"]))
@@ -163,7 +177,8 @@ class CorpusSync:
         self.synced_at = self.manifest_path.stat().st_mtime
         if schema_version(self.manifest) >= 2:
             if self.index_path.exists():
-                log.info("adopted local corpus v2: epoch=%s manifest=%s",
+                log.info("adopted local corpus v%d: epoch=%s manifest=%s",
+                         schema_version(self.manifest),
                          self.manifest.get("corpus_epoch"),
                          self.manifest_sha256[:12])
         elif self.turns_path.exists():
@@ -178,8 +193,12 @@ class CorpusSync:
         return r.content
 
     def _immutable_manifest_key(self, mhash: str) -> str:
-        return posixpath.join(posixpath.dirname(self.manifest_key),
-                              "manifests", f"{mhash}.json")
+        parent = posixpath.dirname(self.manifest_key)
+        if posixpath.basename(parent) == "manifests":
+            # Replaying a pinned revision (manifest_key already names the
+            # immutable copy): it must hash to its own name.
+            return posixpath.join(parent, f"{mhash}.json")
+        return posixpath.join(parent, "manifests", f"{mhash}.json")
 
     def _refresh(self) -> None:
         raw = self._get(self.manifest_key)
@@ -233,12 +252,16 @@ class CorpusSync:
         if not index or not index.get("key") or not index.get("sha256"):
             raise CorpusVerificationError("v2 manifest missing index")
         self.chunks_dir.mkdir(parents=True, exist_ok=True)
+        fmt = CHUNK_FORMATS.get(schema_version(manifest))
+        if fmt is None:
+            raise CorpusVerificationError(
+                f"unsupported schema_version {schema_version(manifest)}")
         if not self.lazy_chunks:
             for shard in active:
-                if (shard.get("format") or "") != "traj_v1":
+                if (shard.get("format") or "") != fmt:
                     # Skip non-chunk actives (should not happen post-migrate).
-                    log.warning("skipping non-traj active shard %s",
-                                shard["key"])
+                    log.warning("skipping active shard %s (format %r, want %r)",
+                                shard["key"], shard.get("format"), fmt)
                     continue
                 self._ensure_gzip_object(shard, self.chunks_dir)
 
@@ -269,10 +292,11 @@ class CorpusSync:
         self._commit_manifest(raw, mhash, manifest)
         self._index_rows = None
         self._chunk_line_cache.clear()
-        log.info("corpus synced v2: epoch=%s manifest=%s chunks=%d index=%s",
+        log.info("corpus synced v%d: epoch=%s manifest=%s chunks=%d index=%s "
+                 "view=%s", schema_version(manifest),
                  manifest.get("corpus_epoch"), mhash[:12],
-                 sum(1 for s in active if s.get("format") == "traj_v1"),
-                 want[:12])
+                 sum(1 for s in active if s.get("format") == fmt),
+                 want[:12], manifest.get("view_spec") or "-")
 
     def _commit_manifest(self, raw: bytes, mhash: str, manifest: dict) -> None:
         mtmp = self.manifest_path.with_suffix(".json.tmp")

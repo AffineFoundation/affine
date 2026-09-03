@@ -33,14 +33,22 @@ through a replayable audit trail, not multi-validator voting.
 
 ## Submission → verdict flow
 
-1. Miner pushes a checkpoint to HF and runs `scripts/submit.py`, which
-   commits `affine1|repo|revision|hotkey` on-chain (reveal after 3 blocks).
-2. Validator scans reveals each tick. Intake burns the hotkey's one eval
-   slot at enqueue and dedups revisions globally.
-3. Metadata-only validation: repo pattern + coldkey token, safetensors
-   layout, no `*.py` / `auto_map`, size cap, per-blob copy check against the
-   king (identical weights with an earlier commit date crown the original
-   author without an eval; otherwise reject).
+1. Miner runs `scripts/submit.py submit` (private R2 flow, `affine2`, since
+   2026-09-03): `activate` commit (Ed25519-signed) → the access controller
+   (`affine/registrations.py`) seals a prefix-scoped temporary R2 credential
+   to the miner's hotkey and posts it on the public mailbox
+   (`dash.affine.io/mailbox/v1/<registration_id>/…`) → miner uploads the
+   checkpoint + signed `manifest.json` to
+   `affine-private-models/models/registrations/<registration_id>/` →
+   `ready` commit with `sha256(manifest.json)`. (Legacy `affine1|repo|
+   revision|hotkey` HF commits are dropped after `hf_cutover_block`.)
+2. Validator scans reveals each tick. On `ready` it revokes the credential,
+   verifies inventory + signature against the manifest, then intake burns the
+   hotkey's one eval slot at enqueue and dedups `model_digest` globally.
+   `repo = r2://<bucket>/<prefix>`, `revision = model_digest`.
+3. Metadata-only validation from the manifest + `config.json`: safetensors
+   layout, no `*.py` / `auto_map`, size caps, genesis-family architecture
+   pin, per-blob copy check against the king.
 4. Duel on the eval machine: slice of `n_turns` drawn from public corpus D
    seeded by `blake2b(reveal_block_hash ‖ hotkey)` (block hash fetch is
    fail-closed: chain hiccup ⇒ requeue, never a predictable fallback slice);
@@ -129,7 +137,14 @@ doppler run -- pm2 start scripts/ecosystem.config.js
 Secrets expected in the environment: `HF_TOKEN`, `HIPPIUS_ACCESS_KEY`,
 `HIPPIUS_SECRET_KEY`, `LIUM_API_KEY` (CLI must be `lium init`-ed),
 `TARGON_API_KEY`, `AFFINE_EVAL_TOKEN` (shared secret for the eval server),
-optional `OPENROUTER_API_KEY` (bench user-sim fallback).
+optional `OPENROUTER_API_KEY` (bench user-sim fallback). Private R2
+submissions (`[submission.r2].enabled`): `CLOUDFLARE_ACCOUNT_ID`,
+`CLOUDFLARE_API_TOKEN` (R2 write + account tokens write),
+`R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` (validator's own S3 pair),
+`AFFINE_MAILBOX_SIGNING_SEED` (Ed25519 seed = validator identity),
+`AFFINE_EVAL_R2_ACCESS_KEY_ID` / `AFFINE_EVAL_R2_SECRET_ACCESS_KEY`
+(read-only pair shipped to eval pods). `scripts/r2_setup.py --apply`
+creates buckets, domains, lifecycle rules and the eval token.
 The bittensor wallet (`affine`/`validator`) must exist on this machine.
 
 Offline verification: `scripts/smoke_test.py` (checks over config — incl.

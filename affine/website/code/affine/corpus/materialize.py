@@ -23,24 +23,51 @@ def stratum_key(rec: dict) -> str:
     return f"{repo}|{phase}"
 
 
-def materialize_turn(traj: dict, turn_meta: dict) -> dict:
-    """Expand one scorable turn from a trajectory record.
+def node_path(nodes: list[dict], node_id: int) -> list[dict]:
+    """Root-to-node message path through a view record's node graph
+    (`nodes[i] = {parent, role, content}`), the node itself last."""
+    chain: list[dict] = []
+    seen = 0
+    j: int | None = node_id
+    while j is not None:
+        if not 0 <= j < len(nodes) or seen > len(nodes):
+            raise ValueError(f"node graph broken at node {j}")
+        chain.append(nodes[j])
+        j = nodes[j].get("parent")
+        seen += 1
+    chain.reverse()
+    return chain
 
-    ``turn_meta`` is an entry from ``traj["turns"]`` (must include
-    ``turn_idx`` and ``msg_pos``). Returns a v1-shaped turn dict with
-    ``prefix`` and ``reference_turn`` so scoring code is unchanged.
+
+def materialize_turn(traj: dict, turn_meta: dict) -> dict:
+    """Expand one scorable turn from a trajectory / view record.
+
+    ``turn_meta`` is an entry from ``traj["turns"]``. Two layouts:
+      * v2 chunks (`traj["messages"]`, meta `msg_pos`): the prefix is the
+        linear message list before the reply;
+      * v4 view records (`traj["nodes"]`, meta `node_id`): the prefix is the
+        root-to-parent path of the reply node in the message graph — the
+        exact prompt the model saw, however the harness shaped its history.
+    Returns a v1-shaped turn dict with ``prefix`` and ``reference_turn`` so
+    scoring code is unchanged.
     """
-    messages = traj["messages"]
-    msg_pos = int(turn_meta["msg_pos"])
-    if msg_pos < 0 or msg_pos >= len(messages):
-        raise ValueError(
-            f"msg_pos {msg_pos} out of range for traj {traj.get('traj_id')}")
-    asst = messages[msg_pos]
+    if "node_id" in turn_meta:
+        chain = node_path(traj["nodes"], int(turn_meta["node_id"]))
+        asst = chain[-1]
+        before = chain[:-1]
+        where = f"node {turn_meta['node_id']}"
+    else:
+        messages = traj["messages"]
+        msg_pos = int(turn_meta["msg_pos"])
+        if msg_pos < 0 or msg_pos >= len(messages):
+            raise ValueError(
+                f"msg_pos {msg_pos} out of range for traj {traj.get('traj_id')}")
+        asst = messages[msg_pos]
+        before = messages[:msg_pos]
+        where = f"messages[{msg_pos}]"
     if asst.get("role") != "assistant":
-        raise ValueError(
-            f"messages[{msg_pos}] is not assistant in {traj.get('traj_id')}")
-    prefix = [{"role": m["role"], "content": m["content"]}
-              for m in messages[:msg_pos]]
+        raise ValueError(f"{where} is not assistant in {traj.get('traj_id')}")
+    prefix = [{"role": m["role"], "content": m["content"]} for m in before]
     if not prefix or prefix[-1]["role"] != "user":
         raise ValueError(
             f"prefix must end on user for {traj.get('traj_id')}:{turn_meta.get('turn_idx')}")
@@ -56,11 +83,16 @@ def materialize_turn(traj: dict, turn_meta: dict) -> dict:
         "repo": traj.get("repo", ""),
         "model": traj.get("model", ""),
         "phase": turn_meta.get("phase") or traj.get("phase", ""),
-        "action_kind": traj.get("action_kind", "bash"),
+        "action_kind": (turn_meta.get("action_kind")
+                        or traj.get("action_kind", "bash")),
         "generated_at": traj.get("generated_at", ""),
     }
+    if traj.get("rollout_id"):
+        out["rollout_id"] = traj["rollout_id"]
     if traj.get("source") is not None:
         out["source"] = traj["source"]
     if traj.get("language") is not None:
         out["language"] = traj["language"]
+    if traj.get("stratum"):
+        out["stratum"] = traj["stratum"]
     return out

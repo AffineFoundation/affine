@@ -22,8 +22,10 @@ Turn record contract (v1 shards / compat flat JSONL):
     against the wrong reference);
   * prefix = plain chat messages [{"role", "content"}], ending on a "user"
     message (the scorer appends the generation prompt from there);
-  * the system message must mandate the action format (one closed ```bash
-    block) — foreign scaffolds must be rewritten at extraction time;
+  * action_kind must be admitted by [dataset].allowed_action_kinds and the
+    system message must state that dialect's contract (affine.dialects
+    `system_marker`; bash = one closed ```bash block) — foreign scaffolds
+    must be rewritten at extraction time;
   * recommended: reference_turn (research force-y/RT tooling) and traj_ids
     matching the phase regex so stratification can see bug families.
 
@@ -57,6 +59,7 @@ import pyarrow.parquet as pq
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 
+from affine import dialects
 from affine.config import load_config
 from affine.corpus.materialize import PHASE_RE, materialize_turn
 from affine.corpus.pack import INDEX_COLUMNS, PackResult
@@ -319,6 +322,7 @@ class Corpus:
         ids: set[str] = set()
         n_records = 0
         n_no_phase = n_no_ref = n_long = 0
+        allowed_kinds = dialects.admitted_kinds()
 
         with open(file, encoding="utf-8") as f:
             for lineno, line in enumerate(f, 1):
@@ -355,10 +359,17 @@ class Corpus:
                 if prefix[-1]["role"] != "user":
                     errors.append(f"line {lineno}: prefix must end on a user "
                                   f"message (got {prefix[-1]['role']!r})")
+                kind = rec.get("action_kind")
+                why = dialects.admission_reason(kind, allowed_kinds)
+                if why:
+                    errors.append(f"line {lineno}: {why}")
+                    continue
                 sys_msgs = [m_ for m_ in prefix if m_["role"] == "system"]
-                if not sys_msgs or "bash" not in sys_msgs[0]["content"].lower():
+                dialect = dialects.get(kind)
+                if not sys_msgs or not dialect.system_ok(sys_msgs[0]["content"]):
                     errors.append(f"line {lineno}: system message missing or "
-                                  "does not mandate the bash action format")
+                                  f"does not mandate the {dialect.id} action "
+                                  "format")
                 if sum(len(m_["content"]) for m_ in prefix) > MAX_PREFIX_CHARS:
                     n_long += 1
                 if not PHASE_RE.search(tid):
@@ -409,6 +420,7 @@ class Corpus:
         """Validate traj chunks + parquet index consistency."""
         errors: list[str] = []
         ids: set[str] = set()
+        allowed_kinds = dialects.admitted_kinds()
 
         # Index columns + row count.
         table = pq.read_table(pack.index_path)
@@ -469,9 +481,16 @@ class Corpus:
                 continue
             if sum(len(m["content"]) for m in mat["prefix"]) > MAX_PREFIX_CHARS:
                 errors.append(f"index row {turn_id}: prefix too long")
+            kind = mat.get("action_kind")
+            why = dialects.admission_reason(kind, allowed_kinds)
+            if why:
+                errors.append(f"index row {turn_id}: {why}")
+                continue
             sys_msgs = [m for m in mat["prefix"] if m["role"] == "system"]
-            if not sys_msgs or "bash" not in sys_msgs[0]["content"].lower():
-                errors.append(f"index row {turn_id}: bash mandate missing")
+            if not sys_msgs or not dialects.get(kind).system_ok(
+                    sys_msgs[0]["content"]):
+                errors.append(f"index row {turn_id}: {kind or 'bash'} "
+                              "mandate missing")
 
         # Overlap vs previously published (skip when replacing whole corpus
         # with a rebuild that reuses the same turn_ids — caller passes

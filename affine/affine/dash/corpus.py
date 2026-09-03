@@ -110,7 +110,8 @@ class DatasetView:
             "n_turns": len(rows),
             "n_trajectories": len(trajs),
             "n_chunks": sum(1 for s in active
-                            if (s.get("format") or "") == "traj_v1"),
+                            if (s.get("format") or "") in ("traj_v1", "view_v4")),
+            "view_spec": manifest.get("view_spec") or "",
             "mix": {
                 "source": dict(by_source.most_common()),
                 "language": dict(by_language.most_common()),

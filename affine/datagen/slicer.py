@@ -9,12 +9,16 @@ evalsrv/dueling.py):
                   the stratification phase regex
   turn_idx        assistant ordinal within the trajectory (int)
   prefix          chat messages [{role, content}] ending on a user message
-  reference_turn  the assistant message (THOUGHT + one closed ```bash block)
+  reference_turn  the assistant message (THOUGHT + exactly one complete
+                  action in the trajectory's dialect — one closed ```bash
+                  block for shell agents)
   suffix_len / n_prefix_chars
+  action_kind     the dialect (affine.dialects id) the action was located
+                  with; the duel splits rollouts on these turns the same way
 
 plus tag fields the duel code ignores: instance_id, repo, model, phase
 (early/mid/late thirds of the trajectory, for later oversampling),
-action_kind, generated_at.
+generated_at.
 
 Standalone use on a directory of *.traj.json files:
 
@@ -32,10 +36,10 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from affine import dialects
+
 log = logging.getLogger("datagen.slicer")
 
-# Same action pattern as the duel chat contract (evalsrv/chat.py BASH_RE).
-BASH_RE = re.compile(r"```bash\n.*?\n```", re.DOTALL)
 # Foreign mini v2 scaffold fence; a no-op on trajectories generated with the
 # datagen agent config, which already speaks ```bash natively.
 FOREIGN_FENCE_RE = re.compile(r"```mswea_bash_command[ \t]*\n")
@@ -90,7 +94,19 @@ def _phase(assistant_idx: int, n_assistant: int) -> str:
 
 def slice_messages(messages: list[dict], *, instance_id: str, repo: str,
                    model: str, run_tag: str, generated_at: str,
-                   max_prefix_chars: int = MAX_PREFIX_CHARS) -> list[dict]:
+                   max_prefix_chars: int = MAX_PREFIX_CHARS,
+                   action_kind: str = dialects.DEFAULT_KIND,
+                   turn: tuple[int, int] | None = None) -> list[dict]:
+    """Turn records from one conversation: every assistant message whose
+    prefix ends in a user message and that holds exactly one action.
+
+    `turn=(idx, n)` switches to single-reply mode: `messages` is the exact
+    path the model saw for ONE reply (its last message), and only that
+    reply is a record — earlier assistant messages are prefix history, not
+    references (they may be a harness's restatement of a reply that is its
+    own record on another path). `idx`/`n` give the reply's position among
+    the trajectory's replies for `turn_idx` and `phase`."""
+    dialect = dialects.get(action_kind)
     msgs: list[dict] = []
     for m in messages:
         role = m.get("role")
@@ -102,6 +118,8 @@ def slice_messages(messages: list[dict], *, instance_id: str, repo: str,
         msgs.append({"role": role, "content": _normalize(text)})
 
     n_assistant = sum(1 for m in msgs if m["role"] == "assistant")
+    if turn is not None:
+        n_assistant = turn[1]
     traj_id = make_traj_id(instance_id, run_tag)
     norm_contents = [_norm_ws(m["content"]) for m in msgs]
     records: list[dict] = []
@@ -110,22 +128,27 @@ def slice_messages(messages: list[dict], *, instance_id: str, repo: str,
     for pos, msg in enumerate(msgs):
         if msg["role"] != "assistant":
             continue
-        idx = a_idx
-        a_idx += 1
+        if turn is not None:
+            if pos != len(msgs) - 1:
+                continue
+            idx = turn[0]
+        else:
+            idx = a_idx
+            a_idx += 1
         prefix = msgs[:pos]
         if not prefix or prefix[-1]["role"] != "user":
             continue
         ref = msg["content"]
-        # Exactly one closed action block: format-error responses and
-        # ambiguous multi-block replies are real history (they stay in later
+        # Exactly one complete action: format-error responses and ambiguous
+        # multi-action replies are real history (they stay in later
         # prefixes) but not scorable references.
-        blocks = BASH_RE.findall(ref)
-        if len(blocks) != 1:
+        actions = dialect.actions(ref)
+        if len(actions) != 1:
             continue
         # Reference leaked into the prefix: the turn would be dropped by the
         # corpus-refresh prefilter and leakage-gated at duel time. The turn
         # stays in later records' prefix history (it is real history).
-        body = _norm_ws(blocks[0])
+        body = _norm_ws(actions[0])
         if (len(body) > LEAK_MIN_CHARS
                 and any(body in norm for norm in norm_contents[:pos])):
             n_leaked += 1
@@ -144,7 +167,7 @@ def slice_messages(messages: list[dict], *, instance_id: str, repo: str,
             "repo": repo,
             "model": model,
             "phase": _phase(idx, n_assistant),
-            "action_kind": "bash",
+            "action_kind": dialect.id,
             "generated_at": generated_at,
         })
     if n_leaked:

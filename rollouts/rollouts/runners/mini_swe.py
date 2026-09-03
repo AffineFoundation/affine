@@ -269,7 +269,8 @@ class MiniSweRunner:
                 eval_ran = True   # nothing had a patch: all unresolved
 
         stamp = PolicyStamp(policy_id=policy.id, model=endpoint.label,
-                            harness=policy.harness, endpoint=endpoint.name)
+                            harness=policy.harness, endpoint=endpoint.name,
+                            action_kind=policy.action_kind)
         for iid, detail in attempted.items():
             traj_path = preds_dir / iid / f"{iid}.traj.json"
             verdict: float | None = None

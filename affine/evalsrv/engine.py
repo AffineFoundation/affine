@@ -35,6 +35,7 @@ from pathlib import Path
 
 import httpx
 
+from . import r2store
 from .vllm_client import Served
 
 log = logging.getLogger("evalsrv.engine")
@@ -52,6 +53,13 @@ CHALLENGER_DISK_HEADROOM_GB = 20.0
 # 0 B/s with ESTABLISHED sockets and no timeout); a hung in-process thread
 # would block every future prefetch and stall the next load_challenger join.
 PREFETCH_STALL_S = 180.0
+
+# Best-effort second copy (king2 / challenger2). Primary ready is enough to
+# start scoring; waiting the full vLLM launch (up to 20 min) for a slow or
+# dead replica serialized the duel behind a GPU that may never come up.
+# If the process is still alive after this grace, leave it warming — the
+# next ensure/load can pick it up instead of killing a half-loaded engine.
+REPLICA_READY_S = 90.0
 
 # Pip nvidia-cuda-nvcc wheel ships nvcc under site-packages; Lium images often
 # lack /usr/local/cuda (or ship an EMPTY stub of it). FlashInfer JIT needs both
@@ -216,6 +224,8 @@ class Engine:
     # reclaimable disk and could wedge the pod into POD_CAPACITY faults).
     _prefetch: tuple[str, threading.Thread, threading.Event] | None = \
         field(init=False, default=None, repr=False)
+    # r2 refs being fetched inline by _ensure_snapshot (kept from pruning).
+    _materializing: set[str] = field(init=False, default_factory=set, repr=False)
 
     def __post_init__(self):
         t = self.cfg["teacher"]
@@ -293,8 +303,10 @@ class Engine:
             batched_tokens = int(cs.get("max_num_batched_tokens", 16384))
             gpu_util = cs.get("gpu_memory_utilization", gpu_util)
             max_len = int(cs.get("max_model_len", max_len))
+        # r2 refs are served from their verified local snapshot; the model is
+        # still *named* by the ref so client requests (model=<ref>) match.
         cmd = [
-            "vllm", "serve", repo,
+            "vllm", "serve", r2store.model_path(repo, revision),
             "--port", str(slot.port),
             "--tensor-parallel-size", str(slot.tp),
             "--max-model-len", str(max_len),
@@ -325,15 +337,47 @@ class Engine:
         # bootstrap also installs prebuilt flashinfer wheels (vLLM >= 0.28
         # hard-imports flashinfer for GDN models even with this override).
         cmd += ["--additional-config", '{"gdn_prefill_backend": "triton"}']
+        # HF cache lives on FUSE.GOCRYPTFS. vLLM only auto-prefetches NFS/
+        # Lustre, so shard reads were ~30s each (~8 min serial H2D) while
+        # 360 GB RAM sat empty (chal-00074 king, 2026-08-30). Force
+        # prefetch: warm the snapshot in the page cache, then load to GPU.
+        # Process-private heap does not hold the 65 GB (read-and-discard).
+        # Four copies share two repos ≈ 135 GB unique. Load-only, no score
+        # effect. Not used on remote teacher.
+        if not slot.label.startswith("teacher"):
+            cmd += ["--safetensors-load-strategy", "prefetch"]
         if self.role == "chat":
             # The chat pod's wire plane serves agent clients (arbos, Cursor)
             # that drive tool loops over /v1/chat/completions. Qwen-family
             # kings emit hermes-style <tool_call> blocks. Never set on duel/
             # bench pods — scoring must see raw completions.
             cmd += ["--enable-auto-tool-choice", "--tool-call-parser", "hermes"]
-        if revision:
+        if r2store.is_r2(repo):
+            cmd += ["--served-model-name", repo]
+        elif revision:
             cmd += ["--revision", revision]
         return cmd
+
+    def _ensure_snapshot(self, repo: str, revision: str | None) -> None:
+        """r2 refs must be on disk and verified before vLLM starts (HF repos
+        download inside vLLM). Raises IntegrityError when the bucket content
+        is not the pinned digest; other exceptions are transport faults.
+        Runs OUTSIDE _lock: a multi-GB download must not block /prefetch."""
+        if not r2store.is_r2(repo) or not revision:
+            return
+        if r2store.snapshot_ready(repo, revision):
+            return
+        log.info("materializing %s@%s from R2", repo, revision[:12])
+        # Registered so a concurrent prune (a /prefetch for the next queue
+        # item) cannot delete the half-written snapshot: like an in-flight
+        # prefetch, an in-flight inline fetch is part of the keep set.
+        with self._lock:
+            self._materializing.add(repo)
+        try:
+            r2store.fetch_snapshot(repo, revision)
+        finally:
+            with self._lock:
+                self._materializing.discard(repo)
 
     def _sweep_slot_gpus(self, slot: Slot) -> None:
         """SIGKILL compute processes still resident on the slot's GPUs.
@@ -414,7 +458,19 @@ class Engine:
             slot.load_error = ""
             LOG_DIR.mkdir(parents=True, exist_ok=True)
             _purge_broken_flashinfer_moe_cache()
-            env = dict(os.environ, **_vllm_env(), CUDA_VISIBLE_DEVICES=slot.gpus)
+            # Per-slot vLLM cache root. Both copies of a fresh challenger
+            # torch.compile the same kernels at the same time, and a shared
+            # ~/.cache/vllm/torch_compile_cache lets one copy import a kernel
+            # file the other is still writing ("@jit functions should be
+            # defined in a Python file", 9 challenger-copy load failures in
+            # 10h on 2026-09-01). Isolating the roots removes the race; the
+            # only cost is that each copy compiles for itself.
+            cache_root = Path(os.environ.get("VLLM_CACHE_ROOT",
+                                             "/root/.cache/vllm"))
+            slot_cache = str(cache_root.with_name(
+                f"{cache_root.name}_{slot.label}"))
+            env = dict(os.environ, **_vllm_env(), CUDA_VISIBLE_DEVICES=slot.gpus,
+                       VLLM_CACHE_ROOT=slot_cache)
             logf = open(LOG_DIR / f"vllm_{slot.label}.log", "a")
             log.info("launching %s: %s (gpus=%s)", slot.label, repo, slot.gpus)
             slot.proc = subprocess.Popen(
@@ -468,22 +524,81 @@ class Engine:
         log.error("%s load failed: %s", slot.label, slot.load_error[:500])
         return False
 
-    def _wait_ready(self, slot: Slot, timeout_s: int = 3600) -> bool:
+    def _probe_http_ready(self, slot: Slot) -> bool:
+        """One /v1/models hit. Sets slot.ready on success. No wait."""
+        if slot.proc is None or slot.proc.poll() is not None:
+            return False
+        try:
+            httpx.get(f"http://localhost:{slot.port}/v1/models", timeout=3)
+            slot.ready = True
+            slot.load_error = ""
+            return True
+        except httpx.HTTPError:
+            return False
+
+    def _wait_ready(self, slot: Slot, timeout_s: int = 3600,
+                    *, required: bool = True) -> bool:
         t0 = time.time()
-        url = f"http://localhost:{slot.port}/v1/models"
         while time.time() - t0 < timeout_s:
             if slot.proc is not None and slot.proc.poll() is not None:
                 return self._fail_load(
                     slot, f"vllm process exited with {slot.proc.returncode}")
-            try:
-                httpx.get(url, timeout=3)
-                slot.ready = True
-                slot.load_error = ""
+            if self._probe_http_ready(slot):
                 log.info("%s ready in %.0fs", slot.label, time.time() - t0)
                 return True
-            except httpx.HTTPError:
-                time.sleep(10)
-        return self._fail_load(slot, f"not ready after {timeout_s}s")
+            time.sleep(10)
+        if required:
+            return self._fail_load(slot, f"not ready after {timeout_s}s")
+        log.warning("%s not ready after %.0fs (optional replica)",
+                    slot.label, timeout_s)
+        return False
+
+    def _wait_any_ready(self, slots: list[Slot | None],
+                        timeout_s: int = 3600) -> bool:
+        """True when any listed copy answers /v1/models.
+
+        A hung primary (CUDA-graph capture deadlock, observed live on
+        chal-00075: 0/83 FULL graphs, replica already serving) must not
+        block the duel. Score-invariant: the ranked quantity is teacher-side.
+        """
+        live = [s for s in slots if s is not None]
+        if not live:
+            return False
+        t0 = time.time()
+        while time.time() - t0 < timeout_s:
+            for slot in live:
+                if slot.ready and self._alive(slot):
+                    return True
+                if self._probe_http_ready(slot):
+                    log.info("%s ready in %.0fs (first copy)",
+                             slot.label, time.time() - t0)
+                    return True
+            if all(s.proc is None or s.proc.poll() is not None for s in live):
+                for slot in live:
+                    rc = None if slot.proc is None else slot.proc.returncode
+                    self._fail_load(slot, f"vllm process exited with {rc}")
+                return False
+            time.sleep(10)
+        for slot in live:
+            if not slot.ready:
+                self._fail_load(slot, f"not ready after {timeout_s}s")
+        return False
+
+    def _wait_replica(self, slot: Slot | None, kind: str) -> None:
+        """Include the second copy if it comes up quickly; never block a duel
+        on it. A still-running engine is left warming (do not kill)."""
+        if slot is None:
+            return
+        if self._wait_ready(slot, timeout_s=int(REPLICA_READY_S),
+                            required=False):
+            return
+        if slot.proc is not None and slot.proc.poll() is None:
+            log.warning("%s replica still warming after %.0fs; "
+                        "scoring without it", slot.label, REPLICA_READY_S)
+            return
+        log.warning("%s replica failed to warm; running single-%s",
+                    kind, kind)
+        self._kill(slot)
 
     # -- public API --------------------------------------------------------------
     def _teacher_base_url(self) -> str:
@@ -615,14 +730,17 @@ class Engine:
 
     def _heal_replica(self, slot: Slot | None, repo: str, revision: str,
                       kind: str) -> None:
-        """Best-effort second copy: launch if down, kill if it fails to warm."""
+        """Best-effort second copy: launch if down, do not block the duel."""
         if slot is None or self._replica_matches(slot, repo, revision):
             return
-        self._launch(slot, repo, revision)
-        if not self._wait_ready(slot, timeout_s=1200):
-            log.warning("%s replica failed to warm; running single-%s",
-                        kind, kind)
-            self._kill(slot)
+        loading = (slot.served is not None
+                   and slot.served.repo == repo
+                   and slot.served.revision == revision
+                   and slot.proc is not None
+                   and slot.proc.poll() is None)
+        if not loading:
+            self._launch(slot, repo, revision)
+        self._wait_replica(slot, kind)
 
     def _serveds_of(self, primary: Slot, replica: Slot | None) -> list[Served]:
         out: list[Served] = []
@@ -643,26 +761,37 @@ class Engine:
         if self._replica_matches(self.king_slot, repo, revision):
             self._heal_replica(self.king2_slot, repo, revision, "king")
             return True
+        if (self.king2_slot is not None
+                and self._replica_matches(self.king2_slot, repo, revision)):
+            self._heal_replica(self.king_slot, repo, revision, "king")
+            return True
+        try:
+            self._ensure_snapshot(repo, revision)
+        except Exception as e:
+            # A king we cannot materialize is a pod/bucket fault for the
+            # caller (KING_LAUNCH), never a dethrone signal — the validator
+            # proves a king gone with its own probe.
+            self._fail_load(self.king_slot, f"king snapshot: {e}")
+            return False
         self._launch(self.king_slot, repo, revision)
-        replica_launched = False
         if self.king2_slot is not None:
             self._launch(self.king2_slot, repo, revision)
-            replica_launched = True
-        if not self._wait_ready(self.king_slot):
+        if not self._wait_any_ready([self.king_slot, self.king2_slot]):
             return False
-        if replica_launched and self.king2_slot is not None:
-            if not self._wait_ready(self.king2_slot, timeout_s=1200):
-                log.warning("king replica failed to warm; running single-king")
-                self._kill(self.king2_slot)
+        for slot in (self.king_slot, self.king2_slot):
+            if slot is not None and not slot.ready:
+                self._wait_replica(slot, "king")
         return True
 
-    def _settle_prefetch(self, incoming_repo: str | None) -> None:
+    def _settle_prefetch(self, incoming_repo: str | None,
+                         incoming_revision: str | None = None) -> None:
         """Bring the prefetch slot to rest before a challenger download.
         A live prefetch of the incoming repo is joined (finishing beats
         racing vLLM's downloader for the same blob locks; the worker's stall
         watchdog bounds the wait in practice, the timeout is a backstop). A
-        live prefetch of any OTHER repo is stale — the queue was reordered —
-        so it is cancelled before it can contend for disk and bandwidth.
+        live prefetch of any OTHER repo is the next queue item (or stale).
+        Cancel it only when incoming still needs the NIC — otherwise leave
+        it running so the next download overlaps this duel’s GPU load.
         Runs OUTSIDE the lock: joining under it would block /prefetch,
         challenger_fits and every launch for the duration."""
         with self._lock:
@@ -672,35 +801,147 @@ class Engine:
         if pf[0] == incoming_repo:
             log.info("waiting for in-flight prefetch of %s", pf[0])
             pf[1].join(timeout=1800)
-        else:
-            log.info("cancelling stale prefetch of %s (incoming: %s)",
-                     pf[0], incoming_repo)
-            pf[2].set()
-            pf[1].join(timeout=60)
+            return
+        snap_ready = False
+        if incoming_repo and incoming_revision:
+            snap_ready = r2store.snapshot_ready(incoming_repo, incoming_revision)
+        if snap_ready:
+            log.info("leaving prefetch of %s running; %s@%s already cached",
+                     pf[0], incoming_repo, incoming_revision[:12])
+            return
+        log.info("cancelling stale prefetch of %s (incoming: %s)",
+                 pf[0], incoming_repo)
+        pf[2].set()
+        pf[1].join(timeout=60)
+
+    def _same_target(self, slot: Slot | None, repo: str,
+                     revision: str) -> bool:
+        return bool(slot is not None and slot.served
+                    and slot.served.repo == repo
+                    and slot.served.revision == revision)
+
+    def _proc_alive(self, slot: Slot | None) -> bool:
+        return bool(slot is not None and slot.proc is not None
+                    and slot.proc.poll() is None)
+
+    def prepare_miners(self, king_repo: str, king_revision: str,
+                       chall_repo: str, chall_revision: str) -> bool:
+        """Launch king + challenger together; wait first ready copy per role.
+
+        They sit on disjoint GPUs. After an evalsrv bounce both are cold —
+        the old ensure_king-then-load_challenger path paid two vLLM starts
+        back-to-back (~11 min each). One wait covers both. King already
+        warm: only the challenger pair launches. Either copy of a role is
+        enough (a hung primary must not block a live replica). Score-invariant.
+        """
+        king_ready = self._replica_matches(
+            self.king_slot, king_repo, king_revision)
+        king2_ready = (
+            self.king2_slot is None
+            or self._replica_matches(self.king2_slot, king_repo, king_revision))
+        self._settle_prefetch(chall_repo, chall_revision)
+        with self._lock:
+            if self._prefetch is not None and self._prefetch[0] == chall_repo:
+                self._prefetch = None
+            self._prune_challenger_cache(
+                keep_repo=chall_repo, keep_revision=chall_revision,
+                extra_keep={king_repo})
+        # R2 checkpoints land on disk (verified) before any vLLM start. King
+        # first: its failure is a pod fault (return False with no king served
+        # → KING_LAUNCH). The challenger's IntegrityError propagates: that is
+        # the miner's checkpoint not matching its commitment.
+        if not king_ready:
+            try:
+                self._ensure_snapshot(king_repo, king_revision)
+            except Exception as e:
+                self._fail_load(self.king_slot, f"king snapshot: {e}")
+                return False
+        self._ensure_snapshot(chall_repo, chall_revision)
+        with self._lock:
+            # Re-pin the keep set: the prefetch prune above ran before the
+            # r2 snapshots existed (a fresh download must not be pruned by a
+            # /prefetch racing in between).
+            self._prune_challenger_cache(
+                keep_repo=chall_repo, keep_revision=chall_revision,
+                extra_keep={king_repo})
+            if not king_ready and not (
+                    self._same_target(self.king_slot, king_repo, king_revision)
+                    and self._proc_alive(self.king_slot)):
+                self._launch(self.king_slot, king_repo, king_revision)
+            if (self.king2_slot is not None and not king2_ready and not (
+                    self._same_target(self.king2_slot, king_repo, king_revision)
+                    and self._proc_alive(self.king2_slot))):
+                self._launch(self.king2_slot, king_repo, king_revision)
+            self._launch(self.chall_slot, chall_repo, chall_revision)
+            if self.chal2_slot is not None:
+                self._launch(self.chal2_slot, chall_repo, chall_revision)
+
+        results = {"king": False, "chall": False}
+
+        def wait_king() -> None:
+            if self._replica_matches(self.king_slot, king_repo, king_revision):
+                results["king"] = True
+                return
+            if (self.king2_slot is not None and self._replica_matches(
+                    self.king2_slot, king_repo, king_revision)):
+                results["king"] = True
+                return
+            results["king"] = self._wait_any_ready(
+                [self.king_slot, self.king2_slot])
+
+        def wait_chall() -> None:
+            results["chall"] = self._wait_any_ready(
+                [self.chall_slot, self.chal2_slot])
+
+        t_k = threading.Thread(target=wait_king, name="wait-king", daemon=True)
+        t_c = threading.Thread(target=wait_chall, name="wait-chall", daemon=True)
+        t_k.start()
+        t_c.start()
+        t_k.join()
+        t_c.join()
+        if not results["king"] or not results["chall"]:
+            return False
+
+        extras: list[threading.Thread] = []
+        for slot, kind in (
+                (self.king_slot, "king"),
+                (self.king2_slot, "king"),
+                (self.chall_slot, "challenger"),
+                (self.chal2_slot, "challenger")):
+            if slot is not None and not slot.ready:
+                extras.append(threading.Thread(
+                    target=self._wait_replica, args=(slot, kind),
+                    name=f"wait-{slot.label}", daemon=True))
+        for t in extras:
+            t.start()
+        for t in extras:
+            t.join()
+        return True
 
     def load_challenger(self, repo: str, revision: str) -> bool:
-        self._settle_prefetch(repo)
+        self._settle_prefetch(repo, revision)
         with self._lock:
             if self._prefetch is not None and self._prefetch[0] == repo:
                 # Consumed: keep_repo protects the snapshot from here on and
                 # the slot frees up for the next prefetch target.
                 self._prefetch = None
             self._prune_challenger_cache(keep_repo=repo, keep_revision=revision)
+        self._ensure_snapshot(repo, revision)  # IntegrityError propagates
+        with self._lock:
             self._launch(self.chall_slot, repo, revision)
             replica_launched = self.chal2_slot is not None
             if replica_launched:
                 self._launch(self.chal2_slot, repo, revision)
-        if not self._wait_ready(self.chall_slot):
+        if not self._wait_any_ready([self.chall_slot, self.chal2_slot]):
             return False
-        if replica_launched and self.chal2_slot is not None:
-            if not self._wait_ready(self.chal2_slot, timeout_s=1200):
-                log.warning("challenger replica failed to warm; "
-                            "running single-challenger")
-                self._kill(self.chal2_slot)
+        for slot in (self.chall_slot, self.chal2_slot):
+            if slot is not None and not slot.ready:
+                self._wait_replica(slot, "challenger")
         return True
 
     def challenger_fits(self, required_bytes: int, repo: str | None = None,
-                        revision: str | None = None) -> tuple[bool, float]:
+                        revision: str | None = None,
+                        extra_keep: set[str] | None = None) -> tuple[bool, float]:
         """Prune non-essential caches, then report whether a challenger's
         servable weights (`required_bytes`) fit the serviceable disk with
         CHALLENGER_DISK_HEADROOM_GB to spare. Returns (fits, free_gb).
@@ -719,9 +960,10 @@ class Engine:
         # A stale prefetch still downloading would both hold its bytes out of
         # the prune and keep growing after we measure — cancel it first so
         # the fit answer stays true through the download that follows.
-        self._settle_prefetch(repo)
+        self._settle_prefetch(repo, revision)
         with self._lock:
-            self._prune_challenger_cache(keep_repo=repo, keep_revision=revision)
+            self._prune_challenger_cache(keep_repo=repo, keep_revision=revision,
+                                         extra_keep=extra_keep)
             free_gb = self.free_disk_gb()
             if required_bytes <= 0 or free_gb < 0:
                 return True, free_gb
@@ -793,8 +1035,7 @@ class Engine:
             self._prefetch = None
             if self.chall_slot.served and self.chall_slot.served.repo == repo:
                 return False, "already serving"
-            snap = self._repo_cache_dir(repo) / "snapshots" / revision
-            if snap.exists():
+            if r2store.snapshot_ready(repo, revision):
                 # A completed snapshot needs no worker; the load-time
                 # keep_repo prune protection covers it from here.
                 return True, "already cached"
@@ -833,8 +1074,14 @@ class Engine:
         fetched. HF_HOME is pinned explicitly so the watchdog measures the
         same cache tree the child writes."""
         t0 = time.time()
-        code = ("from huggingface_hub import snapshot_download; "
-                f"snapshot_download(repo_id={repo!r}, revision={revision!r})")
+        if r2store.is_r2(repo):
+            # Same child-process isolation; r2store verifies as it downloads
+            # and only writes the completion marker on a full match.
+            code = ("from evalsrv import r2store; "
+                    f"r2store.fetch_snapshot({repo!r}, {revision!r})")
+        else:
+            code = ("from huggingface_hub import snapshot_download; "
+                    f"snapshot_download(repo_id={repo!r}, revision={revision!r})")
         # hf_transfer (multi-stream Rust downloader) only for this watchdogged
         # child: single-stream python pulls were observed at 26 MB/s (2647s for
         # one challenger, 2026-08-28) and its known failure mode — hanging on a
@@ -932,7 +1179,7 @@ class Engine:
     # -- disk hygiene ---------------------------------------------------------------
     @staticmethod
     def _repo_cache_dir(repo: str) -> Path:
-        return Path(HF_HOME) / "hub" / ("models--" + repo.replace("/", "--"))
+        return r2store.repo_cache_dir(repo, HF_HOME)
 
     def _cached_repo_bytes(self, repo: str) -> int:
         """On-disk bytes already cached for a repo (blob payloads; snapshot
@@ -951,7 +1198,8 @@ class Engine:
         return total
 
     def _prune_challenger_cache(self, keep_repo: str | None = None,
-                                keep_revision: str | None = None) -> None:
+                                keep_revision: str | None = None,
+                                extra_keep: set[str] | None = None) -> None:
         """Free space before a new challenger download: drop every cached
         model that is not the teacher, the current king, or the incoming
         challenger itself. The incoming repo dir is kept only when it holds a
@@ -972,14 +1220,16 @@ class Engine:
                 keep.add(self.chall_slot.served.repo)
             if self._prefetch is not None and self._prefetch[1].is_alive():
                 keep.add(self._prefetch[0])
-            if keep_repo and keep_revision:
-                snap = self._repo_cache_dir(keep_repo) / "snapshots" / keep_revision
-                if snap.exists():
-                    keep.add(keep_repo)
+            keep.update(self._materializing)
+            if extra_keep:
+                keep.update(r for r in extra_keep if r)
+            if keep_repo and keep_revision and r2store.snapshot_ready(
+                    keep_repo, keep_revision, HF_HOME):
+                keep.add(keep_repo)
             hub = Path(HF_HOME) / "hub"
             if not hub.exists():
                 return
-            keep_dirs = {"models--" + r.replace("/", "--") for r in keep}
+            keep_dirs = {r2store.cache_dir_name(r) for r in keep}
             # Rename under the lock (atomic — instantly invisible to every
             # snap.exists()/cache check), then rmtree outside it: deleting a
             # multi-GB tree takes long enough to stall launches otherwise.

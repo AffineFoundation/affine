@@ -271,6 +271,148 @@ Full writeups: `research/docs/REDTEAM.md`.
  converges to "first teacher uploader holds the throne". Found live: 4 of 28
  queued entries on 2026-08-28 were Qwen3.8-27B-shaped. Admission rule, not a
  scoring change — no wvk bump; verdicts/replays untouched.
+- **action dialects (2026-09-01, mechanism only — no contract change):**
+  where a turn's action span starts/ends is now a per-turn `action_kind`
+  resolved through `affine/dialects.py` (`bash` = one closed ```bash block;
+  `tool_call` = `<tool_call>…</tool_call>`; `boxed` = `\boxed{…}`) instead
+  of a hardcoded bash regex. R/G/B math, centering, band, and the canonical
+  thought rendering are untouched; only the action *parser* is pluggable.
+  Bash replays bit-identically (2.6M texts from 80 stored duels). Live D is
+  gated by `[dataset].allowed_action_kinds = ["bash"]` — the fold refuses
+  other kinds, the duel tripwires on a slice containing one. **Admitting a
+  new dialect is a contract event** (miners must then emit it on those
+  turns or forfeit them): explicit dated operator directive + a wvk
+  decision, not an agent edit. Rollouts policies declare their harness's
+  dialect via `action_kind` in `policies.toml` (default bash).
+- **wvk 11 fork NOTICED, not live (notice posted 2026-09-02; effective not
+  before 2026-09-09, on an explicit dated operator directive):** admit
+  `boxed` (math, `affine-math-v1`, MATH train) and `tool_call` (wiki
+  search, `affine-wiki-v1`) turns to D at target shares math 0.10 /
+  tool_use 0.10 (coding 0.50 / terminal 0.25 / nl2repo 0.05). Forward-only:
+  reign stands, no genesis reset, `min_submission_block` unchanged. Notice
+  is live in `llms.txt` ("Upcoming fork" section), the dashboard banner
+  (`affine/website/index.html` `#fork-notice`, remove at T0) and Discord.
+  Until T0 the gate stays `["bash"]`; non-bash turns accumulate on the HF
+  staging dataset (rollouts views admit any *registered* dialect; fold,
+  `corpus_push`, and the duel tripwire still enforce the allowlist; a
+  temporary `[fold_mix]` in `rollouts/sources.toml` keeps the fold on the
+  old mix until T0 — delete it then). Gate-closed dry run (2026-09-02, 20
+  turns/dialect, teacher-as-challenger vs the bash king): pipeline sound
+  (finite lp*, refs 2.55–2.8/3, bash replay parity 6/6 exact) with three
+  findings for the T0 decision — (1) **forfeits are dropped from pairing,
+  not lost**: `score.duel` pairs only turns valid on both sides, so a
+  bash-only king loses no margin on dialect turns it cannot answer (already
+  ~5% of bash turns today); (2) **boxed hits the token cap**: the king
+  reached `\boxed{}` on 3/18 math turns — every miss was `finish=length`
+  at `max_thought_tokens+max_action_tokens = 1792`, and the teacher's own
+  ref yield was 2.55/3 for the same reason; a per-dialect or larger cap is
+  a `[duel]` knob = contract change; (3) **tool_call carries little R and
+  fails B**: 16/19 turns had all 3 teacher refs identical (next tool call is
+  near-deterministic) so centered R ≡ 0, and per-byte B ≈ 0.005–0.010 <
+  0.02 because the `<tool_call>` XML is boilerplate (teacher B pass 6%,
+  king 15%, vs ~60% on bash). Math R is strong (teacher mean_r_leg 0.054 vs
+  0.012 on bash) and B ≈ 0.84. Verdicts now stamp `duel_params.
+  allowed_action_kinds`, `slice.dialects`, and per-side/teacher
+  `by_dialect` telemetry (additive; single `bash` entry pre-fork).
+  **Second harness (2026-09-02):** coding + terminal sources also run
+  under verifiers' `bash` harness (native `bash` + `edit` tools via tool
+  calls; policies `teacher_bashtool` / `glm_bashtool`, `action_kind =
+  tool_call`, shares mirror the textbased pair → ~half of new shell turns).
+  Probe on 2 terminal-bench tasks: 28 turns derived, baked parity held,
+  system marker "tool" present. Staged until T0 like every non-bash turn.
+  Same-task/two-prompt-styles is the anti-scaffold-overfit lever. Third
+  harness the same day: `pi` (pi-coding-agent over pi-acp; own 2.5k-char
+  system prompt, tools read/bash/edit/write; policies `teacher_pi` /
+  `glm_pi`, equal shares → three harnesses split shell turns ~evenly;
+  probe 16 turns derived, parity held, 1/2 rollouts HarnessError "no
+  visible reply" = teacher reasoning-only answer). hermes_agent / rlm are
+  `tool_call` too and need no new dialect — terminus_2 (JSON command
+  blocks) would.
+  **Prefix = what the model saw (2026-09-02, mechanism only):** turn
+  prefixes are now built per reply from the verifiers message *graph*
+  (`rollouts/schema.py::sampled_paths`: root→node path of each sampled
+  assistant node; `slice_messages(..., turn=(i, n))` slices that path for
+  its last message only) instead of flattening `nodes` in order. The path
+  is by construction the exact prompt the model was sent, for any harness
+  — echo re-serialization (pi), dropped turns, compaction, subagent
+  branches — with no per-harness pattern. Found while checking: mini-swe
+  parses a reply *before* adding it to history, so a FormatError /
+  token-limit reply never entered the model's context, but the flattened
+  walk kept it: 3,595/13,310 stored mini-swe trajectories (27%) and
+  17.9% of turns had a prefix with a phantom assistant turn. Parity on
+  1,110 linear traces: records identical; 270 forked traces now slice to
+  `…user, user(nudge)` prefixes (+6% turns: shorter prefixes clear the
+  char cap, phantom-turn false "leaks" gone). Not a contract change; the
+  duel scores whatever prefix D carries. Prior-turn `reasoning_content`
+  (Qwen3.8 template renders it in tool loops when the client sends it
+  back; pi / bash / null harnesses do) is still dropped from prefixes —
+  open decision, RT-13 surface.
+  **Trace-first corpus on data.affine.io (built + gated 2026-09-02, cuts
+  over at the wvk 11 T0 with `ops/t0/t0_cutover.sh` — same directive, one
+  event):** the canonical dataset object is now the full rollout **trace**
+  (envelope: task + policy + verifiers message graph incl.
+  `reasoning_content` + tool schemas), published by the datagen pod
+  straight to Cloudflare R2 bucket `affine-data` = `https://data.affine.io`
+  (`traces/chunks/*.jsonl.gz`, sha-named immutable; `traces/manifest.json`
+  → `traces/manifests/{sha}.json`; `rollouts/r2mirror.py`, live since
+  13:05 UTC, 1045 chunks / 23,655 rollouts; HF `affine-rollout-traces` is a
+  cold copy behind `ROLLOUTS_HF_TRACE_MIRROR`, drop after 30 d; turn staging
+  to HF retired). D is a versioned **view** `duel_turns@v4`
+  (`affine/corpus/view.py`: one record per rollout = baked plain-text node
+  graph + turn metas; prefix = root→parent path of `node_id`;
+  `materialize_turn` handles v2 `msg_pos` and v4 `node_id`). Fold:
+  `ops/corpus_build.py` (replaces `ops/datagen_refresh.py`; pm2 entry
+  repointed, start only after T0 `--init`) → `views/duel_turns@v4/{chunks,
+  index}` + `corpus/manifest.json` (schema_version **3**, `view_spec`,
+  `traces_manifest_sha256`, `allowed_action_kinds`; first revision's
+  `prev_manifest` chains into `turns/manifests/`). Hippius `turns/**`
+  copied byte-identical to `data.affine.io/turns/**` (39 objects, sha
+  verified). Evalsrv `CorpusSync` has the schema-3 branch; verdict `slice`
+  gains `view_spec` + `corpus_base_url`. **Gates passed 2026-09-02:**
+  derivation parity 23,655/23,655 envelopes identical (v3 `derive_turns`
+  vs v4 view, all 11 sources); legacy import 600/600 sampled v2 turns
+  materialize byte-identical (prefix, reference, strata); legacy replay 8
+  verdicts × 4 manifests (epochs 10–13) reproduce `turn_ids` + `slice.
+  digest` from `data.affine.io/turns/manifests/{sha}`; golden slices 3
+  seeds × 1300 on the staged schema-3 manifest (bash ~1060 / boxed ~145 /
+  tool_call ~85, `check_dialects` passes with all three, trips on
+  `["bash"]`); 60-turn gate-closed mini-duel (20/dialect, teacher vs bash
+  king, v4-materialized prefixes): finite lp*, refs 2.75–2.95/3; pod dry
+  run to `staging/traces/` then promoted; size 0.86 GB traces + 60 MB
+  views (≈$0.03/mo). Staging rehearsal of the fold published epoch 14
+  (legacy 59,745 + 105) and 15 (+4,289 boxed, +1,923 tool_call) under
+  `data.affine.io/staging/`. `[fold_mix]` still holds the fold on the
+  bash-only mix; `--ignore-fold-mix` is the T0 rehearsal flag. Contract
+  patch for T0: `ops/t0/wvk11_T0.patch` (wvk 11, `allowed_action_kinds`,
+  `corpus_base_url`/`manifest_key` → data.affine.io; `min_submission_block`
+  unchanged). Notice extended in `llms.txt` (§ Upcoming fork "Bundled with
+  the fork" + § Turn corpus D schema_version 3 block). Not in scope:
+  reasoning in prefixes (`duel_turns@v5` later, same traces).
+- **private R2 submissions (`affine2`, built 2026-09-02, go-live directive
+ 2026-09-03 — admission mechanism, no wvk bump):** miners no longer publish
+ to HF. Flow: `affine2|activate|<hotkey>|<ed25519 sig>` → validator
+ (`affine/registrations.py`) mints a prefix-scoped temporary R2 credential
+ from a per-registration parent Cloudflare token, seals it (NaCl sealed box)
+ to the miner's **Ed25519** hotkey and posts it at
+ `https://dash.affine.io/mailbox/v1/<registration_id>/generations/…bin` →
+ miner uploads the checkpoint + signed `manifest.json` to
+ `affine-private-models/models/registrations/<registration_id>/` →
+ `affine2|ready|<registration_id>|<sha256(manifest)>` → validator revokes
+ the credential, verifies inventory/signature/hygiene/arch, enqueues with
+ `repo = r2://<bucket>/<prefix>`, `revision = model_digest`. Eval pods fetch
+ with a read-only key and verify every sha256 before vLLM loads
+ (`evalsrv/r2store.py`). Only a **crowned** model is copied to the public
+ bucket (`https://models.affine.io/models/sha256/<digest>/`); private
+ prefixes expire after `private_retention_days` (60; a private-ref king is
+ re-promoted on every weight sweep). Wire contract in `affine/r2protocol.py`; miner client
+ `affine/scripts/submit.py` (`hotkey/check/register/auth/upload/ready/
+ status/submit`). Toggle `[submission.r2].enabled` + `hf_cutover_block`
+ in `affine.toml`; secrets in `~/.affine-validator.env` (the validator's
+ env snapshot — the repo `.env` is NOT read by pm2) (`CLOUDFLARE_*`, `R2_*`,
+ `AFFINE_MAILBOX_SIGNING_SEED`, `AFFINE_EVAL_R2_*`); infra bootstrap
+ `affine/scripts/r2_setup.py`. sr25519 hotkeys are rejected at intake
+ (`rejected_not_ed25519`). Validator state for registrations is
+ `state/registrations.json` mirrored to the private bucket — no database.
 - seed king: `Qwen/Qwen3.6-35B-A3B` @ `995ad96e` (min(R,G)-era genesis,
   unpaid — emissions burn until a registered miner crowns; the Albedo
   genesis `dendriteholdings/albedo-qwen3.6-35b-king-genesis` seeded eras
@@ -441,6 +583,25 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 2. Bootstrap → `/health` ok=true → full **n=80** genesis-vs-challenger burn-in.
 3. Bump `min_submission_block` to current finney tip at go-live.
 4. Mirror corpus to an AffineFoundation HF dataset when org write exists; retarget toml.
+
+### R2 cutover go-live (2026-09-03, order matters)
+1. Cloudflare account API-token quota is 500; each `activate` creates one
+   token (deleted at `ready`, GC'd every 30 min). 2026-09-02: 480 unused
+   `arbos-r2-s3-<hex>` leftovers (2026-03-25/26) were deleted on operator
+   directive → 16/500 in use. If creation ever hits the quota, activations
+   defer (not burn) but nobody can upload — check `list_tokens` first.
+2. `affine/affine.toml`: `[submission.r2] enabled = true`,
+   `hf_cutover_block = <finney tip>`. No `weight_version_key` change.
+3. `pm2 restart affine-validator` — reads `~/.affine-validator.env` (R2 keys
+   synced there 2026-09-02; fail-closed `SystemExit` if any is missing).
+4. `cd affine && python scripts/redeploy_pods.py --all` — live pods get the
+   r2store code + `AFFINE_EVAL_R2_*` without a re-rent (kills the in-flight
+   duel; it requeues as infra). Until this runs, an R2 challenger fails with
+   `FetchError` → infra requeue, never a burn.
+5. `python scripts/build_llms_txt.py` (already run) — then watch
+   `api/v1/contract` shows `submission_r2.validator_identity`, and the first
+   `activate` produces a 200 on `https://dash.affine.io/mailbox/v1/<id>/…`.
+6. Remove the `#r2-notice` banner text "tomorrow" wording once live.
 
 ### Research / paper
 1. Public claim = **distillation meter** (teacher-anchored Reason) + teacher

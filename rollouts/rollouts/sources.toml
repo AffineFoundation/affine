@@ -7,25 +7,60 @@
 # targets at fold time.
 
 [mix]
+# Generation targets. Dialect cutover (2026-09-01): math + tool_use are
+# generated from now on so a backlog stages behind the closed
+# [dataset].allowed_action_kinds gate and lands on day one of the fork.
+coding = 0.50
+terminal = 0.25
+nl2repo = 0.05
+math = 0.10
+tool_use = 0.10
+
+# Fold-side override while the gate is closed. Without it the fold waterfill
+# would see coding/terminal above their new targets and defer them for the
+# whole notice period while math/tool_use cannot be admitted yet. DELETE
+# this block in the wvk-11 fork commit so the fold follows [mix].
+[fold_mix]
 coding = 0.60
 terminal = 0.30
 nl2repo = 0.10
 
+# Language targets for NEWLY FOLDED coding turns (2026-09-01). Enforced by
+# ops/datagen_refresh.py as a second waterfill (after the group waterfill)
+# keyed by rec["language"], with cumulative counts in state["lang_counts"].
+# Existing corpus turns are never rebalanced. Tag → bucket aliasing lives in
+# the fold script: rust→rs, js/ts/typescript/javascript→tsjs, cpp/c→rs,
+# php→tsjs, missing/unknown→python.
+[lang_mix.coding]
+python = 0.25
+go = 0.20
+java = 0.20
+rs = 0.20
+tsjs = 0.15
+
 [defaults]
 # Policy ids from policies.toml; sources may override with `policies = [...]`.
-policies = ["glm_textbased"]
+# Scheduler picks by per-policy kept-turn deficit (equal shares here, so
+# the three harnesses split new turns evenly).
+# 2026-09-02: teacher-only. The GLM seat (glm_* policies, still defined in
+# policies.toml) is switched off by operator decision — every new prefix is
+# the duel teacher's own history, so duel-time refs stay on-policy.
+policies = ["teacher_textbased", "teacher_bashtool", "teacher_pi"]
 
 # -- coding --------------------------------------------------------------------
 
 [source.swerebench_main]
 # The former main datagen loop (mini-swe-agent on the nebius pool).
+# Retired 2026-09-01 (share 0): old Python-only dump whose 97 repos overlap
+# the 860-task exam — the block stays so source → group mapping keeps
+# resolving for already-staged records.
 group = "coding"
 runner = "mini_swe"
 catalog = "hf_swebench"
 dataset = "nebius/SWE-rebench"
 split = "filtered"
 swe_eval = true          # swebench verdict as rewards.solved telemetry
-share = 3.0
+share = 0.0
 
 [source.scaleswe]
 group = "coding"
@@ -69,7 +104,9 @@ catalog = "hf"
 dataset = "PrimeIntellect/Multi-SWE-RL-Verified"
 split = "train"
 row_meta = "multiswe"
-share = 1.0
+# 1.0 → 3.0 (2026-09-01): absorb the retired swerebench_main share with the
+# multilingual repo-bugfix source closest to the official board's task style.
+share = 3.0
 
 [source.swesmith]
 group = "coding"
@@ -88,6 +125,51 @@ dataset = "PrimeIntellect/SWE-Lego-Real-Data-Verified"
 split = "resolved"
 row_meta = "swelego"
 share = 2.0
+
+# -- coding: Harbor-packaged SWE benchmarks (2026-09-02) -----------------------
+#
+# All three load on the pod (catalog = "harbor_swe") with public Docker Hub
+# images. They ship at share 0.0 because each is a PUBLIC TEST BENCHMARK:
+# putting its tasks in D teaches every miner the yardstick the field grades
+# with, and Verified's repos overlap our advisory swe-rebench bench (the
+# reason swerebench_main was retired). Turning one on is an operator call —
+# set share > 0 and the scheduler picks it up on the next supervisor restart.
+
+[source.swebench_multilingual]
+# 300 tasks, 9 languages (C, C++, Go, Java, JS/TS, PHP, Ruby, Rust) — the
+# only one of the three that adds language coverage.
+group = "coding"
+runner = "verifiers"
+taskset_id = "swebench-multilingual-v1"
+catalog = "harbor_swe"
+select = "tasks"
+pass_dataset = false
+task_id_basename = true
+share = 0.0
+
+[source.swebench_verified]
+# 500 Python tasks from the 12 classic repos (django, sympy, astropy, ...).
+group = "coding"
+runner = "verifiers"
+taskset_id = "swebench-verified-v1"
+catalog = "harbor_swe"
+select = "tasks"
+pass_dataset = false
+task_id_basename = true
+share = 0.0
+
+[source.swebench_pro]
+# 731 tasks (Scale AI) across 11 repos — Python (ansible, openlibrary,
+# qutebrowser), Go (flipt, teleport, vuls, navidrome), TS/JS (protonmail,
+# element-web, tutanota, nodebb). Language pinned per repo in catalog.py.
+group = "coding"
+runner = "verifiers"
+taskset_id = "swebench-pro-v1"
+catalog = "harbor_swe"
+select = "tasks"
+pass_dataset = false
+task_id_basename = true
+share = 0.0
 
 # -- terminal ------------------------------------------------------------------
 
@@ -120,4 +202,42 @@ taskset_id = "nl2repobench-v1"
 catalog = "nl2repobench"    # bundled test_files scan
 select = "tasks"
 pass_dataset = false
+share = 1.0
+
+# -- math (boxed dialect) --------------------------------------------------------
+#
+# strata_buckets sets the SLICE share, not the turn share: sample_slice
+# draws ~1 turn per stratum per duel, so share ≈ buckets / total strata.
+# Corpus epoch 13 has 3752 repo|phase strata; 470 buckets per new group
+# gives 470 / (3752 + 2·470) ≈ 10% each. Re-derive when the coding strata
+# count moves a lot (it grows with every new repo).
+
+[source.affine_math]
+group = "math"
+runner = "verifiers_chat"           # harness null, subprocess runtime
+taskset_id = "affine-math-v1"       # rollouts/envs/affine_math_v1
+catalog = "hf"
+dataset = "DigitalLearningGmbH/MATH-lighteval"
+split = "train"
+row_meta = "math"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_boxed"]           # teacher-only since 2026-09-02
+strata_buckets = 470
+share = 1.0
+
+# -- tool_use (tool_call dialect) -----------------------------------------------
+
+[source.affine_wiki]
+group = "tool_use"
+runner = "verifiers_chat"
+taskset_id = "affine-wiki-v1"       # rollouts/envs/affine_wiki_v1
+catalog = "hf"
+dataset = "willcb/wiki-trivia-questions-v4"
+split = "train"
+row_meta = "wiki_trivia"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_toolcall"]        # teacher-only since 2026-09-02
+strata_buckets = 470
 share = 1.0

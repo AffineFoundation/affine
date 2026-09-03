@@ -242,6 +242,41 @@ export function fmtScore(v) {
   return n.toFixed(3);
 }
 
+/** Nice tick step so a huge loser (z = −120) cannot print 60 overlapping labels. */
+function niceStep(span, maxCount) {
+  const raw = span / Math.max(2, maxCount);
+  if (!(raw > 0) || !Number.isFinite(raw)) return 1;
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const err = raw / pow;
+  if (err <= 1) return pow;
+  if (err <= 2) return 2 * pow;
+  if (err <= 5) return 5 * pow;
+  return 10 * pow;
+}
+
+function niceTicks(lo, hi, maxCount) {
+  const step = niceStep(hi - lo, maxCount);
+  const k0 = Math.ceil(lo / step - 1e-9);
+  const k1 = Math.floor(hi / step + 1e-9);
+  const ticks = [];
+  for (let k = k0; k <= k1; k++) ticks.push(k * step);
+  if (!ticks.length) ticks.push(lo, hi);
+  // Label an intentional clip floor (e.g. −8σ) even when it is off the step.
+  if (ticks[0] - lo > step * 0.35) ticks.unshift(lo);
+  return ticks;
+}
+
+function tickBudget(innerH) {
+  return Math.max(4, Math.min(7, Math.floor(innerH / 36)));
+}
+
+/** Keep the crown band readable: one −120 blowout must not flatten +2σ. */
+function clipDomain(rawMin, rawMax, hardFloor, airMin) {
+  const max = rawMax;
+  const min = Math.min(airMin, Math.max(hardFloor, rawMin));
+  return { min, max, clippedLo: rawMin < min, clippedHi: rawMax > max };
+}
+
 export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } = {}) {
   const points = duelPoints(history);
   const width = Math.max(widthOpt || chartWidth(), 280);
@@ -259,16 +294,17 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
 
   const zs = points.map((p) =>
     p.event === "crowned" ? Math.max(Number(p.z) || 0, 3) : Number(p.z) || 0);
-  let min = Math.min(-1, ...zs, 0);
-  let max = Math.max(3.5, ...zs, 1);
-  max = Math.max(max, 3.2);
-  const yAt = (v) => padT + ((max - v) / (max - min || 1)) * (height - padT - padB);
+  const rawMin = Math.min(-1, ...zs, 0);
+  const rawMax = Math.max(3.5, ...zs, 1);
+  // −8σ is already a wipeout; deeper values share that floor so the 2σ
+  // dethrone line stays in the top of the pane instead of a 2px sliver.
+  const { min, max } = clipDomain(rawMin, rawMax, -8, -2);
+  const innerH = height - padT - padB;
+  const yAt = (v) => padT + ((max - v) / (max - min || 1)) * innerH;
   const xAt = (i) => padL + slot * (i + 0.5);
 
-  const ticks = [];
-  const step = max - min > 8 ? 2 : 1;
-  for (let v = Math.ceil(min); v <= Math.floor(max); v += step) ticks.push(v);
-  if (!ticks.includes(0)) ticks.push(0);
+  const ticks = niceTicks(min, max, tickBudget(innerH));
+  if (!ticks.some((v) => Math.abs(v) < 1e-9)) ticks.push(0);
   ticks.sort((a, b) => a - b);
 
   const gold = "#f3c449";
@@ -298,18 +334,26 @@ export function drawDuelZ(svg, history, { width: widthOpt, height: heightOpt } =
 
   const columns = points.map((p, i) => {
     const z = zs[i];
+    const shown = Math.min(max, Math.max(min, z));
     const x = xAt(i);
     const y0 = yAt(0);
-    const y1 = yAt(z);
+    const y1 = yAt(shown);
     const top = Math.min(y0, y1);
     const h = Math.max(Math.abs(y0 - y1), 2);
     const crowned = p.event === "crowned";
     const fill = crowned ? gold : (z >= 0 ? bar : "rgba(255,71,71,0.55)");
     const zLabel = fmtZ(p.event === "crowned" && p.z == null ? kCrown : p.z);
-    const tip = `${duelTipName(p)} · ${p.event} · z=${zLabel} · ${fmtTime(p.at)}`;
+    const clipped = z < min - 1e-9;
+    const tip = `${duelTipName(p)} · ${p.event} · z=${zLabel}${clipped ? " (clipped)" : ""} · ${fmtTime(p.at)}`;
+    const hatch = clipped
+      ? `<line x1="${x - barW / 2 + 0.5}" x2="${x + barW / 2 - 0.5}" y1="${top + h - 3}" y2="${top + h - 3}"
+           stroke="rgba(0,0,0,0.4)" stroke-width="1"/>
+         <line x1="${x - barW / 2 + 0.5}" x2="${x + barW / 2 - 0.5}" y1="${top + h - 1.5}" y2="${top + h - 1.5}"
+           stroke="rgba(0,0,0,0.4)" stroke-width="1"/>`
+      : "";
     return `<g class="duel-hit" data-tip="${esc(tip)}"${duelCidAttr(p)}>
       <rect x="${x - barW / 2}" y="${top}" width="${barW}" height="${h}" rx="1" fill="${fill}"
-        opacity="${crowned ? 1 : 0.92}"/>
+        opacity="${crowned ? 1 : 0.92}"/>${hatch}
     </g>`;
   }).join("");
   const axis = duelAxisMarks(points, xAt, height - padB, width - padR + 12);
@@ -353,20 +397,23 @@ export function drawDuelMargin(svg, history, { width: widthOpt, height: heightOp
     return p.margin != null && Number.isFinite(v) ? v : null;
   });
   const have = margins.filter((v) => v != null);
-  let min = Math.min(0, ...have);
-  let max = Math.max(delta * 1.8, ...have);
-  const pad = (max - min) * 0.1 || 0.001;
-  min -= pad;
-  max += pad;
-  const yAt = (v) => padT + ((max - v) / (max - min || 1)) * (height - padT - padB);
+  const rawMin = Math.min(0, ...have);
+  const rawMax = Math.max(delta * 1.8, ...have);
+  // Same idea as the σ chart: a −0.16 wipeout must not hide δ = 0.002.
+  const { min: clippedMin, max: clippedMax } = clipDomain(
+    rawMin, rawMax, -0.02, -delta);
+  const pad = Math.max((clippedMax - clippedMin) * 0.08, Math.abs(clippedMax) * 0.1, 0.0005);
+  const min = rawMin < clippedMin ? clippedMin : clippedMin - pad;
+  const max = clippedMax + pad;
+  const innerH = height - padT - padB;
+  const yAt = (v) => padT + ((max - v) / (max - min || 1)) * innerH;
   const xAt = (i) => padL + slot * (i + 0.5);
 
   const gold = "#f3c449";
   const bar = "#c6bda8";
   const mono = "IBM Plex Mono, monospace";
 
-  const span = max - min || 1;
-  const ticks = Array.from({ length: 5 }, (_, i) => min + (span * i) / 4);
+  const ticks = niceTicks(min, max, tickBudget(innerH));
   const grid = ticks.map((v) => {
     const y = yAt(v);
     return `<g>
@@ -390,17 +437,25 @@ export function drawDuelMargin(svg, history, { width: widthOpt, height: heightOp
   const columns = points.map((p, i) => {
     const m = margins[i];
     if (m == null) return "";
+    const shown = Math.min(max, Math.max(min, m));
     const x = xAt(i);
     const y0 = yAt(0);
-    const y1 = yAt(m);
+    const y1 = yAt(shown);
     const top = Math.min(y0, y1);
     const h = Math.max(Math.abs(y0 - y1), 2);
     const crowned = p.event === "crowned";
     const fill = crowned ? gold : (m >= 0 ? bar : "rgba(255,71,71,0.55)");
-    const tip = `${duelTipName(p)} · ${p.event} · margin=${fmtScore(m)} · ${fmtTime(p.at)}`;
+    const clipped = m < min - 1e-12;
+    const tip = `${duelTipName(p)} · ${p.event} · margin=${fmtScore(m)}${clipped ? " (clipped)" : ""} · ${fmtTime(p.at)}`;
+    const hatch = clipped
+      ? `<line x1="${x - barW / 2 + 0.5}" x2="${x + barW / 2 - 0.5}" y1="${top + h - 3}" y2="${top + h - 3}"
+           stroke="rgba(0,0,0,0.4)" stroke-width="1"/>
+         <line x1="${x - barW / 2 + 0.5}" x2="${x + barW / 2 - 0.5}" y1="${top + h - 1.5}" y2="${top + h - 1.5}"
+           stroke="rgba(0,0,0,0.4)" stroke-width="1"/>`
+      : "";
     return `<g class="duel-hit" data-tip="${esc(tip)}"${duelCidAttr(p)}>
       <rect x="${x - barW / 2}" y="${top}" width="${barW}" height="${h}" rx="1" fill="${fill}"
-        opacity="${crowned ? 1 : 0.92}"/>
+        opacity="${crowned ? 1 : 0.92}"/>${hatch}
     </g>`;
   }).join("");
   const axis = duelAxisMarks(points, xAt, height - padB, width - padR + 12);
@@ -801,7 +856,7 @@ export const HERO_CHARTS = [
   {
     id: "hero-margin",
     title: "Margin (σ)",
-    caption: "paired z vs king per duel · dashed = 2σ crown bar",
+    caption: "paired z vs king · dashed = 2σ · losses below −8σ clipped",
     detail: `<p>The duel in units of its own noise: each bar is
       <code>z = mean(Reason_c − Reason_k) / SE</code> against the reigning
       king. Because the mean is paired per turn, turn difficulty cancels — a
