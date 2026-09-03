@@ -143,7 +143,13 @@ for _ in range(120):
 else:
     raise SystemExit("eval pod stayed busy for 2h; rerun step 3 later")
 PY
+# Validator paused for the redeploy: its health loop would otherwise
+# soft-restart the OLD bootstrap while the tar uploads (stage-1 race,
+# 2026-09-03). A duel dispatched in the idle->stop gap is recovered from
+# in_flight on start (requeued at front, uncounted).
+pm2 stop affine-validator
 (cd affine && python scripts/redeploy_pods.py)
+pm2 start affine-validator --update-env
 pm2 delete affine-corpus-refresh >/dev/null 2>&1 || true
 pm2 start affine/scripts/ecosystem.config.js --only affine-corpus-refresh
 pm2 save
