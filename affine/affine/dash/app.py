@@ -52,10 +52,13 @@ def _etag(payload) -> str:
 
 
 def _json(payload, *, max_age: int = 5, request: Request | None = None,
-          immutable: bool = False) -> JSONResponse:
+          immutable: bool = False) -> Response:
     tag = f'"{_etag(payload)}"'
     if request is not None and request.headers.get("if-none-match") == tag:
-        return JSONResponse(status_code=304, content=None, headers={
+        # A 304 carries no body. JSONResponse(content=None) rendered b"null",
+        # which h11 rejects ("Too much data for declared Content-Length") on
+        # every conditional poll -- 6M tracebacks / 8.5 GB of dash.err.log.
+        return Response(status_code=304, headers={
             "ETag": tag,
             "Cache-Control": (
                 f"public, max-age={max_age}, immutable" if immutable

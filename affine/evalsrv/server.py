@@ -49,6 +49,7 @@ from affine.eval_client import Fault
 from . import benchrunner, dueling
 from .corpus import CorpusSync
 from .engine import Engine
+from .r2store import FetchError, IntegrityError
 from .vllm_client import ContextLengthError, EngineUnreachableError, Served
 
 log = logging.getLogger("evalsrv")
@@ -262,17 +263,6 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
             # challenger's — infra code so the miner's slot is never burned.
             raise DuelFault(Fault.TEACHER, "teacher not servable")
 
-        job["phase"] = "ensure_king"
-        _check_superseded()
-        if not _engine.ensure_king(req.king_repo, req.king_revision):
-            # A king that will not *launch* is a transient/pod fault, NOT proof
-            # the king is gone: infra code so the miner is not burned and the
-            # king is not dethroned. The root proves a king is truly gone with
-            # an HF metadata probe before reverting it.
-            raise DuelFault(
-                Fault.KING_LAUNCH,
-                f"king {req.king_repo}@{req.king_revision[:12]} failed to launch")
-
         job["phase"] = "load_challenger"
         _check_superseded()
         events.put({"type": "progress",
@@ -283,14 +273,42 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
         # (no miner burn); the validator defers it and the operator is paged.
         fits, free_gb = _engine.challenger_fits(
             req.challenger_weight_bytes,
-            repo=req.challenger_repo, revision=req.challenger_revision)
+            repo=req.challenger_repo, revision=req.challenger_revision,
+            extra_keep={req.king_repo})
         if not fits:
             raise DuelFault(
                 Fault.POD_CAPACITY,
                 f"challenger weights ~{req.challenger_weight_bytes / 1e9:.0f} GB "
                 f"do not fit {free_gb:.0f} GB free after cache prune; provision "
                 "a larger pod or lower submission.max_model_size_gb")
-        if not _engine.load_challenger(req.challenger_repo, req.challenger_revision):
+        # King + challenger occupy disjoint GPUs: launch together so a cold
+        # pair (evalsrv bounce) pays one vLLM start, not two in series.
+        try:
+            prepared = _engine.prepare_miners(
+                req.king_repo, req.king_revision,
+                req.challenger_repo, req.challenger_revision)
+        except IntegrityError as e:
+            # The private-bucket checkpoint is not what the miner committed
+            # to (digest / sha256 / manifest mismatch): a real rejection.
+            verdict = {"challenger_wins": False, "job_id": job_id,
+                       "rejection_reason": f"integrity:{str(e)[:300]}"}
+            job["verdict"] = verdict
+            events.put({"type": "verdict", "data": verdict})
+            job["state"] = "completed"
+            return
+        except FetchError as e:
+            # Could not read the bucket (pod creds, network, disk): our fault.
+            code = (Fault.KING_LAUNCH if e.repo == req.king_repo
+                    else Fault.CHALLENGER_INFRA)
+            raise DuelFault(code, f"r2 fetch failed: {e}") from e
+        if not prepared:
+            if not _engine.king_serveds():
+                # A king that will not *launch* is a transient/pod fault, NOT
+                # proof the king is gone: infra code so the miner is not burned
+                # and the king is not dethroned. Either copy is enough.
+                raise DuelFault(
+                    Fault.KING_LAUNCH,
+                    f"king {req.king_repo}@{req.king_revision[:12]} failed to launch")
             fault = _engine.diagnose_load_failure()
             if fault == "infra":
                 # Our pod is unhealthy (disk/OOM/dead teacher). Emit an infra
@@ -316,11 +334,13 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
         try:
             verdict, artifact = asyncio.run(dueling.run_duel(
                 _cfg.raw, TURNS_PATH,
-                king=Served("king", req.king_repo, req.king_revision,
-                            _engine.king_slot.port),
-                challenger=Served("challenger", req.challenger_repo,
-                                  req.challenger_revision,
-                                  _engine.chall_slot.port),
+                king=_engine.king_serveds() or [
+                    Served("king", req.king_repo, req.king_revision,
+                           _engine.king_slot.port)],
+                challenger=_engine.challenger_serveds() or [
+                    Served("challenger", req.challenger_repo,
+                           req.challenger_revision,
+                           _engine.chall_slot.port)],
                 # All servable teacher replicas — dueling round-robins the
                 # echo load across them. Falls back to the primary endpoint
                 # if the engine reports none (ensure_teacher just passed).
@@ -343,7 +363,7 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
             name = (e.name or "").lower()
             if name.startswith("teacher"):
                 code = Fault.TEACHER
-            elif name == "king":
+            elif name.startswith("king"):
                 code = Fault.KING_LAUNCH
             else:
                 code = Fault.CHALLENGER_INFRA

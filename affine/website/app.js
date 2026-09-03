@@ -45,7 +45,7 @@ import {
   resolveReign,
   setReignLookup,
   short,
-} from "./charts.js?v=72";
+} from "./charts.js?v=73";
 
 const $ = (id) => document.getElementById(id);
 
@@ -88,7 +88,15 @@ function renderLiveContract() {
   }
 }
 
-const hubUrl = (repo) => (repo ? `https://huggingface.co/${repo}` : null);
+// r2://affine-models/models/sha256/<digest>/ → public manifest on models.affine.io;
+// a private-bucket ref (losing / queued challenger) has no public URL.
+const PUBLIC_MODELS_BASE = "https://models.affine.io";
+const hubUrl = (repo) => {
+  if (!repo) return null;
+  const m = /^r2:\/\/([^/]+)\/(.+)$/.exec(repo);
+  if (!m) return `https://huggingface.co/${repo}`;
+  return m[1] === "affine-models" ? `${PUBLIC_MODELS_BASE}/${m[2]}manifest.json` : null;
+};
 const tmcHotkeyUrl = (hk) =>
   (hk ? `https://taomarketcap.com/hotkey/${encodeURIComponent(hk)}` : null);
 // Models are not stored on Hippius — only per-duel eval archives are. The
@@ -998,7 +1006,7 @@ function closeDuelPage() {
 
 /* ---------- dataset page (#dataset) ---------- */
 
-const MANIFEST_URL = "https://s3.hippius.com/affine-sn120/turns/manifest.json";
+const MANIFEST_URL = "https://data.affine.io/turns/manifest.json";
 const PAGE_SIZE = 50;
 
 const datasetPage = {

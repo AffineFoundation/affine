@@ -97,8 +97,11 @@ def main() -> None:
         remaining = {name: 100 for name in registry.sources}
         pick = sched.pick_source(remaining)
         assert state.kept_by_source.get(pick, 0) == 0, pick
+        # Every fixture batch was marked glm_textbased, so the deficit pick
+        # must be a different enabled policy (teacher seat, 0 kept).
         policy = sched.pick_policy(pick)
-        assert policy.id == "glm_textbased"
+        assert policy.id in registry.policies
+        assert policy.id != "glm_textbased", policy.id
         print("scheduler pick:", pick, "policy:", policy.id)
 
         # Zero-yield cooldown kicks in after 3 dead batches.

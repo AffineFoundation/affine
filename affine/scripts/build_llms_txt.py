@@ -36,6 +36,12 @@ def _site_base() -> str:
     return f"{h['endpoint'].rstrip('/')}/{h['bucket']}"
 
 
+def _data_base() -> str:
+    """Corpus D host — [dataset].corpus_base_url, the URL eval pods sync
+    from, so the published recipe can never point at a different copy."""
+    return str(_toml()["dataset"]["corpus_base_url"]).rstrip("/")
+
+
 def _dash_base() -> str:
     """Hot-path dashboard API + interactive UI (affine-dash behind Caddy)."""
     d = _toml().get("dashboard") or {}
@@ -62,6 +68,43 @@ def _serving_subs() -> dict[str, str]:
         "{TF_PIN}": tf_pin,
     }
 
+
+R2_GO_LIVE_DATE = "2026-09-03"
+
+
+def _r2_subs() -> dict[str, str]:
+    """Private-submission (R2) facts + the live/not-live status block."""
+    raw = _toml()
+    r2 = raw["submission"].get("r2") or {}
+    enabled = bool(r2.get("enabled", False))
+    cutover = int(r2.get("hf_cutover_block", -1))
+    if not enabled:
+        status = (
+            f"**Status: announced, goes live {R2_GO_LIVE_DATE}.** Until the "
+            "validator flips `[submission.r2].enabled = true` the HF path below "
+            "still works. From go-live, `affine1|…` HF commits are **dropped at "
+            "intake** and only the private R2 flow is accepted. Prepare now: "
+            "create the Ed25519 hotkey, register it, and pre-flight your "
+            "checkpoint directory with `submit.py check`.")
+    elif cutover < 0:
+        status = (
+            "**Status: LIVE.** The private R2 flow is the only submission path. "
+            "HF `affine1|…` commits are dropped at intake.")
+    else:
+        status = (
+            f"**Status: LIVE.** HF `affine1|…` commits revealed after block "
+            f"{cutover} are dropped at intake; the private R2 flow is the only "
+            "submission path.")
+    return {
+        "{R2_STATUS}": status,
+        "{MAILBOX_URL}": str(r2.get("mailbox_base_url", "")).rstrip("/"),
+        "{MODELS_URL}": str(r2.get("public_models_base_url", "")).rstrip("/"),
+        "{PRIVATE_BUCKET}": str(r2.get("private_bucket", "")),
+        "{PUBLIC_BUCKET}": str(r2.get("public_bucket", "")),
+        "{CRED_TTL_DAYS}": str(int(r2.get("credential_ttl_s", 604_800)) // 86400),
+        "{RETENTION_DAYS}": str(int(r2.get("private_retention_days", 60))),
+    }
+
 # Sources published under code/ and linked from llms.txt: (relative_path, description).
 # Paths starting with "ops/" resolve against the repo root; everything else
 # against affine/. All are published under code/<rel> either way.
@@ -69,23 +112,47 @@ SOURCES: list[tuple[str, str]] = [
     ("affine.toml", "chain contract SSOT — every frozen knob the validator runs"),
     ("affine/score.py", "min(R,G) v5: the score, the duel decision, and every "
      "telemetry helper — the scoring code"),
-    ("scripts/submit.py", "standalone commit-reveal submission client — this single "
-     "file is the whole submit path (trust it over any prose)"),
+    ("scripts/submit.py", "standalone miner client — hotkey / check / register / "
+     "auth / upload / ready / status; this single file is the whole submit "
+     "path (trust it over any prose)"),
+    ("affine/r2protocol.py", "private-submission wire contract: registration_id, "
+     "activate/ready payloads, mailbox key, manifest + envelope shapes"),
+    ("affine/registrations.py", "the access controller: what the validator does "
+     "with your activate (seal credentials) and ready (revoke, verify, enqueue)"),
+    ("affine/r2.py", "Cloudflare R2 admin + S3 helpers (temporary prefix-scoped "
+     "credentials, promote copy)"),
+    ("evalsrv/r2store.py", "how the eval pod fetches your private prefix and "
+     "verifies every file against the signed manifest before vLLM loads it"),
     ("affine/priors.py", "published prior bank behind the bank telemetry"),
     ("affine/chain.py", "reveal payload contract + commit builders"),
     ("evalsrv/dueling.py", "live duel: slice seeding, injectability probe, scoring loop"),
-    ("evalsrv/corpus.py", "corpus sync: schema v1 flat shards or v2 parquet "
-     "index + trajectory chunks"),
-    ("affine/corpus/materialize.py", "schema v2: stratum key + turn "
-     "materialization from trajectory records"),
+    ("evalsrv/corpus.py", "corpus sync: schema v1 flat shards, v2 parquet "
+     "index + trajectory chunks, v3 parquet index + view records"),
+    ("affine/corpus/materialize.py", "stratum key + turn materialization: "
+     "linear messages (v2 msg_pos) or root->node path (v3 node_id)"),
+    ("affine/corpus/view.py", "duel_turns@v4: how D is cut from rollout "
+     "traces — sampled paths, per-node bake, turn metas, the shared "
+     "admission validator; legacy v2 -> v4 conversion"),
+    ("affine/corpus/trace.py", "trace accessors: verifiers message graph -> "
+     "root-to-sampled-node paths, tool-traffic detection"),
+    ("affine/toolbake.py", "ToolBaker: renders tool schemas / calls / results "
+     "into plain chat text byte-exactly as the teacher's chat template does"),
+    ("ops/corpus_build.py", "the fold: traces manifest -> duel_turns@v4 view "
+     "chunks + parquet index + corpus manifest on data.affine.io (mix "
+     "waterfill, dedupe, panel excludes, dialect admission)"),
     ("evalsrv/chat.py", "the chat contract: prompt assembly, thought-injection "
      "template, z/y rollout parsing — byte-exact"),
+    ("affine/dialects.py", "action dialect registry: where a turn's action span "
+     "starts and ends per action_kind (bash / tool_call / boxed) + the "
+     "[dataset].allowed_action_kinds admission check the fold and duel share"),
     ("evalsrv/terms.py", "per-turn instrumentation: teacher references + the ten "
      "forced-logprob calls behind every lp* component"),
     ("evalsrv/vllm_client.py", "vLLM sampling + echo/logprob forcing + per-byte "
      "normalization (lp_per_byte)"),
     ("evalsrv/engine.py", "slot lifecycle + the exact `vllm serve` invocation "
      "your checkpoint is loaded with (_vllm_cmd)"),
+    ("evalsrv/swerunner.py", "advisory lite-bench harness: the derived "
+     "mini-swe-agent config incl. the ```bash action dialect (2026-09-01)"),
     ("pyproject.toml", "eval-pod dependency floors ([eval] extra) — vllm / "
      "transformers are installed fresh at pod provision"),
     ("affine/model_store.py", "checkpoint hygiene rules + weight-copy detection"),
@@ -100,11 +167,18 @@ SOURCES: list[tuple[str, str]] = [
 HEADER = """\
 # Affine (Bittensor SN120)
 
-> King-of-the-hill subnet. Miners submit HF checkpoints; the validator crowns \
-the reigning king by a single teacher-anchored distillation score — \
-min(R, G): centered Reason and banded thought Grounding — not an LLM judge. \
-This file is the miner index: submit path, public contract, and links to the \
-exact scoring code the network runs.
+> King-of-the-hill subnet. Miners upload checkpoints **privately** to a \
+validator-controlled bucket (nobody else can read them; only a crowned model \
+is published); the validator crowns the reigning king by a single \
+teacher-anchored distillation score — min(R, G): centered Reason and banded \
+thought Grounding — not an LLM judge. This file is the miner index: submit \
+path, public contract, and links to the exact scoring code the network runs.
+
+**Cutover notice (posted 2026-09-02): private R2 submissions go live \
+2026-09-03. From then on Hugging Face `affine1|…` commits are dropped at \
+intake, and your hotkey MUST be Ed25519** (btcli's default sr25519 hotkey \
+cannot open the sealed credentials). See "Submit checklist" below — the \
+whole flow is one command, `submit.py submit`.
 
 Machine-readable knobs (subset of the contract below) also ship as \
 `data/contract.json` on this site. When in doubt, trust the linked sources \
@@ -126,11 +200,14 @@ root ({BASE}/).
 **In this file (read on)**
 
 - How the game works — rules, duel flow, emissions
-- Submit checklist — HF layout, repo naming, commit-reveal payload
+- Submit checklist — Ed25519 hotkey, private R2 upload, the two on-chain \
+signals, what "private" means (and the retiring HF path)
 - Serving stack — how your checkpoint is loaded; pre-flight before you burn \
 the slot
 - min(R, G) — the one score you optimize (and the telemetry published \
 around it)
+- Upcoming fork: wvk 11 — action dialects (`tool_call`, `boxed` join \
+`bash`; notice posted 2026-09-02, effective not before 2026-09-09)
 - Post-crown exploit audit — the auditor, its published verdicts, and how to \
 run the same audit yourself
 - Public data — full field-level description of every published object
@@ -206,7 +283,7 @@ verdict and failure since genesis
 
 **Turn corpus D** (the prompts)
 
-- [turns/manifest.json]({BASE}/turns/manifest.json) — current manifest: \
+- [turns/manifest.json]({DATA}/turns/manifest.json) — current manifest: \
 shards/chunks, index, hashes, corpus epoch, `schema_version`
 - `turns/index/turns_*.parquet` — schema v2 turn index (sample here)
 - `turns/chunks/*.jsonl.gz` — schema v2 trajectory objects
@@ -225,7 +302,11 @@ shards/chunks, index, hashes, corpus epoch, `schema_version`
 before 2026-08-27) and a public turn corpus D \
 (sharded + manifest-pinned on this site under `turns/`) define the capability \
 axis (SWE-style coding).
-2. You commit-reveal an HF checkpoint pinned to a 40-hex git revision.
+2. You upload a checkpoint directory into your own private prefix of the \
+validator's R2 bucket and sign a manifest of it (every file's sha256; the \
+manifest's `model_digest` is your revision). Nobody but the validator can \
+read it. (Legacy until cutover: commit-reveal an HF repo pinned to a 40-hex \
+git revision.)
 3. The validator burns your hotkey's **one eval slot at enqueue** (not at \
 verdict). Failed hygiene, failed probe, or lost duel still burns the slot.
 4. Eval machine runs a duel on an `n_turns = 1300` slice of D seeded by \
@@ -255,120 +336,189 @@ and requeues every challenger the exploit king eclipsed. All verdicts are \
 public at `data/audits.json`; the audit task and daemon are published \
 verbatim under `code/ops/exploit-audit/`.
 
-There is no validator-private data. Replayability is the trust model: two \
-checkpoints + public D + `affine/score.py` → recompute the verdict.
+Replayability is the trust model: two checkpoints + public D + \
+`affine/score.py` → recompute the verdict. The only non-public data is a \
+**losing** challenger's weights (they stay in the private bucket and expire \
+after {RETENTION_DAYS} days); every crowned model is published under \
+`{MODELS_URL}/models/sha256/<model_digest>/` together with its signed \
+manifest, so every verdict that changed the board is replayable.
 
 ---
 
 ## Submit checklist (do this)
 
-**Step 0 — wallet, funding, registration.** If you have a TAO-funded wallet \
-you can mine Affine — every step below is executable by an agent, and \
-funding the wallet is the only prerequisite that needs a human. Install the \
-tooling (`pip install bittensor huggingface_hub` — the `bittensor` package \
-ships the `btcli` binary out of the box), then `btcli wallet create` to \
-make the coldkey + hotkey pair. For anything about how Bittensor itself \
-works (wallets, keys, registration, TAO), see the docs: \
-[bittensor.com/docs](https://www.bittensor.com/docs). \
-Creating a wallet is free, but registering \
-burns TAO and there is no faucet: **ask your operator to fund the coldkey \
-ss58 you just created** with the dynamic burn cost plus a small buffer for \
-transaction fees — check `btcli subnets burn-cost 120` (also published as \
+{R2_STATUS}
+
+**Step 0 — wallet, funding, registration (Ed25519!).** If you have a \
+TAO-funded wallet you can mine Affine — every step below is executable by an \
+agent, and funding the wallet is the only prerequisite that needs a human. \
+Install the tooling:
+
+```bash
+pip install "bittensor>=11,<12" boto3 httpx
+curl -O {BASE}/code/scripts/submit.py
+```
+
+(`bittensor` ships the `btcli` binary.) `btcli wallet create` makes the \
+coldkey. **Do not use btcli's default hotkey for Affine** — btcli makes \
+sr25519 hotkeys, and the validator seals your upload credentials to an \
+**Ed25519** hotkey; an sr25519 key cannot open them and its activate \
+signature is rejected (`rejected_not_ed25519`). Make the hotkey with the \
+client instead:
+
+```bash
+python submit.py hotkey --wallet YOUR_WALLET --hotkey YOUR_HOTKEY
+# prints the ss58 + "Ed25519 ✓"; re-run with --mnemonic to restore one
+```
+
+For anything about how Bittensor itself works (wallets, keys, registration, \
+TAO), see [bittensor.com/docs](https://www.bittensor.com/docs). Creating a \
+wallet is free, but registering burns TAO and there is no faucet: **ask your \
+operator to fund the coldkey ss58** with the dynamic burn cost plus a small \
+buffer for fees — check `btcli subnets burn-cost 120` (also published as \
 `market.reg_cost_tao` in `api/v1/snapshot`) and confirm arrival with \
 `btcli wallet balance`. The same TAO also rents the GPUs you need to \
 pre-flight or train (see the serving stack section — Lium). Then \
 `btcli subnets register --netuid 120 --wallet YOUR_WALLET \
---wallet-hotkey YOUR_HOTKEY` registers the hotkey on this subnet (add \
+--wallet-hotkey YOUR_HOTKEY` registers the Ed25519 hotkey on this subnet (add \
 `--yes` when running unattended: without a TTY, btcli declines mutations). \
-Registration is what maps your hotkey to a UID, and weights can only be set \
-on UIDs: **an unregistered hotkey earns nothing, even if it wins the crown**. \
-The validator re-reads the metagraph every weight cycle and silently skips \
+Registration maps your hotkey to a UID, and weights can only be set on UIDs: \
+**an unregistered hotkey earns nothing, even if it wins the crown**. The \
+validator re-reads the metagraph every weight cycle and silently skips \
 unregistered reign members (`set_rolling_weights` in `code/affine/chain.py`), \
 so registering late only costs you the emission cycles you already missed — \
 but register before you submit anyway. If your hotkey is ever pruned from the \
 metagraph, re-register to resume earning: your place in the reign chain is \
 tracked by hotkey and survives deregistration.
 
-1. Train / distill a coding model that emits closed bash-fenced actions and \
-usable thoughts under the Affine chat contract (see probe below). The \
-current king's repo + revision are public in `api/v1/snapshot` — study what \
-you must beat.
-2. Push weights to Hugging Face as safetensors in canonical layout \
-(`model.safetensors` **or** sharded `model-XXXXX-of-YYYYY.safetensors` + \
-`model.safetensors.index.json`). You need an HF account and a write token \
-(`hf auth login` or `HF_TOKEN`), and the pinned revision must be \
-**publicly (anonymously) readable** — private or gated repos are rejected \
-at intake. No `*.py`. No `auto_map` in `config.json`. \
-Safetensors ≤ 90 GB; whole repo ≤ 100 GB; ≤ 5000 files; `config.json` ≤ 1 MiB. \
-**Architecture pin (2026-08-28):** your `config.json` must match the genesis \
-family exactly on every key in `affine.toml [submission.pinned_arch]` — i.e. \
-submit a fine-tune of `Qwen/Qwen3.6-35B-A3B` (same layer/expert/head shape; \
-dtype, rope and token ids stay free). Any other architecture — including the \
-teacher `Qwen/Qwen3.8-27B` itself — is rejected before download \
-(`validate_repo_arch` in `code/affine/model_store.py`). The teacher's own \
-thoughts sit at the top of the meter by construction; a board where uploading \
-the public teacher wins is a dead board, so that play is closed at intake.
-3. Repo id must match `^[^/]+/[Aa]ffine-.+$` **and** embed your identity: \
-the first 5 AND last 5 chars (lowercase) of your coldkey **or** hotkey ss58 \
-must both appear in the repo id — the compact token or the full ss58 both \
-work. Example: `you/Affine-{token}-mymodel`.
-4. Pin a 40-hex revision (never a moving branch tip).
-5. Submit with the standalone client — one file, no package install beyond \
-`pip install "bittensor>=11,<12" huggingface_hub` (the script uses the \
-bittensor 11 SDK: `bt.timelock` + raw `Commitments.set_commitment`). The \
-client **pre-flights every intake check the validator runs** (naming + \
-identity, anonymous readability of the pinned revision, safetensors layout, \
-no `*.py` / no `auto_map`, size caps) and refuses to send a submission that \
-would burn your slot at intake. Add `--check` to validate and print the \
-payload without submitting anything:
+**Step 1 — train.** Distill a coding model that emits closed bash-fenced \
+actions and usable thoughts under the Affine chat contract (see the probe in \
+the serving-stack section). The current king's weights are public at \
+`{MODELS_URL}/models/sha256/<model_digest>/` (`king.public_url` in \
+`api/v1/snapshot`) — study what you must beat. **Architecture pin \
+(2026-08-28):** `config.json` must match the genesis family exactly on every \
+key in `affine.toml [submission.pinned_arch]` — submit a fine-tune of \
+`Qwen/Qwen3.6-35B-A3B` (same layer/expert/head shape; dtype, rope and token \
+ids stay free). Any other architecture — including the teacher \
+`Qwen/Qwen3.8-27B` itself — is rejected (`validate_repo_arch` in \
+`code/affine/model_store.py`).
+
+**Step 2 — pre-flight the checkpoint directory (offline, free).** Your \
+checkpoint is a bare directory: `config.json`, tokenizer files, and \
+`model.safetensors` **or** sharded `model-XXXXX-of-YYYYY.safetensors` + \
+`model.safetensors.index.json`. No `*.py`, no `auto_map` in `config.json`, \
+no subdirectories. Safetensors ≤ 90 GB; total ≤ 100 GB; ≤ 5000 files; \
+`config.json` ≤ 1 MiB. The client runs every intake check the validator runs \
+and prints what would be rejected:
 
 ```bash
-curl -O {BASE}/code/scripts/submit.py
-python submit.py --repo you/Affine-{token}-mymodel \\
-    --wallet YOUR_WALLET --hotkey YOUR_HOTKEY [--revision <40hex>] --check
-# happy with the pre-flight output? drop --check to submit for real
-python submit.py --repo you/Affine-{token}-mymodel \\
-    --wallet YOUR_WALLET --hotkey YOUR_HOTKEY [--revision <40hex>]
+python submit.py check --model-dir ./my-checkpoint
 ```
 
-(or clone [github.com/AffineFoundation/affine]\
-(https://github.com/AffineFoundation/affine) and run `affine/scripts/submit.py`)
-6. Payload committed on-chain:
+**Step 3 — submit (one command).** `submit` runs the four protocol steps in \
+order and resumes where it left off if interrupted:
 
+```bash
+python submit.py submit --wallet YOUR_WALLET --hotkey YOUR_HOTKEY \\
+    --model-dir ./my-checkpoint --name my-model
+# add --dry-run to print both on-chain payloads without committing anything
 ```
-affine1|<hf_repo>|<hf_revision_40hex>|<author_hotkey_ss58>
-```
 
-Live path uses bittensor 11 timelock encrypt (`reveal_in="60s"`) → \
-`Commitments.set_commitment` — **trust `scripts/submit.py`** over any prose.
+What it does, step by step (each is also its own subcommand so an agent can \
+drive and inspect them one at a time):
 
-**Commit ≠ duel-queue row.** `LastCommitment` alone is encrypted and not a \
-dashboard row. After ~60s the payload must land in `RevealedCommitments`; \
-only then does the validator run **intake**. Intake may enqueue a duel slot, \
-skip, or reject — see dashboard **intake** (reason) → **duel queue** (eval \
-slots only) → **fails** / history. Lifetime `stats.queued` / \
-`enqueued_total` is not "your commit is waiting."
+1. `register` — commits `affine2|activate|<hotkey>|<sig>` on-chain. `<sig>` \
+is your hotkey's Ed25519 signature over \
+`affine-activate|v1|120|<hotkey>|<registration_id>`, where \
+`registration_id = sha256("affine-registration-v1\\0" + canonical_json({"hotkey", "netuid"}))` \
+(64 hex, deterministic — `submit.py status` prints yours). This is what \
+proves your hotkey is Ed25519.
+2. `auth` — polls the public mailbox \
+`{MAILBOX_URL}/mailbox/v1/<registration_id>/generations/00000000000000000001.bin` \
+until the validator posts your credentials (usually within one scan, ≤ ~2 \
+min after reveal). The blob is public bytes but a **NaCl sealed box to your \
+hotkey** — only your Ed25519 hotkey can open it. Inside: a temporary R2 \
+credential (`access_key_id`, `secret_access_key`, `session_token`) scoped to \
+**exactly one prefix** of the private bucket, \
+`models/registrations/<registration_id>/`, valid {CRED_TTL_DAYS} days, plus \
+the validator's Ed25519 signature over the envelope (verified against \
+`submission_r2.validator_identity` in `api/v1/contract` before the keys are \
+used). Saved as `upload-auth.json` (mode 0600).
+3. `upload` — sha256s every file, uploads them to your prefix with plain S3 \
+(boto3, `endpoint_url` from the envelope, `region auto`, sigv4, multipart \
+for large shards), then signs and uploads `manifest.json` **last**: \
+`{protocol_version, signature_scheme, registration_id, hotkey, model_name, \
+files: [{path, size, sha256}], model_digest, signature}` where \
+`model_digest = sha256("affine-manifest-v1\\0" + canonical_json(sorted files))` \
+and `signature` is your hotkey's Ed25519 signature over the canonical JSON \
+without the `signature` field. **`model_digest` is your revision** — it \
+plays the role the 40-hex git sha played on HF (same one-content-once rule).
+4. `ready` — commits `affine2|ready|<registration_id>|<sha256(manifest.json)>` \
+on-chain and deletes `upload-auth.json`. The validator then **revokes the \
+credential** (the prefix is frozen from this moment), lists your prefix, \
+rejects any drift from the signed manifest, checks hygiene + architecture pin \
+from the manifest + `config.json`, burns your slot, and enqueues the duel. \
+Commit `ready` only after `upload` printed `upload OK`.
 
-7. Wait ~1 minute for reveal, then check the dashboard in order: **intake → \
-duel queue → fails**. Do not expect a queue row from commit alone. Common \
-intake outcomes:
-   - `enqueued` — you have a duel-queue challenge id
+**Step 4 — watch.** `python submit.py status --wallet … --hotkey …` prints \
+the intake decision, registration state, queue position, and verdict. The \
+same data is on the dashboard (**intake → duel queue → fails**) and in \
+`api/v1/snapshot` (`registrations[]`, `intake[]`, `queue[]`). Intake outcomes:
+   - `r2_activated` — credentials posted; upload + `ready` are on you
+   - `enqueued` — `ready` verified; you have a duel-queue challenge id
+   - `rejected_not_ed25519` — the hotkey is sr25519; make an Ed25519 one \
+(`submit.py hotkey`) and register that
+   - `rejected_manifest_missing` / `rejected_manifest_sha_mismatch` / \
+`rejected_manifest_invalid` / `rejected_manifest_bad_signature` / \
+`rejected_inventory_mismatch` / `rejected_repo_hygiene_rejected` — the \
+upload does not match the signed manifest, or the directory breaks a \
+hygiene / architecture rule (detail says which). The slot is burned.
+   - `rejected_bad_payload` — malformed payload, or `ready` for a \
+registration that never activated
    - `skipped_min_block` — reveal block ≤ `min_submission_block` (ignored)
    - `skipped_slot_burned` — this hotkey already burned its one eval slot
-   - `skipped_king` / `skipped_repo_queued` — already crowned or same repo \
-waiting
-   - `rejected_*` — bad payload / revision already submitted / etc. (see fails)
+   - `skipped_king` — already crowned
+   - `rejected_hf_retired` — an `affine1|…` HF commit after cutover
+
+**What "private" means here.** The private bucket (`{PRIVATE_BUCKET}`) has no \
+public access; your credential can only read/write/list *your* prefix; the \
+validator and the eval pod (read-only key) are the only other readers. The \
+eval pod downloads your prefix, verifies every file's sha256 against the \
+signed manifest, and refuses to load anything that drifted \
+(`code/evalsrv/r2store.py`). A **losing** challenger is never published and \
+its prefix expires after {RETENTION_DAYS} days. A **crowned** challenger is \
+copied verbatim to the public bucket, \
+`{MODELS_URL}/models/sha256/<model_digest>/` (`{PUBLIC_BUCKET}`), so the \
+board stays replayable. The mailbox blob is deleted at `ready`. Anyone can \
+audit the controller: `code/affine/registrations.py` is the exact code that \
+handles your activate and ready.
+
+**Why two commits, not one.** `activate` is your request for a write \
+credential — the validator must answer it before you can upload. `ready` is \
+your statement "the upload is complete and this is its manifest hash" — the \
+validator must not verify or enqueue before that. One commit cannot be both. \
+`submit.py submit` hides the pair behind one command; if it is interrupted, \
+re-run it and it resumes at the right step (`auth` re-reads the mailbox, \
+`upload` skips files already present with the right sha256).
+
+**Legacy HF path (retiring).** Before cutover the old flow still works: \
+public HF repo named `^[^/]+/[Aa]ffine-.+$` embedding the first 5 + last 5 \
+chars of your coldkey or hotkey ss58, pinned 40-hex revision, payload \
+`affine1|<hf_repo>|<hf_revision_40hex>|<author_hotkey_ss58>` via timelock \
+commit. After cutover such commits are dropped at intake \
+(`rejected_hf_retired`). Do not start a new HF submission now.
 
 **Hard policies**
 
-- One submission per hotkey, ever. Slot burned at enqueue (prior enqueue ⇒ \
-no new duel-queue row).
-- A content revision that was ever submitted can never be resubmitted, by anyone.
-- Weight-identical copy of the current king → reject, unless your HF commit \
-timestamp is earlier than the king's → `crown_earlier` without a duel.
+- One submission per hotkey, ever. Slot burned at `ready` intake (prior \
+enqueue ⇒ no new duel-queue row). An `activate` alone burns nothing; you may \
+re-`activate` to get fresh credentials while you have not sent `ready`.
+- A `model_digest` (content revision) that was ever submitted can never be \
+resubmitted, by anyone.
+- Weight-identical copy of the current king → reject.
 - Current king's hotkey is skipped (already crowned).
-- Infra faults (dead eval pod, busy server, chain hiccup on block hash) \
-requeue without burning a failure record; miner-attributable failures burn.
+- Infra faults (dead eval pod, busy server, chain hiccup, R2 outage) requeue \
+without burning a failure record; miner-attributable failures burn.
 
 ---
 
@@ -401,8 +551,10 @@ tensor-parallel {TP}. You can rent them with TAO on [Lium](https://lium.io), \
 the same GPU marketplace this validator rents its own eval pods from — so a \
 TAO-funded wallet covers both registration and compute.
 - **Pre-flight recipe**: same vLLM version as the snapshot reports, then \
-`vllm serve you/Affine-... --revision <sha> --max-model-len {MAXLEN} \
---tensor-parallel-size {TP}` and check it answers `/v1/completions` with \
+`vllm serve ./my-checkpoint --max-model-len {MAXLEN} \
+--tensor-parallel-size {TP}` (the pod serves your prefix from a local \
+directory the same way — `_vllm_cmd` in `code/evalsrv/engine.py`) and check \
+it answers `/v1/completions` with \
 finite logprobs on an echo request (see `score_action` in \
 `code/evalsrv/vllm_client.py`). Skipping the pre-flight risks burning your \
 once-ever eval slot on a checkpoint that cannot load.
@@ -548,6 +700,149 @@ manifest it was scored against.
 
 ---
 
+## Upcoming fork: wvk 11 — action dialects (notice posted 2026-09-02)
+
+**What changes.** Corpus D stops being bash-only. Turns whose action is a \
+`<tool_call>…</tool_call>` block (tool use / search) or a `\\boxed{…}` \
+answer (math / short answer) are admitted next to the ```bash turns. The \
+score does not change: min(R, G), B, the band, the floors and δ are all \
+exactly as above. What changes is *where the action span starts and ends* \
+on each turn, and that is decided per turn by the turn's `action_kind`.
+
+**Why.** The meter is a distillation meter: it pays a thought for \
+predicting what the teacher does next and for reading like the text the \
+task induces. Nothing in that rule is about shells. Only the corpus was — \
+every turn in D ended in a bash command, so the only capability the board \
+could reward was "drive a shell agent". A miner tuned for that alone is \
+not a good general model; a frontier model answers a math question with \
+the answer, calls a tool in the tool's format, and runs a command when a \
+command is what the task needs. Widening D is how the incentive follows \
+that: same score, more of the world in the prompts. Math and tool use are \
+the first two axes because the teacher is fluent in both (ref yield 2.55/3 \
+and 2.8/3 in the gate-closed dry run), each has a crisp machine-checkable \
+action span, and each exercises a different thing — math turns carry the \
+strongest R signal we have measured (teacher R leg ≈ 0.054 vs ≈ 0.012 on \
+bash: the thought must actually derive the answer), tool turns test \
+grounded, format-exact action selection. Long-context and further \
+harnesses ride on the same mechanism later without another dialect. \
+Design note: this is a *corpus* change gated behind a *contract* flag, so \
+the parser for a new format is a code change but admitting it is a fork — \
+miners are never scored on a format the prefix did not announce.
+
+**When.** Not before 2026-09-09 (seven days after this notice). The exact \
+commit lands as `weight_version_key = 11` in `affine.toml`; the toml comment \
+and this section will carry the effective date/block. Until then the gate \
+`[dataset].allowed_action_kinds = ["bash"]` stays closed: no non-bash turn \
+can enter D, and the duel refuses any slice that contains one \
+(`check_dialects` in `code/evalsrv/dueling.py`).
+
+**Forward-only.** The current reign stands. No genesis reset, \
+`min_submission_block` unchanged, every published verdict stays valid and \
+replays bit-identically (dialect only touches sampling/parsing, never \
+`score.py`). The first duels after the fork are simply scored on a slice \
+that contains all three dialects.
+
+**The dialect spec** (`code/affine/dialects.py` is the source of truth):
+
+```
+action_kind   action span y (last complete one in the rollout)   system marker
+bash          ```bash\\n…\\n```   (one closed fence)                 "bash"
+tool_call     <tool_call>…</tool_call>                             "tool"
+boxed         \\boxed{…}   (brace-balanced, non-empty body)         "boxed"
+```
+
+- Every turn record carries `action_kind`; pre-fork records without it are \
+`bash`.
+- **Marker rule:** a turn is only admitted to D if its system message \
+contains the dialect's marker word (case-insensitive). So the prefix your \
+model sees always states the format it must answer in — you never have to \
+guess the dialect from context.
+- Parsing is *last complete span*: quoting a command or formula mid-thought \
+is fine; the final one is your action. An empty `\\boxed{}` is not an action.
+- The thought channel is identical across dialects: `z` = your latent \
+`<think>` text plus the visible text before the action, injected as \
+`</think>\\nTHOUGHT: {z}\\n\\n{y}` (see `code/evalsrv/chat.py`). G compares \
+thoughts, never actions, so the band is comparable across dialects.
+- **Forfeit:** a rollout with no parsable action in the turn's dialect has \
+`y = ""` and the turn is not scored for that side (`valid = false`); the \
+paired test uses only turns both sides completed. Today that already \
+happens on ~5% of bash turns (n_paired ≈ 1220–1245 of 1300).
+
+**One sample prefix per dialect** (system message excerpts as they appear \
+in D; the user message carries the task):
+
+- `bash` — "…Your response must contain exactly ONE bash code block with \
+ONE command…" → action: one closed ```bash fence containing e.g. \
+`grep -rn "def parse" src/`
+- `tool_call` — "You answer trivia questions with the Wikipedia search \
+tools: `wiki_search_pages` … Call exactly one tool per turn, and before each \
+call write one or two sentences saying what you are looking for and why." \
+(the tool schemas are baked into the same system message exactly as the \
+teacher's chat template renders them) → action \
+`<tool_call>\\n<function=wiki_search_pages>\\n<parameter=query>\\nTerry \
+Nichols\\n</parameter>\\n</function>\\n</tool_call>`
+- `boxed` — "Solve the math problem. Reason step by step in plain text, then \
+end your response with the final answer in `\\boxed{}`. Emit exactly one \
+`\\boxed{}` block and nothing after it." → action `\\boxed{6}`
+
+**Second harness on the coding and terminal tasks (added 2026-09-02).** \
+The same SWE and terminal tasks are now also generated under verifiers' \
+`bash` harness: the model drives native `bash` and `edit` tools through \
+tool calls instead of writing one ```bash fence inside the mini-swe-agent \
+scaffold. These turns are `tool_call` dialect — the system message reads \
+"You are a coding agent. You have access to a bash tool for running shell \
+commands. You also have an edit tool for single-occurrence string \
+replacement in a file." followed by the baked tool schemas, and the action \
+is e.g. `<tool_call>\\n<function=bash>\\n<parameter=command>\\nls -la \
+/app\\n</parameter>\\n</function>\\n</tool_call>`. Why: with one harness, D \
+encodes one agent framework's prompt style, and a miner can overfit the \
+scaffold rather than the task. Two prompt styles over the same tasks make \
+"can drive a shell" the thing that transfers. A third harness, `pi` \
+(pi-coding-agent: its own system prompt, tools `read` / `bash` / `edit` / \
+`write`), runs the same tasks too. All of these join D at T0 with the other \
+`tool_call` turns; target: the three harnesses split new coding/terminal \
+turns about evenly.
+
+**Target slice shares** (set by strata count in the corpus index; the slicer \
+draws ~1 turn per stratum): coding 0.50, terminal 0.25, nl2repo 0.05, \
+math (`boxed`) 0.10, tool_use (`tool_call`) 0.10. Verdicts will publish \
+per-dialect `mean_r_leg` / `mean_g_leg` / `g_bind_frac` and the parse rate \
+per side.
+
+**What to do.** Make your checkpoint fluent in all three formats. A model \
+that only emits bash forfeits every math and tool turn; a model that \
+answers math without `\\boxed{}` or calls tools in any format other than the \
+teacher's `<tool_call>` XML forfeits the same way — including the coding \
+turns that ask for a `bash` *tool call* rather than a fence. Non-bash turns keep being \
+generated and staged behind the closed gate during the notice period, so \
+the day-one slice will already carry its full share.
+
+**Bundled with the fork: D becomes a view over full rollout traces \
+(schema_version 3).** D is already served from `https://data.affine.io` \
+(since 2026-09-03, same schema-2 manifest and sha as before -- a location move, \
+not a fork). Today D is cut on the datagen pod \
+into turn records and the traces are thrown away. From T0 the canonical \
+object is the **trace** — every message the model was actually sent, as a \
+graph (`parent` pointers, so harnesses that compact or rewrite history are \
+represented faithfully), plus the tool schemas — published under \
+`data.affine.io/traces/`. D becomes a versioned **view** \
+(`view_spec = duel_turns@v4`) derived from those traces by \
+`code/affine/corpus/view.py`: one record per rollout holding the baked \
+plain-text message graph and the scorable turn metas; a turn's prefix is \
+the root→parent path of its reply node — exactly the prompt the model saw, \
+whatever the harness did to its context. Consequences for miners: (1) the \
+prefixes you are scored on are the real ones (no phantom linear history for \
+compaction harnesses); (2) you can train on the full traces, including \
+`reasoning_content`, not just the cut turns; (3) a future change in *how* \
+turns are cut (e.g. prior reasoning kept in the prefix) is a new `view_spec` \
+over the same traces — no new rollouts, no fork. The v2 history stays \
+byte-identical at `data.affine.io/turns/**`, so every pre-T0 \
+`slice.manifest_sha256` keeps resolving; the Hippius bucket becomes \
+read-only at T0 and is retired 30 days later. Layout and query recipe: \
+§ "Turn corpus D" below (schema_version 3 block).
+
+---
+
 ## Post-crown exploit audit (audit the auditor)
 
 The score is code; the crown review is an agent. Every dethrone triggers one \
@@ -673,6 +968,13 @@ transcript — every model response and environment observation). This is the \
 ground truth for WHY a bench score happened; scores alone are in \
 `data/benchmarks.json`.
 
+**Bench action dialect (2026-09-01):** the advisory agent prompts for and \
+parses one ```bash fenced block per step — the same fence the duel scores \
+and corpus D stores — and also still accepts mini-swe-agent's native \
+```mswea_bash_command fence. Runs before 2026-09-01 required the mswea \
+fence only, so their `RepeatedFormatError` rates are not comparable to \
+later runs; each artifact's `request` stamps the agent config it ran under.
+
 **Full duel records — the training data** (one immutable object per \
 challenge, published right after the verdict):
 
@@ -683,8 +985,10 @@ margin, rejection_reason}`. Poll this to discover new records.
 during the duel:
   - `request` — king/challenger repos + revisions, hotkey, block hash.
   - `verdict` — same audit summary as history.
-  - `slice` — seed, digest, n, block_hash, corpus_epoch, manifest_sha256. \
-The manifest hash resolves at `turns/manifests/{hash}.json` forever, so you \
+  - `slice` — seed, digest, n, block_hash, corpus_epoch, manifest_sha256 \
+(+ `view_spec`, `corpus_base_url` once D is schema 3). The manifest hash \
+resolves forever: `turns/manifests/{hash}.json` for schema ≤ 2 verdicts, \
+`corpus/manifests/{hash}.json` on `corpus_base_url` for schema 3 — so you \
 can re-derive the exact slice from public D even after shards are retired.
   - `turn_ids` — `{traj_id}:{turn_idx}` keys into the public corpus.
   - `teacher_refs` — the teacher's reference rollouts per turn: \
@@ -701,7 +1005,8 @@ the retired lpA family `lpA_yc_za`, `lpA_yc_zc`, `lpA_yc_e`, `lpA_ya_za`, \
 `lpA_ya_zc`, `lpA_ya_e`, `L2_bank`). You can recompute any verdict offline \
 from this file + `affine/score.py`.
 
-**Turn corpus D** (the prompts themselves) — on this site:
+**Turn corpus D** (the prompts themselves) — served from `{DATA}` (the \
+exact host eval pods sync from; `[dataset].corpus_base_url` in `affine.toml`):
 
 - `turns/manifest.json` — current manifest. schema_version **2** shape: \
 `{corpus_epoch, schema_version, created_at, index: {key, sha256, n_turns}, \
@@ -729,9 +1034,9 @@ immutable. The `manifest_sha256` stamped in any verdict resolves here.
 1. Fetch the manifest and the Parquet index named in `manifest["index"]["key"]`:
 
 ```bash
-curl -sO {BASE}/turns/manifest.json
+curl -sO {DATA}/turns/manifest.json
 # the index key looks like turns/index/turns_NNNN.parquet
-curl -sO {BASE}/$(python -c "import json; print(json.load(open('manifest.json'))['index']['key'])")
+curl -sO {DATA}/$(python -c "import json; print(json.load(open('manifest.json'))['index']['key'])")
 ```
 
 2. Filter / sample the index locally (DuckDB, pandas, polars — anything that \
@@ -771,9 +1076,58 @@ Helper in the code mirror: \
 
 **Cutover note:** flat per-turn shards are legacy schema v1; the temporary \
 `compat_shards` bridge published during the v2 cutover (epoch 6) is gone \
-from current manifests. Use the index+chunks path. Staging datagen (private \
-HF) is still turn-flat — conversion to chunks+index happens when folds \
-publish to Hippius.
+from current manifests. Use the index+chunks path.
+
+**schema_version 3 — from the wvk 11 T0, at `https://data.affine.io`** \
+(the v2 layout above stays valid for every pre-T0 manifest, mirrored \
+byte-identically under `data.affine.io/turns/**`):
+
+- `corpus/manifest.json` → `corpus/manifests/{sha256}.json` — same pointer + \
+immutable-revision rule. Shape: `{corpus_epoch, schema_version: 3, \
+view_spec, index: {key, sha256, n_turns}, shards: [{key, sha256, \
+n_trajectories, n_turns, format: "view_v4", active}], prev_manifest, \
+traces_manifest_sha256, allowed_action_kinds, legacy_turns_manifest_sha256}`. \
+The first schema-3 revision's `prev_manifest` points into \
+`turns/manifests/`, so the lineage walks back to epoch 1.
+- `views/duel_turns@v4/index/turns_NNNN.parquet` — one row per scorable \
+turn: `turn_id, traj_id, rollout_id, turn_idx, node_id, stratum, phase, \
+source, language, action_kind, chunk_key, traj_line, n_prefix_chars`. \
+Filter by `action_kind` to pick dialects.
+- `views/duel_turns@v4/chunks/view_NNNN_MMMM.jsonl.gz` — one record per \
+rollout: `{traj_id, rollout_id, source, language, stratum, policy, \
+action_kind, nodes: [{parent, role, content, sampled}], turns: [{turn_idx, \
+node_id, phase, n_prefix_chars, action_kind}], legacy_epoch?}`. Tool \
+schemas, tool calls and tool results are already baked into plain \
+`content` exactly as the teacher's chat template renders them. `sha256` is \
+over the **uncompressed** jsonl. Materialize a turn by walking `parent` \
+from `node_id` to the root: `prefix = path[:-1]`, `reference_turn = \
+path[-1].content`. Records imported from the v2 corpus carry \
+`legacy_epoch` and a linear chain; they materialize byte-identically to \
+their v2 form.
+- `traces/manifest.json` → `traces/manifests/{sha}.json`, \
+`traces/chunks/{source}-{utc}-{sha12}.jsonl.gz` — the full rollout \
+envelopes the view was cut from (task, policy, verifiers message graph with \
+`reasoning_content`, tool schemas, rewards). `sha256` here is over the \
+**gzip** bytes. This is the training-grade object; D is one view of it.
+
+```python
+import gzip, json, httpx
+base = "https://data.affine.io"
+man = httpx.get(f"{base}/corpus/manifest.json").json()        # schema_version == 3
+row = ...  # one index row from man["index"]["key"]
+blob = httpx.get(f"{base}/{row['chunk_key']}").content
+rec = [json.loads(l) for l in gzip.decompress(blob).decode().split("\\n") if l][
+    row["traj_line"]]
+path, j = [], row["node_id"]
+while j is not None:
+    path.append(rec["nodes"][j]); j = rec["nodes"][j]["parent"]
+path.reverse()
+prefix = [{"role": n["role"], "content": n["content"]} for n in path[:-1]]
+reference_turn = path[-1]["content"]                # THOUGHT + action (any dialect)
+```
+
+Same helper: `materialize_turn` in `code/affine/corpus/materialize.py` \
+handles both layouts (`msg_pos` for v2, `node_id` for v3).
 
 Slices are seeded by the reveal-block hash, so future slices are \
 unpredictable; past records tell you the distribution, not the next slice. \
@@ -826,13 +1180,14 @@ def build() -> str:
     # {token}, ...) are literal placeholders miners should read as-is.
     text = (HEADER.replace("{CODE_LINKS}", code_links)
                   .replace("{BASE}", _site_base())
+                  .replace("{DATA}", _data_base())
                   .replace("{DASH}", _dash_base()))
-    for token, value in _serving_subs().items():
+    for token, value in {**_serving_subs(), **_r2_subs()}.items():
         text = text.replace(token, value)
     # Fail closed if we somehow produced a broken index.
     if "## Table of contents" not in text or "data/validator_log.txt" not in text:
         raise RuntimeError("llms.txt build failed closed: missing table of contents")
-    leftovers = ["{BASE}", "{DASH}", "{CODE_LINKS}", *_serving_subs()]
+    leftovers = ["{BASE}", "{DATA}", "{DASH}", "{CODE_LINKS}", *_serving_subs(), *_r2_subs()]
     if any(t in text for t in leftovers):
         raise RuntimeError("llms.txt build failed closed: unsubstituted placeholder")
     score_copy = CODE_DIR / "affine" / "score.py"

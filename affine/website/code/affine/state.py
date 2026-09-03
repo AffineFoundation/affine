@@ -610,6 +610,25 @@ class State:
             self.flush()
             return self.king
 
+    def rewrite_king_repo(self, hotkey: str, revision: str, new_repo: str) -> bool:
+        """Point a lineage member (current king or a previous reign) at a new
+        location for the SAME content revision — used when a crowned private
+        R2 prefix is promoted to the public bucket after the fact. Returns
+        True when something changed."""
+        changed = False
+        if (self.king and self.king.hotkey == hotkey
+                and self.king.revision == revision and self.king.repo != new_repo):
+            self.king.repo = new_repo
+            changed = True
+        for p in (self.king.previous if self.king else []):
+            if (p.get("hotkey") == hotkey and p.get("revision") == revision
+                    and p.get("repo") != new_repo):
+                p["repo"] = new_repo
+                changed = True
+        if changed:
+            self.flush()
+        return changed
+
     def king_lineage_members(self, payout_depth: int) -> list[dict]:
         """Full stored king lineage (current first) for the dashboard.
 

@@ -69,6 +69,40 @@ allow_auto_map = false
 max_repo_files = 5000
 max_config_bytes = 1048576   # 1 MiB; config.json larger than this is rejected
 
+# Private submissions over Cloudflare R2 (affine2 reveals; affine/r2protocol.py
+# is the byte-level contract, scripts/submit.py the miner client). Miners
+# never publish weights: they commit `affine2|activate|<hotkey>|<ed25519 sig>`,
+# the validator seals prefix-scoped temporary R2 credentials to the hotkey
+# in a public mailbox blob, the miner uploads + commits
+# `affine2|ready|<registration_id>|<manifest_sha256>`, the validator revokes
+# the credential, verifies the signed manifest and duels the private prefix.
+# Only a crowned model is copied to the public bucket
+# (models/sha256/<model_digest>/). Hotkeys MUST be Ed25519 (the mailbox is a
+# NaCl sealed box to the hotkey; sr25519 keys cannot open it).
+#   enabled          — false: affine2 payloads are ignored, HF path unchanged.
+#   hf_cutover_block — affine1 (HF) reveals above this block are rejected
+#                      (-1 = never). Set to the finney tip at go-live.
+#   private_retention_days — R2 lifecycle age on models/registrations/**.
+#                      Must exceed the longest a queued or crowned-but-
+#                      unpromoted prefix can sit (the validator re-promotes a
+#                      private-ref king on every weight sweep); losers stay
+#                      readable for post-crown audit / re-eval this long.
+# Admission mechanics only — no scoring change, no weight_version_key bump.
+[submission.r2]
+# 2026-09-03: LIVE (explicit dated operator directive). affine1 (HF) reveals
+# above hf_cutover_block are dropped at intake; queued HF entries below it
+# still duel.
+enabled = true
+reveal_prefix = "affine2"
+private_bucket = "affine-private-models"
+public_bucket = "affine-models"
+dash_bucket = "affine-dash"
+public_models_base_url = "https://models.affine.io"
+mailbox_base_url = "https://dash.affine.io"
+credential_ttl_s = 604800
+hf_cutover_block = 8987674
+private_retention_days = 60
+
 # Architecture pin (2026-08-28, explicit operator directive): every submission's
 # config.json must match this nested subset exactly — i.e. be a fine-tune of the
 # genesis family (Qwen3.6-35B-A3B @ 995ad96e). Keys absent here (dtype,
@@ -102,7 +136,7 @@ linear_key_head_dim = 128
 linear_value_head_dim = 128
 
 [teacher]
-# Frozen frontier reference C. The eval machine serves this warm.
+# Frozen frontier reference C.
 # Qwen/Qwen3.8-27B since 2026-08-27 (explicit dated operator directive,
 # bundled into the wvk-10 min(R,G) fork + genesis reset; GLM-4.5-Air-FP8
 # served eras wvk <= 9). 27B dense GDN+vision hybrid, thinking-on template
@@ -112,66 +146,43 @@ linear_value_head_dim = 128
 # needs chunk x vocab x 4B outside the budgeted pool — teacher chunk/util
 # below are sized for that (8192 -> 7.6 GiB spike, probed clean on B200
 # 2026-08-27 under 12 concurrent 64k echoes).
-# The 2026-08-10 GLM-5.2 dedicated-teacher push was torn down (pod killed;
-# never cut over). Do not reintroduce base_url / a remote teacher without
-# an explicit operator directive.
+#
+# 2026-08-28 (explicit operator directive): full remote-teacher cutover.
+# The eval box no longer serves a local teacher. All teacher sample/echo
+# traffic goes through the swarm router (ops/teacher-swarm/) at
+# 127.0.0.1:9100 — dedicated 8x B200 boxes, TP1 replicas. The 2026-08-10
+# GLM-5.2 remote push was torn down and never cut over; this is the dated
+# directive that [teacher].base_url required. Fail-closed: a dark router
+# fails ensure_teacher and the validator requeues (Fault.TEACHER, no miner
+# burn). Router already 503s on an empty pool. Ops knob only — no
+# weight_version_key event. teacher_serveds returns only this remote slot
+# (extra_urls unused). Rollback: unset base_url, restore local GPU map,
+# restart evalsrv.
 repo = "Qwen/Qwen3.8-27B"
+base_url = "http://127.0.0.1:9100/v1"
 port = 8000
 tp = 2
 gpus = "0,1"
-# Second replica on the otherwise-idle GPUs. The teacher does ~2/3 of a duel's
-# forced-logprob work (48 echo calls per turn per side vs 24 per miner), so
-# with king and challenger scored concurrently one GLM is the wall — the
-# replica doubles teacher throughput. Best-effort: if it fails to launch,
-# duels run on the primary alone. Identical weights at temperature-0 echo
-# scoring, so which replica answers a call is score-invariant.
-replica_port = 8003
-replica_gpus = "6,7"
-# Additive teacher-swarm capacity (2026-08-15, explicit operator directive:
-# "gently add it into our eval process"). These OpenAI-compatible endpoints
-# JOIN the duel's teacher pool next to the mandatory local slots — this is
-# NOT the retired base_url full cutover. Fail-open: each URL is probed per
-# duel and skipped when dark, so a dead swarm degrades to local-only.
-# Identical repo at temperature-0 echo scoring → score-invariant; ops knob
-# only, no weight_version_key event. The URL is a localhost reverse-tunnel
-# to the swarm router (ops/teacher-swarm/), which load-balances ~30 rented
-# boxes with canary admission and per-pod self-healing. Listing it 10x
-# weights the pool's uniform turn hash: 10/12 of turns ride the swarm.
-# 4x -> 10x on 2026-08-15 after mid-scoring queue depths showed the local
-# replica saturated (5 running + 8 waiting) while 34 swarm replicas held ~1
-# request each: sticky turns pinned to a queued local slot paced the duel.
-# At 10/12 weighting the locals keep roughly the same absolute turn load
-# as before while the swarm absorbs everything else.
-# 2026-08-21 history: EMPTIED ~19:25Z after the entire miner-teacher pool
-# vanished from Lium ~18:55Z (all mine-* pods terminated platform-side,
-# cause never established; balance was fine at $71k). With the router at
-# zero backends every duel 503'd mid-turn and chal-00994 was burned as
-# eval_infra_exhausted — root cause was the router's /v1/models answering
-# 200 with an empty pool, so evalsrv's per-duel fail-open probe admitted a
-# dead swarm; fixed in ops/teacher-swarm/router.py (503 when empty).
-# RESTORED ~20:15Z (explicit operator directive): pool is now one dedicated
-# 8x B200 box (swarm-t-b200-8x-1, 8 TP1 GLM-Air-FP8 replicas, $39.60/h)
-# managed by ops/teacher-swarm/manager.py under pm2. 8x weighting: 8 swarm
-# replicas next to the 2 mandatory local slots ≈ 8/10 of turns on the
-# swarm, and a mid-duel pod loss now degrades the next duel to local-only
-# instead of burning challengers.
-extra_urls = [
-  "http://127.0.0.1:9100/v1",
-  "http://127.0.0.1:9100/v1",
-  "http://127.0.0.1:9100/v1",
-  "http://127.0.0.1:9100/v1",
-  "http://127.0.0.1:9100/v1",
-  "http://127.0.0.1:9100/v1",
-  "http://127.0.0.1:9100/v1",
-  "http://127.0.0.1:9100/v1",
-]
+# Unused while base_url is set (2026-08-28 remote cutover). Kept commented
+# so rollback can re-enable the local pair without hunting ports.
+# replica_port = 8003
+# replica_gpus = "6,7"
+# extra_urls listed the router 8x to weight swarm vs local; locals are gone.
 
 [miner_serving]
 # King stays warm; challenger is loaded per duel.
+# 2026-08-28: eval box is miner-only. Two TP2 copies of each miner occupy
+# the 8 GPUs that used to split teacher + king + challenger. Replicas are
+# best-effort (same as the old teacher2): primary required, copy optional.
+# Score-invariant — miners sample; the ranked quantity is teacher-side.
 king_port = 8001
-king_gpus = "2,3"
+king_gpus = "0,1"
+king_replica_port = 8003
+king_replica_gpus = "2,3"
 challenger_port = 8002
 challenger_gpus = "4,5"
+challenger_replica_port = 8004
+challenger_replica_gpus = "6,7"
 tp = 2
 # Was 32768; corpus prefixes routinely hit ~31k tokens, and sample() asks for
 # max_thought+max_action=1792 more → vLLM 400 "maximum context length" mid-duel
@@ -185,15 +196,22 @@ max_model_len = 65536
 gpu_memory_utilization = 0.80
 # Scheduler token budget per engine step for MINER slots (king/challenger).
 # Under reason_only miners only sample — the sole echo they serve is the
-# injectability probe — but that one echo still materializes fp32
-# log_softmax over (chunk x vocab) outside vLLM's budgeted pool. A barely-
-# fitting bf16 challenger (Talucampe037, 2026-08-15) left 6.3 GiB free at
-# 0.80 util and the 8192-chunk probe spike wanted 7.6 GiB → EngineDead
-# crash loop. 4096 halves the spike to ~3.8 GiB so max-size checkpoints
-# survive their probe; miner prefill is sampling-side and decode-dominated,
-# so the smaller chunk is not on the duel critical path (teachers keep
-# their own override below). Ops knob only — no scoring effect.
-max_num_batched_tokens = 4096
+# injectability probe. 4096 (2026-08-15) was for a tight 6.3 GiB-free
+# checkpoint where an 8192-chunk probe spike OOM'd. The live eval box is
+# 8x B300 (~50 GiB free at 0.80 util after load, before scoring fills KV);
+# corpus prefixes are ~31k tokens. 4096 → ~8 prefill steps; 8192 (2026-08-29)
+# halved that. 8192 → 16384 (2026-08-30) halves it again (4 steps → 2).
+# Probe spike scales with the chunk (~16 GiB at 16384) and runs on empty KV
+# (~50 GiB free). Mid-scoring the tightest pair has shown ~25 GiB free —
+# miners do not echo then. Roll back to 8192 if a probe OOM's. Ops knob
+# only — no scoring effect.
+# 16384 → 8192 rollback (2026-09-02): the live box is 8x 183 GB (178.35 GiB
+# usable), not B300s — a loaded miner slot at 0.80 util sits at ~146 GiB, so
+# headroom is ~32 GiB, and the probe echo materializes TWO ~15 GiB fp32
+# tensors (logits + log_softmax) at 16384 x 248,320. 70 identical probe
+# OOMs ("14.65 GiB wanted, 14.37 free") from 2026-09-01 19:10 on; every
+# affected challenger (chal-00179/182/183) bounced through 6 infra retries.
+max_num_batched_tokens = 8192
 # Teacher slots only: bigger chunks cut the echo queue wait that dominates
 # duel wall time. At 0.80 util the 12288 spike OOM'd teacher2 mid-duel
 # (2026-08-14, 6.93 GiB wanted vs 6.66 free), so teachers also run a lower
@@ -220,10 +238,38 @@ teacher_gpu_memory_utilization = 0.70
 # scoring-rule forks. RT-6 mitigations: fresh teacher y_C at duel time,
 # reveal-block slice seeding, and periodic shard refresh/retirement via
 # scripts/corpus_push.py (ρ_late=+0.845 stability: results/rt6_temporal_holdout.json).
-corpus_base_url = "https://s3.hippius.com/affine-sn120"
+# 2026-09-03: data LOCATION only (explicit dated operator directive). Same
+# schema-2 manifest, same sha, turns/** a byte-identical copy of the
+# Hippius history; Hippius affine-sn120/turns/** is read-only from this
+# date. Not a scoring change -- no weight_version_key event. The
+# schema-3 manifest_key (corpus/manifest.json) lands at the wvk 11 T0.
+corpus_base_url = "https://data.affine.io"
 manifest_key = "turns/manifest.json"
+# Trace-first corpus (2026-09-02, cuts over at the wvk 11 T0 on an explicit
+# dated operator directive): the canonical object becomes the full rollout
+# trace (verifiers message graph incl. reasoning_content and tool schemas)
+# under `traces/` on the [data_r2] bucket, and D is a versioned VIEW derived
+# from it (affine/corpus/view.py) — a turn's prefix is the root->reply path
+# of the graph, i.e. exactly the prompt the model was sent, for any harness.
+# `view_spec` names the derivation; a new view (e.g. prior reasoning kept in
+# tool-loop prefixes) is a new spec built from the same traces, never new
+# rollouts. `traces_manifest_key` is the pointer the view builder follows.
+# At T0 manifest_key moves to corpus/manifest.json (schema_version 3); the
+# Hippius keys stay resolvable under data.affine.io/turns/** for replay.
+traces_manifest_key = "traces/manifest.json"
+view_spec = "duel_turns@v4"
 # Pod re-checks the manifest pointer this often (between duels, never mid-duel).
 refresh_interval_s = 3600
+# Action dialects admitted into live D (2026-09-01). A dialect says where a
+# turn's action span starts and ends (affine/dialects.py: bash = one closed
+# ```bash block; tool_call = <tool_call>…</tool_call>; boxed = \boxed{…}).
+# The min(R,G) math never looks inside the action, so parsing support for a
+# new dialect is a code change, not a scoring change; ADMITTING one here is a
+# contract event — every miner must then emit that dialect on those turns or
+# forfeit them — and belongs with an explicit dated operator directive (and
+# a weight_version_key decision), not an agent edit. The fold refuses turns
+# outside this list; the duel refuses a slice that contains one (tripwire).
+allowed_action_kinds = ["bash"]
 
 [duel]
 # min(R,G) v5 — centered Reason + banded Grounding (2026-08-27,
@@ -340,9 +386,10 @@ max_thought_tokens = 1024
 max_action_tokens = 768
 # Client-side turn pipelines in flight per side (ops knob, no scoring
 # effect). 24 -> 36 on 2026-08-15 with the teacher swarm absorbing echo
-# load: mid-scoring the miner engines ran 5-7 requests with zero queueing,
-# so the extra in-flight turns feed idle sampling capacity.
-concurrency = 36
+# load. 36 -> 64 on 2026-08-29: two 8x B200 teacher boxes (16 TP1
+# replicas) were sitting at ~2 in-flight each under 36; 64 is one
+# request per GPU plus headroom for prefix-sticky turns.
+concurrency = 64
 # Whole-duel wall clock budget on the eval server before the validator
 # classifies the eval as a transient failure and requeues.
 timeout_s = 7200
@@ -478,6 +525,21 @@ max_concurrency = 4
 # Website + dashboard state pushed here; miners read it.
 endpoint = "https://s3.hippius.com"
 bucket = "affine-sn120"
+
+[data_r2]
+# Trace-first corpus store (Cloudflare R2, public read via the custom domain;
+# provisioned by scripts/data_r2_setup.py). Layout:
+#   traces/chunks/*.jsonl.gz, traces/manifests/{sha}.json, traces/manifest.json
+#     — rollout envelopes, immutable, written by the datagen pod
+#   views/{view_spec}/chunks/*.jsonl.gz + views/{view_spec}/index/*.parquet
+#   corpus/manifests/{sha}.json, corpus/manifest.json
+#     — the derived D evalsrv follows (schema_version 3), written by
+#       ops/corpus_build.py on the validator box
+#   turns/** — byte-identical copy of the Hippius corpus for replay
+# Credentials: DATA_R2_ACCESS_KEY_ID / DATA_R2_SECRET_ACCESS_KEY (publisher,
+# validator box) and ROLLOUTS_R2_* (writer, pod); endpoint DATA_R2_ENDPOINT.
+bucket = "affine-data"
+public_base_url = "https://data.affine.io"
 
 [dashboard]
 # Hot-path read API (affine-dash) — separate from Hippius archive.

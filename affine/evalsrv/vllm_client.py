@@ -65,13 +65,16 @@ class Served:
 class ModelPool:
     """Load-balanced pool over identical replicas of one model.
 
-    Used for the teacher. Sticky routing by ``sticky_key`` (turn_id) pins
-    every call for one turn — ref sample + king echo + challenger echo — to
-    the same replica so vLLM automatic prefix caching can reuse the shared
-    turn prefix ``x``. Without a key, pick least-in-flight (tie-break
-    round-robin) so replica[0] is not preferred whenever it happens to be
-    idle. Replicas serve identical weights at temperature-0 echo scoring, so
-    which replica answers is score-invariant.
+    Used for the teacher and the dual miner copies. Sticky routing by
+    ``sticky_key`` (turn_id) pins every call for one turn — teacher ref
+    sample + king echo + challenger echo — to the same replica so vLLM
+    automatic prefix caching can reuse the shared turn prefix ``x``.
+    Pass a key only on the teacher: miners sample once per turn, so
+    pinning cannot hit the cache and hash-splits leave one copy idle.
+    Without a key, pick least-in-flight (tie-break round-robin) so
+    replica[0] is not preferred whenever it happens to be idle.
+    Replicas serve identical weights; which replica answers a sample
+    or a temperature-0 echo is score-invariant.
     """
 
     def __init__(self, replicas: list[VllmModel]):
@@ -95,17 +98,19 @@ class ModelPool:
         return self.replicas[best_i]
 
     async def sample(self, prefix_messages: list[dict], temperature: float,
-                     max_tokens: int, *, sticky_key: str | None = None
-                     ) -> tuple[str, str]:
+                     max_tokens: int, *, sticky_key: str | None = None,
+                     action_kind: str | None = None) -> tuple[str, str]:
         return await self._pick(sticky_key).sample(
-            prefix_messages, temperature, max_tokens, sticky_key=sticky_key)
+            prefix_messages, temperature, max_tokens, sticky_key=sticky_key,
+            action_kind=action_kind)
 
     async def sample_injected(self, prefix_messages: list[dict], thoughts: str,
                               temperature: float, max_tokens: int, *,
-                              sticky_key: str | None = None) -> str:
+                              sticky_key: str | None = None,
+                              action_kind: str | None = None) -> str:
         return await self._pick(sticky_key).sample_injected(
             prefix_messages, thoughts, temperature, max_tokens,
-            sticky_key=sticky_key)
+            sticky_key=sticky_key, action_kind=action_kind)
 
     async def score_action(self, prefix_messages: list[dict], thoughts: str,
                            action: str, *, sticky_key: str | None = None
@@ -181,9 +186,9 @@ class VllmModel:
         raise RuntimeError("unreachable")
 
     async def sample(self, prefix_messages: list[dict], temperature: float,
-                     max_tokens: int, *, sticky_key: str | None = None
-                     ) -> tuple[str, str]:
-        """Natural rollout -> (thoughts, action)."""
+                     max_tokens: int, *, sticky_key: str | None = None,
+                     action_kind: str | None = None) -> tuple[str, str]:
+        """Natural rollout -> (thoughts, action) under the turn's dialect."""
         del sticky_key  # only ModelPool uses this; accepted for API symmetry
         # add_special_tokens=False must match score_action so vLLM automatic
         # prefix caching can reuse the shared turn-prefix token blocks.
@@ -194,11 +199,12 @@ class VllmModel:
             "temperature": temperature,
             "add_special_tokens": False,
         })
-        return split_rollout(d["choices"][0]["text"])
+        return split_rollout(d["choices"][0]["text"], action_kind)
 
     async def sample_injected(self, prefix_messages: list[dict], thoughts: str,
                               temperature: float, max_tokens: int, *,
-                              sticky_key: str | None = None) -> str:
+                              sticky_key: str | None = None,
+                              action_kind: str | None = None) -> str:
         """Rollout with planted thoughts -> action only."""
         del sticky_key
         d = await self._post({
@@ -209,7 +215,7 @@ class VllmModel:
             "temperature": temperature,
             "add_special_tokens": False,
         })
-        return extract_action(d["choices"][0]["text"])
+        return extract_action(d["choices"][0]["text"], action_kind)
 
     async def _echo_span(self, full: str, span_start: int,
                          span_bytes: int) -> dict:

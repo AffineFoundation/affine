@@ -15,6 +15,25 @@ share = 1.0
 [policy.glm_textbased.sampling]
 temperature = 0.7
 
+# Teacher self-play (2026-09-01): the duel teacher Qwen/Qwen3.8-27B plays
+# the agent seat, so corpus prefixes are the teacher's OWN history and its
+# duel-time refs on them are on-policy (tighter modes, sharper R). Sampling
+# matches [duel] temperature in affine.toml. Single endpoint on purpose:
+# a fallback serving a different model would silently change who the
+# prefixes belong to.
+[policy.teacher_textbased]
+harness = "mini_swe_textbased"
+share = 2.0
+
+[policy.teacher_textbased.sampling]
+temperature = 0.8
+
+[[policy.teacher_textbased.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
 [[policy.glm_textbased.endpoints]]
 name = "engy"
 model = "glm-5.2"
@@ -27,6 +46,144 @@ model = "z-ai/glm-4.5-air"
 base_url = "https://openrouter.ai/api/v1"
 key_env = "OPENROUTER"
 litellm_model = "openrouter/z-ai/glm-4.5-air"   # native litellm route
+
+# -- second harness on the shell sources (2026-09-02) -----------------------------
+# verifiers' `bash` harness: the model drives native `bash` + `edit` tools
+# through tool calls instead of writing a ```bash fence inside the mini-swe
+# scaffold. Same tasks, second prompt style, so D stops encoding one agent
+# framework. Its system prompt names the tools ("...access to a bash tool...",
+# "...an edit tool...") — that is the tool_call marker the slicer checks.
+# Traces are baked to the teacher's chat-template text (affine.toolbake) and
+# admitted only once tool_call is in [dataset].allowed_action_kinds (T0);
+# until then they stage. Shares mirror the textbased pair, so each harness
+# gets ~half of new coding/terminal turns.
+
+[policy.teacher_bashtool]
+harness = "bash"
+action_kind = "tool_call"
+share = 2.0
+
+[policy.teacher_bashtool.sampling]
+temperature = 0.8
+
+[[policy.teacher_bashtool.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+[policy.glm_bashtool]
+harness = "bash"
+action_kind = "tool_call"
+share = 1.0
+
+[policy.glm_bashtool.sampling]
+temperature = 0.7
+
+[[policy.glm_bashtool.endpoints]]
+name = "engy"
+model = "glm-5.2"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+# Third harness (2026-09-02): pi (pi-coding-agent over pi-acp). Its own
+# ~2.5k-char system prompt and four tools (read / bash / edit / write) — a
+# different agent framework's prompt style over the same tasks. Speaks
+# openai-completions through interception, so traces bake like the bash
+# harness. Probe (2 tb2 tasks, teacher): 16 tool_call turns derived, parity
+# held; 1 rollout ended HarnessError "no visible reply" (teacher answered
+# with reasoning only) — a yield cost, not a parse problem. Equal shares
+# with the other two harnesses.
+
+[policy.teacher_pi]
+harness = "pi"
+action_kind = "tool_call"
+share = 2.0
+
+[policy.teacher_pi.sampling]
+temperature = 0.8
+
+[[policy.teacher_pi.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+[policy.glm_pi]
+harness = "pi"
+action_kind = "tool_call"
+share = 1.0
+
+[policy.glm_pi.sampling]
+temperature = 0.7
+
+[[policy.glm_pi.endpoints]]
+name = "engy"
+model = "glm-5.2"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+# -- non-bash dialects (2026-09-01) ---------------------------------------------
+# Harness `null` is verifiers' plain chat agent: system prompt from the task,
+# native tool calling over MCP, no container. `action_kind` tells the slicer
+# which span is the action; the taskset's system prompt states the same
+# contract to the model (the fold checks for that marker).
+
+[policy.teacher_boxed]
+harness = "null"
+action_kind = "boxed"
+share = 2.0
+
+[policy.teacher_boxed.sampling]
+temperature = 0.8
+
+[[policy.teacher_boxed.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+[policy.glm_boxed]
+harness = "null"
+action_kind = "boxed"
+share = 1.0
+
+[policy.glm_boxed.sampling]
+temperature = 0.7
+
+[[policy.glm_boxed.endpoints]]
+name = "engy"
+model = "glm-5.2"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+[policy.teacher_toolcall]
+harness = "null"
+action_kind = "tool_call"
+share = 2.0
+
+[policy.teacher_toolcall.sampling]
+temperature = 0.8
+
+[[policy.teacher_toolcall.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+[policy.glm_toolcall]
+harness = "null"
+action_kind = "tool_call"
+share = 1.0
+
+[policy.glm_toolcall.sampling]
+temperature = 0.7
+
+[[policy.glm_toolcall.endpoints]]
+name = "engy"
+model = "glm-5.2"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
 
 # -- examples: third-party agent harnesses (enable by adding the policy id
 # to [defaults].policies or a source's `policies`) ------------------------------

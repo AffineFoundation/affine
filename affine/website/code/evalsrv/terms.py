@@ -27,6 +27,7 @@ from affine.score import eta
 from .vllm_client import ModelPool, VllmModel
 
 TeacherClient = VllmModel | ModelPool
+MinerClient = VllmModel | ModelPool
 
 EMPTY_THOUGHTS = ""
 
@@ -55,11 +56,16 @@ _REASON_CALLS = [
 async def sample_teacher_rollouts(
         teacher: TeacherClient, prefix: list[dict], n: int,
         temperature: float, max_thought: int, max_action: int, *,
-        sticky_key: str | None = None) -> list[tuple[str, str]]:
-    """Sample teacher (z, y) only — no forced-logprob echoes yet."""
+        sticky_key: str | None = None,
+        action_kind: str | None = None) -> list[tuple[str, str]]:
+    """Sample teacher (z, y) only — no forced-logprob echoes yet.
+
+    action_kind is the turn's action dialect (affine.dialects); it only
+    selects how the completion is split into (z, y). None = bash default.
+    """
     rollouts = await asyncio.gather(*[
         teacher.sample(prefix, temperature, max_thought + max_action,
-                       sticky_key=sticky_key)
+                       sticky_key=sticky_key, action_kind=action_kind)
         for _ in range(n)
     ])
     return [(z, y) for z, y in rollouts if y]
@@ -106,7 +112,8 @@ async def teacher_reference(teacher: TeacherClient, prefix: list[dict], n: int,
                             temperature: float, max_thought: int,
                             max_action: int, *,
                             thought_echo: bool = False,
-                            sticky_key: str | None = None) -> list[dict]:
+                            sticky_key: str | None = None,
+                            action_kind: str | None = None) -> list[dict]:
     """Sample teacher rollouts once per turn; reused across all miners.
 
     Returns list of dicts with z, y, lp_own (lpC(y|z_C)) and lp_empty
@@ -115,19 +122,21 @@ async def teacher_reference(teacher: TeacherClient, prefix: list[dict], n: int,
     """
     rollouts = await sample_teacher_rollouts(
         teacher, prefix, n, temperature, max_thought, max_action,
-        sticky_key=sticky_key)
+        sticky_key=sticky_key, action_kind=action_kind)
     return await score_teacher_rollouts(
         teacher, prefix, rollouts, thought_echo=thought_echo,
         sticky_key=sticky_key)
 
 
 async def sample_miner_rollouts(
-        miner: VllmModel, prefix: list[dict], n: int,
-        temperature: float, max_thought: int, max_action: int
-        ) -> list[tuple[str, str]]:
-    """Sample miner (z, y) rollouts; filter empty actions."""
+        miner: MinerClient, prefix: list[dict], n: int,
+        temperature: float, max_thought: int, max_action: int, *,
+        sticky_key: str | None = None,
+        action_kind: str | None = None) -> list[tuple[str, str]]:
+    """Sample miner (z, y) rollouts; filter unparsable/empty actions."""
     rollouts = await asyncio.gather(*[
-        miner.sample(prefix, temperature, max_thought + max_action)
+        miner.sample(prefix, temperature, max_thought + max_action,
+                     sticky_key=sticky_key, action_kind=action_kind)
         for _ in range(n)
     ])
     return [(z, y) for z, y in rollouts if y]
@@ -145,7 +154,7 @@ async def _bank_lift(teacher: TeacherClient, prefix: list[dict],
     return scores[0]["lp_per_byte"] - max(s["lp_per_byte"] for s in scores[1:])
 
 
-async def miner_terms(teacher: TeacherClient, miner: VllmModel, prefix: list[dict],
+async def miner_terms(teacher: TeacherClient, miner: MinerClient, prefix: list[dict],
                       ref: list[dict], n: int, temperature: float,
                       max_thought: int, max_action: int,
                       score_bank: bool = False,
@@ -153,6 +162,7 @@ async def miner_terms(teacher: TeacherClient, miner: VllmModel, prefix: list[dic
                       causality_gate: bool = False,
                       thought_echo: bool = False, *,
                       sticky_key: str | None = None,
+                      action_kind: str | None = None,
                       rollouts: list[tuple[str, str]] | None = None) -> dict:
     """Compute the pair record for one miner on one turn.
 
@@ -172,7 +182,8 @@ async def miner_terms(teacher: TeacherClient, miner: VllmModel, prefix: list[dic
     """
     if rollouts is None:
         rollouts = await sample_miner_rollouts(
-            miner, prefix, n, temperature, max_thought, max_action)
+            miner, prefix, n, temperature, max_thought, max_action,
+            sticky_key=sticky_key, action_kind=action_kind)
     rollouts = [(z, y) for z, y in rollouts if y]
     if not rollouts or not ref:
         return {"valid": False}
