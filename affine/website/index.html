@@ -77,21 +77,6 @@
         <a class="fork-notice-link" href="./llms.txt">spec: llms.txt § Upcoming fork →</a>
       </div>
     </div>
-    <!-- Cutover notice (HF -> private R2 submissions, Ed25519 hotkeys).
-         Static by design; retire once every miner has moved over. -->
-    <div class="fork-notice" id="r2-notice" role="note">
-      <div class="fork-notice-inner">
-        <span class="fork-notice-tag">CUTOVER</span>
-        <span class="fork-notice-text">
-          <b>2026-09-03</b>: submissions move to a <b>private</b> R2 bucket
-          (nobody sees your weights unless you win). Hugging Face
-          <code>affine1</code> commits are dropped at intake, and your hotkey
-          <b>must be Ed25519</b> (<code>submit.py hotkey</code> — btcli's
-          default sr25519 key cannot open the sealed credentials).
-        </span>
-        <a class="fork-notice-link" href="./llms.txt">how: llms.txt § Submit checklist →</a>
-      </div>
-    </div>
   </header>
 
   <!-- Top charts, 2×2: score + Margin (σ) over Margin (abs) + reg price —
