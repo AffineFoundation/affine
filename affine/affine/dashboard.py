@@ -218,9 +218,18 @@ class Dashboard:
         }
         if self.registrations is not None:
             # Miners verify mailbox envelopes against this Ed25519 identity.
+            # Same shape as the snapshot block (+ r2_endpoint) so a client
+            # reading either sees `enabled` / `hf_cutover_block`; the dash
+            # relays this file as api/v1/contract.submission_r2 (was
+            # identity-only, so `.enabled` read as null while live).
+            r2cfg = self.cfg.submission.r2
             contract["submission_r2"] = {
+                "enabled": True,
                 "validator_identity": self.registrations.signer.ss58_address,
                 "r2_endpoint": self.cfg.secrets.r2_endpoint,
+                "mailbox_base_url": r2cfg.mailbox_base_url,
+                "public_models_base_url": r2cfg.public_models_base_url,
+                "hf_cutover_block": r2cfg.hf_cutover_block,
             }
         self.hippius.put_json("data/contract.json", contract)
         self._write_public_json("contract.json", contract)
