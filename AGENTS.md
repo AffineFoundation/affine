@@ -283,7 +283,8 @@ Full writeups: `research/docs/REDTEAM.md`.
  from `https://data.affine.io` (`[dataset].corpus_base_url`): same schema-2
  manifest, same sha, byte-identical `turns/**`; Hippius `turns/**` read-only.
  Admission + data location only — **no scoring change, wvk stays 10**. The
- wvk 11 fork (dialects + schema-3 view) is stage 2, 2026-09-09
+ wvk 11 fork (dialects + schema-3 view) is stage 2, 2026-09-04 18:00 UTC
+ (moved forward from 2026-09-09 on 2026-09-03, operator directive; re-noticed same day)
  (`ops/t0/t0_cutover.sh`). Ran via `ops/t0/stage1_go_live.sh`.
 - **action dialects (2026-09-01, mechanism only — no contract change):**
   where a turn's action span starts/ends is now a per-turn `action_kind`
@@ -298,8 +299,10 @@ Full writeups: `research/docs/REDTEAM.md`.
   turns or forfeit them): explicit dated operator directive + a wvk
   decision, not an agent edit. Rollouts policies declare their harness's
   dialect via `action_kind` in `policies.toml` (default bash).
-- **wvk 11 fork NOTICED, not live (notice posted 2026-09-02; effective not
-  before 2026-09-09, on an explicit dated operator directive):** admit
+- **wvk 11 fork NOTICED, not live (notice posted 2026-09-02 as "not before
+  2026-09-09"; T0 moved to 2026-09-04 18:00 UTC by operator directive on
+  2026-09-03, re-noticed the same evening; runs via `AFFINE_T0_DIRECTIVE=2026-09-04
+  ops/t0/t0_cutover.sh`):** admit
   `boxed` (math, `affine-math-v1`, MATH train) and `tool_call` (wiki
   search, `affine-wiki-v1`) turns to D at target shares math 0.10 /
   tool_use 0.10 (coding 0.50 / terminal 0.25 / nl2repo 0.05). Forward-only:

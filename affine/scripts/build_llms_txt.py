@@ -207,7 +207,7 @@ the slot
 - min(R, G) — the one score you optimize (and the telemetry published \
 around it)
 - Upcoming fork: wvk 11 — action dialects (`tool_call`, `boxed` join \
-`bash`; notice posted 2026-09-02, effective not before 2026-09-09)
+`bash`; notice posted 2026-09-02, T0 moved to 2026-09-04 18:00 UTC on 2026-09-03)
 - Post-crown exploit audit — the auditor, its published verdicts, and how to \
 run the same audit yourself
 - Public data — full field-level description of every published object
@@ -729,7 +729,10 @@ Design note: this is a *corpus* change gated behind a *contract* flag, so \
 the parser for a new format is a code change but admitting it is a fork — \
 miners are never scored on a format the prefix did not announce.
 
-**When.** Not before 2026-09-09 (seven days after this notice). The exact \
+**When.** 2026-09-04, 18:00 UTC (14:00 US Eastern). This notice originally \
+said "not before 2026-09-09"; on 2026-09-03 the operator pulled T0 forward to \
+2026-09-04 and this section, the release notes and Discord were updated the \
+same evening. Nothing about *what* changes moved — only the date. The exact \
 commit lands as `weight_version_key = 11` in `affine.toml`; the toml comment \
 and this section will carry the effective date/block. Until then the gate \
 `[dataset].allowed_action_kinds = ["bash"]` stays closed: no non-bash turn \

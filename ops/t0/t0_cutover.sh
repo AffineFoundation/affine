@@ -32,8 +32,11 @@ if ! [[ "$T0" =~ ^20[0-9]{2}-[0-9]{2}-[0-9]{2}$ ]]; then
   echo "refusing: AFFINE_T0_DIRECTIVE=YYYY-MM-DD (the explicit dated operator directive) is required" >&2
   exit 2
 fi
-if [[ "$T0" < "2026-09-09" ]]; then
-  echo "refusing: notice period ends 2026-09-09; directive date $T0 is earlier" >&2
+# Notice posted 2026-09-02 said "not before 2026-09-09". On 2026-09-03 the
+# operator moved T0 to 2026-09-04 ("I need to ship this tomorrow"); the date
+# change was re-noticed the same evening (Discord + llms.txt + release notes).
+if [[ "$T0" < "2026-09-04" ]]; then
+  echo "refusing: earliest noticed T0 is 2026-09-04; directive date $T0 is earlier" >&2
   exit 2
 fi
 step() { printf '\n==== [T0 %s] %s\n' "$T0" "$*"; }
@@ -105,7 +108,7 @@ s2 = s.replace("## Upcoming fork: wvk 11 — action dialects (notice posted 2026
                f"## Fork history: wvk 11 — action dialects + data.affine.io (notice 2026-09-02, effective {t0})")
 s2 = s2.replace("- Upcoming fork: wvk 11 — action dialects (`tool_call`, `boxed` join \\",
                 "- Fork history: wvk 11 — action dialects (`tool_call`, `boxed` join \\")
-s2 = re.sub(r"\*\*When\.\*\* Not before 2026-09-09 .*?\(`check_dialects` in `code/evalsrv/dueling\.py`\)\.",
+s2 = re.sub(r"\*\*When\.\*\* 2026-09-04, 18:00 UTC .*?\(`check_dialects` in `code/evalsrv/dueling\.py`\)\.",
             f"**Effective {t0}.** `weight_version_key = 11` in `affine.toml`; "
             "`[dataset].allowed_action_kinds = [\"bash\", \"tool_call\", \"boxed\"]`; "
             "D served from `https://data.affine.io/corpus/manifest.json` (schema_version 3).",
@@ -187,7 +190,7 @@ Post to Discord (#announcements), then remove nothing else -- llms.txt + toml ca
 1. **Action dialects.** D now admits \`<tool_call>…</tool_call>\` (tool use / search) and \`\\boxed{…}\` (math) turns next to \`\`\`bash. Same min(R,G) score; each turn's system prompt states its format. A model that cannot emit a dialect forfeits those turns.
 2. **Corrected prefixes.** Every turn's prefix is now the exact root→parent path of the message graph the model saw — harnesses that compact or rewrite history are represented faithfully (no phantom linear history).
 3. **More harnesses on the same tasks.** Coding/terminal tasks are generated under mini-swe (bash fence), verifiers' native bash tool, and pi — three prompt styles over the same tasks so "can drive a shell" is what transfers.
-4. **D moves to https://data.affine.io** as a schema-3 view over full rollout traces: \`corpus/manifest.json\` (view \`duel_turns@v4\`), \`traces/manifest.json\` (the full envelopes incl. reasoning_content). The v2 history stays byte-identical at \`data.affine.io/turns/**\`; Hippius is read-only from today and retires in 30 days.
+4. **D becomes a schema-3 view over full rollout traces** on https://data.affine.io: \`corpus/manifest.json\` (view \`duel_turns@v4\`), \`traces/manifest.json\` (the full envelopes incl. reasoning_content). The v2 history stays byte-identical at \`data.affine.io/turns/**\`.
 Spec + query recipes: https://affine.io/llms.txt (§ Fork history, § Turn corpus D).
 EOF
 
