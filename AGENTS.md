@@ -331,6 +331,24 @@ Full writeups: `research/docs/REDTEAM.md`.
   0.012 on bash) and B ≈ 0.84. Verdicts now stamp `duel_params.
   allowed_action_kinds`, `slice.dialects`, and per-side/teacher
   `by_dialect` telemetry (additive; single `bash` entry pre-fork).
+  **T0 data decisions (2026-09-03 night, from staging rehearsals):**
+  (a) D restarts from the traces — `ops/corpus_build.py --init --no-legacy`;
+  the v2 epochs 1–13 are not imported (importing them froze coding: the
+  waterfill counted 60k legacy turns at coding 67% and admitted zero new
+  coding/terminal rollouts). (b) The fold enforces `[mix]` in **slice
+  strata**, not turns (`cap_fill`): one turn per stratum per duel means a
+  group's slice share is its strata share; the turn-count waterfill had
+  made coding 4% of the slice. Rule: every key takes all it has except the
+  single most over-supplied one, capped where the runner-up is on target.
+  (c) The fold assigns math/tool_use strata itself from `strata_buckets`
+  (math 470→830; tool_use stays 470 = its 478 tasks). Epoch 14 (pre-published
+  2026-09-04 03:20 UTC, not read until the toml flips): 189k turns / 14.2k
+  rollouts / 7.4k strata; slice ≈ coding 56 / terminal 27 / math 11 /
+  tool_use 4 / nl2repo 1 %; dialects bash 64 / tool_call 24 / boxed 11 %;
+  coding languages py 32 / go 26 / java 18 / ts-js 17 / rs 7 %. (d) No
+  per-dialect token cap at T0: teacher math completions finish ≤1792 tokens
+  in 78% of trace calls (p50 557); the mechanism exists
+  (`[duel.max_tokens_by_kind.<kind>]`, empty = unchanged) if wanted later.
   **Second harness (2026-09-02):** coding + terminal sources also run
   under verifiers' `bash` harness (native `bash` + `edit` tools via tool
   calls; policies `teacher_bashtool` / `glm_bashtool`, `action_kind =
