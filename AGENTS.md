@@ -104,8 +104,22 @@ key**; then `pm2 restart affine-validator` + `scripts/redeploy_pods.py
   actions were only licensed (B), never ranked — bench transcripts of
   reigns 1–5 show commands shrinking 426→150–250 chars while thoughts grow
   and steps multiply. Cost +k echoes/turn/side (`lpC_ya_zc`). Telemetry
-  `mean_a_leg` / `a_bind_frac`. Positive control still to run (A's live
-  scale vs R/G is unmeasured — the reason it is staged, not flipped).
+  `mean_a_leg` / `a_bind_frac`.
+  **Probe result (2026-09-04, `research/results/v6_action_leg_probe.*`,
+  1,222 turns of chal-00248 re-echoed on the teacher swarm) — DO NOT FLIP
+  A AS BUILT:** ordering passes (generic `ls -la` A = −0.18, negative on
+  86% of turns; teacher-own action 0.009 > king 0.0063 ≈ challenger
+  0.0066), and A would bind ~36% of turns (R 40%, G 22%), but (i) it is
+  noisy at the teacher's own level — even the teacher's own action gets
+  A < 0 on 30% of turns (multi-modal refs); (ii) it did not separate the
+  two live miners and raised the paired SE 0.00057→0.00086, turning this
+  crown's z from +3.5 to +0.5; (iii) **per-byte A rewards short actions
+  ~10×** (king short 0.021 vs long 0.002; challenger 0.019 vs 0.0025) —
+  the fence bytes dominate a short span — which is the opposite of the
+  directive's intent. Redesign candidates: score the dialect's action
+  *body* only (drop fence bytes via `affine/dialects.py`), or a
+  non-per-byte normalization; re-probe before any flip.
+  `ops/v6/v6_toml_edits.py --forfeit-only` flips the floor alone.
 - **Forfeit floor** (`forfeit_turn_score = -0.1`): a turn with no parseable
   action scores the floor instead of being dropped from pairing
   (one-sided = loss, two-sided = tie at 0, kept in n). Old rule made
