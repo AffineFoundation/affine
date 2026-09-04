@@ -80,6 +80,7 @@ def s3_client(endpoint: str, access_key_id: str, secret_access_key: str,
             response_checksum_validation="when_required",
             connect_timeout=connect_timeout, read_timeout=read_timeout,
             retries={"max_attempts": 4, "mode": "standard"},
+            max_pool_connections=32,
         ),
     )
 
