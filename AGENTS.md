@@ -85,6 +85,52 @@ came with a **throne reset**: reign 0 re-seeded from untouched
 `Qwen/Qwen3.6-35B-A3B` (unpaid genesis), old-era reveals invalidated via
 `min_submission_block`.
 
+### Staged — v6: min(R,G,A) + forfeit floor (built 2026-09-04, NOT live)
+Operator directive 2026-09-04 ("implement immediately") after the reign-5
+bench post-mortem. Code is in `affine/affine/score.py` (+ research twin),
+`evalsrv/terms.py` / `dueling.py`, `config.py`; both rules sit behind
+`[duel]` knobs at their legacy values, so live scoring and all 210 stored
+verdicts replay bit-identically. The flip is staged in
+`ops/v6/v6_toml_edits.py` (`--preview` / `--apply DATE --wvk-to N`) and is a
+**weight_version_key event — needs the explicit dated directive naming the
+key**; then `pm2 restart affine-validator` + `scripts/redeploy_pods.py
+--role eval` (dueling.py runs on the eval pod) + llms.txt notice.
+- **A leg** (`score_mode = "min_rga"`): `b_i = lpC(y_A|z_C^i) − lpC(y_A|∅)`,
+  `A = tau·log(mean_i exp(b_i/tau))`, `turn = min(R, G, A)`. The dual of R
+  — "would the teacher, thinking its own thought, take the miner's action?"
+  Teacher-side only. **Not centered**: centering rewards spread, and an
+  action all refs license is the target; a generic action earns less lift
+  than the right one, so the R-leg flat-lift attack has no analog. Why:
+  actions were only licensed (B), never ranked — bench transcripts of
+  reigns 1–5 show commands shrinking 426→150–250 chars while thoughts grow
+  and steps multiply. Cost +k echoes/turn/side (`lpC_ya_zc`). Telemetry
+  `mean_a_leg` / `a_bind_frac`. Positive control still to run (A's live
+  scale vs R/G is unmeasured — the reason it is staged, not flipped).
+- **Forfeit floor** (`forfeit_turn_score = -0.1`): a turn with no parseable
+  action scores the floor instead of being dropped from pairing
+  (one-sided = loss, two-sided = tie at 0, kept in n). Old rule made
+  runaway thinking free and let a miner pick which turns entered its mean.
+  Calibrated on 40 live duels / 100k turns: p1 of valid turn scores −0.087,
+  p5 −0.041, live forfeit rates 1.7% median / 5.7% max per side → −0.1 is
+  under p1 and a 2% forfeit rate costs one δ. Counterfactual on the 210
+  stored verdicts: median margin shift +0.00003, 5 flips (4 king-forfeit
+  losses → wins, 1 crown `chal-00169` → below δ); forward-only, so none
+  re-verdict. Telemetry `n_forfeits` / `forfeit_rate` / `n_forfeit_turns`.
+- **Bench post-mortem facts that drove this** (`affine/state/benches/`):
+  57% of 150 king agent runs never submitted; kings 1–3 hit the 8,192-token
+  reply cap with no command 53–63×/run (genesis 17); one command repeated
+  ×32–36 (genesis ×5); thought chars/reply 660→1,200–1,370, command chars
+  426→150–250, steps 26→44. On D the same kings are surface-identical to
+  the teacher (thought 332–347 vs 352 chars, same 53% two-paragraph
+  restatement shape). D is 100% the bench's mini-swe scaffold already, so
+  the gap is not prompt format: the bench conditions on the model's OWN
+  trajectory and decodes greedily (T=0; duel samples at 0.8). Multi-step
+  control failures stay a blind spot of the single-turn duel by design.
+- **Data pipeline (item 2 of the directive):** three harnesses already run
+  teacher-only (mini-swe textbased, verifiers `bash` tool, `pi`), staged
+  to T0. A fourth (`hermes_agent`, tool_call) exists only as a commented
+  policy and needs a datagen-pod probe before enabling — deferred past T0.
+
 ### History — Reason v4 (wvk 7–9, 2026-08-17 → 2026-08-27)
 v4 was the uncentered tempered LME, `Reason = tau·log((1/k)·Σ exp(a_i/tau))`,
 same B gate and length floor, δ = 0.002 (0.001 experiment 2026-08-21 reverted
