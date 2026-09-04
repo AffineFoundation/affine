@@ -371,6 +371,36 @@ score_mode = "min_rg"
 # the band open when the k=3 reference thoughts happen to agree tightly.
 band_c = 2.0
 band_floor = 0.002
+# ---- v6 (built 2026-09-04, operator directive; NOT live until the flip) ----
+# Two contract knobs, both implemented in score.py / evalsrv and both a
+# weight_version_key event when flipped (ops/v6/v6_toml_edits.py stages the
+# flip; it needs an explicit dated operator directive naming the key):
+#
+#   score_mode = "min_rga"     turn = min(R, G, A)
+#     A = tau·log((1/k)·Σ_i exp(b_i/tau)),  b_i = lpC(y_A|z_C^i) − lpC(y_A|∅)
+#     "Would the teacher, thinking its own thought i, take the miner's
+#     action?" — the dual of R, teacher-side only (no lpA surface), same
+#     tempered LME as R but NOT centered: centering rewards spread across
+#     refs, and an action every teacher thought licenses is the target; a
+#     generic action earns LESS lift than the right one, so the R-leg
+#     flat-lift attack has no analog here. Why: until v6 the miner's action
+#     was only licensed (B), never ranked. Bench transcripts of reigns 1–5
+#     (2026-09-04) show commands shrinking 426→150–250 chars while thoughts
+#     grow and steps multiply — the rule was indifferent. Cost: +k teacher
+#     echoes per turn per side (lpC_ya_zc; lpC_ya_e is the B baseline).
+#
+#   forfeit_turn_score = -0.1  per-turn score for a side with no parseable action
+#     Until v6 a forfeit was DROPPED from pairing (score.duel paired only
+#     turns valid on both sides): runaway thinking with no action cost
+#     nothing, and a miner could choose which turns entered its own mean.
+#     With the floor the turn stays paired — one-sided forfeit = loss by
+#     (floor − opponent's turn), two-sided = tie (diff 0, kept in n).
+#     Calibration (40 live min(R,G) duels, 100k valid turns): p1 of valid
+#     turn scores −0.087, p5 −0.041; live forfeit rates 1.7% median / 5.7%
+#     max per side. −0.1 sits under p1: forfeiting beats answering on <1%
+#     of turns (which a miner cannot predict), and a 2% forfeit rate costs
+#     exactly one δ (0.002) of margin. Absent = legacy drop (wvk ≤ 11 replay).
+# ---------------------------------------------------------------------------
 # Ops: skip prior-bank and non-Reason forced-logprob echos (telemetry GPU).
 score_bank = false
 reason_only = true

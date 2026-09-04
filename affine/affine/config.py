@@ -185,6 +185,10 @@ class DuelCfg:
     score_mode: str = "reason"
     band_c: float = 2.0
     band_floor: float = 0.002
+    # v6 (2026-09-04): per-turn score for a side with no parseable action.
+    # None = legacy (turn dropped from pairing). Contract knob: changing it
+    # is a weight_version_key event.
+    forfeit_turn_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -396,6 +400,8 @@ def _duel(raw: dict) -> DuelCfg:
         score_mode=str(d.get("score_mode", "reason")),
         band_c=float(d.get("band_c", 2.0)),
         band_floor=float(d.get("band_floor", 0.002)),
+        forfeit_turn_score=(float(d["forfeit_turn_score"])
+                            if d.get("forfeit_turn_score") is not None else None),
     )
 
 
