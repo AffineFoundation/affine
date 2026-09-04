@@ -152,6 +152,31 @@ def check_dialects(turns: list[dict], allowed: list[str]) -> None:
 
 # -- probe -----------------------------------------------------------------------
 
+def token_caps(duel_cfg: dict):
+    """(max_thought, max_action) for a turn's action dialect.
+
+    `[duel].max_thought_tokens` / `max_action_tokens` apply to every kind
+    unless `[duel.max_tokens_by_kind.<kind>]` overrides them (`thought`,
+    `action`; a missing key keeps the default). Both sides and the teacher
+    refs sample under the same cap, so a per-kind cap changes the slice's
+    yield, not the pairing — it is still a `[duel]` knob and therefore a
+    contract change when set. Empty table = pre-2026-09-04 behaviour exactly.
+    Motivation: the gate-closed dry run had `boxed` turns hit finish=length
+    at 1024+768 on 15/18 king rollouts (teacher refs 2.55/3), i.e. most math
+    turns would forfeit at the flat cap.
+    """
+    dflt = (int(duel_cfg["max_thought_tokens"]), int(duel_cfg["max_action_tokens"]))
+    table = duel_cfg.get("max_tokens_by_kind") or {}
+    by_kind = {
+        str(kind): (int(v.get("thought", dflt[0])), int(v.get("action", dflt[1])))
+        for kind, v in table.items()
+    }
+
+    def caps(action_kind: str | None) -> tuple[int, int]:
+        return by_kind.get(action_kind or dialects.DEFAULT_KIND, dflt)
+    return caps
+
+
 async def probe_injectable(model: VllmModel | ModelPool, turns: list[dict],
                            temperature: float, max_thought: int,
                            max_action: int, n_probe_turns: int = 3) -> str | None:
@@ -291,8 +316,7 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
     n_teacher = int(duel_cfg["n_teacher_samples"])
     n_miner = int(duel_cfg["n_miner_samples"])
     temperature = float(duel_cfg["temperature"])
-    max_thought = int(duel_cfg["max_thought_tokens"])
-    max_action = int(duel_cfg["max_action_tokens"])
+    caps = token_caps(duel_cfg)
     score_bank = bool(duel_cfg.get("score_bank", False))
     reason_only = bool(duel_cfg.get("reason_only", True))
     causality_gate = bool(duel_cfg.get("causality_gate", False))
@@ -306,6 +330,7 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
         # Per-turn action dialect; absent on pre-dialect corpus records,
         # which means bash (affine.dialects.DEFAULT_KIND).
         action_kind = rec.get("action_kind")
+        max_thought, max_action = caps(action_kind)
         async with turn_sem:
             if abort_event is not None and abort_event.is_set():
                 raise DuelAborted("superseded by a new duel request")
@@ -632,6 +657,11 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "band_c": band_c,
             "band_floor": band_floor,
             "allowed_action_kinds": allowed_kinds,
+            "max_thought_tokens": int(duel_cfg["max_thought_tokens"]),
+            "max_action_tokens": int(duel_cfg["max_action_tokens"]),
+            "max_tokens_by_kind": {
+                str(k): {str(f): int(n) for f, n in v.items()}
+                for k, v in (duel_cfg.get("max_tokens_by_kind") or {}).items()},
         },
         "king": king_sum,
         "challenger": chall_sum,

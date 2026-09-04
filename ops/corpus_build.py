@@ -474,6 +474,11 @@ def main() -> None:
     ap.add_argument("--init", action="store_true",
                     help="first schema-3 revision: import the live v2 corpus "
                          "as legacy records, then fold every published trace")
+    ap.add_argument("--no-legacy", action="store_true",
+                    help="with --init: do not import the v2 epochs; D starts "
+                         "from the traces alone and the mix waterfill counts "
+                         "from zero (the v2 history stays at turns/** for "
+                         "replay and is still chained via prev_manifest)")
     ap.add_argument("--allowed-kinds", default=None,
                     help="comma list overriding [dataset].allowed_action_kinds")
     ap.add_argument("--publish-prefix", default="",
@@ -546,7 +551,11 @@ def main() -> None:
     published = published_turn_ids(
         PublicCorpus(f"{public_base}/{prefix}" if prefix else public_base), live)
     legacy: list[dict] = []
-    if args.init:
+    if args.no_legacy and not args.init:
+        fatal("--no-legacy only applies to --init")
+    if args.init and args.no_legacy:
+        log("--no-legacy: v2 epochs not imported; D restarts from the traces")
+    if args.init and not args.no_legacy:
         legacy = legacy_records(pub, legacy_manifest)
         for rec in legacy:
             for m in rec["turns"]:
@@ -571,12 +580,23 @@ def main() -> None:
     log(f"drops: {drops or 'none'}")
 
     mix, src2grp, lang_mix = load_mix(ignore_fold_mix=args.ignore_fold_mix)
-    if not state.get("group_counts"):
+    if not state.get("group_counts") and not state.get("mix_seeded"):
+        state["mix_seeded"] = True
         # Carry the old fold's per-group / per-language tallies across the
         # cutover: they describe exactly the legacy turns imported here.
         old_state = REPO / "ops" / "datagen_refresh" / "state.json"
         old = json.loads(old_state.read_text()) if old_state.exists() else {}
-        if old.get("group_counts"):
+        if args.no_legacy:
+            # Nothing imported, so nothing to carry. Rehearsal 2026-09-03
+            # showed why this matters: with the 60k legacy turns counted
+            # (coding 67%), the waterfill admitted ZERO new coding/terminal
+            # rollouts -- the rebalanced multi-language / multi-harness data
+            # could not enter D until math and tool_use (both exhausted)
+            # caught up. Counting from zero lets D take the target mix now.
+            state["group_counts"] = {}
+            state["lang_counts"] = {}
+            log("group_counts start at zero (--no-legacy)")
+        elif old.get("group_counts"):
             state["group_counts"] = dict(old["group_counts"])
             state["lang_counts"] = dict(old.get("lang_counts") or {})
             log(f"group_counts carried from datagen_refresh: {state['group_counts']}")
