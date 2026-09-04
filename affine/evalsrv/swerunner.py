@@ -30,6 +30,61 @@ BENCH_DATA_DIR = Path(os.environ.get("AFFINE_BENCH_DIR", "/root/bench"))
 # change stay distinguishable.
 ACTION_REGEX = r"```(?:bash|mswea_bash_command)\s*\n(.*?)\n```"
 
+# `docker run` probe cache: (monotonic time, error or None). A daemon that
+# only answers `docker info` but cannot mount overlays (observed 2026-09-04:
+# the pod's sysbox helper died on the host; every `docker run` returned 125
+# "function not implemented" while `docker ps` stayed green) must fail
+# /health so the provisioner re-rents, and must fail a bench run up front
+# instead of scoring 25 dead containers as 0/25.
+_DOCKER_PROBE_TTL_S = 300.0
+_docker_probe_lock = threading.Lock()
+_docker_probe_cache: tuple[float, str | None] = (0.0, None)
+
+
+def docker_probe(force: bool = False) -> str | None:
+    """Start a throwaway container from any cached image; return an error
+    string when the daemon cannot, None when it can (or nothing to test).
+
+    Uses the first image already in the local cache — never pulls, so a
+    fresh pod still bootstrapping (no images yet) reports healthy."""
+    global _docker_probe_cache
+    with _docker_probe_lock:
+        at, err = _docker_probe_cache
+        if not force and time.monotonic() - at < _DOCKER_PROBE_TTL_S:
+            return err
+        err = _docker_probe_uncached()
+        _docker_probe_cache = (time.monotonic(), err)
+        return err
+
+
+def _docker_probe_uncached() -> str | None:
+    try:
+        p = subprocess.run(["docker", "images", "-q"], capture_output=True,
+                           text=True, timeout=30)
+    except Exception as e:
+        return f"docker images: {type(e).__name__}: {e}"
+    if p.returncode != 0:
+        return f"docker images exit {p.returncode}: {(p.stderr or '')[-300:]}"
+    images = (p.stdout or "").split()
+    if not images:
+        return None
+    name = f"affine-docker-probe-{int(time.time())}"
+    try:
+        p = subprocess.run(
+            ["docker", "run", "--rm", "--name", name, "--entrypoint",
+             "/bin/true", images[0]],
+            capture_output=True, text=True, timeout=90)
+    except subprocess.TimeoutExpired:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True,
+                       timeout=30)
+        return "docker run: timed out after 90s"
+    except Exception as e:
+        return f"docker run: {type(e).__name__}: {e}"
+    if p.returncode != 0:
+        return (f"docker run exit {p.returncode}: "
+                f"{(p.stderr or p.stdout or '').strip()[-300:]}")
+    return None
+
 
 def _load_pin() -> dict:
     return json.loads(IDS_PATH.read_text())
@@ -333,6 +388,11 @@ def run_swe_lite(model_repo: str, model_port: int, *,
     except Exception as e:
         return {"ok": False, "suite": SUITE_NAME, "error": f"prepare: {e}"}
     _prepull_images(pin)
+    docker_err = docker_probe(force=True)
+    if docker_err:
+        return {"ok": False, "suite": SUITE_NAME, "infra": True,
+                "wall_time_s": round(time.time() - t0, 1),
+                "error": f"infra: docker cannot start containers: {docker_err}"}
 
     env = dict(os.environ)
     env["MSWEA_COST_TRACKING"] = "ignore_errors"
@@ -434,6 +494,23 @@ def run_swe_lite(model_repo: str, model_port: int, *,
                 "preds_path": str(preds_json),
                 "_artifact": _artifact([])}
 
+    artifact = _artifact(resolved_ids)
+    instances = artifact.get("instances") or {}
+    reached_model = sum(1 for inst in instances.values() if inst.get("messages"))
+    if instances and reached_model == 0:
+        # 0/25 with zero transcripts is a dead environment, not a model
+        # score (observed 2026-09-04: 25/25 CalledProcessError in 12.7s).
+        statuses: dict[str, int] = {}
+        for inst in instances.values():
+            key = str(inst.get("exit_status"))
+            statuses[key] = statuses.get(key, 0) + 1
+        return {"ok": False, "suite": SUITE_NAME, "infra": True,
+                "wall_time_s": round(time.time() - t0, 1),
+                "error": ("infra: no task reached the model; exit statuses "
+                          f"{json.dumps(statuses, sort_keys=True)}"),
+                "preds_path": str(preds_json),
+                "_artifact": artifact}
+
     return {
         "ok": True,
         "suite": SUITE_NAME,
@@ -444,5 +521,5 @@ def run_swe_lite(model_repo: str, model_port: int, *,
         "preds_path": str(preds_json),
         "run_id": run_id,
         "action_regex": ACTION_REGEX,
-        "_artifact": _artifact(resolved_ids),
+        "_artifact": artifact,
     }

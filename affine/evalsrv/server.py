@@ -46,7 +46,7 @@ from pydantic import BaseModel
 from affine.config import load_config
 from affine.eval_client import Fault
 
-from . import benchrunner, dueling
+from . import benchrunner, dueling, swerunner
 from .corpus import CorpusSync
 from .engine import Engine
 from .r2store import FetchError, IntegrityError
@@ -195,8 +195,14 @@ def _stack_versions() -> dict:
 
 @app.get("/health")
 def health(_: None = Depends(_require_token)):
+    # Bench pods live or die by `docker run`: a daemon that lists images but
+    # cannot start containers scores every task 0 in seconds. Surface that
+    # as ok=false so the provisioner reprovisions (cached probe, 5 min).
+    docker_err = swerunner.docker_probe() if _ROLE == "bench" else None
     return {
-        "ok": _teacher_ready,
+        "ok": _teacher_ready and docker_err is None,
+        "docker": ({"ok": docker_err is None, "error": docker_err}
+                   if _ROLE == "bench" else None),
         "role": _ROLE,
         "engine": _engine.status(),
         "busy": _busy_lock.locked(),
