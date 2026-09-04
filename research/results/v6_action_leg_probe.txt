@@ -1,0 +1,21 @@
+v6 action-leg probe — 1222 turns of 1300 (duel margin +0.00230, z=3.89)
+
+side            A med    A p10    A p90    A<0  |y| med
+king           0.0063  -0.0287   0.0679  34.9%      114
+challenger     0.0066  -0.0325   0.0698  33.2%      106
+teacher_own    0.0090  -0.0299   0.0731  29.9%      112
+generic       -0.1799  -0.4235   0.0403  85.9%       18
+
+teacher-own A > generic A on 86.2% of turns
+king A > generic A        on 86.2% of turns
+challenger A > generic A  on 86.3% of turns
+
+king         R med=0.0021  G med=0.0245  A med=0.0063  B med=0.0287
+             binding leg under min(R,G,A): R 39.9%  G 24.4%  A 35.7%
+challenger   R med=0.0022  G med=0.0271  A med=0.0066  B med=0.0296
+             binding leg under min(R,G,A): R 42.3%  G 20.9%  A 36.7%
+
+paired margin (challenger − king) under min(R,G)   : +0.00201  SE 0.00057  z +3.53
+paired margin (challenger − king) under min(R,G,A) : +0.00042  SE 0.00086  z +0.48
+king         A med for short actions 0.0207 vs long actions 0.0019
+challenger   A med for short actions 0.0188 vs long actions 0.0025

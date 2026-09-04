@@ -49,9 +49,15 @@ HISTORY_LINE = (
     "# pairing. Forward-only; reign stands.\n")
 
 
-def render(src: str, date: str, wvk_to: int) -> str:
+HISTORY_LINE_FORFEIT_ONLY = (
+    "# {a}→{b} forfeit floor ({date}): a turn with no parseable action scores\n"
+    "# forfeit_turn_score (−0.1) instead of leaving the pairing; one-sided =\n"
+    "# loss, two-sided = tie. min(R,G) unchanged. Forward-only; reign stands.\n")
+
+
+def render(src: str, date: str, wvk_to: int, action_leg: bool = True) -> str:
     a, b = wvk_to - 1, wvk_to
-    if src.count(MODE_OLD) != 1:
+    if action_leg and src.count(MODE_OLD) != 1:
         raise SystemExit('anchor missing: score_mode = "min_rg"')
     if re.search(r"^forfeit_turn_score\s*=", src, re.M):
         raise SystemExit("forfeit_turn_score already set")
@@ -61,7 +67,9 @@ def render(src: str, date: str, wvk_to: int) -> str:
     if src.count(FLOOR_ANCHOR) != 1:
         raise SystemExit("anchor missing: band_floor = 0.002")
     fmt = dict(date=date, a=a, b=b)
-    out = src.replace(MODE_OLD, MODE_NEW.format(**fmt))
+    out = src
+    if action_leg:
+        out = out.replace(MODE_OLD, MODE_NEW.format(**fmt))
     out = out.replace(FLOOR_ANCHOR, FLOOR_NEW.format(**fmt))
     out = out.replace(key_old, f"weight_version_key = {b}\n")
     # History line: right before the NEVER-CHANGE banner that precedes the key.
@@ -72,7 +80,8 @@ def render(src: str, date: str, wvk_to: int) -> str:
     head, tail = out[:idx], out[idx:]
     if not head.endswith("#\n"):
         raise SystemExit("unexpected text above the banner")
-    out = head[:-2] + HISTORY_LINE.format(**fmt) + "#\n" + tail
+    hist = HISTORY_LINE if action_leg else HISTORY_LINE_FORFEIT_ONLY
+    out = head[:-2] + hist.format(**fmt) + "#\n" + tail
     return out
 
 
@@ -84,6 +93,10 @@ def main() -> int:
     g.add_argument("--apply", metavar="DATE",
                    help="explicit dated operator directive (YYYY-MM-DD)")
     ap.add_argument("--wvk-to", type=int, help="new weight_version_key")
+    ap.add_argument("--forfeit-only", action="store_true",
+                    help="flip only forfeit_turn_score; leave score_mode at "
+                         "min_rg (the 2026-09-04 probe found the A leg "
+                         "rewards short actions ~10x — see AGENTS.md)")
     args = ap.parse_args()
     src = args.toml.read_text()
     if args.wvk_to is None:
@@ -92,15 +105,17 @@ def main() -> int:
     date = args.apply or "YYYY-MM-DD"
     if args.apply and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.apply):
         raise SystemExit("--apply needs a YYYY-MM-DD directive date")
-    out = render(src, date, args.wvk_to)
+    out = render(src, date, args.wvk_to, action_leg=not args.forfeit_only)
     if args.preview:
         sys.stdout.writelines(difflib.unified_diff(
             src.splitlines(True), out.splitlines(True),
             "a/affine/affine.toml", "b/affine/affine.toml"))
         return 0
     args.toml.write_text(out)
+    what = ("forfeit_turn_score -0.1" if args.forfeit_only
+            else "score_mode min_rga, forfeit_turn_score -0.1")
     print(f"applied v6 flip: weight_version_key {args.wvk_to - 1} -> {args.wvk_to}, "
-          f"score_mode min_rga, forfeit_turn_score -0.1 ({date})")
+          f"{what} ({date})")
     return 0
 
 
