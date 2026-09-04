@@ -60,11 +60,20 @@ fi
 grep -q '^weight_version_key = 10$' affine/affine.toml || { echo "contract is not at wvk 10; refusing" >&2; exit 1; }
 
 # -- 1. epoch 14 on data.affine.io ---------------------------------------------
-step "1 publish epoch 14 (schema 3, all three dialects, legacy epochs 1-13 imported)"
+step "1 publish epoch 14 (schema 3, all three dialects, traces only)"
+# --no-legacy (decided 2026-09-03 from the staging rehearsal): the v2 epochs
+# 1-13 are NOT imported. Importing them made the mix waterfill count 60k
+# legacy turns (coding 67%, python-heavy, GLM-era teacher) and admit zero new
+# coding/terminal rollouts -- the multi-language / multi-harness data could
+# not enter D until math and tool_use (both exhausted) caught up. From the
+# traces alone D takes the [mix] targets on day one. The v2 history stays
+# byte-identical at data.affine.io/turns/** and is chained via prev_manifest.
+# Set AFFINE_T0_IMPORT_LEGACY=1 to keep the old behaviour.
 if curl -sf -o /dev/null https://data.affine.io/corpus/manifest.json; then
   echo "corpus manifest already published; skipping --init"
 else
-  python ops/corpus_build.py --init --ignore-fold-mix --allowed-kinds bash,tool_call,boxed
+  LEGACY_FLAG="--no-legacy"; [[ "${AFFINE_T0_IMPORT_LEGACY:-}" == "1" ]] && LEGACY_FLAG=""
+  python ops/corpus_build.py --init $LEGACY_FLAG --ignore-fold-mix --allowed-kinds bash,tool_call,boxed
 fi
 python - <<'PY'
 import httpx
@@ -190,7 +199,7 @@ Post to Discord (#announcements), then remove nothing else -- llms.txt + toml ca
 1. **Action dialects.** D now admits \`<tool_call>…</tool_call>\` (tool use / search) and \`\\boxed{…}\` (math) turns next to \`\`\`bash. Same min(R,G) score; each turn's system prompt states its format. A model that cannot emit a dialect forfeits those turns.
 2. **Corrected prefixes.** Every turn's prefix is now the exact root→parent path of the message graph the model saw — harnesses that compact or rewrite history are represented faithfully (no phantom linear history).
 3. **More harnesses on the same tasks.** Coding/terminal tasks are generated under mini-swe (bash fence), verifiers' native bash tool, and pi — three prompt styles over the same tasks so "can drive a shell" is what transfers.
-4. **D becomes a schema-3 view over full rollout traces** on https://data.affine.io: \`corpus/manifest.json\` (view \`duel_turns@v4\`), \`traces/manifest.json\` (the full envelopes incl. reasoning_content). The v2 history stays byte-identical at \`data.affine.io/turns/**\`.
+4. **D becomes a schema-3 view over full rollout traces** on https://data.affine.io: \`corpus/manifest.json\` (view \`duel_turns@v4\`), \`traces/manifest.json\` (the full envelopes incl. reasoning_content). D is rebuilt from the traces alone — the pre-fork turns (epochs 1–13, python-heavy, old-teacher era) are **not** carried into the new slice population; they stay byte-identical at \`data.affine.io/turns/**\` for verdict replay. Mix at the published targets from day one (coding 0.50 / terminal 0.25 / math 0.10 / tool_use 0.10 / nl2repo 0.05, by turn count).
 Spec + query recipes: https://affine.io/llms.txt (§ Fork history, § Turn corpus D).
 EOF
 
