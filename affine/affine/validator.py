@@ -440,7 +440,8 @@ class Validator:
             max_repo_files=sub.max_repo_files,
             max_config_bytes=sub.max_config_bytes)
         if reason is None and sub.pinned_arch:
-            reason = model_store.validate_repo_arch(info, sub.pinned_arch)
+            reason = model_store.validate_repo_arch(
+                info, sub.pinned_arch, sub.pinned_arch_alt)
         return reason
 
     async def _prefetch_next(self, nxt: QueueEntry) -> None:

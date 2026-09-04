@@ -311,13 +311,17 @@ def validate_repo_hygiene(info: RepoInfo, *, max_size_gb: float,
     return None
 
 
-def validate_repo_arch(info: RepoInfo, pinned: dict) -> str | None:
+def validate_repo_arch(info: RepoInfo, pinned: dict,
+                       alternatives: list[dict] | tuple[dict, ...] = ()) -> str | None:
     """Return a rejection reason or None. `pinned` is a nested dict of
     config.json keys that must match exactly (subset match: keys absent from
     `pinned` are unconstrained). Pinning the compute-graph shape to the genesis
     family keeps every crown a fine-tune of the seed model — in particular it
     excludes uploading the frozen teacher itself, whose thoughts would land
     in-band on G and top R by construction (it IS the distillation target).
+    `alternatives` are further profiles, any one of which also admits
+    (2026-09-04: the text-only Qwen3_5MoeForCausalLM extraction, whose
+    config.json is the genesis text_config flattened to the root).
     Metadata-only; empty `pinned` disables the check."""
 
     def walk(want: dict, have: object, path: str) -> str | None:
@@ -338,7 +342,11 @@ def validate_repo_arch(info: RepoInfo, pinned: dict) -> str | None:
         return None
 
     fault = walk(pinned, info.config, "")
-    return f"arch not pinned to the genesis family: {fault}" if fault else None
+    if fault is None:
+        return None
+    if any(walk(alt, info.config, "") is None for alt in alternatives):
+        return None
+    return f"arch not pinned to the genesis family: {fault}"
 
 
 @dataclass

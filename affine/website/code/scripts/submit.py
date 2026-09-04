@@ -80,8 +80,10 @@ MAX_TOTAL_REPO_GB = 100.0
 MAX_REPO_FILES = 5000
 MAX_CONFIG_BYTES = 1 << 20
 
-# Architecture pin (affine.toml [submission.pinned_arch]): config.json must
-# match this nested subset exactly. Keys not listed stay free.
+# Architecture pin (affine.toml [submission.pinned_arch] + [[pinned_arch_alt]]):
+# config.json must match one of these nested subsets exactly. Keys not listed
+# stay free. The second profile is the text-only extraction of the genesis
+# (vision tower dropped, text_config flattened to the root; 2026-09-04).
 PINNED_ARCH: dict = {
     "architectures": ["Qwen3_5MoeForConditionalGeneration"],
     "model_type": "qwen3_5_moe",
@@ -105,6 +107,12 @@ PINNED_ARCH: dict = {
         "linear_value_head_dim": 128,
     },
 }
+PINNED_ARCH_ALT: list[dict] = [{
+    "architectures": ["Qwen3_5MoeForCausalLM"],
+    "model_type": "qwen3_5_moe_text",
+    "tie_word_embeddings": False,
+    **{k: v for k, v in PINNED_ARCH["text_config"].items() if k != "model_type"},
+}]
 
 # ---------------------------------------------------------------------------
 # Protocol (verbatim mirror of affine/r2protocol.py — keep in sync)
@@ -362,6 +370,9 @@ def scan_model_dir(model_dir: Path) -> tuple[list[dict], list[str]]:
             if "auto_map" in config:
                 problems.append("auto_map present in config.json (custom code not allowed)")
             fault = check_pinned_arch(config, PINNED_ARCH)
+            if fault and any(check_pinned_arch(config, alt) is None
+                             for alt in PINNED_ARCH_ALT):
+                fault = None
             if fault:
                 problems.append("arch not pinned to the genesis family (must be a "
                                 f"Qwen/Qwen3.6-35B-A3B fine-tune): {fault}")

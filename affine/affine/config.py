@@ -110,6 +110,10 @@ class SubmissionCfg:
     # Nested config.json subset every submission must match exactly
     # (validate_repo_arch). Empty dict = no restriction.
     pinned_arch: dict
+    # Alternative profiles ([[submission.pinned_arch_alt]]): a submission
+    # passes if it matches pinned_arch OR any of these (text-only extraction
+    # of the genesis family, 2026-09-04).
+    pinned_arch_alt: list[dict]
     # Private R2 submission flow ([submission.r2]); see R2Cfg.
     r2: "R2Cfg"
 
@@ -360,6 +364,7 @@ def _submission(raw: dict) -> SubmissionCfg:
         max_repo_files=int(s["max_repo_files"]),
         max_config_bytes=int(s["max_config_bytes"]),
         pinned_arch=dict(s.get("pinned_arch") or {}),
+        pinned_arch_alt=[dict(p) for p in (s.get("pinned_arch_alt") or [])],
         r2=_r2(s.get("r2") or {}),
     )
 

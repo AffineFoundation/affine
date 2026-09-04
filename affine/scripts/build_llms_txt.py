@@ -399,8 +399,11 @@ the serving-stack section). The current king's weights are public at \
 (2026-08-28):** `config.json` must match the genesis family exactly on every \
 key in `affine.toml [submission.pinned_arch]` — submit a fine-tune of \
 `Qwen/Qwen3.6-35B-A3B` (same layer/expert/head shape; dtype, rope and token \
-ids stay free). Any other architecture — including the teacher \
-`Qwen/Qwen3.8-27B` itself — is rejected (`validate_repo_arch` in \
+ids stay free). Since 2026-09-04 the text-only extraction of the genesis \
+(`Qwen3_5MoeForCausalLM`, vision tower dropped, `text_config` flattened to \
+the root, `model_type = qwen3_5_moe_text`) is admitted too — see \
+`[[submission.pinned_arch_alt]]`. Any other architecture — including the \
+teacher `Qwen/Qwen3.8-27B` itself — is rejected (`validate_repo_arch` in \
 `code/affine/model_store.py`).
 
 **Step 2 — pre-flight the checkpoint directory (offline, free).** Your \

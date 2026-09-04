@@ -1191,6 +1191,12 @@ class Engine:
         total = 0
         for p in d.rglob("*"):
             if p.is_file() and not p.is_symlink():
+                landed = r2store.incomplete_bytes(p)
+                if landed is not None:
+                    # Preallocated ranged download: st_size is the target,
+                    # not progress.
+                    total += landed
+                    continue
                 try:
                     total += p.stat().st_size
                 except OSError:
