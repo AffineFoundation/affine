@@ -152,6 +152,31 @@ def check_dialects(turns: list[dict], allowed: list[str]) -> None:
 
 # -- probe -----------------------------------------------------------------------
 
+def token_caps(duel_cfg: dict):
+    """(max_thought, max_action) for a turn's action dialect.
+
+    `[duel].max_thought_tokens` / `max_action_tokens` apply to every kind
+    unless `[duel.max_tokens_by_kind.<kind>]` overrides them (`thought`,
+    `action`; a missing key keeps the default). Both sides and the teacher
+    refs sample under the same cap, so a per-kind cap changes the slice's
+    yield, not the pairing — it is still a `[duel]` knob and therefore a
+    contract change when set. Empty table = pre-2026-09-04 behaviour exactly.
+    Motivation: the gate-closed dry run had `boxed` turns hit finish=length
+    at 1024+768 on 15/18 king rollouts (teacher refs 2.55/3), i.e. most math
+    turns would forfeit at the flat cap.
+    """
+    dflt = (int(duel_cfg["max_thought_tokens"]), int(duel_cfg["max_action_tokens"]))
+    table = duel_cfg.get("max_tokens_by_kind") or {}
+    by_kind = {
+        str(kind): (int(v.get("thought", dflt[0])), int(v.get("action", dflt[1])))
+        for kind, v in table.items()
+    }
+
+    def caps(action_kind: str | None) -> tuple[int, int]:
+        return by_kind.get(action_kind or dialects.DEFAULT_KIND, dflt)
+    return caps
+
+
 async def probe_injectable(model: VllmModel | ModelPool, turns: list[dict],
                            temperature: float, max_thought: int,
                            max_action: int, n_probe_turns: int = 3) -> str | None:
@@ -291,13 +316,15 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
     n_teacher = int(duel_cfg["n_teacher_samples"])
     n_miner = int(duel_cfg["n_miner_samples"])
     temperature = float(duel_cfg["temperature"])
-    max_thought = int(duel_cfg["max_thought_tokens"])
-    max_action = int(duel_cfg["max_action_tokens"])
+    caps = token_caps(duel_cfg)
     score_bank = bool(duel_cfg.get("score_bank", False))
     reason_only = bool(duel_cfg.get("reason_only", True))
     causality_gate = bool(duel_cfg.get("causality_gate", False))
     # min(R,G) v5: grounding echoes (t_i on refs, m per miner rollout).
-    thought_echo = str(duel_cfg.get("score_mode", "reason")) == "min_rg"
+    # min(R,G,A) v6 adds the action echoes lpC(y_A|z_C^i) per pair.
+    score_mode = str(duel_cfg.get("score_mode", "reason"))
+    thought_echo = score_mode in ("min_rg", "min_rga")
+    action_echo = score_mode == "min_rga"
 
     async def one(rec: dict) -> None:
         nonlocal done
@@ -306,6 +333,7 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
         # Per-turn action dialect; absent on pre-dialect corpus records,
         # which means bash (affine.dialects.DEFAULT_KIND).
         action_kind = rec.get("action_kind")
+        max_thought, max_action = caps(action_kind)
         async with turn_sem:
             if abort_event is not None and abort_event.is_set():
                 raise DuelAborted("superseded by a new duel request")
@@ -340,6 +368,7 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
             score_bank=score_bank, reason_only=reason_only,
             causality_gate=causality_gate,
             thought_echo=thought_echo,
+            action_echo=action_echo,
             sticky_key=tid, action_kind=action_kind,
             rollouts=miner_rollouts)
         t.update({"turn_id": tid, "miner": miner.cfg.name})
@@ -358,14 +387,19 @@ def _mean_bank(rows: list[dict]) -> float | None:
 
 def _miner_summary(rows: list[dict], tau: float | None,
                    score_mode: str = "reason",
-                   band_c: float = 2.0, band_floor: float = 0.002) -> dict:
+                   band_c: float = 2.0, band_floor: float = 0.002,
+                   forfeit_turn_score: float | None = None) -> dict:
     """Per-side summary: the score (reason) plus measured-not-scored telemetry."""
     s = score_miner(rows, bank_frac=_mean_bank(rows), tau=tau,
                     score_mode=score_mode, band_c=band_c,
-                    band_floor=band_floor)
+                    band_floor=band_floor,
+                    forfeit_turn_score=forfeit_turn_score)
     out = {
         "reason": s.reason if math.isfinite(s.reason) else None,
         "n_turns": s.n_turns, "n_pairs": s.n_pairs,
+        # Forfeits (v6): turns with no parseable action. Scored at the
+        # floor when forfeit_turn_score is set, dropped otherwise.
+        "n_forfeits": s.n_forfeits, "forfeit_rate": s.forfeit_rate,
         # -- telemetry (B pass rate is validity only when causality_gate) --
         "gate_pass_rate": s.gate_pass_rate, "bank_frac": s.bank_frac,
         "calib_ratio": s.calib_ratio, "baseline_abs": s.baseline_abs,
@@ -375,18 +409,22 @@ def _miner_summary(rows: list[dict], tau: float | None,
         "mean_len_y": s.mean_len_y,
         "mean_b": s.mean_b, "b_gate_pass_rate": s.b_gate_pass_rate,
     }
-    if score_mode == "min_rg":
+    if score_mode in ("min_rg", "min_rga"):
         # Which-leg-binds telemetry (post-fork watch item): g_bind_frac
         # near 1.0 means grounding is the binding constraint for this side.
         out["mean_r_leg"] = s.mean_r_leg
         out["mean_g_leg"] = s.mean_g_leg
         out["g_bind_frac"] = s.g_bind_frac
+    if score_mode == "min_rga":
+        out["mean_a_leg"] = s.mean_a_leg
+        out["a_bind_frac"] = s.a_bind_frac
     return out
 
 
 def _by_dialect(rows: list[dict], kind_by_tid: dict[str, str],
                 tau: float | None, score_mode: str,
-                band_c: float, band_floor: float) -> dict[str, dict]:
+                band_c: float, band_floor: float,
+                forfeit_turn_score: float | None = None) -> dict[str, dict]:
     """Per-action_kind telemetry for one side (wvk 11 dialect watch item).
 
     ``parse_rate`` is the share of this dialect's turns where the side
@@ -401,7 +439,8 @@ def _by_dialect(rows: list[dict], kind_by_tid: dict[str, str],
     out: dict[str, dict] = {}
     for kind, grp in sorted(groups.items()):
         s = score_miner(grp, tau=tau, score_mode=score_mode,
-                        band_c=band_c, band_floor=band_floor)
+                        band_c=band_c, band_floor=band_floor,
+                        forfeit_turn_score=forfeit_turn_score)
         n_valid = sum(1 for r in grp if r.get("valid") and "pairs" in r)
         out[kind] = {
             "n_turns": len(grp), "n_valid": n_valid,
@@ -412,6 +451,9 @@ def _by_dialect(rows: list[dict], kind_by_tid: dict[str, str],
             "mean_r_leg": s.mean_r_leg, "mean_g_leg": s.mean_g_leg,
             "g_bind_frac": s.g_bind_frac,
         }
+        if score_mode == "min_rga":
+            out[kind]["mean_a_leg"] = s.mean_a_leg
+            out[kind]["a_bind_frac"] = s.a_bind_frac
     return out
 
 
@@ -563,6 +605,9 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     score_mode = str(duel_cfg.get("score_mode", "reason"))
     band_c = float(duel_cfg.get("band_c", 2.0))
     band_floor = float(duel_cfg.get("band_floor", 0.002))
+    # v6 forfeit floor: absent/None keeps the legacy drop-from-pairing rule.
+    _ff = duel_cfg.get("forfeit_turn_score")
+    forfeit_turn_score = float(_ff) if _ff is not None else None
     result = score_duel(
         chall_rows, king_rows,
         k_sigma=float(duel_cfg["k_sigma"]),
@@ -572,10 +617,13 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         challenger_bank_frac=_mean_bank(chall_rows),
         king_bank_frac=_mean_bank(king_rows),
         tau=tau,
-        score_mode=score_mode, band_c=band_c, band_floor=band_floor)
+        score_mode=score_mode, band_c=band_c, band_floor=band_floor,
+        forfeit_turn_score=forfeit_turn_score)
 
-    king_sum = _miner_summary(king_rows, tau, score_mode, band_c, band_floor)
-    chall_sum = _miner_summary(chall_rows, tau, score_mode, band_c, band_floor)
+    king_sum = _miner_summary(king_rows, tau, score_mode, band_c, band_floor,
+                              forfeit_turn_score)
+    chall_sum = _miner_summary(chall_rows, tau, score_mode, band_c, band_floor,
+                               forfeit_turn_score)
     teacher_sum = _teacher_lengths(refs_used)
     _len_deltas(king_sum, teacher_sum)
     _len_deltas(chall_sum, teacher_sum)
@@ -584,26 +632,37 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     kind_by_tid = {turn_id(rec): rec.get("action_kind") or dialects.DEFAULT_KIND
                    for rec in turns}
     king_sum["by_dialect"] = _by_dialect(
-        king_rows, kind_by_tid, tau, score_mode, band_c, band_floor)
+        king_rows, kind_by_tid, tau, score_mode, band_c, band_floor,
+        forfeit_turn_score)
     chall_sum["by_dialect"] = _by_dialect(
-        chall_rows, kind_by_tid, tau, score_mode, band_c, band_floor)
+        chall_rows, kind_by_tid, tau, score_mode, band_c, band_floor,
+        forfeit_turn_score)
     teacher_sum["by_dialect"] = _teacher_by_dialect(turns, refs_used)
     slice_info["dialects"] = {
         kind: sum(1 for k in kind_by_tid.values() if k == kind)
         for kind in sorted(set(kind_by_tid.values()))}
 
-    if score_mode == "min_rg":
+    _rg_formula = (
+        "R = tau·log(mean_i exp(a_i/tau)) − mean_i a_i,"
+        " a_i = lpC(y_i|z_A) − lpC(y_i|∅);"
+        " G = min(m − (mu − w), (mu + w) − m),"
+        " m = lpC(z_A|x), mu/sd over lpC(z_C^i|x),"
+        " w = max(band_c·sd, band_floor)")
+    if score_mode == "min_rga":
         ranking_formula = (
-            "turn = min(R, G); R = tau·log(mean_i exp(a_i/tau)) − mean_i a_i,"
-            " a_i = lpC(y_i|z_A) − lpC(y_i|∅);"
-            " G = min(m − (mu − w), (mu + w) − m),"
-            " m = lpC(z_A|x), mu/sd over lpC(z_C^i|x),"
-            " w = max(band_c·sd, band_floor)")
+            "turn = min(R, G, A); " + _rg_formula +
+            "; A = tau·log(mean_i exp(b_i/tau)),"
+            " b_i = lpC(y_A|z_C^i) − lpC(y_A|∅)")
+    elif score_mode == "min_rg":
+        ranking_formula = "turn = min(R, G); " + _rg_formula
     elif tau:
         ranking_formula = (
             "Reason(turn) = tau·log(mean_i exp((lpC(y_i|z_A) − lpC(y_i|∅))/tau))")
     else:
         ranking_formula = "Reason = lpC(y_C|z_A) − lpC(y_C|∅)"
+    if forfeit_turn_score is not None:
+        ranking_formula += (
+            f"; forfeit (no parseable action) scores {forfeit_turn_score:g}")
 
     verdict = {
         "challenger_wins": result.challenger_wins,
@@ -617,6 +676,7 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         "k_sigma": result.k_sigma,
         "min_margin": result.min_margin,
         "n_paired_turns": result.n_paired_turns,
+        "n_forfeit_turns": result.n_forfeit_turns,
         "ranking_formula": ranking_formula,
         "duel_params": {
             "n_turns": int(duel_cfg["n_turns"]),
@@ -631,7 +691,13 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "score_mode": score_mode,
             "band_c": band_c,
             "band_floor": band_floor,
+            "forfeit_turn_score": forfeit_turn_score,
             "allowed_action_kinds": allowed_kinds,
+            "max_thought_tokens": int(duel_cfg["max_thought_tokens"]),
+            "max_action_tokens": int(duel_cfg["max_action_tokens"]),
+            "max_tokens_by_kind": {
+                str(k): {str(f): int(n) for f, n in v.items()}
+                for k, v in (duel_cfg.get("max_tokens_by_kind") or {}).items()},
         },
         "king": king_sum,
         "challenger": chall_sum,

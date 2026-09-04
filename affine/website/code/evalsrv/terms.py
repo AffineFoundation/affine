@@ -51,6 +51,12 @@ _FULL_CALLS = [
 _REASON_CALLS = [
     ("lpC_yc_za", "teacher", "za", "yc"),
 ]
+# min(R,G,A) v6 action leg: b_i = lpC(y_A|z_C^i) − lpC(y_A|∅). The first term
+# is ref-dependent (one echo per pair, like Reason); the baseline is the B
+# echo lpC_ya_e, shared per rollout.
+_ACTION_CALLS = [
+    ("lpC_ya_zc", "teacher", "zc", "ya"),
+]
 
 
 async def sample_teacher_rollouts(
@@ -161,6 +167,7 @@ async def miner_terms(teacher: TeacherClient, miner: MinerClient, prefix: list[d
                       reason_only: bool = True,
                       causality_gate: bool = False,
                       thought_echo: bool = False, *,
+                      action_echo: bool = False,
                       sticky_key: str | None = None,
                       action_kind: str | None = None,
                       rollouts: list[tuple[str, str]] | None = None) -> dict:
@@ -173,9 +180,12 @@ async def miner_terms(teacher: TeacherClient, miner: MinerClient, prefix: list[d
     license does not depend on the ref). thought_echo (min(R,G) grounding
     leg, wvk 10) adds m = lpC(z_A|x) once per distinct miner rollout,
     stamped on each pair as ``lpC_za_x``, with the turn's reference band
-    values copied from the refs as ``lpC_zc_x``. Legacy full_terms keeps the
-    old diagonal min(refs, rollouts) truncation for replay comparability.
-    sticky_key pins teacher echoes for this turn to one replica (prefix cache).
+    values copied from the refs as ``lpC_zc_x``. action_echo (min(R,G,A)
+    action leg, v6) adds lpC(y_A|z_C^i) per pair as ``lpC_ya_zc`` and
+    forces the lpC(y_A|∅) baseline echo even when the B gate is off. Legacy
+    full_terms keeps the old diagonal min(refs, rollouts) truncation for
+    replay comparability. sticky_key pins teacher echoes for this turn to
+    one replica (prefix cache).
 
     If ``rollouts`` is provided (already sampled), skip miner sampling — used
     when the caller overlapped miner sample with teacher ref scoring.
@@ -192,7 +202,7 @@ async def miner_terms(teacher: TeacherClient, miner: MinerClient, prefix: list[d
         # v4 pairing: keep all k refs; cycle miner rollouts across them
         # (with the production 1 miner sample, every ref shares one z_A/y_A).
         midx = [i % len(rollouts) for i in range(len(ref))]
-        calls = _REASON_CALLS
+        calls = _REASON_CALLS + (_ACTION_CALLS if action_echo else [])
     else:
         m = min(len(ref), len(rollouts))
         ref, rollouts = ref[:m], rollouts[:m]
@@ -211,8 +221,10 @@ async def miner_terms(teacher: TeacherClient, miner: MinerClient, prefix: list[d
             else:
                 tasks.append(teacher.score_action(
                     prefix, ctx[z_key], ctx[y_key], sticky_key=sticky_key))
-    # B echoes once per distinct miner rollout (ref-independent).
-    b_rollouts = sorted(set(midx)) if (reason_only and causality_gate) else []
+    # B echoes once per distinct miner rollout (ref-independent). The action
+    # leg reuses the lpC(y_A|∅) baseline from this pair of echoes.
+    b_rollouts = (sorted(set(midx))
+                  if (reason_only and (causality_gate or action_echo)) else [])
     for j in b_rollouts:
         tasks.append(teacher.score_action(
             prefix, rollouts[j][0], rollouts[j][1], sticky_key=sticky_key))

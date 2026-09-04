@@ -15,11 +15,12 @@ into the view the duel scores:
      admitted by [dataset].allowed_action_kinds, prefix shape/cap, exactly
      one action, no verbatim leakage; dedupe turn_ids against the live
      index;
-  3. enforce [mix] group targets from rollouts/rollouts/sources.toml by
-     whole-corpus deficit waterfill at ROLLOUT granularity (a rollout's
-     turns enter together, so a trajectory is never split across epochs;
-     surplus rollouts defer to work/deferred_views.jsonl and re-enter next
-     cycle), then [lang_mix.coding] over newly selected coding rollouts;
+  3. enforce [mix] group targets from rollouts/rollouts/sources.toml in
+     SLICE STRATA (cap_fill: what a duel slice is made of; turn counts are
+     not) at ROLLOUT granularity (a rollout's turns enter together, so a
+     trajectory is never split across epochs; capped rollouts defer to
+     work/deferred_views.jsonl and re-enter next cycle), then
+     [lang_mix.coding] over newly selected coding rollouts;
   4. skip when fewer than MIN_NEW_TURNS eligible turns accumulated unless
      the newest unfolded chunk is older than STALE_AFTER_S;
   5. publish in the safe order: view chunks + merged index first, immutable
@@ -64,6 +65,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "affine"))
 
 from affine.config import load_config  # noqa: E402
+from affine.corpus.materialize import stratum_key  # noqa: E402
 from affine.corpus.pack import PackResult  # noqa: E402
 from affine.corpus.publish import CorpusPublisher  # noqa: E402
 from affine.corpus.trace import ToolParityError, TraceShapeError  # noqa: E402
@@ -118,7 +120,8 @@ def load_state() -> dict:
     if STATE_PATH.exists():
         return json.loads(STATE_PATH.read_text())
     return {"folded_chunks": [], "pending": None, "unannounced": None,
-            "history": [], "group_counts": {}, "lang_counts": {}}
+            "history": [], "group_counts": {}, "group_strata": {},
+            "lang_strata": {}}
 
 
 def save_state(state: dict) -> None:
@@ -192,7 +195,7 @@ def panel_keys() -> tuple[set[str], set[str], set[str]]:
 
 
 def load_mix(*, ignore_fold_mix: bool = False
-             ) -> tuple[dict[str, float], dict[str, str], dict[str, float]]:
+             ) -> tuple[dict[str, float], dict[str, str], dict[str, float], dict[str, int]]:
     raw = tomllib.loads(SOURCES_TOML.read_text())
     # [fold_mix] overrides [mix] during a dialect notice period; the T0
     # commit deletes the block (rehearsals pass --ignore-fold-mix).
@@ -205,7 +208,32 @@ def load_mix(*, ignore_fold_mix: bool = False
                 (raw.get("lang_mix", {}).get("coding") or {}).items()}
     if lang_mix and abs(sum(lang_mix.values()) - 1.0) > 0.01:
         fatal(f"[lang_mix.coding] in {SOURCES_TOML} must sum to 1.0")
-    return mix, src2grp, lang_mix
+    buckets = {name: int(cfg.get("strata_buckets", 0) or 0)
+               for name, cfg in raw.get("source", {}).items()}
+    return mix, src2grp, lang_mix, buckets
+
+
+def assign_bucket_strata(records: list[dict], buckets: dict[str, int],
+                         src2grp: dict[str, str]) -> int:
+    """Fold-owned slice strata for sources with `strata_buckets` (math,
+    tool_use). Datagen stamps the same shape (catalog.bucket_stratum) but
+    from the bucket count at generation time; the fold recomputes from the
+    CURRENT toml value so the group's slice share follows one setting.
+    Bucket = sha256(instance_id) % n, so every rollout of a task shares a
+    stratum. Raising n later only adds bucket names above the old range
+    (old shards are immutable and stay in the low buckets), so the share
+    can be re-derived upward without a rewrite. Returns records touched."""
+    n_set = 0
+    for rec in records:
+        n = buckets.get(rec.get("source") or "", 0)
+        if n <= 0:
+            continue
+        group = src2grp.get(rec["source"], DEFAULT_GROUP)
+        key = str(rec.get("instance_id") or rec.get("traj_id"))
+        h = int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:8], 16)
+        rec["stratum"] = f"{group}:{h % n:04d}"
+        n_set += 1
+    return n_set
 
 
 def group_of(rec: dict, src2grp: dict[str, str], mix: dict[str, float]) -> str:
@@ -217,35 +245,68 @@ def lang_bucket(rec: dict) -> str:
     return LANG_BUCKETS.get(str(rec.get("language") or "").lower(), "python")
 
 
-def waterfill(records: list[dict], keyf, counts: dict[str, int],
-              targets: dict[str, float]) -> tuple[list[dict], list[dict], dict[str, int]]:
-    """Deficit waterfill at rollout granularity: repeatedly take the next
-    record from the key furthest below its target share of the post-fold
-    total (counted in turns); stop when every key with candidates left
-    would only move further above target."""
+def record_strata(rec: dict) -> set[str]:
+    """Slice strata this record's turns land in (affine.corpus.materialize.
+    stratum_key on the index row: explicit bucket for math / tool_use,
+    repo|phase from traj_id otherwise)."""
+    return {stratum_key({"stratum": m.get("stratum") or rec.get("stratum"),
+                         "traj_id": rec.get("traj_id")}) for m in rec["turns"]}
+
+
+def cap_fill(records: list[dict], keyf, have: dict[str, set[str]],
+             targets: dict[str, float]
+             ) -> tuple[list[dict], list[dict], dict[str, set[str]]]:
+    """Mix enforcement in SLICE STRATA, not turns.
+
+    sample_slice draws round-robin over strata and n_turns (1300) is far
+    below the strata count, so a duel slice holds one turn per stratum: a
+    group's share of what miners are scored on is its share of strata, and
+    its turn count is irrelevant. Counting turns (the fold until 2026-09-03)
+    gave a 1-turn math rollout the weight of a 40-turn coding rollout; the
+    traces-only rehearsal selected coding 9,677 turns = 186 strata against
+    math 1,935 = 1,935 strata -- coding 4% of the slice.
+
+    Rule: every key takes all its candidates except the single most
+    over-supplied one, which is capped at the share it would hold if the
+    second-most over-supplied key were exactly on target. Over-supply of key
+    k is (strata available) / target_k -- the corpus size k alone could
+    support at its target. Exhausted keys (math, tool_use, small languages)
+    therefore never throttle the others (the strict waterfill froze D at the
+    first exhausted key), while the one flood (terminal 8.6k tasks vs coding
+    5.3k; python vs the other languages) is held to its target ratio against
+    the next-largest supply. At most one key is ever trimmed; trimmed
+    rollouts defer and re-enter as the reference key grows.
+    Keys without a positive target are deferred whole, as before."""
     pools: dict[str, list[dict]] = {}
     for rec in records:
         pools.setdefault(keyf(rec), []).append(rec)
-    counts = {k: int(counts.get(k, 0)) for k in targets}
-    added: dict[str, int] = {}
+    keyed = {k: v for k, v in pools.items() if targets.get(k, 0.0) > 0}
+    avail: dict[str, set[str]] = {k: set(have.get(k, ())) for k in targets}
+    for k, pool in keyed.items():
+        for rec in pool:
+            avail[k] |= record_strata(rec)
+    supply = sorted((len(avail[k]) / targets[k] for k in targets), reverse=True)
+    ref_total = supply[1] if len(supply) > 1 else float("inf")
+    cap = {k: targets[k] * ref_total for k in targets}
     selected: list[dict] = []
-    cursors = {k: 0 for k in pools}
-    while True:
-        cands = [k for k in pools
-                 if cursors[k] < len(pools[k]) and targets.get(k, 0.0) > 0]
-        if not cands:
-            break
-        total = sum(counts.values()) + 1
-        best = max(cands, key=lambda k: targets[k] * total - counts.get(k, 0))
-        if targets[best] * total - counts.get(best, 0) <= 0:
-            break
-        rec = pools[best][cursors[best]]
-        n = len(rec["turns"])
-        selected.append(rec)
-        cursors[best] += 1
-        counts[best] = counts.get(best, 0) + n
-        added[best] = added.get(best, 0) + n
-    deferred = [rec for k, pool in pools.items() for rec in pool[cursors[k]:]]
+    deferred: list[dict] = []
+    added: dict[str, set[str]] = {}
+    for k, pool in pools.items():
+        if k not in keyed:
+            deferred.extend(pool)
+            continue
+        strata = set(have.get(k, ()))
+        for rec in pool:
+            new = record_strata(rec) - strata
+            # A rollout in strata the corpus already holds adds within-stratum
+            # variety and moves no share; a rollout opening new strata must fit
+            # under the cap.
+            if new and len(strata) + len(new) > cap[k] + 1e-9:
+                deferred.append(rec)
+                continue
+            selected.append(rec)
+            strata |= new
+            added.setdefault(k, set()).update(new)
     return selected, deferred, added
 
 
@@ -404,15 +465,20 @@ def finalize(state: dict, manifest: dict, mhash: str) -> None:
     pending = state["pending"]
     state["folded_chunks"] = sorted(set(state["folded_chunks"])
                                     | set(pending["folded_chunks"]))
-    for group, n in (pending.get("group_added") or {}).items():
+    for group, n in (pending.get("group_turns") or {}).items():
         state["group_counts"][group] = int(state["group_counts"].get(group, 0)) + int(n)
-    for bucket, n in (pending.get("lang_added") or {}).items():
-        state["lang_counts"][bucket] = int(state["lang_counts"].get(bucket, 0)) + int(n)
+    for group, keys in (pending.get("group_strata_added") or {}).items():
+        state["group_strata"][group] = sorted(
+            set(state["group_strata"].get(group, [])) | set(keys))
+    for bucket, keys in (pending.get("lang_strata_added") or {}).items():
+        state["lang_strata"][bucket] = sorted(
+            set(state["lang_strata"].get(bucket, [])) | set(keys))
     state["unannounced"] = {
         "epoch": int(pending["epoch"]), "n_added": int(pending["n_turns"]),
         "total": int(manifest["index"]["n_turns"]), "manifest_sha256": mhash,
         "by_dialect": pending.get("by_dialect") or {},
-        "by_group": pending.get("group_added") or {},
+        "by_group": pending.get("group_turns") or {},
+        "strata": {g: len(v) for g, v in state["group_strata"].items()},
         "init": bool(pending.get("init")),
     }
     state["history"].append({
@@ -432,14 +498,20 @@ def announce(state: dict, public_base: str) -> None:
                               sorted(info.get("by_dialect", {}).items())) or "n/a"
     groups_line = ", ".join(f"{k} {v:,}" for k, v in
                             sorted(info.get("by_group", {}).items())) or "n/a"
-    head = ("**Corpus D moved to data.affine.io — epoch "
+    strata = info.get("strata") or {}
+    tot = sum(strata.values()) or 1
+    strata_line = ", ".join(f"{k} {100 * v / tot:.0f}%" for k, v in
+                            sorted(strata.items(), key=lambda kv: -kv[1])) or "n/a"
+    head = ("**Corpus D is now the schema-3 trace view — epoch "
             f"{epoch} is live.**" if info.get("init") else
             f"**Corpus refresh: epoch {epoch} is live.**")
     content = (
         f"{head}\n\n"
         f"{info['n_added']:,} new turns folded into the production turn corpus D "
         f"(corpus total: {info['total']:,} turns). New turns by dialect: "
-        f"{dialects_line}; by group: {groups_line}.\n\n"
+        f"{dialects_line}; by group: {groups_line}.\n"
+        f"Slice composition (share of strata = share of every duel slice): "
+        f"{strata_line}.\n\n"
         f"- corpus_epoch: **{epoch}**\n"
         f"- schema_version: **3** (view `{VIEW_SPEC}`: one record per rollout "
         "holding the message graph the model saw + turn metas; prefix = "
@@ -474,6 +546,11 @@ def main() -> None:
     ap.add_argument("--init", action="store_true",
                     help="first schema-3 revision: import the live v2 corpus "
                          "as legacy records, then fold every published trace")
+    ap.add_argument("--no-legacy", action="store_true",
+                    help="with --init: do not import the v2 epochs; D starts "
+                         "from the traces alone and the mix waterfill counts "
+                         "from zero (the v2 history stays at turns/** for "
+                         "replay and is still chained via prev_manifest)")
     ap.add_argument("--allowed-kinds", default=None,
                     help="comma list overriding [dataset].allowed_action_kinds")
     ap.add_argument("--publish-prefix", default="",
@@ -546,7 +623,11 @@ def main() -> None:
     published = published_turn_ids(
         PublicCorpus(f"{public_base}/{prefix}" if prefix else public_base), live)
     legacy: list[dict] = []
-    if args.init:
+    if args.no_legacy and not args.init:
+        fatal("--no-legacy only applies to --init")
+    if args.init and args.no_legacy:
+        log("--no-legacy: v2 epochs not imported; D restarts from the traces")
+    if args.init and not args.no_legacy:
         legacy = legacy_records(pub, legacy_manifest)
         for rec in legacy:
             for m in rec["turns"]:
@@ -570,40 +651,66 @@ def main() -> None:
                 f"{sum(len(r['turns']) for r in candidates)} turns")
     log(f"drops: {drops or 'none'}")
 
-    mix, src2grp, lang_mix = load_mix(ignore_fold_mix=args.ignore_fold_mix)
-    if not state.get("group_counts"):
-        # Carry the old fold's per-group / per-language tallies across the
-        # cutover: they describe exactly the legacy turns imported here.
-        old_state = REPO / "ops" / "datagen_refresh" / "state.json"
-        old = json.loads(old_state.read_text()) if old_state.exists() else {}
-        if old.get("group_counts"):
-            state["group_counts"] = dict(old["group_counts"])
-            state["lang_counts"] = dict(old.get("lang_counts") or {})
-            log(f"group_counts carried from datagen_refresh: {state['group_counts']}")
-        else:
-            seed_total = sum(len(r["turns"]) for r in legacy) if legacy else int(
-                (live or {}).get("index", {}).get("n_turns") or 0)
-            state["group_counts"] = {DEFAULT_GROUP: seed_total}
-            log(f"initialized group_counts: {seed_total} existing turns as {DEFAULT_GROUP!r}")
-    selected, deferred, group_added = waterfill(
-        candidates, lambda r: group_of(r, src2grp, mix), state["group_counts"], mix)
-    log(f"mix: selected {len(selected)} rollouts (+{group_added} turns), "
-        f"deferred {len(deferred)}")
+    mix, src2grp, lang_mix, buckets = load_mix(ignore_fold_mix=args.ignore_fold_mix)
+    n_bucketed = assign_bucket_strata(candidates, buckets, src2grp)
+    log(f"bucket strata assigned on {n_bucketed} rollouts "
+        f"({ {k: v for k, v in buckets.items() if v} })")
+    if not state.get("mix_seeded"):
+        state["mix_seeded"] = True
+        # Mix state is the set of slice strata each group / language bucket
+        # already holds in D (see cap_fill). Legacy import seeds it from the
+        # imported records; --no-legacy starts empty (rehearsal 2026-09-03:
+        # with the 60k legacy turns counted, coding 67%, the fold admitted
+        # zero new coding/terminal rollouts).
+        state["group_strata"] = {}
+        state["lang_strata"] = {}
+        for rec in legacy:
+            g = group_of(rec, src2grp, mix)
+            state["group_strata"].setdefault(g, [])
+            state["group_strata"][g] = sorted(set(state["group_strata"][g])
+                                              | record_strata(rec))
+            if g == "coding":
+                b = lang_bucket(rec)
+                state["lang_strata"][b] = sorted(set(state["lang_strata"].get(b, []))
+                                                 | record_strata(rec))
+        log("mix state seeded: strata per group "
+            f"{ {g: len(v) for g, v in state['group_strata'].items()} }")
+    # Language cap first, inside coding, so the group stage sizes terminal /
+    # math / tool_use against the coding strata that actually enter D.
+    lang_added: dict[str, set[str]] = {}
+    lang_deferred: list[dict] = []
     if lang_mix:
-        coding = [r for r in selected if group_of(r, src2grp, mix) == "coding"]
-        other = [r for r in selected if group_of(r, src2grp, mix) != "coding"]
-        chosen, lang_deferred, lang_added = waterfill(
-            coding, lang_bucket, state.get("lang_counts") or {}, lang_mix)
-        selected = other + chosen
-        deferred += lang_deferred
-        group_added = {}
-        for r in selected:
-            g = group_of(r, src2grp, mix)
-            group_added[g] = group_added.get(g, 0) + len(r["turns"])
+        coding = [r for r in candidates if group_of(r, src2grp, mix) == "coding"]
+        other = [r for r in candidates if group_of(r, src2grp, mix) != "coding"]
+        have_langs = {b: set(v) for b, v in (state.get("lang_strata") or {}).items()}
+        chosen, lang_deferred, lang_added = cap_fill(
+            coding, lang_bucket, have_langs, lang_mix)
+        candidates = other + chosen
         log(f"lang mix: kept {len(chosen)}/{len(coding)} coding rollouts "
-            f"(+{lang_added}), deferred {len(lang_deferred)}")
-    else:
+            f"(+{ {b: len(v) for b, v in lang_added.items()} } strata), "
+            f"deferred {len(lang_deferred)}")
+    have_groups = {g: set(v) for g, v in (state.get("group_strata") or {}).items()}
+    selected, deferred, group_added = cap_fill(
+        candidates, lambda r: group_of(r, src2grp, mix), have_groups, mix)
+    deferred += lang_deferred
+    log(f"mix: selected {len(selected)} rollouts (+{ {g: len(v) for g, v in group_added.items()} } "
+        f"strata), deferred {len(deferred)}")
+    # Language strata credited only for coding rollouts that made it through
+    # the group stage too.
+    if lang_mix:
+        kept_ids = {id(r) for r in selected}
         lang_added = {}
+        have_langs2 = {b: set(v) for b, v in (state.get("lang_strata") or {}).items()}
+        for r in chosen:
+            if id(r) in kept_ids:
+                b = lang_bucket(r)
+                new = record_strata(r) - have_langs2.get(b, set())
+                lang_added.setdefault(b, set()).update(new)
+    group_turns: dict[str, int] = {}
+    for r in selected:
+        g = group_of(r, src2grp, mix)
+        group_turns[g] = group_turns.get(g, 0) + len(r["turns"])
+    log(f"mix: turns by group {group_turns}")
 
     n_new = sum(len(r["turns"]) for r in selected)
     stale = False
@@ -635,7 +742,9 @@ def main() -> None:
     tmp.replace(DEFERRED_PATH)
     state["pending"] = {
         "epoch": epoch, "pack_dir": str(pack.chunk_paths[0].parent),
-        "n_turns": n_new, "group_added": group_added, "lang_added": lang_added,
+        "n_turns": n_new, "group_turns": group_turns,
+        "group_strata_added": {g: sorted(v) for g, v in group_added.items()},
+        "lang_strata_added": {b: sorted(v) for b, v in lang_added.items()},
         "by_dialect": by_dialect, "allowed_kinds": list(allowed),
         "folded_chunks": [c["key"] for c in unfolded], "init": bool(args.init),
     }
