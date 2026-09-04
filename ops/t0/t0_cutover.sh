@@ -69,11 +69,15 @@ step "1 publish epoch 14 (schema 3, all three dialects, traces only)"
 # traces alone D takes the [mix] targets on day one. The v2 history stays
 # byte-identical at data.affine.io/turns/** and is chained via prev_manifest.
 # Set AFFINE_T0_IMPORT_LEGACY=1 to keep the old behaviour.
+# Normally pre-published the night before (2026-09-03/04: --init --no-legacy
+# --no-announce, ~25 min) so this run is contract + deploy only; the epoch
+# announce is then posted by the fold in step 2b. Nothing reads
+# corpus/manifest.json until the toml manifest_key moves in step 2.
 if curl -sf -o /dev/null https://data.affine.io/corpus/manifest.json; then
   echo "corpus manifest already published; skipping --init"
 else
   LEGACY_FLAG="--no-legacy"; [[ "${AFFINE_T0_IMPORT_LEGACY:-}" == "1" ]] && LEGACY_FLAG=""
-  python ops/corpus_build.py --init $LEGACY_FLAG --ignore-fold-mix --allowed-kinds bash,tool_call,boxed
+  python ops/corpus_build.py --init $LEGACY_FLAG --ignore-fold-mix --allowed-kinds bash,tool_call,boxed --no-announce
 fi
 python - <<'PY'
 import httpx
@@ -135,6 +139,14 @@ boxed; manifest_key -> corpus/manifest.json on data.affine.io (schema 3 view
 duel_turns@v4 over rollout traces; v2 history byte-identical under
 data.affine.io/turns/**). Removes the notice banner and [fold_mix]."
 echo "committed; push when the deploy below is green"
+
+# -- 2b. fold under the new contract --------------------------------------------
+step "2b fold: announce the pre-published epoch, fold traces since, all dialects"
+# The toml now admits all three kinds and [fold_mix] is gone, so this is the
+# first fold on the T0 contract: it posts the still-unannounced init epoch,
+# then folds every trace chunk published since the pre-publish into the next
+# epoch (skips below MIN_NEW_TURNS; the daily pm2 job continues from here).
+python ops/corpus_build.py
 
 # -- 3. deploy -----------------------------------------------------------------
 step "3 deploy: validator, eval pod (between duels), daily fold"

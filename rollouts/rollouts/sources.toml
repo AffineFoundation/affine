@@ -208,9 +208,14 @@ share = 1.0
 #
 # strata_buckets sets the SLICE share, not the turn share: sample_slice
 # draws ~1 turn per stratum per duel, so share ≈ buckets / total strata.
-# Corpus epoch 13 has 3752 repo|phase strata; 470 buckets per new group
-# gives 470 / (3752 + 2·470) ≈ 10% each. Re-derive when the coding strata
-# count moves a lot (it grows with every new repo).
+# Since 2026-09-04 the FOLD assigns these strata (ops/corpus_build.py
+# assign_bucket_strata: sha256(instance_id) % n) from the value here, so one
+# setting governs D; datagen's own stamp is overwritten. Sizing: the schema-3
+# D (traces only) enters T0 with ~4,150 coding strata after the language cap,
+# and the group cap holds terminal at half of coding; math at 10% of the
+# slice therefore needs 0.10/0.50 × 4,150 ≈ 830 buckets. Raising n later only
+# adds bucket names above the old range (immutable shards keep theirs), so
+# re-derive UPWARD as coding grows; never lower it.
 
 [source.affine_math]
 group = "math"
@@ -223,7 +228,7 @@ row_meta = "math"
 select = "tasks"
 pass_dataset = false
 policies = ["teacher_boxed"]           # teacher-only since 2026-09-02
-strata_buckets = 470
+strata_buckets = 830                    # 470 -> 830 at T0 (2026-09-04), see above
 share = 1.0
 
 # -- tool_use (tool_call dialect) -----------------------------------------------
@@ -239,5 +244,7 @@ row_meta = "wiki_trivia"
 select = "tasks"
 pass_dataset = false
 policies = ["teacher_toolcall"]        # teacher-only since 2026-09-02
+# 478 tasks total, so strata <= tasks; 470 already ~one task per bucket.
+# tool_use cannot reach 10% of the slice until a second tool source exists.
 strata_buckets = 470
 share = 1.0
