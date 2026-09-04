@@ -331,6 +331,14 @@ Full writeups: `research/docs/REDTEAM.md`.
  converges to "first teacher uploader holds the throne". Found live: 4 of 28
  queued entries on 2026-08-28 were Qwen3.8-27B-shaped. Admission rule, not a
  scoring change — no wvk bump; verdicts/replays untouched.
+ **2026-09-04 (explicit operator directive, "allow it"):** the text-only
+ extraction of the genesis — `Qwen3_5MoeForCausalLM`, vision tower dropped,
+ `text_config` flattened to the root, `model_type = qwen3_5_moe_text` — is
+ admitted via `[[submission.pinned_arch_alt]]` (match primary OR any alt
+ profile; `validate_repo_arch(..., alternatives)`; `submit.py
+ PINNED_ARCH_ALT` mirrors it). Trigger: chal-00251 rejected on the class
+ name alone. vLLM 0.28 serves the class. Teacher still matches neither.
+ Live at the next validator restart (folded into the T0 cutover).
 - **release stage 1 (2026-09-03 15:47 UTC, explicit dated operator
  directive; commit `11c4806`):** (a) private R2 mining live —
  `[submission.r2].enabled = true`, `hf_cutover_block = 8987674`; `affine1`
