@@ -250,15 +250,27 @@ class EvalClient:
     async def _fetch_verdict(self, client: httpx.AsyncClient,
                              job_id: str) -> dict | None:
         """SSE race / broken-stream fallback: the duel may have completed
-        server-side even though we lost the stream."""
+        server-side even though we lost the stream.
+
+        A 404 means the job is gone (evalsrv restarted / replaced) — raise
+        so the poll race ends. Swallowing 404 and returning None let
+        chal-00269 hang forever after a mid-duel bootstrap relaunch
+        (2026-09-05): SSE stayed open while every poll logged 404.
+        """
         try:
             r = await client.get(f"{self.base}/duel/{job_id}",
                                  timeout=httpx.Timeout(30.0))
+            if r.status_code == 404:
+                raise TransientEvalError(
+                    f"duel job {job_id} vanished (404); evalsrv likely "
+                    f"restarted mid-duel")
             r.raise_for_status()
             job = r.json()
             if job.get("state") == "completed" and job.get("verdict"):
                 log.info("recovered verdict for %s via job poll", job_id)
                 return job["verdict"]
+        except TransientEvalError:
+            raise
         except httpx.HTTPError:
             log.warning("verdict fallback poll failed for %s", job_id,
                         exc_info=True)
