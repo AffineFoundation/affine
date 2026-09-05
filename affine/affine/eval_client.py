@@ -34,7 +34,16 @@ class EvalBusyError(TransientEvalError):
 class InfraFaultError(TransientEvalError):
     """The eval server diagnosed its own infrastructure as the cause (low
     disk, dead teacher/king launch, pod too small). Requeue without spending
-    the miner's retry budget."""
+    the miner's retry budget. `code` is the Fault constant."""
+
+    def __init__(self, message: str, code: str = ""):
+        super().__init__(message)
+        self.code = code
+
+
+class DispatchError(TransientEvalError):
+    """The duel never started: the eval server was unreachable or not ready
+    (503). Nothing about the entry was involved — a pod-wide condition."""
 
 
 class Fault:
@@ -56,6 +65,12 @@ class Fault:
 # Every code above is OUR infrastructure, never the miner's fault: the duel is
 # requeued without spending the miner's bounded retry budget. An error event
 # with no known code is treated as a generic transient (bounded retries).
+# Codes that can only be about THIS entry (the pod cannot fetch/fit/load this
+# checkpoint). Everything else infra-side — dead teacher, king launch, context
+# limit, busy, unreachable — is pod-wide: it would fail every entry the same
+# way, so it must never move an entry in the queue (see validator
+# _requeue_or_exhaust).
+ENTRY_FAULT_CODES = frozenset({Fault.POD_CAPACITY, Fault.CHALLENGER_INFRA})
 INFRA_FAULT_CODES = frozenset({
     Fault.TEACHER, Fault.KING_LAUNCH, Fault.POD_CAPACITY, Fault.CHALLENGER_INFRA,
     Fault.CONTEXT_LIMIT,
@@ -118,14 +133,14 @@ class EvalClient:
                 try:
                     resp = await client.post(f"{self.base}/duel", json=payload)
                 except httpx.HTTPError as e:
-                    raise TransientEvalError(f"duel dispatch failed: {e}") from e
+                    raise DispatchError(f"duel dispatch failed: {e}") from e
                 if resp.status_code == 409:
                     log.info("eval server busy (attempt %d/30): %s; waiting 30s",
                              attempt + 1, resp.text[:120])
                     await asyncio.sleep(30)
                     continue
                 if resp.status_code == 503:
-                    raise TransientEvalError(f"eval server not ready: {resp.text[:200]}")
+                    raise DispatchError(f"eval server not ready: {resp.text[:200]}")
                 resp.raise_for_status()
                 break
             else:
@@ -161,7 +176,7 @@ class EvalClient:
                             code = event["data"].get("code")
                             if code in INFRA_FAULT_CODES:
                                 raise InfraFaultError(
-                                    f"eval server infra fault [{code}]: {err}")
+                                    f"eval server infra fault [{code}]: {err}", code)
                             raise TransientEvalError(f"eval server error: {err}")
                         else:
                             log.warning("unknown SSE event type %r", event["type"])
