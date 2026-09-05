@@ -47,7 +47,10 @@ MAX_MANIFEST_BYTES = 2 << 20
 CHUNK = 8 << 20
 PART = 128 << 20           # ranged-GET unit; a stall costs at most one part
 PART_RETRIES = 8
-DOWNLOAD_WORKERS = int(os.environ.get("AFFINE_R2_DOWNLOAD_WORKERS", "8"))
+# 8 -> 16 (2026-09-05): one R2 stream from the eval pod runs ~50 MB/s (RTT
+# bound); the NIC is 10 Gbps and the local-disk cache writes at 3 GB/s, so
+# the stream count was the ceiling once HF_HOME left the encrypted volume.
+DOWNLOAD_WORKERS = int(os.environ.get("AFFINE_R2_DOWNLOAD_WORKERS", "16"))
 
 
 class IntegrityError(Exception):
@@ -111,9 +114,12 @@ def client():
     if not (endpoint and ak and sk):
         raise RuntimeError("AFFINE_EVAL_R2_ENDPOINT / _ACCESS_KEY_ID / "
                            "_SECRET_ACCESS_KEY are not set on this pod")
-    # 60 s: a dead stream is noticed and its part retried well inside the
-    # engine's 180 s no-progress watchdog.
-    return r2.s3_client(endpoint, ak, sk, read_timeout=60.0)
+    # 20 s (was 60): a healthy stream delivers an 8 MB chunk in well under a
+    # second, so a socket that is silent for 20 s is dead. Stalled parts were
+    # the 17 MB/s shards (2026-09-05: a 50 GB file took 48 min) — each stall
+    # idled a worker for the full timeout before the part was retried. Still
+    # far inside the engine's 180 s no-progress watchdog.
+    return r2.s3_client(endpoint, ak, sk, read_timeout=20.0)
 
 
 def _sha256_file(path: Path) -> str:
