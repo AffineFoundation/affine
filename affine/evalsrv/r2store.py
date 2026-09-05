@@ -52,6 +52,8 @@ PART_RETRIES = 8
 # bound); the NIC is 10 Gbps and the local-disk cache writes at 3 GB/s, so
 # the stream count was the ceiling once HF_HOME left the encrypted volume.
 DOWNLOAD_WORKERS = int(os.environ.get("AFFINE_R2_DOWNLOAD_WORKERS", "16"))
+# Objects downloaded concurrently (each split into DOWNLOAD_WORKERS ranges).
+FILE_WORKERS = int(os.environ.get("AFFINE_R2_FILE_WORKERS", "3"))
 
 
 class IntegrityError(Exception):
@@ -199,6 +201,17 @@ def _fetch_part(s3, bucket: str, key: str, fd: int, a: int, b: int) -> None:
 class FetchCancelled(Exception):
     """The caller's cancel event fired mid-download (the duel was superseded).
     Parts already landed stay on disk and resume next time."""
+
+
+class _AnyEvent:
+    """is_set() when either the caller's event or the local one is set."""
+
+    def __init__(self, outer: threading.Event | None):
+        self.outer = outer
+        self.local = threading.Event()
+
+    def is_set(self) -> bool:
+        return self.local.is_set() or (self.outer is not None and self.outer.is_set())
 
 
 def adopt_sibling_snapshot(repo: str, revision: str,
@@ -382,18 +395,42 @@ def _fetch(repo: str, revision: str, bucket: str, prefix: str, snap: Path,
     total = sum(int(f["size"]) for f in todo)
     log.info("fetching %s@%s: %d/%d files, %.1f GB", repo, revision[:12],
              len(todo), len(manifest["files"]), total / 1e9)
-    # Files in series, each file's ranges in parallel: the pool is shared by
-    # the parts only, so it can never be exhausted by waiting file tasks.
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        for f in todo:
-            if cancel is not None and cancel.is_set():
-                raise FetchCancelled(f"{repo}: cancelled before {f['path']}")
-            t1 = time.time()
-            _download(s3, bucket, prefix + f["path"], snap / f["path"],
-                      int(f["size"]), f["sha256"], pool, cancel)
-            dt = max(time.time() - t1, 1e-3)
-            log.info("fetched %s (%.1f GB, %.0f MB/s)", f["path"],
-                     int(f["size"]) / 1e9, int(f["size"]) / 1e6 / dt)
+    # FILE_WORKERS files at a time, each file's ranges in parallel on the
+    # shared parts pool (file tasks never sit in the parts pool, so it cannot
+    # be exhausted by waiters). Measured 2026-09-05 from the eval pod: one
+    # object streams ~120 MB/s no matter how many ranges are in flight, while
+    # two objects at once ran ~105 MB/s EACH — the cap is per object, the pod
+    # path takes >2 Gbps. Serial files left half the link idle.
+    # A local stop flag OR'd with the caller's cancel: a failure in one file
+    # halts its siblings without touching the caller's event (which, for the
+    # duel path, means "superseded" — not something a transport error may set).
+    stop = _AnyEvent(cancel)
+
+    def one_file(f: dict) -> None:
+        if stop.is_set():
+            raise FetchCancelled(f"{repo}: cancelled before {f['path']}")
+        t1 = time.time()
+        _download(s3, bucket, prefix + f["path"], snap / f["path"],
+                  int(f["size"]), f["sha256"], pool, stop)
+        dt = max(time.time() - t1, 1e-3)
+        log.info("fetched %s (%.1f GB, %.0f MB/s)", f["path"],
+                 int(f["size"]) / 1e9, int(f["size"]) / 1e6 / dt)
+
+    # Largest files first so the tail of the run is short small files, not
+    # one 50 GB shard streaming alone at the per-object cap.
+    todo.sort(key=lambda f: -int(f["size"]))
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool, \
+            ThreadPoolExecutor(max_workers=max(1, FILE_WORKERS)) as fpool:
+        futs = [fpool.submit(one_file, f) for f in todo]
+        try:
+            for fut in as_completed(futs):
+                fut.result()
+        except BaseException:
+            stop.local.set()
+            for fut in futs:
+                fut.cancel()
+            wait(futs)
+            raise
     (snap / COMPLETE_MARKER).write_text(json.dumps({
         "repo": repo, "model_digest": revision,
         "files": len(manifest["files"]),
