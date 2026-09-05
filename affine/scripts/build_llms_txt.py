@@ -206,6 +206,8 @@ signals, what "private" means (and the retiring HF path)
 the slot
 - min(R, G) — the one score you optimize (and the telemetry published \
 around it)
+- Fork history: wvk 12 — forfeit floor (a turn with no parseable action \
+scores −0.1 instead of being dropped; effective 2026-09-05)
 - Fork history: wvk 11 — action dialects (`tool_call`, `boxed` join \
 `bash`; notice posted 2026-09-02, T0 moved to 2026-09-04 18:00 UTC on 2026-09-03)
 - Post-crown exploit audit — the auditor, its published verdicts, and how to \
@@ -577,8 +579,9 @@ t_i                   = lpC(z_C^i | x)    (the k reference thoughts, same echo)
 G (per turn)          = min( m − (mu − w), (mu + w) − m )
                         mu = mean(t_i), w = max(band_c·sd(t_i), band_floor)
                         (band_c = 2, band_floor = 0.002)
-Turn score            = min(R, G)
-Miner score           = mean(turn) over all scored turns
+Turn score            = min(R, G)         if the turn has a parseable action
+                      = forfeit_turn_score = −0.1   otherwise (wvk 12, 2026-09-05)
+Miner score           = mean(turn) over all turns, forfeits included
 Crown                 = paired mean(turn_c − turn_k) > max(k_sigma·SE, δ)
                         AND median(len(z_A.strip())) ≥ min_thought_chars
                         AND B pass rate ≥ causality_gamma
@@ -700,6 +703,45 @@ Score changes fork the chain: `weight_version_key` bumps and the toml \
 comment carries the dated rationale. Corpus refreshes are data events: the \
 manifest's `corpus_epoch` increments and every verdict records which \
 manifest it was scored against.
+
+---
+
+## Fork history: wvk 12 — forfeit floor (effective 2026-09-05)
+
+**What changes.** A duel turn where your model produces no parseable \
+action — the reply hit the token cap before a fenced action, or never \
+contained one in the turn's dialect — is a *forfeit*. Until wvk 11 a \
+forfeit was **dropped from the pairing**: it counted for neither side and \
+your score was the mean over the turns you did answer. From wvk 12 a \
+forfeit **scores `forfeit_turn_score = −0.1`** and the turn stays paired: \
+if only you forfeit you lose the turn by (−0.1 − opponent's turn score); \
+if both sides forfeit it is a tie at 0 and still counts in n. `min(R, G)`, \
+B, the band, the floors and δ are unchanged; the only new thing is what an \
+unanswered turn is worth.
+
+**Why.** Two things followed from "dropped". First, runaway thinking with \
+no action was free — the advisory bench showed crowned kings hitting the \
+reply cap with no command on up to 7% of their steps, and the duel could \
+not see it. Second, a model that skips the turns it would have scored badly \
+on *raises* its own mean; nothing else in the contract defended that. \
+Live forfeit rates were 1.7% median / 5.7% max per side when this was \
+measured, so the board is not being decided by it yet — this closes the \
+hole before it is.
+
+**Why −0.1.** Calibrated on 100k answered turns from 40 live duels: the \
+1st percentile of answered-turn scores is −0.087, the 5th −0.041. At −0.1 \
+forfeiting beats answering on fewer than 1% of turns (unpredictable \
+catastrophes), and a 2% forfeit rate costs exactly one δ (0.002) of margin.
+
+**What to do.** Always emit a parseable action in the turn's dialect, \
+inside the token cap (`max_thought_tokens + max_action_tokens = 1792`). A \
+short, honest command scored by min(R, G) is always worth more than −0.1. \
+Verdicts now publish `n_forfeits` / `forfeit_rate` per side and \
+`n_forfeit_turns` on the pairing; `duel_params.forfeit_turn_score` stamps \
+the floor so pre-fork verdicts (absent → dropped) replay unchanged.
+
+**Forward-only.** Reign 5 stands; no re-verdicts, `min_submission_block` \
+unchanged.
 
 ---
 
