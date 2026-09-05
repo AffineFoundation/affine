@@ -11,7 +11,24 @@ if [ -f /root/affine/.eval_env ]; then
   # shellcheck disable=SC1091
   source /root/affine/.eval_env
 fi
-export HF_HOME=${HF_HOME:-/root/hf}
+# Model cache placement (2026-09-05). /root on Lium pods is a gocryptfs FUSE
+# volume: measured on the eval box, writes 231 MB/s, reads 333 MB/s — the
+# whole 72 GB checkpoint pipeline was capped by it (download >= 6 min even
+# at line rate; two vLLM engines reading weights => 465-589 s loads). The
+# pod's plain local disk (/) did 3.0 GB/s write / 7.4 GB/s read. Use it when
+# it has room for a king + challenger + one prefetch with headroom; the
+# encrypted volume stays the fallback. Nothing there survives a pod
+# recreate, which is fine: every checkpoint is re-fetchable from R2/HF.
+if [ -z "${HF_HOME:-}" ]; then
+  root_avail_gb=$(df -BG --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9')
+  if [ "${root_avail_gb:-0}" -ge 400 ]; then
+    export HF_HOME=/hf
+  else
+    export HF_HOME=/root/hf
+  fi
+fi
+export HF_HOME
+echo "[bootstrap] HF_HOME=$HF_HOME ($(df -h --output=avail "$(dirname "$HF_HOME")" 2>/dev/null | tail -1 | tr -d ' ') free)"
 # Rust multi-stream downloads (hf_transfer, installed via the [eval] extra).
 # Model pulls are the fixed per-duel cost; this takes them to near line rate.
 export HF_HUB_ENABLE_HF_TRANSFER=${HF_HUB_ENABLE_HF_TRANSFER:-1}
