@@ -1,0 +1,21 @@
+mode-concentration weighting — 1222 paired turns of chal-00248.json.gz
+
+M: med +0.0038  p10 -0.0480  p90 +0.0626  M<0 on 39.4% of turns
+
+lowest-M quartile    n= 305  mean diff +0.00122  sd 0.0253
+highest-M quartile   n= 305  mean diff +0.00153  sd 0.0160
+
+== crown statistic under per-turn weights w(M) ==
+weighting                             margin       SE      z   n_eff
+unweighted (live rule)              +0.00201  0.00057  +3.53    1222
+drop M<0                            +0.00202  0.00065  +3.09     740
+drop lowest 20% M                   +0.00207  0.00057  +3.64     978
+w = clip(M,0,∞)                     +0.00155  0.00092  +1.68     303
+w = rank(M)                         +0.00188  0.00056  +3.35     917
+w = sigmoid((M−med)/sd)             +0.00202  0.00054  +3.76    1076
+
+== teacher-own − king on the A leg (n=1222), same weights ==
+unweighted                          +0.00455  0.00157  +2.91    1222
+drop M<0                            +0.01410  0.00179  +7.89     740
+w = clip(M,0,∞)                     +0.03169  0.00707  +4.48     303
+w = sigmoid((M−med)/sd)             +0.01111  0.00174  +6.40    1076
