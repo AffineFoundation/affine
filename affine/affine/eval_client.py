@@ -149,15 +149,17 @@ class EvalClient:
             job_id = resp.json()["job_id"]
             log.info("duel dispatched as %s", job_id)
 
-            verdict = None
-            stream_error: Exception | None = None
-            try:
-                # read timeout = idle timeout: the server heartbeats every
-                # 30s, so a silent connection longer than this means the pod
-                # or tunnel is wedged and httpx raises ReadTimeout for us.
-                stream_timeout = httpx.Timeout(
-                    self.duel_timeout_s, connect=30.0,
-                    read=self.stream_idle_timeout_s)
+            # SSE is preferred, but a half-closed tunnel can leave
+            # aiter_lines hung past read timeouts (chal-00267, 2026-09-05:
+            # duel completed server-side while the root stream sat in
+            # CLOSE-WAIT for ~13 min). Race the stream against a job-status
+            # poll so a finished duel always surfaces.
+            stream_timeout = httpx.Timeout(
+                self.duel_timeout_s, connect=30.0,
+                read=self.stream_idle_timeout_s)
+            poll_every_s = max(30.0, float(self.stream_idle_timeout_s) / 4.0)
+
+            async def _consume_stream() -> dict | None:
                 async with client.stream(
                         "GET", f"{self.base}/duel/{job_id}/stream",
                         timeout=stream_timeout) as stream:
@@ -169,21 +171,57 @@ class EvalClient:
                             if on_progress:
                                 on_progress(event["data"])
                         elif event["type"] == "verdict":
-                            verdict = event["data"]
-                            break
+                            return event["data"]
                         elif event["type"] == "error":
                             err = event["data"].get("error", "?")
                             code = event["data"].get("code")
                             if code in INFRA_FAULT_CODES:
                                 raise InfraFaultError(
-                                    f"eval server infra fault [{code}]: {err}", code)
-                            raise TransientEvalError(f"eval server error: {err}")
+                                    f"eval server infra fault [{code}]: {err}",
+                                    code)
+                            raise TransientEvalError(
+                                f"eval server error: {err}")
                         else:
-                            log.warning("unknown SSE event type %r", event["type"])
-            except TransientEvalError:
-                raise
-            except (httpx.HTTPError, json.JSONDecodeError) as e:
-                stream_error = e
+                            log.warning("unknown SSE event type %r",
+                                        event["type"])
+                return None
+
+            async def _poll_completed() -> dict:
+                while True:
+                    await asyncio.sleep(poll_every_s)
+                    got = await self._fetch_verdict(client, job_id)
+                    if got is not None:
+                        return got
+
+            stream_task = asyncio.create_task(
+                _consume_stream(), name=f"duel-stream-{job_id}")
+            poll_task = asyncio.create_task(
+                _poll_completed(), name=f"duel-poll-{job_id}")
+            stream_error: Exception | None = None
+            verdict: dict | None = None
+            try:
+                done, pending = await asyncio.wait(
+                    {stream_task, poll_task},
+                    return_when=asyncio.FIRST_COMPLETED)
+                for task in pending:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                if poll_task in done:
+                    verdict = poll_task.result()
+                else:
+                    try:
+                        verdict = stream_task.result()
+                    except TransientEvalError:
+                        raise
+                    except (httpx.HTTPError, json.JSONDecodeError) as e:
+                        stream_error = e
+            finally:
+                for task in (stream_task, poll_task):
+                    if not task.done():
+                        task.cancel()
 
             if verdict is None:
                 verdict = await self._fetch_verdict(client, job_id)
