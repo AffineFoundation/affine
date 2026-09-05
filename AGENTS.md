@@ -309,7 +309,11 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
-- `weight_version_key = 10` (min(R,G) v5 fork + genesis reset, 2026-08-27,
+- `weight_version_key = 11` (action dialects + schema-3 trace-first D,
+  T0 ran 2026-09-05 12:12 UTC on explicit operator directive "Run the cut
+  over" — a day after the noticed 2026-09-04 18:00 slot, which passed
+  unrun; commit `45f3466`; scoring rule unchanged = min(R,G) v5, forward-
+  only, reign stands; min(R,G) v5 fork + genesis reset was 10, 2026-08-27,
   explicit dated operator directive; δ revert was 9, δ=0.001 was 8,
   Reason v4 was 7, B gate 6, thought-length floor 5, δ floor 4,
   Reason v3 was 3). **Do not bump** without an explicit dated operator
@@ -338,7 +342,7 @@ Full writeups: `research/docs/REDTEAM.md`.
  profile; `validate_repo_arch(..., alternatives)`; `submit.py
  PINNED_ARCH_ALT` mirrors it). Trigger: chal-00251 rejected on the class
  name alone. vLLM 0.28 serves the class. Teacher still matches neither.
- Live at the next validator restart (folded into the T0 cutover).
+ Live since the 2026-09-05 11:57 UTC validator restart.
 - **release stage 1 (2026-09-03 15:47 UTC, explicit dated operator
  directive; commit `11c4806`):** (a) private R2 mining live —
  `[submission.r2].enabled = true`, `hf_cutover_block = 8987674`; `affine1`
@@ -367,10 +371,13 @@ Full writeups: `research/docs/REDTEAM.md`.
   turns or forfeit them): explicit dated operator directive + a wvk
   decision, not an agent edit. Rollouts policies declare their harness's
   dialect via `action_kind` in `policies.toml` (default bash).
-- **wvk 11 fork NOTICED, not live (notice posted 2026-09-02 as "not before
-  2026-09-09"; T0 moved to 2026-09-04 18:00 UTC by operator directive on
-  2026-09-03, re-noticed the same evening; runs via `AFFINE_T0_DIRECTIVE=2026-09-04
-  ops/t0/t0_cutover.sh`):** admit
+- **wvk 11 fork LIVE 2026-09-05 12:12 UTC (notice posted 2026-09-02 as
+  "not before 2026-09-09"; T0 moved to 2026-09-04 18:00 UTC by operator
+  directive on 2026-09-03, re-noticed the same evening; that slot passed
+  unrun and the operator directed "Run the cut over" on 2026-09-05; ran as
+  `AFFINE_T0_DIRECTIVE=2026-09-05 ops/t0/t0_cutover.sh`, epoch 15 folded
+  and announced, eval pod on schema 3, late notice posted to Discord):**
+  admit
   `boxed` (math, `affine-math-v1`, MATH train) and `tool_call` (wiki
   search, `affine-wiki-v1`) turns to D at target shares math 0.10 /
   tool_use 0.10 (coding 0.50 / terminal 0.25 / nl2repo 0.05). Forward-only:
@@ -735,7 +742,8 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 ## 12. One-paragraph resume
 
 > Affine SN120: teacher-anchored thought-injection duels. Since 2026-08-27
-> (`weight_version_key=10`) the contract is **min(R,G) v5: centered Reason
+> (`weight_version_key=11` since the 2026-09-05 dialect/corpus fork; the
+> scoring rule itself dates from wvk 10) the contract is **min(R,G) v5: centered Reason
 > + banded Grounding + δ floor + thought-length floor + B gate**: per turn
 > the teacher samples k=3 refs, a_i = lpC(y_i|z_A) − lpC(y_i|∅);
 > R = 0.03·log(mean_i exp(a_i/0.03)) − mean_i a_i (centering cancels any
