@@ -568,7 +568,9 @@ once-ever eval slot on a checkpoint that cannot load.
 
 ## min(R, G) (what you optimize)
 
-Since 2026-08-27 (`weight_version_key = 10`) the whole scoring contract is:
+Since 2026-08-27 (`weight_version_key = 10`; the forfeit line was added at \
+`weight_version_key = 12`, 2026-09-05, nothing else has changed since) the \
+whole scoring contract is:
 
 ```
 a_i (per teacher ref) = lpC(y_i | z_A) − lpC(y_i | ∅)     i = 1..k, k = 3
