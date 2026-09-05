@@ -29,6 +29,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import sys
 import threading
 import time
@@ -195,8 +196,62 @@ def _fetch_part(s3, bucket: str, key: str, fd: int, a: int, b: int) -> None:
     raise FetchError(key, f"part {a}-{b} failed after {PART_RETRIES} attempts: {last}")
 
 
+class FetchCancelled(Exception):
+    """The caller's cancel event fired mid-download (the duel was superseded).
+    Parts already landed stay on disk and resume next time."""
+
+
+def adopt_sibling_snapshot(repo: str, revision: str,
+                           hf_home: str | None = None) -> bool:
+    """Materialize repo@revision by hard-linking a verified snapshot of the
+    SAME revision cached under another r2 ref, if one exists.
+
+    The revision of an r2 ref is its model_digest, so equal revisions mean
+    byte-identical files. A crowned challenger is re-served from the public
+    bucket ref (r2://affine-models/models/sha256/<digest>/) whose cache dir
+    differs from the private ref it just dueled under — without this the
+    king was downloaded a second time (72 GB, 28 min on 2026-09-05). Links
+    are instant on one filesystem and survive the sibling being pruned.
+    Returns False (caller downloads) when no sibling or linking fails."""
+    home = Path(hf_home or HF_HOME)
+    want = snapshot_dir(repo, revision, hf_home)
+    hub = home / "hub"
+    if not hub.is_dir():
+        return False
+    for other in hub.glob("models--r2--*"):
+        if other.name == cache_dir_name(repo) or other.name.endswith(".pruning"):
+            continue
+        src = other / "snapshots" / revision
+        if not (src / COMPLETE_MARKER).is_file():
+            continue
+        try:
+            marker = json.loads((src / COMPLETE_MARKER).read_text())
+            if marker.get("model_digest") != revision:
+                continue
+            tmp = want.with_name(want.name + ".linking")
+            if tmp.exists():
+                shutil.rmtree(tmp)
+            tmp.mkdir(parents=True)
+            for f in src.iterdir():
+                if f.name == COMPLETE_MARKER or not f.is_file():
+                    continue
+                os.link(f, tmp / f.name)
+            marker["adopted_from"] = other.name
+            (tmp / COMPLETE_MARKER).write_text(json.dumps(marker))
+            want.parent.mkdir(parents=True, exist_ok=True)
+            tmp.replace(want)
+            log.info("adopted snapshot %s@%s from %s (hard links)",
+                     repo, revision[:12], other.name)
+            return True
+        except OSError as e:
+            log.warning("could not adopt %s from %s: %s", repo, other.name, e)
+            shutil.rmtree(want.with_name(want.name + ".linking"), ignore_errors=True)
+    return False
+
+
 def _download(s3, bucket: str, key: str, dest: Path, size: int,
-              sha256: str, pool: ThreadPoolExecutor) -> None:
+              sha256: str, pool: ThreadPoolExecutor,
+              cancel: threading.Event | None = None) -> None:
     """Resumable ranged download: PART-sized ranges fetched concurrently into
     a preallocated `.incomplete` file, completed part indices recorded in a
     `.parts` sidecar so a killed downloader (engine stall watchdog, pod
@@ -235,8 +290,16 @@ def _download(s3, bucket: str, key: str, dest: Path, size: int,
             fut.add_done_callback(record(i))
             futs.append(fut)
         try:
-            for fut in as_completed(futs):
-                fut.result()
+            pending = set(futs)
+            while pending:
+                # Poll so a superseded duel stops downloading within seconds
+                # instead of at the end of the file (a 72 GB checkpoint kept
+                # a stale job alive for 50 min on 2026-09-05).
+                if cancel is not None and cancel.is_set():
+                    raise FetchCancelled(f"{dest.name}: cancelled")
+                finished, pending = wait(pending, timeout=5.0)
+                for fut in finished:
+                    fut.result()
         except BaseException:
             for fut in futs:
                 fut.cancel()
@@ -256,19 +319,25 @@ def _download(s3, bucket: str, key: str, dest: Path, size: int,
 
 
 def fetch_snapshot(repo: str, revision: str, s3=None,
-                   workers: int = DOWNLOAD_WORKERS) -> Path:
+                   workers: int = DOWNLOAD_WORKERS,
+                   cancel: threading.Event | None = None) -> Path:
     """Materialize + verify an r2 ref at the pinned model_digest. Idempotent:
     a complete snapshot returns immediately; a partial one resumes (files
-    already present are re-hashed, never trusted by size alone)."""
+    already present are re-hashed, never trusted by size alone). A verified
+    snapshot of the same digest under another ref is hard-linked instead of
+    downloaded. `cancel` (set by the caller) raises FetchCancelled between
+    parts; landed parts stay for the next attempt."""
     if not is_r2(repo):
         raise ValueError(f"not an r2 ref: {repo}")
     bucket, prefix = proto.parse_r2_ref(repo)
     snap = snapshot_dir(repo, revision)
     if (snap / COMPLETE_MARKER).is_file():
         return snap
+    if adopt_sibling_snapshot(repo, revision):
+        return snap
     try:
-        return _fetch(repo, revision, bucket, prefix, snap, s3, workers)
-    except IntegrityError:
+        return _fetch(repo, revision, bucket, prefix, snap, s3, workers, cancel)
+    except (IntegrityError, FetchCancelled):
         raise
     except ValueError as e:
         # get_bytes size cap: a manifest that grew past the cap after ready.
@@ -287,7 +356,7 @@ def fetch_snapshot(repo: str, revision: str, s3=None,
 
 
 def _fetch(repo: str, revision: str, bucket: str, prefix: str, snap: Path,
-           s3, workers: int) -> Path:
+           s3, workers: int, cancel: threading.Event | None = None) -> Path:
     s3 = s3 or client()
     t0 = time.time()
     raw = r2.get_bytes(s3, bucket, prefix + "manifest.json", MAX_MANIFEST_BYTES)
@@ -317,9 +386,11 @@ def _fetch(repo: str, revision: str, bucket: str, prefix: str, snap: Path,
     # the parts only, so it can never be exhausted by waiting file tasks.
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         for f in todo:
+            if cancel is not None and cancel.is_set():
+                raise FetchCancelled(f"{repo}: cancelled before {f['path']}")
             t1 = time.time()
             _download(s3, bucket, prefix + f["path"], snap / f["path"],
-                      int(f["size"]), f["sha256"], pool)
+                      int(f["size"]), f["sha256"], pool, cancel)
             dt = max(time.time() - t1, 1e-3)
             log.info("fetched %s (%.1f GB, %.0f MB/s)", f["path"],
                      int(f["size"]) / 1e9, int(f["size"]) / 1e6 / dt)
