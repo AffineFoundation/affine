@@ -206,7 +206,7 @@ signals, what "private" means (and the retiring HF path)
 the slot
 - min(R, G) — the one score you optimize (and the telemetry published \
 around it)
-- Upcoming fork: wvk 11 — action dialects (`tool_call`, `boxed` join \
+- Fork history: wvk 11 — action dialects (`tool_call`, `boxed` join \
 `bash`; notice posted 2026-09-02, T0 moved to 2026-09-04 18:00 UTC on 2026-09-03)
 - Post-crown exploit audit — the auditor, its published verdicts, and how to \
 run the same audit yourself
@@ -703,7 +703,7 @@ manifest it was scored against.
 
 ---
 
-## Upcoming fork: wvk 11 — action dialects (notice posted 2026-09-02)
+## Fork history: wvk 11 — action dialects + data.affine.io (notice 2026-09-02, effective 2026-09-05)
 
 **What changes.** Corpus D stops being bash-only. Turns whose action is a \
 `<tool_call>…</tool_call>` block (tool use / search) or a `\\boxed{…}` \
@@ -732,15 +732,7 @@ Design note: this is a *corpus* change gated behind a *contract* flag, so \
 the parser for a new format is a code change but admitting it is a fork — \
 miners are never scored on a format the prefix did not announce.
 
-**When.** 2026-09-04, 18:00 UTC (14:00 US Eastern). This notice originally \
-said "not before 2026-09-09"; on 2026-09-03 the operator pulled T0 forward to \
-2026-09-04 and this section, the release notes and Discord were updated the \
-same evening. Nothing about *what* changes moved — only the date. The exact \
-commit lands as `weight_version_key = 11` in `affine.toml`; the toml comment \
-and this section will carry the effective date/block. Until then the gate \
-`[dataset].allowed_action_kinds = ["bash"]` stays closed: no non-bash turn \
-can enter D, and the duel refuses any slice that contains one \
-(`check_dialects` in `code/evalsrv/dueling.py`).
+**Effective 2026-09-05.** `weight_version_key = 11` in `affine.toml`; `[dataset].allowed_action_kinds = ["bash", "tool_call", "boxed"]`; D served from `https://data.affine.io/corpus/manifest.json` (schema_version 3).
 
 **Forward-only.** The current reign stands. No genesis reset, \
 `min_submission_block` unchanged, every published verdict stays valid and \

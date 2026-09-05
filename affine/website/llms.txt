@@ -20,7 +20,7 @@ Everything the project publishes, in one index. All URLs are on this site's root
 - Submit checklist — Ed25519 hotkey, private R2 upload, the two on-chain signals, what "private" means (and the retiring HF path)
 - Serving stack — how your checkpoint is loaded; pre-flight before you burn the slot
 - min(R, G) — the one score you optimize (and the telemetry published around it)
-- Upcoming fork: wvk 11 — action dialects (`tool_call`, `boxed` join `bash`; notice posted 2026-09-02, T0 moved to 2026-09-04 18:00 UTC on 2026-09-03)
+- Fork history: wvk 11 — action dialects (`tool_call`, `boxed` join `bash`; notice posted 2026-09-02, T0 moved to 2026-09-04 18:00 UTC on 2026-09-03)
 - Post-crown exploit audit — the auditor, its published verdicts, and how to run the same audit yourself
 - Public data — full field-level description of every published object
 - Source of truth — links to the exact validator code under `code/`
@@ -265,13 +265,13 @@ Frozen numeric knobs live in `affine.toml` `[duel]` (linked under `code/`). Scor
 
 ---
 
-## Upcoming fork: wvk 11 — action dialects (notice posted 2026-09-02)
+## Fork history: wvk 11 — action dialects + data.affine.io (notice 2026-09-02, effective 2026-09-05)
 
 **What changes.** Corpus D stops being bash-only. Turns whose action is a `<tool_call>…</tool_call>` block (tool use / search) or a `\boxed{…}` answer (math / short answer) are admitted next to the ```bash turns. The score does not change: min(R, G), B, the band, the floors and δ are all exactly as above. What changes is *where the action span starts and ends* on each turn, and that is decided per turn by the turn's `action_kind`.
 
 **Why.** The meter is a distillation meter: it pays a thought for predicting what the teacher does next and for reading like the text the task induces. Nothing in that rule is about shells. Only the corpus was — every turn in D ended in a bash command, so the only capability the board could reward was "drive a shell agent". A miner tuned for that alone is not a good general model; a frontier model answers a math question with the answer, calls a tool in the tool's format, and runs a command when a command is what the task needs. Widening D is how the incentive follows that: same score, more of the world in the prompts. Math and tool use are the first two axes because the teacher is fluent in both (ref yield 2.55/3 and 2.8/3 in the gate-closed dry run), each has a crisp machine-checkable action span, and each exercises a different thing — math turns carry the strongest R signal we have measured (teacher R leg ≈ 0.054 vs ≈ 0.012 on bash: the thought must actually derive the answer), tool turns test grounded, format-exact action selection. Long-context and further harnesses ride on the same mechanism later without another dialect. Design note: this is a *corpus* change gated behind a *contract* flag, so the parser for a new format is a code change but admitting it is a fork — miners are never scored on a format the prefix did not announce.
 
-**When.** 2026-09-04, 18:00 UTC (14:00 US Eastern). This notice originally said "not before 2026-09-09"; on 2026-09-03 the operator pulled T0 forward to 2026-09-04 and this section, the release notes and Discord were updated the same evening. Nothing about *what* changes moved — only the date. The exact commit lands as `weight_version_key = 11` in `affine.toml`; the toml comment and this section will carry the effective date/block. Until then the gate `[dataset].allowed_action_kinds = ["bash"]` stays closed: no non-bash turn can enter D, and the duel refuses any slice that contains one (`check_dialects` in `code/evalsrv/dueling.py`).
+**Effective 2026-09-05.** `weight_version_key = 11` in `affine.toml`; `[dataset].allowed_action_kinds = ["bash", "tool_call", "boxed"]`; D served from `https://data.affine.io/corpus/manifest.json` (schema_version 3).
 
 **Forward-only.** The current reign stands. No genesis reset, `min_submission_block` unchanged, every published verdict stays valid and replays bit-identically (dialect only touches sampling/parsing, never `score.py`). The first duels after the fork are simply scored on a slice that contains all three dialects.
 

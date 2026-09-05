@@ -16,15 +16,6 @@ nl2repo = 0.05
 math = 0.10
 tool_use = 0.10
 
-# Fold-side override while the gate is closed. Without it the fold waterfill
-# would see coding/terminal above their new targets and defer them for the
-# whole notice period while math/tool_use cannot be admitted yet. DELETE
-# this block in the wvk-11 fork commit so the fold follows [mix].
-[fold_mix]
-coding = 0.60
-terminal = 0.30
-nl2repo = 0.10
-
 # Language targets for NEWLY FOLDED coding turns (2026-09-01). Enforced by
 # ops/datagen_refresh.py as a second waterfill (after the group waterfill)
 # keyed by rec["language"], with cumulative counts in state["lang_counts"].
