@@ -21,7 +21,8 @@ king_chain_size = 5
 min_submission_block = 8938619
 # Bittensor weight-version gate for contract upgrades (bump on breaking
 # scoring/contract changes so stale validators are ignored by consensus).
-# Current: 10 (min(R,G) v5 scoring fork + genesis reset, 2026-08-27,
+# Current: 12 (forfeit floor, 2026-09-05; 11 = dialects + schema-3 D,
+# 2026-09-05). 10 was min(R,G) v5 scoring fork + genesis reset, 2026-08-27,
 # explicit dated operator directive via the approved release plan — the
 # wvk-9 king crowned on a constant filler suffix and benched 0/50; the new
 # rule scores each turn min(centered Reason, banded Grounding); see [duel]
@@ -37,6 +38,9 @@ min_submission_block = 8938619
 # boxed + tool_call turns next to bash and is served as a schema_version 3
 # view over rollout traces (corpus/manifest.json on data.affine.io); score
 # unchanged; forward-only, reign stands.
+# 11→12 forfeit floor (2026-09-05): a turn with no parseable action scores
+# forfeit_turn_score (−0.1) instead of leaving the pairing; one-sided =
+# loss, two-sided = tie. min(R,G) unchanged. Forward-only; reign stands.
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -44,7 +48,7 @@ min_submission_block = 8938619
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 11
+weight_version_key = 12
 
 [wallet]
 name = "default"
@@ -409,6 +413,8 @@ score_mode = "min_rg"
 # the band open when the k=3 reference thoughts happen to agree tightly.
 band_c = 2.0
 band_floor = 0.002
+# 2026-09-05 (weight_version_key 11→12): forfeits are scored, not dropped.
+forfeit_turn_score = -0.1
 # ---- v6 (built 2026-09-04, operator directive; NOT live until the flip) ----
 # Two contract knobs, both implemented in score.py / evalsrv and both a
 # weight_version_key event when flipped (ops/v6/v6_toml_edits.py stages the

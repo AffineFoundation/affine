@@ -46,8 +46,9 @@ m   = lpC(z_A | x)          # miner-thought grounding echo (per-byte)
 t_i = lpC(z_C^i | x)        # same echo for each teacher reference thought
 mu = mean(t_i), w = max(band_c · sd(t_i), band_floor)           # band_c = 2, band_floor = 0.002
 G (per turn) = min(m − (mu − w), (mu + w) − m)                  # positive iff m inside the band
-Turn score  = min(R, G)
-Miner score = mean(turn) over all scored turns
+Turn score  = min(R, G)              # if the side produced a parseable action
+            = forfeit_turn_score      # = −0.1 otherwise (wvk 12, 2026-09-05); both forfeit → tie at 0
+Miner score = mean(turn) over all turns, forfeits included
 Crown = paired mean(turn_c − turn_k) > max(k_sigma · SE, min_margin)
         AND median(len(z_A.strip())) ≥ min_thought_chars
         AND B pass rate ≥ causality_gamma
@@ -56,7 +57,8 @@ Scoring hyperparameters: `n_turns = 1300`, `k_sigma = 2.0`,
 `min_margin = 0.002` (churn risk at v4/v5 noise scale explicitly accepted
 2026-08-27), `min_thought_chars = 80`, `causality_gate = true`,
 `n_teacher_samples = k = 3`, `tau = 0.03`, `n_miner_samples = 1`,
-`score_mode = "min_rg"`, `band_c = 2.0`, `band_floor = 0.002`.
+`score_mode = "min_rg"`, `band_c = 2.0`, `band_floor = 0.002`,
+`forfeit_turn_score = -0.1` (wvk 12, 2026-09-05).
 No mix, no clip, no lpA gates, no `min_se` floor.
 
 **Why v5 (2026-08-27):** the reign-41 king gamed v4 with a fixed filler
@@ -85,16 +87,17 @@ came with a **throne reset**: reign 0 re-seeded from untouched
 `Qwen/Qwen3.6-35B-A3B` (unpaid genesis), old-era reveals invalidated via
 `min_submission_block`.
 
-### Staged — v6: min(R,G,A) + forfeit floor (built 2026-09-04, NOT live)
+### v6: forfeit floor LIVE (wvk 12, 2026-09-05); action leg A staged, NOT live
 Operator directive 2026-09-04 ("implement immediately") after the reign-5
-bench post-mortem. Code is in `affine/affine/score.py` (+ research twin),
-`evalsrv/terms.py` / `dueling.py`, `config.py`; both rules sit behind
-`[duel]` knobs at their legacy values, so live scoring and all 210 stored
-verdicts replay bit-identically. The flip is staged in
-`ops/v6/v6_toml_edits.py` (`--preview` / `--apply DATE --wvk-to N`) and is a
-**weight_version_key event — needs the explicit dated directive naming the
-key**; then `pm2 restart affine-validator` + `scripts/redeploy_pods.py
---role eval` (dueling.py runs on the eval pod) + llms.txt notice.
+bench post-mortem; **forfeit floor flipped 2026-09-05 on explicit operator
+directive ("yes add this forfeit"), wvk 11→12** via
+`ops/v6/v6_toml_edits.py --apply 2026-09-05 --wvk-to 12 --forfeit-only`,
+then eval-pod redeploy + validator restart + llms.txt "Fork history: wvk
+12" section. Code is in `affine/affine/score.py` (+ research twin),
+`evalsrv/terms.py` / `dueling.py`, `config.py`. The A leg stays behind
+`score_mode` (still `min_rg`); pre-wvk-12 verdicts (no
+`duel_params.forfeit_turn_score`) replay bit-identically through the
+legacy drop-from-pairing path (210/210 checked).
 - **A leg** (`score_mode = "min_rga"`): `b_i = lpC(y_A|z_C^i) − lpC(y_A|∅)`,
   `A = tau·log(mean_i exp(b_i/tau))`, `turn = min(R, G, A)`. The dual of R
   — "would the teacher, thinking its own thought, take the miner's action?"
@@ -309,7 +312,10 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
-- `weight_version_key = 11` (action dialects + schema-3 trace-first D,
+- `weight_version_key = 12` (forfeit floor `forfeit_turn_score = -0.1`,
+  2026-09-05 ~16:30 UTC, explicit operator directive "yes add this
+  forfeit" after the staged-flip review; forward-only, reign 5 stands;
+  11 = action dialects + schema-3 trace-first D,
   T0 ran 2026-09-05 12:12 UTC on explicit operator directive "Run the cut
   over" — a day after the noticed 2026-09-04 18:00 slot, which passed
   unrun; commit `45f3466`; scoring rule unchanged = min(R,G) v5, forward-
