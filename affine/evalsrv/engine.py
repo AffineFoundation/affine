@@ -241,6 +241,13 @@ class Engine:
     # leaves when its snapshot is gone or its repo is launched.
     _prefetched_ready: dict[str, str] = field(init=False, default_factory=dict,
                                               repr=False)
+    # Repos of the duel being prepared right now (king + challenger), kept
+    # out of every prune from /duel acceptance until the job ends. Closes the
+    # second eviction path seen 2026-09-05 18:12: a /prefetch for the NEXT
+    # queue item arrived while this duel's king was still downloading; its
+    # prune ran with no slot served yet and no live prefetch, and evicted this
+    # duel's own (complete) challenger snapshot — re-downloaded minutes later.
+    _pending_duel: set[str] = field(init=False, default_factory=set, repr=False)
 
     def __post_init__(self):
         t = self.cfg["teacher"]
@@ -373,11 +380,14 @@ class Engine:
             cmd += ["--revision", revision]
         return cmd
 
-    def _ensure_snapshot(self, repo: str, revision: str | None) -> None:
+    def _ensure_snapshot(self, repo: str, revision: str | None,
+                         cancel: threading.Event | None = None) -> None:
         """r2 refs must be on disk and verified before vLLM starts (HF repos
         download inside vLLM). Raises IntegrityError when the bucket content
-        is not the pinned digest; other exceptions are transport faults.
-        Runs OUTSIDE _lock: a multi-GB download must not block /prefetch."""
+        is not the pinned digest; r2store.FetchCancelled when `cancel` fires
+        mid-download (the duel was superseded); other exceptions are
+        transport faults. Runs OUTSIDE _lock: a multi-GB download must not
+        block /prefetch."""
         if not r2store.is_r2(repo) or not revision:
             return
         if r2store.snapshot_ready(repo, revision):
@@ -389,7 +399,7 @@ class Engine:
         with self._lock:
             self._materializing.add(repo)
         try:
-            r2store.fetch_snapshot(repo, revision)
+            r2store.fetch_snapshot(repo, revision, cancel=cancel)
         finally:
             with self._lock:
                 self._materializing.discard(repo)
@@ -840,7 +850,8 @@ class Engine:
                     and slot.proc.poll() is None)
 
     def prepare_miners(self, king_repo: str, king_revision: str,
-                       chall_repo: str, chall_revision: str) -> bool:
+                       chall_repo: str, chall_revision: str,
+                       cancel: threading.Event | None = None) -> bool:
         """Launch king + challenger together; wait first ready copy per role.
 
         They sit on disjoint GPUs. After an evalsrv bounce both are cold —
@@ -867,11 +878,13 @@ class Engine:
         # the miner's checkpoint not matching its commitment.
         if not king_ready:
             try:
-                self._ensure_snapshot(king_repo, king_revision)
+                self._ensure_snapshot(king_repo, king_revision, cancel)
+            except r2store.FetchCancelled:
+                raise
             except Exception as e:
                 self._fail_load(self.king_slot, f"king snapshot: {e}")
                 return False
-        self._ensure_snapshot(chall_repo, chall_revision)
+        self._ensure_snapshot(chall_repo, chall_revision, cancel)
         with self._lock:
             # Re-pin the keep set: the prefetch prune above ran before the
             # r2 snapshots existed (a fresh download must not be pruned by a
@@ -935,7 +948,8 @@ class Engine:
             t.join()
         return True
 
-    def load_challenger(self, repo: str, revision: str) -> bool:
+    def load_challenger(self, repo: str, revision: str,
+                        cancel: threading.Event | None = None) -> bool:
         self._settle_prefetch(repo, revision)
         with self._lock:
             if self._prefetch is not None and self._prefetch[0] == repo:
@@ -943,7 +957,7 @@ class Engine:
                 # the slot frees up for the next prefetch target.
                 self._prefetch = None
             self._prune_challenger_cache(keep_repo=repo, keep_revision=revision)
-        self._ensure_snapshot(repo, revision)  # IntegrityError propagates
+        self._ensure_snapshot(repo, revision, cancel)  # IntegrityError propagates
         with self._lock:
             self._launch(self.chall_slot, repo, revision)
             replica_launched = self.chal2_slot is not None
@@ -1036,6 +1050,15 @@ class Engine:
             self._kill(self.chal2_slot)
 
     # -- prefetch ---------------------------------------------------------------
+    def begin_duel(self, king_repo: str, chall_repo: str) -> None:
+        """Protect this duel's repos from cache prunes until end_duel()."""
+        with self._lock:
+            self._pending_duel = {r for r in (king_repo, chall_repo) if r}
+
+    def end_duel(self) -> None:
+        with self._lock:
+            self._pending_duel = set()
+
     def _note_prefetched(self, repo: str, revision: str) -> None:
         """Record a completed prefetch so the prune keeps it until its duel."""
         with self._lock:
@@ -1259,6 +1282,7 @@ class Engine:
             if self._prefetch is not None and self._prefetch[1].is_alive():
                 keep.add(self._prefetch[0])
             keep.update(self._materializing)
+            keep.update(self._pending_duel)
             # Finished prefetches awaiting their duel: kept while the
             # verified snapshot is actually on disk, forgotten otherwise.
             for r, rev in list(self._prefetched_ready.items()):

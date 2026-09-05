@@ -49,7 +49,7 @@ from affine.eval_client import Fault
 from . import benchrunner, dueling, swerunner
 from .corpus import CorpusSync
 from .engine import Engine
-from .r2store import FetchError, IntegrityError
+from .r2store import FetchCancelled, FetchError, IntegrityError
 from .vllm_client import ContextLengthError, EngineUnreachableError, Served
 
 log = logging.getLogger("evalsrv")
@@ -263,6 +263,10 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
 
         job["state"] = "running"
 
+        # From here until the job ends, no cache prune (ours or a /prefetch
+        # for the next queue item) may evict this duel's king or challenger.
+        _engine.begin_duel(req.king_repo, req.challenger_repo)
+
         job["phase"] = "ensure_teacher"
         if not _engine.ensure_teacher():
             # The teacher is ours: a dead teacher is a pod fault, not the
@@ -292,7 +296,12 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
         try:
             prepared = _engine.prepare_miners(
                 req.king_repo, req.king_revision,
-                req.challenger_repo, req.challenger_revision)
+                req.challenger_repo, req.challenger_revision,
+                cancel=_abort_duel)
+        except FetchCancelled as e:
+            # Superseded while still downloading: honour it now instead of
+            # after the whole checkpoint lands (50 min lost on 2026-09-05).
+            raise dueling.DuelAborted(f"superseded during download: {e}") from e
         except IntegrityError as e:
             # The private-bucket checkpoint is not what the miner committed
             # to (digest / sha256 / manifest mismatch): a real rejection.
@@ -407,6 +416,7 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
             _engine.unload_challenger()
         except Exception:
             log.warning("challenger unload failed", exc_info=True)
+        _engine.end_duel()
         _current.update(kind=None, job_id=None)
         _busy_lock.release()
         _corpus_kick.set()
