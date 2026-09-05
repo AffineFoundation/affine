@@ -53,6 +53,10 @@ CHALLENGER_DISK_HEADROOM_GB = 20.0
 # 0 B/s with ESTABLISHED sockets and no timeout); a hung in-process thread
 # would block every future prefetch and stall the next load_challenger join.
 PREFETCH_STALL_S = 180.0
+# Completed-but-unconsumed prefetch snapshots kept out of the cache prune.
+# 2 covers "next" plus "next-next" when the validator prefetches ahead of a
+# dispatch; each is one challenger (≤ submission.max_model_size_gb) of disk.
+PREFETCH_KEEP = 2
 
 # Best-effort second copy (king2 / challenger2). Primary ready is enough to
 # start scoring; waiting the full vLLM launch (up to 20 min) for a slow or
@@ -226,6 +230,17 @@ class Engine:
         field(init=False, default=None, repr=False)
     # r2 refs being fetched inline by _ensure_snapshot (kept from pruning).
     _materializing: set[str] = field(init=False, default_factory=set, repr=False)
+    # Completed prefetch targets (repo -> revision) whose duel has not
+    # started yet. A finished prefetch has no live worker, so before this it
+    # was protected by nothing: the validator's /prefetch for the *following*
+    # queue item arrived seconds after a verdict, its challenger_fits prune
+    # ran with the challenger slot already empty, and the snapshot the next
+    # duel was about to use was evicted and re-downloaded from R2 (observed
+    # every duel on 2026-09-05: ~13 min at ~120 MB/s, 65 min when parts
+    # stalled). Bounded to PREFETCH_KEEP entries, insertion-ordered; an entry
+    # leaves when its snapshot is gone or its repo is launched.
+    _prefetched_ready: dict[str, str] = field(init=False, default_factory=dict,
+                                              repr=False)
 
     def __post_init__(self):
         t = self.cfg["teacher"]
@@ -875,6 +890,8 @@ class Engine:
             self._launch(self.chall_slot, chall_repo, chall_revision)
             if self.chal2_slot is not None:
                 self._launch(self.chal2_slot, chall_repo, chall_revision)
+            # Consumed: the served slot protects the snapshot from here on.
+            self._prefetched_ready.pop(chall_repo, None)
 
         results = {"king": False, "chall": False}
 
@@ -932,6 +949,7 @@ class Engine:
             replica_launched = self.chal2_slot is not None
             if replica_launched:
                 self._launch(self.chal2_slot, repo, revision)
+            self._prefetched_ready.pop(repo, None)
         if not self._wait_any_ready([self.chall_slot, self.chal2_slot]):
             return False
         for slot in (self.chall_slot, self.chal2_slot):
@@ -1018,6 +1036,15 @@ class Engine:
             self._kill(self.chal2_slot)
 
     # -- prefetch ---------------------------------------------------------------
+    def _note_prefetched(self, repo: str, revision: str) -> None:
+        """Record a completed prefetch so the prune keeps it until its duel."""
+        with self._lock:
+            self._prefetched_ready.pop(repo, None)
+            self._prefetched_ready[repo] = revision
+            while len(self._prefetched_ready) > PREFETCH_KEEP:
+                oldest = next(iter(self._prefetched_ready))
+                del self._prefetched_ready[oldest]
+
     def start_prefetch(self, repo: str, revision: str,
                        weight_bytes: int = 0) -> tuple[bool, str]:
         """Warm the next challenger's snapshot in the background while the
@@ -1036,8 +1063,12 @@ class Engine:
             if self.chall_slot.served and self.chall_slot.served.repo == repo:
                 return False, "already serving"
             if r2store.snapshot_ready(repo, revision):
-                # A completed snapshot needs no worker; the load-time
-                # keep_repo prune protection covers it from here.
+                # A completed snapshot needs no worker, but it must survive
+                # every prune between now and its duel (see _prefetched_ready).
+                self._prefetched_ready.pop(repo, None)
+                self._prefetched_ready[repo] = revision
+                while len(self._prefetched_ready) > PREFETCH_KEEP:
+                    del self._prefetched_ready[next(iter(self._prefetched_ready))]
                 return True, "already cached"
             fits, free_gb = self.challenger_fits(weight_bytes, repo=repo,
                                                  revision=revision)
@@ -1129,6 +1160,7 @@ class Engine:
             if not stalled and proc.returncode == 0:
                 log.info("prefetch %s@%s done in %.0fs",
                          repo, revision[:12], time.time() - t0)
+                self._note_prefetched(repo, revision)
                 return
             stderr_f.seek(0)
             tail = stderr_f.read()[-2000:].decode(errors="replace").strip()
@@ -1227,6 +1259,13 @@ class Engine:
             if self._prefetch is not None and self._prefetch[1].is_alive():
                 keep.add(self._prefetch[0])
             keep.update(self._materializing)
+            # Finished prefetches awaiting their duel: kept while the
+            # verified snapshot is actually on disk, forgotten otherwise.
+            for r, rev in list(self._prefetched_ready.items()):
+                if r2store.snapshot_ready(r, rev, HF_HOME):
+                    keep.add(r)
+                else:
+                    del self._prefetched_ready[r]
             if extra_keep:
                 keep.update(r for r in extra_keep if r)
             if keep_repo and keep_revision and r2store.snapshot_ready(
