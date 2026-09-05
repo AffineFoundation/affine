@@ -42,8 +42,8 @@ from .bench import BenchOrchestrator
 from .chain import BlockHashUnavailable
 from .config import Config, load_config
 from .dashboard import Dashboard
-from .eval_client import (EvalBusyError, EvalClient, InfraFaultError,
-                          TransientEvalError)
+from .eval_client import (ENTRY_FAULT_CODES, DispatchError, EvalBusyError,
+                          EvalClient, InfraFaultError, TransientEvalError)
 from .hippius import Hippius
 from .provisioner import BenchMachineManager, ChatMachineManager, EvalMachineManager
 from .r2protocol import is_r2_ref, parse_r2_ref
@@ -361,16 +361,25 @@ class Validator:
         # transients (including chain hiccups fetching the seed block hash)
         # count against the bounded budget so a permanent failure cannot wedge
         # the queue forever.
-        machine_fault = (isinstance(e, (EvalBusyError, InfraFaultError))
+        machine_fault = (isinstance(e, (EvalBusyError, InfraFaultError, DispatchError))
                          or not self.machine.is_healthy_now())
         max_retries = self.cfg.validator.max_transient_eval_retries
         if machine_fault:
-            # Infra never burns the miner, but a *persistent* infra fault (a
-            # repo too large for the pod, a wedged tunnel) must not pin the
-            # head forever. Past a bound, rotate to the tail so every other
-            # submission still gets its turn while this one keeps its slot.
-            entry.infra_retry_count += 1
-            if entry.infra_retry_count > self.cfg.validator.max_infra_front_requeues:
+            # Infra never burns the miner. Only a fault that is about THIS
+            # entry (the pod cannot fetch / fit / load this checkpoint) counts
+            # toward deferral: past a bound it is moved behind the rest so the
+            # head cannot wedge on one repo. A pod-wide fault (dead teacher,
+            # unreachable server, busy) would hit every entry identically, so
+            # it leaves the order alone and the head simply waits (the
+            # 2026-09-05 teacher outage rotated 30 entries to the tail one by
+            # one and let "dispatch failed" burn miner retries).
+            entry_fault = (isinstance(e, InfraFaultError)
+                           and e.code in ENTRY_FAULT_CODES
+                           and self.machine.is_healthy_now())
+            if entry_fault:
+                entry.infra_retry_count += 1
+            if (entry_fault and entry.infra_retry_count
+                    > self.cfg.validator.max_infra_front_requeues):
                 self.state.requeue_back(entry, str(e))
             else:
                 self.state.requeue_front(entry, str(e), count_retry=False)

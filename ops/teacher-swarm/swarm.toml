@@ -32,6 +32,12 @@ ttl_hours = 48                   # per-pod safety-net TTL at rent time
 bootstrap_timeout_min = 50       # venv + model pull + engine warmup (slow pipes)
 unreachable_grace_min = 25   # dark grace after healthy: covers a supervisor engine relaunch
 min_balance_usd = 10000.0        # refuse to rent below this Lium balance
+# 2026-09-05: the only b200-8x went dark 22:15 UTC and no 8x B200 <= $48 came
+# back into stock until 09:51 — 10h45m with zero teacher replicas, every duel
+# failing teacher_unservable. When a target>0 type has no stock and the swarm
+# holds no pod at all, rent ONE box of the first type below that has stock;
+# it is released once the primary type is healthy again. Order = throughput.
+fallback_types = ["eval-b200-8x", "pro6000-8x", "h200-8x", "h100-8x", "b300-1x", "b200-1x"]
 
 # Serving knobs shared by every replica (mirrors production teacher slots).
 # Chunk 8192, not 12288: the 248,320-token vocab makes the fp32 echo
