@@ -485,7 +485,14 @@ revision = "995ad96eacd98c81ed38be0c5b274b04031597b0"
 # SWE-rebench lite panel (coding isomorphism axis). tau2_* suites remain
 # supported by the runner if re-added here.
 enabled = true
-suites = ["swe_rebench_lite"]
+# 2026-09-06: swe_rebench_lite_300 = the same 25 tasks at the official
+# SWE-rebench budget (300 agent steps, 128k context) instead of 50 steps /
+# 65k. Across reigns 0-8, 23% of RESOLVED runs finished in steps 40-50 and
+# 56% of the runs that hit the 50-step cap were still editing/testing in
+# their last 10 steps — the cap truncated the distribution. The 50-step
+# rows stay in bench_history under their own suite name; both columns are
+# published. Advisory only — never part of the score.
+suites = ["swe_rebench_lite_300"]
 num_trials = 1
 # Parallel mini-SWE-agent workers (and swebench eval workers, capped at 8).
 # Rollouts are docker/CPU-bound most of the time; the H200 pair serving the
@@ -507,6 +514,10 @@ tp = 2
 # small prefill chunks the duel pod needs do not apply — big chunks keep
 # long-context agent prompts fast.
 max_num_batched_tokens = 16384
+# Official SWE-rebench protocol: 128k context (2026-09-06). Genesis-family
+# checkpoints support >=128k; the 2x B200 bench pod holds a 35B-A3B at TP=2
+# with ~140 GB per GPU spare for KV. Ops knob, no scoring effect.
+max_model_len = 131072
 
 [eval_machine]
 # GPU pod hosting duel evalsrv. The provisioner keeps exactly one alive and
