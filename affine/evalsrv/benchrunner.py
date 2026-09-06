@@ -40,12 +40,16 @@ def run_suite(suite: str, model_repo: str, model_port: int,
               num_trials: int, max_concurrency: int,
               timeout_s: int = 14400,
               abort_event: threading.Event | None = None) -> dict:
-    """Dispatch a named advisory suite (tau2_* or swe_rebench_lite)."""
-    if suite == swerunner.SUITE_NAME or suite == "swe_rebench_lite":
+    """Dispatch a named advisory suite (tau2_* or swe_rebench_lite[_300])."""
+    if suite in swerunner.STEP_LIMITS:
+        if suite == swerunner.SUITE_300:
+            # 6x the steps of the 50-step suite; the agent phase gets half
+            # of timeout_s, and a 300-step task at ~15 s/step is ~75 min.
+            timeout_s = max(timeout_s, 6 * 3600)
         return swerunner.run_swe_lite(
             model_repo, model_port,
             workers=max_concurrency, timeout_s=timeout_s,
-            abort_event=abort_event)
+            abort_event=abort_event, suite=suite)
     return _run_tau2(
         suite, model_repo, model_port, user_llm, teacher_repo, teacher_port,
         num_trials, max_concurrency, timeout_s=timeout_s,

@@ -317,6 +317,9 @@ class Engine:
         if self.role == "bench":
             bs = self.cfg.get("bench_serving") or {}
             batched_tokens = int(bs.get("max_num_batched_tokens", 16384))
+            # Official SWE-rebench protocol is 128k context; the duel pod's
+            # 65k is sized for corpus prefixes, not for 300-step agent runs.
+            max_len = int(bs.get("max_model_len", max_len))
         if self.role == "chat":
             # Chat serves short interactive contexts, not 64k corpus prefixes:
             # a smaller KV pool leaves the 2-GPU pod headroom, and no echo

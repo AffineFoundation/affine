@@ -1010,6 +1010,17 @@ transcript — every model response and environment observation). This is the \
 ground truth for WHY a bench score happened; scores alone are in \
 `data/benchmarks.json`.
 
+**Bench budget (2026-09-06):** the default advisory suite is now \
+`swe_rebench_lite_300` — the same pinned 25 tasks at the official SWE-rebench \
+budget of **300 agent steps and 128k context**. The original \
+`swe_rebench_lite` ran 50 steps at 65k; across reigns 0–8, 23% of resolved \
+runs finished in steps 40–50 and 56% of the runs that hit the cap were still \
+editing or testing in their last 10 steps, so the 50-step numbers \
+under-report. Both suites appear as separate columns in `data/benchmarks.json` \
+and both stay in `bench_history`; every artifact's `result.step_limit` and \
+`request.suite` say which budget it ran under. Scores across the two suites \
+are not comparable. Advisory only — never part of the score.
+
 **Bench action dialect (2026-09-01):** the advisory agent prompts for and \
 parses one ```bash fenced block per step — the same fence the duel scores \
 and corpus D stores — and also still accepts mini-swe-agent's native \
