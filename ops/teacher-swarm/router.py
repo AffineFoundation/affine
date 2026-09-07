@@ -25,7 +25,7 @@ from pathlib import Path
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 HERE = Path(__file__).resolve().parent
 STATE_JSON = HERE / "state" / "state.json"
@@ -182,7 +182,7 @@ class Router:
         return ranked
 
     # ---- proxy --------------------------------------------------------------
-    async def forward(self, path: str, payload: dict) -> JSONResponse:
+    async def forward(self, path: str, payload: dict) -> Response:
         self.reload_state()
         key = self.affinity_key(payload, path)
         candidates = self.ranked(key)[:3]  # primary + two retries
@@ -204,7 +204,12 @@ class Router:
                         f"{r.status_code}", request=r.request, response=r)
                 b.record(True)
                 self.done.append((time.monotonic(), is_sample))
-                return JSONResponse(r.json(), r.status_code)
+                # Pass the body through as bytes. Echo responses carry
+                # logprobs + token strings for every prompt token (MBs);
+                # parsing and re-serialising them here put the router at
+                # 40-70% of a core (2026-09-07) for no benefit.
+                return Response(content=r.content, status_code=r.status_code,
+                                media_type="application/json")
             except (httpx.HTTPError, ValueError) as e:
                 b.record(False)
                 last_err = f"{b.pod}: {e!r}"

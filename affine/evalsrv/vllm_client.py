@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import httpx
+import orjson
 
 from .chat import (
     extract_action,
@@ -26,6 +28,20 @@ log = logging.getLogger("evalsrv.vllm_client")
 # trailing prompt tokens that must be recomputed (not served from the
 # prefix cache) so their logprobs exist.
 ECHO_TAIL_XARG = "affine_echo_tail"
+
+# Echo bookkeeping off the event loop (2026-09-07 py-spy of a live duel:
+# the single duel thread sat at 99% CPU, 47% in the HF tokenizer call that
+# locates the span and 32% in json.loads of the echo response, while 16
+# teacher replicas idled at <1 request each). The Rust tokenizer releases
+# the GIL on batch encodes, so a thread pool runs them in parallel on the
+# pod's spare cores; orjson takes the JSON share down ~5x.
+_TOK_POOL = ThreadPoolExecutor(max_workers=32, thread_name_prefix="tok")
+
+
+def _encode_offsets(tok, text: str) -> tuple[list[int], list[tuple[int, int]]]:
+    """(input_ids, offset_mapping) for one text via the batch path (GIL-free)."""
+    enc = tok([text], add_special_tokens=False, return_offsets_mapping=True)
+    return enc["input_ids"][0], enc["offset_mapping"][0]
 
 
 class ContextLengthError(RuntimeError):
@@ -161,7 +177,7 @@ class VllmModel:
                             f"{self.base}/completions", json=payload, timeout=timeout
                         )
                         r.raise_for_status()
-                        return r.json()
+                        return orjson.loads(r.content)
                     except httpx.HTTPStatusError as e:
                         body = (e.response.text or "")[:500]
                         # Context-length 400s are deterministic for this prompt —
@@ -235,9 +251,10 @@ class VllmModel:
         boundary); add_special_tokens=False keeps vLLM's tokenization aligned.
         """
         tok = get_tokenizer(self.cfg.repo, self.cfg.revision)
-        enc = tok(full, add_special_tokens=False, return_offsets_mapping=True)
-        n_prompt = sum(1 for s, _ in enc["offset_mapping"] if s < span_start)
-        n_total = len(enc["input_ids"])
+        input_ids, offsets = await asyncio.get_running_loop().run_in_executor(
+            _TOK_POOL, _encode_offsets, tok, full)
+        n_prompt = sum(1 for s, _ in offsets if s < span_start)
+        n_total = len(input_ids)
         payload = {
             "model": self.cfg.repo,
             "prompt": full,
