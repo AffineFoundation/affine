@@ -20,6 +20,8 @@ disk stays bounded to teacher + king + at most one challenger.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import re
@@ -64,6 +66,32 @@ PREFETCH_STALL_S = 180.0
 # dispatch; each is one challenger (≤ submission.max_model_size_gb) of disk.
 PREFETCH_KEEP = 2
 
+# Warm-swap challengers (2026-09-07). A challenger vLLM start costs ~8.5
+# min on the eval box (process/engine init ~2.5, weight read ~2, compile
+# ~1, profiling + CUDA-graph capture ~2) — ~25% of a 35 min verdict. With
+# the pinned architecture every challenger has the same tensor layout, so
+# the challenger engines stay alive between duels and the next checkpoint's
+# weights are loaded IN PLACE (vLLM `reload_weights(weights_path=...)` via
+# the dev-mode /collective_rpc endpoint, then /reset_prefix_cache). Only the
+# 72 GB weight read is paid. Guarded by _swap_compatible: anything that
+# could make a swapped engine score the miner differently from a fresh one
+# (config.json beyond cosmetic keys — dtype, rope, norms —, tokenizer files,
+# generation_config sampling defaults, the tensor-name set) forces the old
+# full relaunch. Score-invariant by construction: same weights, same
+# engine config, KV cache reset.
+WARM_SWAP = os.environ.get("AFFINE_CHALLENGER_WARM_SWAP", "1") != "0"
+# Fixed served-model alias for the challenger slots so requests keep
+# resolving across swaps (the repo name is added too, for logs).
+CHALLENGER_ALIAS = "challenger"
+# Files that must be byte-identical between the loaded checkpoint and the
+# incoming one for a swap (presence must match too).
+SWAP_IDENTICAL_FILES = (
+    "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json",
+    "vocab.json", "merges.txt", "added_tokens.json", "generation_config.json",
+    "preprocessor_config.json", "video_preprocessor_config.json",
+)
+SWAP_CONFIG_IGNORE_KEYS = ("_name_or_path", "transformers_version")
+
 # Best-effort second copy (king2 / challenger2). Primary ready is enough to
 # start scoring; waiting the full vLLM launch (up to 20 min) for a slow or
 # dead replica serialized the duel behind a GPU that may never come up.
@@ -97,6 +125,14 @@ def _cuda_home() -> str:
         if _cuda_complete(p):
             return str(p)
     return os.environ.get("CUDA_HOME", "/usr/local/cuda")
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _vllm_env() -> dict[str, str]:
@@ -383,11 +419,21 @@ class Engine:
             # kings emit hermes-style <tool_call> blocks. Never set on duel/
             # bench pods — scoring must see raw completions.
             cmd += ["--enable-auto-tool-choice", "--tool-call-parser", "hermes"]
-        if r2store.is_r2(repo):
-            cmd += ["--served-model-name", repo]
-        elif revision:
+        served_names = [repo] if r2store.is_r2(repo) else []
+        if not r2store.is_r2(repo) and revision:
             cmd += ["--revision", revision]
+        if self._warm_swap_slot(slot):
+            # Alias for successive checkpoints (the dev-mode RPC surface this
+            # enables, VLLM_SERVER_DEV_MODE in _launch, is reachable only from
+            # inside the pod: slot ports are not among the pod's mapped ports).
+            served_names.append(CHALLENGER_ALIAS)
+        if served_names:
+            cmd += ["--served-model-name", *served_names]
         return cmd
+
+    def _warm_swap_slot(self, slot: Slot) -> bool:
+        return (WARM_SWAP and self.role == "duel"
+                and slot in (self.chall_slot, self.chal2_slot))
 
     def _ensure_snapshot(self, repo: str, revision: str | None,
                          cancel: threading.Event | None = None) -> None:
@@ -505,6 +551,10 @@ class Engine:
                 f"{cache_root.name}_{slot.label}"))
             env = dict(os.environ, **_vllm_env(), CUDA_VISIBLE_DEVICES=slot.gpus,
                        VLLM_CACHE_ROOT=slot_cache)
+            warm = self._warm_swap_slot(slot)
+            if warm:
+                # /collective_rpc + /reset_prefix_cache for weight swaps.
+                env["VLLM_SERVER_DEV_MODE"] = "1"
             logf = open(LOG_DIR / f"vllm_{slot.label}.log", "a")
             log.info("launching %s: %s (gpus=%s)", slot.label, repo, slot.gpus)
             slot.proc = subprocess.Popen(
@@ -516,8 +566,116 @@ class Engine:
             except ProcessLookupError:
                 slot.pgid = None
             slot.served = Served(name=slot.label, repo=repo, revision=revision,
-                                 port=slot.port)
+                                 port=slot.port,
+                                 model_name=CHALLENGER_ALIAS if warm else None)
             slot.ready = False
+
+    # -- warm swap -------------------------------------------------------------
+    def _swap_compatible(self, slot: Slot, repo: str, revision: str | None
+                         ) -> str | None:
+        """None when `repo@revision` can be loaded in place into the engine
+        `slot` is running; otherwise the reason a full relaunch is needed."""
+        if not self._warm_swap_slot(slot):
+            return "warm swap disabled for slot"
+        if not (slot.served and slot.ready and self._proc_alive(slot)):
+            return "no warm engine"
+        if not slot.served.model_name:
+            return "engine not serving the alias"
+        if not (r2store.is_r2(slot.served.repo) and r2store.is_r2(repo)
+                and revision):
+            return "not an r2 -> r2 swap"
+        if (slot.served.repo, slot.served.revision) == (repo, revision):
+            return None  # same checkpoint: nothing to do
+        old = Path(r2store.model_path(slot.served.repo, slot.served.revision))
+        new = Path(r2store.model_path(repo, revision))
+        if not old.is_dir() or not new.is_dir():
+            return "snapshot dir missing"
+        try:
+            for name in SWAP_IDENTICAL_FILES:
+                a, b = old / name, new / name
+                if a.exists() != b.exists():
+                    return f"{name} present on one side only"
+                if a.exists() and _sha256(a) != _sha256(b):
+                    return f"{name} differs"
+            ca = json.loads((old / "config.json").read_text())
+            cb = json.loads((new / "config.json").read_text())
+            for k in SWAP_CONFIG_IGNORE_KEYS:
+                ca.pop(k, None)
+                cb.pop(k, None)
+            if ca != cb:
+                diff = sorted(k for k in set(ca) | set(cb) if ca.get(k) != cb.get(k))
+                return f"config.json differs: {diff[:6]}"
+            ia, ib = old / "model.safetensors.index.json", new / "model.safetensors.index.json"
+            if not (ia.is_file() and ib.is_file()):
+                return "no safetensors index"
+            ta = set(json.loads(ia.read_text()).get("weight_map", {}))
+            tb = set(json.loads(ib.read_text()).get("weight_map", {}))
+            if ta != tb:
+                return (f"tensor set differs (+{len(tb - ta)} -{len(ta - tb)})")
+        except (OSError, ValueError) as e:
+            return f"compat check failed: {e}"
+        return None
+
+    def _swap_weights(self, slot: Slot, repo: str, revision: str) -> bool:
+        """Load `repo@revision` into the running engine in place. On any
+        failure the caller falls back to a full relaunch."""
+        assert slot.served is not None
+        path = r2store.model_path(repo, revision)
+        base = f"http://localhost:{slot.port}"
+        t0 = time.time()
+        old = slot.served
+        slot.ready = False
+        try:
+            r = httpx.post(f"{base}/collective_rpc",
+                           json={"method": "reload_weights",
+                                 "kwargs": {"weights_path": path},
+                                 "timeout": 1500},
+                           timeout=1800)
+            r.raise_for_status()
+            # KV blocks were computed with the old weights.
+            httpx.post(f"{base}/reset_prefix_cache", timeout=120).raise_for_status()
+            # The engine must still answer with the new weights in place.
+            r = httpx.post(f"{base}/v1/completions",
+                           json={"model": CHALLENGER_ALIAS, "prompt": "1, 2, 3,",
+                                 "max_tokens": 4, "temperature": 0},
+                           timeout=300)
+            r.raise_for_status()
+            text = r.json()["choices"][0]["text"]
+            if "4" not in text:
+                # Any Qwen-family fine-tune continues the count; garbage here
+                # means the in-place load left the model inconsistent.
+                raise RuntimeError(f"post-swap probe returned {text!r}")
+        except Exception as e:  # noqa: BLE001 — any failure -> relaunch
+            log.warning("%s warm swap to %s@%s failed after %.0fs (%s); "
+                        "relaunching", slot.label, repo, revision[:12],
+                        time.time() - t0, e)
+            return False
+        slot.served = Served(name=slot.label, repo=repo, revision=revision,
+                             port=slot.port, model_name=CHALLENGER_ALIAS)
+        slot.ready = True
+        slot.load_error = ""
+        log.info("%s warm-swapped %s@%s -> %s@%s in %.0fs (probe %r)",
+                 slot.label, old.repo[-20:], (old.revision or "")[:12],
+                 repo[-20:], revision[:12], time.time() - t0, text)
+        return True
+
+    def _launch_or_swap(self, slot: Slot, repo: str, revision: str | None
+                        ) -> bool:
+        """Challenger slot: swap weights into the warm engine when safe, else
+        relaunch. Returns True when the slot is already ready (swapped or
+        same checkpoint) and no _wait_ready is needed."""
+        reason = self._swap_compatible(slot, repo, revision)
+        if reason is None:
+            if slot.served and (slot.served.repo, slot.served.revision) == (repo, revision):
+                log.info("%s already serving %s@%s", slot.label, repo,
+                         (revision or "")[:12])
+                return True
+            if self._swap_weights(slot, repo, revision or ""):
+                return True
+        elif slot.served is not None and self._warm_swap_slot(slot):
+            log.info("%s: full relaunch for %s (%s)", slot.label, repo, reason)
+        self._launch(slot, repo, revision)
+        return False
 
     def _kill(self, slot: Slot) -> None:
         if slot.proc and slot.proc.poll() is None:
@@ -909,11 +1067,12 @@ class Engine:
                     self._same_target(self.king2_slot, king_repo, king_revision)
                     and self._proc_alive(self.king2_slot))):
                 self._launch(self.king2_slot, king_repo, king_revision)
-            self._launch(self.chall_slot, chall_repo, chall_revision)
-            if self.chal2_slot is not None:
-                self._launch(self.chal2_slot, chall_repo, chall_revision)
             # Consumed: the served slot protects the snapshot from here on.
             self._prefetched_ready.pop(chall_repo, None)
+        # Challenger copies: weight swap into the warm engines (both copies
+        # in parallel — each reads the 72 GB itself) or full relaunch. Runs
+        # outside _lock: a swap blocks for the weight read.
+        self._prepare_challengers(chall_repo, chall_revision)
 
         results = {"king": False, "chall": False}
 
@@ -957,6 +1116,19 @@ class Engine:
             t.join()
         return True
 
+    def _prepare_challengers(self, repo: str, revision: str | None) -> None:
+        """Bring both challenger copies onto repo@revision: warm swap where
+        compatible, full relaunch otherwise; copies in parallel."""
+        slots = [s for s in (self.chall_slot, self.chal2_slot) if s is not None]
+        threads = [threading.Thread(target=self._launch_or_swap,
+                                    args=(s, repo, revision),
+                                    name=f"prep-{s.label}", daemon=True)
+                   for s in slots]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
     def load_challenger(self, repo: str, revision: str,
                         cancel: threading.Event | None = None) -> bool:
         self._settle_prefetch(repo, revision)
@@ -968,11 +1140,8 @@ class Engine:
             self._prune_challenger_cache(keep_repo=repo, keep_revision=revision)
         self._ensure_snapshot(repo, revision, cancel)  # IntegrityError propagates
         with self._lock:
-            self._launch(self.chall_slot, repo, revision)
-            replica_launched = self.chal2_slot is not None
-            if replica_launched:
-                self._launch(self.chal2_slot, repo, revision)
             self._prefetched_ready.pop(repo, None)
+        self._prepare_challengers(repo, revision)
         if not self._wait_any_ready([self.chall_slot, self.chal2_slot]):
             return False
         for slot in (self.chall_slot, self.chal2_slot):
@@ -1054,9 +1223,18 @@ class Engine:
         # Snapshot deliberately NOT evicted here: the pre-load prune bounds
         # disk identically, and keeping it makes retries of the same
         # checkpoint skip the re-download.
-        self._kill(self.chall_slot)
-        if self.chal2_slot is not None:
-            self._kill(self.chal2_slot)
+        for slot in (self.chall_slot, self.chal2_slot):
+            if slot is None:
+                continue
+            if self._warm_swap_slot(slot) and self._proc_alive(slot):
+                # Keep the engine (compile, CUDA graphs, KV pool) for the
+                # next challenger's in-place weight swap. Nothing else uses
+                # these GPUs between duels. Its snapshot stays in the prune
+                # keep set via slot.served until the swap replaces it.
+                log.info("%s kept warm for the next challenger (%s)",
+                         slot.label, (slot.served.repo if slot.served else "?"))
+                continue
+            self._kill(slot)
 
     # -- prefetch ---------------------------------------------------------------
     def begin_duel(self, king_repo: str, chall_repo: str) -> None:

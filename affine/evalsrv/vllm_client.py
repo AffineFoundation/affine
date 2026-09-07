@@ -12,12 +12,14 @@ import httpx
 import orjson
 
 from .chat import (
+    chat_prompt,
     extract_action,
     force_text,
     gen_prompt,
     get_tokenizer,
     inject_prompt,
     split_rollout,
+    think_closed,
     thought_text,
 )
 
@@ -85,6 +87,15 @@ class Served:
     # Optional OpenAI-compatible base including /v1 (e.g. remote teacher box).
     # When set, clients hit this URL instead of localhost:{port}/v1.
     base_url: str | None = None
+    # Name to put in the request's "model" field when it is not the repo:
+    # warm-swapped challenger engines serve successive checkpoints under a
+    # fixed alias (engine.CHALLENGER_ALIAS). Tokenizer/rendering still use
+    # `repo`/`revision` (the checkpoint's own files).
+    model_name: str | None = None
+
+    @property
+    def request_model(self) -> str:
+        return self.model_name or self.repo
 
 
 class ModelPool:
@@ -107,6 +118,26 @@ class ModelPool:
         self.replicas = replicas
         self.cfg = replicas[0].cfg
         self._rr = 0
+
+    @property
+    def n_samples(self) -> int:
+        return sum(r.n_samples for r in self.replicas)
+
+    @property
+    def n_think_closed(self) -> int:
+        return sum(r.n_think_closed for r in self.replicas)
+
+    @property
+    def think_close_rate(self) -> float | None:
+        """Fraction of natural samples that emitted </think> (all replicas)."""
+        n = self.n_samples
+        return self.n_think_closed / n if n else None
+
+    async def complete(self, messages: list[dict], temperature: float,
+                       max_tokens: int, *, tools: list[dict] | None = None
+                       ) -> str:
+        return await self._pick().complete(
+            messages, temperature, max_tokens, tools=tools)
 
     def _pick(self, sticky_key: str | None = None) -> VllmModel:
         n = len(self.replicas)
@@ -150,7 +181,8 @@ class ModelPool:
 
 
 class VllmModel:
-    def __init__(self, cfg: Served, client: httpx.AsyncClient, sem: asyncio.Semaphore):
+    def __init__(self, cfg: Served, client: httpx.AsyncClient, sem: asyncio.Semaphore,
+                 require_think_close: bool = False):
         self.cfg = cfg
         if cfg.base_url:
             self.base = cfg.base_url.rstrip("/")
@@ -159,6 +191,14 @@ class VllmModel:
         self.http = client
         self.sem = sem
         self.in_flight = 0
+        # [duel].require_think_close: a natural sample without </think>
+        # splits to ("", "") — a forfeit. Set per side by run_duel (miner
+        # sides only; teacher refs keep their pre-knob semantics).
+        self.require_think_close = require_think_close
+        # Well-formedness telemetry, counted on every natural sample whether
+        # or not the knob is on, so the live rate is known before any flip.
+        self.n_samples = 0
+        self.n_think_closed = 0
 
     async def _post(self, payload: dict) -> dict:
         # Keep per-request timeout under vLLM hang windows but above worst-case
@@ -218,13 +258,34 @@ class VllmModel:
         # add_special_tokens=False must match score_action so vLLM automatic
         # prefix caching can reuse the shared turn-prefix token blocks.
         d = await self._post({
-            "model": self.cfg.repo,
+            "model": self.cfg.request_model,
             "prompt": gen_prompt(self.cfg.repo, self.cfg.revision, prefix_messages),
             "max_tokens": max_tokens,
             "temperature": temperature,
             "add_special_tokens": False,
         })
-        return split_rollout(d["choices"][0]["text"], action_kind)
+        text = d["choices"][0]["text"]
+        self.n_samples += 1
+        self.n_think_closed += int(think_closed(text))
+        return split_rollout(text, action_kind,
+                             require_think_close=self.require_think_close)
+
+    async def complete(self, messages: list[dict], temperature: float,
+                       max_tokens: int, *, tools: list[dict] | None = None
+                       ) -> str:
+        """Raw completion text for a chat rendered the way an OpenAI client
+        would send it (own template, thinking on, optional tool schemas).
+        Not split, not counted in the duel's well-formedness telemetry —
+        the protocol probe evaluates the text itself."""
+        d = await self._post({
+            "model": self.cfg.request_model,
+            "prompt": chat_prompt(self.cfg.repo, self.cfg.revision, messages,
+                                  tools=tools),
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "add_special_tokens": False,
+        })
+        return d["choices"][0]["text"]
 
     async def sample_injected(self, prefix_messages: list[dict], thoughts: str,
                               temperature: float, max_tokens: int, *,
@@ -233,7 +294,7 @@ class VllmModel:
         """Rollout with planted thoughts -> action only."""
         del sticky_key
         d = await self._post({
-            "model": self.cfg.repo,
+            "model": self.cfg.request_model,
             "prompt": inject_prompt(self.cfg.repo, self.cfg.revision,
                                     prefix_messages, thoughts),
             "max_tokens": max_tokens,
@@ -256,7 +317,7 @@ class VllmModel:
         n_prompt = sum(1 for s, _ in offsets if s < span_start)
         n_total = len(input_ids)
         payload = {
-            "model": self.cfg.repo,
+            "model": self.cfg.request_model,
             "prompt": full,
             "max_tokens": 1,
             "temperature": 0,
