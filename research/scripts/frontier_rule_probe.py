@@ -502,14 +502,20 @@ async def cmd_echo(args) -> int:
 
 # ------------------------------------------------------------------ analyze
 def thought_scores(a: list[float], f: list[float], m: float, mu: float, w: float,
-                   tau: float) -> dict[str, float]:
+                   tau: float, band_f: tuple[float, float] | None = None) -> dict[str, float]:
     """All candidate rules for one thought on one turn.
-    a: per-teacher-ref Reason, f: per-frontier-ref Reason, m: lpC(z|x)."""
+    a: per-teacher-ref Reason, f: per-frontier-ref Reason, m: lpC(z|x);
+    band_f: (mu, w) of the band built from the FRONTIER thoughts' echoes
+    m_F^j = lpC(z_F^j|x) instead of the teacher's t_i (post-hoc add-on: is G's
+    punishment of frontier thoughts a property of whose thoughts define the
+    band?)."""
     R, RF, G = clme(a, tau), clme(f, tau), g_leg(m, mu, w)
+    GF = g_leg(m, *band_f) if band_f else float("nan")
     pooled = clme(a + f, tau)
     base = min(R, G)
     return {
-        "R": R, "RF": RF, "G": G, "RF_u": lme(f, tau), "pooled_raw": pooled,
+        "R": R, "RF": RF, "G": G, "GF": GF, "RF_u": lme(f, tau), "pooled_raw": pooled,
+        "minRGF": min(R, GF), "minRFGF": min(RF, GF),
         "minRG": base,
         "RF_rule": RF,
         "minRGRF": min(R, G, RF),
@@ -524,7 +530,7 @@ def thought_scores(a: list[float], f: list[float], m: float, mu: float, w: float
 
 RULES = {"minRG": "minRG", "RF": "RF_rule", "minRGRF": "minRGRF", "mix25": "mix25",
          "mix50": "mix50", "mix100": "mix100", "add25": "add25", "add50": "add50",
-         "pooled": "pooled"}
+         "pooled": "pooled", "minRGF": "minRGF", "minRFGF": "minRFGF"}
 
 
 def build_turn(t: dict, e: dict, tau: float, band_c: float, band_floor: float) -> dict:
@@ -556,12 +562,15 @@ def build_turn(t: dict, e: dict, tau: float, band_c: float, band_floor: float) -
     for vn in ("filler", "generic", "parrot"):
         fam[vn] = ([lp[f"var.{vn}.a.{i}"] - refs[i]["lp_empty"] for i in range(len(refs))],
                    [lp[f"var.{vn}.f.{j}"] - yF_e[j] for j in range(nF)], lp[f"var.{vn}.m"])
+    mF = [lp[f"mF.{j}"] for j in range(nF)]
+    band_f_full = band(mF, band_c, band_floor)
+    band_f_loo = band(mF[1:], band_c, band_floor) if nF >= 3 else band_f_full
     sides, sides_loo = {}, {}
     for name, (a, f, m) in fam.items():
         a_full = [x for x in a if x is not None]
         f_full = [x for x in f if x is not None]
-        sides[name] = thought_scores(a_full, f_full, m, mu, w, tau)
-        sides_loo[name] = thought_scores(a[1:], f[1:], m, mu, w, tau)
+        sides[name] = thought_scores(a_full, f_full, m, mu, w, tau, band_f_full)
+        sides_loo[name] = thought_scores(a[1:], f[1:], m, mu, w, tau, band_f_loo)
     # A_F: does the frontier's thought license the miner's action
     AF = {"king": lme([lp[f"AF.king.{j}"] - kp[0]["lpC_ya_e"] for j in range(nF)], tau),
           "challenger": lme([lp[f"AF.chal.{j}"] - cp[0]["lpC_ya_e"] for j in range(nF)], tau)}
@@ -706,7 +715,7 @@ def cmd_analyze(args) -> int:
             res["ordering"][rule] = means
             P(f"{rule:9} " + " ".join(f"{means[f]:11.4f}" for f in fams))
         P("legs:     " + " ".join(f"{f[:11]:>11}" for f in fams))
-        for leg in ("R", "RF", "G"):
+        for leg in ("R", "RF", "G", "GF"):
             P(f"{leg:9} " + " ".join(f"{st.mean(r['sides_loo'][f][leg] for r in sub):11.4f}" for f in fams))
         P(f"frontier refs all identical on {sum(1 for r in sub if r['yF_all_same']) / len(sub):.0%} of turns "
           f"(centered R_F is 0 there by construction)")
