@@ -1021,6 +1021,14 @@ and both stay in `bench_history`; every artifact's `result.step_limit` and \
 `request.suite` say which budget it ran under. Scores across the two suites \
 are not comparable. Advisory only — never part of the score.
 
+**Teacher reference row (2026-09-07):** the frozen teacher `Qwen/Qwen3.8-27B` \
+was run on the same suites and appears in `data/benchmarks.json` under \
+`label = "teacher"` (dashboard reign table: "vs teacher" column). It is the \
+ceiling of the current mechanism — min(R,G) has its fixed point at the \
+teacher — so the gap between a king and this row is the head-room the \
+distillation ladder still has. Reference rows (teacher, base) are run via \
+`scripts/bench_run.py`, never through the submission queue.
+
 **Bench action dialect (2026-09-01):** the advisory agent prompts for and \
 parses one ```bash fenced block per step — the same fence the duel scores \
 and corpus D stores — and also still accepts mini-swe-agent's native \

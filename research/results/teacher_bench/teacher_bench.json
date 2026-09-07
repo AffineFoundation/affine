@@ -1,0 +1,46 @@
+{
+ "generated_at": "2026-09-07",
+ "teacher": "Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+ "note": "advisory swe-rebench lite 25 tasks; lite=50 steps/65k, lite_300=300 steps/128k; teacher run via affine/scripts/bench_run.py",
+ "scores": {
+  "reign-0": {
+   "swe_rebench_lite": 0.2,
+   "swe_rebench_lite_300": 0.4
+  },
+  "reign-1": {
+   "swe_rebench_lite": 0.4,
+   "swe_rebench_lite_300": 0.4
+  },
+  "reign-2": {
+   "swe_rebench_lite": 0.32,
+   "swe_rebench_lite_300": 0.36
+  },
+  "reign-3": {
+   "swe_rebench_lite": 0.2,
+   "swe_rebench_lite_300": 0.32
+  },
+  "reign-4": {
+   "swe_rebench_lite": 0.32,
+   "swe_rebench_lite_300": 0.4
+  },
+  "reign-5": {
+   "swe_rebench_lite": 0.28,
+   "swe_rebench_lite_300": 0.4
+  },
+  "reign-6": {
+   "swe_rebench_lite": 0.36,
+   "swe_rebench_lite_300": 0.4
+  },
+  "reign-7": {
+   "swe_rebench_lite_300": 0.44
+  },
+  "reign-8": {
+   "swe_rebench_lite": 0.36,
+   "swe_rebench_lite_300": 0.56
+  },
+  "teacher": {
+   "swe_rebench_lite_300": 0.6,
+   "swe_rebench_lite": 0.4
+  }
+ }
+}
