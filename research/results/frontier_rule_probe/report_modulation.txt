@@ -1,0 +1,203 @@
+Frontier ACTION as turn modulator — 1577 turns, same overnight data (no new echoes)
+agree = best token-Jaccard of an action against the frontier's 3 sampled actions; agree_T = same vs the teacher's 3 refs
+
+===== ALL DIALECTS (n=1577) =====
+-- agreement landscape --
+teacher refs vs frontier: mean agree 0.572; teacher-own action exact-matches a frontier sample on 25%; frontier self-agreement 0.742
+king       agree_F mean 0.576 (exact 25%; ≥0.5 on 58%)  agree_T mean 0.663 (≥0.5 on 70%)  sides with frontier over teacher (agree_F − agree_T > 0.2) on 10%
+challenger agree_F mean 0.576 (exact 24%; ≥0.5 on 59%)  agree_T mean 0.644 (≥0.5 on 66%)  sides with frontier over teacher (agree_F − agree_T > 0.2) on 12%
+tilt weight entropy mean 0.933 (uniform k=3 = 1.099; 0 = one ref takes all)
+-- does min(R,G) today punish siding with the frontier against the teacher? (king turns) --
+  F-like, not T-like (aF≥.5, aT<.5)      n= 106  king min(R,G) -0.0130  R +0.0077  G +0.0060
+  T-like, not F-like (aT≥.5, aF<.5)      n= 300  king min(R,G) +0.0002  R +0.0151  G +0.0216
+  both ≥.5                               n= 807  king min(R,G) -0.0056  R +0.0061  G +0.0215
+  neither                                n= 364  king min(R,G) -0.0017  R +0.0156  G +0.0174
+-- challenger − king margin per rule --
+rule          margin       SE       z SE ratio rho vs minRG  term≠0
+minRG       -0.03777  0.00542   -6.97     1.00        1.000      0%
+tilt        -0.03761  0.00542   -6.94     1.00        0.974     68%
+add0.01     -0.03777  0.00542   -6.97     1.00        0.963     56%
+beyond0.01  -0.03766  0.00542   -6.95     1.00        0.984     28%
+add0.03     -0.03776  0.00541   -6.98     1.00        0.889     56%
+beyond0.03  -0.03745  0.00542   -6.92     1.00        0.953     28%
+scale1      -0.03787  0.00543   -6.97     1.00        0.992     73%
+scale3      -0.03808  0.00546   -6.97     1.01        0.976     73%
+-- attacks under tilt (king's thought + variant; same action) --
+minRG  min-leg: king -0.0041 filler -0.0997 generic -0.2308 parrot -0.0133 | R-leg alone: king +0.0101 filler +0.0077 generic +0.0060 parrot +0.0070
+tilt   min-leg: king -0.0055 filler -0.0999 generic -0.2308 parrot -0.0142 | R-leg alone: king +0.0068 filler +0.0050 generic +0.0047 parrot +0.0052
+
+===== dialect bash (n=1023) =====
+-- agreement landscape --
+teacher refs vs frontier: mean agree 0.472; teacher-own action exact-matches a frontier sample on 17%; frontier self-agreement 0.710
+king       agree_F mean 0.473 (exact 17%; ≥0.5 on 46%)  agree_T mean 0.596 (≥0.5 on 62%)  sides with frontier over teacher (agree_F − agree_T > 0.2) on 12%
+challenger agree_F mean 0.478 (exact 17%; ≥0.5 on 48%)  agree_T mean 0.593 (≥0.5 on 61%)  sides with frontier over teacher (agree_F − agree_T > 0.2) on 12%
+tilt weight entropy mean 0.907 (uniform k=3 = 1.099; 0 = one ref takes all)
+-- does min(R,G) today punish siding with the frontier against the teacher? (king turns) --
+  F-like, not T-like (aF≥.5, aT<.5)      n=  74  king min(R,G) -0.0074  R +0.0101  G +0.0122
+  T-like, not F-like (aT≥.5, aF<.5)      n= 239  king min(R,G) +0.0039  R +0.0174  G +0.0259
+  both ≥.5                               n= 400  king min(R,G) -0.0011  R +0.0091  G +0.0310
+  neither                                n= 310  king min(R,G) +0.0022  R +0.0180  G +0.0209
+-- challenger − king margin per rule --
+rule          margin       SE       z SE ratio rho vs minRG  term≠0
+minRG       -0.00067  0.00068   -0.99     1.00        1.000      0%
+tilt        -0.00049  0.00065   -0.75     0.96        0.956     73%
+add0.01     -0.00062  0.00068   -0.91     1.00        0.952     57%
+beyond0.01  -0.00063  0.00068   -0.92     1.00        0.978     26%
+add0.03     -0.00051  0.00071   -0.72     1.04        0.853     57%
+beyond0.03  -0.00053  0.00069   -0.78     1.01        0.935     26%
+scale1      -0.00069  0.00076   -0.92     1.11        0.986     78%
+scale3      -0.00073  0.00098   -0.74     1.45        0.960     78%
+-- attacks under tilt (king's thought + variant; same action) --
+minRG  min-leg: king +0.0006 filler -0.0772 generic -0.2128 parrot -0.0089 | R-leg alone: king +0.0138 filler +0.0105 generic +0.0088 parrot +0.0095
+tilt   min-leg: king -0.0014 filler -0.0774 generic -0.2128 parrot -0.0103 | R-leg alone: king +0.0093 filler +0.0068 generic +0.0069 parrot +0.0070
+
+===== dialect boxed (n=161) =====
+-- agreement landscape --
+teacher refs vs frontier: mean agree 0.991; teacher-own action exact-matches a frontier sample on 98%; frontier self-agreement 0.977
+king       agree_F mean 0.998 (exact 99%; ≥0.5 on 100%)  agree_T mean 0.996 (≥0.5 on 99%)  sides with frontier over teacher (agree_F − agree_T > 0.2) on 1%
+challenger agree_F mean 0.949 (exact 92%; ≥0.5 on 93%)  agree_T mean 0.935 (≥0.5 on 91%)  sides with frontier over teacher (agree_F − agree_T > 0.2) on 2%
+tilt weight entropy mean 0.898 (uniform k=3 = 1.099; 0 = one ref takes all)
+-- does min(R,G) today punish siding with the frontier against the teacher? (king turns) --
+  F-like, not T-like (aF≥.5, aT<.5)      n=   1
+  T-like, not F-like (aT≥.5, aF<.5)      n=   0
+  both ≥.5                               n= 160  king min(R,G) -0.0066  R +0.0038  G +0.0044
+  neither                                n=   0
+-- challenger − king margin per rule --
+rule          margin       SE       z SE ratio rho vs minRG  term≠0
+minRG       -0.00138  0.00152   -0.91     1.00        1.000      0%
+tilt        -0.00113  0.00151   -0.75     0.99        0.996     49%
+add0.01     -0.00188  0.00152   -1.23     1.00        0.962      8%
+beyond0.01  -0.00129  0.00153   -0.84     1.00        0.994      1%
+add0.03     -0.00286  0.00157   -1.83     1.03        0.926      8%
+beyond0.03  -0.00110  0.00154   -0.71     1.01        0.991      1%
+scale1      -0.00154  0.00159   -0.97     1.04        0.999     52%
+scale3      -0.00185  0.00180   -1.03     1.18        0.998     52%
+-- attacks under tilt (king's thought + variant; same action) --
+minRG  min-leg: king -0.0066 filler -0.1069 generic -0.3322 parrot -0.0124 | R-leg alone: king +0.0038 filler +0.0034 generic +0.0009 parrot +0.0022
+tilt   min-leg: king -0.0069 filler -0.1069 generic -0.3322 parrot -0.0125 | R-leg alone: king +0.0015 filler +0.0016 generic +0.0005 parrot +0.0014
+
+===== dialect tool_call (n=393) =====
+-- agreement landscape --
+teacher refs vs frontier: mean agree 0.659; teacher-own action exact-matches a frontier sample on 19%; frontier self-agreement 0.730
+king       agree_F mean 0.671 (exact 16%; ≥0.5 on 71%)  agree_T mean 0.700 (≥0.5 on 78%)  sides with frontier over teacher (agree_F − agree_T > 0.2) on 10%
+challenger agree_F mean 0.678 (exact 16%; ≥0.5 on 73%)  agree_T mean 0.658 (≥0.5 on 69%)  sides with frontier over teacher (agree_F − agree_T > 0.2) on 15%
+tilt weight entropy mean 1.015 (uniform k=3 = 1.099; 0 = one ref takes all)
+-- does min(R,G) today punish siding with the frontier against the teacher? (king turns) --
+  F-like, not T-like (aF≥.5, aT<.5)      n=  31  king min(R,G) -0.0268  R +0.0023  G -0.0089
+  T-like, not F-like (aT≥.5, aF<.5)      n=  61  king min(R,G) -0.0143  R +0.0060  G +0.0051
+  both ≥.5                               n= 247  king min(R,G) -0.0124  R +0.0027  G +0.0171
+  neither                                n=  54  king min(R,G) -0.0240  R +0.0017  G -0.0027
+-- challenger − king margin per rule --
+rule          margin       SE       z SE ratio rho vs minRG  term≠0
+minRG       -0.14924  0.02070   -7.21     1.00        1.000      0%
+tilt        -0.14919  0.02069   -7.21     1.00        0.996     63%
+add0.01     -0.14917  0.02069   -7.21     1.00        0.987     75%
+beyond0.01  -0.14898  0.02069   -7.20     1.00        0.994     45%
+add0.03     -0.14903  0.02066   -7.21     1.00        0.953     75%
+beyond0.03  -0.14846  0.02068   -7.18     1.00        0.980     45%
+scale1      -0.14954  0.02072   -7.22     1.00        0.999     69%
+scale3      -0.15013  0.02077   -7.23     1.00        0.995     69%
+-- attacks under tilt (king's thought + variant; same action) --
+minRG  min-leg: king -0.0154 filler -0.1555 generic -0.2362 parrot -0.0250 | R-leg alone: king +0.0031 filler +0.0022 generic +0.0010 parrot +0.0025
+tilt   min-leg: king -0.0157 filler -0.1555 generic -0.2362 parrot -0.0252 | R-leg alone: king +0.0024 filler +0.0016 generic +0.0009 parrot +0.0021
+
+===== record chal-00286 (live margin -0.03979 z -6.73) (n=393) =====
+-- agreement landscape --
+teacher refs vs frontier: mean agree 0.560; teacher-own action exact-matches a frontier sample on 24%; frontier self-agreement 0.723
+king       agree_F mean 0.552 (exact 23%; ≥0.5 on 56%)  agree_T mean 0.654 (≥0.5 on 67%)  sides with frontier over teacher (agree_F − agree_T > 0.2) on 9%
+challenger agree_F mean 0.564 (exact 23%; ≥0.5 on 56%)  agree_T mean 0.648 (≥0.5 on 67%)  sides with frontier over teacher (agree_F − agree_T > 0.2) on 12%
+tilt weight entropy mean 0.927 (uniform k=3 = 1.099; 0 = one ref takes all)
+-- does min(R,G) today punish siding with the frontier against the teacher? (king turns) --
+  F-like, not T-like (aF≥.5, aT<.5)      n=  28  king min(R,G) -0.0152  R +0.0062  G -0.0014
+  T-like, not F-like (aT≥.5, aF<.5)      n=  71  king min(R,G) -0.0006  R +0.0140  G +0.0227
+  both ≥.5                               n= 191  king min(R,G) -0.0060  R +0.0068  G +0.0182
+  neither                                n= 103  king min(R,G) -0.0057  R +0.0147  G +0.0165
+-- challenger − king margin per rule --
+rule          margin       SE       z SE ratio rho vs minRG  term≠0
+minRG       -0.04959  0.01229   -4.03     1.00        1.000      0%
+tilt        -0.04978  0.01228   -4.05     1.00        0.983     66%
+add0.01     -0.04948  0.01229   -4.03     1.00        0.965     53%
+beyond0.01  -0.04948  0.01229   -4.03     1.00        0.985     25%
+add0.03     -0.04925  0.01228   -4.01     1.00        0.898     53%
+beyond0.03  -0.04924  0.01228   -4.01     1.00        0.954     25%
+scale1      -0.04947  0.01233   -4.01     1.00        0.998     69%
+scale3      -0.04921  0.01240   -3.97     1.01        0.986     69%
+-- attacks under tilt (king's thought + variant; same action) --
+minRG  min-leg: king -0.0056 filler -0.1005 generic -0.2298 parrot -0.0139 | R-leg alone: king +0.0102 filler +0.0078 generic +0.0062 parrot +0.0070
+tilt   min-leg: king -0.0065 filler -0.1007 generic -0.2298 parrot -0.0146 | R-leg alone: king +0.0064 filler +0.0048 generic +0.0047 parrot +0.0054
+
+===== record chal-00287 (live margin -0.04688 z -7.30) (n=394) =====
+-- agreement landscape --
+teacher refs vs frontier: mean agree 0.579; teacher-own action exact-matches a frontier sample on 27%; frontier self-agreement 0.733
+king       agree_F mean 0.591 (exact 29%; ≥0.5 on 59%)  agree_T mean 0.671 (≥0.5 on 73%)  sides with frontier over teacher (agree_F − agree_T > 0.2) on 10%
+challenger agree_F mean 0.593 (exact 27%; ≥0.5 on 60%)  agree_T mean 0.652 (≥0.5 on 68%)  sides with frontier over teacher (agree_F − agree_T > 0.2) on 12%
+tilt weight entropy mean 0.932 (uniform k=3 = 1.099; 0 = one ref takes all)
+-- does min(R,G) today punish siding with the frontier against the teacher? (king turns) --
+  F-like, not T-like (aF≥.5, aT<.5)      n=  24  king min(R,G) -0.0015  R +0.0104  G +0.0168
+  T-like, not F-like (aT≥.5, aF<.5)      n=  77  king min(R,G) -0.0037  R +0.0125  G +0.0201
+  both ≥.5                               n= 209  king min(R,G) -0.0045  R +0.0054  G +0.0262
+  neither                                n=  84  king min(R,G) -0.0004  R +0.0171  G +0.0149
+-- challenger − king margin per rule --
+rule          margin       SE       z SE ratio rho vs minRG  term≠0
+minRG       -0.05088  0.01283   -3.97     1.00        1.000      0%
+tilt        -0.05053  0.01283   -3.94     1.00        0.970     71%
+add0.01     -0.05086  0.01283   -3.96     1.00        0.963     48%
+beyond0.01  -0.05076  0.01283   -3.96     1.00        0.979     23%
+add0.03     -0.05082  0.01284   -3.96     1.00        0.897     48%
+beyond0.03  -0.05050  0.01284   -3.93     1.00        0.949     23%
+scale1      -0.05102  0.01284   -3.97     1.00        0.988     76%
+scale3      -0.05130  0.01289   -3.98     1.00        0.973     76%
+-- attacks under tilt (king's thought + variant; same action) --
+minRG  min-leg: king -0.0033 filler -0.0958 generic -0.2315 parrot -0.0120 | R-leg alone: king +0.0096 filler +0.0072 generic +0.0062 parrot +0.0070
+tilt   min-leg: king -0.0047 filler -0.0959 generic -0.2315 parrot -0.0132 | R-leg alone: king +0.0068 filler +0.0048 generic +0.0046 parrot +0.0052
+
+===== record chal-00288 (live margin -0.05184 z -7.88) (n=397) =====
+-- agreement landscape --
+teacher refs vs frontier: mean agree 0.565; teacher-own action exact-matches a frontier sample on 24%; frontier self-agreement 0.754
+king       agree_F mean 0.571 (exact 22%; ≥0.5 on 58%)  agree_T mean 0.665 (≥0.5 on 72%)  sides with frontier over teacher (agree_F − agree_T > 0.2) on 9%
+challenger agree_F mean 0.564 (exact 21%; ≥0.5 on 58%)  agree_T mean 0.634 (≥0.5 on 65%)  sides with frontier over teacher (agree_F − agree_T > 0.2) on 13%
+tilt weight entropy mean 0.927 (uniform k=3 = 1.099; 0 = one ref takes all)
+-- does min(R,G) today punish siding with the frontier against the teacher? (king turns) --
+  F-like, not T-like (aF≥.5, aT<.5)      n=  27  king min(R,G) -0.0238  R +0.0050  G -0.0012
+  T-like, not F-like (aT≥.5, aF<.5)      n=  82  king min(R,G) +0.0015  R +0.0174  G +0.0187
+  both ≥.5                               n= 204  king min(R,G) -0.0063  R +0.0067  G +0.0188
+  neither                                n=  84  king min(R,G) -0.0002  R +0.0182  G +0.0200
+-- challenger − king margin per rule --
+rule          margin       SE       z SE ratio rho vs minRG  term≠0
+minRG       -0.04719  0.01218   -3.87     1.00        1.000      0%
+tilt        -0.04699  0.01218   -3.86     1.00        0.969     63%
+add0.01     -0.04725  0.01216   -3.89     1.00        0.951     55%
+beyond0.01  -0.04701  0.01217   -3.86     1.00        0.983     28%
+add0.03     -0.04739  0.01213   -3.91     1.00        0.878     55%
+beyond0.03  -0.04665  0.01215   -3.84     1.00        0.950     28%
+scale1      -0.04755  0.01220   -3.90     1.00        0.993     67%
+scale3      -0.04826  0.01224   -3.94     1.01        0.978     67%
+-- attacks under tilt (king's thought + variant; same action) --
+minRG  min-leg: king -0.0046 filler -0.0985 generic -0.2351 parrot -0.0114 | R-leg alone: king +0.0112 filler +0.0089 generic +0.0059 parrot +0.0078
+tilt   min-leg: king -0.0059 filler -0.0986 generic -0.2351 parrot -0.0124 | R-leg alone: king +0.0085 filler +0.0065 generic +0.0050 parrot +0.0055
+
+===== record chal-00289 (live margin -0.01075 z -6.54) (n=393) =====
+-- agreement landscape --
+teacher refs vs frontier: mean agree 0.582; teacher-own action exact-matches a frontier sample on 26%; frontier self-agreement 0.761
+king       agree_F mean 0.588 (exact 27%; ≥0.5 on 59%)  agree_T mean 0.662 (≥0.5 on 69%)  sides with frontier over teacher (agree_F − agree_T > 0.2) on 11%
+challenger agree_F mean 0.582 (exact 25%; ≥0.5 on 60%)  agree_T mean 0.642 (≥0.5 on 65%)  sides with frontier over teacher (agree_F − agree_T > 0.2) on 9%
+tilt weight entropy mean 0.946 (uniform k=3 = 1.099; 0 = one ref takes all)
+-- does min(R,G) today punish siding with the frontier against the teacher? (king turns) --
+  F-like, not T-like (aF≥.5, aT<.5)      n=  27  king min(R,G) -0.0101  R +0.0097  G +0.0111
+  T-like, not F-like (aT≥.5, aF<.5)      n=  70  king min(R,G) +0.0037  R +0.0164  G +0.0257
+  both ≥.5                               n= 203  king min(R,G) -0.0058  R +0.0054  G +0.0224
+  neither                                n=  93  king min(R,G) +0.0001  R +0.0128  G +0.0183
+-- challenger − king margin per rule --
+rule          margin       SE       z SE ratio rho vs minRG  term≠0
+minRG       -0.00328  0.00148   -2.22     1.00        1.000      0%
+tilt        -0.00302  0.00142   -2.12     0.96        0.969     72%
+add0.01     -0.00335  0.00147   -2.28     0.99        0.972     68%
+beyond0.01  -0.00329  0.00147   -2.23     1.00        0.990     37%
+add0.03     -0.00347  0.00149   -2.33     1.01        0.888     68%
+beyond0.03  -0.00330  0.00147   -2.24     1.00        0.961     37%
+scale1      -0.00332  0.00156   -2.12     1.06        0.987     78%
+scale3      -0.00339  0.00186   -1.83     1.26        0.964     78%
+-- attacks under tilt (king's thought + variant; same action) --
+minRG  min-leg: king -0.0030 filler -0.1041 generic -0.2269 parrot -0.0159 | R-leg alone: king +0.0094 filler +0.0069 generic +0.0058 parrot +0.0062
+tilt   min-leg: king -0.0049 filler -0.1043 generic -0.2269 parrot -0.0169 | R-leg alone: king +0.0055 filler +0.0037 generic +0.0045 parrot +0.0047
+

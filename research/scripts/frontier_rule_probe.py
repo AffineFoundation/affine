@@ -840,6 +840,197 @@ def cmd_analyze(args) -> int:
     return 0
 
 
+# ------------------------------------------------------------------ modulation
+TOKEN_RE = re.compile(r"[A-Za-z0-9_./-]{2,}")
+
+
+def action_tokens(y: str) -> set[str]:
+    body = y.strip()
+    if body.startswith("```bash\n") and body.endswith("\n```"):
+        body = body[len("```bash\n"):-len("\n```")]
+    return set(TOKEN_RE.findall(body))
+
+
+def jaccard(a: str, b: str) -> float:
+    ta, tb = action_tokens(a), action_tokens(b)
+    if not ta and not tb:
+        return 1.0
+    return len(ta & tb) / max(len(ta | tb), 1)
+
+
+def agree(y: str, targets: list[str]) -> float:
+    """Action-level agreement in [0,1]: best token-Jaccard against any target."""
+    return max((jaccard(y, t) for t in targets), default=0.0)
+
+
+def wclme(a: list[float], w: list[float], tau: float) -> float:
+    """Weighted centered tempered LME: tau·log(Σ w_i exp(a_i/tau)) − Σ w_i a_i,
+    weights summing to 1. Uniform weights recover clme."""
+    if not a:
+        return float("nan")
+    z = sum(w)
+    w = [x / z for x in w]
+    m = max(a)
+    return m + tau * math.log(sum(wi * math.exp((ai - m) / tau) for ai, wi in zip(a, w))) \
+        - sum(wi * ai for ai, wi in zip(a, w))
+
+
+def cmd_modulation(args) -> int:
+    """Rules where the frontier ACTION modulates the teacher-scored turn
+    (operator question 2026-09-07): the teacher still bounds the turn via
+    min(R,G); the frontier action scales/tilts it. Thoughts never touch the
+    frontier. Computed from the overnight data, no new echoes."""
+    out = Path(args.out)
+    meta = json.loads((out / "meta.json").read_text())
+    rows: list[dict] = []
+    for rec in sorted(meta):
+        dp = meta[rec]["duel_params"]
+        tau, band_c, band_floor = dp["tau"], dp["band_c"], dp["band_floor"]
+        turns = {t["turn_id"]: t for t in read_jsonl(out / "turns" / f"{rec}.jsonl")}
+        fr = {f["turn_id"]: f for f in read_jsonl(out / "frontier" / f"{rec}.jsonl")}
+        by_tid: dict[str, dict] = {}
+        for e in read_jsonl(out / "echoes" / f"{rec}.jsonl"):
+            prev = by_tid.get(e["turn_id"])
+            if prev is None or ("lp" in e and "lp" not in prev):
+                by_tid[e["turn_id"]] = e
+        for tid, e in by_tid.items():
+            if "lp" not in e:
+                continue
+            t, f = turns[tid], fr[tid]
+            F = [smp for smp in f["samples"] if smp["parsed"]][:N_FRONTIER]
+            yF = [smp["y"] for smp in F]
+            yG = f["greedy"]["y"] if f.get("greedy") and f["greedy"]["parsed"] else None
+            refs = t["refs"]
+            yC = [r["y"] for r in refs]
+            mu, w = band([r["lp_thought"] for r in refs], band_c, band_floor)
+            lp = e["lp"]
+            nF = len(yF)
+            yF_e = [lp[f"yF_e.{j}"] for j in range(nF)]
+            # ref tilt: weight teacher ref i by how well ITS thought explains the
+            # frontier's actions (teacher-side echo lpC(y_F^j|z_C^i) − lpC(y_F^j|∅)),
+            # averaged over frontier samples; softmax at tau.
+            tilt_raw = [st.mean(lp[f"tref.{i}.f.{j}"] - yF_e[j] for j in range(nF))
+                        for i in range(len(refs))]
+            mx = max(tilt_raw)
+            tilt_w = [math.exp((x - mx) / tau) for x in tilt_raw]
+
+            def side(pairs, y):
+                a = [reason(p) for p in pairs]
+                R = clme(a, tau)
+                G = g_leg(pairs[0]["lpC_za_x"], mu, w)
+                return {"R": R, "G": G, "base": min(R, G),
+                        "R_tilt": wclme(a, tilt_w, tau),
+                        "agree_F": agree(y, yF), "agree_G": jaccard(y, yG) if yG else None,
+                        "agree_T": agree(y, yC),
+                        "exact_F": any(y.strip() == x.strip() for x in yF)}
+
+            k, c = side(t["king"], t["king"][0]["y_a"]), side(t["challenger"], t["challenger"][0]["y_a"])
+            # variants share the king's action; only R changes (needed for tilt attacks)
+            var = {}
+            for vn in ("filler", "generic", "parrot"):
+                a = [lp[f"var.{vn}.a.{i}"] - refs[i]["lp_empty"] for i in range(len(refs))]
+                var[vn] = {"R": clme(a, tau), "R_tilt": wclme(a, tilt_w, tau),
+                           "G": g_leg(lp[f"var.{vn}.m"], mu, w)}
+            rows.append({
+                "record": rec, "kind": t["kind"], "king": k, "challenger": c, "var": var,
+                "teacher_agree_F": agree(yC[0], yF),        # teacher's own action vs frontier
+                "frontier_self": agree(yF[0], yF[1:]) if nF > 1 else None,
+                "teacher_frontier_jacc": st.mean(agree(x, yF) for x in yC),
+                "tilt_entropy": -sum((x / sum(tilt_w)) * math.log(x / sum(tilt_w) + 1e-12) for x in tilt_w),
+            })
+    if not rows:
+        raise SystemExit("no rows")
+
+    LAMBDAS = (0.01, 0.03)
+    def rule_scores(sd: dict) -> dict[str, float]:
+        base = sd["base"]
+        aF, aT = sd["agree_F"], sd["agree_T"]
+        r = {"minRG": base, "tilt": min(sd["R_tilt"], G) if (G := sd["G"]) is not None else base}
+        for lam in LAMBDAS:
+            r[f"add{lam}"] = base + lam * aF                       # pay for agreeing with the frontier
+            r[f"beyond{lam}"] = base + lam * max(aF - aT, 0.0)    # pay only where frontier ≠ teacher and miner sides with frontier
+        r["scale1"] = base * (1 + aF) if base > 0 else base        # multiplicative on positive reward
+        r["scale3"] = base * (1 + 3 * aF) if base > 0 else base
+        return r
+
+    L: list[str] = []
+    P = L.append
+    P(f"Frontier ACTION as turn modulator — {len(rows)} turns, same overnight data (no new echoes)")
+    P("agree = best token-Jaccard of an action against the frontier's 3 sampled actions; agree_T = same vs the teacher's 3 refs")
+    P("")
+
+    def section(sub: list[dict], title: str) -> dict:
+        res: dict = {"n": len(sub)}
+        P(f"===== {title} (n={len(sub)}) =====")
+        if len(sub) < 10:
+            P("  too few"); P(""); return res
+        n = len(sub)
+        # 1. agreement landscape
+        tf = [r["teacher_frontier_jacc"] for r in sub]
+        P("-- agreement landscape --")
+        P(f"teacher refs vs frontier: mean agree {st.mean(tf):.3f}; teacher-own action exact-matches a frontier sample on "
+          f"{sum(1 for r in sub if r['teacher_agree_F'] >= 0.999) / n:.0%}; frontier self-agreement {st.mean(r['frontier_self'] for r in sub if r['frontier_self'] is not None):.3f}")
+        for sname in ("king", "challenger"):
+            aF = [r[sname]["agree_F"] for r in sub]; aT = [r[sname]["agree_T"] for r in sub]
+            P(f"{sname:10} agree_F mean {st.mean(aF):.3f} (exact {sum(1 for r in sub if r[sname]['exact_F']) / n:.0%}; ≥0.5 on {sum(1 for x in aF if x >= .5) / n:.0%})  "
+              f"agree_T mean {st.mean(aT):.3f} (≥0.5 on {sum(1 for x in aT if x >= .5) / n:.0%})  "
+              f"sides with frontier over teacher (agree_F − agree_T > 0.2) on {sum(1 for a, b in zip(aF, aT) if a - b > .2) / n:.0%}")
+        P(f"tilt weight entropy mean {st.mean(r['tilt_entropy'] for r in sub):.3f} (uniform k=3 = {math.log(3):.3f}; 0 = one ref takes all)")
+        # 2. does today's rule punish "frontier-like but not teacher-like" actions?
+        P("-- does min(R,G) today punish siding with the frontier against the teacher? (king turns) --")
+        bins = {"F-like, not T-like (aF≥.5, aT<.5)": lambda r: r["king"]["agree_F"] >= .5 and r["king"]["agree_T"] < .5,
+                "T-like, not F-like (aT≥.5, aF<.5)": lambda r: r["king"]["agree_T"] >= .5 and r["king"]["agree_F"] < .5,
+                "both ≥.5": lambda r: r["king"]["agree_T"] >= .5 and r["king"]["agree_F"] >= .5,
+                "neither": lambda r: r["king"]["agree_T"] < .5 and r["king"]["agree_F"] < .5}
+        res["bins"] = {}
+        for name, fn in bins.items():
+            part = [r for r in sub if fn(r)]
+            if len(part) < 5:
+                P(f"  {name:38} n={len(part):4d}"); continue
+            res["bins"][name] = {"n": len(part), "minRG": st.mean(r["king"]["base"] for r in part),
+                                 "R": st.mean(r["king"]["R"] for r in part), "G": st.mean(r["king"]["G"] for r in part)}
+            P(f"  {name:38} n={len(part):4d}  king min(R,G) {res['bins'][name]['minRG']:+.4f}  R {res['bins'][name]['R']:+.4f}  G {res['bins'][name]['G']:+.4f}")
+        # 3. live pair under each rule
+        P("-- challenger − king margin per rule --")
+        names = list(rule_scores(sub[0]["king"]).keys())
+        rng = random.Random(3)
+        d0 = [rule_scores(r["challenger"])["minRG"] - rule_scores(r["king"])["minRG"] for r in sub]
+        se0 = st.stdev(d0) / math.sqrt(n)
+        P(f"{'rule':10} {'margin':>9} {'SE':>8} {'z':>7} {'SE ratio':>8} {'rho vs minRG':>12} {'term≠0':>7}")
+        res["margins"] = {}
+        for nm in names:
+            d = [rule_scores(r["challenger"])[nm] - rule_scores(r["king"])[nm] for r in sub]
+            m = st.mean(d); se = st.stdev(d) / math.sqrt(n)
+            nz = sum(1 for a, b in zip(d, d0) if abs(a - b) > 1e-9) / n
+            res["margins"][nm] = {"margin": m, "se": se, "z": m / se if se else float("nan"),
+                                  "se_ratio": se / se0, "rho": spearman(d0, d), "changed": nz}
+            P(f"{nm:10} {m:+9.5f} {se:8.5f} {m / se if se else float('nan'):+7.2f} {se / se0:8.2f} {spearman(d0, d):12.3f} {nz:7.0%}")
+        # 4. tilt attacks (variants share the king's action, so only tilt differs from minRG here)
+        P("-- attacks under tilt (king's thought + variant; same action) --")
+        for nm, key in (("minRG", "R"), ("tilt", "R_tilt")):
+            k = st.mean(min(r["king"][key], r["king"]["G"]) for r in sub)
+            vals = {vn: st.mean(min(r["var"][vn][key], r["var"][vn]["G"]) for r in sub) for vn in ("filler", "generic", "parrot")}
+            rk = st.mean(r["king"][key] for r in sub)
+            rv = {vn: st.mean(r["var"][vn][key] for r in sub) for vn in ("filler", "generic", "parrot")}
+            P(f"{nm:6} min-leg: king {k:+.4f} filler {vals['filler']:+.4f} generic {vals['generic']:+.4f} parrot {vals['parrot']:+.4f} | "
+              f"R-leg alone: king {rk:+.4f} filler {rv['filler']:+.4f} generic {rv['generic']:+.4f} parrot {rv['parrot']:+.4f}")
+        P("")
+        return res
+
+    report = {"n": len(rows), "all": section(rows, "ALL DIALECTS")}
+    for kind in sorted({r["kind"] for r in rows}):
+        report[kind] = section([r for r in rows if r["kind"] == kind], f"dialect {kind}")
+    for rec in sorted(meta):
+        sub = [r for r in rows if r["record"] == rec]
+        if sub:
+            report[rec] = section(sub, f"record {rec} (live margin {meta[rec]['margin']:+.5f} z {meta[rec]['z']:+.2f})")
+    text = "\n".join(L) + "\n"
+    (out / "report_modulation.txt").write_text(text)
+    (out / "report_modulation.json").write_text(json.dumps(report, indent=1, default=str))
+    print(text)
+    return 0
+
+
 # ------------------------------------------------------------------ main
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -863,7 +1054,10 @@ def main() -> int:
     s.add_argument("--concurrency", type=int, default=48)
     s.add_argument("--limit", type=int, default=0)
     sub.add_parser("analyze")
+    sub.add_parser("modulation")
     args = ap.parse_args()
+    if args.cmd == "modulation":
+        return cmd_modulation(args)
     if args.cmd == "select":
         return cmd_select(args)
     if args.cmd == "sample":
