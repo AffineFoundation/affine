@@ -1,0 +1,164 @@
+{
+ "bench-00001-swe_rebench_lite": {
+  "label": "reign-0",
+  "revision": "995ad96eacd98c81ed38be0c5b274b04031597b0",
+  "swe": 0.3,
+  "suite": "swe_rebench_lite",
+  "n_turns": 0,
+  "n_resolved": 5,
+  "n_instances": 25
+ },
+ "bench-00083-swe_rebench_lite": {
+  "label": "reign-1",
+  "revision": "dbac41854dec78abe640141626a288af5e68a056",
+  "swe": 0.4,
+  "suite": "swe_rebench_lite",
+  "n_turns": 0,
+  "n_resolved": 10,
+  "n_instances": 25
+ },
+ "bench-00138-swe_rebench_lite": {
+  "label": "reign-2",
+  "revision": "2838aa060d48d14479debb6c1a3c113531bc2ed7",
+  "swe": 0.34,
+  "suite": "swe_rebench_lite",
+  "n_turns": 1,
+  "n_resolved": 8,
+  "n_instances": 25
+ },
+ "bench-00143-swe_rebench_lite": {
+  "label": "reign-3",
+  "revision": "c7e1eab5a11c70b319f087f7c0d3f76a23d7e30c",
+  "swe": 0.26,
+  "suite": "swe_rebench_lite",
+  "n_turns": 0,
+  "n_resolved": 5,
+  "n_instances": 25
+ },
+ "bench-00193-swe_rebench_lite": {
+  "label": "reign-4",
+  "revision": "dbcaf7533ce0d9d2b8a769793d95a70a14b2ab96",
+  "swe": 0.36,
+  "suite": "swe_rebench_lite",
+  "n_turns": 0,
+  "n_resolved": 8,
+  "n_instances": 25
+ },
+ "bench-00282-swe_rebench_lite": {
+  "label": "reign-5",
+  "revision": "83dbebac0e25efb20259c4ef98812b3a5347f9bf",
+  "swe": 0.34,
+  "suite": "swe_rebench_lite",
+  "n_turns": 0,
+  "n_resolved": 0,
+  "n_instances": 25
+ },
+ "bench-00291-swe_rebench_lite": {
+  "label": "reign-5",
+  "revision": "83dbebac0e25efb20259c4ef98812b3a5347f9bf",
+  "swe": 0.34,
+  "suite": "swe_rebench_lite",
+  "n_turns": 100,
+  "n_resolved": 7,
+  "n_instances": 25
+ },
+ "bench-00322-swe_rebench_lite": {
+  "label": "reign-6",
+  "revision": "492e3ef293c23158a2d07d9aa404d18f138a6fbbd064884b922287c3ad510bf2",
+  "swe": 0.38,
+  "suite": "swe_rebench_lite",
+  "n_turns": 100,
+  "n_resolved": 9,
+  "n_instances": 25
+ },
+ "bench-00337-swe_rebench_lite": {
+  "label": "reign-8",
+  "revision": "0a04e3d1c57d56a25cb066a863c77bace094e11395eac968bc69fa405dbc861a",
+  "swe": 0.46,
+  "suite": "swe_rebench_lite",
+  "n_turns": 100,
+  "n_resolved": 9,
+  "n_instances": 25
+ },
+ "bench-00339-swe_rebench_lite_300": {
+  "label": "reign-8",
+  "revision": "0a04e3d1c57d56a25cb066a863c77bace094e11395eac968bc69fa405dbc861a",
+  "swe": 0.46,
+  "suite": "swe_rebench_lite_300",
+  "n_turns": 100,
+  "n_resolved": 14,
+  "n_instances": 25
+ },
+ "bench-00340-swe_rebench_lite_300": {
+  "label": "reign-7",
+  "revision": "4cd7c090d0bc65ad9ce6e61351532bcdf24a37910b7ecac098226ab7b66e3a43",
+  "swe": 0.44,
+  "suite": "swe_rebench_lite_300",
+  "n_turns": 100,
+  "n_resolved": 11,
+  "n_instances": 25
+ },
+ "bench-00341-swe_rebench_lite_300": {
+  "label": "reign-6",
+  "revision": "492e3ef293c23158a2d07d9aa404d18f138a6fbbd064884b922287c3ad510bf2",
+  "swe": 0.38,
+  "suite": "swe_rebench_lite_300",
+  "n_turns": 100,
+  "n_resolved": 10,
+  "n_instances": 25
+ },
+ "bench-00342-swe_rebench_lite_300": {
+  "label": "reign-5",
+  "revision": "83dbebac0e25efb20259c4ef98812b3a5347f9bf",
+  "swe": 0.34,
+  "suite": "swe_rebench_lite_300",
+  "n_turns": 100,
+  "n_resolved": 10,
+  "n_instances": 25
+ },
+ "bench-00343-swe_rebench_lite_300": {
+  "label": "reign-4",
+  "revision": "dbcaf7533ce0d9d2b8a769793d95a70a14b2ab96",
+  "swe": 0.36,
+  "suite": "swe_rebench_lite_300",
+  "n_turns": 100,
+  "n_resolved": 10,
+  "n_instances": 25
+ },
+ "bench-00344-swe_rebench_lite_300": {
+  "label": "reign-3",
+  "revision": "c7e1eab5a11c70b319f087f7c0d3f76a23d7e30c",
+  "swe": 0.26,
+  "suite": "swe_rebench_lite_300",
+  "n_turns": 100,
+  "n_resolved": 8,
+  "n_instances": 25
+ },
+ "bench-00345-swe_rebench_lite_300": {
+  "label": "reign-2",
+  "revision": "2838aa060d48d14479debb6c1a3c113531bc2ed7",
+  "swe": 0.34,
+  "suite": "swe_rebench_lite_300",
+  "n_turns": 100,
+  "n_resolved": 9,
+  "n_instances": 25
+ },
+ "bench-00346-swe_rebench_lite_300": {
+  "label": "reign-1",
+  "revision": "dbac41854dec78abe640141626a288af5e68a056",
+  "swe": 0.4,
+  "suite": "swe_rebench_lite_300",
+  "n_turns": 100,
+  "n_resolved": 10,
+  "n_instances": 25
+ },
+ "bench-00347-swe_rebench_lite_300": {
+  "label": "reign-0",
+  "revision": "995ad96eacd98c81ed38be0c5b274b04031597b0",
+  "swe": 0.3,
+  "suite": "swe_rebench_lite_300",
+  "n_turns": 100,
+  "n_resolved": 10,
+  "n_instances": 25
+ }
+}
