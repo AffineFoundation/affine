@@ -1,0 +1,27 @@
+king      62/82  =  75.6%  (95% CI 65–84)  median turns 97
+teacher   50/83  =  60.2%  (95% CI 49–70)  median turns 57
+paired on 82: both 41, king-only 21, teacher-only 8, neither 12, sign-test p=0.02
+
+repo                                 king      teacher
+ansible/ansible                12/13     92%    7/13     54%
+element-hq/element-web          6/8      75%    1/8      12%
+flipt-io/flipt                  7/12     58%    6/12     50%
+future-architect/vuls           7/8      88%    7/8      88%
+gravitational/teleport          3/4      75%    2/4      50%
+internetarchive/openlibrary     4/8      50%    7/8      88%
+navidrome/navidrome             6/8      75%    6/8      75%
+nodebb/nodebb                   4/6      67%    3/6      50%
+protonmail/webclients           2/2     100%    1/2      50%
+qutebrowser/qutebrowser         9/10     90%    8/11     73%
+tutao/tutanota                  2/3      67%    2/3      67%
+
+language                             king      teacher
+go                             23/32     72%   21/32     66%
+js                              4/6      67%    3/6      50%
+python                         25/31     81%   22/32     69%
+ts                             10/13     77%    4/13     31%
+
+Excluded (env-broken on this harness/box, both models): 17 = teleport 6, webclients 7, openlibrary 4.
+Gold-patch line-Jaccard of solves: king >=0.95: 15/61  teacher: 5/45
+Excluding tasks where either solve is near-verbatim (>=0.8): 52 tasks, king 38 vs teacher 30
+Final: king 62/83 = 74.7% (one flipt task cut after 105 min, counted unsolved); teacher 50/83 = 60.2%.

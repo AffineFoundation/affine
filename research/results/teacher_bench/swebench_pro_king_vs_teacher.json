@@ -1,0 +1,288 @@
+{
+ "subset": {
+  "seed": 20260907,
+  "n": 100
+ },
+ "models": {
+  "king": {
+   "resolved": 62,
+   "n": 82,
+   "rate": 0.7560975609756098,
+   "wilson95": [
+    0.6530708869115632,
+    0.8362023791971765
+   ],
+   "median_turns": 97
+  },
+  "teacher": {
+   "resolved": 50,
+   "n": 83,
+   "rate": 0.6024096385542169,
+   "wilson95": [
+    0.4948463779413774,
+    0.7009123367759931
+   ],
+   "median_turns": 57
+  },
+  "king_incl_cut_task": {
+   "resolved": 62,
+   "n": 83,
+   "rate": 0.7469879518072289
+  }
+ },
+ "by_repo": {
+  "gravitational/teleport": {
+   "king": {
+    "resolved": 3,
+    "n": 4
+   },
+   "teacher": {
+    "resolved": 2,
+    "n": 4
+   }
+  },
+  "flipt-io/flipt": {
+   "king": {
+    "resolved": 7,
+    "n": 12
+   },
+   "teacher": {
+    "resolved": 6,
+    "n": 12
+   }
+  },
+  "future-architect/vuls": {
+   "king": {
+    "resolved": 7,
+    "n": 8
+   },
+   "teacher": {
+    "resolved": 7,
+    "n": 8
+   }
+  },
+  "internetarchive/openlibrary": {
+   "king": {
+    "resolved": 4,
+    "n": 8
+   },
+   "teacher": {
+    "resolved": 7,
+    "n": 8
+   }
+  },
+  "navidrome/navidrome": {
+   "king": {
+    "resolved": 6,
+    "n": 8
+   },
+   "teacher": {
+    "resolved": 6,
+    "n": 8
+   }
+  },
+  "nodebb/nodebb": {
+   "king": {
+    "resolved": 4,
+    "n": 6
+   },
+   "teacher": {
+    "resolved": 3,
+    "n": 6
+   }
+  },
+  "qutebrowser/qutebrowser": {
+   "king": {
+    "resolved": 9,
+    "n": 10
+   },
+   "teacher": {
+    "resolved": 8,
+    "n": 11
+   }
+  },
+  "protonmail/webclients": {
+   "king": {
+    "resolved": 2,
+    "n": 2
+   },
+   "teacher": {
+    "resolved": 1,
+    "n": 2
+   }
+  },
+  "tutao/tutanota": {
+   "king": {
+    "resolved": 2,
+    "n": 3
+   },
+   "teacher": {
+    "resolved": 2,
+    "n": 3
+   }
+  },
+  "ansible/ansible": {
+   "king": {
+    "resolved": 12,
+    "n": 13
+   },
+   "teacher": {
+    "resolved": 7,
+    "n": 13
+   }
+  },
+  "element-hq/element-web": {
+   "king": {
+    "resolved": 6,
+    "n": 8
+   },
+   "teacher": {
+    "resolved": 1,
+    "n": 8
+   }
+  }
+ },
+ "by_lang": {
+  "go": {
+   "king": {
+    "resolved": 23,
+    "n": 32
+   },
+   "teacher": {
+    "resolved": 21,
+    "n": 32
+   }
+  },
+  "python": {
+   "king": {
+    "resolved": 25,
+    "n": 31
+   },
+   "teacher": {
+    "resolved": 22,
+    "n": 32
+   }
+  },
+  "js": {
+   "king": {
+    "resolved": 4,
+    "n": 6
+   },
+   "teacher": {
+    "resolved": 3,
+    "n": 6
+   }
+  },
+  "ts": {
+   "king": {
+    "resolved": 10,
+    "n": 13
+   },
+   "teacher": {
+    "resolved": 4,
+    "n": 13
+   }
+  }
+ },
+ "paired": {
+  "n_common": 82,
+  "both": 41,
+  "king_only": 21,
+  "teacher_only": 8,
+  "neither": 12,
+  "sign_test_p": 0.0241195447742939
+ },
+ "protocol": {
+  "date": "2026-09-07",
+  "taskset": "swebench-pro-v1 (Harbor package scale-ai/swe-bench-pro, 731 public tasks)",
+  "subset": "100 tasks, seed 20260907, allocated proportionally by repo (research/results/teacher_bench/swebench_pro_subset100.json)",
+  "harness": "verifiers mini_swe_textbased 2.4.6 (same scaffold as duel corpus D and the advisory swe-rebench bench), docker runtime, 150-turn cap, temperature 0.8, 1 rollout/task",
+  "king": "reign-8 Affine-IX, sha256 0a04e3d1\u2026861a (models.affine.io), vLLM 0.28 on 1x B200, 262k context (first ~10 tasks at 128k)",
+  "teacher": "Qwen/Qwen3.8-27B via api.engy.ai (same endpoint datagen uses; 1M context)",
+  "runner": "datagen-3 (56 cores); containers capped 3 CPU / 8 GB after an uncapped first pass overloaded the box; rollouts that hit the 90-min wall clock were re-run once with a 3 h budget",
+  "excluded_env_broken": {
+   "n": 17,
+   "why": {
+    "gravitational/teleport (6)": "mini-swe harness setup fails inside image (uv script build of pyroscope-io)",
+    "protonmail/webclients (7)": "same harness setup failure",
+    "internetarchive/openlibrary (4)": "docker layer Lchown UID 110779 not mappable on the DinD pod"
+   },
+   "note": "identical failure set for both models; excluded pairwise"
+  },
+  "pending": "1 king task (flipt) exceeded the 90-min budget twice and a 3 h rerun was cut at 105 min for cost; counted as unsolved -> king 62/83",
+  "comparability": "NOT the vendor protocol (Qwen used Claude Code, 256k, T=1.0, full 731 set). Compare king vs teacher within this table only; the teacher's 60% here vs its card 61.7% is a coincidence of scale, not a calibration."
+ },
+ "gold_patch_similarity": {
+  "method": "token-stripped changed-line Jaccard between the model's last `git diff` in transcript and the gold patch (solution/solve.sh); solved tasks only; all gold patches >= 10 changed lines",
+  "king": {
+   "n_solved_with_diff": 61,
+   "bins": [
+    "0-.2",
+    ".2-.4",
+    ".4-.6",
+    ".6-.8",
+    ".8-.95",
+    ".95-1"
+   ],
+   "counts": [
+    23,
+    9,
+    6,
+    1,
+    7,
+    15
+   ],
+   "ge_0.8": 22,
+   "ge_0.95": 15
+  },
+  "teacher": {
+   "n_solved_with_diff": 45,
+   "bins": [
+    "0-.2",
+    ".2-.4",
+    ".4-.6",
+    ".6-.8",
+    ".8-.95",
+    ".95-1"
+   ],
+   "counts": [
+    22,
+    10,
+    4,
+    2,
+    2,
+    5
+   ],
+   "ge_0.8": 7,
+   "ge_0.95": 5
+  },
+  "near_verbatim_ge_0.8_by_repo": {
+   "king": {
+    "teleport": 2,
+    "flipt": 2,
+    "openlibrary": 1,
+    "navidrome": 1,
+    "nodebb": 1,
+    "qutebrowser": 6,
+    "webclients": 1,
+    "tutanota": 1,
+    "ansible": 3,
+    "element": 4
+   },
+   "teacher": {
+    "vuls": 3,
+    "openlibrary": 1,
+    "navidrome": 1,
+    "webclients": 1,
+    "teleport": 1
+   }
+  },
+  "king_only_wins_near_verbatim": 9,
+  "excluding_any_near_verbatim_solve": {
+   "n_tasks": 52,
+   "king_solved": 38,
+   "teacher_solved": 30
+  },
+  "reading": "king reproduces gold patches at >=0.95 line identity on 15/61 solves vs teacher 5/45 \u2014 a memorization signal (SWE-bench Pro public set + gold patches are on HF; the base and any miner SFT could include them). Even on the 52 tasks where neither model is near-verbatim the king leads 38 vs 30."
+ }
+}
