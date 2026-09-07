@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import zlib
 from dataclasses import dataclass
 
@@ -17,6 +18,14 @@ from .chat import (
     split_rollout,
     thought_text,
 )
+
+log = logging.getLogger("evalsrv.vllm_client")
+
+# Request extra-arg read by the teacher-side vLLM plugin
+# (ops/teacher-swarm/echo_cache_plugin/affine_vllm_echo_cache.py): number of
+# trailing prompt tokens that must be recomputed (not served from the
+# prefix cache) so their logprobs exist.
+ECHO_TAIL_XARG = "affine_echo_tail"
 
 
 class ContextLengthError(RuntimeError):
@@ -228,7 +237,8 @@ class VllmModel:
         tok = get_tokenizer(self.cfg.repo, self.cfg.revision)
         enc = tok(full, add_special_tokens=False, return_offsets_mapping=True)
         n_prompt = sum(1 for s, _ in enc["offset_mapping"] if s < span_start)
-        d = await self._post({
+        n_total = len(enc["input_ids"])
+        payload = {
             "model": self.cfg.repo,
             "prompt": full,
             "max_tokens": 1,
@@ -236,11 +246,33 @@ class VllmModel:
             "echo": True,
             "logprobs": 0,
             "add_special_tokens": False,
-        })
+            # Echo prefix caching (ops/teacher-swarm/echo_cache_plugin): let
+            # the engine reuse the cached prefix KV and recompute only the
+            # tail we read. T = span tokens + 1 (token n_prompt's logprob
+            # comes from hidden state n_prompt-1) + slack for tokenizer
+            # drift at the injection boundary. Stock vLLM ignores the xarg
+            # and echoes uncached, exactly as before.
+            "vllm_xargs": {ECHO_TAIL_XARG: n_total - n_prompt + 1 + 8},
+        }
+        d = await self._post(payload)
         lp = d["choices"][0]["logprobs"]["token_logprobs"]
         # Span logprobs: everything after the prompt tokens (last generated
         # token excluded: echo returns prompt tokens + 1 generated).
-        span = [x for x in lp[n_prompt:-1] if x is not None]
+        raw_span = lp[n_prompt:-1]
+        if any(x is None or x > 0 for x in raw_span):
+            # A cached block reached into the span (the plugin marks cached
+            # positions with an impossible positive logprob) or the engine
+            # withheld a position. Score-bearing bytes must be computed:
+            # redo the echo with the cache lookup off (stock behaviour).
+            log.warning("%s echo span touched the prefix cache (%d/%d "
+                        "positions); retrying uncached", self.cfg.name,
+                        sum(1 for x in raw_span if x is None or x > 0),
+                        len(raw_span))
+            payload.pop("vllm_xargs")
+            d = await self._post(payload)
+            lp = d["choices"][0]["logprobs"]["token_logprobs"]
+            raw_span = lp[n_prompt:-1]
+        span = [x for x in raw_span if x is not None]
         n_bytes = max(span_bytes, 1)
         return {
             "sum_lp": sum(span),

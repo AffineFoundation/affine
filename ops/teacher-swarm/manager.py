@@ -36,6 +36,7 @@ PODS_JSON = STATE_DIR / "pods.json"          # manager memory across restarts
 BLACKLIST = STATE_DIR / "blacklist.txt"      # executor ids that burned us
 KNOWN_HOSTS = STATE_DIR / "known_hosts"      # host:port reuse => key churn
 ENV_FILE = HERE / ".swarm_env"               # HF_TOKEN=..., SWARM_KEY=...
+ECHO_PLUGIN_DIR = HERE / "echo_cache_plugin"  # vLLM echo prefix-cache plugin
 
 SSH_OPTS = [
     "-o", "StrictHostKeyChecking=accept-new",
@@ -388,6 +389,17 @@ class Manager:
                        "/root/swarm/bootstrap.sh"):
             log(f"{name}: bootstrap upload failed")
             return False
+        # Echo prefix-cache plugin (a two-file pip package); bootstrap
+        # installs it into the swarm venv before launching replicas.
+        try:
+            ssh_run(host, port, "mkdir -p /root/swarm/echo_cache_plugin")
+        except subprocess.SubprocessError:
+            pass
+        for fname in ("pyproject.toml", "affine_vllm_echo_cache.py"):
+            if not scp_put(host, port, ECHO_PLUGIN_DIR / fname,
+                           f"/root/swarm/echo_cache_plugin/{fname}"):
+                log(f"{name}: echo plugin upload failed ({fname})")
+                return False
         # NB: a pgrep -f pattern would match this ssh command's own cmdline;
         # use a pidfile instead. setsid fully detaches from the ssh session.
         launch = (
