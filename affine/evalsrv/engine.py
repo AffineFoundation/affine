@@ -27,7 +27,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -48,10 +47,17 @@ LOG_DIR = Path(os.environ.get("AFFINE_LOG_DIR", "/root/logs"))
 # trouble, so the pre-download fit check and the post-failure diagnosis agree.
 CHALLENGER_DISK_HEADROOM_GB = 20.0
 
-# Kill a prefetch download whose on-disk bytes have not grown for this long.
+# Kill a prefetch download that reports no progress for this long. Progress
+# is the r2store child's heartbeat (every landed 8 MB chunk + every hashed
+# chunk, see r2store.Progress) or, for HF downloads, on-disk bytes.
 # hf_transfer can hang forever on a dead TCP connection (observed live:
 # 0 B/s with ESTABLISHED sockets and no timeout); a hung in-process thread
 # would block every future prefetch and stall the next load_challenger join.
+# History: measuring on-disk bytes alone mis-fired on every first attempt
+# (2026-09-05/06, "failed after 195s"): a preallocated `.incomplete` counted
+# at full size until its first part landed, so the count dropped and could
+# not recover inside the window. r2store's per-part retry budget (123 s) is
+# kept under this window on purpose.
 PREFETCH_STALL_S = 180.0
 # Completed-but-unconsumed prefetch snapshots kept out of the cache prune.
 # 2 covers "next" plus "next-next" when the validator prefetches ahead of a
@@ -1146,6 +1152,11 @@ class Engine:
         # The inline vLLM download path has no such watchdog, so it stays on
         # the slow-but-safe default; with prefetch retrying, it is rarely hit.
         env = dict(os.environ, HF_HOME=HF_HOME, HF_HUB_ENABLE_HF_TRANSFER="1")
+        # The child's own log (per-file rates, part retries, integrity
+        # errors) used to go to a TemporaryFile that died with the attempt;
+        # every stall post-mortem was blind. Append to a persistent log.
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        child_log = LOG_DIR / "prefetch.log"
         for attempt in range(3):
             if attempt:
                 # Partial blobs resume, so a retry only re-pays the tail.
@@ -1154,7 +1165,11 @@ class Engine:
                     return
                 log.info("prefetch %s: retry %d", repo, attempt)
             try:
-                stderr_f = tempfile.TemporaryFile()
+                stderr_f = open(child_log, "ab")
+                stderr_f.write(
+                    f"\n=== {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} "
+                    f"prefetch {repo}@{revision[:12]} attempt {attempt}\n".encode())
+                stderr_f.flush()
                 proc = subprocess.Popen(
                     [sys.executable, "-c", code], env=env,
                     stdout=subprocess.DEVNULL, stderr=stderr_f,
@@ -1163,40 +1178,66 @@ class Engine:
                 log.warning("prefetch %s: could not spawn downloader", repo,
                             exc_info=True)
                 return
-            last_bytes = -1
+            last_key: tuple[str, int] | None = None
             last_progress = time.time()
             stalled = False
             while proc.poll() is None:
                 if cancel.wait(15.0):
                     log.info("prefetch %s cancelled", repo)
                     self._kill_downloader(proc)
+                    stderr_f.close()
                     return
-                cur = self._cached_repo_bytes(repo)
-                if cur > last_bytes:
-                    last_bytes = cur
+                key = self._prefetch_progress(repo, revision, proc.pid)
+                # Progress = the same source grew, or the source changed
+                # (heartbeat appearing after the disk fallback). Heartbeat and
+                # disk bytes are different scales; never compare across them.
+                if last_key is None or key[0] != last_key[0] or key[1] > last_key[1]:
+                    last_key = key
                     last_progress = time.time()
                 elif time.time() - last_progress > PREFETCH_STALL_S:
                     log.warning(
-                        "prefetch %s stalled at %.1fGB (no progress for "
+                        "prefetch %s stalled at %.1fGB (%s; no progress for "
                         "%.0fs); killing downloader", repo,
-                        max(cur, 0) / 1e9, PREFETCH_STALL_S)
+                        max(key[1], 0) / 1e9, key[0], PREFETCH_STALL_S)
                     self._kill_downloader(proc)
                     stalled = True
                     break
+            stderr_f.close()
             if not stalled and proc.returncode == 0:
                 log.info("prefetch %s@%s done in %.0fs",
                          repo, revision[:12], time.time() - t0)
                 self._note_prefetched(repo, revision)
                 return
-            stderr_f.seek(0)
-            tail = stderr_f.read()[-2000:].decode(errors="replace").strip()
+            tail = self._log_tail(child_log)
             log.warning("prefetch %s@%s attempt %d failed after %.0fs "
                         "(exit %s)%s", repo, revision[:12], attempt,
                         time.time() - t0,
                         "stall" if stalled else proc.returncode,
-                        f": ...{tail[-300:]}" if tail else "")
+                        f": ...{tail}" if tail else "")
         log.warning("prefetch %s@%s gave up after 3 attempts; the duel "
                     "will download inline", repo, revision[:12])
+
+    def _prefetch_progress(self, repo: str, revision: str,
+                           pid: int) -> tuple[str, int]:
+        """(source, value) the stall watchdog compares between polls. Prefers
+        the r2store child's heartbeat (work bytes: landed chunks + hashed
+        chunks, pid-stamped so a dead child's file is ignored); falls back to
+        on-disk bytes for HF downloads or a child that has not written yet."""
+        if r2store.is_r2(repo):
+            hb = r2store.read_progress(r2store.snapshot_dir(repo, revision, HF_HOME))
+            if hb and hb.get("pid") == pid:
+                return "heartbeat", int(hb.get("work_bytes", 0))
+        return "disk", self._cached_repo_bytes(repo)
+
+    @staticmethod
+    def _log_tail(path: Path, n: int = 300) -> str:
+        try:
+            with open(path, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                f.seek(max(f.tell() - 2000, 0))
+                return f.read().decode(errors="replace").strip()[-n:]
+        except OSError:
+            return ""
 
     def _alive(self, slot: Slot, http_timeout: float = 3.0) -> bool:
         # Remote teacher (base_url): no local process — probe the endpoint.
