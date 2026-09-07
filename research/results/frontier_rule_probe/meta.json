@@ -1,0 +1,162 @@
+{
+ "chal-00286": {
+  "duel_params": {
+   "n_turns": 1300,
+   "k_sigma": 2.0,
+   "min_margin": 0.002,
+   "min_thought_chars": 80,
+   "causality_gate": true,
+   "causality_gamma": 0.3,
+   "tau": 0.03,
+   "n_teacher_samples": 3,
+   "n_miner_samples": 1,
+   "score_mode": "min_rg",
+   "band_c": 2.0,
+   "band_floor": 0.002,
+   "forfeit_turn_score": -0.1,
+   "allowed_action_kinds": [
+    "bash",
+    "tool_call",
+    "boxed"
+   ],
+   "max_thought_tokens": 1024,
+   "max_action_tokens": 768,
+   "max_tokens_by_kind": {}
+  },
+  "margin": -0.039793134486633436,
+  "se": 0.005914481114753531,
+  "z": -6.72808547606491,
+  "challenger_wins": false,
+  "n_paired_turns": 1262,
+  "manifest_sha256": "27f48b3feba0b911e835d54cb247a749fc179f40bf7a4055e7e41284f8f48628",
+  "corpus_epoch": 16,
+  "king_repo": "r2://affine-models/models/sha256/0a04e3d1c57d56a25cb066a863c77bace094e11395eac968bc69fa405dbc861a/",
+  "challenger_repo": "r2://affine-private-models/models/registrations/427e91eedc23227a9cd2fce01511769bb8cab3c48b1d9cd5f7d4e9e763bb3d67/",
+  "eligible": 1029,
+  "picked": {
+   "bash": 266,
+   "tool_call": 99,
+   "boxed": 35
+  }
+ },
+ "chal-00287": {
+  "duel_params": {
+   "n_turns": 1300,
+   "k_sigma": 2.0,
+   "min_margin": 0.002,
+   "min_thought_chars": 80,
+   "causality_gate": true,
+   "causality_gamma": 0.3,
+   "tau": 0.03,
+   "n_teacher_samples": 3,
+   "n_miner_samples": 1,
+   "score_mode": "min_rg",
+   "band_c": 2.0,
+   "band_floor": 0.002,
+   "forfeit_turn_score": -0.1,
+   "allowed_action_kinds": [
+    "bash",
+    "tool_call",
+    "boxed"
+   ],
+   "max_thought_tokens": 1024,
+   "max_action_tokens": 768,
+   "max_tokens_by_kind": {}
+  },
+  "margin": -0.04687756854256334,
+  "se": 0.0064207913654078476,
+  "z": -7.30090200331337,
+  "challenger_wins": false,
+  "n_paired_turns": 1264,
+  "manifest_sha256": "2ceebfa94009a6945a32e70ef58eb1cb8da24bf0ca3fe5efd66e5e48e8417570",
+  "corpus_epoch": 17,
+  "king_repo": "r2://affine-models/models/sha256/0a04e3d1c57d56a25cb066a863c77bace094e11395eac968bc69fa405dbc861a/",
+  "challenger_repo": "r2://affine-private-models/models/registrations/145ea12374de1e7a6cafdae0d64ce5756a0223188b3a3eb9f08ef4b28062d66a/",
+  "eligible": 1043,
+  "picked": {
+   "bash": 257,
+   "tool_call": 102,
+   "boxed": 41
+  }
+ },
+ "chal-00288": {
+  "duel_params": {
+   "n_turns": 1300,
+   "k_sigma": 2.0,
+   "min_margin": 0.002,
+   "min_thought_chars": 80,
+   "causality_gate": true,
+   "causality_gamma": 0.3,
+   "tau": 0.03,
+   "n_teacher_samples": 3,
+   "n_miner_samples": 1,
+   "score_mode": "min_rg",
+   "band_c": 2.0,
+   "band_floor": 0.002,
+   "forfeit_turn_score": -0.1,
+   "allowed_action_kinds": [
+    "bash",
+    "tool_call",
+    "boxed"
+   ],
+   "max_thought_tokens": 1024,
+   "max_action_tokens": 768,
+   "max_tokens_by_kind": {}
+  },
+  "margin": -0.05184462421223613,
+  "se": 0.006582297642475652,
+  "z": -7.876371903586082,
+  "challenger_wins": false,
+  "n_paired_turns": 1251,
+  "manifest_sha256": "2ceebfa94009a6945a32e70ef58eb1cb8da24bf0ca3fe5efd66e5e48e8417570",
+  "corpus_epoch": 17,
+  "king_repo": "r2://affine-models/models/sha256/0a04e3d1c57d56a25cb066a863c77bace094e11395eac968bc69fa405dbc861a/",
+  "challenger_repo": "r2://affine-private-models/models/registrations/ec2789b6a2941e3d116245af60c8436daf6ae333d0eabed151ed1350205f81e1/",
+  "eligible": 1043,
+  "picked": {
+   "tool_call": 96,
+   "bash": 262,
+   "boxed": 42
+  }
+ },
+ "chal-00289": {
+  "duel_params": {
+   "n_turns": 1300,
+   "k_sigma": 2.0,
+   "min_margin": 0.002,
+   "min_thought_chars": 80,
+   "causality_gate": true,
+   "causality_gamma": 0.3,
+   "tau": 0.03,
+   "n_teacher_samples": 3,
+   "n_miner_samples": 1,
+   "score_mode": "min_rg",
+   "band_c": 2.0,
+   "band_floor": 0.002,
+   "forfeit_turn_score": -0.1,
+   "allowed_action_kinds": [
+    "bash",
+    "tool_call",
+    "boxed"
+   ],
+   "max_thought_tokens": 1024,
+   "max_action_tokens": 768,
+   "max_tokens_by_kind": {}
+  },
+  "margin": -0.010748808721020818,
+  "se": 0.0016443247619031098,
+  "z": -6.5369134918216245,
+  "challenger_wins": false,
+  "n_paired_turns": 1264,
+  "manifest_sha256": "2ceebfa94009a6945a32e70ef58eb1cb8da24bf0ca3fe5efd66e5e48e8417570",
+  "corpus_epoch": 17,
+  "king_repo": "r2://affine-models/models/sha256/0a04e3d1c57d56a25cb066a863c77bace094e11395eac968bc69fa405dbc861a/",
+  "challenger_repo": "r2://affine-private-models/models/registrations/1dc35a446c7f58e00d0417290ce21707575ddd01ebd8d11fd40b2f40670eab04/",
+  "eligible": 1036,
+  "picked": {
+   "bash": 248,
+   "tool_call": 106,
+   "boxed": 46
+  }
+ }
+}

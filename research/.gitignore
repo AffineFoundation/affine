@@ -41,3 +41,6 @@ data/disc_pairs/
 # ~270M, 2026-08-22). Re-pullable from the research pods while they live;
 # scripts that produced them stay tracked.
 data/harvest/
+results/frontier_rule_probe/turns/
+results/frontier_rule_probe/turn_scores.jsonl
+results/frontier_rule_probe/logs/
