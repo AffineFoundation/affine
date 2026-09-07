@@ -128,7 +128,13 @@ replicas = 8
 # box (research/scripts/frontier_rule_probe.py, 90.5k teacher echoes) with
 # advertise = false so the router never sent live duel traffic to it.
 # Released after the run; target=1 + advertise=false to repeat.
-target = 0
+# 2026-09-07 (operator directive "lets do that"): target=1 as a second
+# LIVE teacher box. Schema-3 prefixes doubled scoring (26-30 -> 52 min/duel)
+# and the single box runs 97-100% GPU with a queue while the eval box's
+# miner engines idle at 1-2 in-flight. Each echo re-prefills the full
+# prefix (vLLM disables prefix caching under prompt logprobs), so teacher
+# capacity is the bottleneck; expect near-linear scaling.
+target = 1
 max_price = 56.0
 est_tps = 4.0
 gpu_util = 0.75
