@@ -341,7 +341,16 @@ Full writeups: `research/docs/REDTEAM.md`.
   logprob +1.0, client falls back to uncached on any span overlap; parity
   on 584 stored echoes inside batch nondeterminism, 3.5–4.4× per replica);
   `[duel].concurrency` 64→192; echo tokenization in a thread pool + orjson;
-  router passes bodies through. Scoring 52 → 26.6 min/duel.
+  router passes bodies through. Scoring 52 → 26.6 min/duel. Prefetch
+  stall watchdog now reads the r2store child's heartbeat (every earlier
+  "stall" was a metric artefact). **Challenger warm-swap** (in-place
+  `reload_weights` into the live engine, ~139 s vs ~8.5 min cold) is built
+  but **disabled** (`AFFINE_CHALLENGER_WARM_SWAP`, default off): vLLM
+  0.28.0's layerwise reload dropped a per-rank subset of fused MoE expert
+  tensors (~20/40 layers kept the previous challenger's experts) and both
+  swapped engines died 8 min into the duel; the duel requeued with no
+  verdict. Do not enable without a tensor-by-tensor check against a fresh
+  load on a test box.
 - **architecture pin (2026-08-28, explicit operator directive):** submissions
  must be genesis-family fine-tunes — `config.json` must match
  `[submission.pinned_arch]` (Qwen3.6-35B-A3B shape: qwen3_5_moe, 40 layers,
