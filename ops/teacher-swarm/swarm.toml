@@ -43,7 +43,12 @@ fallback_types = ["eval-b200-8x", "pro6000-8x", "h200-8x", "h100-8x", "b300-1x",
 # Chunk 8192, not 12288: the 248,320-token vocab makes the fp32 echo
 # log_softmax spike ~11.4 GiB at 12288 (engine-killer, probed 2026-08-27);
 # 8192 -> 7.6 GiB, stress-probed clean under concurrent 64k echoes.
-max_model_len = 65536
+# 65536 -> 131072 (2026-09-07): the 120k-char corpus prefix cap is not a
+# token cap; a schema-3 turn tokenized to 63,745 and +1792 gen overflowed
+# 65,536 by one token. Fault.CONTEXT_LIMIT is a pod-wide infra requeue, so
+# chal-00290 looped 25x (~26 min each, 14.5 h, zero verdicts). Must match
+# affine.toml [miner_serving].max_model_len. KV 1.14M tok/replica -> 8.7x.
+max_model_len = 131072
 gpu_memory_utilization = 0.70
 max_num_batched_tokens = 8192
 

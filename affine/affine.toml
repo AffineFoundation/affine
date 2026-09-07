@@ -223,7 +223,13 @@ tp = 2
 # max_thought+max_action=1792 more → vLLM 400 "maximum context length" mid-duel
 # (observed 2026-08-09/10, burned as eval_infra_exhausted). 65536 clears the
 # knife-edge; both GLM-Air and Qwen3.6-35B support ≥128k. Ops knob only.
-max_model_len = 65536
+# 65536 -> 131072 (2026-09-07): the corpus caps prefixes at 120k CHARS, not
+# tokens; a schema-3 turn tokenized to 63,745 and +1792 gen = 65,537 blew
+# the limit by one token on king2. Fault.CONTEXT_LIMIT requeues the same
+# entry (pod-wide infra, no penalty), so chal-00290 looped 25x at ~26 min
+# each — 14.5 h with zero verdicts. Teacher swarm raised in lockstep
+# (ops/teacher-swarm/swarm.toml). 2xH200 TP2 has ample KV for 128k.
+max_model_len = 131072
 # 0.80 (not the usual 0.85–0.90): teacher-forcing echo+logprobs materializes
 # an fp32 log_softmax over (step_tokens x vocab) OUTSIDE vLLM's budgeted pool
 # — ~5 GB transient at 8192x151k — so the duel pod needs real headroom.
