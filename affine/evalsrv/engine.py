@@ -71,27 +71,43 @@ PREFETCH_KEEP = 2
 # ~1, profiling + CUDA-graph capture ~2) — ~25% of a 35 min verdict. With
 # the pinned architecture every challenger has the same tensor layout, so
 # the challenger engines stay alive between duels and the next checkpoint's
-# weights are loaded IN PLACE (vLLM `reload_weights(weights_path=...)` via
-# the dev-mode /collective_rpc endpoint, then /reset_prefix_cache). Only the
-# 72 GB weight read is paid. Guarded by _swap_compatible: anything that
-# could make a swapped engine score the miner differently from a fresh one
-# (config.json beyond cosmetic keys — dtype, rope, norms —, tokenizer files,
-# generation_config sampling defaults, the tensor-name set) forces the old
-# full relaunch. Score-invariant by construction: same weights, same
-# engine config, KV cache reset.
+# weights are loaded IN PLACE through the evalsrv.vllm_ext.WeightTools
+# worker extension (raw `model.load_weights` from the new snapshot over the
+# dev-mode /collective_rpc endpoint, then /reset_prefix_cache). Only the
+# 72 GB weight read is paid (~10 s from page cache, ~2 min cold). Guarded by
+# _swap_compatible: anything that could make a swapped engine score the
+# miner differently from a fresh one (config.json beyond cosmetic keys —
+# dtype, rope, norms —, tokenizer files, generation_config sampling
+# defaults, the tensor-name set) forces the old full relaunch.
+# Score-invariant by construction: same weights, same engine config, KV
+# cache reset.
 #
-# DISABLED BY DEFAULT (2026-09-07 19:05 UTC, same day): the first live swap
-# (chal-00303) logged "Following weights were not loaded from checkpoint"
-# for a per-rank subset of fused MoE expert tensors (routed_experts.
-# w13_weight / w2_weight in ~20 of 40 layers). vLLM 0.28.0's layerwise
-# reload (model_loader/reload/meta.py get_numel_loaded) documents the
-# mechanism: the per-layer loaded-element counter can over-count, finalize
-# the layer early and "silently drop the trailing parameter(s)" — those
-# experts kept the PREVIOUS challenger's weights. The '1, 2, 3,' probe did
-# not catch it. Until the reload path is verified tensor-by-tensor against
-# a fresh load on a test box, challengers relaunch cold. Set
-# AFFINE_CHALLENGER_WARM_SWAP=1 only for that experiment.
-WARM_SWAP = os.environ.get("AFFINE_CHALLENGER_WARM_SWAP", "0") == "1"
+# Verification (2026-09-07, commit ffd870b + this one): on a 1x B200
+# (TP1) and a 2x H200 (TP2, the eval pod's layout), swapping king ->
+# challenger gave weights BIT-IDENTICAL to a fresh load of the challenger on
+# every rank (948/948 tensors, sha256 of raw bytes) and identical logprobs
+# (delta 0.0, prompts up to 39k tokens), for both the raw path used here and
+# vLLM's own layerwise `reload_weights`; each swapped engine then served 10
+# min of duel-like load (~1000 completions) with zero failures. vLLM's
+# "Following weights were not loaded from checkpoint" warning (fused MoE
+# routed_experts.w13/w2 names) appears on these correct swaps too: it is a
+# bookkeeping artefact of the reload wrapper's return value, not data loss.
+# (The same-day emergency disable was triggered by that warning plus two
+# engine deaths that turned out to be the operator's own redeploy pkill.)
+# Runtime invariant checked after every swap: the raw loader must report
+# exactly the pinned architecture's expected counts (SWAP_EXPECTED_LOADED
+# reported names, and the SWAP_EXPECTED_UNREPORTED fused-expert names that
+# FusedMoE never reports) — any other shape of result -> relaunch.
+WARM_SWAP = os.environ.get("AFFINE_CHALLENGER_WARM_SWAP", "1") != "0"
+# Pinned-arch constants observed on the verified swaps (Qwen3.6-35B-A3B
+# family with vision tower, 40 layers): 906 names reported loaded, 80 fused
+# expert params (w13_weight + w2_weight x 40 layers) legitimately
+# unreported. The admitted text-only variant (Qwen3_5MoeForCausalLM) has a
+# different count, so it always takes the cold relaunch until verified.
+SWAP_EXPECTED_LOADED = 906
+SWAP_UNREPORTED_SUFFIXES = (".mlp.experts.routed_experts.w13_weight",
+                            ".mlp.experts.routed_experts.w2_weight")
+WORKER_EXTENSION = "evalsrv.vllm_ext.WeightTools"
 # Fixed served-model alias for the challenger slots so requests keep
 # resolving across swaps (the repo name is added too, for logs).
 CHALLENGER_ALIAS = "challenger"
@@ -439,6 +455,7 @@ class Engine:
             # enables, VLLM_SERVER_DEV_MODE in _launch, is reachable only from
             # inside the pod: slot ports are not among the pod's mapped ports).
             served_names.append(CHALLENGER_ALIAS)
+            cmd += ["--worker-extension-cls", WORKER_EXTENSION]
         if served_names:
             cmd += ["--served-model-name", *served_names]
         return cmd
@@ -639,11 +656,23 @@ class Engine:
         slot.ready = False
         try:
             r = httpx.post(f"{base}/collective_rpc",
-                           json={"method": "reload_weights",
+                           json={"method": "affine_direct_load",
                                  "kwargs": {"weights_path": path},
                                  "timeout": 1500},
                            timeout=1800)
             r.raise_for_status()
+            # One report per TP rank; every rank must show the pinned
+            # architecture's exact shape of result.
+            for rank, raw in enumerate(r.json().get("results") or []):
+                rep = json.loads(raw) if isinstance(raw, str) else raw
+                missing = rep.get("missing") or []
+                if (rep.get("loaded") != SWAP_EXPECTED_LOADED
+                        or rep.get("n_missing") != len(SWAP_UNREPORTED_SUFFIXES) * 40
+                        or any(not m.endswith(SWAP_UNREPORTED_SUFFIXES) for m in missing)):
+                    raise RuntimeError(
+                        f"rank{rank} loader report off-shape: loaded="
+                        f"{rep.get('loaded')} n_missing={rep.get('n_missing')} "
+                        f"first={missing[:2]}")
             # KV blocks were computed with the old weights.
             httpx.post(f"{base}/reset_prefix_cache", timeout=120).raise_for_status()
             # The engine must still answer with the new weights in place.
