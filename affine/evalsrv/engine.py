@@ -155,6 +155,26 @@ def _cuda_home() -> str:
     return os.environ.get("CUDA_HOME", "/usr/local/cuda")
 
 
+PUBLIC_MODELS_BUCKET_PREFIX = "r2://affine-models/"
+
+
+def _is_public_king_cache(repo_dir: Path) -> bool:
+    """True when a cache dir holds a verified snapshot served from the public
+    bucket (only crowned kings live there). Kept out of the challenger prune:
+    after an evalsrv restart king_slot.served is empty, so a /prefetch prune
+    could evict the king's 72 GB and force a re-download before the next
+    duel (2026-09-07 22:5x: the king snapshot vanished while the server sat
+    without R2 credentials). A few crowned kings is bounded disk."""
+    try:
+        for marker in repo_dir.glob(f"snapshots/*/{r2store.COMPLETE_MARKER}"):
+            repo = json.loads(marker.read_text()).get("repo") or ""
+            if repo.startswith(PUBLIC_MODELS_BUCKET_PREFIX):
+                return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -1572,7 +1592,8 @@ class Engine:
             doomed: list[Path] = list(hub.glob("*.pruning"))
             for d in hub.iterdir():
                 if (d.is_dir() and d.name.startswith("models--")
-                        and d.name not in keep_dirs):
+                        and d.name not in keep_dirs
+                        and not _is_public_king_cache(d)):
                     log.info("pruning cached model %s", d.name)
                     target = hub / f"{d.name}.pruning"
                     try:
