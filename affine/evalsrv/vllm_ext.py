@@ -8,9 +8,11 @@ and driven over the dev-mode RPC endpoint
 
 Purpose (2026-09-07): the challenger warm swap (`reload_weights` into a
 live engine) logged "weights were not loaded" for a per-rank subset of
-fused MoE expert tensors. These methods let a test harness compare EVERY
-tensor of a swapped engine against a freshly loaded one, and try the raw
-`model.load_weights` path as an alternative. Not used on the live duel pod.
+fused MoE expert tensors. `affine_param_digest` lets a test harness compare EVERY
+tensor of a swapped engine against a freshly loaded one (done 2026-09-07 on
+TP1 and TP2: bit-identical). `affine_direct_load` is the production swap
+path used by engine._swap_weights; its loaded/missing report is checked
+against pinned-architecture constants there.
 """
 
 from __future__ import annotations
