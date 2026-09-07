@@ -469,7 +469,13 @@ max_action_tokens = 768
 # load. 36 -> 64 on 2026-08-29: two 8x B200 teacher boxes (16 TP1
 # replicas) were sitting at ~2 in-flight each under 36; 64 is one
 # request per GPU plus headroom for prefix-sticky turns.
-concurrency = 64
+# 64 -> 192 on 2026-09-07 after echo prefix caching went live: echoes fell
+# from ~10 s to ~2 s, so the 64-slot teacher semaphore became the wall —
+# ~100 slot-seconds/turn (3 ref samples x 20 s + 21 echoes x 2 s) / 64 =
+# 0.64 turns/s = the measured 35 min/duel, with 16 teacher replicas at <1
+# in flight and miner engines at 1.5-2. Miner KV holds 7.3M tokens/engine
+# (55x 128k), teacher 1.1M/replica, so 192 turns/side fits both.
+concurrency = 192
 # Whole-duel wall clock budget on the eval server before the validator
 # classifies the eval as a transient failure and requeues.
 timeout_s = 7200
