@@ -80,11 +80,27 @@ snapshot_download("$MODEL", token=os.environ.get("HF_TOKEN") or None,
 print("download ok", flush=True)
 PY
 
+# 2b. Echo prefix-cache plugin (2026-09-07). Uploaded by the manager next
+# to this script; installs as a vllm.general_plugins entry point so every
+# engine process patches itself at start. Re-installed on each bootstrap
+# run so a changed plugin file takes effect on the next replica launch.
+if [ -f /root/swarm/echo_cache_plugin/pyproject.toml ]; then
+  log "installing affine-vllm-echo-cache plugin"
+  VIRTUAL_ENV=/root/swarm-venv uv pip install --no-deps --reinstall \
+    /root/swarm/echo_cache_plugin >> /root/logs/pip_vllm.log 2>&1 \
+    || { tail -5 /root/logs/pip_vllm.log; echo pip-echo-plugin > /root/swarm/bootstrap.failed; exit 1; }
+fi
+
 rm -f /root/swarm/bootstrap.failed
 
 launch_replica() {  # port gpus tp
   local port=$1 gpus=$2 tp=$3
   log "launch replica port=$port gpus=$gpus tp=$tp"
+  extra=()
+  if [ -n "${EXTRA_VLLM_ARGS:-}" ]; then
+    # Intentional split: EXTRA_VLLM_ARGS is a shell-word list of flags.
+    read -r -a extra <<< "$EXTRA_VLLM_ARGS"
+  fi
   CUDA_VISIBLE_DEVICES=$gpus nohup /root/swarm-venv/bin/vllm serve "$MODEL" \
     --port "$port" \
     --tensor-parallel-size "$tp" \
@@ -96,6 +112,7 @@ launch_replica() {  # port gpus tp
     --compilation-config.pass_config.fuse_allreduce_rms false \
     --moe-backend triton \
     --api-key "$SWARM_KEY" \
+    "${extra[@]}" \
     >> "/root/logs/vllm_$port.log" 2>&1 &
   echo $! > "/root/swarm/replica_$port.pid"
 }
