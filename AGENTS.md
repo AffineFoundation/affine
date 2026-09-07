@@ -330,7 +330,18 @@ Full writeups: `research/docs/REDTEAM.md`.
   bundled into the wvk-10 fork — GLM served eras wvk ≤ 9. Requires
   vLLM ≥ 0.28 (GDN kernels ICE cutlass JIT on 0.22.x); echo chunk 8192 /
   util ≤ 0.75 for the 248k-vocab fp32 logprob spike. 2026-08-10 GLM-5.2
-  remote-teacher push torn down, never cut over)
+  remote-teacher push torn down, never cut over). **2026-09-07 serving
+  changes, all ops-only (no wvk):** `max_model_len` 65536→131072 on teacher
+  swarm + miner slots (a 63,745-token schema-3 prefix + 1792 gen overflowed
+  by one token; `Fault.CONTEXT_LIMIT` requeued the same entry 25× for 14.5 h);
+  second live teacher box (`eval-b200-8x` target=1, 16 replicas); **echo
+  prefix caching** — vLLM plugin `ops/teacher-swarm/echo_cache_plugin`
+  lets `echo=True` requests reuse the cached prefix KV and recompute only
+  the scored tail (`vllm_xargs.affine_echo_tail`; cached rows marked with
+  logprob +1.0, client falls back to uncached on any span overlap; parity
+  on 584 stored echoes inside batch nondeterminism, 3.5–4.4× per replica);
+  `[duel].concurrency` 64→192; echo tokenization in a thread pool + orjson;
+  router passes bodies through. Scoring 52 → 26.6 min/duel.
 - **architecture pin (2026-08-28, explicit operator directive):** submissions
  must be genesis-family fine-tunes — `config.json` must match
  `[submission.pinned_arch]` (Qwen3.6-35B-A3B shape: qwen3_5_moe, 40 layers,
