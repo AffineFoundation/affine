@@ -1139,8 +1139,12 @@ class Engine:
         t0 = time.time()
         if r2store.is_r2(repo):
             # Same child-process isolation; r2store verifies as it downloads
-            # and only writes the completion marker on a full match.
-            code = ("from evalsrv import r2store; "
+            # and only writes the completion marker on a full match. Logging
+            # configured explicitly: without it only WARNING+ reach stderr and
+            # the per-file rates never land in prefetch.log.
+            code = ("import logging; logging.basicConfig(level='INFO', "
+                    "format='%(asctime)s %(name)s %(levelname)s %(message)s'); "
+                    "from evalsrv import r2store; "
                     f"r2store.fetch_snapshot({repo!r}, {revision!r})")
         else:
             code = ("from huggingface_hub import snapshot_download; "
