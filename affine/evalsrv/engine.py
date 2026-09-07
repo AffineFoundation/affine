@@ -79,7 +79,19 @@ PREFETCH_KEEP = 2
 # generation_config sampling defaults, the tensor-name set) forces the old
 # full relaunch. Score-invariant by construction: same weights, same
 # engine config, KV cache reset.
-WARM_SWAP = os.environ.get("AFFINE_CHALLENGER_WARM_SWAP", "1") != "0"
+#
+# DISABLED BY DEFAULT (2026-09-07 19:05 UTC, same day): the first live swap
+# (chal-00303) logged "Following weights were not loaded from checkpoint"
+# for a per-rank subset of fused MoE expert tensors (routed_experts.
+# w13_weight / w2_weight in ~20 of 40 layers). vLLM 0.28.0's layerwise
+# reload (model_loader/reload/meta.py get_numel_loaded) documents the
+# mechanism: the per-layer loaded-element counter can over-count, finalize
+# the layer early and "silently drop the trailing parameter(s)" — those
+# experts kept the PREVIOUS challenger's weights. The '1, 2, 3,' probe did
+# not catch it. Until the reload path is verified tensor-by-tensor against
+# a fresh load on a test box, challengers relaunch cold. Set
+# AFFINE_CHALLENGER_WARM_SWAP=1 only for that experiment.
+WARM_SWAP = os.environ.get("AFFINE_CHALLENGER_WARM_SWAP", "0") == "1"
 # Fixed served-model alias for the challenger slots so requests keep
 # resolving across swaps (the repo name is added too, for logs).
 CHALLENGER_ALIAS = "challenger"
