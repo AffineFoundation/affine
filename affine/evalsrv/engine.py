@@ -20,7 +20,6 @@ disk stays bounded to teacher + king + at most one challenger.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -35,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
+from transformers import AutoTokenizer
 
 from . import r2store
 from .vllm_client import Served
@@ -111,14 +111,41 @@ WORKER_EXTENSION = "evalsrv.vllm_ext.WeightTools"
 # Fixed served-model alias for the challenger slots so requests keep
 # resolving across swaps (the repo name is added too, for logs).
 CHALLENGER_ALIAS = "challenger"
-# Files that must be byte-identical between the loaded checkpoint and the
-# incoming one for a swap (presence must match too).
-SWAP_IDENTICAL_FILES = (
-    "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json",
-    "vocab.json", "merges.txt", "added_tokens.json", "generation_config.json",
-    "preprocessor_config.json", "video_preprocessor_config.json",
-)
 SWAP_CONFIG_IGNORE_KEYS = ("_name_or_path", "transformers_version")
+# generation_config.json keys vLLM turns into request defaults (see
+# ModelConfig.get_diff_sampling_param) plus the stop-token set. Anything
+# else in that file (transformers_version, do_sample, duplicated eos ids)
+# does not change how the engine samples. Overnight 2026-09-08 byte
+# comparison forced 10/32 cold relaunches on files that differed only by a
+# duplicated eos id and a version string.
+SWAP_GEN_KEYS = ("temperature", "top_p", "top_k", "min_p", "repetition_penalty",
+                 "max_new_tokens", "max_length")
+# tokenizer_config.json special-token strings the engine reads at launch
+# (chat_template is client-side rendering here; model_max_length is
+# overridden by max_model_len). Behavioural flags (add_bos_token,
+# clean_up_tokenization_spaces, ...) are judged by the probes below, not by
+# spelling: "false" vs absent is the same tokenizer.
+SWAP_TOKCFG_KEYS = ("eos_token", "bos_token", "pad_token", "unk_token")
+# Tokenizer equivalence is decided empirically: both tokenizers must encode
+# this probe (plus every added-token string of either side, plus the chat
+# markers the duel renders) to identical ids, and decode identically.
+# tokenizer.json files from different transformers versions differ in
+# serialisation (merges as pairs vs strings, decoder flags, regex text)
+# while tokenizing identically; a real difference — extra added tokens,
+# another pre-tokenizer — shows up on the probe and forces a relaunch.
+SWAP_TOKENIZER_PROBE = (
+    "def f(x):\n    return {'a': x ** 2, \"b\": [1, 2, 3]}  # comment\n"
+    "SELECT id, name FROM users WHERE created_at >= '2026-01-01' AND id IN (1,22,333,4444);\n"
+    "$ ls -la /usr/local/bin | grep -E '^-rwx' | awk '{print $9}'\n"
+    "if err != nil {\n\treturn fmt.Errorf(\"wrap: %w\", err)\n}\n"
+    "let x: Vec<u8> = vec![0u8; 1024]; println!(\"{:?}\", &x[..4]);\n"
+    "Ünïcödé — 日本語のテキスト, русский текст, العربية, 🤖🚀 ✓ ∑∫√ 1234567890 3.14159 1e-9\n"
+    "    \t  mixed   whitespace\n\n\n\r\n tabs\t\ttabs\n"
+    "<|im_start|>system\nYou are helpful.<|im_end|>\n<|im_start|>user\nhi<|im_end|>\n"
+    "<|im_start|>assistant\n<think>\nthinking...\n</think>\n\n```bash\ncd /repo && make test\n```\n"
+    "<tool_call>\n{\"name\": \"search\", \"arguments\": {\"q\": \"x\"}}\n</tool_call>\n\\boxed{42}\n"
+    "camelCaseIdentifier snake_case_identifier CONSTANT_VALUE __dunder__ ->>= <<== != === ...\n"
+)
 
 # Best-effort second copy (king2 / challenger2). Primary ready is enough to
 # start scoring; waiting the full vLLM launch (up to 20 min) for a slow or
@@ -175,12 +202,67 @@ def _is_public_king_cache(repo_dir: Path) -> bool:
     return False
 
 
-def _sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+def _load_json(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text())
+    except FileNotFoundError:
+        return None
+
+
+def _generation_config_mismatch(old: Path, new: Path) -> str | None:
+    """Sampling defaults and stop tokens the engine took from the loaded
+    checkpoint's generation_config.json must be what the incoming one
+    specifies. Semantic comparison (see SWAP_GEN_KEYS)."""
+    ga = _load_json(old / "generation_config.json") or {}
+    gb = _load_json(new / "generation_config.json") or {}
+    for k in SWAP_GEN_KEYS:
+        if ga.get(k) != gb.get(k):
+            return f"generation_config {k}: {ga.get(k)!r} vs {gb.get(k)!r}"
+
+    def ids(g, k):
+        v = g.get(k)
+        return frozenset(v) if isinstance(v, list) else frozenset([v] if v is not None else [])
+
+    for k in ("eos_token_id", "pad_token_id", "bos_token_id"):
+        if ids(ga, k) != ids(gb, k):
+            return f"generation_config {k}: {ga.get(k)!r} vs {gb.get(k)!r}"
+    return None
+
+
+def _tokenizer_mismatch(old: Path, new: Path) -> str | None:
+    """The engine keeps the tokenizer it was launched with; the incoming
+    checkpoint's tokenizer must behave identically. Runtime-relevant
+    tokenizer_config keys must match, and both tokenizers must encode a
+    rich probe (plus every added token of either side) to identical ids and
+    decode identically."""
+    ta = _load_json(old / "tokenizer_config.json") or {}
+    tb = _load_json(new / "tokenizer_config.json") or {}
+
+    def norm(v):
+        return v.get("content") if isinstance(v, dict) else v
+
+    for k in SWAP_TOKCFG_KEYS:
+        if norm(ta.get(k)) != norm(tb.get(k)):
+            return f"tokenizer_config {k}: {norm(ta.get(k))!r} vs {norm(tb.get(k))!r}"
+    if (old / "tokenizer.json").is_file() != (new / "tokenizer.json").is_file():
+        return "tokenizer.json present on one side only"
+    tok_a = AutoTokenizer.from_pretrained(str(old))
+    tok_b = AutoTokenizer.from_pretrained(str(new))
+    if len(tok_a) != len(tok_b):
+        return f"tokenizer size {len(tok_a)} vs {len(tok_b)}"
+    added = sorted(set(tok_a.get_added_vocab()) | set(tok_b.get_added_vocab()))
+    probe = SWAP_TOKENIZER_PROBE + "\n".join(added) + "\n" + " ".join(added)
+    for special in (False, True):
+        ia = tok_a(probe, add_special_tokens=special)["input_ids"]
+        ib = tok_b(probe, add_special_tokens=special)["input_ids"]
+        if ia != ib:
+            first = next((i for i, (x, y) in enumerate(zip(ia, ib)) if x != y),
+                         min(len(ia), len(ib)))
+            return (f"tokenizer encodes probe differently (add_special_tokens="
+                    f"{special}, first divergence at token {first}, lens {len(ia)}/{len(ib)})")
+    if tok_a.decode(ia) != tok_b.decode(ia):
+        return "tokenizer decodes probe differently"
+    return None
 
 
 def _vllm_env() -> dict[str, str]:
@@ -640,12 +722,12 @@ class Engine:
         if not old.is_dir() or not new.is_dir():
             return "snapshot dir missing"
         try:
-            for name in SWAP_IDENTICAL_FILES:
-                a, b = old / name, new / name
-                if a.exists() != b.exists():
-                    return f"{name} present on one side only"
-                if a.exists() and _sha256(a) != _sha256(b):
-                    return f"{name} differs"
+            reason = _generation_config_mismatch(old, new)
+            if reason:
+                return reason
+            reason = _tokenizer_mismatch(old, new)
+            if reason:
+                return reason
             ca = json.loads((old / "config.json").read_text())
             cb = json.loads((new / "config.json").read_text())
             for k in SWAP_CONFIG_IGNORE_KEYS:
