@@ -64,6 +64,30 @@ def run_tag(trace: dict) -> str:
         json.dumps(trace, sort_keys=True).encode()).hexdigest()[:8]
 
 
+def deliberate_final_reply(trace: dict) -> bool:
+    """Did the model END this rollout on purpose, with an untruncated reply?
+
+    True iff the harness stopped because the agent said it was done
+    (`stop_condition == "agent_completed"`, not max_turns / timeout) and the
+    last sampled reply's model call finished with `stop` (not `length`).
+    Only such a final reply may become a `text` turn — the report the model
+    chose to close on, not a cap it ran into. Traces without call records
+    (older dumps) are treated as untruncated: the stop condition alone
+    decides."""
+    if trace.get("stop_condition") != "agent_completed":
+        return False
+    nodes = trace.get("nodes") or []
+    sampled = [i for i, nd in enumerate(nodes)
+               if nd.get("sampled")
+               and (nd.get("message") or {}).get("role") == "assistant"]
+    if not sampled:
+        return False
+    last = sampled[-1]
+    finishes = [c.get("finish_reason") for c in (trace.get("calls") or [])
+                if c.get("node") == last]
+    return not finishes or finishes[-1] != "length"
+
+
 def build_view_record(envelope: dict, *, baker=None,
                       generated_at: str | None = None) -> dict | None:
     """View record for one envelope, or None when nothing is scorable
@@ -85,12 +109,16 @@ def build_view_record(envelope: dict, *, baker=None,
         # Pre-dialect envelopes carry no action_kind: they were all bash.
         action_kind=policy.get("action_kind") or dialects.DEFAULT_KIND)
 
+    final_is_text = deliberate_final_reply(trace)
+
     nodes: list[dict] = []
     by_key: dict[tuple[int | None, str, str], int] = {}
     turns: list[dict] = []
     traj_id = ""
     for i, conv in enumerate(convs):
-        recs = slice_messages(conv, turn=(i, len(convs)), **common)
+        recs = slice_messages(conv, turn=(i, len(convs)),
+                              text_final=(final_is_text and i == len(convs) - 1),
+                              **common)
         if not recs:
             continue
         rec = recs[0]

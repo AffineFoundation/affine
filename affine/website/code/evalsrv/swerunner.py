@@ -22,6 +22,15 @@ import yaml
 log = logging.getLogger("evalsrv.swe")
 
 SUITE_NAME = "swe_rebench_lite"
+# Same 25 tasks, official-protocol budget (2026-09-06): SWE-rebench's public
+# board runs 300 agent steps at 128k context; the original suite capped at 50
+# steps. Across the first 8 kings, 23% of *resolved* runs finished in steps
+# 40-50 and 56% of the runs that hit the cap were still editing/testing in
+# their last 10 steps — the cap was truncating the distribution, not just
+# stopping stuck agents. Kept as a separate suite so the 50-step history
+# stays comparable with itself.
+SUITE_300 = "swe_rebench_lite_300"
+STEP_LIMITS = {SUITE_NAME: 50, SUITE_300: 300}
 IDS_PATH = Path(__file__).resolve().parent / "data" / "swe_rebench_lite_ids.json"
 BENCH_DATA_DIR = Path(os.environ.get("AFFINE_BENCH_DIR", "/root/bench"))
 # Dual-fence action parser (2026-09-01): ```bash is the dialect the duel
@@ -120,7 +129,8 @@ def _prepare_subset(pin: dict, out_dir: Path) -> Path:
     return out_dir
 
 
-def _write_agent_config(model_repo: str, model_port: int, path: Path) -> None:
+def _write_agent_config(model_repo: str, model_port: int, path: Path,
+                        step_limit: int = 50) -> None:
     """Derive the agent config from mini-swe-agent's packaged swebench config.
 
     The backticks variant is required: miner models are served by plain vLLM
@@ -137,7 +147,7 @@ def _write_agent_config(model_repo: str, model_port: int, path: Path) -> None:
     base = (Path(spec.origin).parent / "config" / "benchmarks"
             / "swebench_backticks.yaml")
     cfg = yaml.safe_load(base.read_text())
-    cfg["agent"]["step_limit"] = 50
+    cfg["agent"]["step_limit"] = int(step_limit)
     cfg["agent"]["cost_limit"] = 0  # local vLLM is free; 0 disables the check
     # One tool dialect across duel, corpus D, and this advisory bench
     # (2026-09-01): the duel scores ```bash actions (affine/dialects.py `bash`)
@@ -369,8 +379,11 @@ def _collect_artifact(preds_dir: Path, preds_raw,
 
 def run_swe_lite(model_repo: str, model_port: int, *,
                  workers: int = 2, timeout_s: int = 14400,
-                 abort_event: threading.Event | None = None) -> dict:
-    """Run the pinned swe_rebench_lite suite. Returns a result dict."""
+                 abort_event: threading.Event | None = None,
+                 suite: str = SUITE_NAME) -> dict:
+    """Run the pinned 25-task suite under `suite`'s step budget
+    (STEP_LIMITS). Returns a result dict stamped with that suite name."""
+    step_limit = STEP_LIMITS.get(suite, STEP_LIMITS[SUITE_NAME])
     pin = _load_pin()
     n = len(pin["instance_ids"])
     run_root = BENCH_DATA_DIR / f"swe-{int(time.time())}"
@@ -384,13 +397,14 @@ def run_swe_lite(model_repo: str, model_port: int, *,
     _reap_stale_containers()
     try:
         _prepare_subset(pin, subset_dir)
-        _write_agent_config(model_repo, model_port, agent_cfg)
+        _write_agent_config(model_repo, model_port, agent_cfg,
+                            step_limit=step_limit)
     except Exception as e:
-        return {"ok": False, "suite": SUITE_NAME, "error": f"prepare: {e}"}
+        return {"ok": False, "suite": suite, "error": f"prepare: {e}"}
     _prepull_images(pin)
     docker_err = docker_probe(force=True)
     if docker_err:
-        return {"ok": False, "suite": SUITE_NAME, "infra": True,
+        return {"ok": False, "suite": suite, "infra": True,
                 "wall_time_s": round(time.time() - t0, 1),
                 "error": f"infra: docker cannot start containers: {docker_err}"}
 
@@ -411,12 +425,12 @@ def run_swe_lite(model_repo: str, model_port: int, *,
     code, out = _run(agent_cmd, env, timeout_s=timeout_s // 2,
                      abort_event=abort_event)
     if code == -1:
-        return {"ok": False, "suite": SUITE_NAME, "aborted": True,
+        return {"ok": False, "suite": suite, "aborted": True,
                 "error": "aborted to free GPUs"}
     if code == -2:
-        return {"ok": False, "suite": SUITE_NAME, "error": out}
+        return {"ok": False, "suite": suite, "error": out}
     if code != 0:
-        return {"ok": False, "suite": SUITE_NAME,
+        return {"ok": False, "suite": suite,
                 "wall_time_s": round(time.time() - t0, 1),
                 "error": (out or "")[-2000:] or f"agent exit {code}"}
 
@@ -426,7 +440,7 @@ def run_swe_lite(model_repo: str, model_port: int, *,
         cands = sorted(preds_dir.rglob("preds.json"),
                        key=lambda p: p.stat().st_mtime, reverse=True)
         if not cands:
-            return {"ok": False, "suite": SUITE_NAME,
+            return {"ok": False, "suite": suite,
                     "wall_time_s": round(time.time() - t0, 1),
                     "error": "no preds.json from mini-swe-agent"}
         preds_json = cands[0]
@@ -476,11 +490,11 @@ def run_swe_lite(model_repo: str, model_port: int, *,
     remaining = max(300, timeout_s - int(time.time() - t0))
     code, out = _run(eval_cmd, env, timeout_s=remaining, abort_event=abort_event)
     if code == -1:
-        return {"ok": False, "suite": SUITE_NAME, "aborted": True,
+        return {"ok": False, "suite": suite, "aborted": True,
                 "error": "aborted during evaluation"}
     if code != 0:
         # Rollouts exist even when the harness fails; still publish them.
-        return {"ok": False, "suite": SUITE_NAME,
+        return {"ok": False, "suite": suite,
                 "wall_time_s": round(time.time() - t0, 1),
                 "error": (out or "")[-2000:] or f"eval exit {code}",
                 "preds_path": str(preds_json),
@@ -488,7 +502,7 @@ def run_swe_lite(model_repo: str, model_port: int, *,
 
     rate, n_ok, resolved_ids = _parse_resolve_rate(run_id, n)
     if rate is None:
-        return {"ok": False, "suite": SUITE_NAME,
+        return {"ok": False, "suite": suite,
                 "wall_time_s": round(time.time() - t0, 1),
                 "error": "evaluation finished but resolve rate not found",
                 "preds_path": str(preds_json),
@@ -504,7 +518,7 @@ def run_swe_lite(model_repo: str, model_port: int, *,
         for inst in instances.values():
             key = str(inst.get("exit_status"))
             statuses[key] = statuses.get(key, 0) + 1
-        return {"ok": False, "suite": SUITE_NAME, "infra": True,
+        return {"ok": False, "suite": suite, "infra": True,
                 "wall_time_s": round(time.time() - t0, 1),
                 "error": ("infra: no task reached the model; exit statuses "
                           f"{json.dumps(statuses, sort_keys=True)}"),
@@ -513,7 +527,7 @@ def run_swe_lite(model_repo: str, model_port: int, *,
 
     return {
         "ok": True,
-        "suite": SUITE_NAME,
+        "suite": suite,
         "score": round(rate, 4),
         "n_resolved": n_ok,
         "n_instances": n,
@@ -521,5 +535,6 @@ def run_swe_lite(model_repo: str, model_port: int, *,
         "preds_path": str(preds_json),
         "run_id": run_id,
         "action_regex": ACTION_REGEX,
+        "step_limit": step_limit,
         "_artifact": artifact,
     }

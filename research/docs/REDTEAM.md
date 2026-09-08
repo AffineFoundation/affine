@@ -19,6 +19,56 @@ hedge-filler equilibrium (A13). Everything below that references gates, clip,
 r-band, baseline band, or the pre-δ 3σ-only rule describes a retired snapshot
 and is kept as the experimental record.
 
+## 2026-09-02 — wvk 11 noticed (action dialects): RT-14 watch item, and three dry-run findings
+
+**What the fork does (not live; notice posted 2026-09-02, effective not before
+2026-09-09 on a dated directive).** D admits `boxed` (math) and `tool_call`
+(wiki search) turns next to bash at 10% + 10% target slice share. Score
+untouched; only the action *parser* is per-turn (`affine/dialects.py`).
+
+**RT-14 — format-only compliance [WATCH, new with wvk 11].** A miner learns
+to emit a valid `\boxed{…}` / `<tool_call>…</tool_call>` wrapper around junk
+so it stops forfeiting dialect turns, without learning the task. Expected
+under min(R,G): centered R ≈ 0 for a thought that does not predict the
+teacher's specific action; junk thoughts fall below the G band; B fails on
+an action the thought did not cause. Confirm on the first post-fork duels
+via the new per-side `by_dialect` telemetry (`parse_rate`, `mean_r_leg`,
+`mean_g_leg`, `b_gate_pass_rate` per action_kind). Cheap variant to watch:
+`\boxed{}` with a trivial body on every math turn — `_boxed_finder` already
+rejects the *empty* body (models quote the instruction mid-thought).
+
+**Gate-closed dry run (20 turns/dialect; teacher seated as challenger vs the
+bash-trained king; eval pod, 2026-09-02).** Pipeline sound: finite lp*
+everywhere, teacher ref yield 2.55/3 (boxed) and 2.8/3 (tool_call), bash
+replay parity 6/6 exact on stored wvk-10 artifacts. Three findings that bear
+on the T0 decision, none of them a scoring bug:
+
+1. **Forfeit semantics.** `score.duel` pairs only turns valid on *both*
+   sides; a side with no parsable action drops the turn for both. So a
+   bash-only king is not penalised on dialect turns it cannot answer — it
+   just loses statistical power (this already removes ~5% of bash turns:
+   live n_paired ≈ 1220–1245 of 1300). The plan's "incumbent loses margin on
+   20% of turns" needs a forfeit-scoring rule to be true; that is a
+   contract choice for the fork commit, not something to slip in.
+2. **Boxed and the token cap.** The king produced `\boxed{}` on 3/18 math
+   turns; every miss was `finish_reason=length` at 1792 tokens
+   (`max_thought_tokens=1024 + max_action_tokens=768`), not a missing
+   format — and the teacher's own 15% ref loss is the same cap. Math
+   thoughts run ~2k chars for both. Two of the king's "valid" rollouts were
+   an *empty* `\boxed{}` quoted from the instruction (parser fixed to
+   reject empty bodies). A per-dialect or larger cap is a `[duel]` knob →
+   contract change.
+3. **tool_call is R-poor and B-poor.** 16/19 turns had all three teacher
+   refs emit the identical tool call (the next call is near-deterministic
+   given the search results), so centered R ≡ 0 on those turns and the
+   dialect scores on G alone (teacher mean_r_leg 0.0005 vs 0.012 on bash).
+   Per-byte B ≈ 0.005–0.010 < τ_B = 0.02 because the `<tool_call>` XML is
+   mostly boilerplate: B pass 6% (teacher) / 15% (king) vs ~60% on bash. At
+   10% share the pooled B license survives (0.9·0.6 + 0.1·0.1 ≈ 0.55 >
+   0.30) but the dialect adds little ranking signal. Math is the opposite:
+   teacher mean_r_leg 0.054 (4.5× bash), B ≈ 0.84 (the thought derives the
+   answer), G in band 0.0125.
+
 ## 2026-08-17 — Reason v4: tempered multi-sample closes the hedging equilibrium (A13); two new watch items
 
 **The attack v4 closes (A13 — hedge-filler equilibrium).** The teacher's

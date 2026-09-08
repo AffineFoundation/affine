@@ -65,7 +65,8 @@ def r2_endpoint(account_id: str) -> str:
 
 def s3_client(endpoint: str, access_key_id: str, secret_access_key: str,
               session_token: str | None = None, *,
-              connect_timeout: float = 10.0, read_timeout: float = 120.0):
+              connect_timeout: float = 10.0, read_timeout: float = 120.0,
+              max_pool_connections: int = 32):
     """boto3 S3 client tuned for R2 (region auto, sigv4, checksums only when
     the operation requires them — R2 rejects the newer default CRC trailers)."""
     return boto3.client(
@@ -80,7 +81,7 @@ def s3_client(endpoint: str, access_key_id: str, secret_access_key: str,
             response_checksum_validation="when_required",
             connect_timeout=connect_timeout, read_timeout=read_timeout,
             retries={"max_attempts": 4, "mode": "standard"},
-            max_pool_connections=32,
+            max_pool_connections=max_pool_connections,
         ),
     )
 

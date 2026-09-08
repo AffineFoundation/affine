@@ -208,30 +208,35 @@ def load_mix(*, ignore_fold_mix: bool = False
                 (raw.get("lang_mix", {}).get("coding") or {}).items()}
     if lang_mix and abs(sum(lang_mix.values()) - 1.0) > 0.01:
         fatal(f"[lang_mix.coding] in {SOURCES_TOML} must sum to 1.0")
-    buckets = {name: int(cfg.get("strata_buckets", 0) or 0)
+    buckets = {name: (int(cfg.get("strata_buckets", 0) or 0),
+                      int(cfg.get("strata_offset", 0) or 0))
                for name, cfg in raw.get("source", {}).items()}
     return mix, src2grp, lang_mix, buckets
 
 
-def assign_bucket_strata(records: list[dict], buckets: dict[str, int],
+def assign_bucket_strata(records: list[dict], buckets: dict[str, tuple[int, int]],
                          src2grp: dict[str, str]) -> int:
     """Fold-owned slice strata for sources with `strata_buckets` (math,
     tool_use). Datagen stamps the same shape (catalog.bucket_stratum) but
     from the bucket count at generation time; the fold recomputes from the
     CURRENT toml value so the group's slice share follows one setting.
-    Bucket = sha256(instance_id) % n, so every rollout of a task shares a
-    stratum. Raising n later only adds bucket names above the old range
-    (old shards are immutable and stay in the low buckets), so the share
-    can be re-derived upward without a rewrite. Returns records touched."""
+    Bucket = offset + sha256(instance_id) % n, so every rollout of a task
+    shares a stratum. Raising n later only adds bucket names above the old
+    range (old shards are immutable and stay in the low buckets), so the
+    share can be re-derived upward without a rewrite. Bucket names are
+    per GROUP, so a second bucketed source in one group must set
+    `strata_offset` past the first source's range or the two collide into
+    the same strata (affine_wiki 0-469, affine_agent 470-969, 2026-09-07).
+    Returns records touched."""
     n_set = 0
     for rec in records:
-        n = buckets.get(rec.get("source") or "", 0)
+        n, offset = buckets.get(rec.get("source") or "", (0, 0))
         if n <= 0:
             continue
         group = src2grp.get(rec["source"], DEFAULT_GROUP)
         key = str(rec.get("instance_id") or rec.get("traj_id"))
         h = int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:8], 16)
-        rec["stratum"] = f"{group}:{h % n:04d}"
+        rec["stratum"] = f"{group}:{offset + h % n:04d}"
         n_set += 1
     return n_set
 
@@ -654,7 +659,7 @@ def main() -> None:
     mix, src2grp, lang_mix, buckets = load_mix(ignore_fold_mix=args.ignore_fold_mix)
     n_bucketed = assign_bucket_strata(candidates, buckets, src2grp)
     log(f"bucket strata assigned on {n_bucketed} rollouts "
-        f"({ {k: v for k, v in buckets.items() if v} })")
+        f"({ {k: (n if not off else f'{n}@{off}') for k, (n, off) in buckets.items() if n} })")
     if not state.get("mix_seeded"):
         state["mix_seeded"] = True
         # Mix state is the set of slice strata each group / language bucket
