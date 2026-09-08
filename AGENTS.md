@@ -343,14 +343,27 @@ Full writeups: `research/docs/REDTEAM.md`.
   `[duel].concurrency` 64→192; echo tokenization in a thread pool + orjson;
   router passes bodies through. Scoring 52 → 26.6 min/duel. Prefetch
   stall watchdog now reads the r2store child's heartbeat (every earlier
-  "stall" was a metric artefact). **Challenger warm-swap** (in-place
-  `reload_weights` into the live engine, ~139 s vs ~8.5 min cold) is built
-  but **disabled** (`AFFINE_CHALLENGER_WARM_SWAP`, default off): vLLM
-  0.28.0's layerwise reload dropped a per-rank subset of fused MoE expert
-  tensors (~20/40 layers kept the previous challenger's experts) and both
-  swapped engines died 8 min into the duel; the duel requeued with no
-  verdict. Do not enable without a tensor-by-tensor check against a fresh
-  load on a test box.
+  "stall" was a metric artefact). **Challenger warm-swap LIVE (2026-09-08
+  00:12 UTC):** challenger engines stay up between duels and the next
+  checkpoint's weights are loaded in place (`evalsrv.vllm_ext.WeightTools.
+  affine_direct_load` over vLLM's dev-mode `/collective_rpc`, then
+  `/reset_prefix_cache`, then a count-continuation probe; ~136 s vs ~8.5
+  min cold). Verified on 1×B200 (TP1) and 2×H200 (TP2): swapped weights
+  bit-identical to a fresh load on every rank (948/948 tensors), logprobs
+  Δ=0.0 to 39k tokens, 10-min duel-like soak clean — for both the raw path
+  and vLLM's layerwise `reload_weights`. vLLM's "weights were not loaded"
+  warning on fused MoE experts is a return-value artefact, not data loss
+  (the same-day scare + two engine deaths were the operator's own redeploy
+  pkill). Guards: `_swap_compatible` (config.json/tokenizer/generation_
+  config/tensor-set identical, else cold relaunch) + per-rank loader-report
+  invariant (906 reported / 80 unreported fused names) + probe. Total per
+  verdict 35 → ~29 min. `AFFINE_CHALLENGER_WARM_SWAP=0` disables.
+  **Redeploy pitfall:** `scripts/redeploy_pods.py` writes the pod's
+  `.eval_env` from the *calling* process's environment — export from
+  `/proc/$(pm2 pid affine-validator)/environ`, never from a `pgrep -f`
+  match (2026-09-07 23:07: a shell wrapper matched, the pod got no R2/HF
+  creds, and the king snapshot was pruned; guard `_is_public_king_cache`
+  committed in `725240e`, deploys with the next redeploy).
 - **architecture pin (2026-08-28, explicit operator directive):** submissions
  must be genesis-family fine-tunes — `config.json` must match
  `[submission.pinned_arch]` (Qwen3.6-35B-A3B shape: qwen3_5_moe, 40 layers,
