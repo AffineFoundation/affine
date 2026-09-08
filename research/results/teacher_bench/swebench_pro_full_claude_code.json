@@ -1,0 +1,252 @@
+{
+ "protocol": {
+  "tasks": 731,
+  "harness": "claude_code 2.1.223 (verifiers ACP adapter)",
+  "sampling": {
+   "temperature": 1.0,
+   "top_p": 0.95
+  },
+  "context": 262144,
+  "turn_cap": null,
+  "rollout_timeout_s": 14400,
+  "runner_patch": "no-visible-reply -> scored; CLAUDE_CODE_AUTO_COMPACT_WINDOW=262144"
+ },
+ "models": {
+  "king": {
+   "resolved": 412,
+   "n_official": 731,
+   "rate_official": 0.5636114911080712,
+   "wilson95_official": [
+    0.5274194249991335,
+    0.5991384617617685
+   ],
+   "resolved_runnable": 412,
+   "n_runnable": 698,
+   "rate_runnable": 0.5902578796561605,
+   "wilson95_runnable": [
+    0.5533762994531205,
+    0.6261513888457778
+   ],
+   "stops": {
+    "agent_completed": 638,
+    "HarnessError": 60,
+    "SandboxError": 33
+   },
+   "median_calls": 80
+  },
+  "teacher": {
+   "resolved": 558,
+   "n_official": 731,
+   "rate_official": 0.7633378932968536,
+   "wilson95_official": [
+    0.7311990231079678,
+    0.7927234113323253
+   ],
+   "resolved_runnable": 558,
+   "n_runnable": 698,
+   "rate_runnable": 0.7994269340974212,
+   "wilson95_runnable": [
+    0.7681174274522452,
+    0.8274585543647345
+   ],
+   "stops": {
+    "agent_completed": 695,
+    "HarnessError": 3,
+    "SandboxError": 33
+   },
+   "median_calls": 64
+  }
+ },
+ "by_repo": {
+  "ansible/ansible": {
+   "n": 96,
+   "king": 64,
+   "teacher": 83,
+   "broken": 0
+  },
+  "element-hq/element-web": {
+   "n": 56,
+   "king": 32,
+   "teacher": 50,
+   "broken": 0
+  },
+  "flipt-io/flipt": {
+   "n": 85,
+   "king": 37,
+   "teacher": 46,
+   "broken": 0
+  },
+  "future-architect/vuls": {
+   "n": 62,
+   "king": 40,
+   "teacher": 59,
+   "broken": 0
+  },
+  "gravitational/teleport": {
+   "n": 76,
+   "king": 41,
+   "teacher": 65,
+   "broken": 0
+  },
+  "internetarchive/openlibrary": {
+   "n": 91,
+   "king": 40,
+   "teacher": 50,
+   "broken": 33
+  },
+  "navidrome/navidrome": {
+   "n": 57,
+   "king": 38,
+   "teacher": 52,
+   "broken": 0
+  },
+  "nodebb/nodebb": {
+   "n": 44,
+   "king": 11,
+   "teacher": 9,
+   "broken": 0
+  },
+  "protonmail/webclients": {
+   "n": 65,
+   "king": 36,
+   "teacher": 54,
+   "broken": 0
+  },
+  "qutebrowser/qutebrowser": {
+   "n": 79,
+   "king": 59,
+   "teacher": 73,
+   "broken": 0
+  },
+  "tutao/tutanota": {
+   "n": 20,
+   "king": 14,
+   "teacher": 17,
+   "broken": 0
+  }
+ },
+ "by_lang": {
+  "python": {
+   "n": 266,
+   "king": 163,
+   "teacher": 206,
+   "broken": 33
+  },
+  "ts-js": {
+   "n": 185,
+   "king": 93,
+   "teacher": 130,
+   "broken": 0
+  },
+  "go": {
+   "n": 280,
+   "king": 156,
+   "teacher": 222,
+   "broken": 0
+  }
+ },
+ "env_broken": {
+  "n": 33,
+  "by_repo": {
+   "internetarchive/openlibrary": 33
+  },
+  "tasks": [
+   "instance_internetarchive__openlibrary-00bec1e7c8f3272c469a58e1377df03f955ed478-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+   "instance_internetarchive__openlibrary-08ac40d050a64e1d2646ece4959af0c42bf6b7b5-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-11838fad1028672eb975c79d8984f03348500173-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-1894cb48d6e7fb498295a5d3ed0596f6f603b784-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-25858f9f0c165df25742acf8309ce909773f0cdd-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+   "instance_internetarchive__openlibrary-2abe28b472ffed563a87cfe83685b161b35263b0-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+   "instance_internetarchive__openlibrary-2fe532a33635aab7a9bfea5d977f6a72b280a30c-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-322d7a46cdc965bfabbf9500e98fde098c9d95b2-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+   "instance_internetarchive__openlibrary-3aeec6afed9198d734b7ee1293f03ca94ff970e1-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+   "instance_internetarchive__openlibrary-3f580a5f244c299d936d73d9e327ba873b6401d9-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-427f1f4eddfc54735ca451779d4f95bf683d1b0e-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-43f9e7e0d56a4f1d487533543c17040a029ac501-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-4a5d2a7d24c9e4c11d3069220c0685b736d5ecde-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+   "instance_internetarchive__openlibrary-4b7ea2977be2747496ba792a678940baa985f7ea-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-5fb312632097be7e9ac6ab657964af115224d15d-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-62d2243131a9c7e6aee00d1e9c5660fd5b594e89-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-630221ab686c64e75a2ce253c893c033e4814b2e-v93c53c13d5f9b383ebb411ee7750b49dcd1a34c6",
+   "instance_internetarchive__openlibrary-6a117fab6c963b74dc1ba907d838e74f76d34a4b-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+   "instance_internetarchive__openlibrary-72321288ea790a3ace9e36f1c05b68c93f7eec43-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-798055d1a19b8fa0983153b709f460be97e33064-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+   "instance_internetarchive__openlibrary-7f7e53aa4cf74a4f8549a5bcd4810c527e2f6d7e-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+   "instance_internetarchive__openlibrary-8a5a63af6e0be406aa6c8c9b6d5f28b2f1b6af5a-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-8a9d9d323dfcf2a5b4f38d70b1108b030b20ebf3-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+   "instance_internetarchive__openlibrary-910b08570210509f3bcfebf35c093a48243fe754-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-9cd47f4dc21e273320d9e30d889c864f8cb20ccf-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-c05ccf2cd8baa81609434e0e35c4a63bc0da5a25-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-c4eebe6677acc4629cb541a98d5e91311444f5d4-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+   "instance_internetarchive__openlibrary-c506c1b0b678892af5cb22c1c1dbc35d96787a0a-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-d40ec88713dc95ea791b252f92d2f7b75e107440-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+   "instance_internetarchive__openlibrary-e010b2a13697de70170033902ba2e27a1e1acbe9-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-f3b26c2c0721f8713353fe4b341230332e30008d-v0f5aece3601a5b4419f7ccec1dbda2071be28ee4",
+   "instance_internetarchive__openlibrary-f8cc11d9c1575fdba5ac66aee0befca970da8d64-v13642507b4fc1f8d234172bf8129942da2c2ca26",
+   "instance_internetarchive__openlibrary-fdbc0d8f418333c7e575c40b661b582c301ef7ac-v13642507b4fc1f8d234172bf8129942da2c2ca26"
+  ]
+ },
+ "missing": {
+  "king": 0,
+  "teacher": 0
+ },
+ "paired": {
+  "n_common_scored": 635,
+  "both": 390,
+  "king_only": 20,
+  "teacher_only": 127,
+  "neither": 98,
+  "sign_test_p": 3.125038959701049e-20
+ },
+ "errors": {
+  "king": {
+   "HarnessError: harness 'claude_code': RuntimeError: RuntimeError: Internal error: Prompt is too long": 53,
+   "SandboxError: docker run failed: Unable to find image 'jefzda/sweap-images:internetarchive.openlibrary-i": 33,
+   "HarnessError: harness setup: RuntimeError: Node.js install failed: ACP adapters require Node.js 22.19 or": 3,
+   "HarnessError: harness 'claude_code': RuntimeError: ConnectionError: Connection closed": 2,
+   "HarnessError: harness setup timed out": 1,
+   "HarnessError: harness 'claude_code': RuntimeError: RuntimeError: Internal error: The Claude Agent proces": 1
+  },
+  "teacher": {
+   "SandboxError: docker run failed: Unable to find image 'jefzda/sweap-images:internetarchive.openlibrary-i": 33,
+   "HarnessError: harness setup: RuntimeError: Node.js install failed: ACP adapters require Node.js 22.19 or": 2,
+   "HarnessError: harness 'claude_code': RuntimeError: RuntimeError: Internal error: The Claude Agent proces": 1
+  }
+ },
+ "gold_patch_similarity": {
+  "king": {
+   "n_solved_with_diff_gold>=10": 379,
+   "median_line_jaccard": 0.24210526315789474,
+   "ge_0.8": 67,
+   "ge_0.95": 37
+  },
+  "teacher": {
+   "n_solved_with_diff_gold>=10": 478,
+   "median_line_jaccard": 0.4782608695652174,
+   "ge_0.8": 159,
+   "ge_0.95": 103
+  }
+ },
+ "card_row": {
+  "columns": [
+   "Qwen3.8-27B",
+   "Qwen3.6-27B",
+   "Qwen3.7-Plus",
+   "Muse Glimmer-30B",
+   "Opus4.6 Max"
+  ],
+  "SWE-bench Pro": [
+   61.7,
+   53.5,
+   57.6,
+   51.2,
+   53.4
+  ]
+ },
+ "caveats": [
+  "contamination signal: teacher 21.5% of solves reproduce gold at line-Jaccard>=0.95 (king 9.8%)",
+  "runner patches: no-visible-reply scored on diff; CLAUDE_CODE_AUTO_COMPACT_WINDOW=262144",
+  "rerun merge: finished beats errored, solved beats unsolved (reruns only for box-side errors)",
+  "33 openlibrary tasks env-broken for both; 2 king tasks unfinished at cut-off (unresolved)"
+ ]
+}
