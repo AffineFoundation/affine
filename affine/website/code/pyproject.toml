@@ -14,6 +14,9 @@ dependencies = [
     "uvicorn>=0.29",
     # Corpus packer + Parquet turn index (schema_version=2).
     "pyarrow>=17",
+    # Echo responses carry logprobs for every prompt token (MBs each, ~21
+    # per turn); json.loads was 32% of the duel thread (2026-09-07).
+    "orjson>=3.9",
 ]
 
 [project.optional-dependencies]

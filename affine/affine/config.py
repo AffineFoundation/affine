@@ -193,6 +193,11 @@ class DuelCfg:
     # None = legacy (turn dropped from pairing). Contract knob: changing it
     # is a weight_version_key event.
     forfeit_turn_score: float | None = None
+    # Staged 2026-09-07, OFF: a miner rollout that never emits </think> is
+    # a forfeit (same floor as no parseable action). Contract knob — turning
+    # it on changes which turns score and is a weight_version_key event.
+    # The </think> rate is measured and published either way.
+    require_think_close: bool = False
 
 
 @dataclass(frozen=True)
@@ -319,6 +324,12 @@ class Config:
         return self.raw.get("chat") or {}
 
     @property
+    def protocol_probe(self) -> dict:
+        """Chat-protocol conformance probe (admission rule, eval pod).
+        Optional section; absent = mode "off"."""
+        return self.raw.get("protocol_probe") or {}
+
+    @property
     def seed_king(self) -> dict:
         return self.raw["seed_king"]
 
@@ -407,6 +418,7 @@ def _duel(raw: dict) -> DuelCfg:
         band_floor=float(d.get("band_floor", 0.002)),
         forfeit_turn_score=(float(d["forfeit_turn_score"])
                             if d.get("forfeit_turn_score") is not None else None),
+        require_think_close=bool(d.get("require_think_close", False)),
     )
 
 

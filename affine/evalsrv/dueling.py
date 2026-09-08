@@ -48,6 +48,7 @@ from .terms import (
     sample_teacher_rollouts,
     score_teacher_rollouts,
 )
+from .protocol_probe import probe_settings, rejection_detail, run_probe
 from .vllm_client import EngineUnreachableError, ModelPool, Served, VllmModel
 
 log = logging.getLogger("evalsrv.dueling")
@@ -552,15 +553,21 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     # Cap used to be 16 while concurrency=24, which under-fed the dual teacher
     # replicas once sticky routing spread load. Match the client queue depth.
     turn_conc = max(4, conc)
+    # Staged v7 knob: miner rollouts without </think> forfeit. Miner sides
+    # only — teacher refs keep their semantics so refs (and the G band built
+    # from them) are unchanged by the flip.
+    require_think_close = bool(duel_cfg.get("require_think_close", False))
     async with httpx.AsyncClient() as http:
-        def _pool(served: Served | list[Served]) -> ModelPool:
+        def _pool(served: Served | list[Served],
+                  require_close: bool = False) -> ModelPool:
             items = served if isinstance(served, list) else [served]
             return ModelPool([
-                VllmModel(s, http, asyncio.Semaphore(conc)) for s in items
+                VllmModel(s, http, asyncio.Semaphore(conc),
+                          require_think_close=require_close) for s in items
             ])
         teacher_m = _pool(teacher)
-        king_m = _pool(king)
-        chall_m = _pool(challenger)
+        king_m = _pool(king, require_think_close)
+        chall_m = _pool(challenger, require_think_close)
 
         rejection = await probe_injectable(
             chall_m, turns, float(duel_cfg["temperature"]),
@@ -573,6 +580,29 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             }
             return verdict, {"slice": slice_info, "turn_ids": turn_ids,
                              "rejection_reason": verdict["rejection_reason"]}
+
+        # Chat-protocol conformance (admission rule, staged 2026-09-07):
+        # Cursor-shaped prompts through the challenger's own template with
+        # thinking on; every reply must close </think> and carry a visible
+        # answer. Runs before the 1,300-turn scoring so a reject costs
+        # minutes. mode: off (default) | shadow (publish only) | enforce.
+        probe_cfg = probe_settings(engine_cfg.get("protocol_probe"))
+        protocol = None
+        if probe_cfg["mode"] != "off":
+            protocol = await run_probe(chall_m, probe_cfg)
+            log.info("protocol probe (%s): pass_rate=%.2f think_close=%.2f %s",
+                     probe_cfg["mode"], protocol["pass_rate"],
+                     protocol["think_close_rate"], protocol["by_reason"])
+            if probe_cfg["mode"] == "enforce" and not protocol["passed"]:
+                verdict = {
+                    "challenger_wins": False,
+                    "rejection_reason": f"protocol:{rejection_detail(protocol)}",
+                    "protocol_probe": _probe_public(protocol),
+                    "slice": slice_info,
+                }
+                return verdict, {"slice": slice_info, "turn_ids": turn_ids,
+                                 "rejection_reason": verdict["rejection_reason"],
+                                 "protocol_probe": protocol}
 
         # Fresh teacher references every duel (see RefCache docstring): the
         # cache lives and dies inside this call.
@@ -627,6 +657,13 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     teacher_sum = _teacher_lengths(refs_used)
     _len_deltas(king_sum, teacher_sum)
     _len_deltas(chall_sum, teacher_sum)
+    # Chat-protocol well-formedness (2026-09-07): share of natural samples
+    # that closed </think>. Telemetry whether or not require_think_close is
+    # on — the number the flip decision needs. Teacher too, as the reference.
+    for summary, pool in ((king_sum, king_m), (chall_sum, chall_m),
+                          (teacher_sum, teacher_m)):
+        summary["n_samples"] = pool.n_samples
+        summary["think_close_rate"] = pool.think_close_rate
     # Per-dialect telemetry (wvk 11 watch item): parse rate and leg means
     # per action_kind on each side; teacher ref yield per dialect.
     kind_by_tid = {turn_id(rec): rec.get("action_kind") or dialects.DEFAULT_KIND
@@ -663,6 +700,8 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     if forfeit_turn_score is not None:
         ranking_formula += (
             f"; forfeit (no parseable action) scores {forfeit_turn_score:g}")
+    if require_think_close:
+        ranking_formula += "; a rollout without </think> is a forfeit"
 
     verdict = {
         "challenger_wins": result.challenger_wins,
@@ -692,6 +731,7 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "band_c": band_c,
             "band_floor": band_floor,
             "forfeit_turn_score": forfeit_turn_score,
+            "require_think_close": require_think_close,
             "allowed_action_kinds": allowed_kinds,
             "max_thought_tokens": int(duel_cfg["max_thought_tokens"]),
             "max_action_tokens": int(duel_cfg["max_action_tokens"]),
@@ -705,6 +745,8 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         "duel_seconds": time.monotonic() - started,
         "slice": slice_info,
     }
+    if protocol is not None:
+        verdict["protocol_probe"] = _probe_public(protocol)
     artifact = {
         "slice": slice_info,
         "turn_ids": turn_ids,
@@ -712,4 +754,25 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         "king_rows": king_rows,
         "challenger_rows": chall_rows,
     }
+    if protocol is not None:
+        artifact["protocol_probe"] = protocol
     return verdict, artifact
+
+
+def _probe_public(protocol: dict) -> dict:
+    """Verdict-sized view of a protocol probe: rates + per-prompt verdicts,
+    without the completion text heads (those go to the artifact)."""
+    return {
+        "mode": protocol["mode"],
+        "passed": protocol["passed"],
+        "pass_rate": protocol["pass_rate"],
+        "min_pass_rate": protocol["min_pass_rate"],
+        "think_close_rate": protocol["think_close_rate"],
+        "n": protocol["n"],
+        "by_reason": protocol["by_reason"],
+        "by_prompt": {
+            r["id"]: {"ok": r["ok"], "reasons": r["reasons"]}
+            for r in sorted(protocol["results"], key=lambda r: (r["id"], -r["ok"]))
+        },
+        "settings": protocol["settings"],
+    }

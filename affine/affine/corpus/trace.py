@@ -112,8 +112,21 @@ def trace_conversations(trace: dict, baker=None) -> list[list[dict]]:
             continue
         if baker is None:
             raise ToolParityError("tool-using trace but no ToolBaker configured")
-        baked = baker.bake(msgs, tools)
-        if not baker.parity_ok(msgs, tools, baked):
+        # A conversation the teacher's template refuses to render at all
+        # (e.g. Codex CLI's two leading system messages, 2026-09-07 probe:
+        # "System message must be at the beginning") is not admissible
+        # either — surface it as a parity failure so the fold / pod yield
+        # path drops the trajectory instead of dying on a jinja exception.
+        try:
+            baked = baker.bake(msgs, tools)
+            parity = baker.parity_ok(msgs, tools, baked)
+        except ToolParityError:
+            raise
+        except Exception as e:  # jinja TemplateError, tokenizer ValueError
+            raise ToolParityError(
+                f"template cannot render conversation: {type(e).__name__}: {e}"
+            ) from e
+        if not parity:
             raise ToolParityError("baked prefix != template(messages, tools)")
         out.append(baked)
     return out

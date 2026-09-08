@@ -14,6 +14,10 @@ the delimiter pluggable while leaving the scoring math untouched:
                                            prolog — anything with a container)
     tool_call   <tool_call> ... </tool_call>  tool-use / search envs
     boxed       \\boxed{...}               math / short-answer envs
+    text        the whole visible reply    final reports / answers: the reply
+                                           that ends a trajectory without a
+                                           tool call (staged 2026-09-08, see
+                                           below; admission is a fork event)
 
 What deliberately does NOT vary per dialect: the thought channel rendering
 (`</think>\\nTHOUGHT: {z}`, see evalsrv/chat.py). G compares the miner's
@@ -26,6 +30,20 @@ to emit a dialect that the turn prefix asked for. The fold requires the
 marker in the turn's system message, so an env whose prompt never states its
 action contract is dropped rather than silently scored against a format the
 model was never told about.
+
+`text` is the one dialect with no marker. Its contract — "when you are done,
+say so in plain words" — is the default contract of every chat model and no
+harness prompt spells it out, so the marker check is vacuous for it. The
+fold compensates on the other side: a text turn is only ever the FINAL
+sampled reply of a rollout that stopped by itself (`agent_completed`, not
+finish=length, not max_turns), i.e. the reply the model chose to end on.
+Why the dialect exists: under min(R,G) the visible message was never the
+scored span, so a king trained against the score learned to put everything
+in <think> and emit no visible text — Claude Code's compaction and
+final-report prompts then get reasoning only (SWE-bench Pro post-mortem,
+2026-09-08). With `text` admitted, the visible reply is an action: R asks
+whether the miner's thought predicts the teacher's report, B whether its
+thought causes its own, G judges the thought — the same three legs.
 
 Admission is separate from parsing: `[dataset].allowed_action_kinds` in
 affine.toml gates which dialects may enter live D. Parsing support here is a
@@ -86,12 +104,32 @@ def _boxed_finder(text: str) -> list[Span]:
     return spans
 
 
+def _text_finder(text: str) -> list[Span]:
+    """One span: the visible reply without surrounding whitespace. An empty
+    or whitespace-only reply has no action — the same forfeit as an
+    unterminated fence. (On the duel side the text handed in here is what
+    follows </think>, so an unclosed think block that never says anything
+    visible is empty here too once require_think_close is on.)"""
+    stripped = text.strip()
+    if not stripped:
+        return []
+    start = len(text) - len(text.lstrip())
+    return [(start, start + len(stripped))]
+
+
 @dataclass(frozen=True)
 class Dialect:
     id: str
     finder: Finder
+    # "" = no marker required (text: the default contract of a chat model).
     system_marker: str
     label: str
+    # A rollout in this dialect legitimately ends with a plain reply (agent
+    # loops: the model stops calling tools and reports). The fold may then
+    # record that final reply as a `text` turn. False for answer-format
+    # dialects (boxed): a final reply without the format is a miss, not a
+    # report.
+    ends_in_text: bool = False
 
     def spans(self, text: str) -> list[Span]:
         return self.finder(text)
@@ -100,6 +138,8 @@ class Dialect:
         return [text[s:e] for s, e in self.finder(text)]
 
     def system_ok(self, system_content: str) -> bool:
+        if not self.system_marker:
+            return True
         return self.system_marker in system_content.lower()
 
 
@@ -110,12 +150,14 @@ DIALECTS: dict[str, Dialect] = {
             finder=_regex_finder(BASH_PATTERN),
             system_marker="bash",
             label="one closed ```bash block (shell agents)",
+            ends_in_text=True,
         ),
         Dialect(
             id="tool_call",
             finder=_regex_finder(TOOL_CALL_PATTERN),
             system_marker="tool",
             label="one <tool_call>...</tool_call> block (tool use / search)",
+            ends_in_text=True,
         ),
         Dialect(
             id="boxed",
@@ -123,10 +165,20 @@ DIALECTS: dict[str, Dialect] = {
             system_marker="boxed",
             label="one \\boxed{...} answer (math / short answer)",
         ),
+        Dialect(
+            id="text",
+            finder=_text_finder,
+            system_marker="",
+            label="the whole visible reply (final report / answer)",
+        ),
     )
 }
 
 DEFAULT_KIND = "bash"
+# The dialect a reply falls back to when it carries no action in its
+# policy's dialect and ends the rollout (see the module docstring and
+# datagen.slicer.slice_messages `text_final`).
+TEXT_KIND = "text"
 
 
 class UnknownDialect(ValueError):

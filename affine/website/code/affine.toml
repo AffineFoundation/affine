@@ -21,7 +21,8 @@ king_chain_size = 5
 min_submission_block = 8938619
 # Bittensor weight-version gate for contract upgrades (bump on breaking
 # scoring/contract changes so stale validators are ignored by consensus).
-# Current: 10 (min(R,G) v5 scoring fork + genesis reset, 2026-08-27,
+# Current: 12 (forfeit floor, 2026-09-05; 11 = dialects + schema-3 D,
+# 2026-09-05). 10 was min(R,G) v5 scoring fork + genesis reset, 2026-08-27,
 # explicit dated operator directive via the approved release plan — the
 # wvk-9 king crowned on a constant filler suffix and benched 0/50; the new
 # rule scores each turn min(centered Reason, banded Grounding); see [duel]
@@ -37,6 +38,9 @@ min_submission_block = 8938619
 # boxed + tool_call turns next to bash and is served as a schema_version 3
 # view over rollout traces (corpus/manifest.json on data.affine.io); score
 # unchanged; forward-only, reign stands.
+# 11→12 forfeit floor (2026-09-05): a turn with no parseable action scores
+# forfeit_turn_score (−0.1) instead of leaving the pairing; one-sided =
+# loss, two-sided = tie. min(R,G) unchanged. Forward-only; reign stands.
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -44,7 +48,7 @@ min_submission_block = 8938619
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 11
+weight_version_key = 12
 
 [wallet]
 name = "default"
@@ -219,7 +223,13 @@ tp = 2
 # max_thought+max_action=1792 more → vLLM 400 "maximum context length" mid-duel
 # (observed 2026-08-09/10, burned as eval_infra_exhausted). 65536 clears the
 # knife-edge; both GLM-Air and Qwen3.6-35B support ≥128k. Ops knob only.
-max_model_len = 65536
+# 65536 -> 131072 (2026-09-07): the corpus caps prefixes at 120k CHARS, not
+# tokens; a schema-3 turn tokenized to 63,745 and +1792 gen = 65,537 blew
+# the limit by one token on king2. Fault.CONTEXT_LIMIT requeues the same
+# entry (pod-wide infra, no penalty), so chal-00290 looped 25x at ~26 min
+# each — 14.5 h with zero verdicts. Teacher swarm raised in lockstep
+# (ops/teacher-swarm/swarm.toml). 2xH200 TP2 has ample KV for 128k.
+max_model_len = 131072
 # 0.80 (not the usual 0.85–0.90): teacher-forcing echo+logprobs materializes
 # an fp32 log_softmax over (step_tokens x vocab) OUTSIDE vLLM's budgeted pool
 # — ~5 GB transient at 8192x151k — so the duel pod needs real headroom.
@@ -409,6 +419,8 @@ score_mode = "min_rg"
 # the band open when the k=3 reference thoughts happen to agree tightly.
 band_c = 2.0
 band_floor = 0.002
+# 2026-09-05 (weight_version_key 11→12): forfeits are scored, not dropped.
+forfeit_turn_score = -0.1
 # ---- v6 (built 2026-09-04, operator directive; NOT live until the flip) ----
 # Two contract knobs, both implemented in score.py / evalsrv and both a
 # weight_version_key event when flipped (ops/v6/v6_toml_edits.py stages the
@@ -439,6 +451,22 @@ band_floor = 0.002
 #     of turns (which a miner cannot predict), and a 2% forfeit rate costs
 #     exactly one δ (0.002) of margin. Absent = legacy drop (wvk ≤ 11 replay).
 # ---------------------------------------------------------------------------
+# ---- v7 candidate (built 2026-09-07; staged, NOT live) --------------------
+#   require_think_close = true   a miner rollout that never emits </think>
+#     is a forfeit (scores forfeit_turn_score, same as no parseable action).
+#     Why: every OpenAI-compatible client that separates reasoning from the
+#     answer (vLLM reasoning parsers, Cursor, the chat pod) needs the
+#     closing tag; without it the whole reply is delivered as reasoning and
+#     the visible answer is empty. split_rollout treated the tag as
+#     optional, and we build the scored body with our own </think>, so the
+#     tag was dead weight to a miner: bench transcripts show genesis
+#     closing </think> on 95–98% of replies, the teacher on 99%, kings of
+#     reigns 1–5 on 0–4%, and the reign-8 king on 98% of SWE-scaffold
+#     replies but 0% of Cursor-shaped ones. Flipping this changes which
+#     turns score: weight_version_key event, explicit dated operator
+#     directive required. Until then the per-side </think> rate is
+#     published on every verdict (king/challenger.think_close_rate).
+require_think_close = false
 # Ops: skip prior-bank and non-Reason forced-logprob echos (telemetry GPU).
 score_bank = false
 reason_only = true
@@ -457,7 +485,13 @@ max_action_tokens = 768
 # load. 36 -> 64 on 2026-08-29: two 8x B200 teacher boxes (16 TP1
 # replicas) were sitting at ~2 in-flight each under 36; 64 is one
 # request per GPU plus headroom for prefix-sticky turns.
-concurrency = 64
+# 64 -> 192 on 2026-09-07 after echo prefix caching went live: echoes fell
+# from ~10 s to ~2 s, so the 64-slot teacher semaphore became the wall —
+# ~100 slot-seconds/turn (3 ref samples x 20 s + 21 echoes x 2 s) / 64 =
+# 0.64 turns/s = the measured 35 min/duel, with 16 teacher replicas at <1
+# in flight and miner engines at 1.5-2. Miner KV holds 7.3M tokens/engine
+# (55x 128k), teacher 1.1M/replica, so 192 turns/side fits both.
+concurrency = 192
 # Whole-duel wall clock budget on the eval server before the validator
 # classifies the eval as a transient failure and requeues.
 timeout_s = 7200
@@ -479,7 +513,14 @@ revision = "995ad96eacd98c81ed38be0c5b274b04031597b0"
 # SWE-rebench lite panel (coding isomorphism axis). tau2_* suites remain
 # supported by the runner if re-added here.
 enabled = true
-suites = ["swe_rebench_lite"]
+# 2026-09-06: swe_rebench_lite_300 = the same 25 tasks at the official
+# SWE-rebench budget (300 agent steps, 128k context) instead of 50 steps /
+# 65k. Across reigns 0-8, 23% of RESOLVED runs finished in steps 40-50 and
+# 56% of the runs that hit the 50-step cap were still editing/testing in
+# their last 10 steps — the cap truncated the distribution. The 50-step
+# rows stay in bench_history under their own suite name; both columns are
+# published. Advisory only — never part of the score.
+suites = ["swe_rebench_lite_300"]
 num_trials = 1
 # Parallel mini-SWE-agent workers (and swebench eval workers, capped at 8).
 # Rollouts are docker/CPU-bound most of the time; the H200 pair serving the
@@ -501,6 +542,43 @@ tp = 2
 # small prefill chunks the duel pod needs do not apply — big chunks keep
 # long-context agent prompts fast.
 max_num_batched_tokens = 16384
+# Official SWE-rebench protocol: 128k context (2026-09-06). Genesis-family
+# checkpoints support >=128k; the 2x B200 bench pod holds a 35B-A3B at TP=2
+# with ~140 GB per GPU spare for KV. Ops knob, no scoring effect.
+max_model_len = 131072
+
+[protocol_probe]
+# Chat-protocol conformance probe (built 2026-09-07; STAGED, mode off).
+# Admission rule in the class of the architecture pin — no scoring change,
+# no weight_version_key bump. On the eval pod, once the challenger is
+# served and probe_injectable has passed, evalsrv.protocol_probe renders a
+# fixed public prompt set (IDE-agent system prompt + greeting / code
+# question / follow-up / tool-call requests; plain-assistant prompts; a
+# no-system greeting) through the challenger's OWN chat template with
+# thinking on and tool schemas where the prompt has tools — exactly what
+# Cursor or any OpenAI client sends — and checks every reply for (1) a
+# closed </think> and (2) a non-empty visible answer after it (text, or one
+# well-formed <tool_call> when the prompt asks for a tool). Why: the
+# reign-8 king renders as an EMPTY message in Cursor — with a system prompt
+# it never emits </think>, so a reasoning parser files the whole reply as
+# hidden reasoning. Nothing in the score asked for the tag; this does.
+#   mode = "off"      nothing runs (default)
+#   mode = "shadow"   runs; result published on the verdict
+#                     (verdict.protocol_probe); never rejects
+#   mode = "enforce"  runs; pass_rate < min_pass_rate rejects the challenger
+#                     with rejection_reason "protocol:<detail>", before the
+#                     1,300-turn scoring (minutes, not an hour of echoes)
+# Recommended path: shadow at the next eval-pod redeploy, read a few
+# verdicts (genesis-family models should sit near 1.0; the reign-8 king
+# near 0.0), then enforce by operator decision.
+# 2026-09-08: shadow (operator directive after the SWE-bench Pro / Claude
+# Code post-mortem: the king answers compaction and final-report prompts
+# with reasoning only and no visible text). Enforce follows a verdict read.
+mode = "shadow"
+min_pass_rate = 0.9
+n_samples = 2          # completions per prompt (10 prompts -> 20 replies)
+temperature = 0.7
+max_tokens = 1024
 
 [eval_machine]
 # GPU pod hosting duel evalsrv. The provisioner keeps exactly one alive and

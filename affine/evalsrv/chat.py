@@ -53,6 +53,24 @@ def gen_prompt(repo: str, revision: str | None, prefix_messages: list[dict]) -> 
     return p
 
 
+def chat_prompt(repo: str, revision: str | None, messages: list[dict],
+                tools: list[dict] | None = None) -> str:
+    """Prompt exactly as an OpenAI-compatible client would render it: the
+    model's own chat template with add_generation_prompt and, when given,
+    the tool schemas the template folds into its system block. Ends inside
+    the open <think> the template emits (thinking on). Used by the protocol
+    probe; the duel path keeps gen_prompt (no tools — D carries them baked
+    into the prefix text)."""
+    tok = get_tokenizer(repo, revision)
+    kwargs = {"tokenize": False, "add_generation_prompt": True}
+    if tools:
+        kwargs["tools"] = tools
+    p = tok.apply_chat_template(messages, **kwargs)
+    if not p.rstrip().endswith(THINK_OPEN):
+        p = p + THINK_OPEN
+    return p
+
+
 def inject_prompt(repo: str, revision: str | None,
                   prefix_messages: list[dict], thoughts: str) -> str:
     """Prompt where `thoughts` are planted as the full reasoning channel."""
@@ -82,17 +100,41 @@ def thought_text(repo: str, revision: str | None,
     )
 
 
-def split_rollout(text: str, action_kind: str | None = dialects.DEFAULT_KIND
-                  ) -> tuple[str, str]:
+def think_closed(text: str) -> bool:
+    """Did the completion close its reasoning block?
+
+    The prompt always ends inside an open <think>, so a well-formed reply
+    emits </think> before its visible answer. Every OpenAI-compatible client
+    that separates reasoning from content (vLLM's reasoning parsers, Cursor,
+    the chat pod) depends on that tag; a reply without it is delivered as
+    100% reasoning and 0% answer. Measured on every sample (telemetry), and
+    required when [duel].require_think_close is on.
+    """
+    return THINK_CLOSE in text
+
+
+def split_rollout(text: str, action_kind: str | None = dialects.DEFAULT_KIND,
+                  require_think_close: bool = False) -> tuple[str, str]:
     """Split a completion (which started inside <think>) into (z, y).
 
     Returns ("", "") when the rollout contains no complete action in the
     turn's dialect; callers filter on empty y. An unparsable action is a
     forfeited turn, not an error — that is the incentive for a miner to
     honor the contract the prefix states.
+
+    require_think_close (staged 2026-09-07, off by default): a rollout that
+    never emits </think> is treated exactly like one with no parseable
+    action — ("", ""), i.e. a forfeit. Without it the tag is optional here,
+    which is why kings trained against this score dropped it (bench
+    transcripts: genesis closes </think> on 95–98% of replies, kings of
+    reigns 1–5 on 0–4%) and then render as empty replies in Cursor.
+    Flipping the knob changes which turns score, so it is a
+    weight_version_key event.
     """
     if THINK_CLOSE in text:
         latent, _, rest = text.partition(THINK_CLOSE)
+    elif require_think_close:
+        return "", ""
     else:
         latent, rest = "", text
     before, y = dialects.split_action(rest, action_kind)
