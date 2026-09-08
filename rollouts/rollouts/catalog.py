@@ -59,6 +59,11 @@ TERMINAL_LEGO_DATASET = "PrimeIntellect/Terminal-Lego-15k"
 REQUIRED_LEGO_FILES = (
     "task.toml", "instruction.md", "tests/test.sh", "tests/test_outputs.py",
 )
+# general-agent corpus (tool_use): Harbor exports it as
+# ~/.cache/harbor/general-agent_<date>_<hash>/general-agent/<task>/ (see
+# general_agent_v1.corpus.ensure_corpus, run inside the verifiers env).
+GENERAL_AGENT_GLOB = "general-agent_*/general-agent"
+GENERAL_AGENT_TIER_RE = re.compile(r"_t(\d+)$")
 NL2REPO_IMAGE_PREFIX = "ghcr.io/multimodal-art-projection/nl2repobench"
 NL2REPO_DEFAULT_DIR = ("/root/prime-pilot/research-environments/environments/"
                        "code/nl2repobench_v1/nl2repobench_v1/test_files")
@@ -208,7 +213,25 @@ def _wiki_trivia_meta(row: dict) -> dict | None:
     }
 
 
+def _commit0_meta(row: dict) -> dict | None:
+    """commit0/commit0 (test): repo commit-0/<name>, original_repo owner/name,
+    setup.python picks the sandbox image (affine_nl2lib_v1.taskset)."""
+    repo = row.get("repo") or ""
+    if not repo or not row.get("base_commit"):
+        return None
+    name = repo.rsplit("/", 1)[-1]
+    python = str((row.get("setup") or {}).get("python") or "3.11")
+    return {
+        "uid": name,
+        "sid": f"c0_{_dotless_task(name)}-0",
+        "repo": row.get("original_repo") or repo,
+        "language": "python",
+        "image": f"python:{python}",
+    }
+
+
 ROW_META = {
+    "commit0": _commit0_meta,
     "scaleswe": _scaleswe_meta,
     "swerebench_v2": _swerebench_v2_meta,
     "r2e": _r2e_meta,
@@ -219,16 +242,19 @@ ROW_META = {
 }
 
 
-def bucket_stratum(group: str, uid: str, n_buckets: int) -> str:
+def bucket_stratum(group: str, uid: str, n_buckets: int, offset: int = 0) -> str:
     """Explicit slice stratum for sources without a repo structure.
 
     sample_slice draws round-robin over strata, ~1 turn per stratum per
     duel, so a group's slice share is its strata count over the corpus
     total — not its turn count. Hashing task uids into `n_buckets` strata
     pins that share by construction (rollouts/sources.toml `strata_buckets`
-    documents the arithmetic)."""
+    documents the arithmetic). Names are per group, so a second bucketed
+    source in the same group passes `offset` (its `strata_offset`) to start
+    above the first source's range. The fold (ops/corpus_build.py
+    assign_bucket_strata) recomputes this from the current toml anyway."""
     h = int(hashlib.sha256(uid.encode("utf-8")).hexdigest()[:8], 16)
-    return f"{group}:{h % n_buckets:03d}"
+    return f"{group}:{offset + h % n_buckets:04d}"
 
 
 def _swesmith_meta(row: dict, lang_key: str, language: str) -> dict | None:
@@ -286,7 +312,7 @@ def build_hf_catalog(cfg: RolloutsConfig, src: Source) -> dict:
             continue
         if src.strata_buckets:
             meta["stratum"] = bucket_stratum(src.group, meta["uid"],
-                                             src.strata_buckets)
+                                             src.strata_buckets, src.strata_offset)
         seen.add(meta["uid"])
         kept.append(meta)
     return _write_catalog(cfg, src.name, kept, {
@@ -641,8 +667,65 @@ def build_nl2repobench_catalog(cfg: RolloutsConfig, src: Source) -> dict:
     })
 
 
+def _general_agent_root() -> Path:
+    override = os.environ.get("ROLLOUTS_GENERAL_AGENT_DIR")
+    if override:
+        return Path(override)
+    harbor = Path(os.environ.get("HARBOR_CACHE_DIR", "~/.cache/harbor")).expanduser()
+    roots = sorted(harbor.glob(GENERAL_AGENT_GLOB))
+    if not roots:
+        raise FileNotFoundError(
+            f"general-agent corpus not under {harbor}; run "
+            "`general_agent_v1.corpus.ensure_corpus()` in the verifiers env "
+            "first (or set ROLLOUTS_GENERAL_AGENT_DIR)")
+    return roots[-1]
+
+
+def build_general_agent_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    """general_agent_v1 corpus: one task dir per row, uid = dir name (what
+    `--taskset.tasks` matches). Family = name minus its `_t<tier>` suffix;
+    it becomes the repo so the fold's repo-stratum groups task variants of
+    one world together when `strata_buckets` is unset."""
+    root = _general_agent_root()
+    kept: list[dict] = []
+    n_unusable = 0
+    for task_dir in sorted(root.iterdir()):
+        if not task_dir.is_dir():
+            continue
+        needed = ("task.toml", "instruction.md", "tools.py", "db.json", "gold.json")
+        if not all((task_dir / f).is_file() for f in needed):
+            n_unusable += 1
+            continue
+        uid = task_dir.name
+        try:
+            meta = tomllib.loads((task_dir / "task.toml").read_text()).get("metadata", {})
+        except Exception:
+            n_unusable += 1
+            continue
+        family = GENERAL_AGENT_TIER_RE.sub("", uid)
+        tier = int(meta.get("tier", 0) or 0)
+        row = {
+            "uid": uid,
+            "sid": f"general_agent__{_dotless_task(family)}-{tier}",
+            "repo": f"general-agent/{family}",
+            "language": "tool",
+            "tier": tier,
+            "task_dir": str(task_dir),
+        }
+        if src.strata_buckets:
+            row["stratum"] = bucket_stratum(src.group, uid, src.strata_buckets,
+                                            src.strata_offset)
+        kept.append(row)
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": str(root),
+        "total": len(kept) + n_unusable, "kept": len(kept),
+        "panel_excluded": 0, "unusable": n_unusable,
+    })
+
+
 BUILDERS = {
     "hf": build_hf_catalog,
+    "general_agent": build_general_agent_catalog,
     "hf_swebench": build_hf_swebench_catalog,
     "swesmith": build_swesmith_catalog,
     "terminal_lego": build_terminal_lego_catalog,

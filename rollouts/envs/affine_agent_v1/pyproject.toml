@@ -1,0 +1,13 @@
+[project]
+name = "affine-agent-v1"
+version = "0.1.0"
+description = "affine-agent-v1 — general-agent tool worlds (4,417 tasks, per-task DB + tools) with a system-message tool contract; DB-hash graded, telemetry only."
+requires-python = ">=3.11"
+dependencies = ["general-agent-v1"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["affine_agent_v1"]

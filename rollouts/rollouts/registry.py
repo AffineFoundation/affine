@@ -17,7 +17,8 @@ from rollouts.schema import Endpoint, Policy
 
 RUNNERS = ("verifiers", "verifiers_chat", "mini_swe")
 CATALOG_KINDS = ("hf", "hf_swebench", "swesmith", "terminal_lego",
-                 "terminal_bench_2", "harbor_swe", "nl2repobench")
+                 "terminal_bench_2", "harbor_swe", "nl2repobench",
+                 "general_agent")
 SELECT_MODES = ("filter_fn", "tasks")
 
 _PKG_DIR = Path(__file__).resolve().parent
@@ -48,6 +49,9 @@ class Source:
     # traj_id. For sources with no repo structure (math, trivia) this is
     # what sets their share of every duel slice.
     strata_buckets: int = 0
+    # Bucket names are per group; a second bucketed source in the same
+    # group starts its range here so the two do not collide.
+    strata_offset: int = 0
 
 
 @dataclass(frozen=True)
@@ -134,6 +138,7 @@ def _load_sources(path: Path, policies: dict[str, Policy],
             share=float(cfg.get("share", 1.0)),
             extra_flags=tuple(cfg.get("extra_flags", ())),
             strata_buckets=int(cfg.get("strata_buckets", 0)),
+            strata_offset=int(cfg.get("strata_offset", 0)),
         )
         if src.group not in mix:
             raise ValueError(f"source {name!r} group {src.group!r} missing "
