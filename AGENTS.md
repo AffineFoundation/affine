@@ -148,6 +148,67 @@ legacy drop-from-pairing path (210/210 checked).
   to T0. A fourth (`hermes_agent`, tool_call) exists only as a commented
   policy and needs a datagen-pod probe before enabling — deferred past T0.
 
+### v7 bundle: "models must work as chat models" — noticed 2026-09-07/08, STAGED, wvk 12→13 NOT flipped
+Trigger: SWE-bench Pro under the Claude Code harness (full 731 tasks, king
+reign-8 vs teacher, 2026-09-07/08). The king answers Claude Code's
+compaction ("summarize, TEXT ONLY") and final-report prompts with reasoning
+only and no visible text → compaction fails silently → "Prompt is too
+long"; it also never closes `</think>` under IDE-shaped prompts. Root cause
+is the contract: min(R,G) never scored the visible message and treated
+`</think>` as optional. Operator order 2026-09-08 ("lets do this"): probe
+to shadow now, the rest bundled into one fork with one notice.
+- **Protocol probe — LIVE in `shadow` since 2026-09-08 13:58 UTC** (toml
+  swapped on the eval pod at a duel boundary; `[protocol_probe].mode`).
+  Ten Cursor/IDE-shaped prompts through the challenger's own template; pass
+  = closes `</think>` + visible answer. Result published on every verdict
+  (`verdict.protocol_probe`), rejects nobody. First read (chal-00348
+  challenger): pass 0.00, think_close 0.00 (20 `no_think_close`, 4
+  `no_tool_call`). **Enforce** (`mode = "enforce"`, ≥ 0.90) is an operator
+  decision after reading shadow verdicts — admission rule, no wvk.
+- **`text` dialect — code staged, admission is the fork.**
+  `affine/dialects.py` `text`: action = the whole visible reply after
+  `</think>` (stripped), no system marker (`Dialect.system_marker = ""`
+  → `system_ok` vacuous), `ends_in_text` marks the dialects whose rollouts
+  legitimately end on prose (bash, tool_call; not boxed). Fold rule
+  (`affine/corpus/view.py::deliberate_final_reply` + `datagen/slicer.py`
+  `text_final`): only the FINAL sampled reply of a rollout with
+  `stop_condition == agent_completed` whose last call did not finish
+  `length`, and only when it has no action in the policy dialect. Existing
+  records unchanged by construction (fallback fires only where the old rule
+  yielded nothing). Measured on real traces (3,485 envelopes): +89 text
+  turns next to 3,902 bash-tool `tool_call` turns, +105 / 3,896 pi, +46 /
+  187 wiki — ~1 text turn per 35–45 tool turns; 100% of claude_code, 99%
+  pi, 98% bash-tool teacher rollouts end on such a reply (p50 1.6–2.2k
+  chars). Until the flip the fold drops them as
+  `action_kind_not_admitted:text` (the staging validator admits every
+  registered dialect, so pod yield counts include them). No per-kind token
+  cap needed: a truncated text reply still parses (shorter report), it
+  does not forfeit.
+- **`require_think_close = true`** — knob exists since 2026-09-07 (forfeit
+  when no `</think>`), flips in the same fork.
+- **Visible-span G — decided NO** (`research/results/visible_span_g_decision.txt`):
+  the teacher's own tool-loop replies carry no visible prose on 20–33%
+  (pi 33 / bash 24 / claude_code 20 %; GLM-era 61–63 %), so a band on the
+  visible span has no support there and would punish the teacher's own
+  behaviour; the spans are 15–35 tokens (per-byte noise, the A-leg
+  lesson). The visible channel that matters — the reply that ends a
+  trajectory — is the `text` dialect. Uncovered: mid-trajectory compaction
+  summaries (not final replies; rare in datagen) — extend the fallback if
+  they become common.
+- **`teacher_claude_code` datagen policy** — live on datagen-1/2 since
+  2026-09-07 (~130 kept tool_call turns per 24-rollout batch); tomls
+  synced to datagen-3 and its supervisor bounced 2026-09-08.
+- **Flip tooling:** `ops/v7/v7_toml_edits.py --preview` writes
+  `ops/v7/wvk13_T0.patch` (require_think_close true, allowed_action_kinds
+  += text, wvk 12→13 + history paragraph); `--apply YYYY-MM-DD` only under
+  an explicit dated directive. Then: commit, validator restart, eval-pod
+  toml redeploy between duels, one fold (`ops/corpus_build.py`) so the
+  next epoch admits the text turns already in the traces, llms.txt notice
+  → history, Discord. Notice as published: effective once the queue as of
+  2026-09-07 (through `chal-00359`) drains, projected 2026-09-09; the text
+  dialect was added to that notice on 2026-09-08 as an addendum — the
+  operator may push T0 to give it its own notice window.
+
 ### History — Reason v4 (wvk 7–9, 2026-08-17 → 2026-08-27)
 v4 was the uncentered tempered LME, `Reason = tau·log((1/k)·Σ exp(a_i/tau))`,
 same B gate and length floor, δ = 0.002 (0.001 experiment 2026-08-21 reverted
