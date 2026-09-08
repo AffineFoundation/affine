@@ -43,20 +43,25 @@ dst "grep -qF '$PUB' /root/.ssh/authorized_keys 2>/dev/null || echo '$PUB' >> /r
 echo "== [3/5] rsync SRC -> DST (code, venv, caches, catalogs, state seed)"
 # -H keeps uv's hardlinked environments hardlinked (else the env cache
 # balloons); --delete is deliberately absent (never trim a live pod).
-src "rsync -aH --info=progress2 --human-readable \
+# -R (relative) recreates each source's full path under DST:/ — without it
+# rsync drops the last path component into the destination, so
+# /root/.cache/huggingface landed at /root/huggingface on pods 2/3
+# (2026-09-02) and every terminal_lego catalog path was dead until a
+# symlink patched it (2026-09-07). Excludes are anchored at / accordingly.
+src "rsync -aHR --info=progress2 --human-readable \
   -e 'ssh -p $DST_PORT -i /root/.ssh/id_ed25519_fleet -o StrictHostKeyChecking=accept-new -o BatchMode=yes' \
-  --exclude='/rollouts-data/traces/' \
-  --exclude='/rollouts-data/runs/' \
-  --exclude='/rollouts-data/outbox/' \
-  --exclude='/prime-pilot/verifiers/outputs/' \
-  --exclude='/prime-pilot/outbox/' \
-  --exclude='/logs/' \
-  --exclude='/.ssh/' \
-  --exclude='/.bash_history' \
+  --exclude='/root/rollouts-data/traces/' \
+  --exclude='/root/rollouts-data/runs/' \
+  --exclude='/root/rollouts-data/outbox/' \
+  --exclude='/root/prime-pilot/verifiers/outputs/' \
+  --exclude='/root/prime-pilot/outbox/' \
+  --exclude='/root/logs/' \
+  --exclude='/root/.ssh/' \
+  --exclude='/root/.bash_history' \
   /root/affine /root/rollouts /root/prime-pilot /root/prime-lane /root/venv \
   /root/.local /root/.cache/uv /root/.cache/harbor /root/.cache/huggingface \
   /root/hf /root/rollouts-data \
-  root@$DST_HOST:/root/"
+  root@$DST_HOST:/"
 
 echo "== [4/5] shard env + import smoke on DST"
 # The rsync just overwrote .rollouts_env with SRC's copy (SRC's own shard
@@ -84,6 +89,10 @@ assert cfg.shard[1] > 1, 'shard not applied'
 PY"
 
 echo "== [5/5] (re)start the supervisor on DST"
+# /start.sh (PID 1 of the Lium template) runs /post_start.sh on every
+# container start; the hook relaunches the bootstrap loop after a host-side
+# restart (pods 2/3 sat idle for 3 days after one on 2026-09-04).
+dst 'install -m 0755 /root/rollouts/scripts/pod_post_start.sh /post_start.sh'
 dst 'set -e
   # anchored patterns: the cmdline of this remote shell contains the words too
   pkill -f "^bash /root/rollouts/bootstrap.sh$" 2>/dev/null || true

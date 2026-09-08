@@ -36,7 +36,15 @@ tsjs = 0.15
 # 2026-09-02: teacher-only. The GLM seat (glm_* policies, still defined in
 # policies.toml) is switched off by operator decision — every new prefix is
 # the duel teacher's own history, so duel-time refs stay on-policy.
-policies = ["teacher_textbased", "teacher_bashtool", "teacher_pi"]
+# 2026-09-07: + teacher_claude_code (IDE-agent prompt family; verifiers'
+# claude_code harness). Datagen-pod probe on 2 terminal-bench-2 tasks:
+# 26 replies -> 16 tool_call turns, 0 drops, baked parity held, dialect
+# marker present, prefixes 88-107k chars (Claude Code's 80k-char system
+# prompt + tool schemas; under the 120k slicer cap). teacher_codex stays
+# staged: Codex sends two leading system messages the teacher template
+# cannot render (see policies.toml).
+policies = ["teacher_textbased", "teacher_bashtool", "teacher_pi",
+            "teacher_claude_code"]
 
 # -- coding --------------------------------------------------------------------
 
@@ -187,10 +195,33 @@ share = 1.0
 # -- nl2repo -------------------------------------------------------------------
 
 [source.nl2repobench]
+# 104 tasks, exhausted 2026-08-13 (tasks never re-run) — 57 strata, 0.7% of
+# the slice against a 5% target. Block stays so source -> group resolves.
 group = "nl2repo"
 runner = "verifiers"
 taskset_id = "nl2repobench-v1"
 catalog = "nl2repobench"    # bundled test_files scan
+select = "tasks"
+pass_dataset = false
+share = 1.0
+
+[source.affine_nl2lib]
+# Commit0 (commit0/commit0, 54 libraries): implement a Python library from
+# its docstring skeleton + visible tests in a python:<ver> sandbox
+# (rollouts/envs/affine_nl2lib_v1). Second nl2repo source, added 2026-09-07.
+# Small by construction — every graded NL->repo set is (nl2repobench 104,
+# DevBench 22, Commit0 54); the scalable follow-up is a synthesized
+# "re-implement this module from its docstrings" family over the swesmith
+# images, which is a design decision, not a config edit. Repos that overlap
+# the advisory bench panel (requests, flask, ...) are dropped by the panel
+# filter at catalog time, so expect fewer than 54.
+group = "nl2repo"
+runner = "verifiers"
+taskset_id = "affine-nl2lib-v1"
+catalog = "hf"
+dataset = "commit0/commit0"
+split = "test"
+row_meta = "commit0"
 select = "tasks"
 pass_dataset = false
 share = 1.0
@@ -236,6 +267,33 @@ select = "tasks"
 pass_dataset = false
 policies = ["teacher_toolcall"]        # teacher-only since 2026-09-02
 # 478 tasks total, so strata <= tasks; 470 already ~one task per bucket.
-# tool_use cannot reach 10% of the slice until a second tool source exists.
+# Exhausted 2026-09-02 (one pass, tasks never re-run); affine_agent below is
+# the second tool source that lets tool_use approach 10% of the slice.
 strata_buckets = 470
+share = 1.0
+
+[source.affine_agent]
+# general-agent toolbench (PrimeIntellect research-environments,
+# tool_use/general_agent_v1): 4,417 multi-turn tasks, each with its own
+# database + tool set served on the host per rollout, DB-hash graded
+# (telemetry only). Wrapped by rollouts/envs/affine_agent_v1, which adds the
+# system-message tool contract the fold requires for `tool_call` turns.
+# Corpus (~320 MB) is pulled once per pod into ~/.cache/harbor by
+# general_agent_v1.corpus.ensure_corpus() (run in the verifiers env).
+# Added 2026-09-07: tool_use sat at 3.5% of the slice (target 10%) with
+# affine_wiki exhausted. Sizing per the math note above: tool_use at 10%
+# against ~4,800 coding strata needs ~960 buckets in total; wiki holds 470,
+# so 500 here. Re-derive upward as coding grows; never lower.
+# strata_offset: bucket names are per GROUP (`tool_use:NNNN`); wiki owns
+# 0000-0469, so this source starts at 0470 — otherwise the two sources
+# would collide into the same 470 names and add no slice share.
+group = "tool_use"
+runner = "verifiers_chat"
+taskset_id = "affine-agent-v1"
+catalog = "general_agent"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_toolcall"]
+strata_buckets = 500
+strata_offset = 470
 share = 1.0
