@@ -25,7 +25,7 @@ from pathlib import Path
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 HERE = Path(__file__).resolve().parent
 STATE_JSON = HERE / "state" / "state.json"
@@ -39,7 +39,17 @@ OVERLOAD_FACTOR = 4       # spill if chosen backend has 4x the min in-flight
 ECHO_TIMEOUT_S = 240.0
 EMPTY_GRACE_S = 120.0  # empty backend list must persist this long to take effect
 SAMPLE_TIMEOUT_S = 600.0
-AFFINITY_KEY_CHARS = 2048  # prompt prefix length used for affinity hashing
+AFFINITY_KEY_CHARS = 2048  # chat/completions fallback: leading chars hashed
+# Completions (the duel path): the key is the rendered prompt up to the final
+# assistant turn — i.e. exactly the turn prefix x that every sample and echo
+# of one turn shares. The old "first 2048 chars" key broke at the wvk-11 T0:
+# tool_call / pi turns carry a long identical system prompt (tool schemas),
+# so 322 tool_call turns of a 1300-turn slice hashed onto TWO backends (177 +
+# 145 turns; 285/257 total vs ~125 elsewhere) and the duel ran at the pace of
+# the two overloaded replicas (36 -> 52 min per duel, measured 2026-09-05).
+# Hashing the whole prefix gives 1300 distinct keys spread 147-193 per
+# backend on the same slice, with per-turn stickiness intact.
+ASSISTANT_TURN_MARK = "<|im_start|>assistant"
 
 
 def swarm_key() -> str:
@@ -139,6 +149,11 @@ class Router:
         else:
             p = payload.get("prompt")
             raw = p if isinstance(p, str) else json.dumps(p)
+            raw = raw or ""
+            cut = raw.rfind(ASSISTANT_TURN_MARK)
+            # Everything before the final assistant turn = the turn prefix x.
+            # blake2s over ~100k chars is ~0.1 ms; no need to truncate.
+            return raw[:cut] if cut > 0 else raw
         return (raw or "")[:AFFINITY_KEY_CHARS]
 
     def ranked(self, key: str) -> list[Backend]:
@@ -167,7 +182,7 @@ class Router:
         return ranked
 
     # ---- proxy --------------------------------------------------------------
-    async def forward(self, path: str, payload: dict) -> JSONResponse:
+    async def forward(self, path: str, payload: dict) -> Response:
         self.reload_state()
         key = self.affinity_key(payload, path)
         candidates = self.ranked(key)[:3]  # primary + two retries
@@ -189,7 +204,12 @@ class Router:
                         f"{r.status_code}", request=r.request, response=r)
                 b.record(True)
                 self.done.append((time.monotonic(), is_sample))
-                return JSONResponse(r.json(), r.status_code)
+                # Pass the body through as bytes. Echo responses carry
+                # logprobs + token strings for every prompt token (MBs);
+                # parsing and re-serialising them here put the router at
+                # 40-70% of a core (2026-09-07) for no benefit.
+                return Response(content=r.content, status_code=r.status_code,
+                                media_type="application/json")
             except (httpx.HTTPError, ValueError) as e:
                 b.record(False)
                 last_err = f"{b.pod}: {e!r}"

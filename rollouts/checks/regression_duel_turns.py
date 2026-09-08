@@ -89,8 +89,11 @@ def check_verifiers_fixture(path: Path) -> tuple[int, int]:
             derive_turns(env, panel=panel, generated_at=generated_at))
     new_kept, new_drops = validate_records(new_records, panel)
 
+    # rollout_id is new with the trace-first view (links a turn back to its
+    # envelope); the vendor slicer never had it.
     old_dump = [json.dumps(r, sort_keys=True) for r in old_kept]
-    new_dump = [json.dumps(r, sort_keys=True) for r in new_kept]
+    new_dump = [json.dumps({k: v for k, v in r.items() if k != "rollout_id"},
+                           sort_keys=True) for r in new_kept]
     assert old_drops == new_drops, (old_drops, new_drops)
     assert old_dump == new_dump, (
         f"{path.name}: record mismatch "
@@ -119,7 +122,8 @@ def check_mini_swe_fixture(path: Path) -> tuple[int, int]:
     new_records = derive_turns(env, panel=panel_keys())
 
     stripped = [{k: v for k, v in r.items()
-                 if k not in ("source", "language")} for r in new_records]
+                 if k not in ("source", "language", "rollout_id")}
+                for r in new_records]
     old_dump = [json.dumps(r, sort_keys=True) for r in old_records]
     new_dump = [json.dumps(r, sort_keys=True) for r in stripped]
     assert old_dump == new_dump, (

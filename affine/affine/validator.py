@@ -32,6 +32,7 @@ import logging
 import os
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import bittensor as bt
@@ -41,10 +42,12 @@ from .bench import BenchOrchestrator
 from .chain import BlockHashUnavailable
 from .config import Config, load_config
 from .dashboard import Dashboard
-from .eval_client import (EvalBusyError, EvalClient, InfraFaultError,
-                          TransientEvalError)
+from .eval_client import (ENTRY_FAULT_CODES, DispatchError, EvalBusyError,
+                          EvalClient, InfraFaultError, TransientEvalError)
 from .hippius import Hippius
 from .provisioner import BenchMachineManager, ChatMachineManager, EvalMachineManager
+from .r2protocol import is_r2_ref, parse_r2_ref
+from .registrations import AccessController
 from .state import QueueEntry, State, now_iso
 
 log = logging.getLogger("affine.validator")
@@ -96,7 +99,15 @@ class Validator:
         self.hippius = Hippius(
             cfg.hippius["endpoint"], cfg.hippius["bucket"],
             cfg.secrets.hippius_access_key, cfg.secrets.hippius_secret_key)
-        self.dashboard = Dashboard(cfg, self.state, self.hippius)
+        # Private R2 intake (affine2). None while [submission.r2].enabled is
+        # false: every r2 branch below is then dead code and the HF path
+        # behaves exactly as before.
+        self.registrations = AccessController.build_if_configured(
+            cfg, self.state, self._hygiene_reason)
+        self.r2_reader = (self.registrations.reader
+                          if self.registrations is not None else None)
+        self.dashboard = Dashboard(cfg, self.state, self.hippius,
+                                   registrations=self.registrations)
         repo_root = Path(__file__).resolve().parents[1]
         self.machine = EvalMachineManager(cfg, self.state, repo_root)
         self.bench_machine = BenchMachineManager(cfg, self.state, repo_root)
@@ -218,12 +229,13 @@ class Validator:
         for m in candidates:
             if not m["hotkey"] or not m["repo"]:
                 continue  # genesis seed rows can't earn via the metagraph
+            self._repromote_if_private(m)
             key = (m["repo"], m["revision"])
             status, ts = self._access_cache.get(key, ("", 0.0))
             if not status or time.monotonic() - ts >= ttl:
                 ref = model_store.ModelRef(m["repo"], m["revision"])
                 status, _ = model_store.fetch_repo_info_or_status(
-                    ref, self.cfg.secrets.hf_token)
+                    ref, self.cfg.secrets.hf_token, r2_reader=self.r2_reader)
                 self._access_cache[key] = (status, time.monotonic())
             if status == "gone":
                 gone.add(m["hotkey"])
@@ -251,21 +263,34 @@ class Validator:
 
     # -- intake -------------------------------------------------------------------
     def _scan_and_enqueue(self) -> None:
-        reveals, bad = chain.scan_reveals(
-            self.subtensor, self.cfg.netuid,
-            self.cfg.submission.reveal_prefix,
-            self.cfg.min_submission_block, self.state.seen_hotkeys)
+        r2cfg = self.cfg.submission.r2
+        all_reveals = chain.scan_commitments(self.subtensor, self.cfg.netuid)
+        exclude = (r2cfg.reveal_prefix,) if self.registrations is not None else ()
+        reveals, bad = chain.latest_reveals(
+            all_reveals, self.cfg.submission.reveal_prefix, exclude)
         for b in bad:
             self.state.record_intake(
                 hotkey=b["hotkey"], block=b["block"],
                 decision="rejected_bad_payload",
                 detail=b.get("detail") or "unparseable reveal payload")
+        cutover = r2cfg.hf_cutover_block if self.registrations is not None else -1
         for r in reveals:
+            if 0 <= cutover < r.block:
+                # HF submissions retired: record once (intake dedupes on
+                # hotkey:block, so enqueue below is a no-op for this reveal).
+                self.state.record_intake(
+                    hotkey=r.hotkey, block=r.block, repo=r.repo,
+                    revision=r.revision, decision="rejected_hf_retired",
+                    detail=(f"HF submissions closed at block {cutover}; submit "
+                            f"via the private R2 flow (scripts/submit.py)"))
+                continue
             entry = self.state.enqueue(r.hotkey, r.repo, r.revision, r.block,
                                        self.cfg.min_submission_block)
             if entry:
                 log.info("enqueued %s: %s@%s from %s",
                          entry.challenge_id, r.repo, r.revision[:12], r.hotkey[:16])
+        if self.registrations is not None:
+            self.registrations.handle_commitments(all_reveals)
 
     # -- challenge processing --------------------------------------------------------
     async def _process_challenge_safely(self, entry: QueueEntry) -> None:
@@ -336,16 +361,25 @@ class Validator:
         # transients (including chain hiccups fetching the seed block hash)
         # count against the bounded budget so a permanent failure cannot wedge
         # the queue forever.
-        machine_fault = (isinstance(e, (EvalBusyError, InfraFaultError))
+        machine_fault = (isinstance(e, (EvalBusyError, InfraFaultError, DispatchError))
                          or not self.machine.is_healthy_now())
         max_retries = self.cfg.validator.max_transient_eval_retries
         if machine_fault:
-            # Infra never burns the miner, but a *persistent* infra fault (a
-            # repo too large for the pod, a wedged tunnel) must not pin the
-            # head forever. Past a bound, rotate to the tail so every other
-            # submission still gets its turn while this one keeps its slot.
-            entry.infra_retry_count += 1
-            if entry.infra_retry_count > self.cfg.validator.max_infra_front_requeues:
+            # Infra never burns the miner. Only a fault that is about THIS
+            # entry (the pod cannot fetch / fit / load this checkpoint) counts
+            # toward deferral: past a bound it is moved behind the rest so the
+            # head cannot wedge on one repo. A pod-wide fault (dead teacher,
+            # unreachable server, busy) would hit every entry identically, so
+            # it leaves the order alone and the head simply waits (the
+            # 2026-09-05 teacher outage rotated 30 entries to the tail one by
+            # one and let "dispatch failed" burn miner retries).
+            entry_fault = (isinstance(e, InfraFaultError)
+                           and e.code in ENTRY_FAULT_CODES
+                           and self.machine.is_healthy_now())
+            if entry_fault:
+                entry.infra_retry_count += 1
+            if (entry_fault and entry.infra_retry_count
+                    > self.cfg.validator.max_infra_front_requeues):
                 self.state.requeue_back(entry, str(e))
             else:
                 self.state.requeue_front(entry, str(e), count_retry=False)
@@ -415,7 +449,8 @@ class Validator:
             max_repo_files=sub.max_repo_files,
             max_config_bytes=sub.max_config_bytes)
         if reason is None and sub.pinned_arch:
-            reason = model_store.validate_repo_arch(info, sub.pinned_arch)
+            reason = model_store.validate_repo_arch(
+                info, sub.pinned_arch, sub.pinned_arch_alt)
         return reason
 
     async def _prefetch_next(self, nxt: QueueEntry) -> None:
@@ -426,15 +461,13 @@ class Validator:
         size so the engine needs no HF-metadata access of its own.
         Best-effort: every failure is swallowed — a missed prefetch only
         means that duel pays its own download."""
-        sub = self.cfg.submission
         try:
-            pairs = self.metagraph.identity_token_pairs(
-                nxt.hotkey, sub.coldkey_prefix_len, sub.coldkey_suffix_len)
-            if model_store.validate_repo_name(nxt.repo, sub.repo_pattern, pairs):
+            if self._repo_name_reason(nxt):
                 return
             ref = model_store.ModelRef(nxt.repo, nxt.revision)
             info = await asyncio.to_thread(
-                model_store.fetch_repo_info, ref, self.cfg.secrets.hf_token)
+                model_store.fetch_repo_info, ref, self.cfg.secrets.hf_token,
+                self.r2_reader)
             if self._hygiene_reason(info):
                 return
             await self.eval_client.prefetch(nxt.repo, nxt.revision,
@@ -443,22 +476,28 @@ class Validator:
             log.debug("prefetch precheck failed for %s (ignored): %s",
                       nxt.repo, e)
 
+    def _repo_name_reason(self, entry: QueueEntry) -> str | None:
+        """Repo-name policy: pattern + anti-impersonation identity binding
+        (coldkey OR hotkey prefix+suffix). The hotkey pair is always
+        checkable, so a deregistered/unknown coldkey never wedges the queue
+        head in a retry loop. R2 refs skip it: the prefix is derived from the
+        hotkey and only that hotkey could write it."""
+        if is_r2_ref(entry.repo):
+            return None
+        sub = self.cfg.submission
+        pairs = self.metagraph.identity_token_pairs(
+            entry.hotkey, sub.coldkey_prefix_len, sub.coldkey_suffix_len)
+        return model_store.validate_repo_name(entry.repo, sub.repo_pattern, pairs)
+
     async def _process_challenge(self, entry: QueueEntry) -> None:
         cid = entry.challenge_id
-        sub = self.cfg.submission
         king = self.state.king
         assert king is not None
         t0 = time.monotonic()
         self.state.set_phase("process_challenge", challenge_id=cid, repo=entry.repo)
         log.info("processing %s: %s@%s", cid, entry.repo, entry.revision[:12])
 
-        # Repo-name policy: pattern + anti-impersonation identity binding
-        # (coldkey OR hotkey prefix+suffix). The hotkey pair is always
-        # checkable, so a deregistered/unknown coldkey no longer wedges the
-        # queue head in a retry loop.
-        pairs = self.metagraph.identity_token_pairs(
-            entry.hotkey, sub.coldkey_prefix_len, sub.coldkey_suffix_len)
-        reason = model_store.validate_repo_name(entry.repo, sub.repo_pattern, pairs)
+        reason = self._repo_name_reason(entry)
         if reason:
             self.state.record_failure(entry, "repo_name_rejected", reason,
                                       **self._history_meta(entry, t0))
@@ -467,7 +506,8 @@ class Validator:
         # Pin + hygiene (metadata only, no weight download).
         ref = model_store.ModelRef(entry.repo, entry.revision)
         try:
-            info = model_store.fetch_repo_info(ref, self.cfg.secrets.hf_token)
+            info = model_store.fetch_repo_info(ref, self.cfg.secrets.hf_token,
+                                               self.r2_reader)
         except Exception as e:
             self.state.record_failure(entry, "revision_not_found",
                                       f"cannot read {ref.immutable_ref}: {e}",
@@ -488,7 +528,7 @@ class Validator:
         # king metadata for copy detection when the repo is live.
         king_ref = model_store.ModelRef(king.repo, king.revision)
         king_status, king_info = model_store.fetch_repo_info_or_status(
-            king_ref, self.cfg.secrets.hf_token)
+            king_ref, self.cfg.secrets.hf_token, r2_reader=self.r2_reader)
         if king_status == "gone":
             await self._revert_dead_king_and_requeue(
                 entry, f"king repo {king_ref.immutable_ref} is gone/gated")
@@ -528,21 +568,28 @@ class Validator:
         self.state.set_phase("duel", challenge_id=cid)
         self.dashboard.flush(force=True)
 
+        prefetch_tried_load = False
         prefetch_sent = False
 
         def on_progress(data: dict) -> None:
-            nonlocal prefetch_sent
+            nonlocal prefetch_tried_load, prefetch_sent
             self.watchdog.beat()
             if self.state.current_eval is not None:
                 self.state.current_eval["stage"] = data.get("phase", "scoring")
                 self.state.current_eval["progress"] = data
             self.dashboard.flush()
-            # Scoring is GPU-bound and the pod's network is idle: warm the next
-            # queued challenger's weights so its duel skips the download. Fired
-            # at the load→scoring transition, never earlier, so it cannot steal
-            # bandwidth from the current challenger's own download.
-            if not prefetch_sent and data.get("phase") == "scoring":
-                prefetch_sent = True
+            # Warm the next queued challenger as soon as this one is on GPU
+            # load (load_challenger). Weights already on disk do not use the
+            # NIC, so the next download overlaps that wait. Retry at scoring
+            # if the first hint was cancelled (incoming still downloading).
+            phase = data.get("phase")
+            fire = ((phase == "load_challenger" and not prefetch_tried_load)
+                    or (phase == "scoring" and not prefetch_sent))
+            if fire:
+                if phase == "load_challenger":
+                    prefetch_tried_load = True
+                else:
+                    prefetch_sent = True
                 nxt = self.state.peek_next()
                 if nxt is not None:
                     self._prefetch_task = asyncio.create_task(
@@ -560,10 +607,22 @@ class Validator:
         verdict["block_hash"] = block_hash
         self._apply_thought_floor(verdict)
         self._apply_causality_gate(verdict)
+        accepted = bool(verdict.get("challenger_wins"))
+        crowned_entry = entry
+        if accepted and is_r2_ref(entry.repo):
+            # "Public on crown": copy the private prefix to the public bucket
+            # and crown THAT ref, so the king row, weights probe and pods all
+            # point at the published copy. A failed copy still crowns the
+            # private ref (pods read both buckets); promotion is retried by
+            # the operator, never by burning the miner.
+            public_ref = await asyncio.to_thread(self._promote_or_none, entry)
+            if public_ref:
+                crowned_entry = replace(entry, repo=public_ref)
+                verdict["private_repo"] = entry.repo
         # One history row per duel: a winning verdict crowns inside
         # record_verdict, so the crowned row carries the full verdict payload.
-        self.state.record_verdict(entry, verdict, **self._history_meta(entry, t0))
-        accepted = bool(verdict.get("challenger_wins"))
+        self.state.record_verdict(crowned_entry, verdict,
+                                  **self._history_meta(entry, t0))
         log.info("verdict %s: challenger_wins=%s z=%s reason=%s", cid, accepted,
                  verdict.get("z"), verdict.get("rejection_reason"))
         await self._publish_eval_artifact(entry, verdict)
@@ -571,9 +630,38 @@ class Validator:
         if accepted:
             await self._maybe_set_weights(force=True)
         self.bench.enqueue_for(
-            entry.repo, entry.revision, entry.hotkey, accepted=accepted,
+            crowned_entry.repo, entry.revision, entry.hotkey, accepted=accepted,
             label=(f"reign-{self.state.king.reign_number}" if accepted else cid))
         self.dashboard.flush(force=True)
+
+    def _repromote_if_private(self, member: dict) -> None:
+        """A reign member still pointing at its private prefix (promotion
+        failed at crown time) would go dark when the private retention
+        lifecycle deletes it. Retry the public copy on every sweep until it
+        lands, then repoint the lineage row."""
+        if self.registrations is None or not is_r2_ref(member["repo"]):
+            return
+        bucket, _ = parse_r2_ref(member["repo"])
+        if bucket != self.cfg.submission.r2.private_bucket:
+            return
+        entry = QueueEntry(challenge_id="repromote", hotkey=member["hotkey"],
+                           repo=member["repo"], revision=member["revision"],
+                           block=int(member.get("block") or 0), queued_at="")
+        public_ref = self._promote_or_none(entry)
+        if public_ref and self.state.rewrite_king_repo(
+                member["hotkey"], member["revision"], public_ref):
+            log.warning("late promotion: %s → %s", member["repo"], public_ref)
+            member["repo"] = public_ref
+
+    def _promote_or_none(self, entry: QueueEntry) -> str | None:
+        if self.registrations is None:
+            return None
+        try:
+            return self.registrations.promote(entry)
+        except Exception:
+            log.error("promotion of %s to the public bucket failed; crowning "
+                      "the private ref", entry.repo, exc_info=True)
+            return None
 
     async def _publish_eval_artifact(self, entry: QueueEntry,
                                      verdict: dict) -> None:

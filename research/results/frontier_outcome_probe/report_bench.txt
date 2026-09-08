@@ -1,0 +1,26 @@
+B on the bench: 1167 king turns from 300 on-policy swe-rebench trajectories, frontier glm-5.2 sampled per turn
+resolved turns 463 / unresolved 704
+          resolved  unresolved
+aF           0.508       0.501   turn AUC 0.508
+aG           0.455       0.452   turn AUC 0.504
+exact        0.145       0.173   turn AUC 0.486
+-- by position in trajectory (quartile) --
+  Q1: resolved 0.469 unresolved 0.486  AUC 0.483  (n=298)
+  Q2: resolved 0.541 unresolved 0.459  AUC 0.575  (n=293)
+  Q3: resolved 0.554 unresolved 0.533  AUC 0.519  (n=286)
+  Q4: resolved 0.466 unresolved 0.528  AUC 0.452  (n=290)
+-- trajectory level: AUC(resolved | mean aF) pooled 0.515 [0.443, 0.585] (resolved 117 / unresolved 183)
+   within-run AUCs: mean 0.530  (0.51, 0.51, 0.65, 0.37, 0.42, 0.69, 0.59, 0.80, 0.68, 0.37, 0.36, 0.42)
+-- model level (same 25 tasks for every model) --
+model         swe  turns  agree_F  agree_G
+reign-8      0.46    197    0.460    0.415
+reign-7      0.44     97    0.519    0.480
+reign-1      0.40     96    0.534    0.475
+reign-6      0.38    193    0.504    0.437
+reign-4      0.36     98    0.534    0.498
+reign-5      0.34    195    0.543    0.499
+reign-2      0.34     98    0.543    0.502
+reign-0      0.30     96    0.380    0.345
+reign-3      0.26     97    0.518    0.441
+Spearman(mean aF, swe) = -0.083  perm p 0.844
+Spearman(mean aG, swe) = -0.083  perm p 0.841

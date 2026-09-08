@@ -38,10 +38,47 @@ class Secrets:
     eval_token: str = ""
     # TaoMarketCap public API key (dash market stream). Header: Authorization: <key>.
     taomarketcap: str = ""
+    # Cloudflare R2 private-submission flow ([submission.r2]). The account
+    # API token needs Workers R2 Storage Write + Account API Tokens Write;
+    # the S3 pair is the validator's full read/write key over all three
+    # buckets. Missing values disable the flow even if the toml enables it.
+    cloudflare_account_id: str = ""
+    cloudflare_api_token: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_endpoint: str = ""
+    # 64-hex Ed25519 seed; signs mailbox envelopes so miners can verify the
+    # credentials came from this validator (its ss58 is published).
+    mailbox_signing_seed: str = ""
+    # Read-only S3 pair shipped to eval pods (never the management token).
+    eval_r2_access_key_id: str = ""
+    eval_r2_secret_access_key: str = ""
+    # Publisher pair for the trace-first corpus bucket ([data_r2]); writes
+    # views/ + corpus/ from the validator box. The pod's writer pair
+    # (ROLLOUTS_R2_*) lives in the rollouts package, not here.
+    data_r2_access_key_id: str = ""
+    data_r2_secret_access_key: str = ""
+    data_r2_endpoint: str = ""
 
     @classmethod
     def from_env(cls) -> "Secrets":
+        account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
+        r2_endpoint = (os.environ.get("R2_ENDPOINT", "").rstrip("/")
+                       or (f"https://{account_id}.r2.cloudflarestorage.com"
+                           if account_id else ""))
         return cls(
+            cloudflare_account_id=account_id,
+            cloudflare_api_token=os.environ.get("CLOUDFLARE_API_TOKEN", ""),
+            r2_access_key_id=os.environ.get("R2_ACCESS_KEY_ID", ""),
+            r2_secret_access_key=os.environ.get("R2_SECRET_ACCESS_KEY", ""),
+            r2_endpoint=r2_endpoint,
+            data_r2_access_key_id=os.environ.get("DATA_R2_ACCESS_KEY_ID", ""),
+            data_r2_secret_access_key=os.environ.get("DATA_R2_SECRET_ACCESS_KEY", ""),
+            data_r2_endpoint=(os.environ.get("DATA_R2_ENDPOINT", "").rstrip("/")
+                              or r2_endpoint),
+            mailbox_signing_seed=os.environ.get("AFFINE_MAILBOX_SIGNING_SEED", ""),
+            eval_r2_access_key_id=os.environ.get("AFFINE_EVAL_R2_ACCESS_KEY_ID", ""),
+            eval_r2_secret_access_key=os.environ.get("AFFINE_EVAL_R2_SECRET_ACCESS_KEY", ""),
             hf_token=os.environ.get("HF_TOKEN", ""),
             hippius_access_key=os.environ.get("HIPPIUS_ACCESS_KEY", ""),
             hippius_secret_key=os.environ.get("HIPPIUS_SECRET_KEY", ""),
@@ -73,6 +110,40 @@ class SubmissionCfg:
     # Nested config.json subset every submission must match exactly
     # (validate_repo_arch). Empty dict = no restriction.
     pinned_arch: dict
+    # Alternative profiles ([[submission.pinned_arch_alt]]): a submission
+    # passes if it matches pinned_arch OR any of these (text-only extraction
+    # of the genesis family, 2026-09-04).
+    pinned_arch_alt: list[dict]
+    # Private R2 submission flow ([submission.r2]); see R2Cfg.
+    r2: "R2Cfg"
+
+
+@dataclass(frozen=True)
+class R2Cfg:
+    """[submission.r2] — the private-upload intake (affine2 reveals).
+
+    `enabled=false` makes the validator ignore affine2 payloads entirely and
+    keep the affine1 (HF) path exactly as before. `hf_cutover_block` retires
+    affine1: reveals at a higher block are rejected (`-1` = never)."""
+
+    enabled: bool = False
+    reveal_prefix: str = "affine2"
+    private_bucket: str = ""
+    public_bucket: str = ""
+    dash_bucket: str = ""
+    # Public GET bases (custom domains on the public + dash buckets).
+    public_models_base_url: str = ""
+    mailbox_base_url: str = ""
+    credential_ttl_s: int = 604_800
+    hf_cutover_block: int = -1
+    # Days a private registration prefix is kept after upload (bucket
+    # lifecycle rule; losers are never published, winners are copied out).
+    private_retention_days: int = 14
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.enabled and self.private_bucket and self.public_bucket
+                    and self.dash_bucket)
 
 
 @dataclass(frozen=True)
@@ -118,6 +189,15 @@ class DuelCfg:
     score_mode: str = "reason"
     band_c: float = 2.0
     band_floor: float = 0.002
+    # v6 (2026-09-04): per-turn score for a side with no parseable action.
+    # None = legacy (turn dropped from pairing). Contract knob: changing it
+    # is a weight_version_key event.
+    forfeit_turn_score: float | None = None
+    # Staged 2026-09-07, OFF: a miner rollout that never emits </think> is
+    # a forfeit (same floor as no parseable action). Contract knob — turning
+    # it on changes which turns score and is a weight_version_key event.
+    # The </think> rate is measured and published either way.
+    require_think_close: bool = False
 
 
 @dataclass(frozen=True)
@@ -125,6 +205,13 @@ class DatasetCfg:
     corpus_base_url: str
     manifest_key: str
     refresh_interval_s: int = 3600
+    # Action dialects admitted into live D (affine.dialects). Admitting a
+    # new one is a contract event, not a corpus refresh.
+    allowed_action_kinds: tuple[str, ...] = ("bash",)
+    # Trace-first corpus: pointer to the trace manifest on [data_r2] and the
+    # name of the view D is derived through (affine/corpus/view.py).
+    traces_manifest_key: str = "traces/manifest.json"
+    view_spec: str = "duel_turns@v4"
 
 
 @dataclass(frozen=True)
@@ -237,12 +324,23 @@ class Config:
         return self.raw.get("chat") or {}
 
     @property
+    def protocol_probe(self) -> dict:
+        """Chat-protocol conformance probe (admission rule, eval pod).
+        Optional section; absent = mode "off"."""
+        return self.raw.get("protocol_probe") or {}
+
+    @property
     def seed_king(self) -> dict:
         return self.raw["seed_king"]
 
     @property
     def hippius(self) -> dict:
         return self.raw["hippius"]
+
+    @property
+    def data_r2(self) -> dict:
+        """Trace-first corpus bucket ([data_r2]): bucket + public base URL."""
+        return self.raw["data_r2"]
 
     @property
     def dashboard(self) -> dict:
@@ -277,6 +375,23 @@ def _submission(raw: dict) -> SubmissionCfg:
         max_repo_files=int(s["max_repo_files"]),
         max_config_bytes=int(s["max_config_bytes"]),
         pinned_arch=dict(s.get("pinned_arch") or {}),
+        pinned_arch_alt=[dict(p) for p in (s.get("pinned_arch_alt") or [])],
+        r2=_r2(s.get("r2") or {}),
+    )
+
+
+def _r2(r: dict) -> R2Cfg:
+    return R2Cfg(
+        enabled=bool(r.get("enabled", False)),
+        reveal_prefix=str(r.get("reveal_prefix", "affine2")),
+        private_bucket=str(r.get("private_bucket", "")),
+        public_bucket=str(r.get("public_bucket", "")),
+        dash_bucket=str(r.get("dash_bucket", "")),
+        public_models_base_url=str(r.get("public_models_base_url", "")).rstrip("/"),
+        mailbox_base_url=str(r.get("mailbox_base_url", "")).rstrip("/"),
+        credential_ttl_s=int(r.get("credential_ttl_s", 604_800)),
+        hf_cutover_block=int(r.get("hf_cutover_block", -1)),
+        private_retention_days=int(r.get("private_retention_days", 14)),
     )
 
 
@@ -301,6 +416,9 @@ def _duel(raw: dict) -> DuelCfg:
         score_mode=str(d.get("score_mode", "reason")),
         band_c=float(d.get("band_c", 2.0)),
         band_floor=float(d.get("band_floor", 0.002)),
+        forfeit_turn_score=(float(d["forfeit_turn_score"])
+                            if d.get("forfeit_turn_score") is not None else None),
+        require_think_close=bool(d.get("require_think_close", False)),
     )
 
 
@@ -368,7 +486,12 @@ def load_config(path: str | Path | None = None) -> Config:
         duel=_duel(raw),
         dataset=DatasetCfg(corpus_base_url=str(ds["corpus_base_url"]).rstrip("/"),
                            manifest_key=str(ds["manifest_key"]),
-                           refresh_interval_s=int(ds.get("refresh_interval_s", 3600))),
+                           refresh_interval_s=int(ds.get("refresh_interval_s", 3600)),
+                           allowed_action_kinds=tuple(
+                               str(k) for k in ds.get("allowed_action_kinds", ["bash"])),
+                           traces_manifest_key=str(
+                               ds.get("traces_manifest_key", "traces/manifest.json")),
+                           view_spec=str(ds.get("view_spec", "duel_turns@v4"))),
         bench=BenchCfg(enabled=bool(b["enabled"]), suites=list(b["suites"]),
                        num_trials=int(b["num_trials"]),
                        max_concurrency=int(b["max_concurrency"]),

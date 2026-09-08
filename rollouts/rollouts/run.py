@@ -3,13 +3,15 @@
 Cycle: pick source by kept-turn deficit -> pick policy by per-policy
 deficit -> next unprocessed tasks (seed-deterministic shuffle, restart-
 safe) -> runner (verifiers eval or mini-swe agent) -> store envelopes
-(system of record) + parquet index -> derive duel_turns@v3 -> validate ->
-queue + upload turn shards -> mirror trace chunks -> mark state.
+(system of record) + parquet index -> derive duel_turns (yield accounting
+only) -> publish trace chunks to data.affine.io -> mark state.
 
-Restart-safe: outcomes live in state.jsonl (written only after a batch's
-traces are parsed), sliced-but-not-uploaded turns survive in
-pending_turns.jsonl / outbox/, stored chunks are immutable, and a crash
-mid-batch just means the un-marked tasks are re-selected.
+Traces are canonical (2026-09-02): the pod no longer stages turn shards;
+D is derived from the published traces by ops/corpus_build.py on the
+validator box. Restart-safe: outcomes live in state.jsonl (written only
+after a batch's traces are parsed), stored chunks are immutable and marked
+mirrored only after their put succeeded, and a crash mid-batch just means
+the un-marked tasks are re-selected.
 
   python -m rollouts.run           # the service (supervised by bootstrap.sh)
   python -m rollouts.run --once    # one batch, then exit
@@ -18,7 +20,7 @@ mid-batch just means the un-marked tasks are re-selected.
 from __future__ import annotations
 
 import argparse
-import json
+import hashlib
 import logging
 import os
 import random
@@ -27,16 +29,17 @@ import sys
 import time
 from pathlib import Path
 
-from datagen.uploader import TurnUploader, shard_sha256
+from affine.toolbake import ToolBaker
 
 from rollouts.catalog import load_catalog
 from rollouts.config import RolloutsConfig, load_config
 from rollouts.index import RolloutIndex
 from rollouts.panel import panel_keys
+from rollouts.r2mirror import R2TraceMirror
 from rollouts.registry import Registry, load_registry
 from rollouts.runners.base import BatchResult, EndpointHealth
 from rollouts.runners.mini_swe import MiniSweRunner
-from rollouts.runners.verifiers import VerifiersRunner
+from rollouts.runners.verifiers import VerifiersChatRunner, VerifiersRunner
 from rollouts.scheduler import Scheduler, UnifiedState
 from rollouts.store import TraceStore
 from rollouts.uploader import TraceMirror
@@ -53,10 +56,21 @@ def _utc_tag() -> str:
     return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 
 
+def owns_task(shard: tuple[int, int], uid: str) -> bool:
+    """Shard ownership is a pure function of the uid, so every pod in the
+    fleet computes the same partition from the same catalog."""
+    i, n = shard
+    if n == 1:
+        return True
+    h = hashlib.blake2b(uid.encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(h, "big") % n == i
+
+
 def ordered_rows(cfg: RolloutsConfig, name: str,
                  catalog: list[dict]) -> list[dict]:
     rows = [r for r in catalog
-            if cfg.langs is None or (r.get("language") or "") in cfg.langs]
+            if (cfg.langs is None or (r.get("language") or "") in cfg.langs)
+            and owns_task(cfg.shard, r["uid"])]
     rng = random.Random(f"{cfg.seed}:{name}")
     rng.shuffle(rows)
     return rows
@@ -73,7 +87,7 @@ def _outcome(row: dict) -> str:
 
 def process_batch(cfg: RolloutsConfig, source, policy, batch: list[dict],
                   runners: dict, state: UnifiedState, store: TraceStore,
-                  index: RolloutIndex, panel) -> tuple[bool, int]:
+                  index: RolloutIndex, panel, baker=None) -> tuple[bool, int]:
     """One batch end to end. Returns (produced_output, kept_turns)."""
     tag = f"{source.name}-{_utc_tag()}"
     run_dir = cfg.data_dir / "runs" / tag
@@ -88,12 +102,14 @@ def process_batch(cfg: RolloutsConfig, source, policy, batch: list[dict],
         shutil.rmtree(run_dir, ignore_errors=True)
         return result.produced_output, 0
 
-    # Derive + validate the duel_turns view; count survivors per rollout.
+    # Derive + validate the duel_turns view for yield accounting only (the
+    # scheduler's deficit is in kept turns); the fold re-derives from the
+    # published traces, so nothing here is stored.
     records: list[dict] = []
     sid_to_rollout: dict[str, str] = {}
     for env in result.envelopes:
         sid_to_rollout[env["task"]["sid"]] = env["rollout_id"]
-        records.extend(derive_turns(env, panel=panel))
+        records.extend(derive_turns(env, panel=panel, baker=baker))
     kept, drops = validate_records(records, panel)
     if drops:
         log.info("validation drops: %s", drops)
@@ -105,11 +121,6 @@ def process_batch(cfg: RolloutsConfig, source, policy, batch: list[dict],
         rid = sid_to_rollout.get(sid)
         if rid:
             kept_by_rollout[rid] = kept_by_rollout.get(rid, 0) + 1
-    if kept:
-        cfg.pending_turns.parent.mkdir(parents=True, exist_ok=True)
-        with open(cfg.pending_turns, "a", encoding="utf-8") as f:
-            for rec in kept:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
     # System of record + index, then (and only then) mark state.
     chunk_key = store.append_batch(result.envelopes, tag)
@@ -144,43 +155,21 @@ def process_batch(cfg: RolloutsConfig, source, policy, batch: list[dict],
     return result.produced_output, len(kept)
 
 
-def flush_uploads(cfg: RolloutsConfig, uploader: TurnUploader,
-                  mirror: TraceMirror | None, store: TraceStore) -> None:
-    """Cut pending turns into a shard when big or old enough, push queued
-    shards, and mirror unmirrored trace chunks. Atomic renames: a crash or
-    upload failure never loses or duplicates turns."""
-    outbox = cfg.data_dir / "outbox"
-    cut_state = cfg.data_dir / "upload_state.json"
-    last_cut = 0.0
-    if cut_state.exists():
-        last_cut = float(json.loads(cut_state.read_text()).get("last_cut", 0))
-    pending = cfg.pending_turns
-    n_pending = 0
-    if pending.exists():
-        with open(pending, "rb") as f:
-            n_pending = sum(1 for line in f if line.strip())
-    if n_pending and (n_pending >= cfg.upload_min_turns
-                      or time.time() - last_cut >= cfg.upload_interval_s):
-        outbox.mkdir(parents=True, exist_ok=True)
-        sha = shard_sha256(pending)
-        dest = outbox / f"rollout-turns-{_utc_tag()}-{sha[:12]}.jsonl"
-        pending.rename(dest)
-        cut_state.write_text(json.dumps({"last_cut": time.time()}))
-        log.info("cut shard %s (%d turns)", dest.name, n_pending)
-    shards = sorted(outbox.glob("*.jsonl")) if outbox.is_dir() else []
-    for shard in shards:
+def flush_uploads(r2: R2TraceMirror, hf: TraceMirror | None,
+                  store: TraceStore) -> None:
+    """Publish unmirrored trace chunks to data.affine.io (chunks, then the
+    immutable manifest, then the pointer), and refresh the HF cold copy. A
+    failure leaves the chunks unmarked so the next cycle retries."""
+    try:
+        r2.mirror(store)
+    except Exception:
+        log.warning("R2 trace publish failed; will retry next cycle",
+                    exc_info=True)
+    if hf is not None:
         try:
-            uploader.upload_shard(shard)
+            hf.mirror(store)
         except Exception:
-            log.warning("upload of %s failed; will retry next cycle",
-                        shard.name, exc_info=True)
-            break
-        shard.unlink()
-    if mirror is not None:
-        try:
-            mirror.mirror(store)
-        except Exception:
-            log.warning("trace mirror failed; will retry next cycle",
+            log.warning("HF cold copy failed; will retry next cycle",
                         exc_info=True)
 
 
@@ -192,7 +181,7 @@ def main() -> None:
                     help="bypass the scheduler and force this source "
                          "every cycle (diagnostics)")
     ap.add_argument("--no-mirror", action="store_true",
-                    help="skip the trace-chunk HF mirror")
+                    help="skip the HF cold copy of trace chunks")
     args = ap.parse_args()
     logging.basicConfig(
         level=logging.INFO,
@@ -200,8 +189,11 @@ def main() -> None:
 
     cfg = load_config()
     registry: Registry = load_registry()
-    if not os.environ.get("HF_TOKEN"):
-        sys.exit("HF_TOKEN missing (fail-closed: turns could never upload)")
+    if not (cfg.r2_endpoint and cfg.r2_access_key_id and cfg.r2_secret_access_key):
+        sys.exit("ROLLOUTS_R2_* missing (fail-closed: traces could never publish)")
+    hf_mirror = cfg.hf_trace_mirror and not args.no_mirror
+    if hf_mirror and not os.environ.get("HF_TOKEN"):
+        sys.exit("HF_TOKEN missing while ROLLOUTS_HF_TRACE_MIRROR is on")
     if not any(p.available_endpoints(os.environ)
                for p in registry.policies.values()):
         sys.exit("no policy endpoint has its key env set (fail-closed)")
@@ -216,17 +208,30 @@ def main() -> None:
     env = dict(os.environ)
     runners = {
         "verifiers": VerifiersRunner(cfg, health, env),
+        "verifiers_chat": VerifiersChatRunner(cfg, health, env),
         "mini_swe": MiniSweRunner(cfg, health, env),
     }
-    uploader = TurnUploader(cfg.turns_hf_repo, private=True)
-    mirror = None if args.no_mirror else TraceMirror(cfg.traces_hf_repo)
+    r2 = R2TraceMirror(bucket=cfg.r2_bucket, endpoint=cfg.r2_endpoint,
+                       access_key_id=cfg.r2_access_key_id,
+                       secret_access_key=cfg.r2_secret_access_key,
+                       prefix=cfg.r2_prefix)
+    hf = TraceMirror(cfg.traces_hf_repo) if hf_mirror else None
     panel = panel_keys()
+    # Tool-use traces need the teacher's chat template to bake tool schemas /
+    # calls / results into plain prefixes (and to prove byte parity). Only
+    # loaded when a tool_call policy is enabled; a bash/boxed-only registry
+    # never touches the tokenizer.
+    baker = None
+    if any(p.action_kind == "tool_call" for p in registry.policies.values()):
+        baker = ToolBaker.from_pretrained()
+        log.info("tool baker ready: %s", baker.tok.name_or_path)
 
     log.info("rollouts starting: sources=%s targets=%s batch=%d "
-             "containers=%d turns_repo=%s",
+             "containers=%d shard=%d/%d traces=%s/%s",
              sorted(registry.sources), {k: round(v, 3) for k, v in
                                         registry.target_shares().items()},
-             cfg.batch_size, cfg.max_containers, cfg.turns_hf_repo)
+             cfg.batch_size, cfg.max_containers, cfg.shard[0], cfg.shard[1],
+             cfg.r2_bucket, cfg.r2_prefix)
 
     pools = {name: ordered_rows(cfg, name, load_catalog(cfg, src))
              for name, src in registry.sources.items()}
@@ -248,7 +253,7 @@ def main() -> None:
         if name is None:
             log.info("all pools exhausted or cooling; sleeping %ds",
                      POOL_EXHAUSTED_SLEEP_S)
-            flush_uploads(cfg, uploader, mirror, store)
+            flush_uploads(r2, hf, store)
             if args.once:
                 break
             time.sleep(POOL_EXHAUSTED_SLEEP_S)
@@ -264,7 +269,8 @@ def main() -> None:
                  name, policy.id, len(batch), remaining)
 
         ok, kept_turns = process_batch(
-            cfg, source, policy, batch, runners, state, store, index, panel)
+            cfg, source, policy, batch, runners, state, store, index, panel,
+            baker)
         scheduler.record_batch_yield(name, kept_turns)
         if ok:
             fails = 0
@@ -275,7 +281,7 @@ def main() -> None:
                           fails, FAIL_SLEEP_S)
                 time.sleep(FAIL_SLEEP_S)
                 fails = 0
-        flush_uploads(cfg, uploader, mirror, store)
+        flush_uploads(r2, hf, store)
         if args.once:
             break
 

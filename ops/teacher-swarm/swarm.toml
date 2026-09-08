@@ -10,6 +10,11 @@
 # swarm was replaced by vanished in the platform-level mine-* wipe. New
 # footprint: exactly ONE 8x B200 box (types.b200-8x, target=1); every other
 # type target set to 0. ~$40-48/h, restores swarm-assisted duel pace.
+#
+# 2026-08-28 (explicit operator directive): rent a second 8x B200
+# (types.eval-b200-8x) as an eval-tune sandbox. Same Qwen3.8-27B / 8x TP1
+# start so it can join the live router; knobs on this type can move
+# independently of the production box. Production b200-8x stays target=1.
 
 [swarm]
 # Qwen/Qwen3.8-27B since 2026-08-27 (teacher swap bundled into the wvk-10
@@ -27,12 +32,23 @@ ttl_hours = 48                   # per-pod safety-net TTL at rent time
 bootstrap_timeout_min = 50       # venv + model pull + engine warmup (slow pipes)
 unreachable_grace_min = 25   # dark grace after healthy: covers a supervisor engine relaunch
 min_balance_usd = 10000.0        # refuse to rent below this Lium balance
+# 2026-09-05: the only b200-8x went dark 22:15 UTC and no 8x B200 <= $48 came
+# back into stock until 09:51 — 10h45m with zero teacher replicas, every duel
+# failing teacher_unservable. When a target>0 type has no stock and the swarm
+# holds no pod at all, rent ONE box of the first type below that has stock;
+# it is released once the primary type is healthy again. Order = throughput.
+fallback_types = ["eval-b200-8x", "pro6000-8x", "h200-8x", "h100-8x", "b300-1x", "b200-1x"]
 
 # Serving knobs shared by every replica (mirrors production teacher slots).
 # Chunk 8192, not 12288: the 248,320-token vocab makes the fp32 echo
 # log_softmax spike ~11.4 GiB at 12288 (engine-killer, probed 2026-08-27);
 # 8192 -> 7.6 GiB, stress-probed clean under concurrent 64k echoes.
-max_model_len = 65536
+# 65536 -> 131072 (2026-09-07): the 120k-char corpus prefix cap is not a
+# token cap; a schema-3 turn tokenized to 63,745 and +1792 gen overflowed
+# 65,536 by one token. Fault.CONTEXT_LIMIT is a pod-wide infra requeue, so
+# chal-00290 looped 25x (~26 min each, 14.5 h, zero verdicts). Must match
+# affine.toml [miner_serving].max_model_len. KV 1.14M tok/replica -> 8.7x.
+max_model_len = 131072
 gpu_memory_utilization = 0.70
 max_num_batched_tokens = 8192
 
@@ -89,6 +105,42 @@ est_tps = 4.0                # prior: 8x the measured 0.5 of b200-1x
 # 0.80 -> 0.75 with the Qwen3.8 teacher: 0.85 died on the echo spike in the
 # 2026-08-27 probe, 0.75 probed clean; 27B needs no VRAM squeeze anyway.
 gpu_util = 0.75
+
+[types.eval-b200-8x]         # eval-tune sandbox (2026-08-28)
+# Second 8x B200, same layout as production so it can join the router on
+# day one. Type is separate so we can change replica count / chunk / util
+# here without touching the live scoring box. Lium's only 8x B200 in stock
+# today is $52/box — above the production $48 cap — so this type's cap is
+# $56. Starts identical to b200-8x (8x TP1, util 0.75, chunk 8192).
+# advertise=true: stock 8xTP1 is production-identical and all 8 replicas
+# are healthy — join the live router so duels get the extra capacity
+# while we keep sweeping knobs against the box IPs.
+match = "B200"
+gpu_count = 8
+tp = 1
+replicas = 8
+# 2026-09-03 (explicit operator directive): released. Measured value of the
+# second box on live duels: median 30.8 min (16 replicas, n=154) vs 33.3 min
+# (8 replicas, n=21) — ~2.5 min/duel, ~1.7 extra duels/day for $48/h. The
+# teacher is not the duel bottleneck; the sweep it was rented for ran once
+# (2026-08-28, nothing beat stock). target=1 to re-rent.
+# 2026-09-06 22:00 -> 2026-09-07 01:35 UTC: rented as the frontier-rule probe
+# box (research/scripts/frontier_rule_probe.py, 90.5k teacher echoes) with
+# advertise = false so the router never sent live duel traffic to it.
+# Released after the run; target=1 + advertise=false to repeat.
+# 2026-09-07 (operator directive "lets do that"): target=1 as a second
+# LIVE teacher box. Schema-3 prefixes doubled scoring (26-30 -> 52 min/duel)
+# and the single box runs 97-100% GPU with a queue while the eval box's
+# miner engines idle at 1-2 in-flight. Each echo re-prefills the full
+# prefix (vLLM disables prefix caching under prompt logprobs), so teacher
+# capacity is the bottleneck; expect near-linear scaling.
+target = 1
+max_price = 56.0
+est_tps = 4.0
+gpu_util = 0.75
+advertise = true
+# Match the eval pod: GDN prefill through Triton, not FlashInfer JIT.
+vllm_extra = "--additional-config {\"gdn_prefill_backend\":\"triton\"}"
 
 [types.b200-1x]              # 179 GB single GPU
 match = "B200"

@@ -1,0 +1,60 @@
+--- a/affine/affine.toml
++++ b/affine/affine.toml
+@@ -32,7 +32,11 @@
+ # teacher-side B license); 6→7 Reason v4 (2026-08-17, tempered
+ # log-mean-exp over k=3 teacher refs); 7→8 min_margin 0.002→0.001
+ # (2026-08-21, δ recalibrated to the v4 margin scale); 8→9 min_margin
+-# 0.001→0.002 revert (2026-08-22); 9→10 min(R,G) v5 (2026-08-27).
++# 0.001→0.002 revert (2026-08-22); 9→10 min(R,G) v5 (2026-08-27); 10→11
++# action dialects + trace-first corpus (2026-09-04, notice 2026-09-02): D admits
++# boxed + tool_call turns next to bash and is served as a schema_version 3
++# view over rollout traces (corpus/manifest.json on data.affine.io); score
++# unchanged; forward-only, reign stands.
+ #
+ # ############################################################################
+ # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
+@@ -40,7 +44,7 @@
+ # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
+ # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
+ # ############################################################################
+-weight_version_key = 10
++weight_version_key = 11
+ 
+ [wallet]
+ name = "default"
+@@ -244,7 +248,10 @@
+ # date. Not a scoring change -- no weight_version_key event. The
+ # schema-3 manifest_key (corpus/manifest.json) lands at the wvk 11 T0.
+ corpus_base_url = "https://data.affine.io"
+-manifest_key = "turns/manifest.json"
++# 2026-09-04 (weight_version_key 10→11): the schema-3 view duel_turns@v4. Every
++# pre-T0 verdict's slice.manifest_sha256 still resolves at
++# data.affine.io/turns/manifests/{sha} (schema-2 history, immutable).
++manifest_key = "corpus/manifest.json"
+ # Trace-first corpus (2026-09-02, cuts over at the wvk 11 T0 on an explicit
+ # dated operator directive): the canonical object becomes the full rollout
+ # trace (verifiers message graph incl. reasoning_content and tool schemas)
+@@ -254,8 +261,8 @@
+ # `view_spec` names the derivation; a new view (e.g. prior reasoning kept in
+ # tool-loop prefixes) is a new spec built from the same traces, never new
+ # rollouts. `traces_manifest_key` is the pointer the view builder follows.
+-# At T0 manifest_key moves to corpus/manifest.json (schema_version 3); the
+-# Hippius keys stay resolvable under data.affine.io/turns/** for replay.
++# Rollback (data only): manifest_key back to turns/manifest.json restores
++# the schema-2 slice population; weight_version_key does not roll back.
+ traces_manifest_key = "traces/manifest.json"
+ view_spec = "duel_turns@v4"
+ # Pod re-checks the manifest pointer this often (between duels, never mid-duel).
+@@ -269,7 +276,11 @@
+ # forfeit them — and belongs with an explicit dated operator directive (and
+ # a weight_version_key decision), not an agent edit. The fold refuses turns
+ # outside this list; the duel refuses a slice that contains one (tripwire).
+-allowed_action_kinds = ["bash"]
++# 2026-09-04 (weight_version_key 10→11, explicit dated operator directive):
++# boxed (math, affine-math-v1) and tool_call (wiki search, affine-wiki-v1)
++# admitted; target slice shares math 0.10 / tool_use 0.10 via strata count.
++# Notice posted 2026-09-02 (llms.txt "Upcoming fork", Discord, dashboard).
++allowed_action_kinds = ["bash", "tool_call", "boxed"]
+ 
+ [duel]
+ # min(R,G) v5 — centered Reason + banded Grounding (2026-08-27,

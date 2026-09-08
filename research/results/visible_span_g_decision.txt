@@ -1,0 +1,58 @@
+Visible-span G — decision probe (2026-09-08)
+
+Question
+  Should the grounding leg G judge the miner's VISIBLE prose (the text after
+  </think> and before the action) instead of, or in addition to, the whole
+  thought z = latent + visible? Motivation: the reign-8 king says nothing
+  outside <think> (SWE-bench Pro / Claude Code post-mortem: compaction and
+  final-report prompts answered with reasoning only, "Prompt is too long").
+
+Data (free — no GPU): teacher rollout traces on data.affine.io.
+  (a) 120 random chunks of the pre-2026-09-07 dump (43,178 sampled replies,
+      GLM-era + teacher; harness mix pi / bash / mini_swe / null)
+  (b) the 40 newest chunks as of 2026-09-08 14:04 UTC (10,364 replies, all
+      teacher_* policies = Qwen/Qwen3.8-27B via engy)
+
+Visible prose of the TEACHER's own replies in tool loops (b):
+  harness       replies  reasoning p50  visible p50  visible EMPTY
+  pi              3301       325 ch        67 ch        33%
+  bash            3056       364 ch        86 ch        24%
+  claude_code     1861       340 ch        92 ch        20%
+  mini_swe        2146       464 ch       135 ch         0%   (THOUGHT: is the scaffold format)
+  (a) GLM-era pi / bash replies: visible empty 61–63%.
+
+Final replies (b): 315/320 pi, 267/271 bash, 165/165 claude_code rollouts end
+on a plain-text report with no tool call (100% agent_completed).
+
+Findings
+  1. The teacher itself emits NO visible prose on 20–33% of tool-loop replies.
+     A band built from teacher refs' visible spans has no support on those
+     turns, and a leg that penalises an empty visible span penalises the
+     teacher's own behaviour — the fixed point of min(R,G) would move away
+     from the teacher. Not coherent as a scoring leg.
+  2. Visible spans are short (p50 67–135 chars ≈ 15–35 tokens). Per-byte
+     log-likelihood on spans that short is noise-dominated (the A-leg probe
+     lesson: short spans win ~10x on per-byte scores). The band width
+     w = max(2·sd, 0.002) would be set by that noise, so G_vis would rarely
+     bind except on empties — which finding 1 says it must not punish.
+  3. Where the visible channel matters — the reply that ENDS a trajectory —
+     the teacher speaks every time (100% text finals under claude_code).
+     That is exactly the `text` dialect: the final report becomes the scored
+     action on those turns, under the existing R / B / G legs, no new leg.
+
+Decision
+  Do NOT add a visible-span G. The bundle covers the failure with:
+    - require_think_close = true   (no </think> = forfeit; the king's 0–4%
+                                    close rate under IDE prompts is the
+                                    proximate cause of "empty replies")
+    - `text` dialect               (final reports / answers are actions;
+                                    fed by traces already published)
+    - protocol probe               (admission: Cursor-shaped prompts must
+                                    get a closed think block + visible text)
+  Left uncovered, noted for later: mid-trajectory compaction summaries
+  ("summarize the conversation, TEXT ONLY"). They are not final replies, so
+  the text fallback (final, agent_completed, untruncated) does not record
+  them; they only occur when a datagen trajectory grows past the harness's
+  compaction window, which the current sources rarely do. If they become
+  common, extend the fallback to replies whose prompt is a compaction
+  request (harness-specific detection) — a fold change, no new leg.

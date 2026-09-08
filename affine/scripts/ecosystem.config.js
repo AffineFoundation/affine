@@ -58,16 +58,18 @@ module.exports = {
       error_file: "logs/caddy.err.log",
       merge_logs: true,
     },
-    // Daily datagen → production corpus refresh at 16:00 UTC (host is UTC).
+    // Daily trace-first fold at 16:00 UTC (host is UTC): published traces on
+    // data.affine.io -> duel_turns@v4 view chunks + index + corpus manifest.
     // Runs once per cron fire and exits (autorestart off). Deliberately NOT
-    // wrapped in doppler (local doppler token is broken): the script sources
-    // Hippius keys from the running validator's process env and caches the
-    // datagen HF token itself — see ops/datagen_refresh.py.
+    // wrapped in doppler (local doppler token is broken): the script reads
+    // DATA_R2_* / DISCORD_* from the process env or the repo .env — see
+    // ops/corpus_build.py. Replaced ops/datagen_refresh.py at the wvk 11 T0;
+    // (re)start only after the T0 --init publish, never before.
     {
       name: "affine-corpus-refresh",
       cwd: __dirname + "/../..",
       script: ".venv/bin/python",
-      args: "ops/datagen_refresh.py",
+      args: "ops/corpus_build.py",
       interpreter: "none",
       autorestart: false,
       cron_restart: "0 16 * * *",

@@ -45,7 +45,7 @@ import {
   resolveReign,
   setReignLookup,
   short,
-} from "./charts.js?v=72";
+} from "./charts.js?v=73";
 
 const $ = (id) => document.getElementById(id);
 
@@ -88,7 +88,15 @@ function renderLiveContract() {
   }
 }
 
-const hubUrl = (repo) => (repo ? `https://huggingface.co/${repo}` : null);
+// r2://affine-models/models/sha256/<digest>/ → public manifest on models.affine.io;
+// a private-bucket ref (losing / queued challenger) has no public URL.
+const PUBLIC_MODELS_BASE = "https://models.affine.io";
+const hubUrl = (repo) => {
+  if (!repo) return null;
+  const m = /^r2:\/\/([^/]+)\/(.+)$/.exec(repo);
+  if (!m) return `https://huggingface.co/${repo}`;
+  return m[1] === "affine-models" ? `${PUBLIC_MODELS_BASE}/${m[2]}manifest.json` : null;
+};
 const tmcHotkeyUrl = (hk) =>
   (hk ? `https://taomarketcap.com/hotkey/${encodeURIComponent(hk)}` : null);
 // Models are not stored on Hippius — only per-duel eval archives are. The
@@ -195,6 +203,10 @@ const BENCH_GENESIS = {
   label: "reign-0",
   repo: "Qwen/Qwen3.6-35B-A3B",
 };
+// The frozen teacher C (affine.toml [teacher]). min(R,G) has its fixed point
+// at the teacher, so this is the ceiling the current mechanism can reach;
+// benched 2026-09-07 via scripts/bench_run.py (label "teacher").
+const BENCH_TEACHER = { label: "teacher", repo: "Qwen/Qwen3.8-27B" };
 
 // Genesis (reign 0 → Affine-I) is known statically; the rest of the reign
 // lookup arrives with the first snapshot (see applySnapshot).
@@ -215,7 +227,8 @@ function benchInfo(b) {
     const s = hit?.suites?.[suite]?.score;
     return s != null && Number.isFinite(Number(s)) ? Number(s) : null;
   };
-  return { suite, scores, qwen: refScore(BENCH_BASELINE), genesis: refScore(BENCH_GENESIS) };
+  return { suite, scores, qwen: refScore(BENCH_BASELINE), genesis: refScore(BENCH_GENESIS),
+           teacher: refScore(BENCH_TEACHER) };
 }
 
 function deltaCell(score, ref) {
@@ -244,6 +257,7 @@ function renderReign(d) {
   const benchBits = [];
   if (bench.qwen != null) benchBits.push(`qwen ${fmtPct(bench.qwen)}`);
   if (bench.genesis != null) benchBits.push(`Affine-I ${fmtPct(bench.genesis)}`);
+  if (bench.teacher != null) benchBits.push(`teacher ${fmtPct(bench.teacher)}`);
   $("reign-meta").textContent =
     `${members.length} kings · ${earners.length} earning · ${pct}% each`
     + (benchBits.length ? ` · swe: ${benchBits.join(" / ")}` : "");
@@ -276,6 +290,7 @@ function renderReign(d) {
       <th>reign</th><th>crowned</th><th>uid</th><th>model</th><th>hotkey</th>
       <th class="r">swe</th><th class="r" title="swe vs the king it dethroned">vs prev</th>
       <th class="r">vs qwen</th><th class="r">vs Affine-I</th>
+      <th class="r" title="swe vs the frozen teacher Qwen3.8-27B — the ceiling of min(R,G)">vs teacher</th>
       <th class="r">Reason</th><th class="r">α/day</th><th class="r">$/day</th><th class="r">weight</th>
     </tr></thead>
     <tbody>${members.map((m) => {
@@ -294,6 +309,7 @@ function renderReign(d) {
         ${prevCell(m)}
         ${deltaCell(swe, bench.qwen)}
         ${deltaCell(swe, bench.genesis)}
+        ${deltaCell(swe, bench.teacher)}
         <td class="r ${m.current ? "gold" : ""}">${esc(fmtScore(m.score))}</td>
         <td class="r ${earning ? "gold" : "dim"}">${esc(alpha)}</td>
         <td class="r ${earning ? "" : "dim"}">${esc(usd)}</td>
@@ -998,7 +1014,7 @@ function closeDuelPage() {
 
 /* ---------- dataset page (#dataset) ---------- */
 
-const MANIFEST_URL = "https://s3.hippius.com/affine-sn120/turns/manifest.json";
+const MANIFEST_URL = "https://data.affine.io/turns/manifest.json";
 const PAGE_SIZE = 50;
 
 const datasetPage = {

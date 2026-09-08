@@ -1,0 +1,13 @@
+[project]
+name = "affine-math-v1"
+version = "0.1.0"
+description = "affine-math-v1 — competition math (MATH train split), single-turn, \\boxed{} answer contract, math-verify graded."
+requires-python = ">=3.10"
+dependencies = ["datasets"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["affine_math_v1"]

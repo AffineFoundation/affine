@@ -1,0 +1,41 @@
+on-policy bench probe — 1348 steps from 150 runs
+
+== per reign: mean over steps ==
+reign     steps        R        G        A        B    minRG   minRGA    A<0
+reign-0     210   0.0130   0.0190  -0.0003   0.0487  -0.0011  -0.0188  42.4%
+reign-1     237   0.0163   0.0174   0.0142   0.0652   0.0001  -0.0163  30.8%
+reign-2     233   0.0118   0.0159   0.0196   0.0520  -0.0029  -0.0160  30.9%
+reign-3     211   0.0149   0.0101   0.0145   0.0701  -0.0040  -0.0202  34.6%
+reign-4     233   0.0127   0.0182   0.0189   0.0533  -0.0013  -0.0126  28.3%
+reign-5     224   0.0138   0.0179   0.0290   0.0601  -0.0012  -0.0110  29.5%
+
+== resolved vs unresolved runs, pooled (confounded by task difficulty) ==
+R       resolved mean   0.0137 (n=43)  unresolved   0.0136 (n=105)  diff +0.0002
+G       resolved mean   0.0184 (n=43)  unresolved   0.0154 (n=105)  diff +0.0030
+A       resolved mean   0.0177 (n=43)  unresolved   0.0164 (n=105)  diff +0.0013
+B       resolved mean   0.0545 (n=43)  unresolved   0.0610 (n=105)  diff -0.0064
+minRG   resolved mean  -0.0001 (n=43)  unresolved  -0.0023 (n=105)  diff +0.0022
+minRGA  resolved mean  -0.0128 (n=43)  unresolved  -0.0165 (n=105)  diff +0.0037
+
+== WITHIN TASK: tasks some reigns solved and others failed ==
+mixed-outcome tasks with scored steps: 7
+leg      mean(solved−failed)  tasks with diff>0  within-task AUC  pairs
+R            +0.0034 ±0.0028         4/7                   0.545     44
+G            +0.0046 ±0.0049         4/7                   0.545     44
+A            +0.0004 ±0.0062         4/7                   0.477     44
+B            -0.0139 ±0.0118         3/7                   0.364     44
+minRG        +0.0017 ±0.0031         3/7                   0.432     44
+minRGA       +0.0025 ±0.0052         4/7                   0.636     44
+
+AUC = P(solving run's leg > failing run's leg) over all solved/failed run pairs of the
+same task; 0.5 = the leg does not see the outcome, 1.0 = it always does.
+
+== step-level: submitted-and-resolved vs each failure mode (pooled, coarse) ==
+Resolved                     n=  417 R=+0.0138 G=+0.0185 A=+0.0172
+LimitsExceeded               n=  331 R=+0.0130 G=+0.0162 A=+0.0122
+RepeatedFormatError          n=  301 R=+0.0134 G=+0.0130 A=+0.0149
+Submitted                    n=  200 R=+0.0159 G=+0.0151 A=+0.0176
+ContextWindowExceededError   n=   99 R=+0.0127 G=+0.0221 A=+0.0264
+
+== does A pay short actions here too? ==
+A median: actions ≤82 chars 0.0250  vs longer 0.0046

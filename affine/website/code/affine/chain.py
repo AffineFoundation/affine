@@ -109,46 +109,51 @@ def _decode_commitment_pair(pair) -> tuple[str, list[tuple[int, str]]]:
     return key, out
 
 
-def scan_reveals(subtensor, netuid: int, prefix: str,
-                 min_submission_block: int,
-                 seen_hotkeys: set[str]) -> tuple[list[Reveal], list[dict]]:
-    """Pull RevealedCommitments; return (parseable latest reveals, bad payloads).
-
-    Returns the latest reveal per hotkey (oldest-first), including those the
-    validator will later skip (seen slot / below min_submission_block) so
-    intake can surface the decision. `min_submission_block` and `seen_hotkeys`
-    are retained for call-site compat but no longer filter the reveal list —
-    enqueue / intake owns those gates.
-
-    `bad` entries are `{hotkey, block, detail}` for undecodable or unparseable
-    payloads (so the dashboard can show rejected_bad_payload).
-    """
-    del min_submission_block, seen_hotkeys  # gates moved to State.enqueue
+def scan_commitments(subtensor, netuid: int) -> dict[str, list[tuple[int, str]]]:
+    """Pull RevealedCommitments: {hotkey: [(block, payload), ...]} for every
+    decodable row. Every retained entry is returned (not only the latest) so
+    a two-step protocol (affine2 activate → ready) sees both commits even when
+    they land within one scan interval."""
     try:
         query = subtensor.query_map(
             bt.storage.Commitments.RevealedCommitments, [netuid])
     except Exception:
         log.exception("query_map RevealedCommitments failed")
-        return [], []
-
-    all_reveals: dict[str, list[tuple[int, str]]] = {}
+        return {}
+    out: dict[str, list[tuple[int, str]]] = {}
     bad_rows = 0
     for pair in query:
         try:
             hotkey, entries = _decode_commitment_pair(pair)
-            all_reveals[hotkey] = entries
+            out[hotkey] = entries
         except Exception:
             bad_rows += 1
     if bad_rows:
-        log.warning("scan_reveals: skipped %d undecodable on-chain commitments",
+        log.warning("scan_commitments: skipped %d undecodable on-chain rows",
                     bad_rows)
+    return out
 
+
+def latest_reveals(all_reveals: dict[str, list[tuple[int, str]]],
+                   prefix: str,
+                   exclude_prefixes: tuple[str, ...] = ()) -> tuple[list[Reveal], list[dict]]:
+    """Latest `prefix` reveal per hotkey (oldest-first) + bad payloads.
+
+    Payloads starting with any of `exclude_prefixes` belong to another
+    protocol (e.g. affine2) and are neither parsed nor reported as bad;
+    when a hotkey's newest row is such a payload, its newer affine1 rows
+    (if any) are still considered — the two protocols are independent.
+    `bad` entries are `{hotkey, block, detail}` for unparseable payloads
+    (dashboard: rejected_bad_payload)."""
     out: list[Reveal] = []
     bad: list[dict] = []
     for hotkey, entries in all_reveals.items():
-        if not entries:
+        mine = [e for e in entries
+                if not any(str(e[1]).lstrip().startswith(x + "|")
+                           for x in exclude_prefixes)]
+        if not mine:
             continue
-        block, payload = max(entries, key=lambda e: e[0])
+        block, payload = max(mine, key=lambda e: e[0])
         try:
             repo, revision, author = parse_reveal(prefix, payload)
         except ValueError as e:
@@ -164,6 +169,21 @@ def scan_reveals(subtensor, netuid: int, prefix: str,
         out.append(Reveal(hotkey=hotkey, block=block, repo=repo, revision=revision))
     out.sort(key=lambda r: r.block)
     return out, bad
+
+
+def scan_reveals(subtensor, netuid: int, prefix: str,
+                 min_submission_block: int,
+                 seen_hotkeys: set[str]) -> tuple[list[Reveal], list[dict]]:
+    """Pull RevealedCommitments; return (parseable latest reveals, bad payloads).
+
+    Returns the latest reveal per hotkey (oldest-first), including those the
+    validator will later skip (seen slot / below min_submission_block) so
+    intake can surface the decision. `min_submission_block` and `seen_hotkeys`
+    are retained for call-site compat but no longer filter the reveal list —
+    enqueue / intake owns those gates.
+    """
+    del min_submission_block, seen_hotkeys  # gates moved to State.enqueue
+    return latest_reveals(scan_commitments(subtensor, netuid), prefix)
 
 
 def safe_block(subtensor) -> int:

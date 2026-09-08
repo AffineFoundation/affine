@@ -92,15 +92,25 @@ class TraceStore:
                     if line.strip():
                         yield json.loads(line)
 
-    def unmirrored_chunks(self) -> list[dict]:
-        """Chunks not yet marked as mirrored to the remote trace dataset."""
-        return [c for c in self._load_manifest()["chunks"]
-                if not c.get("mirrored_at")]
+    def chunks(self) -> list[dict]:
+        return list(self._load_manifest()["chunks"])
 
-    def mark_mirrored(self, keys: list[str]) -> None:
+    def unmirrored_chunks(self, field: str = "mirrored_at") -> list[dict]:
+        """Chunks not yet marked as mirrored. `mirrored_at` is the canonical
+        R2 publish; the HF cold copy tracks itself under `hf_mirrored_at`."""
+        return [c for c in self._load_manifest()["chunks"] if not c.get(field)]
+
+    def mark_mirrored(self, keys: list[str], mirrored: bool = True, *,
+                      field: str = "mirrored_at",
+                      details: dict[str, dict] | None = None) -> None:
+        """Stamp `field` on the given chunks (None to unmark). `details`
+        merges extra per-chunk facts (e.g. the gzip sha256 + byte size a
+        remote reader verifies) into the manifest entries."""
         manifest = self._load_manifest()
-        now = utc_now_iso()
+        now = utc_now_iso() if mirrored else None
+        wanted = set(keys)
         for c in manifest["chunks"]:
-            if c["key"] in keys:
-                c["mirrored_at"] = now
+            if c["key"] in wanted:
+                c[field] = now
+                c.update((details or {}).get(c["key"], {}))
         self._write_manifest(manifest)

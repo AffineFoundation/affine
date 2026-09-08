@@ -15,7 +15,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from huggingface_hub import HfApi
+from huggingface_hub import CommitOperationAdd, HfApi
 from huggingface_hub.errors import EntryNotFoundError
 
 log = logging.getLogger("datagen.uploader")
@@ -59,37 +59,49 @@ class TurnUploader:
         except EntryNotFoundError:
             return {"schema": SCHEMA, "shards": []}
 
-    def upload_shard(self, shard: Path) -> dict:
-        """Upload one shard jsonl + refreshed manifest. Raises on failure so
-        the caller keeps the shard queued for retry."""
-        self._ensure_repo()
-        sha = shard_sha256(shard)
-        with open(shard, "rb") as f:
-            n_turns = sum(1 for line in f if line.strip())
-        key = f"shards/{shard.name}"
-        self.api.upload_file(
-            path_or_fileobj=str(shard), path_in_repo=key,
-            repo_id=self.repo_id, repo_type="dataset",
-            commit_message=f"add shard {shard.name} ({n_turns} turns)")
+    def upload_shards(self, shards: list[Path]) -> list[dict]:
+        """Upload shard jsonls + refreshed manifest in ONE commit.
 
+        The Hub rate-limits commits per account (~128/h). Two commits per
+        shard (file, then manifest) across a backlog of outbox shards plus
+        the trace mirror burned that budget and stalled staging for hours.
+        One commit per flush keeps the manifest consistent with the shards
+        and costs the same whether one or a hundred shards are queued.
+        Raises on failure so the caller keeps every shard queued for retry.
+        """
+        if not shards:
+            return []
+        self._ensure_repo()
         manifest = self._load_manifest()
-        entry = {
-            "key": key,
-            "sha256": sha,
-            "n_turns": n_turns,
-            "uploaded_at": datetime.now(timezone.utc).isoformat(
-                timespec="seconds"),
-        }
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        entries: list[dict] = []
+        ops: list[CommitOperationAdd] = []
+        for shard in shards:
+            with open(shard, "rb") as f:
+                n_turns = sum(1 for line in f if line.strip())
+            key = f"shards/{shard.name}"
+            entries.append({"key": key, "sha256": shard_sha256(shard),
+                            "n_turns": n_turns, "uploaded_at": now})
+            ops.append(CommitOperationAdd(path_in_repo=key,
+                                          path_or_fileobj=str(shard)))
+        keys = {e["key"] for e in entries}
         manifest["shards"] = [s for s in manifest.get("shards", [])
-                              if s.get("key") != key] + [entry]
+                              if s.get("key") not in keys] + entries
         manifest["schema"] = SCHEMA
-        manifest["updated_at"] = entry["uploaded_at"]
-        self.api.upload_file(
-            path_or_fileobj=json.dumps(manifest, indent=2,
-                                       sort_keys=True).encode(),
+        manifest["updated_at"] = now
+        ops.append(CommitOperationAdd(
             path_in_repo=MANIFEST_NAME,
-            repo_id=self.repo_id, repo_type="dataset",
-            commit_message=f"manifest: +{shard.name}")
-        log.info("uploaded %s (%d turns, sha %s) to %s",
-                 key, n_turns, sha[:12], self.repo_id)
-        return entry
+            path_or_fileobj=json.dumps(manifest, indent=2,
+                                       sort_keys=True).encode()))
+        total = sum(e["n_turns"] for e in entries)
+        self.api.create_commit(
+            repo_id=self.repo_id, repo_type="dataset", operations=ops,
+            commit_message=f"add {len(entries)} shard(s) ({total} turns)")
+        for e in entries:
+            log.info("uploaded %s (%d turns, sha %s) to %s",
+                     e["key"], e["n_turns"], e["sha256"][:12], self.repo_id)
+        return entries
+
+    def upload_shard(self, shard: Path) -> dict:
+        """Upload one shard jsonl + refreshed manifest (single commit)."""
+        return self.upload_shards([shard])[0]

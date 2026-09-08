@@ -27,11 +27,13 @@ PYTHONPATH=/root/affine:/root/rollouts /root/venv/bin/python - <<'PY'
 from rollouts.registry import load_registry
 from rollouts.config import load_config
 from datagen.slicer import slice_messages
-from datagen.uploader import TurnUploader
+from rollouts.r2mirror import R2TraceMirror
 r = load_registry()
 cfg = load_config()
+assert cfg.r2_endpoint and cfg.r2_access_key_id, "ROLLOUTS_R2_* not set"
 print(f"[rollouts bootstrap] IMPORT_OK sources={sorted(r.sources)} "
-      f"policies={sorted(r.policies)} data_dir={cfg.data_dir}")
+      f"policies={sorted(r.policies)} data_dir={cfg.data_dir} "
+      f"traces={cfg.r2_bucket}/traces/")
 PY
 
 # Supervise. `|| code=$?` is load-bearing: under `set -e` a bare nonzero

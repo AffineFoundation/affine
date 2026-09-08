@@ -4,6 +4,28 @@ Grounding (2026-08-27, weight_version_key=10).
 Shared between root validator and eval server. Any change here is a chain fork
 (bump [subnet].weight_version_key).
 
+v6 additions (2026-09-04, operator directive; both OFF until the contract
+flips them — score_mode="min_rga" and forfeit_turn_score set in [duel]):
+  A leg:      b_i = lpC(y_A | z_C^i) − lpC(y_A | ∅)   (per ref, per byte)
+              A   = tau·log((1/k)·Σ_i exp(b_i/tau))
+              ("would the teacher, thinking its own thought, take the
+              miner's action?" — the dual of R; teacher-side only, so no
+              lpA surface. NOT centered: centering rewards spread across
+              refs, and an action every teacher thought licenses is the
+              target, not a flat-lift attack — a generic action earns less
+              lift than the right one, unlike filler in the thought.)
+  Per turn:   turn = min(R, G, A)                     (score_mode="min_rga")
+  Forfeit:    a turn where a side emits no parseable action scores
+              forfeit_turn_score (a constant floor) instead of being dropped
+              from pairing. Both sides forfeit → both get the floor → tie
+              (diff 0, kept in n). Under the old rule a forfeit cost nothing
+              and let a miner choose which turns enter its own mean.
+              Calibration (40 live min(R,G) duels, 100k valid turns): p1 of
+              valid turn scores = −0.087, p5 = −0.041; live forfeit rates
+              1.7% median / 5.7% max per side. −0.1 sits under p1, so
+              forfeiting beats answering on <1% of turns (unpredictable
+              ones) and a 2% forfeit rate costs one δ of margin.
+
 v5 (score_mode="min_rg", the live rule):
   Per ref i:  a_i = lpC(y_i | z_A) − lpC(y_i | ∅)      (per-byte, k refs/turn)
   R leg:      R   = tau·log((1/k)·Σ_i exp(a_i/tau)) − mean_i a_i
@@ -128,6 +150,11 @@ DEFAULT_TEMPER_TAU = 0.03
 DEFAULT_SCORE_MODE = "reason"
 DEFAULT_BAND_C = 2.0
 DEFAULT_BAND_FLOOR = 0.002
+# Forfeit floor (v6, 2026-09-04): the per-turn score a side receives for a
+# turn with no parseable action. None = legacy behaviour (the turn is dropped
+# from pairing and from the side's mean). Live contract sets it in [duel].
+DEFAULT_FORFEIT_TURN_SCORE: float | None = None
+SCORE_MODES = ("reason", "min_rg", "min_rga")
 # Teacher-side causality gate B (off unless causality_gamma > 0).
 # B = lpC(y_A|z_A) − lpC(y_A|∅). Same τ/γ as retired v2 miner-side A9.
 DEFAULT_CAUSALITY_TAU = 0.02
@@ -310,15 +337,97 @@ def turn_min_rg(pairs: list[dict],
     return min(centered_reason(pairs, tau), g)
 
 
+def action_lift(pair: dict) -> float | None:
+    """Per-reference action lift b_i = lpC(y_A|z_C^i) − lpC(y_A|∅) (per byte).
+
+    How much the teacher's OWN thought i makes the miner's action likely.
+    None when the action echoes are absent (pre-v6 rows)."""
+    try:
+        return pair["lpC_ya_zc"] - pair["lpC_ya_e"]
+    except (KeyError, TypeError):
+        return None
+
+
+def action_leg(pairs: list[dict],
+               tau: float | None = DEFAULT_TEMPER_TAU) -> float | None:
+    """A leg of min(R,G,A): tempered log-mean-exp of the per-ref action lifts.
+
+        A = tau · log( (1/k) · Σ_i exp(b_i / tau) )
+
+    Same aggregation as the R leg (dominated by the best-matching teacher
+    thought: the teacher's next-action distribution is multi-modal and the
+    miner's action need only match one mode) but deliberately NOT centered.
+    Centering measures spread across refs, and the ideal action — one every
+    teacher thought licenses — has no spread; the R-leg flat-lift attack has
+    no analog here because a generic action earns less lift than the right
+    one. None when the echoes are missing.
+    """
+    b = [v for p in pairs if (v := action_lift(p)) is not None]
+    if not b:
+        return None
+    if tau is None or tau <= 0 or len(b) == 1:
+        return st.mean(b)
+    m = max(b)
+    return m + tau * math.log(st.mean(math.exp((bi - m) / tau) for bi in b))
+
+
+def turn_min_rga(pairs: list[dict],
+                 tau: float | None = DEFAULT_TEMPER_TAU,
+                 band_c: float = DEFAULT_BAND_C,
+                 band_floor: float = DEFAULT_BAND_FLOOR) -> float:
+    """Turn score under min(R,G,A) (v6, 2026-09-04).
+
+    min(R,G) plus the action leg: the miner is also paid the worse of its
+    thought legs and "would the teacher have taken that action". A thought
+    that predicts the teacher but is followed by an action the teacher would
+    not take is paid the action. Fails loudly without the action echoes —
+    older rows replay through their own score_mode."""
+    rg = turn_min_rg(pairs, tau, band_c, band_floor)
+    a = action_leg(pairs, tau)
+    if a is None:
+        raise ValueError(
+            "min_rga scoring requires action echoes (lpC_ya_zc / lpC_ya_e); "
+            "replay older rows with their stamped score_mode")
+    return min(rg, a)
+
+
 def turn_score(pairs: list[dict],
                tau: float | None = DEFAULT_TEMPER_TAU,
                score_mode: str = DEFAULT_SCORE_MODE,
                band_c: float = DEFAULT_BAND_C,
                band_floor: float = DEFAULT_BAND_FLOOR) -> float:
     """Dispatch the per-turn score by contract score_mode."""
+    if score_mode == "min_rga":
+        return turn_min_rga(pairs, tau, band_c, band_floor)
     if score_mode == "min_rg":
         return turn_min_rg(pairs, tau, band_c, band_floor)
     return turn_reason(pairs, tau)
+
+
+def is_forfeit(row: dict) -> bool:
+    """A row the miner forfeited: no parseable action against a valid ref.
+
+    Rows only exist for turns where the teacher produced references (turns
+    with zero refs are skipped on both sides before a row is written), and
+    infra faults abort the duel — so ``valid: false`` means exactly one
+    thing: this side did not answer."""
+    return not (row.get("valid") and "pairs" in row)
+
+
+def side_turn_score(row: dict,
+                    tau: float | None = DEFAULT_TEMPER_TAU,
+                    score_mode: str = DEFAULT_SCORE_MODE,
+                    band_c: float = DEFAULT_BAND_C,
+                    band_floor: float = DEFAULT_BAND_FLOOR,
+                    forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE
+                    ) -> float | None:
+    """One side's score on one turn: the turn rule, or the forfeit floor.
+
+    None when the side forfeited and the contract has no floor (legacy:
+    the turn is dropped)."""
+    if is_forfeit(row):
+        return forfeit_turn_score
+    return turn_score(row["pairs"], tau, score_mode, band_c, band_floor)
 
 
 def l1_lift(pair: dict) -> float | None:
@@ -400,10 +509,17 @@ class MinerScore:
     mean_len_y: float | None = None    # chars of y_A
     mean_b: float | None = None        # mean teacher-side B (not scored)
     b_gate_pass_rate: float | None = None  # share of pairs passing B+leakage
-    # -- min(R,G) leg telemetry (score_mode="min_rg" only) --
+    # -- min(R,G) leg telemetry (score_mode="min_rg" / "min_rga") --
     mean_r_leg: float | None = None    # mean per-turn centered Reason
     mean_g_leg: float | None = None    # mean per-turn banded Grounding
-    g_bind_frac: float | None = None   # share of turns where G < R (G binds)
+    g_bind_frac: float | None = None   # share of turns where G is the min
+    # -- min(R,G,A) action leg (score_mode="min_rga") --
+    mean_a_leg: float | None = None    # mean per-turn action leg
+    a_bind_frac: float | None = None   # share of turns where A is the min
+    # -- forfeits (v6): turns with no parseable action --
+    n_forfeits: int = 0
+    forfeit_rate: float | None = None  # n_forfeits / n_turns
+    forfeit_turn_score: float | None = None  # floor applied (None = dropped)
 
 
 def score_miner(rows: list[dict],
@@ -411,21 +527,29 @@ def score_miner(rows: list[dict],
                 tau: float | None = DEFAULT_TEMPER_TAU,
                 score_mode: str = DEFAULT_SCORE_MODE,
                 band_c: float = DEFAULT_BAND_C,
-                band_floor: float = DEFAULT_BAND_FLOOR) -> MinerScore:
+                band_floor: float = DEFAULT_BAND_FLOOR,
+                forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE
+                ) -> MinerScore:
     """Score one miner: mean per-turn score + telemetry.
 
     Each row is one turn holding k pairs (one per teacher reference); the
     turn score is turn_score(pairs, ...) — tempered Reason under
     score_mode="reason" (wvk<=9 replay: k=1 or tau <= 0 recovers v3
-    exactly), min(centered R, banded G) under score_mode="min_rg" (wvk 10).
-    No gating here.
+    exactly), min(centered R, banded G) under score_mode="min_rg" (wvk 10),
+    min(R, G, A) under "min_rga" (v6). With forfeit_turn_score set, every
+    forfeited turn enters the mean at that floor; with None (legacy) it is
+    dropped. No gating here.
     """
     if not rows:
         return MinerScore("?", float("-inf"), 0, 0)
-    valid = [r for r in rows if r.get("valid") and "pairs" in r]
+    valid = [r for r in rows if not is_forfeit(r)]
+    forfeits = [r for r in rows if is_forfeit(r)]
     pairs = [p for r in valid for p in r["pairs"]]
     if not pairs:
-        return MinerScore(rows[0].get("miner", "?"), float("-inf"), 0, 0)
+        return MinerScore(rows[0].get("miner", "?"), float("-inf"), 0, 0,
+                          n_forfeits=len(forfeits),
+                          forfeit_rate=len(forfeits) / len(rows),
+                          forfeit_turn_score=forfeit_turn_score)
     gpass = [gate_pass(p) for p in pairs]
     gpass_f = [1.0 if g else 0.0 for g in gpass if g is not None]
     bflags = [b_gate_pass(p) for p in pairs]
@@ -436,19 +560,37 @@ def score_miner(rows: list[dict],
         baseline_abs = None
     z_lens = [len((p.get("z_a") or "").strip()) for p in pairs]
     mean_r_leg = mean_g_leg = g_bind_frac = None
-    if score_mode == "min_rg":
+    mean_a_leg = a_bind_frac = None
+    if score_mode in ("min_rg", "min_rga"):
         r_legs = [centered_reason(r["pairs"], tau) for r in valid]
         g_legs = [grounding(r["pairs"], band_c, band_floor) for r in valid]
-        have = [(r, g) for r, g in zip(r_legs, g_legs) if g is not None]
+        a_legs = ([action_leg(r["pairs"], tau) for r in valid]
+                  if score_mode == "min_rga" else [None] * len(valid))
+        have = [(r, g, a) for r, g, a in zip(r_legs, g_legs, a_legs)
+                if g is not None]
         if have:
-            mean_r_leg = st.mean(r for r, _ in have)
-            mean_g_leg = st.mean(g for _, g in have)
-            g_bind_frac = st.mean(1.0 if g < r else 0.0 for r, g in have)
+            mean_r_leg = st.mean(r for r, _, _ in have)
+            mean_g_leg = st.mean(g for _, g, _ in have)
+            if score_mode == "min_rga":
+                # Which leg binds = which leg is the strict minimum. Ties go
+                # to the earlier leg in (R, G, A) order — the R share is
+                # what is left over.
+                have_a = [(r, g, a) for r, g, a in have if a is not None]
+                if have_a:
+                    mean_a_leg = st.mean(a for _, _, a in have_a)
+                    g_bind_frac = st.mean(
+                        1.0 if (g < r and g <= a) else 0.0 for r, g, a in have_a)
+                    a_bind_frac = st.mean(
+                        1.0 if (a < r and a < g) else 0.0 for r, g, a in have_a)
+            else:
+                g_bind_frac = st.mean(1.0 if g < r else 0.0 for r, g, _ in have)
+    turn_scores = [turn_score(r["pairs"], tau, score_mode, band_c, band_floor)
+                   for r in valid]
+    if forfeit_turn_score is not None:
+        turn_scores += [forfeit_turn_score] * len(forfeits)
     return MinerScore(
         miner=rows[0].get("miner", "?"),
-        reason=st.mean(
-            turn_score(r["pairs"], tau, score_mode, band_c, band_floor)
-            for r in valid),
+        reason=st.mean(turn_scores),
         n_pairs=len(pairs),
         n_turns=len({r["turn_id"] for r in rows}),
         gate_pass_rate=(st.mean(gpass_f) if gpass_f else 0.0),
@@ -465,6 +607,11 @@ def score_miner(rows: list[dict],
         mean_r_leg=mean_r_leg,
         mean_g_leg=mean_g_leg,
         g_bind_frac=g_bind_frac,
+        mean_a_leg=mean_a_leg,
+        a_bind_frac=a_bind_frac,
+        n_forfeits=len(forfeits),
+        forfeit_rate=len(forfeits) / len(rows),
+        forfeit_turn_score=forfeit_turn_score,
     )
 
 
@@ -487,6 +634,8 @@ class DuelResult:
     score_mode: str = DEFAULT_SCORE_MODE
     band_c: float = DEFAULT_BAND_C
     band_floor: float = DEFAULT_BAND_FLOOR
+    forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE
+    n_forfeit_turns: int = 0          # paired turns where at least one side forfeited
 
 
 def duel(challenger_rows: list[dict], king_rows: list[dict],
@@ -499,7 +648,9 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
          tau: float | None = DEFAULT_TEMPER_TAU,
          score_mode: str = DEFAULT_SCORE_MODE,
          band_c: float = DEFAULT_BAND_C,
-         band_floor: float = DEFAULT_BAND_FLOOR) -> DuelResult:
+         band_floor: float = DEFAULT_BAND_FLOOR,
+         forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE
+         ) -> DuelResult:
     """Paired duel on the per-turn score: wins iff
     mean > max(k_sigma·SE, min_margin) AND the challenger's median stripped
     thought length is ≥ min_thought_chars AND (if causality_gamma > 0) the
@@ -508,24 +659,38 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
     Each turn's score on each side is turn_score(pairs, ...): tempered
     Reason under score_mode="reason" (k=1 or tau <= 0 recovers the v3 plain
     mean — pre-fork replay), min(centered R, banded G) under
-    score_mode="min_rg" (wvk 10, 2026-08-27). The δ floor stops ε-copies /
-    SE-compression; the length floor evicts empty/cue thoughts (A9). B is
-    the starting-line license: thoughts must cause the miner's own action,
-    as judged by the teacher. Bank fracs are accepted only to thread
-    telemetry. min_thought_chars ≤ 0 disables the length floor;
-    causality_gamma ≤ 0 disables B (pre-fork replay / try)."""
+    score_mode="min_rg" (wvk 10, 2026-08-27), min(R, G, A) under "min_rga"
+    (v6). Forfeits (v6): with forfeit_turn_score set, a turn one side did
+    not answer stays paired with that side at the floor — a one-sided
+    forfeit is a loss by (floor − opponent's turn), a two-sided forfeit is a
+    tie (diff 0, counted in n). With None (legacy) only turns valid on both
+    sides are paired. The δ floor stops ε-copies / SE-compression; the
+    length floor evicts empty/cue thoughts (A9). B is the starting-line
+    license: thoughts must cause the miner's own action, as judged by the
+    teacher. Bank fracs are accepted only to thread telemetry.
+    min_thought_chars ≤ 0 disables the length floor; causality_gamma ≤ 0
+    disables B (pre-fork replay / try)."""
     cs = score_miner(challenger_rows, challenger_bank_frac, tau=tau,
                      score_mode=score_mode, band_c=band_c,
-                     band_floor=band_floor)
+                     band_floor=band_floor,
+                     forfeit_turn_score=forfeit_turn_score)
     ks = score_miner(king_rows, king_bank_frac, tau=tau,
                      score_mode=score_mode, band_c=band_c,
-                     band_floor=band_floor)
-    c_by = {r["turn_id"]: r for r in challenger_rows if r.get("valid") and "pairs" in r}
-    k_by = {r["turn_id"]: r for r in king_rows if r.get("valid") and "pairs" in r}
+                     band_floor=band_floor,
+                     forfeit_turn_score=forfeit_turn_score)
+    c_by = {r["turn_id"]: r for r in challenger_rows}
+    k_by = {r["turn_id"]: r for r in king_rows}
     diffs = []
+    n_forfeit_turns = 0
     for tid in sorted(set(c_by) & set(k_by)):
-        rc = turn_score(c_by[tid]["pairs"], tau, score_mode, band_c, band_floor)
-        rk = turn_score(k_by[tid]["pairs"], tau, score_mode, band_c, band_floor)
+        rc = side_turn_score(c_by[tid], tau, score_mode, band_c, band_floor,
+                             forfeit_turn_score)
+        rk = side_turn_score(k_by[tid], tau, score_mode, band_c, band_floor,
+                             forfeit_turn_score)
+        if rc is None or rk is None:
+            continue  # legacy: a forfeit drops the turn from pairing
+        if is_forfeit(c_by[tid]) or is_forfeit(k_by[tid]):
+            n_forfeit_turns += 1
         diffs.append(rc - rk)
     n = len(diffs)
     if n < 2:
@@ -533,7 +698,9 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
                           k_sigma, False, n, min_margin, min_thought_chars,
                           False, causality_gamma,
                           score_mode=score_mode, band_c=band_c,
-                          band_floor=band_floor)
+                          band_floor=band_floor,
+                          forfeit_turn_score=forfeit_turn_score,
+                          n_forfeit_turns=n_forfeit_turns)
     mean = st.mean(diffs)
     se = st.stdev(diffs) / math.sqrt(n)
     z = mean / se if se > 0 else (math.inf if mean > 0 else 0.0)
@@ -560,4 +727,6 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
         score_mode=score_mode,
         band_c=band_c,
         band_floor=band_floor,
+        forfeit_turn_score=forfeit_turn_score,
+        n_forfeit_turns=n_forfeit_turns,
     )

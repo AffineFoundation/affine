@@ -93,14 +93,22 @@ DATAGEN_POD_SSH = [
     "-p", "3049", "root@66.153.184.201",
 ]
 
-BASH_BLOCK = re.compile(r"```bash\n.*?\n```", re.DOTALL)
-
 # Reuse the production publish path (validation, immutable shard upload,
 # manifest revision scheme) instead of reimplementing it.
 _spec = importlib.util.spec_from_file_location(
     "corpus_push", REPO / "affine" / "scripts" / "corpus_push.py")
 corpus_push = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(corpus_push)
+# Action dialect registry + [dataset].allowed_action_kinds admission — the
+# same module the duel parses with, so fold and score cannot disagree on
+# where an action starts and ends.
+_dspec = importlib.util.spec_from_file_location(
+    "affine_dialects", REPO / "affine" / "affine" / "dialects.py")
+dialects = importlib.util.module_from_spec(_dspec)
+# Registered before exec: the module's dataclasses resolve their (deferred)
+# annotations through sys.modules[__module__].
+sys.modules[_dspec.name] = dialects
+_dspec.loader.exec_module(dialects)
 
 
 def log(msg: str) -> None:
@@ -252,6 +260,7 @@ def prefilter(lines: list[str], published: set[str],
     kept: list[str] = []
     drops: dict[str, int] = {}
     seen: set[str] = set()
+    allowed_kinds = dialects.admitted_kinds()
 
     def drop(reason: str) -> None:
         drops[reason] = drops.get(reason, 0) + 1
@@ -280,8 +289,10 @@ def prefilter(lines: list[str], published: set[str],
         if repo in panel_repos or str(rec.get("instance_id", "")) in panel_ids:
             drop("bench_panel_overlap")
             continue
-        if rec.get("action_kind") != "bash":
-            drop("action_kind_not_bash")
+        kind = rec.get("action_kind")
+        reason = dialects.admission_reason(kind, allowed_kinds)
+        if reason:
+            drop(reason)
             continue
         prefix = rec.get("prefix")
         if (not isinstance(prefix, list) or not prefix
@@ -292,18 +303,15 @@ def prefilter(lines: list[str], published: set[str],
                 or prefix[-1]["role"] != "user"):
             drop("prefix_shape")
             continue
-        sys_msgs = [m for m in prefix if m["role"] == "system"]
-        if not sys_msgs or "bash" not in sys_msgs[0]["content"].lower():
-            drop("system_msg_no_bash_mandate")
-            continue
         if sum(len(m["content"]) for m in prefix) > corpus_push.MAX_PREFIX_CHARS:
             drop("prefix_too_long")
             continue
-        blocks = BASH_BLOCK.findall(rec.get("reference_turn") or "")
-        if len(blocks) != 1:
-            drop(f"ref_bash_blocks={len(blocks)}")
+        reason, action = dialects.reference_check(
+            prefix, rec.get("reference_turn") or "", kind)
+        if reason:
+            drop(reason)
             continue
-        body = _norm(blocks[0])
+        body = _norm(action)
         if len(body) > 40 and any(body in _norm(m["content"]) for m in prefix):
             drop("reference_leaked_into_prefix")
             continue
@@ -337,9 +345,14 @@ def load_mix() -> tuple[dict[str, float], dict[str, str], dict[str, float]]:
     language targets) from the rollouts registry TOML (single source of
     truth shared with the generation-side scheduler)."""
     raw = tomllib.loads(SOURCES_TOML.read_text())
-    mix = {g: float(v) for g, v in raw.get("mix", {}).items()}
+    # [fold_mix], when present, overrides [mix] for the fold only: during a
+    # dialect notice period generation already targets groups the admission
+    # gate still refuses, and the fold must keep today's targets or it
+    # would defer coding/terminal until the not-yet-admitted groups catch
+    # up. The fork commit deletes the block.
+    mix = {g: float(v) for g, v in (raw.get("fold_mix") or raw.get("mix", {})).items()}
     if abs(sum(mix.values()) - 1.0) > 0.01:
-        fatal(f"[mix] in {SOURCES_TOML} must sum to 1.0")
+        fatal(f"[fold_mix]/[mix] in {SOURCES_TOML} must sum to 1.0")
     src2grp = {name: cfg["group"] for name, cfg in raw.get("source", {}).items()}
     lang_mix = {b: float(v) for b, v in
                 (raw.get("lang_mix", {}).get("coding") or {}).items()}

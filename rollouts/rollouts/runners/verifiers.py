@@ -35,8 +35,11 @@ log = logging.getLogger("rollouts.runners.verifiers")
 
 
 def eval_cmd(cfg: RolloutsConfig, source: Source, endpoint: Endpoint,
-             harness: str, batch: list[dict], run_dir: Path) -> list[str]:
+             harness: str, batch: list[dict], run_dir: Path,
+             sampling: dict | None = None, runtime: str = "docker",
+             ) -> list[str]:
     uids = [r["uid"] for r in batch]
+    sampling = sampling or {}
     cmd = [
         "nice", "-n", "10", "uv", "run", "eval", source.taskset_id,
         "-n", str(len(uids)),
@@ -44,7 +47,7 @@ def eval_cmd(cfg: RolloutsConfig, source: Source, endpoint: Endpoint,
         "--client.base-url", endpoint.base_url,
         "--client.api-key-var", endpoint.key_env,
         "--env.agent.harness.id", harness,
-        "--env.agent.runtime.type", "docker",
+        "--env.agent.runtime.type", runtime,
         "--env.agent.max-turns", str(cfg.max_turns),
         "--env.agent.timeout.setup", "1800",
         "--env.agent.timeout.rollout", str(cfg.rollout_timeout_s),
@@ -53,6 +56,12 @@ def eval_cmd(cfg: RolloutsConfig, source: Source, endpoint: Endpoint,
         "-c", str(min(cfg.max_containers, len(uids))),
         "-o", str(run_dir),
     ]
+    # Policy sampling rides the v1 eval CLI's dotted SamplingConfig; unset
+    # keys keep the eval defaults, which every pre-policy batch ran with.
+    if "temperature" in sampling:
+        cmd.extend(["--sampling.temperature", str(sampling["temperature"])])
+    if "max_tokens" in sampling:
+        cmd.extend(["--sampling.max-tokens", str(sampling["max_tokens"])])
     if source.select == "tasks":
         # Harbor filters on the task directory basename where flagged;
         # traces still key on the full TaskData.name.
@@ -161,6 +170,10 @@ def _batch_suspect(per_task: list[dict], produced_traces: bool) -> bool:
 
 
 class VerifiersRunner:
+    # Where the agent's harness process lives. Shell agents need a per-task
+    # container; the chat runner below runs harness `null` in a subprocess.
+    RUNTIME = "docker"
+
     def __init__(self, cfg: RolloutsConfig, health: EndpointHealth,
                  env: dict):
         self.cfg = cfg
@@ -170,7 +183,8 @@ class VerifiersRunner:
     def run_batch(self, source: Source, policy: Policy, batch: list[dict],
                   run_dir: Path) -> BatchResult:
         result = BatchResult()
-        reap_containers()
+        if self.RUNTIME == "docker":
+            reap_containers()
 
         if source.local_docker_build:
             batch, build_failed = build_local_images(batch)
@@ -191,13 +205,14 @@ class VerifiersRunner:
             env["PATH"] = f"{Path.home()}/.local/bin:" + env.get("PATH", "")
             code, out = run_streamed(
                 eval_cmd(self.cfg, source, endpoint, policy.harness, batch,
-                         attempt_dir),
+                         attempt_dir, policy.sampling, runtime=self.RUNTIME),
                 env, self.cfg.batch_timeout_s, cwd=self.cfg.verifiers_dir)
             if code != 0:
                 log.error("eval exited %s; tail:\n%s", code, out[-2000:])
             stamp = PolicyStamp(policy_id=policy.id, model=endpoint.label,
                                 harness=policy.harness,
-                                endpoint=endpoint.name)
+                                endpoint=endpoint.name,
+                                action_kind=policy.action_kind)
             traces_path = attempt_dir / "traces.jsonl"
             envelopes, _ = envelopes_from_traces(
                 traces_path, source=source.name, env_id=source.taskset_id,
@@ -221,6 +236,14 @@ class VerifiersRunner:
                 break
             log.warning("retrying batch on fallback endpoint")
 
-        if self.cfg.prune_images:
+        if self.cfg.prune_images and self.RUNTIME == "docker":
             prune_images([r.get("image") or "" for r in batch])
         return result
+
+
+class VerifiersChatRunner(VerifiersRunner):
+    """Same eval CLI, no container: for tasksets whose agent is a plain chat
+    loop (harness `null` — math answers, native tool calling over MCP).
+    Task images, docker reaping and image pruning do not apply."""
+
+    RUNTIME = "subprocess"

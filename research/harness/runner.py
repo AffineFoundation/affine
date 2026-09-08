@@ -17,7 +17,9 @@ import random
 
 import httpx
 
-from .chat import BASH_RE, action_kind, _extract_tool_json
+from affine import dialects
+
+from .chat import LEGACY_TOOL_KIND, action_kind, _extract_tool_json
 from .client import VllmModel
 from .config import RunCfg, TEACHER, ModelCfg, king_cfg
 from .terms import miner_terms, teacher_reference
@@ -27,10 +29,9 @@ def gold_action(rec: dict) -> str | None:
     """Parse a force-target action from the trajectory's reference_turn."""
     ref = rec.get("reference_turn") or ""
     kind = rec.get("action_kind", "bash")
-    if kind == "tool":
+    if kind == LEGACY_TOOL_KIND:
         return _extract_tool_json(ref)
-    matches = list(BASH_RE.finditer(ref))
-    return matches[-1].group(0) if matches else None
+    return dialects.last_action(ref, kind) or None
 
 
 async def sample_force_rollouts(miner: VllmModel, prefix, n: int,

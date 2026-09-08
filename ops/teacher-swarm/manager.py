@@ -36,6 +36,7 @@ PODS_JSON = STATE_DIR / "pods.json"          # manager memory across restarts
 BLACKLIST = STATE_DIR / "blacklist.txt"      # executor ids that burned us
 KNOWN_HOSTS = STATE_DIR / "known_hosts"      # host:port reuse => key churn
 ENV_FILE = HERE / ".swarm_env"               # HF_TOKEN=..., SWARM_KEY=...
+ECHO_PLUGIN_DIR = HERE / "echo_cache_plugin"  # vLLM echo prefix-cache plugin
 
 SSH_OPTS = [
     "-o", "StrictHostKeyChecking=accept-new",
@@ -77,6 +78,11 @@ class TypePlan:
     # They count toward target; lium_api.remove refuses non-prefixed names,
     # so the manager can bootstrap/heal them but never delete them.
     adopt: list[str] = field(default_factory=list)
+    # When false the manager still boots/heals the box but the router never
+    # sees its URLs. Used for eval-tune sandboxes under live load tests.
+    advertise: bool = True
+    # Extra `vllm serve` argv, space-separated. Empty = stock flags.
+    vllm_extra: str = ""
 
 
 @dataclass
@@ -93,6 +99,13 @@ class Config:
     max_model_len: int
     gpu_memory_utilization: float
     max_num_batched_tokens: int
+    # Type names tried in order when a target>0 type has no rentable stock
+    # and the swarm holds no pod at all (2026-09-05: the single b200-8x died
+    # 22:15 UTC, no 8x B200 <= $48 was in stock, and the manager sat at
+    # "0 healthy replicas on 0 pods" for 10h45m while every duel failed
+    # teacher_unservable). A fallback pod is released once the primary type
+    # is healthy again.
+    fallback_types: list[str] = field(default_factory=list)
     types: dict[str, TypePlan] = field(default_factory=dict)
 
 
@@ -109,6 +122,7 @@ def load_config() -> Config:
         max_model_len=int(s["max_model_len"]),
         gpu_memory_utilization=float(s["gpu_memory_utilization"]),
         max_num_batched_tokens=int(s["max_num_batched_tokens"]),
+        fallback_types=[str(x) for x in (s.get("fallback_types") or [])],
     )
     for name, t in raw.get("types", {}).items():
         cfg.types[name] = TypePlan(
@@ -120,6 +134,8 @@ def load_config() -> Config:
                 t.get("max_num_batched_tokens", cfg.max_num_batched_tokens)),
             gpu_util=float(t.get("gpu_util", cfg.gpu_memory_utilization)),
             adopt=[str(x) for x in (t.get("adopt") or [])],
+            advertise=bool(t.get("advertise", True)),
+            vllm_extra=str(t.get("vllm_extra", "")),
         )
     return cfg
 
@@ -348,7 +364,14 @@ class Manager:
             f'MAX_MODEL_LEN="{self.cfg.max_model_len}"',
             f'GPU_UTIL="{plan.gpu_util}"',
             f'BATCHED_TOKENS="{plan.max_num_batched_tokens}"',
+            f"EXTRA_VLLM_ARGS='{plan.vllm_extra}'",
         ]
+        # A fresh pod on a reused host:port has a new host key; accept-new
+        # refuses ("REMOTE HOST IDENTIFICATION HAS CHANGED") and the env push
+        # fails every cycle (2026-09-04 22:54-23:06, 24 cycles). The known_hosts
+        # file is the manager's own throwaway: drop the stale entry first.
+        subprocess.run(["ssh-keygen", "-R", f"[{host}]:{port}", "-f", str(KNOWN_HOSTS)],
+                       capture_output=True, text=True, timeout=15)
         # Write env without putting secrets on a command line: pipe via stdin.
         try:
             p = subprocess.run(
@@ -366,6 +389,17 @@ class Manager:
                        "/root/swarm/bootstrap.sh"):
             log(f"{name}: bootstrap upload failed")
             return False
+        # Echo prefix-cache plugin (a two-file pip package); bootstrap
+        # installs it into the swarm venv before launching replicas.
+        try:
+            ssh_run(host, port, "mkdir -p /root/swarm/echo_cache_plugin")
+        except subprocess.SubprocessError:
+            pass
+        for fname in ("pyproject.toml", "affine_vllm_echo_cache.py"):
+            if not scp_put(host, port, ECHO_PLUGIN_DIR / fname,
+                           f"/root/swarm/echo_cache_plugin/{fname}"):
+                log(f"{name}: echo plugin upload failed ({fname})")
+                return False
         # NB: a pgrep -f pattern would match this ssh command's own cmdline;
         # use a pidfile instead. setsid fully detaches from the ssh session.
         launch = (
@@ -425,6 +459,8 @@ class Manager:
         if n_up:
             m["last_healthy"] = now
             m["phase"] = "ready" if n_up == plan.replicas else "degraded"
+            if not plan.advertise:
+                return []
             ip = lium_api.pod_ip(pod)
             return [{"url": f"http://{ip}:{ext}/v1", "pod": name,
                      "type": plan.name, "est_tps": plan.est_tps / plan.replicas}
@@ -509,17 +545,25 @@ class Manager:
         live_pods = [p for p in swarm_pods if self.plan_of(p)]
         spend = self.spend_usd_hr(live_pods)
         stock = None
+        healthy_types = {b["type"] for b in backends}
+        unfilled: list[str] = []
         for tname, plan in cfg.types.items():
             have = len(by_type[tname])
             if have > plan.target:
-                # Shrink: drop the newest boxes first (least sunk warmup).
+                # Shrink: drop the newest boxes first (least sunk warmup). A
+                # fallback pod stays until the type it covers for is healthy.
                 extra = sorted(
                     by_type[tname],
                     key=lambda p: self.mem.get(lium_api.pod_name(p), {})
                                       .get("rented_at", 0),
                     reverse=True)[: have - plan.target]
                 for pod in extra:
-                    self.remove_pod(pod, "over target")
+                    covering = self.mem.get(lium_api.pod_name(pod), {}
+                                            ).get("fallback_for")
+                    if covering and covering not in healthy_types:
+                        continue
+                    self.remove_pod(pod, "over target"
+                                    + (f" ({covering} healthy again)" if covering else ""))
                 continue
             missing = plan.target - have
             if missing <= 0:
@@ -531,6 +575,9 @@ class Manager:
                 log(f"balance ${bal:.0f} < floor — no renting")
                 break
             candidates = self.match_stock(stock, plan)
+            if not candidates:
+                unfilled.append(tname)
+                log(f"{tname}: no rentable stock ({self.stock_summary(stock, plan)})")
             rate_limited = False
             for cand in candidates[:missing]:
                 price = (cand.get("price_per_gpu") or 0) * plan.gpu_count
@@ -562,6 +609,39 @@ class Manager:
             if rate_limited:
                 break
 
+        # Nothing rented at all and the primary has no stock: rent one box of
+        # the first fallback type with stock so the teacher never sits empty.
+        if unfilled and not live_pods and stock is not None:
+            for tname in cfg.fallback_types:
+                plan = cfg.types.get(tname)
+                if plan is None or tname in unfilled:
+                    continue
+                cands = self.match_stock(stock, plan)
+                if not cands:
+                    continue
+                cand = cands[0]
+                price = (cand.get("price_per_gpu") or 0) * plan.gpu_count
+                if spend + price > cfg.budget_usd_hr:
+                    continue
+                name = self.new_name(plan, names_seen)
+                pod_id = lium_api.rent(self.sess, str(cand["id"]), name,
+                                       plan.gpu_count, cfg.template_id,
+                                       cfg.ttl_hours, self.pubkey)
+                if pod_id and pod_id != "RATE_LIMITED":
+                    log(f"FALLBACK for {unfilled[0]}: rented {name} "
+                        f"({cand.get('machine_name')} ${price:.2f}/h "
+                        f"executor={str(cand['id'])[:12]})")
+                    names_seen.add(name)
+                    spend += price
+                    self.mem[name] = {
+                        "type": tname, "executor_id": str(cand["id"]),
+                        "rented_at": now, "phase": "renting",
+                        "bootstrap_started": 0, "last_seen": now,
+                        "last_healthy": 0, "fallback_for": unfilled[0]}
+                    break
+                log(f"fallback rent failed on {str(cand['id'])[:12]} ({pod_id})")
+                time.sleep(2.0)
+
         state = {
             "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "model": cfg.model,
@@ -575,6 +655,34 @@ class Manager:
         log(f"state: {len(backends)} healthy replicas on "
             f"{len(swarm_pods)} pods, ${spend:.2f}/h")
         return state
+
+    def stock_summary(self, stock: list[dict], plan: TypePlan) -> str:
+        """Why match_stock came back empty, for the log."""
+        bl = blacklist_ids()
+        n_match = n_full = n_price = n_bl = 0
+        cheapest = None
+        for n in stock:
+            mn = (n.get("machine_name") or "").upper()
+            if plan.match.upper() not in mn or (
+                    plan.match.upper() == "B200" and "B300" in mn):
+                continue
+            if int(n.get("gpu_count") or 0) != plan.gpu_count:
+                continue
+            n_match += 1
+            if str(n.get("id")) in bl:
+                n_bl += 1
+                continue
+            avail = n.get("available_gpu_count")
+            if avail is not None and int(avail) < plan.gpu_count:
+                n_full += 1
+                continue
+            price = (n.get("price_per_gpu") or 1e9) * plan.gpu_count
+            cheapest = price if cheapest is None else min(cheapest, price)
+            if price > plan.max_price:
+                n_price += 1
+        return (f"{len(stock)} executors, {n_match} {plan.match} x{plan.gpu_count}: "
+                f"{n_bl} blacklisted, {n_full} occupied, {n_price} above "
+                f"${plan.max_price:.0f}" + (f", cheapest ${cheapest:.0f}" if cheapest else ""))
 
     def match_stock(self, stock: list[dict], plan: TypePlan) -> list[dict]:
         bl = blacklist_ids()

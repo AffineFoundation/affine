@@ -408,6 +408,20 @@ class LiumProvider(Provider):
         if p.returncode != 0 or "EXTRACT_OK" not in (p.stdout or ""):
             raise RuntimeError(
                 f"extract on pod failed: {_redact((p.stderr or p.stdout or '')[-500:])}")
+        # The tar upload above takes minutes. A running validator's health
+        # loop sees the pod dark meanwhile and _soft_restart relaunches the
+        # OLD bootstrap with the OLD .eval_env; that server then owns :9000
+        # and ours crash-loops on exit 3 (live 2026-09-03 15:45: the stage-1
+        # redeploy shipped AFFINE_EVAL_R2_* but the serving process had none).
+        # Re-stop right before writing the env so the launch below is the
+        # only supervisor. A duel that slipped in is requeued by the
+        # validator as an infra fault (no miner burn).
+        restop = ("pkill -f '[e]valsrv/bootstrap.sh' || true; "
+                  "pkill -f '[p]ython -m evalsrv' || true; sleep 3; echo RESTOPPED")
+        p = _ssh_run(ssh, restop, timeout=60)
+        if "RESTOPPED" not in (p.stdout or ""):
+            raise RuntimeError(
+                f"re-stop before env write failed: {_redact((p.stderr or p.stdout or '')[-300:])}")
         with tempfile.NamedTemporaryFile("w", delete=False, prefix="affine-eval-env-") as f:
             f.write(env_file_contents)
             local_env = Path(f.name)
@@ -701,6 +715,7 @@ class MachineManager:
         register_secret(cfg.secrets.hf_token)
         register_secret(cfg.secrets.eval_token)
         register_secret(cfg.secrets.targon_api_key)
+        register_secret(cfg.secrets.eval_r2_secret_access_key)
 
     def _get_machine(self) -> dict:
         return getattr(self.state, self.state_attr) or {}
@@ -812,6 +827,33 @@ class MachineManager:
                         out or _redact((p.stderr or "")[-200:]))
         except Exception:
             log.warning("%s soft-restart ssh failed", self.label, exc_info=True)
+
+    def redeploy(self) -> bool:
+        """Push the current tree + env file to the LIVE pod and relaunch
+        bootstrap (operator action: code or secret change without renting a
+        new pod; weights in HF_HOME survive). Stops the old supervisor first —
+        bootstrap.sh does not evict a running server, and a second launch
+        would just fail to bind the port while the stale code kept serving.
+        A duel in flight dies and is requeued as an infra fault."""
+        machine = self._get_machine()
+        provider = self._provider_for(machine) if machine else None
+        ssh = (machine or {}).get("ssh") or ""
+        if provider is None or not ssh:
+            log.error("%s redeploy: no live machine with ssh", self.label)
+            return False
+        stop = ("pkill -f '[e]valsrv/bootstrap.sh' || true; "
+                "pkill -f '[p]ython -m evalsrv' || true; sleep 5; "
+                "pkill -9 -f '[v]llm serve' || true; echo STOPPED")
+        p = _ssh_run(ssh, stop, timeout=120)
+        if "STOPPED" not in (p.stdout or ""):
+            log.error("%s redeploy: stop failed: %s", self.label,
+                      _redact((p.stderr or "")[-300:]))
+            return False
+        provider.push_and_bootstrap(machine, self._env_file_contents())
+        self._last_check = 0.0
+        log.warning("%s redeploy: bootstrap relaunched on %s", self.label,
+                    {k: machine.get(k) for k in ("provider", "id")})
+        return True
 
     def is_healthy_now(self) -> bool:
         """Live probe, bypassing the check-interval cache. Used by the
@@ -927,11 +969,17 @@ class MachineManager:
         self.state.set_phase("tick")
 
     def _env_file_contents(self) -> str:
+        sec = self.cfg.secrets
         kv = {
-            "HF_TOKEN": self.cfg.secrets.hf_token,
+            "HF_TOKEN": sec.hf_token,
             "AFFINE_EVAL_PORT": str(self.em.port),
-            "AFFINE_EVAL_TOKEN": self.cfg.secrets.eval_token,
+            "AFFINE_EVAL_TOKEN": sec.eval_token,
             "AFFINE_ROLE": self.role,
+            # Read-only R2 pair for r2:// checkpoints (evalsrv/r2store.py).
+            # Never the management token or the validator's write key.
+            "AFFINE_EVAL_R2_ENDPOINT": sec.r2_endpoint if sec.eval_r2_access_key_id else "",
+            "AFFINE_EVAL_R2_ACCESS_KEY_ID": sec.eval_r2_access_key_id,
+            "AFFINE_EVAL_R2_SECRET_ACCESS_KEY": sec.eval_r2_secret_access_key,
         }
         return "".join(f"export {k}={shlex.quote(v)}\n" for k, v in kv.items() if v)
 

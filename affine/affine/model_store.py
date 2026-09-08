@@ -26,6 +26,8 @@ from datetime import datetime, timezone
 
 from huggingface_hub import HfApi, get_hf_file_metadata, hf_hub_url
 
+from . import r2, r2protocol as proto
+
 # HF raises these for a repo/revision that no longer exists or is gated. The
 # import path moved across huggingface_hub versions; support both.
 try:
@@ -73,12 +75,91 @@ def resolve_head_revision(repo: str, hf_token: str = "") -> str:
 
 MAX_TREE_ENTRIES = 20000  # hard stop while listing an attacker-controlled repo
 MAX_CONFIG_BYTES_HARD = 16 * 1024 * 1024  # refuse to download bigger configs
+MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 
 
-def fetch_repo_info(ref: ModelRef, hf_token: str = "") -> RepoInfo:
+class R2Reader:
+    """Metadata reader for `r2://bucket/prefix/` refs: the signed manifest
+    is the file tree, config.json is fetched from the prefix. Shape-compatible
+    with the HF path so hygiene / arch / copy checks run unchanged."""
+
+    def __init__(self, s3):
+        self.s3 = s3
+
+    def fetch_manifest(self, bucket: str, prefix: str) -> dict:
+        raw = r2.get_bytes(self.s3, bucket, prefix + "manifest.json",
+                           MAX_MANIFEST_BYTES)
+        manifest = json.loads(raw)
+        proto.validate_manifest_shape(manifest)
+        return manifest
+
+    def repo_info_from_manifest(self, bucket: str, prefix: str, manifest: dict,
+                                uploaded_at: datetime | None = None) -> RepoInfo:
+        files = [f["path"] for f in manifest["files"]] + ["manifest.json"]
+        by_path = {f["path"]: f for f in manifest["files"]}
+        if "config.json" not in by_path:
+            raise ValueError("manifest lists no config.json")
+        if int(by_path["config.json"]["size"]) > MAX_CONFIG_BYTES_HARD:
+            raise ValueError("config.json exceeds the hard size cap")
+        raw = r2.get_bytes(self.s3, bucket, prefix + "config.json",
+                           MAX_CONFIG_BYTES_HARD)
+        if proto.sha256_hex(raw) != by_path["config.json"]["sha256"]:
+            raise ValueError("config.json sha256 differs from the manifest")
+        try:
+            config = json.loads(raw)
+        except ValueError as e:
+            raise ValueError(f"config.json is not JSON: {e}") from e
+        blobs = {f["path"]: f["sha256"] for f in manifest["files"]
+                 if f["path"].endswith(".safetensors")}
+        total_st = sum(int(f["size"]) for f in manifest["files"]
+                       if f["path"].endswith(".safetensors"))
+        total_all = sum(int(f["size"]) for f in manifest["files"])
+        if uploaded_at is not None and uploaded_at.tzinfo is None:
+            uploaded_at = uploaded_at.replace(tzinfo=timezone.utc)
+        return RepoInfo(files=files, config=config, safetensors_blobs=blobs,
+                        total_safetensors_bytes=total_st,
+                        total_repo_bytes=total_all, committed_at=uploaded_at)
+
+    def repo_info(self, ref: ModelRef) -> RepoInfo:
+        """Raises when the prefix/manifest is missing or the manifest's
+        model_digest is not the pinned revision (content moved under us)."""
+        bucket, prefix = proto.parse_r2_ref(ref.repo)
+        manifest = self.fetch_manifest(bucket, prefix)
+        if manifest["model_digest"] != ref.revision:
+            raise ValueError(f"manifest digest {manifest['model_digest'][:12]} != "
+                             f"pinned {ref.revision[:12]}")
+        head = self.s3.head_object(Bucket=bucket, Key=prefix + "manifest.json")
+        return self.repo_info_from_manifest(bucket, prefix, manifest,
+                                            uploaded_at=head.get("LastModified"))
+
+    def status(self, ref: ModelRef) -> tuple[str, RepoInfo | None]:
+        bucket, prefix = proto.parse_r2_ref(ref.repo)
+        exists = r2.object_exists(self.s3, bucket, prefix + "manifest.json")
+        if exists is None:
+            return "unknown", None
+        if not exists:
+            return "gone", None
+        try:
+            return "ok", self.repo_info(ref)
+        except ValueError as e:
+            # Manifest present but not the pinned content: permanently wrong.
+            log.warning("r2 ref %s is not the pinned content: %s", ref.repo, e)
+            return "gone", None
+        except Exception:
+            log.warning("availability probe inconclusive for %s", ref.repo,
+                        exc_info=True)
+            return "unknown", None
+
+
+def fetch_repo_info(ref: ModelRef, hf_token: str = "",
+                    r2_reader: R2Reader | None = None) -> RepoInfo:
     """Metadata-only snapshot of the pinned revision: file list, config.json,
     per-file blob digests, sizes, commit timestamp. Raises on missing repo or
     revision (callers record `revision_not_found`)."""
+    if proto.is_r2_ref(ref.repo):
+        if r2_reader is None:
+            raise ValueError(f"{ref.repo}: R2 submissions are not configured")
+        return r2_reader.repo_info(ref)
     api = _api(hf_token)
     tree = []
     for i, t in enumerate(api.list_repo_tree(
@@ -134,8 +215,9 @@ def fetch_repo_info(ref: ModelRef, hf_token: str = "") -> RepoInfo:
                     total_repo_bytes=total_all, committed_at=committed_at)
 
 
-def fetch_repo_info_or_status(ref: ModelRef,
-                              hf_token: str = "") -> tuple[str, RepoInfo | None]:
+def fetch_repo_info_or_status(ref: ModelRef, hf_token: str = "",
+                              r2_reader: R2Reader | None = None,
+                              ) -> tuple[str, RepoInfo | None]:
     """Probe a repo's availability while fetching its metadata.
 
     Returns one of:
@@ -150,6 +232,11 @@ def fetch_repo_info_or_status(ref: ModelRef,
     config.json, so fetch_repo_info alone reports it healthy while every
     weight download 403s (observed: reign #1 gated post-crown, kept earning).
     """
+    if proto.is_r2_ref(ref.repo):
+        if r2_reader is None:
+            log.warning("cannot probe %s: R2 not configured", ref.repo)
+            return "unknown", None
+        return r2_reader.status(ref)
     try:
         info = fetch_repo_info(ref, hf_token)
         # HEAD the config blob at the pinned revision. Never served from the
@@ -224,13 +311,17 @@ def validate_repo_hygiene(info: RepoInfo, *, max_size_gb: float,
     return None
 
 
-def validate_repo_arch(info: RepoInfo, pinned: dict) -> str | None:
+def validate_repo_arch(info: RepoInfo, pinned: dict,
+                       alternatives: list[dict] | tuple[dict, ...] = ()) -> str | None:
     """Return a rejection reason or None. `pinned` is a nested dict of
     config.json keys that must match exactly (subset match: keys absent from
     `pinned` are unconstrained). Pinning the compute-graph shape to the genesis
     family keeps every crown a fine-tune of the seed model — in particular it
     excludes uploading the frozen teacher itself, whose thoughts would land
     in-band on G and top R by construction (it IS the distillation target).
+    `alternatives` are further profiles, any one of which also admits
+    (2026-09-04: the text-only Qwen3_5MoeForCausalLM extraction, whose
+    config.json is the genesis text_config flattened to the root).
     Metadata-only; empty `pinned` disables the check."""
 
     def walk(want: dict, have: object, path: str) -> str | None:
@@ -251,7 +342,11 @@ def validate_repo_arch(info: RepoInfo, pinned: dict) -> str | None:
         return None
 
     fault = walk(pinned, info.config, "")
-    return f"arch not pinned to the genesis family: {fault}" if fault else None
+    if fault is None:
+        return None
+    if any(walk(alt, info.config, "") is None for alt in alternatives):
+        return None
+    return f"arch not pinned to the genesis family: {fault}"
 
 
 @dataclass

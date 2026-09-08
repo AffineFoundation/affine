@@ -54,6 +54,25 @@ class QueueEntry:
     # head forever: past a bound the entry is rotated to the tail so other
     # submissions still get evaluated.
     infra_retry_count: int = 0
+    # Queue order is CANONICAL, not positional: entries sort by submission
+    # sequence (the challenge number). A persistent entry-specific infra
+    # fault defers the entry behind everything queued at that moment
+    # (`deferred_after` = the highest sequence then present); later arrivals
+    # still come after it. Nothing else can reorder the queue — the 2026-09-05
+    # teacher outage rotated every entry to the tail one by one over 10 h and
+    # interleaved them with new arrivals.
+    deferred_after: int = 0
+
+    @property
+    def seq(self) -> int:
+        try:
+            return int(self.challenge_id.rsplit("-", 1)[1])
+        except (IndexError, ValueError):
+            return 0
+
+    @property
+    def order_key(self) -> tuple[int, int]:
+        return (max(self.seq, self.deferred_after), self.seq)
 
 
 @dataclass
@@ -184,6 +203,7 @@ class State:
             d = json.loads(self._state_path.read_text())
             self.king = King(**d["king"]) if d.get("king") else None
             self.queue = [QueueEntry(**e) for e in d.get("queue", [])]
+            self._sort_queue()
             self.seen_hotkeys = set(d.get("seen_hotkeys", []))
             self.completed_revisions = set(d.get("completed_revisions", []))
             self.last_weights_at = d.get("last_weights_at", "")
@@ -220,7 +240,13 @@ class State:
                                 "shutdown; requeued at front",
                                 entry.challenge_id, entry.repo)
                     self.queue.insert(0, entry)
+                    self._sort_queue()
         self._reconcile_from_history()
+
+    def _sort_queue(self) -> None:
+        """Restore the canonical order (see QueueEntry.order_key). Caller
+        holds the lock or is single-threaded (load)."""
+        self.queue.sort(key=lambda e: e.order_key)
 
     def drop_unknown_bench_suites(self, suites: list[str]) -> int:
         """Remove queued jobs whose suite is no longer in the contract."""
@@ -380,6 +406,7 @@ class State:
                                repo=repo, revision=revision, block=block,
                                queued_at=now_iso())
             self.queue.append(entry)
+            self._sort_queue()
             # Slot burned at enqueue: one reveal = one shot (policy, module doc).
             self.seen_hotkeys.add(hotkey)
             self.completed_revisions.add(revision)
@@ -423,20 +450,23 @@ class State:
     def push_front(self, entry: QueueEntry) -> None:
         """Put an entry back untouched (e.g. metagraph not ready yet)."""
         with self._lock:
-            self.queue.insert(0, entry)
+            self.queue = [e for e in self.queue if e.repo != entry.repo] + [entry]
+            self._sort_queue()
             self._clear_in_flight(entry)
 
     def requeue_front(self, entry: QueueEntry, reason: str,
                       count_retry: bool = True) -> int:
-        """Put a challenge back at the head of the queue after a transient
-        failure. `count_retry=False` when the failure was our infrastructure
-        (eval machine down): the miner's bounded retry budget only pays for
-        failures that happened while the machine was healthy."""
+        """Put a challenge back in its canonical queue position after a
+        transient failure (it was the head, so it stays the head unless it
+        had been deferred). `count_retry=False` when the failure was our
+        infrastructure (eval machine down): the miner's bounded retry budget
+        only pays for failures that happened while the machine was healthy."""
         with self._lock:
             if count_retry:
                 entry.retry_count += 1
             entry.queued_at = now_iso()
-            self.queue = [entry] + [e for e in self.queue if e.repo != entry.repo]
+            self.queue = [e for e in self.queue if e.repo != entry.repo] + [entry]
+            self._sort_queue()
             self.current_eval = None
             self._clear_in_flight(entry)
         log.warning("requeued %s at front (retry %d, counted=%s) due to %s",
@@ -444,17 +474,22 @@ class State:
         return entry.retry_count
 
     def requeue_back(self, entry: QueueEntry, reason: str) -> None:
-        """Rotate an entry to the TAIL of the queue. Used when a persistent
-        infra fault (e.g. the pod cannot fit this repo) would otherwise wedge
-        the head forever: deferring lets every other submission progress while
-        the head entry keeps its slot for a later retry."""
+        """Defer an entry behind everything queued right now. Used when a
+        persistent ENTRY-SPECIFIC infra fault (e.g. the pod cannot fit this
+        repo) would otherwise wedge the head forever: every other submission
+        progresses while this one keeps its slot for a later retry. Arrivals
+        after this moment still queue behind it (canonical order)."""
         with self._lock:
             entry.queued_at = now_iso()
-            self.queue = [e for e in self.queue if e.repo != entry.repo] + [entry]
+            others = [e for e in self.queue if e.repo != entry.repo]
+            entry.deferred_after = max([e.order_key[0] for e in others] + [entry.seq]) + 1
+            self.queue = others + [entry]
+            self._sort_queue()
             self.current_eval = None
             self._clear_in_flight(entry)
-        log.warning("deferred %s to queue tail (infra retry %d) due to %s",
-                    entry.challenge_id, entry.infra_retry_count, reason)
+        log.warning("deferred %s behind seq %d (infra retry %d) due to %s",
+                    entry.challenge_id, entry.deferred_after,
+                    entry.infra_retry_count, reason)
 
     # -- verdicts / king lifecycle --------------------------------------------
     def record_failure(self, entry: QueueEntry, code: str, detail: str = "",
@@ -609,6 +644,25 @@ class State:
             })
             self.flush()
             return self.king
+
+    def rewrite_king_repo(self, hotkey: str, revision: str, new_repo: str) -> bool:
+        """Point a lineage member (current king or a previous reign) at a new
+        location for the SAME content revision — used when a crowned private
+        R2 prefix is promoted to the public bucket after the fact. Returns
+        True when something changed."""
+        changed = False
+        if (self.king and self.king.hotkey == hotkey
+                and self.king.revision == revision and self.king.repo != new_repo):
+            self.king.repo = new_repo
+            changed = True
+        for p in (self.king.previous if self.king else []):
+            if (p.get("hotkey") == hotkey and p.get("revision") == revision
+                    and p.get("repo") != new_repo):
+                p["repo"] = new_repo
+                changed = True
+        if changed:
+            self.flush()
+        return changed
 
     def king_lineage_members(self, payout_depth: int) -> list[dict]:
         """Full stored king lineage (current first) for the dashboard.

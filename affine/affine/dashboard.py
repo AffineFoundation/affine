@@ -33,6 +33,7 @@ from pathlib import Path
 from . import __version__
 from .config import Config
 from .hippius import Hippius
+from .r2protocol import is_r2_ref, parse_r2_ref, public_model_url
 from .state import State, now_iso
 
 log = logging.getLogger("affine.dashboard")
@@ -69,6 +70,8 @@ _SIDE_FIELDS = ("reason", "mean_l1lift", "mean_eta", "mean_len_z",
                 "n_turns", "n_pairs",
                 # min(R,G) v5 leg telemetry
                 "mean_r_leg", "mean_g_leg", "g_bind_frac",
+                # wvk 11 action-dialect telemetry (per action_kind)
+                "by_dialect",
                 # legacy (pre-fork verdicts)
                 "valid", "S", "mean_lambda2", "baseline_band_exceeded")
 
@@ -88,10 +91,14 @@ def _side_score(side: dict | None) -> float | None:
 
 
 class Dashboard:
-    def __init__(self, cfg: Config, state: State, hippius: Hippius):
+    def __init__(self, cfg: Config, state: State, hippius: Hippius,
+                 registrations=None):
         self.cfg = cfg
         self.state = state
         self.hippius = hippius
+        # affine.registrations.AccessController when [submission.r2] is live;
+        # supplies the public registration rows + the envelope signer id.
+        self.registrations = registrations
         self._last_flush = 0.0
         self._min_interval = cfg.validator.dashboard_flush_min_interval_s
         self._last_log_push = 0.0
@@ -209,6 +216,21 @@ class Dashboard:
             },
             "version": __version__,
         }
+        if self.registrations is not None:
+            # Miners verify mailbox envelopes against this Ed25519 identity.
+            # Same shape as the snapshot block (+ r2_endpoint) so a client
+            # reading either sees `enabled` / `hf_cutover_block`; the dash
+            # relays this file as api/v1/contract.submission_r2 (was
+            # identity-only, so `.enabled` read as null while live).
+            r2cfg = self.cfg.submission.r2
+            contract["submission_r2"] = {
+                "enabled": True,
+                "validator_identity": self.registrations.signer.ss58_address,
+                "r2_endpoint": self.cfg.secrets.r2_endpoint,
+                "mailbox_base_url": r2cfg.mailbox_base_url,
+                "public_models_base_url": r2cfg.public_models_base_url,
+                "hf_cutover_block": r2cfg.hf_cutover_block,
+            }
         self.hippius.put_json("data/contract.json", contract)
         self._write_public_json("contract.json", contract)
 
@@ -229,7 +251,20 @@ class Dashboard:
                 "hotkey": king.hotkey, "reign_number": king.reign_number,
                 "crowned_at": king.crowned_at, "block": king.block,
                 "score": king.score,
+                "public_url": self._public_url(king.repo, king.revision),
             } if king else None),
+            # Private-submission registrations (affine2): state per hotkey,
+            # mailbox URL while credentials are live, public URL once
+            # crowned. No credentials are ever stored, so none can leak here.
+            "registrations": (self.registrations.dashboard_rows()
+                              if self.registrations is not None else []),
+            "submission_r2": ({
+                "enabled": True,
+                "validator_identity": self.registrations.signer.ss58_address,
+                "mailbox_base_url": self.cfg.submission.r2.mailbox_base_url,
+                "public_models_base_url": self.cfg.submission.r2.public_models_base_url,
+                "hf_cutover_block": self.cfg.submission.r2.hf_cutover_block,
+            } if self.registrations is not None else {"enabled": False}),
             # Full lineage for the UI; `size` is the equal-share payout window.
             "reign": {
                 "size": self.cfg.king_chain_size,
@@ -272,6 +307,20 @@ class Dashboard:
         self._flush_history()
         self._flush_benchmarks()
         self._push_validator_log()
+
+    def _public_url(self, repo: str, revision: str) -> str | None:
+        """Where anyone can fetch a model's manifest: HF page for hub repos,
+        the public bucket for crowned r2 refs, None for a still-private one."""
+        if not is_r2_ref(repo):
+            return f"https://huggingface.co/{repo}/tree/{revision}"
+        r2c = self.cfg.submission.r2
+        try:
+            bucket, _prefix = parse_r2_ref(repo)
+        except ValueError:
+            return None
+        if bucket == r2c.public_bucket and r2c.public_models_base_url:
+            return public_model_url(r2c.public_models_base_url, revision)
+        return None
 
     def _push_validator_log(self) -> None:
         """Publish a redacted tail of the validator log. Rate-limited well

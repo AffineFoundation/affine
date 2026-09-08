@@ -30,6 +30,15 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from affine.corpus.trace import (  # noqa: F401  (re-exported)
+    ToolParityError,
+    TraceShapeError,
+    has_tool_traffic,
+    sampled_paths,
+    trace_conversations,
+    trace_error_type,
+)
+
 ENVELOPE_SCHEMA = 1
 
 # Keys every catalog row (envelope["task"]) must carry. `uid` is unique
@@ -75,6 +84,11 @@ class Policy:
     endpoints: tuple[Endpoint, ...]           # ordered fallback chain
     sampling: dict = field(default_factory=dict)   # temperature etc.
     share: float = 1.0                        # target share within a source
+    # Action dialect the harness speaks (affine.dialects id). Decides how the
+    # slicer locates the action span in every assistant turn; bash is the
+    # shell-agent default. A harness that emits <tool_call> blocks or
+    # \boxed{} answers declares it here, else its turns slice to nothing.
+    action_kind: str = "bash"
 
     def available_endpoints(self, env: dict) -> list[Endpoint]:
         return [e for e in self.endpoints if env.get(e.key_env)]
@@ -88,10 +102,12 @@ class PolicyStamp:
     model: str        # provider-qualified label, e.g. engy/glm-5.2
     harness: str
     endpoint: str     # endpoint name, e.g. "engy"
+    action_kind: str = "bash"
 
     def to_dict(self) -> dict:
         return {"id": self.policy_id, "model": self.model,
-                "harness": self.harness, "endpoint": self.endpoint}
+                "harness": self.harness, "endpoint": self.endpoint,
+                "action_kind": self.action_kind}
 
 
 def utc_now_iso() -> str:
@@ -117,29 +133,9 @@ def make_envelope(*, source: str, env_id: str, task: dict,
 
 
 # -- trace accessors -----------------------------------------------------------
-# Shared by the index and the views; tolerate both native verifiers traces
-# and mini_swe-adapted ones (same shape by construction).
-
-def trace_messages(trace: dict) -> list[dict]:
-    """Linear conversation: drop the non-sampled assistant echo the graph
-    records alongside every sampled assistant node. Tolerates nodes without
-    a content key (tool-call-only assistant messages) and multimodal part
-    lists; non-chat roles are dropped like the slicer does."""
-    msgs = []
-    for nd in trace["nodes"]:
-        m = nd["message"]
-        role = m.get("role")
-        if role not in ("system", "user", "assistant"):
-            continue
-        if role == "assistant" and not nd.get("sampled"):
-            continue
-        content = m.get("content")
-        if isinstance(content, list):
-            content = "\n".join(
-                p.get("text", "") for p in content
-                if isinstance(p, dict) and p.get("type") == "text")
-        msgs.append({"role": role, "content": content or ""})
-    return msgs
+# Graph walking, baking and the parity gate live in affine.corpus.trace (the
+# fold on the validator box derives D from published traces with the same
+# code); re-exported here so rollouts callers keep their import path.
 
 
 def trace_stats(trace: dict) -> dict:
@@ -171,13 +167,6 @@ def trace_reward_score(trace: dict) -> float | None:
     if score is None:
         score = (rewards.get("passed_fraction") or {}).get("score")
     return score
-
-
-def trace_error_type(trace: dict) -> str | None:
-    errors = trace.get("errors") or []
-    if not errors:
-        return None
-    return errors[0].get("type") or errors[0].get("error") or "unknown"
 
 
 def trace_task_name(trace: dict) -> str:

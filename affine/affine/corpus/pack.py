@@ -86,7 +86,7 @@ def rebuild_trajectory(turns: list[dict]) -> dict:
                 "n_prefix_chars", sum(len(m["content"]) for m in prefix))),
         })
     head = turns[0]
-    return {
+    traj = {
         "traj_id": tid,
         "messages": messages,
         "turns": turn_metas,
@@ -98,6 +98,11 @@ def rebuild_trajectory(turns: list[dict]) -> dict:
         "source": head.get("source", "swe"),
         "language": head.get("language", "python"),
     }
+    # Only bucketed sources carry one; omitted (not "") so bash chunk bytes
+    # are unchanged.
+    if head.get("stratum"):
+        traj["stratum"] = str(head["stratum"])
+    return traj
 
 
 def _check_roundtrip(trajs: list[dict], originals: dict[str, dict],
@@ -198,7 +203,10 @@ def pack_turns_to_chunks(
         index_rows["turn_id"].append(f"{tid}:{t['turn_idx']}")
         index_rows["traj_id"].append(tid)
         index_rows["turn_idx"].append(int(t["turn_idx"]))
-        index_rows["stratum"].append(stratum_key({"traj_id": tid}))
+        # Explicit stratum (bucketed non-repo sources) wins over the
+        # repo|phase key derived from traj_id; bash records carry none.
+        index_rows["stratum"].append(stratum_key(
+            {"traj_id": tid, "stratum": t.get("stratum") or tr.get("stratum")}))
         index_rows["phase"].append(str(meta.get("phase") or t.get("phase")
                                        or ""))
         index_rows["source"].append(str(tr.get("source") or ""))

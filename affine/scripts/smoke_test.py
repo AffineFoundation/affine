@@ -79,7 +79,7 @@ check("config.bench_machine_port",
 check("config.bench_machine_smaller",
       cfg.bench_machine.gpu_count <= cfg.eval_machine.gpu_count)
 check("config.bench_suite_swe",
-      "swe_rebench_lite" in cfg.bench.suites)
+      any(s.startswith("swe_rebench_lite") for s in cfg.bench.suites))
 swe_ids = (Path(__file__).resolve().parents[1] / "evalsrv" / "data"
            / "swe_rebench_lite_ids.json")
 pin = json.loads(swe_ids.read_text())

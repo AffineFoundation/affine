@@ -20,6 +20,8 @@ Catalogs are deterministic snapshots; rebuild by deleting the file or
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib
 import json
 import logging
 import os
@@ -57,6 +59,11 @@ TERMINAL_LEGO_DATASET = "PrimeIntellect/Terminal-Lego-15k"
 REQUIRED_LEGO_FILES = (
     "task.toml", "instruction.md", "tests/test.sh", "tests/test_outputs.py",
 )
+# general-agent corpus (tool_use): Harbor exports it as
+# ~/.cache/harbor/general-agent_<date>_<hash>/general-agent/<task>/ (see
+# general_agent_v1.corpus.ensure_corpus, run inside the verifiers env).
+GENERAL_AGENT_GLOB = "general-agent_*/general-agent"
+GENERAL_AGENT_TIER_RE = re.compile(r"_t(\d+)$")
 NL2REPO_IMAGE_PREFIX = "ghcr.io/multimodal-art-projection/nl2repobench"
 NL2REPO_DEFAULT_DIR = ("/root/prime-pilot/research-environments/environments/"
                        "code/nl2repobench_v1/nl2repobench_v1/test_files")
@@ -165,13 +172,89 @@ def _swelego_meta(row: dict) -> dict | None:
     }
 
 
+def _text_uid(prefix: str, text: str) -> tuple[str, int]:
+    """(name, small int) from a prompt text. `name` must match the v1
+    taskset's TaskData.name (rollouts/envs/*/taskset.py `task_name`) so
+    `--env.taskset.tasks` addresses the row; the int gives make_traj_id a
+    trailing number so the traj_id stem stays a clean repo-like key."""
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return f"{prefix}-{digest[:12]}", int(digest[:6], 16)
+
+
+def _math_meta(row: dict) -> dict | None:
+    """DigitalLearningGmbH/MATH-lighteval (train): problem/solution/type/level.
+    Rows whose reference solution has no \\boxed{} are unusable — the
+    taskset skips them too (affine_math_v1.taskset)."""
+    problem = row.get("problem") or ""
+    if not problem or "\\boxed{" not in (row.get("solution") or ""):
+        return None
+    uid, num = _text_uid("math", problem)
+    subject = re.sub(r"[^a-z0-9]+", "_", str(row.get("type") or "math").lower())
+    return {
+        "uid": uid,
+        "sid": f"math_{subject}-{num}",
+        "repo": f"math/{subject}",
+        "language": "math",
+        "level": str(row.get("level") or ""),
+    }
+
+
+def _wiki_trivia_meta(row: dict) -> dict | None:
+    """willcb/wiki-trivia-questions-v4: question/answer/filename."""
+    question = row.get("question") or ""
+    if not question:
+        return None
+    uid, num = _text_uid("wiki", question)
+    return {
+        "uid": uid,
+        "sid": f"wiki-{num}",
+        "repo": "wiki/trivia",
+        "language": "search",
+    }
+
+
+def _commit0_meta(row: dict) -> dict | None:
+    """commit0/commit0 (test): repo commit-0/<name>, original_repo owner/name,
+    setup.python picks the sandbox image (affine_nl2lib_v1.taskset)."""
+    repo = row.get("repo") or ""
+    if not repo or not row.get("base_commit"):
+        return None
+    name = repo.rsplit("/", 1)[-1]
+    python = str((row.get("setup") or {}).get("python") or "3.11")
+    return {
+        "uid": name,
+        "sid": f"c0_{_dotless_task(name)}-0",
+        "repo": row.get("original_repo") or repo,
+        "language": "python",
+        "image": f"python:{python}",
+    }
+
+
 ROW_META = {
+    "commit0": _commit0_meta,
     "scaleswe": _scaleswe_meta,
     "swerebench_v2": _swerebench_v2_meta,
     "r2e": _r2e_meta,
     "multiswe": _multiswe_meta,
     "swelego": _swelego_meta,
+    "math": _math_meta,
+    "wiki_trivia": _wiki_trivia_meta,
 }
+
+
+def bucket_stratum(group: str, uid: str, n_buckets: int, offset: int = 0) -> str:
+    """Explicit slice stratum for sources without a repo structure.
+
+    sample_slice draws round-robin over strata, ~1 turn per stratum per
+    duel, so a group's slice share is its strata count over the corpus
+    total — not its turn count. Hashing task uids into `n_buckets` strata
+    pins that share by construction (rollouts/sources.toml `strata_buckets`
+    documents the arithmetic). Names are per group, so a second bucketed
+    source in the same group passes `offset` (its `strata_offset`) to start
+    above the first source's range. The fold (ops/corpus_build.py
+    assign_bucket_strata) recomputes this from the current toml anyway."""
+    h = int(hashlib.sha256(uid.encode("utf-8")).hexdigest()[:8], 16)
+    return f"{group}:{offset + h % n_buckets:04d}"
 
 
 def _swesmith_meta(row: dict, lang_key: str, language: str) -> dict | None:
@@ -227,6 +310,9 @@ def build_hf_catalog(cfg: RolloutsConfig, src: Source) -> dict:
         if panel_drop(meta["uid"], meta["repo"], panel):
             n_panel += 1
             continue
+        if src.strata_buckets:
+            meta["stratum"] = bucket_stratum(src.group, meta["uid"],
+                                             src.strata_buckets, src.strata_offset)
         seen.add(meta["uid"])
         kept.append(meta)
     return _write_catalog(cfg, src.name, kept, {
@@ -464,6 +550,96 @@ def build_terminal_bench_2_catalog(cfg: RolloutsConfig, src: Source) -> dict:
     })
 
 
+# Harbor-packaged SWE benchmarks (research-environments/environments/swe).
+# taskset_id -> (module, Taskset class, Config class, fixed language or None).
+# Language comes from the fixed tag when the whole set is one language, else
+# from the last `metadata.tags` entry of the task's task.toml (multilingual
+# tags each task "..., swe-bench-multilingual, java").
+HARBOR_SWE_TASKSETS: dict[str, tuple[str, str, str, str | None]] = {
+    "swebench-verified-v1": (
+        "swebench_verified_v1.taskset", "SWEBenchVerifiedTaskset",
+        "SWEBenchVerifiedConfig", "python"),
+    "swebench-pro-v1": (
+        "swebench_pro_v1.taskset", "SWEBenchProTaskset",
+        "SWEBenchProConfig", None),
+    "swebench-multilingual-v1": (
+        "swebench_multilingual_v1.taskset", "SWEBenchMultilingualTaskset",
+        "SWEBenchMultilingualConfig", None),
+}
+# SWE-bench Pro's Harbor metadata carries no language; its public set is 11
+# repos, so the primary language is pinned per repo.
+_PRO_REPO_LANG = {
+    "ansible/ansible": "python", "internetarchive/openlibrary": "python",
+    "qutebrowser/qutebrowser": "python", "flipt-io/flipt": "go",
+    "gravitational/teleport": "go", "future-architect/vuls": "go",
+    "navidrome/navidrome": "go", "protonmail/webclients": "ts",
+    "element-hq/element-web": "ts", "tutao/tutanota": "ts",
+    "nodebb/nodebb": "js",
+}
+_HARBOR_LANG_TAGS = {
+    "c", "cpp", "c++", "go", "java", "javascript", "js", "typescript", "ts",
+    "php", "ruby", "rust", "python",
+}
+# Pro names end in `-<base sha>-v<sha>`; a missing version renders as `-vnan`.
+_HEX_SUFFIX_RE = re.compile(r"-v?(?:[0-9a-f]{7,}|nan)$")
+
+
+def harbor_swe_repo(name: str) -> str:
+    """`swe-bench/astropy__astropy-12907` -> `astropy/astropy`;
+    `scale-ai/instance_ansible__ansible-<sha>-v<sha>` -> `ansible/ansible`."""
+    short = name.rsplit("/", 1)[-1].removeprefix("instance_")
+    owner, sep, rest = short.partition("__")
+    if not sep:
+        return short
+    while _HEX_SUFFIX_RE.search(rest):
+        rest = _HEX_SUFFIX_RE.sub("", rest)
+    rest = _TRAILING_NUM_RE.sub("", rest)
+    return f"{owner}/{rest}"
+
+
+def build_harbor_swe_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    """Enumerate a Harbor-packaged SWE taskset (same shape as terminal_bench_2:
+    tasks carry a prebuilt public image + task_dir with task.toml). Taskset
+    packages exist only inside the verifiers environment on the pod."""
+    module, ts_cls, cfg_cls, fixed_lang = HARBOR_SWE_TASKSETS[src.taskset_id]
+    mod = importlib.import_module(module)
+    tasks = list(getattr(mod, ts_cls)(getattr(mod, cfg_cls)()).load())
+    kept: list[dict] = []
+    n_unusable = 0
+    for task in tasks:
+        data = task.data
+        uid = data.name
+        image = data.image or ""
+        if not uid or not image:
+            n_unusable += 1
+            continue
+        repo = harbor_swe_repo(uid)
+        lang = fixed_lang or _PRO_REPO_LANG.get(repo)
+        if lang is None:
+            try:
+                meta = tomllib.loads(
+                    (Path(data.task_dir) / "task.toml").read_text()
+                ).get("metadata", {})
+                tags = [str(t).lower() for t in meta.get("tags") or []]
+                lang = next((t for t in reversed(tags)
+                             if t in _HARBOR_LANG_TAGS), "unknown")
+            except Exception:
+                lang = "unknown"
+        short = uid.rsplit("/", 1)[-1]
+        kept.append({
+            "uid": uid,
+            "sid": f"{src.name}__{_dotless_task(short)}-0",
+            "repo": repo,
+            "language": lang,
+            "image": image,
+        })
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": src.taskset_id,
+        "total": len(tasks), "kept": len(kept),
+        "panel_excluded": 0, "unusable": n_unusable,
+    })
+
+
 def build_nl2repobench_catalog(cfg: RolloutsConfig, src: Source) -> dict:
     root = Path(os.environ.get("ROLLOUTS_NL2REPO_DIR", NL2REPO_DEFAULT_DIR))
     kept: list[dict] = []
@@ -491,12 +667,70 @@ def build_nl2repobench_catalog(cfg: RolloutsConfig, src: Source) -> dict:
     })
 
 
+def _general_agent_root() -> Path:
+    override = os.environ.get("ROLLOUTS_GENERAL_AGENT_DIR")
+    if override:
+        return Path(override)
+    harbor = Path(os.environ.get("HARBOR_CACHE_DIR", "~/.cache/harbor")).expanduser()
+    roots = sorted(harbor.glob(GENERAL_AGENT_GLOB))
+    if not roots:
+        raise FileNotFoundError(
+            f"general-agent corpus not under {harbor}; run "
+            "`general_agent_v1.corpus.ensure_corpus()` in the verifiers env "
+            "first (or set ROLLOUTS_GENERAL_AGENT_DIR)")
+    return roots[-1]
+
+
+def build_general_agent_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    """general_agent_v1 corpus: one task dir per row, uid = dir name (what
+    `--taskset.tasks` matches). Family = name minus its `_t<tier>` suffix;
+    it becomes the repo so the fold's repo-stratum groups task variants of
+    one world together when `strata_buckets` is unset."""
+    root = _general_agent_root()
+    kept: list[dict] = []
+    n_unusable = 0
+    for task_dir in sorted(root.iterdir()):
+        if not task_dir.is_dir():
+            continue
+        needed = ("task.toml", "instruction.md", "tools.py", "db.json", "gold.json")
+        if not all((task_dir / f).is_file() for f in needed):
+            n_unusable += 1
+            continue
+        uid = task_dir.name
+        try:
+            meta = tomllib.loads((task_dir / "task.toml").read_text()).get("metadata", {})
+        except Exception:
+            n_unusable += 1
+            continue
+        family = GENERAL_AGENT_TIER_RE.sub("", uid)
+        tier = int(meta.get("tier", 0) or 0)
+        row = {
+            "uid": uid,
+            "sid": f"general_agent__{_dotless_task(family)}-{tier}",
+            "repo": f"general-agent/{family}",
+            "language": "tool",
+            "tier": tier,
+            "task_dir": str(task_dir),
+        }
+        if src.strata_buckets:
+            row["stratum"] = bucket_stratum(src.group, uid, src.strata_buckets,
+                                            src.strata_offset)
+        kept.append(row)
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": str(root),
+        "total": len(kept) + n_unusable, "kept": len(kept),
+        "panel_excluded": 0, "unusable": n_unusable,
+    })
+
+
 BUILDERS = {
     "hf": build_hf_catalog,
+    "general_agent": build_general_agent_catalog,
     "hf_swebench": build_hf_swebench_catalog,
     "swesmith": build_swesmith_catalog,
     "terminal_lego": build_terminal_lego_catalog,
     "terminal_bench_2": build_terminal_bench_2_catalog,
+    "harbor_swe": build_harbor_swe_catalog,
     "nl2repobench": build_nl2repobench_catalog,
 }
 

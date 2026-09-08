@@ -6,3 +6,5 @@ legacy.pid
 *.pid
 # corpus-refresh job state (folded-shard ledger, cached HF token, work files)
 datagen_refresh/
+# trace-first fold state (folded-chunk ledger, trace cache, pack work dirs)
+corpus_build/

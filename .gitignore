@@ -24,3 +24,7 @@ ops/exploit-audit/state/
 ops/teacher-b200/logs/
 ops/teacher-swarm/.swarm_env
 ops/teacher-swarm/state/
+
+# private king-chat pod state (ops/king-chat/kingchat.sh)
+ops/king-chat/state.json
+ops/king-chat/known_hosts

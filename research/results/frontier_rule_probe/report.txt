@@ -1,0 +1,513 @@
+Frontier-rule probe — 1577 turns from 4 records (skipped 23 with <2 parsed frontier samples, 0 echo errors)
+frontier = engy glm-5.2; teacher echoes only; tau=0.03
+
+== Frontier sampling (Job A) ==
+kind        turns  parsed  greedy ok  len cap  repaired  errors
+bash         1033   98.6%      98.5%     1.4%      0.0%       0
+boxed         164   97.8%      98.2%     2.2%      0.0%       0
+tool_call     403   94.5%      97.0%     1.3%     54.0%       0
+
+===== ALL DIALECTS (n=1577) =====
+-- Test 1: ordering of thought families (mean per-turn score; every family on k−1 refs, leave-one-out) --
+rule      frontier_ow teacher_own        king  challenger     generic      filler      parrot
+minRG         -0.0234      0.0051     -0.0052     -0.0432     -0.2309     -0.0998     -0.0141
+RF             0.0070      0.0086      0.0080      0.0086      0.0044      0.0054      0.0053
+minRGRF       -0.0256      0.0015     -0.0081     -0.0458     -0.2309     -0.1004     -0.0159
+mix25         -0.0233      0.0057     -0.0050     -0.0430     -0.2308     -0.0999     -0.0140
+mix50         -0.0234      0.0056     -0.0052     -0.0430     -0.2308     -0.0999     -0.0140
+mix100        -0.0242      0.0040     -0.0063     -0.0440     -0.2308     -0.1002     -0.0144
+add25         -0.0217      0.0073     -0.0033     -0.0411     -0.2298     -0.0985     -0.0128
+add50         -0.0199      0.0094     -0.0013     -0.0389     -0.2287     -0.0971     -0.0115
+pooled        -0.0209      0.0100     -0.0018     -0.0395     -0.2308     -0.0996     -0.0113
+minRGF        -0.0091     -0.0300     -0.0326     -0.0705     -0.2530     -0.1269     -0.0314
+minRFGF       -0.0088     -0.0295     -0.0323     -0.0698     -0.2529     -0.1271     -0.0312
+legs:     frontier_ow teacher_own        king  challenger     generic      filler      parrot
+R              0.0064      0.0084      0.0078      0.0073      0.0043      0.0059      0.0051
+RF             0.0070      0.0086      0.0080      0.0086      0.0044      0.0054      0.0053
+G             -0.0063      0.0341      0.0195     -0.0204     -0.2303     -0.0963      0.0059
+GF             0.0210      0.0002     -0.0019     -0.0422     -0.2496     -0.1161     -0.0007
+frontier refs all identical on 27% of turns (centered R_F is 0 there by construction)
+paired win fractions: minRG: F>T 23% T>king 65% F>king 36%; RF: F>T 35% T>king 44% F>king 38%; minRGRF: F>T 20% T>king 61% F>king 34%; mix25: F>T 22% T>king 66% F>king 36%; mix50: F>T 22% T>king 66% F>king 36%; mix100: F>T 19% T>king 62% F>king 34%; add25: F>T 22% T>king 65% F>king 36%; add50: F>T 23% T>king 65% F>king 37%; pooled: F>T 23% T>king 69% F>king 37%; minRGF: F>T 59% T>king 49% F>king 59%; minRFGF: F>T 57% T>king 48% F>king 56%
+
+-- Test 2/3: challenger − king margin per rule (same turns), noise --
+rule         margin       SE       z  boot SE sign stab split agree rho vs minRG SE ratio
+minRG      -0.03777  0.00542   -6.97  0.00553    100.0%      100.0%        1.000     1.00
+RF         +0.00045  0.00047   +0.96  0.00046     81.7%       64.5%        0.055     0.09
+minRGRF    -0.03769  0.00541   -6.97  0.00579    100.0%      100.0%        0.873     1.00
+mix25      -0.03778  0.00542   -6.97  0.00586    100.0%      100.0%        0.967     1.00
+mix50      -0.03780  0.00542   -6.97  0.00500    100.0%      100.0%        0.935     1.00
+mix100     -0.03775  0.00542   -6.97  0.00543    100.0%      100.0%        0.799     1.00
+add25      -0.03766  0.00542   -6.94  0.00539    100.0%      100.0%        0.959     1.00
+add50      -0.03754  0.00543   -6.91  0.00555    100.0%      100.0%        0.923     1.00
+pooled     -0.03783  0.00543   -6.97  0.00519    100.0%      100.0%        0.890     1.00
+minRGF     -0.03721  0.00545   -6.83  0.00572    100.0%      100.0%        0.432     1.01
+minRFGF    -0.03702  0.00545   -6.79  0.00534    100.0%      100.0%        0.372     1.01
+binding leg under min(R,G,RF) king      : R 27%  G 33%  RF 39%
+binding leg under min(R,G,RF) challenger: R 25%  G 40%  RF 35%
+
+-- Test 4: attack variants of the king's thought (mean score; king real for reference) --
+rule           king    filler   generic    parrot filler<=0 generic<=0 parrot<king
+minRG       -0.0041   -0.0997   -0.2308   -0.0133       91%        99%         60%
+RF          +0.0112   +0.0075   +0.0061   +0.0154        8%         7%         29%
+minRGRF     -0.0073   -0.1003   -0.2309   -0.0148       91%        99%         53%
+mix25       -0.0038   -0.0998   -0.2308   -0.0122       91%        99%         55%
+mix50       -0.0040   -0.0998   -0.2308   -0.0114       91%        99%         55%
+mix100      -0.0053   -0.1001   -0.2308   -0.0106       91%        99%         49%
+add25       -0.0013   -0.0979   -0.2293   -0.0094       90%        99%         55%
+add50       +0.0015   -0.0960   -0.2278   -0.0056       90%        99%         54%
+pooled      -0.0012   -0.0996   -0.2308   -0.0080       91%        99%         55%
+minRGF      -0.0251   -0.1176   -0.2435   -0.0245       84%        97%         51%
+minRFGF     -0.0249   -0.1177   -0.2434   -0.0213       85%        97%         42%
+parrot flagged by B-leakage check: 100%; parrot G mean +0.0059 (king G mean +0.0195)
+
+-- Test 5: teacher/frontier disagreement --
+surprise = mean_j lpC(y_F^j|∅) − mean_i lpC(y_C^i|∅): median -0.0085, p25 -0.0416; frontier action exactly equals a teacher ref on 32% of turns
+frontier thought inside G band: 52% of samples (mean m_F G -0.0058)
+teacher's own thoughts on frontier actions (tref R_F mean): +0.0119
+  most-surprising quartile n= 395  R_F: F_own +0.0117 T_own +0.0187 king +0.0171 chal +0.0199 | m_F in band 43% | A_F king +0.0279 chal +0.0300
+  rest                     n=1182  R_F: F_own +0.0055 T_own +0.0097 king +0.0092 chal +0.0089 | m_F in band 55% | A_F king +0.0882 chal +0.0889
+A_F overall: king +0.0731, challenger +0.0742; R_F vs action length rho (king): +0.117
+
+===== dialect bash (n=1023) =====
+-- Test 1: ordering of thought families (mean per-turn score; every family on k−1 refs, leave-one-out) --
+rule      frontier_ow teacher_own        king  challenger     generic      filler      parrot
+minRG         -0.0095      0.0069     -0.0010     -0.0020     -0.2129     -0.0773     -0.0100
+RF             0.0088      0.0111      0.0100      0.0101      0.0056      0.0063      0.0060
+minRGRF       -0.0126      0.0020     -0.0048     -0.0056     -0.2129     -0.0781     -0.0124
+mix25         -0.0093      0.0077     -0.0007     -0.0016     -0.2129     -0.0774     -0.0099
+mix50         -0.0095      0.0076     -0.0009     -0.0017     -0.2129     -0.0774     -0.0100
+mix100        -0.0108      0.0052     -0.0026     -0.0032     -0.2129     -0.0779     -0.0106
+add25         -0.0073      0.0097      0.0015      0.0005     -0.2115     -0.0758     -0.0085
+add50         -0.0051      0.0125      0.0040      0.0031     -0.2101     -0.0742     -0.0070
+pooled        -0.0060      0.0131      0.0038      0.0032     -0.2128     -0.0769     -0.0065
+minRGF        -0.0068     -0.0161     -0.0155     -0.0160     -0.2349     -0.1011     -0.0162
+minRFGF       -0.0070     -0.0157     -0.0155     -0.0155     -0.2348     -0.1016     -0.0166
+legs:     frontier_ow teacher_own        king  challenger     generic      filler      parrot
+R              0.0091      0.0115      0.0108      0.0099      0.0062      0.0082      0.0072
+RF             0.0088      0.0111      0.0100      0.0101      0.0056      0.0063      0.0060
+G              0.0119      0.0355      0.0254      0.0251     -0.2121     -0.0731      0.0110
+GF             0.0183      0.0070      0.0082      0.0077     -0.2332     -0.0946      0.0076
+frontier refs all identical on 24% of turns (centered R_F is 0 there by construction)
+paired win fractions: minRG: F>T 29% T>king 64% F>king 42%; RF: F>T 39% T>king 48% F>king 43%; minRGRF: F>T 25% T>king 61% F>king 38%; mix25: F>T 27% T>king 65% F>king 41%; mix50: F>T 27% T>king 65% F>king 40%; mix100: F>T 23% T>king 62% F>king 37%; add25: F>T 27% T>king 64% F>king 41%; add50: F>T 28% T>king 64% F>king 41%; pooled: F>T 28% T>king 68% F>king 42%; minRGF: F>T 57% T>king 49% F>king 58%; minRFGF: F>T 54% T>king 49% F>king 53%
+
+-- Test 2/3: challenger − king margin per rule (same turns), noise --
+rule         margin       SE       z  boot SE sign stab split agree rho vs minRG SE ratio
+minRG      -0.00067  0.00068   -0.99  0.00072     85.7%       65.0%        1.000     1.00
+RF         -0.00037  0.00052   -0.72  0.00050     77.7%       49.0%        0.017     0.76
+minRGRF    -0.00074  0.00058   -1.27  0.00061     87.3%       81.5%        0.790     0.86
+mix25      -0.00067  0.00066   -1.02  0.00061     85.7%       72.0%        0.952     0.96
+mix50      -0.00068  0.00064   -1.07  0.00062     88.3%       70.5%        0.901     0.93
+mix100     -0.00061  0.00062   -0.99  0.00067     84.7%       66.0%        0.682     0.91
+add25      -0.00076  0.00069   -1.10  0.00068     87.3%       76.0%        0.947     1.02
+add50      -0.00086  0.00073   -1.17  0.00072     88.7%       77.0%        0.901     1.07
+pooled     -0.00072  0.00072   -1.01  0.00070     84.0%       66.0%        0.828     1.05
+minRGF     +0.00004  0.00072   +0.05  0.00070     53.7%        6.0%        0.382     1.06
+minRFGF    +0.00047  0.00071   +0.67  0.00077     73.7%       52.5%        0.279     1.04
+binding leg under min(R,G,RF) king      : R 27%  G 29%  RF 44%
+binding leg under min(R,G,RF) challenger: R 26%  G 32%  RF 42%
+
+-- Test 4: attack variants of the king's thought (mean score; king real for reference) --
+rule           king    filler   generic    parrot filler<=0 generic<=0 parrot<king
+minRG       +0.0006   -0.0772   -0.2128   -0.0089       89%        99%         63%
+RF          +0.0141   +0.0090   +0.0078   +0.0165        4%         4%         32%
+minRGRF     -0.0038   -0.0780   -0.2129   -0.0110       89%        99%         54%
+mix25       +0.0009   -0.0772   -0.2128   -0.0078       88%        99%         57%
+mix50       +0.0006   -0.0774   -0.2128   -0.0070       88%        99%         56%
+mix100      -0.0014   -0.0777   -0.2129   -0.0065       89%        99%         49%
+add25       +0.0041   -0.0749   -0.2108   -0.0048       88%        99%         58%
+add50       +0.0077   -0.0727   -0.2089   -0.0007       87%        99%         55%
+pooled      +0.0045   -0.0769   -0.2128   -0.0032       88%        99%         56%
+minRGF      -0.0081   -0.0923   -0.2257   -0.0095       86%        98%         54%
+minRFGF     -0.0086   -0.0927   -0.2257   -0.0065       86%        98%         43%
+parrot flagged by B-leakage check: 100%; parrot G mean +0.0110 (king G mean +0.0254)
+
+-- Test 5: teacher/frontier disagreement --
+surprise = mean_j lpC(y_F^j|∅) − mean_i lpC(y_C^i|∅): median -0.0062, p25 -0.0352; frontier action exactly equals a teacher ref on 25% of turns
+frontier thought inside G band: 62% of samples (mean m_F G +0.0116)
+teacher's own thoughts on frontier actions (tref R_F mean): +0.0148
+  most-surprising quartile n= 256  R_F: F_own +0.0174 T_own +0.0262 king +0.0242 chal +0.0250 | m_F in band 58% | A_F king +0.0081 chal +0.0052
+  rest                     n= 767  R_F: F_own +0.0060 T_own +0.0114 king +0.0108 chal +0.0100 | m_F in band 63% | A_F king -0.0005 chal +0.0005
+A_F overall: king +0.0017, challenger +0.0017; R_F vs action length rho (king): +0.016
+
+===== dialect boxed (n=161) =====
+-- Test 1: ordering of thought families (mean per-turn score; every family on k−1 refs, leave-one-out) --
+rule      frontier_ow teacher_own        king  challenger     generic      filler      parrot
+minRG         -0.0177      0.0005     -0.0067     -0.0081     -0.3322     -0.1069     -0.0124
+RF             0.0086      0.0082      0.0090      0.0148      0.0031      0.0071      0.0072
+minRGRF       -0.0181      0.0001     -0.0070     -0.0082     -0.3322     -0.1069     -0.0126
+mix25         -0.0174      0.0010     -0.0066     -0.0077     -0.3322     -0.1069     -0.0122
+mix50         -0.0173      0.0013     -0.0064     -0.0076     -0.3322     -0.1069     -0.0120
+mix100        -0.0174      0.0013     -0.0064     -0.0075     -0.3322     -0.1069     -0.0120
+add25         -0.0156      0.0025     -0.0045     -0.0044     -0.3314     -0.1051     -0.0106
+add50         -0.0134      0.0045     -0.0022     -0.0007     -0.3306     -0.1034     -0.0088
+pooled        -0.0167      0.0022     -0.0057     -0.0071     -0.3322     -0.1069     -0.0116
+minRGF        -0.0093     -0.0133     -0.0134     -0.0197     -0.2897     -0.0751     -0.0166
+minRFGF       -0.0064     -0.0111     -0.0103     -0.0170     -0.2897     -0.0743     -0.0130
+legs:     frontier_ow teacher_own        king  challenger     generic      filler      parrot
+R              0.0020      0.0024      0.0016      0.0038      0.0005      0.0016      0.0012
+RF             0.0086      0.0082      0.0090      0.0148      0.0031      0.0071      0.0072
+G             -0.0086      0.0158      0.0044     -0.0009     -0.3322     -0.1069     -0.0040
+GF             0.0159      0.0103      0.0149     -0.0020     -0.2897     -0.0644      0.0117
+frontier refs all identical on 86% of turns (centered R_F is 0 there by construction)
+paired win fractions: minRG: F>T 19% T>king 60% F>king 42%; RF: F>T 27% T>king 26% F>king 30%; minRGRF: F>T 18% T>king 55% F>king 42%; mix25: F>T 24% T>king 68% F>king 42%; mix50: F>T 25% T>king 68% F>king 42%; mix100: F>T 20% T>king 60% F>king 42%; add25: F>T 24% T>king 66% F>king 41%; add50: F>T 25% T>king 66% F>king 43%; pooled: F>T 24% T>king 75% F>king 47%; minRGF: F>T 53% T>king 40% F>king 55%; minRFGF: F>T 52% T>king 37% F>king 52%
+
+-- Test 2/3: challenger − king margin per rule (same turns), noise --
+rule         margin       SE       z  boot SE sign stab split agree rho vs minRG SE ratio
+minRG      -0.00138  0.00152   -0.91  0.00156     82.7%       58.5%        1.000     1.00
+RF         +0.00689  0.00309   +2.23  0.00321     99.7%       97.0%        0.010     2.03
+minRGRF    -0.00114  0.00150   -0.76  0.00159     74.7%       51.5%        0.966     0.99
+mix25      -0.00121  0.00154   -0.78  0.00146     79.7%       56.0%        0.976     1.01
+mix50      -0.00132  0.00154   -0.86  0.00154     80.0%       51.0%        0.972     1.01
+mix100     -0.00133  0.00155   -0.86  0.00163     76.7%       62.5%        0.935     1.02
+add25      +0.00034  0.00167   +0.20  0.00170     52.3%       20.5%        0.910     1.10
+add50      +0.00206  0.00212   +0.97  0.00211     82.7%       69.5%        0.862     1.39
+pooled     -0.00143  0.00157   -0.91  0.00146     83.7%       64.5%        0.951     1.03
+minRGF     -0.00288  0.00180   -1.60  0.00183     95.3%       92.5%        0.284     1.18
+minRFGF    -0.00450  0.00196   -2.30  0.00189     99.0%       98.0%        0.236     1.29
+binding leg under min(R,G,RF) king      : R 25%  G 47%  RF 28%
+binding leg under min(R,G,RF) challenger: R 20%  G 52%  RF 27%
+
+-- Test 4: attack variants of the king's thought (mean score; king real for reference) --
+rule           king    filler   generic    parrot filler<=0 generic<=0 parrot<king
+minRG       -0.0066   -0.1069   -0.3322   -0.0124      100%       100%         61%
+RF          +0.0100   +0.0076   +0.0038   +0.0100       47%        39%         22%
+minRGRF     -0.0070   -0.1069   -0.3322   -0.0126      100%       100%         53%
+mix25       -0.0062   -0.1069   -0.3322   -0.0121      100%       100%         63%
+mix50       -0.0060   -0.1069   -0.3322   -0.0120      100%       100%         63%
+mix100      -0.0059   -0.1069   -0.3322   -0.0118      100%       100%         57%
+add25       -0.0041   -0.1050   -0.3312   -0.0099      100%       100%         59%
+add50       -0.0016   -0.1031   -0.3303   -0.0074       99%       100%         60%
+pooled      -0.0056   -0.1069   -0.3322   -0.0116      100%       100%         69%
+minRGF      -0.0090   -0.0663   -0.2838   -0.0118       82%       100%         52%
+minRFGF     -0.0051   -0.0657   -0.2838   -0.0082       87%       100%         46%
+parrot flagged by B-leakage check: 100%; parrot G mean -0.0040 (king G mean +0.0044)
+
+-- Test 5: teacher/frontier disagreement --
+surprise = mean_j lpC(y_F^j|∅) − mean_i lpC(y_C^i|∅): median +0.0012, p25 -0.0052; frontier action exactly equals a teacher ref on 98% of turns
+frontier thought inside G band: 53% of samples (mean m_F G -0.0094)
+teacher's own thoughts on frontier actions (tref R_F mean): +0.0117
+  most-surprising quartile n=  41  R_F: F_own +0.0131 T_own +0.0175 king +0.0154 chal +0.0350 | m_F in band 57% | A_F king +0.6815 chal +0.7235
+  rest                     n= 120  R_F: F_own +0.0071 T_own +0.0081 king +0.0082 chal +0.0107 | m_F in band 52% | A_F king +0.7057 chal +0.7009
+A_F overall: king +0.6995, challenger +0.7067; R_F vs action length rho (king): +0.209
+
+===== dialect tool_call (n=393) =====
+-- Test 1: ordering of thought families (mean per-turn score; every family on k−1 refs, leave-one-out) --
+rule      frontier_ow teacher_own        king  challenger     generic      filler      parrot
+minRG         -0.0620      0.0024     -0.0157     -0.1650     -0.2362     -0.1555     -0.0257
+RF             0.0016      0.0022      0.0022      0.0023      0.0017      0.0024      0.0027
+minRGRF       -0.0625      0.0005     -0.0169     -0.1657     -0.2362     -0.1556     -0.0262
+mix25         -0.0620      0.0024     -0.0158     -0.1650     -0.2362     -0.1555     -0.0255
+mix50         -0.0620      0.0024     -0.0159     -0.1650     -0.2362     -0.1555     -0.0254
+mix100        -0.0620      0.0020     -0.0161     -0.1651     -0.2362     -0.1555     -0.0251
+add25         -0.0616      0.0029     -0.0152     -0.1645     -0.2358     -0.1549     -0.0250
+add50         -0.0612      0.0035     -0.0147     -0.1639     -0.2354     -0.1543     -0.0243
+pooled        -0.0612      0.0050     -0.0145     -0.1639     -0.2362     -0.1555     -0.0239
+minRGF        -0.0150     -0.0730     -0.0848     -0.2330     -0.2852     -0.2151     -0.0771
+minRFGF       -0.0147     -0.0731     -0.0850     -0.2329     -0.2851     -0.2151     -0.0767
+legs:     frontier_ow teacher_own        king  challenger     generic      filler      parrot
+R              0.0013      0.0027      0.0024      0.0017      0.0008      0.0017      0.0014
+RF             0.0016      0.0022      0.0022      0.0023      0.0017      0.0024      0.0027
+G             -0.0526      0.0378      0.0105     -0.1467     -0.2360     -0.1524     -0.0034
+GF             0.0302     -0.0218     -0.0354     -0.1888     -0.2758     -0.1934     -0.0272
+frontier refs all identical on 11% of turns (centered R_F is 0 there by construction)
+paired win fractions: minRG: F>T 7% T>king 69% F>king 20%; RF: F>T 27% T>king 41% F>king 28%; minRGRF: F>T 6% T>king 64% F>king 20%; mix25: F>T 8% T>king 68% F>king 22%; mix50: F>T 9% T>king 69% F>king 22%; mix100: F>T 8% T>king 63% F>king 22%; add25: F>T 9% T>king 67% F>king 22%; add50: F>T 9% T>king 67% F>king 22%; pooled: F>T 9% T>king 70% F>king 21%; minRGF: F>T 65% T>king 54% F>king 63%; minRFGF: F>T 67% T>king 51% F>king 65%
+
+-- Test 2/3: challenger − king margin per rule (same turns), noise --
+rule         margin       SE       z  boot SE sign stab split agree rho vs minRG SE ratio
+minRG      -0.14924  0.02070   -7.21  0.01907    100.0%      100.0%        1.000     1.00
+RF         -0.00004  0.00041   -0.09  0.00041     58.7%       10.5%        0.147     0.02
+minRGRF    -0.14886  0.02067   -7.20  0.02086    100.0%      100.0%        0.973     1.00
+mix25      -0.14934  0.02070   -7.22  0.01921    100.0%      100.0%        0.990     1.00
+mix50      -0.14938  0.02070   -7.22  0.01983    100.0%      100.0%        0.981     1.00
+mix100     -0.14937  0.02070   -7.22  0.02021    100.0%      100.0%        0.946     1.00
+add25      -0.14925  0.02070   -7.21  0.01938    100.0%      100.0%        0.991     1.00
+add50      -0.14926  0.02071   -7.21  0.02031    100.0%      100.0%        0.979     1.00
+pooled     -0.14935  0.02073   -7.21  0.02219    100.0%      100.0%        0.971     1.00
+minRGF     -0.14824  0.02081   -7.12  0.01980    100.0%      100.0%        0.582     1.01
+minRFGF    -0.14795  0.02081   -7.11  0.02100    100.0%      100.0%        0.581     1.01
+binding leg under min(R,G,RF) king      : R 31%  G 39%  RF 30%
+binding leg under min(R,G,RF) challenger: R 23%  G 56%  RF 21%
+
+-- Test 4: attack variants of the king's thought (mean score; king real for reference) --
+rule           king    filler   generic    parrot filler<=0 generic<=0 parrot<king
+minRG       -0.0154   -0.1555   -0.2362   -0.0250       94%        99%         53%
+RF          +0.0040   +0.0037   +0.0026   +0.0148        3%         3%         23%
+minRGRF     -0.0166   -0.1556   -0.2362   -0.0255       94%        99%         49%
+mix25       -0.0152   -0.1555   -0.2362   -0.0237       94%        99%         47%
+mix50       -0.0151   -0.1555   -0.2362   -0.0225       94%        99%         48%
+mix100      -0.0151   -0.1555   -0.2362   -0.0207       94%        99%         44%
+add25       -0.0144   -0.1546   -0.2355   -0.0213       94%        99%         47%
+add50       -0.0134   -0.1536   -0.2349   -0.0176       94%        99%         46%
+pooled      -0.0142   -0.1554   -0.2362   -0.0194       94%        99%         45%
+minRGF      -0.0758   -0.2043   -0.2733   -0.0685       81%        91%         45%
+minRFGF     -0.0757   -0.2041   -0.2732   -0.0654       81%        91%         37%
+parrot flagged by B-leakage check: 100%; parrot G mean -0.0034 (king G mean +0.0105)
+
+-- Test 5: teacher/frontier disagreement --
+surprise = mean_j lpC(y_F^j|∅) − mean_i lpC(y_C^i|∅): median -0.0323, p25 -0.0945; frontier action exactly equals a teacher ref on 21% of turns
+frontier thought inside G band: 25% of samples (mean m_F G -0.0508)
+teacher's own thoughts on frontier actions (tref R_F mean): +0.0044
+  most-surprising quartile n=  99  R_F: F_own +0.0036 T_own +0.0103 king +0.0087 chal +0.0099 | m_F in band 23% | A_F king +0.0037 chal +0.0041
+  rest                     n= 294  R_F: F_own +0.0010 T_own +0.0023 king +0.0024 chal +0.0020 | m_F in band 25% | A_F king +0.0019 chal +0.0037
+A_F overall: king +0.0024, challenger +0.0038; R_F vs action length rho (king): -0.097
+
+record chal-00286: live verdict margin -0.03979 z -6.73 (challenger_wins=False)
+===== record chal-00286 (n=393) =====
+-- Test 1: ordering of thought families (mean per-turn score; every family on k−1 refs, leave-one-out) --
+rule      frontier_ow teacher_own        king  challenger     generic      filler      parrot
+minRG         -0.0260      0.0047     -0.0067     -0.0567     -0.2298     -0.1007     -0.0147
+RF             0.0071      0.0091      0.0093      0.0104      0.0056      0.0049      0.0059
+minRGRF       -0.0279      0.0015     -0.0091     -0.0587     -0.2298     -0.1012     -0.0162
+mix25         -0.0257      0.0056     -0.0061     -0.0559     -0.2298     -0.1007     -0.0142
+mix50         -0.0255      0.0058     -0.0058     -0.0556     -0.2298     -0.1007     -0.0139
+mix100        -0.0258      0.0046     -0.0066     -0.0563     -0.2298     -0.1009     -0.0139
+add25         -0.0242      0.0070     -0.0044     -0.0541     -0.2284     -0.0995     -0.0132
+add50         -0.0224      0.0093     -0.0020     -0.0515     -0.2270     -0.0983     -0.0117
+pooled        -0.0224      0.0106     -0.0019     -0.0511     -0.2298     -0.1002     -0.0109
+minRGF        -0.0118     -0.0343     -0.0347     -0.0840     -0.2555     -0.1306     -0.0322
+minRFGF       -0.0112     -0.0334     -0.0340     -0.0828     -0.2554     -0.1304     -0.0311
+legs:     frontier_ow teacher_own        king  challenger     generic      filler      parrot
+R              0.0058      0.0076      0.0070      0.0065      0.0045      0.0053      0.0048
+RF             0.0071      0.0091      0.0093      0.0104      0.0056      0.0049      0.0059
+G             -0.0093      0.0332      0.0172     -0.0340     -0.2295     -0.0974      0.0046
+GF             0.0176     -0.0050     -0.0061     -0.0547     -0.2538     -0.1214     -0.0014
+frontier refs all identical on 25% of turns (centered R_F is 0 there by construction)
+paired win fractions: minRG: F>T 22% T>king 64% F>king 34%; RF: F>T 33% T>king 37% F>king 33%; minRGRF: F>T 19% T>king 60% F>king 33%; mix25: F>T 22% T>king 62% F>king 33%; mix50: F>T 21% T>king 62% F>king 33%; mix100: F>T 18% T>king 58% F>king 31%; add25: F>T 22% T>king 62% F>king 33%; add50: F>T 23% T>king 60% F>king 33%; pooled: F>T 22% T>king 67% F>king 35%; minRGF: F>T 60% T>king 47% F>king 61%; minRFGF: F>T 59% T>king 45% F>king 56%
+
+-- Test 2/3: challenger − king margin per rule (same turns), noise --
+rule         margin       SE       z  boot SE sign stab split agree rho vs minRG SE ratio
+minRG      -0.04959  0.01229   -4.03  0.01308    100.0%      100.0%        1.000     1.00
+RF         +0.00059  0.00068   +0.87  0.00064     83.7%       55.0%        0.035     0.06
+minRGRF    -0.04955  0.01226   -4.04  0.01269    100.0%      100.0%        0.862     1.00
+mix25      -0.04959  0.01229   -4.03  0.01218    100.0%      100.0%        0.967     1.00
+mix50      -0.04976  0.01229   -4.05  0.01100    100.0%      100.0%        0.932     1.00
+mix100     -0.04974  0.01228   -4.05  0.01240    100.0%      100.0%        0.778     1.00
+add25      -0.04945  0.01230   -4.02  0.01297    100.0%      100.0%        0.959     1.00
+add50      -0.04930  0.01231   -4.01  0.01229    100.0%      100.0%        0.925     1.00
+pooled     -0.04943  0.01233   -4.01  0.01219    100.0%      100.0%        0.862     1.00
+minRGF     -0.04853  0.01273   -3.81  0.01180    100.0%      100.0%        0.392     1.04
+minRFGF    -0.04792  0.01274   -3.76  0.01232    100.0%      100.0%        0.320     1.04
+binding leg under min(R,G,RF) king      : R 30%  G 34%  RF 36%
+binding leg under min(R,G,RF) challenger: R 27%  G 39%  RF 34%
+
+-- Test 4: attack variants of the king's thought (mean score; king real for reference) --
+rule           king    filler   generic    parrot filler<=0 generic<=0 parrot<king
+minRG       -0.0056   -0.1005   -0.2298   -0.0139       91%        99%         59%
+RF          +0.0130   +0.0077   +0.0076   +0.0160        8%         6%         30%
+minRGRF     -0.0084   -0.1011   -0.2298   -0.0155       91%        99%         52%
+mix25       -0.0049   -0.1005   -0.2298   -0.0127       91%        99%         53%
+mix50       -0.0046   -0.1006   -0.2298   -0.0118       91%        99%         54%
+mix100      -0.0054   -0.1009   -0.2298   -0.0108       91%        99%         49%
+add25       -0.0024   -0.0986   -0.2278   -0.0099       91%        99%         55%
+add50       +0.0009   -0.0967   -0.2259   -0.0059       90%        99%         53%
+pooled      -0.0013   -0.1001   -0.2298   -0.0080       91%        99%         54%
+minRGF      -0.0252   -0.1195   -0.2435   -0.0234       84%        96%         50%
+minRFGF     -0.0245   -0.1193   -0.2434   -0.0191       85%        96%         40%
+parrot flagged by B-leakage check: 100%; parrot G mean +0.0046 (king G mean +0.0172)
+
+-- Test 5: teacher/frontier disagreement --
+surprise = mean_j lpC(y_F^j|∅) − mean_i lpC(y_C^i|∅): median -0.0118, p25 -0.0489; frontier action exactly equals a teacher ref on 31% of turns
+frontier thought inside G band: 50% of samples (mean m_F G -0.0082)
+teacher's own thoughts on frontier actions (tref R_F mean): +0.0131
+  most-surprising quartile n=  99  R_F: F_own +0.0126 T_own +0.0216 king +0.0215 chal +0.0242 | m_F in band 41% | A_F king +0.0205 chal +0.0178
+  rest                     n= 294  R_F: F_own +0.0053 T_own +0.0094 king +0.0101 chal +0.0100 | m_F in band 53% | A_F king +0.0738 chal +0.0780
+A_F overall: king +0.0604, challenger +0.0629; R_F vs action length rho (king): +0.096
+
+record chal-00287: live verdict margin -0.04688 z -7.30 (challenger_wins=False)
+===== record chal-00287 (n=394) =====
+-- Test 1: ordering of thought families (mean per-turn score; every family on k−1 refs, leave-one-out) --
+rule      frontier_ow teacher_own        king  challenger     generic      filler      parrot
+minRG         -0.0225      0.0054     -0.0041     -0.0555     -0.2316     -0.0959     -0.0130
+RF             0.0061      0.0076      0.0056      0.0071      0.0035      0.0041      0.0047
+minRGRF       -0.0250      0.0014     -0.0072     -0.0585     -0.2316     -0.0965     -0.0149
+mix25         -0.0224      0.0058     -0.0040     -0.0553     -0.2316     -0.0959     -0.0129
+mix50         -0.0226      0.0056     -0.0042     -0.0554     -0.2316     -0.0959     -0.0129
+mix100        -0.0238      0.0036     -0.0055     -0.0565     -0.2316     -0.0963     -0.0135
+add25         -0.0210      0.0073     -0.0027     -0.0537     -0.2308     -0.0948     -0.0118
+add50         -0.0195      0.0092     -0.0013     -0.0519     -0.2299     -0.0938     -0.0107
+pooled        -0.0201      0.0098     -0.0009     -0.0517     -0.2316     -0.0956     -0.0107
+minRGF        -0.0093     -0.0285     -0.0310     -0.0828     -0.2554     -0.1253     -0.0334
+minRFGF       -0.0097     -0.0288     -0.0318     -0.0833     -0.2555     -0.1259     -0.0337
+legs:     frontier_ow teacher_own        king  challenger     generic      filler      parrot
+R              0.0070      0.0086      0.0083      0.0082      0.0047      0.0063      0.0055
+RF             0.0061      0.0076      0.0056      0.0071      0.0035      0.0041      0.0047
+G             -0.0050      0.0357      0.0220     -0.0308     -0.2311     -0.0929      0.0071
+GF             0.0187      0.0002     -0.0015     -0.0553     -0.2525     -0.1144     -0.0037
+frontier refs all identical on 29% of turns (centered R_F is 0 there by construction)
+paired win fractions: minRG: F>T 22% T>king 65% F>king 36%; RF: F>T 33% T>king 47% F>king 39%; minRGRF: F>T 21% T>king 63% F>king 35%; mix25: F>T 22% T>king 68% F>king 37%; mix50: F>T 22% T>king 67% F>king 35%; mix100: F>T 19% T>king 64% F>king 34%; add25: F>T 21% T>king 68% F>king 37%; add50: F>T 22% T>king 68% F>king 37%; pooled: F>T 24% T>king 70% F>king 38%; minRGF: F>T 56% T>king 48% F>king 57%; minRFGF: F>T 54% T>king 49% F>king 55%
+
+-- Test 2/3: challenger − king margin per rule (same turns), noise --
+rule         margin       SE       z  boot SE sign stab split agree rho vs minRG SE ratio
+minRG      -0.05088  0.01283   -3.97  0.01281    100.0%      100.0%        1.000     1.00
+RF         +0.00096  0.00117   +0.82  0.00113     83.0%       57.0%        0.119     0.09
+minRGRF    -0.05103  0.01282   -3.98  0.01275    100.0%      100.0%        0.856     1.00
+mix25      -0.05112  0.01283   -3.98  0.01291    100.0%      100.0%        0.948     1.00
+mix50      -0.05116  0.01284   -3.99  0.01250    100.0%      100.0%        0.909     1.00
+mix100     -0.05119  0.01285   -3.99  0.01337    100.0%      100.0%        0.783     1.00
+add25      -0.05064  0.01284   -3.94  0.01351    100.0%      100.0%        0.955     1.00
+add50      -0.05040  0.01286   -3.92  0.01304    100.0%      100.0%        0.919     1.00
+pooled     -0.05103  0.01285   -3.97  0.01287    100.0%      100.0%        0.871     1.00
+minRGF     -0.05064  0.01276   -3.97  0.01336    100.0%      100.0%        0.411     0.99
+minRFGF    -0.05116  0.01277   -4.01  0.01361    100.0%      100.0%        0.383     1.00
+binding leg under min(R,G,RF) king      : R 30%  G 31%  RF 39%
+binding leg under min(R,G,RF) challenger: R 24%  G 39%  RF 37%
+
+-- Test 4: attack variants of the king's thought (mean score; king real for reference) --
+rule           king    filler   generic    parrot filler<=0 generic<=0 parrot<king
+minRG       -0.0033   -0.0958   -0.2315   -0.0120       92%        99%         60%
+RF          +0.0101   +0.0071   +0.0056   +0.0163        9%         7%         26%
+minRGRF     -0.0064   -0.0963   -0.2316   -0.0135       92%        99%         51%
+mix25       -0.0028   -0.0958   -0.2315   -0.0108       91%        99%         56%
+mix50       -0.0028   -0.0958   -0.2315   -0.0101       91%        99%         55%
+mix100      -0.0039   -0.0961   -0.2316   -0.0095       92%        99%         48%
+add25       -0.0008   -0.0940   -0.2301   -0.0079       91%        99%         55%
+add50       +0.0018   -0.0922   -0.2287   -0.0038       89%        99%         52%
+pooled      -0.0002   -0.0956   -0.2315   -0.0074       91%        99%         56%
+minRGF      -0.0253   -0.1165   -0.2460   -0.0267       85%        97%         51%
+minRFGF     -0.0256   -0.1169   -0.2460   -0.0241       86%        97%         42%
+parrot flagged by B-leakage check: 100%; parrot G mean +0.0071 (king G mean +0.0220)
+
+-- Test 5: teacher/frontier disagreement --
+surprise = mean_j lpC(y_F^j|∅) − mean_i lpC(y_C^i|∅): median -0.0086, p25 -0.0505; frontier action exactly equals a teacher ref on 34% of turns
+frontier thought inside G band: 53% of samples (mean m_F G -0.0038)
+teacher's own thoughts on frontier actions (tref R_F mean): +0.0115
+  most-surprising quartile n=  99  R_F: F_own +0.0103 T_own +0.0185 king +0.0147 chal +0.0209 | m_F in band 48% | A_F king +0.0306 chal +0.0350
+  rest                     n= 295  R_F: F_own +0.0047 T_own +0.0091 king +0.0086 chal +0.0078 | m_F in band 55% | A_F king +0.0913 chal +0.0950
+A_F overall: king +0.0761, challenger +0.0799; R_F vs action length rho (king): +0.207
+
+record chal-00288: live verdict margin -0.05184 z -7.88 (challenger_wins=False)
+===== record chal-00288 (n=397) =====
+-- Test 1: ordering of thought families (mean per-turn score; every family on k−1 refs, leave-one-out) --
+rule      frontier_ow teacher_own        king  challenger     generic      filler      parrot
+minRG         -0.0206      0.0057     -0.0057     -0.0526     -0.2351     -0.0985     -0.0122
+RF             0.0070      0.0096      0.0090      0.0088      0.0047      0.0063      0.0051
+minRGRF       -0.0232      0.0018     -0.0088     -0.0550     -0.2351     -0.0991     -0.0140
+mix25         -0.0206      0.0063     -0.0055     -0.0522     -0.2351     -0.0986     -0.0122
+mix50         -0.0209      0.0061     -0.0059     -0.0525     -0.2351     -0.0987     -0.0123
+mix100        -0.0219      0.0043     -0.0073     -0.0535     -0.2351     -0.0991     -0.0127
+add25         -0.0188      0.0081     -0.0034     -0.0504     -0.2339     -0.0969     -0.0109
+add50         -0.0171      0.0105     -0.0012     -0.0482     -0.2327     -0.0953     -0.0096
+pooled        -0.0184      0.0108     -0.0025     -0.0497     -0.2351     -0.0984     -0.0094
+minRGF        -0.0065     -0.0250     -0.0292     -0.0727     -0.2482     -0.1179     -0.0263
+minRFGF       -0.0071     -0.0244     -0.0285     -0.0718     -0.2479     -0.1180     -0.0266
+legs:     frontier_ow teacher_own        king  challenger     generic      filler      parrot
+R              0.0077      0.0103      0.0096      0.0088      0.0046      0.0074      0.0059
+RF             0.0070      0.0096      0.0090      0.0088      0.0047      0.0063      0.0051
+G             -0.0035      0.0342      0.0177     -0.0314     -0.2341     -0.0943      0.0079
+GF             0.0274      0.0108      0.0064     -0.0427     -0.2415     -0.1037      0.0070
+frontier refs all identical on 26% of turns (centered R_F is 0 there by construction)
+paired win fractions: minRG: F>T 23% T>king 68% F>king 40%; RF: F>T 35% T>king 46% F>king 40%; minRGRF: F>T 20% T>king 63% F>king 36%; mix25: F>T 23% T>king 69% F>king 40%; mix50: F>T 23% T>king 69% F>king 41%; mix100: F>T 19% T>king 64% F>king 37%; add25: F>T 23% T>king 68% F>king 41%; add50: F>T 24% T>king 67% F>king 41%; pooled: F>T 21% T>king 70% F>king 39%; minRGF: F>T 57% T>king 52% F>king 57%; minRFGF: F>T 53% T>king 48% F>king 53%
+
+-- Test 2/3: challenger − king margin per rule (same turns), noise --
+rule         margin       SE       z  boot SE sign stab split agree rho vs minRG SE ratio
+minRG      -0.04719  0.01218   -3.87  0.01171    100.0%      100.0%        1.000     1.00
+RF         +0.00002  0.00071   +0.02  0.00069     55.3%        1.5%        0.075     0.06
+minRGRF    -0.04630  0.01216   -3.81  0.01155    100.0%      100.0%        0.892     1.00
+mix25      -0.04682  0.01218   -3.84  0.01226    100.0%      100.0%        0.964     1.00
+mix50      -0.04660  0.01217   -3.83  0.01175    100.0%      100.0%        0.931     1.00
+mix100     -0.04621  0.01217   -3.80  0.01169    100.0%      100.0%        0.814     1.00
+add25      -0.04718  0.01218   -3.87  0.01322    100.0%      100.0%        0.956     1.00
+add50      -0.04718  0.01219   -3.87  0.01237    100.0%      100.0%        0.910     1.00
+pooled     -0.04723  0.01219   -3.88  0.01205    100.0%      100.0%        0.889     1.00
+minRGF     -0.04367  0.01198   -3.65  0.01183    100.0%      100.0%        0.454     0.98
+minRFGF    -0.04315  0.01197   -3.60  0.01176    100.0%      100.0%        0.364     0.98
+binding leg under min(R,G,RF) king      : R 26%  G 37%  RF 37%
+binding leg under min(R,G,RF) challenger: R 24%  G 44%  RF 32%
+
+-- Test 4: attack variants of the king's thought (mean score; king real for reference) --
+rule           king    filler   generic    parrot filler<=0 generic<=0 parrot<king
+minRG       -0.0046   -0.0985   -0.2351   -0.0114       91%        99%         61%
+RF          +0.0127   +0.0084   +0.0064   +0.0152        7%         8%         32%
+minRGRF     -0.0081   -0.0991   -0.2351   -0.0132       91%        99%         54%
+mix25       -0.0045   -0.0986   -0.2351   -0.0104       91%        99%         57%
+mix50       -0.0049   -0.0988   -0.2351   -0.0097       91%        99%         56%
+mix100      -0.0065   -0.0991   -0.2351   -0.0091       91%        99%         51%
+add25       -0.0014   -0.0964   -0.2335   -0.0076       90%        99%         56%
+add50       +0.0018   -0.0943   -0.2319   -0.0038       90%        99%         56%
+pooled      -0.0021   -0.0985   -0.2351   -0.0059       91%        99%         56%
+minRGF      -0.0228   -0.1102   -0.2409   -0.0209       84%        96%         53%
+minRFGF     -0.0224   -0.1103   -0.2408   -0.0180       84%        96%         44%
+parrot flagged by B-leakage check: 100%; parrot G mean +0.0079 (king G mean +0.0177)
+
+-- Test 5: teacher/frontier disagreement --
+surprise = mean_j lpC(y_F^j|∅) − mean_i lpC(y_C^i|∅): median -0.0076, p25 -0.0360; frontier action exactly equals a teacher ref on 29% of turns
+frontier thought inside G band: 54% of samples (mean m_F G -0.0036)
+teacher's own thoughts on frontier actions (tref R_F mean): +0.0130
+  most-surprising quartile n= 100  R_F: F_own +0.0126 T_own +0.0229 king +0.0219 chal +0.0210 | m_F in band 43% | A_F king +0.0338 chal +0.0409
+  rest                     n= 297  R_F: F_own +0.0051 T_own +0.0109 king +0.0096 chal +0.0100 | m_F in band 58% | A_F king +0.0896 chal +0.0892
+A_F overall: king +0.0755, challenger +0.0770; R_F vs action length rho (king): +0.076
+
+record chal-00289: live verdict margin -0.01075 z -6.54 (challenger_wins=False)
+===== record chal-00289 (n=393) =====
+-- Test 1: ordering of thought families (mean per-turn score; every family on k−1 refs, leave-one-out) --
+rule      frontier_ow teacher_own        king  challenger     generic      filler      parrot
+minRG         -0.0246      0.0047     -0.0045     -0.0081     -0.2269     -0.1043     -0.0167
+RF             0.0079      0.0079      0.0080      0.0083      0.0037      0.0063      0.0054
+minRGRF       -0.0263      0.0011     -0.0071     -0.0108     -0.2269     -0.1046     -0.0183
+mix25         -0.0245      0.0051     -0.0045     -0.0082     -0.2269     -0.1043     -0.0168
+mix50         -0.0246      0.0050     -0.0048     -0.0084     -0.2269     -0.1043     -0.0170
+mix100        -0.0254      0.0034     -0.0059     -0.0094     -0.2269     -0.1044     -0.0174
+add25         -0.0227      0.0067     -0.0025     -0.0060     -0.2260     -0.1027     -0.0154
+add50         -0.0207      0.0087     -0.0005     -0.0040     -0.2251     -0.1011     -0.0140
+pooled        -0.0225      0.0087     -0.0019     -0.0053     -0.2269     -0.1041     -0.0143
+minRGF        -0.0089     -0.0323     -0.0355     -0.0423     -0.2529     -0.1338     -0.0338
+minRFGF       -0.0075     -0.0315     -0.0349     -0.0413     -0.2530     -0.1341     -0.0334
+legs:     frontier_ow teacher_own        king  challenger     generic      filler      parrot
+R              0.0052      0.0071      0.0063      0.0056      0.0033      0.0045      0.0044
+RF             0.0079      0.0079      0.0080      0.0083      0.0037      0.0063      0.0054
+G             -0.0073      0.0332      0.0213      0.0147     -0.2264     -0.1006      0.0039
+GF             0.0204     -0.0054     -0.0067     -0.0161     -0.2506     -0.1252     -0.0046
+frontier refs all identical on 28% of turns (centered R_F is 0 there by construction)
+paired win fractions: minRG: F>T 23% T>king 62% F>king 35%; RF: F>T 39% T>king 47% F>king 41%; minRGRF: F>T 19% T>king 59% F>king 33%; mix25: F>T 23% T>king 65% F>king 35%; mix50: F>T 23% T>king 67% F>king 35%; mix100: F>T 21% T>king 62% F>king 34%; add25: F>T 23% T>king 64% F>king 35%; add50: F>T 24% T>king 64% F>king 35%; pooled: F>T 25% T>king 69% F>king 37%; minRGF: F>T 63% T>king 50% F>king 60%; minRFGF: F>T 61% T>king 49% F>king 60%
+
+-- Test 2/3: challenger − king margin per rule (same turns), noise --
+rule         margin       SE       z  boot SE sign stab split agree rho vs minRG SE ratio
+minRG      -0.00328  0.00148   -2.22  0.00138     98.7%       96.5%        1.000     1.00
+RF         +0.00025  0.00112   +0.22  0.00113     61.0%       21.0%       -0.018     0.76
+minRGRF    -0.00377  0.00133   -2.84  0.00129    100.0%       99.0%        0.878     0.90
+mix25      -0.00346  0.00143   -2.41  0.00147     99.3%       97.0%        0.984     0.97
+mix50      -0.00356  0.00139   -2.56  0.00134     99.7%      100.0%        0.964     0.94
+mix100     -0.00376  0.00137   -2.74  0.00152     99.7%      100.0%        0.822     0.93
+add25      -0.00322  0.00150   -2.15  0.00151     98.3%       99.0%        0.964     1.02
+add50      -0.00316  0.00158   -2.01  0.00148     98.3%       96.5%        0.938     1.07
+pooled     -0.00351  0.00150   -2.33  0.00150     99.7%       98.5%        0.928     1.02
+minRGF     -0.00589  0.00180   -3.27  0.00182    100.0%      100.0%        0.453     1.22
+minRFGF    -0.00577  0.00179   -3.21  0.00179    100.0%      100.0%        0.409     1.22
+binding leg under min(R,G,RF) king      : R 24%  G 32%  RF 44%
+binding leg under min(R,G,RF) challenger: R 24%  G 38%  RF 38%
+
+-- Test 4: attack variants of the king's thought (mean score; king real for reference) --
+rule           king    filler   generic    parrot filler<=0 generic<=0 parrot<king
+minRG       -0.0030   -0.1041   -0.2269   -0.0159       91%        99%         61%
+RF          +0.0089   +0.0069   +0.0049   +0.0140        9%         7%         27%
+minRGRF     -0.0064   -0.1045   -0.2269   -0.0171       91%        99%         53%
+mix25       -0.0031   -0.1041   -0.2269   -0.0149       91%        99%         54%
+mix50       -0.0036   -0.1042   -0.2269   -0.0141       91%        99%         53%
+mix100      -0.0052   -0.1044   -0.2269   -0.0132       91%        99%         48%
+add25       -0.0008   -0.1024   -0.2257   -0.0124       90%        99%         55%
+add50       +0.0015   -0.1007   -0.2245   -0.0089       90%        99%         53%
+pooled      -0.0011   -0.1040   -0.2269   -0.0110       91%        99%         53%
+minRGF      -0.0271   -0.1241   -0.2436   -0.0269       85%        97%         52%
+minRFGF     -0.0273   -0.1243   -0.2436   -0.0241       85%        97%         43%
+parrot flagged by B-leakage check: 100%; parrot G mean +0.0039 (king G mean +0.0213)
+
+-- Test 5: teacher/frontier disagreement --
+surprise = mean_j lpC(y_F^j|∅) − mean_i lpC(y_C^i|∅): median -0.0065, p25 -0.0405; frontier action exactly equals a teacher ref on 33% of turns
+frontier thought inside G band: 50% of samples (mean m_F G -0.0075)
+teacher's own thoughts on frontier actions (tref R_F mean): +0.0100
+  most-surprising quartile n=  99  R_F: F_own +0.0135 T_own +0.0126 king +0.0115 chal +0.0143 | m_F in band 43% | A_F king +0.0234 chal +0.0231
+  rest                     n= 294  R_F: F_own +0.0060 T_own +0.0091 king +0.0080 chal +0.0074 | m_F in band 52% | A_F king +0.0994 chal +0.0950
+A_F overall: king +0.0803, challenger +0.0769; R_F vs action length rho (king): +0.077
+
+== Decision (per plan): pass = test1 ordering F>=T>miners, SE ratio <= 1.30, filler & generic <= 0, |z| >= 0.7·|z(minRG)| ==
+minRG     ordering True  noise True  attacks True  z_kept True  -> PASS
+RF        ordering False noise True  attacks False z_kept False -> fail
+minRGRF   ordering False noise True  attacks True  z_kept True  -> fail
+mix25     ordering False noise True  attacks True  z_kept True  -> fail
+mix50     ordering False noise True  attacks True  z_kept True  -> fail
+mix100    ordering False noise True  attacks True  z_kept True  -> fail
+add25     ordering False noise True  attacks True  z_kept True  -> fail
+add50     ordering False noise True  attacks True  z_kept True  -> fail
+pooled    ordering False noise True  attacks True  z_kept True  -> fail
+minRGF    ordering True  noise True  attacks True  z_kept True  -> PASS
+minRFGF   ordering True  noise True  attacks True  z_kept True  -> PASS

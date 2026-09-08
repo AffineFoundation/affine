@@ -1,4 +1,4 @@
-"""Env-driven runtime configuration (paths, budgets, upload cadence).
+"""Env-driven runtime configuration (paths, budgets, publish targets).
 
 What to generate lives in sources.toml / policies.toml (declarative,
 versioned); how hard to push the box lives here (per-pod knobs). Secrets
@@ -23,12 +23,36 @@ def _bool(name: str, default: bool) -> bool:
     return raw.strip().lower() not in ("0", "false", "no", "")
 
 
+def _shard(name: str) -> tuple[int, int]:
+    """`i/N` -> (i, N); unset = the whole pool (1 pod). Fail-closed on a
+    malformed value: two pods silently sharing a shard would double-roll
+    the same tasks."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return (0, 1)
+    try:
+        i_s, n_s = raw.split("/")
+        i, n = int(i_s), int(n_s)
+    except ValueError:
+        raise SystemExit(f"{name}={raw!r}: expected i/N (e.g. 1/3)") from None
+    if n < 1 or not 0 <= i < n:
+        raise SystemExit(f"{name}={raw!r}: need 0 <= i < N")
+    return (i, n)
+
+
 @dataclass(frozen=True)
 class RolloutsConfig:
-    data_dir: Path            # store + index + catalogs + state + outbox
+    data_dir: Path            # store + index + catalogs + state
     verifiers_dir: Path       # verifiers checkout `uv run eval` runs from
-    turns_hf_repo: str        # staging dataset the fold consumes
-    traces_hf_repo: str       # trace-chunk mirror (system of record backup)
+    # Canonical trace publish: the public corpus bucket (data.affine.io),
+    # `traces/` prefix. The fold derives D from these on the validator box.
+    r2_bucket: str
+    r2_endpoint: str
+    r2_access_key_id: str
+    r2_secret_access_key: str
+    r2_prefix: str            # traces/ in production; staging/traces/ for dry runs
+    traces_hf_repo: str       # HF cold copy of the chunks (secondary)
+    hf_trace_mirror: bool     # keep the HF cold copy running
     batch_size: int
     # Single capacity budget: rollout containers across BOTH runners.
     # Replaces the two hand-tuned knobs (LANE_CONCURRENCY vs mini-swe
@@ -42,11 +66,13 @@ class RolloutsConfig:
     batch_timeout_s: int
     eval_workers: int         # swebench telemetry eval parallelism
     eval_timeout_s: int
-    upload_min_turns: int
-    upload_interval_s: int
     prune_images: bool
     seed: int
     langs: frozenset[str] | None   # None = all languages
+    # Task partition for a fleet of pods: this pod owns the tasks whose
+    # blake2b(uid) % N == i. Deterministic in the uid alone (not the pool
+    # order), so pods agree on ownership without talking to each other.
+    shard: tuple[int, int]         # (i, N); (0, 1) = single pod
 
     @property
     def catalog_dir(self) -> Path:
@@ -60,9 +86,6 @@ class RolloutsConfig:
     def state_path(self) -> Path:
         return self.data_dir / "state.jsonl"
 
-    @property
-    def pending_turns(self) -> Path:
-        return self.data_dir / "pending_turns.jsonl"
 
 
 def load_config() -> RolloutsConfig:
@@ -73,10 +96,14 @@ def load_config() -> RolloutsConfig:
         data_dir=Path(os.environ.get("ROLLOUTS_DATA_DIR", "/root/rollouts-data")),
         verifiers_dir=Path(os.environ.get(
             "ROLLOUTS_VERIFIERS_DIR", "/root/prime-pilot/verifiers")),
-        turns_hf_repo=os.environ.get(
-            "ROLLOUTS_TURNS_HF_REPO", "unconst/affine-datagen-turns"),
+        r2_bucket=os.environ.get("ROLLOUTS_R2_BUCKET", "affine-data"),
+        r2_endpoint=os.environ.get("ROLLOUTS_R2_ENDPOINT", "").rstrip("/"),
+        r2_access_key_id=os.environ.get("ROLLOUTS_R2_ACCESS_KEY_ID", ""),
+        r2_secret_access_key=os.environ.get("ROLLOUTS_R2_SECRET_ACCESS_KEY", ""),
+        r2_prefix=os.environ.get("ROLLOUTS_R2_PREFIX", "traces/"),
         traces_hf_repo=os.environ.get(
             "ROLLOUTS_TRACES_HF_REPO", "unconst/affine-rollout-traces"),
+        hf_trace_mirror=_bool("ROLLOUTS_HF_TRACE_MIRROR", True),
         batch_size=_int("ROLLOUTS_BATCH_SIZE", 10),
         max_containers=_int("ROLLOUTS_MAX_CONTAINERS", 24),
         max_turns=_int("ROLLOUTS_MAX_TURNS", 80),
@@ -86,9 +113,8 @@ def load_config() -> RolloutsConfig:
         batch_timeout_s=_int("ROLLOUTS_BATCH_TIMEOUT_S", 7200),
         eval_workers=_int("ROLLOUTS_EVAL_WORKERS", 16),
         eval_timeout_s=_int("ROLLOUTS_EVAL_TIMEOUT_S", 3600),
-        upload_min_turns=_int("ROLLOUTS_UPLOAD_MIN_TURNS", 400),
-        upload_interval_s=_int("ROLLOUTS_UPLOAD_INTERVAL_S", 3600),
         prune_images=_bool("ROLLOUTS_PRUNE_IMAGES", True),
         seed=_int("ROLLOUTS_SEED", 0),
         langs=langs,
+        shard=_shard("ROLLOUTS_SHARD"),
     )

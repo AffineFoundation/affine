@@ -1,0 +1,50 @@
+--- a/affine/affine.toml
++++ b/affine/affine.toml
+@@ -41,6 +41,10 @@
+ # 11→12 forfeit floor (2026-09-05): a turn with no parseable action scores
+ # forfeit_turn_score (−0.1) instead of leaving the pairing; one-sided =
+ # loss, two-sided = tie. min(R,G) unchanged. Forward-only; reign stands.
++# 12→13 think-close forfeit + text dialect (YYYY-MM-DD): a rollout without
++# </think> forfeits (require_think_close), and the visible final reply of
++# a self-ended rollout is a scored action (allowed_action_kinds += text).
++# min(R,G) math unchanged. Forward-only; reign stands.
+ #
+ # ############################################################################
+ # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
+@@ -48,7 +52,7 @@
+ # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
+ # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
+ # ############################################################################
+-weight_version_key = 12
++weight_version_key = 13
+ 
+ [wallet]
+ name = "default"
+@@ -317,7 +321,15 @@
+ # boxed (math, affine-math-v1) and tool_call (wiki search, affine-wiki-v1)
+ # admitted; target slice shares math 0.10 / tool_use 0.10 via strata count.
+ # Notice posted 2026-09-02 (llms.txt "Upcoming fork", Discord, dashboard).
+-allowed_action_kinds = ["bash", "tool_call", "boxed"]
++# YYYY-MM-DD (weight_version_key 12→13, explicit dated operator directive):
++# text admitted — the visible final reply of a rollout that stopped by
++# itself (agent_completed, untruncated) is an action; the reply the
++# model chose to end on. Fed by the traces already published (bash /
++# pi / claude_code harness reports, wiki answers): no new rollouts, the
++# next fold picks them up. Why: min(R,G) never scored the visible
++# message, so kings learned to say nothing outside <think>
++# (SWE-bench Pro / Claude Code post-mortem 2026-09-08).
++allowed_action_kinds = ["bash", "tool_call", "boxed", "text"]
+ 
+ [duel]
+ # min(R,G) v5 — centered Reason + banded Grounding (2026-08-27,
+@@ -466,7 +478,9 @@
+ #     turns score: weight_version_key event, explicit dated operator
+ #     directive required. Until then the per-side </think> rate is
+ #     published on every verdict (king/challenger.think_close_rate).
+-require_think_close = false
++# YYYY-MM-DD (weight_version_key 12→13, explicit dated operator directive):
++# on. A reply that never closes </think> scores forfeit_turn_score.
++require_think_close = true
+ # Ops: skip prior-bank and non-Reason forced-logprob echos (telemetry GPU).
+ score_bank = false
+ reason_only = true

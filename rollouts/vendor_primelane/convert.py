@@ -17,9 +17,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from affine import dialects
 from datagen.slicer import MAX_PREFIX_CHARS, slice_messages
 
-BASH_BLOCK = re.compile(r"```bash\n.*?\n```", re.DOTALL)
 WS_RE = re.compile(r"\s+")
 
 
@@ -130,6 +130,9 @@ def validate_records(records: list[dict], panel_ids: set[str],
     drops: dict[str, int] = {}
     kept: list[dict] = []
     seen: set[str] = set()
+    # Staging admits every registered dialect; [dataset].allowed_action_kinds
+    # is enforced downstream (fold prefilter, corpus_push, duel tripwire).
+    allowed_kinds = tuple(dialects.DIALECTS)
 
     def drop(reason: str) -> None:
         drops[reason] = drops.get(reason, 0) + 1
@@ -148,8 +151,10 @@ def validate_records(records: list[dict], panel_ids: set[str],
                 or str(rec.get("instance_id", "")) in panel_ids):
             drop("bench_panel_overlap")
             continue
-        if rec.get("action_kind") != "bash":
-            drop("action_kind_not_bash")
+        kind = rec.get("action_kind")
+        reason = dialects.admission_reason(kind, allowed_kinds)
+        if reason:
+            drop(reason)
             continue
         prefix = rec.get("prefix")
         if (not isinstance(prefix, list) or not prefix
@@ -160,18 +165,15 @@ def validate_records(records: list[dict], panel_ids: set[str],
                 or prefix[-1]["role"] != "user"):
             drop("prefix_shape")
             continue
-        sys_msgs = [m for m in prefix if m["role"] == "system"]
-        if not sys_msgs or "bash" not in sys_msgs[0]["content"].lower():
-            drop("system_msg_no_bash_mandate")
-            continue
         if sum(len(m["content"]) for m in prefix) > MAX_PREFIX_CHARS:
             drop("prefix_too_long")
             continue
-        blocks = BASH_BLOCK.findall(rec.get("reference_turn") or "")
-        if len(blocks) != 1:
-            drop(f"ref_bash_blocks={len(blocks)}")
+        reason, action = dialects.reference_check(
+            prefix, rec.get("reference_turn") or "", kind)
+        if reason:
+            drop(reason)
             continue
-        body = _norm(blocks[0])
+        body = _norm(action)
         if len(body) > 40 and any(body in _norm(m["content"]) for m in prefix):
             drop("reference_leaked_into_prefix")
             continue

@@ -1,27 +1,31 @@
-"""HF uploads: turn shards to the staging dataset, trace chunks to the
-rollout mirror.
+"""HF cold copy of the trace chunks (secondary; the R2 mirror is canonical).
 
-Turn shards reuse datagen.uploader.TurnUploader unchanged (sha-manifested,
-same staging repo the fold consumes). Trace chunks are mirrored file-per-
-chunk plus the local store manifest, so the pod disk is never the only copy
-of the system of record.
+Kept behind ROLLOUTS_HF_TRACE_MIRROR for 30 days after the trace-first
+cutover (2026-09-02) so a bad R2 day never leaves the pod disk as the only
+copy; drop the module once nothing reads unconst/affine-rollout-traces.
+Turn-shard staging on HF is retired: D is derived from the published traces
+by ops/corpus_build.py on the validator box.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 
-from huggingface_hub import HfApi
-
-from datagen.uploader import TurnUploader, shard_sha256
+from huggingface_hub import CommitOperationAdd, HfApi
 
 from rollouts.store import TraceStore
 
-__all__ = ["TurnUploader", "TraceMirror", "shard_sha256"]
+__all__ = ["TraceMirror", "MAX_FILES_PER_COMMIT"]
 
 log = logging.getLogger("rollouts.uploader")
+
+# Hub budgets (observed 2026-09-02): ~128 commits/hour AND 1000 API calls
+# per 5-minute window, where LFS verify costs one call per file. One file
+# per commit starves the former; a 600-file backlog in one commit starves
+# the latter. 64 files per commit fits both with room for the other loops.
+MAX_FILES_PER_COMMIT = 64
+FIELD = "hf_mirrored_at"
 
 
 class TraceMirror:
@@ -39,32 +43,35 @@ class TraceMirror:
         self._repo_ready = True
 
     def mirror(self, store: TraceStore) -> int:
-        """Upload every unmirrored chunk + the refreshed manifest. Returns
-        the number of chunks mirrored; raises on failure so the caller
-        retries next cycle (chunks stay marked unmirrored)."""
-        pending = store.unmirrored_chunks()
+        """Upload every chunk not yet on HF plus the refreshed manifest in
+        batched commits. Returns the number of chunks mirrored; raises on
+        failure so the caller retries next cycle."""
+        pending = [c for c in store.unmirrored_chunks(FIELD)
+                   if (store.root / c["key"]).exists()]
         if not pending:
             return 0
         self._ensure_repo()
-        done: list[str] = []
-        for chunk in pending:
-            path = store.root / chunk["key"]
-            if not path.exists():
-                log.warning("skipping missing chunk %s", chunk["key"])
-                continue
-            self.api.upload_file(
-                path_or_fileobj=str(path), path_in_repo=chunk["key"],
-                repo_id=self.repo_id, repo_type="dataset",
-                commit_message=(f"add {Path(chunk['key']).name} "
-                                f"({chunk['n_rollouts']} rollouts)"))
-            done.append(chunk["key"])
-        if done:
-            store.mark_mirrored(done)
-            self.api.upload_file(
-                path_or_fileobj=str(store.manifest_path),
+        total = 0
+        for i in range(0, len(pending), MAX_FILES_PER_COMMIT):
+            batch = pending[i:i + MAX_FILES_PER_COMMIT]
+            keys = [c["key"] for c in batch]
+            ops = [CommitOperationAdd(path_in_repo=k,
+                                      path_or_fileobj=str(store.root / k))
+                   for k in keys]
+            # Mark first so the manifest we commit already lists these
+            # chunks as mirrored; on commit failure, unmark so they retry.
+            store.mark_mirrored(keys, field=FIELD)
+            ops.append(CommitOperationAdd(
                 path_in_repo="manifest.json",
-                repo_id=self.repo_id, repo_type="dataset",
-                commit_message=f"manifest: +{len(done)} chunk(s)")
-            log.info("mirrored %d trace chunk(s) to %s", len(done),
-                     self.repo_id)
-        return len(done)
+                path_or_fileobj=str(store.manifest_path)))
+            try:
+                self.api.create_commit(
+                    repo_id=self.repo_id, repo_type="dataset", operations=ops,
+                    commit_message=f"add {len(keys)} chunk(s)")
+            except Exception:
+                store.mark_mirrored(keys, mirrored=False, field=FIELD)
+                raise
+            total += len(keys)
+            log.info("HF cold copy: %d trace chunk(s) to %s (%d/%d)", len(keys),
+                     self.repo_id, total, len(pending))
+        return total

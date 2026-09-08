@@ -214,7 +214,14 @@ def snapshot(cfg: Config) -> dict:
 
 
 def contract_payload(cfg: Config) -> dict:
+    # The validator publishes submission_r2 (its mailbox-signing identity)
+    # into public/contract.json; the dash has no secrets, so it relays that
+    # block instead of deriving it. submit.py auth reads it from here.
+    published = read_json(public_dir(cfg) / "contract.json")
+    r2_block = ((published or {}).get("submission_r2")
+                if isinstance(published, dict) else None)
     return {
+        "submission_r2": r2_block or {"enabled": False},
         "subnet": cfg.raw["subnet"],
         "submission": cfg.raw["submission"],
         "teacher": {"repo": cfg.teacher.repo},

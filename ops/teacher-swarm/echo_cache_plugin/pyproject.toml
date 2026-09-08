@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "affine-vllm-echo-cache"
+version = "0.1.0"
+description = "vLLM general plugin: prefix-cache reuse for teacher-forcing echo requests (Affine SN120 teacher swarm)"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.entry-points."vllm.general_plugins"]
+affine_echo_cache = "affine_vllm_echo_cache:register"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["affine_vllm_echo_cache.py"]

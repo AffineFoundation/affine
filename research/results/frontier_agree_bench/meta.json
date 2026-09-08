@@ -1,0 +1,816 @@
+{
+ "chal-00220": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "llorite/affine-5cjfxpsxn8-tpc1",
+    "revision": "464b141101808d60be8d155404a65df77cb94a28",
+    "swe": 0.0,
+    "label": "chal-00220"
+   },
+   "king": {
+    "repo": "dendriteholdings/albedo-qwen3.6-35b-king-genesis",
+    "revision": "abe89194d6addf82e71f3f1ba9fef94b05404abf",
+    "swe": 0.2,
+    "label": "albedo-genesis"
+   }
+  },
+  "n_turns": 80,
+  "margin": -0.004653739053998576,
+  "z": -0.459603395850047,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00222": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "thompsville/affine-5dvegrgnsg-cgpb1",
+    "revision": "bfd1f14d1906ed9321de56a48e430fa59de9c9d2",
+    "swe": 0.08,
+    "label": "chal-00222"
+   },
+   "king": {
+    "repo": "dendriteholdings/albedo-qwen3.6-35b-king-genesis",
+    "revision": "abe89194d6addf82e71f3f1ba9fef94b05404abf",
+    "swe": 0.2,
+    "label": "albedo-genesis"
+   }
+  },
+  "n_turns": 80,
+  "margin": -0.01744097626263952,
+  "z": -1.8381448045923598,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00224": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "kevin954/Affine-5dfqbbh8ev-sft",
+    "revision": "6a5815fad8f4e34c983b1933c1fae5762fe25220",
+    "swe": 0.0,
+    "label": "reign-2"
+   },
+   "king": {
+    "repo": "dendriteholdings/albedo-qwen3.6-35b-king-genesis",
+    "revision": "abe89194d6addf82e71f3f1ba9fef94b05404abf",
+    "swe": 0.2,
+    "label": "albedo-genesis"
+   }
+  },
+  "n_turns": 80,
+  "margin": 0.0,
+  "z": 0.0,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00232": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "tojointhecommunity/affine-5efg6cm3yl-temp",
+    "revision": "305455ba317028426daa70707ec50d1ab12481d4",
+    "swe": 0.16,
+    "label": "chal-00232"
+   },
+   "king": {
+    "repo": "kevin954/Affine-5dfqbbh8ev-sft",
+    "revision": "6a5815fad8f4e34c983b1933c1fae5762fe25220",
+    "swe": 0.0,
+    "label": "reign-2"
+   }
+  },
+  "n_turns": 80,
+  "margin": -0.04036042118784895,
+  "z": -3.245899907214737,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00233": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "llorite/affine-5cjfxpsxn8-tpc2",
+    "revision": "9b1db42baf55d568fc55df7c1d7445dbf4d2b1bc",
+    "swe": 0.12,
+    "label": "chal-00233"
+   },
+   "king": {
+    "repo": "kevin954/Affine-5dfqbbh8ev-sft",
+    "revision": "6a5815fad8f4e34c983b1933c1fae5762fe25220",
+    "swe": 0.0,
+    "label": "reign-2"
+   }
+  },
+  "n_turns": 80,
+  "margin": -0.02435636364997912,
+  "z": -2.737031694146264,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00234": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "ttttxxxxsada/Affine-5fvpb6y4be",
+    "revision": "df883e3b073bf194f9e6ac1b6877db707d56bd2b",
+    "swe": 0.08,
+    "label": "chal-00234"
+   },
+   "king": {
+    "repo": "kevin954/Affine-5dfqbbh8ev-sft",
+    "revision": "6a5815fad8f4e34c983b1933c1fae5762fe25220",
+    "swe": 0.0,
+    "label": "reign-2"
+   }
+  },
+  "n_turns": 80,
+  "margin": -0.023955040412715754,
+  "z": -2.602858764648723,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00235": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "thompsville/affine-5dvegrgnsg-cgpb2",
+    "revision": "8f0c20a51b0ce8013c4367808a2148c2f7ec4ef5",
+    "swe": 0.16,
+    "label": "chal-00235"
+   },
+   "king": {
+    "repo": "kevin954/Affine-5dfqbbh8ev-sft",
+    "revision": "6a5815fad8f4e34c983b1933c1fae5762fe25220",
+    "swe": 0.0,
+    "label": "reign-2"
+   }
+  },
+  "n_turns": 80,
+  "margin": -0.012551984813726515,
+  "z": -1.142010748835706,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00236": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "Aldiendix/Affine-5dfqbbh8ev-star-v1",
+    "revision": "5a28d929e0f219cd01f88ff162322982513c0aa3",
+    "swe": 0.2,
+    "label": "chal-00236"
+   },
+   "king": {
+    "repo": "kevin954/Affine-5dfqbbh8ev-sft",
+    "revision": "6a5815fad8f4e34c983b1933c1fae5762fe25220",
+    "swe": 0.0,
+    "label": "reign-2"
+   }
+  },
+  "n_turns": 80,
+  "margin": -0.043157403113596386,
+  "z": -3.9269607298334965,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00237": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "llorite/affine-5cjfxpsxn8-tpc3",
+    "revision": "e738924b5b3ac6e1396ec92470f661c805b64200",
+    "swe": 0.16,
+    "label": "chal-00237"
+   },
+   "king": {
+    "repo": "kevin954/Affine-5dfqbbh8ev-sft",
+    "revision": "6a5815fad8f4e34c983b1933c1fae5762fe25220",
+    "swe": 0.0,
+    "label": "reign-2"
+   }
+  },
+  "n_turns": 80,
+  "margin": -0.058837337722742196,
+  "z": -4.900948944578889,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00255": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "Tok331102/affine-5EqYW8McUc-af5",
+    "revision": "2fc4df97c5479869ba3d0fec4e1c8209a39d90b8",
+    "swe": 0.16,
+    "label": "chal-00255"
+   },
+   "king": {
+    "repo": "kevin954/Affine-5dfqbbh8ev-sft",
+    "revision": "6a5815fad8f4e34c983b1933c1fae5762fe25220",
+    "swe": 0.0,
+    "label": "reign-2"
+   }
+  },
+  "n_turns": 80,
+  "margin": -0.01651346580072977,
+  "z": -2.13335945761269,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00276": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "Sansaliu/Affine-5dm33ngrnj-v1",
+    "revision": "ed7e1baa0f00a36915e45138a964f8f73c44f7b5",
+    "swe": 0.12,
+    "label": "chal-00276"
+   },
+   "king": {
+    "repo": "kevin954/Affine-5dfqbbh8ev-sft",
+    "revision": "6a5815fad8f4e34c983b1933c1fae5762fe25220",
+    "swe": 0.0,
+    "label": "reign-2"
+   }
+  },
+  "n_turns": 80,
+  "margin": 0.0007891599877347892,
+  "z": 0.08336473993281658,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00284": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   },
+   "king": {
+    "repo": "kevin954/Affine-5dfqbbh8ev-sft",
+    "revision": "6a5815fad8f4e34c983b1933c1fae5762fe25220",
+    "swe": 0.0,
+    "label": "reign-2"
+   }
+  },
+  "n_turns": 80,
+  "margin": 0.028034631289228805,
+  "z": 3.219005261058055,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00289": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "adambell/Affine-5eqdtdzqle-ckpt511-m6",
+    "revision": "7383794c425234e62db59e05a9acbcdbe615346f",
+    "swe": 0.16,
+    "label": "chal-00289"
+   },
+   "king": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 80,
+  "margin": -0.002495291343766623,
+  "z": -0.38199751458244674,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00307": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "BKN1890/Affine-5fwsxgdhfr-ct1072no",
+    "revision": "04f7a1e2de5703ea694f8c44ef31fca2333f03d6",
+    "swe": 0.12,
+    "label": "chal-00307"
+   },
+   "king": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 80,
+  "margin": -0.0033753311943811194,
+  "z": -0.3529322294832297,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00315": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "leary-criste/affine-5g4yy75zuz-test",
+    "revision": "1e6d6d02ebe771b767c5d2bfaf3c0a1538605fc3",
+    "swe": 0.04,
+    "label": "chal-00315"
+   },
+   "king": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 80,
+  "margin": 0.005858827866907402,
+  "z": 0.914525343433062,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00321": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "llorite/affine-5cjfxpsxn8-tpc6",
+    "revision": "ed7b52fff1fb5d8c7d683cb6829f60ebe8198092",
+    "swe": 0.0,
+    "label": "chal-00321"
+   },
+   "king": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 80,
+  "margin": -0.0037397883016899785,
+  "z": -0.4096652843446788,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00325": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "syntaxsorcerer1/Affine-5gbhwtw4zo-sft2",
+    "revision": "affa6d81675d81c512bcc4a77d95ff4191214601",
+    "swe": 0.04,
+    "label": "chal-00325"
+   },
+   "king": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 80,
+  "margin": 0.01094616544303506,
+  "z": 1.9294874581573778,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00333": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "longertime/Affine-5he5ssykut-hk9",
+    "revision": "8be58079dffe5b8943c4ebbaae02236da0035b1d",
+    "swe": 0.04,
+    "label": "chal-00333"
+   },
+   "king": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 80,
+  "margin": 0.008433985884174594,
+  "z": 1.3675788438882546,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00337": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "leary-criste/affine-5g4yy75zuz-tt",
+    "revision": "93aeaa1765a79d0444b688e2de53864c23a320b9",
+    "swe": 0.12,
+    "label": "chal-00337"
+   },
+   "king": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 80,
+  "margin": 0.011633378519265537,
+  "z": 2.325227695950418,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00338": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "syntaxsorcerer1/Affine-5gbhwtw4zo-sft1",
+    "revision": "b4d1b10b574a5aacbc38815792b139b354622f65",
+    "swe": 0.0,
+    "label": "chal-00338"
+   },
+   "king": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 80,
+  "margin": -0.003961352995740323,
+  "z": -0.38591956625745943,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00343": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "0pentensor/Affine-5dkbdyucyr-awesome-v1",
+    "revision": "6db3442705135cf6bda19a6fddf27a4b3a2a40c7",
+    "swe": 0.08,
+    "label": "chal-00343"
+   },
+   "king": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 80,
+  "margin": 0.003543169277536971,
+  "z": 0.5672424681293035,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00350": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "fortunateGambler/affine-5cwwlhucdc-topper",
+    "revision": "633b86963559100ef4461c07456ae203de48c219",
+    "swe": 0.12,
+    "label": "chal-00350"
+   },
+   "king": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 80,
+  "margin": 0.01277637733118329,
+  "z": 1.7945339585580624,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00353": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "0pentensor/Affine-5dkbdyucyr-awesome-v2",
+    "revision": "54454708b0a837c02832e338a43edfa97860edcd",
+    "swe": 0.08,
+    "label": "chal-00353"
+   },
+   "king": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 79,
+  "margin": 0.00438546542617986,
+  "z": 0.6468087481073064,
+  "manifest_sha256": "515df523816bf00d26273ea8efc4230bf44d2ba4e77161f356d168660a3376aa"
+ },
+ "chal-00355": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "BKN1890/Affine-5cye3tdpnk-sec",
+    "revision": "4f9176158b0544098dd6c384dea22ee662374035",
+    "swe": 0.04,
+    "label": "chal-00355"
+   },
+   "king": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 80,
+  "margin": 0.0028496239800860656,
+  "z": 0.3646958870049775,
+  "manifest_sha256": "04956388d55da3c26a80458d934874eb4bfadcffc212087726fb07ea6136cc48"
+ },
+ "chal-00358": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "aurora1001/affine-5cwwlhucdc-alsdkjf",
+    "revision": "b14677ff83721bc9f784cb6599a60319f9461c7c",
+    "swe": 0.0,
+    "label": "chal-00358"
+   },
+   "king": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 80,
+  "margin": -0.0006369978755251495,
+  "z": -0.08953042695051211,
+  "manifest_sha256": "50495b069bb6010415448ab563075ae28fc700a0c0436801887ff97cc82b2cea"
+ },
+ "chal-00359": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "justice101/affine-5dz2gkonkn-120",
+    "revision": "22ab09720b949460c30def9d40bcc937df8d9403",
+    "swe": 0.08,
+    "label": "chal-00359"
+   },
+   "king": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 80,
+  "margin": 0.0024571415678631007,
+  "z": 0.3726581048019365,
+  "manifest_sha256": "50495b069bb6010415448ab563075ae28fc700a0c0436801887ff97cc82b2cea"
+ },
+ "chal-00378": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "BKN1890/Affine-5dcro3nxkz-fourth",
+    "revision": "7c19aae8c0fa37d1eebaf2c69fc4d3adb578ff7b",
+    "swe": 0.12,
+    "label": "chal-00378"
+   },
+   "king": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 80,
+  "margin": -0.0031692671319502783,
+  "z": -0.34420526732128065,
+  "manifest_sha256": "50495b069bb6010415448ab563075ae28fc700a0c0436801887ff97cc82b2cea"
+ },
+ "chal-00388": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "Tok331102/affine-5EqYW8McUc-af10",
+    "revision": "eb8bf9a356a254f71faaa439e8abc3cfba572c53",
+    "swe": 0.0,
+    "label": "reign-4"
+   },
+   "king": {
+    "repo": "TalentPigs/affine-5ekxlcg3fx-abc",
+    "revision": "dbfbb3e2a17c7603e7fc68a3a15b343f42dfdef4",
+    "swe": 0.0,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 80,
+  "margin": 0.026904774477195508,
+  "z": 3.198341530481782,
+  "manifest_sha256": "50495b069bb6010415448ab563075ae28fc700a0c0436801887ff97cc82b2cea"
+ },
+ "chal-00403": {
+  "panel": "rt7",
+  "era": "wvk9",
+  "sides": {
+   "challenger": {
+    "repo": "syntaxs0cerer/affine-5gcl5uxakb-epoch3",
+    "revision": "be602b57e3f08b3a518d1077c3fbda5f4f03e69f",
+    "swe": 0.0,
+    "label": "chal-00403"
+   },
+   "king": {
+    "repo": "Tok331102/affine-5EqYW8McUc-af10",
+    "revision": "eb8bf9a356a254f71faaa439e8abc3cfba572c53",
+    "swe": 0.0,
+    "label": "reign-4"
+   }
+  },
+  "n_turns": 80,
+  "margin": 0.00016411554167631526,
+  "z": 0.016545572840002333,
+  "manifest_sha256": "4fc9fd779b0e5d710edbf5bf276045160a19baceee221ba78264e5411c921ffe"
+ },
+ "chal-00052": {
+  "panel": "reigns",
+  "era": "live",
+  "sides": {
+   "challenger": {
+    "repo": "vera6/affine-5g4yy75zuz-q1",
+    "revision": "dbac41854dec78abe640141626a288af5e68a056",
+    "swe": 0.4,
+    "label": "reign-1"
+   },
+   "king": {
+    "repo": "Qwen/Qwen3.6-35B-A3B",
+    "revision": "995ad96eacd98c81ed38be0c5b274b04031597b0",
+    "swe": 0.3,
+    "label": "reign-0"
+   }
+  },
+  "n_turns": 150,
+  "margin": 0.004714901764189897,
+  "z": 5.677208707848519,
+  "manifest_sha256": "09d8c168d6452422b19d04650b4fe607b601c30b11ca785f16a97d50b4c4af0d"
+ },
+ "chal-00118": {
+  "panel": "reigns",
+  "era": "live",
+  "sides": {
+   "challenger": {
+    "repo": "musc1es/affine-5ek5k4rbj7-055c91371d",
+    "revision": "2838aa060d48d14479debb6c1a3c113531bc2ed7",
+    "swe": 0.34,
+    "label": "reign-2"
+   },
+   "king": {
+    "repo": "vera6/affine-5g4yy75zuz-q1",
+    "revision": "dbac41854dec78abe640141626a288af5e68a056",
+    "swe": 0.4,
+    "label": "reign-1"
+   }
+  },
+  "n_turns": 150,
+  "margin": 0.002222003533475167,
+  "z": 3.073856084411543,
+  "manifest_sha256": "09d8c168d6452422b19d04650b4fe607b601c30b11ca785f16a97d50b4c4af0d"
+ },
+ "chal-00128": {
+  "panel": "reigns",
+  "era": "live",
+  "sides": {
+   "challenger": {
+    "repo": "isomsom/Affine-5cw1mntrm4-tr2",
+    "revision": "c7e1eab5a11c70b319f087f7c0d3f76a23d7e30c",
+    "swe": 0.26,
+    "label": "reign-3"
+   },
+   "king": {
+    "repo": "musc1es/affine-5ek5k4rbj7-055c91371d",
+    "revision": "2838aa060d48d14479debb6c1a3c113531bc2ed7",
+    "swe": 0.34,
+    "label": "reign-2"
+   }
+  },
+  "n_turns": 150,
+  "margin": 0.0030421885010695955,
+  "z": 4.210305426712075,
+  "manifest_sha256": "09d8c168d6452422b19d04650b4fe607b601c30b11ca785f16a97d50b4c4af0d"
+ },
+ "chal-00169": {
+  "panel": "reigns",
+  "era": "live",
+  "sides": {
+   "challenger": {
+    "repo": "diane613/affine-5gedzafcvg-new",
+    "revision": "dbcaf7533ce0d9d2b8a769793d95a70a14b2ab96",
+    "swe": 0.36,
+    "label": "reign-4"
+   },
+   "king": {
+    "repo": "isomsom/Affine-5cw1mntrm4-tr2",
+    "revision": "c7e1eab5a11c70b319f087f7c0d3f76a23d7e30c",
+    "swe": 0.26,
+    "label": "reign-3"
+   }
+  },
+  "n_turns": 150,
+  "margin": 0.0023232712504419233,
+  "z": 3.083174534387094,
+  "manifest_sha256": "09d8c168d6452422b19d04650b4fe607b601c30b11ca785f16a97d50b4c4af0d"
+ },
+ "chal-00248": {
+  "panel": "reigns",
+  "era": "live",
+  "sides": {
+   "challenger": {
+    "repo": "ringtone-ro/affine-5hndumbnxc-f90f8ebe64",
+    "revision": "83dbebac0e25efb20259c4ef98812b3a5347f9bf",
+    "swe": 0.34,
+    "label": "reign-5"
+   },
+   "king": {
+    "repo": "diane613/affine-5gedzafcvg-new",
+    "revision": "dbcaf7533ce0d9d2b8a769793d95a70a14b2ab96",
+    "swe": 0.36,
+    "label": "reign-4"
+   }
+  },
+  "n_turns": 150,
+  "margin": 0.0022968435026257863,
+  "z": 3.894858286893308,
+  "manifest_sha256": "09d8c168d6452422b19d04650b4fe607b601c30b11ca785f16a97d50b4c4af0d"
+ },
+ "chal-00267": {
+  "panel": "reigns",
+  "era": "live",
+  "sides": {
+   "challenger": {
+    "repo": "r2://affine-private-models/models/registrations/5046e4810c51deaa165c8ac395de6125b293bfb6c65df9e880fb173bfc590402/",
+    "revision": "492e3ef293c23158a2d07d9aa404d18f138a6fbbd064884b922287c3ad510bf2",
+    "swe": 0.38,
+    "label": "reign-6"
+   },
+   "king": {
+    "repo": "ringtone-ro/affine-5hndumbnxc-f90f8ebe64",
+    "revision": "83dbebac0e25efb20259c4ef98812b3a5347f9bf",
+    "swe": 0.34,
+    "label": "reign-5"
+   }
+  },
+  "n_turns": 150,
+  "margin": 0.0291971526083181,
+  "z": 4.633479699401941,
+  "manifest_sha256": "27f48b3feba0b911e835d54cb247a749fc179f40bf7a4055e7e41284f8f48628"
+ },
+ "chal-00272": {
+  "panel": "reigns",
+  "era": "live",
+  "sides": {
+   "challenger": {
+    "repo": "r2://affine-private-models/models/registrations/e2ed1e01a904a8448bf8afa06700cdffa974400f32171593a04514623f4c0e3a/",
+    "revision": "4cd7c090d0bc65ad9ce6e61351532bcdf24a37910b7ecac098226ab7b66e3a43",
+    "swe": 0.44,
+    "label": "reign-7"
+   },
+   "king": {
+    "repo": "r2://affine-models/models/sha256/492e3ef293c23158a2d07d9aa404d18f138a6fbbd064884b922287c3ad510bf2/",
+    "revision": "492e3ef293c23158a2d07d9aa404d18f138a6fbbd064884b922287c3ad510bf2",
+    "swe": 0.38,
+    "label": "reign-6"
+   }
+  },
+  "n_turns": 150,
+  "margin": 0.009291665144973116,
+  "z": 2.765240691157851,
+  "manifest_sha256": "27f48b3feba0b911e835d54cb247a749fc179f40bf7a4055e7e41284f8f48628"
+ },
+ "chal-00283": {
+  "panel": "reigns",
+  "era": "live",
+  "sides": {
+   "challenger": {
+    "repo": "r2://affine-private-models/models/registrations/b415f8ea47e795de56ae6f1cff4396b1b25cca747732e649a8b538475a8b2b30/",
+    "revision": "0a04e3d1c57d56a25cb066a863c77bace094e11395eac968bc69fa405dbc861a",
+    "swe": 0.46,
+    "label": "reign-8"
+   },
+   "king": {
+    "repo": "r2://affine-models/models/sha256/4cd7c090d0bc65ad9ce6e61351532bcdf24a37910b7ecac098226ab7b66e3a43/",
+    "revision": "4cd7c090d0bc65ad9ce6e61351532bcdf24a37910b7ecac098226ab7b66e3a43",
+    "swe": 0.44,
+    "label": "reign-7"
+   }
+  },
+  "n_turns": 150,
+  "margin": 0.013644721149748773,
+  "z": 9.386103011972192,
+  "manifest_sha256": "27f48b3feba0b911e835d54cb247a749fc179f40bf7a4055e7e41284f8f48628"
+ }
+}

@@ -1,0 +1,44 @@
+observation-dependence probe — 1600 steps, 369 repeat steps, 88 dead-tail steps
+
+== step-level failure-mode discrimination (higher = leg prefers the healthy step) ==
+leg        repeat  non-repeat      z    AUC | dead tail  submitted      z    AUC
+R         +0.0098     +0.0135  +3.23  0.619 |   +0.0148    +0.0122  -0.86  0.467
+G         +0.0235     +0.0171  -2.28  0.475 |   +0.0129    +0.0182  +1.25  0.552
+A         +0.0048     +0.0171  +4.04  0.574 |   +0.0065    +0.0151  +1.41  0.556
+B         +0.0357     +0.0609  +8.81  0.665 |   +0.0562    +0.0516  -0.70  0.473
+O_z       +0.0154     +0.0346  +9.76  0.599 |   +0.0252    +0.0255  +0.05  0.565
+O_y       +0.0005     +0.0213 +10.70  0.589 |   +0.0119    +0.0091  -0.57  0.502
+N_echo    +0.0477     +0.0298  -5.68  0.380 |   +0.0413    +0.0237  -2.86  0.406
+minRG     -0.0036     -0.0010  +1.86  0.586 |   -0.0025    -0.0019  +0.27  0.538
+z = (healthy − failing) / SE; AUC = P(healthy step scores higher than failing step).
+
+== teacher's own observation-dependence (band reference for O_z) ==
+teacher O_C: med +0.0133  p10 +0.0001  p90 +0.1017  <0: 9.6%
+miner   O_z: med +0.0120  p10 -0.0004  p90 +0.0863  <0: 11.3%
+
+== per reign (mean over steps): drift test ==
+reign         n        R        G        A        B      O_z      O_y   N_echo    minRG  repeat%
+reign-0     257   0.0126   0.0141  -0.0043   0.0458   0.0195   0.0101   0.0557  -0.0035    24.9%
+reign-1     271   0.0140   0.0160   0.0157   0.0619   0.0319   0.0129   0.0250  -0.0017    22.5%
+reign-2     279   0.0116   0.0166   0.0167   0.0490   0.0318   0.0203   0.0346  -0.0021    21.9%
+reign-3     264   0.0145   0.0178   0.0131   0.0672   0.0216   0.0215   0.0355  -0.0023    29.9%
+reign-4     266   0.0120   0.0217   0.0188   0.0498   0.0393   0.0215   0.0290  -0.0008    20.3%
+reign-5     263   0.0110   0.0255   0.0248   0.0565   0.0348   0.0100   0.0245   0.0009    19.0%
+
+== within task (mixed-outcome tasks), run-level means ==
+mixed tasks: 7
+leg        AUC  pairs
+R        0.432     44
+G        0.455     44
+A        0.386     44
+B        0.318     44
+O_z      0.386     44
+O_y      0.341     44
+N_echo   0.341     44
+minRG    0.318     44
+
+== short vs long actions (per-byte bias check) ==
+A       ≤84 chars +0.0228   longer +0.0056
+O_y     ≤84 chars +0.0241   longer +0.0084
+N_echo  ≤84 chars +0.0317   longer +0.0361
+B       ≤84 chars +0.0720   longer +0.0378

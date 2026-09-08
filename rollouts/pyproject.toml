@@ -12,6 +12,13 @@ dependencies = [
     "huggingface_hub>=0.30",
     "pyarrow>=17",
     "pyyaml>=6",
+    # Teacher chat template for affine.toolbake (tokenizer files only, no
+    # weights): tool-use traces are baked into plain prefixes at slice time.
+    "transformers>=4.51",
+    # transformers renders chat templates with jinja2 but only lists it as an
+    # optional extra; a `uv sync` on 2026-09-07 dropped it and the 16:00 fold
+    # died in ToolBaker.from_pretrained(). Declare the real dependency.
+    "jinja2>=3.1",
 ]
 
 [tool.uv.sources]

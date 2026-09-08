@@ -22,6 +22,8 @@ import pyarrow as pa
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
+from affine.toolbake import ToolBaker
+
 from rollouts.schema import (
     trace_error_type,
     trace_reward_score,
@@ -170,10 +172,14 @@ def rebuild(root: Path) -> None:
     by_chunk: dict[str, list[dict]] = {}
     for chunk in store._load_manifest()["chunks"]:
         by_chunk[chunk["key"]] = list(store.iter_envelopes(chunk["key"]))
+    baker = None
+    if any(env["trace"].get("tools") for envs in by_chunk.values()
+           for env in envs):
+        baker = ToolBaker.from_pretrained()
     for key, envelopes in by_chunk.items():
         kept: dict[str, int] = {}
         for env in envelopes:
-            records, _ = derive_and_validate([env])
+            records, _ = derive_and_validate([env], baker=baker)
             kept[env["rollout_id"]] = len(records)
         index.append(envelopes, key, kept)
         log.info("rebuilt index for %s (%d rollouts)", key, len(envelopes))
