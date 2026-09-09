@@ -567,6 +567,14 @@ def main() -> None:
                     help="publish even below MIN_NEW_TURNS")
     ap.add_argument("--ignore-fold-mix", action="store_true",
                     help="use [mix] even while [fold_mix] exists (T0 rehearsal)")
+    ap.add_argument("--rederive", action="store_true",
+                    help="re-derive EVERY published trace chunk, not just the "
+                         "unfolded ones, and drop the deferred carryover (it is "
+                         "regenerated). Already-published turn ids are still "
+                         "skipped, so only turns the previous contract could not "
+                         "admit enter. Used once at the wvk 13 flip (2026-09-09) "
+                         "to back-fill the `text` turns of trajectories folded "
+                         "under wvk 11/12.")
     args = ap.parse_args()
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -614,10 +622,14 @@ def main() -> None:
     log(f"allowed action kinds: {list(allowed)}")
 
     unfolded = [c for c in traces_manifest["chunks"]
-                if c["key"] not in state["folded_chunks"]]
+                if args.rederive or c["key"] not in state["folded_chunks"]]
     # split("\n"), not splitlines(): JSON strings may carry U+2028 / U+0085.
     carryover = ([json.loads(l) for l in DEFERRED_PATH.read_text().split("\n")
                   if l.strip()] if DEFERRED_PATH.exists() else [])
+    if args.rederive:
+        log(f"--rederive: all {len(unfolded)} chunks re-derived; "
+            f"{len(carryover)} deferred rollouts dropped (regenerated from traces)")
+        carryover = []
     if not unfolded and not carryover and not args.init:
         log(f"no unfolded trace chunks ({len(traces_manifest['chunks'])} total) "
             "and no deferred rollouts; done")
