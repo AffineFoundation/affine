@@ -1,0 +1,38 @@
+Text-similarity checks on the RT-7 panel (local artifacts)
+========================================================================
+tok331102/affine-5eqyw8mcuc-af10           S_live=+0.0446 swe=0.00 ref_sim=0.163 self_sim=0.005 suffix=0.02
+0pentensor/affine-5dkbdyucyr-awesome-v1    S_live=+0.0432 swe=0.08 ref_sim=0.194 self_sim=0.009 suffix=0.02
+syntaxsorcerer1/affine-5gbhwtw4zo-sft2     S_live=+0.0321 swe=0.04 ref_sim=0.182 self_sim=0.008 suffix=0.02
+talentpigs/affine-5ekxlcg3fx-abc           S_live=+0.0315 swe=0.00 ref_sim=0.198 self_sim=0.011 suffix=0.02
+bkn1890/affine-5cye3tdpnk-sec              S_live=+0.0309 swe=0.04 ref_sim=0.178 self_sim=0.010 suffix=0.02
+0pentensor/affine-5dkbdyucyr-awesome-v2    S_live=+0.0277 swe=0.08 ref_sim=0.216 self_sim=0.008 suffix=0.02
+justice101/affine-5dz2gkonkn-120           S_live=+0.0266 swe=0.08 ref_sim=0.166 self_sim=0.010 suffix=0.02
+leary-criste/affine-5g4yy75zuz-test        S_live=+0.0264 swe=0.04 ref_sim=0.213 self_sim=0.010 suffix=0.02
+adambell/affine-5eqdtdzqle-ckpt511-m6      S_live=+0.0256 swe=0.16 ref_sim=0.160 self_sim=0.008 suffix=0.02
+aurora1001/affine-5cwwlhucdc-alsdkjf       S_live=+0.0227 swe=0.00 ref_sim=0.174 self_sim=0.008 suffix=0.02
+bkn1890/affine-5fwsxgdhfr-ct1072no         S_live=+0.0218 swe=0.12 ref_sim=0.117 self_sim=0.009 suffix=0.02
+sansaliu/affine-5dm33ngrnj-v1              S_live=+0.0216 swe=0.12 ref_sim=0.144 self_sim=0.009 suffix=0.02
+fortunategambler/affine-5cwwlhucdc-topper  S_live=+0.0215 swe=0.12 ref_sim=0.154 self_sim=0.008 suffix=0.02
+syntaxs0cerer/affine-5gcl5uxakb-epoch3     S_live=+0.0211 swe=0.00 ref_sim=0.186 self_sim=0.007 suffix=0.02
+longertime/affine-5he5ssykut-hk9           S_live=+0.0192 swe=0.04 ref_sim=0.181 self_sim=0.007 suffix=0.02
+llorite/affine-5cjfxpsxn8-tpc6             S_live=+0.0170 swe=0.00 ref_sim=0.149 self_sim=0.006 suffix=0.02
+bkn1890/affine-5dcro3nxkz-fourth           S_live=+0.0151 swe=0.12 ref_sim=0.191 self_sim=0.006 suffix=0.02
+leary-criste/affine-5g4yy75zuz-tt          S_live=+0.0124 swe=0.12 ref_sim=0.180 self_sim=0.006 suffix=0.02
+thompsville/affine-5dvegrgnsg-cgpb2        S_live=+0.0110 swe=0.16 ref_sim=0.179 self_sim=0.007 suffix=0.02
+syntaxsorcerer1/affine-5gbhwtw4zo-sft1     S_live=+0.0104 swe=0.00 ref_sim=0.195 self_sim=0.006 suffix=0.02
+kevin954/affine-5dfqbbh8ev-sft             S_live=+0.0086 swe=0.00 ref_sim=0.208 self_sim=0.009 suffix=0.02
+ttttxxxxsada/affine-5fvpb6y4be             S_live=+0.0036 swe=0.08 ref_sim=0.130 self_sim=0.008 suffix=0.02
+llorite/affine-5cjfxpsxn8-tpc2             S_live=-0.0100 swe=0.12 ref_sim=0.184 self_sim=0.006 suffix=0.03
+tok331102/affine-5eqyw8mcuc-af5            S_live=-0.0145 swe=0.16 ref_sim=0.174 self_sim=0.007 suffix=0.02
+llorite/affine-5cjfxpsxn8-tpc3             S_live=-0.0198 swe=0.16 ref_sim=0.098 self_sim=0.009 suffix=0.02
+llorite/affine-5cjfxpsxn8-tpc1             S_live=-0.0273 swe=0.00 ref_sim=0.131 self_sim=0.007 suffix=0.02
+tojointhecommunity/affine-5efg6cm3yl-temp  S_live=-0.0276 swe=0.16 ref_sim=0.110 self_sim=0.009 suffix=0.02
+aldiendix/affine-5dfqbbh8ev-star-v1        S_live=-0.0294 swe=0.20 ref_sim=0.091 self_sim=0.008 suffix=0.02
+thompsville/affine-5dvegrgnsg-cgpb1        S_live=-0.0397 swe=0.08 ref_sim=0.153 self_sim=0.010 suffix=0.02
+
+ref_sim vs S_live                  n=29  rho=+0.440  p=0.0171
+ref_sim vs swe                     n=29  rho=-0.436  p=0.0207
+self_sim vs S_live                 n=29  rho=+0.252  p=0.1911
+suffix_frac vs S_live              n=29  rho=-0.181  p=0.4870
+ref_sim vs S_shadow(mean)          n=29  rho=-0.404  p=0.0282
+self_sim vs S_shadow(mean)         n=29  rho=-0.084  p=0.6675

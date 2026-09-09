@@ -4,21 +4,21 @@ export const esc = (s) =>
   String(s ?? "—").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-const GOLD = "#f3c449";
-const BONE = "#c6bda8";
-const ACCENT = "#5ac8fa";
+export const GOLD = "#f3c449";
+export const BONE = "#c6bda8";
+export const ACCENT = "#5ac8fa";
 const QUAR = "rgba(229,229,229,0.30)";   // quarantined marks
-const WARN = "rgba(245,230,99,0.5)";
-const MONO = "IBM Plex Mono, monospace";
-const TICK_FILL = "rgba(229,229,229,0.45)";
+export const WARN = "rgba(245,230,99,0.5)";
+export const MONO = "IBM Plex Mono, monospace";
+export const TICK_FILL = "rgba(229,229,229,0.45)";
 const GRID = 'stroke="rgba(255,255,255,0.03)" stroke-width="1" stroke-dasharray="2 4"';
 
-const W = 760;
-const H = 300;
-const PAD_L = 56;
-const PAD_R = 24;
-const PAD_T = 28;
-const PAD_B = 34;
+export const W = 760;
+export const H = 300;
+export const PAD_L = 56;
+export const PAD_R = 24;
+export const PAD_T = 28;
+export const PAD_B = 34;
 
 export const pct = (v, d = 1) =>
   v == null || Number.isNaN(Number(v)) ? "—" : `${(Number(v) * 100).toFixed(d)}%`;
@@ -51,19 +51,19 @@ export function fmtAgo(iso) {
   return `${(sec / 86400).toFixed(1)}d`;
 }
 
-function frame(svg) {
+export function frame(svg) {
   svg.setAttribute("width", String(W));
   svg.setAttribute("height", String(H));
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
 }
 
-function emptyNote(svg, msg, extra = "") {
+export function emptyNote(svg, msg, extra = "") {
   frame(svg);
   svg.innerHTML = `${extra}<text x="${(PAD_L + W - PAD_R) / 2}" y="${H / 2}" text-anchor="middle"
     fill="rgba(229,229,229,0.35)" font-family="${MONO}" font-size="12">${esc(msg)}</text>`;
 }
 
-function yGrid(yAt, ticks, fmt) {
+export function yGrid(yAt, ticks, fmt) {
   return ticks.map((v) => {
     const y = yAt(v);
     return `<g>
@@ -74,13 +74,13 @@ function yGrid(yAt, ticks, fmt) {
   }).join("");
 }
 
-function baseline() {
+export function baseline() {
   const y = H - PAD_B;
   return `<line x1="${PAD_L}" x2="${W - PAD_R}" y1="${y}" y2="${y}"
     stroke="rgba(255,255,255,0.08)" stroke-width="1"/>`;
 }
 
-function refLine(y, color, label, anchor = "end") {
+export function refLine(y, color, label, anchor = "end") {
   const tx = anchor === "end" ? W - PAD_R : PAD_L + 4;
   return `<g>
     <line x1="${PAD_L}" x2="${W - PAD_R}" y1="${y}" y2="${y}"
