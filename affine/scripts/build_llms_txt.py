@@ -212,13 +212,11 @@ signals, what "private" means (and the retiring HF path)
 the slot
 - min(R, G) — the one score you optimize (and the telemetry published \
 around it)
-- **Upcoming changes (notice 2026-09-07, addendum 2026-09-08)** — `</think>` \
-becomes required (wvk 13), a chat-protocol probe gates admission (running in \
-shadow since 2026-09-08: its result is on every verdict, it rejects nobody \
-yet), IDE-agent prompts join D, and the visible final reply of a trajectory \
-becomes a scored action (`text` dialect, same wvk 13 fork); effective once \
-the queue as of the notice (through `chal-00359`) has drained, projected \
-2026-09-09
+- **Fork history: wvk 13 — models must work as chat models (notice \
+2026-09-07, effective 2026-09-09)** — `</think>` required (a turn without it \
+forfeits), chat-protocol probe enforced at admission (pass ≥ 0.90), the \
+visible final reply of a trajectory is a scored action (`text` dialect), \
+IDE-agent prompts in D
 - Fork history: wvk 12 — forfeit floor (a turn with no parseable action \
 scores −0.1 instead of being dropped; effective 2026-09-05)
 - Fork history: wvk 11 — action dialects (`tool_call`, `boxed` join \
@@ -721,17 +719,16 @@ manifest it was scored against.
 
 ---
 
-## Upcoming changes (notice 2026-09-07): models must work as chat models
+## Fork history: wvk 13 — models must work as chat models (notice 2026-09-07, effective 2026-09-09)
 
-**When.** These land together once every challenger queued at the time of \
-this notice has its verdict — the queue runs through `chal-00359` (44 queued \
-plus one in flight at 16:55 UTC on 2026-09-07). Recent throughput is one \
-challenger per 50–61 minutes (median over the last 72 h; ~45 min since the \
-2026-09-07 echo-cache speedup), so the projection is **2026-09-09, roughly \
-06:00–15:00 UTC**, assuming the validator runs without pauses; an outage \
-pushes it back by the length of the outage. Anything submitted after this \
-notice sits behind `chal-00359` and is judged under the new rules. The exact \
-moment is announced on Discord and recorded here when it happens.
+**Effective 2026-09-09 (01:40 UTC).** `weight_version_key = 13` in \
+`affine.toml`; `[duel].require_think_close = true`; \
+`[dataset].allowed_action_kinds = ["bash", "tool_call", "boxed", "text"]`; \
+`[protocol_probe].mode = "enforce"`. The queue as of the 2026-09-07 notice \
+(through `chal-00359`) was judged under the old rules as promised; \
+`chal-00366` was the last pre-fork duel. Forward-only: the reign stands \
+(reign 9 was crowned by `chal-00349` on 2026-09-08 under wvk 12), no \
+re-verdicts, `min_submission_block` unchanged.
 
 **Why.** The goal of this subnet is models people can use — in Cursor and \
 any OpenAI-compatible client — and the current king does not work there. \
@@ -745,7 +742,7 @@ on 95–98% of replies, the teacher on 99%, the kings of reigns 1–5 on 0–4%,
 and the reign-8 king on 98% of SWE-scaffold replies but 0% of Cursor-shaped \
 ones. That is our contract's fault, and these three changes fix it.
 
-**1. `</think>` becomes required — `weight_version_key` 12 → 13.** A duel \
+**1. `</think>` is required — `weight_version_key` 12 → 13.** A duel \
 turn where your model never emits `</think>` is a **forfeit** (scores \
 `forfeit_turn_score = −0.1`, same as no parseable action). Knob: \
 `[duel].require_think_close = true`. Miner sides only; teacher references \
@@ -769,12 +766,12 @@ slot is burned as with any other rejection. The prompt set, the pass rule and \
 a CLI are published verbatim at `code/evalsrv/protocol_probe.py` — run \
 `python -m evalsrv.protocol_probe --base-url http://YOUR_VLLM/v1 --model \
 YOUR_MODEL` against your own serving before you submit. Reference results: \
-the teacher passes 10/10; the reign-8 king passes 0/10. **Status \
-2026-09-08: the probe runs in `shadow` mode on the eval pod** — every new \
-verdict carries `protocol_probe` (`pass_rate`, `think_close_rate`, \
-`by_reason`) so you can read your own result, but it rejects nobody until \
-the operator flips `[protocol_probe].mode = "enforce"` after reading the \
-first shadow verdicts (target: with the wvk 13 flip).
+the teacher passes 10/10; the reign-8 king passes 0/10. **Shadow \
+read (2026-09-08, 18 verdicts `chal-00348`…`chal-00365`):** pass rates \
+0.00–1.00, median 0.60, one model at ≥ 0.90; every failure was \
+`no_think_close`. **Enforced since 2026-09-09** with the fork. Every verdict \
+still carries `protocol_probe` (`pass_rate`, `think_close_rate`, \
+`by_reason`, `by_prompt`).
 
 **3. IDE-agent prompts join D — data event, no wvk change.** Teacher \
 rollouts under two real IDE/CLI coding agents (OpenAI Codex CLI and Claude \
@@ -788,7 +785,7 @@ fencing it with the probe. Cursor itself cannot be a datagen harness (its \
 agent loop runs on Cursor's servers), which is why change 2 tests \
 Cursor-shaped prompts directly.
 
-**4. The final reply becomes a scored action — `text` dialect, same wvk 13 \
+**4. The final reply is a scored action — `text` dialect, same wvk 13 \
 fork (addendum 2026-09-08).** Until now D only held turns whose action is a \
 bash fence, a tool call or a boxed answer, so the message a model writes when \
 it is *done* — the report that ends a Claude Code / pi / bash-tool \
@@ -913,7 +910,7 @@ action_kind   action span y (last complete one in the rollout)   system marker
 bash          ```bash\\n…\\n```   (one closed fence)                 "bash"
 tool_call     <tool_call>…</tool_call>                             "tool"
 boxed         \\boxed{…}   (brace-balanced, non-empty body)         "boxed"
-text          the whole visible reply (stripped; wvk 13, see notice) (none)
+text          the whole visible reply (stripped; since wvk 13)   (none)
 ```
 
 - Every turn record carries `action_kind`; pre-fork records without it are \
@@ -921,7 +918,7 @@ text          the whole visible reply (stripped; wvk 13, see notice) (none)
 - **Marker rule:** a turn is only admitted to D if its system message \
 contains the dialect's marker word (case-insensitive). So the prefix your \
 model sees always states the format it must answer in — you never have to \
-guess the dialect from context. `text` (wvk 13) is the one exception: it \
+guess the dialect from context. `text` (since wvk 13) is the one exception: it \
 has no marker because a plain visible reply is what every chat model owes \
 by default; the fold only records it on the reply that ended a trajectory.
 - Parsing is *last complete span*: quoting a command or formula mid-thought \

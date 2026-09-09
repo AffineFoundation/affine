@@ -1,0 +1,75 @@
+tasks 731; env-broken for both models 33 ({'internetarchive/openlibrary': 33}); runnable 698; missing traces king 0 teacher 0
+king     official 412/731 =  56.4% (95% CI 52.7–59.9)   runnable 412/698 =  59.0%   stops {'agent_completed': 638, 'HarnessError': 60, 'SandboxError': 33}   median model calls 80
+teacher  official 558/731 =  76.3% (95% CI 73.1–79.3)   runnable 558/698 =  79.9%   stops {'agent_completed': 695, 'HarnessError': 3, 'SandboxError': 33}   median model calls 64
+paired on 635 scored-by-both: both 390, king-only 20, teacher-only 127, neither 98, sign-test p=3.13e-20
+
+repo                          n broken           king        teacher
+ansible/ansible              96      0   64/96   66.7%   83/96   86.5%
+element-hq/element-web       56      0   32/56   57.1%   50/56   89.3%
+flipt-io/flipt               85      0   37/85   43.5%   46/85   54.1%
+future-architect/vuls        62      0   40/62   64.5%   59/62   95.2%
+gravitational/teleport       76      0   41/76   53.9%   65/76   85.5%
+internetarchive/openlibrary   91     33   40/91   44.0%   50/91   54.9%
+navidrome/navidrome          57      0   38/57   66.7%   52/57   91.2%
+nodebb/nodebb                44      0   11/44   25.0%    9/44   20.5%
+protonmail/webclients        65      0   36/65   55.4%   54/65   83.1%
+qutebrowser/qutebrowser      79      0   59/79   74.7%   73/79   92.4%
+tutao/tutanota               20      0   14/20   70.0%   17/20   85.0%
+
+lang                          n broken           king        teacher
+go                          280      0  156/280  55.7%  222/280  79.3%
+python                      266     33  163/266  61.3%  206/266  77.4%
+ts-js                       185      0   93/185  50.3%  130/185  70.3%
+
+king unscored rollouts:
+    53  HarnessError: harness 'claude_code': RuntimeError: RuntimeError: Internal error: Prompt is too long
+    33  SandboxError: docker run failed: Unable to find image 'jefzda/sweap-images:internetarchive.openlibrary-i
+     3  HarnessError: harness setup: RuntimeError: Node.js install failed: ACP adapters require Node.js 22.19 or
+     2  HarnessError: harness 'claude_code': RuntimeError: ConnectionError: Connection closed
+     1  HarnessError: harness setup timed out
+     1  HarnessError: harness 'claude_code': RuntimeError: RuntimeError: Internal error: The Claude Agent proces
+
+teacher unscored rollouts:
+    33  SandboxError: docker run failed: Unable to find image 'jefzda/sweap-images:internetarchive.openlibrary-i
+     2  HarnessError: harness setup: RuntimeError: Node.js install failed: ACP adapters require Node.js 22.19 or
+     1  HarnessError: harness 'claude_code': RuntimeError: RuntimeError: Internal error: The Claude Agent proces
+king     gold-patch line-Jaccard (solved, gold>=10 lines, diff visible in transcript): n=379 median 0.24  >=0.8: 67  >=0.95: 37
+teacher  gold-patch line-Jaccard (solved, gold>=10 lines, diff visible in transcript): n=478 median 0.48  >=0.8: 159  >=0.95: 103
+
+Context (2026-09-08) — read before quoting
+  Model card row (Qwen3.8-27B card, "SWE-bench Pro", Claude Code harness,
+  T=1.0 top_p 0.95 256K): Qwen3.8-27B 61.7 | Qwen3.6-27B 53.5 |
+  Qwen3.7-Plus 57.6 | Muse Glimmer-30B 51.2 | Opus 4.6 Max 53.4.
+  Ours (same harness family, verifiers claude_code ACP adapter, Claude Code
+  2.1.223, T=1.0 top_p 0.95, 262k ctx, 731 public tasks, one attempt):
+  teacher Qwen3.8-27B 76.3 official / 79.9 runnable; king (reign 8)
+  56.4 / 59.0.
+  Why our teacher number is 14.6 pp above the card and must NOT be read as
+  "better than reported":
+   1. Contamination signal. Of the teacher's solved tasks with a visible
+      diff and a gold patch >= 10 lines, 103/478 (21.5%) reproduce the
+      gold patch at line-Jaccard >= 0.95 and 159/478 (33%) at >= 0.8;
+      median 0.48. King: 37/379 (9.8%) at >= 0.95, median 0.24. SWE-bench
+      Pro public tasks come from public repos whose fix commits are
+      crawlable; the vendor's "problematic tasks corrected and baselines
+      re-run" set is not the public set we ran.
+   2. Runner patches, both models: a reply with no visible text after a
+      completed tool turn is scored on the repo diff instead of raising
+      (verifiers raises by default); CLAUDE_CODE_AUTO_COMPACT_WINDOW set
+      to the model context. Both favour the king (its failure mode) more
+      than the teacher.
+   3. Merge rule across the rerun pass: box-side errors (Node.js install
+      on Alpine images, harness setup timeouts, connection drops) were
+      re-run once and a finished attempt replaces an errored one; a solved
+      attempt replaces an unsolved one. Reruns were only issued for
+      box-side errors, so this is at most a small optimistic bias.
+   4. 33 openlibrary tasks are environment-broken for both models (image
+      layer Lchown UID mapping under DinD) and count as unresolved in the
+      official rate; two king tasks were still in flight at cut-off and
+      count as unresolved.
+  What IS solid: the paired comparison. On 635 tasks scored for both,
+  teacher-only 127 vs king-only 20 (sign test p = 3e-20). The king's 53
+  "Prompt is too long" failures are the compaction failure described in
+  AGENTS.md (reasoning-only replies to Claude Code's TEXT-ONLY summary
+  request); they are the trigger for the v7 bundle (protocol probe,
+  require_think_close, text dialect).
