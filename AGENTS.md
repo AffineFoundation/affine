@@ -148,7 +148,7 @@ legacy drop-from-pairing path (210/210 checked).
   to T0. A fourth (`hermes_agent`, tool_call) exists only as a commented
   policy and needs a datagen-pod probe before enabling — deferred past T0.
 
-### v7 bundle: "models must work as chat models" — noticed 2026-09-07/08, STAGED, wvk 12→13 NOT flipped
+### v7: "models must work as chat models" — LIVE 2026-09-09 (wvk 12→13, notice 2026-09-07/08)
 Trigger: SWE-bench Pro under the Claude Code harness (full 731 tasks, king
 reign-8 vs teacher, 2026-09-07/08). The king answers Claude Code's
 compaction ("summarize, TEXT ONLY") and final-report prompts with reasoning
@@ -156,16 +156,38 @@ only and no visible text → compaction fails silently → "Prompt is too
 long"; it also never closes `</think>` under IDE-shaped prompts. Root cause
 is the contract: min(R,G) never scored the visible message and treated
 `</think>` as optional. Operator order 2026-09-08 ("lets do this"): probe
-to shadow now, the rest bundled into one fork with one notice.
-- **Protocol probe — LIVE in `shadow` since 2026-09-08 13:58 UTC** (toml
+to shadow now, the rest bundled into one fork with one notice. **Flipped
+2026-09-09 ~02:00 UTC on explicit operator directive ("make all the changes
+and flip the bit lets go to main", 2026-09-08 22:30 UTC-3), after the
+noticed queue (through `chal-00359`) had been judged under wvk 12
+(`chal-00366` = last pre-fork duel; `chal-00349` crowned reign 9 under wvk
+12 on 2026-09-08). Ran as `ops/v7/v7_toml_edits.py --apply 2026-09-09`
+(+ `[protocol_probe].mode = "enforce"` by hand), commit `fc09cc5`, then
+`/tmp/v7flip/deploy.sh` (wait for pod idle → pm2 stop validator →
+`redeploy_pods.py` → pm2 start) and one `ops/corpus_build.py --rederive`
+(new flag: re-derive every trace chunk so the `text` turns of trajectories
+folded under wvk 11/12 back-fill; already-published turn ids are skipped,
+the deferred carryover is regenerated) → epoch 20: +6,045 `text` turns (of
++14,075 new; D = 283,828 turns, text ≈ 2.1%), zero not-admitted drops, 12 min
+wall. Eval pod redeployed 02:05–02:10 UTC at the duel boundary (pod toml +
+code verified); `chal-00367` = first wvk-13 duel. Discord: epoch-20 post by
+the fold + fork notice `…/1547069605703454831`. Pitfall hit: `pm2 stop` 10 s
+after the pod went idle left `in_flight = chal-00366` in state.json although
+its verdict was already in history — `State.load` would have requeued it
+(no verdict check); cleared by hand before the restart. Forward-only: reign
+9 stands, no re-verdicts, `min_submission_block` unchanged.**
+- **Protocol probe — `shadow` 2026-09-08 13:58 UTC → `enforce` 2026-09-09** (toml
   swapped on the eval pod at a duel boundary; `[protocol_probe].mode`).
   Ten Cursor/IDE-shaped prompts through the challenger's own template; pass
   = closes `</think>` + visible answer. Result published on every verdict
-  (`verdict.protocol_probe`), rejects nobody. First read (chal-00348
-  challenger): pass 0.00, think_close 0.00 (20 `no_think_close`, 4
-  `no_tool_call`). **Enforce** (`mode = "enforce"`, ≥ 0.90) is an operator
-  decision after reading shadow verdicts — admission rule, no wvk.
-- **`text` dialect — code staged, admission is the fork.**
+  (`verdict.protocol_probe`). Shadow read, 18 verdicts `chal-00348`…`365`:
+  pass_rate 0.00–1.00, median 0.60, **1/18 at ≥ 0.90**; every failure was
+  `no_think_close` (the reign-9 king's own lineage sat at 0.70). Enforce
+  (`min_pass_rate = 0.90`) therefore rejects most of the current queue on
+  sight — that is the intent (a model that does not close `</think>` also
+  forfeits under `require_think_close`), and `min_pass_rate` is the dial if
+  the operator wants a softer bar. Admission rule, no wvk.
+- **`text` dialect — admitted at the flip (`allowed_action_kinds` += text).**
   `affine/dialects.py` `text`: action = the whole visible reply after
   `</think>` (stripped), no system marker (`Dialect.system_marker = ""`
   → `system_ok` vacuous), `ends_in_text` marks the dialects whose rollouts
@@ -179,13 +201,13 @@ to shadow now, the rest bundled into one fork with one notice.
   turns next to 3,902 bash-tool `tool_call` turns, +105 / 3,896 pi, +46 /
   187 wiki — ~1 text turn per 35–45 tool turns; 100% of claude_code, 99%
   pi, 98% bash-tool teacher rollouts end on such a reply (p50 1.6–2.2k
-  chars). Until the flip the fold drops them as
-  `action_kind_not_admitted:text` (the staging validator admits every
-  registered dialect, so pod yield counts include them). No per-kind token
+  chars). Before the flip the fold dropped them as
+  `action_kind_not_admitted:text`; the `--rederive` fold at the flip
+  back-filled them from the already-published traces. No per-kind token
   cap needed: a truncated text reply still parses (shorter report), it
   does not forfeit.
-- **`require_think_close = true`** — knob exists since 2026-09-07 (forfeit
-  when no `</think>`), flips in the same fork.
+- **`require_think_close = true`** — knob since 2026-09-07 (a rollout that
+  never emits `</think>` scores `forfeit_turn_score`), live with the flip.
 - **Visible-span G — decided NO** (`research/results/visible_span_g_decision.txt`):
   the teacher's own tool-loop replies carry no visible prose on 20–33%
   (pi 33 / bash 24 / claude_code 20 %; GLM-era 61–63 %), so a band on the
@@ -198,16 +220,11 @@ to shadow now, the rest bundled into one fork with one notice.
 - **`teacher_claude_code` datagen policy** — live on datagen-1/2 since
   2026-09-07 (~130 kept tool_call turns per 24-rollout batch); tomls
   synced to datagen-3 and its supervisor bounced 2026-09-08.
-- **Flip tooling:** `ops/v7/v7_toml_edits.py --preview` writes
-  `ops/v7/wvk13_T0.patch` (require_think_close true, allowed_action_kinds
-  += text, wvk 12→13 + history paragraph); `--apply YYYY-MM-DD` only under
-  an explicit dated directive. Then: commit, validator restart, eval-pod
-  toml redeploy between duels, one fold (`ops/corpus_build.py`) so the
-  next epoch admits the text turns already in the traces, llms.txt notice
-  → history, Discord. Notice as published: effective once the queue as of
-  2026-09-07 (through `chal-00359`) drains, projected 2026-09-09; the text
-  dialect was added to that notice on 2026-09-08 as an addendum — the
-  operator may push T0 to give it its own notice window.
+- **Flip tooling (used):** `ops/v7/v7_toml_edits.py --apply 2026-09-09`
+  (require_think_close true, allowed_action_kinds += text, wvk 12→13 +
+  history paragraph). Notice as published: effective once the queue as of
+  2026-09-07 (through `chal-00359`) drained, projected 2026-09-09 — met.
+  llms.txt "Upcoming changes" → "Fork history: wvk 13".
 
 ### History — Reason v4 (wvk 7–9, 2026-08-17 → 2026-08-27)
 v4 was the uncentered tempered LME, `Reason = tau·log((1/k)·Σ exp(a_i/tau))`,
@@ -373,7 +390,10 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
-- `weight_version_key = 12` (forfeit floor `forfeit_turn_score = -0.1`,
+- `weight_version_key = 13` (2026-09-09 ~02:00 UTC, explicit operator
+  directive "make all the changes and flip the bit": `require_think_close
+  = true`, `allowed_action_kinds` += `text`, protocol probe enforced;
+  forward-only, reign 9 stands; 12 = forfeit floor `forfeit_turn_score = -0.1`,
   2026-09-05 ~16:30 UTC, explicit operator directive "yes add this
   forfeit" after the staged-flip review; forward-only, reign 5 stands;
   11 = action dialects + schema-3 trace-first D,
@@ -842,7 +862,7 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 ## 12. One-paragraph resume
 
 > Affine SN120: teacher-anchored thought-injection duels. Since 2026-08-27
-> (`weight_version_key=11` since the 2026-09-05 dialect/corpus fork; the
+> (`weight_version_key=13` since the 2026-09-09 think-close/text fork; the
 > scoring rule itself dates from wvk 10) the contract is **min(R,G) v5: centered Reason
 > + banded Grounding + δ floor + thought-length floor + B gate**: per turn
 > the teacher samples k=3 refs, a_i = lpC(y_i|z_A) − lpC(y_i|∅);
