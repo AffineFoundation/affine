@@ -174,8 +174,16 @@ code verified); `chal-00367` = first wvk-13 duel. Discord: epoch-20 post by
 the fold + fork notice `…/1547069605703454831`. Pitfall hit: `pm2 stop` 10 s
 after the pod went idle left `in_flight = chal-00366` in state.json although
 its verdict was already in history — `State.load` would have requeued it
-(no verdict check); cleared by hand before the restart. Forward-only: reign
-9 stands, no re-verdicts, `min_submission_block` unchanged.**
+(no verdict check); cleared by hand before the restart. **First wvk-13
+verdicts:** `chal-00367` probe-rejected (0.75 < 0.90, 12 min); `chal-00368`
+/ `00369` passed the probe at 0.95 but closed `</think>` on only 80 / 77 %
+of duel rollouts (long SWE prefixes at the 1792-token cap) → 20 / 23 %
+forfeits, z −8.6 / −9.4; king think-close 0.96, forfeits 3 %. Slices carry
+21–25 `text` turns (1.6–1.9 %); teacher text refs 3.0/3, zero empty. Stamps
+verified: `duel_params.require_think_close`, `allowed_action_kinds`,
+`ranking_formula` suffix, `by_dialect.text` on both sides + teacher.
+Forward-only: reign 9 stands, no re-verdicts, `min_submission_block`
+unchanged.**
 - **Protocol probe — `shadow` 2026-09-08 13:58 UTC → `enforce` 2026-09-09** (toml
   swapped on the eval pod at a duel boundary; `[protocol_probe].mode`).
   Ten Cursor/IDE-shaped prompts through the challenger's own template; pass
