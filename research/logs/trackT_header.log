@@ -1,0 +1,16 @@
+[trackT] pure-GAN training run: RAW student (no SFT warm start anywhere) vs 27B teacher -- does adversarial training alone build SWE ability? every SWE point must be attributable to the GAN loop
+[trackT] POD: brave-wolf-83 (name trackT) 8xB300 -- ssh -p 40300 root@204.9.206.216 | gpu: 0,1=teacher+judge 27B TP2 :8000 (base=teacher, d_v*=judge) | 2=student :8001 (base + m_r*) | 3,4=g_sft (+5 borrowed at judge pretrain, DDPx3) | 5=d_train online | 6,7=bench server :8006 (student base + bench_* adapters)
+[trackT] STUDENT: dendriteholdings/albedo-qwen3.6-35b-king-genesis (Albedo SN97 king genesis, Qwen3.6-35B-A3B miner arch; best SWE evidence among Affine checkpoints: 6/25 internal suite, recent kings score 1/25 having Goodharted the distillation metric). CONTROL = its raw baseline on the full 150-panel (tag full_baseline)
+[trackT] RULES: student trains ONLY on its own rollouts (best-of-k rejection SFT, judge reward = P(judged teacher), both A/B orders averaged); cached teacher corpus used ONLY as judge-train/scoring references; loop rewards scored vs FRESH teacher rollouts each round; judge pretrained to 0.6-0.85 held band BEFORE the loop, then warm-start every 3rd round, SKIPPED while held_acc>0.85
+[trackT] LINE FORMATS (key=value, space-separated; a frontend parser is built against these):
+[trackT]   [loop] round=N fool=X fool_best=X valid=X agree_exact=X agree_tok=X typ_lp=X winners=N dver=vN wall=Xs fool_win=X t_valid=X tt_tok=X think_len=N g=m_rN(eff=X)|kept errs=A+B
+[trackT]   [judge] PRETRAIN dver=v0 attempt=N held_acc=X pos_bias=X matched=X n=N steps=N train_acc=X eff=X pairs=N wall=Xs gpu_hours=X
+[trackT]   [judge] UPDATE dver=vN held_acc=X pos_bias=X matched=X n=N train_acc=X pairs=N+Mreplay probe_delta=X eff=X wall=Xs
+[trackT]   [judge] SKIP round=N held_acc=X (>0.85 balanced-regime throttle) pos_bias=X n=N
+[trackT]   [bench] PROXY round=N ckpt=m_rN score=K/16 gpu_hours=X wall=Xs
+[trackT]   [bench] FULL ckpt=m_rN|<base> score=0.XXXX resolved=K/150 p_vs_baseline=P(b=B,c=C)|n/a gpu_hours=X round=N wall=Xs
+[trackT]   [bench] START|LAUNCH|SKIP|FAILED|ABORTED tag=... (bench lifecycle; ABORTED = adapter-effect gate tripped)
+[trackT]   [pretrain] ... (phase-0 progress) | [infra] ... (bring-up, watchdog, restarts)
+[trackT] METRIC KEY: fool = mean over valid candidates of (1 - p_teacher), the judge's belief the student rollout is the teacher (continuous reward); fool_best = same over per-turn winners; valid = parse gate pass rate; agree_* = winner-vs-teacher bash-action agreement (exact / token-jaccard); typ_lp = mean per-token logprob of winners under the plain 27B (drift); tt_tok = teacher-vs-teacher agreement floor; held_acc = judge accuracy on held-out (student, cached-teacher) pairs, band 0.6-0.85; gpu_hours = wall since pod start x 8
+[trackT] BASELINES (full 150-panel): teacher Qwen3.8-27B = 0.3133; stock Qwen3.6-35B-A3B = 0.1333; raw Albedo-genesis student = see [bench] FULL ckpt=dendriteholdings/... tag full_baseline line
+[trackT] paths (pod): /root/work (code+data) /dshare/trackT/{status.log,state.json,m_lora/,d_versions/,d_pending.jsonl,d_pretrain_pairs.jsonl,bench_*.json,bench_*_instances.json} /dshare/hf (HF cache) /dshare/bench (panel workdirs)

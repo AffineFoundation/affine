@@ -1,0 +1,6 @@
+Shadow-teacher re-scoring of the RT-7 live panel (engy)
+================================================================
+live teacher (stored S):  Spearman(S, swe) = -0.371  (n=29)
+deepseek-v4-flash-0731   n=29  Spearman(S_shadow, swe) = +0.286 (p=0.1330)  Spearman(S_shadow, S_live) = -0.719
+glm-5.2                  n=29  Spearman(S_shadow, swe) = +0.238 (p=0.2127)  Spearman(S_shadow, S_live) = -0.690
+qwen3.8-27b              n=29  Spearman(S_shadow, swe) = +0.069 (p=0.7202)  Spearman(S_shadow, S_live) = -0.352

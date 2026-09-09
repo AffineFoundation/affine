@@ -49,9 +49,18 @@ def main():
     ap.add_argument("--max-tokens", type=int, default=1792)
     ap.add_argument("--d-max-len", type=int, default=3584)
     ap.add_argument("--crown-eps", type=float, default=0.03,
-                    help="challenger must beat king fool rate by this margin")
+                    help="economic floor: challenger fool >= king fool + eps")
+    ap.add_argument("--crown-z", type=float, default=2.5,
+                    help="paired z-score gate (p<0.01): mean(d)/(std(d)/sqrt(n)) "
+                         "on per-turn d_i = fool_c_i - fool_k_i; at fool~0.18 "
+                         "the +3pp floor alone is inside noise ~10% of the time")
     ap.add_argument("--crown-n", type=int, default=400,
-                    help="minimum paired eval turns before a crown verdict")
+                    help="first test checkpoint; tests only at n, 2n, 3n, 4n "
+                         "to avoid sequential-peeking inflation")
+    ap.add_argument("--duel-max", type=int, default=1600,
+                    help="REJECT if conditions unmet by this many pairs")
+    ap.add_argument("--duel-early-reject", type=int, default=800,
+                    help="REJECT early if z<0 at this checkpoint")
     ap.add_argument("--d-steps", type=int, default=150)
     ap.add_argument("--d-lr", type=float, default=1e-5)
     ap.add_argument("--d-batch", type=int, default=2, help="per-GPU")
@@ -101,11 +110,13 @@ def main():
     dver0 = "v0"
     if os.path.exists(f"{W}/VERSION"):
         dver0 = open(f"{W}/VERSION").read().strip()
+    FRESH_DUEL = {"n": 0, "kf": 0.0, "cf": 0.0, "sd": 0.0, "sd2": 0.0,
+                  "ck": 0}
     state = {
         "reign": 0, "dver": dver0,
         "king_name": args.base_35b, "king_adapter": "",
         "chal": None,                      # {name, adapter, sub, local_fool}
-        "duel": {"n": 0, "kf": 0.0, "cf": 0.0},
+        "duel": dict(FRESH_DUEL),
         "reign_turns": 0, "reign_t0": time.time(),
         "ratchet": {"n": 0, "f": 0.0, "logged": False},
         "agree": {"n": 0, "ex": 0.0, "tok": 0.0},
@@ -113,6 +124,12 @@ def main():
     }
     if os.path.exists(state_path):
         state.update(json.load(open(state_path)))
+        if "sd" not in state["duel"]:
+            # duel begun under the old rule: restart it under the z-gate
+            state["duel"] = dict(FRESH_DUEL)
+            if state["chal"]:
+                status(f"duel with {state['chal']['sub']} RESTARTED under new "
+                       f"crown rule (paired z>={args.crown_z} added)")
         status(f"resume state reign={state['reign']} dver={state['dver']} "
                f"king={state['king_name']} chal={bool(state['chal'])}")
 
@@ -134,6 +151,18 @@ def main():
 
     def save():
         json.dump(state, open(state_path, "w"))
+
+    def duel_stats(d):
+        """Paired duel statistics from running sums of d_i = fool_c - fool_k
+        (continuous judge probabilities, per turn)."""
+        import math
+        n = max(d["n"], 1)
+        mean = d["sd"] / n
+        var = max(d["sd2"] / n - mean * mean, 0.0) * (n / max(n - 1, 1))
+        se = math.sqrt(var / n) if n > 1 else float("inf")
+        z = mean / se if se > 0 else 0.0
+        return {"n": d["n"], "kf": d["kf"] / n, "cf": d["cf"] / n,
+                "diff": mean, "se": se, "z": z}
 
     def archive_rows(rows):
         with open(archive_path, "a") as fh:
@@ -168,26 +197,32 @@ def main():
             return
         state["chal"] = {"name": name, "adapter": f"{W}/submissions/{sub}/adapter",
                          "sub": sub, "local_fool": meta.get("local_fool")}
-        state["duel"] = {"n": 0, "kf": 0.0, "cf": 0.0}
+        state["duel"] = dict(FRESH_DUEL)
         os.rename(f"{W}/submissions/{sub}/READY",
                   f"{W}/submissions/{sub}/CONSUMED")
         status(f"DUEL start: challenger={sub} miner_round={meta.get('round')} "
                f"miner_local_fool={meta.get('local_fool')} vs king="
-               f"{state['king_name']} (eps={args.crown_eps} n={args.crown_n})")
+               f"{state['king_name']} (rule: margin>={args.crown_eps} AND "
+               f"z>={args.crown_z}, tests at n={args.crown_n},x2,x3,x4, "
+               f"reject at {args.duel_max})")
         save()
 
-    def crown(margin):
+    def crown(st_):
         """Pause evals, retrain D from scratch, gate, publish, new reign."""
         t_crown = time.time()
         old_king = state["king_name"]
         ch = state["chal"]
-        d = state["duel"]
         new_reign = state["reign"] + 1
         new_dver = f"v{new_reign}"
         status(f"CROWN reign={state['reign']}->{new_reign}: {ch['sub']} "
-               f"dethrones {old_king} | king_fool={d['kf']/d['n']:.4f} "
-               f"ch_fool={d['cf']/d['n']:.4f} margin={margin:.4f} "
-               f"n_pairs={d['n']} | reign_len_turns={state['reign_turns']} "
+               f"dethrones {old_king} | n={st_['n']} "
+               f"king_fool={st_['kf']:.4f} ch_fool={st_['cf']:.4f} "
+               f"diff={st_['diff']:+.4f} paired_se={st_['se']:.4f} "
+               f"z={st_['z']:.2f} "
+               f"miner_local_fool={ch.get('local_fool')} (overfit gap = "
+               f"local - measured = "
+               f"{(ch.get('local_fool') or 0) - st_['cf']:+.4f}) | "
+               f"reign_len_turns={state['reign_turns']} "
                f"reign_wall_s={time.time()-state['reign_t0']:.0f} | "
                f"EVALS PAUSED for D retrain")
         # 1. new king takes GPU-2 slot
@@ -200,7 +235,7 @@ def main():
         load_adapter(args.king_url, new_king_name, king_dir,
                      drop=[old_king] if state["king_adapter"] else [])
         state.update({"king_name": new_king_name, "king_adapter": king_dir,
-                      "chal": None, "duel": {"n": 0, "kf": 0.0, "cf": 0.0}})
+                      "chal": None, "duel": dict(FRESH_DUEL)})
 
         # 2. held-out gate data FIRST (needs the king/chal servers, which are
         # about to be stopped so their GPUs can join the DDP retrain)
@@ -237,12 +272,15 @@ def main():
                 shutil.rmtree(out_dir)
             env = dict(os.environ)
             env["CUDA_VISIBLE_DEVICES"] = args.dtrain_gpus
+            env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
             log_p = f"{W}/d_train_{new_dver}.log"
+            # --grad-ckpt is REQUIRED on this arch: qwen3_5's gated-delta
+            # layers OOM a 141GB H200 at batch 2 without it (v1 crown, rc=1)
             rc = subprocess.run(
                 [f"{os.path.dirname(args.train_python)}/torchrun",
                  f"--nproc-per-node={len(gpus)}", f"{here}/d_train.py",
                  "--base", args.base_27b, "--pairs", pairs_path,
-                 "--lora-out", out_dir,
+                 "--lora-out", out_dir, "--grad-ckpt",
                  "--max-steps", str(d_steps), "--lr", str(args.d_lr),
                  "--batch", str(args.d_batch), "--accum", str(args.d_accum),
                  "--max-len", str(args.d_max_len), "--seed", str(new_reign)],
@@ -254,6 +292,7 @@ def main():
                        f"{log_p}); keeping {dv_current()} judge")
                 subprocess.run("docker start vllm_8001 vllm_8003", shell=True,
                                capture_output=True, timeout=300)
+                wait_and_repin_king()
                 save()
                 return
             # 4. gates: adapter-effect guard (no-op class) + held-out band
@@ -275,7 +314,7 @@ def main():
                    f"{meta['steps']} pairs={n_all}(+{n_replay} replay) "
                    f"wall={wall:.0f}s effect={eff:.4f} held_acc={acc} "
                    f"pos_bias={gate['pos_bias']} matched={gate['matched_acc']} "
-                   f"n={gate['n']}")
+                   f"ab_mass={gate['ab_mass']} n={gate['n']}")
             if acc <= 0.92 or attempt == 2:
                 if acc > 0.92:
                     status(f"CROWN {new_dver} WARNING held_acc={acc}>0.92 "
@@ -288,18 +327,25 @@ def main():
             d_steps = max(30, d_steps // 2)
             status(f"CROWN {new_dver} held_acc={acc}>0.92: retraining "
                    f"from scratch with steps={d_steps}")
+        # 4b. SOFT answer-mass gate (replaces the A3 hard answer-first gate,
+        # user decision 2026-08-22 ~21:00Z): with direct logit reading the
+        # A/B ratio is defined regardless of what the judge WOULD generate,
+        # so format drift is harmless for scoring. Only refuse when raw
+        # mass(A)+mass(B) collapses -- renormalized readings get noisy when
+        # the judge puts almost no probability on either letter.
+        if gate["ab_mass"] < 0.5:
+            status(f"CROWN {new_dver} PUBLISH REFUSED: mean answer mass "
+                   f"{gate['ab_mass']:.4f} < 0.5 on held pairs -- judge "
+                   f"barely considers A/B; keeping {dv_current()}")
+            subprocess.run("docker start vllm_8001 vllm_8003", shell=True,
+                           capture_output=True, timeout=300)
+            wait_and_repin_king()
+            save()
+            return
         # 5. resume the sampling servers, re-pin the new king adapter
         subprocess.run("docker start vllm_8001 vllm_8003", shell=True,
                        capture_output=True, timeout=300)
-        for port in (8001, 8003):
-            for _ in range(60):
-                try:
-                    import requests as rq
-                    rq.get(f"http://127.0.0.1:{port}/v1/models", timeout=5)
-                    break
-                except Exception:
-                    time.sleep(10)
-        load_adapter(args.king_url, new_king_name, king_dir)
+        wait_and_repin_king()
         # 6. publish
         judge.load_adapter(f"d_{new_dver}", f"{W}/d_versions/{new_dver}",
                            drop=[f"d_{new_dver}_cand"])
@@ -327,6 +373,21 @@ def main():
     def dv_current():
         return state["dver"]
 
+    def wait_and_repin_king():
+        """After a sampling-server restart, runtime adapters are gone; the
+        king adapter must be re-loaded or every request 404s."""
+        import requests as rq
+        for port in (8001, 8003):
+            for _ in range(80):
+                try:
+                    rq.get(f"http://127.0.0.1:{port}/v1/models", timeout=5)
+                    break
+                except Exception:
+                    time.sleep(10)
+        if state["king_adapter"]:
+            load_adapter(args.king_url, state["king_name"],
+                         state["king_adapter"])
+
     def gen_held_pairs():
         cands, vr, _ = sample_model(args.king_url, state["king_name"], m_tok,
                                     turns, held_tids, 1, args.temp,
@@ -341,16 +402,17 @@ def main():
                         "mine": both_text(cs[0]["z"], cs[0]["y"])})
         return out
 
-    def reject():
+    def reject(st_):
         ch = state["chal"]
-        d = state["duel"]
         status(f"REJECT: challenger {ch['sub']} failed to dethrone "
-               f"{state['king_name']} | king_fool={d['kf']/d['n']:.4f} "
-               f"ch_fool={d['cf']/d['n']:.4f} "
-               f"margin={(d['cf']-d['kf'])/d['n']:.4f} n_pairs={d['n']} "
-               f"(needed +{args.crown_eps} over {args.crown_n})")
+               f"{state['king_name']} | n={st_['n']} "
+               f"king_fool={st_['kf']:.4f} ch_fool={st_['cf']:.4f} "
+               f"diff={st_['diff']:+.4f} paired_se={st_['se']:.4f} "
+               f"z={st_['z']:.2f} (needed diff>=+{args.crown_eps} AND "
+               f"z>={args.crown_z}) | miner_local_fool="
+               f"{ch.get('local_fool')} -- noise-floor calibration point")
         state["chal"] = None
-        state["duel"] = {"n": 0, "kf": 0.0, "cf": 0.0}
+        state["duel"] = dict(FRESH_DUEL)
         save()
 
     status(f"eval driver up: reign={state['reign']} dver={state['dver']} "
@@ -403,16 +465,24 @@ def main():
         fool = {"king": {}, "challenger": {}}
         rows = []
         ts = now()
+        n_scr_err = 0
         for (who, tid, c), s in zip(owners, scores):
-            f = (1 - s["p_teacher"]) if s else None
-            fool[who][tid] = f if f is not None else 0.0
+            # [fix] transport/scoring errors are EXCLUDED from every stat
+            # (never scored 0.5 or 0.0); archived with score_err for audit.
+            # Absent from fool[who], the turn also drops out of the paired
+            # duel intersection below.
+            if s is None:
+                n_scr_err += 1
+            else:
+                fool[who][tid] = 1 - s["p_teacher"]
             rows.append({"ts": ts, "turn_id": tid, "model": who,
                          "ckpt": state["king_name"] if who == "king"
                          else state["chal"]["name"],
                          "dver": state["dver"], "z": c["z"], "y": c["y"],
                          "ref": teacher_ref(tid, t_train),
                          "score": (s["p_teacher"] if s else None),
-                         "valid": True})
+                         "valid": True,
+                         **({"score_err": True} if s is None else {})})
         # invalid rollouts: archived, fool 0
         for who, cands in (("king", k_cands), ("challenger", c_cands)):
             for tid, cs in cands.items():
@@ -427,6 +497,17 @@ def main():
                                  "ref": teacher_ref(tid, t_train),
                                  "score": None, "valid": False})
         archive_rows(rows)
+
+        if not k_cands:
+            # king server unreachable/misloaded: back off instead of spinning
+            status(f"batch={b} king sampling returned NOTHING "
+                   f"(errs={k_st['err']}); repinning king and backing off 30s")
+            try:
+                wait_and_repin_king()
+            except Exception as e:
+                status(f"king repin failed {type(e).__name__}")
+            time.sleep(30)
+            continue
 
         kf_list = list(fool["king"].values())
         kf = sum(kf_list) / max(len(kf_list), 1)
@@ -458,12 +539,18 @@ def main():
         if state["chal"]:
             both = [t for t in fool["king"] if t in fool["challenger"]]
             d = state["duel"]
-            d["n"] += len(both)
-            d["kf"] += sum(fool["king"][t] for t in both)
-            d["cf"] += sum(fool["challenger"][t] for t in both)
+            for t in both:
+                di = fool["challenger"][t] - fool["king"][t]
+                d["n"] += 1
+                d["kf"] += fool["king"][t]
+                d["cf"] += fool["challenger"][t]
+                d["sd"] += di
+                d["sd2"] += di * di
             cf = (sum(fool["challenger"][t] for t in both) / max(len(both), 1))
 
         ag = state["agree"]
+        b_mass = [s["mass"] for s in scores if s]
+        b_mass = sum(b_mass) / len(b_mass) if b_mass else float("nan")
         status(f"batch={b} reign={state['reign']} dver={state['dver']} "
                f"king_fool={kf:.4f} "
                f"ch_fool={'%.4f' % cf if cf is not None else '-'} "
@@ -472,17 +559,42 @@ def main():
                f"valid_c={'%.3f' % c_vr if c_vr is not None else '-'} "
                f"agree_exact={ag['ex']/max(ag['n'],1):.3f} "
                f"agree_tok={ag['tok']/max(ag['n'],1):.3f} "
-               f"errs={k_st['err']} judge_miss={judge.miss} "
+               f"errs={k_st['err']} scr_errs={n_scr_err} "
+               f"judge_errs={judge.err} judge_miss={judge.miss} "
+               f"judge_mass={b_mass:.3f} "
                f"wall={time.time()-t0:.0f}s")
+        if b_mass == b_mass and b_mass < 0.5:
+            status(f"ALARM: judge answer mass {b_mass:.3f} < 0.5 this batch "
+                   f"-- scoring is renormalizing near-zero probabilities; "
+                   f"judge {state['dver']} format health degraded")
         save()
 
-        if state["chal"] and state["duel"]["n"] >= args.crown_n:
+        # crown rule: margin floor AND paired z-gate, tested only at fixed
+        # checkpoints (n, 2n, 3n, 4n) to avoid sequential-peeking inflation
+        if state["chal"]:
             d = state["duel"]
-            margin = (d["cf"] - d["kf"]) / d["n"]
-            if margin >= args.crown_eps:
-                crown(margin)
-            elif d["n"] >= 2 * args.crown_n:
-                reject()
+            checkpoints = [args.crown_n * i for i in (1, 2, 3, 4)]
+            due = [c for c in checkpoints[d["ck"]:] if d["n"] >= c]
+            if due:
+                d["ck"] += len(due)
+                st_ = duel_stats(d)
+                decision = "CONTINUE"
+                if (st_["diff"] >= args.crown_eps
+                        and st_["z"] >= args.crown_z):
+                    decision = "CROWN"
+                elif d["n"] >= args.duel_max:
+                    decision = "REJECT"
+                elif (d["n"] >= args.duel_early_reject and st_["z"] < 0):
+                    decision = "REJECT (early: z<0)"
+                status(f"DUEL checkpoint: n={st_['n']} "
+                       f"king_fool={st_['kf']:.4f} ch_fool={st_['cf']:.4f} "
+                       f"diff={st_['diff']:+.4f} paired_se={st_['se']:.4f} "
+                       f"z={st_['z']:.2f} decision={decision}")
+                if decision == "CROWN":
+                    crown(st_)
+                elif decision.startswith("REJECT"):
+                    reject(st_)
+                save()
 
 
 if __name__ == "__main__":

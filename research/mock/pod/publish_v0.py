@@ -80,7 +80,13 @@ def main():
     status(f"JUDGE {args.ver} gate: steps={meta['steps']} "
            f"train_loss={round(meta['loss'], 4)} effect={eff:.4f} "
            f"held_acc={g['held_acc']} pos_bias={g['pos_bias']} "
-           f"matched={g['matched_acc']} n={g['n']} (band 0.6-0.9)")
+           f"matched={g['matched_acc']} ab_mass={g['ab_mass']} n={g['n']} "
+           f"(band 0.6-0.9)")
+    if g["ab_mass"] < 0.5:
+        status(f"PUBLISH REFUSED {args.ver}: mean answer mass "
+               f"{g['ab_mass']:.4f} < 0.5 -- judge barely considers A/B "
+               f"(soft format-health gate)")
+        raise SystemExit(2)
     if g["held_acc"] > 0.9:
         status(f"JUDGE {args.ver} WARNING held_acc>0.9: miner reward may be "
                f"thin; publishing anyway, watch miner reward distribution")

@@ -5,7 +5,7 @@
 import {
   esc, pct, fmtTime, fmtClock, fmtAgo,
   drawReignFoolRate, drawRatchet, drawJudgeAcc, drawSwe, drawMechDiagram,
-} from "./charts.js?v=2";
+} from "./charts.js?v=3";
 
 const $ = (id) => document.getElementById(id);
 const POLL_MS = 90_000;

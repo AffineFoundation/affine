@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Build data.json for the Track M site.
+"""Build the per-track JSON datasets for the multi-track dashboard.
 
-Parses the real run log at LOG_PATH (`ISO8601Z [source] key=value ...` lines)
-when it exists; falls back to a mock dataset otherwise. The site fetches
-data.json — a refresh loop (see refresh_data.sh) reruns this every 2 minutes.
+Track M: parses LOG_PATH (`ISO8601Z [source] key=value ...` lines) when it
+exists; falls back to a mock dataset otherwise -> data.json.
+Track S: parses S_LOG_PATH (self-play control)      -> dataS.json.
+Track T: parses T_LOG_PATH (pure-GAN run; the log may not exist yet —
+missing file means an honest "starting up" empty state) -> dataT.json.
+
+A refresh loop (see refresh_data.sh) reruns this every 2 minutes.
 
 Usage: python3 generate_data.py [-o data.json]
 """
@@ -16,6 +20,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 LOG_PATH = Path("/home/const/subnet120/research/logs/trackM_status.log")
+S_LOG_PATH = Path("/home/const/subnet120/research/logs/trackS_status.log")
+T_LOG_PATH = Path("/home/const/subnet120/research/logs/trackT_status.log")
 HERE = Path(__file__).resolve().parent
 
 TEACHER = "Qwen3.8-27B"
@@ -232,6 +238,264 @@ def parse_status_log(path: Path):
     }
 
 
+# ------------------------------------------------------------- track S / T
+
+WALL_RE = re.compile(r"wall=(\d+(?:\.\d+)?)s")
+EFF_RE = re.compile(r"\(eff=([-\d.eE]+)\)")
+PTRIPLE_RE = re.compile(r"p\([^)]*\)=([\d.]+)/([\d.]+)/([\d.]+)")
+SCORE_FRAC_RE = re.compile(r"score=(\d+)/(\d+)")
+RESOLVED_RE = re.compile(r"resolved=(\d+)/(\d+)")
+
+SWE_TEACHER_FRAC = 0.3133  # teacher full-panel SWE score, as a fraction
+
+
+def _now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _num(v):
+    return v if isinstance(v, (int, float)) else None
+
+
+def _wall(rest):
+    m = WALL_RE.search(rest)
+    return float(m.group(1)) if m else None
+
+
+def _push_event(events, ts, src, msg):
+    """Run-log entry; consecutive identical messages collapse into one row."""
+    if events and events[-1]["src"] == src and events[-1]["msg"] == msg:
+        events[-1]["count"] += 1
+        events[-1]["t_last"] = ts
+        return
+    low = msg.lower()
+    if "fatal" in low or "failed" in low:
+        sev = "bad"
+    elif "stalled" in low or "watchdog" in low or "rejected" in low:
+        sev = "warn"
+    else:
+        sev = "info"
+    events.append({"t": ts, "t_last": ts, "src": src, "msg": msg,
+                   "count": 1, "sev": sev})
+
+
+def parse_trackS(path: Path):
+    """Self-play control (the recursive check). Never raises: unknown lines
+    land in the run log, a missing file yields an empty-state dataset."""
+    data = {
+        "generated_at": _now_iso(), "track": "S", "source": "missing",
+        "teacher": TEACHER, "header": [],
+        "log_start": None, "log_end": None,
+        "rounds": [], "d_updates": [], "events": [],
+        "verdict": {"label": "PENDING", "mean_fool5": None, "n": 0,
+                    "reason": "no rounds logged yet"},
+        "current": {},
+    }
+    if not path.exists():
+        return data
+
+    rounds, dups, events = [], [], []
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        m = LINE_RE.match(line)
+        if not m:
+            if line.startswith("[trackS]"):
+                data["header"].append(line[len("[trackS]"):].strip())
+            continue
+        ts, src, rest = m.groups()
+        data["log_start"] = data["log_start"] or ts
+        data["log_end"] = ts
+        try:
+            if src == "loop" and rest.startswith("round=") and " fool=" in rest:
+                kv = _kv(rest)
+                em = EFF_RE.search(rest)
+                g = kv.get("g")
+                rounds.append({
+                    "t": ts, "round": kv.get("round"),
+                    "fool": _num(kv.get("fool")),
+                    "fool_best": _num(kv.get("fool_best")),
+                    "fool_win": _num(kv.get("fool_win")),
+                    "valid": _num(kv.get("valid")),
+                    "t_valid": _num(kv.get("t_valid")),
+                    "agree_exact": _num(kv.get("agree_exact")),
+                    "agree_tok": _num(kv.get("agree_tok")),
+                    "tt_exact": _num(kv.get("tt_exact")),
+                    "tt_tok": _num(kv.get("tt_tok")),
+                    "g_self_tok": _num(kv.get("g_self_tok")),
+                    "typ_lp": _num(kv.get("typ_lp")),
+                    "think_len": kv.get("think_len"),
+                    "winners": kv.get("winners"),
+                    "g": g if isinstance(g, str) else None,
+                    "eff": float(em.group(1)) if em else None,
+                    "dver": kv.get("dver"), "errs": kv.get("errs"),
+                    "wall_s": _wall(rest),
+                })
+            elif src == "loop" and rest.startswith("D UPDATE"):
+                kv = _kv(rest)
+                pm = PTRIPLE_RE.search(rest)
+                dups.append({
+                    "t": ts, "dver": kv.get("dver"),
+                    "held_live": _num(kv.get("held_live")),
+                    "held_ctrl": _num(kv.get("held_ctrl")),
+                    "held_tt": _num(kv.get("held_tt")),
+                    "p_live": float(pm.group(1)) if pm else None,
+                    "p_ctrl": float(pm.group(2)) if pm else None,
+                    "p_tt": float(pm.group(3)) if pm else None,
+                    "n": kv.get("n"), "train_acc": _num(kv.get("train_acc")),
+                    "pairs": kv.get("pairs"),
+                    "probe_delta": _num(kv.get("probe_delta")),
+                    "wall_s": _wall(rest),
+                })
+            else:
+                _push_event(events, ts, src, rest)
+        except Exception:
+            _push_event(events, ts, src, rest)
+
+    data["rounds"] = rounds
+    data["d_updates"] = dups
+    data["events"] = events[-120:]
+    data["source"] = "live" if (rounds or dups) else "starting"
+
+    # Verdict from recent data (readout guide in the log header).
+    fools = [r["fool"] for r in rounds if r["fool"] is not None]
+    recent = fools[-5:]
+    mean5 = round(sum(recent) / len(recent), 4) if recent else None
+    lastd = dups[-2:]
+    leak = bool(lastd) and all(
+        max(u["held_ctrl"] or 0.0, u["held_tt"] or 0.0) > 0.58 for u in lastd)
+    if leak:
+        v = ("LEAK", "held_ctrl / held_tt sustained above 0.58 — "
+                     "pipeline artifact, not a real signal")
+    elif mean5 is None:
+        v = ("PENDING", "no scored rounds yet")
+    elif 0.45 <= mean5 <= 0.55:
+        v = ("STABLE", f"mean fool over last {len(recent)} rounds = {mean5} "
+                       f"— inside the 0.45–0.55 equilibrium band")
+    else:
+        v = ("DRIFT", f"mean fool over last {len(recent)} rounds = {mean5} "
+                      f"— outside the 0.45–0.55 equilibrium band")
+    data["verdict"] = {"label": v[0], "reason": v[1],
+                       "mean_fool5": mean5, "n": len(recent)}
+
+    r = rounds[-1] if rounds else {}
+    u = dups[-1] if dups else {}
+    walls = [x["wall_s"] for x in rounds[-5:] if x.get("wall_s")]
+    data["current"] = {
+        "round": r.get("round"), "fool": r.get("fool"),
+        "typ_lp": r.get("typ_lp"), "think_len": r.get("think_len"),
+        "g": r.get("g"), "eff": r.get("eff"),
+        "dver": r.get("dver") or u.get("dver"),
+        "held_live": u.get("held_live"), "held_ctrl": u.get("held_ctrl"),
+        "held_tt": u.get("held_tt"), "d_updated_at": u.get("t"),
+        "avg_wall_s": round(sum(walls) / len(walls)) if walls else None,
+    }
+    return data
+
+
+def parse_trackT(path: Path):
+    """Pure-GAN run. The log may not exist yet — that is the honest
+    'experiment starting up' state, not an error."""
+    data = {
+        "generated_at": _now_iso(), "track": "T", "source": "missing",
+        "teacher": TEACHER, "header": [],
+        "log_start": None, "log_end": None,
+        "swe_teacher": SWE_TEACHER_FRAC, "swe_student_baseline": None,
+        "rounds": [], "judges": [], "bench_proxy": [], "bench_full": [],
+        "events": [], "banner": {},
+    }
+    if not path.exists():
+        return data
+
+    rounds, judges, proxies, fulls, events = [], [], [], [], []
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        m = LINE_RE.match(line)
+        if not m:
+            if line.startswith("[trackT]"):
+                data["header"].append(line[len("[trackT]"):].strip())
+            continue
+        ts, src, rest = m.groups()
+        data["log_start"] = data["log_start"] or ts
+        data["log_end"] = ts
+        try:
+            if src == "loop" and rest.startswith("round=") and "fool=" in rest:
+                kv = _kv(rest)
+                rounds.append({
+                    "t": ts, "round": kv.get("round"),
+                    "fool": _num(kv.get("fool")),
+                    "valid": _num(kv.get("valid")),
+                    "dver": kv.get("dver"), "wall_s": _wall(rest),
+                })
+            elif src == "judge" and "UPDATE" in rest:
+                kv = _kv(rest)
+                judges.append({
+                    "t": ts, "dver": kv.get("dver"),
+                    "held_acc": _num(kv.get("held_acc")),
+                    "train_acc": _num(kv.get("train_acc")),
+                    "pairs": kv.get("pairs"), "wall_s": _wall(rest),
+                })
+                _push_event(events, ts, src, rest)
+            elif src == "bench" and rest.startswith("PROXY"):
+                kv = _kv(rest)
+                sm = SCORE_FRAC_RE.search(rest)
+                proxies.append({
+                    "t": ts, "round": kv.get("round"),
+                    "num": int(sm.group(1)) if sm else None,
+                    "den": int(sm.group(2)) if sm else None,
+                    "frac": (int(sm.group(1)) / int(sm.group(2)))
+                            if sm and int(sm.group(2)) else None,
+                    "gpu_hours": _num(kv.get("gpu_hours")),
+                })
+                _push_event(events, ts, src, rest)
+            elif src == "bench" and rest.startswith("FULL"):
+                kv = _kv(rest)
+                rm = RESOLVED_RE.search(rest)
+                ckpt = str(kv.get("ckpt") or "")
+                is_base = bool(re.search(r"base|raw|student|untrained",
+                                         ckpt, re.I))
+                entry = {
+                    "t": ts, "ckpt": ckpt or None,
+                    "score": _num(kv.get("score")),
+                    "resolved": int(rm.group(1)) if rm else None,
+                    "panel": int(rm.group(2)) if rm else None,
+                    "p_vs_baseline": _num(kv.get("p_vs_baseline")),
+                    "gpu_hours": _num(kv.get("gpu_hours")),
+                    "baseline": is_base,
+                }
+                if is_base and entry["score"] is not None:
+                    data["swe_student_baseline"] = entry["score"]
+                fulls.append(entry)
+                _push_event(events, ts, src, rest)
+            else:
+                _push_event(events, ts, src, rest)
+        except Exception:
+            _push_event(events, ts, src, rest)
+
+    data["rounds"] = rounds
+    data["judges"] = judges
+    data["bench_proxy"] = proxies
+    data["bench_full"] = fulls
+    data["events"] = events[-120:]
+    data["source"] = ("live" if (rounds or judges or proxies or fulls)
+                      else "starting")
+
+    gpu = [x["gpu_hours"] for x in proxies + fulls if x.get("gpu_hours")]
+    r = rounds[-1] if rounds else {}
+    data["banner"] = {
+        "rounds": r.get("round") if r else None,
+        "started_at": data["log_start"],
+        "judge_version": (judges[-1]["dver"] if judges else r.get("dver")),
+        "gpu_hours": max(gpu) if gpu else None,
+        "last_fool": r.get("fool"),
+        "benches": {"proxy": len(proxies), "full": len(fulls)},
+    }
+    return data
+
+
 # ---------------------------------------------------------------- mock run
 
 def mock_dataset(seed: int = 120):
@@ -316,11 +580,19 @@ def main():
     ap.add_argument("-o", "--out", default=str(HERE / "data.json"))
     args = ap.parse_args()
 
+    out = Path(args.out)
     data = parse_status_log(LOG_PATH)
     if data is None:
         data = mock_dataset()
-    Path(args.out).write_text(json.dumps(data, indent=1))
-    print(f"wrote {args.out} (source={data['source']})")
+    out.write_text(json.dumps(data, indent=1))
+
+    site = out.parent
+    data_s = parse_trackS(S_LOG_PATH)
+    (site / "dataS.json").write_text(json.dumps(data_s, indent=1))
+    data_t = parse_trackT(T_LOG_PATH)
+    (site / "dataT.json").write_text(json.dumps(data_t, indent=1))
+    print(f"wrote {out} (M={data['source']} S={data_s['source']} "
+          f"T={data_t['source']})")
 
 
 if __name__ == "__main__":

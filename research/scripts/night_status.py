@@ -14,10 +14,13 @@ import time
 LOGS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
 
 TRACKS = {
+    "S": "self-play control: G=copy of 27B teacher vs itself, online D -- equilibrium stability test",
     "M": "two-box KOTH mock: crown-triggered from-scratch D, frozen per reign",
     "A": "realistic scale: G=Qwen3.6-35B-A3B vs T=Qwen3.8-27B, online D, 150-instance panel",
     "B": "fast dynamics: G=Qwen3-4B vs T=Qwen3-32B, ONLINE D (the thesis arm)",
     "C": "control: same as B but D trained once then FROZEN (mechanism ablation)",
+    "T": "pure-GAN training run: raw student vs 27B teacher, no SFT warm start "
+         "-- does adversarial training alone build SWE ability?",
 }
 
 ROUND_RE = re.compile(r"round[ =]+(\d+)", re.I)

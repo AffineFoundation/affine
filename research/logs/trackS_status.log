@@ -1,0 +1,130 @@
+[trackS] self-play control: G initialised as an EXACT COPY of the 27B teacher (zero LoRA), trained against an ONLINE D on one box -- equilibrium stability test for the SN120 distillation game
+[trackS] POD: cosmic-eagle-0c (name trackS) 8xB200 -- ssh -p 40299 root@38.127.229.127 | gpu: 0,1=sampler 27B TP2 :8000 (teacher=base + g_r* adapters) | 2,3=judge 27B TP2 :8001 (base + d_v* adapters) | 4,5=d_train DDP | 6,7=g_sft + SWE proxy via :8000
+[trackS] FAIRNESS: teacher refs sampled FRESH each round, same server/params/template as G (only model name differs); NO cached teacher text is ever scored; D v0 trained briefly on fresh round-0 pairs only
+[trackS] LEAK INSTRUMENTATION at every D update on never-trained held turns: held_live (D vs current G), held_ctrl (D vs frozen zero-adapter G; truth 0.5 forever), held_tt (teacher vs teacher; truth 0.5 by construction) -- sustained ctrl/tt > ~0.58 = pipeline artifact
+[trackS] readout guide: fool~0.5 + held_live~0.5 flat = STABLE EQUILIBRIUM | early held>0.6 = LEAK | held_live climbing + fool falling + typ_lp rising = DRIFT (SWE panel classifies benign/harmful) | fool>0.55 across D updates = OUTCOMPETE
+[trackS] incident 2026-08-22 20:30Z: pre-fix judge scorer (top-20 readout) missed A/B on 15-35% of calls -> exact-0.5 fallbacks diluted fool toward 0.5 and biased held ACCURACY below chance; CONSTRAINED-SCORING (Track M A1, forced-token logprobs) deployed, all pre-fix absolute accs suspect, mean-p readings and the round-0 LEAK-FREE verdict survive (identity check was numeric, p symmetric ~0.5 both directions)
+[trackS] incident 2026-08-22 21:00Z: G drifted by rounds 10-12 (think_len 1040->332, typ_lp -0.38->-0.225) yet warm-start D updates (v9,v12) stayed at chance on held pairs while a trivial length probe hits 0.687 on the same pairs -> online-D recipe (warm-start, 400-pair diluted window, <=150 steps lr 1e-5) too weak; switched to FROM-SCRATCH per update (Track M crown recipe), 200 steps, 300-pair window, 4 epochs; vf13 = forced from-scratch update on drifted pairs = arms-race engagement test
+[trackS] paths (pod): /dshare/trackS/{status.log,state.json,g_lora/,d_versions/,d_pending.jsonl,winners_r*.jsonl,bench_*.json}; data /root/work/turns.jsonl.gz + train/held tid lists (same split as Track M: 7173 train / 199 held)
+[trackS] loop spec: 28 turns/round k=6 temp=0.9 max_tok=1792; G SFT 30 steps lr 1e-5 attention-only LoRA r16 per round; D update every 3rd round, warm-start, 150 steps lr 1e-5 on last 400 (G-best, fresh-teacher) pairs; SWE proxy panel (16) every 15 rounds vs teacher baseline 0.3133 (full-150 panel)
+2026-08-22T15:52:22Z [infra] phaseS: bringing up sampler + judge servers (vllm :latest docker)
+2026-08-22T16:18:11Z [infra] servers up: 0,1=sampler :8000 (teacher+G) | 2,3=judge :8001 (D) | 4,5=d_train | 6,7=g_sft
+2026-08-22T16:18:11Z [infra] trackS driver launched (pid 12860)
+2026-08-22T16:18:39Z [loop] driver up: base=Qwen/Qwen3.8-27B G=base+zero-LoRA (exact copy) D=base+LoRA online(every 3r, 150 steps, lr 1e-5) k=6 turns/round=28 temp=0.9 max_tok=1792 train_turns=7174 held=200 (fixed 64) | gpu_map[0,1=sampler :8000 (T=base + g_r*) 2,3=judge :8001 (base + d_v*) 4,5=d_train 6,7=g_sft]
+2026-08-22T16:18:39Z [loop] building zero-init G adapter (g_sft --epochs 0)
+2026-08-22T16:19:24Z [loop] IDENTITY CHECK g_r0 vs base: eff=0.000000 noise_floor=0.000000 -> PASS
+2026-08-22T16:21:00Z [loop] round-0 pairs sampled: n=185 teacher_valid=0.979 g0_valid=0.974 wall=96s (both distributions IDENTICAL by construction)
+2026-08-22T16:21:00Z [loop] training D v0 (fresh LoRA, 100 steps, round-0 pairs only)
+2026-08-22T16:21:57Z [loop] FATAL D v0 training failed rc=1
+2026-08-22T16:25:51Z [loop] driver up: base=Qwen/Qwen3.8-27B G=base+zero-LoRA (exact copy) D=base+LoRA online(every 3r, 150 steps, lr 1e-5) k=6 turns/round=28 temp=0.9 max_tok=1792 train_turns=7174 held=200 (fixed 64) | gpu_map[0,1=sampler :8000 (T=base + g_r*) 2,3=judge :8001 (base + d_v*) 4,5=d_train 6,7=g_sft]
+2026-08-22T16:25:52Z [loop] IDENTITY CHECK g_r0 vs base: eff=0.000000 noise_floor=0.000000 -> PASS
+2026-08-22T16:26:59Z [loop] round-0 pairs sampled: n=187 teacher_valid=0.984 g0_valid=0.984 wall=67s (both distributions IDENTICAL by construction)
+2026-08-22T16:26:59Z [loop] training D v0 (fresh LoRA, 100 steps, round-0 pairs only)
+2026-08-22T16:42:59Z [loop] D v0 loaded; adapter-effect vs base = 0.19001 (OK) wall=959s
+2026-08-22T16:45:38Z [loop] D UPDATE dver=v0 held_live=0.3448 held_ctrl=0.4333 held_tt=0.4667 p(live/ctrl/tt)=0.482/0.5065/0.517 n=58 | truth=0.5 for all three at round 0 -> LEAK-FREE so far
+2026-08-22T16:56:30Z [loop] round=1 G adapter hot-load REJECTED ConnectionError HTTPConnectionPool(host='127.0.0.1', port=8000): Max retries exceeded with url: /v1/load_lora_adapte; keeping g_r0
+2026-08-22T16:56:30Z [loop] round=1 fool=0.5180 fool_best=0.6225 fool_win=0.329 valid=0.994 t_valid=0.982 agree_exact=0.214 agree_tok=0.421 tt_exact=0.185 tt_tok=0.440 g_self_tok=0.503 typ_lp=-0.2321 think_len=1040 winners=28 g=kept dver=v0 errs=0+0 wall=651s
+2026-08-22T16:56:30Z [loop] round=2 stalled (g=0 t=0 errs=28/28); waiting 90s
+2026-08-22T16:58:00Z [loop] round=2 stalled (g=0 t=0 errs=28/28); waiting 90s
+2026-08-22T16:59:30Z [loop] round=2 stalled (g=0 t=0 errs=28/28); waiting 90s
+2026-08-22T17:01:00Z [loop] round=2 stalled (g=0 t=0 errs=28/28); waiting 90s
+2026-08-22T17:02:31Z [loop] round=2 stalled (g=0 t=0 errs=28/28); waiting 90s
+2026-08-22T17:04:01Z [loop] round=2 stalled (g=0 t=0 errs=28/28); waiting 90s
+2026-08-22T17:05:31Z [loop] round=2 stalled (g=0 t=0 errs=28/28); waiting 90s
+2026-08-22T17:06:25Z [infra] watchdog: driver dead -- relaunching
+2026-08-22T17:06:51Z [loop] resume G adapter reload failed ConnectionError
+2026-08-22T17:06:52Z [loop] resumed at round=1 g=g_r0 d=v0
+2026-08-22T17:06:52Z [loop] round=2 stalled (g=0 t=0 errs=28/28); waiting 90s + best-effort adapter reload (server may have restarted)
+2026-08-22T17:08:23Z [loop] round=2 stalled (g=0 t=0 errs=28/28); waiting 90s + best-effort adapter reload (server may have restarted)
+2026-08-22T17:09:54Z [loop] round=2 stalled (g=0 t=0 errs=28/28); waiting 90s + best-effort adapter reload (server may have restarted)
+2026-08-22T17:11:24Z [loop] round=2 stalled (g=0 t=0 errs=28/28); waiting 90s + best-effort adapter reload (server may have restarted)
+2026-08-22T17:26:50Z [loop] round=2 fool=0.4932 fool_best=0.5748 fool_win=0.348 valid=0.958 t_valid=0.964 agree_exact=0.143 agree_tok=0.450 tt_exact=0.115 tt_tok=0.416 g_self_tok=0.528 typ_lp=-0.3213 think_len=932 winners=28 g=g_r2(eff=0.2614) dver=v0 errs=0+0 wall=835s
+2026-08-22T17:39:20Z [loop] round=3 fool=0.5196 fool_best=0.6158 fool_win=0.366 valid=0.976 t_valid=0.982 agree_exact=0.214 agree_tok=0.472 tt_exact=0.333 tt_tok=0.570 g_self_tok=0.426 typ_lp=-0.3349 think_len=979 winners=28 g=g_r3(eff=0.0979) dver=v0 errs=0+0 wall=749s
+2026-08-22T17:50:50Z [loop] D UPDATE dver=v3 held_live=0.4127 held_ctrl=0.2903 held_tt=0.377 p(l/c/t)=0.5031/0.4975/0.4976 n=63 probe_delta=0.0982 eff_vs_base=0.2995 train_acc=0.325 pairs=84 wall=690s
+2026-08-22T18:03:12Z [loop] round=4 fool=0.4994 fool_best=0.5109 fool_win=0.299 valid=0.946 t_valid=0.946 agree_exact=0.038 agree_tok=0.384 tt_exact=0.077 tt_tok=0.414 g_self_tok=0.477 typ_lp=-0.3178 think_len=610 winners=26 g=g_r4(eff=0.2916) dver=v3 errs=0+0 wall=743s
+2026-08-22T18:16:01Z [loop] round=5 fool=0.4992 fool_best=0.5123 fool_win=0.267 valid=0.958 t_valid=1.000 agree_exact=0.143 agree_tok=0.444 tt_exact=0.071 tt_tok=0.347 g_self_tok=0.423 typ_lp=-0.3469 think_len=1044 winners=28 g=g_r5(eff=0.1743) dver=v3 errs=0+0 wall=769s
+2026-08-22T18:29:26Z [loop] round=6 fool=0.5016 fool_best=0.5197 fool_win=0.373 valid=0.976 t_valid=0.964 agree_exact=0.148 agree_tok=0.503 tt_exact=0.154 tt_tok=0.497 g_self_tok=0.521 typ_lp=-0.3114 think_len=818 winners=27 g=g_r6(eff=1.7020) dver=v3 errs=0+0 wall=805s
+2026-08-22T18:30:00Z [loop] round=6 D train FAILED rc=1; keeping v3
+2026-08-22T18:41:58Z [loop] round=7 fool=0.5043 fool_best=0.5233 fool_win=0.273 valid=0.958 t_valid=0.964 agree_exact=0.222 agree_tok=0.468 tt_exact=0.148 tt_tok=0.415 g_self_tok=0.458 typ_lp=-0.4291 think_len=357 winners=27 g=g_r7(eff=0.1178) dver=v3 errs=0+0 wall=717s
+2026-08-22T18:49:45Z [infra] watchdog: driver dead -- relaunching
+2026-08-22T18:50:12Z [loop] resumed at round=7 g=g_r7 d=v3
+2026-08-22T18:52:55Z [loop] round=8 g_sft FAILED rc=1; keeping g_r7
+2026-08-22T18:52:55Z [loop] round=8 fool=0.4974 fool_best=0.5101 fool_win=0.323 valid=0.952 t_valid=0.964 agree_exact=0.192 agree_tok=0.441 tt_exact=0.115 tt_tok=0.401 g_self_tok=0.491 typ_lp=-0.3413 think_len=858 winners=26 g=kept dver=v3 errs=0+0 wall=162s
+2026-08-22T19:02:41Z [loop] round=9 fool=0.5011 fool_best=0.5124 fool_win=0.333 valid=0.982 t_valid=0.946 agree_exact=0.111 agree_tok=0.357 tt_exact=0.080 tt_tok=0.414 g_self_tok=0.412 typ_lp=-0.3810 think_len=878 winners=27 g=g_r9(eff=0.2511) dver=v3 errs=0+0 wall=586s
+2026-08-22T19:23:34Z [loop] D UPDATE dver=v9 held_live=0.322 held_ctrl=0.4483 held_tt=0.3443 p(l/c/t)=0.5003/0.5072/0.5033 n=59 probe_delta=0.0362 eff_vs_base=0.3491 train_acc=0.425 pairs=245 wall=1253s
+2026-08-22T19:35:09Z [loop] round=10 fool=0.4983 fool_best=0.5201 fool_win=0.253 valid=0.988 t_valid=1.000 agree_exact=0.179 agree_tok=0.509 tt_exact=0.179 tt_tok=0.425 g_self_tok=0.468 typ_lp=-0.3477 think_len=631 winners=28 g=g_r10(eff=3.5571) dver=v9 errs=0+0 wall=695s
+2026-08-22T19:45:44Z [loop] round=11 fool=0.5104 fool_best=0.5305 fool_win=0.325 valid=0.952 t_valid=0.964 agree_exact=0.148 agree_tok=0.455 tt_exact=0.185 tt_tok=0.469 g_self_tok=0.529 typ_lp=-0.2993 think_len=607 winners=27 g=g_r11(eff=0.2329) dver=v9 errs=0+0 wall=635s
+2026-08-22T19:57:22Z [loop] round=12 fool=0.5040 fool_best=0.5213 fool_win=0.327 valid=1.000 t_valid=0.982 agree_exact=0.286 agree_tok=0.520 tt_exact=0.259 tt_tok=0.603 g_self_tok=0.638 typ_lp=-0.2251 think_len=332 winners=28 g=g_r12(eff=0.3707) dver=v9 errs=0+0 wall=698s
+2026-08-22T20:24:06Z [loop] D UPDATE dver=v12 held_live=0.2623 held_ctrl=0.2623 held_tt=0.3833 p(l/c/t)=0.4958/0.4901/0.4787 n=61 probe_delta=0.0158 eff_vs_base=0.3316 train_acc=0.5125 pairs=328 wall=1604s
+2026-08-22T20:27:03Z [fix] loop PAUSED for constrained-scoring deploy + trainer diagnostics (v12 held_live=0.26 despite 3x think-len gap -> judge readout suspect)
+2026-08-22T20:30:07Z [fix] trainer audit (a): supervised next-token targets=[32, 33] (['A', 'B']); prompt ends with closed think + awaiting single letter; slot flips randomize (see driver.log for decoded examples)
+2026-08-22T20:30:07Z [fix] length-probe last400(all rounds): n=328 mean_think ref=705 mine=761 | longer-is-teacher acc=0.500 | 1D-logistic acc=0.500 (w=-0.086)
+2026-08-22T20:30:07Z [fix] length-probe rounds>=10(drifted): n=83 mean_think ref=667 mine=524 | longer-is-teacher acc=0.687 | 1D-logistic acc=0.687 (w=0.236)
+2026-08-22T20:31:33Z [fix] CONSTRAINED-SCORING deployed; fresh held samples (n live/ctrl/tt = 60/59/61, valid t/g/g0 = 0.969/0.984/0.938, wall=81s) saved to remeasure_held_pairs.json
+2026-08-22T20:31:57Z [fix] re-measured v9 held_live: NEW acc=0.55 p=0.5033 n=60 | OLD acc=0.3833 p=0.5018 exact0.5=17 miss=26 of 120 calls
+2026-08-22T20:32:17Z [fix] re-measured v9 held_ctrl: NEW acc=0.5593 p=0.5019 n=59 | OLD acc=0.4576 p=0.5053 exact0.5=18 miss=26 of 118 calls
+2026-08-22T20:32:41Z [fix] re-measured v9 held_tt: NEW acc=0.4918 p=0.4993 n=61 | OLD acc=0.3934 p=0.498 exact0.5=17 miss=26 of 122 calls
+2026-08-22T20:33:03Z [fix] re-measured v12 held_live: NEW acc=0.5 p=0.5007 n=60 | OLD acc=0.4333 p=0.508 exact0.5=12 miss=18 of 120 calls
+2026-08-22T20:33:26Z [fix] re-measured v12 held_ctrl: NEW acc=0.5254 p=0.5026 n=59 | OLD acc=0.3898 p=0.5106 exact0.5=17 miss=20 of 118 calls
+2026-08-22T20:33:49Z [fix] re-measured v12 held_tt: NEW acc=0.4098 p=0.506 n=61 | OLD acc=0.377 p=0.5064 exact0.5=16 miss=16 of 122 calls
+2026-08-22T20:34:21Z [fix] re-measured rounds [10, 11, 12, 13] G-best pairs under v9: NEW d_acc=0.2771 p_teacher=0.4803 (fool=0.5197) n=83 | OLD d_acc=0.0482 p=0.4782 exact0.5=35 miss=59
+2026-08-22T20:34:53Z [fix] re-measured rounds [10, 11, 12, 13] G-best pairs under v12: NEW d_acc=0.4699 p_teacher=0.5043 (fool=0.4957) n=83 | OLD d_acc=0.1807 p=0.5009 exact0.5=36 miss=48
+2026-08-22T21:07:10Z [fix] re-measured vf13 held_live: NEW acc=0.55 p=0.5203 n=60
+2026-08-22T21:07:25Z [fix] re-measured vf13 held_ctrl: NEW acc=0.4576 p=0.4839 n=59
+2026-08-22T21:07:40Z [fix] re-measured vf13 held_tt: NEW acc=0.5246 p=0.5142 n=61
+2026-08-22T21:08:07Z [fix] re-measured rounds [10, 11, 12] G-best pairs under vf13: NEW d_acc=0.8675 p_teacher=0.6648 (fool=0.3352) n=83 | OLD d_acc=0.5904 p=0.6652 exact0.5=28 miss=53
+2026-08-22T21:09:19Z [fix] FORCED D UPDATE dver=vf13 FROM-SCRATCH on 83 drifted pairs (r10-12): train_acc=0.7875 (80 steps, 8ep) vs 0.5125 warm-start v12 -- recipe was the bottleneck, not the data. Held (constrained scoring, same fresh pairs as v9/v12 remeasure): held_live=0.55 held_ctrl=0.4576 held_tt=0.5246. On the r10-12 winner pairs: d_acc=0.8675 fool=0.3352 (was 0.28 acc under v9).
+2026-08-22T21:09:19Z [verdict-correction] v12 verdict: judge READOUT was broken (top-20 miss 15-35% of calls -> 0.5 fallbacks; accs biased BELOW chance) AND warm-start D recipe too weak (v12 train_acc 0.51 vs length-probe 0.687 on same pairs). Round-0 LEAK-FREE conclusion SURVIVES (numeric identity check; corrected held accs 0.41-0.56 ~ chance, ctrl/tt still chance under strong vf13). KEY REFRAME: think_len 1040->332 was WINNERS-ONLY; fresh unconditional g_r12 thoughts = 660 chars vs teacher 720 (mild drift, held_live 0.55 under strong D). Arms race now ENGAGED via vf13 (d_acc 0.87 on drifted winner distribution); from-scratch D updates every 3rd round (200 steps, 300-pair window, 4ep) from here. Watch: fool on winners should drop, winner think_len should recover, r15 SWE proxy on schedule.
+2026-08-22T21:09:19Z [infra] watchdog: driver dead -- relaunching
+2026-08-22T21:09:47Z [loop] resumed at round=12 g=g_r12 d=vf13
+2026-08-22T21:19:37Z [loop] round=13 fool=0.4926 fool_best=0.6608 fool_win=0.512 valid=0.976 t_valid=0.982 agree_exact=0.036 agree_tok=0.310 tt_exact=0.037 tt_tok=0.346 g_self_tok=0.468 typ_lp=-0.2425 think_len=666 winners=28 g=g_r13(eff=0.4415) dver=vf13 errs=0+0 wall=591s
+82 agree_exact=0.286 agree_tok=0.528 tt_exact=0.185 tt_tok=0.492 g_self_tok=0.534 typ_lp=-0.2979 think_len=491 winners=28 g=g_r20(eff=1.4312) dver=v18 errs=0+0 wall=696s
+2026-08-23T00:16:29Z [loop] round=21 fool=0.4899 fool_best=0.5333 fool_win=0.414 valid=0.970 t_valid=0.982 agree_exact=0.148 agree_tok=0.469 tt_exact=0.185 tt_tok=0.529 g_self_tok=0.562 typ_lp=-0.2997 think_len=409 winners=27 g=g_r21(eff=0.5863) dver=v18 errs=0+0 wall=564s
+2026-08-23T01:01:28Z [loop] D UPDATE dver=v21 held_live=0.6 held_ctrl=0.4098 held_tt=0.3443 p(l/c/t)=0.4973/0.4933/0.4945 n=60 probe_delta=0.0107 eff_vs_base=0.2947 train_acc=0.4 pairs=300 wall=2698s
+2026-08-23T01:12:04Z [loop] round=22 fool=0.4951 fool_best=0.5249 fool_win=0.424 valid=0.982 t_valid=1.000 agree_exact=0.250 agree_tok=0.520 tt_exact=0.143 tt_tok=0.443 g_self_tok=0.486 typ_lp=-0.2925 think_len=814 winners=28 g=g_r22(eff=9.7844) dver=v21 errs=0+0 wall=637s
+2026-08-23T01:22:03Z [loop] round=23 fool=0.4940 fool_best=0.5201 fool_win=0.335 valid=0.976 t_valid=0.911 agree_exact=0.154 agree_tok=0.487 tt_exact=0.200 tt_tok=0.560 g_self_tok=0.474 typ_lp=-0.3709 think_len=424 winners=26 g=g_r23(eff=10.9281) dver=v21 errs=0+0 wall=599s
+2026-08-23T01:32:49Z [loop] round=24 fool=0.4969 fool_best=0.5186 fool_win=0.455 valid=0.994 t_valid=0.982 agree_exact=0.071 agree_tok=0.386 tt_exact=0.037 tt_tok=0.361 g_self_tok=0.467 typ_lp=-0.3707 think_len=494 winners=28 g=g_r24(eff=1.7355) dver=v21 errs=0+0 wall=645s
+2026-08-23T02:17:30Z [loop] D UPDATE dver=v24 held_live=0.5323 held_ctrl=0.3871 held_tt=0.4839 p(l/c/t)=0.5036/0.4942/0.4961 n=62 probe_delta=0.0484 eff_vs_base=0.3351 train_acc=0.4625 pairs=300 wall=2682s
+2026-08-23T02:26:55Z [loop] round=25 fool=0.4940 fool_best=0.5368 fool_win=0.413 valid=0.994 t_valid=1.000 agree_exact=0.179 agree_tok=0.497 tt_exact=0.179 tt_tok=0.463 g_self_tok=0.624 typ_lp=-0.3119 think_len=325 winners=28 g=g_r25(eff=1.9900) dver=v24 errs=0+0 wall=565s
+2026-08-23T02:36:57Z [loop] round=26 fool=0.5084 fool_best=0.5490 fool_win=0.565 valid=1.000 t_valid=1.000 agree_exact=0.071 agree_tok=0.436 tt_exact=0.071 tt_tok=0.554 g_self_tok=0.502 typ_lp=-0.2708 think_len=329 winners=28 g=g_r26(eff=1.2194) dver=v24 errs=0+0 wall=602s
+2026-08-23T02:47:49Z [loop] round=27 fool=0.5118 fool_best=0.5550 fool_win=0.599 valid=0.994 t_valid=1.000 agree_exact=0.107 agree_tok=0.458 tt_exact=0.143 tt_tok=0.507 g_self_tok=0.569 typ_lp=-0.3429 think_len=360 winners=28 g=g_r27(eff=0.2463) dver=v24 errs=0+0 wall=652s
+2026-08-23T03:32:47Z [loop] D UPDATE dver=v27 held_live=0.5902 held_ctrl=0.5833 held_tt=0.75 p(l/c/t)=0.5036/0.5161/0.5278 n=61 probe_delta=0.0945 eff_vs_base=0.2394 train_acc=0.5625 pairs=300 wall=2698s
+2026-08-23T03:42:12Z [loop] round=28 fool=0.4933 fool_best=0.5591 fool_win=0.426 valid=0.994 t_valid=0.964 agree_exact=0.148 agree_tok=0.537 tt_exact=0.111 tt_tok=0.476 g_self_tok=0.604 typ_lp=-0.1902 think_len=476 winners=27 g=g_r28(eff=2.2621) dver=v27 errs=0+0 wall=564s
+2026-08-23T03:46:59Z [sweep] night-sweep M2: proxy_r15 crashed (mini-extra not on driver PATH; g_r15 since pruned) -- symlinked /usr/local/bin/mini-extra -> benchenv so the scheduled proxy_r30 runs automatically
+2026-08-23T03:47:24Z [sweep] night-sweep M2: swerunner eval_cmd patched python->sys.executable (bare python would miss benchenv swebench pkg); backup swerunner.py.sweep_bak
+2026-08-23T03:51:38Z [loop] round=29 fool=0.4947 fool_best=0.5598 fool_win=0.425 valid=0.982 t_valid=0.964 agree_exact=0.154 agree_tok=0.511 tt_exact=0.192 tt_tok=0.559 g_self_tok=0.513 typ_lp=-0.3492 think_len=434 winners=26 g=g_r29(eff=2.3569) dver=v27 errs=0+0 wall=566s
+2026-08-23T04:01:24Z [loop] round=30 fool=0.4826 fool_best=0.5449 fool_win=0.389 valid=1.000 t_valid=0.964 agree_exact=0.111 agree_tok=0.456 tt_exact=0.077 tt_tok=0.450 g_self_tok=0.548 typ_lp=-0.2569 think_len=531 winners=27 g=g_r30(eff=0.9365) dver=v27 errs=0+0 wall=585s
+2026-08-23T04:47:07Z [loop] D UPDATE dver=v30 held_live=0.7119 held_ctrl=0.6034 held_tt=0.5254 p(l/c/t)=0.525/0.5052/0.5067 n=59 probe_delta=0.0266 eff_vs_base=0.2755 train_acc=0.5875 pairs=300 wall=2743s
+2026-08-23T04:47:07Z [loop] BENCH launching SWE proxy panel on g_r30 (loop paused)
+2026-08-23T04:47:07Z [eval] BENCH start tag=proxy_r30 model=g_r30 n=16
+2026-08-23T04:58:01Z [eval] BENCH tag=proxy_r30 score=0.1875 resolved=3/16 wall=653.5s (baselines: base35B=0.1333 teacher27B=0.3133 on full panel)
+2026-08-23T05:08:58Z [loop] round=31 fool=0.4900 fool_best=0.5449 fool_win=0.391 valid=0.988 t_valid=0.982 agree_exact=0.148 agree_tok=0.486 tt_exact=0.222 tt_tok=0.521 g_self_tok=0.653 typ_lp=-0.2435 think_len=410 winners=27 g=g_r31(eff=3.9215) dver=v30 errs=0+0 wall=658s
+2026-08-23T05:19:47Z [loop] round=32 fool=0.4907 fool_best=0.5324 fool_win=0.396 valid=0.946 t_valid=0.875 agree_exact=0.080 agree_tok=0.524 tt_exact=0.083 tt_tok=0.430 g_self_tok=0.571 typ_lp=-0.3595 think_len=488 winners=25 g=g_r32(eff=17.6582) dver=v30 errs=0+0 wall=649s
+2026-08-23T05:29:38Z [loop] round=33 fool=0.5030 fool_best=0.5465 fool_win=0.522 valid=0.988 t_valid=0.929 agree_exact=0.222 agree_tok=0.465 tt_exact=0.040 tt_tok=0.413 g_self_tok=0.566 typ_lp=-0.2942 think_len=576 winners=27 g=g_r33(eff=0.8310) dver=v30 errs=0+0 wall=591s
+2026-08-23T06:15:25Z [loop] D UPDATE dver=v33 held_live=0.5574 held_ctrl=0.5 held_tt=0.5 p(l/c/t)=0.5042/0.4953/0.4969 n=61 probe_delta=0.0246 eff_vs_base=0.2399 train_acc=0.4625 pairs=300 wall=2747s
+2026-08-23T06:26:39Z [loop] round=34 fool=0.4918 fool_best=0.5562 fool_win=0.405 valid=1.000 t_valid=1.000 agree_exact=0.143 agree_tok=0.505 tt_exact=0.071 tt_tok=0.438 g_self_tok=0.632 typ_lp=-0.2033 think_len=435 winners=28 g=g_r34(eff=5.9739) dver=v33 errs=0+0 wall=674s
+2026-08-23T06:37:11Z [loop] round=35 fool=0.4783 fool_best=0.5398 fool_win=0.333 valid=1.000 t_valid=0.982 agree_exact=0.222 agree_tok=0.540 tt_exact=0.111 tt_tok=0.384 g_self_tok=0.463 typ_lp=-0.2432 think_len=328 winners=27 g=g_r35(eff=8.6368) dver=v33 errs=0+0 wall=632s
+2026-08-23T06:48:34Z [loop] round=36 fool=0.4734 fool_best=0.5390 fool_win=0.395 valid=0.994 t_valid=0.982 agree_exact=0.111 agree_tok=0.402 tt_exact=0.148 tt_tok=0.496 g_self_tok=0.577 typ_lp=-0.3238 think_len=759 winners=27 g=g_r36(eff=4.2040) dver=v33 errs=0+0 wall=683s
+2026-08-23T07:33:48Z [loop] D UPDATE dver=v36 held_live=0.7119 held_ctrl=0.3621 held_tt=0.4828 p(l/c/t)=0.5114/0.4914/0.5012 n=59 probe_delta=0.0601 eff_vs_base=0.3102 train_acc=0.6 pairs=300 wall=2714s
+2026-08-23T07:43:54Z [loop] round=37 fool=0.4880 fool_best=0.5240 fool_win=0.389 valid=1.000 t_valid=0.964 agree_exact=0.148 agree_tok=0.462 tt_exact=0.115 tt_tok=0.460 g_self_tok=0.616 typ_lp=-0.3983 think_len=412 winners=27 g=g_r37(eff=1.0893) dver=v36 errs=0+0 wall=606s
+2026-08-23T07:56:10Z [loop] round=38 fool=0.4925 fool_best=0.5290 fool_win=0.457 valid=1.000 t_valid=0.964 agree_exact=0.148 agree_tok=0.422 tt_exact=0.148 tt_tok=0.338 g_self_tok=0.558 typ_lp=-0.3439 think_len=410 winners=27 g=g_r38(eff=4.4874) dver=v36 errs=0+0 wall=736s
+2026-08-23T08:06:46Z [loop] round=39 fool=0.4642 fool_best=0.5231 fool_win=0.265 valid=1.000 t_valid=0.964 agree_exact=0.148 agree_tok=0.441 tt_exact=0.115 tt_tok=0.411 g_self_tok=0.620 typ_lp=-0.2444 think_len=411 winners=27 g=g_r39(eff=1.0588) dver=v36 errs=0+0 wall=635s
+2026-08-23T08:51:09Z [loop] D UPDATE dver=v39 held_live=0.661 held_ctrl=0.4483 held_tt=0.4912 p(l/c/t)=0.5131/0.4934/0.4974 n=59 probe_delta=0.0169 eff_vs_base=0.3114 train_acc=0.525 pairs=300 wall=2664s
+2026-08-23T09:02:32Z [loop] round=40 fool=0.4927 fool_best=0.5355 fool_win=0.368 valid=0.970 t_valid=0.946 agree_exact=0.179 agree_tok=0.442 tt_exact=0.280 tt_tok=0.467 g_self_tok=0.536 typ_lp=-0.3133 think_len=489 winners=28 g=g_r40(eff=2.1333) dver=v39 errs=0+0 wall=682s
+2026-08-23T09:13:37Z [loop] round=41 fool=0.4916 fool_best=0.5280 fool_win=0.355 valid=0.988 t_valid=0.946 agree_exact=0.214 agree_tok=0.446 tt_exact=0.160 tt_tok=0.366 g_self_tok=0.691 typ_lp=-0.3949 think_len=465 winners=28 g=g_r41(eff=5.8006) dver=v39 errs=0+0 wall=666s
+2026-08-23T09:26:26Z [loop] round=42 fool=0.4860 fool_best=0.5287 fool_win=0.290 valid=1.000 t_valid=0.929 agree_exact=0.259 agree_tok=0.514 tt_exact=0.200 tt_tok=0.443 g_self_tok=0.485 typ_lp=-0.3454 think_len=301 winners=27 g=g_r42(eff=2.1275) dver=v39 errs=0+0 wall=769s
+2026-08-23T10:10:53Z [loop] D UPDATE dver=v42 held_live=0.7049 held_ctrl=0.5085 held_tt=0.4407 p(l/c/t)=0.5317/0.5092/0.493 n=61 probe_delta=0.0350 eff_vs_base=0.2223 train_acc=0.5625 pairs=300 wall=2667s
+2026-08-23T10:21:54Z [loop] round=43 fool=0.4694 fool_best=0.5406 fool_win=0.268 valid=1.000 t_valid=1.000 agree_exact=0.107 agree_tok=0.406 tt_exact=0.071 tt_tok=0.414 g_self_tok=0.473 typ_lp=-0.2917 think_len=460 winners=28 g=g_r43(eff=2.1535) dver=v42 errs=0+0 wall=660s
+2026-08-23T10:33:07Z [loop] round=44 fool=0.4740 fool_best=0.5417 fool_win=0.329 valid=0.994 t_valid=0.946 agree_exact=0.231 agree_tok=0.453 tt_exact=0.120 tt_tok=0.461 g_self_tok=0.472 typ_lp=-0.3073 think_len=204 winners=26 g=g_r44(eff=3.9035) dver=v42 errs=0+0 wall=674s
+2026-08-23T10:44:57Z [loop] round=45 fool=0.4703 fool_best=0.5338 fool_win=0.383 valid=1.000 t_valid=0.964 agree_exact=0.148 agree_tok=0.416 tt_exact=0.154 tt_tok=0.422 g_self_tok=0.594 typ_lp=-0.3033 think_len=310 winners=27 g=g_r45(eff=8.0792) dver=v42 errs=0+0 wall=709s
+2026-08-23T11:28:57Z [loop] D UPDATE dver=v45 held_live=0.5167 held_ctrl=0.541 held_tt=0.4754 p(l/c/t)=0.5075/0.5032/0.4947 n=60 probe_delta=0.0238 eff_vs_base=0.2749 train_acc=0.5 pairs=300 wall=2640s
+2026-08-23T11:28:57Z [loop] BENCH launching SWE proxy panel on g_r45 (loop paused)
+2026-08-23T11:28:57Z [eval] BENCH start tag=proxy_r45 model=g_r45 n=16
+2026-08-23T11:37:57Z [eval] BENCH tag=proxy_r45 score=0.0625 resolved=1/16 wall=539.6s (baselines: base35B=0.1333 teacher27B=0.3133 on full panel)
+2026-08-23T11:47:36Z [loop] round=46 fool=0.4703 fool_best=0.5385 fool_win=0.375 valid=1.000 t_valid=0.982 agree_exact=0.143 agree_tok=0.465 tt_exact=0.222 tt_tok=0.566 g_self_tok=0.717 typ_lp=-0.3379 think_len=359 winners=28 g=g_r46(eff=5.6923) dver=v45 errs=0+0 wall=579s
+2026-08-23T12:00:11Z [loop] round=47 fool=0.4650 fool_best=0.5016 fool_win=0.277 valid=0.994 t_valid=0.929 agree_exact=0.115 agree_tok=0.477 tt_exact=0.125 tt_tok=0.438 g_self_tok=0.645 typ_lp=-0.3973 think_len=500 winners=26 g=g_r47(eff=10.6642) dver=v45 errs=0+0 wall=755s
+2026-08-23T12:09:00Z [loop] round=48 fool=0.4762 fool_best=0.5470 fool_win=0.381 valid=1.000 t_valid=1.000 agree_exact=0.286 agree_tok=0.520 tt_exact=0.143 tt_tok=0.391 g_self_tok=0.639 typ_lp=-0.2153 think_len=396 winners=28 g=g_r48(eff=2.7399) dver=v45 errs=0+0 wall=529s
+2026-08-23T12:53:09Z [loop] D UPDATE dver=v48 held_live=0.7213 held_ctrl=0.4355 held_tt=0.6452 p(l/c/t)=0.5731/0.5005/0.53 n=61 probe_delta=0.0336 eff_vs_base=0.2398 train_acc=0.5875 pairs=300 wall=2650s
+2026-08-23T13:05:40Z [loop] round=49 fool=0.4421 fool_best=0.4940 fool_win=0.329 valid=0.958 t_valid=0.964 agree_exact=0.148 agree_tok=0.492 tt_exact=0.111 tt_tok=0.440 g_self_tok=0.559 typ_lp=-0.2797 think_len=479 winners=27 g=g_r49(eff=1.5679) dver=v48 errs=0+0 wall=751s
+2026-08-23T13:16:14Z [loop] round=50 fool=0.4613 fool_best=0.5334 fool_win=0.339 valid=1.000 t_valid=1.000 agree_exact=0.107 agree_tok=0.438 tt_exact=0.179 tt_tok=0.405 g_self_tok=0.626 typ_lp=-0.4020 think_len=705 winners=28 g=g_r50(eff=7.1623) dver=v48 errs=0+0 wall=634s
+2026-08-23T13:27:25Z [loop] round=51 fool=0.4275 fool_best=0.5101 fool_win=0.238 valid=1.000 t_valid=0.982 agree_exact=0.143 agree_tok=0.386 tt_exact=0.111 tt_tok=0.400 g_self_tok=0.705 typ_lp=-0.3815 think_len=511 winners=28 g=g_r51(eff=4.9131) dver=v48 errs=0+0 wall=671s
