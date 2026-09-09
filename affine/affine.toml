@@ -41,6 +41,10 @@ min_submission_block = 8938619
 # 11→12 forfeit floor (2026-09-05): a turn with no parseable action scores
 # forfeit_turn_score (−0.1) instead of leaving the pairing; one-sided =
 # loss, two-sided = tie. min(R,G) unchanged. Forward-only; reign stands.
+# 12→13 think-close forfeit + text dialect (2026-09-09): a rollout without
+# </think> forfeits (require_think_close), and the visible final reply of
+# a self-ended rollout is a scored action (allowed_action_kinds += text).
+# min(R,G) math unchanged. Forward-only; reign stands.
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -48,7 +52,7 @@ min_submission_block = 8938619
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 12
+weight_version_key = 13
 
 [wallet]
 name = "default"
@@ -317,7 +321,15 @@ refresh_interval_s = 3600
 # boxed (math, affine-math-v1) and tool_call (wiki search, affine-wiki-v1)
 # admitted; target slice shares math 0.10 / tool_use 0.10 via strata count.
 # Notice posted 2026-09-02 (llms.txt "Upcoming fork", Discord, dashboard).
-allowed_action_kinds = ["bash", "tool_call", "boxed"]
+# 2026-09-09 (weight_version_key 12→13, explicit dated operator directive):
+# text admitted — the visible final reply of a rollout that stopped by
+# itself (agent_completed, untruncated) is an action; the reply the
+# model chose to end on. Fed by the traces already published (bash /
+# pi / claude_code harness reports, wiki answers): no new rollouts, the
+# next fold picks them up. Why: min(R,G) never scored the visible
+# message, so kings learned to say nothing outside <think>
+# (SWE-bench Pro / Claude Code post-mortem 2026-09-08).
+allowed_action_kinds = ["bash", "tool_call", "boxed", "text"]
 
 [duel]
 # min(R,G) v5 — centered Reason + banded Grounding (2026-08-27,
@@ -451,7 +463,7 @@ forfeit_turn_score = -0.1
 #     of turns (which a miner cannot predict), and a 2% forfeit rate costs
 #     exactly one δ (0.002) of margin. Absent = legacy drop (wvk ≤ 11 replay).
 # ---------------------------------------------------------------------------
-# ---- v7 candidate (built 2026-09-07; staged, NOT live) --------------------
+# ---- v7 (built 2026-09-07; LIVE 2026-09-09, weight_version_key 13) ---------
 #   require_think_close = true   a miner rollout that never emits </think>
 #     is a forfeit (scores forfeit_turn_score, same as no parseable action).
 #     Why: every OpenAI-compatible client that separates reasoning from the
@@ -466,7 +478,9 @@ forfeit_turn_score = -0.1
 #     turns score: weight_version_key event, explicit dated operator
 #     directive required. Until then the per-side </think> rate is
 #     published on every verdict (king/challenger.think_close_rate).
-require_think_close = false
+# 2026-09-09 (weight_version_key 12→13, explicit dated operator directive):
+# on. A reply that never closes </think> scores forfeit_turn_score.
+require_think_close = true
 # Ops: skip prior-bank and non-Reason forced-logprob echos (telemetry GPU).
 score_bank = false
 reason_only = true
@@ -574,7 +588,11 @@ max_model_len = 131072
 # 2026-09-08: shadow (operator directive after the SWE-bench Pro / Claude
 # Code post-mortem: the king answers compaction and final-report prompts
 # with reasoning only and no visible text). Enforce follows a verdict read.
-mode = "shadow"
+# 2026-09-09: enforce, with the wvk 13 flip (operator directive "make all the
+# changes and flip the bit"). Shadow read on 18 verdicts (chal-00348..365):
+# pass_rate 0.00–1.00, median 0.6, 1/18 at ≥ 0.90; every failure was
+# no_think_close. Admission rule (no wvk); min_pass_rate is the dial.
+mode = "enforce"
 min_pass_rate = 0.9
 n_samples = 2          # completions per prompt (10 prompts -> 20 replies)
 temperature = 0.7
