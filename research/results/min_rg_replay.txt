@@ -1,0 +1,15 @@
+ADVERSARY PANEL chal-01093 (n_turns=1261, band = mu +/- max(2.0*sd, 0.002))
+kind      median m-mu   median G   %G>0     mean G
+ref-LOO       0.00104    0.01602  65.6%    0.02619
+king         -0.24087   -0.17560   9.4%   -0.17257
+chall        -0.36865   -0.30606   2.8%   -0.29832
+parrot        0.09243   -0.03137  30.5%   -0.03709
+boiler       -0.27445   -0.21095   9.8%   -0.17782
+swap         -0.36279   -0.30396   7.1%   -0.31506
+
+DUEL REPLAYS  turn = min(centered R, G)   (delta ref: 0.002; z at 2.0 sigma)
+challenge   challenger              stored   cenR z  minRG margin  minRG z
+chal-01074  active-king               lose     4.98       0.07112    10.36
+chal-01093  tojointhecommunity         WIN    -2.65      -0.12134   -55.51
+chal-01113  afgod1079                 lose    15.25       0.28639    78.07
+chal-01115  isomsom                   lose     1.49      -0.02795   -15.04

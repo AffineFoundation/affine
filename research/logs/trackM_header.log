@@ -5,3 +5,16 @@
 [trackM] crown rule: challenger fool >= king fool + 0.03 over >= 400 paired turns (reject at 800); D retrained from scratch on full archive + high-fool replay at each crown, held-out gate band 0.6-0.9
 [trackM] paths (eval box): /dshare/koth/{archive.jsonl,VERSION,d_versions/,submissions/,kings/,state.json,status.log}; (miner box): /dshare/koth/{judges/,m_lora/,miner_state.json,status.log}; data /dshare/gad + /root/work/turns.jsonl.gz
 [trackM] data: SE corpus 27943 turns (trackB pod); teacher rollouts 7174 train / 200 held + king0 base rollouts 7725 (copied from trackA pod calm-raven-5e, same 27B teacher)
+# 2026-08-22 ~21:10Z SCORING CHANGE (user): judge A/B read is now DIRECT
+#   LOGIT READING -- forced-decode raw logprobs of each letter's single-token
+#   variants ("A", " A", ...), summed; score = P(A)/(P(A)+P(B)), both orders
+#   averaged. Answer-first HARD gate (>=0.99) retired; replaced by SOFT
+#   answer-mass health metric mass(A)+mass(B): logged per batch and at every
+#   gate, alarm/refuse only < 0.5. v2 parse-vs-logit agreement on 39 held
+#   pairs: mean|dp|=0.0073 max|dp|=0.0215 verdict_agree=1.000 (legacy top-20
+#   read missed 11/50 pairs even under v2 -- change was overdue).
+#   v3 RE-GATED under logit scoring and PASSED (effect=0.148 held_acc=0.816
+#   pos_bias=0.484 ab_mass=0.585) -> PUBLISHED; reign 3 under v3, king_r3.
+#   Active duel (sub_r0080) stats reset at judge switch, challenger kept.
+#   Caveat: v3 batch mass hovers ~0.4-0.8 -> intermittent informational
+#   alarms; hardened d_train recipe targets this at v4.

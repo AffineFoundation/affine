@@ -1,0 +1,5826 @@
+[
+ {
+  "challenge_id": "chal-00823",
+  "challenger": "alex-drok/affine-5cj9mpkjrr-cpkt6000",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": -0.00022596425527766426,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1222,
+   "margin": -0.00022596425527766426,
+   "se": 0.0006948338810018165,
+   "z": -0.3252061556812218,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1222,
+   "margin": 4.361207764730783e-05,
+   "se": 0.0003473074962624989,
+   "z": 0.1255719445063326,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.012680450335391608,
+  "king_mean_old": 0.012837930865126043,
+  "chall_mean_cen": 0.009784118367134173,
+  "king_mean_cen": 0.00985105757295542
+ },
+ {
+  "challenge_id": "chal-00824",
+  "challenger": "Talucampe037/Affine-5f6xxabdmp-v1",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": 0.00025630190825116873,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1224,
+   "margin": 0.00025630190825116873,
+   "se": 0.0007100248519679816,
+   "z": 0.3609759680112248,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1224,
+   "margin": -0.00026935404833131033,
+   "se": 0.00034925113134626646,
+   "z": -0.7712331447374988,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014118886284867259,
+  "king_mean_old": 0.014330564566960517,
+  "chall_mean_cen": 0.009076125228873792,
+  "king_mean_cen": 0.009506657344097369
+ },
+ {
+  "challenge_id": "chal-00826",
+  "challenger": "ammazon/Affine-5dvqtektxx-sbs-v7",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": -0.00012590182168829543,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1246,
+   "margin": -0.00012590182168829543,
+   "se": 0.000723043375471616,
+   "z": -0.1741276193923692,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1246,
+   "margin": -0.0003240090486485847,
+   "se": 0.00032323829495968525,
+   "z": -1.0023844751717788,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01436940615059849,
+  "king_mean_old": 0.014803218821883166,
+  "chall_mean_cen": 0.009049293075535923,
+  "king_mean_cen": 0.009417206407722253
+ },
+ {
+  "challenge_id": "chal-00829",
+  "challenger": "unconst/Affine-5czsc2fc98-r637-r252-odpo-midrank-lobeta-softctx-ep3-lolr-merged",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": -0.00028553948265390135,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1242,
+   "margin": -0.00028553948265390135,
+   "se": 0.0008747643342061897,
+   "z": -0.3264187524437835,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1242,
+   "margin": -0.0007203555863818464,
+   "se": 0.0004017160879780822,
+   "z": -1.7931957617319754,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.013007868492681334,
+  "king_mean_old": 0.013508101060007787,
+  "chall_mean_cen": 0.009465135517281082,
+  "king_mean_cen": 0.01039620058977848
+ },
+ {
+  "challenge_id": "chal-00831",
+  "challenger": "llorite/affine-5cjfxpsxn8-tpc13",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": 0.00048261766769629427,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1213,
+   "margin": 0.00048261766769629427,
+   "se": 0.0007990511931432938,
+   "z": 0.6039884200632768,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1213,
+   "margin": 9.360550317365239e-06,
+   "se": 0.0003088594911152155,
+   "z": 0.030306824257096972,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.013713425977615313,
+  "king_mean_old": 0.013035305359841574,
+  "chall_mean_cen": 0.009053113997204858,
+  "king_mean_cen": 0.00925511771908122
+ },
+ {
+  "challenge_id": "chal-00832",
+  "challenger": "windsword8989/Affine-5Hg5nxaqeQ-notecom",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": 0.0003005519123412552,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1220,
+   "margin": 0.0003005519123412552,
+   "se": 0.0006860981241977065,
+   "z": 0.43805966193641416,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1220,
+   "margin": -0.0008514330970869552,
+   "se": 0.00037968624832334963,
+   "z": -2.242464932155918,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014470328388489334,
+  "king_mean_old": 0.014039149056269786,
+  "chall_mean_cen": 0.009864727249067938,
+  "king_mean_cen": 0.010701295812578579
+ },
+ {
+  "challenge_id": "chal-00833",
+  "challenger": "alex-drok/affine-5fknrenir8-mind",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": 0.000426110163895873,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1230,
+   "margin": 0.000426110163895873,
+   "se": 0.0007325325655985861,
+   "z": 0.5816944992031565,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1230,
+   "margin": -0.00044609894449250707,
+   "se": 0.0003739229568375931,
+   "z": -1.1930236866581645,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.013405776294534382,
+  "king_mean_old": 0.013502132142956607,
+  "chall_mean_cen": 0.009679009683461687,
+  "king_mean_cen": 0.010431575790103509
+ },
+ {
+  "challenge_id": "chal-00839",
+  "challenger": "Shatoria/Affine-5ghntktyzq-hope14",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": -0.0006074564403032381,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1231,
+   "margin": -0.0006074564403032381,
+   "se": 0.0006681119299913554,
+   "z": -0.9092135808907018,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1231,
+   "margin": -0.0007518419390006595,
+   "se": 0.0003844415643356242,
+   "z": -1.9556728739775087,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.012841395924264934,
+  "king_mean_old": 0.013123303094785963,
+  "chall_mean_cen": 0.009325378338676738,
+  "king_mean_cen": 0.01010660818516233
+ },
+ {
+  "challenge_id": "chal-00842",
+  "challenger": "Attila115/Affine-5esaheajl6-dpo",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": 0.00022493686346984073,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1246,
+   "margin": 0.00022493686346984073,
+   "se": 0.0006957613372464887,
+   "z": 0.3232960088872428,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1246,
+   "margin": -0.00040237802764766454,
+   "se": 0.0002952607207750391,
+   "z": -1.362788882284951,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.011976921007452202,
+  "king_mean_old": 0.012133539646664722,
+  "chall_mean_cen": 0.008483800866408871,
+  "king_mean_cen": 0.009104306114236982
+ },
+ {
+  "challenge_id": "chal-00844",
+  "challenger": "Tok331102/affine-5EqYW8McUc-af27",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": -0.009763610749557696,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1186,
+   "margin": -0.009763610749557696,
+   "se": 0.001867521052812063,
+   "z": -5.228112815572233,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1186,
+   "margin": 0.012812188961687529,
+   "se": 0.001096144189523732,
+   "z": 11.688415706745976,
+   "wins_2sigma": true,
+   "wins": true
+  },
+  "chall_mean_old": 0.0052969303010498205,
+  "king_mean_old": 0.01424979605071884,
+  "chall_mean_cen": 0.022861143990475476,
+  "king_mean_cen": 0.01017644082786592
+ },
+ {
+  "challenge_id": "chal-00851",
+  "challenger": "isomsom/Affine-5d7gxm8jak-rc1",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": -0.0010174149601573173,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1239,
+   "margin": -0.0010174149601573173,
+   "se": 0.0007430230195302043,
+   "z": -1.3692913051342668,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1239,
+   "margin": -0.00043651716874771544,
+   "se": 0.00044699733343903314,
+   "z": -0.9765543015420536,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.012941644398412113,
+  "king_mean_old": 0.014211397696016141,
+  "chall_mean_cen": 0.008819373882341207,
+  "king_mean_cen": 0.009345698220211729
+ },
+ {
+  "challenge_id": "chal-00856",
+  "challenger": "thompsville/affine-5dvegrgnsg-cgpb13",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": 0.0002546622246390256,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1210,
+   "margin": 0.0002546622246390256,
+   "se": 0.0007303831144696409,
+   "z": 0.3486693758301704,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1210,
+   "margin": -0.00022045427028086502,
+   "se": 0.00036133694053957854,
+   "z": -0.6101072034087195,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.013706680542228306,
+  "king_mean_old": 0.013424348385132623,
+  "chall_mean_cen": 0.009225065504094052,
+  "king_mean_cen": 0.00954200279774874
+ },
+ {
+  "challenge_id": "chal-00858",
+  "challenger": "magicworld7/affine-5dtu4gucst-onlyu",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": 0.0002627683559817316,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1210,
+   "margin": 0.0002627683559817316,
+   "se": 0.0006462860764768703,
+   "z": 0.40658210898519287,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1210,
+   "margin": 0.00047001458394528784,
+   "se": 0.0003497962847559417,
+   "z": 1.3436808920747239,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.013655250245620887,
+  "king_mean_old": 0.013525419810643877,
+  "chall_mean_cen": 0.010549164935505378,
+  "king_mean_cen": 0.010099105941809381
+ },
+ {
+  "challenge_id": "chal-00860",
+  "challenger": "unconst/Affine-5czsc2fc98-r683-r252-odpo-midrank-hibeta-shortctx-ultraextra-ep3-lolr-merged",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": 4.700160743542967e-05,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1221,
+   "margin": 4.700160743542967e-05,
+   "se": 0.0007158760196373825,
+   "z": 0.06565607192602667,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1221,
+   "margin": -0.0015085023282029404,
+   "se": 0.00043476339114664763,
+   "z": -3.469708717250565,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.012582788705509104,
+  "king_mean_old": 0.012872896959444446,
+  "chall_mean_cen": 0.009576779753999502,
+  "king_mean_cen": 0.011325664485281264
+ },
+ {
+  "challenge_id": "chal-00862",
+  "challenger": "IntoLayer/Affine-5g94ihdxwu-v5a",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": 0.00019349470820382545,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1232,
+   "margin": 0.00019349470820382545,
+   "se": 0.0007239457818335558,
+   "z": 0.26727789989155887,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1232,
+   "margin": -0.0006647473696518984,
+   "se": 0.00035852540745002825,
+   "z": -1.8541150943243871,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.013629981148208712,
+  "king_mean_old": 0.013349112584957528,
+  "chall_mean_cen": 0.0100096822200478,
+  "king_mean_cen": 0.010744496499810373
+ },
+ {
+  "challenge_id": "chal-00865",
+  "challenger": "thrivepath/Affine-5DczYgY8r1-summit",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": 0.0011133950424394396,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1235,
+   "margin": 0.0011133950424394396,
+   "se": 0.0006170621362091079,
+   "z": 1.8043483420965178,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1235,
+   "margin": 3.862365339050151e-05,
+   "se": 0.0004206879409722496,
+   "z": 0.09181069773770693,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01603742624519861,
+  "king_mean_old": 0.014864907925700232,
+  "chall_mean_cen": 0.010250886054655763,
+  "king_mean_cen": 0.010185931496838734
+ },
+ {
+  "challenge_id": "chal-00866",
+  "challenger": "llorite/affine-5cjfxpsxn8-tpc14",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": 0.0010871862627443204,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1242,
+   "margin": 0.0010871862627443204,
+   "se": 0.0007445919288167141,
+   "z": 1.4601101901172204,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1242,
+   "margin": -7.660754304241509e-05,
+   "se": 0.0004350430880196542,
+   "z": -0.17609185193847776,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015929122351556864,
+  "king_mean_old": 0.014958079245967414,
+  "chall_mean_cen": 0.010077917900773949,
+  "king_mean_cen": 0.010152852702997364
+ },
+ {
+  "challenge_id": "chal-00869",
+  "challenger": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "king": "cryptoDev23/Affine-5Dku3dYp9j-hk8161",
+  "stored_margin": 0.0033276719642269122,
+  "stored_wins": true,
+  "rejection": null,
+  "old": {
+   "n": 1245,
+   "margin": 0.0033276719642269122,
+   "se": 0.000993815503823878,
+   "z": 3.3483800075799945,
+   "wins_2sigma": true,
+   "wins": true
+  },
+  "centered": {
+   "n": 1245,
+   "margin": 0.00014943220447748387,
+   "se": 0.0003767767033331675,
+   "z": 0.39660680492059874,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01785118127925474,
+  "king_mean_old": 0.014224064616939158,
+  "chall_mean_cen": 0.010175848876710167,
+  "king_mean_cen": 0.010259462876442648
+ },
+ {
+  "challenge_id": "chal-00873",
+  "challenger": "vikingL08/Affine-5grxdkmnwt-glory",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.0012888213807865422,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1262,
+   "margin": 0.0012888213807865422,
+   "se": 0.0010619121531593321,
+   "z": 1.2136798481419808,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1262,
+   "margin": 0.0005521768746942743,
+   "se": 0.0005232461366919066,
+   "z": 1.0552908774162675,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017053394490527223,
+  "king_mean_old": 0.015819450353161634,
+  "chall_mean_cen": 0.010694273015436712,
+  "king_mean_cen": 0.010145688428158007
+ },
+ {
+  "challenge_id": "chal-00874",
+  "challenger": "darius3th/Affine-5fknrenir8-6lbw19ym",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": -0.0011596032015167477,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1261,
+   "margin": -0.0011596032015167477,
+   "se": 0.0007247164029209215,
+   "z": -1.6000785919058045,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1261,
+   "margin": -0.00068274946394034,
+   "se": 0.000373682993444553,
+   "z": -1.8270819810311925,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014707608879338908,
+  "king_mean_old": 0.016199749546633144,
+  "chall_mean_cen": 0.009375607022798887,
+  "king_mean_cen": 0.010061338443727235
+ },
+ {
+  "challenge_id": "chal-00875",
+  "challenger": "Sansaliu/Affine-5dm33ngrnj-v8",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": -0.0014881734597528358,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1245,
+   "margin": -0.0014881734597528358,
+   "se": 0.0006340053152466629,
+   "z": -2.3472570717705334,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1245,
+   "margin": -0.00016594197588728492,
+   "se": 0.0002937792331883985,
+   "z": -0.5648526415101218,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014942725488482881,
+  "king_mean_old": 0.016391907540315304,
+  "chall_mean_cen": 0.010029622090599844,
+  "king_mean_cen": 0.010233569831491351
+ },
+ {
+  "challenge_id": "chal-00877",
+  "challenger": "thompsville/affine-5dvegrgnsg-cgpb14",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.0008716635379262697,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1265,
+   "margin": 0.0008716635379262697,
+   "se": 0.0005845680387585219,
+   "z": 1.4911241808181432,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1265,
+   "margin": 0.00013074633408720443,
+   "se": 0.0003113952164271326,
+   "z": 0.4198726479724182,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015575109343189805,
+  "king_mean_old": 0.014484978543716415,
+  "chall_mean_cen": 0.00950533619442724,
+  "king_mean_cen": 0.009525970377764422
+ },
+ {
+  "challenge_id": "chal-00882",
+  "challenger": "Talucampe037/Affine-5f6xxabdmp-l1",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": -0.0026415041470983836,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1222,
+   "margin": -0.0026415041470983836,
+   "se": 0.0008856031390604489,
+   "z": -2.9827176876324075,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1222,
+   "margin": 3.0888140024592906e-05,
+   "se": 0.00044597180257937647,
+   "z": 0.06926029817567955,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01279692363395209,
+  "king_mean_old": 0.014963107444763247,
+  "chall_mean_cen": 0.00980744088308187,
+  "king_mean_cen": 0.009770936311744345
+ },
+ {
+  "challenge_id": "chal-00883",
+  "challenger": "thompsville/affine-5dvegrgnsg-cgpb15",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.001247828584279546,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1262,
+   "margin": 0.001247828584279546,
+   "se": 0.0005850016569046901,
+   "z": 2.133034273581289,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "centered": {
+   "n": 1262,
+   "margin": 0.00039941333220870027,
+   "se": 0.00027870269367514887,
+   "z": 1.4331161530654226,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015416134476659956,
+  "king_mean_old": 0.014315326669673308,
+  "chall_mean_cen": 0.009435746370403043,
+  "king_mean_cen": 0.008855696425737018
+ },
+ {
+  "challenge_id": "chal-00886",
+  "challenger": "unconstai/Affine-5HYy4T6gXS-1787023806",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": -0.0006304135313506224,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1272,
+   "margin": -0.0006304135313506224,
+   "se": 0.0007232568092036868,
+   "z": -0.8716316574256856,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1272,
+   "margin": -0.0006275163931830364,
+   "se": 0.0004304457831637877,
+   "z": -1.4578291104881425,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014958069390362629,
+  "king_mean_old": 0.015509142908104876,
+  "chall_mean_cen": 0.00971245534231934,
+  "king_mean_cen": 0.010350885277895482
+ },
+ {
+  "challenge_id": "chal-00888",
+  "challenger": "pandora-box/Affine-5eqdtdzqle-diz",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.0004629572053246199,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1255,
+   "margin": 0.0004629572053246199,
+   "se": 0.0005893398529299178,
+   "z": 0.7855521784637787,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1255,
+   "margin": 8.277317137169165e-05,
+   "se": 0.0002538393458002365,
+   "z": 0.32608487510376544,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016287688063090472,
+  "king_mean_old": 0.015582282428493549,
+  "chall_mean_cen": 0.009920959595562301,
+  "king_mean_cen": 0.009973042770298346
+ },
+ {
+  "challenge_id": "chal-00889",
+  "challenger": "elonmasky/Affine-5cj9mpkjrr-e9uw2za6",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.0004824904399779806,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1264,
+   "margin": 0.0004824904399779806,
+   "se": 0.0006282561428360846,
+   "z": 0.7679836408760191,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1264,
+   "margin": 0.0001263731254923293,
+   "se": 0.00032785347484958285,
+   "z": 0.3854561113018812,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01492595522989205,
+  "king_mean_old": 0.014578550311399846,
+  "chall_mean_cen": 0.009379720645777193,
+  "king_mean_cen": 0.009049488659972953
+ },
+ {
+  "challenge_id": "chal-00890",
+  "challenger": "Shatoria/Affine-5ghntktyzq-hope99",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.001569826490309315,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1270,
+   "margin": 0.001569826490309315,
+   "se": 0.000893177967304386,
+   "z": 1.757574131667238,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1270,
+   "margin": 4.8749281022551994e-05,
+   "se": 0.00048486952891743006,
+   "z": 0.1005410282873306,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016515760240087978,
+  "king_mean_old": 0.014898140484034072,
+  "chall_mean_cen": 0.010471597575935994,
+  "king_mean_cen": 0.01038727778303316
+ },
+ {
+  "challenge_id": "chal-00894",
+  "challenger": "0xgevdhc/affine-5dpmave72j-v8",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.00020850585956227379,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1275,
+   "margin": 0.00020850585956227379,
+   "se": 0.0009055718571040589,
+   "z": 0.23024772460250437,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1275,
+   "margin": 0.0006302334582208717,
+   "se": 0.0004345232680004774,
+   "z": 1.4504020949694674,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014651865708801481,
+  "king_mean_old": 0.01469801285300396,
+  "chall_mean_cen": 0.00908743380052365,
+  "king_mean_cen": 0.00856195911729866
+ },
+ {
+  "challenge_id": "chal-00896",
+  "challenger": "yukimero/affine-5cimu84ak1-six",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": -0.0008841434460839516,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1257,
+   "margin": -0.0008841434460839516,
+   "se": 0.0005824223876201748,
+   "z": -1.5180450904310763,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1257,
+   "margin": -0.00012441272242282706,
+   "se": 0.00026314919978368304,
+   "z": -0.47278396637762243,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014134445101488638,
+  "king_mean_old": 0.015096729454512795,
+  "chall_mean_cen": 0.008769495032043956,
+  "king_mean_cen": 0.008863765553726193
+ },
+ {
+  "challenge_id": "chal-00897",
+  "challenger": "isomsom/Affine-5eqvcfqpuo-m1",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.0005131827393202395,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1254,
+   "margin": 0.0005131827393202395,
+   "se": 0.0010198523019410886,
+   "z": 0.5031931960574065,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1254,
+   "margin": -3.233602371213956e-05,
+   "se": 0.0004024222471186903,
+   "z": -0.08035346938113584,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014856761416733758,
+  "king_mean_old": 0.014539791137813477,
+  "chall_mean_cen": 0.008969673051869145,
+  "king_mean_cen": 0.008868106991086876
+ },
+ {
+  "challenge_id": "chal-00899",
+  "challenger": "0pentensor/Affine-5dkbdyucyr-awesome-v1_lora",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.0010506895398293347,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1277,
+   "margin": 0.0010506895398293347,
+   "se": 0.0009806117841376716,
+   "z": 1.0714633016095028,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1277,
+   "margin": 0.00010200033331195357,
+   "se": 0.00042292641752652514,
+   "z": 0.2411774934952043,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015659001556879045,
+  "king_mean_old": 0.014790191565093822,
+  "chall_mean_cen": 0.00913801418797308,
+  "king_mean_cen": 0.00903106370886731
+ },
+ {
+  "challenge_id": "chal-00901",
+  "challenger": "isomsom/Affine-5ewxqvvui1-m2",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.0005669661729177329,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1272,
+   "margin": 0.0005669661729177329,
+   "se": 0.000939882274424956,
+   "z": 0.6032310517448766,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1272,
+   "margin": 0.0007578165995958029,
+   "se": 0.0005366128879539573,
+   "z": 1.4122221374243724,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016382281841735048,
+  "king_mean_old": 0.0158740009583585,
+  "chall_mean_cen": 0.009804558127618448,
+  "king_mean_cen": 0.009074989037097726
+ },
+ {
+  "challenge_id": "chal-00904",
+  "challenger": "Sansaliu/Affine-5dm33ngrnj-pass",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.001007714881431803,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1271,
+   "margin": 0.001007714881431803,
+   "se": 0.0009656610587365859,
+   "z": 1.0435492581115757,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1271,
+   "margin": 7.023584983154313e-05,
+   "se": 0.0004664835049439893,
+   "z": 0.15056448746237308,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01550944308569335,
+  "king_mean_old": 0.01438924712814841,
+  "chall_mean_cen": 0.00979094622818868,
+  "king_mean_cen": 0.009551251027972722
+ },
+ {
+  "challenge_id": "chal-00905",
+  "challenger": "Talucampe037/Affine-5f6xxabdmp-l2",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 3.84214491565154e-05,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1267,
+   "margin": 3.84214491565154e-05,
+   "se": 0.000895836033877391,
+   "z": 0.042888930232263874,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1267,
+   "margin": 9.604299260111975e-05,
+   "se": 0.0004369047657740301,
+   "z": 0.21982592117293084,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014464121783050158,
+  "king_mean_old": 0.014621404147297208,
+  "chall_mean_cen": 0.009386873668899343,
+  "king_mean_cen": 0.009284914793451664
+ },
+ {
+  "challenge_id": "chal-00908",
+  "challenger": "vikingL08/Affine-5e5db5vwqr-theking",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": -0.0003160744517091542,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1275,
+   "margin": -0.0003160744517091542,
+   "se": 0.0011034879803470583,
+   "z": -0.2864321654049603,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1275,
+   "margin": -0.00023232869665830525,
+   "se": 0.00041224896932994686,
+   "z": -0.5635640448923938,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01488444880105399,
+  "king_mean_old": 0.015157350031469664,
+  "chall_mean_cen": 0.009361296919394904,
+  "king_mean_cen": 0.009484052407296861
+ },
+ {
+  "challenge_id": "chal-00909",
+  "challenger": "Tok331102/affine-5EqYW8McUc-final30",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.0009956816842427454,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1260,
+   "margin": 0.0009956816842427454,
+   "se": 0.00063641670490559,
+   "z": 1.5645121766413266,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1260,
+   "margin": 5.883067264233706e-05,
+   "se": 0.00036609978708379847,
+   "z": 0.16069573028424353,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016734443368618103,
+  "king_mean_old": 0.015905619352293825,
+  "chall_mean_cen": 0.010114760241252426,
+  "king_mean_cen": 0.01000034070910442
+ },
+ {
+  "challenge_id": "chal-00912",
+  "challenger": "afgod1079/Affine-5fzrs3xw7j-cp4000",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.00027154989163291984,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1271,
+   "margin": 0.00027154989163291984,
+   "se": 0.0005732725288561632,
+   "z": 0.47368376812811314,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1271,
+   "margin": 8.193404964704184e-05,
+   "se": 0.00036541826888739044,
+   "z": 0.22421990530607858,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015813890687611076,
+  "king_mean_old": 0.015515718281090184,
+  "chall_mean_cen": 0.009933998409177058,
+  "king_mean_cen": 0.009922951056313982
+ },
+ {
+  "challenge_id": "chal-00913",
+  "challenger": "m3s2er/Affine-5HbRsvxynL-v1",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": -0.00016434815046969384,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1272,
+   "margin": -0.00016434815046969384,
+   "se": 0.0010850965075428556,
+   "z": -0.15145947786879496,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1272,
+   "margin": -0.00047486663914929935,
+   "se": 0.0005138404610765053,
+   "z": -0.9241519014568158,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016913152134425548,
+  "king_mean_old": 0.017162798845935533,
+  "chall_mean_cen": 0.00980747848068536,
+  "king_mean_cen": 0.010182548565806474
+ },
+ {
+  "challenge_id": "chal-00916",
+  "challenger": "Shatoria/Affine-5ghntktyzq-hope88",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.00041962100340821876,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1268,
+   "margin": 0.00041962100340821876,
+   "se": 0.0005897976385195352,
+   "z": 0.7114660622608108,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1268,
+   "margin": 0.0004910238618737053,
+   "se": 0.000275015649882471,
+   "z": 1.7854397089167333,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015121483108673454,
+  "king_mean_old": 0.01467958086045509,
+  "chall_mean_cen": 0.00986469420576971,
+  "king_mean_cen": 0.009332423828178988
+ },
+ {
+  "challenge_id": "chal-00918",
+  "challenger": "nothink123/Affine-5fknrenir8-kpkp",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": -0.00024752042189937366,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1259,
+   "margin": -0.00024752042189937366,
+   "se": 0.0005441279142906294,
+   "z": -0.45489381338221174,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1259,
+   "margin": 0.00016946696188734357,
+   "se": 0.00028177788814660285,
+   "z": 0.6014203704982473,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015169992770240772,
+  "king_mean_old": 0.01541684534908006,
+  "chall_mean_cen": 0.010444145411160283,
+  "king_mean_cen": 0.01027476172944059
+ },
+ {
+  "challenge_id": "chal-00919",
+  "challenger": "qriuzagnadisfo/affine-5CUNAQpoWU-ttt",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.0005341197615294664,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1262,
+   "margin": 0.0005341197615294664,
+   "se": 0.0006357584385555323,
+   "z": 0.8401300386087004,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1262,
+   "margin": -5.763322451266541e-05,
+   "se": 0.0003235627179520964,
+   "z": -0.17812072069810603,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01498642800251277,
+  "king_mean_old": 0.014463883838255429,
+  "chall_mean_cen": 0.009374901770613347,
+  "king_mean_cen": 0.009396541317470315
+ },
+ {
+  "challenge_id": "chal-00922",
+  "challenger": "thompsville/affine-5dvegrgnsg-cgpb16",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": -0.00012022483887499369,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1274,
+   "margin": -0.00012022483887499369,
+   "se": 0.0005539352060522762,
+   "z": -0.21703772853110148,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1274,
+   "margin": -0.00012004970683333768,
+   "se": 0.00027889687030835093,
+   "z": -0.43044479739270514,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014182234877808344,
+  "king_mean_old": 0.014507108974711032,
+  "chall_mean_cen": 0.00865231954319154,
+  "king_mean_cen": 0.008712150632624503
+ },
+ {
+  "challenge_id": "chal-00924",
+  "challenger": "vera6/affine-5g4yy75zuz-t5",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.001540303423064566,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1275,
+   "margin": 0.001540303423064566,
+   "se": 0.000799290211430795,
+   "z": 1.9270890610649374,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1275,
+   "margin": 0.00016943340988039162,
+   "se": 0.0004570944119467892,
+   "z": 0.3706748659620795,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01743033819797098,
+  "king_mean_old": 0.016312120973295798,
+  "chall_mean_cen": 0.010259785557227962,
+  "king_mean_cen": 0.010056821591141686
+ },
+ {
+  "challenge_id": "chal-00925",
+  "challenger": "vera6/affine-5g4yy75zuz-t6",
+  "king": "tammyfritz/Affine-5hmwhnfbix-tammy2",
+  "stored_margin": 0.0035164056749879442,
+  "stored_wins": true,
+  "rejection": null,
+  "old": {
+   "n": 1278,
+   "margin": 0.0035164056749879442,
+   "se": 0.0007758628289046461,
+   "z": 4.532251764080983,
+   "wins_2sigma": true,
+   "wins": true
+  },
+  "centered": {
+   "n": 1278,
+   "margin": -0.00014632412284528668,
+   "se": 0.00039072079124058114,
+   "z": -0.3744979180163196,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01954133128486121,
+  "king_mean_old": 0.016233242761781227,
+  "chall_mean_cen": 0.010381801545816843,
+  "king_mean_cen": 0.010546908060668731
+ },
+ {
+  "challenge_id": "chal-00927",
+  "challenger": "unconstai/Affine-5HYy4T6gXS-1787074522",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0004395975930335356,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": 0.0004395975930335356,
+   "se": 0.0005672438125955813,
+   "z": 0.7749711557399542,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": 0.00023199816715245548,
+   "se": 0.0003312008889468606,
+   "z": 0.7004756777379252,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015228469881917202,
+  "king_mean_old": 0.014800271804018845,
+  "chall_mean_cen": 0.00950656117357774,
+  "king_mean_cen": 0.009282096798333955
+ },
+ {
+  "challenge_id": "chal-00928",
+  "challenger": "elonmasky/Affine-5cj9mpkjrr-ruban",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 4.1157798802011556e-05,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1286,
+   "margin": 4.1157798802011556e-05,
+   "se": 0.0006906635554429333,
+   "z": 0.05959167597256007,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1286,
+   "margin": -0.00045079129806762,
+   "se": 0.0003574597373434525,
+   "z": -1.2610967081713407,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.0171244217136633,
+  "king_mean_old": 0.017235537084542365,
+  "chall_mean_cen": 0.009924656096944892,
+  "king_mean_cen": 0.010475520367400177
+ },
+ {
+  "challenge_id": "chal-00933",
+  "challenger": "diane613/affine-5gedzafcvg-onlyu",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0004761913539850997,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": -0.0004761913539850997,
+   "se": 0.0005728972473209511,
+   "z": -0.831198537280326,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": 2.4853926411211582e-05,
+   "se": 0.00025386919277702995,
+   "z": 0.09790052167944799,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01653867881687942,
+  "king_mean_old": 0.017012144515271884,
+  "chall_mean_cen": 0.009297423726607974,
+  "king_mean_cen": 0.009260946373448362
+ },
+ {
+  "challenge_id": "chal-00934",
+  "challenger": "unconst/Affine-5czsc2fc98-r861-vera-odpo-midrank-midbeta-softctx-megaextra-ep4-ultralolr-merged",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0011824155395741619,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": 0.0011824155395741619,
+   "se": 0.0006456751737665944,
+   "z": 1.8312854320794967,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": -9.139650107845763e-05,
+   "se": 0.00029088496099416574,
+   "z": -0.31420153440071025,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017702379955283475,
+  "king_mean_old": 0.016561501227529755,
+  "chall_mean_cen": 0.008885200906493801,
+  "king_mean_cen": 0.008989116899439792
+ },
+ {
+  "challenge_id": "chal-00935",
+  "challenger": "syntaxs0cerer/Affine-5fqbxvz29b-x5r0bcb7",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0012322156545294051,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1290,
+   "margin": 0.0012322156545294051,
+   "se": 0.0006786477091754783,
+   "z": 1.8156926456386084,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1290,
+   "margin": 3.0251882393704497e-05,
+   "se": 0.0003522439591922025,
+   "z": 0.08588332490663808,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01678379000441849,
+  "king_mean_old": 0.015563816666653938,
+  "chall_mean_cen": 0.009485836703296308,
+  "king_mean_cen": 0.009462594258275534
+ },
+ {
+  "challenge_id": "chal-00936",
+  "challenger": "ammazon/Affine-5dvqtektxx-sbs-v9",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0001549555905650191,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1287,
+   "margin": 0.0001549555905650191,
+   "se": 0.0005883135154848702,
+   "z": 0.2633894793957086,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1287,
+   "margin": -0.00011714027584833681,
+   "se": 0.00033451562905344444,
+   "z": -0.3501787829160643,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015433349121958179,
+  "king_mean_old": 0.015265134134900625,
+  "chall_mean_cen": 0.010369265114091027,
+  "king_mean_cen": 0.010478182352045843
+ },
+ {
+  "challenge_id": "chal-00937",
+  "challenger": "pandora-box/Affine-5eqdtdzqle-ko8dsnxa",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0005085173270467059,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": 0.0005085173270467059,
+   "se": 0.0005474349371639495,
+   "z": 0.9289091589242353,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": 9.37635750406358e-05,
+   "se": 0.00026942104769405774,
+   "z": 0.34801874554028694,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014912095074174143,
+  "king_mean_old": 0.014383613723210892,
+  "chall_mean_cen": 0.008783338089554104,
+  "king_mean_cen": 0.00868135212203088
+ },
+ {
+  "challenge_id": "chal-00938",
+  "challenger": "0pentensor/Affine-5dflhtkufw-awesome-v15",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -2.5070010613293392e-05,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1295,
+   "margin": -2.5070010613293392e-05,
+   "se": 0.0005815083623853396,
+   "z": -0.0431120379945295,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1295,
+   "margin": -0.0002289333175311629,
+   "se": 0.0003037632519764814,
+   "z": -0.7536570537797898,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017499774807979797,
+  "king_mean_old": 0.0175379855011096,
+  "chall_mean_cen": 0.009085330145661688,
+  "king_mean_cen": 0.009321279153406449
+ },
+ {
+  "challenge_id": "chal-00939",
+  "challenger": "afgod1079/Affine-5clogq5i6n-cp500",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.00021013897640597776,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1293,
+   "margin": 0.00021013897640597776,
+   "se": 0.0005831962254204585,
+   "z": 0.36032293634012624,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1293,
+   "margin": -0.0006441177732503038,
+   "se": 0.00029447759398066833,
+   "z": -2.1873235397752824,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016100447236589377,
+  "king_mean_old": 0.015916285525959518,
+  "chall_mean_cen": 0.009582117200567654,
+  "king_mean_cen": 0.0102334423122432
+ },
+ {
+  "challenge_id": "chal-00940",
+  "challenger": "diane613/affine-5gedzafcvg-jesusss",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0004507725446343172,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": -0.0004507725446343172,
+   "se": 0.0006249382814530944,
+   "z": -0.7213073002764203,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": -0.00014840094864289615,
+   "se": 0.00032610706364065575,
+   "z": -0.45506818216738254,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017626795878252,
+  "king_mean_old": 0.018083532188591055,
+  "chall_mean_cen": 0.009228425793729575,
+  "king_mean_cen": 0.009374688345761183
+ },
+ {
+  "challenge_id": "chal-00941",
+  "challenger": "Talucampe037/Affine-5f6xxabdmp-v1",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0007676002326133,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1290,
+   "margin": 0.0007676002326133,
+   "se": 0.0005945935887293876,
+   "z": 1.2909662114817242,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1290,
+   "margin": 0.00010931630146967642,
+   "se": 0.00030078634133742424,
+   "z": 0.36343505819981575,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015879815183179852,
+  "king_mean_old": 0.015116040420772749,
+  "chall_mean_cen": 0.010680400539537326,
+  "king_mean_cen": 0.010570160202156686
+ },
+ {
+  "challenge_id": "chal-00942",
+  "challenger": "unint64/Affine-5fudjek6tg-p28",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0007198094103597169,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1290,
+   "margin": -0.0007198094103597169,
+   "se": 0.0007052751770915668,
+   "z": -1.0206078899984639,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1290,
+   "margin": -0.00031930782819277425,
+   "se": 0.00032369158661695583,
+   "z": -0.9864569899082081,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01538367744112052,
+  "king_mean_old": 0.01608809050438651,
+  "chall_mean_cen": 0.008648560067217124,
+  "king_mean_cen": 0.008952936589649529
+ },
+ {
+  "challenge_id": "chal-00943",
+  "challenger": "syntaxs0cerer/Affine-5fqbxvz29b-car",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 6.916919964406201e-05,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": 6.916919964406201e-05,
+   "se": 0.0006284225449776606,
+   "z": 0.11006797925513775,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": -0.00040604255967046217,
+   "se": 0.0002697982048531389,
+   "z": -1.5049861428525295,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01843230671861892,
+  "king_mean_old": 0.018408516447337556,
+  "chall_mean_cen": 0.00915737476150112,
+  "king_mean_cen": 0.00957275595006592
+ },
+ {
+  "challenge_id": "chal-00944",
+  "challenger": "llorite/affine-5cjfxpsxn8-tpc15",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0007907130250000957,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": 0.0007907130250000957,
+   "se": 0.0004888821390992943,
+   "z": 1.617389881448498,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": 3.867696126388543e-05,
+   "se": 0.00029966914141525626,
+   "z": 0.12906554569224116,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015289285385762625,
+  "king_mean_old": 0.014538886347309855,
+  "chall_mean_cen": 0.008818117385778009,
+  "king_mean_cen": 0.0087080035077692
+ },
+ {
+  "challenge_id": "chal-00945",
+  "challenger": "arbosfan/Affine-5cj9mpkjrr-rise",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -6.9233448106842535e-06,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1290,
+   "margin": -6.9233448106842535e-06,
+   "se": 0.0006017892296261718,
+   "z": -0.011504600730367005,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1290,
+   "margin": -0.0005270447137133014,
+   "se": 0.00027335458740590475,
+   "z": -1.9280624434178297,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014902611461189163,
+  "king_mean_old": 0.014891976545047054,
+  "chall_mean_cen": 0.008764216476338252,
+  "king_mean_cen": 0.009284261479599456
+ },
+ {
+  "challenge_id": "chal-00946",
+  "challenger": "thompsville/affine-5dvegrgnsg-cgpb17",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0006090770791809829,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1285,
+   "margin": -0.0006090770791809829,
+   "se": 0.0007069080627057516,
+   "z": -0.8616072037001358,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1285,
+   "margin": -0.0001290728568080006,
+   "se": 0.00034749929374673443,
+   "z": -0.3714334363570589,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016001180494082886,
+  "king_mean_old": 0.01661474768161044,
+  "chall_mean_cen": 0.009032292369296504,
+  "king_mean_cen": 0.00916809387385075
+ },
+ {
+  "challenge_id": "chal-00947",
+  "challenger": "sonata611/Affine-5fknrenir8-hjzings6",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0004724728677464653,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": 0.0004724728677464653,
+   "se": 0.0005913530132799442,
+   "z": 0.7989692402612287,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": -0.00016279763233586743,
+   "se": 0.00026427424889948723,
+   "z": -0.6160177656877386,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017443763637768502,
+  "king_mean_old": 0.017008193332926646,
+  "chall_mean_cen": 0.009228454676181752,
+  "king_mean_cen": 0.009434420149694926
+ },
+ {
+  "challenge_id": "chal-00948",
+  "challenger": "Shatoria/Affine-5ghntktyzq-hope77",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.00034459602565781124,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1290,
+   "margin": -0.00034459602565781124,
+   "se": 0.0006428139237682816,
+   "z": -0.5360743022455585,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1290,
+   "margin": 0.00027324901565276504,
+   "se": 0.00032227550906273745,
+   "z": 0.8478739710859369,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.018216899411354206,
+  "king_mean_old": 0.01866172960188895,
+  "chall_mean_cen": 0.009660679764946849,
+  "king_mean_cen": 0.009459764668191671
+ },
+ {
+  "challenge_id": "chal-00949",
+  "challenger": "unconst/Affine-5czsc2fc98-r938-vera-odpo-midrank-hibeta-softctx-megaextra-ep4-ultralolr-merged",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.000615129115242075,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1290,
+   "margin": -0.000615129115242075,
+   "se": 0.0005471293148528074,
+   "z": -1.1242846956711894,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1290,
+   "margin": -0.00019942150442219274,
+   "se": 0.0002742083408418015,
+   "z": -0.7272627222424448,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017551497790487133,
+  "king_mean_old": 0.018173318137730318,
+  "chall_mean_cen": 0.009449853093488341,
+  "king_mean_cen": 0.009638294149806794
+ },
+ {
+  "challenge_id": "chal-00950",
+  "challenger": "unconstai/Affine-5HYy4T6gXS-1787189841",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.00027828715032442457,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1293,
+   "margin": 0.00027828715032442457,
+   "se": 0.0006576911870061489,
+   "z": 0.4231273823071964,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1293,
+   "margin": 0.000343068776280861,
+   "se": 0.0003110730478334418,
+   "z": 1.1028559969121812,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015607749015011527,
+  "king_mean_old": 0.015375899971391395,
+  "chall_mean_cen": 0.009360281144208739,
+  "king_mean_cen": 0.008978648553626765
+ },
+ {
+  "challenge_id": "chal-00951",
+  "challenger": "unconstai/Affine-5HYy4T6gXS-1787189841-1787189998",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.00017074740069441017,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": 0.00017074740069441017,
+   "se": 0.0007058718493978295,
+   "z": 0.24189575039728906,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": -0.000608938878418422,
+   "se": 0.00029006266181328316,
+   "z": -2.09933562152306,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01647461418966981,
+  "king_mean_old": 0.0162948907051918,
+  "chall_mean_cen": 0.008968953447162871,
+  "king_mean_cen": 0.00957586083545154
+ },
+ {
+  "challenge_id": "chal-00952",
+  "challenger": "0pentensor/Affine-5dkbdyucyr-awesome-v28",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.00047666291671898646,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": -0.00047666291671898646,
+   "se": 0.0006129738818935441,
+   "z": -0.7776235347035048,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": 0.00037164959276792545,
+   "se": 0.0003233903755095003,
+   "z": 1.1492289842652026,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016493449144468774,
+  "king_mean_old": 0.016961600456147377,
+  "chall_mean_cen": 0.009804550840281501,
+  "king_mean_cen": 0.009425894545829686
+ },
+ {
+  "challenge_id": "chal-00953",
+  "challenger": "diceofgod/affine-5fjgc5jhxq-lio",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0005109006271020061,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1294,
+   "margin": 0.0005109006271020061,
+   "se": 0.0008197810865661602,
+   "z": 0.623215923707181,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1294,
+   "margin": 0.00023101129294068306,
+   "se": 0.0004018996289527386,
+   "z": 0.5747984727994084,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015823655864252814,
+  "king_mean_old": 0.015292200783258264,
+  "chall_mean_cen": 0.009723273875537331,
+  "king_mean_cen": 0.009507435983435217
+ },
+ {
+  "challenge_id": "chal-00954",
+  "challenger": "Talucampe037/Affine-5f6xxabdmp-v2",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -4.364304655276225e-05,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1286,
+   "margin": -4.364304655276225e-05,
+   "se": 0.0006883691808603947,
+   "z": -0.06340063989821955,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1286,
+   "margin": 0.00029468683764587725,
+   "se": 0.0003467398111301892,
+   "z": 0.849878866477297,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016314445017252568,
+  "king_mean_old": 0.01635331070885846,
+  "chall_mean_cen": 0.009183272850427027,
+  "king_mean_cen": 0.008882859369781315
+ },
+ {
+  "challenge_id": "chal-00955",
+  "challenger": "diceofgod/affine-5fjgc5jhxq-turtle",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.00010997710029541002,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1294,
+   "margin": 0.00010997710029541002,
+   "se": 0.0006788991756863123,
+   "z": 0.1619932741621494,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1294,
+   "margin": 0.00022959705133399026,
+   "se": 0.0003486515770517691,
+   "z": 0.6585286470678973,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016640681929878876,
+  "king_mean_old": 0.016518533280756226,
+  "chall_mean_cen": 0.009677590883661,
+  "king_mean_cen": 0.009440889032319938
+ },
+ {
+  "challenge_id": "chal-00956",
+  "challenger": "afgod1079/Affine-5fxzhvbpq6-cp700",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.00021722566400442575,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": 0.00021722566400442575,
+   "se": 0.000637872927061549,
+   "z": 0.3405469252396495,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": -0.0006907067813411137,
+   "se": 0.00038207041883821604,
+   "z": -1.807799681120005,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01630888717671843,
+  "king_mean_old": 0.016187588961498238,
+  "chall_mean_cen": 0.008600042382202437,
+  "king_mean_cen": 0.00929443656414127
+ },
+ {
+  "challenge_id": "chal-00957",
+  "challenger": "unconst/Affine-5czsc2fc98-r959-vera-odpo-hirank-midbeta-softctx-megaextra-ep4-ultralolr-merged",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0006588710425135285,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1294,
+   "margin": -0.0006588710425135285,
+   "se": 0.0005689737845371241,
+   "z": -1.1579989455042086,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1294,
+   "margin": 3.750881198943448e-05,
+   "se": 0.0002349460591872286,
+   "z": 0.15964861091602178,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015824625247565012,
+  "king_mean_old": 0.016508877401811648,
+  "chall_mean_cen": 0.008872323213698729,
+  "king_mean_cen": 0.008848509433054532
+ },
+ {
+  "challenge_id": "chal-00958",
+  "challenger": "aurora1001/affine-5cwwlhucdc-notfaraway",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0005981330244978036,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1285,
+   "margin": -0.0005981330244978036,
+   "se": 0.0004646477975974652,
+   "z": -1.2872825989718337,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1285,
+   "margin": -6.442357262807804e-05,
+   "se": 0.00024458033385602696,
+   "z": -0.26340454938622004,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015352928990020083,
+  "king_mean_old": 0.015906205780852303,
+  "chall_mean_cen": 0.009465155732313112,
+  "king_mean_cen": 0.009522196623835941
+ },
+ {
+  "challenge_id": "chal-00959",
+  "challenger": "ammazon/Affine-5dvqtektxx-sbs-v10",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0007319742498208559,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1295,
+   "margin": 0.0007319742498208559,
+   "se": 0.0005588556538127969,
+   "z": 1.3097733642434428,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1295,
+   "margin": -5.67554209442978e-05,
+   "se": 0.0002703200284137298,
+   "z": -0.20995640344278366,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016376125079505262,
+  "king_mean_old": 0.01565926931666823,
+  "chall_mean_cen": 0.00901062351076739,
+  "king_mean_cen": 0.009073871893290456
+ },
+ {
+  "challenge_id": "chal-00960",
+  "challenger": "Sansaliu/Affine-5dm33ngrnj-hopeful",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.00041581653707857915,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1295,
+   "margin": 0.00041581653707857915,
+   "se": 0.0005789447385490408,
+   "z": 0.7182318266173456,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1295,
+   "margin": 0.00024938766757808233,
+   "se": 0.0003198493363140721,
+   "z": 0.7797035643469311,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016889734302919512,
+  "king_mean_old": 0.016473917765840933,
+  "chall_mean_cen": 0.009726024524134486,
+  "king_mean_cen": 0.009476636856556402
+ },
+ {
+  "challenge_id": "chal-00961",
+  "challenger": "unconst/Affine-5czsc2fc98-r1008-vera-odpo-hirank-midbeta-midctx-megaextra-ep4-midlr-merged",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0004680330747393934,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": 0.0004680330747393934,
+   "se": 0.0007501499955502741,
+   "z": 0.6239193194903198,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": 0.00018683264610531324,
+   "se": 0.00037950617505312515,
+   "z": 0.49230462739943426,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016721098338473756,
+  "king_mean_old": 0.01626212953485462,
+  "chall_mean_cen": 0.009345299413205013,
+  "king_mean_cen": 0.009165228508628599
+ },
+ {
+  "challenge_id": "chal-00962",
+  "challenger": "unconstai/Affine-5HYy4T6gXS-1787229988",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.00012649626221348872,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": -0.00012649626221348872,
+   "se": 0.0006272660571515728,
+   "z": -0.20166285226385544,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": -0.00027026208838650423,
+   "se": 0.00036216172275177635,
+   "z": -0.7462469703672698,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016334238296010096,
+  "king_mean_old": 0.016407329699035328,
+  "chall_mean_cen": 0.009661809989576458,
+  "king_mean_cen": 0.009923984380697725
+ },
+ {
+  "challenge_id": "chal-00963",
+  "challenger": "ammazon/Affine-5dvqtektxx-sbs-v11",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0003983662274148521,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1294,
+   "margin": 0.0003983662274148521,
+   "se": 0.0006361751700907898,
+   "z": 0.6261895247467777,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1294,
+   "margin": -5.535752648116454e-05,
+   "se": 0.0003032892207285766,
+   "z": -0.1825238837970631,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016869370361596067,
+  "king_mean_old": 0.016477314116984644,
+  "chall_mean_cen": 0.010354282613810885,
+  "king_mean_cen": 0.01039383565733693
+ },
+ {
+  "challenge_id": "chal-00964",
+  "challenger": "rlchampion/Affine-5csuuetoqu-strong",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0002975631074940852,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1297,
+   "margin": 0.0002975631074940852,
+   "se": 0.000528017846305841,
+   "z": 0.5635474436629728,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1297,
+   "margin": -0.00085028918079423,
+   "se": 0.00028083251475147957,
+   "z": -3.027744780716316,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.0183234560572228,
+  "king_mean_old": 0.018025892949728714,
+  "chall_mean_cen": 0.009044347747092408,
+  "king_mean_cen": 0.009894636927886639
+ },
+ {
+  "challenge_id": "chal-00965",
+  "challenger": "dora7/affine-5fhnbtexaw-redaxe",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0007078519648412863,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": -0.0007078519648412863,
+   "se": 0.0006267702294082234,
+   "z": -1.1293643693153992,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": -0.0005886738684638479,
+   "se": 0.00031638140056388004,
+   "z": -1.8606462561157722,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016362129049189673,
+  "king_mean_old": 0.017072431267071028,
+  "chall_mean_cen": 0.008992722782734504,
+  "king_mean_cen": 0.009585789517284117
+ },
+ {
+  "challenge_id": "chal-00966",
+  "challenger": "afgod1079/Affine-5gbdabmyum-cp1000",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0009245976170423514,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": 0.0009245976170423514,
+   "se": 0.0007186867722862183,
+   "z": 1.2865098575574294,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": 0.00044512498316049456,
+   "se": 0.0003084169852964075,
+   "z": 1.443257033112824,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.020463066830067652,
+  "king_mean_old": 0.019500511114948143,
+  "chall_mean_cen": 0.01089118253047956,
+  "king_mean_cen": 0.010440550551324156
+ },
+ {
+  "challenge_id": "chal-00967",
+  "challenger": "unconst/Affine-5czsc2fc98-r1032-vera-odpo-midrank-hibeta-shortctx-ultraextra-ep4-midlr-merged",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.00142818986302113,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": 0.00142818986302113,
+   "se": 0.000515722406772877,
+   "z": 2.7692996159658847,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": 0.00031207932439997546,
+   "se": 0.00032636596161458826,
+   "z": 0.9562251003629963,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01863452266140181,
+  "king_mean_old": 0.017238170175165258,
+  "chall_mean_cen": 0.010683384480619885,
+  "king_mean_cen": 0.010380318062803078
+ },
+ {
+  "challenge_id": "chal-00968",
+  "challenger": "vikingL08/Affine-5hdm4dumpm-queen",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0009778710254230928,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1284,
+   "margin": 0.0009778710254230928,
+   "se": 0.0005892165726263386,
+   "z": 1.6596122221484524,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1284,
+   "margin": 0.00018913151564326557,
+   "se": 0.00028473630836894687,
+   "z": 0.6642339248080668,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016459670285931427,
+  "king_mean_old": 0.015440759280403761,
+  "chall_mean_cen": 0.008878720450568213,
+  "king_mean_cen": 0.008680211634825009
+ },
+ {
+  "challenge_id": "chal-00969",
+  "challenger": "pandora-box/Affine-5eqdtdzqle-r3",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0004034168397364682,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1295,
+   "margin": 0.0004034168397364682,
+   "se": 0.0006990460868127696,
+   "z": 0.5770961991587805,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1295,
+   "margin": 0.0004533202979462294,
+   "se": 0.00035129392173527423,
+   "z": 1.2904302349069379,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.018124644717913006,
+  "king_mean_old": 0.017799307849312877,
+  "chall_mean_cen": 0.009610762752899168,
+  "king_mean_cen": 0.009158977846755302
+ },
+ {
+  "challenge_id": "chal-00970",
+  "challenger": "vera6/affine-5g4yy75zuz-t7",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0005269764135744936,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": 0.0005269764135744936,
+   "se": 0.0007721851725832925,
+   "z": 0.6824482420602952,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": 0.0008811485597264562,
+   "se": 0.00043628009598637856,
+   "z": 2.019685444815633,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.016952509522749924,
+  "king_mean_old": 0.016444079939035516,
+  "chall_mean_cen": 0.01003387914029152,
+  "king_mean_cen": 0.009153413482531864
+ },
+ {
+  "challenge_id": "chal-00971",
+  "challenger": "vera6/affine-5g4yy75zuz-t8",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0008836803190034536,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": -0.0008836803190034536,
+   "se": 0.000689402691057435,
+   "z": -1.2818057290261333,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": -0.00011212028515349473,
+   "se": 0.00039439081192943064,
+   "z": -0.28428726471842025,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01760379232278984,
+  "king_mean_old": 0.018510654200003755,
+  "chall_mean_cen": 0.009443463579729075,
+  "king_mean_cen": 0.009570150949947164
+ },
+ {
+  "challenge_id": "chal-00972",
+  "challenger": "dives000/affine-5ek5k4rbj7-5cd99622ed",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0012765890251925827,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": -0.0012765890251925827,
+   "se": 0.0007718648474812903,
+   "z": -1.6539022723450647,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": 8.577949690581338e-05,
+   "se": 0.0005085318630960107,
+   "z": 0.1686806729937751,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01833903508753804,
+  "king_mean_old": 0.01958246639442131,
+  "chall_mean_cen": 0.010272978985739872,
+  "king_mean_cen": 0.01017175384150893
+ },
+ {
+  "challenge_id": "chal-00973",
+  "challenger": "unconstai/affine-5funiajncz-c1e709e229",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0008812167269758132,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1294,
+   "margin": -0.0008812167269758132,
+   "se": 0.0007155322298958733,
+   "z": -1.2315542056072735,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1294,
+   "margin": 0.001021620328916327,
+   "se": 0.00042770517227578924,
+   "z": 2.388608778052313,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.015346954503134743,
+  "king_mean_old": 0.016246606058588135,
+  "chall_mean_cen": 0.011264250901413041,
+  "king_mean_cen": 0.010252096240623657
+ },
+ {
+  "challenge_id": "chal-00974",
+  "challenger": "unconst/Affine-5czsc2fc98-r1064-vera-odpo-midrank-midbeta-midctx-ultraextra-ep4-hilr-merged",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0006589959666230279,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1286,
+   "margin": -0.0006589959666230279,
+   "se": 0.0008578962206320923,
+   "z": -0.7681534791439972,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1286,
+   "margin": 0.0019379335667745674,
+   "se": 0.0004425088334603662,
+   "z": 4.379423460589834,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.016200727122652185,
+  "king_mean_old": 0.016849122818442648,
+  "chall_mean_cen": 0.010652972265355724,
+  "king_mean_cen": 0.008711294409532224
+ },
+ {
+  "challenge_id": "chal-00975",
+  "challenger": "alex-drok/affine-5cj9mpkjrr-grape",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0010684556408141592,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1293,
+   "margin": -0.0010684556408141592,
+   "se": 0.0008220045123263146,
+   "z": -1.299817245273235,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1293,
+   "margin": 0.0009669406150506671,
+   "se": 0.00040811739082137813,
+   "z": 2.369270795112651,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.016121673133076674,
+  "king_mean_old": 0.017200621576744415,
+  "chall_mean_cen": 0.009568845611434652,
+  "king_mean_cen": 0.008610047776213124
+ },
+ {
+  "challenge_id": "chal-00976",
+  "challenger": "qriuzagnadisfo/affine-5CUNAQpoWU-asdlkfjasdlfjasdf",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0016197747147655816,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1293,
+   "margin": -0.0016197747147655816,
+   "se": 0.0008330798961898806,
+   "z": -1.9443209735028737,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1293,
+   "margin": 0.00188239220588624,
+   "se": 0.00047176501861221644,
+   "z": 3.9901055220746184,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.015591122000072531,
+  "king_mean_old": 0.0171971545539464,
+  "chall_mean_cen": 0.010639048665714534,
+  "king_mean_cen": 0.008749901851798858
+ },
+ {
+  "challenge_id": "chal-00977",
+  "challenger": "0pentensor/Affine-5dflhtkufw-awesome-v14",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -4.148804724053393e-05,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": -4.148804724053393e-05,
+   "se": 0.0006112325312481903,
+   "z": -0.06787604572651215,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": -0.00032889269304186094,
+   "se": 0.000384061613926459,
+   "z": -0.856353983621071,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01787689118200138,
+  "king_mean_old": 0.01789092261253272,
+  "chall_mean_cen": 0.008932123476925846,
+  "king_mean_cen": 0.009249004822220708
+ },
+ {
+  "challenge_id": "chal-00978",
+  "challenger": "thompsville/affine-5dvegrgnsg-cgpb18",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0001757106449462863,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1293,
+   "margin": -0.0001757106449462863,
+   "se": 0.0005325681734428534,
+   "z": -0.32993080268087166,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1293,
+   "margin": -0.0003671338402210693,
+   "se": 0.0002697519536869365,
+   "z": -1.3610053058119846,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015561007738359939,
+  "king_mean_old": 0.01572250543564644,
+  "chall_mean_cen": 0.008541812822331891,
+  "king_mean_cen": 0.008901816696656883
+ },
+ {
+  "challenge_id": "chal-00979",
+  "challenger": "vikingL08/Affine-5hjbmbbs2g-queen2",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.000564469073203819,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": 0.000564469073203819,
+   "se": 0.0005084652351006201,
+   "z": 1.1101429050348277,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": 0.0003795771536303649,
+   "se": 0.00036212688700369683,
+   "z": 1.04818826564096,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016527560423230392,
+  "king_mean_old": 0.015938817687749997,
+  "chall_mean_cen": 0.010534361057369789,
+  "king_mean_cen": 0.01013911203633606
+ },
+ {
+  "challenge_id": "chal-00981",
+  "challenger": "ringtone-ro/affine-5fxhutxn4p-98f4b79472",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0015678479046410617,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1293,
+   "margin": 0.0015678479046410617,
+   "se": 0.000702201355442966,
+   "z": 2.232761148192351,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "centered": {
+   "n": 1293,
+   "margin": 0.0006148104592306816,
+   "se": 0.0002989913595823523,
+   "z": 2.0562816935227923,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.017064682026604865,
+  "king_mean_old": 0.015511499533545352,
+  "chall_mean_cen": 0.009403641163291551,
+  "king_mean_cen": 0.008796103435045628
+ },
+ {
+  "challenge_id": "chal-00982",
+  "challenger": "fortunateGambler/affine-5cwwlhucdc-bittersweat",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0001772555904372179,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1290,
+   "margin": -0.0001772555904372179,
+   "se": 0.0006475975704862182,
+   "z": -0.27371256242381187,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1290,
+   "margin": -0.00011577699370364356,
+   "se": 0.000328483625590081,
+   "z": -0.35245894980507547,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01589580653115905,
+  "king_mean_old": 0.01604545399711675,
+  "chall_mean_cen": 0.008487913959589324,
+  "king_mean_cen": 0.008593839376498554
+ },
+ {
+  "challenge_id": "chal-00983",
+  "challenger": "llorite/affine-5cjfxpsxn8-tpc16",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0013886437734807573,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1287,
+   "margin": -0.0013886437734807573,
+   "se": 0.0008868027178899421,
+   "z": -1.5658993206345777,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1287,
+   "margin": 0.0011373463584687198,
+   "se": 0.00046508949437797965,
+   "z": 2.4454354962152616,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.014433696340086817,
+  "king_mean_old": 0.015755087090918326,
+  "chall_mean_cen": 0.010455902241213361,
+  "king_mean_cen": 0.009283407000122725
+ },
+ {
+  "challenge_id": "chal-00984",
+  "challenger": "afgod1079/Affine-5fncbzsbwx-cp1100",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0002559284576994515,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": 0.0002559284576994515,
+   "se": 0.0005031352281921415,
+   "z": 0.5086673390353724,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": -0.00032190599466367953,
+   "se": 0.000399742476643209,
+   "z": -0.8052834348925032,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015363611247684041,
+  "king_mean_old": 0.015057567466930342,
+  "chall_mean_cen": 0.008356981594856002,
+  "king_mean_cen": 0.008651831733397682
+ },
+ {
+  "challenge_id": "chal-00985",
+  "challenger": "0xgevdhc/affine-5dpmave72j-v12",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0003411684030793397,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1290,
+   "margin": 0.0003411684030793397,
+   "se": 0.0005475966635400352,
+   "z": 0.6230286373072407,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1290,
+   "margin": -0.0005931832280956846,
+   "se": 0.0003227429452760614,
+   "z": -1.8379432820392074,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016042196520452908,
+  "king_mean_old": 0.015712785508322526,
+  "chall_mean_cen": 0.008870243991233413,
+  "king_mean_cen": 0.00947030064856231
+ },
+ {
+  "challenge_id": "chal-00987",
+  "challenger": "afgod1079/Affine-5esdjfmmtz-cp1200",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -1.3628341820205364e-05,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": -1.3628341820205364e-05,
+   "se": 0.0006249153968233168,
+   "z": -0.021808298994525372,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": -0.00012608237310162847,
+   "se": 0.0003317661972650241,
+   "z": -0.38003381339332276,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01606170660827724,
+  "king_mean_old": 0.016074734737953726,
+  "chall_mean_cen": 0.009625221114975617,
+  "king_mean_cen": 0.00975120394992277
+ },
+ {
+  "challenge_id": "chal-00988",
+  "challenger": "Tok331102/affine-5EqYW8McUc-puma31",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": -0.0007875038704693672,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1294,
+   "margin": -0.0007875038704693672,
+   "se": 0.0005815913502877106,
+   "z": -1.3540501764336637,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1294,
+   "margin": -0.00014348715101646827,
+   "se": 0.0003089659288174596,
+   "z": -0.46441091924165534,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016879939029375877,
+  "king_mean_old": 0.017680425719887573,
+  "chall_mean_cen": 0.009667056017958812,
+  "king_mean_cen": 0.009818013121068947
+ },
+ {
+  "challenge_id": "chal-00989",
+  "challenger": "m3s2er/Affine-5FvjkBqmey-v1",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.00016999637279420542,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1275,
+   "margin": 0.00016999637279420542,
+   "se": 0.0006834142042511155,
+   "z": 0.24874574121632026,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1275,
+   "margin": 0.0007274122900045038,
+   "se": 0.000340170385115776,
+   "z": 2.138376301502352,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.016894032580877284,
+  "king_mean_old": 0.016626947675363705,
+  "chall_mean_cen": 0.009494482275242546,
+  "king_mean_cen": 0.008691082022871598
+ },
+ {
+  "challenge_id": "chal-00990",
+  "challenger": "vikingL08/Affine-5guxjrafay-queen-r2",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.00019092319806647694,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": 0.00019092319806647694,
+   "se": 0.0006615497384731111,
+   "z": 0.2885999146596852,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": 0.00028219802132472557,
+   "se": 0.00037743669656743197,
+   "z": 0.747669805006119,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01787522939833753,
+  "king_mean_old": 0.017764610701469747,
+  "chall_mean_cen": 0.010146757194400505,
+  "king_mean_cen": 0.009865733542152368
+ },
+ {
+  "challenge_id": "chal-00991",
+  "challenger": "syntaxs0cerer/affine-5fqbxvz29b-plane",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0006389154756127011,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": 0.0006389154756127011,
+   "se": 0.00067614700926888,
+   "z": 0.9449357415683352,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": 0.0003059530382536463,
+   "se": 0.00027574203218593674,
+   "z": 1.1095625713215092,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015920886233041512,
+  "king_mean_old": 0.01529575030378521,
+  "chall_mean_cen": 0.00882750256736839,
+  "king_mean_cen": 0.008528313146081212
+ },
+ {
+  "challenge_id": "chal-00992",
+  "challenger": "tammyfritz/Affine-5hmwhnfbix-tammy3",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.00047927496417733413,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1293,
+   "margin": 0.00047927496417733413,
+   "se": 0.0007141394096690605,
+   "z": 0.6711224134786722,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1293,
+   "margin": -4.0208457020128805e-05,
+   "se": 0.00032684563749138437,
+   "z": -0.12301971453172202,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016049264105639727,
+  "king_mean_old": 0.015571347531295424,
+  "chall_mean_cen": 0.009362405577897118,
+  "king_mean_cen": 0.009402576749787568
+ },
+ {
+  "challenge_id": "chal-00993",
+  "challenger": "0pentensor/Affine-5dflhtkufw-awesome-v16",
+  "king": "vera6/affine-5g4yy75zuz-t6",
+  "stored_margin": 0.0015272215279211981,
+  "stored_wins": true,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": 0.0015272215279211981,
+   "se": 0.0005768349660897657,
+   "z": 2.6475883358352714,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": 0.00044154065254591577,
+   "se": 0.0002475426768761166,
+   "z": 1.783695070756975,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.018983523378916345,
+  "king_mean_old": 0.017474273268060506,
+  "chall_mean_cen": 0.009766506731844328,
+  "king_mean_cen": 0.009332061127271927
+ },
+ {
+  "challenge_id": "chal-00995",
+  "challenger": "llorite/affine-5cjfxpsxn8-tpc17",
+  "king": "0pentensor/Affine-5dflhtkufw-awesome-v16",
+  "stored_margin": 0.0007241756953740273,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": 0.0007241756953740273,
+   "se": 0.0004015416210482321,
+   "z": 1.8034884988598512,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": -9.122931490681848e-06,
+   "se": 0.00023259269215401712,
+   "z": -0.03922277783620506,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016545473559284343,
+  "king_mean_old": 0.015797915117493042,
+  "chall_mean_cen": 0.009271106725910831,
+  "king_mean_cen": 0.009266794005744325
+ },
+ {
+  "challenge_id": "chal-00998",
+  "challenger": "vikingL08/Affine-5guxjrafay-queen4",
+  "king": "0pentensor/Affine-5dflhtkufw-awesome-v16",
+  "stored_margin": -0.002896245727055162,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": -0.002896245727055162,
+   "se": 0.0012125510314942513,
+   "z": -2.3885557406075186,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": -1.3330662363668075e-05,
+   "se": 0.0005500716494595567,
+   "z": -0.024234410874956744,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014879797100771624,
+  "king_mean_old": 0.017792631092008893,
+  "chall_mean_cen": 0.010521290287410851,
+  "king_mean_cen": 0.010551069614943905
+ },
+ {
+  "challenge_id": "chal-00999",
+  "challenger": "afgod1079/Affine-5eqgpsdo6a-cp1800",
+  "king": "0pentensor/Affine-5dflhtkufw-awesome-v16",
+  "stored_margin": -0.0008181254361593902,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": -0.0008181254361593902,
+   "se": 0.0007542336136783483,
+   "z": -1.084710918901434,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": -0.000417608100015692,
+   "se": 0.0003261040101702696,
+   "z": -1.280597867525901,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01566812568954437,
+  "king_mean_old": 0.01651457729160756,
+  "chall_mean_cen": 0.008978394860455966,
+  "king_mean_cen": 0.009397572112092014
+ },
+ {
+  "challenge_id": "chal-01000",
+  "challenger": "Tok331102/affine-5EqYW8McUc-happy32",
+  "king": "0pentensor/Affine-5dflhtkufw-awesome-v16",
+  "stored_margin": -0.008545875945763616,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1277,
+   "margin": -0.008545875945763616,
+   "se": 0.001445231981438206,
+   "z": -5.913151698497072,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1277,
+   "margin": 0.0068619482404295344,
+   "se": 0.0007961142080677202,
+   "z": 8.619301314926204,
+   "wins_2sigma": true,
+   "wins": true
+  },
+  "chall_mean_old": 0.00720945348438964,
+  "king_mean_old": 0.015519000165766204,
+  "chall_mean_cen": 0.017134553990681665,
+  "king_mean_cen": 0.010228735842525255
+ },
+ {
+  "challenge_id": "chal-01001",
+  "challenger": "bodenmaurice/affine-5CUNAQpoWU-star",
+  "king": "0pentensor/Affine-5dflhtkufw-awesome-v16",
+  "stored_margin": -0.0008220429051309452,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": -0.0008220429051309452,
+   "se": 0.000606996074450441,
+   "z": -1.3542804306851608,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": -0.0006273895291246921,
+   "se": 0.0002567116951021474,
+   "z": -2.4439460339936963,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014044065508273237,
+  "king_mean_old": 0.01475994350763846,
+  "chall_mean_cen": 0.008472700745869121,
+  "king_mean_cen": 0.009085004085070214
+ },
+ {
+  "challenge_id": "chal-01002",
+  "challenger": "diane613/affine-5gedzafcvg-great",
+  "king": "0pentensor/Affine-5dflhtkufw-awesome-v16",
+  "stored_margin": 0.0005200808439441123,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": 0.0005200808439441123,
+   "se": 0.0006238692852352426,
+   "z": 0.8336375203148608,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": -3.8702559679359264e-05,
+   "se": 0.00030362854927316733,
+   "z": -0.12746680037831193,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017338156866745932,
+  "king_mean_old": 0.016774784219610248,
+  "chall_mean_cen": 0.009560966953912682,
+  "king_mean_cen": 0.009594824872855212
+ },
+ {
+  "challenge_id": "chal-01003",
+  "challenger": "bodenmaurice/affine-5CUNAQpoWU-star-v2",
+  "king": "0pentensor/Affine-5dflhtkufw-awesome-v16",
+  "stored_margin": 0.00015397513044305172,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1296,
+   "margin": 0.00015397513044305172,
+   "se": 0.0006543347079182225,
+   "z": 0.23531554811287075,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1296,
+   "margin": 0.00020821351608853747,
+   "se": 0.0003350509333590006,
+   "z": 0.621438400428035,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.019422833333233233,
+  "king_mean_old": 0.01926517349389116,
+  "chall_mean_cen": 0.010566140508414364,
+  "king_mean_cen": 0.01035778336489716
+ },
+ {
+  "challenge_id": "chal-01004",
+  "challenger": "afgod1079/Affine-5hb2xk3yze-cp2200",
+  "king": "0pentensor/Affine-5dflhtkufw-awesome-v16",
+  "stored_margin": -0.0007803425020308061,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1295,
+   "margin": -0.0007803425020308061,
+   "se": 0.000553848727658758,
+   "z": -1.4089451921817853,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1295,
+   "margin": -0.0006348412426344749,
+   "se": 0.0003017103839369815,
+   "z": -2.1041411778756505,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017396619689605347,
+  "king_mean_old": 0.018190858268773428,
+  "chall_mean_cen": 0.009319494148573792,
+  "king_mean_cen": 0.009961531911786316
+ },
+ {
+  "challenge_id": "chal-01005",
+  "challenger": "vikingL08/Affine-5guxjrafay-prince",
+  "king": "0pentensor/Affine-5dflhtkufw-awesome-v16",
+  "stored_margin": 0.0009675786330828909,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": 0.0009675786330828909,
+   "se": 0.0006563331537250523,
+   "z": 1.4742187372241506,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": -0.0004333381517035817,
+   "se": 0.000249605479895376,
+   "z": -1.736092300077781,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015792494999550426,
+  "king_mean_old": 0.014796996423697395,
+  "chall_mean_cen": 0.00886801255358158,
+  "king_mean_cen": 0.009279818380325966
+ },
+ {
+  "challenge_id": "chal-01006",
+  "challenger": "ttttxxxxsada/Affine-5hmintpj7m",
+  "king": "0pentensor/Affine-5dflhtkufw-awesome-v16",
+  "stored_margin": -0.0005993047054104956,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1294,
+   "margin": -0.0005993047054104956,
+   "se": 0.0005001150438175582,
+   "z": -1.1983336890563958,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1294,
+   "margin": -0.0002199984663196184,
+   "se": 0.00024812021767439327,
+   "z": -0.8866607823483418,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014450776257671199,
+  "king_mean_old": 0.015094557963912373,
+  "chall_mean_cen": 0.00756008769439032,
+  "king_mean_cen": 0.007800277526871292
+ },
+ {
+  "challenge_id": "chal-01007",
+  "challenger": "active-king/affine-5dz2gkonkn-tiger",
+  "king": "0pentensor/Affine-5dflhtkufw-awesome-v16",
+  "stored_margin": -0.0015230171573441446,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1295,
+   "margin": -0.0015230171573441446,
+   "se": 0.0006852558442809192,
+   "z": -2.2225525985004033,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1295,
+   "margin": 3.6680258860192695e-05,
+   "se": 0.0002913833114590478,
+   "z": 0.12588318348268854,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015815557013831475,
+  "king_mean_old": 0.01730867274753625,
+  "chall_mean_cen": 0.009839452022493828,
+  "king_mean_cen": 0.009787670683284986
+ },
+ {
+  "challenge_id": "chal-01008",
+  "challenger": "ttttxxxxsada/Affine-5dppris2s6",
+  "king": "0pentensor/Affine-5dflhtkufw-awesome-v16",
+  "stored_margin": 0.0015266113508215602,
+  "stored_wins": true,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": 0.0015266113508215602,
+   "se": 0.0006823229011586267,
+   "z": 2.237373754023614,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": 0.0004433001106869965,
+   "se": 0.0004119644979283381,
+   "z": 1.076063866950276,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01847415752682988,
+  "king_mean_old": 0.016951851175891937,
+  "chall_mean_cen": 0.009629188708423251,
+  "king_mean_cen": 0.009186571917180829
+ },
+ {
+  "challenge_id": "chal-01009",
+  "challenger": "ttttxxxxsada/Affine-5fkpofh1zp",
+  "king": "ttttxxxxsada/Affine-5dppris2s6",
+  "stored_margin": 0.0006025246957141877,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1286,
+   "margin": 0.0006025246957141877,
+   "se": 0.0006183754030637206,
+   "z": 0.9743671768459723,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1286,
+   "margin": 0.00014161497762353446,
+   "se": 0.00027385664689932225,
+   "z": 0.5171135308451954,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016781777121955516,
+  "king_mean_old": 0.016145738791131847,
+  "chall_mean_cen": 0.009655761463512715,
+  "king_mean_cen": 0.009518550697247793
+ },
+ {
+  "challenge_id": "chal-01010",
+  "challenger": "ttttxxxxsada/Affine-5gxga2tjde",
+  "king": "ttttxxxxsada/Affine-5dppris2s6",
+  "stored_margin": -0.00022563683214353925,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": -0.00022563683214353925,
+   "se": 0.0005688059915474824,
+   "z": -0.396685048147394,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": -0.00014137446743912763,
+   "se": 0.00025766557399051643,
+   "z": -0.5486742572926371,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017133570459160388,
+  "king_mean_old": 0.01733608291141726,
+  "chall_mean_cen": 0.008299840567687287,
+  "king_mean_cen": 0.008449132435658358
+ },
+ {
+  "challenge_id": "chal-01011",
+  "challenger": "ttttxxxxsada/Affine-5ekt61j9xs",
+  "king": "ttttxxxxsada/Affine-5dppris2s6",
+  "stored_margin": 0.00115886257233886,
+  "stored_wins": true,
+  "rejection": null,
+  "old": {
+   "n": 1293,
+   "margin": 0.00115886257233886,
+   "se": 0.0005485795207228221,
+   "z": 2.112478735647867,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "centered": {
+   "n": 1293,
+   "margin": -0.00012083886224793687,
+   "se": 0.00027484400598082304,
+   "z": -0.43966344405694724,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017656906591390648,
+  "king_mean_old": 0.016498044019051788,
+  "chall_mean_cen": 0.009429740815499613,
+  "king_mean_cen": 0.009550579677747549
+ },
+ {
+  "challenge_id": "chal-01012",
+  "challenger": "afgod1079/Affine-5g6ema5feo-cp2500",
+  "king": "ttttxxxxsada/Affine-5ekt61j9xs",
+  "stored_margin": -0.0002142286259730901,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": -0.0002142286259730901,
+   "se": 0.0006486842132363589,
+   "z": -0.33025102446116156,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": -0.00014376846164714012,
+   "se": 0.0002894395544873221,
+   "z": -0.49671324951350904,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.018725658375835928,
+  "king_mean_old": 0.018963572393792035,
+  "chall_mean_cen": 0.009879473543601263,
+  "king_mean_cen": 0.010037516017978214
+ },
+ {
+  "challenge_id": "chal-01013",
+  "challenger": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "king": "ttttxxxxsada/Affine-5ekt61j9xs",
+  "stored_margin": 0.0014032833886371606,
+  "stored_wins": true,
+  "rejection": null,
+  "old": {
+   "n": 1293,
+   "margin": 0.0014032833886371606,
+   "se": 0.000644479678711092,
+   "z": 2.1773896602040512,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "centered": {
+   "n": 1293,
+   "margin": 0.0006686146827577179,
+   "se": 0.0003215440891602088,
+   "z": 2.07938726071429,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.018085127766634096,
+  "king_mean_old": 0.016711051647158314,
+  "chall_mean_cen": 0.010102640279702058,
+  "king_mean_cen": 0.00943571006783028
+ },
+ {
+  "challenge_id": "chal-01015",
+  "challenger": "pandora-box/Affine-5fknrenir8-pwpelhzd",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.00032656033315099224,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": -0.00032656033315099224,
+   "se": 0.0005551006774928335,
+   "z": -0.5882902802892152,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": -0.00033561392021533147,
+   "se": 0.00031461692208179794,
+   "z": -1.0667382987367553,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015558000905043586,
+  "king_mean_old": 0.015842649725647265,
+  "chall_mean_cen": 0.009368775660868644,
+  "king_mean_cen": 0.009711363479389237
+ },
+ {
+  "challenge_id": "chal-01016",
+  "challenger": "afgod1079/Affine-5eqesjqmlw-cp1500",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0010025050717231514,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": 0.0010025050717231514,
+   "se": 0.0005321182450674927,
+   "z": 1.8839892843666652,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": -0.00037411743861495424,
+   "se": 0.0002727765941699118,
+   "z": -1.3715159093962346,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017581404635293483,
+  "king_mean_old": 0.016644312608436317,
+  "chall_mean_cen": 0.008586103057450927,
+  "king_mean_cen": 0.008966610382265348
+ },
+ {
+  "challenge_id": "chal-01018",
+  "challenger": "ammazon/Affine-5dvqtektxx-sbs-v12",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.0007386896584225276,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1290,
+   "margin": -0.0007386896584225276,
+   "se": 0.000600560535117248,
+   "z": -1.2300003334023812,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1290,
+   "margin": 0.00014551436895462663,
+   "se": 0.00023281687264299007,
+   "z": 0.6250164230054052,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016921562725444473,
+  "king_mean_old": 0.01764679056543498,
+  "chall_mean_cen": 0.00859356865785488,
+  "king_mean_cen": 0.00844161510433197
+ },
+ {
+  "challenge_id": "chal-01019",
+  "challenger": "realmadrid9999/affine-5GxuhSvToM-messi",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.00020284094468716847,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1294,
+   "margin": -0.00020284094468716847,
+   "se": 0.0005778285395169532,
+   "z": -0.35104002453173605,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1294,
+   "margin": -0.0003118361200769503,
+   "se": 0.00023846804589400204,
+   "z": -1.3076641732350172,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016865321918733106,
+  "king_mean_old": 0.01705562834214134,
+  "chall_mean_cen": 0.009141842951174267,
+  "king_mean_cen": 0.009446378932972259
+ },
+ {
+  "challenge_id": "chal-01020",
+  "challenger": "IntoLayer/Affine-5g94ihdxwu-v7a",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.0001446558973286641,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": -0.0001446558973286641,
+   "se": 0.0004992232869469301,
+   "z": -0.28976191838591403,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": -5.488961562359148e-05,
+   "se": 0.0002770777117098376,
+   "z": -0.19810188010024135,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015435271482914511,
+  "king_mean_old": 0.015579381457079322,
+  "chall_mean_cen": 0.009111885003116497,
+  "king_mean_cen": 0.009166722993570528
+ },
+ {
+  "challenge_id": "chal-01022",
+  "challenger": "thompsville/affine-5dvegrgnsg-cgpb19",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 6.601428891528002e-07,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1294,
+   "margin": 6.601428891528002e-07,
+   "se": 0.000598511038657928,
+   "z": 0.001102975294546066,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1294,
+   "margin": -0.00015642436573630293,
+   "se": 0.00023606285028981698,
+   "z": -0.662638638584,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016835947463422814,
+  "king_mean_old": 0.01679694329171192,
+  "chall_mean_cen": 0.010133109585947596,
+  "king_mean_cen": 0.010284612548555729
+ },
+ {
+  "challenge_id": "chal-01023",
+  "challenger": "thompsville/affine-5dvegrgnsg-cgpb20",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.00028272558030382745,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1294,
+   "margin": -0.00028272558030382745,
+   "se": 0.0004678539796909243,
+   "z": -0.6043030359399804,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1294,
+   "margin": -4.8153160255112746e-05,
+   "se": 0.00022120070824358594,
+   "z": -0.2176899008934752,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014513951873445943,
+  "king_mean_old": 0.014796677453749772,
+  "chall_mean_cen": 0.008561740372630914,
+  "king_mean_cen": 0.008609893532886027
+ },
+ {
+  "challenge_id": "chal-01026",
+  "challenger": "tammyfritz/Affine-5hmwhnfbix-tammy4",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.00012340581983677685,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1284,
+   "margin": -0.00012340581983677685,
+   "se": 0.00041547447166154894,
+   "z": -0.29702383239879265,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1284,
+   "margin": -0.00034036577200040715,
+   "se": 0.0002811070379412319,
+   "z": -1.210804875228929,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01652518895804881,
+  "king_mean_old": 0.01663494318746346,
+  "chall_mean_cen": 0.008909430751992041,
+  "king_mean_cen": 0.009242984844031837
+ },
+ {
+  "challenge_id": "chal-01027",
+  "challenger": "0xgevdhc/affine-5dpmave72j-v15",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.00012503097756031364,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1290,
+   "margin": 0.00012503097756031364,
+   "se": 0.0004465662979262431,
+   "z": 0.2799830129164031,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1290,
+   "margin": 0.0002282763992517174,
+   "se": 0.00024435355943698415,
+   "z": 0.9342053366347101,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01648422252330114,
+  "king_mean_old": 0.016361015037420445,
+  "chall_mean_cen": 0.009112205428348428,
+  "king_mean_cen": 0.008884084577648827
+ },
+ {
+  "challenge_id": "chal-01029",
+  "challenger": "vikingL08/Affine-5guxjrafay-duke",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.010651517928141093,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1286,
+   "margin": -0.010651517928141093,
+   "se": 0.001309052822309403,
+   "z": -8.136812928106226,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1286,
+   "margin": 0.0024222207717654546,
+   "se": 0.0005707429779714333,
+   "z": 4.243978227072802,
+   "wins_2sigma": true,
+   "wins": true
+  },
+  "chall_mean_old": 0.006637122804525161,
+  "king_mean_old": 0.01730122895787405,
+  "chall_mean_cen": 0.011965494238871414,
+  "king_mean_cen": 0.009548128438057555
+ },
+ {
+  "challenge_id": "chal-01030",
+  "challenger": "isomsom/Affine-5cdqb2dugt-r1",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.000414749877473996,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": 0.000414749877473996,
+   "se": 0.0006264232574896655,
+   "z": 0.6620920799397975,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": 0.00012746913768467967,
+   "se": 0.0002807002662039781,
+   "z": 0.45411121053961134,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01650718919952841,
+  "king_mean_old": 0.01604828264455618,
+  "chall_mean_cen": 0.010202702056360478,
+  "king_mean_cen": 0.010052682960162049
+ },
+ {
+  "challenge_id": "chal-01031",
+  "challenger": "vikingL08/Affine-5gl6ffbtdo-earl",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.017117259967675866,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1256,
+   "margin": -0.017117259967675866,
+   "se": 0.0015339658213104745,
+   "z": -11.158827484860456,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1256,
+   "margin": 0.0038055663445379475,
+   "se": 0.0006754157790463408,
+   "z": 5.634405447132505,
+   "wins_2sigma": true,
+   "wins": true
+  },
+  "chall_mean_old": 0.0001680165434278395,
+  "king_mean_old": 0.01694391940741128,
+  "chall_mean_cen": 0.01302851150328957,
+  "king_mean_cen": 0.009162117089423279
+ },
+ {
+  "challenge_id": "chal-01032",
+  "challenger": "afgod1079/Affine-5cvkm1jh3k-cp1500",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.00033358406086089266,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1294,
+   "margin": -0.00033358406086089266,
+   "se": 0.0005972523791861694,
+   "z": -0.5585311544768434,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1294,
+   "margin": -0.00047083523283837235,
+   "se": 0.00035109361648700963,
+   "z": -1.3410532425780892,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017355342752491544,
+  "king_mean_old": 0.017681400979797098,
+  "chall_mean_cen": 0.009602818068238051,
+  "king_mean_cen": 0.010073122918080277
+ },
+ {
+  "challenge_id": "chal-01033",
+  "challenger": "afgod1079/Affine-5e7olmlmcc-cp2500",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.0003198867623674779,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": -0.0003198867623674779,
+   "se": 0.0006207474789197606,
+   "z": -0.5153251092121267,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": -0.0004908089446084619,
+   "se": 0.0003518054316616004,
+   "z": -1.3951147436534412,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014632395536865172,
+  "king_mean_old": 0.014871938819644454,
+  "chall_mean_cen": 0.008753090860599515,
+  "king_mean_cen": 0.009243098914954971
+ },
+ {
+  "challenge_id": "chal-01034",
+  "challenger": "isomsom/Affine-5ghdmpteni-r1",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0001827975907191298,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": 0.0001827975907191298,
+   "se": 0.0005927239428301307,
+   "z": 0.3084025758202212,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": -0.0003832998184252039,
+   "se": 0.0003091703464056161,
+   "z": -1.239769023392475,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016537566113097243,
+  "king_mean_old": 0.016141068411523025,
+  "chall_mean_cen": 0.008707997448293644,
+  "king_mean_cen": 0.009053195791684525
+ },
+ {
+  "challenge_id": "chal-01035",
+  "challenger": "isomsom/Affine-5ewfqjwb5c-r1",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0008087921465585563,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": 0.0008087921465585563,
+   "se": 0.0005587888737283616,
+   "z": 1.447402023526557,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": -0.00020627156877364605,
+   "se": 0.0003045049383496059,
+   "z": -0.6773997488895339,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01749898103274623,
+  "king_mean_old": 0.016747994050749206,
+  "chall_mean_cen": 0.010339944041082457,
+  "king_mean_cen": 0.010553761393639317
+ },
+ {
+  "challenge_id": "chal-01036",
+  "challenger": "afgod1079/Affine-5ftfp7epqk-cp3000",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0006022814489711352,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": 0.0006022814489711352,
+   "se": 0.0006470072997941728,
+   "z": 0.9308727261079344,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": -0.00019993746937999366,
+   "se": 0.00033258080775089034,
+   "z": -0.601169594638037,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.018338560407688904,
+  "king_mean_old": 0.017748242577574055,
+  "chall_mean_cen": 0.009393788099226249,
+  "king_mean_cen": 0.009593244621991516
+ },
+ {
+  "challenge_id": "chal-01037",
+  "challenger": "afgod1079/Affine-5gupm4f39t-cp300",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.001832131382228858,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1290,
+   "margin": -0.001832131382228858,
+   "se": 0.0006438317309739789,
+   "z": -2.8456680435076374,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1290,
+   "margin": -0.00013430095073125225,
+   "se": 0.00028214474574732014,
+   "z": -0.4760001834360861,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015135561649992805,
+  "king_mean_old": 0.016947746536615307,
+  "chall_mean_cen": 0.008194341176958296,
+  "king_mean_cen": 0.008331619063393522
+ },
+ {
+  "challenge_id": "chal-01038",
+  "challenger": "ammazon/Affine-5dvqtektxx-sbs-v13",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.0006545179271420835,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1283,
+   "margin": -0.0006545179271420835,
+   "se": 0.0005469227376511929,
+   "z": -1.1967283166045857,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1283,
+   "margin": -0.0006397000664450499,
+   "se": 0.0002707582530689495,
+   "z": -2.362624441524034,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01765581601203609,
+  "king_mean_old": 0.0182948515483744,
+  "chall_mean_cen": 0.0088722534602577,
+  "king_mean_cen": 0.009504067642016568
+ },
+ {
+  "challenge_id": "chal-01039",
+  "challenger": "0pentensor/Affine-5dflhtkufw-awesome-v17",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.001386440633810524,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": -0.001386440633810524,
+   "se": 0.0007030363412778093,
+   "z": -1.9720753429198097,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": -0.0008329172867400604,
+   "se": 0.00032922314207041036,
+   "z": -2.529947565356526,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.018452783084133673,
+  "king_mean_old": 0.019843461845439413,
+  "chall_mean_cen": 0.009641708817868539,
+  "king_mean_cen": 0.010476390148387487
+ },
+ {
+  "challenge_id": "chal-01040",
+  "challenger": "afgod1079/Affine-5dpzg2owi5-cp700",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.00024110755113355983,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1284,
+   "margin": -0.00024110755113355983,
+   "se": 0.0005805364122798513,
+   "z": -0.41531856750672236,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1284,
+   "margin": -0.00026278634770110737,
+   "se": 0.0004628498460821374,
+   "z": -0.567757232557172,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017040231906302786,
+  "king_mean_old": 0.017234156944606747,
+  "chall_mean_cen": 0.009714999136320767,
+  "king_mean_cen": 0.009958881806026821
+ },
+ {
+  "challenge_id": "chal-01041",
+  "challenger": "tammyfritz/Affine-5hmwhnfbix-tammy5",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.00025503766613731843,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1287,
+   "margin": -0.00025503766613731843,
+   "se": 0.0005460860212629035,
+   "z": -0.46702837319934803,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1287,
+   "margin": 3.7075831218106854e-06,
+   "se": 0.00023419975881467476,
+   "z": 0.01583085798454875,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.018137751709418424,
+  "king_mean_old": 0.018439979195363373,
+  "chall_mean_cen": 0.009983745748821613,
+  "king_mean_cen": 0.00997752138077525
+ },
+ {
+  "challenge_id": "chal-01042",
+  "challenger": "0pentensor/Affine-5dflhtkufw-awesome-v18",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.0013315724697910525,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": -0.0013315724697910525,
+   "se": 0.0005822104543857928,
+   "z": -2.287098178605887,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": -0.0003364293645677906,
+   "se": 0.0002931896176309286,
+   "z": -1.1474804847670041,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016717682133665725,
+  "king_mean_old": 0.018094862706570406,
+  "chall_mean_cen": 0.009218526087954348,
+  "king_mean_cen": 0.009588573329548107
+ },
+ {
+  "challenge_id": "chal-01043",
+  "challenger": "rlchampion/Affine-5csuuetoqu-sth",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 5.505733099489306e-05,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": 5.505733099489306e-05,
+   "se": 0.0006715340269255206,
+   "z": 0.08198740315060674,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": 0.000327258965796517,
+   "se": 0.0004142377457245007,
+   "z": 0.790026908880894,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01613020203363261,
+  "king_mean_old": 0.016124060985409052,
+  "chall_mean_cen": 0.009135247386497965,
+  "king_mean_cen": 0.00883630589883374
+ },
+ {
+  "challenge_id": "chal-01044",
+  "challenger": "completeyourprofile321/affine-5efg6cm3yl-tourist",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0008277724673529328,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": 0.0008277724673529328,
+   "se": 0.0006532629865037946,
+   "z": 1.2671351116693408,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": 0.00011835407544580303,
+   "se": 0.0003614272608311057,
+   "z": 0.3274630562554873,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016273524065892973,
+  "king_mean_old": 0.015476554237760105,
+  "chall_mean_cen": 0.008914454911701666,
+  "king_mean_cen": 0.00880963943932102
+ },
+ {
+  "challenge_id": "chal-01045",
+  "challenger": "darius3th/Affine-5csuuetoqu-ux460844",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0005956723416521173,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1294,
+   "margin": 0.0005956723416521173,
+   "se": 0.0006312243588549466,
+   "z": 0.9436776849560727,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1294,
+   "margin": -0.0006739878359416292,
+   "se": 0.00041709068460143496,
+   "z": -1.6159263700307307,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01962334643836355,
+  "king_mean_old": 0.01901008534906901,
+  "chall_mean_cen": 0.010067557234456053,
+  "king_mean_cen": 0.010733335191494503
+ },
+ {
+  "challenge_id": "chal-01046",
+  "challenger": "completeyourprofile321/affine-5efg6cm3yl-error",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 6.616050029195876e-05,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1295,
+   "margin": 6.616050029195876e-05,
+   "se": 0.0004773184078135236,
+   "z": 0.13860873414671662,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1295,
+   "margin": 6.594164278756144e-05,
+   "se": 0.0003775607428389477,
+   "z": 0.17465174554889967,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01596695191421048,
+  "king_mean_old": 0.015888274829236094,
+  "chall_mean_cen": 0.009832895555926275,
+  "king_mean_cen": 0.009767004794035927
+ },
+ {
+  "challenge_id": "chal-01047",
+  "challenger": "iionai/affine-5ek5k4rbj7-0b7fe96ec3",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.0006823380895851268,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": -0.0006823380895851268,
+   "se": 0.0004924368495334501,
+   "z": -1.3856357220861824,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": -0.0004957711840293505,
+   "se": 0.00024109159849919392,
+   "z": -2.056360267697209,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01612268466505327,
+  "king_mean_old": 0.016819468216831265,
+  "chall_mean_cen": 0.008305918420671228,
+  "king_mean_cen": 0.008806954818934898
+ },
+ {
+  "challenge_id": "chal-01048",
+  "challenger": "0xgevdhc/affine-5dpmave72j-v16",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.0008202605206271373,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1290,
+   "margin": -0.0008202605206271373,
+   "se": 0.000582708458644313,
+   "z": -1.4076688066885035,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1290,
+   "margin": -0.0002975418890903561,
+   "se": 0.0002846416490410719,
+   "z": -1.0453209855013972,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016467905803743816,
+  "king_mean_old": 0.017315790474811955,
+  "chall_mean_cen": 0.009044257994483131,
+  "king_mean_cen": 0.009358796740130345
+ },
+ {
+  "challenge_id": "chal-01049",
+  "challenger": "ammazon/Affine-5dvqtektxx-sbs-v14",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.0007634355016478149,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": -0.0007634355016478149,
+   "se": 0.0005564912374328553,
+   "z": -1.3718733562986767,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": -0.0005007731935603737,
+   "se": 0.00030624424005031557,
+   "z": -1.6352085298913615,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01622270660815264,
+  "king_mean_old": 0.01701857094594876,
+  "chall_mean_cen": 0.00994876561212822,
+  "king_mean_cen": 0.010423102038079855
+ },
+ {
+  "challenge_id": "chal-01050",
+  "challenger": "tammyfritz/Affine-5hmwhnfbix-tammy6",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.0005007037710930174,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": -0.0005007037710930174,
+   "se": 0.0005957259224946303,
+   "z": -0.8404935091565208,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": -0.000292931670451396,
+   "se": 0.0003212311634363938,
+   "z": -0.9119030274576666,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016954116526830012,
+  "king_mean_old": 0.017415479689341876,
+  "chall_mean_cen": 0.00903483655507886,
+  "king_mean_cen": 0.009306115859493721
+ },
+ {
+  "challenge_id": "chal-01051",
+  "challenger": "Tok331102/affine-5EqYW8McUc-miracle33",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0007106828032342522,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": 0.0007106828032342522,
+   "se": 0.000496278242476572,
+   "z": 1.4320249053993168,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": 0.0002925163503140889,
+   "se": 0.0002878128733927425,
+   "z": 1.016342135311398,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01676946711166973,
+  "king_mean_old": 0.016055552589890873,
+  "chall_mean_cen": 0.009751408989328938,
+  "king_mean_cen": 0.009459580523941647
+ },
+ {
+  "challenge_id": "chal-01052",
+  "challenger": "realmadrid9999/affine-5GxuhSvToM-pig",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.00011898487578372214,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": 0.00011898487578372214,
+   "se": 0.000600184487924639,
+   "z": 0.19824716929149,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": -0.0002950694072012068,
+   "se": 0.0003028560117489044,
+   "z": -0.9742894172622419,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017333535733022074,
+  "king_mean_old": 0.017306329816354802,
+  "chall_mean_cen": 0.00940754055414414,
+  "king_mean_cen": 0.00968928301350309
+ },
+ {
+  "challenge_id": "chal-01053",
+  "challenger": "Shatoria/Affine-5ghntktyzq-hope44",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.000859824442451113,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": 0.000859824442451113,
+   "se": 0.0007315379735010949,
+   "z": 1.1753654268090103,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": -0.0001656020176217029,
+   "se": 0.00038535069839085916,
+   "z": -0.4297436550996818,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.018971895545968988,
+  "king_mean_old": 0.018075621871209768,
+  "chall_mean_cen": 0.00989409584454853,
+  "king_mean_cen": 0.010045825980076853
+ },
+ {
+  "challenge_id": "chal-01054",
+  "challenger": "Tok331102/affine-5EqYW8McUc-hope34",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.0003053695773031411,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": -0.0003053695773031411,
+   "se": 0.0006369507928324785,
+   "z": -0.47942412622674124,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": 0.00010559911554442489,
+   "se": 0.00040224421610953934,
+   "z": 0.26252488243527183,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017073495401634633,
+  "king_mean_old": 0.017358598146059338,
+  "chall_mean_cen": 0.009926576277537767,
+  "king_mean_cen": 0.009807007096060201
+ },
+ {
+  "challenge_id": "chal-01055",
+  "challenger": "michael-chan-000/affine-5GbZvZ7tcC-d1",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0007751097093371024,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1286,
+   "margin": 0.0007751097093371024,
+   "se": 0.0005646570821983444,
+   "z": 1.3727087355734844,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1286,
+   "margin": 0.0002614248259930452,
+   "se": 0.0003624286028395161,
+   "z": 0.7213140021092774,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01519164152666863,
+  "king_mean_old": 0.014379536605525307,
+  "chall_mean_cen": 0.009728527070197066,
+  "king_mean_cen": 0.009487319184802407
+ },
+ {
+  "challenge_id": "chal-01056",
+  "challenger": "Sansaliu/Affine-5dm33ngrnj-pass12",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0007041312855577562,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1296,
+   "margin": 0.0007041312855577562,
+   "se": 0.0007930132883204994,
+   "z": 0.8879186464189222,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1296,
+   "margin": -0.00015684057062045683,
+   "se": 0.00032247073577037095,
+   "z": -0.48637148498380905,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017069028161779083,
+  "king_mean_old": 0.01636489687622133,
+  "chall_mean_cen": 0.009243536746028588,
+  "king_mean_cen": 0.009400377316649043
+ },
+ {
+  "challenge_id": "chal-01057",
+  "challenger": "leary-criste/affine-5g4yy75zuz-v1",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -5.948963400759772e-05,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": -5.948963400759772e-05,
+   "se": 0.0005216620334728715,
+   "z": -0.11403864991200557,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": 0.000750099665500316,
+   "se": 0.0003098187749017284,
+   "z": 2.4210917034909865,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.016244814267515405,
+  "king_mean_old": 0.016330122141133857,
+  "chall_mean_cen": 0.009439347813440016,
+  "king_mean_cen": 0.008677460879660459
+ },
+ {
+  "challenge_id": "chal-01058",
+  "challenger": "leary-criste/affine-5g4yy75zuz-v2",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.000490459769808467,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": -0.000490459769808467,
+   "se": 0.0006864144685627043,
+   "z": -0.7145242302882246,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": 0.00011926722855545093,
+   "se": 0.000349077683065884,
+   "z": 0.34166385976883185,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01821178631655488,
+  "king_mean_old": 0.01867368165272318,
+  "chall_mean_cen": 0.009914527025198036,
+  "king_mean_cen": 0.009780125778817574
+ },
+ {
+  "challenge_id": "chal-01059",
+  "challenger": "leary-criste/affine-5g4yy75zuz-a1",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0001656998217730488,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": 0.0001656998217730488,
+   "se": 0.0007287899078009022,
+   "z": 0.22736294781172553,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": -9.045986822364529e-05,
+   "se": 0.00039064339638790154,
+   "z": -0.2315663570921351,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017335006684865862,
+  "king_mean_old": 0.017154936536676806,
+  "chall_mean_cen": 0.008929675308342815,
+  "king_mean_cen": 0.009014231714968042
+ },
+ {
+  "challenge_id": "chal-01060",
+  "challenger": "leary-criste/affine-5g4yy75zuz-a2",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0011491458238015073,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1293,
+   "margin": 0.0011491458238015073,
+   "se": 0.0006279982178995371,
+   "z": 1.8298552305531222,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1293,
+   "margin": -0.00020264081221657988,
+   "se": 0.00038441640487968365,
+   "z": -0.5271388256180256,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01973296972302531,
+  "king_mean_old": 0.018639120304153392,
+  "chall_mean_cen": 0.010810331367723358,
+  "king_mean_cen": 0.011027078015238648
+ },
+ {
+  "challenge_id": "chal-01061",
+  "challenger": "leary-criste/affine-5g4yy75zuz-c1",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0011859420537507553,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": 0.0011859420537507553,
+   "se": 0.0004687767162515716,
+   "z": 2.5298655258174407,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": 0.0010668697092681935,
+   "se": 0.0003045177783716701,
+   "z": 3.5034726542831187,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.018123535562895636,
+  "king_mean_old": 0.017049519187802228,
+  "chall_mean_cen": 0.010195734325426125,
+  "king_mean_cen": 0.009131596991103597
+ },
+ {
+  "challenge_id": "chal-01062",
+  "challenger": "leary-criste/affine-5g4yy75zuz-c2",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.0005522109505844939,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": -0.0005522109505844939,
+   "se": 0.000624355820890175,
+   "z": -0.8844491107605585,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": 0.0002381492310007427,
+   "se": 0.0003300054278059648,
+   "z": 0.7216524667005438,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.0187026444714267,
+  "king_mean_old": 0.019235828689397074,
+  "chall_mean_cen": 0.010430123374064213,
+  "king_mean_cen": 0.010184301030050774
+ },
+ {
+  "challenge_id": "chal-01063",
+  "challenger": "unconstai/affine-5ek5k4rbj7-6baa3dc529",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.00022452169855412396,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": 0.00022452169855412396,
+   "se": 0.0005652001376083873,
+   "z": 0.39724282358488966,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": -0.00032581699562060277,
+   "se": 0.0003372645666684614,
+   "z": -0.9660575934171234,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01690048702101869,
+  "king_mean_old": 0.016747683733968628,
+  "chall_mean_cen": 0.007942848252231127,
+  "king_mean_cen": 0.008285061311768926
+ },
+ {
+  "challenge_id": "chal-01064",
+  "challenger": "afgod1079/Affine-5f9f7taepa-cp600",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.0003382256010000723,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1293,
+   "margin": -0.0003382256010000723,
+   "se": 0.0005875830236093503,
+   "z": -0.5756218056172753,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1293,
+   "margin": -0.0005025154955072934,
+   "se": 0.0002848840921090809,
+   "z": -1.763929645165594,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01559423528330194,
+  "king_mean_old": 0.015969703053391703,
+  "chall_mean_cen": 0.008355078832328153,
+  "king_mean_cen": 0.008867971772507931
+ },
+ {
+  "challenge_id": "chal-01065",
+  "challenger": "ttttxxxxsada/Affine-5cydt1yobt",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0006176560937075089,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1287,
+   "margin": 0.0006176560937075089,
+   "se": 0.0005490314668361074,
+   "z": 1.1249921562180458,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1287,
+   "margin": -0.00010277059454890614,
+   "se": 0.000236260536621142,
+   "z": -0.4349884073687049,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.019039206834757967,
+  "king_mean_old": 0.018295637804865716,
+  "chall_mean_cen": 0.00935345321914703,
+  "king_mean_cen": 0.009443273768958692
+ },
+ {
+  "challenge_id": "chal-01066",
+  "challenger": "truelove-yes/affine-5ek5k4rbj7-faaef48d61",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.00018954714917268143,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": 0.00018954714917268143,
+   "se": 0.0005056614687591359,
+   "z": 0.37484989638981037,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": 0.0002830866885287368,
+   "se": 0.00023547746234768363,
+   "z": 1.2021816682853406,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016688731481661716,
+  "king_mean_old": 0.016486763373607577,
+  "chall_mean_cen": 0.00899660372207462,
+  "king_mean_cen": 0.008706778172813115
+ },
+ {
+  "challenge_id": "chal-01067",
+  "challenger": "ttttxxxxsada/Affine-5epdlgzp1d",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.00024078876020133434,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": -0.00024078876020133434,
+   "se": 0.00047946098742880086,
+   "z": -0.50220720040771,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": 5.224306549398303e-05,
+   "se": 0.0002183038517100165,
+   "z": 0.2393135305893732,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015536245027734102,
+  "king_mean_old": 0.01575352940415685,
+  "chall_mean_cen": 0.00942110493758724,
+  "king_mean_cen": 0.009354381477043783
+ },
+ {
+  "challenge_id": "chal-01068",
+  "challenger": "williamjamesbias/affine-5ccc9x82l1-august",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 7.052906797508777e-05,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1293,
+   "margin": 7.052906797508777e-05,
+   "se": 0.0005264225037612309,
+   "z": 0.1339780641427092,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1293,
+   "margin": -0.0003801183959866677,
+   "se": 0.00023522999185918682,
+   "z": -1.6159435834789888,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01774845917945491,
+  "king_mean_old": 0.01769299393027045,
+  "chall_mean_cen": 0.009594498201925122,
+  "king_mean_cen": 0.00995786453905352
+ },
+ {
+  "challenge_id": "chal-01069",
+  "challenger": "ttttxxxxsada/Affine-5fmstfjhbh",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.00015569579700297733,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": -0.00015569579700297733,
+   "se": 0.0005363766654847135,
+   "z": -0.29027324830075885,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": -1.4406903790499193e-05,
+   "se": 0.00023087262185453945,
+   "z": -0.06240195859852198,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017061928713793622,
+  "king_mean_old": 0.01716059107755684,
+  "chall_mean_cen": 0.010038940896096533,
+  "king_mean_cen": 0.010037800177239481
+ },
+ {
+  "challenge_id": "chal-01070",
+  "challenger": "dora7/affine-5fhnbtexaw-second",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.00011438723909102565,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1290,
+   "margin": 0.00011438723909102565,
+   "se": 0.0004344884613308003,
+   "z": 0.2632687614779631,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1290,
+   "margin": -0.0002226565581338561,
+   "se": 0.0002720054367791444,
+   "z": -0.8185739254713602,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016388193637761807,
+  "king_mean_old": 0.016255304580698317,
+  "chall_mean_cen": 0.009434201546908992,
+  "king_mean_cen": 0.009667531973327268
+ },
+ {
+  "challenge_id": "chal-01071",
+  "challenger": "m3s2er/Affine-5Fs7kLurx3-v1",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.00013596552498781414,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1264,
+   "margin": 0.00013596552498781414,
+   "se": 0.0006281214190365609,
+   "z": 0.2164637614115497,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1264,
+   "margin": 0.0008563336808664832,
+   "se": 0.0003053368787485694,
+   "z": 2.804553725629827,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.015994282413597533,
+  "king_mean_old": 0.01571616196798167,
+  "chall_mean_cen": 0.00957191289161531,
+  "king_mean_cen": 0.008732974294332407
+ },
+ {
+  "challenge_id": "chal-01072",
+  "challenger": "magicworld7/affine-5dtu4gucst-Arak",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0011232018680989906,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1288,
+   "margin": 0.0011232018680989906,
+   "se": 0.0005607931945628992,
+   "z": 2.002880703597788,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "centered": {
+   "n": 1288,
+   "margin": 9.224968820481147e-06,
+   "se": 0.00032664081416664323,
+   "z": 0.028241935546287306,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017539022703146064,
+  "king_mean_old": 0.016411299410603805,
+  "chall_mean_cen": 0.010458412222412025,
+  "king_mean_cen": 0.010496608392467337
+ },
+ {
+  "challenge_id": "chal-01073",
+  "challenger": "tojointhecommunity/affine-5efg6cm3yl-assassin",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0007184446000133175,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1295,
+   "margin": 0.0007184446000133175,
+   "se": 0.0005720876685545024,
+   "z": 1.2558295511396287,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1295,
+   "margin": 0.00024171975671963348,
+   "se": 0.0002861385393297482,
+   "z": 0.844764767744459,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.018392820465890383,
+  "king_mean_old": 0.017688944349568025,
+  "chall_mean_cen": 0.010218997390517457,
+  "king_mean_cen": 0.0099851687514739
+ },
+ {
+  "challenge_id": "chal-01074",
+  "challenger": "active-king/affine-5dz2gkonkn-sky",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.03503954550398506,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 859,
+   "margin": -0.03503954550398506,
+   "se": 0.0022431990624516627,
+   "z": -15.620346000719723,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 859,
+   "margin": 0.0046803824311846725,
+   "se": 0.0009587262463399511,
+   "z": 4.881875769076498,
+   "wins_2sigma": true,
+   "wins": true
+  },
+  "chall_mean_old": -0.018525928870742902,
+  "king_mean_old": 0.01755022754465389,
+  "chall_mean_cen": 0.013444279845333643,
+  "king_mean_cen": 0.009928815056260755
+ },
+ {
+  "challenge_id": "chal-01075",
+  "challenger": "williamjamesbias/affine-5ccc9x82l1-dpo",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": -0.03592114124766244,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 866,
+   "margin": -0.03592114124766244,
+   "se": 0.002501338460911984,
+   "z": -14.360767968428252,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 866,
+   "margin": 0.004353190074280792,
+   "se": 0.0009505588434296464,
+   "z": 4.579611356383098,
+   "wins_2sigma": true,
+   "wins": true
+  },
+  "chall_mean_old": -0.01793980376123119,
+  "king_mean_old": 0.019223051185037497,
+  "chall_mean_cen": 0.013162136287620274,
+  "king_mean_cen": 0.01006295399100725
+ },
+ {
+  "challenge_id": "chal-01079",
+  "challenger": "realmadrid9999/affine-5GxuhSvToM-h5",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0010283567045778394,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1293,
+   "margin": 0.0010283567045778394,
+   "se": 0.0005688201307889319,
+   "z": 1.807876776708918,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1293,
+   "margin": 0.0004953977345374083,
+   "se": 0.000304379512050314,
+   "z": 1.627565965923222,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017785930361527702,
+  "king_mean_old": 0.016740343165577855,
+  "chall_mean_cen": 0.00992313558196847,
+  "king_mean_cen": 0.009420480096730226
+ },
+ {
+  "challenge_id": "chal-01080",
+  "challenger": "realmadrid9999/affine-5GxuhSvToM-h7",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0004424392905267364,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1289,
+   "margin": 0.0004424392905267364,
+   "se": 0.00047603519365836173,
+   "z": 0.9294255895799665,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1289,
+   "margin": 0.0006361603600926893,
+   "se": 0.0002907284790299624,
+   "z": 2.1881597641045913,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.017538397882387965,
+  "king_mean_old": 0.017086607991577133,
+  "chall_mean_cen": 0.010445690844636037,
+  "king_mean_cen": 0.009811004378414213
+ },
+ {
+  "challenge_id": "chal-01081",
+  "challenger": "nothink123/Affine-5fknrenir8-bby",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0009762469543749242,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": 0.0009762469543749242,
+   "se": 0.0006559056207572141,
+   "z": 1.488395469530952,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": 0.0004853750258149631,
+   "se": 0.00030009118238668637,
+   "z": 1.617425150431534,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.018007670576353017,
+  "king_mean_old": 0.017035427029055434,
+  "chall_mean_cen": 0.010527028556191767,
+  "king_mean_cen": 0.010023877889701886
+ },
+ {
+  "challenge_id": "chal-01082",
+  "challenger": "bodenmaurice/affine-5CUNAQpoWU-h13",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 7.40997583380672e-05,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1286,
+   "margin": 7.40997583380672e-05,
+   "se": 0.0005886962801971266,
+   "z": 0.12587094709219954,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1286,
+   "margin": 0.0007978138023719575,
+   "se": 0.0003027626791371547,
+   "z": 2.635112770985024,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.017126105772598862,
+  "king_mean_old": 0.017005099096329343,
+  "chall_mean_cen": 0.010070880758379974,
+  "king_mean_cen": 0.009261008468020403
+ },
+ {
+  "challenge_id": "chal-01084",
+  "challenger": "tammyfritz/Affine-5hmwhnfbix-tammy7",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0005007154338877427,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1294,
+   "margin": 0.0005007154338877427,
+   "se": 0.0005916215429814479,
+   "z": 0.8463441533322328,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1294,
+   "margin": 0.0002333984895817864,
+   "se": 0.00031279967247213126,
+   "z": 0.7461596354535216,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.018030494789622598,
+  "king_mean_old": 0.017604239511428213,
+  "chall_mean_cen": 0.010002640891576996,
+  "king_mean_cen": 0.009790896870059854
+ },
+ {
+  "challenge_id": "chal-01085",
+  "challenger": "tojointhecommunity/affine-5efg6cm3yl-urus",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.00044177031383913433,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1293,
+   "margin": 0.00044177031383913433,
+   "se": 0.0005473430254474309,
+   "z": 0.8071178279434635,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1293,
+   "margin": 0.00022694065624228886,
+   "se": 0.0002762954947219241,
+   "z": 0.8213693693076388,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.014988428187576957,
+  "king_mean_old": 0.014552684255379427,
+  "chall_mean_cen": 0.008878451273956629,
+  "king_mean_cen": 0.008665897566039077
+ },
+ {
+  "challenge_id": "chal-01089",
+  "challenger": "angryaffine/Affine-5eluvugymt-hv1",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.001768981445940221,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": 0.001768981445940221,
+   "se": 0.0007132049898325618,
+   "z": 2.480326794061722,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": -0.001972884359608409,
+   "se": 0.00040952341851369735,
+   "z": -4.817512919697465,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.020231605489555285,
+  "king_mean_old": 0.01845847892095707,
+  "chall_mean_cen": 0.00884620468686399,
+  "king_mean_cen": 0.010817195221650937
+ },
+ {
+  "challenge_id": "chal-01090",
+  "challenger": "angryaffine/Affine-5cdnynpsnu-hv2",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0011729563982998147,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1296,
+   "margin": 0.0011729563982998147,
+   "se": 0.0007052122929845913,
+   "z": 1.6632670898796194,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1296,
+   "margin": -0.0005395261913449472,
+   "se": 0.0003337255168570399,
+   "z": -1.6166764724079141,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01756812463833395,
+  "king_mean_old": 0.016381713976692136,
+  "chall_mean_cen": 0.00832100463445357,
+  "king_mean_cen": 0.00885369926772157
+ },
+ {
+  "challenge_id": "chal-01091",
+  "challenger": "angryaffine/Affine-5cgacjoodx-hv3",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0009310275054389586,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1287,
+   "margin": 0.0009310275054389586,
+   "se": 0.000700672835454891,
+   "z": 1.3287620959852349,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1287,
+   "margin": -0.001028328327198076,
+   "se": 0.00035964106846001024,
+   "z": -2.859318407659606,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.018563150530594943,
+  "king_mean_old": 0.017542082181483773,
+  "chall_mean_cen": 0.008783224329127934,
+  "king_mean_cen": 0.009796865762746137
+ },
+ {
+  "challenge_id": "chal-01092",
+  "challenger": "angryaffine/Affine-5dhnrnxlw4-hv4",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0018713474207588225,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1282,
+   "margin": 0.0018713474207588225,
+   "se": 0.0009005679633876834,
+   "z": 2.0779635705886537,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "centered": {
+   "n": 1282,
+   "margin": -0.0010007357169598361,
+   "se": 0.00041112606012962474,
+   "z": -2.4341335031019735,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017457945074233573,
+  "king_mean_old": 0.015723497021096638,
+  "chall_mean_cen": 0.00801425826440741,
+  "king_mean_cen": 0.008989187151684376
+ },
+ {
+  "challenge_id": "chal-01093",
+  "challenger": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "king": "unconstai/affine-5hndumbnxc-0c3c6cbec9",
+  "stored_margin": 0.0021792195746100328,
+  "stored_wins": true,
+  "rejection": null,
+  "old": {
+   "n": 1286,
+   "margin": 0.0021792195746100328,
+   "se": 0.000804962722829559,
+   "z": 2.7072304254658706,
+   "wins_2sigma": true,
+   "wins": true
+  },
+  "centered": {
+   "n": 1286,
+   "margin": -0.001054804821953319,
+   "se": 0.0003768726753299587,
+   "z": -2.798836028719298,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01965497278769384,
+  "king_mean_old": 0.017484629338117348,
+  "chall_mean_cen": 0.008313188191497678,
+  "king_mean_cen": 0.00936513494898072
+ },
+ {
+  "challenge_id": "chal-01095",
+  "challenger": "tojointhecommunity/affine-5efg6cm3yl-prince",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": -4.8444718484497814e-05,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": -4.8444718484497814e-05,
+   "se": 0.0004245696401807686,
+   "z": -0.11410311501281993,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": -4.824627221624623e-05,
+   "se": 0.00022511708712413597,
+   "z": -0.21431634902792548,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01941582620627257,
+  "king_mean_old": 0.01946042513143185,
+  "chall_mean_cen": 0.008462815558908992,
+  "king_mean_cen": 0.00851208549127093
+ },
+ {
+  "challenge_id": "chal-01096",
+  "challenger": "everest103/Affine-5fnhs7lgaz-hv1",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": 0.00022903884235244687,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1293,
+   "margin": 0.00022903884235244687,
+   "se": 0.00039272330591721077,
+   "z": 0.5832066467701056,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1293,
+   "margin": 1.5916753309800482e-05,
+   "se": 0.00016998463948596923,
+   "z": 0.09363642125507625,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017587520448167648,
+  "king_mean_old": 0.017358481605815202,
+  "chall_mean_cen": 0.008280021988554164,
+  "king_mean_cen": 0.008264105235244363
+ },
+ {
+  "challenge_id": "chal-01097",
+  "challenger": "ringtone-ro/Affine-5HYy4T6gXS-4c13e9fe0a",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": 0.00018598867951271158,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1295,
+   "margin": 0.00018598867951271158,
+   "se": 0.0003742855790724243,
+   "z": 0.4969164988232762,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1295,
+   "margin": 0.0002261137345251795,
+   "se": 0.000195811895451501,
+   "z": 1.154749735728817,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01835541710913485,
+  "king_mean_old": 0.018183816156498122,
+  "chall_mean_cen": 0.008350259750935729,
+  "king_mean_cen": 0.0081305940934383
+ },
+ {
+  "challenge_id": "chal-01098",
+  "challenger": "ringtone-ro/Affine-5HYy4T6gXS-0cc075b85b",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": -0.0003844914909585362,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1296,
+   "margin": -0.0003844914909585362,
+   "se": 0.000471570531355438,
+   "z": -0.8153424893904841,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1296,
+   "margin": -0.0004302423856474001,
+   "se": 0.0002686545158842749,
+   "z": -1.6014708862468199,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.018839362609694977,
+  "king_mean_old": 0.019223854100653512,
+  "chall_mean_cen": 0.008209961857472033,
+  "king_mean_cen": 0.008640204243119433
+ },
+ {
+  "challenge_id": "chal-01100",
+  "challenger": "TheFireThief/Affine-5casrhbefk-ch1",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": -0.004139034724143654,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1262,
+   "margin": -0.004139034724143654,
+   "se": 0.0006723259687980816,
+   "z": -6.156291614829358,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1262,
+   "margin": 0.00043013226921103227,
+   "se": 0.00031446941821925973,
+   "z": 1.3678031766864152,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.015483107507667205,
+  "king_mean_old": 0.019238683496956416,
+  "chall_mean_cen": 0.008713384705989168,
+  "king_mean_cen": 0.008155685271582768
+ },
+ {
+  "challenge_id": "chal-01101",
+  "challenger": "llorite/affine-5cjfxpsxn8-tpc18",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": 0.00018162824034337566,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1287,
+   "margin": 0.00018162824034337566,
+   "se": 0.0004436282328119532,
+   "z": 0.40941542244080964,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1287,
+   "margin": -1.7925620384257128e-05,
+   "se": 0.00016899939948876355,
+   "z": -0.10606913656784306,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016988041387906754,
+  "king_mean_old": 0.01681982617701011,
+  "chall_mean_cen": 0.006959009227534372,
+  "king_mean_cen": 0.006982341469679383
+ },
+ {
+  "challenge_id": "chal-01102",
+  "challenger": "thompsville/affine-5dvegrgnsg-cgpb21",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": -0.00013454856568535003,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1294,
+   "margin": -0.00013454856568535003,
+   "se": 0.0004519905926770989,
+   "z": -0.29768001340123296,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1294,
+   "margin": -0.0003435483884085297,
+   "se": 0.00023954324482618254,
+   "z": -1.4341810751449717,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.01874656014962276,
+  "king_mean_old": 0.018881108715308112,
+  "chall_mean_cen": 0.007979914870508328,
+  "king_mean_cen": 0.008323463258916858
+ },
+ {
+  "challenge_id": "chal-01103",
+  "challenger": "isomsom/Affine-5eczs4hqpr-r1",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": 0.0002820768302790344,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1290,
+   "margin": 0.0002820768302790344,
+   "se": 0.0006030448522422581,
+   "z": 0.4677543125195556,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1290,
+   "margin": -0.0005488979420754077,
+   "se": 0.0003782305315333758,
+   "z": -1.4512258961489255,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017979638439346374,
+  "king_mean_old": 0.017660105920194007,
+  "chall_mean_cen": 0.007441596979702744,
+  "king_mean_cen": 0.00797146219061173
+ },
+ {
+  "challenge_id": "chal-01104",
+  "challenger": "afgod1079/Affine-5fjdspsgy7-cp400",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": -0.002471905093477531,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1287,
+   "margin": -0.002471905093477531,
+   "se": 0.0007335916006564666,
+   "z": -3.369592960532135,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1287,
+   "margin": 0.003784909814635457,
+   "se": 0.0004837476256795381,
+   "z": 7.824141378097009,
+   "wins_2sigma": true,
+   "wins": true
+  },
+  "chall_mean_old": 0.018327742377572512,
+  "king_mean_old": 0.020919363742652,
+  "chall_mean_cen": 0.012258022731031529,
+  "king_mean_cen": 0.0085625196384223
+ },
+ {
+  "challenge_id": "chal-01105",
+  "challenger": "iionai/Affine-5HYy4T6gXS-bca075b13e",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": -0.0018445129831766239,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1290,
+   "margin": -0.0018445129831766239,
+   "se": 0.0006848447754115791,
+   "z": -2.693330006158119,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1290,
+   "margin": 0.0012725569925564778,
+   "se": 0.0004012080512757362,
+   "z": 3.1718131989377603,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.017699400705431658,
+  "king_mean_old": 0.019576911225365437,
+  "chall_mean_cen": 0.009262137431798413,
+  "king_mean_cen": 0.00800365500672132
+ },
+ {
+  "challenge_id": "chal-01107",
+  "challenger": "michael-chan-000/affine-5cxncav2du-e1",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": -0.001837644799016525,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1282,
+   "margin": -0.001837644799016525,
+   "se": 0.0008123384119327669,
+   "z": -2.2621665700188722,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1282,
+   "margin": 0.0021782487412879037,
+   "se": 0.0004427696759745502,
+   "z": 4.919597839426354,
+   "wins_2sigma": true,
+   "wins": true
+  },
+  "chall_mean_old": 0.015314430131577163,
+  "king_mean_old": 0.017175297265832074,
+  "chall_mean_cen": 0.00961932515811739,
+  "king_mean_cen": 0.007455260195216217
+ },
+ {
+  "challenge_id": "chal-01108",
+  "challenger": "michael-chan-000/affine-5GbZvZ7tcC-e2",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": -0.0014480925343306017,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1292,
+   "margin": -0.0014480925343306017,
+   "se": 0.0007267855501350738,
+   "z": -1.992461922311846,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1292,
+   "margin": 0.0013808390316689197,
+   "se": 0.000382934218201191,
+   "z": 3.605943177800414,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.01693627990364955,
+  "king_mean_old": 0.018383476195402294,
+  "chall_mean_cen": 0.009515180421488415,
+  "king_mean_cen": 0.008134854189059904
+ },
+ {
+  "challenge_id": "chal-01109",
+  "challenger": "michael-chan-000/affine-5GbZvZ7tcC-e3",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": -0.0033146541439686267,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1297,
+   "margin": -0.0033146541439686267,
+   "se": 0.0008650292453357137,
+   "z": -3.831840555497318,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1297,
+   "margin": 0.0007347620966362159,
+   "se": 0.00037835064728901715,
+   "z": 1.9420135842266464,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016132093072466595,
+  "king_mean_old": 0.01945827752497165,
+  "chall_mean_cen": 0.008829835831707673,
+  "king_mean_cen": 0.008101881627000299
+ },
+ {
+  "challenge_id": "chal-01110",
+  "challenger": "llorite/affine-5cjfxpsxn8-tpc19",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": -0.003143630042959685,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1281,
+   "margin": -0.003143630042959685,
+   "se": 0.0008649621677985025,
+   "z": -3.6344133419856237,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1281,
+   "margin": 0.0012835155073612212,
+   "se": 0.00044148993324006,
+   "z": 2.9072361807699707,
+   "wins_2sigma": true,
+   "wins": false
+  },
+  "chall_mean_old": 0.016910109348274815,
+  "king_mean_old": 0.01991175118495283,
+  "chall_mean_cen": 0.00955660114625417,
+  "king_mean_cen": 0.008229152851153623
+ },
+ {
+  "challenge_id": "chal-01111",
+  "challenger": "thompsville/affine-5dvegrgnsg-cgpb22",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": -0.0008534088836425887,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": -0.0008534088836425887,
+   "se": 0.00046143329289743967,
+   "z": -1.8494740123406557,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": -0.0002601216270117047,
+   "se": 0.000249681847044998,
+   "z": -1.0418123307331397,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.017052297346408243,
+  "king_mean_old": 0.017904614004106506,
+  "chall_mean_cen": 0.008460366474194628,
+  "king_mean_cen": 0.008720285122828223
+ },
+ {
+  "challenge_id": "chal-01113",
+  "challenger": "afgod1079/Affine-5g72aexy3t-cp3300",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": -0.014012551730021087,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1291,
+   "margin": -0.014012551730021087,
+   "se": 0.0017477258262961586,
+   "z": -8.017591500445453,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1291,
+   "margin": 0.018357710183848068,
+   "se": 0.0011969297122777795,
+   "z": 15.337333508843225,
+   "wins_2sigma": true,
+   "wins": true
+  },
+  "chall_mean_old": 0.004354434726929017,
+  "king_mean_old": 0.018357940001009015,
+  "chall_mean_cen": 0.02613468240269208,
+  "king_mean_cen": 0.007780365866514532
+ },
+ {
+  "challenge_id": "chal-01114",
+  "challenger": "Bittoby1040/Affine-5cxncav2du-v1818",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": -0.04084219913838432,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 108,
+   "margin": -0.04084219913838432,
+   "se": 0.007413122250478773,
+   "z": -5.509446324825757,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 108,
+   "margin": 0.004361701206317939,
+   "se": 0.0024023850421517976,
+   "z": 1.8155712468186187,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": -0.022406569869574726,
+  "king_mean_old": 0.01779132006565894,
+  "chall_mean_cen": 0.010912208607892082,
+  "king_mean_cen": 0.008130950616097043
+ },
+ {
+  "challenge_id": "chal-01115",
+  "challenger": "isomsom/Affine-5f4bvgquuk-r2",
+  "king": "tojointhecommunity/affine-5efg6cm3yl-king",
+  "stored_margin": -0.0005467455848038905,
+  "stored_wins": false,
+  "rejection": null,
+  "old": {
+   "n": 1295,
+   "margin": -0.0005467455848038905,
+   "se": 0.000512605209844566,
+   "z": -1.0666016932790767,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "centered": {
+   "n": 1295,
+   "margin": 0.00043166648705673087,
+   "se": 0.00029390994772402623,
+   "z": 1.468703221512102,
+   "wins_2sigma": false,
+   "wins": false
+  },
+  "chall_mean_old": 0.016291899674088322,
+  "king_mean_old": 0.01685193148993042,
+  "chall_mean_cen": 0.00790154444870478,
+  "king_mean_cen": 0.0074759791289553896
+ }
+]
