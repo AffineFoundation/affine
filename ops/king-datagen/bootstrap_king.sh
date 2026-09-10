@@ -134,6 +134,7 @@ for spec in "${SPECS[@]}"; do
 done
 cat > /etc/nginx/nginx.conf <<EOF
 worker_processes 4;
+error_log /root/logs/nginx_error.log warn;
 events { worker_connections 4096; }
 http {
   upstream king { least_conn;
@@ -153,6 +154,10 @@ nginx -s reload 2>/dev/null || nginx
 launch_replica() {  # port gpus tp
   local port=$1 gpus=$2 tp=$3
   log "launch replica port=$port gpus=$gpus tp=$tp"
+  # Per-replica compile cache: four replicas starting at once race on the
+  # shared torch_compile_cache (FileNotFoundError mid-profile, first box
+  # 2026-09-10: 2 of 4 died on first launch and came back on relaunch).
+  VLLM_CACHE_ROOT="/root/.cache/vllm_$port" \
   CUDA_VISIBLE_DEVICES=$gpus nohup /root/venv/bin/vllm serve "$SERVE_TARGET" "${SERVE_REV[@]}" \
     --served-model-name "$SERVED_NAME" \
     --host 127.0.0.1 --port "$port" \
