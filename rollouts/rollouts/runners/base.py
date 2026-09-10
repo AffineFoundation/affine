@@ -78,8 +78,10 @@ class EndpointHealth:
             if not e.base_url_env:
                 usable = True
                 continue
-            if self.cooling(e.name):
-                continue
+            # A cooling endpoint is probed too (one GET, not skipped): the
+            # scheduler falls back to cooling policies when every route of a
+            # source cools, and skipping here would spin the cycle loop on a
+            # box that is in fact answering. Strikes are left in place.
             try:
                 r = httpx.get(f"{e.base_url.rstrip('/')}/models",
                               headers={"Authorization": f"Bearer {env.get(e.key_env, '')}"},

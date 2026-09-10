@@ -331,6 +331,38 @@ only teacher-trajectory prefixes (covariate shift; DAgger fix). Pieces:
   and is NOT applied; no paired filter, replay buffer or decay yet; king
   successes are discarded rather than used as a control; no hot standby
   (a dead box means ~45 min without king rollouts, by operator choice).
+- **Breadth release (2026-09-10 evening, operator: "data broad enough for
+  a really good agent — Claude Code, Hermes, terminal-bench agent, …"):**
+  (a) **Claude Code 401 fixed** — Claude Code speaks Anthropic Messages
+  and sends the key as `x-api-key`; vLLM `--api-key` reads only
+  `Authorization: Bearer`, so every `king_claude_code` call got
+  `upstream 401` (2 batches, 48 errored rollouts). The king box's nginx
+  now maps `x-api-key` → bearer (`bootstrap_king.sh`; patched live).
+  (b) **Seats** (`rollouts/scheduler.py`): "done" is per (source, seat) —
+  teacher seat = all non-king policies (unchanged), each king =
+  `king:<served model>`. The king replays tasks the teacher finished, and
+  a new king starts over. Before this every pool the teacher had exhausted
+  (terminal, math, tool_use, nl2repo) was closed to the king: epoch 22's
+  1,994 `king_fail` turns were 100 % `king_textbased` from scaleswe /
+  swesmith / terminal_lego. (c) **Three more harnesses**, teacher + king
+  pairs in `[defaults].policies`: `kimi_code` (tool_call; king probe 27
+  turns / 0 drops), `hermes_agent` (tool_call), `terminus_2` — harbor's
+  terminal-bench reference agent, reply = one JSON object
+  `{"analysis","plan","commands"}` → **new dialect `terminus_json`**
+  (`affine/dialects.py`; `Dialect.marker_roles` lets its mandate sit in
+  the first *user* message, where Terminus states its format; every other
+  dialect keeps the historical first-system-message check bit-for-bit).
+  King probe: 29 turns / 0 drops, one terminal-bench task solved.
+  **Registered, NOT admitted** — its turns stage behind
+  `[dataset].allowed_action_kinds` (fold drop
+  `action_kind_not_admitted:terminus_json`) until a dated operator
+  directive + wvk decision, like boxed/tool_call before wvk 11.
+  (d) `EndpointHealth.preflight` probes a cooling king endpoint instead of
+  skipping it (a source whose every policy cooled spun the cycle loop at
+  5 s while the fallback pick was refused). Pods get
+  `affine/dialects.py` via `deploy_pods.sh` (`AFFINE_FILES`). Codex and
+  OpenClaw stay out: both speak OpenAI Responses with two leading system
+  messages the teacher template refuses (see `policies.toml`).
 
 ### History — Reason v4 (wvk 7–9, 2026-08-17 → 2026-08-27)
 v4 was the uncentered tempered LME, `Reason = tau·log((1/k)·Σ exp(a_i/tau))`,

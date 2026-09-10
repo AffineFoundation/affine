@@ -362,14 +362,89 @@ model_env = "KING_MODEL"
 base_url_env = "KING_BASE_URL"
 key_env = "KING_KEY"
 
-# -- example: other third-party agent harnesses (enable the same way) ----------
-#
-# [policy.hermes]
-# harness = "hermes_agent"        # installs Hermes Agent in the task
-# share = 0.5                     # container, drives it over ACP
-#
-# [[policy.hermes.endpoints]]
-# name = "engy"
-# model = "glm-5.2"
-# base_url = "https://api.engy.ai/v1"
-# key_env = "ENGY"
+# -- more agent harnesses (2026-09-10, operator: "broad enough for a really
+#    good agent") --------------------------------------------------------------
+# Each harness is one more prompt family the king must answer in the right
+# format. Teacher + king pairs as above (2.0 / 1.0). All are verifiers
+# harnesses; nothing hand-rolled.
+#   hermes_agent — Nous Hermes Agent over its native ACP server; OpenAI
+#     chat_completions transport, native tool calls -> tool_call.
+#   kimi_code    — Kimi Code CLI over ACP; KIMI_MODEL_BASE_URL/_API_KEY ->
+#     OpenAI-compatible, native tool calls -> tool_call.
+#   terminus_2   — harbor's Terminus 2, the terminal-bench reference agent.
+#     No tool channel: the reply IS a JSON object {"analysis","plan",
+#     "commands"} -> dialect `terminus_json` (affine/dialects.py, registered
+#     2026-09-10, NOT admitted: its turns stage behind
+#     [dataset].allowed_action_kinds until an operator fork decision).
+# Scheduled only after a datagen-pod probe (see sources.toml [defaults]).
+[policy.teacher_hermes]
+harness = "hermes_agent"
+action_kind = "tool_call"
+share = 2.0
+[policy.teacher_hermes.sampling]
+temperature = 0.8
+[[policy.teacher_hermes.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+[policy.king_hermes]
+harness = "hermes_agent"
+action_kind = "tool_call"
+share = 1.0
+[policy.king_hermes.sampling]
+temperature = 0.8
+[[policy.king_hermes.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.teacher_kimi]
+harness = "kimi_code"
+action_kind = "tool_call"
+share = 2.0
+[policy.teacher_kimi.sampling]
+temperature = 0.8
+[[policy.teacher_kimi.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+[policy.king_kimi]
+harness = "kimi_code"
+action_kind = "tool_call"
+share = 1.0
+[policy.king_kimi.sampling]
+temperature = 0.8
+[[policy.king_kimi.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.teacher_terminus]
+harness = "terminus_2"
+action_kind = "terminus_json"
+share = 2.0
+[policy.teacher_terminus.sampling]
+temperature = 0.8
+[[policy.teacher_terminus.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+[policy.king_terminus]
+harness = "terminus_2"
+action_kind = "terminus_json"
+share = 1.0
+[policy.king_terminus.sampling]
+temperature = 0.8
+[[policy.king_terminus.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
