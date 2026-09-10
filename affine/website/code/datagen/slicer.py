@@ -44,8 +44,13 @@ log = logging.getLogger("datagen.slicer")
 # datagen agent config, which already speaks ```bash natively.
 FOREIGN_FENCE_RE = re.compile(r"```mswea_bash_command[ \t]*\n")
 TRAILING_NUM_RE = re.compile(r"-(\d+)$")
-# Serving-window cap from affine/scripts/corpus_push.py.
-MAX_PREFIX_CHARS = 120_000
+# Serving-window cap on a turn's prefix. 120_000 until 2026-09-10 (~32k
+# tokens, the GLM-era window); raised to 300_000 (~78k tokens p50 with the
+# Qwen3.8 tokenizer, inside max_model_len 131072 with 1792 gen headroom) so
+# the deep turns of long agent trajectories — where the king's failures
+# live — enter D. Data event, no weight_version_key change. The fold adds a
+# tokenizer-measured guard (ops/corpus_build.py MAX_PREFIX_TOKENS).
+MAX_PREFIX_CHARS = 300_000
 # Reference-leakage predicate, byte-for-byte the ops/datagen_refresh.py
 # prefilter (which drops such records downstream anyway — 4.6-5% of early
 # shards): whole ```bash block, whitespace collapsed + lowercased, longer

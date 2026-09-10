@@ -88,6 +88,33 @@ def deliberate_final_reply(trace: dict) -> bool:
     return not finishes or finishes[-1] != "length"
 
 
+CLEAN_STOP_CONDITIONS = frozenset({"agent_completed", "max_turns"})
+
+
+def rollout_outcome(trace: dict) -> str:
+    """"solved" / "failed" / "errored" / "unscored" for one rollout.
+
+    "errored" first: the trace recorded an error (API failure, harness
+    crash) or the harness stopped for a reason other than the agent's own
+    finish / the turn cap — the env may still have graded such a rollout
+    0, but that is an infrastructure failure, not the model's. Then
+    `rewards.solved.score` (every verifiers env in the registry grades into
+    that key; a missing or non-numeric score is unscored). The fold uses it
+    for the king seat: only the king's FAILED rollouts enter D."""
+    if trace.get("errors"):
+        return "errored"
+    if trace.get("stop_condition") not in CLEAN_STOP_CONDITIONS:
+        return "errored"
+    score = ((trace.get("rewards") or {}).get("solved") or {}).get("score")
+    if isinstance(score, bool) or not isinstance(score, (int, float, str)):
+        return "unscored"
+    try:
+        value = float(score)
+    except (TypeError, ValueError):
+        return "unscored"
+    return "solved" if value >= 1.0 else "failed"
+
+
 def build_view_record(envelope: dict, *, baker=None,
                       generated_at: str | None = None) -> dict | None:
     """View record for one envelope, or None when nothing is scorable
@@ -158,6 +185,7 @@ def build_view_record(envelope: dict, *, baker=None,
         "language": task.get("language") or "",
         "action_kind": common["action_kind"],
         "generated_at": common["generated_at"],
+        "outcome": rollout_outcome(trace),
         "nodes": nodes,
         "turns": turns,
     }

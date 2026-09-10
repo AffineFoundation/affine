@@ -243,20 +243,44 @@ in their OWN trajectory context (loops, shrinking commands) while D held
 only teacher-trajectory prefixes (covariate shift; DAgger fix). Pieces:
 - **Controller** `ops/king-datagen/kingctl.py` (pm2 `affine-king-datagen`,
   60 s ticks; config `king.toml`, state `state/state.json` 0600 with the
-  per-box bearer). Reads `affine/state/state.json` → king; rents ONE Lium
-  pod `king-dg-<digest12>` (first `[[types]]` with stock under cap:
-  h200-2x, b200-2x, pro6000-4x/8x, …; budget $30/h incl. the old box during
-  a swap), pushes `bootstrap_king.sh` (vLLM 0.28, replicas TP per type
-  behind nginx on the first mapped data port, `--served-model-name
+  per-box bearer). Reads `affine/state/state.json` → king; rents a Lium
+  pod `king-dg-<digest12>-<hex4>` (first `[[types]]` with stock under cap:
+  h200-2x, b200-2x, pro6000-4x/8x, …; budget $25/h = two boxes during a
+  swap/rotation), pushes `bootstrap_king.sh` (vLLM 0.28, replicas TP per
+  type behind nginx on the first mapped data port, `--served-model-name
   king-<digest12>`, qwen3_xml tool parser + qwen3 reasoning parser,
-  max_model_len 262144), waits for `/v1/models` + a chat canary, then writes
-  `/root/rollouts/.king_env` (KING_BASE_URL / KING_MODEL / KING_KEY /
-  KING_DIGEST / KING_REIGN) on every `affine-datagen*` pod and releases the
-  previous king's box. Bootstrap failure/timeout → remove + executor
-  strike (`state/blacklist.txt`); dark past 20 min → replaced; no serving
-  box → `.king_env` emptied so the king policies idle. R2 kings come from
-  the public `models.affine.io` copy; an HF genesis king from its pinned
-  revision. `kingctl.py status` / `unpublish`.
+  max_model_len 262144, per-replica compile cache), waits for `/v1/models`
+  + a chat canary, then writes `/root/rollouts/.king_env` (KING_BASE_URL /
+  KING_MODEL / KING_KEY / KING_DIGEST / KING_REIGN) on every
+  `affine-datagen*` pod and releases the previous king's box. R2 kings come
+  from the public `models.affine.io` copy; an HF genesis king from its
+  pinned revision. `kingctl.py status` / `unpublish` / `pods`.
+  **Fault tolerance (release 2026-09-10 16:00 UTC, drilled live + in
+  simulation `/tmp/kd_sim.py`-style: rent→ready→publish, listing flake,
+  wedged engine, dark→re-rent, crown change, rotation, stale state.json):**
+  lost controller state → memory RECOVERED from the box's `/root/king/env`
+  + `ready` marker (never released; verified live by moving state.json
+  aside); a pod missing from the Lium listing is forgotten only after
+  `pod_forget_ticks = 5` consecutive misses; an unreadable state.json keeps
+  the last king `state_stale_min = 30`; after READY a canary completion
+  runs every `canary_every_min = 10`, 3 misses = dark even while `/models`
+  answers; dark past `unreachable_grace_min = 20` → remove → re-rent (the
+  accepted ~45 min gap; teacher datagen continues); bootstrap failure /
+  timeout → remove + executor strike (`state/blacklist.txt`); Lium TTL
+  (72 h) → replacement rented `rotate_before_ttl_hours = 2` before
+  `removal_scheduled_at`, published once it serves, old box removed (zero
+  gap); on a crown the old king's PUBLISHED box stays until the new one
+  serves, any never-published box of another king is removed at once; no
+  serving box → `.king_env` emptied so the king policies idle; datagen-pod
+  watchdog every 5 min (`pgrep -f -x` on the supervisor + bootstrap loop;
+  both gone `watchdog_relaunch_min = 10` → relaunch `bootstrap.sh`; loop
+  alive but supervisor gone → crash-loop alert; ssh unreachable → alert);
+  every state change is one Discord line (`[discord]`, channel
+  1381987595881414656, token `DISCORD_BOT_TOKEN_ARBOS_BITTENSOR`).
+  Deploy to the pods with `ops/king-datagen/deploy_pods.sh [--restart]
+  --all` (scp + registry import check + `/root/rollouts/RESTART` flag —
+  the supervisor exits at its next cycle boundary and the bootstrap loop
+  relaunches it; nothing is killed).
 - **Rollouts** (`rollouts/`): `Endpoint.model_env` / `base_url_env`
   (resolved per pick against a shared env dict; unset = unavailable, like
   a missing key); `rollouts/king.py` re-reads `.king_env` every supervisor
@@ -269,24 +293,44 @@ only teacher-trajectory prefixes (covariate shift; DAgger fix). Pieces:
   datagen pods 2026-09-10 13:20 UTC (rollouts files only — the pods'
   `/root/affine` tree is pre-wvk-13 and used for yield accounting only;
   datagen-3's bootstrap loop had been dead since its 2026-09-09 06:51
-  reboot and was relaunched).
+  reboot and was relaunched). **Dead-endpoint guards (16:00 UTC
+  release):** before any batch the supervisor runs `EndpointHealth.
+  preflight` — `GET /models` on every DYNAMIC endpoint (`base_url_env`
+  set); a miss strikes it (exponential cooldown 60 s → 15 min) and the
+  cycle is skipped without a batch failure or a zero-yield strike on the
+  source; `Scheduler.pick_policy` skips policies whose endpoints are ALL
+  cooling (falls back to every usable policy so a source is never left
+  unpicked). One endpoint name `king` is shared by all `king_*` policies,
+  so one strike idles them all for the cooldown. `/root/rollouts/RESTART`
+  makes the supervisor exit between batches (graceful redeploy).
 - **Fold** (`ops/corpus_build.py`): view records now carry `outcome`
-  (`affine.corpus.view.rollout_outcome`: `rewards.solved.score` → solved /
-  failed / unscored). `route_king_fail` (after `assign_bucket_strata`, so
-  it wins on math/tool_use too): `king_*` records with `outcome == failed`
-  → `fold_group = king_fail`, `stratum = king_fail:<sha256(instance_id) %
+  (`affine.corpus.view.rollout_outcome`: `errors` non-empty or
+  `stop_condition` ∉ {agent_completed, max_turns} → **errored** (harness /
+  API failure the env still graded 0 — 3 of 48 king rollouts in the first
+  two batches); else `rewards.solved.score` → solved / failed / unscored).
+  `route_king_fail` (after `assign_bucket_strata`, so it wins on
+  math/tool_use too): `king_*` records with `outcome == failed` →
+  `fold_group = king_fail`, `stratum = king_fail:<sha256(instance_id) %
   1000>` (own namespace — sharing the teacher's `repo|phase` strata would
   add within-stratum variety and move no share under `cap_fill`);
-  `solved` → drop `king_not_failed`, else `king_unscored`; `group_of`
-  honours `fold_group`. Announce `by_group` shows `king_fail`.
+  `solved` → drop `king_not_failed`, `errored` → `king_errored`, else
+  `king_unscored`; `group_of` honours `fold_group`. Announce `by_group`
+  shows `king_fail`. First real routing (dry run 2026-09-10 15:22 UTC):
+  32 failed king rollouts → 1,303 turns, 36 successes dropped.
+  **Prefix cap (data event, operator decision 2026-09-10):**
+  `datagen/slicer.py MAX_PREFIX_CHARS` 120_000 → **300_000** (median king
+  failure trajectory is 193k chars; the deep turns are the point) plus a
+  tokenizer-measured guard in `derive_chunk` — prefixes > 120k chars are
+  tokenized with the teacher tokenizer and dropped past `MAX_PREFIX_TOKENS
+  = 110_000` (`prefix_too_many_tokens`; serving window 131072 − 1792 gen).
+  No wvk change: the duel scores whatever prefix D carries.
 - **Known gaps (by design, "simplest first"):** the failure label is a
   noisy proxy (a failed run has good turns too; only the outcome filters);
-  deep failure turns past `MAX_PREFIX_CHARS = 120_000` are still dropped
-  (`prefix_too_long`) and teacher refs hit the 1792-token cap more at depth
-  (refs<2 → turn dropped) — the two prerequisite knobs from the diagnosis
-  (prefix cap 120k→300k, `[duel] max_thought_tokens` 1024→4096 = contract
-  change) are NOT applied; no paired filter, replay buffer or decay yet;
-  king successes are discarded rather than used as a control.
+  teacher refs hit the 1792-token cap more at depth (refs<2 → turn
+  dropped) — `[duel] max_thought_tokens` 1024→4096 is a contract change
+  and is NOT applied; no paired filter, replay buffer or decay yet; king
+  successes are discarded rather than used as a control; no hot standby
+  (a dead box means ~45 min without king rollouts, by operator choice).
 
 ### History — Reason v4 (wvk 7–9, 2026-08-17 → 2026-08-27)
 v4 was the uncentered tempered LME, `Reason = tau·log((1/k)·Σ exp(a_i/tau))`,

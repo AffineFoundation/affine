@@ -51,6 +51,10 @@ log = logging.getLogger("rollouts.run")
 MAX_CONSECUTIVE_FAILS = 3
 FAIL_SLEEP_S = 600
 POOL_EXHAUSTED_SLEEP_S = 6 * 3600
+PREFLIGHT_SKIP_SLEEP_S = 5
+# Touch this file to make the supervisor exit cleanly between batches (the
+# bootstrap loop relaunches it) — a redeploy without killing a running batch.
+RESTART_FLAG = Path(os.environ.get("ROLLOUTS_RESTART_FLAG", "/root/rollouts/RESTART"))
 
 
 def _utc_tag() -> str:
@@ -206,10 +210,10 @@ def main() -> None:
     shutil.rmtree(cfg.data_dir / "runs", ignore_errors=True)
 
     state = UnifiedState(cfg.state_path)
-    scheduler = Scheduler(registry, state, env)
+    health = EndpointHealth()
+    scheduler = Scheduler(registry, state, env, health)
     store = TraceStore(cfg.store_dir)
     index = RolloutIndex(cfg.store_dir)
-    health = EndpointHealth()
     runners = {
         "verifiers": VerifiersRunner(cfg, health, env),
         "verifiers_chat": VerifiersChatRunner(cfg, health, env),
@@ -245,6 +249,13 @@ def main() -> None:
 
     fails = 0
     while True:
+        if RESTART_FLAG.exists():
+            # Graceful redeploy: exit between batches; bootstrap.sh relaunches
+            # the supervisor on the freshly deployed code.
+            RESTART_FLAG.unlink(missing_ok=True)
+            flush_uploads(r2, hf, store)
+            log.info("restart flag %s seen; exiting for relaunch", RESTART_FLAG)
+            return
         refresh_king_env(env)
         remaining = {
             name: sum(1 for r in rows
@@ -272,6 +283,14 @@ def main() -> None:
                  if r["uid"] not in done][: cfg.batch_size]
         log.info("cycle: source=%s policy=%s batch=%d remaining=%s",
                  name, policy.id, len(batch), remaining)
+        if not health.preflight(policy, env):
+            # A dynamic endpoint (the king seat) does not answer: struck, so
+            # the scheduler prefers another policy while it cools. Not a
+            # batch failure and not a zero-yield strike on the source.
+            log.warning("policy %s: no endpoint passed preflight; skipping "
+                        "this cycle", policy.id)
+            time.sleep(PREFLIGHT_SKIP_SLEEP_S)
+            continue
 
         ok, kept_turns = process_batch(
             cfg, source, policy, batch, runners, state, store, index, panel,
