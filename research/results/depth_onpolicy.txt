@@ -1,0 +1,54 @@
+depth probe — 1282 steps scored, 179 failed
+failures by kind: {'refs<2': 174, 'ContextLengthError': 5}
+
+== per label x depth bin (prefix chars): mean ± se ==
+label     bin           n   G>0                  R                 G             minRG                 B   len_z  ref_z
+reign-8   0-40k       113   67%  +0.0082 ±0.0011 +0.0133 ±0.0033 -0.0037 ±0.0017 +0.0576 ±0.0051     216    258
+reign-8   40-120k     148   52%  +0.0071 ±0.0013 +0.0071 ±0.0043 -0.0128 ±0.0026 +0.0671 ±0.0046     294    512
+reign-8   120-250k     91   45%  +0.0079 ±0.0014 -0.0040 ±0.0054 -0.0208 ±0.0033 +0.0612 ±0.0057     228    399
+reign-8   250-infk     46   46%  +0.0104 ±0.0029 -0.0002 ±0.0064 -0.0135 ±0.0045 +0.0493 ±0.0065     376    879
+reign-9   0-40k       147   69%  +0.0092 ±0.0014 +0.0155 ±0.0036 -0.0056 ±0.0020 +0.0722 ±0.0047     197    232
+reign-9   40-120k     147   56%  +0.0118 ±0.0017 +0.0071 ±0.0036 -0.0076 ±0.0021 +0.0679 ±0.0048     231    601
+reign-9   120-250k     98   60%  +0.0119 ±0.0024 +0.0148 ±0.0049 -0.0085 ±0.0025 +0.0531 ±0.0054     280    510
+reign-9   250-infk     31   45%  +0.0051 ±0.0014 +0.0080 ±0.0077 -0.0085 ±0.0031 +0.0431 ±0.0061     304    587
+teacher   0-40k       144   78%  +0.0098 ±0.0014 +0.0230 ±0.0027 +0.0027 ±0.0014 +0.0535 ±0.0035     206    209
+teacher   40-120k     188   76%  +0.0127 ±0.0019 +0.0220 ±0.0024 +0.0017 ±0.0010 +0.0525 ±0.0033     278    414
+teacher   120-250k    103   73%  +0.0151 ±0.0026 +0.0247 ±0.0039 +0.0033 ±0.0017 +0.0463 ±0.0041     420    546
+teacher   250-infk     26   77%  +0.0209 ±0.0050 +0.0256 ±0.0101 +0.0075 ±0.0045 +0.0678 ±0.0118     958   1373
+
+== king − teacher per bin (unpaired means) ==
+reign-8   0-40k      n=113/144 ΔR -0.0016  ΔG -0.0097  ΔminRG -0.0064  Δlen_z +67
+reign-8   40-120k    n=148/188 ΔR -0.0056  ΔG -0.0149  ΔminRG -0.0145  Δlen_z +266
+reign-8   120-250k   n= 91/103 ΔR -0.0071  ΔG -0.0288  ΔminRG -0.0241  Δlen_z -947
+reign-8   250-infk   n= 46/26  ΔR -0.0105  ΔG -0.0258  ΔminRG -0.0210  Δlen_z -753
+reign-9   0-40k      n=147/144 ΔR -0.0006  ΔG -0.0074  ΔminRG -0.0084  Δlen_z -180
+reign-9   40-120k    n=147/188 ΔR -0.0010  ΔG -0.0149  ΔminRG -0.0093  Δlen_z +103
+reign-9   120-250k   n= 98/103 ΔR -0.0032  ΔG -0.0100  ΔminRG -0.0118  Δlen_z -1000
+reign-9   250-infk   n= 31/26  ΔR -0.0158  ΔG -0.0176  ΔminRG -0.0160  Δlen_z -1356
+
+== repeated step (action already issued verbatim in this run) vs fresh step ==
+reign-8   repeats n= 36: R +0.0050 ±0.0021  G +0.0080 ±0.0089  minRG -0.0149 ±0.0047
+          fresh   n=362: R +0.0083 ±0.0008  G +0.0052 ±0.0024  minRG -0.0119 ±0.0015
+reign-9   repeats n= 44: R +0.0064 ±0.0023  G +0.0290 ±0.0092  minRG -0.0077 ±0.0033
+          fresh   n=379: R +0.0109 ±0.0010  G +0.0099 ±0.0022  minRG -0.0072 ±0.0013
+teacher   repeats n= 52: R +0.0081 ±0.0028  G +0.0313 ±0.0065  minRG -0.0007 ±0.0023
+          fresh   n=409: R +0.0134 ±0.0012  G +0.0221 ±0.0017  minRG +0.0031 ±0.0008
+
+== within run: does the king think shorter than the teacher's refs where the refs are long? ==
+reign-8   ref thought    0- 300 chars: n=179  own thought median   169  ratio 0.97
+reign-8   ref thought  300- 800 chars: n= 97  own thought median   349  ratio 0.77
+reign-8   ref thought  800-1500 chars: n= 43  own thought median   487  ratio 0.44
+reign-8   ref thought 1500- inf chars: n= 79  own thought median  1295  ratio 0.51
+reign-9   ref thought    0- 300 chars: n=178  own thought median   148  ratio 0.86
+reign-9   ref thought  300- 800 chars: n=113  own thought median   315  ratio 0.78
+reign-9   ref thought  800-1500 chars: n= 53  own thought median   417  ratio 0.42
+reign-9   ref thought 1500- inf chars: n= 79  own thought median   787  ratio 0.27
+teacher   ref thought    0- 300 chars: n=223  own thought median   156  ratio 0.94
+teacher   ref thought  300- 800 chars: n= 82  own thought median   430  ratio 0.87
+teacher   ref thought  800-1500 chars: n= 59  own thought median   734  ratio 0.63
+teacher   ref thought 1500- inf chars: n= 97  own thought median  2359  ratio 0.84
+== teacher ref yield by depth: steps where <2 of 3 teacher refs parsed an action inside max_thought+max_action = 1792 tokens ==
+   0-40.0k chars  attempted  422  refs<2  18  (4%)
+  40-120.0k chars  attempted  543  refs<2  60  (11%)
+ 120-250.0k chars  attempted  345  refs<2  53  (15%)
+ 250- infk chars  attempted  146  refs<2  43  (29%)
