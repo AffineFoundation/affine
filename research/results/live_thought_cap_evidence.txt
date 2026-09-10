@@ -1,0 +1,16 @@
+live thought-cap evidence — 53 min(R,G) verdicts, 68900 slice turns
+
+1. teacher-ref thought length (chars, median over the turn's refs):
+   forfeited turns  n= 4803  median 1766
+   answered turns   n=128837  median 358
+   share of forfeits where the teacher ref itself is >=1500 chars: 53% (base rate among answered turns 12%)
+
+2. miner thought length / teacher ref thought length, by ref bucket (median ratio):
+   ref     0-  300 chars  n= 55483  ratio 1.02
+   ref   300-  800 chars  n= 42267  ratio 0.87
+   ref   800- 1500 chars  n= 15862  ratio 0.78
+   ref  1500-  inf chars  n= 15209  ratio 0.50
+
+3. turns dropped because <2 teacher refs parsed inside the cap: 4378 / 68900 = 6.4%
+
+forfeit rate per side: king 2.7%  challenger 4.5%

@@ -257,14 +257,201 @@ model = "qwen3.8-27b"
 base_url = "https://api.engy.ai/v1"
 key_env = "ENGY"
 
-# -- example: other third-party agent harnesses (enable the same way) ----------
+# -- the king seat (2026-09-10) ------------------------------------------------
+# The current SN120 king plays the agent seat on the same envs the teacher
+# plays, one policy per harness. Only its FAILED rollouts enter D (fold group
+# `king_fail`, ops/corpus_build.py): those prefixes are the king's own
+# history at the places it went wrong, and the duel then asks both sides
+# "what does the teacher do from here?" — the king tends to repeat itself,
+# the teacher does not, so a challenger that recovers like the teacher wins
+# exactly where the incumbent is weak. Successes and unscored rollouts are
+# dropped at the fold (they are not the signal); every rollout still ships
+# to traces/ for provenance.
 #
-# [policy.hermes]
-# harness = "hermes_agent"        # installs Hermes Agent in the task
-# share = 0.5                     # container, drives it over ACP
-#
-# [[policy.hermes.endpoints]]
-# name = "engy"
-# model = "glm-5.2"
-# base_url = "https://api.engy.ai/v1"
-# key_env = "ENGY"
+# Routing is dynamic: model + base_url come from KING_MODEL / KING_BASE_URL
+# (rollouts/king.py reads /root/rollouts/.king_env every cycle; the
+# validator-side controller ops/king-datagen/kingctl.py writes it after it
+# has served the new king). No file -> these policies are idle and the
+# scheduler falls back to the teacher policies. The served model name is
+# `king-<digest12>` (KING_MODEL), so the envelope's policy.model label reads
+# `king/king-0ce59769300c` and every trace names the king it came from;
+# KING_DIGEST / KING_REIGN ride along for the log.
+# Shares: 1.0 against the teacher's 2.0 -> ~1/3 of new rollouts per source
+# are king rollouts while the seat is up. Sampling 0.8 = [duel] temperature.
+
+[policy.king_textbased]
+harness = "mini_swe_textbased"
+share = 1.0
+
+[policy.king_textbased.sampling]
+temperature = 0.8
+
+[[policy.king_textbased.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_bashtool]
+harness = "bash"
+action_kind = "tool_call"
+share = 1.0
+
+[policy.king_bashtool.sampling]
+temperature = 0.8
+
+[[policy.king_bashtool.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_pi]
+harness = "pi"
+action_kind = "tool_call"
+share = 1.0
+
+[policy.king_pi.sampling]
+temperature = 0.8
+
+[[policy.king_pi.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_claude_code]
+harness = "claude_code"
+action_kind = "tool_call"
+share = 1.0
+
+[policy.king_claude_code.sampling]
+temperature = 0.8
+
+[[policy.king_claude_code.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_boxed]
+harness = "null"
+action_kind = "boxed"
+share = 1.0
+
+[policy.king_boxed.sampling]
+temperature = 0.8
+# Runaway guard: the king box serves 262k context and the null harness
+# sets no cap, so one looping math reply held a 24-task batch for the
+# whole 3600 s rollout timeout (datagen-2, 2026-09-10 19:54). Teacher
+# math replies are p50 557 tokens; a reply past 16k has no `\boxed{}`
+# worth keeping.
+max_tokens = 16384
+
+[[policy.king_boxed.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_toolcall]
+harness = "null"
+action_kind = "tool_call"
+share = 1.0
+
+[policy.king_toolcall.sampling]
+temperature = 0.8
+max_tokens = 16384  # same runaway guard as king_boxed (null harness, no cap)
+
+[[policy.king_toolcall.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+# -- more agent harnesses (2026-09-10, operator: "broad enough for a really
+#    good agent") --------------------------------------------------------------
+# Each harness is one more prompt family the king must answer in the right
+# format. Teacher + king pairs as above (2.0 / 1.0). All are verifiers
+# harnesses; nothing hand-rolled.
+#   hermes_agent — Nous Hermes Agent over its native ACP server; OpenAI
+#     chat_completions transport, native tool calls -> tool_call.
+#   kimi_code    — Kimi Code CLI over ACP; KIMI_MODEL_BASE_URL/_API_KEY ->
+#     OpenAI-compatible, native tool calls -> tool_call.
+#   terminus_2   — harbor's Terminus 2, the terminal-bench reference agent.
+#     No tool channel: the reply IS a JSON object {"analysis","plan",
+#     "commands"} -> dialect `terminus_json` (affine/dialects.py, registered
+#     2026-09-10, NOT admitted: its turns stage behind
+#     [dataset].allowed_action_kinds until an operator fork decision).
+# Scheduled only after a datagen-pod probe (see sources.toml [defaults]).
+[policy.teacher_hermes]
+harness = "hermes_agent"
+action_kind = "tool_call"
+share = 2.0
+[policy.teacher_hermes.sampling]
+temperature = 0.8
+[[policy.teacher_hermes.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+[policy.king_hermes]
+harness = "hermes_agent"
+action_kind = "tool_call"
+share = 1.0
+[policy.king_hermes.sampling]
+temperature = 0.8
+[[policy.king_hermes.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.teacher_kimi]
+harness = "kimi_code"
+action_kind = "tool_call"
+share = 2.0
+[policy.teacher_kimi.sampling]
+temperature = 0.8
+[[policy.teacher_kimi.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+[policy.king_kimi]
+harness = "kimi_code"
+action_kind = "tool_call"
+share = 1.0
+[policy.king_kimi.sampling]
+temperature = 0.8
+[[policy.king_kimi.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.teacher_terminus]
+harness = "terminus_2"
+action_kind = "terminus_json"
+share = 2.0
+[policy.teacher_terminus.sampling]
+temperature = 0.8
+[[policy.teacher_terminus.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+[policy.king_terminus]
+harness = "terminus_2"
+action_kind = "terminus_json"
+share = 1.0
+[policy.king_terminus.sampling]
+temperature = 0.8
+[[policy.king_terminus.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"

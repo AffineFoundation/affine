@@ -1,0 +1,32 @@
+reign-9 CC run: 281/282 tasks finished (28 unscored: {'HarnessError': 28})
+
+set A (random, unbiased): n=150
+  reign-9 97/150 = 64.7%  (95% 56.7%–71.9%)
+  teacher 116/150 = 77.3%   reign-8 85/150 = 56.7%
+  paired vs teacher: king9-only 13, teacher-only 32, sign p=0.00661
+  paired vs reign-8: king9-only 27, reign8-only 15, sign p=0.0884
+
+set B (reign-8 teacher-only): n=131
+  reign-9 54/131 = 41.2%  (95% 33.2%–49.8%)
+  teacher 131/131 = 100.0%   reign-8 0/131 = 0.0%
+  paired vs teacher: king9-only 0, teacher-only 77, sign p=1.32e-23
+  paired vs reign-8: king9-only 54, reign8-only 0, sign p=1.11e-16
+
+all: n=281
+  reign-9 151/281 = 53.7%  (95% 47.9%–59.5%)
+  teacher 247/281 = 87.9%   reign-8 85/281 = 30.2%
+  paired vs teacher: king9-only 13, teacher-only 109, sign p=4.68e-20
+  paired vs reign-8: king9-only 81, reign8-only 15, sign p=4.03e-12
+
+== behaviour on the 251 finished+scored tasks (median per run) ==
+model    steps reason/step reason/run repeat-max tests edits reasoning-only len-cut max-prompt-tok
+reign-9    116         242     103655          3     9    13              0       0         118453
+reign-8    100         298     132154          3     7    14              2       0         113204
+teacher    104         438     269387          2     7    13              0       0          68200
+reign-9  identical call >=3x: 73%  >=5x: 39% | >=3 reasoning-only replies: 11% | zero test runs: 10%
+reign-8  identical call >=3x: 62%  >=5x: 24% | >=3 reasoning-only replies: 41% | zero test runs: 16%
+teacher  identical call >=3x: 31%  >=5x: 3% | >=3 reasoning-only replies: 0% | zero test runs: 10%
+
+== set A restricted to reign-9 scored tasks (HarnessError runs excluded, 28 = 10% of the run) ==
+  n=142  reign-9 97/142 = 68.3%   teacher 112/142 = 78.9%   reign-8 82/142 = 57.7%
+  paired vs teacher: king9-only 13, teacher-only 28, sign p=0.0275

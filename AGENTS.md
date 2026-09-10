@@ -234,6 +234,166 @@ unchanged.**
   2026-09-07 (through `chal-00359`) drained, projected 2026-09-09 — met.
   llms.txt "Upcoming changes" → "Fork history: wvk 13".
 
+### The king seat — king-failure datagen (LIVE 2026-09-10, data event, no wvk)
+Operator directive 2026-09-10 ("do the simplest thing first: trigger on
+the new king, spin up the new king on our fleet, sample envs from Prime
+env from it, add only the failures to the dataset"). Motivation:
+`research/results/reign9_vs_teacher_diagnosis.txt` — kings fail at depth
+in their OWN trajectory context (loops, shrinking commands) while D held
+only teacher-trajectory prefixes (covariate shift; DAgger fix). Pieces:
+- **Controller** `ops/king-datagen/kingctl.py` (pm2 `affine-king-datagen`,
+  60 s ticks; config `king.toml`, state `state/state.json` 0600 with the
+  per-box bearer). Reads `affine/state/state.json` → king; rents a Lium
+  pod `king-dg-<digest12>-<hex4>` (first `[[types]]` with stock under cap:
+  h200-2x, b200-2x, pro6000-4x/8x, …; budget $25/h = two boxes during a
+  swap/rotation), pushes `bootstrap_king.sh` (vLLM 0.28, replicas TP per
+  type behind nginx on the first mapped data port, `--served-model-name
+  king-<digest12>`, qwen3_xml tool parser + qwen3 reasoning parser,
+  max_model_len 262144, per-replica compile cache), waits for `/v1/models`
+  + a chat canary, then writes `/root/rollouts/.king_env` (KING_BASE_URL /
+  KING_MODEL / KING_KEY / KING_DIGEST / KING_REIGN) on every
+  `affine-datagen*` pod and releases the previous king's box. R2 kings come
+  from the public `models.affine.io` copy; an HF genesis king from its
+  pinned revision. `kingctl.py status` / `unpublish` / `pods`.
+  **Fault tolerance (release 2026-09-10 16:00 UTC, drilled live + in
+  simulation `/tmp/kd_sim.py`-style: rent→ready→publish, listing flake,
+  wedged engine, dark→re-rent, crown change, rotation, stale state.json):**
+  lost controller state → memory RECOVERED from the box's `/root/king/env`
+  + `ready` marker (never released; verified live by moving state.json
+  aside); a pod missing from the Lium listing is forgotten only after
+  `pod_forget_ticks = 5` consecutive misses; an unreadable state.json keeps
+  the last king `state_stale_min = 30`; after READY a canary completion
+  runs every `canary_every_min = 10`, 3 misses = dark even while `/models`
+  answers; dark past `unreachable_grace_min = 20` → remove → re-rent (the
+  accepted ~45 min gap; teacher datagen continues); bootstrap failure /
+  timeout → remove + executor strike (`state/blacklist.txt`); Lium TTL
+  (72 h) → replacement rented `rotate_before_ttl_hours = 2` before
+  `removal_scheduled_at`, published once it serves, old box removed (zero
+  gap); on a crown the old king's PUBLISHED box stays until the new one
+  serves, any never-published box of another king is removed at once; no
+  serving box → `.king_env` emptied so the king policies idle; datagen-pod
+  watchdog every 5 min (`pgrep -f -x` on the supervisor + bootstrap loop;
+  both gone `watchdog_relaunch_min = 10` → relaunch `bootstrap.sh`; loop
+  alive but supervisor gone → crash-loop alert; ssh unreachable → alert);
+  every state change is one Discord line (`[discord]`, channel
+  1381987595881414656, token `DISCORD_BOT_TOKEN_ARBOS_BITTENSOR`).
+  Deploy to the pods with `ops/king-datagen/deploy_pods.sh [--restart]
+  --all` (scp + registry import check + `/root/rollouts/RESTART` flag —
+  the supervisor exits at its next cycle boundary and the bootstrap loop
+  relaunches it; nothing is killed).
+- **Rollouts** (`rollouts/`): `Endpoint.model_env` / `base_url_env`
+  (resolved per pick against a shared env dict; unset = unavailable, like
+  a missing key); `rollouts/king.py` re-reads `.king_env` every supervisor
+  cycle (no restart on a crown). `policies.toml` `king_textbased /
+  king_bashtool / king_pi / king_claude_code / king_boxed / king_toolcall`
+  (share 1.0 vs teacher 2.0 → ~1/3 of new rollouts per source while the
+  seat is up; T=0.8). `sources.toml`: king policies on `[defaults]` +
+  math/wiki/agent; `[mix]` scaled ×0.9 + `king_fail = 0.10`; `[king_fail]
+  strata_buckets = 1000, policy_prefix = "king_"`. Deployed to the three
+  datagen pods 2026-09-10 13:20 UTC (rollouts files only — the pods'
+  `/root/affine` tree is pre-wvk-13 and used for yield accounting only;
+  datagen-3's bootstrap loop had been dead since its 2026-09-09 06:51
+  reboot and was relaunched). **Dead-endpoint guards (16:00 UTC
+  release):** before any batch the supervisor runs `EndpointHealth.
+  preflight` — `GET /models` on every DYNAMIC endpoint (`base_url_env`
+  set); a miss strikes it (exponential cooldown 60 s → 15 min) and the
+  cycle is skipped without a batch failure or a zero-yield strike on the
+  source; `Scheduler.pick_policy` skips policies whose endpoints are ALL
+  cooling (falls back to every usable policy so a source is never left
+  unpicked). One endpoint name `king` is shared by all `king_*` policies,
+  so one strike idles them all for the cooldown. `/root/rollouts/RESTART`
+  makes the supervisor exit between batches (graceful redeploy).
+- **Fold** (`ops/corpus_build.py`): view records now carry `outcome`
+  (`affine.corpus.view.rollout_outcome`: `errors` non-empty or
+  `stop_condition` ∉ {agent_completed, max_turns} → **errored** (harness /
+  API failure the env still graded 0 — 3 of 48 king rollouts in the first
+  two batches); else `rewards.solved.score` → solved / failed / unscored).
+  `route_king_fail` (after `assign_bucket_strata`, so it wins on
+  math/tool_use too): `king_*` records with `outcome == failed` →
+  `fold_group = king_fail`, `stratum = king_fail:<sha256(instance_id) %
+  1000>` (own namespace — sharing the teacher's `repo|phase` strata would
+  add within-stratum variety and move no share under `cap_fill`);
+  `solved` → drop `king_not_failed`, `errored` → `king_errored`, else
+  `king_unscored`; `group_of` honours `fold_group`. Announce `by_group`
+  shows `king_fail`. First real routing (dry run 2026-09-10 15:22 UTC):
+  32 failed king rollouts → 1,303 turns, 36 successes dropped.
+  **Prefix cap (data event, operator decision 2026-09-10):**
+  `datagen/slicer.py MAX_PREFIX_CHARS` 120_000 → **300_000** (median king
+  failure trajectory is 193k chars; the deep turns are the point) plus a
+  tokenizer-measured guard in `derive_chunk` — prefixes > 120k chars are
+  tokenized with the teacher tokenizer and dropped past `MAX_PREFIX_TOKENS
+  = 110_000` (`prefix_too_many_tokens`; serving window 131072 − 1792 gen).
+  No wvk change: the duel scores whatever prefix D carries.
+- **Known gaps (by design, "simplest first"):** the failure label is a
+  noisy proxy (a failed run has good turns too; only the outcome filters);
+  teacher refs hit the 1792-token cap more at depth (refs<2 → turn
+  dropped) — `[duel] max_thought_tokens` 1024→4096 is a contract change
+  and is NOT applied; no paired filter, replay buffer or decay yet; king
+  successes are discarded rather than used as a control; no hot standby
+  (a dead box means ~45 min without king rollouts, by operator choice).
+- **Breadth release (2026-09-10 evening, operator: "data broad enough for
+  a really good agent — Claude Code, Hermes, terminal-bench agent, …"):**
+  (a) **Claude Code 401 fixed** — Claude Code speaks Anthropic Messages
+  and sends the key as `x-api-key`; vLLM `--api-key` reads only
+  `Authorization: Bearer`, so every `king_claude_code` call got
+  `upstream 401` (2 batches, 48 errored rollouts). The king box's nginx
+  now maps `x-api-key` → bearer (`bootstrap_king.sh`; patched live).
+  (b) **Seats** (`rollouts/scheduler.py`): "done" is per (source, seat) —
+  teacher seat = all non-king policies (unchanged), each king =
+  `king:<served model>`. The king replays tasks the teacher finished, and
+  a new king starts over. Before this every pool the teacher had exhausted
+  (terminal, math, tool_use, nl2repo) was closed to the king: epoch 22's
+  1,994 `king_fail` turns were 100 % `king_textbased` from scaleswe /
+  swesmith / terminal_lego. (c) **Three more harnesses**, teacher + king
+  pairs in `[defaults].policies`: `kimi_code` (tool_call; king probe 27
+  turns / 0 drops), `hermes_agent` (tool_call), `terminus_2` — harbor's
+  terminal-bench reference agent, reply = one JSON object
+  `{"analysis","plan","commands"}` → **new dialect `terminus_json`**
+  (`affine/dialects.py`; `Dialect.marker_roles` lets its mandate sit in
+  the first *user* message, where Terminus states its format; every other
+  dialect keeps the historical first-system-message check bit-for-bit).
+  King probe: 29 turns / 0 drops, one terminal-bench task solved.
+  **ADMITTED 2026-09-10 ~21:00 UTC — wvk 13→14** on the explicit operator
+  directive "do it now yes" (same day; it had been staged behind
+  `[dataset].allowed_action_kinds` for ~2 h, so no `--rederive` was
+  needed: no fold had run since the terminus policies went live).
+  Commit `fcb2354` (toml: allowed_action_kinds += terminus_json, wvk 14 +
+  history paragraph), `8ef06b2` (llms.txt "Fork history: wvk 14", dialect
+  table row, marker-rule note). Deploy = `/tmp/v8flip/deploy.sh` (the v7
+  script re-pointed): pod was idle (queue 0, no in_flight) → pm2 stop →
+  `redeploy_pods.py` (dialects.py with terminus_json + toml) → pm2 start.
+  Forward-only; reign 11 stands; `min_submission_block` unchanged. The
+  next fold (pm2 cron 16:00 UTC) admits the staged terminus turns; the
+  duel tripwire accepts slices carrying them once the pod is on wvk 14.
+  Discord notice `…/1547714360326094858`; llms.txt live with the section.
+  (d) `EndpointHealth.preflight` probes a cooling king endpoint instead of
+  skipping it (a source whose every policy cooled spun the cycle loop at
+  5 s while the fallback pick was refused). Pods get
+  `affine/dialects.py` + `affine/corpus/trace.py` via `deploy_pods.sh`
+  (`AFFINE_FILES`). Codex and OpenClaw stay out: both speak OpenAI
+  Responses with two leading system messages the teacher template refuses
+  (see `policies.toml`). (e) **Turn-cap artifact** (`corpus/trace.py
+  is_turn_cap_artifact`): ACP harnesses raise interception's refusal past
+  `max_turns` as a `HarnessError` ("rollout stopped: max_turns") and
+  verifiers then skips grading (`rewards == {}`); `trace_error_type` /
+  `rollout_outcome` no longer count it as an error, and an ungraded
+  `max_turns` rollout is `failed` (the agent did not finish). Before: the
+  first post-401 `king_claude_code` batch — 24/24 rollouts at the 80-turn
+  cap, 653 tool_call turns, prefixes p50 111k / max 223k chars — folded to
+  zero as `king_errored`, and 15–20 % of the teacher's Claude Code
+  rollouts had been dropped the same way since 2026-09-07. Forward-only
+  (the fold re-derives only unfolded chunks); `--rederive` would back-fill.
+  (f) `rollout_outcome` reads the env's primary grade in order `solved` /
+  `correct` / `passed_fraction` (`PRIMARY_REWARD_KEYS`): affine-math grades
+  into `correct`, so every king math rollout had been `king_unscored`
+  (120/120 in the 20:05 UTC dry fold); affine-wiki grades nothing and stays
+  unscored. (g) `king_boxed` / `king_toolcall` carry `max_tokens = 16384`:
+  the null harness sets no cap and the king box serves 262k context, so one
+  looping math reply held a 24-task batch for the full 3600 s rollout
+  timeout (datagen-2 19:54, datagen-3 20:11 UTC). Once the teacher's pool
+  is done the seat scheduler drains the king's math pool first (math is the
+  cheapest deficit: 1 turn per rollout, ~1–4 min per batch, ~1 h per pod).
+
 ### History — Reason v4 (wvk 7–9, 2026-08-17 → 2026-08-27)
 v4 was the uncentered tempered LME, `Reason = tau·log((1/k)·Σ exp(a_i/tau))`,
 same B gate and length floor, δ = 0.002 (0.001 experiment 2026-08-21 reverted
@@ -398,7 +558,10 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
-- `weight_version_key = 13` (2026-09-09 ~02:00 UTC, explicit operator
+- `weight_version_key = 14` (2026-09-10 ~21:00 UTC, explicit operator
+  directive "do it now yes": `allowed_action_kinds` += `terminus_json`, the
+  Terminus 2 / terminal-bench agent JSON command batch; forward-only, reign
+  11 stands; 13 = 2026-09-09 ~02:00 UTC, explicit operator
   directive "make all the changes and flip the bit": `require_think_close
   = true`, `allowed_action_kinds` += `text`, protocol probe enforced;
   forward-only, reign 9 stands; 12 = forfeit floor `forfeit_turn_score = -0.1`,
@@ -870,7 +1033,7 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 ## 12. One-paragraph resume
 
 > Affine SN120: teacher-anchored thought-injection duels. Since 2026-08-27
-> (`weight_version_key=13` since the 2026-09-09 think-close/text fork; the
+> (`weight_version_key=14` since the 2026-09-10 terminus_json fork; the
 > scoring rule itself dates from wvk 10) the contract is **min(R,G) v5: centered Reason
 > + banded Grounding + δ floor + thought-length floor + B gate**: per turn
 > the teacher samples k=3 refs, a_i = lpC(y_i|z_A) − lpC(y_i|∅);

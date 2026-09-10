@@ -1,0 +1,111 @@
+# King-seat controller config (ops/king-datagen/kingctl.py).
+#
+# One goal: the CURRENT SN120 king is served somewhere the datagen pods can
+# reach, and every datagen pod knows where. The controller watches the
+# validator's state.json; on a new crown it rents one Lium box, serves the
+# king there (bootstrap_king.sh), writes /root/rollouts/.king_env on every
+# datagen pod (rollouts/king.py re-reads it each cycle), then releases the
+# previous king's box. A dead or unreachable box is replaced the same way.
+
+[king]
+state_json = "affine/state/state.json"      # relative to the repo root
+pod_prefix = "king-dg-"                      # controller only touches pods with this prefix
+datagen_pod_prefix = "affine-datagen"        # pods that receive .king_env
+king_env_path = "/root/rollouts/.king_env"   # on the datagen pods
+template_id = "345273fa-4818-46f7-a8fa-32f0e331713c"  # Pytorch (Cuda+DinD) cu13.0.2 — same as the swarm
+ttl_hours = 72                               # per-pod safety-net TTL at rent time (Lium kills the pod)
+rotate_before_ttl_hours = 2                  # rent the replacement this long before the TTL (zero-gap rotation)
+bootstrap_timeout_min = 45                   # venv + 70 GB pull + engine warmup
+unreachable_grace_min = 20                   # a box dark this long after READY is replaced
+canary_every_min = 10                        # real completion probe cadence after READY (3 misses = dark)
+pod_forget_ticks = 5                         # consecutive Lium-listing misses before a pod is forgotten
+state_stale_min = 30                         # keep the last known king this long if state.json is unreadable
+watchdog_every_min = 5                       # datagen-pod supervisor liveness check cadence
+watchdog_relaunch_min = 10                   # supervisor + bootstrap loop both gone this long -> relaunch
+min_balance_usd = 2000.0                     # refuse to rent below this Lium balance
+budget_usd_hr = 25.0                         # cap on all king-dg pods together (two boxes during a swap/rotation)
+vllm_version = "0.28.0"
+
+# Serving knobs (Qwen3.6-35B-A3B family, ~70 GB BF16). 262144 = the
+# model's own max_position_embeddings, same as the SWE-bench Pro bench
+# serving; Claude Code prompts reach 120k+ tokens at depth and the failures
+# we want ARE the deep ones.
+max_model_len = 262144
+gpu_memory_utilization = 0.90
+max_num_batched_tokens = 16384
+max_num_seqs = 32
+
+# State-change alerts (rented / READY / published / unpublished / removed /
+# recovered / datagen supervisor relaunched). One line each, never a secret.
+[discord]
+enabled = true
+channel_id = "1381987595881414656"           # same ops channel as corpus_build / exploit-audit
+token_env = "DISCORD_BOT_TOKEN_ARBOS_BITTENSOR"  # read from ~/.affine-validator.env or the repo .env
+
+# Box types, in PREFERENCE order: the first type with stock under its price
+# cap is rented. match = substring of the Lium machine_name; gpu_count exact;
+# tp = GPUs per replica (the model needs ~70 GB + KV, so 1 on a >= 141 GB
+# card, 2 on 96 GB cards); replicas = tp * replicas <= gpu_count.
+[[types]]
+name = "h200-2x"
+match = "H200"
+gpu_count = 2
+tp = 1
+replicas = 2
+max_price = 9.0
+
+[[types]]
+name = "b200-2x"
+match = "B200"
+gpu_count = 2
+tp = 1
+replicas = 2
+max_price = 13.0
+
+[[types]]
+name = "pro6000-4x"
+match = "RTX PRO 6000"
+gpu_count = 4
+tp = 2
+replicas = 2
+max_price = 6.0
+
+[[types]]
+name = "pro6000-8x"
+match = "RTX PRO 6000"
+gpu_count = 8
+tp = 2
+replicas = 4
+max_price = 12.0
+
+[[types]]
+name = "h200-1x"
+match = "H200"
+gpu_count = 1
+tp = 1
+replicas = 1
+max_price = 5.0
+
+[[types]]
+name = "b200-1x"
+match = "B200"
+gpu_count = 1
+tp = 1
+replicas = 1
+max_price = 7.0
+
+[[types]]
+name = "h200-4x"
+match = "H200"
+gpu_count = 4
+tp = 1
+replicas = 4
+max_price = 16.0
+
+[[types]]
+name = "pro6000-2x"
+match = "RTX PRO 6000"
+gpu_count = 2
+tp = 2
+replicas = 1
+max_price = 3.0

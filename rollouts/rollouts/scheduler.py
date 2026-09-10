@@ -13,6 +13,15 @@ The scheduler owns two picks per cycle:
 Kept-turn counts come from the unified state (one jsonl row per processed
 task, written after its batch converts) — the same numbers the Parquet
 index carries, but restart-cheap to load.
+
+Seats (2026-09-10): "done" is per (source, SEAT), not per source. The
+teacher seat is every non-king policy (one pass over each task, as before).
+Each king is its own seat, `king:<served model>`, so the king replays tasks
+the teacher already solved — its failures on the teacher's tasks are the
+whole point of the king seat (DAgger) — and a newly crowned king starts
+over. Before this, the king could only pick tasks the teacher had not
+reached yet: every exhausted pool (terminal, math, tool_use, nl2repo) was
+closed to it and king failures came from three coding sources only.
 """
 
 from __future__ import annotations
@@ -24,22 +33,39 @@ import time
 from pathlib import Path
 
 from rollouts.registry import Registry
+from rollouts.runners.base import EndpointHealth
 from rollouts.schema import Policy
 
 log = logging.getLogger("rollouts.scheduler")
 
 ZERO_YIELD_STRIKES = 3        # consecutive zero-kept batches -> cooldown
 ZERO_YIELD_COOLDOWN_S = 4 * 3600
+KING_POLICY_PREFIX = "king_"
+TEACHER_SEAT = "teacher"
+
+
+def seat_of(policy_id: str, model: str) -> str:
+    """The seat a (policy, served model) plays. `model` is the endpoint's
+    model name (the `provider` label on state rows is `<endpoint>/<model>`)."""
+    if policy_id.startswith(KING_POLICY_PREFIX):
+        return f"king:{model or 'unknown'}"
+    return TEACHER_SEAT
+
+
+def policy_seat(policy: Policy, env: dict) -> str:
+    eps = policy.available_endpoints(env)
+    return seat_of(policy.id, eps[0].model if eps else "")
 
 
 class UnifiedState:
     """Append-only jsonl keyed (source, uid): outcome + kept-turn counts.
-    A task recorded here is never attempted again (restart-safe; rows are
-    written only after its batch's traces were parsed)."""
+    A task recorded here is never attempted again BY THE SAME SEAT
+    (restart-safe; rows are written only after its batch's traces were
+    parsed)."""
 
     def __init__(self, path: Path):
         self.path = path
-        self.done: dict[str, set[str]] = {}
+        self.done: dict[tuple[str, str], set[str]] = {}
         self.kept_by_source: dict[str, int] = {}
         self.kept_by_policy: dict[tuple[str, str], int] = {}
         if path.exists():
@@ -51,7 +77,10 @@ class UnifiedState:
 
     def _absorb(self, rec: dict) -> None:
         source, uid = rec["source"], rec["uid"]
-        self.done.setdefault(source, set()).add(uid)
+        provider = str(rec.get("provider") or "")
+        model = provider.split("/", 1)[1] if "/" in provider else provider
+        seat = seat_of(str(rec.get("policy_id") or ""), model)
+        self.done.setdefault((source, seat), set()).add(uid)
         n = int(rec.get("n_turns") or 0)
         self.kept_by_source[source] = self.kept_by_source.get(source, 0) + n
         pid = rec.get("policy_id") or ""
@@ -69,16 +98,17 @@ class UnifiedState:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         self._absorb(rec)
 
-    def done_for(self, source: str) -> set[str]:
-        return self.done.get(source, set())
+    def done_for(self, source: str, seat: str = TEACHER_SEAT) -> set[str]:
+        return self.done.get((source, seat), set())
 
 
 class Scheduler:
     def __init__(self, registry: Registry, state: UnifiedState,
-                 env: dict | None = None):
+                 env: dict | None = None, health: EndpointHealth | None = None):
         self.registry = registry
         self.state = state
         self.env = env if env is not None else dict(os.environ)
+        self.health = health
         self.targets = registry.target_shares()
         self._cooldown_until: dict[str, float] = {}
         self._zero_streak: dict[str, int] = {}
@@ -110,12 +140,48 @@ class Scheduler:
         return [p for p in self.registry.policies_for(source)
                 if p.available_endpoints(self.env)]
 
-    def pick_policy(self, source: str) -> Policy:
+    def _healthy_policies(self, source: str) -> list[Policy]:
+        """Usable policies whose endpoints are not ALL on cooldown (a struck
+        king box is skipped for the cooldown instead of being re-picked by
+        deficit every cycle). Falls back to every usable policy when all of
+        them cool, so a source never goes unpicked while it has a route."""
         cands = self._usable_policies(source)
+        if self.health is None:
+            return cands
+        warm = [p for p in cands if not self.health.all_cooling(p, self.env)]
+        return warm or cands
+
+    # -- seats: per-(source, seat) work ------------------------------------------
+
+    def pending(self, source: str, rows: list[dict], policy: Policy) -> list[dict]:
+        """Pool rows this policy's seat has not processed, in pool order."""
+        done = self.state.done_for(source, policy_seat(policy, self.env))
+        return [r for r in rows if r["uid"] not in done]
+
+    def remaining(self, source: str, rows: list[dict]) -> int:
+        """Tasks some usable policy of this source still has to run — the
+        union over seats (a task the teacher finished is still work for the
+        king)."""
+        seats = {policy_seat(p, self.env) for p in self._usable_policies(source)}
+        if not seats:
+            return 0
+        dones = [self.state.done_for(source, s) for s in seats]
+        return sum(1 for r in rows if any(r["uid"] not in d for d in dones))
+
+    def pick_policy(self, source: str, rows: list[dict] | None = None) -> Policy:
+        cands = self._healthy_policies(source)
+        if rows is not None:
+            with_work = [p for p in cands if self.pending(source, rows, p)]
+            if not with_work:
+                # Every warm policy is finished here; fall back to any usable
+                # policy with work (a cooling one still beats an idle cycle).
+                with_work = [p for p in self._usable_policies(source)
+                             if self.pending(source, rows, p)]
+            cands = with_work
         if not cands:
             raise RuntimeError(
                 f"no policy for source {source!r} has a usable endpoint "
-                "(fail-closed)")
+                "with work left (fail-closed)")
         total_share = sum(p.share for p in cands)
         total_kept = sum(self.state.kept_by_policy.get((source, p.id), 0)
                          for p in cands) + 1

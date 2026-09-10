@@ -16,8 +16,11 @@ the delimiter pluggable while leaving the scoring math untouched:
     boxed       \\boxed{...}               math / short-answer envs
     text        the whole visible reply    final reports / answers: the reply
                                            that ends a trajectory without a
-                                           tool call (staged 2026-09-08, see
-                                           below; admission is a fork event)
+                                           tool call (admitted wvk 13)
+    terminus_json  one JSON object with    Terminus 2, the terminal-bench
+                   "analysis"/"plan"/      reference agent (harbor): the reply
+                   "commands"              IS the JSON; registered 2026-09-10,
+                                           NOT admitted (staging only)
 
 What deliberately does NOT vary per dialect: the thought channel rendering
 (`</think>\\nTHOUGHT: {z}`, see evalsrv/chat.py). G compares the miner's
@@ -29,7 +32,11 @@ keeps every stored bash turn byte-identical on replay.
 to emit a dialect that the turn prefix asked for. The fold requires the
 marker in the turn's system message, so an env whose prompt never states its
 action contract is dropped rather than silently scored against a format the
-model was never told about.
+model was never told about. `marker_roles` says which leading message may
+carry it: the system message for every dialect that has one, plus the first
+user message for `terminus_json` — Terminus 2 states its whole format
+contract in the first user turn and sends a system message only when the
+task supplies one.
 
 `text` is the one dialect with no marker. Its contract — "when you are done,
 say so in plain words" — is the default contract of every chat model and no
@@ -55,6 +62,7 @@ dependency set.
 
 from __future__ import annotations
 
+import json
 import re
 import tomllib
 from dataclasses import dataclass
@@ -117,6 +125,65 @@ def _text_finder(text: str) -> list[Span]:
     return [(start, start + len(stripped))]
 
 
+TERMINUS_REQUIRED_KEYS = ("analysis", "plan", "commands")
+
+
+def _balanced_object_end(text: str, start: int) -> int:
+    """Index one past the `}` closing the JSON object opened at `start`,
+    string-aware, or -1 when it never closes."""
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return -1
+
+
+def _terminus_json_finder(text: str) -> list[Span]:
+    """Spans of every top-level JSON object that is a Terminus 2 command
+    batch: parses, is an object, and carries the three required keys with
+    `commands` a list. Terminus 2 (harbor's terminal-bench agent) has no
+    tool channel — the reply IS the action, a JSON object whose `analysis`
+    and `plan` strings are the agent's visible reasoning and whose
+    `commands` are tmux keystrokes. Prose around the object is tolerated by
+    the harness ("warnings") and by this finder alike; a truncated object
+    never closes and yields no span (forfeit, like an open fence)."""
+    spans: list[Span] = []
+    pos = text.find("{")
+    while pos != -1:
+        end = _balanced_object_end(text, pos)
+        if end == -1:
+            break
+        try:
+            obj = json.loads(text[pos:end])
+        except ValueError:
+            obj = None
+        if (isinstance(obj, dict)
+                and all(k in obj for k in TERMINUS_REQUIRED_KEYS)
+                and isinstance(obj["commands"], list)):
+            spans.append((pos, end))
+            pos = text.find("{", end)
+        else:
+            pos = text.find("{", pos + 1)
+    return spans
+
+
 @dataclass(frozen=True)
 class Dialect:
     id: str
@@ -130,6 +197,8 @@ class Dialect:
     # dialects (boxed): a final reply without the format is a miss, not a
     # report.
     ends_in_text: bool = False
+    # Which leading prefix message may state the contract (see module doc).
+    marker_roles: tuple[str, ...] = ("system",)
 
     def spans(self, text: str) -> list[Span]:
         return self.finder(text)
@@ -141,6 +210,18 @@ class Dialect:
         if not self.system_marker:
             return True
         return self.system_marker in system_content.lower()
+
+    def mandate_ok(self, prefix: list[dict]) -> bool:
+        """The prefix states this dialect's contract: the marker appears in
+        the first message of one of `marker_roles`. For ("system",) this is
+        exactly the historical check — the first system message carries the
+        marker, and a prefix with no system message is dropped (also for
+        `text`, whose marker is vacuous)."""
+        for role in self.marker_roles:
+            first = next((m for m in prefix if m.get("role") == role), None)
+            if first is not None and self.system_ok(str(first.get("content", ""))):
+                return True
+        return False
 
 
 DIALECTS: dict[str, Dialect] = {
@@ -170,6 +251,16 @@ DIALECTS: dict[str, Dialect] = {
             finder=_text_finder,
             system_marker="",
             label="the whole visible reply (final report / answer)",
+        ),
+        Dialect(
+            id="terminus_json",
+            finder=_terminus_json_finder,
+            # Terminus 2's prompt: 'Format your response as JSON with the
+            # following structure' + the "commands" key. Both words together
+            # are the contract; "json" alone would match unrelated prompts.
+            system_marker='"commands"',
+            label='one Terminus 2 JSON command batch ("analysis"/"plan"/"commands")',
+            marker_roles=("system", "user"),
         ),
     )
 }
@@ -264,8 +355,7 @@ def reference_check(prefix: list[dict], reference_turn: str,
     in later prefixes) but not references.
     """
     d = get(action_kind)
-    sys_msgs = [m for m in prefix if m.get("role") == "system"]
-    if not sys_msgs or not d.system_ok(sys_msgs[0].get("content", "")):
+    if not d.mandate_ok(prefix):
         return f"system_msg_no_{d.id}_mandate", ""
     acts = d.actions(reference_turn)
     if len(acts) != 1:

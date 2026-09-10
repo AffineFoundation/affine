@@ -34,6 +34,7 @@ from affine.toolbake import ToolBaker
 from rollouts.catalog import load_catalog
 from rollouts.config import RolloutsConfig, load_config
 from rollouts.index import RolloutIndex
+from rollouts.king import refresh_king_env
 from rollouts.panel import panel_keys
 from rollouts.r2mirror import R2TraceMirror
 from rollouts.registry import Registry, load_registry
@@ -50,6 +51,10 @@ log = logging.getLogger("rollouts.run")
 MAX_CONSECUTIVE_FAILS = 3
 FAIL_SLEEP_S = 600
 POOL_EXHAUSTED_SLEEP_S = 6 * 3600
+PREFLIGHT_SKIP_SLEEP_S = 5
+# Touch this file to make the supervisor exit cleanly between batches (the
+# bootstrap loop relaunches it) — a redeploy without killing a running batch.
+RESTART_FLAG = Path(os.environ.get("ROLLOUTS_RESTART_FLAG", "/root/rollouts/RESTART"))
 
 
 def _utc_tag() -> str:
@@ -194,18 +199,21 @@ def main() -> None:
     hf_mirror = cfg.hf_trace_mirror and not args.no_mirror
     if hf_mirror and not os.environ.get("HF_TOKEN"):
         sys.exit("HF_TOKEN missing while ROLLOUTS_HF_TRACE_MIRROR is on")
-    if not any(p.available_endpoints(os.environ)
+    # One env dict shared by the scheduler and every runner; the king seat
+    # vars are refreshed into it each cycle (rollouts.king).
+    env = dict(os.environ)
+    refresh_king_env(env)
+    if not any(p.available_endpoints(env)
                for p in registry.policies.values()):
         sys.exit("no policy endpoint has its key env set (fail-closed)")
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(cfg.data_dir / "runs", ignore_errors=True)
 
     state = UnifiedState(cfg.state_path)
-    scheduler = Scheduler(registry, state)
+    health = EndpointHealth()
+    scheduler = Scheduler(registry, state, env, health)
     store = TraceStore(cfg.store_dir)
     index = RolloutIndex(cfg.store_dir)
-    health = EndpointHealth()
-    env = dict(os.environ)
     runners = {
         "verifiers": VerifiersRunner(cfg, health, env),
         "verifiers_chat": VerifiersChatRunner(cfg, health, env),
@@ -236,16 +244,24 @@ def main() -> None:
     pools = {name: ordered_rows(cfg, name, load_catalog(cfg, src))
              for name, src in registry.sources.items()}
     for name, rows in pools.items():
-        log.info("source %s: %d selectable tasks (%d already processed)",
-                 name, len(rows), len(state.done_for(name)))
+        log.info("source %s: %d selectable tasks (%d processed by the teacher "
+                 "seat)", name, len(rows), len(state.done_for(name)))
 
     fails = 0
     while True:
-        remaining = {
-            name: sum(1 for r in rows
-                      if r["uid"] not in state.done_for(name))
-            for name, rows in pools.items()
-        }
+        if RESTART_FLAG.exists():
+            # Graceful redeploy: exit between batches; bootstrap.sh relaunches
+            # the supervisor on the freshly deployed code.
+            RESTART_FLAG.unlink(missing_ok=True)
+            flush_uploads(r2, hf, store)
+            log.info("restart flag %s seen; exiting for relaunch", RESTART_FLAG)
+            return
+        refresh_king_env(env)
+        # Per source: tasks some usable seat still has to run (the king seat
+        # replays the teacher's tasks, so an exhausted teacher pool is not
+        # an exhausted source while the king is up).
+        remaining = {name: scheduler.remaining(name, rows)
+                     for name, rows in pools.items()}
         if args.source:
             name = args.source if remaining.get(args.source) else None
         else:
@@ -261,12 +277,20 @@ def main() -> None:
                      for n, s in registry.sources.items()}
             continue
         source = registry.sources[name]
-        policy = scheduler.pick_policy(name)
-        done = state.done_for(name)
-        batch = [r for r in pools[name]
-                 if r["uid"] not in done][: cfg.batch_size]
-        log.info("cycle: source=%s policy=%s batch=%d remaining=%s",
-                 name, policy.id, len(batch), remaining)
+        policy = scheduler.pick_policy(name, pools[name])
+        pending = scheduler.pending(name, pools[name], policy)
+        batch = pending[: cfg.batch_size]
+        log.info("cycle: source=%s policy=%s batch=%d seat_pending=%d "
+                 "remaining=%s", name, policy.id, len(batch), len(pending),
+                 remaining)
+        if not health.preflight(policy, env):
+            # A dynamic endpoint (the king seat) does not answer: struck, so
+            # the scheduler prefers another policy while it cools. Not a
+            # batch failure and not a zero-yield strike on the source.
+            log.warning("policy %s: no endpoint passed preflight; skipping "
+                        "this cycle", policy.id)
+            time.sleep(PREFLIGHT_SKIP_SLEEP_S)
+            continue
 
         ok, kept_turns = process_batch(
             cfg, source, policy, batch, runners, state, store, index, panel,

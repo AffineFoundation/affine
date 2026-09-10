@@ -132,8 +132,34 @@ def trace_conversations(trace: dict, baker=None) -> list[list[dict]]:
     return out
 
 
+TURN_CAP_STOP = "max_turns"
+TURN_CAP_ARTIFACT = "rollout stopped: max_turns"
+
+
+def is_turn_cap_artifact(err: dict, trace: dict) -> bool:
+    """The error is only the turn cap surfacing through a harness.
+
+    When interception refuses the call past `max_turns`, ACP agents (Claude
+    Code and friends) raise the refusal as their own runtime error, so the
+    trace carries `stop_condition == max_turns` AND a HarnessError whose
+    message quotes "rollout stopped: max_turns". Nothing failed: the model
+    used its whole turn budget. Live 2026-09-10: 15-20 % of the teacher's
+    Claude Code rollouts and 24/24 of the king's looked like this and were
+    dropped as errored — the king looping to the cap is exactly the
+    failure the king seat exists to capture."""
+    if trace.get("stop_condition") != TURN_CAP_STOP:
+        return False
+    return TURN_CAP_ARTIFACT in str(err.get("message") or "")
+
+
+def real_errors(trace: dict) -> list[dict]:
+    """`trace["errors"]` without turn-cap artifacts."""
+    return [e for e in (trace.get("errors") or [])
+            if not is_turn_cap_artifact(e, trace)]
+
+
 def trace_error_type(trace: dict) -> str | None:
-    errors = trace.get("errors") or []
+    errors = real_errors(trace)
     if not errors:
         return None
     return errors[0].get("type") or errors[0].get("error") or "unknown"

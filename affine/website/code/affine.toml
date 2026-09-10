@@ -45,6 +45,9 @@ min_submission_block = 8938619
 # </think> forfeits (require_think_close), and the visible final reply of
 # a self-ended rollout is a scored action (allowed_action_kinds += text).
 # min(R,G) math unchanged. Forward-only; reign stands.
+# 13→14 terminus_json dialect (2026-09-10): the Terminus 2 (terminal-bench
+# agent) JSON command batch is a scored action (allowed_action_kinds +=
+# terminus_json). min(R,G) math unchanged. Forward-only; reign stands.
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -52,7 +55,7 @@ min_submission_block = 8938619
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 13
+weight_version_key = 14
 
 [wallet]
 name = "default"
@@ -329,7 +332,17 @@ refresh_interval_s = 3600
 # next fold picks them up. Why: min(R,G) never scored the visible
 # message, so kings learned to say nothing outside <think>
 # (SWE-bench Pro / Claude Code post-mortem 2026-09-08).
-allowed_action_kinds = ["bash", "tool_call", "boxed", "text"]
+# 2026-09-10 (weight_version_key 13→14, explicit dated operator directive
+# "do it now yes"): terminus_json admitted — the reply of harbor's Terminus 2
+# agent (the terminal-bench reference harness) is one JSON object
+# {"analysis", "plan", "commands": [...]}; the whole object is the action.
+# Its format mandate sits in the first USER message, so the marker check
+# reads that role too (Dialect.marker_roles). Fed by the teacher_terminus /
+# king_terminus rollouts policies (live on the datagen pods since 2026-09-10
+# ~19:00 UTC); the next fold admits them. Why: kings must work under the
+# agent harnesses people actually run (Claude Code, Hermes, terminal-bench);
+# a dialect the fold refuses never reaches D.
+allowed_action_kinds = ["bash", "tool_call", "boxed", "text", "terminus_json"]
 
 [duel]
 # min(R,G) v5 — centered Reason + banded Grounding (2026-08-27,
