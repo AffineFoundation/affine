@@ -21,7 +21,7 @@ REPO=$PWD
 KH="$REPO/ops/king-datagen/state/known_hosts"
 FILES=(schema.py registry.py run.py king.py scheduler.py policies.toml sources.toml
        runners/base.py runners/verifiers.py runners/mini_swe.py)
-AFFINE_FILES=(affine/dialects.py)
+AFFINE_FILES=(affine/dialects.py affine/corpus/trace.py)
 RESTART=0; TARGETS=()
 for a in "$@"; do
   case "$a" in
@@ -39,7 +39,7 @@ for t in "${TARGETS[@]}"; do
   SSH="ssh -o UserKnownHostsFile=$KH -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15 -o LogLevel=ERROR -p $P root@$H"
   SCP="scp -o UserKnownHostsFile=$KH -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o LogLevel=ERROR -P $P"
   echo "== $H:$P"
-  $SSH 'mkdir -p /root/rollouts/rollouts/.bak/runners /root/affine/.bak/affine && cd /root/rollouts/rollouts && for f in '"${FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; cd /root/affine && for f in '"${AFFINE_FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; echo backed-up' || { echo "SSH-FAILED"; rc=1; continue; }
+  $SSH 'mkdir -p /root/rollouts/rollouts/.bak/runners /root/affine/.bak/affine/corpus && cd /root/rollouts/rollouts && for f in '"${FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; cd /root/affine && for f in '"${AFFINE_FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; echo backed-up' || { echo "SSH-FAILED"; rc=1; continue; }
   ok=1
   for f in "${FILES[@]}"; do
     $SCP "rollouts/rollouts/$f" "root@$H:/root/rollouts/rollouts/$f" || { echo "SCP-FAILED $f"; ok=0; break; }
