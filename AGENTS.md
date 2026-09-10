@@ -353,10 +353,18 @@ only teacher-trajectory prefixes (covariate shift; DAgger fix). Pieces:
   the first *user* message, where Terminus states its format; every other
   dialect keeps the historical first-system-message check bit-for-bit).
   King probe: 29 turns / 0 drops, one terminal-bench task solved.
-  **Registered, NOT admitted** — its turns stage behind
-  `[dataset].allowed_action_kinds` (fold drop
-  `action_kind_not_admitted:terminus_json`) until a dated operator
-  directive + wvk decision, like boxed/tool_call before wvk 11.
+  **ADMITTED 2026-09-10 ~21:00 UTC — wvk 13→14** on the explicit operator
+  directive "do it now yes" (same day; it had been staged behind
+  `[dataset].allowed_action_kinds` for ~2 h, so no `--rederive` was
+  needed: no fold had run since the terminus policies went live).
+  Commit `fcb2354` (toml: allowed_action_kinds += terminus_json, wvk 14 +
+  history paragraph), `8ef06b2` (llms.txt "Fork history: wvk 14", dialect
+  table row, marker-rule note). Deploy = `/tmp/v8flip/deploy.sh` (the v7
+  script re-pointed): pod was idle (queue 0, no in_flight) → pm2 stop →
+  `redeploy_pods.py` (dialects.py with terminus_json + toml) → pm2 start.
+  Forward-only; reign 11 stands; `min_submission_block` unchanged. The
+  next fold (pm2 cron 16:00 UTC) admits the staged terminus turns; the
+  duel tripwire accepts slices carrying them once the pod is on wvk 14.
   (d) `EndpointHealth.preflight` probes a cooling king endpoint instead of
   skipping it (a source whose every policy cooled spun the cycle loop at
   5 s while the fallback pick was refused). Pods get
@@ -549,7 +557,10 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
-- `weight_version_key = 13` (2026-09-09 ~02:00 UTC, explicit operator
+- `weight_version_key = 14` (2026-09-10 ~21:00 UTC, explicit operator
+  directive "do it now yes": `allowed_action_kinds` += `terminus_json`, the
+  Terminus 2 / terminal-bench agent JSON command batch; forward-only, reign
+  11 stands; 13 = 2026-09-09 ~02:00 UTC, explicit operator
   directive "make all the changes and flip the bit": `require_think_close
   = true`, `allowed_action_kinds` += `text`, protocol probe enforced;
   forward-only, reign 9 stands; 12 = forfeit floor `forfeit_turn_score = -0.1`,
@@ -1021,7 +1032,7 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 ## 12. One-paragraph resume
 
 > Affine SN120: teacher-anchored thought-injection duels. Since 2026-08-27
-> (`weight_version_key=13` since the 2026-09-09 think-close/text fork; the
+> (`weight_version_key=14` since the 2026-09-10 terminus_json fork; the
 > scoring rule itself dates from wvk 10) the contract is **min(R,G) v5: centered Reason
 > + banded Grounding + δ floor + thought-length floor + B gate**: per turn
 > the teacher samples k=3 refs, a_i = lpC(y_i|z_A) − lpC(y_i|∅);
