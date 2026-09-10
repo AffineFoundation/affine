@@ -244,8 +244,8 @@ def main() -> None:
     pools = {name: ordered_rows(cfg, name, load_catalog(cfg, src))
              for name, src in registry.sources.items()}
     for name, rows in pools.items():
-        log.info("source %s: %d selectable tasks (%d already processed)",
-                 name, len(rows), len(state.done_for(name)))
+        log.info("source %s: %d selectable tasks (%d processed by the teacher "
+                 "seat)", name, len(rows), len(state.done_for(name)))
 
     fails = 0
     while True:
@@ -257,11 +257,11 @@ def main() -> None:
             log.info("restart flag %s seen; exiting for relaunch", RESTART_FLAG)
             return
         refresh_king_env(env)
-        remaining = {
-            name: sum(1 for r in rows
-                      if r["uid"] not in state.done_for(name))
-            for name, rows in pools.items()
-        }
+        # Per source: tasks some usable seat still has to run (the king seat
+        # replays the teacher's tasks, so an exhausted teacher pool is not
+        # an exhausted source while the king is up).
+        remaining = {name: scheduler.remaining(name, rows)
+                     for name, rows in pools.items()}
         if args.source:
             name = args.source if remaining.get(args.source) else None
         else:
@@ -277,12 +277,12 @@ def main() -> None:
                      for n, s in registry.sources.items()}
             continue
         source = registry.sources[name]
-        policy = scheduler.pick_policy(name)
-        done = state.done_for(name)
-        batch = [r for r in pools[name]
-                 if r["uid"] not in done][: cfg.batch_size]
-        log.info("cycle: source=%s policy=%s batch=%d remaining=%s",
-                 name, policy.id, len(batch), remaining)
+        policy = scheduler.pick_policy(name, pools[name])
+        pending = scheduler.pending(name, pools[name], policy)
+        batch = pending[: cfg.batch_size]
+        log.info("cycle: source=%s policy=%s batch=%d seat_pending=%d "
+                 "remaining=%s", name, policy.id, len(batch), len(pending),
+                 remaining)
         if not health.preflight(policy, env):
             # A dynamic endpoint (the king seat) does not answer: struck, so
             # the scheduler prefers another policy while it cools. Not a

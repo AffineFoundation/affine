@@ -65,9 +65,27 @@ tsjs = 0.15
 # cannot render (see policies.toml).
 # 2026-09-10: + the king seat (king_* in policies.toml, share 1.0 vs the
 # teacher's 2.0). Idle until the controller has served the current king.
+# 2026-09-10 (evening, operator: data broad enough for "a really good
+# agent" — Claude Code, Hermes, the terminal-bench agent, ...): + kimi_code,
+# hermes_agent and terminus_2 harnesses, teacher + king each. Datagen-pod
+# probes with the KING on terminal-bench-2 tasks (2 each, 12-40 turns):
+#   kimi_code   27 tool_call turns kept / 0 drops, prefixes 94-126k chars
+#               (Kimi's system prompt; under the 300k slicer cap).
+#   terminus_2  29 terminus_json turns kept / 0 drops, one task SOLVED by
+#               the king, replies are the bare JSON object. Dialect
+#               REGISTERED, NOT ADMITTED: turns stage behind
+#               [dataset].allowed_action_kinds until the operator's fork
+#               decision (the fold reports action_kind_not_admitted).
+#   hermes_agent tool_call, one call per reply (see policies.toml); probe
+#               yield below.
+# Seats (scheduler.py): the king replays tasks the teacher has finished,
+# so terminal / math / tool_use / nl2repo pools exhausted by the teacher
+# are open to the king — before, king failures came from 3 coding sources.
 policies = ["teacher_textbased", "teacher_bashtool", "teacher_pi",
-            "teacher_claude_code",
-            "king_textbased", "king_bashtool", "king_pi", "king_claude_code"]
+            "teacher_claude_code", "teacher_kimi", "teacher_hermes",
+            "teacher_terminus",
+            "king_textbased", "king_bashtool", "king_pi", "king_claude_code",
+            "king_kimi", "king_hermes", "king_terminus"]
 
 # -- coding --------------------------------------------------------------------
 

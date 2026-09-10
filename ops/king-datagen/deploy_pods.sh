@@ -11,13 +11,17 @@
 # supervisor exits cleanly at its next cycle boundary (no running batch is
 # killed) and bootstrap.sh relaunches it on the new code. Never kills.
 #
-# The pods' /root/affine tree is NOT touched (yield accounting only).
+# The pods' /root/affine tree is NOT touched except for AFFINE_FILES — the
+# stdlib-only dialect registry the pod imports to validate policies'
+# action_kind (a policy in an unregistered dialect fails the registry
+# check; the same file gates nothing on the pod beyond yield accounting).
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 REPO=$PWD
 KH="$REPO/ops/king-datagen/state/known_hosts"
 FILES=(schema.py registry.py run.py king.py scheduler.py policies.toml sources.toml
        runners/base.py runners/verifiers.py runners/mini_swe.py)
+AFFINE_FILES=(affine/dialects.py)
 RESTART=0; TARGETS=()
 for a in "$@"; do
   case "$a" in
@@ -35,10 +39,13 @@ for t in "${TARGETS[@]}"; do
   SSH="ssh -o UserKnownHostsFile=$KH -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15 -o LogLevel=ERROR -p $P root@$H"
   SCP="scp -o UserKnownHostsFile=$KH -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o LogLevel=ERROR -P $P"
   echo "== $H:$P"
-  $SSH 'mkdir -p /root/rollouts/rollouts/.bak/runners && cd /root/rollouts/rollouts && for f in '"${FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; echo backed-up' || { echo "SSH-FAILED"; rc=1; continue; }
+  $SSH 'mkdir -p /root/rollouts/rollouts/.bak/runners /root/affine/.bak/affine && cd /root/rollouts/rollouts && for f in '"${FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; cd /root/affine && for f in '"${AFFINE_FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; echo backed-up' || { echo "SSH-FAILED"; rc=1; continue; }
   ok=1
   for f in "${FILES[@]}"; do
     $SCP "rollouts/rollouts/$f" "root@$H:/root/rollouts/rollouts/$f" || { echo "SCP-FAILED $f"; ok=0; break; }
+  done
+  for f in "${AFFINE_FILES[@]}"; do
+    $SCP "affine/$f" "root@$H:/root/affine/$f" || { echo "SCP-FAILED $f"; ok=0; break; }
   done
   [ $ok = 1 ] || { rc=1; continue; }
   $SSH 'cd /root/rollouts && source /root/affine/.datagen_env && source /root/rollouts/.rollouts_env 2>/dev/null; PYTHONPATH=/root/affine:/root/rollouts /root/venv/bin/python - <<PY
@@ -55,7 +62,7 @@ avail = [p.id for p in r.policies.values() if p.available_endpoints(env)]
 ke = read_king_env()
 print("REGISTRY_OK king policies", len(ks), "available now", len(avail),
       "king env", KING_ENV_PATH, "reign", ke.get("KING_REIGN"), "digest", (ke.get("KING_DIGEST") or "")[:12])
-PY' || { echo "REGISTRY-CHECK-FAILED (files restored from .bak)"; $SSH 'cd /root/rollouts/rollouts && for f in '"${FILES[*]}"'; do [ -f ".bak/$f" ] && cp ".bak/$f" "$f"; done'; rc=1; continue; }
+PY' || { echo "REGISTRY-CHECK-FAILED (files restored from .bak)"; $SSH 'cd /root/rollouts/rollouts && for f in '"${FILES[*]}"'; do [ -f ".bak/$f" ] && cp ".bak/$f" "$f"; done; cd /root/affine && for f in '"${AFFINE_FILES[*]}"'; do [ -f ".bak/$f" ] && cp ".bak/$f" "$f"; done'; rc=1; continue; }
   if [ $RESTART = 1 ]; then
     $SSH 'touch /root/rollouts/RESTART && echo "RESTART flag set (supervisor exits at the next cycle boundary; bootstrap loop relaunches)"; pgrep -f -x "bash /root/rollouts/bootstrap.sh" >/dev/null || echo "WARNING: bootstrap loop not running — kingctl watchdog will relaunch it"'
   fi
