@@ -139,12 +139,21 @@ events { worker_connections 4096; }
 http {
   upstream king { least_conn;
 $UP  }
+  # Anthropic-style clients (Claude Code -> vLLM /v1/messages) send the key
+  # as x-api-key; vLLM --api-key only reads Authorization: Bearer. Translate.
+  map \$http_x_api_key \$king_auth {
+    "" \$http_authorization;
+    default "Bearer \$http_x_api_key";
+  }
   server {
     listen $FRONT_PORT;
     client_max_body_size 200m;
     proxy_read_timeout 3600s; proxy_send_timeout 3600s; proxy_connect_timeout 30s;
     proxy_buffering off; proxy_request_buffering off;
-    location / { proxy_pass http://king; proxy_http_version 1.1; proxy_set_header Connection ""; }
+    location / {
+      proxy_pass http://king; proxy_http_version 1.1; proxy_set_header Connection "";
+      proxy_set_header Authorization \$king_auth;
+    }
   }
 }
 EOF
