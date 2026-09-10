@@ -360,9 +360,20 @@ only teacher-trajectory prefixes (covariate shift; DAgger fix). Pieces:
   (d) `EndpointHealth.preflight` probes a cooling king endpoint instead of
   skipping it (a source whose every policy cooled spun the cycle loop at
   5 s while the fallback pick was refused). Pods get
-  `affine/dialects.py` via `deploy_pods.sh` (`AFFINE_FILES`). Codex and
-  OpenClaw stay out: both speak OpenAI Responses with two leading system
-  messages the teacher template refuses (see `policies.toml`).
+  `affine/dialects.py` + `affine/corpus/trace.py` via `deploy_pods.sh`
+  (`AFFINE_FILES`). Codex and OpenClaw stay out: both speak OpenAI
+  Responses with two leading system messages the teacher template refuses
+  (see `policies.toml`). (e) **Turn-cap artifact** (`corpus/trace.py
+  is_turn_cap_artifact`): ACP harnesses raise interception's refusal past
+  `max_turns` as a `HarnessError` ("rollout stopped: max_turns") and
+  verifiers then skips grading (`rewards == {}`); `trace_error_type` /
+  `rollout_outcome` no longer count it as an error, and an ungraded
+  `max_turns` rollout is `failed` (the agent did not finish). Before: the
+  first post-401 `king_claude_code` batch — 24/24 rollouts at the 80-turn
+  cap, 653 tool_call turns, prefixes p50 111k / max 223k chars — folded to
+  zero as `king_errored`, and 15–20 % of the teacher's Claude Code
+  rollouts had been dropped the same way since 2026-09-07. Forward-only
+  (the fold re-derives only unfolded chunks); `--rederive` would back-fill.
 
 ### History — Reason v4 (wvk 7–9, 2026-08-17 → 2026-08-27)
 v4 was the uncentered tempered LME, `Reason = tau·log((1/k)·Σ exp(a_i/tau))`,
