@@ -1,0 +1,171 @@
+Reign 9 vs teacher — what the king does right, what it does wrong, and the
+one D update + one scoring update the evidence supports          (2026-09-09)
+
+Scope. King = reign 9 (4f7dea97), reign 8 for trend. Teacher = Qwen/Qwen3.8-27B.
+Bench = SWE-bench Pro under the Claude Code harness (verifiers `claude_code`,
+T=1.0, same patched harness for every model), plus swe_rebench_lite_300
+under mini-swe. Rollouts inspected step by step; the duel meter probed
+on-policy on the bench steps; live-duel verdicts re-read for the cap.
+
+Artifacts
+  research/results/reign9_cc_swepro.txt            bench table (final, when the run drains)
+  research/scripts/cc_bench_behaviour.py           behaviour tables (reproducible)
+  research/results/depth_onpolicy.{txt,json}       meter at depth, teacher ref yield by depth
+  research/scripts/depth_onpolicy_probe.py
+  research/results/live_thought_cap_evidence.{txt,json}
+  research/scripts/live_thought_cap_evidence.py
+
+-------------------------------------------------------------------------------
+1. How performant is the king?
+-------------------------------------------------------------------------------
+SWE-bench Pro / Claude Code (full 731 tasks, reign 8): king 64.6 %, teacher
+81.4 % (paired: teacher-only 127, king-only 20).
+Reign 9, 281 / 282 tasks finished (reign9_cc_swepro.txt; 28 HarnessError
+runs = 10 %, counted as fails in the first line, excluded in the second):
+  set A (150 random tasks, unbiased rate)  reign-9 64.7 %  teacher 77.3 %  reign-8 56.7 %
+    paired vs teacher: king-only 13, teacher-only 32, sign p = 0.0066
+  set A, scored runs only (n=142)          reign-9 68.3 %  teacher 78.9 %  reign-8 57.7 %
+  set B (reign-8's 131 teacher-only tasks) reign-9 41.2 %  teacher 100 %   reign-8 0 %
+swe_rebench_lite_300 / mini-swe (25 tasks): reign-9 14/25, teacher 15/25.
+Reported Qwen3.8-27B SWE-bench Pro = 53.5 (their harness); Opus 4.6 = 61.7.
+
+Read: the king is 10–13 points under the teacher on an unbiased panel and
+gaining across reigns (reign 8 → 9 = +8 points on set A; it recovers 41 %
+of the tasks reign 8 lost to the teacher). The distillation meter is
+moving the right direction on a benchmark it never touches.
+
+-------------------------------------------------------------------------------
+2. What the king does right
+-------------------------------------------------------------------------------
+  - Same skeleton as the teacher: ~100 steps per run, 14 edits, 8–10 test
+    runs, 0 % zero-test runs (reign 9). It reads, edits, tests, submits.
+  - Step 0–32k tokens of context: identical-call repeat rate 1.8 % (teacher
+    0.5 %), median reasoning 181 chars — close to the teacher's early game.
+  - Reign 9 stopped going silent: reasoning-only replies (a <think> block
+    with no visible text or tool call, the compaction killer) fell from 50 %
+    of runs (reign 8, >=3 per run) to 10 %.
+  - On the duel meter itself the king is in band on 56–69 % of its own
+    bench steps at shallow depth (teacher 76–78 %).
+
+-------------------------------------------------------------------------------
+3. What the king does wrong  (every number is king vs teacher on the same tasks)
+-------------------------------------------------------------------------------
+3a. It thinks short, and it is getting shorter across reigns.
+    median reasoning chars per step (251 paired tasks): reign-8 298,
+    reign-9 242, teacher 438
+    p90 per step: king 3.2k, teacher 9.1k;  p99: 13.8k vs 36.6k
+    When the teacher's reference thought on the same prefix is long
+    (>=1500 chars) the king writes 0.27x (reign 9) / 0.51x (reign 8) of it;
+    the teacher re-sampled on its own prefixes writes 0.84x.
+    Live duels, 53 verdicts / 129k answered turns: same ratio 0.50x on the
+    >=1500-char ref turns, 1.02x on the <300-char ones.
+
+3b. It loops. Identical tool call issued >=3x in a run: reign-9 73 %,
+    reign-8 62 %, teacher 31 %; >=5x: 39 / 24 / 3 %.
+    Solve rate when an identical call repeats >=3x: 0.56 vs 0.75 without.
+    The loop is a depth effect: repeat rate by prompt depth
+      king    0–32k tok 1.8 %  32–64k 3.2 %  64–100k 6.3 %  >100k 7.9 %
+      teacher            0.5 %         0.8 %          1.0 %        1.2 %
+    re-Reads of a file already read: king 4 → 12 % of Read steps, teacher 2 → 4 %.
+
+3c. Context bloat follows from 3a+3b: median max prompt 113k tokens (king)
+    vs 64k (teacher); 65 % of king steps sit beyond 64k tokens vs 27 % for
+    the teacher. Reign 8 then died on compaction ("Prompt is too long");
+    reign 9 mostly survives it but pays in steps.
+
+3d. Where the meter sees this. depth_onpolicy_probe (bench steps re-scored
+    with fresh teacher refs, k=3, tau 0.03, band 2.0/0.002):
+      king − teacher mean min(R,G):  0–40k chars −0.006/−0.008 (r8/r9)
+                                     120–250k     −0.024/−0.012
+                                     250k+        −0.021/−0.016
+    The gap is 2–3x wider at depth, and it is the G leg (grounding) that
+    opens: ΔG −0.026…−0.029 at 120k+ vs −0.007…−0.010 shallow. Repeated
+    steps score below fresh ones for every model. So min(R,G) already
+    discriminates the failure — it is just not sampled where it happens.
+
+-------------------------------------------------------------------------------
+4. Why: two caps, one incentive
+-------------------------------------------------------------------------------
+4a. D never shows the depth where the king breaks.
+    datagen/slicer.py MAX_PREFIX_CHARS = 120_000 (~32k tokens) — a
+    "serving-window cap" from the 65,536-token era. max_model_len went to
+    131,072 on 2026-09-07; the cap did not follow.
+    Effect on D: 82 % of teacher_claude_code steps, ~30 % of pi / bashtool
+    steps dropped at slicing. On the bench, 92 % of king steps and 84 % of
+    teacher steps happen beyond that cap. Depth bins 120–250k / 250k+ chars,
+    where the gap is widest, have zero support in D. A miner can be SFT'd to
+    the teacher on everything D contains and still loop at 80k tokens,
+    because nothing in the objective ever looked there.
+
+4b. The thought cap forfeits exactly the turns that need thought.
+    [duel] max_thought_tokens = 1024 (+768 action) = 1792 tokens per sample.
+    Since wvk 12 a sample with no parseable action scores forfeit −0.1
+    (p1 of valid turn scores is −0.087). A miner that thinks as long as the
+    teacher on a hard turn does not lose a little — it takes the floor.
+    Evidence, live (53 min(R,G) verdicts):
+      forfeited turns  median teacher-ref thought 1,766 chars
+      answered turns                              358 chars
+      53 % of forfeits land on turns whose ref is >=1500 chars (base 12 %)
+      forfeit rate king 2.7 %, challenger 4.5 % — each 2 % ≈ one δ (0.002)
+      across 73 verdicts: Spearman(margin, challenger median thought chars)
+      = −0.46 (p 5e-5); Spearman(margin, challenger forfeit rate) = −0.55
+      (p 4e-7). Longer-thinking challengers lose. (Confounded — weak models
+      may both ramble and lose — but the forfeit rows above show the
+      mechanism directly.) The live king's median thought is ~260 chars
+      against a 358-char teacher-ref median.
+    Evidence, teacher side: 19 % of the teacher's own Claude Code steps
+    exceed 1024 thought tokens; 13 % exceed 1792. In the duel the teacher's
+    3 refs fail to parse (refs<2, turn dropped) on 6.4 % of live slice turns,
+    rising with depth in the probe: 4 % → 11 % → 15 % → 29 %.
+    So: the meter cannot score the teacher's deep-thought turns, and it
+    punishes a miner that tries them. The gradient a miner feels is
+    "think less than 1024 tokens or eat −0.1" — the exact behaviour in 3a,
+    monotone across reigns 8 → 9 (298 → 242 chars/step) while the bench
+    rate still rose because the rest of the trajectory improved.
+
+-------------------------------------------------------------------------------
+5. Decision
+-------------------------------------------------------------------------------
+Single best D update — raise the prefix cap to the serving window.
+    MAX_PREFIX_CHARS 120_000 → 300_000 in affine/datagen/slicer.py (and the
+    view.py guard that imports it), then one fold. Data event, no wvk
+    (corpus refresh rule, AGENTS.md §5). 300k chars ≈ 78k tokens (p50) /
+    90k (p10) at the 3.3–3.9 chars/token measured with the Qwen3.8
+    tokenizer on 200 baked D prefixes — inside the 131,072 max_model_len
+    with 1792 gen headroom; the probe scored 400k-char prefixes on the
+    live swarm with 5 ContextLengthErrors in 1,461. Add a
+    tokenizer-measured guard (drop > 110k tokens) at fold so the cap is
+    stated in the unit that actually binds. Cost: echo prefix caching
+    already amortises the long prefix across the ~10 echoes per turn; the
+    fold reprocesses existing traces (nothing to regenerate — the deep steps
+    are already in traces/).
+    Why this over more harnesses / frontier data / language balance: those
+    add breadth at depths D already covers; the measured gap is a depth
+    gap. Traces already hold the data; the slicer throws it away.
+
+Single best scoring update — raise max_thought_tokens 1024 → 4096.
+    [duel] knob, contract change → wvk event under an explicit dated
+    directive (not made here). Cost: mean generated thought tokens 339 → 662
+    per teacher sample (1.95x on the generation half; echoes unchanged);
+    teacher truncation 19.4 % → 5.5 %; 2048 would be 1.46x / 11.9 %.
+    Ordering: this is the change that removes the perverse gradient in 4b;
+    the D change is what lets the meter see the depth where 3b happens.
+    Do both; if only one can ship, the thought cap ships first — it is the
+    one that currently rewards the failure.
+
+Not recommended, and why
+  - A repeat-action penalty term: the probe shows repeated steps already
+    score lower on min(R,G) (king −0.015 vs −0.012 fresh; teacher −0.001 vs
+    +0.003); a new term is not needed once those depths are in D.
+  - Visible-span G: decided NO 2026-09-08 (teacher's own tool-loop replies
+    are prose-free 20–33 %).
+  - Frontier-action modulation: null on the reign chain (v6 frontier probe).
+  - Per-dialect caps alone (max_tokens_by_kind): the long-thought turns
+    are bash/tool_call coding turns, not just boxed; a per-kind cap does not
+    reach them.
+
+Checks to run after shipping
+  - Fold: share of D turns with prefix > 120k chars (target 25–35 %).
+  - Verdicts: forfeit_rate on both sides (expect < 1 %), teacher refs<2
+    share (expect < 3 %), median_len_z rising toward the teacher's ref.
+  - Next reign's bench: repeat >=3x share and re-Read share by depth bin.
