@@ -194,6 +194,56 @@ def panel_keys() -> tuple[set[str], set[str], set[str]]:
     return ids, repos, bare
 
 
+def load_king_fail() -> dict:
+    """[king_fail] from sources.toml: the fold group for the king seat's
+    failed rollouts. {} when the block is absent (feature off)."""
+    raw = tomllib.loads(SOURCES_TOML.read_text())
+    cfg = raw.get("king_fail") or {}
+    if not cfg:
+        return {}
+    return {"group": "king_fail",
+            "strata_buckets": int(cfg.get("strata_buckets", 0) or 0),
+            "policy_prefix": str(cfg.get("policy_prefix") or "king_")}
+
+
+def route_king_fail(records: list[dict], king: dict, drops: dict[str, int]
+                    ) -> list[dict]:
+    """The king seat (2026-09-10). Rollouts played by a `king_*` policy are
+    kept only when the env graded them FAILED (`outcome == "failed"`,
+    affine.corpus.view.rollout_outcome); they move to the `king_fail`
+    group with a bucketed stratum `king_fail:NNNN` (sha256(instance_id) %
+    strata_buckets) so the group holds its own slice share instead of
+    adding within-stratum variety to the teacher's repo strata. Successful
+    and unscored king rollouts are dropped here (`king_not_failed` /
+    `king_unscored`). Non-king records pass through untouched. Without a
+    [king_fail] block every king record is dropped (fail-closed: the seat's
+    data never lands unlabelled in the teacher groups)."""
+    prefix = (king or {}).get("policy_prefix") or "king_"
+    n = int((king or {}).get("strata_buckets") or 0)
+    out: list[dict] = []
+    for rec in records:
+        pid = str((rec.get("policy") or {}).get("id") or "")
+        if not pid.startswith(prefix):
+            out.append(rec)
+            continue
+        if not king or n <= 0:
+            drops["king_no_fold_group"] = drops.get("king_no_fold_group", 0) + 1
+            continue
+        outcome = rec.get("outcome") or "unscored"
+        if outcome == "solved":
+            drops["king_not_failed"] = drops.get("king_not_failed", 0) + 1
+            continue
+        if outcome != "failed":
+            drops["king_unscored"] = drops.get("king_unscored", 0) + 1
+            continue
+        key = str(rec.get("instance_id") or rec.get("traj_id"))
+        h = int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:8], 16)
+        rec["stratum"] = f"{king['group']}:{h % n:04d}"
+        rec["fold_group"] = king["group"]
+        out.append(rec)
+    return out
+
+
 def load_mix(*, ignore_fold_mix: bool = False
              ) -> tuple[dict[str, float], dict[str, str], dict[str, float], dict[str, int]]:
     raw = tomllib.loads(SOURCES_TOML.read_text())
@@ -242,7 +292,8 @@ def assign_bucket_strata(records: list[dict], buckets: dict[str, tuple[int, int]
 
 
 def group_of(rec: dict, src2grp: dict[str, str], mix: dict[str, float]) -> str:
-    g = src2grp.get(rec.get("source") or "", DEFAULT_GROUP)
+    # A fold-assigned group (king_fail) wins over the source's group.
+    g = rec.get("fold_group") or src2grp.get(rec.get("source") or "", DEFAULT_GROUP)
     return g if g in mix else DEFAULT_GROUP
 
 
@@ -672,6 +723,18 @@ def main() -> None:
     n_bucketed = assign_bucket_strata(candidates, buckets, src2grp)
     log(f"bucket strata assigned on {n_bucketed} rollouts "
         f"({ {k: (n if not off else f'{n}@{off}') for k, (n, off) in buckets.items() if n} })")
+    # King seat: after the source buckets so `king_fail:NNNN` wins for king
+    # rollouts on bucketed sources (math / tool_use) too.
+    king = load_king_fail()
+    n_before = len(candidates)
+    king_drops: dict[str, int] = {}
+    candidates = route_king_fail(candidates, king, king_drops)
+    n_king = sum(1 for r in candidates if r.get("fold_group") == "king_fail")
+    log(f"king seat: {n_king} failed king rollouts -> king_fail "
+        f"({sum(len(r['turns']) for r in candidates if r.get('fold_group') == 'king_fail')} turns), "
+        f"dropped {n_before - len(candidates)} {king_drops or ''}")
+    for k, v in king_drops.items():
+        drops[k] = drops.get(k, 0) + v
     if not state.get("mix_seeded"):
         state["mix_seeded"] = True
         # Mix state is the set of slice strata each group / language bucket

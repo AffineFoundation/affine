@@ -34,6 +34,7 @@ from affine.toolbake import ToolBaker
 from rollouts.catalog import load_catalog
 from rollouts.config import RolloutsConfig, load_config
 from rollouts.index import RolloutIndex
+from rollouts.king import refresh_king_env
 from rollouts.panel import panel_keys
 from rollouts.r2mirror import R2TraceMirror
 from rollouts.registry import Registry, load_registry
@@ -194,18 +195,21 @@ def main() -> None:
     hf_mirror = cfg.hf_trace_mirror and not args.no_mirror
     if hf_mirror and not os.environ.get("HF_TOKEN"):
         sys.exit("HF_TOKEN missing while ROLLOUTS_HF_TRACE_MIRROR is on")
-    if not any(p.available_endpoints(os.environ)
+    # One env dict shared by the scheduler and every runner; the king seat
+    # vars are refreshed into it each cycle (rollouts.king).
+    env = dict(os.environ)
+    refresh_king_env(env)
+    if not any(p.available_endpoints(env)
                for p in registry.policies.values()):
         sys.exit("no policy endpoint has its key env set (fail-closed)")
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(cfg.data_dir / "runs", ignore_errors=True)
 
     state = UnifiedState(cfg.state_path)
-    scheduler = Scheduler(registry, state)
+    scheduler = Scheduler(registry, state, env)
     store = TraceStore(cfg.store_dir)
     index = RolloutIndex(cfg.store_dir)
     health = EndpointHealth()
-    env = dict(os.environ)
     runners = {
         "verifiers": VerifiersRunner(cfg, health, env),
         "verifiers_chat": VerifiersChatRunner(cfg, health, env),
@@ -241,6 +245,7 @@ def main() -> None:
 
     fails = 0
     while True:
+        refresh_king_env(env)
         remaining = {
             name: sum(1 for r in rows
                       if r["uid"] not in state.done_for(name))

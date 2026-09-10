@@ -257,6 +257,111 @@ model = "qwen3.8-27b"
 base_url = "https://api.engy.ai/v1"
 key_env = "ENGY"
 
+# -- the king seat (2026-09-10) ------------------------------------------------
+# The current SN120 king plays the agent seat on the same envs the teacher
+# plays, one policy per harness. Only its FAILED rollouts enter D (fold group
+# `king_fail`, ops/corpus_build.py): those prefixes are the king's own
+# history at the places it went wrong, and the duel then asks both sides
+# "what does the teacher do from here?" — the king tends to repeat itself,
+# the teacher does not, so a challenger that recovers like the teacher wins
+# exactly where the incumbent is weak. Successes and unscored rollouts are
+# dropped at the fold (they are not the signal); every rollout still ships
+# to traces/ for provenance.
+#
+# Routing is dynamic: model + base_url come from KING_MODEL / KING_BASE_URL
+# (rollouts/king.py reads /root/rollouts/.king_env every cycle; the
+# validator-side controller ops/king-datagen/kingctl.py writes it after it
+# has served the new king). No file -> these policies are idle and the
+# scheduler falls back to the teacher policies. The served model name is
+# `king-<digest12>` (KING_MODEL), so the envelope's policy.model label reads
+# `king/king-0ce59769300c` and every trace names the king it came from;
+# KING_DIGEST / KING_REIGN ride along for the log.
+# Shares: 1.0 against the teacher's 2.0 -> ~1/3 of new rollouts per source
+# are king rollouts while the seat is up. Sampling 0.8 = [duel] temperature.
+
+[policy.king_textbased]
+harness = "mini_swe_textbased"
+share = 1.0
+
+[policy.king_textbased.sampling]
+temperature = 0.8
+
+[[policy.king_textbased.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_bashtool]
+harness = "bash"
+action_kind = "tool_call"
+share = 1.0
+
+[policy.king_bashtool.sampling]
+temperature = 0.8
+
+[[policy.king_bashtool.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_pi]
+harness = "pi"
+action_kind = "tool_call"
+share = 1.0
+
+[policy.king_pi.sampling]
+temperature = 0.8
+
+[[policy.king_pi.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_claude_code]
+harness = "claude_code"
+action_kind = "tool_call"
+share = 1.0
+
+[policy.king_claude_code.sampling]
+temperature = 0.8
+
+[[policy.king_claude_code.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_boxed]
+harness = "null"
+action_kind = "boxed"
+share = 1.0
+
+[policy.king_boxed.sampling]
+temperature = 0.8
+
+[[policy.king_boxed.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_toolcall]
+harness = "null"
+action_kind = "tool_call"
+share = 1.0
+
+[policy.king_toolcall.sampling]
+temperature = 0.8
+
+[[policy.king_toolcall.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
 # -- example: other third-party agent harnesses (enable the same way) ----------
 #
 # [policy.hermes]

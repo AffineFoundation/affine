@@ -80,11 +80,22 @@ def _load_policies(path: Path) -> dict[str, Policy]:
     raw = tomllib.loads(path.read_text())
     policies: dict[str, Policy] = {}
     for pid, cfg in raw.get("policy", {}).items():
-        endpoints = tuple(
-            Endpoint(name=e["name"], model=e["model"],
-                     base_url=e["base_url"], key_env=e["key_env"],
-                     litellm_model=e.get("litellm_model", ""))
-            for e in cfg.get("endpoints", ()))
+        endpoints = []
+        for e in cfg.get("endpoints", ()):
+            model_env = str(e.get("model_env", ""))
+            base_url_env = str(e.get("base_url_env", ""))
+            if not (e.get("model") or model_env):
+                raise ValueError(f"policy {pid!r} endpoint {e.get('name')!r}: "
+                                 "needs `model` or `model_env`")
+            if not (e.get("base_url") or base_url_env):
+                raise ValueError(f"policy {pid!r} endpoint {e.get('name')!r}: "
+                                 "needs `base_url` or `base_url_env`")
+            endpoints.append(Endpoint(
+                name=e["name"], model=str(e.get("model", "")),
+                base_url=str(e.get("base_url", "")), key_env=e["key_env"],
+                litellm_model=e.get("litellm_model", ""),
+                model_env=model_env, base_url_env=base_url_env))
+        endpoints = tuple(endpoints)
         if not endpoints:
             raise ValueError(f"policy {pid!r} has no endpoints")
         action_kind = str(cfg.get("action_kind", "bash"))
