@@ -341,6 +341,12 @@ share = 1.0
 
 [policy.king_boxed.sampling]
 temperature = 0.8
+# Runaway guard: the king box serves 262k context and the null harness
+# sets no cap, so one looping math reply held a 24-task batch for the
+# whole 3600 s rollout timeout (datagen-2, 2026-09-10 19:54). Teacher
+# math replies are p50 557 tokens; a reply past 16k has no `\boxed{}`
+# worth keeping.
+max_tokens = 16384
 
 [[policy.king_boxed.endpoints]]
 name = "king"
@@ -355,6 +361,7 @@ share = 1.0
 
 [policy.king_toolcall.sampling]
 temperature = 0.8
+max_tokens = 16384  # same runaway guard as king_boxed (null harness, no cap)
 
 [[policy.king_toolcall.endpoints]]
 name = "king"
