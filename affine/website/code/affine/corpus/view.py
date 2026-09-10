@@ -41,7 +41,8 @@ import re
 
 from affine import dialects
 from affine.corpus.materialize import materialize_turn
-from affine.corpus.trace import trace_conversations, trace_error_type
+from affine.corpus.trace import (TURN_CAP_STOP, real_errors,
+                                 trace_conversations, trace_error_type)
 from datagen.slicer import MAX_PREFIX_CHARS, slice_messages
 
 VIEW_SPEC = "duel_turns@v4"
@@ -94,19 +95,27 @@ CLEAN_STOP_CONDITIONS = frozenset({"agent_completed", "max_turns"})
 def rollout_outcome(trace: dict) -> str:
     """"solved" / "failed" / "errored" / "unscored" for one rollout.
 
-    "errored" first: the trace recorded an error (API failure, harness
-    crash) or the harness stopped for a reason other than the agent's own
-    finish / the turn cap — the env may still have graded such a rollout
-    0, but that is an infrastructure failure, not the model's. Then
-    `rewards.solved.score` (every verifiers env in the registry grades into
-    that key; a missing or non-numeric score is unscored). The fold uses it
-    for the king seat: only the king's FAILED rollouts enter D."""
-    if trace.get("errors"):
+    "errored" first: the trace recorded a REAL error (API failure, harness
+    crash; the turn-cap artifact of ACP harnesses is not one, see
+    `trace.is_turn_cap_artifact`) or the harness stopped for a reason other
+    than the agent's own finish / the turn cap — the env may still have
+    graded such a rollout 0, but that is an infrastructure failure, not the
+    model's. Then `rewards.solved.score` (every verifiers env in the
+    registry grades into that key); missing or non-numeric is unscored,
+    except at the turn cap, where an ungraded rollout is a failure. The
+    fold uses it for the king seat: only the king's FAILED rollouts enter D."""
+    if real_errors(trace):
         return "errored"
     if trace.get("stop_condition") not in CLEAN_STOP_CONDITIONS:
         return "errored"
     score = ((trace.get("rewards") or {}).get("solved") or {}).get("score")
     if isinstance(score, bool) or not isinstance(score, (int, float, str)):
+        # Out of turn budget and never graded: ACP harnesses (Claude Code)
+        # raise on the refused call past max_turns, so verifiers skips
+        # scoring (`rewards == {}`). The agent did not finish — for the king
+        # seat that IS the failure (loops to the cap), not a missing label.
+        if trace.get("stop_condition") == TURN_CAP_STOP:
+            return "failed"
         return "unscored"
     try:
         value = float(score)
