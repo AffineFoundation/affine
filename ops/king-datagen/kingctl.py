@@ -955,8 +955,12 @@ class Controller:
                   f"ready={'yes' if m.get('ready_at') else 'no'} up_now={up} "
                   f"canary_fails={m.get('canary_fails', 0)} {m.get('base_url', '')}")
         for name, m in sorted((self.state.get("datagen") or {}).items()):
-            state = (f"DOWN since {int((time.time() - m['down_since']) / 60)} min"
-                     if m.get("down_since") else "up")
+            if m.get("ssh_fail_since"):
+                state = f"UNKNOWN (ssh unreachable {int((time.time() - m['ssh_fail_since']) / 60)} min)"
+            elif m.get("down_since"):
+                state = f"DOWN since {int((time.time() - m['down_since']) / 60)} min"
+            else:
+                state = "up"
             print(f"  datagen {name}: supervisor {state}")
 
 
