@@ -27,7 +27,7 @@ Everything downstream (store, index, views) reads envelopes only.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
 from affine.corpus.trace import (  # noqa: F401  (re-exported)
@@ -58,6 +58,29 @@ class Endpoint:
     base_url: str
     key_env: str              # env var holding the API key (never the key)
     litellm_model: str = ""   # mini_swe route override (e.g. openrouter/...)
+    # Dynamic routes (the king seat, 2026-09-10): the model name and base
+    # URL come from env vars at pick time instead of the toml. The env is
+    # refreshed every supervisor cycle from ROLLOUTS_KING_ENV, so a crown
+    # re-points the policy without a toml edit or a restart. An endpoint
+    # whose env vars are unset is simply unavailable, like a missing key.
+    model_env: str = ""
+    base_url_env: str = ""
+
+    def resolve(self, env: dict) -> "Endpoint | None":
+        """Concrete endpoint for this env, or None when a required var is
+        missing. Static endpoints resolve to themselves."""
+        if not env.get(self.key_env):
+            return None
+        model, base_url = self.model, self.base_url
+        if self.model_env:
+            model = env.get(self.model_env) or ""
+        if self.base_url_env:
+            base_url = env.get(self.base_url_env) or ""
+        if not model or not base_url:
+            return None
+        if model == self.model and base_url == self.base_url:
+            return self
+        return replace(self, model=model, base_url=base_url)
 
     @property
     def label(self) -> str:
@@ -91,7 +114,14 @@ class Policy:
     action_kind: str = "bash"
 
     def available_endpoints(self, env: dict) -> list[Endpoint]:
-        return [e for e in self.endpoints if env.get(e.key_env)]
+        """Keyed endpoints, in chain order, with dynamic routes resolved
+        against `env` (see Endpoint.resolve)."""
+        out = []
+        for e in self.endpoints:
+            r = e.resolve(env)
+            if r is not None:
+                out.append(r)
+        return out
 
 
 @dataclass(frozen=True)

@@ -24,6 +24,8 @@ ops/exploit-audit/state/
 ops/teacher-b200/logs/
 ops/teacher-swarm/.swarm_env
 ops/teacher-swarm/state/
+# king-seat controller memory (holds the per-box bearer) + its known_hosts
+ops/king-datagen/state/
 
 # private king-chat pod state (ops/king-chat/kingchat.sh)
 ops/king-chat/state.json

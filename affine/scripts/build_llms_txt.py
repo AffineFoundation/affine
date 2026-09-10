@@ -1324,6 +1324,20 @@ The corpus is refreshed continuously — new chunks appear and old ones retire \
 via manifest revisions (`corpus_epoch` increments each time; this is a data \
 event, not a scoring fork), so keep your local copy synced to the manifest.
 
+**The king seat (since 2026-09-10, data event).** The current king also \
+plays the agent seat on the datagen envs (same tasks and harnesses as the \
+teacher; `policy.id` starts with `king_`, `policy.model` is \
+`king/king-<digest12>`). Only the king's **failed** rollouts (`rewards.solved \
+== 0`) enter D, as the fold group `king_fail` with its own slice strata \
+(`king_fail:NNNN`, target ~10% of the slice as it fills; the other groups \
+scale down proportionally). Those prefixes are the king's own trajectory at \
+the places it went wrong; the teacher's fresh refs on them are what both \
+sides are scored against, so a challenger that recovers like the teacher \
+where the incumbent loops or stalls gains exactly there. The king's \
+successful and unscored rollouts are published in `traces/` for provenance \
+but do not enter D. Turns are stamped like every other turn (`source`, \
+`stratum`, `action_kind`); the record carries `outcome` and `fold_group`.
+
 Suggested agent loop: poll `evals/index.jsonl` → fetch new \
 `evals/*.json.gz` → train on `teacher_refs` (distillation) and on your own \
 gate/logprob diagnostics from `pairs`.

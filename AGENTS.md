@@ -234,6 +234,60 @@ unchanged.**
   2026-09-07 (through `chal-00359`) drained, projected 2026-09-09 — met.
   llms.txt "Upcoming changes" → "Fork history: wvk 13".
 
+### The king seat — king-failure datagen (LIVE 2026-09-10, data event, no wvk)
+Operator directive 2026-09-10 ("do the simplest thing first: trigger on
+the new king, spin up the new king on our fleet, sample envs from Prime
+env from it, add only the failures to the dataset"). Motivation:
+`research/results/reign9_vs_teacher_diagnosis.txt` — kings fail at depth
+in their OWN trajectory context (loops, shrinking commands) while D held
+only teacher-trajectory prefixes (covariate shift; DAgger fix). Pieces:
+- **Controller** `ops/king-datagen/kingctl.py` (pm2 `affine-king-datagen`,
+  60 s ticks; config `king.toml`, state `state/state.json` 0600 with the
+  per-box bearer). Reads `affine/state/state.json` → king; rents ONE Lium
+  pod `king-dg-<digest12>` (first `[[types]]` with stock under cap:
+  h200-2x, b200-2x, pro6000-4x/8x, …; budget $30/h incl. the old box during
+  a swap), pushes `bootstrap_king.sh` (vLLM 0.28, replicas TP per type
+  behind nginx on the first mapped data port, `--served-model-name
+  king-<digest12>`, qwen3_xml tool parser + qwen3 reasoning parser,
+  max_model_len 262144), waits for `/v1/models` + a chat canary, then writes
+  `/root/rollouts/.king_env` (KING_BASE_URL / KING_MODEL / KING_KEY /
+  KING_DIGEST / KING_REIGN) on every `affine-datagen*` pod and releases the
+  previous king's box. Bootstrap failure/timeout → remove + executor
+  strike (`state/blacklist.txt`); dark past 20 min → replaced; no serving
+  box → `.king_env` emptied so the king policies idle. R2 kings come from
+  the public `models.affine.io` copy; an HF genesis king from its pinned
+  revision. `kingctl.py status` / `unpublish`.
+- **Rollouts** (`rollouts/`): `Endpoint.model_env` / `base_url_env`
+  (resolved per pick against a shared env dict; unset = unavailable, like
+  a missing key); `rollouts/king.py` re-reads `.king_env` every supervisor
+  cycle (no restart on a crown). `policies.toml` `king_textbased /
+  king_bashtool / king_pi / king_claude_code / king_boxed / king_toolcall`
+  (share 1.0 vs teacher 2.0 → ~1/3 of new rollouts per source while the
+  seat is up; T=0.8). `sources.toml`: king policies on `[defaults]` +
+  math/wiki/agent; `[mix]` scaled ×0.9 + `king_fail = 0.10`; `[king_fail]
+  strata_buckets = 1000, policy_prefix = "king_"`. Deployed to the three
+  datagen pods 2026-09-10 13:20 UTC (rollouts files only — the pods'
+  `/root/affine` tree is pre-wvk-13 and used for yield accounting only;
+  datagen-3's bootstrap loop had been dead since its 2026-09-09 06:51
+  reboot and was relaunched).
+- **Fold** (`ops/corpus_build.py`): view records now carry `outcome`
+  (`affine.corpus.view.rollout_outcome`: `rewards.solved.score` → solved /
+  failed / unscored). `route_king_fail` (after `assign_bucket_strata`, so
+  it wins on math/tool_use too): `king_*` records with `outcome == failed`
+  → `fold_group = king_fail`, `stratum = king_fail:<sha256(instance_id) %
+  1000>` (own namespace — sharing the teacher's `repo|phase` strata would
+  add within-stratum variety and move no share under `cap_fill`);
+  `solved` → drop `king_not_failed`, else `king_unscored`; `group_of`
+  honours `fold_group`. Announce `by_group` shows `king_fail`.
+- **Known gaps (by design, "simplest first"):** the failure label is a
+  noisy proxy (a failed run has good turns too; only the outcome filters);
+  deep failure turns past `MAX_PREFIX_CHARS = 120_000` are still dropped
+  (`prefix_too_long`) and teacher refs hit the 1792-token cap more at depth
+  (refs<2 → turn dropped) — the two prerequisite knobs from the diagnosis
+  (prefix cap 120k→300k, `[duel] max_thought_tokens` 1024→4096 = contract
+  change) are NOT applied; no paired filter, replay buffer or decay yet;
+  king successes are discarded rather than used as a control.
+
 ### History — Reason v4 (wvk 7–9, 2026-08-17 → 2026-08-27)
 v4 was the uncentered tempered LME, `Reason = tau·log((1/k)·Σ exp(a_i/tau))`,
 same B gate and length floor, δ = 0.002 (0.001 experiment 2026-08-21 reverted
