@@ -365,6 +365,7 @@ only teacher-trajectory prefixes (covariate shift; DAgger fix). Pieces:
   Forward-only; reign 11 stands; `min_submission_block` unchanged. The
   next fold (pm2 cron 16:00 UTC) admits the staged terminus turns; the
   duel tripwire accepts slices carrying them once the pod is on wvk 14.
+  Discord notice `…/1547714360326094858`; llms.txt live with the section.
   (d) `EndpointHealth.preflight` probes a cooling king endpoint instead of
   skipping it (a source whose every policy cooled spun the cycle loop at
   5 s while the fallback pick was refused). Pods get
