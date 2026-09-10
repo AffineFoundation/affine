@@ -13,11 +13,17 @@ pod_prefix = "king-dg-"                      # controller only touches pods with
 datagen_pod_prefix = "affine-datagen"        # pods that receive .king_env
 king_env_path = "/root/rollouts/.king_env"   # on the datagen pods
 template_id = "345273fa-4818-46f7-a8fa-32f0e331713c"  # Pytorch (Cuda+DinD) cu13.0.2 — same as the swarm
-ttl_hours = 72                               # per-pod safety-net TTL at rent time
+ttl_hours = 72                               # per-pod safety-net TTL at rent time (Lium kills the pod)
+rotate_before_ttl_hours = 2                  # rent the replacement this long before the TTL (zero-gap rotation)
 bootstrap_timeout_min = 45                   # venv + 70 GB pull + engine warmup
-unreachable_grace_min = 20                   # a published box dark this long is replaced
+unreachable_grace_min = 20                   # a box dark this long after READY is replaced
+canary_every_min = 10                        # real completion probe cadence after READY (3 misses = dark)
+pod_forget_ticks = 5                         # consecutive Lium-listing misses before a pod is forgotten
+state_stale_min = 30                         # keep the last known king this long if state.json is unreadable
+watchdog_every_min = 5                       # datagen-pod supervisor liveness check cadence
+watchdog_relaunch_min = 10                   # supervisor + bootstrap loop both gone this long -> relaunch
 min_balance_usd = 2000.0                     # refuse to rent below this Lium balance
-budget_usd_hr = 30.0                         # cap on all king-dg pods together (old + new during a swap)
+budget_usd_hr = 25.0                         # cap on all king-dg pods together (two boxes during a swap/rotation)
 vllm_version = "0.28.0"
 
 # Serving knobs (Qwen3.6-35B-A3B family, ~70 GB BF16). 262144 = the
@@ -28,6 +34,13 @@ max_model_len = 262144
 gpu_memory_utilization = 0.90
 max_num_batched_tokens = 16384
 max_num_seqs = 32
+
+# State-change alerts (rented / READY / published / unpublished / removed /
+# recovered / datagen supervisor relaunched). One line each, never a secret.
+[discord]
+enabled = true
+channel_id = "1381987595881414656"           # same ops channel as corpus_build / exploit-audit
+token_env = "DISCORD_BOT_TOKEN_ARBOS_BITTENSOR"  # read from ~/.affine-validator.env or the repo .env
 
 # Box types, in PREFERENCE order: the first type with stock under its price
 # cap is rented. match = substring of the Lium machine_name; gpu_count exact;

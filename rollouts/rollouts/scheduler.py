@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 
 from rollouts.registry import Registry
+from rollouts.runners.base import EndpointHealth
 from rollouts.schema import Policy
 
 log = logging.getLogger("rollouts.scheduler")
@@ -75,10 +76,11 @@ class UnifiedState:
 
 class Scheduler:
     def __init__(self, registry: Registry, state: UnifiedState,
-                 env: dict | None = None):
+                 env: dict | None = None, health: EndpointHealth | None = None):
         self.registry = registry
         self.state = state
         self.env = env if env is not None else dict(os.environ)
+        self.health = health
         self.targets = registry.target_shares()
         self._cooldown_until: dict[str, float] = {}
         self._zero_streak: dict[str, int] = {}
@@ -110,8 +112,19 @@ class Scheduler:
         return [p for p in self.registry.policies_for(source)
                 if p.available_endpoints(self.env)]
 
-    def pick_policy(self, source: str) -> Policy:
+    def _healthy_policies(self, source: str) -> list[Policy]:
+        """Usable policies whose endpoints are not ALL on cooldown (a struck
+        king box is skipped for the cooldown instead of being re-picked by
+        deficit every cycle). Falls back to every usable policy when all of
+        them cool, so a source never goes unpicked while it has a route."""
         cands = self._usable_policies(source)
+        if self.health is None:
+            return cands
+        warm = [p for p in cands if not self.health.all_cooling(p, self.env)]
+        return warm or cands
+
+    def pick_policy(self, source: str) -> Policy:
+        cands = self._healthy_policies(source)
         if not cands:
             raise RuntimeError(
                 f"no policy for source {source!r} has a usable endpoint "

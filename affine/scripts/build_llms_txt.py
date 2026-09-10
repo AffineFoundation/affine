@@ -1334,9 +1334,15 @@ scale down proportionally). Those prefixes are the king's own trajectory at \
 the places it went wrong; the teacher's fresh refs on them are what both \
 sides are scored against, so a challenger that recovers like the teacher \
 where the incumbent loops or stalls gains exactly there. The king's \
-successful and unscored rollouts are published in `traces/` for provenance \
-but do not enter D. Turns are stamped like every other turn (`source`, \
-`stratum`, `action_kind`); the record carries `outcome` and `fold_group`.
+successful, errored (harness or API failure — `outcome = errored`, never \
+counted as a king failure) and unscored rollouts are published in `traces/` \
+for provenance but do not enter D. Turns are stamped like every other turn \
+(`source`, `stratum`, `action_kind`); the record carries `outcome` and \
+`fold_group`. With the same release the per-turn prefix cap rose from \
+120,000 to **300,000 characters** (plus a tokenizer guard at 110,000 teacher \
+tokens, inside the 131,072-token serving window), so deep turns of long \
+agent trajectories now enter D — expect longer prefixes in new epochs. Data \
+event, no `weight_version_key` change.
 
 Suggested agent loop: poll `evals/index.jsonl` → fetch new \
 `evals/*.json.gz` → train on `teacher_refs` (distillation) and on your own \

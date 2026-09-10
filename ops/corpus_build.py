@@ -213,9 +213,10 @@ def route_king_fail(records: list[dict], king: dict, drops: dict[str, int]
     affine.corpus.view.rollout_outcome); they move to the `king_fail`
     group with a bucketed stratum `king_fail:NNNN` (sha256(instance_id) %
     strata_buckets) so the group holds its own slice share instead of
-    adding within-stratum variety to the teacher's repo strata. Successful
-    and unscored king rollouts are dropped here (`king_not_failed` /
-    `king_unscored`). Non-king records pass through untouched. Without a
+    adding within-stratum variety to the teacher's repo strata. Successful,
+    errored (harness/API failure) and unscored king rollouts are dropped
+    here (`king_not_failed` / `king_errored` / `king_unscored`). Non-king
+    records pass through untouched. Without a
     [king_fail] block every king record is dropped (fail-closed: the seat's
     data never lands unlabelled in the teacher groups)."""
     prefix = (king or {}).get("policy_prefix") or "king_"
@@ -232,6 +233,10 @@ def route_king_fail(records: list[dict], king: dict, drops: dict[str, int]
         outcome = rec.get("outcome") or "unscored"
         if outcome == "solved":
             drops["king_not_failed"] = drops.get("king_not_failed", 0) + 1
+            continue
+        if outcome == "errored":
+            # Harness / API failure graded 0 by the env: not the king's doing.
+            drops["king_errored"] = drops.get("king_errored", 0) + 1
             continue
         if outcome != "failed":
             drops["king_unscored"] = drops.get("king_unscored", 0) + 1
@@ -367,6 +372,23 @@ def cap_fill(records: list[dict], keyf, have: dict[str, set[str]],
 
 
 # -- derive ----------------------------------------------------------------------
+# The prefix cap in the unit that binds at duel time: the serving window is
+# max_model_len = 131072 tokens minus 1792 generated. MAX_PREFIX_CHARS (300k,
+# datagen/slicer.py) is the coarse cut; prefixes above TOKEN_GUARD_FROM_CHARS
+# are measured with the teacher tokenizer and dropped past MAX_PREFIX_TOKENS
+# (a 2026-09-10 data event; 300k chars ~ 78k tokens p50 / 90k p10).
+MAX_PREFIX_TOKENS = 110_000
+TOKEN_GUARD_FROM_CHARS = 120_000
+
+
+def prefix_over_token_cap(turn: dict, baker: ToolBaker) -> bool:
+    if int(turn.get("n_prefix_chars") or 0) <= TOKEN_GUARD_FROM_CHARS:
+        return False
+    text = "\n".join(m.get("content", "") for m in turn.get("prefix") or [])
+    n = len(baker.tok(text, add_special_tokens=False)["input_ids"])
+    return n + 8 * len(turn.get("prefix") or []) > MAX_PREFIX_TOKENS
+
+
 def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                  published: set[str], drops: dict[str, int]) -> list[dict]:
     """View records for one trace chunk, with only the turns that pass the
@@ -392,6 +414,9 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             tid = f"{t['traj_id']}:{t['turn_idx']}"
             if tid in published:
                 drops["already_published"] = drops.get("already_published", 0) + 1
+                continue
+            if prefix_over_token_cap(t, baker):
+                drops["prefix_too_many_tokens"] = drops.get("prefix_too_many_tokens", 0) + 1
                 continue
             keep_idx.add(t["turn_idx"])
         rec["turns"] = [m for m in rec["turns"] if m["turn_idx"] in keep_idx]
