@@ -212,8 +212,12 @@ signals, what "private" means (and the retiring HF path)
 the slot
 - min(R, G) — the one score you optimize (and the telemetry published \
 around it)
-- **Fork history: wvk 13 — models must work as chat models (notice \
-2026-09-07, effective 2026-09-09)** — `</think>` required (a turn without it \
+- **Fork history: wvk 14 — Terminus 2 JSON dialect (effective \
+2026-09-10)** — `terminus_json` joins the admitted dialects: under the \
+terminal-bench agent harness the reply is one JSON command batch, and that \
+object is the action
+- Fork history: wvk 13 — models must work as chat models (notice \
+2026-09-07, effective 2026-09-09) — `</think>` required (a turn without it \
 forfeits), chat-protocol probe enforced at admission (pass ≥ 0.90), the \
 visible final reply of a trajectory is a scored action (`text` dialect), \
 IDE-agent prompts in D
@@ -719,6 +723,54 @@ manifest it was scored against.
 
 ---
 
+## Fork history: wvk 14 — Terminus 2 JSON dialect (effective 2026-09-10)
+
+**Effective 2026-09-10 ~21:00 UTC (eval pod redeployed at a duel \
+boundary; explicit dated operator directive).** `weight_version_key = 14`; \
+`[dataset].allowed_action_kinds = ["bash", "tool_call", "boxed", "text", \
+"terminus_json"]`. Nothing else in `[duel]` changes; `score.py` is untouched.
+
+**What changes.** D gains turns from harbor's **Terminus 2** agent — the \
+terminal-bench reference harness. Under that harness the model's whole \
+reply is one JSON object:
+
+```
+{"analysis": "...", "plan": "...", "commands": [{"keystrokes": "ls -la\\n", "duration": 1.0}], "task_complete": false}
+```
+
+The new dialect `terminus_json` (`code/affine/dialects.py`) takes that \
+object as the action `y`: the last top-level JSON object in the reply that \
+parses, is a dict, and carries `"analysis"`, `"plan"` and a list under \
+`"commands"`. Reasoning stays in `<think>`; the visible text before the \
+object is part of the thought `z`, as with every other dialect.
+
+**Marker rule, one difference.** Terminus states its format in the first \
+*user* message, not in a system message. So for `terminus_json` the fold \
+looks for the marker `"commands"` in the first system OR the first user \
+message (`Dialect.marker_roles`). Every other dialect keeps the \
+first-system-message rule bit-for-bit. The prefix you see still always \
+states the format you must answer in.
+
+**Why.** Kings must work under the agent harnesses people actually run. \
+The datagen pods now roll the teacher and the reigning king through \
+Claude Code, Hermes Agent, Kimi Code, pi, verifiers' bash tool, mini-swe \
+and Terminus 2 on the same tasks; the king's *failed* trajectories enter D \
+as `king_fail` strata (its own context, where it loops and shrinks \
+commands). Terminus 2 was the one harness whose replies no admitted \
+dialect could parse, so its turns never reached D.
+
+**What you must do.** When a turn's prefix is a Terminus 2 transcript, \
+answer with exactly one such JSON object after `</think>`. A reply with no \
+parseable object forfeits the turn (`forfeit_turn_score`), like any other \
+dialect. Expected share is small at first (one harness among seven on the \
+terminal sources) and grows with the fold.
+
+**Forward-only.** The current reign stands; no re-verdicts, no genesis \
+reset, `min_submission_block` unchanged. Pre-fork verdicts replay \
+bit-identically (dialects touch parsing only).
+
+---
+
 ## Fork history: wvk 13 — models must work as chat models (notice 2026-09-07, effective 2026-09-09)
 
 **Effective 2026-09-09 (eval pod on the new contract from 02:10 UTC).** \
@@ -917,6 +969,7 @@ bash          ```bash\\n…\\n```   (one closed fence)                 "bash"
 tool_call     <tool_call>…</tool_call>                             "tool"
 boxed         \\boxed{…}   (brace-balanced, non-empty body)         "boxed"
 text          the whole visible reply (stripped; since wvk 13)   (none)
+terminus_json {"analysis","plan","commands":[…]} (since wvk 14)  "commands" (system or first user msg)
 ```
 
 - Every turn record carries `action_kind`; pre-fork records without it are \
@@ -926,7 +979,9 @@ contains the dialect's marker word (case-insensitive). So the prefix your \
 model sees always states the format it must answer in — you never have to \
 guess the dialect from context. `text` (since wvk 13) is the one exception: it \
 has no marker because a plain visible reply is what every chat model owes \
-by default; the fold only records it on the reply that ended a trajectory.
+by default; the fold only records it on the reply that ended a trajectory. \
+`terminus_json` (since wvk 14) reads the marker from the first system or \
+the first user message, because Terminus 2 states its format in the user turn.
 - Parsing is *last complete span*: quoting a command or formula mid-thought \
 is fine; the final one is your action. An empty `\\boxed{}` is not an action.
 - The thought channel is identical across dialects: `z` = your latent \
