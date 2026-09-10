@@ -374,6 +374,16 @@ only teacher-trajectory prefixes (covariate shift; DAgger fix). Pieces:
   zero as `king_errored`, and 15–20 % of the teacher's Claude Code
   rollouts had been dropped the same way since 2026-09-07. Forward-only
   (the fold re-derives only unfolded chunks); `--rederive` would back-fill.
+  (f) `rollout_outcome` reads the env's primary grade in order `solved` /
+  `correct` / `passed_fraction` (`PRIMARY_REWARD_KEYS`): affine-math grades
+  into `correct`, so every king math rollout had been `king_unscored`
+  (120/120 in the 20:05 UTC dry fold); affine-wiki grades nothing and stays
+  unscored. (g) `king_boxed` / `king_toolcall` carry `max_tokens = 16384`:
+  the null harness sets no cap and the king box serves 262k context, so one
+  looping math reply held a 24-task batch for the full 3600 s rollout
+  timeout (datagen-2 19:54, datagen-3 20:11 UTC). Once the teacher's pool
+  is done the seat scheduler drains the king's math pool first (math is the
+  cheapest deficit: 1 turn per rollout, ~1–4 min per batch, ~1 h per pod).
 
 ### History — Reason v4 (wvk 7–9, 2026-08-17 → 2026-08-27)
 v4 was the uncentered tempered LME, `Reason = tau·log((1/k)·Σ exp(a_i/tau))`,
