@@ -24,9 +24,18 @@
         <a class="nav-chip" href="#dataset" id="nav-dataset">Dataset</a>
         <a class="nav-chip" href="#audits" id="nav-audits">Audits</a>
         <a class="nav-chip" href="#metrics" id="nav-metrics">Metrics</a>
+        <!-- Kings = the king seat scoreboard (kings.affine.io): solve rate of
+             the reigning king vs the teacher per datagen environment and
+             harness — the data the king_fail corpus group is cut from. -->
+        <a class="nav-chip" href="https://kings.affine.io" id="nav-kings"
+           target="_blank" rel="noopener" title="king vs teacher solve rate per environment">Kings</a>
         <!-- Chat = your own sandboxed agent running the current king: sign in
              at chat.affine.io/affine and a personal container is provisioned.
-             The lightweight inline chat is still reachable at #chat. -->
+             The lightweight inline chat is still reachable at #chat.
+             TODO(chat-endpoint): when the public OpenAI-compatible endpoint
+             gets its own docs page, link it here next to Chat (today it is
+             described in llms.txt → "Other public surfaces":
+             base_url https://affine.io/v1, model "affine-king"). -->
         <a class="nav-chip nav-chip-chat" href="https://chat.affine.io/affine" id="nav-chat">Chat</a>
       </div>
       <div class="nav-right">
@@ -270,6 +279,6 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=80"></script>
+  <script type="module" src="app.js?v=81"></script>
 </body>
 </html>

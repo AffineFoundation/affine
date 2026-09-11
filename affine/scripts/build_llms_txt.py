@@ -126,9 +126,10 @@ SOURCES: list[tuple[str, str]] = [
     ("affine/priors.py", "published prior bank behind the bank telemetry"),
     ("affine/chain.py", "reveal payload contract + commit builders"),
     ("evalsrv/dueling.py", "live duel: slice seeding, injectability probe, scoring loop"),
-    ("evalsrv/protocol_probe.py", "chat-protocol conformance probe (staged "
-     "admission check, see Upcoming changes): the fixed prompt set, the pass "
-     "rule, and a CLI to run it against your own vLLM before you submit"),
+    ("evalsrv/protocol_probe.py", "chat-protocol conformance probe (admission "
+     "check, enforced since 2026-09-09: pass rate ≥ 0.90 or the model is "
+     "rejected before scoring): the fixed prompt set, the pass rule, and a "
+     "CLI to run it against your own vLLM before you submit"),
     ("evalsrv/corpus.py", "corpus sync: schema v1 flat shards, v2 parquet "
      "index + trajectory chunks, v3 parquet index + view records"),
     ("affine/corpus/materialize.py", "stratum key + turn materialization: "
@@ -149,8 +150,9 @@ SOURCES: list[tuple[str, str]] = [
     ("evalsrv/chat.py", "the chat contract: prompt assembly, thought-injection "
      "template, z/y rollout parsing — byte-exact"),
     ("affine/dialects.py", "action dialect registry: where a turn's action span "
-     "starts and ends per action_kind (bash / tool_call / boxed) + the "
-     "[dataset].allowed_action_kinds admission check the fold and duel share"),
+     "starts and ends per action_kind (bash / tool_call / boxed / text / "
+     "terminus_json) + the [dataset].allowed_action_kinds admission check the "
+     "fold and duel share"),
     ("evalsrv/terms.py", "per-turn instrumentation: teacher references + the ten "
      "forced-logprob calls behind every lp* component"),
     ("evalsrv/vllm_client.py", "vLLM sampling + echo/logprob forcing + per-byte "
@@ -180,11 +182,23 @@ teacher-anchored distillation score — min(R, G): centered Reason and banded \
 thought Grounding — not an LLM judge. This file is the miner index: submit \
 path, public contract, and links to the exact scoring code the network runs.
 
-**Cutover notice (posted 2026-09-02): private R2 submissions go live \
-2026-09-03. From then on Hugging Face `affine1|…` commits are dropped at \
-intake, and your hotkey MUST be Ed25519** (btcli's default sr25519 hotkey \
-cannot open the sealed credentials). See "Submit checklist" below — the \
+**Private R2 submissions are the only path (live since 2026-09-03 15:47 \
+UTC). Hugging Face `affine1|…` commits revealed after block 8987674 are \
+dropped at intake, and your hotkey MUST be Ed25519** — btcli's default \
+sr25519 hotkey cannot open the sealed credentials and is rejected \
+(`rejected_not_ed25519`); an already-registered sr25519 hotkey cannot be \
+reused, register a fresh Ed25519 one. See "Submit checklist" below — the \
 whole flow is one command, `submit.py submit`.
+
+**Status line (2026-09-11).** `weight_version_key = 14`. Score: min(R, G) \
+v5 (unchanged since wvk 10, 2026-08-27) with the forfeit floor (wvk 12), \
+the `</think>` requirement (wvk 13) and five admitted action dialects \
+(`bash`, `tool_call`, `boxed`, `text`, `terminus_json`; wvk 14). Admission: \
+architecture pin + chat-protocol probe (pass ≥ 0.90, enforced). Sampling: \
+`n_turns = 1300`, plus one more 1300-turn slice when the first margin lands \
+in the near-miss window (no fork; see "Sequential near-miss"). Teacher \
+`Qwen/Qwen3.8-27B`. The live king, reign number, queue and corpus epoch are \
+in `api/v1/snapshot` and `api/v1/dataset` (linked below), never in this file.
 
 Machine-readable knobs (subset of the contract below) also ship as \
 `data/contract.json` on this site. When in doubt, trust the linked sources \
@@ -207,11 +221,14 @@ root ({BASE}/).
 
 - How the game works — rules, duel flow, emissions
 - Submit checklist — Ed25519 hotkey, private R2 upload, the two on-chain \
-signals, what "private" means (and the retiring HF path)
+signals, what "private" means, queue order (the HF path is retired)
 - Serving stack — how your checkpoint is loaded; pre-flight before you burn \
 the slot
 - min(R, G) — the one score you optimize (and the telemetry published \
 around it)
+- Sequential near-miss (2026-09-11, no fork) — a first-slice margin in \
+(0.001, 0.003) draws a second seeded slice; the crown is decided on the \
+pooled 2 × `n_turns`
 - **Fork history: wvk 14 — Terminus 2 JSON dialect (effective \
 2026-09-10)** — `terminus_json` joins the admitted dialects: under the \
 terminal-bench agent harness the reply is one JSON command batch, and that \
@@ -224,7 +241,7 @@ IDE-agent prompts in D
 - Fork history: wvk 12 — forfeit floor (a turn with no parseable action \
 scores −0.1 instead of being dropped; effective 2026-09-05)
 - Fork history: wvk 11 — action dialects (`tool_call`, `boxed` join \
-`bash`; notice posted 2026-09-02, T0 moved to 2026-09-04 18:00 UTC on 2026-09-03)
+`bash`; notice posted 2026-09-02, effective 2026-09-05 12:12 UTC)
 - Post-crown exploit audit — the auditor, its published verdicts, and how to \
 run the same audit yourself
 - Public data — full field-level description of every published object
@@ -262,8 +279,12 @@ queue, live eval
 - [api/v1/history]({DASH}/api/v1/history) — filterable verdicts (`?q=&event=`)
 - [api/v1/benchmarks]({DASH}/api/v1/benchmarks) — advisory benches
 - [api/v1/contract]({DASH}/api/v1/contract) — machine-readable knobs
-- `api/v1/duels/{challenge_id}` — duel detail (Reason, telemetry, rejection)
+- `api/v1/duels/{challenge_id}` — duel detail (Reason, telemetry, rejection, \
+protocol-probe result, near-miss stamp)
 - `api/v1/duels/{challenge_id}/series` — chart-safe per-turn Reason/L1lift
+- `api/v1/duels/{challenge_id}/turn?turn_id=` — one scored turn: both \
+sides' rollouts + the teacher refs
+- `api/v1/duels/{challenge_id}/log` — redacted validator log lines for one duel
 - [api/v1/benches]({DASH}/api/v1/benches) — manifest of bench rollout records
 - `api/v1/benches/{job_id}` — one bench run: per-task patch/exit/resolution
 - `api/v1/benches/{job_id}/trajectory?instance_id=` — full agent transcript
@@ -275,9 +296,24 @@ paginated turn index
 - [api/v1/audits]({DASH}/api/v1/audits) — post-crown exploit-audit verdicts
 - `api/v1/audits/{reign}` — one audit's verdict + pinned-input manifest + \
 analysis prose
+- [api/v1/market]({DASH}/api/v1/market) — SN120 price, registration cost, \
+emissions (TaoMarketCap); `api/v1/market/reg-history` — burn-cost history
 - [api/v1/stream]({DASH}/api/v1/stream) — SSE snapshot deltas
 - [index.html]({DASH}/) — interactive dashboard UI (`#dataset` = corpus \
-browser, `#audits` = exploit-audit verdicts)
+browser, `#audits` = exploit-audit verdicts, `#metrics` = duel metrics)
+
+**Other public surfaces**
+
+- [kings.affine.io](https://kings.affine.io) — the king seat scoreboard: \
+solve rate of the reigning king vs the teacher per datagen environment and \
+harness (the data the `king_fail` group is cut from)
+- [chat.affine.io/affine](https://chat.affine.io/affine) — chat with the \
+reigning king in your own sandboxed agent; the lightweight inline chat is \
+at [{DASH}/#chat]({DASH}/#chat)
+- `{DASH}/v1/chat/completions` — OpenAI-compatible wire to the same king \
+pod (`base_url = {DASH}/v1`, model `affine-king`, any API key; per-IP rate \
+limit; `{DASH}/v1/models` lists the served king). Best-effort, not part of \
+the contract; the pod may be loading a new king right after a crown
 
 **Hippius archive** (cold public mirror — miners / replay; same objects)
 
@@ -298,14 +334,23 @@ verdict and failure since genesis
 - [data/bench_history_full.jsonl.gz]({BASE}/data/bench_history_full.jsonl.gz) \
 — every completed bench run
 
-**Turn corpus D** (the prompts)
+**Turn corpus D** (the prompts) — schema_version 3 since 2026-09-05, served \
+from {DATA} (note: Cloudflare returns 403 to the `Python-urllib` user agent; \
+use curl, httpx or requests)
 
-- [turns/manifest.json]({DATA}/turns/manifest.json) — current manifest: \
-shards/chunks, index, hashes, corpus epoch, `schema_version`
-- `turns/index/turns_*.parquet` — schema v2 turn index (sample here)
-- `turns/chunks/*.jsonl.gz` — schema v2 trajectory objects
-- `turns/shards/*.jsonl.gz` — schema v1 / compat flat per-turn JSONL
-- `turns/manifests/{sha256}.json` — every manifest revision ever, immutable
+- [corpus/manifest.json]({DATA}/corpus/manifest.json) — current manifest: \
+view chunks, Parquet index, hashes, `corpus_epoch`, `view_spec`, \
+`allowed_action_kinds`
+- `views/duel_turns@v4/index/turns_NNNN.parquet` — one row per scorable \
+turn (filter by `action_kind`, `stratum`, `source`); \
+`views/duel_turns@v4/chunks/*.jsonl.gz` — one record per rollout
+- `corpus/manifests/{sha256}.json` — every schema-3 manifest revision, \
+immutable
+- [traces/manifest.json]({DATA}/traces/manifest.json) — the full rollout \
+traces D is cut from (training-grade; includes `reasoning_content`)
+- [turns/manifest.json]({DATA}/turns/manifest.json), `turns/index/`, \
+`turns/chunks/`, `turns/shards/`, `turns/manifests/{sha256}.json` — the \
+frozen schema ≤ 2 corpus (pre-2026-09-05 verdicts replay against it)
 
 **Website / index**
 
@@ -316,19 +361,27 @@ shards/chunks, index, hashes, corpus epoch, `schema_version`
 ## How the game works
 
 1. A frozen teacher C (`Qwen/Qwen3.8-27B`; `zai-org/GLM-4.5-Air-FP8` \
-before 2026-08-27) and a public turn corpus D \
-(sharded + manifest-pinned on this site under `turns/`) define the capability \
-axis (SWE-style coding).
+before 2026-08-27) and a public turn corpus D (manifest-pinned at \
+`{DATA}`: SWE-style coding, terminal, math, tool-use and agent-harness \
+turns in five action dialects, plus the reigning king's own failed \
+trajectories) define the capability axis.
 2. You upload a checkpoint directory into your own private prefix of the \
 validator's R2 bucket and sign a manifest of it (every file's sha256; the \
 manifest's `model_digest` is your revision). Nobody but the validator can \
-read it. (Legacy until cutover: commit-reveal an HF repo pinned to a 40-hex \
-git revision.)
+read it. (The old HF commit-reveal path is retired: `affine1|…` reveals \
+after block 8987674 are dropped at intake.)
 3. The validator burns your hotkey's **one eval slot at enqueue** (not at \
 verdict). Failed hygiene, failed probe, or lost duel still burns the slot.
 4. Eval machine runs a duel on an `n_turns = 1300` slice of D seeded by \
 `blake2b(reveal_block_hash ‖ your_hotkey)` — you cannot know the slice before \
-reveal; anyone can re-derive it after.
+reveal; anyone can re-derive it after. If that slice's margin lands inside \
+the near-miss window `(near_miss_low, near_miss_high) = (0.001, 0.003)`, a \
+second slice of 1300 (seed `blake2b(block_hash ‖ hotkey ‖ "|slice1")`, \
+disjoint turns) is scored and the crown is decided on the pooled 2600 \
+turns (see "Sequential near-miss" below). Before any scoring, two \
+admission checks run on your served checkpoint: the injectability probe \
+(can it take the thought-injection prompt) and the chat-protocol probe \
+(closes `</think>` and answers on ≥ 90 % of ten IDE-shaped prompts).
 5. Both sides are scored with min(R, G) v5 (centered Reason + banded \
 Grounding + δ + thought-length floor + B gate): the teacher samples `k = 3` \
 reference rollouts per turn; each ref scores \
@@ -338,7 +391,9 @@ task-independent lift cancels exactly); the G leg checks your thought's own \
 teacher likelihood `m = lpC(z_A|x)` against the band `mu ± w` built from \
 the teacher's reference thoughts `t_i = lpC(z_C^i|x)` \
 (`w = max(band_c·sd, band_floor)`, `band_c = 2`, `band_floor = 0.002`); the \
-turn score is `min(R, G)`; miner score = mean over turns. You dethrone the \
+turn score is `min(R, G)`; a turn where your reply has no parseable action \
+in the turn's dialect, or never closes `</think>`, scores \
+`forfeit_turn_score = −0.1`; miner score = mean over turns. You dethrone the \
 king iff the paired mean `turn_c − turn_k` beats `max(k_sigma·SE, δ)` \
 (`k_sigma = 2`, `min_margin = 0.002`) **and** your median stripped thought \
 length is at least `min_thought_chars = 80` **and** at least \
@@ -408,9 +463,16 @@ but register before you submit anyway. If your hotkey is ever pruned from the \
 metagraph, re-register to resume earning: your place in the reign chain is \
 tracked by hotkey and survives deregistration.
 
-**Step 1 — train.** Distill a coding model that emits closed bash-fenced \
-actions and usable thoughts under the Affine chat contract (see the probe in \
-the serving-stack section). The current king's weights are public at \
+**Step 1 — train.** Distill a model that thinks inside `<think>…</think>`, \
+**closes the tag**, and then emits the one action the turn's prefix asks \
+for — a closed ```` ```bash ```` fence, a `<tool_call>`, a `\\boxed{}` \
+answer, a plain visible reply (the report that ends a trajectory), or a \
+Terminus 2 JSON command batch (see "The dialect spec" under wvk 11 and the \
+wvk 13 / 14 sections). A turn answered in the wrong dialect, or without \
+`</think>`, forfeits at −0.1. It must also work as a plain chat model: the \
+admission probe (`code/evalsrv/protocol_probe.py`) rejects checkpoints that \
+do not close `</think>` and answer on ≥ 90 % of ten IDE-shaped prompts. \
+The current king's weights are public at \
 `{MODELS_URL}/models/sha256/<model_digest>/` (`king.public_url` in \
 `api/v1/snapshot`) — study what you must beat. **Architecture pin \
 (2026-08-28):** `config.json` must match the genesis family exactly on every \
@@ -500,6 +562,28 @@ registration that never activated
    - `skipped_king` — already crowned
    - `rejected_hf_retired` — an `affine1|…` HF commit after cutover
 
+**Queue order (under review, 2026-09-11).** The validator evaluates one \
+duel at a time and always takes the queue head. As implemented in \
+`code/affine/state.py` (`QueueEntry.order_key`), the order is canonical, \
+not positional: entries sort by their challenge number (`chal-NNNNN`, \
+assigned at `ready` intake), so a later `ready` never overtakes an earlier \
+one. One exception exists: an entry that hits a *persistent, \
+entry-specific* infrastructure fault (for example the pod cannot load that \
+checkpoint after the retry budget) is deferred behind everything queued \
+at that moment (`deferred_after`) and keeps its slot for a later retry; \
+transient infra faults (dead pod, teacher outage) put the head back in \
+its canonical place without counting a retry. This canonical rule was \
+written after the 2026-09-05 teacher outage rotated every queued entry to \
+the tail one by one (the "265, 266, 267 moved to the end" reports); the \
+2026-09-01 reports of later submissions being judged first predate it. \
+Whether the rule covers every reported case is under review and this \
+paragraph will be updated with the outcome. The \
+dashboard's **duel queue** lists entries in pop order, head first; \
+`api/v1/snapshot` `queue[]` is the same list. There is no published ETA: \
+one duel takes ~30 min of scoring plus model load (about 60 min when the \
+near-miss rule draws a second slice); recent durations are the \
+`duration_s` field of `api/v1/history` rows.
+
 **What "private" means here.** The private bucket (`{PRIVATE_BUCKET}`) has no \
 public access; your credential can only read/write/list *your* prefix; the \
 validator and the eval pod (read-only key) are the only other readers. The \
@@ -521,12 +605,16 @@ validator must not verify or enqueue before that. One commit cannot be both. \
 re-run it and it resumes at the right step (`auth` re-reads the mailbox, \
 `upload` skips files already present with the right sha256).
 
-**Legacy HF path (retiring).** Before cutover the old flow still works: \
-public HF repo named `^[^/]+/[Aa]ffine-.+$` embedding the first 5 + last 5 \
-chars of your coldkey or hotkey ss58, pinned 40-hex revision, payload \
+**Legacy HF path (retired 2026-09-03).** Until the cutover block \
+(8987674) miners committed a public HF repo named `^[^/]+/[Aa]ffine-.+$` \
+embedding the first 5 + last 5 chars of their coldkey or hotkey ss58, a \
+pinned 40-hex revision, payload \
 `affine1|<hf_repo>|<hf_revision_40hex>|<author_hotkey_ss58>` via timelock \
-commit. After cutover such commits are dropped at intake \
-(`rejected_hf_retired`). Do not start a new HF submission now.
+commit. Such commits revealed after the cutover block are dropped at \
+intake (`rejected_hf_retired`). The `[submission]` HF fields still in \
+`affine.toml` and `api/v1/contract` (`reveal_prefix = "affine1"`, \
+`repo_pattern`, coldkey affixes) exist only so pre-cutover verdicts replay; \
+do not use them.
 
 **Hard policies**
 
@@ -584,8 +672,9 @@ once-ever eval slot on a checkpoint that cannot load.
 ## min(R, G) (what you optimize)
 
 Since 2026-08-27 (`weight_version_key = 10`; the forfeit line was added at \
-`weight_version_key = 12`, 2026-09-05, nothing else has changed since) the \
-whole scoring contract is:
+`weight_version_key = 12`, 2026-09-05, the `</think>` requirement at \
+`weight_version_key = 13`, 2026-09-09; wvk 14 only widened the admitted \
+dialects) the whole scoring contract is:
 
 ```
 a_i (per teacher ref) = lpC(y_i | z_A) − lpC(y_i | ∅)     i = 1..k, k = 3
@@ -597,7 +686,10 @@ G (per turn)          = min( m − (mu − w), (mu + w) − m )
                         mu = mean(t_i), w = max(band_c·sd(t_i), band_floor)
                         (band_c = 2, band_floor = 0.002)
 Turn score            = min(R, G)         if the turn has a parseable action
-                      = forfeit_turn_score = −0.1   otherwise (wvk 12, 2026-09-05)
+                                          in its dialect AND closes </think>
+                      = forfeit_turn_score = −0.1   otherwise
+                        (no action: wvk 12, 2026-09-05; no </think>: wvk 13,
+                         2026-09-09 — require_think_close = true)
 Miner score           = mean(turn) over all turns, forfeits included
 Crown                 = paired mean(turn_c − turn_k) > max(k_sigma·SE, δ)
                         AND median(len(z_A.strip())) ≥ min_thought_chars
@@ -605,6 +697,11 @@ Crown                 = paired mean(turn_c − turn_k) > max(k_sigma·SE, δ)
                         (k_sigma = 2, δ = min_margin = 0.002,
                          min_thought_chars = 80, causality_gamma = 0.30,
                          SE = sd/√n over paired turns)
+Sequential near-miss  = if near_miss_low < margin(slice 0) < near_miss_high
+                        (0.001 < margin < 0.003) and no gate blocks, score
+                        near_miss_extra_slices = 1 more slice of n_turns
+                        (seed blake2b(block_hash ‖ hotkey ‖ "|slice1"),
+                        turns disjoint) and apply Crown to the POOLED turns
 B (per rollout)       = lpC(y_A | z_A) − lpC(y_A | ∅)
                         passes iff B ≥ 0.02 and z does not contain y
 ```
@@ -695,7 +792,14 @@ Pre-fork verdicts (before 2026-08-10) stamp the old `gates` block and the \
 S* mix formula they were judged under; they remain replayable as recorded.
 
 Before the full duel, an injectability probe rejects checkpoints that cannot \
-emit a parsable bash action or return finite forced logprobs.
+emit a parsable bash action or return finite forced logprobs \
+(`rejection_reason = "unpromptable:…"`), and the chat-protocol probe rejects \
+checkpoints that do not close `</think>` and answer on ≥ 90 % of ten fixed \
+IDE-shaped prompts (`rejection_reason = "protocol:…"`, enforced since \
+2026-09-09; the result is published on every verdict as `protocol_probe`). \
+Both run on the challenger only: a king got its seat by passing them as a \
+challenger (every king crowned since 2026-09-09 passed the enforced probe), \
+and inside the duel both sides forfeit `</think>`-less turns alike.
 
 **Simulate before you submit.** Your eval slot is burned at enqueue, one per \
 hotkey, ever — so replay the duel locally first. The complete measurement \
@@ -704,8 +808,9 @@ layer is published under `code/` and is import-closed (every module \
 contract — models are rendered through their own chat template to a string \
 and driven via `/v1/completions`, injection plants thoughts as the canonical \
 assistant body `</think>\\nTHOUGHT: {z}\\n\\n{y}`, and `split_rollout` \
-defines exactly what counts as z (all reasoning text) and y (the last closed \
-bash-fenced block). `evalsrv/terms.py` runs the live Reason echoes (`lpC(y_i|z_A)`), the \
+defines exactly what counts as z (all reasoning text) and y (the last \
+complete action span in the turn's dialect — `code/affine/dialects.py`). \
+`evalsrv/terms.py` runs the live Reason echoes (`lpC(y_i|z_A)`), the \
 grounding echoes (`lpC(z_A|x)` and per-ref `lpC(z_C|x)`), and the B pair \
 (`lpC(y_A|z_A)`, `lpC(y_A|∅)`); `evalsrv/vllm_client.py` \
 shows the echo+logprobs forcing (`score_action` / `score_thought`) and the \
@@ -719,7 +824,63 @@ Frozen numeric knobs live in `affine.toml` `[duel]` (linked under `code/`). \
 Score changes fork the chain: `weight_version_key` bumps and the toml \
 comment carries the dated rationale. Corpus refreshes are data events: the \
 manifest's `corpus_epoch` increments and every verdict records which \
-manifest it was scored against.
+manifest it was scored against. The live `[duel]` block (`api/v1/contract`) \
+also carries one **staged, inert** knob: `action_norm_bytes = 128` belongs \
+to an action leg (`score_mode = "min_rga"`) that is NOT live — under the \
+live `score_mode = "min_rg"` it changes nothing; flipping it would be a \
+fork with notice.
+
+---
+
+## Sequential near-miss (2026-09-11, no fork)
+
+**A sampling-size rule, not a scoring change.** Per-turn scores, the crown \
+formula and δ are exactly as above; `weight_version_key` does not move. \
+Every verdict stamps `near_miss.enabled`, so you can see whether the rule \
+was on for a given duel. Status 2026-09-11: live on the validator and \
+stamped on every verdict since `chal-00435`; the implementing commit to the \
+public GitHub repository is pending — until it lands, the `code/` copies on \
+this site (republished from the validator's own tree) are the authoritative \
+source, not GitHub `main`.
+
+**The rule.** After the normal `n_turns = 1300` slice is scored, if the \
+paired margin `mean(turn_c − turn_k)` lands strictly inside \
+`(near_miss_low, near_miss_high) = (0.001, 0.003)` and no validity gate \
+(thought floor, B license) already blocks the crown, the eval draws \
+`near_miss_extra_slices = 1` more slice of 1300 turns — seed \
+`blake2b(reveal_block_hash ‖ hotkey ‖ "|slice1")`, drawn from the turns \
+the duel has not scored yet with the same stratified round-robin — scores \
+both sides on it exactly as before, and applies the unchanged crown rule to \
+the **pooled** turns: pooled mean, pooled `SE = sd/√n_pooled` (~2600), \
+gates over the pooled challenger rows, forfeits at the same floor. Outside \
+the window the first slice decides as it always has.
+
+**Why.** The crown bar is `max(2·SE, δ)`; at the live noise scale \
+(`2·SE ≈ 0.0010–0.0018`) δ = 0.002 is the binding term. Across 349 stored \
+duels (2026-08-27 → 2026-09-10) twelve challengers cleared the 2σ test \
+(z 2.0–3.8) with margins 0.0014–0.0019 and were blocked by δ alone — and \
+on the advisory bench those near-miss losers score like kings. A true \
++δ improver lands below δ on half of all 1300-turn slices; only more turns \
+can separate "just below δ by noise" from "just below δ for real". δ stays \
+where the 2026-08-22 winner's-curse decision put it; the estimate it is \
+compared against gets √2 sharper on the ~10% of duels where the two are \
+within noise of each other (35/349 historical margins fell in the window: \
+the 12 near-miss losers, 6 crowns at 0.0022–0.0028, 17 sub-2σ losers).
+
+**What you see.** `verdict.margin / se / z / n_paired_turns` are the \
+deciding (pooled) numbers. `verdict.near_miss = {enabled, low, high, \
+extra_slices, triggered, slices: [{index, seed, n, digest, n_paired_turns, \
+n_forfeit_turns, margin, se, z, challenger_wins}, …], pooled: {…} | null}` \
+shows what each slice said on its own. `verdict.slice` keeps the first \
+slice's `seed` / `digest` as always and adds `extra_slices` + `n_pooled` \
+when the rule fired. The published artifact's `turn_ids` covers every \
+scored turn in slice order and `slices[i].turn_ids` splits them per draw. \
+Knobs: `[duel] near_miss_enabled / near_miss_low / near_miss_high / \
+near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
+`near_miss_triggered` in `code/affine/score.py`; the draw is \
+`duel_seed(block_hash, hotkey, slice_index)` in `code/evalsrv/dueling.py`. \
+A triggered duel takes about twice the scoring time (`[duel].timeout_s` \
+covers both passes).
 
 ---
 
@@ -841,7 +1002,13 @@ thoughts on those turns become the grounding band there, so min(R, G) starts \
 rewarding in-distribution behaviour on IDE-shaped prompts instead of only \
 fencing it with the probe. Cursor itself cannot be a datagen harness (its \
 agent loop runs on Cursor's servers), which is why change 2 tests \
-Cursor-shaped prompts directly.
+Cursor-shaped prompts directly. *Status 2026-09-11:* Claude Code has been \
+live on the datagen pods since 2026-09-07; Codex CLI was **not** enabled \
+(it speaks OpenAI Responses with two leading system messages, which the \
+teacher's chat template refuses — see `rollouts/policies.toml`). The \
+harnesses that generate D today are mini-swe-agent (text), verifiers' bash \
+tool, pi, Claude Code, Kimi Code, Hermes Agent and Terminus 2 on the \
+coding/terminal tasks, plus the plain chat harness for math and wiki.
 
 **4. The final reply is a scored action — `text` dialect, same wvk 13 \
 fork (addendum 2026-09-08).** Until now D only held turns whose action is a \
@@ -989,9 +1156,11 @@ is fine; the final one is your action. An empty `\\boxed{}` is not an action.
 `</think>\\nTHOUGHT: {z}\\n\\n{y}` (see `code/evalsrv/chat.py`). G compares \
 thoughts, never actions, so the band is comparable across dialects.
 - **Forfeit:** a rollout with no parsable action in the turn's dialect has \
-`y = ""` and the turn is not scored for that side (`valid = false`); the \
-paired test uses only turns both sides completed. Today that already \
-happens on ~5% of bash turns (n_paired ≈ 1220–1245 of 1300).
+`y = ""`. *As written for wvk 11* the turn was then dropped from the pairing \
+(`valid = false`; ~5% of bash turns, n_paired ≈ 1220–1245 of 1300). \
+**Superseded at wvk 12 (2026-09-05):** the turn now stays paired and scores \
+`forfeit_turn_score = −0.1` for that side; since wvk 13 a reply that never \
+closes `</think>` forfeits the same way. See the wvk 12 / 13 sections.
 
 **One sample prefix per dialect** (system message excerpts as they appear \
 in D; the user message carries the task):
@@ -1029,10 +1198,17 @@ scaffold rather than the task. Two prompt styles over the same tasks make \
 turns about evenly.
 
 **Target slice shares** (set by strata count in the corpus index; the slicer \
-draws ~1 turn per stratum): coding 0.50, terminal 0.25, nl2repo 0.05, \
-math (`boxed`) 0.10, tool_use (`tool_call`) 0.10. Verdicts will publish \
-per-dialect `mean_r_leg` / `mean_g_leg` / `g_bind_frac` and the parse rate \
-per side.
+draws ~1 turn per stratum). At the fork: coding 0.50, terminal 0.25, \
+nl2repo 0.05, math (`boxed`) 0.10, tool_use (`tool_call`) 0.10. Since \
+2026-09-10 the five scale by 0.9 (coding 0.45, terminal 0.225, nl2repo \
+0.045, math 0.09, tool_use 0.09) and the reigning king's failed \
+trajectories take the remaining 0.10 (`king_fail`; see "The king seat" \
+below) — a second king group, `king_loop_onset` (the turn where a king \
+run starts to loop), is staged to split that 0.10 into 0.07 + 0.03 from \
+the next fold. The shares are a ceiling that fills as the groups supply \
+strata; the realised mix of any epoch is in `api/v1/dataset`. Verdicts \
+publish per-dialect `mean_r_leg` / `mean_g_leg` / `g_bind_frac` and the \
+parse rate per side (`by_dialect`).
 
 **What to do.** Make your checkpoint fluent in all three formats. A model \
 that only emits bash forfeits every math and tool turn; a model that \
@@ -1234,7 +1410,11 @@ during the duel:
 resolves forever: `turns/manifests/{hash}.json` for schema ≤ 2 verdicts, \
 `corpus/manifests/{hash}.json` on `corpus_base_url` for schema 3 — so you \
 can re-derive the exact slice from public D even after shards are retired.
-  - `turn_ids` — `{traj_id}:{turn_idx}` keys into the public corpus.
+  - `turn_ids` — `{traj_id}:{turn_idx}` keys into the public corpus, every \
+scored turn in slice order. `slices` — one entry per seeded draw \
+(`{index, seed, n, digest, …, turn_ids}`; a single entry unless the \
+sequential near-miss rule pooled a second slice) and `near_miss` — the same \
+stamp as the verdict.
   - `teacher_refs` — the teacher's reference rollouts per turn: \
 `{turn_id: [{z, y, lp_own, lp_empty, lp_thought}]}` (`lp_thought` = \
 `lpC(z_C|x)`, the grounding-band component, wvk ≥ 10). This is \
@@ -1250,9 +1430,13 @@ the retired lpA family `lpA_yc_za`, `lpA_yc_zc`, `lpA_yc_e`, `lpA_ya_za`, \
 from this file + `affine/score.py`.
 
 **Turn corpus D** (the prompts themselves) — served from `{DATA}` (the \
-exact host eval pods sync from; `[dataset].corpus_base_url` in `affine.toml`):
+exact host eval pods sync from; `[dataset].corpus_base_url` in `affine.toml`). \
+**The live corpus is schema_version 3** (`corpus/manifest.json`, the view \
+`duel_turns@v4` over full traces) — jump to the "schema_version 3" block \
+below for today's layout and query recipe. The schema ≤ 2 layout that \
+follows is frozen and kept so every pre-2026-09-05 verdict replays:
 
-- `turns/manifest.json` — current manifest. schema_version **2** shape: \
+- `turns/manifest.json` — the last schema-2 manifest. schema_version **2** shape: \
 `{corpus_epoch, schema_version, created_at, index: {key, sha256, n_turns}, \
 shards: [{key, sha256, n_trajectories, format, active}], compat_shards?, \
 prev_manifest}`. Poll it like `evals/index.jsonl`; a hash change means the \
@@ -1382,10 +1566,16 @@ event, not a scoring fork), so keep your local copy synced to the manifest.
 **The king seat (since 2026-09-10, data event).** The current king also \
 plays the agent seat on the datagen envs (same tasks and harnesses as the \
 teacher; `policy.id` starts with `king_`, `policy.model` is \
-`king/king-<digest12>`). Only the king's **failed** rollouts (`rewards.solved \
-== 0`) enter D, as the fold group `king_fail` with its own slice strata \
+`king/king-<digest12>`). Only the king's **failed** rollouts enter D \
+(`outcome = failed`: the env's primary grade — `solved`, `correct` or \
+`passed_fraction` — is 0, or the run hit the harness turn cap ungraded), as \
+the fold group `king_fail` with its own slice strata \
 (`king_fail:NNNN`, target ~10% of the slice as it fills; the other groups \
-scale down proportionally). Those prefixes are the king's own trajectory at \
+scale down proportionally; first turns in epoch 22, 2026-09-10). A second \
+king group, `king_loop_onset`, is staged for the next fold: only the turn \
+at which a failed king run *starts* to loop, teacher-labelled at duel \
+time, taking 0.03 of the king seat's 0.10 (`king_fail` keeps 0.07). Those \
+prefixes are the king's own trajectory at \
 the places it went wrong; the teacher's fresh refs on them are what both \
 sides are scored against, so a challenger that recovers like the teacher \
 where the incumbent loops or stalls gains exactly there. The king's \
