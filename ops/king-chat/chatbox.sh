@@ -65,8 +65,13 @@ PY
 ssh_pod() {  # ssh_pod "remote command" [stdin]
   local ssh; ssh=$(pod_ssh)
   [ -n "$ssh" ] || { echo "no chat pod in $STATE_JSON" >&2; return 1; }
+  # Login shell, like the provisioner's _ssh_run: a plain `bash -c` has no
+  # ~/.local/bin on PATH, so bootstrap.sh misses `uv` and re-downloads the
+  # installer from astral.sh — one reset connection there killed a relaunch
+  # on 2026-09-11 (set -e), leaving the pod dark against the validator's
+  # 5-strike terminate.
   # shellcheck disable=SC2086
-  ssh "${SSH_OPTS[@]}" $ssh "$1"
+  ssh "${SSH_OPTS[@]}" $ssh "bash -lc $(printf %q "$1")"
 }
 scp_pod() {  # scp_pod local remote
   local ssh host port; ssh=$(pod_ssh); host=${ssh%% *}; port=${ssh##*-p }
@@ -225,8 +230,12 @@ cmd_watch() {
   #  - state=error for ERR_TICKS consecutive ticks -> restart chatsrv, at most
   #    once per RESTART_COOLDOWN_S (stale-code loops like 2026-09-11, where
   #    the in-memory server predated r2store and re-failed every poll)
-  local interval=${CHATBOX_WATCH_INTERVAL_S:-60} ERR_TICKS=5 RESTART_COOLDOWN_S=1800
-  local last_line="" err_ticks=0 last_restart=0 checked_env_for=""
+  #  - /health unreachable for DARK_TICKS ticks while the pod answers ssh and
+  #    runs neither bootstrap nor chatsrv -> relaunch bootstrap (the
+  #    validator soft-restarts only on every 3rd strike and terminates on
+  #    the 5th; a dead bootstrap is a ~30 s fix)
+  local interval=${CHATBOX_WATCH_INTERVAL_S:-60} ERR_TICKS=5 DARK_TICKS=2 RESTART_COOLDOWN_S=1800
+  local last_line="" err_ticks=0 dark_ticks=0 last_restart=0 checked_env_for=""
   log "watch start public=$PUBLIC_URL local=$LOCAL_URL"
   while true; do
     local ssh king h state served line now
@@ -246,6 +255,20 @@ cmd_watch() {
         last_restart=$now
       fi
       checked_env_for=$ssh
+    fi
+    if [ -n "$ssh" ] && [ "$state" = "unreachable" ]; then
+      dark_ticks=$((dark_ticks + 1))
+      if [ "$dark_ticks" -ge "$DARK_TICKS" ]; then
+        if ssh_pod "pgrep -f '[p]ython -m evalsrv' >/dev/null || pgrep -f '[e]valsrv/bootstrap.sh' >/dev/null" 2>/dev/null; then
+          log "dark $dark_ticks ticks but bootstrap/chatsrv alive on pod — leaving it (loading?)"
+        else
+          log "dark $dark_ticks ticks and no bootstrap/chatsrv on pod — relaunching bootstrap"
+          ssh_pod "cd $REMOTE_DIR && (nohup bash evalsrv/bootstrap.sh </dev/null >> /root/bootstrap.log 2>&1 &) && echo RELAUNCHED" || log "WARNING relaunch failed"
+        fi
+        dark_ticks=0
+      fi
+    else
+      dark_ticks=0
     fi
     if [ "$state" = "error" ]; then
       err_ticks=$((err_ticks + 1))
