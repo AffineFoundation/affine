@@ -153,9 +153,14 @@ def process_batch(cfg: RolloutsConfig, source, policy, batch: list[dict],
         log.info("%d task(s) produced no trace; will be re-selected",
                  len(missing))
 
-    log.info("batch %s [%s/%s]: %d rollouts, %d kept turns in %.0fs",
-             tag, policy.id, endpoint_label, len(result.envelopes),
-             len(kept), time.time() - t0)
+    stops: dict[str, int] = {}
+    for env in result.envelopes:
+        stop = str(env["trace"].get("stop_condition") or "none")
+        stops[stop] = stops.get(stop, 0) + 1
+    log.info("batch %s [%s/%s]: %d rollouts, %d kept turns in %.0fs; "
+             "stops=%s", tag, policy.id, endpoint_label,
+             len(result.envelopes), len(kept), time.time() - t0,
+             dict(sorted(stops.items())))
     shutil.rmtree(run_dir, ignore_errors=True)
     return result.produced_output, len(kept)
 
