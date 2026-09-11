@@ -69,8 +69,12 @@ EVAL_TOKEN = os.environ.get("AFFINE_EVAL_TOKEN", "")
 DEFAULT_PUBLIC_KEY = "sk-affine-king"
 PUBLIC_KEY = os.environ.get("AFFINE_CHAT_PUBLIC_KEY", DEFAULT_PUBLIC_KEY)
 PUBLIC_RATE_PER_MIN = int(os.environ.get("AFFINE_CHAT_PUBLIC_RATE_PER_MIN", "60"))
+# Stable public model id; vLLM serves it as an alias (engine.CHAT_ALIAS) so
+# responses echo it instead of the r2:// ref.
+KING_ALIAS = "affine-king"
 PUBLIC_MAX_CONCURRENCY = int(os.environ.get("AFFINE_CHAT_PUBLIC_MAX_CONCURRENCY", "8"))
 UPSTREAM_TIMEOUT_S = 600.0
+WIDGET_MAX_OUTPUT_TOKENS = 4096
 
 app = FastAPI(title="affine-chatsrv")
 
@@ -309,10 +313,13 @@ async def chat(req: ChatRequest, _: None = Depends(_require_token)):
     if total > max_chars:
         raise HTTPException(400, f"conversation too long (>{max_chars} chars)")
 
-    max_out = _max_output_tokens()
+    # The website widget gets a tighter cap than /v1: a king that thinks past
+    # the cap (1 of 6 at T=0.7 on reign 11) shows the visitor nothing, so
+    # burning 16k tokens on it helps no one.
+    max_out = min(_max_output_tokens(), WIDGET_MAX_OUTPUT_TOKENS)
     temperature = req.temperature if req.temperature is not None else 0.7
     payload = {
-        "model": st["repo"],
+        "model": KING_ALIAS,
         "messages": msgs,
         "stream": True,
         "max_tokens": min(int(req.max_tokens or max_out), max_out),
@@ -344,9 +351,7 @@ async def chat(req: ChatRequest, _: None = Depends(_require_token)):
 
 
 # -- OpenAI-compatible wire plane --------------------------------------------
-# "affine-king" is the stable public alias; the concrete repo id also works.
-
-KING_ALIAS = "affine-king"
+# KING_ALIAS is the stable public alias; the concrete repo id also works.
 
 
 @app.get("/v1/models")
@@ -360,9 +365,9 @@ def v1_models(_: bool = Depends(_require_v1_key)):
 
 
 def _shape_v1_payload(payload: dict, st: dict) -> dict:
-    # The alias (or anything else the client sent) maps to the current king;
-    # vLLM only accepts its served ids.
-    payload["model"] = st["repo"]
+    # Whatever model id the client sent maps to the current king. vLLM serves
+    # the alias, and echoing it keeps the r2:// ref out of client UIs.
+    payload["model"] = KING_ALIAS
     payload["messages"] = _fold_system_messages(list(payload["messages"]))
     # Output cap. Clients send max_tokens or (newer OpenAI) max_completion_tokens;
     # vLLM treats the latter as an alias, so normalize to one field.

@@ -1490,7 +1490,9 @@ async function sendChatMessage() {
             continue;
           }
           const delta = j.choices?.[0]?.delta || {};
-          if (delta.reasoning_content) reply.rc = (reply.rc || "") + delta.reasoning_content;
+          // vLLM < 0.11 named the field reasoning_content; 0.28 says reasoning.
+          const rc = delta.reasoning_content || delta.reasoning;
+          if (rc) reply.rc = (reply.rc || "") + rc;
           if (delta.content) reply.raw = (reply.raw || "") + delta.content;
           // Kings trained for thought-duels emit reasoning inline, closed by
           // </think> — fold it into the collapsible thought block so the
@@ -1515,6 +1517,10 @@ async function sendChatMessage() {
     if (!reply.content && !reply.reasoning && !reply.error) {
       reply.error = true;
       reply.content = "the king returned nothing — try rephrasing";
+    } else if (!reply.content && !reply.error) {
+      // Thought right up to the reply cap and never answered — a real king
+      // failure mode worth seeing, not a transport error.
+      reply.content = "(the king used its whole reply budget thinking and never answered — try again or rephrase)";
     }
   } catch {
     reply.error = true;

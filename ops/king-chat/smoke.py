@@ -34,9 +34,13 @@ def _call(base: str, key: str, path: str, body: dict | None = None,
           stream: bool = False, timeout: float = 300.0):
     url = base.rstrip("/") + path
     data = json.dumps(body).encode() if body is not None else None
+    # Cloudflare's browser integrity check 403s the default "Python-urllib"
+    # agent (error 1010); SDK agents (OpenAI/Python, python-requests, Cursor)
+    # pass, so name ourselves.
     req = urllib.request.Request(url, data=data, method="POST" if data else "GET",
                                  headers={"Authorization": f"Bearer {key}",
-                                          "Content-Type": "application/json"})
+                                          "Content-Type": "application/json",
+                                          "User-Agent": "affine-chat-smoke/1.0"})
     resp = urllib.request.urlopen(req, timeout=timeout)
     if stream:
         return resp
