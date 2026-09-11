@@ -304,7 +304,18 @@ def ingest(conn: sqlite3.Connection, fetcher: Fetcher, groups: dict[str, str]) -
              len(todo), fetcher.mode)
 
     def work(c: dict) -> tuple[dict, list[tuple]]:
-        blob = fetcher.get(c["key"])
+        # R2 throttles bursts of simultaneous reads (ServiceUnavailable);
+        # a chunk that still fails stays unrecorded and is retried next pass.
+        last: Exception | None = None
+        for attempt in range(4):
+            try:
+                blob = fetcher.get(c["key"])
+                break
+            except Exception as e:  # botocore / urllib errors alike
+                last = e
+                time.sleep(1.5 * 2 ** attempt)
+        else:
+            raise RuntimeError(f"{c['key']}: {last}")
         got = hashlib.sha256(blob).hexdigest()
         if got != c["sha256"]:
             raise RuntimeError(f"{c['key']}: sha mismatch {got[:12]} != {c['sha256'][:12]}")

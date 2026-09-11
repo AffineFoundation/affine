@@ -21,7 +21,22 @@ import re, shlex, sys
 from pathlib import Path
 
 valid = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-skip = {"PS1", "OLDPWD", "_", "SHLVL", "PWD", "HOME", "PATH", "SHELL", "USER", "TERM"}
+# pm2 / shell noise from a process-env dump — do not export (same list as
+# ops/run_validator.sh, plus the login-shell basics)
+skip = {
+    "name", "cwd", "exec_interpreter", "restart_delay", "kill_timeout",
+    "merge_logs", "vizion", "autostart", "autorestart", "watch",
+    "max_restarts", "instance_var", "pmx", "automation", "treekill",
+    "username", "windowsHide", "kill_retry_time", "namespace",
+    "pm_exec_path", "pm_cwd", "exec_mode", "pm_out_log_path",
+    "pm_err_log_path", "pm_pid_path", "km_link", "vizion_running",
+    "NODE_APP_INSTANCE", "PM2_USAGE", "PM2_JSON_PROCESSING", "PM2_HOME",
+    "unique_id", "status", "pm_uptime", "created_at", "restart_time",
+    "unstable_restarts", "version", "exit_code", "instances", "pm_id",
+    "prev_restart_delay", "NODE_CHANNEL_FD", "NODE_CHANNEL_SERIALIZATION_MODE",
+    "PS1", "OLDPWD", "_", "SHLVL", "PWD", "HOME", "PATH", "SHELL", "USER",
+    "TERM", "LOGNAME", "MAIL", "LANG",
+}
 for line in Path(sys.argv[1]).read_text().splitlines():
     line = line.strip("\n")
     if not line or line.lstrip().startswith("#") or "=" not in line:
