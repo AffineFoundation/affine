@@ -414,6 +414,9 @@ class Dashboard:
                 "se": v.get("se"), "k_sigma": v.get("k_sigma"),
                 "min_margin": v.get("min_margin"),
                 "n_paired_turns": v.get("n_paired_turns"),
+                # Sequential near-miss (2026-09-11): window, per-slice
+                # stats, pooled decision. Absent on older verdicts.
+                "near_miss": v.get("near_miss"),
                 "rejection_reason": v.get("rejection_reason"),
                 "reign_number": r.get("reign_number"),
                 # Absolute score (Reason) for both sides; falls back to the

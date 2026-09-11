@@ -2027,7 +2027,9 @@ function duelPageHtml(duel, series, logLines) {
       <div class="kv"><span class="k">revision</span><span class="v mono">${esc(short(revision || "—", 14))}${copyBtn(revision)}</span></div>
       <div class="kv"><span class="k">when</span><span class="v" title="${esc(fmtTime(duel.at))}">${esc(fmtTime(duel.at))} · ${esc(fmtAge(duel.at))}</span></div>
       <div class="kv"><span class="k">duration</span><span class="v">${esc(fmtDuration(duel.duration_s))}</span></div>
-      <div class="kv"><span class="k">paired turns</span><span class="v">${esc(duel.n_paired_turns ?? paired.length ?? "—")}</span></div>
+      <div class="kv"><span class="k">paired turns</span><span class="v">${esc(duel.n_paired_turns ?? paired.length ?? "—")}${
+        duel.near_miss?.triggered ? ` <span class="dim" title="sequential near-miss: the first slice's margin fell inside the near-miss window, so a second seeded slice was scored and the crown decided on the pooled turns">· pooled over ${esc(String((duel.near_miss.slices || []).length))} slices</span>` : ""
+      }</span></div>
       <div class="kv"><span class="k">artifact</span><span class="v">${artifactLink}${duel.challenge_id ? copyBtn(hippiusEvalUrl(duel.challenge_id)) : ""}</span></div>
     </div>`;
 
@@ -2068,6 +2070,20 @@ function duelPageHtml(duel, series, logLines) {
       ${card("challenger Reason", esc(fine(chR)), "mean over the slice",
         chR != null && kgR != null ? passCls(Number(chR) >= Number(kgR)) : "")}
       ${card("king Reason", esc(fine(kgR)), "same slice, same teacher")}
+      ${(() => {
+        // Sequential near-miss (2026-09-11): one card per extra slice the
+        // rule drew, showing what each slice said on its own. Rendered only
+        // when the rule fired — single-slice verdicts look as before.
+        const nm = duel.near_miss;
+        if (!nm || !nm.triggered || !Array.isArray(nm.slices)) return "";
+        return nm.slices.map((s) => card(
+          `slice ${esc(String(s.index))} alone`,
+          esc(fine(s.margin)),
+          `z = ${esc(fmtZ(s.z))} · ${esc(String(s.n_paired_turns ?? "—"))} paired turns · seed ${esc(short(String(s.seed ?? ""), 10))}`,
+          s.challenger_wins == null ? "" : passCls(Boolean(s.challenger_wins)))).join("")
+          + card("near-miss window", `(${esc(fine(nm.low))}, ${esc(fine(nm.high))})`,
+            `first-slice margin inside → ${esc(String(nm.extra_slices))} extra slice(s), decided on the pool`);
+      })()}
       ${(() => {
         // The two non-margin crown conditions (wvk=5/6). Render only when the
         // duel recorded them — pre-fork rows have neither.

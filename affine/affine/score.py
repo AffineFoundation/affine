@@ -43,6 +43,18 @@ v5 (score_mode="min_rg", the live rule):
               AND median(len(z_A.strip())) ≥ min_thought_chars
               AND (if causality_gamma > 0) B pass rate ≥ causality_gamma
               with SE = stdev(diffs) / sqrt(n) over paired turns.
+  Sequential near-miss (2026-09-11, sampling rule, not a scoring change):
+              if the first slice's margin lands strictly inside
+              (near_miss_low, near_miss_high) — default (0.001, 0.003), the
+              band around δ where 2·SE and δ compete — the eval draws
+              near_miss_extra_slices more slices of n_turns each (different
+              seed, disjoint turns) and the SAME rule above decides on the
+              pooled turns (pooled mean, pooled SE, pooled gates). Per-turn
+              scores are untouched, so weight_version_key does not move.
+              Why: 12 of 349 stored duels had z > 2 but margin < δ, and the
+              near-miss losers bench like kings — δ blocks a real improver
+              at n = 1300 exactly as often as it blocks noise, and only a
+              larger n can tell the two apart.
 
 Why v5 (2026-08-27): the wvk-9 king crowned on a constant filler suffix — a
 flat, task-independent lift that raises every a_i equally and benches 0/50
@@ -159,6 +171,15 @@ SCORE_MODES = ("reason", "min_rg", "min_rga")
 # B = lpC(y_A|z_A) − lpC(y_A|∅). Same τ/γ as retired v2 miner-side A9.
 DEFAULT_CAUSALITY_TAU = 0.02
 DEFAULT_CAUSALITY_GAMMA = 0.0
+
+# Sequential near-miss window (2026-09-11): a first-slice margin strictly
+# inside (low, high) triggers extra slices; the crown is then decided on the
+# pooled turns by the unchanged rule. A sampling-size rule, not a per-turn
+# scoring change (no weight_version_key event). Defaults bracket δ = 0.002:
+# below `low` the challenger is clearly behind, above `high` clearly ahead
+# of the bar at the live SE scale (2·SE ≈ 0.0010–0.0018).
+DEFAULT_NEAR_MISS_LOW = 0.001
+DEFAULT_NEAR_MISS_HIGH = 0.003
 
 # Telemetry constants (non-consensus): thresholds used only to report the
 # legacy causality/leakage pass rate. Changing them is NOT a chain fork.
@@ -730,3 +751,27 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
         forfeit_turn_score=forfeit_turn_score,
         n_forfeit_turns=n_forfeit_turns,
     )
+
+
+def near_miss_triggered(result: DuelResult,
+                        low: float = DEFAULT_NEAR_MISS_LOW,
+                        high: float = DEFAULT_NEAR_MISS_HIGH) -> bool:
+    """Sequential near-miss rule (2026-09-11): does this slice's verdict call
+    for more turns before the crown is decided?
+
+    True iff the paired margin lands strictly inside (low, high) AND no
+    validity gate already blocks the crown. Inside the window the standard
+    bar max(k_sigma·SE, δ) is decided by a few 1e-4 of margin — at n = 1300
+    that is one slice's worth of noise, so the eval draws another slice and
+    re-runs the same rule on the pooled turns. A gate block (thought floor,
+    B license) is not a statistical near-miss: no margin can crown that
+    challenger, so no extra slice is spent. Pooling is nothing more than
+    ``duel()`` on the concatenated per-turn rows of all slices — same
+    per-turn scores, same forfeit floor, one mean and one SE over the
+    pooled paired turns.
+    """
+    if result.thought_floor_blocked or result.causality_blocked:
+        return False
+    if not math.isfinite(result.margin) or not math.isfinite(result.se):
+        return False
+    return low < result.margin < high
