@@ -79,7 +79,29 @@ def build_prompt(description: str, path: str) -> str:
     )
 
 
+# The agent does not reliably follow the time-limit rule (re-probe: `time
+# swipl ...` and `swipl -g "repeat, ..."` pegged 4 containers again), and the
+# bash harness's own command timeout is a hard-coded 3600 s. So the sandbox
+# enforces it: at setup `swipl` becomes a shim that runs the real binary
+# under `timeout`. The scorer's `solve/1` query goes through the same shim
+# (its own 60 s wrapper is tighter, so nothing changes for grading).
+SWIPL_CMD_TIMEOUT_S = 120
+SWIPL_SHIM = (
+    'set -e; real=$(command -v swipl); '
+    '[ -e "$real.real" ] || mv "$real" "$real.real"; '
+    "printf '#!/bin/sh\\nexec timeout " + str(SWIPL_CMD_TIMEOUT_S)
+    + ' "%s.real" "$@"\\n\' "$real" > "$real"; '
+    'chmod +x "$real"; swipl --version'
+)
+
+
 class PrologTask(BasePrologTask):
+    async def setup(self, runtime: vf.Runtime) -> None:
+        await super().setup(runtime)
+        result = await runtime.run(["bash", "-lc", SWIPL_SHIM], {})
+        if result.exit_code != 0:
+            raise RuntimeError(f"swipl shim failed: {(result.stderr or '')[-300:]}")
+
     @vf.reward(weight=1.0)
     async def solved(self, trace: vf.Trace, runtime: vf.Runtime) -> float:
         """The base reward, minus its `trace.has_error` early return.
