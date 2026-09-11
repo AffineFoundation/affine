@@ -54,12 +54,37 @@ uv pip install -e ".[eval]" 2>&1 | tee /root/logs/pip_eval.log | tail -20
 # JIT-compiles at startup — which needs nvcc and dies on pods without a CUDA
 # toolkit ("Could not find nvcc"). The cubin + jit-cache wheels ship the
 # kernels prebuilt (no nvcc); both live on the flashinfer index, not PyPI.
-# Pin to vLLM 0.28.0's required flashinfer-python==0.6.16.post3; the cuXXX
-# suffix must match torch.version.cuda (cu130 for the torch vLLM 0.28 pulls).
-uv pip install "flashinfer-cubin==0.6.16.post3" \
-  --index-url https://flashinfer.ai/whl 2>&1 | tail -3
-uv pip install "flashinfer-jit-cache==0.6.16.post3" \
-  --index-url https://flashinfer.ai/whl/cu130 2>&1 | tail -3
+# Match cubin/jit-cache to whatever flashinfer-python vLLM pulled (0.28 →
+# 0.6.16.post3; 0.29 → 0.6.18). A mismatch aborts TP>1 workers with
+# "flashinfer-cubin version does not match flashinfer version" before CUDA
+# init (seen 2026-09-11 on lunar-raven-18 / vLLM 0.29.0). cuXXX must match
+# torch.version.cuda (cu130 for current vLLM torch wheels).
+FI_VER=$(python - <<'PY'
+import importlib.metadata as m
+print(m.version("flashinfer-python"))
+PY
+)
+echo "[bootstrap] flashinfer-python=$FI_VER — installing matching cubin/jit-cache"
+uv pip install "flashinfer-cubin==${FI_VER}" \
+  --index-url https://flashinfer.ai/whl 2>&1 | tee -a /root/logs/pip_eval.log | tail -5
+CUDA_TAG=$(python - <<'PY'
+import torch
+v = (torch.version.cuda or "13.0").split(".")
+print(f"cu{v[0]}{v[1]}")
+PY
+)
+uv pip install "flashinfer-jit-cache==${FI_VER}" \
+  --index-url "https://flashinfer.ai/whl/${CUDA_TAG}" 2>&1 | tee -a /root/logs/pip_eval.log | tail -5
+python - <<'PY'
+import importlib.metadata as m
+fi = m.version("flashinfer-python")
+cubin = m.version("flashinfer-cubin")
+if cubin != fi:
+    raise SystemExit(
+        f"[bootstrap] FATAL: flashinfer-cubin={cubin} != flashinfer-python={fi}"
+    )
+print(f"[bootstrap] flashinfer match OK cubin={cubin}")
+PY
 python - <<'PY'
 import affine, evalsrv
 from affine.config import load_config
