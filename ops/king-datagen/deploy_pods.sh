@@ -20,7 +20,7 @@ cd "$(dirname "$0")/../.." || exit 1
 REPO=$PWD
 KH="$REPO/ops/king-datagen/state/known_hosts"
 FILES=(schema.py registry.py run.py king.py scheduler.py policies.toml sources.toml
-       loopguard.py loopguard_site/sitecustomize.py adapters/mini_swe.py
+       loopguard.py loopguard_site/sitecustomize.py adapters/mini_swe.py adapters/verifiers.py
        runners/base.py runners/verifiers.py runners/mini_swe.py)
 AFFINE_FILES=(affine/dialects.py affine/corpus/trace.py)
 # The mini_swe_textbased verifiers harness is a tiny package of ours installed
