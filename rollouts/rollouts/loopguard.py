@@ -10,7 +10,9 @@ at the 3,600 s wall (king-datagen throughput report, 2026-09-11).
 
 Rule (the `label_loops.py` definition, exact form): the last N assistant
 actions are identical after whitespace normalization AND the observations
-between them are identical on their first 200 normalized characters. The
+between them are identical on their first 200 normalized characters. Short
+cycles (period 2-3, e.g. re-reading two wiki sections in turn) count too
+once they have run >= 3 full periods and >= N turns (`is_loop`). The
 onset and its repeats stay in the trace (the fold needs them); the rollout
 ends with `stop_condition = "loop_guard"`, which `affine.corpus.view.
 rollout_outcome` classifies as a FAILED rollout (not errored).
@@ -50,6 +52,10 @@ import sys
 ENV_REPEATS = "ROLLOUTS_LOOP_GUARD_REPEATS"
 STOP_CONDITION = "loop_guard"
 DEFAULT_KING_REPEATS = 6
+# Longest action cycle the guard recognizes (1 = the plain "same action N
+# times" rule; 2 and 3 = A B A B ... / A B C A B C ... with the same
+# observations). Cycles need >= 3 full periods and >= `repeats` turns.
+MAX_PERIOD = 3
 OBS_HEAD = 200
 SITE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "loopguard_site")
 
@@ -108,21 +114,37 @@ def obs_head(text: str) -> str:
     return norm_ws(text)[:OBS_HEAD]
 
 
-def is_loop(pairs: list[tuple[str, str | None]], repeats: int) -> bool:
+def is_loop(pairs: list[tuple[str, str | None]], repeats: int,
+            max_period: int = MAX_PERIOD) -> bool:
     """`pairs` = (action, observation head) per completed turn, oldest first;
-    the newest observation may be None (not seen yet). True iff the last
-    `repeats` actions are one non-empty action and every KNOWN observation
-    among the last `repeats - 1` is the same."""
-    if repeats <= 0 or len(pairs) < repeats:
+    the newest observation may be None (not seen yet).
+
+    Period 1 (the spec): the last `repeats` actions are one non-empty
+    action and every known observation between them is the same. Periods
+    2..`max_period` catch the short cycles the king also runs to the cap
+    (A B A B ...: re-reading two wiki sections in turn, seen live
+    2026-09-11): the last `max(repeats, 3 * period)` turns repeat with that
+    period in both action and known observation, i.e. at least three full
+    cycles and never fewer turns than the period-1 rule."""
+    if repeats <= 0:
         return False
-    tail = pairs[-repeats:]
-    action = tail[0][0]
-    if not action or any(a != action for a, _ in tail):
-        return False
-    heads = [o for _, o in tail[:-1]]
-    if not heads or any(o is None for o in heads):
-        return False
-    return len(set(heads)) == 1
+    for period in range(1, max_period + 1):
+        window = max(repeats, 3 * period)
+        if len(pairs) < window:
+            continue
+        tail = pairs[-window:]
+        acts = [a for a, _ in tail]
+        if any(not a for a in acts):
+            continue
+        if any(acts[i] != acts[i - period] for i in range(period, window)):
+            continue
+        known = [o for _, o in tail[:-1]]
+        if len(known) <= period or any(o is None for o in known):
+            continue
+        if any(known[i] != known[i - period] for i in range(period, len(known))):
+            continue
+        return True
+    return False
 
 
 # -- verifiers hook -----------------------------------------------------------
