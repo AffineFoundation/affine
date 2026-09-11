@@ -132,16 +132,25 @@ def rollout_outcome(trace: dict) -> str:
 
 
 def build_view_record(envelope: dict, *, baker=None,
-                      generated_at: str | None = None) -> dict | None:
+                      generated_at: str | None = None,
+                      convs: list[list[dict]] | None = None,
+                      leak_exempt: frozenset[int] | set[int] = frozenset(),
+                      ) -> dict | None:
     """View record for one envelope, or None when nothing is scorable
     (errored rollout, no reply passes the slicer). Raises ToolParityError /
-    TraceShapeError for traces that cannot be represented plain."""
+    TraceShapeError for traces that cannot be represented plain.
+
+    `convs`: the trace's baked conversations when the caller already has
+    them (the fold labels loops on them first); None derives them here.
+    `leak_exempt`: reply indices sliced without the reference-leakage
+    predicate (the fold's `king_loop_onset` turns, see datagen.slicer)."""
     trace = envelope["trace"]
     task = envelope["task"]
     policy = envelope["policy"]
     if trace_error_type(trace) is not None:
         return None
-    convs = trace_conversations(trace, baker)
+    if convs is None:
+        convs = trace_conversations(trace, baker)
     stamped_at = (trace.get("info") or {}).get("generated_at")
     common = dict(
         instance_id=task["sid"],
@@ -161,6 +170,7 @@ def build_view_record(envelope: dict, *, baker=None,
     for i, conv in enumerate(convs):
         recs = slice_messages(conv, turn=(i, len(convs)),
                               text_final=(final_is_text and i == len(convs) - 1),
+                              leak_check=i not in leak_exempt,
                               **common)
         if not recs:
             continue
@@ -248,6 +258,13 @@ def legacy_view_record(traj: dict, *, legacy_epoch: int) -> dict:
     return record
 
 
+def reference_leaks(prefix: list[dict], action: str) -> bool:
+    """The v2-era leakage predicate: the reference's action (whitespace
+    collapsed, lower-cased, > 40 chars) is a substring of a prefix message."""
+    body = _norm(action)
+    return len(body) > 40 and any(body in _norm(m["content"]) for m in prefix)
+
+
 def view_turns(record: dict) -> list[dict]:
     """Every scorable turn of a view record as a v1-shaped turn dict
     (prefix + reference_turn + tags) — what validate_turns and the duel
@@ -265,13 +282,16 @@ def view_turns(record: dict) -> list[dict]:
 
 def validate_turns(records: list[dict], *, panel: PanelKeys | None = None,
                    allowed_kinds: tuple[str, ...] | list[str] | None = None,
+                   leak_check: bool = True,
                    ) -> tuple[list[dict], dict[str, int]]:
     """The fold's per-turn admission contract (was ops/datagen_refresh.py's
     prefilter + rollouts validate_records). Returns (kept, drop counts).
 
     `allowed_kinds`: [dataset].allowed_action_kinds for the fold — a
     dialect outside it is refused; None admits every REGISTERED dialect
-    (staging semantics: a not-yet-admitted dialect builds its backlog)."""
+    (staging semantics: a not-yet-admitted dialect builds its backlog).
+    `leak_check=False` waives `reference_leaked_into_prefix` only (the
+    fold's `king_loop_onset` turns); every other rule still applies."""
     panel_ids, panel_repos, panel_bare = panel or (set(), set(), set())
     kinds = tuple(allowed_kinds) if allowed_kinds is not None \
         else tuple(dialects.DIALECTS)
@@ -318,8 +338,7 @@ def validate_turns(records: list[dict], *, panel: PanelKeys | None = None,
         if reason:
             drop(reason)
             continue
-        body = _norm(action)
-        if len(body) > 40 and any(body in _norm(m["content"]) for m in prefix):
+        if leak_check and reference_leaks(prefix, action):
             drop("reference_leaked_into_prefix")
             continue
         seen.add(turn_id)
