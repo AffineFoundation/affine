@@ -562,9 +562,10 @@ class Engine:
             # Never set on duel/bench pods — scoring must see raw text.
             cmd += ["--enable-auto-tool-choice", "--tool-call-parser", "qwen3_xml",
                     "--reasoning-parser", "qwen3"]
-            # --served-model-name replaces the default id, so the repo id
-            # (what chatsrv forwards) must stay listed for HF kings too.
-            served_names = [repo, CHAT_ALIAS]
+            # --served-model-name replaces the default id; vLLM echoes the
+            # FIRST name in every response, so the alias leads and the repo
+            # id stays listed (HF kings included) for clients that send it.
+            served_names = [CHAT_ALIAS, repo]
         if not r2store.is_r2(repo) and revision:
             cmd += ["--revision", revision]
         if self._warm_swap_slot(slot):
