@@ -44,6 +44,17 @@ from prolog_v1.verify import verify_answer
 KINDS = tuple(sorted(GENERATORS))
 DEFAULT_SEED = 42
 DEFAULT_NUM_EXAMPLES = 3000
+# Probe 2026-09-11 (medium, bash harness): 5 of 12 teacher rollouts hung
+# for 20+ minutes inside one `swipl` call — an exhaustive search on
+# nqueens / nonogram / bin_packing with no time limit, the container at
+# 100 % CPU, the batch slot held until the rollout timeout. The scorer runs
+# solve/1 under `timeout 60`; the agent is told to do the same.
+SYSTEM_PROMPT = PROLOG_SYSTEM_PROMPT + (
+    "\nAlways run swipl under a time limit, e.g. `timeout 60 swipl ...`: a "
+    "query that does not finish within a minute must be reformulated (use "
+    "library(clpfd) constraints and labeling instead of generate-and-test), "
+    "not waited for. The final verification query is run with a 60 s limit."
+)
 
 
 def task_name(kind: str, index: int) -> str:
@@ -104,7 +115,7 @@ class PrologConfig(vf.TasksetConfig):
     seed: int = DEFAULT_SEED
     docker_image: str = DEFAULT_DOCKER_IMAGE
     workdir: str = DEFAULT_WORKDIR
-    task_system_prompt: str = PROLOG_SYSTEM_PROMPT
+    task_system_prompt: str = SYSTEM_PROMPT
     task: PrologTaskConfig = PrologTaskConfig()
 
 
