@@ -281,7 +281,7 @@ key_env = "ENGY"
 
 [policy.king_textbased]
 harness = "mini_swe_textbased"
-share = 1.0
+share = 2.0
 
 [policy.king_textbased.sampling]
 temperature = 0.8
@@ -295,7 +295,7 @@ key_env = "KING_KEY"
 [policy.king_bashtool]
 harness = "bash"
 action_kind = "tool_call"
-share = 1.0
+share = 2.0
 
 [policy.king_bashtool.sampling]
 temperature = 0.8
@@ -309,7 +309,7 @@ key_env = "KING_KEY"
 [policy.king_pi]
 harness = "pi"
 action_kind = "tool_call"
-share = 1.0
+share = 2.0
 
 [policy.king_pi.sampling]
 temperature = 0.8
@@ -323,7 +323,7 @@ key_env = "KING_KEY"
 [policy.king_claude_code]
 harness = "claude_code"
 action_kind = "tool_call"
-share = 1.0
+share = 2.0
 
 [policy.king_claude_code.sampling]
 temperature = 0.8
@@ -337,7 +337,7 @@ key_env = "KING_KEY"
 [policy.king_boxed]
 harness = "null"
 action_kind = "boxed"
-share = 1.0
+share = 2.0
 
 [policy.king_boxed.sampling]
 temperature = 0.8
@@ -357,7 +357,7 @@ key_env = "KING_KEY"
 [policy.king_toolcall]
 harness = "null"
 action_kind = "tool_call"
-share = 1.0
+share = 2.0
 
 [policy.king_toolcall.sampling]
 temperature = 0.8
@@ -399,7 +399,7 @@ key_env = "ENGY"
 [policy.king_hermes]
 harness = "hermes_agent"
 action_kind = "tool_call"
-share = 1.0
+share = 2.0
 [policy.king_hermes.sampling]
 temperature = 0.8
 [[policy.king_hermes.endpoints]]
@@ -423,7 +423,7 @@ key_env = "ENGY"
 [policy.king_kimi]
 harness = "kimi_code"
 action_kind = "tool_call"
-share = 1.0
+share = 2.0
 [policy.king_kimi.sampling]
 temperature = 0.8
 [[policy.king_kimi.endpoints]]
@@ -447,7 +447,7 @@ key_env = "ENGY"
 [policy.king_terminus]
 harness = "terminus_2"
 action_kind = "terminus_json"
-share = 1.0
+share = 2.0
 [policy.king_terminus.sampling]
 temperature = 0.8
 [[policy.king_terminus.endpoints]]
