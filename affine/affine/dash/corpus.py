@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections import Counter
+from collections import Counter, OrderedDict
 
 from evalsrv.corpus import CorpusSync, CorpusVerificationError
 
@@ -21,6 +21,9 @@ log = logging.getLogger("affine.dash.corpus")
 REFRESH_TTL_S = 900          # manifest pointer re-check cadence
 MAX_PAGE = 200
 TOP_REPOS = 25
+# Materialized turns are immutable per manifest; a crawler walking turn ids
+# re-fetches the same popular ones, and each miss costs a chunk decode.
+TURN_LRU = 256
 
 # n_prefix_chars buckets for the length histogram (chars of prompt context).
 LEN_BUCKETS = [
@@ -51,7 +54,13 @@ class DatasetView:
     """Thread-safe reader over the synced corpus for the dataset endpoints."""
 
     def __init__(self, cfg: Config):
+        # `_lock` guards the index-derived caches (stats, turn pages);
+        # `_chunk_lock` guards chunk fetch/decode for /turn. They are separate
+        # so a slow chunk decode never stalls /api/v1/dataset or /turns
+        # (2026-09-11: 5–12 s TTFB across the site under turn-id crawling).
+        # refresh() takes both, in that order; nothing else nests them.
         self._lock = threading.Lock()
+        self._chunk_lock = threading.Lock()
         self._sync = CorpusSync(
             cfg.dataset.corpus_base_url,
             cfg.dataset.manifest_key,
@@ -61,17 +70,19 @@ class DatasetView:
         self._stats_sha = ""          # manifest sha the caches were built for
         self._stats: dict | None = None
         self._by_turn_id: dict[str, dict] = {}
+        self._turn_lru: OrderedDict[str, dict] = OrderedDict()
 
     # -- refresh -----------------------------------------------------------------
     def refresh(self) -> None:
         """Re-check the manifest pointer; rebuild derived caches on change.
         Called from a background task — endpoints never hit the network for
         the index (only /turn may fetch one chunk)."""
-        with self._lock:
+        with self._lock, self._chunk_lock:
             self._sync.refresh()
             if self._sync.ready and self._sync.manifest_sha256 != self._stats_sha:
                 try:
                     self._rebuild()
+                    self._turn_lru.clear()
                 except Exception as exc:
                     log.warning("dataset cache rebuild failed: %s", exc)
 
@@ -174,14 +185,27 @@ class DatasetView:
         chunk. May download + verify that single chunk on first view."""
         with self._lock:
             row = self._by_turn_id.get(turn_id)
-            if row is None:
-                return None
+        if row is None:
+            return None
+        with self._chunk_lock:
+            hit = self._turn_lru.get(turn_id)
+            if hit is not None:
+                self._turn_lru.move_to_end(turn_id)
+                return hit
             try:
                 turn = self._sync.materialize_turns([row])[0]
             except (CorpusVerificationError, OSError, ValueError,
                     KeyError, StopIteration) as exc:
                 log.warning("turn materialize failed %s: %s", turn_id, exc)
                 return None
+            detail = self._turn_payload(turn_id, turn)
+            self._turn_lru[turn_id] = detail
+            while len(self._turn_lru) > TURN_LRU:
+                self._turn_lru.popitem(last=False)
+        return detail
+
+    @staticmethod
+    def _turn_payload(turn_id: str, turn: dict) -> dict:
         return {
             "turn_id": turn_id,
             "traj_id": turn.get("traj_id"),

@@ -88,7 +88,9 @@ class CorpusSync:
         self.synced_at: float = 0.0
         self.stale: bool = False
         self._index_rows: list[dict] | None = None
-        self._chunk_line_cache: dict[str, list[dict]] = {}
+        # Eager mode caches parsed rollouts per chunk; lazy mode (dash) keeps
+        # the raw jsonl lines and decodes one on demand (see _traj_at_lazy).
+        self._chunk_line_cache: dict[str, list] = {}
         self._load_local()
 
     # -- public ------------------------------------------------------------------
@@ -341,16 +343,13 @@ class CorpusSync:
         self._ensure_gzip_object(shard, self.chunks_dir)
 
     # In lazy mode only a handful of chunks are viewed at a time; cap the
-    # parsed-line cache so the dash process does not grow with corpus size.
+    # cache so the dash process does not grow with corpus size.
     _LAZY_CACHE_CHUNKS = 4
 
     def _traj_at(self, chunk_key: str, traj_line: int) -> dict:
+        if self.lazy_chunks:
+            return self._traj_at_lazy(chunk_key, traj_line)
         if chunk_key not in self._chunk_line_cache:
-            if self.lazy_chunks:
-                self.ensure_chunk(chunk_key)
-                while len(self._chunk_line_cache) >= self._LAZY_CACHE_CHUNKS:
-                    self._chunk_line_cache.pop(
-                        next(iter(self._chunk_line_cache)))
             path = self.chunks_dir / posixpath.basename(chunk_key)
             with gzip.open(path, "rt", encoding="utf-8") as f:
                 self._chunk_line_cache[chunk_key] = [
@@ -360,6 +359,28 @@ class CorpusSync:
             raise CorpusVerificationError(
                 f"traj_line {traj_line} OOB in {chunk_key}")
         return lines[traj_line]
+
+    def _traj_at_lazy(self, chunk_key: str, traj_line: int) -> dict:
+        """Dash path: one rollout per request. Keep the chunk as raw lines
+        and decode only the requested one. Parsing every rollout of a view
+        chunk (up to ~1,000 × 66 MB of text) cost 0.6 s of CPU per cache
+        miss and held the dataset lock the whole time; a crawler walking
+        random turn ids turned that into 5–12 s TTFB for every dataset
+        endpoint and, once the waiters filled the sync-handler thread pool,
+        for the static site too (2026-09-11)."""
+        self.ensure_chunk(chunk_key)
+        lines = self._chunk_line_cache.get(chunk_key)
+        if lines is None:
+            while len(self._chunk_line_cache) >= self._LAZY_CACHE_CHUNKS:
+                self._chunk_line_cache.pop(next(iter(self._chunk_line_cache)))
+            path = self.chunks_dir / posixpath.basename(chunk_key)
+            with gzip.open(path, "rb") as f:
+                lines = [line for line in f if line.strip()]
+            self._chunk_line_cache[chunk_key] = lines
+        if traj_line < 0 or traj_line >= len(lines):
+            raise CorpusVerificationError(
+                f"traj_line {traj_line} OOB in {chunk_key}")
+        return json.loads(lines[traj_line])
 
 
 def main() -> None:
