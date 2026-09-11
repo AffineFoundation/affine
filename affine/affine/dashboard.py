@@ -132,6 +132,16 @@ class Dashboard:
                                 self.state.benches_index_path)
         self._push_full_logs()
 
+    @staticmethod
+    def _pushed_key(path: Path) -> str:
+        """Identity of the bytes we pushed, not just the name: challenge ids
+        restarted at the 2026-08-27 genesis reset, so `chal-00272.json.gz`
+        was written twice (2026-08-07 and 2026-09-06) and the name-only
+        marker skipped the second upload — the public mirror kept the
+        August duel and reign 7 was audited against it."""
+        st = path.stat()
+        return f"{path.name}:{st.st_size}:{st.st_mtime_ns}"
+
     def _push_artifact_dir(self, d: Path, prefix: str, idx: Path) -> None:
         if not d.exists():
             return
@@ -144,7 +154,16 @@ class Dashboard:
                 log.warning("corrupt %s; re-uploading all artifacts", marker)
         changed = False
         for path in sorted(d.glob("*.json.gz")):
+            key = self._pushed_key(path)
+            if key in pushed:
+                continue
             if path.name in pushed:
+                # Legacy name-only entry: assume the current bytes are the
+                # ones pushed and upgrade the key (an operator who knows a
+                # name was reused deletes the entry to force a re-upload).
+                pushed.discard(path.name)
+                pushed.add(key)
+                changed = True
                 continue
             ok = self.hippius.put_bytes(
                 f"{prefix}/{path.name}", path.read_bytes(),
@@ -152,7 +171,7 @@ class Dashboard:
                 cache_control="public, max-age=31536000, immutable")
             if not ok:
                 break  # Hippius cooling down; retry next publish.
-            pushed.add(path.name)
+            pushed.add(key)
             changed = True
         if changed:
             marker.write_text(json.dumps(sorted(pushed)))
