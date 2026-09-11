@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import logging
+import sys
 import time
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from datagen.agentrun import (
 )
 from datagen.instances import materialize_subset
 
+from rollouts import loopguard
 from rollouts.adapters.mini_swe import envelope_from_traj
 from rollouts.config import RolloutsConfig
 from rollouts.registry import Source
@@ -122,8 +124,16 @@ class MiniSweRunner:
         write_agent_config(self.cfg, policy, endpoint, agent_cfg)
         preds_dir = gdir / "preds"
         preds_dir.mkdir(parents=True, exist_ok=True)
+        env = _subprocess_env(self.env, endpoint)
+        if policy.loop_guard_repeats > 0:
+            # rollouts.loopguard wraps the batch runner's agent class; the
+            # threshold rides the env like the verifiers path.
+            env[loopguard.ENV_REPEATS] = str(policy.loop_guard_repeats)
+            launcher = [sys.executable, "-m", "rollouts.loopguard"]
+        else:
+            launcher = ["mini-extra", "swebench"]
         cmd = [
-            "mini-extra", "swebench",
+            *launcher,
             "--model", endpoint.litellm,
             "--config", str(agent_cfg),
             "--subset", str(subset_dir),
@@ -132,9 +142,7 @@ class MiniSweRunner:
             "--output", str(preds_dir),
             "--environment-class", "docker",
         ]
-        code, out = run_streamed(
-            cmd, _subprocess_env(self.env, endpoint),
-            self.cfg.batch_timeout_s, cwd=gdir)
+        code, out = run_streamed(cmd, env, self.cfg.batch_timeout_s, cwd=gdir)
         if code == -2:
             # Killing the process group orphans its containers; reap only
             # this batch's, by instance image. Finished trajectories still
@@ -149,8 +157,13 @@ class MiniSweRunner:
         results = {}
         for r in rows:
             iid = r["instance_id"]
-            results[iid] = classify_traj(
+            kind, detail = classify_traj(
                 preds_dir / iid / f"{iid}.traj.json")
+            if detail == loopguard.STOP_CONDITION:
+                # The guard's exit is a terminal state of the agent, not an
+                # exception class (agentrun.ATTEMPTED_EXITS predates it).
+                kind = "attempted"
+            results[iid] = (kind, detail)
         return results
 
     # -- swebench verdict telemetry ------------------------------------------------
