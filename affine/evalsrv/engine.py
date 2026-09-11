@@ -902,6 +902,17 @@ class Engine:
         detail = f"{reason}" + (f" | {tail}" if tail else "")
         slot.load_error = detail[:1500]
         log.error("%s load failed: %s", slot.label, slot.load_error[:500])
+        # Kill on failure. prepare_miners skips relaunch when same_target +
+        # proc_alive (to let a still-warming engine finish), so a hung /
+        # non-ready process left alive would be waited on again for another
+        # full timeout — seen 2026-09-11 on lunar-raven-18: duel-17b933
+        # hit "not ready after 3600s", zombie kings held GPUs 0–3, and
+        # duel-f4a70e waited on the same dead procs instead of relaunching.
+        try:
+            self._kill(slot)
+        except Exception:
+            log.warning("could not kill %s after load failure", slot.label,
+                        exc_info=True)
         return False
 
     def _probe_http_ready(self, slot: Slot) -> bool:
@@ -1428,11 +1439,15 @@ class Engine:
         for slot in (self.chall_slot, self.chal2_slot):
             if slot is None:
                 continue
-            if self._warm_swap_slot(slot) and self._proc_alive(slot):
+            if (self._warm_swap_slot(slot) and slot.ready
+                    and self._proc_alive(slot)):
                 # Keep the engine (compile, CUDA graphs, KV pool) for the
                 # next challenger's in-place weight swap. Nothing else uses
                 # these GPUs between duels. Its snapshot stays in the prune
                 # keep set via slot.served until the swap replaces it.
+                # Require ready: a process that never answered /v1/models
+                # (timeout / CUDA assert) must not be "kept warm" — that
+                # left GPU zombies after the 2026-09-11 3600s hangs.
                 log.info("%s kept warm for the next challenger (%s)",
                          slot.label, (slot.served.repo if slot.served else "?"))
                 continue
