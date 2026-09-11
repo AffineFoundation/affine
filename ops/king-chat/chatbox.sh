@@ -84,7 +84,12 @@ push_overrides() {
 restart_chatsrv() {
   # Same stop sequence as MachineManager.redeploy; bootstrap.sh is the
   # supervisor, so it is relaunched too (it re-sources .eval_env/.chat_env).
-  ssh_pod "pkill -f '[e]valsrv/bootstrap.sh' || true; pkill -f '[p]ython -m evalsrv' || true; sleep 3; pkill -9 -f '[v]llm serve' || true; cd $REMOTE_DIR && (nohup bash evalsrv/bootstrap.sh </dev/null >> /root/bootstrap.log 2>&1 &) && echo RESTARTED"
+  # Stop and launch are SEPARATE ssh calls: in one command line the
+  # `pkill -f '[e]valsrv/bootstrap.sh'` regex matches the launch text
+  # `bash evalsrv/bootstrap.sh` further along the same line and kills the
+  # remote shell before it gets there (hit on the first deploy).
+  ssh_pod "pkill -f '[e]valsrv/bootstrap.sh' || true; pkill -f '[p]ython -m evalsrv' || true; sleep 3; pkill -9 -f '[v]llm serve' || true; echo STOPPED"
+  ssh_pod "cd $REMOTE_DIR && (nohup bash evalsrv/bootstrap.sh </dev/null >> /root/bootstrap.log 2>&1 &) && echo RESTARTED"
 }
 
 cmd_deploy() {

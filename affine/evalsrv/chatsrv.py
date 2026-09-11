@@ -217,7 +217,9 @@ def _stack_versions() -> dict:
 def _fetch_king() -> dict | None:
     """Current king {repo, revision, reign_number} from the public snapshot."""
     url = str(_chat.get("snapshot_url", "https://affine.io/api/v1/snapshot"))
-    r = httpx.get(url, timeout=15, follow_redirects=True)
+    # affine.io's first byte is often 10-15 s (Cloudflare -> validator box ->
+    # dash under cache rebuilds); a 15 s timeout made whole polls fail.
+    r = httpx.get(url, timeout=60, follow_redirects=True)
     r.raise_for_status()
     king = (r.json() or {}).get("king") or {}
     if king.get("repo") and king.get("revision"):
