@@ -14,12 +14,16 @@
 # so the table still sums to 1. king_fail has no source of its own — the
 # fold assigns it (the scheduler ignores a group without sources), so the
 # generation targets of the five real groups are unchanged in ratio.
+# 2026-09-11: king_fail 0.10 -> 0.07 + king_loop_onset 0.03 (see
+# [king_loop_onset]); the share moves inside the king seat, the five real
+# groups are untouched.
 coding = 0.45
 terminal = 0.225
 nl2repo = 0.045
 math = 0.09
 tool_use = 0.09
-king_fail = 0.10
+king_fail = 0.07
+king_loop_onset = 0.03
 
 [king_fail]
 # The king's FAILED rollouts (policies king_*, rewards.solved == 0), any
@@ -35,6 +39,30 @@ king_fail = 0.10
 # (`king_not_failed` / `king_unscored` in the drop counts).
 strata_buckets = 1000
 policy_prefix = "king_"
+
+[king_loop_onset]
+# The first turn of every LOOP in the king's failed rollouts (2026-09-11,
+# operator directive; data event, no weight_version_key change). A loop:
+# the king re-issues a command it already ran and gets the same
+# observation back (affine/corpus/loops.py; 93 % of onsets are verbatim
+# repeats). Measured 2026-09-11: 49-100 % of the king's failed agent
+# rollouts loop (teacher 8-13 %), yet 1.1 % of king_fail turns were loop
+# turns — a repeated command is a "reference leaked into the prefix" for
+# the slicer, so 86 % of onsets never reached D. The fold waives THAT rule
+# for onset turns only (the stored reference is never scored under
+# min(R,G); teacher refs are sampled fresh at duel time); caps, dialect
+# gate, panel and action-count rules still apply. Later turns of the same
+# loop are dropped (king_in_loop: near-duplicate prefixes); the turns
+# before / after a loop keep the king_fail path. Strata
+# `king_loop_onset:NNNN` = sha256(instance_id) % buckets, own namespace as
+# for king_fail; ~665 looping tasks in the first 36 h -> ~480 buckets
+# occupied at 1000, ~1,000 onsets/day arrive at the current seat rate.
+# exclude_sources: tool_use — the teacher's next tool call is
+# near-deterministic there (centered R ~ 0, wvk-11 findings), so a wiki
+# loop prefix carries no signal; those rollouts stay on king_fail.
+strata_buckets = 1000
+policy_prefix = "king_"
+exclude_sources = ["affine_wiki", "affine_agent"]
 
 # Language targets for NEWLY FOLDED coding turns (2026-09-01). Enforced by
 # ops/datagen_refresh.py as a second waterfill (after the group waterfill)
