@@ -194,10 +194,11 @@ class RecoverableResumeHarness(Harness[RecoverableResumeConfig]):
         program = await runtime.prepare_uv_script(self._textbased_source(),
                                                   self.config.resolved_env)
         temperature = (self.state.get("sampling") or {}).get("temperature", 0.8)
-        args = ["--state-file", state_path, "--base-url", endpoint,
-                "--api-key", secret, "--model", ctx.model,
-                "--report", report_path, "--temperature", str(temperature),
-                "--replay-timeout", str(self.config.replay_timeout)]
+        # `--key=value` form: the interception secret may start with "-".
+        args = [f"--state-file={state_path}", f"--base-url={endpoint}",
+                f"--api-key={secret}", f"--model={ctx.model}",
+                f"--report={report_path}", f"--temperature={temperature}",
+                f"--replay-timeout={self.config.replay_timeout}"]
         env = {**self.config.resolved_env, "MSWEA_CONFIGURED": "true",
                "MSWEA_SILENT_STARTUP": "true", "MSWEA_COST_TRACKING": "ignore_errors"}
         result = await runtime.run_program([*program, *args], env)
@@ -244,9 +245,9 @@ class RecoverableResumeHarness(Harness[RecoverableResumeConfig]):
         tmux_dir = f"/tmp/vf-terminus-2-{trace.id}"
         env = {**self.config.resolved_env, "TMUX_TMPDIR": tmux_dir}
         system_prompt, _ = self.resolve_text_prompt(data)
-        args = ["--state-file", state_path, "--base-url", endpoint,
-                "--api-key", secret, "--model", ctx.model,
-                "--system-prompt", system_prompt or "", "--report", report_path]
+        args = [f"--state-file={state_path}", f"--base-url={endpoint}",
+                f"--api-key={secret}", f"--model={ctx.model}",
+                f"--system-prompt={system_prompt or ''}", f"--report={report_path}"]
         try:
             program = await runtime.prepare_uv_script(self._terminus_source(),
                                                       self.config.resolved_env)
