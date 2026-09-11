@@ -20,6 +20,7 @@ Catalogs are deterministic snapshots; rebuild by deleting the file or
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import importlib
 import json
@@ -80,7 +81,22 @@ VERIFIERS_IMAGE_PREFIXES = (
     "terminal-lego/",
     "alexgshaw/",
     "ghcr.io/multimodal-art-projection/nl2repobench",
+    "swipl",
 )
+
+# Env wave 1 (2026-09-11): the INTELLECT-3-RL logic / science subsets ship a
+# per-row solve rate of Qwen3-4B (`avg@16_qwen3_4b_instruct_2507`); rows a 4B
+# model always or never solves are dropped on both sides — here and in the
+# tasksets (rollouts/envs/affine_{logic,science}_v1) — so the catalog and the
+# taskset agree on the pool. Mirrors the tasksets' constants; keep in step.
+I3_DIFFICULTY_COLUMN = "avg@16_qwen3_4b_instruct_2507"
+I3_DIFFICULTY_MIN = 0.1
+I3_DIFFICULTY_MAX = 0.9
+I3_LOGIC_SKIP = ("arc_agi", "arc_agi_2", "buggy_tables")
+# prolog_v1 generator kinds, sorted — kind = KINDS[index % 9]
+# (affine_prolog_v1.taskset.kind_of).
+PROLOG_KINDS = ("bin_packing", "cryptarithm", "graph_coloring", "hamiltonian",
+                "nonogram", "nqueens", "scheduling", "sudoku", "zebra")
 
 
 def _dotless(stem: str) -> str:
@@ -230,6 +246,103 @@ def _commit0_meta(row: dict) -> dict | None:
     }
 
 
+def _i3_in_band(row: dict) -> bool:
+    value = row.get(I3_DIFFICULTY_COLUMN)
+    return value is not None and I3_DIFFICULTY_MIN <= float(value) <= I3_DIFFICULTY_MAX
+
+
+def _i3_logic_meta(row: dict) -> dict | None:
+    """PrimeIntellect/INTELLECT-3-RL `logic` (train): question / info{task_name}.
+    Name = affine_logic_v1.taskset.task_name(question)."""
+    question = row.get("question") or ""
+    if not question or not _i3_in_band(row):
+        return None
+    family = str(json.loads(row["info"]).get("task_name") or "logic")
+    if family in I3_LOGIC_SKIP:
+        return None
+    uid, num = _text_uid("logic", question)
+    return {
+        "uid": uid,
+        "sid": f"logic_{_dotless_task(family)}-{num}",
+        "repo": f"logic/{family}",
+        "language": "logic",
+        "family": family,
+    }
+
+
+def _i3_science_meta(row: dict) -> dict | None:
+    """PrimeIntellect/INTELLECT-3-RL `science` (train): question / answer.
+    Name = affine_science_v1.taskset.task_name(question)."""
+    question = str(row.get("question") or "")
+    if not question or row.get("answer") in (None, "") or not _i3_in_band(row):
+        return None
+    uid, num = _text_uid("science", question)
+    return {
+        "uid": uid,
+        "sid": f"science-{num}",
+        "repo": "science/i3",
+        "language": "science",
+    }
+
+
+def _rlvr_ifeval_meta(row: dict) -> dict | None:
+    """allenai/RLVR-IFeval (train): messages[0].content is the prompt,
+    ground_truth JSON names the checker. Name =
+    affine_ifeval_v1.taskset.task_name(prompt)."""
+    messages = row.get("messages")
+    if isinstance(messages, str):
+        messages = ast.literal_eval(messages)
+    if not messages:
+        return None
+    prompt = str(messages[0].get("content") or "")
+    if not prompt:
+        return None
+    func = str(json.loads(row.get("ground_truth") or "{}").get("func_name") or "")
+    if not func:
+        return None
+    uid, num = _text_uid("ifeval", prompt)
+    return {
+        "uid": uid,
+        "sid": f"ifeval_{func}-{num}",
+        "repo": f"ifeval/{func}",
+        "language": "chat",
+        "constraint_type": str(row.get("constraint_type") or ""),
+    }
+
+
+def _unscramble_meta(row: dict) -> dict | None:
+    """kalomaze/unscramble-mix-it2 (train): problem_id / task_type / prompt.
+    Name = affine_unscramble_v1.taskset.task_name(problem_id)."""
+    pid = str(row.get("problem_id") or "")
+    if not pid or not row.get("prompt"):
+        return None
+    kind = re.sub(r"[^a-z0-9]+", "_", str(row.get("task_type") or "mix").lower())
+    _, num = _text_uid("unscr", row["prompt"])
+    return {
+        "uid": f"unscr-{pid}",
+        "sid": f"unscramble_{kind}-{num}",
+        "repo": f"unscramble/{kind}",
+        "language": "chat",
+        "difficulty": str(row.get("difficulty") or ""),
+    }
+
+
+def _triviaqa_meta(row: dict) -> dict | None:
+    """mandarjoshi/trivia_qa rc.wikipedia.nocontext (train): question_id is
+    the task name (affine_trivia_v1 keeps TriviaQA's own ids)."""
+    qid = str(row.get("question_id") or "")
+    question = row.get("question") or ""
+    if not qid or not question:
+        return None
+    _, num = _text_uid("trivia", question)
+    return {
+        "uid": qid,
+        "sid": f"trivia-{num}",
+        "repo": "trivia/qa",
+        "language": "chat",
+    }
+
+
 ROW_META = {
     "commit0": _commit0_meta,
     "scaleswe": _scaleswe_meta,
@@ -239,6 +352,54 @@ ROW_META = {
     "swelego": _swelego_meta,
     "math": _math_meta,
     "wiki_trivia": _wiki_trivia_meta,
+    "i3_logic": _i3_logic_meta,
+    "i3_science": _i3_science_meta,
+    "rlvr_ifeval": _rlvr_ifeval_meta,
+    "unscramble": _unscramble_meta,
+    "triviaqa": _triviaqa_meta,
+}
+
+
+# -- procedural pools (catalog kind "procedural") ---------------------------------
+# Infinite / generated tasksets have no dataset rows to scan. Their wrappers
+# (rollouts/envs/affine_{prolog,needle,wikispeedia}_v1) name task `i` from
+# the index alone and generate it from a per-index seed, so the pool is
+# simply range(procedural_uids) and these functions reproduce the names.
+
+def _prolog_meta(i: int) -> dict:
+    kind = PROLOG_KINDS[i % len(PROLOG_KINDS)]
+    # No `image`: swipl:latest is shared by every task, so the per-batch
+    # prune (runners.verifiers) must not remove it.
+    return {
+        "uid": f"prolog-{kind}-{i:04d}",
+        "sid": f"prolog_{kind}-{i}",
+        "repo": f"prolog/{kind}",
+        "language": "prolog",
+    }
+
+
+def _needle_meta(i: int) -> dict:
+    return {
+        "uid": f"needle-{i:05d}",
+        "sid": f"needle-{i}",
+        "repo": "needle/patterned",
+        "language": "text",
+    }
+
+
+def _wikispeedia_meta(i: int) -> dict:
+    return {
+        "uid": f"wikispeedia-{i:05d}",
+        "sid": f"wikispeedia-{i}",
+        "repo": "wikispeedia/snap",
+        "language": "tool",
+    }
+
+
+PROCEDURAL_META = {
+    "prolog": _prolog_meta,
+    "needle": _needle_meta,
+    "wikispeedia": _wikispeedia_meta,
 }
 
 
@@ -295,10 +456,31 @@ def _write_catalog(cfg: RolloutsConfig, name: str, kept: list[dict],
     return summary
 
 
+def build_procedural_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    meta = PROCEDURAL_META[src.row_meta]
+    if src.procedural_uids <= 0:
+        raise ValueError(f"source {src.name!r}: catalog 'procedural' needs "
+                         "procedural_uids > 0")
+    kept: list[dict] = []
+    for i in range(src.procedural_uids):
+        row = meta(i)
+        if src.strata_buckets:
+            row["stratum"] = bucket_stratum(src.group, row["uid"],
+                                            src.strata_buckets, src.strata_offset)
+        kept.append(row)
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": f"procedural:{src.row_meta}",
+        "total": len(kept), "kept": len(kept),
+        "panel_excluded": 0, "unusable": 0,
+    })
+
+
 def build_hf_catalog(cfg: RolloutsConfig, src: Source) -> dict:
     row_meta = ROW_META[src.row_meta]
     panel = panel_keys()
-    rows = load_dataset(src.dataset, split=src.split)
+    rows = load_dataset(src.dataset, src.dataset_config or None,
+                        split=src.split,
+                        revision=src.dataset_revision or None)
     kept: list[dict] = []
     n_panel = n_unusable = 0
     seen: set[str] = set()
@@ -732,6 +914,7 @@ BUILDERS = {
     "terminal_bench_2": build_terminal_bench_2_catalog,
     "harbor_swe": build_harbor_swe_catalog,
     "nl2repobench": build_nl2repobench_catalog,
+    "procedural": build_procedural_catalog,
 }
 
 

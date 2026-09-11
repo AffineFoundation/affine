@@ -194,14 +194,24 @@ def trace_stats(trace: dict) -> dict:
             "cost_usd": round(cost, 5), "agent_wall_s": wall}
 
 
+# The env's primary grade, first key present — the same tuple the fold reads
+# (affine.corpus.view.PRIMARY_REWARD_KEYS): `solved` (SWE / terminal / agent /
+# prolog / wikispeedia), `correct` (math, logic, science, trivia, ifeval,
+# unscramble, needle), `passed_fraction` (nl2repo).
+PRIMARY_REWARD_KEYS = ("solved", "correct", "passed_fraction")
+
+
 def trace_reward_score(trace: dict) -> float | None:
-    """Primary scalar outcome as telemetry: `solved` if the env publishes
-    it, else `passed_fraction`. None when the env scored nothing."""
+    """Primary scalar outcome as telemetry (state rows, batch health).
+    None when the env scored nothing. Until 2026-09-11 this read `solved` /
+    `passed_fraction` only, so every `correct`-graded rollout (affine_math)
+    was logged unresolved."""
     rewards = trace.get("rewards") or {}
-    score = (rewards.get("solved") or {}).get("score")
-    if score is None:
-        score = (rewards.get("passed_fraction") or {}).get("score")
-    return score
+    for key in PRIMARY_REWARD_KEYS:
+        score = (rewards.get(key) or {}).get("score")
+        if score is not None:
+            return score
+    return None
 
 
 def trace_task_name(trace: dict) -> str:
