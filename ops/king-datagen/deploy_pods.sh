@@ -29,9 +29,14 @@ cd "$(dirname "$0")/../.." || exit 1
 REPO=$PWD
 KH="$REPO/ops/king-datagen/state/known_hosts"
 FILES=(schema.py registry.py catalog.py run.py king.py scheduler.py policies.toml sources.toml
-       loopguard.py loopguard_site/sitecustomize.py adapters/mini_swe.py
+       loopguard.py loopguard_site/sitecustomize.py adapters/mini_swe.py adapters/verifiers.py
        runners/base.py runners/verifiers.py runners/mini_swe.py)
 AFFINE_FILES=(affine/dialects.py affine/corpus/trace.py)
+# The mini_swe_textbased verifiers harness is a tiny package of ours installed
+# editable on every pod at /root/prime-pilot/mini-swe-textbased; its source of
+# truth is rollouts/harnesses/mini_swe_textbased in this repo.
+HARNESS_SRC=rollouts/harnesses/mini_swe_textbased/mini_swe_textbased/__init__.py
+HARNESS_DST=/root/prime-pilot/mini-swe-textbased/mini_swe_textbased/__init__.py
 ENV_PKGS=(affine_logic_v1 affine_trivia_v1 affine_ifeval_v1 affine_science_v1
           affine_unscramble_v1 affine_prolog_v1 affine_needle_v1 affine_wikispeedia_v1)
 RESEARCH_ENVS=(reasoning/i3_logic_v1 knowledge/triviaqa_v1 if/ifeval_v1 science/i3_science_v1
@@ -56,7 +61,7 @@ for t in "${TARGETS[@]}"; do
   SSH="ssh -o UserKnownHostsFile=$KH -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15 -o LogLevel=ERROR -p $P root@$H"
   SCP="scp -o UserKnownHostsFile=$KH -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o LogLevel=ERROR -P $P"
   echo "== $H:$P"
-  $SSH 'mkdir -p /root/rollouts/rollouts/{runners,adapters,loopguard_site} /root/rollouts/rollouts/.bak/{runners,adapters,loopguard_site} /root/affine/.bak/affine/corpus && cd /root/rollouts/rollouts && for f in '"${FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; cd /root/affine && for f in '"${AFFINE_FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; echo backed-up' || { echo "SSH-FAILED"; rc=1; continue; }
+  $SSH 'mkdir -p /root/rollouts/rollouts/{runners,adapters,loopguard_site} /root/rollouts/rollouts/.bak/{runners,adapters,loopguard_site} /root/affine/.bak/affine/corpus && cd /root/rollouts/rollouts && for f in '"${FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; cd /root/affine && for f in '"${AFFINE_FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; mkdir -p "$(dirname '"$HARNESS_DST"')/.bak" && [ -f '"$HARNESS_DST"' ] && cp '"$HARNESS_DST"' "$(dirname '"$HARNESS_DST"')/.bak/__init__.py"; echo backed-up' || { echo "SSH-FAILED"; rc=1; continue; }
   ok=1
   for f in "${FILES[@]}"; do
     $SCP "rollouts/rollouts/$f" "root@$H:/root/rollouts/rollouts/$f" || { echo "SCP-FAILED $f"; ok=0; break; }
@@ -64,6 +69,9 @@ for t in "${TARGETS[@]}"; do
   for f in "${AFFINE_FILES[@]}"; do
     $SCP "affine/$f" "root@$H:/root/affine/$f" || { echo "SCP-FAILED $f"; ok=0; break; }
   done
+  if [ $ok = 1 ]; then
+    $SCP "$HARNESS_SRC" "root@$H:$HARNESS_DST" || { echo "SCP-FAILED $HARNESS_SRC"; ok=0; }
+  fi
   [ $ok = 1 ] || { rc=1; continue; }
   tar -C rollouts/envs -czf - "${ENV_PKGS[@]}" | $SSH 'mkdir -p /root/rollouts/envs && tar -C /root/rollouts/envs -xzf -' \
     || { echo "ENV-COPY-FAILED"; rc=1; continue; }
@@ -77,6 +85,7 @@ uv pip install --python .venv/bin/python -q '"${ENV_EXTRA_DEPS[*]}"' || exit 1
 .venv/bin/python -c "import '"$(IFS=,; echo "${ENV_PKGS[*]}")"'; print(\"ENV_IMPORT_OK\")" || exit 1
 for img in '"${ENV_IMAGES[*]}"'; do docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null || echo "WARNING: pull failed $img"; done' \
     || { echo "ENV-INSTALL-FAILED"; rc=1; continue; }
+  $SSH "/root/prime-pilot/verifiers/.venv/bin/python -m py_compile $HARNESS_DST && echo HARNESS_OK" || { echo "HARNESS-COMPILE-FAILED (restored from .bak)"; $SSH "cp $(dirname "$HARNESS_DST")/.bak/__init__.py $HARNESS_DST"; rc=1; continue; }
   $SSH 'cd /root/rollouts && source /root/affine/.datagen_env && source /root/rollouts/.rollouts_env 2>/dev/null; PYTHONPATH=/root/affine:/root/rollouts /root/venv/bin/python - <<PY
 import os
 from rollouts.registry import load_registry

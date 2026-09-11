@@ -13,7 +13,11 @@ from pathlib import Path
 from datagen.providers import looks_like_provider_failure
 
 from rollouts import loopguard
-from rollouts.adapters.verifiers import envelopes_from_traces
+from rollouts.adapters.verifiers import (
+    NO_VISIBLE_REPLY_STOP,
+    envelopes_from_traces,
+    mark_no_visible_reply,
+)
 from rollouts.catalog import VERIFIERS_IMAGE_PREFIXES
 from rollouts.config import RolloutsConfig
 from rollouts.registry import Source
@@ -45,6 +49,10 @@ log = logging.getLogger("rollouts.runners.verifiers")
 # (~+15 s per container). Harness env vars ride `--env.agent.harness.env.*`.
 MINI_SWE_HARNESSES = ("mini_swe_agent", "mini_swe_textbased")
 MINI_SWE_HARNESS_ENV = {"UV_PYTHON": "3.12"}
+# Harnesses whose "agent completed" may hide a final reply with no visible
+# text (adapters.verifiers.mark_no_visible_reply). pi ends the agent when its
+# last tool completes even if the model then says nothing.
+NO_VISIBLE_REPLY_HARNESSES = ("pi",)
 
 
 def eval_cmd(cfg: RolloutsConfig, source: Source, endpoint: Endpoint,
@@ -241,6 +249,11 @@ class VerifiersRunner:
             envelopes, _ = envelopes_from_traces(
                 traces_path, source=source.name, env_id=source.taskset_id,
                 meta_by_uid=meta_by_uid, policy=stamp)
+            if policy.harness in NO_VISIBLE_REPLY_HARNESSES:
+                n_silent = sum(mark_no_visible_reply(e["trace"]) for e in envelopes)
+                if n_silent:
+                    log.info("%d rollout(s) finished without a visible reply "
+                             "-> stop_condition=%s", n_silent, NO_VISIBLE_REPLY_STOP)
             per_task = _per_task_rows(envelopes)
             suspect = code != 0 or _batch_suspect(per_task,
                                                   traces_path.exists())
