@@ -33,6 +33,18 @@ from rollouts.schema import (
 
 log = logging.getLogger("rollouts.runners.verifiers")
 
+# The mini-swe-agent harnesses install `mini-swe-agent==2.4.6` +
+# `litellm[proxy]` (unpinned) into every task container with a PEP 723 uv
+# script. litellm >= 1.98.0 (2026-08-22) no longer imports on Python 3.10
+# (`typing.NotRequired`) although it still declares `>= 3.10`, and on a
+# 3.10 image (r2e_gym, others) uv picks the image's interpreter, so every
+# such rollout died at start-up as "Unknown model class: litellm_textbased"
+# (600 r2e_gym + ~130 other king_textbased rollouts, 2026-09-10/11).
+# UV_PYTHON makes uv fetch a managed 3.12 for the script env instead
+# (~+15 s per container). Harness env vars ride `--env.agent.harness.env.*`.
+MINI_SWE_HARNESSES = ("mini_swe_agent", "mini_swe_textbased")
+MINI_SWE_HARNESS_ENV = {"UV_PYTHON": "3.12"}
+
 
 def eval_cmd(cfg: RolloutsConfig, source: Source, endpoint: Endpoint,
              harness: str, batch: list[dict], run_dir: Path,
@@ -47,6 +59,11 @@ def eval_cmd(cfg: RolloutsConfig, source: Source, endpoint: Endpoint,
         "--client.base-url", endpoint.base_url,
         "--client.api-key-var", endpoint.key_env,
         "--env.agent.harness.id", harness,
+    ]
+    if harness in MINI_SWE_HARNESSES:
+        for key, value in MINI_SWE_HARNESS_ENV.items():
+            cmd.extend([f"--env.agent.harness.env.{key}", value])
+    cmd += [
         "--env.agent.runtime.type", runtime,
         "--env.agent.max-turns", str(cfg.max_turns),
         "--env.agent.timeout.setup", "1800",
