@@ -94,7 +94,13 @@ def deliberate_final_reply(trace: dict) -> bool:
 # to the turn cap. The agent did not finish, so it is a clean stop that
 # grades as a failure -- the material the king seat exists to capture.
 LOOP_GUARD_STOP = "loop_guard"
-CLEAN_STOP_CONDITIONS = frozenset({"agent_completed", "max_turns", LOOP_GUARD_STOP})
+# `no_visible_reply` (pi adapter, live 2026-09-11 22:57 UTC): the model
+# finished with reasoning only -- no tool call, no visible text after
+# `</think>`. It said nothing, so the rollout is a failure whatever the env
+# graded (the v7 "models must work as chat models" defect, seen in datagen).
+NO_VISIBLE_REPLY_STOP = "no_visible_reply"
+CLEAN_STOP_CONDITIONS = frozenset({"agent_completed", "max_turns",
+                                   LOOP_GUARD_STOP, NO_VISIBLE_REPLY_STOP})
 # The env's primary grade, first key present: `solved` (SWE / terminal /
 # agent envs), `correct` (affine-math), `passed_fraction` (nl2repo — a
 # partial pass is not a solve). Surveyed on the pods' chunks 2026-09-10;
@@ -118,6 +124,8 @@ def rollout_outcome(trace: dict) -> str:
         return "errored"
     if trace.get("stop_condition") not in CLEAN_STOP_CONDITIONS:
         return "errored"
+    if trace.get("stop_condition") == NO_VISIBLE_REPLY_STOP:
+        return "failed"
     rewards = trace.get("rewards") or {}
     score = next(((rewards.get(k) or {}).get("score")
                   for k in PRIMARY_REWARD_KEYS if rewards.get(k)), None)
