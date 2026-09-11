@@ -25,7 +25,7 @@ import statistics
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from judge import CATEGORIES, PROMPT_VERSION
+from judge import CATEGORIES, PROMPT_VERSION, well_formed
 from krlib import (TraceStore, clip, load_env_groups, norm_ws, parse_rollout,
                    read_jsonl, short_action)
 
@@ -510,8 +510,12 @@ def load_judgments(out_dir: Path, sample: list[dict]) -> list[dict]:
     ids = {s["rollout_id"] for s in sample}
     seen: dict[str, dict] = {}
     for r in read_jsonl(out_dir / "cache" / "judgments.jsonl"):
-        if r["rollout_id"] in ids and r.get("prompt_version") == PROMPT_VERSION:
-            seen[r["rollout_id"]] = r  # last write wins
+        if r["rollout_id"] not in ids or r.get("prompt_version") != PROMPT_VERSION:
+            continue
+        prev = seen.get(r["rollout_id"])
+        # last write wins, but never let an off-schema retry shadow a good one
+        if prev is None or well_formed(r) or not well_formed(prev):
+            seen[r["rollout_id"]] = r
     return [seen[i] for i in sorted(seen)]
 
 

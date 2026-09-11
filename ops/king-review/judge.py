@@ -132,6 +132,17 @@ def merge_usage(acc: dict, new: dict) -> dict:
     return out
 
 
+def well_formed(rec: dict) -> bool:
+    s1, s2 = rec.get("stage1") or {}, rec.get("stage2") or {}
+    return ("pivotal_turns" in s1 and isinstance(s1.get("pivotal_turns"), list)
+            and s2.get("failure_category") in CATEGORIES)
+
+
+SCHEMA_NUDGE = ("Your previous reply did not follow the requested schema. Return ONLY the "
+                "JSON object with exactly the keys described above (failure_category must be "
+                "one of the listed keys).")
+
+
 def extract_json(text: str) -> dict:
     s = text.strip()
     s = re.sub(r"^```(?:json)?\s*|\s*```$", "", s, flags=re.S)
@@ -157,7 +168,9 @@ class Judge:
         self.out_dir = out_dir
         self.cache_path = out_dir / "cache" / "judgments.jsonl"
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.cache: dict[str, dict] = {r["cache_key"]: r for r in read_jsonl(self.cache_path)}
+        # Off-schema judgments are not cached: the next run re-judges them.
+        self.cache: dict[str, dict] = {r["cache_key"]: r for r in read_jsonl(self.cache_path)
+                                       if well_formed(r)}
         self.sem = asyncio.Semaphore(concurrency)
         self.max_usd = max_usd
         self.price_in = price_in
@@ -279,6 +292,17 @@ class Judge:
                 s2 = extract_json(raw2)
             except (ValueError, json.JSONDecodeError) as ex:
                 s2 = {"parse_error": str(ex)}
+            if s2.get("failure_category") not in CATEGORIES:
+                # one corrective round inside the same conversation
+                messages += [{"role": "assistant", "content": raw2},
+                             {"role": "user", "content": SCHEMA_NUDGE}]
+                raw2b, usage2b = await self.chat(client, messages)
+                usage2 = merge_usage(usage2, usage2b)
+                try:
+                    s2 = extract_json(raw2b)
+                    raw2 = raw2b
+                except (ValueError, json.JSONDecodeError) as ex:
+                    s2 = {**s2, "parse_error": str(ex)}
             async with self.lock:
                 c1 = self._account(usage1)
                 c2 = self._account(usage2)
