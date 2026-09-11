@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+import hashlib
 import json
 import logging
 import os
@@ -54,6 +55,13 @@ PRICE_OUT = 0.32e-6
 PRICE_CACHE = 0.015e-6
 
 _lock = threading.Lock()
+
+
+def owns(state_id: str, i: int, n: int) -> bool:
+    if n <= 1:
+        return True
+    h = hashlib.blake2b(state_id.encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(h, "big") % n == i
 
 
 def first_reply(trace: dict) -> dict | None:
@@ -181,6 +189,9 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--only", default="", help="comma-separated state ids")
     ap.add_argument("--retry-errored", action="store_true")
+    ap.add_argument("--shard", default="0/1",
+                    help="i/n: run only states with blake2b(state_id) %% n == i "
+                         "(split the work across pods)")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
@@ -201,8 +212,10 @@ def main() -> None:
     kinds = set(args.kinds.split(","))
     only = set(args.only.split(",")) if args.only else None
     states = [json.loads(l) for l in open(args.states, encoding="utf-8")]
+    shard_i, shard_n = (int(x) for x in args.shard.split("/"))
     states = [s for s in states if s["resume_kind"] in kinds
-              and (only is None or s["state_id"] in only)]
+              and (only is None or s["state_id"] in only)
+              and owns(s["state_id"], shard_i, shard_n)]
     args.out.mkdir(parents=True, exist_ok=True)
     results_dir = args.out / "results"
     results_dir.mkdir(exist_ok=True)

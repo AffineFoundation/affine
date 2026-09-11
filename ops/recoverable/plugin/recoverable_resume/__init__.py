@@ -50,7 +50,13 @@ from verifiers.v1.types import (
     UserMessage,
 )
 
+from recoverable_resume import shield
+
 __all__ = ["RecoverableResumeHarness"]
+
+# Importing the plugin = running a continuation next to the datagen
+# supervisor; keep its reaper off our containers (see shield.py).
+shield.install()
 
 PROGRAMS = Path(__file__).resolve().parent / "programs"
 TEXTBASED_SOURCE = (PROGRAMS / "textbased_resume.py").read_text()
