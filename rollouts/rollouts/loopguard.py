@@ -125,8 +125,10 @@ def is_loop(pairs: list[tuple[str, str | None]], repeats: int,
     (A B A B ...: re-reading two wiki sections in turn, seen live
     2026-09-11): the last `max(repeats, 3 * period)` turns repeat with that
     period in both action and known observation, i.e. at least three full
-    cycles and never fewer turns than the period-1 rule."""
-    if repeats <= 0:
+    cycles and never fewer turns than the period-1 rule. Longer cycles fall
+    to `_revisits`: `repeats` consecutive turns that each exactly repeat an
+    earlier (action, observation) pair."""
+    if repeats <= 0 or len(pairs) < repeats:
         return False
     for period in range(1, max_period + 1):
         window = max(repeats, 3 * period)
@@ -144,7 +146,32 @@ def is_loop(pairs: list[tuple[str, str | None]], repeats: int,
         if any(known[i] != known[i - period] for i in range(period, len(known))):
             continue
         return True
-    return False
+    return _revisits(pairs, repeats)
+
+
+def _revisits(pairs: list[tuple[str, str | None]], repeats: int) -> bool:
+    """The fold's `in_loop` shape for cycles of any length (the king
+    re-reading every section of a page, over and over): each of the last
+    `repeats` turns with a known observation exactly repeats an earlier
+    (action, observation) pair of the rollout, and the newest action — whose
+    observation may not be in yet — repeats an earlier action too."""
+    if pairs[-1][1] is None:
+        known, newest = pairs[:-1], pairs[-1][0]
+        if not newest or all(a != newest for a, _ in known):
+            return False
+    else:
+        known = pairs
+    if len(known) <= repeats:
+        return False
+    seen: set[tuple[str, str]] = set()
+    first_checked = len(known) - repeats
+    for idx, (action, obs) in enumerate(known):
+        if idx >= first_checked:
+            if not action or obs is None or (action, obs) not in seen:
+                return False
+        if action and obs is not None:
+            seen.add((action, obs))
+    return True
 
 
 # -- verifiers hook -----------------------------------------------------------
