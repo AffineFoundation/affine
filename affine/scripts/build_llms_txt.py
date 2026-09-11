@@ -539,6 +539,16 @@ resubmitted, by anyone.
 - Current king's hotkey is skipped (already crowned).
 - Infra faults (dead eval pod, busy server, chain hiccup, R2 outage) requeue \
 without burning a failure record; miner-attributable failures burn.
+- **Queue order is your challenge number.** `chal-NNNNN` is assigned when \
+your `ready` is verified, in on-chain block order; the validator always \
+duels the lowest number waiting. An infra fault puts you back in the same \
+place (uncounted). One exception: a fault that is specific to *your* \
+checkpoint (the pod cannot fetch, fit or load it) and repeats 6 times \
+defers you behind everything queued at that moment, so one broken upload \
+cannot hold the head; arrivals after that still queue behind you. The \
+validator never reorders otherwise. (Before 2026-09-05 a pod-wide fault \
+could rotate the whole queue one entry at a time — that was the \
+"queue-order bug" of 2026-09-05 and is fixed.)
 
 ---
 
