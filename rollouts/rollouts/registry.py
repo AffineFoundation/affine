@@ -20,7 +20,7 @@ RUNNERS = ("verifiers", "verifiers_chat", "mini_swe")
 KING_POLICY_PREFIX = "king_"
 CATALOG_KINDS = ("hf", "hf_swebench", "swesmith", "terminal_lego",
                  "terminal_bench_2", "harbor_swe", "nl2repobench",
-                 "general_agent")
+                 "general_agent", "procedural")
 SELECT_MODES = ("filter_fn", "tasks")
 
 _PKG_DIR = Path(__file__).resolve().parent
@@ -35,6 +35,10 @@ class Source:
     policies: tuple[str, ...]
     taskset_id: str = ""
     dataset: str = ""
+    # HF dataset config name (`load_dataset(dataset, dataset_config, ...)`)
+    # and revision pin; empty = the default config / latest revision.
+    dataset_config: str = ""
+    dataset_revision: str = ""
     split: str = "train"
     uid_field: str = "instance_id"
     row_meta: str = ""
@@ -54,6 +58,10 @@ class Source:
     # Bucket names are per group; a second bucketed source in the same
     # group starts its range here so the two do not collide.
     strata_offset: int = 0
+    # catalog = "procedural": the pool is the index range [0, procedural_uids)
+    # of a seeded generator; catalog.PROCEDURAL_META[row_meta] names each
+    # index the way the taskset does, so no taskset import is needed here.
+    procedural_uids: int = 0
 
 
 @dataclass(frozen=True)
@@ -148,6 +156,8 @@ def _load_sources(path: Path, policies: dict[str, Policy],
             policies=pids,
             taskset_id=cfg.get("taskset_id", ""),
             dataset=cfg.get("dataset", ""),
+            dataset_config=cfg.get("dataset_config", ""),
+            dataset_revision=cfg.get("dataset_revision", ""),
             split=cfg.get("split", "train"),
             uid_field=cfg.get("uid_field", "instance_id"),
             row_meta=cfg.get("row_meta", ""),
@@ -160,6 +170,7 @@ def _load_sources(path: Path, policies: dict[str, Policy],
             extra_flags=tuple(cfg.get("extra_flags", ())),
             strata_buckets=int(cfg.get("strata_buckets", 0)),
             strata_offset=int(cfg.get("strata_offset", 0)),
+            procedural_uids=int(cfg.get("procedural_uids", 0)),
         )
         if src.group not in mix:
             raise ValueError(f"source {name!r} group {src.group!r} missing "
