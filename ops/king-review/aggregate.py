@@ -32,8 +32,50 @@ from krlib import (TraceStore, clip, load_env_groups, norm_ws, parse_rollout,
 STOP = set("""a an the of to in on at for with and or by from into after before
 without instead then than that this it its is are was were be been being as
 same again re when while until does did do not no never always already
-agent model command result output""".split())
+agent model command result output found once more first then keeps keep
+despite still only rather""".split())
 TOOL_HEAD_RE = re.compile(r"^([A-Za-z_][\w.-]*)")
+# Word families: the judge's free-text labels say the same thing many ways
+# ("reruns", "re-issues", "repeats"; "submit", "finalize", "stop"). Mapping
+# them to one token before clustering is what makes clusters recur.
+FAMILIES = {
+    "finish": {"submit", "submits", "submitting", "submission", "finalize", "finalizing",
+               "finalise", "finish", "finishing", "finished", "complete", "completing",
+               "completion", "stop", "stopping", "terminate", "terminating", "done",
+               "deliver", "delivering", "answer", "answering", "answers", "final", "emit",
+               "emitting", "return", "returning", "returns"},
+    "verify": {"verify", "verifies", "verifying", "verification", "reverify", "re-verify",
+               "re-verifies", "recheck", "rechecks", "re-check", "check", "checks",
+               "checking", "confirm", "confirms", "confirming", "confirmation",
+               "re-read", "re-reads", "reread", "rereads", "re-reading", "validate",
+               "validating", "status", "diff"},
+    "repeat": {"repeat", "repeats", "repeating", "repeated", "repeatedly", "rerun", "reruns",
+               "re-run", "re-runs", "re-running", "rerunning", "reissue", "reissues",
+               "re-issue", "re-issues", "loop", "loops", "looping", "redundant", "again",
+               "identical", "same", "unchanged"},
+    "explore": {"explore", "explores", "exploring", "exploration", "read", "reads",
+                "reading", "inspect", "inspects", "inspecting", "investigate",
+                "investigates", "investigating", "search", "searches", "searching",
+                "browse", "browsing", "grep", "greps", "history", "archaeology",
+                "trace", "traces", "tracing", "study", "studies"},
+    "edit": {"edit", "edits", "editing", "patch", "patches", "patching", "fix", "fixes",
+             "fixing", "implement", "implements", "implementing", "change", "changes",
+             "changing", "modify", "modifies", "modifying", "apply", "applies", "applying",
+             "write", "writes", "writing", "code"},
+    "format": {"malformed", "invalid", "format", "formatting", "json", "parse", "parseable",
+               "unparseable", "schema", "syntax", "fields", "wrapping", "boxed", "fence"},
+    "repro": {"reproduce", "reproduces", "reproducing", "reproduction", "repro",
+              "reproducer"},
+    "test": {"test", "tests", "testing", "tested", "suite", "pytest", "jest"},
+    "error": {"error", "errors", "failing", "failure", "failures", "fails", "failed",
+              "traceback", "exception", "broken"},
+    "plan": {"plan", "planning", "approach", "strategy", "hypothesis", "assumption",
+             "assumes", "assuming", "misreads", "misread", "misinterprets",
+             "misinterpreting", "misunderstands", "wrong", "incorrect", "unrelated"},
+    "wait": {"wait", "waits", "waiting", "sleep", "idle", "poll", "polling", "install",
+             "installing", "build", "building", "compile", "compiling"},
+}
+FAMILY_OF = {w: fam for fam, words in FAMILIES.items() for w in words}
 
 # Frequent pattern -> what D must contain so the teacher's references at
 # duel time correct it (data-only; scoring untouched).
@@ -127,8 +169,15 @@ def pattern_tokens(rec: dict) -> set[str]:
     s2 = rec.get("stage2") or {}
     s1 = rec.get("stage1") or {}
     text = str(s2.get("pivot_pattern") or "")
-    toks = {t for t in re.findall(r"[a-z][a-z_\-]+", text.lower()) if t not in STOP}
-    toks = {re.sub(r"(ing|ed|es|s)$", "", t) if len(t) > 4 else t for t in toks}
+    toks: set[str] = set()
+    for w in re.findall(r"[a-z][a-z_\-]+", text.lower()):
+        if w in STOP:
+            continue
+        fam = FAMILY_OF.get(w)
+        if fam:
+            toks.add("f:" + fam)
+        else:
+            toks.add(re.sub(r"(ing|ed|es|s)$", "", w) if len(w) > 4 else w)
     rep = s1.get("repeated_action")
     if isinstance(rep, str) and rep.strip():
         m = TOOL_HEAD_RE.match(rep.strip().lstrip("`").split("(")[0].split("{")[0])
@@ -144,10 +193,14 @@ def jaccard(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(a | b) if a | b else 0.0
 
 
-def cluster_patterns(recs: list[dict], threshold: float = 0.4) -> list[dict]:
-    """Greedy clustering inside each category: a judgment joins the first
-    cluster whose token set it overlaps by >= threshold (Jaccard), else it
+def cluster_patterns(recs: list[dict], threshold: float = 0.34) -> list[dict]:
+    """Greedy clustering inside each category: a judgment joins the best
+    cluster whose CORE token set (family tokens + action head, the words
+    that carry the pattern) it overlaps by >= threshold (Jaccard), else it
     starts a new one. Deterministic given the input order."""
+    def core(toks: set[str]) -> set[str]:
+        c = {t for t in toks if t.startswith(("f:", "act:"))}
+        return c or toks
     clusters: list[dict] = []
     for rec in sorted(recs, key=lambda r: r["rollout_id"]):
         cat = category_of(rec)
@@ -156,12 +209,17 @@ def cluster_patterns(recs: list[dict], threshold: float = 0.4) -> list[dict]:
         for c in clusters:
             if c["category"] != cat:
                 continue
-            j = jaccard(toks, c["tokens"])
+            j = jaccard(core(toks), core(c["tokens"]))
             if j > best_j:
                 best, best_j = c, j
         if best is not None and best_j >= threshold:
             best["members"].append(rec)
-            best["tokens"] |= toks
+            if len(best["members"]) <= 3:
+                best["tokens"] |= toks       # small cluster: widen
+            elif core(best["tokens"]) & core(toks):
+                best["tokens"] &= toks       # big cluster: tighten to the shared core
+            if not best["tokens"]:
+                best["tokens"] = set(toks)
         else:
             clusters.append({"category": cat, "tokens": set(toks), "members": [rec]})
     for c in clusters:
@@ -183,6 +241,7 @@ def det_agreement(recs: list[dict]) -> dict:
     the same rollout (computed in krlib.parse_rollout with the
     king-loop-labels definitions)."""
     out = Counter()
+    gaps: list[int] = []
     multi = [r for r in recs if (r.get("n_turns") or 0) > 1]
     for r in multi:
         p, src = primary_pivot(r)
@@ -212,6 +271,7 @@ def det_agreement(recs: list[dict]) -> dict:
             first = onsets[0]
             if t < first:
                 out["pivot_before_first_onset"] += 1
+                gaps.append(first - t)
             elif t == first:
                 out["pivot_at_first_onset"] += 1
             else:
@@ -228,7 +288,13 @@ def det_agreement(recs: list[dict]) -> dict:
         if onsets and any(p["turn"] in onsets for p, _ in all_pivots(r)):
             out["rollouts_any_pivot_is_onset"] += 1
     out["n_multi_turn"] = len(multi)
-    return dict(out)
+    result = dict(out)
+    if gaps:
+        gaps.sort()
+        result["gap_before_onset_p50"] = gaps[len(gaps) // 2]
+        result["gap_before_onset_p90"] = gaps[min(len(gaps) - 1, int(0.9 * len(gaps)))]
+        result["gap_before_onset_le3"] = sum(1 for g in gaps if g <= 3)
+    return result
 
 
 def depth_stats(recs: list[dict]) -> dict:
@@ -404,9 +470,17 @@ def build_report(*, recs: list[dict], sample: list[dict], cells: list[dict], cos
     md.append("")
     md.append(f"## 3. Top {min(top_patterns, len(clusters))} recurring pivot patterns")
     md.append("")
-    md.append("Clustered on the judge's generic pattern label plus the head of the repeated action "
-              "(greedy Jaccard >= 0.4 inside one category). One example per cluster; the quote is the "
-              "judge's rationale for the pivot.")
+    md.append("Clustered on the judge's generic pattern label (word families: finish / verify / repeat / "
+              "explore / edit / format / ...) plus the head of the repeated action, greedy Jaccard inside "
+              "one category. Examples quote the judge's rationale for the pivot; `det label` is the "
+              "deterministic label of the same turn.")
+    md.append("")
+    md.append(table(["#", "pattern", "rollouts", "category", "harnesses"],
+                    [[i, c["label"], c["n"], f"`{c['category']}`",
+                      ", ".join(f"{k} {v}" for k, v in c["harnesses"].most_common(4))]
+                     for i, c in enumerate(clusters[:top_patterns], 1)]))
+    md.append("")
+    md.append(f"{len(clusters)} clusters in total; {sum(1 for c in clusters if c['n'] == 1)} are singletons.")
     md.append("")
     for i, c in enumerate(clusters[:top_patterns], 1):
         md.append(f"### 3.{i} {c['label']}  --  {c['n']} rollouts, `{c['category']}`")
@@ -415,9 +489,10 @@ def build_report(*, recs: list[dict], sample: list[dict], cells: list[dict], cos
                   f"Env: {', '.join(f'{k} {v}' for k, v in c['envs'].most_common())}.")
         variants = Counter(str((m.get("stage2") or {}).get("pivot_pattern") or "") for m in c["members"])
         if len(variants) > 1:
-            md.append("Labels in the cluster: " + "; ".join(f"_{k}_ ({v})" for k, v in variants.most_common(5)))
+            md.append("Labels in the cluster: " + "; ".join(f"_{k}_ ({v})" for k, v in variants.most_common(6)))
         md.append("")
-        for m in c["members"][:n_examples]:
+        n_ex = n_examples if i <= 5 else 1
+        for m in c["members"][:n_ex]:
             md.append(example_block(m, ts, env_groups, item_by_id))
         md.append("")
     md.append("## 4. Agreement with the deterministic labels")
@@ -443,6 +518,12 @@ def build_report(*, recs: list[dict], sample: list[dict], cells: list[dict], cos
     ]
     md.append(table(["statistic", "count", "share"], rows))
     md.append("")
+    if agree.get("gap_before_onset_p50") is not None:
+        md.append(f"When the pivot lands before the first onset, it is **{agree['gap_before_onset_p50']} turns "
+                  f"earlier at the median** (p90 {agree['gap_before_onset_p90']}); in "
+                  f"{agree['gap_before_onset_le3']} of {agree.get('pivot_before_first_onset', 0)} such rollouts "
+                  f"the gap is <= 3 turns.")
+        md.append("")
     md.append("Reading: the deterministic labeler marks the wreckage (the repeat); the judge is asked for the "
               "decision point. When the pivot lands BEFORE the first onset, the judged turn is new material the "
               "loop labeler cannot see. When it lands AT the onset, the two agree. AFTER means the judge blamed "
