@@ -13,8 +13,21 @@ website. Ops-only: nothing here touches scoring, duels, or the chain.
                  stable alias that always routes to the current king, so
                  OpenAI clients (arbos, Cursor, curl) survive crowns without
                  reconfiguration. Requests are proxied verbatim to the local
-                 vLLM with only the model field rewritten and output caps
-                 applied.
+                 vLLM with only the model field rewritten, system messages
+                 folded to the front (the Qwen template rejects a system
+                 message that is not first — Cursor sends them mid-thread)
+                 and output caps applied.
+
+Two keys open /v1: the pod's AFFINE_EVAL_TOKEN (the validator, the dash proxy
+— unlimited) and a PUBLIC demo key (AFFINE_CHAT_PUBLIC_KEY, default
+DEFAULT_PUBLIC_KEY) that the community plugs into Cursor. Public-key traffic
+is rate-limited per client IP (CF-Connecting-IP through the Cloudflare
+tunnel) and capped in flight; the GPU is the thing being protected, the key
+is not a secret.
+
+Pod-local overrides (AFFINE_CHAT_*) come from /root/affine/.chat_env, written
+by ops/king-chat/chatbox.sh; they exist so the public box can serve IDE-sized
+contexts without touching the [chat] knobs the website chat is sized for.
 
 King tracking: the pod polls the public dash snapshot ([chat].snapshot_url)
 and swaps the vLLM slot when the king's repo@revision changes. /health stays
@@ -35,6 +48,7 @@ import json
 import logging
 import os
 import threading
+import time
 
 import httpx
 import uvicorn
@@ -49,6 +63,18 @@ from .engine import Engine
 log = logging.getLogger("chatsrv")
 
 EVAL_TOKEN = os.environ.get("AFFINE_EVAL_TOKEN", "")
+# Intentionally public: it is printed in the community announcement. Its
+# only job is to make stock OpenAI clients (which insist on a key) work and
+# to let the rate limiter tell public traffic from the dash/validator.
+DEFAULT_PUBLIC_KEY = "sk-affine-king"
+PUBLIC_KEY = os.environ.get("AFFINE_CHAT_PUBLIC_KEY", DEFAULT_PUBLIC_KEY)
+PUBLIC_RATE_PER_MIN = int(os.environ.get("AFFINE_CHAT_PUBLIC_RATE_PER_MIN", "60"))
+# Stable public model id; vLLM serves it as an alias (engine.CHAT_ALIAS) so
+# responses echo it instead of the r2:// ref.
+KING_ALIAS = "affine-king"
+PUBLIC_MAX_CONCURRENCY = int(os.environ.get("AFFINE_CHAT_PUBLIC_MAX_CONCURRENCY", "8"))
+UPSTREAM_TIMEOUT_S = 600.0
+WIDGET_MAX_OUTPUT_TOKENS = 4096
 
 app = FastAPI(title="affine-chatsrv")
 
@@ -74,18 +100,110 @@ def _get_state() -> dict:
         return dict(_state)
 
 
+def _max_output_tokens() -> int:
+    return int(os.environ.get("AFFINE_CHAT_MAX_OUTPUT_TOKENS")
+               or _chat.get("max_output_tokens", 1024))
+
+
+def _bearer(authorization: str) -> str:
+    return authorization.removeprefix("Bearer ").strip()
+
+
 def _require_token(x_affine_token: str = Header(default=""),
                    authorization: str = Header(default="")) -> None:
-    """Shared-secret gate. Accepts the native X-Affine-Token header or an
-    OpenAI-style `Authorization: Bearer <token>` so stock OpenAI clients
-    work against /v1/* without customization."""
+    """Operator gate (/chat): the pod's eval token only, as X-Affine-Token or
+    `Authorization: Bearer`."""
     if not EVAL_TOKEN:
         return
-    if x_affine_token == EVAL_TOKEN:
-        return
-    if authorization.removeprefix("Bearer ").strip() == EVAL_TOKEN:
+    if x_affine_token == EVAL_TOKEN or _bearer(authorization) == EVAL_TOKEN:
         return
     raise HTTPException(401, "bad or missing token")
+
+
+def _require_v1_key(x_affine_token: str = Header(default=""),
+                    authorization: str = Header(default="")) -> bool:
+    """/v1 gate. Returns True when the caller used the PUBLIC key (rate
+    limited), False for the eval token (dash proxy / operator, unlimited)."""
+    if EVAL_TOKEN and (x_affine_token == EVAL_TOKEN
+                       or _bearer(authorization) == EVAL_TOKEN):
+        return False
+    if PUBLIC_KEY and _bearer(authorization) == PUBLIC_KEY:
+        return True
+    if not EVAL_TOKEN and not PUBLIC_KEY:
+        return False
+    raise HTTPException(401, "bad or missing API key")
+
+
+# -- public-traffic limiter ------------------------------------------------------
+# Sliding per-IP window + global in-flight cap, public key only. Behind the
+# Cloudflare tunnel every connection arrives from 127.0.0.1, so the client
+# is identified by CF-Connecting-IP (X-Forwarded-For as a fallback).
+
+_limit_lock = threading.Lock()
+_ip_hits: dict[str, list[float]] = {}
+_public_active = 0
+
+
+def _client_ip(request: Request) -> str:
+    h = request.headers
+    ip = h.get("cf-connecting-ip") or (h.get("x-forwarded-for") or "").split(",")[0]
+    return ip.strip() or (request.client.host if request.client else "?")
+
+
+def _public_admit(request: Request) -> None:
+    """Reserve one public in-flight slot or raise 429. Pair with _public_release."""
+    global _public_active
+    ip = _client_ip(request)
+    now = time.monotonic()
+    with _limit_lock:
+        if len(_ip_hits) > 5000:
+            for k in [k for k, v in _ip_hits.items() if not v or now - v[-1] > 60.0]:
+                _ip_hits.pop(k, None)
+        hits = [t for t in _ip_hits.get(ip, []) if now - t < 60.0]
+        if len(hits) >= PUBLIC_RATE_PER_MIN:
+            _ip_hits[ip] = hits
+            raise HTTPException(
+                429, f"rate limited: {PUBLIC_RATE_PER_MIN} requests/minute per client")
+        if _public_active >= PUBLIC_MAX_CONCURRENCY:
+            raise HTTPException(
+                429, f"busy: {PUBLIC_MAX_CONCURRENCY} public requests already in flight")
+        hits.append(now)
+        _ip_hits[ip] = hits
+        _public_active += 1
+
+
+def _public_release() -> None:
+    global _public_active
+    with _limit_lock:
+        _public_active = max(0, _public_active - 1)
+
+
+# -- request shaping -------------------------------------------------------------
+
+def _text_of(content) -> str:
+    """Flatten OpenAI content (string or list of parts) to plain text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(str(p.get("text", "")) for p in content
+                         if isinstance(p, dict) and p.get("type", "text") == "text")
+    return "" if content is None else str(content)
+
+
+def _fold_system_messages(messages: list) -> list:
+    """One leading system message. The Qwen chat template raises
+    "System message must be at the beginning" for anything else; Cursor (and
+    other IDE agents) inject `system`/`developer` messages mid-thread, which
+    turned into vLLM 400s on the operator's private king box. Untouched when
+    the thread already has at most one system message and it is first."""
+    sys_idx = [i for i, m in enumerate(messages)
+               if isinstance(m, dict) and m.get("role") in ("system", "developer")]
+    if not sys_idx or (sys_idx == [0] and messages[0].get("role") == "system"):
+        return messages
+    system_text = "\n\n".join(
+        t for t in (_text_of(messages[i].get("content")) for i in sys_idx) if t.strip())
+    rest = [m for i, m in enumerate(messages) if i not in set(sys_idx)]
+    return [{"role": "system", "content": system_text}] + rest
 
 
 def _stack_versions() -> dict:
@@ -103,7 +221,9 @@ def _stack_versions() -> dict:
 def _fetch_king() -> dict | None:
     """Current king {repo, revision, reign_number} from the public snapshot."""
     url = str(_chat.get("snapshot_url", "https://affine.io/api/v1/snapshot"))
-    r = httpx.get(url, timeout=15, follow_redirects=True)
+    # affine.io's first byte is often 10-15 s (Cloudflare -> validator box ->
+    # dash under cache rebuilds); a 15 s timeout made whole polls fail.
+    r = httpx.get(url, timeout=60, follow_redirects=True)
     r.raise_for_status()
     king = (r.json() or {}).get("king") or {}
     if king.get("repo") and king.get("revision"):
@@ -150,7 +270,9 @@ def _watch_king() -> None:
 # -- routes ----------------------------------------------------------------------
 
 @app.get("/health")
-def health(_: None = Depends(_require_token)):
+def health():
+    # Open: nothing here is secret (the king ref is public), and the public
+    # hostname needs a status probe the community can read.
     st = _get_state()
     return {
         "ok": True,
@@ -191,10 +313,13 @@ async def chat(req: ChatRequest, _: None = Depends(_require_token)):
     if total > max_chars:
         raise HTTPException(400, f"conversation too long (>{max_chars} chars)")
 
-    max_out = int(_chat.get("max_output_tokens", 1024))
+    # The website widget gets a tighter cap than /v1: a king that thinks past
+    # the cap (1 of 6 at T=0.7 on reign 11) shows the visitor nothing, so
+    # burning 16k tokens on it helps no one.
+    max_out = min(_max_output_tokens(), WIDGET_MAX_OUTPUT_TOKENS)
     temperature = req.temperature if req.temperature is not None else 0.7
     payload = {
-        "model": st["repo"],
+        "model": KING_ALIAS,
         "messages": msgs,
         "stream": True,
         "max_tokens": min(int(req.max_tokens or max_out), max_out),
@@ -226,13 +351,11 @@ async def chat(req: ChatRequest, _: None = Depends(_require_token)):
 
 
 # -- OpenAI-compatible wire plane --------------------------------------------
-# "affine-king" is the stable public alias; the concrete repo id also works.
-
-KING_ALIAS = "affine-king"
+# KING_ALIAS is the stable public alias; the concrete repo id also works.
 
 
 @app.get("/v1/models")
-def v1_models(_: None = Depends(_require_token)):
+def v1_models(_: bool = Depends(_require_v1_key)):
     st = _get_state()
     data = [{"id": KING_ALIAS, "object": "model", "owned_by": "affine",
              "root": st["repo"] or None}]
@@ -241,9 +364,27 @@ def v1_models(_: None = Depends(_require_token)):
     return {"object": "list", "data": data}
 
 
+def _shape_v1_payload(payload: dict, st: dict) -> dict:
+    # Whatever model id the client sent maps to the current king. vLLM serves
+    # the alias, and echoing it keeps the r2:// ref out of client UIs.
+    payload["model"] = KING_ALIAS
+    payload["messages"] = _fold_system_messages(list(payload["messages"]))
+    # Output cap. Clients send max_tokens or (newer OpenAI) max_completion_tokens;
+    # vLLM treats the latter as an alias, so normalize to one field.
+    max_out = _max_output_tokens()
+    req_max = payload.pop("max_completion_tokens", None)
+    req_max = payload.get("max_tokens") or req_max or max_out
+    try:
+        req_max = int(req_max)
+    except (TypeError, ValueError):
+        req_max = max_out
+    payload["max_tokens"] = max(1, min(req_max, max_out))
+    return payload
+
+
 @app.post("/v1/chat/completions")
 async def v1_chat_completions(request: Request,
-                              _: None = Depends(_require_token)):
+                              public: bool = Depends(_require_v1_key)):
     st = _get_state()
     if st["state"] != "serving":
         raise HTTPException(503, detail=json.dumps(
@@ -254,21 +395,15 @@ async def v1_chat_completions(request: Request,
         raise HTTPException(400, "invalid JSON body")
     if not isinstance(payload, dict) or not payload.get("messages"):
         raise HTTPException(400, "messages required")
-    # The alias (or anything else the client sent) maps to the current king;
-    # vLLM only accepts the exact served repo id.
-    payload["model"] = st["repo"]
-    max_out = int(_chat.get("max_output_tokens", 1024))
-    try:
-        req_max = int(payload.get("max_tokens") or max_out)
-    except (TypeError, ValueError):
-        req_max = max_out
-    payload["max_tokens"] = min(req_max, max_out)
+    payload = _shape_v1_payload(payload, st)
 
+    if public:
+        _public_admit(request)
     url = f"http://localhost:{_engine.chall_slot.port}/v1/chat/completions"
+    timeout = httpx.Timeout(UPSTREAM_TIMEOUT_S, connect=10.0)
     if payload.get("stream"):
         async def relay():
             try:
-                timeout = httpx.Timeout(600.0, connect=10.0)
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     async with client.stream("POST", url, json=payload) as r:
                         if r.status_code != 200:
@@ -284,14 +419,20 @@ async def v1_chat_completions(request: Request,
                 yield ("data: " + json.dumps(
                     {"error": {"message": f"{type(e).__name__}: {e}"}}
                 ) + "\n\n").encode()
+            finally:
+                if public:
+                    _public_release()
 
         return StreamingResponse(relay(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache",
                                           "X-Accel-Buffering": "no"})
 
-    timeout = httpx.Timeout(600.0, connect=10.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.post(url, json=payload)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(url, json=payload)
+    finally:
+        if public:
+            _public_release()
     return Response(content=r.content, status_code=r.status_code,
                     media_type=r.headers.get("content-type",
                                              "application/json"))
