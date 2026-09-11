@@ -394,7 +394,8 @@ share = 1.0
 # cipher, futoshiki, sudoku, BBH/BBEH, ...), per-family Python verifier in
 # process. Difficulty band [0.1, 0.9] on the shipped Qwen3-4B solve rate
 # (catalog + taskset agree) -> ~7.4k rows. Answer format is stated by each
-# puzzle; the visible reply is the action (`text`).
+# puzzle; the visible reply is the action (`text`). Probe: 8/12 solved,
+# replies p50 4.7k tokens (33% under the duel's 1,792-token ref cap).
 group = "general"
 runner = "verifiers_chat"
 taskset_id = "affine-logic-v1"          # rollouts/envs/affine_logic_v1
@@ -413,7 +414,9 @@ share = 1.0
 [source.affine_trivia]
 # TriviaQA rc.wikipedia.nocontext TRAIN (61,888 questions; validation stays
 # out of D as a held-out scorecard), zero-shot, closed book, alias
-# exact-match on the first line of the visible reply.
+# exact-match on the first line of the visible reply. Probe: 8/12 solved,
+# replies p50 308 tokens (83% under the duel ref cap); visible answers are
+# 5-17 chars, the value is in the thought.
 group = "general"
 runner = "verifiers_chat"
 taskset_id = "affine-trivia-v1"         # rollouts/envs/affine_trivia_v1
@@ -447,7 +450,10 @@ pass_dataset = false
 policies = ["teacher_text"]
 strata_buckets = 230
 strata_offset = 570
-share = 1.0
+# Probe: 12/12 solved (one constraint per prompt is easy for the teacher;
+# above the 20-90% headroom band) — kept at half share for the prompt
+# shape; the first mean_r_leg read decides whether it stays.
+share = 0.5
 
 [source.affine_science]
 # INTELLECT-3-RL `science` train (29,307 problems), \boxed{} answer graded by
@@ -466,11 +472,15 @@ pass_dataset = false
 policies = ["teacher_boxed"]
 strata_buckets = 340
 strata_offset = 800
-share = 1.0
+# Probe: 3/12 by math-verify (a lower bound: free-text golds), replies p50
+# 4.5k tokens — far past the duel's 1,792-token ref cap, so duel yield on
+# these prefixes will be low until that knob moves. Half share.
+share = 0.5
 
 [source.affine_unscramble]
 # kalomaze/unscramble-mix-it2 (10,300): reorder scrambled text blocks; the
 # wrapper grades `correct` = exact order (base similarity kept as a metric).
+# Probe: 3/12 exact, replies p50 2.4k tokens (42% under the duel ref cap).
 group = "general"
 runner = "verifiers_chat"
 taskset_id = "affine-unscramble-v1"     # rollouts/envs/affine_unscramble_v1
@@ -506,7 +516,12 @@ share = 1.0
 [source.affine_needle]
 # Patterned needle-in-a-haystack: 200 lines of a hidden word-order pattern,
 # 2 outlier lines to name in \boxed{}; synthetic long-context read. Pool =
-# 5,000 per-index-seeded tasks.
+# 5,000 per-index-seeded tasks. STAGED AT SHARE 0.0 (probe 2026-09-11):
+# headroom is fine (8/12 at 200 lines, 7/12 at 100) but the teacher spends
+# 25-28k completion tokens per reply (3-4 of 12 hit the 32k cap), ~4 min
+# wall, and 0-8% of replies fit the duel's 1,792-token ref cap — the most
+# expensive 1-turn rollout in the wave with near-zero duel yield. Flip
+# share > 0 only if [duel] max_thought_tokens moves.
 group = "general"
 runner = "verifiers_chat"
 taskset_id = "affine-needle-v1"         # rollouts/envs/affine_needle_v1
@@ -518,7 +533,7 @@ pass_dataset = false
 policies = ["teacher_boxed"]
 strata_buckets = 115
 strata_offset = 1485
-share = 0.5
+share = 0.0
 
 [source.affine_wikispeedia]
 # Wikispeedia: reach a target article by clicking links (stateful

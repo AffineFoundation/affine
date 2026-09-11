@@ -54,11 +54,30 @@ def task_name(index: int) -> str:
     return f"wikispeedia-{index:05d}"
 
 
+def target_reached(trace: vf.Trace) -> bool:
+    return any("TARGET REACHED" in (m.content or "") for m in trace.tool_messages)
+
+
 class WikispeediaTask(WikiTask):
+    # The base taskset's turn cap is a task-level @stop named `done`, so a
+    # rollout that runs out of clicks is stored with stop_condition "done" —
+    # which the fold reads as an infrastructure stop (`errored`: only
+    # `agent_completed` / `max_turns` are clean, affine.corpus.view). The
+    # trace records the stop method's NAME (verifiers session.py), so the
+    # same rule under the name `max_turns` makes an exhausted click budget
+    # what it is: the turn cap, graded 0 -> `failed`. Probe 2026-09-11: 4 of
+    # 12 teacher rollouts hit the 30-click cap.
+    @vf.stop
+    async def max_turns(self, trace: vf.Trace) -> bool:
+        return target_reached(trace) or trace.num_turns >= self.config.max_turns
+
+    async def done(self, trace: vf.Trace) -> bool:
+        # Undecorated override: suppresses the base `done` stop.
+        return await self.max_turns(trace)
+
     @vf.reward(weight=1.0)
     async def solved(self, trace: vf.Trace) -> float:
-        return float(any("TARGET REACHED" in (m.content or "")
-                         for m in trace.tool_messages))
+        return float(target_reached(trace))
 
     async def reached_target(self, trace: vf.Trace) -> float:
         # Undecorated override: the grade is counted once, under `solved`.

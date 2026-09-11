@@ -36,9 +36,10 @@ from prolog_v1.taskset import (
     DIFFICULTIES,
     PROLOG_SYSTEM_PROMPT,
     PrologData,
-    PrologTask,
+    PrologTask as BasePrologTask,
     PrologTaskConfig,
 )
+from prolog_v1.verify import verify_answer
 
 KINDS = tuple(sorted(GENERATORS))
 DEFAULT_SEED = 42
@@ -65,6 +66,34 @@ def build_prompt(description: str, path: str) -> str:
         f"not change the problem facts — solve the instance as given. `solve/1` "
         f"must succeed deterministically with exactly one solution."
     )
+
+
+class PrologTask(BasePrologTask):
+    @vf.reward(weight=1.0)
+    async def solved(self, trace: vf.Trace, runtime: vf.Runtime) -> float:
+        """The base reward, minus its `trace.has_error` early return.
+
+        On the pods' verifiers (a298bcf) `Trace.ok` is False until the
+        rollout's `finally` block, i.e. throughout scoring, so the base
+        guard made every rollout 0.0 without ever running `solve/1`
+        (probe 2026-09-11: 12/12 teacher rollouts "failed" with an empty
+        `info`). Recorded errors are checked directly instead."""
+        if trace.errors:
+            return 0.0
+        exit_code, clean_output = await self._run_solve(runtime)
+        trace.info["solve_exit_code"] = exit_code
+        trace.info["solve_output"] = clean_output[-4000:]
+        if exit_code != 0:
+            trace.info["solution_correct"] = False
+            return 0.0
+        correct = verify_answer(
+            kind=self.data.kind,
+            output=clean_output,
+            metadata=self.data.metadata,
+            expected=self.data.expected_answer,
+        )
+        trace.info["solution_correct"] = correct
+        return 1.0 if correct else 0.0
 
 
 class PrologConfig(vf.TasksetConfig):
