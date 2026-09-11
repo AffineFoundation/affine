@@ -89,7 +89,12 @@ def deliberate_final_reply(trace: dict) -> bool:
     return not finishes or finishes[-1] != "length"
 
 
-CLEAN_STOP_CONDITIONS = frozenset({"agent_completed", "max_turns"})
+# `loop_guard` (rollouts/loopguard.py, live 2026-09-11 ~22:00 UTC): the
+# datagen pod ends a looping king rollout early instead of letting it run
+# to the turn cap. The agent did not finish, so it is a clean stop that
+# grades as a failure -- the material the king seat exists to capture.
+LOOP_GUARD_STOP = "loop_guard"
+CLEAN_STOP_CONDITIONS = frozenset({"agent_completed", "max_turns", LOOP_GUARD_STOP})
 # The env's primary grade, first key present: `solved` (SWE / terminal /
 # agent envs), `correct` (affine-math), `passed_fraction` (nl2repo — a
 # partial pass is not a solve). Surveyed on the pods' chunks 2026-09-10;
@@ -106,8 +111,8 @@ def rollout_outcome(trace: dict) -> str:
     than the agent's own finish / the turn cap — the env may still have
     graded such a rollout 0, but that is an infrastructure failure, not the
     model's. Then the env's primary grade (`PRIMARY_REWARD_KEYS`); missing
-    or non-numeric is unscored, except at the turn cap, where an ungraded
-    rollout is a failure. The
+    or non-numeric is unscored, except at the turn cap or a loop-guard
+    stop, where an ungraded rollout is a failure. The
     fold uses it for the king seat: only the king's FAILED rollouts enter D."""
     if real_errors(trace):
         return "errored"
@@ -121,7 +126,8 @@ def rollout_outcome(trace: dict) -> str:
         # raise on the refused call past max_turns, so verifiers skips
         # scoring (`rewards == {}`). The agent did not finish — for the king
         # seat that IS the failure (loops to the cap), not a missing label.
-        if trace.get("stop_condition") == TURN_CAP_STOP:
+        # Same for a rollout the pod's loop guard cut short.
+        if trace.get("stop_condition") in (TURN_CAP_STOP, LOOP_GUARD_STOP):
             return "failed"
         return "unscored"
     try:

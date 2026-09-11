@@ -514,8 +514,9 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         onset_turns = [t for t in turns if t["turn_idx"] in onsets]
         rest = [t for t in turns if t["turn_idx"] not in onsets
                 and t["turn_idx"] not in in_loop]
-        if in_loop:
-            _count(drops, "king_in_loop", len(turns) - len(onset_turns) - len(rest))
+        n_in_loop = len(turns) - len(onset_turns) - len(rest)
+        if n_in_loop:
+            _count(drops, "king_in_loop", n_in_loop)
         kept, d = validate_turns(rest, panel=panel, allowed_kinds=allowed_kinds)
         for k, v in d.items():
             _count(drops, k, v)
@@ -786,6 +787,14 @@ def main() -> None:
                          "admit enter. Used once at the wvk 13 flip (2026-09-09) "
                          "to back-fill the `text` turns of trajectories folded "
                          "under wvk 11/12.")
+    ap.add_argument("--rederive-since", default=None, metavar="ISO8601",
+                    help="like --rederive, but only for published chunks "
+                         "created at or after this time (plus the unfolded "
+                         "ones); deferred rollouts from other chunks are kept. "
+                         "A full --rederive re-tokenizes every deferred coding "
+                         "prefix (hours); a data event that touches only recent "
+                         "traces (king_loop_onset, 2026-09-11: the king seat "
+                         "went live 2026-09-10T13:00Z) needs only these.")
     args = ap.parse_args()
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -822,7 +831,16 @@ def main() -> None:
     if state["unannounced"] and not args.no_announce and publisher is not None:
         announce(state, public_base)
 
-    live, live_sha = (publisher.current_manifest() if publisher else (None, None))
+    if publisher is not None:
+        live, live_sha = publisher.current_manifest()
+    elif not args.init and not prefix:
+        # --no-publish preview of the production fold: read the live manifest
+        # anonymously so the dry run skips already-published turns and
+        # numbers the epoch as the real cycle would. Before 2026-09-11 a dry
+        # run re-admitted every turn of a re-derived chunk (epoch "14").
+        live, live_sha = pub.manifest(cfg.dataset.manifest_key)
+    else:
+        live, live_sha = None, None
     if args.init and live is not None:
         fatal(f"--init but a corpus manifest already exists (epoch {live['corpus_epoch']})")
     if not args.init and live is None and not args.no_publish:
@@ -832,8 +850,16 @@ def main() -> None:
                if args.allowed_kinds else tuple(cfg.dataset.allowed_action_kinds))
     log(f"allowed action kinds: {list(allowed)}")
 
+    if args.rederive and args.rederive_since:
+        fatal("--rederive and --rederive-since are exclusive")
+    since = (datetime.fromisoformat(args.rederive_since)
+             if args.rederive_since else None)
+    if since is not None and since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
     unfolded = [c for c in traces_manifest["chunks"]
-                if args.rederive or c["key"] not in state["folded_chunks"]]
+                if args.rederive or c["key"] not in state["folded_chunks"]
+                or (since is not None
+                    and datetime.fromisoformat(c["created_at"]) >= since)]
     # split("\n"), not splitlines(): JSON strings may carry U+2028 / U+0085.
     carryover = ([json.loads(l) for l in DEFERRED_PATH.read_text().split("\n")
                   if l.strip()] if DEFERRED_PATH.exists() else [])
@@ -841,6 +867,23 @@ def main() -> None:
         log(f"--rederive: all {len(unfolded)} chunks re-derived; "
             f"{len(carryover)} deferred rollouts dropped (regenerated from traces)")
         carryover = []
+    if since is not None:
+        # The deferred copies of rollouts in a re-derived chunk are stale
+        # (they were cut under the previous contract); the chunk regenerates
+        # them, so drop them here or the pack would hold each turn twice.
+        rederived_rollouts: set[str] = set()
+        for c in unfolded:
+            if c["key"] in state["folded_chunks"]:
+                path = pub.cached(c["key"], c["sha256"], gz_sha=True)
+                rederived_rollouts |= {str(e.get("rollout_id") or "")
+                                       for e in iter_jsonl_gz(path)}
+        n0 = len(carryover)
+        carryover = [r for r in carryover
+                     if str(r.get("rollout_id") or "") not in rederived_rollouts]
+        log(f"--rederive-since {since.isoformat()}: {len(unfolded)} chunk(s) "
+            f"derived ({sum(c['key'] in state['folded_chunks'] for c in unfolded)} "
+            f"already folded); {n0 - len(carryover)} deferred rollouts from those "
+            f"chunks dropped (regenerated from traces), {len(carryover)} kept")
     if not unfolded and not carryover and not args.init:
         log(f"no unfolded trace chunks ({len(traces_manifest['chunks'])} total) "
             "and no deferred rollouts; done")
@@ -988,6 +1031,10 @@ def main() -> None:
 
     epoch = (int(live["corpus_epoch"]) if live else int(legacy_manifest["corpus_epoch"])) + 1
     records = legacy + selected
+    turn_ids = [f"{r['traj_id']}:{m['turn_idx']}" for r in records for m in r["turns"]]
+    if len(turn_ids) != len(set(turn_ids)):
+        fatal(f"{len(turn_ids) - len(set(turn_ids))} duplicate turn id(s) in the "
+              "pack (deferred copy + re-derived record?) -- operator check")
     by_dialect: dict[str, int] = {}
     for r in selected:
         for m in r["turns"]:
