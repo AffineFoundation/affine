@@ -544,8 +544,27 @@ def clip(s: str, head: int, tail: int = 0) -> str:
     return f"{s[:head]}\n[... {cut} chars omitted ...]"
 
 
+def terminus_display(action_json: str, limit: int) -> str:
+    """A Terminus reply is one JSON object {analysis, plan, commands,
+    task_complete}. Show the judge what the harness acts on -- the
+    keystrokes and the completion flag -- as such, so an empty command
+    batch with task_complete=true reads as the valid completion it is."""
+    try:
+        obj = json.loads(action_json)
+    except ValueError:
+        return clip(action_json, limit)
+    cmds = obj.get("commands") or []
+    keys = " ⏎ ".join(str(c.get("keystrokes", c)).rstrip("\n") if isinstance(c, dict)
+                      else str(c) for c in cmds).strip()
+    done = bool(obj.get("task_complete"))
+    return (f"Terminus JSON batch -- commands: {clip(keys, limit) if keys else '(none)'}; "
+            f"task_complete: {'true' if done else 'false'}")
+
+
 def short_action(t: Turn, limit: int = 600) -> str:
-    if t.action_kind == "tool_call" or t.action_kind == "terminus_json":
+    if t.action_kind == "terminus_json":
+        return terminus_display(t.action_raw, limit)
+    if t.action_kind == "tool_call":
         return clip(t.action, limit)
     return clip(t.action_raw or t.action, limit)
 
