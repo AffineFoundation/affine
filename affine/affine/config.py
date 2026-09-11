@@ -198,6 +198,17 @@ class DuelCfg:
     # it on changes which turns score and is a weight_version_key event.
     # The </think> rate is measured and published either way.
     require_think_close: bool = False
+    # Sequential near-miss (2026-09-11): a first-slice margin strictly inside
+    # (near_miss_low, near_miss_high) makes the eval draw
+    # near_miss_extra_slices more n_turns slices (different seed, disjoint
+    # turns) and decide the crown on the pooled turns with the unchanged
+    # rule. Sampling-size knob, not a per-turn scoring change — no
+    # weight_version_key event. Off by default so pre-2026-09-11 replays
+    # and the offline harness see exactly one slice.
+    near_miss_enabled: bool = False
+    near_miss_low: float = 0.001
+    near_miss_high: float = 0.003
+    near_miss_extra_slices: int = 1
 
 
 @dataclass(frozen=True)
@@ -397,6 +408,18 @@ def _r2(r: dict) -> R2Cfg:
 
 def _duel(raw: dict) -> DuelCfg:
     d = raw["duel"]
+    near_miss_enabled = bool(d.get("near_miss_enabled", False))
+    near_miss_low = float(d.get("near_miss_low", 0.001))
+    near_miss_high = float(d.get("near_miss_high", 0.003))
+    near_miss_extra_slices = int(d.get("near_miss_extra_slices", 1))
+    if near_miss_enabled and not (0.0 <= near_miss_low < near_miss_high):
+        raise ValueError(
+            f"[duel] near-miss window must satisfy 0 <= low < high, got "
+            f"near_miss_low={near_miss_low} near_miss_high={near_miss_high}")
+    if near_miss_enabled and near_miss_extra_slices < 1:
+        raise ValueError(
+            f"[duel] near_miss_extra_slices must be >= 1 when enabled, got "
+            f"{near_miss_extra_slices}")
     return DuelCfg(
         n_turns=int(d["n_turns"]), k_sigma=float(d["k_sigma"]),
         min_margin=float(d.get("min_margin", 0.0)),
@@ -419,6 +442,10 @@ def _duel(raw: dict) -> DuelCfg:
         forfeit_turn_score=(float(d["forfeit_turn_score"])
                             if d.get("forfeit_turn_score") is not None else None),
         require_think_close=bool(d.get("require_think_close", False)),
+        near_miss_enabled=near_miss_enabled,
+        near_miss_low=near_miss_low,
+        near_miss_high=near_miss_high,
+        near_miss_extra_slices=near_miss_extra_slices,
     )
 
 

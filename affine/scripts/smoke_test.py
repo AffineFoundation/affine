@@ -54,6 +54,12 @@ check("config.v5_min_rg",
       cfg.duel.score_mode == "min_rg" and cfg.duel.band_c == 2.0
       and cfg.duel.band_floor == 0.002)
 check("config.v10_fork_key", cfg.weight_version_key >= 10)
+# Sequential near-miss (2026-09-11): sampling-size rule, window brackets δ.
+check("config.near_miss_window",
+      cfg.duel.near_miss_enabled is True
+      and 0.0 <= cfg.duel.near_miss_low < cfg.duel.min_margin
+      < cfg.duel.near_miss_high
+      and cfg.duel.near_miss_extra_slices >= 1)
 check("config.genesis_qwen",
       cfg.seed_king["repo"] == "Qwen/Qwen3.6-35B-A3B"
       and len(cfg.seed_king["revision"]) == 40)
@@ -636,5 +642,27 @@ check("dueling.slice_deterministic",
       [r["turn_idx"] for r in s1] == [r["turn_idx"] for r in s2])
 check("dueling.slice_hotkey_dependent",
       [r["turn_idx"] for r in s1] != [r["turn_idx"] for r in s3])
+# Sequential near-miss: slice 0 keeps the launch seed; slice 1 differs and
+# is deterministic from the same public material.
+check("dueling.slice0_seed_unchanged",
+      duel_seed("0xabc", "hk1", 0) == duel_seed("0xabc", "hk1"))
+check("dueling.extra_slice_seed_distinct",
+      duel_seed("0xabc", "hk1", 1) != duel_seed("0xabc", "hk1")
+      and duel_seed("0xabc", "hk1", 1) == duel_seed("0xabc", "hk1", 1))
+from affine.score import DuelResult, near_miss_triggered  # noqa: E402
+
+def _res(margin, se=0.0007, **kw):
+    return DuelResult("c", "k", margin, se, margin / se, 2.0,
+                      margin > max(2 * se, 0.002), 1200, **kw)
+check("score.near_miss_window_only",
+      near_miss_triggered(_res(0.0015)) and near_miss_triggered(_res(0.0025))
+      and not near_miss_triggered(_res(0.0009))
+      and not near_miss_triggered(_res(0.0031))
+      and not near_miss_triggered(_res(0.001))
+      and not near_miss_triggered(_res(0.003)))
+check("score.near_miss_skips_gate_blocked",
+      not near_miss_triggered(_res(0.0015, thought_floor_blocked=True))
+      and not near_miss_triggered(_res(0.0015, causality_blocked=True))
+      and not near_miss_triggered(_res(0.0, se=float("inf"))))
 
 print(f"\nALL {PASS} CHECKS PASSED")

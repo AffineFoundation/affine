@@ -200,6 +200,7 @@ def project_duel_summary(history_row: dict | None, artifact: dict | None,
         "margin": row.get("margin"),
         "se": row.get("se"),
         "n_paired_turns": row.get("n_paired_turns"),
+        "near_miss": row.get("near_miss"),         # sequential near-miss stamp
         "rejection_reason": row.get("rejection_reason") or art.get("rejection_reason"),
         "error_code": row.get("error_code"),
         "error_detail": row.get("error_detail"),

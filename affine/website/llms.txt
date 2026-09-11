@@ -20,6 +20,7 @@ Everything the project publishes, in one index. All URLs are on this site's root
 - Submit checklist — Ed25519 hotkey, private R2 upload, the two on-chain signals, what "private" means (and the retiring HF path)
 - Serving stack — how your checkpoint is loaded; pre-flight before you burn the slot
 - min(R, G) — the one score you optimize (and the telemetry published around it)
+- Sequential near-miss (2026-09-11, no fork) — a first-slice margin in (0.001, 0.003) draws a second seeded slice; the crown is decided on the pooled 2 × `n_turns`
 - **Fork history: wvk 14 — Terminus 2 JSON dialect (effective 2026-09-10)** — `terminus_json` joins the admitted dialects: under the terminal-bench agent harness the reply is one JSON command batch, and that object is the action
 - Fork history: wvk 13 — models must work as chat models (notice 2026-09-07, effective 2026-09-09) — `</think>` required (a turn without it forfeits), chat-protocol probe enforced at admission (pass ≥ 0.90), the visible final reply of a trajectory is a scored action (`text` dialect), IDE-agent prompts in D
 - Fork history: wvk 12 — forfeit floor (a turn with no parseable action scores −0.1 instead of being dropped; effective 2026-09-05)
@@ -127,7 +128,7 @@ Root: https://affine.io/
 1. A frozen teacher C (`Qwen/Qwen3.8-27B`; `zai-org/GLM-4.5-Air-FP8` before 2026-08-27) and a public turn corpus D (sharded + manifest-pinned on this site under `turns/`) define the capability axis (SWE-style coding).
 2. You upload a checkpoint directory into your own private prefix of the validator's R2 bucket and sign a manifest of it (every file's sha256; the manifest's `model_digest` is your revision). Nobody but the validator can read it. (Legacy until cutover: commit-reveal an HF repo pinned to a 40-hex git revision.)
 3. The validator burns your hotkey's **one eval slot at enqueue** (not at verdict). Failed hygiene, failed probe, or lost duel still burns the slot.
-4. Eval machine runs a duel on an `n_turns = 1300` slice of D seeded by `blake2b(reveal_block_hash ‖ your_hotkey)` — you cannot know the slice before reveal; anyone can re-derive it after.
+4. Eval machine runs a duel on an `n_turns = 1300` slice of D seeded by `blake2b(reveal_block_hash ‖ your_hotkey)` — you cannot know the slice before reveal; anyone can re-derive it after. If that slice's margin lands inside the near-miss window `(near_miss_low, near_miss_high) = (0.001, 0.003)`, a second slice of 1300 (seed `blake2b(block_hash ‖ hotkey ‖ "|slice1")`, disjoint turns) is scored and the crown is decided on the pooled 2600 turns (see "Sequential near-miss" below).
 5. Both sides are scored with min(R, G) v5 (centered Reason + banded Grounding + δ + thought-length floor + B gate): the teacher samples `k = 3` reference rollouts per turn; each ref scores `a_i = lpC(y_i|z_A) − lpC(y_i|∅)`; the R leg is the tempered log-mean-exp of the `a_i` **minus their plain mean** (`tau = 0.03`; a flat, task-independent lift cancels exactly); the G leg checks your thought's own teacher likelihood `m = lpC(z_A|x)` against the band `mu ± w` built from the teacher's reference thoughts `t_i = lpC(z_C^i|x)` (`w = max(band_c·sd, band_floor)`, `band_c = 2`, `band_floor = 0.002`); the turn score is `min(R, G)`; miner score = mean over turns. You dethrone the king iff the paired mean `turn_c − turn_k` beats `max(k_sigma·SE, δ)` (`k_sigma = 2`, `min_margin = 0.002`) **and** your median stripped thought length is at least `min_thought_chars = 80` **and** at least `causality_gamma = 0.30` of pairs pass teacher-side B (`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no leakage). No lpA gates.
 6. Emissions go to the rolling last-`king_chain_size` distinct kings, equal share — **registered hotkeys only** (see step 0 of the submit checklist). Advisory tau2 benches never affect Reason or crowning.
 7. Every dethrone is reviewed post-crown by a published LLM audit (see the exploit-audit section below). An `exploit = true` verdict reverts the crown and requeues every challenger the exploit king eclipsed. All verdicts are public at `data/audits.json`; the audit task and daemon are published verbatim under `code/ops/exploit-audit/`.
@@ -241,6 +242,11 @@ Crown                 = paired mean(turn_c − turn_k) > max(k_sigma·SE, δ)
                         (k_sigma = 2, δ = min_margin = 0.002,
                          min_thought_chars = 80, causality_gamma = 0.30,
                          SE = sd/√n over paired turns)
+Sequential near-miss  = if near_miss_low < margin(slice 0) < near_miss_high
+                        (0.001 < margin < 0.003) and no gate blocks, score
+                        near_miss_extra_slices = 1 more slice of n_turns
+                        (seed blake2b(block_hash ‖ hotkey ‖ "|slice1"),
+                        turns disjoint) and apply Crown to the POOLED turns
 B (per rollout)       = lpC(y_A | z_A) − lpC(y_A | ∅)
                         passes iff B ≥ 0.02 and z does not contain y
 ```
@@ -268,6 +274,18 @@ Before the full duel, an injectability probe rejects checkpoints that cannot emi
 **Simulate before you submit.** Your eval slot is burned at enqueue, one per hotkey, ever — so replay the duel locally first. The complete measurement layer is published under `code/` and is import-closed (every module `dueling.py` touches is in the list above): `evalsrv/chat.py` is the chat contract — models are rendered through their own chat template to a string and driven via `/v1/completions`, injection plants thoughts as the canonical assistant body `</think>\nTHOUGHT: {z}\n\n{y}`, and `split_rollout` defines exactly what counts as z (all reasoning text) and y (the last closed bash-fenced block). `evalsrv/terms.py` runs the live Reason echoes (`lpC(y_i|z_A)`), the grounding echoes (`lpC(z_A|x)` and per-ref `lpC(z_C|x)`), and the B pair (`lpC(y_A|z_A)`, `lpC(y_A|∅)`); `evalsrv/vllm_client.py` shows the echo+logprobs forcing (`score_action` / `score_thought`) and the per-byte normalization (`lp_per_byte`). Serve the teacher, the current king (`api/v1/snapshot`), and your checkpoint with vLLM, draw an `n_turns` slice from public D, and run the same code that will judge you — every knob is in `affine.toml` `[duel]`, and `duel` in `code/affine/score.py` is the exact decision function.
 
 Frozen numeric knobs live in `affine.toml` `[duel]` (linked under `code/`). Score changes fork the chain: `weight_version_key` bumps and the toml comment carries the dated rationale. Corpus refreshes are data events: the manifest's `corpus_epoch` increments and every verdict records which manifest it was scored against.
+
+---
+
+## Sequential near-miss (2026-09-11, no fork)
+
+**A sampling-size rule, not a scoring change.** Per-turn scores, the crown formula and δ are exactly as above; `weight_version_key` does not move. Every verdict stamps `near_miss.enabled`, so you can see whether the rule was on for a given duel.
+
+**The rule.** After the normal `n_turns = 1300` slice is scored, if the paired margin `mean(turn_c − turn_k)` lands strictly inside `(near_miss_low, near_miss_high) = (0.001, 0.003)` and no validity gate (thought floor, B license) already blocks the crown, the eval draws `near_miss_extra_slices = 1` more slice of 1300 turns — seed `blake2b(reveal_block_hash ‖ hotkey ‖ "|slice1")`, drawn from the turns the duel has not scored yet with the same stratified round-robin — scores both sides on it exactly as before, and applies the unchanged crown rule to the **pooled** turns: pooled mean, pooled `SE = sd/√n_pooled` (~2600), gates over the pooled challenger rows, forfeits at the same floor. Outside the window the first slice decides as it always has.
+
+**Why.** The crown bar is `max(2·SE, δ)`; at the live noise scale (`2·SE ≈ 0.0010–0.0018`) δ = 0.002 is the binding term. Across 349 stored duels (2026-08-27 → 2026-09-10) twelve challengers cleared the 2σ test (z 2.0–3.8) with margins 0.0014–0.0019 and were blocked by δ alone — and on the advisory bench those near-miss losers score like kings. A true +δ improver lands below δ on half of all 1300-turn slices; only more turns can separate "just below δ by noise" from "just below δ for real". δ stays where the 2026-08-22 winner's-curse decision put it; the estimate it is compared against gets √2 sharper on the ~10% of duels where the two are within noise of each other (35/349 historical margins fell in the window: the 12 near-miss losers, 6 crowns at 0.0022–0.0028, 17 sub-2σ losers).
+
+**What you see.** `verdict.margin / se / z / n_paired_turns` are the deciding (pooled) numbers. `verdict.near_miss = {enabled, low, high, extra_slices, triggered, slices: [{index, seed, n, digest, n_paired_turns, n_forfeit_turns, margin, se, z, challenger_wins}, …], pooled: {…} | null}` shows what each slice said on its own. `verdict.slice` keeps the first slice's `seed` / `digest` as always and adds `extra_slices` + `n_pooled` when the rule fired. The published artifact's `turn_ids` covers every scored turn in slice order and `slices[i].turn_ids` splits them per draw. Knobs: `[duel] near_miss_enabled / near_miss_low / near_miss_high / near_miss_extra_slices` in `code/affine.toml`; the decision helper is `near_miss_triggered` in `code/affine/score.py`; the draw is `duel_seed(block_hash, hotkey, slice_index)` in `code/evalsrv/dueling.py`.
 
 ---
 
@@ -458,7 +476,7 @@ Everything the validator scores is published — there is no validator-private d
   - `request` — king/challenger repos + revisions, hotkey, block hash.
   - `verdict` — same audit summary as history.
   - `slice` — seed, digest, n, block_hash, corpus_epoch, manifest_sha256 (+ `view_spec`, `corpus_base_url` once D is schema 3). The manifest hash resolves forever: `turns/manifests/{hash}.json` for schema ≤ 2 verdicts, `corpus/manifests/{hash}.json` on `corpus_base_url` for schema 3 — so you can re-derive the exact slice from public D even after shards are retired.
-  - `turn_ids` — `{traj_id}:{turn_idx}` keys into the public corpus.
+  - `turn_ids` — `{traj_id}:{turn_idx}` keys into the public corpus, every scored turn in slice order. `slices` — one entry per seeded draw (`{index, seed, n, digest, …, turn_ids}`; a single entry unless the sequential near-miss rule pooled a second slice) and `near_miss` — the same stamp as the verdict.
   - `teacher_refs` — the teacher's reference rollouts per turn: `{turn_id: [{z, y, lp_own, lp_empty, lp_thought}]}` (`lp_thought` = `lpC(z_C|x)`, the grounding-band component, wvk ≥ 10). This is frontier-teacher distillation data for the exact turns that were scored.
   - `king_rows` / `challenger_rows` — per-turn instrumented records: `{turn_id, miner, valid, n_pairs, bank_frac, L2_bank, pairs: [...]}`. Each pair carries the miner rollout text (`z_a` thoughts, `y_a` action) plus every forced-logprob component the score and the telemetry are computed from (`lpC_yc_za`, `lpC_yc_zc`, `lpC_yc_e`, `lpC_ya_za`, `lpC_ya_e`, and — wvk ≥ 10 grounding — `lpC_za_x`, `lpC_zc_x`; pre-fork rows may also carry the retired lpA family `lpA_yc_za`, `lpA_yc_zc`, `lpA_yc_e`, `lpA_ya_za`, `lpA_ya_zc`, `lpA_ya_e`, `L2_bank`). You can recompute any verdict offline from this file + `affine/score.py`.
 
