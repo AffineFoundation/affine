@@ -587,6 +587,12 @@ class Engine:
         # effect. Not used on remote teacher.
         if not slot.label.startswith("teacher"):
             cmd += ["--safetensors-load-strategy", "prefetch"]
+            # vLLM 0.29.0 on 8×H200 (lunar-raven-18, 2026-09-11): CUDA-graph
+            # capture inside compile_or_warm_up_model dies with
+            # "CUDA error: device-side assert" on Qwen3.6-35B TP=2 (king +
+            # challenger). Eager skips capture. Score-invariant (same logits;
+            # slower decode only). Teacher stays graph-enabled when local.
+            cmd += ["--enforce-eager"]
         if self.role == "chat":
             # The chat pod's wire plane serves agent clients (arbos, Cursor)
             # that drive tool loops over /v1/chat/completions. Qwen-family
