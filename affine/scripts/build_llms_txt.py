@@ -212,6 +212,9 @@ signals, what "private" means (and the retiring HF path)
 the slot
 - min(R, G) — the one score you optimize (and the telemetry published \
 around it)
+- Sequential near-miss (2026-09-11, no fork) — a first-slice margin in \
+(0.001, 0.003) draws a second seeded slice; the crown is decided on the \
+pooled 2 × `n_turns`
 - **Fork history: wvk 14 — Terminus 2 JSON dialect (effective \
 2026-09-10)** — `terminus_json` joins the admitted dialects: under the \
 terminal-bench agent harness the reply is one JSON command batch, and that \
@@ -328,7 +331,11 @@ git revision.)
 verdict). Failed hygiene, failed probe, or lost duel still burns the slot.
 4. Eval machine runs a duel on an `n_turns = 1300` slice of D seeded by \
 `blake2b(reveal_block_hash ‖ your_hotkey)` — you cannot know the slice before \
-reveal; anyone can re-derive it after.
+reveal; anyone can re-derive it after. If that slice's margin lands inside \
+the near-miss window `(near_miss_low, near_miss_high) = (0.001, 0.003)`, a \
+second slice of 1300 (seed `blake2b(block_hash ‖ hotkey ‖ "|slice1")`, \
+disjoint turns) is scored and the crown is decided on the pooled 2600 \
+turns (see "Sequential near-miss" below).
 5. Both sides are scored with min(R, G) v5 (centered Reason + banded \
 Grounding + δ + thought-length floor + B gate): the teacher samples `k = 3` \
 reference rollouts per turn; each ref scores \
@@ -605,6 +612,11 @@ Crown                 = paired mean(turn_c − turn_k) > max(k_sigma·SE, δ)
                         (k_sigma = 2, δ = min_margin = 0.002,
                          min_thought_chars = 80, causality_gamma = 0.30,
                          SE = sd/√n over paired turns)
+Sequential near-miss  = if near_miss_low < margin(slice 0) < near_miss_high
+                        (0.001 < margin < 0.003) and no gate blocks, score
+                        near_miss_extra_slices = 1 more slice of n_turns
+                        (seed blake2b(block_hash ‖ hotkey ‖ "|slice1"),
+                        turns disjoint) and apply Crown to the POOLED turns
 B (per rollout)       = lpC(y_A | z_A) − lpC(y_A | ∅)
                         passes iff B ≥ 0.02 and z does not contain y
 ```
@@ -720,6 +732,52 @@ Score changes fork the chain: `weight_version_key` bumps and the toml \
 comment carries the dated rationale. Corpus refreshes are data events: the \
 manifest's `corpus_epoch` increments and every verdict records which \
 manifest it was scored against.
+
+---
+
+## Sequential near-miss (2026-09-11, no fork)
+
+**A sampling-size rule, not a scoring change.** Per-turn scores, the crown \
+formula and δ are exactly as above; `weight_version_key` does not move. \
+Every verdict stamps `near_miss.enabled`, so you can see whether the rule \
+was on for a given duel.
+
+**The rule.** After the normal `n_turns = 1300` slice is scored, if the \
+paired margin `mean(turn_c − turn_k)` lands strictly inside \
+`(near_miss_low, near_miss_high) = (0.001, 0.003)` and no validity gate \
+(thought floor, B license) already blocks the crown, the eval draws \
+`near_miss_extra_slices = 1` more slice of 1300 turns — seed \
+`blake2b(reveal_block_hash ‖ hotkey ‖ "|slice1")`, drawn from the turns \
+the duel has not scored yet with the same stratified round-robin — scores \
+both sides on it exactly as before, and applies the unchanged crown rule to \
+the **pooled** turns: pooled mean, pooled `SE = sd/√n_pooled` (~2600), \
+gates over the pooled challenger rows, forfeits at the same floor. Outside \
+the window the first slice decides as it always has.
+
+**Why.** The crown bar is `max(2·SE, δ)`; at the live noise scale \
+(`2·SE ≈ 0.0010–0.0018`) δ = 0.002 is the binding term. Across 349 stored \
+duels (2026-08-27 → 2026-09-10) twelve challengers cleared the 2σ test \
+(z 2.0–3.8) with margins 0.0014–0.0019 and were blocked by δ alone — and \
+on the advisory bench those near-miss losers score like kings. A true \
++δ improver lands below δ on half of all 1300-turn slices; only more turns \
+can separate "just below δ by noise" from "just below δ for real". δ stays \
+where the 2026-08-22 winner's-curse decision put it; the estimate it is \
+compared against gets √2 sharper on the ~10% of duels where the two are \
+within noise of each other (35/349 historical margins fell in the window: \
+the 12 near-miss losers, 6 crowns at 0.0022–0.0028, 17 sub-2σ losers).
+
+**What you see.** `verdict.margin / se / z / n_paired_turns` are the \
+deciding (pooled) numbers. `verdict.near_miss = {enabled, low, high, \
+extra_slices, triggered, slices: [{index, seed, n, digest, n_paired_turns, \
+n_forfeit_turns, margin, se, z, challenger_wins}, …], pooled: {…} | null}` \
+shows what each slice said on its own. `verdict.slice` keeps the first \
+slice's `seed` / `digest` as always and adds `extra_slices` + `n_pooled` \
+when the rule fired. The published artifact's `turn_ids` covers every \
+scored turn in slice order and `slices[i].turn_ids` splits them per draw. \
+Knobs: `[duel] near_miss_enabled / near_miss_low / near_miss_high / \
+near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
+`near_miss_triggered` in `code/affine/score.py`; the draw is \
+`duel_seed(block_hash, hotkey, slice_index)` in `code/evalsrv/dueling.py`.
 
 ---
 
@@ -1234,7 +1292,11 @@ during the duel:
 resolves forever: `turns/manifests/{hash}.json` for schema ≤ 2 verdicts, \
 `corpus/manifests/{hash}.json` on `corpus_base_url` for schema 3 — so you \
 can re-derive the exact slice from public D even after shards are retired.
-  - `turn_ids` — `{traj_id}:{turn_idx}` keys into the public corpus.
+  - `turn_ids` — `{traj_id}:{turn_idx}` keys into the public corpus, every \
+scored turn in slice order. `slices` — one entry per seeded draw \
+(`{index, seed, n, digest, …, turn_ids}`; a single entry unless the \
+sequential near-miss rule pooled a second slice) and `near_miss` — the same \
+stamp as the verdict.
   - `teacher_refs` — the teacher's reference rollouts per turn: \
 `{turn_id: [{z, y, lp_own, lp_empty, lp_thought}]}` (`lp_thought` = \
 `lpC(z_C|x)`, the grounding-band component, wvk ≥ 10). This is \
