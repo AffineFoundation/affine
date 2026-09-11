@@ -86,7 +86,17 @@ if [ "$ROLE" = "bench" ]; then
 elif [ "$ROLE" = "chat" ]; then
   # Public king-chat pod: serves the current king only — no corpus, no
   # bench deps. chatsrv polls the public snapshot for king changes itself.
-  :
+  # Optional pod-local overrides (AFFINE_CHAT_MAX_MODEL_LEN, public key,
+  # limits) pushed by ops/king-chat/chatbox.sh; the provisioner never
+  # writes this file, so a fresh rental runs on the [chat] toml defaults
+  # until the chatbox watcher re-pushes it.
+  if [ -f /root/affine/.chat_env ]; then
+    set -a
+    # shellcheck disable=SC1091
+    source /root/affine/.chat_env
+    set +a
+    echo "[bootstrap] chat overrides loaded from .chat_env"
+  fi
 else
   # 2. Turn corpus D: manifest + shard sync from the public bucket. Fail-closed:
   #    the sync verifies the manifest hash against its immutable published copy

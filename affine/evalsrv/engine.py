@@ -111,6 +111,9 @@ WORKER_EXTENSION = "evalsrv.vllm_ext.WeightTools"
 # Fixed served-model alias for the challenger slots so requests keep
 # resolving across swaps (the repo name is added too, for logs).
 CHALLENGER_ALIAS = "challenger"
+# Stable public model id on the chat pod (chatsrv.KING_ALIAS): clients keep
+# `model = "affine-king"` across crowns.
+CHAT_ALIAS = "affine-king"
 SWAP_CONFIG_IGNORE_KEYS = ("_name_or_path", "transformers_version")
 # generation_config.json keys vLLM turns into request defaults (see
 # ModelConfig.get_diff_sampling_param) plus the stop-token set. Anything
@@ -493,13 +496,16 @@ class Engine:
             # 65k is sized for corpus prefixes, not for 300-step agent runs.
             max_len = int(bs.get("max_model_len", max_len))
         if self.role == "chat":
-            # Chat serves short interactive contexts, not 64k corpus prefixes:
-            # a smaller KV pool leaves the 2-GPU pod headroom, and no echo
-            # traffic means the higher util + big chunks are safe.
+            # No echo traffic on the chat pod, so the higher util + big
+            # chunks are safe. Context: [chat].max_model_len, or the pod's
+            # AFFINE_CHAT_MAX_MODEL_LEN override (.chat_env, pushed by
+            # ops/king-chat/chatbox.sh) — IDE agent clients (Cursor) send
+            # 20-60k-token prompts, far past the website chat's 16k.
             cs = self.cfg.get("chat") or {}
             batched_tokens = int(cs.get("max_num_batched_tokens", 16384))
             gpu_util = cs.get("gpu_memory_utilization", gpu_util)
-            max_len = int(cs.get("max_model_len", max_len))
+            max_len = int(os.environ.get("AFFINE_CHAT_MAX_MODEL_LEN")
+                          or cs.get("max_model_len", max_len))
         # r2 refs are served from their verified local snapshot; the model is
         # still *named* by the ref so client requests (model=<ref>) match.
         cmd = [
@@ -543,13 +549,22 @@ class Engine:
         # effect. Not used on remote teacher.
         if not slot.label.startswith("teacher"):
             cmd += ["--safetensors-load-strategy", "prefetch"]
-        if self.role == "chat":
-            # The chat pod's wire plane serves agent clients (arbos, Cursor)
-            # that drive tool loops over /v1/chat/completions. Qwen-family
-            # kings emit hermes-style <tool_call> blocks. Never set on duel/
-            # bench pods — scoring must see raw completions.
-            cmd += ["--enable-auto-tool-choice", "--tool-call-parser", "hermes"]
         served_names = [repo] if r2store.is_r2(repo) else []
+        if self.role == "chat":
+            # The chat pod's wire plane serves agent clients (Cursor, arbos)
+            # that drive tool loops over /v1/chat/completions. The Qwen3.6
+            # template emits <tool_call><function=NAME><parameter=K>V…
+            # (XML-ish), which the hermes (JSON) parser passes through as
+            # plain text — qwen3_xml is the matching parser (same as the
+            # king-datagen box). The qwen3 reasoning parser files the
+            # <think> block under `reasoning` so IDE clients get a clean
+            # visible answer; since wvk 13 every king closes </think>.
+            # Never set on duel/bench pods — scoring must see raw text.
+            cmd += ["--enable-auto-tool-choice", "--tool-call-parser", "qwen3_xml",
+                    "--reasoning-parser", "qwen3"]
+            # --served-model-name replaces the default id, so the repo id
+            # (what chatsrv forwards) must stay listed for HF kings too.
+            served_names = [repo, CHAT_ALIAS]
         if not r2store.is_r2(repo) and revision:
             cmd += ["--revision", revision]
         if self._warm_swap_slot(slot):
