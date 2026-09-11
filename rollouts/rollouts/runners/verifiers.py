@@ -12,6 +12,7 @@ from pathlib import Path
 
 from datagen.providers import looks_like_provider_failure
 
+from rollouts import loopguard
 from rollouts.adapters.verifiers import envelopes_from_traces
 from rollouts.catalog import VERIFIERS_IMAGE_PREFIXES
 from rollouts.config import RolloutsConfig
@@ -220,6 +221,12 @@ class VerifiersRunner:
             attempt_dir.mkdir(parents=True, exist_ok=True)
             env = dict(self.env)
             env["PATH"] = f"{Path.home()}/.local/bin:" + env.get("PATH", "")
+            if policy.loop_guard_repeats > 0:
+                # rollouts.loopguard: sitecustomize installs the `loop_guard`
+                # @stop in the eval process; the threshold rides the env.
+                env[loopguard.ENV_REPEATS] = str(policy.loop_guard_repeats)
+                env["PYTHONPATH"] = loopguard.SITE_DIR + (
+                    ":" + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
             code, out = run_streamed(
                 eval_cmd(self.cfg, source, endpoint, policy.harness, batch,
                          attempt_dir, policy.sampling, runtime=self.RUNTIME),

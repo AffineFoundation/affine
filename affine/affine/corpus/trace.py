@@ -133,23 +133,28 @@ def trace_conversations(trace: dict, baker=None) -> list[list[dict]]:
 
 
 TURN_CAP_STOP = "max_turns"
-TURN_CAP_ARTIFACT = "rollout stopped: max_turns"
+# The datagen loop guard (rollouts.loopguard, 2026-09-11): the rollout was
+# refused after the same action repeated N times with the same observation.
+# Surfaces through harnesses exactly like the turn cap.
+LOOP_GUARD_STOP = "loop_guard"
+REFUSAL_STOPS = frozenset({TURN_CAP_STOP, LOOP_GUARD_STOP})
 
 
 def is_turn_cap_artifact(err: dict, trace: dict) -> bool:
-    """The error is only the turn cap surfacing through a harness.
+    """The error is only a refused model call surfacing through a harness.
 
-    When interception refuses the call past `max_turns`, ACP agents (Claude
-    Code and friends) raise the refusal as their own runtime error, so the
-    trace carries `stop_condition == max_turns` AND a HarnessError whose
-    message quotes "rollout stopped: max_turns". Nothing failed: the model
-    used its whole turn budget. Live 2026-09-10: 15-20 % of the teacher's
-    Claude Code rollouts and 24/24 of the king's looked like this and were
-    dropped as errored — the king looping to the cap is exactly the
-    failure the king seat exists to capture."""
-    if trace.get("stop_condition") != TURN_CAP_STOP:
+    When interception refuses the call past `max_turns` (or on the loop
+    guard), ACP agents (Claude Code and friends) raise the refusal as their
+    own runtime error, so the trace carries `stop_condition == max_turns`
+    AND a HarnessError whose message quotes "rollout stopped: max_turns".
+    Nothing failed: the model used its whole turn budget. Live 2026-09-10:
+    15-20 % of the teacher's Claude Code rollouts and 24/24 of the king's
+    looked like this and were dropped as errored — the king looping to the
+    cap is exactly the failure the king seat exists to capture."""
+    stop = trace.get("stop_condition")
+    if stop not in REFUSAL_STOPS:
         return False
-    return TURN_CAP_ARTIFACT in str(err.get("message") or "")
+    return f"rollout stopped: {stop}" in str(err.get("message") or "")
 
 
 def real_errors(trace: dict) -> list[dict]:
