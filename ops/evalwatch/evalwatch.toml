@@ -1,0 +1,43 @@
+# affine-evalwatch — standing health monitor for the duel pipeline.
+# Read-only against production: state.json, history.jsonl, the validator log,
+# the eval pod /health (through the validator's ssh tunnel), pm2, Lium.
+# Every tick writes affine/state/evalwatch.json; alerts go to Discord.
+
+[watch]
+interval_s = 300
+# in-flight duel older than this (from its `processing` log line) -> alert
+inflight_max_min = 60
+# queue depth strictly above this -> alert
+queue_depth_max = 8
+# eval /health `busy` continuously true for this long -> alert
+busy_unchanged_max_min = 90
+# last successful set_weights older than this -> alert
+weights_max_min = 120
+# the same infra fault requeuing the same challenge this many times inside
+# `repeat_fault_window_min` -> alert (2026-09-11: king_launch_failed x12 on
+# a re-rented pod with the wrong vLLM, 2.5 h of zero verdicts, nobody paged)
+repeat_fault_min_count = 3
+repeat_fault_window_min = 120
+# one Discord line per condition key per this many hours
+alert_dedupe_h = 6
+# how much of the validator log tail to scan (bytes)
+log_tail_bytes = 4000000
+
+[paths]
+state_dir = "../../affine/state"
+validator_log = "../../affine/logs/validator.err.log"
+out_json = "../../affine/state/evalwatch.json"
+own_state = "state/state.json"
+
+[eval]
+health_url = "http://127.0.0.1:9000/health"
+token_env = "AFFINE_EVAL_TOKEN"
+pm2_validator = "affine-validator"
+# machine records in state.json whose Lium pod must exist and be RUNNING
+machines = ["eval_machine", "bench_machine", "chat_machine"]
+
+[discord]
+enabled = true
+channel_id = "1381987595881414656"            # same ops channel as kingctl / corpus_build
+token_env = "DISCORD_BOT_TOKEN_ARBOS_BITTENSOR"  # ~/.affine-validator.env or the repo .env
+prefix = "[evalwatch]"
