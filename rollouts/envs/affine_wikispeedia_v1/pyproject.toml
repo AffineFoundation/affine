@@ -1,0 +1,13 @@
+[project]
+name = "affine-wikispeedia-v1"
+version = "0.1.0"
+description = "affine-wikispeedia-v1 — navigate the SNAP Wikispeedia link graph with a stateful click tool (wikispeedia-v1); system-message tool contract, index-named tasks, `solved` reward."
+requires-python = ">=3.10"
+dependencies = ["wikispeedia-v1"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["affine_wikispeedia_v1"]

@@ -465,3 +465,25 @@ name = "king"
 model_env = "KING_MODEL"
 base_url_env = "KING_BASE_URL"
 key_env = "KING_KEY"
+
+# -- text dialect (env wave 1, 2026-09-11) --------------------------------------
+# Harness `null` again, but the action is the WHOLE visible reply
+# (affine/dialects.py `text`: no system marker; admitted since wvk 13).
+# For the single-turn chat sources (affine_logic / trivia / ifeval /
+# unscramble) the reply IS the answer. Teacher only for now — the king
+# seat follows the first fold read (teacher-first rule).
+[policy.teacher_text]
+harness = "null"
+action_kind = "text"
+share = 2.0
+[policy.teacher_text.sampling]
+temperature = 0.8
+# Runaway guard (probe 2026-09-11): 2 of 48 chat rollouts ran the teacher's
+# reasoning to 32k tokens with no visible reply (nothing derives from them);
+# completions are p50 0.3-5k tokens. Same cap as king_boxed / king_toolcall.
+max_tokens = 16384
+[[policy.teacher_text.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
