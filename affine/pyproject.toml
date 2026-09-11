@@ -25,7 +25,14 @@ eval = [
     "transformers>=4.51",
     # >=0.28: the Qwen3.8-27B teacher's GDN kernels ICE cutlass-DSL JIT on
     # 0.22.x (verified on B200 2026-08-27, all backend-flag combos + eager).
-    "vllm>=0.28",
+    # <0.29: an unpinned upper bound let a re-rented eval pod install 0.29.0
+    # on 2026-09-11 (teacher swarm, king box and bench pod all pin 0.28.0).
+    # 0.29.0's V2 model-runner warmup dies on the Qwen3.5-MoE king with
+    # `scatter gather kernel index out of bounds` in apply_top_k_top_p, the
+    # worker exits but the API server hangs, and every duel loops on
+    # king_launch_failed (2 h+ of zero throughput). Bump deliberately, with
+    # a parity check on stored echoes, never by accident.
+    "vllm>=0.28,<0.29",
     # Rust multi-stream HF downloader; huggingface_hub uses it when
     # HF_HUB_ENABLE_HF_TRANSFER=1 (set in bootstrap.sh). Takes challenger
     # downloads from ~100 MB/s python-requests to near pod line rate.
