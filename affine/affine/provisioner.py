@@ -784,6 +784,15 @@ class MachineManager:
         if self._unhealthy >= self.em.unhealthy_threshold:
             log.error("%s machine failed %d consecutive health checks; reprovisioning",
                       self.label, self._unhealthy)
+            # A host that died IN SERVICE is as bad as one that never came
+            # up: exclude its executor from the re-rent, or the cheapest
+            # listing can hand us the same dead box (2026-09-11: two eval
+            # pods from one provider died under load within 3.5 h; only
+            # up/ssh/bootstrap failures were being blacklisted).
+            machine = self._get_machine()
+            provider = self._provider_for(machine) if machine else None
+            if machine and provider is not None and hasattr(provider, "remember_bad"):
+                provider.remember_bad(machine)
             self._terminate()
             self._unhealthy = 0
             self._start_provisioning()
