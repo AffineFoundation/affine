@@ -191,6 +191,9 @@ def main() -> None:
     ap.add_argument("--source", default=None,
                     help="bypass the scheduler and force this source "
                          "every cycle (diagnostics)")
+    ap.add_argument("--policy", default=None,
+                    help="bypass the policy pick and force this policy id "
+                         "every cycle (diagnostics; with --source)")
     ap.add_argument("--no-mirror", action="store_true",
                     help="skip the HF cold copy of trace chunks")
     args = ap.parse_args()
@@ -284,7 +287,10 @@ def main() -> None:
                      for n, s in registry.sources.items()}
             continue
         source = registry.sources[name]
-        policy = scheduler.pick_policy(name, pools[name])
+        if args.policy:
+            policy = registry.policies[args.policy]
+        else:
+            policy = scheduler.pick_policy(name, pools[name])
         pending = scheduler.pending(name, pools[name], policy)
         batch = pending[: cfg.batch_size]
         log.info("cycle: source=%s policy=%s batch=%d seat_pending=%d "
