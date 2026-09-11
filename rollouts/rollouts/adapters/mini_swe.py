@@ -25,9 +25,9 @@ from rollouts.schema import PolicyStamp, make_envelope
 log = logging.getLogger("rollouts.adapters.mini_swe")
 
 # Agent exit statuses that mean the rollout ran to a real terminal state
-# (same set the legacy loop used for eval eligibility).
+# (the legacy loop's eval-eligibility set + the rollouts loop guard's exit).
 ATTEMPTED_EXITS = {"Submitted", "LimitsExceeded", "TimeExceeded",
-                   "RepeatedFormatError"}
+                   "RepeatedFormatError", "loop_guard"}
 
 
 def _calls_from_messages(messages: list[dict], model: str,

@@ -13,9 +13,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from affine import dialects
+from rollouts import loopguard
 from rollouts.schema import Endpoint, Policy
 
 RUNNERS = ("verifiers", "verifiers_chat", "mini_swe")
+KING_POLICY_PREFIX = "king_"
 CATALOG_KINDS = ("hf", "hf_swebench", "swesmith", "terminal_lego",
                  "terminal_bench_2", "harbor_swe", "nl2repobench",
                  "general_agent")
@@ -103,11 +105,19 @@ def _load_policies(path: Path) -> dict[str, Policy]:
             raise ValueError(
                 f"policy {pid!r}: action_kind {action_kind!r} is not a "
                 f"registered dialect ({sorted(dialects.DIALECTS)})")
+        # Loop guard default: on for the king seat, off for everyone else
+        # (rollouts.loopguard). An explicit `loop_guard_repeats` wins; 0 = off.
+        default_repeats = (loopguard.DEFAULT_KING_REPEATS
+                           if pid.startswith(KING_POLICY_PREFIX) else 0)
+        repeats = int(cfg.get("loop_guard_repeats", default_repeats))
+        if repeats < 0:
+            raise ValueError(f"policy {pid!r}: loop_guard_repeats must be >= 0")
         policies[pid] = Policy(
             id=pid, harness=cfg["harness"], endpoints=endpoints,
             sampling=cfg.get("sampling", {}),
             share=float(cfg.get("share", 1.0)),
-            action_kind=action_kind)
+            action_kind=action_kind,
+            loop_guard_repeats=repeats)
     if not policies:
         raise ValueError(f"no policies defined in {path}")
     return policies

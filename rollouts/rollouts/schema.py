@@ -112,6 +112,11 @@ class Policy:
     # shell-agent default. A harness that emits <tool_call> blocks or
     # \boxed{} answers declares it here, else its turns slice to nothing.
     action_kind: str = "bash"
+    # Loop guard (rollouts.loopguard): end the rollout with stop_condition
+    # `loop_guard` once the same action repeats this many times in a row
+    # with the same observation. 0 = off. The registry defaults it to 6 for
+    # `king_*` policies (the king loops; the teacher does not).
+    loop_guard_repeats: int = 0
 
     def available_endpoints(self, env: dict) -> list[Endpoint]:
         """Keyed endpoints, in chain order, with dynamic routes resolved
