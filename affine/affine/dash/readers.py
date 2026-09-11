@@ -311,6 +311,9 @@ def history_row_from_raw(r: dict) -> dict:
         "margin": v.get("margin"),
         "se": v.get("se"),
         "n_paired_turns": v.get("n_paired_turns"),
+        "n_forfeit_turns": v.get("n_forfeit_turns"),
+        "near_miss": v.get("near_miss"),           # sequential near-miss stamp
+        "protocol_probe": v.get("protocol_probe"),  # admission probe result
         "rejection_reason": v.get("rejection_reason"),
         "reign_number": r.get("reign_number"),
         "score": r.get("score", _side_score(v.get("challenger"))),

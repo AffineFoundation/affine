@@ -72,6 +72,8 @@ _SIDE_FIELDS = ("reason", "mean_l1lift", "mean_eta", "mean_len_z",
                 "mean_r_leg", "mean_g_leg", "g_bind_frac",
                 # wvk 11 action-dialect telemetry (per action_kind)
                 "by_dialect",
+                # wvk 12 forfeit floor + wvk 13 </think> requirement
+                "n_forfeits", "forfeit_rate", "think_close_rate",
                 # legacy (pre-fork verdicts)
                 "valid", "S", "mean_lambda2", "baseline_band_exceeded")
 
@@ -414,6 +416,13 @@ class Dashboard:
                 "se": v.get("se"), "k_sigma": v.get("k_sigma"),
                 "min_margin": v.get("min_margin"),
                 "n_paired_turns": v.get("n_paired_turns"),
+                "n_forfeit_turns": v.get("n_forfeit_turns"),
+                # Sequential near-miss (2026-09-11): window, per-slice
+                # stats, pooled decision. Absent on older verdicts.
+                "near_miss": v.get("near_miss"),
+                # Chat-protocol probe stamp (shadow 2026-09-08, enforced
+                # 2026-09-09). Absent on older verdicts.
+                "protocol_probe": v.get("protocol_probe"),
                 "rejection_reason": v.get("rejection_reason"),
                 "reign_number": r.get("reign_number"),
                 # Absolute score (Reason) for both sides; falls back to the
