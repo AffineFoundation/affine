@@ -30,6 +30,7 @@ from .readers import (
     load_eval_artifact,
     load_public_audits,
     load_public_benchmarks,
+    load_public_history,
     snapshot,
 )
 from .stream import snapshot_events
@@ -386,6 +387,31 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     @app.get("/api/v1/health")
     def api_health():
         return {"ok": True, "version": contract_payload(cfg)["version"]}
+
+    # -- data/*.json on this host -------------------------------------------
+    # llms.txt advertises `data/contract.json` etc. as the machine-readable
+    # mirror. On Hippius the validator rewrites them on every push; on this
+    # host they used to be static fossils under website/data/ (contract.json
+    # still said wvk 7 on 2026-09-11). Serve the live objects instead.
+    @app.get("/data/contract.json")
+    def data_contract(request: Request):
+        return _json(contract_payload(cfg), max_age=60, request=request)
+
+    @app.get("/data/dashboard.json")
+    def data_dashboard(request: Request):
+        return _json(enrich_snapshot(cfg, snapshot(cfg)), max_age=5,
+                     request=request)
+
+    @app.get("/data/history.json")
+    def data_history(request: Request):
+        pub = load_public_history(cfg)
+        if pub is None:
+            pub = index.query_history(limit=100)["items"]
+        return _json(pub, max_age=5, request=request)
+
+    @app.get("/data/benchmarks.json")
+    def data_benchmarks(request: Request):
+        return api_benchmarks(request)
 
     # -- public king chat (proxied to the chat pod over its SSH tunnel) ---------
     # The browser never sees the pod or the token; the dash adds both. Freely
