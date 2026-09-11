@@ -555,6 +555,23 @@ function renderIntake(d) {
   </table>`;
 }
 
+/**
+ * Median wall clock of the last completed duels (seconds), from the history
+ * rows already in cache. Drives the queue ETA column; null until history
+ * has loaded or when no row carries a duration.
+ */
+function medianDuelSeconds() {
+  const d = (cache.history || [])
+    .filter((r) => r.event === "verdict" || r.event === "crowned")
+    .map((r) => Number(r.duration_s))
+    .filter((v) => Number.isFinite(v) && v > 0)
+    .slice(0, 20)
+    .sort((a, b) => a - b);
+  if (!d.length) return null;
+  const mid = Math.floor(d.length / 2);
+  return d.length % 2 ? d[mid] : (d[mid - 1] + d[mid]) / 2;
+}
+
 function renderQueue(d) {
   const q = d?.queue || [];
   const ce = d?.current_eval;
@@ -562,6 +579,8 @@ function renderQueue(d) {
   const bits = [];
   if (ce) bits.push(`evaluating ${ce.challenge_id || ""}`.trim());
   bits.push(pending ? `${pending} pending` : "idle");
+  const med = medianDuelSeconds();
+  if (med != null) bits.push(`≈ ${fmtDuration(med)} per duel`);
   $("queue-meta").textContent = bits.join(" · ");
   if (!q.length && !ce) {
     $("queue-wrap").innerHTML = `<div class="empty">empty — commits/reveals show under intake, not here</div>`;
@@ -569,27 +588,42 @@ function renderQueue(d) {
   }
   const rows = [];
   if (ce) {
+    const started = ce.started_at ? Date.parse(ce.started_at) : NaN;
+    const elapsed = Number.isNaN(started) ? null : Math.max(0, (Date.now() - started) / 1000);
     rows.push({
-      status: "evaluating", id: ce.challenge_id, repo: ce.repo,
-      hotkey: ce.hotkey || "", queued: "now", retries: "—",
+      status: "evaluating", pos: "now", id: ce.challenge_id, repo: ce.repo,
+      hotkey: ce.hotkey || "", queued: ce.stage || ce.progress?.phase || "running",
+      eta: elapsed != null ? `${fmtDuration(elapsed)} in` : "—", retries: "—",
     });
   }
-  for (const e of q) {
+  q.forEach((e, i) => {
+    // Position = pop order (head first). ETA = duels ahead × the median of
+    // the last 20 durations — an estimate: infra retries, the near-miss
+    // second slice, and probe rejections (fast) all move it.
+    const ahead = i + (ce ? 1 : 0);
     rows.push({
-      status: "queued", id: e.challenge_id, repo: e.repo,
-      hotkey: e.hotkey, queued: fmtTime(e.queued_at), retries: e.retry_count ?? 0,
+      status: "queued", pos: `#${i + 1}`, id: e.challenge_id, repo: e.repo,
+      hotkey: e.hotkey, queued: fmtTime(e.queued_at),
+      eta: med != null ? `≈ ${fmtDuration(ahead * med)}` : "—",
+      retries: e.retry_count ?? 0,
     });
-  }
+  });
   $("queue-wrap").innerHTML = `<table class="data-table">
     <thead><tr>
-      <th>status</th><th>id</th><th>model</th><th>hotkey</th><th>queued</th><th class="r">retries</th>
+      <th>status</th>
+      <th title="pop order, head first — canonical by challenge number; see llms.txt → Queue order">pos</th>
+      <th>id</th><th>model</th><th>hotkey</th><th>queued</th>
+      <th title="estimate: duels ahead × median duration of the last 20 duels">eta</th>
+      <th class="r">retries</th>
     </tr></thead>
     <tbody>${rows.map((r) => `<tr class="${r.status === "evaluating" ? "current" : ""}">
         <td>${badge(r.status, r.status)}</td>
+        <td class="mono">${esc(r.pos)}</td>
         <td>${esc(short(r.id, 14))}</td>
         <td>${modelLink(r.repo, r.hotkey)}</td>
         <td>${hotkeyLink(r.hotkey)}</td>
         <td class="when">${esc(r.queued)}</td>
+        <td class="when">${esc(r.eta)}</td>
         <td class="r">${esc(r.retries)}</td>
       </tr>`).join("")}</tbody>
   </table>`;
@@ -1115,9 +1149,10 @@ function datasetPageHtml(stats) {
         <a href="${esc(MANIFEST_URL)}" target="_blank" rel="noopener">manifest</a>
         pins a Parquet turn index and gzipped trajectory chunks by sha256, and
         the <a href="/api/v1/contract" target="_blank" rel="noopener">chain contract</a>
-        pins the manifest. Every duel samples its 80-turn slice from this exact
-        data via a block-hash seed — download the files behind the manifest and
-        you can rebuild everything shown here, including any duel's slice.</p>
+        pins the manifest. Every duel samples its 1,300-turn slice (2,600 when
+        the near-miss rule pools a second slice) from this exact data via a
+        block-hash seed — download the files behind the manifest and you can
+        rebuild everything shown here, including any duel's slice.</p>
       </div>
     </div>`;
   return `
@@ -1750,10 +1785,16 @@ function verdictSummary(duel) {
       + `(z = ${fmtZ(duel.z)})${duel.event === "crowned" ? ` — crowned reign #${duel.reign_number ?? "?"}` : ""}.`;
   }
   if (duel.rejection_reason) {
+    const rr = String(duel.rejection_reason);
     const why = {
       thought_too_short: "median thought length below the floor",
-      causality_fail: "teacher-side B pass rate below γ",
-    }[duel.rejection_reason] || duel.rejection_reason;
+      causality_fail: "teacher-side B pass rate below γ (fewer than 30% of rollouts had the thought causally help the action)",
+    }[rr]
+      || (rr.startsWith("protocol:")
+        ? `it failed the chat-protocol probe before scoring (${rr.slice("protocol:".length)} — it must close </think> and answer on ≥ 90% of the IDE-shaped prompts)`
+        : rr.startsWith("unpromptable:")
+        ? `the injectability probe failed before scoring (${rr.slice("unpromptable:".length)})`
+        : rr);
     return `${name} was rejected: ${why}.`;
   }
   return `${name} did not dethrone the king: paired score margin ${m} `
@@ -2027,7 +2068,9 @@ function duelPageHtml(duel, series, logLines) {
       <div class="kv"><span class="k">revision</span><span class="v mono">${esc(short(revision || "—", 14))}${copyBtn(revision)}</span></div>
       <div class="kv"><span class="k">when</span><span class="v" title="${esc(fmtTime(duel.at))}">${esc(fmtTime(duel.at))} · ${esc(fmtAge(duel.at))}</span></div>
       <div class="kv"><span class="k">duration</span><span class="v">${esc(fmtDuration(duel.duration_s))}</span></div>
-      <div class="kv"><span class="k">paired turns</span><span class="v">${esc(duel.n_paired_turns ?? paired.length ?? "—")}</span></div>
+      <div class="kv"><span class="k">paired turns</span><span class="v">${esc(duel.n_paired_turns ?? paired.length ?? "—")}${
+        duel.near_miss?.triggered ? ` <span class="dim" title="sequential near-miss: the first slice's margin fell inside the near-miss window, so a second seeded slice was scored and the crown decided on the pooled turns">· pooled over ${esc(String((duel.near_miss.slices || []).length))} slices</span>` : ""
+      }</span></div>
       <div class="kv"><span class="k">artifact</span><span class="v">${artifactLink}${duel.challenge_id ? copyBtn(hippiusEvalUrl(duel.challenge_id)) : ""}</span></div>
     </div>`;
 
@@ -2068,6 +2111,47 @@ function duelPageHtml(duel, series, logLines) {
       ${card("challenger Reason", esc(fine(chR)), "mean over the slice",
         chR != null && kgR != null ? passCls(Number(chR) >= Number(kgR)) : "")}
       ${card("king Reason", esc(fine(kgR)), "same slice, same teacher")}
+      ${(() => {
+        // Sequential near-miss (2026-09-11): one card per extra slice the
+        // rule drew, showing what each slice said on its own. Rendered only
+        // when the rule fired — single-slice verdicts look as before.
+        const nm = duel.near_miss;
+        if (!nm || !nm.triggered || !Array.isArray(nm.slices)) return "";
+        return nm.slices.map((s) => card(
+          `slice ${esc(String(s.index))} alone`,
+          esc(fine(s.margin)),
+          `z = ${esc(fmtZ(s.z))} · ${esc(String(s.n_paired_turns ?? "—"))} paired turns · seed ${esc(short(String(s.seed ?? ""), 10))}`,
+          s.challenger_wins == null ? "" : passCls(Boolean(s.challenger_wins)))).join("")
+          + card("near-miss window", `(${esc(fine(nm.low))}, ${esc(fine(nm.high))})`,
+            `first-slice margin inside → ${esc(String(nm.extra_slices))} extra slice(s), decided on the pool`);
+      })()}
+      ${(() => {
+        // Chat-protocol probe (admission check, enforced since 2026-09-09):
+        // the most-asked-about rejection on Discord. Rendered whenever the
+        // verdict carries the stamp (shadow or enforce).
+        const pp = duel.protocol_probe;
+        if (!pp || pp.pass_rate == null) return "";
+        const minRate = Number(pp.min_pass_rate ?? pp.settings?.min_pass_rate ?? 0.9);
+        const reasons = Object.entries(pp.by_reason || {})
+          .map(([r, n]) => `${r} ×${n}`).join(", ");
+        return card("protocol probe", esc(`${Math.round(Number(pp.pass_rate) * 100)}%`),
+          `${esc(pp.mode || "enforce")} · closes </think> + answers on ${esc(String(pp.n ?? "—"))} IDE-shaped replies · needs ≥ ${Math.round(minRate * 100)}%`
+            + (reasons ? ` · fails: ${esc(reasons)}` : ""),
+          pp.mode === "enforce" ? passCls(Boolean(pp.passed ?? Number(pp.pass_rate) >= minRate)) : "");
+      })()}
+      ${(() => {
+        // Forfeit floor (wvk 12) + </think> requirement (wvk 13): how many
+        // turns each side gave away at −0.1. Absent on pre-wvk-12 verdicts.
+        const chF = duel.challenger?.forfeit_rate;
+        const kgF = duel.king?.forfeit_rate;
+        if (chF == null && kgF == null) return "";
+        const pctF = (v) => (v == null ? "—" : `${(Number(v) * 100).toFixed(1)}%`);
+        const chT = duel.challenger?.think_close_rate;
+        return card("forfeits", esc(`${pctF(chF)} vs ${pctF(kgF)}`),
+          `challenger vs king · turns with no action in the dialect${params.require_think_close ? " or no </think>" : ""} score ${esc(String(params.forfeit_turn_score ?? -0.1))}`
+            + (chT != null ? ` · challenger closes </think> on ${esc(`${Math.round(Number(chT) * 100)}%`)}` : ""),
+          chF != null && kgF != null ? passCls(Number(chF) <= Number(kgF)) : "");
+      })()}
       ${(() => {
         // The two non-margin crown conditions (wvk=5/6). Render only when the
         // duel recorded them — pre-fork rows have neither.
@@ -2144,9 +2228,10 @@ function duelPageHtml(duel, series, logLines) {
             it does not exist before the commitment lands on chain, so neither
             the miner nor the validator can precompute or steer the slice.</li>
           <li><strong>The corpus is content-addressed.</strong> The turn corpus
-            is sha-pinned in <a href="/api/v1/contract" target="_blank" rel="noopener">the chain contract</a>
-            (affine.toml) and mirrored on Hugging Face (Dataset link in the
-            nav)${slice.digest ? ` — this duel's slice digest is <code>${esc(short(slice.digest, 18))}</code>` : ""}.
+            is served from <a href="https://data.affine.io/corpus/manifest.json" target="_blank" rel="noopener">data.affine.io</a>
+            (the host in <a href="/api/v1/contract" target="_blank" rel="noopener">the chain contract</a>)
+            behind an immutable sha-named manifest, browsable under the Dataset
+            link in the nav${slice.digest ? ` — this duel's slice digest is <code>${esc(short(slice.digest, 18))}</code>` : ""}.
             Re-derive the slice from seed + corpus and you get these exact turn ids.</li>
           <li><strong>The raw evidence is published.</strong> The artifact
             (${artifactLink}) contains every scored pair: the miner's thought
@@ -2156,7 +2241,13 @@ function duelPageHtml(duel, series, logLines) {
           <li><strong>The math is replayable.</strong> Teacher-force the pinned
             teacher (see the contract) over the published texts to reproduce
             the logprobs, then recompute
-            ${Number(params.tau || 0) > 0
+            ${params.score_mode === "min_rg"
+              ? `<code>a_i = lpC(y_i|z_A) − lpC(y_i|∅)</code> per teacher ref,
+            <code>R = τ·log(mean_i exp(a_i/τ)) − mean_i a_i</code> (τ = ${esc(String(params.tau))}),
+            <code>G = min(m − (μ − w), (μ + w) − m)</code> with <code>m = lpC(z_A|x)</code>
+            against the band of the teacher's own thoughts, the turn score
+            <code>min(R, G)</code> (${esc(String(params.forfeit_turn_score ?? "dropped"))} on a forfeit)`
+              : Number(params.tau || 0) > 0
               ? `<code>a_i = lpC(y_i|z_A) − lpC(y_i|∅)</code> per teacher ref,
             the turn score <code>τ·log(mean_i exp(a_i/τ))</code> (τ = ${esc(String(params.tau))})`
               : `<code>Reason = lpC(y_C|z_A) − lpC(y_C|∅)</code>`} and the paired
@@ -2247,6 +2338,8 @@ async function refreshHistoryAndBench() {
     renderGates(true);
     renderHistory(cache.history);
     renderFails(cache.history);
+    // The queue ETA column is derived from history durations.
+    if (cache.dashboard) renderQueue(cache.dashboard);
     drawOpenChart();
   }
   const bfp = fingerprint(b);
