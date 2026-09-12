@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 from types import ModuleType
 
 import verifiers.v1 as vf
@@ -74,13 +75,28 @@ def extract_last_json(text: str) -> dict | None:
 
 
 def load_model(code: str, model_name: str) -> type[BaseModel]:
-    module = ModuleType("dyn_pydantic_cfg")
-    exec(code, module.__dict__)  # noqa: S102 - dataset-authored schema code, as upstream
-    cls = getattr(module, model_name, None)
-    if cls is None or not (isinstance(cls, type) and issubclass(cls, BaseModel)):
-        raise RuntimeError(f"{model_name} not found or not a Pydantic BaseModel")
-    cls.model_json_schema()
-    return cls
+    """Execute the row's schema code in a throwaway module and return the model.
+
+    The module is registered in `sys.modules` while it lives: pydantic (2.11+)
+    resolves forward references (`list["Item"]`, nested models declared later
+    in the file) through `sys.modules[cls.__module__]`, and without the entry
+    every nested schema failed with "`X` is not fully defined" (probe
+    2026-09-12: 12/12 rollouts errored at scoring)."""
+    name = f"dyn_pydantic_cfg_{hashlib.sha256(code.encode('utf-8')).hexdigest()[:12]}"
+    module = ModuleType(name)
+    sys.modules[name] = module
+    try:
+        exec(code, module.__dict__)  # noqa: S102 - dataset-authored schema code, as upstream
+        cls = getattr(module, model_name, None)
+        if cls is None or not (isinstance(cls, type) and issubclass(cls, BaseModel)):
+            raise RuntimeError(f"{model_name} not found or not a Pydantic BaseModel")
+        for obj in list(module.__dict__.values()):
+            if isinstance(obj, type) and issubclass(obj, BaseModel) and obj is not BaseModel:
+                obj.model_rebuild()
+        cls.model_json_schema()
+        return cls
+    finally:
+        sys.modules.pop(name, None)
 
 
 class PydanticData(vf.TaskData):

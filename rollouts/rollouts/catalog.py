@@ -1265,11 +1265,11 @@ def build_autobench_catalog(cfg: RolloutsConfig, src: Source) -> dict:
 # scorers live in that env only). Same pattern as longcot / autobench.
 RGYM_LIST = r"""
 import json, sys
-from affine_rgym_v1.taskset import default_generators
-json.dump(default_generators(), sys.stdout)
+from affine_rgym_v1.taskset import usable_generators
+json.dump(usable_generators(int(sys.argv[1])), sys.stdout)
 """
 RCORE_LIST = r"""
-import json, sys
+import json, os, sys
 from datasets import load_dataset
 from affine_rcore_v1.taskset import DATASET, SPLIT, generator_of, task_name
 from reasoning_core import list_tasks
@@ -1279,10 +1279,11 @@ for i, row in enumerate(load_dataset(DATASET, split=SPLIT, streaming=True)):
     gen = generator_of(row)
     if gen in available:
         out.append({"uid": task_name(str(row["prompt"])), "generator": gen})
-json.dump(out, sys.stdout)
+json.dump(out, sys.stdout); sys.stdout.flush()
+os._exit(0)   # datasets' streaming reader crashes this venv at interpreter shutdown
 """
 OOLONG_LIST = r"""
-import json, sys
+import json, os, sys
 from datasets import load_dataset
 from affine_oolong_v1.taskset import DATASET, task_name
 context_len = int(sys.argv[1]); split = sys.argv[2]; out = []
@@ -1290,7 +1291,8 @@ ds = load_dataset(DATASET, split=split, streaming=True).select_columns(["context
 for i, row in enumerate(ds):
     if row.get("context_len") == context_len:
         out.append({"uid": task_name(context_len, i), "answer_type": str(row.get("answer_type") or "")})
-json.dump(out, sys.stdout)
+json.dump(out, sys.stdout); sys.stdout.flush()
+os._exit(0)
 """
 
 
@@ -1319,7 +1321,8 @@ def _bucketed(src: Source, row: dict) -> dict:
 
 
 def build_rgym_catalog(cfg: RolloutsConfig, src: Source) -> dict:
-    gens = _verifiers_listing(cfg, RGYM_LIST, what="reasoning-gym")
+    level = _flag_value(src, "--env.taskset.curriculum-level", "3")
+    gens = _verifiers_listing(cfg, RGYM_LIST, level, what="reasoning-gym")
     per = int(_flag_value(src, "--env.taskset.per-generator", "60"))
     kept = [_bucketed(src, {
         "uid": f"rgym-{g}-{i:04d}", "sid": f"rgym_{_dotless_task(g)}-{i}",
@@ -1345,7 +1348,7 @@ def build_rcore_catalog(cfg: RolloutsConfig, src: Source) -> dict:
             "uid": r["uid"], "sid": f"rcore_{_dotless_task(r['generator'])}-{num}",
             "repo": f"rcore/{r['generator']}", "language": "formal", "generator": r["generator"]}))
     return _write_catalog(cfg, src.name, kept, {
-        "source": src.name, "dataset": "reasoning-core/formal-reasoning-env",
+        "source": src.name, "dataset": "reasoning-core/symbolic-reasoning-env",
         "total": len(rows), "kept": len(kept), "panel_excluded": 0,
         "unusable": len(rows) - len(kept)})
 
