@@ -576,9 +576,10 @@ def main() -> int:
     s.add_argument("--run-id", required=True)
     s.add_argument("--out", required=True)
     a = ap.parse_args()
-    if a.cmd == "run" and not (Path(a.verifiers_dir).expanduser() / ".venv/bin/eval").exists():
+    if a.cmd in ("run", "retry") and not (Path(a.verifiers_dir).expanduser() / ".venv/bin/eval").exists():
         raise SystemExit("verifiers venv missing: run install_eval_env.sh first")
-    return {"run": cmd_run, "summarize": cmd_summarize}[a.cmd](a)
+    return {"run": cmd_run, "summarize": cmd_summarize, "retry": cmd_retry,
+            "compare": cmd_compare}[a.cmd](a)
 
 
 if __name__ == "__main__":
