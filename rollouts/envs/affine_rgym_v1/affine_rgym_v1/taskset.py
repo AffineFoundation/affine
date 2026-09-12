@@ -50,6 +50,20 @@ def default_generators() -> list[str]:
     return sorted(n for n in DATASETS if n not in EXCLUDE)
 
 
+def usable_generators(level: int = DEFAULT_LEVEL, seed: int = DEFAULT_SEED) -> list[str]:
+    """Generators whose curriculum yields a valid config at `level` (knight_swap
+    at level 3 asserts `min_nodes >= 6`, for example). The catalog listing and
+    the taskset call this with the same (level, seed), so the pools agree."""
+    out = []
+    for gen in default_generators():
+        try:
+            make_entry(gen, seed, level)
+        except Exception:  # noqa: BLE001 - any generator failure excludes it
+            continue
+        out.append(gen)
+    return out
+
+
 def extract_answer(text: str) -> str:
     text = text or ""
     if "<answer>" in text:
@@ -109,7 +123,7 @@ class RGymTaskset(vf.Taskset[RGymTask, RGymConfig]):
     def load(self) -> list[RGymTask]:
         cfg = self.config
         want = set(cfg.tasks)
-        gens = cfg.generators or default_generators()
+        gens = cfg.generators or usable_generators(cfg.curriculum_level, cfg.seed)
         tasks: list[RGymTask] = []
         idx = 0
         for gen in gens:
