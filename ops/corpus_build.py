@@ -297,8 +297,14 @@ def load_king_pivot() -> dict:
 def load_completion() -> dict:
     """[completion]: the reply that ended a SOLVED rollout on purpose
     (affine.corpus.completion), teacher and king alike. `policy_prefix`
-    is empty = any policy."""
-    return _group_cfg(COMPLETION_GROUP)
+    is empty = any policy. `min_replies` (default 2): a one-reply rollout
+    (math, single-shot answer envs) has no "decide to stop" state -- its
+    only turn is the answer, and routing it would drain the source group's
+    growth into this one."""
+    cfg = _group_cfg(COMPLETION_GROUP)
+    if cfg:
+        cfg["min_replies"] = int(cfg["raw"].get("min_replies", 2) or 0)
+    return cfg
 
 
 def _policy_ok(env: dict, cfg: dict) -> bool:
@@ -331,10 +337,16 @@ def king_pivot_turns(env: dict, cfg: dict) -> dict[int, dict]:
 
 
 def completion_candidate(env: dict, cfg: dict) -> bool:
-    """A SOLVED rollout the agent ended itself (`agent_completed`)."""
-    return (_policy_ok(env, cfg)
+    """A SOLVED rollout the agent ended itself (`agent_completed`) after at
+    least `min_replies` replies."""
+    if not (_policy_ok(env, cfg)
             and env["trace"].get("stop_condition") == "agent_completed"
-            and rollout_outcome(env["trace"]) == "solved")
+            and rollout_outcome(env["trace"]) == "solved"):
+        return False
+    n_replies = sum(1 for nd in env["trace"].get("nodes") or []
+                    if nd.get("sampled")
+                    and (nd.get("message") or {}).get("role") == "assistant")
+    return n_replies >= cfg["min_replies"]
 
 
 def group_stratum(rec: dict, cfg: dict) -> str:
@@ -1080,6 +1092,14 @@ def main() -> None:
         log(f"{g}: {'off' if not cfg else shown}")
     king_loop, king_pivot, completion = (routed[g] for g in
                                          (KING_LOOP_GROUP, KING_PIVOT_GROUP, COMPLETION_GROUP))
+    if completion:
+        # A group the fold mix holds at 0 contributes nothing to D -- not
+        # even its finals (env wave 1: `general` = 0.0 until the operator
+        # reads the first fold telemetry).
+        zero = {src for src, g in src2grp.items() if mix.get(g, 0.0) <= 0}
+        completion["exclude_sources"] = completion["exclude_sources"] | zero
+        log(f"{COMPLETION_GROUP}: excluding sources {sorted(completion['exclude_sources'])} "
+            f"(config + zero-share groups); min_replies {completion['min_replies']}")
     if king_pivot:
         log(f"{KING_PIVOT_GROUP}: {king_pivot['n_rows']} side-table rows in "
             f"{king_pivot['n_files']} file(s) -> admitted pivots on "

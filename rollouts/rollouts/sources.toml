@@ -137,9 +137,14 @@ exclude_categories = ["format_error"]
 # logs `completion_leaked` (candidates the leak rule refused) so the
 # assumption is measured; mini-swe's COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT
 # command is quoted in the task prompt and IS a leak by the rule.
+# min_replies = 2: a one-reply rollout (math, single-shot answer envs) has
+# no "decide to stop" state -- its only turn is the answer -- and routing
+# it would drain the source group's growth into this one. Sources whose
+# fold-mix share is 0 (general, until set) are excluded by the fold too.
 strata_buckets = 1000
 exclude_sources = ["affine_wiki"]
 leak_exempt = false
+min_replies = 2
 
 # Language targets for NEWLY FOLDED coding turns (2026-09-01). Enforced by
 # ops/datagen_refresh.py as a second waterfill (after the group waterfill)
