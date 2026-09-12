@@ -30,10 +30,34 @@ from reasoning_gym.factory import CURRICULA, DATASETS, create_curriculum
 DEFAULT_SEED = 1000
 DEFAULT_PER_GENERATOR = 60
 DEFAULT_LEVEL = 3
-# Generators that need external data / heavy deps or whose answers are long
-# programs (weak `text` signal) are left out of the default pool.
-EXCLUDE = frozenset({"composite", "rush_hour", "sokoban", "mini_sudoku", "sudoku",
-                     "futoshiki", "kakurasu", "rubiks_cube", "puzzle24", "emoji_mystery"})
+# The pool: reasoning-gym 0.1.25 generators whose curriculum yields a valid,
+# fast config at DEFAULT_LEVEL (sweep 2026-09-12 on datagen-2: 91 of 96
+# registered generators; excluded - caesar_cipher / knight_swap / survo reject
+# their level-3 config, jugs / number_sequence take > 6 s per puzzle, and
+# composite is a meta-generator). A static tuple, so the catalog and the
+# taskset agree without sweeping the library at every load.
+DEFAULT_GENERATORS = (
+    "ab", "acre", "advanced_geometry", "aiw", "arc_1d", "arc_agi", "base_conversion",
+    "basic_arithmetic", "bf", "binary_alternation", "binary_matrix", "bitwise_arithmetic",
+    "boxnet", "calendar_arithmetic", "chain_sum", "circuit_logic", "codeio", "coin_flip",
+    "color_cube_rotation", "complex_arithmetic", "count_bits", "count_primes", "countdown",
+    "course_schedule", "cryptarithm", "decimal_arithmetic", "decimal_chain_sum", "dice",
+    "family_relationships", "figlet_font", "fraction_simplification", "game_of_life",
+    "game_of_life_halting", "gcd", "graph_color", "group_anagrams", "gsm_symbolic",
+    "intermediate_integration", "isomorphic_strings", "knights_knaves", "largest_island",
+    "lcm", "leg_counting", "letter_counting", "letter_jumble", "list_functions",
+    "mahjong_puzzle", "manipulate_matrix", "maze", "modulo_grid", "n_queens",
+    "needle_haystack", "number_filtering", "number_format", "number_sorting",
+    "palindrome_generation", "palindrome_partitioning", "path_star", "polynomial_equations",
+    "polynomial_multiplication", "pool_matrix", "power_function", "prime_factorization",
+    "products", "propositional_logic", "quantum_lock", "ransom_note", "rearc",
+    "rectangle_count", "rotate_matrix", "rotten_oranges", "self_reference",
+    "sentence_reordering", "shortest_path", "simple_equations", "simple_geometry",
+    "simple_integration", "spell_backward", "spiral_matrix", "string_insertion",
+    "string_manipulation", "string_splitting", "string_synthesis", "syllogism",
+    "time_intervals", "tower_of_hanoi", "tsumego", "word_ladder", "word_sequence_reversal",
+    "word_sorting", "zebra_puzzles",
+)
 SYSTEM = (
     "You solve puzzles and reasoning problems. Think the problem through "
     "step by step, then give the final answer once, inside <answer> and "
@@ -47,21 +71,7 @@ def task_name(generator: str, index: int) -> str:
 
 
 def default_generators() -> list[str]:
-    return sorted(n for n in DATASETS if n not in EXCLUDE)
-
-
-def usable_generators(level: int = DEFAULT_LEVEL, seed: int = DEFAULT_SEED) -> list[str]:
-    """Generators whose curriculum yields a valid config at `level` (knight_swap
-    at level 3 asserts `min_nodes >= 6`, for example). The catalog listing and
-    the taskset call this with the same (level, seed), so the pools agree."""
-    out = []
-    for gen in default_generators():
-        try:
-            make_entry(gen, seed, level)
-        except Exception:  # noqa: BLE001 - any generator failure excludes it
-            continue
-        out.append(gen)
-    return out
+    return [g for g in DEFAULT_GENERATORS if g in DATASETS]
 
 
 def extract_answer(text: str) -> str:
@@ -112,7 +122,7 @@ class RGymConfig(vf.TasksetConfig):
     tasks: list[str] = []
     """Task names to load (empty = generators x per_generator)."""
     generators: list[str] = []
-    """Generator names (empty = every registered generator minus EXCLUDE)."""
+    """Generator names (empty = DEFAULT_GENERATORS)."""
     per_generator: int = DEFAULT_PER_GENERATOR
     seed: int = DEFAULT_SEED
     curriculum_level: int = DEFAULT_LEVEL
@@ -123,7 +133,7 @@ class RGymTaskset(vf.Taskset[RGymTask, RGymConfig]):
     def load(self) -> list[RGymTask]:
         cfg = self.config
         want = set(cfg.tasks)
-        gens = cfg.generators or usable_generators(cfg.curriculum_level, cfg.seed)
+        gens = cfg.generators or default_generators()
         tasks: list[RGymTask] = []
         idx = 0
         for gen in gens:
