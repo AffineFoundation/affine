@@ -49,6 +49,7 @@ secret.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import gzip
 import hashlib
 import io
@@ -1317,6 +1318,14 @@ def main() -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    # One fold at a time: the pm2 cron and an operator's manual run share
+    # state.json, the pack dir and the deferred file. The lock lives for the
+    # process; a second instance exits at once instead of racing.
+    lock = open(STATE_DIR / "fold.lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fatal("another fold is running (ops/corpus_build/fold.lock held); exiting")
     cfg = load_config()
     public_base = cfg.data_r2["public_base_url"].rstrip("/")
     pub = PublicCorpus(public_base)
