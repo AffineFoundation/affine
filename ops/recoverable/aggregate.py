@@ -220,16 +220,16 @@ def main() -> None:
         "n_admit": sum(1 for r in rows if r["admit"]),
         "cost_usd": round(cost, 2),
         "tokens": dict(tokens),
-        "by_state_kind": rate_table(ran, lambda r: r["state_kind"]),
-        "by_harness": rate_table(ran, lambda r: r["harness"]),
-        "by_source": rate_table(ran, lambda r: r["source"]),
-        "by_depth": rate_table(ran, lambda r: depth_bucket(r["turn_idx"])),
-        "by_kind_and_harness": rate_table(ran, lambda r: f"{r['state_kind']}/{r['harness']}"),
+        "by_state_kind": rate_table(rows, lambda r: r["state_kind"]),
+        "by_harness": rate_table(rows, lambda r: r["harness"]),
+        "by_source": rate_table(rows, lambda r: r["source"]),
+        "by_depth": rate_table(rows, lambda r: depth_bucket(r["turn_idx"])),
+        "by_kind_and_harness": rate_table(rows, lambda r: f"{r['state_kind']}/{r['harness']}"),
         "by_onset_rank": rate_table(
-            [r for r in ran if r["state_kind"] == "loop_onset"],
+            [r for r in rows if r["state_kind"] == "loop_onset"],
             lambda r: "first onset" if r["onset_rank"] == 1 else "later onset"),
     }
-    docker = [r for r in ran if r["harness"] != "null"]
+    docker = [r for r in rows if r["harness"] != "null"]
     summary["by_depth_agent_harnesses"] = rate_table(docker, lambda r: depth_bucket(r["turn_idx"]))
     summary["by_onset_rank_agent_harnesses"] = rate_table(
         [r for r in docker if r["state_kind"] == "loop_onset"],
