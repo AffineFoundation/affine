@@ -23,8 +23,8 @@ class ToolParityError(ValueError):
 
 
 class TraceShapeError(ValueError):
-    """The message graph has no single root, or a node points at a parent
-    that does not exist — the trace cannot be walked."""
+    """The message graph has no root, or a node points at a parent that does
+    not exist (or comes later) — the trace cannot be walked."""
 
 
 def message_text(content) -> str:
@@ -55,6 +55,17 @@ def sampled_paths(trace: dict) -> list[list[dict]]:
     path (a harness re-stating or rewriting an earlier reply) stay as
     prefix history; only sampled nodes are replies to score.
 
+    The graph may be a forest. Agent harnesses run side conversations
+    against the same model inside one rollout — Claude Code asks it to
+    summarize a fetched web page (WebFetch), Kimi Code delegates to a
+    sub-agent with its own task, pi compacts its history through a
+    "context summarization assistant" — and verifiers commits each as its
+    own root, because each was a separate prompt with its own system
+    message. Every sampled node's prefix is the path to ITS root, which is
+    exactly what the model saw for that reply; until 2026-09-12 a second
+    root failed the whole rollout (37 % of the teacher's Claude Code
+    rollouts, 20 of 92 of the king's).
+
     Traces without `parent` (mini_swe adapter, older dumps) are linear by
     construction: the path to node i is nodes[:i+1]."""
     nodes = trace["nodes"]
@@ -67,8 +78,8 @@ def sampled_paths(trace: dict) -> list[list[dict]]:
             parent = nd.get("parent")
             if parent is not None and not 0 <= parent < i:
                 raise TraceShapeError(f"node {i} has parent {parent}")
-        if sum(nd.get("parent") is None for nd in nodes) != 1:
-            raise TraceShapeError("graph does not have exactly one root")
+        if not any(nd.get("parent") is None for nd in nodes):
+            raise TraceShapeError("graph has no root")
     paths: list[list[dict]] = []
     for i, nd in enumerate(nodes):
         if msgs[i] is None or msgs[i]["role"] != "assistant":
