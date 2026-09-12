@@ -471,8 +471,11 @@ share = 1.0
 # -- general (env wave 1, 2026-09-11; data plan W3 "environment breadth") ---------
 #
 # Eight Prime RL environments outside the coding / terminal axis, onboarded
-# TEACHER-FIRST: teacher policies only; king_* policies follow a fold read of
-# mean_r_leg / ref yield per source (AGENTS.md teacher-first rule). Every
+# TEACHER-FIRST (2026-09-11: teacher policies only). 2026-09-12 (data plan
+# W3 part A): the king seat joins every source — king_text on the `text`
+# sources, king_boxed / king_toolcall / the shell kings where the harness
+# requires — so kings.affine.io shows king-vs-teacher on the same tasks
+# (the seat scheduler replays the teacher's pool for each king). Every
 # source is a thin wrapper under rollouts/envs/affine_<x>_v1 over the
 # research-environments taskset: a real system message (the fold drops
 # prefixes without one), a `tasks` selector, and the grade under a fold key
@@ -508,7 +511,7 @@ split = "train"
 row_meta = "i3_logic"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_text"]
+policies = ["teacher_text", "king_text"]   # + king seat 2026-09-12 (W3 part A)
 strata_buckets = 340
 strata_offset = 0
 share = 1.0
@@ -530,7 +533,7 @@ split = "train"
 row_meta = "triviaqa"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_text"]
+policies = ["teacher_text", "king_text"]   # + king seat 2026-09-12
 strata_buckets = 230
 strata_offset = 340
 share = 1.0
@@ -549,7 +552,7 @@ split = "train"
 row_meta = "rlvr_ifeval"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_text"]
+policies = ["teacher_text", "king_text"]   # + king seat 2026-09-12
 strata_buckets = 230
 strata_offset = 570
 # Probe: 12/12 solved (one constraint per prompt is easy for the teacher;
@@ -571,7 +574,7 @@ split = "train"
 row_meta = "i3_science"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_boxed"]
+policies = ["teacher_boxed", "king_boxed"]   # + king seat 2026-09-12
 strata_buckets = 340
 strata_offset = 800
 # Probe: 3/12 by math-verify (a lower bound: free-text golds), replies p50
@@ -592,7 +595,7 @@ split = "train"
 row_meta = "unscramble"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_text"]
+policies = ["teacher_text", "king_text"]   # + king seat 2026-09-12
 strata_buckets = 115
 strata_offset = 1140
 share = 0.5
@@ -609,7 +612,8 @@ row_meta = "prolog"
 procedural_uids = 3000
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased",
+            "king_bashtool", "king_pi", "king_textbased"]   # + king seat 2026-09-12
 extra_flags = ["--env.taskset.difficulty", "medium"]
 strata_buckets = 230
 strata_offset = 1255
@@ -632,7 +636,7 @@ row_meta = "needle"
 procedural_uids = 5000
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_boxed"]
+policies = ["teacher_boxed", "king_boxed"]   # + king seat 2026-09-12 (idle at share 0.0)
 strata_buckets = 115
 strata_offset = 1485
 share = 0.0
@@ -651,7 +655,7 @@ row_meta = "wikispeedia"
 procedural_uids = 4000
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_toolcall"]
+policies = ["teacher_toolcall", "king_toolcall"]   # + king seat 2026-09-12
 strata_buckets = 230
 strata_offset = 1600
 share = 1.0

@@ -216,7 +216,14 @@ def seat_of(policy_id: str) -> str:
 def harness_label(policy: dict) -> str:
     h = policy.get("harness") or ""
     if h == "null":
-        return "boxed" if policy.get("action_kind") == "boxed" else "toolcall"
+        # The null harness plays three dialects: math-style \boxed{} answers,
+        # native tool calling, and (env wave 1) the whole visible reply.
+        kind = policy.get("action_kind")
+        if kind == "boxed":
+            return "boxed"
+        if kind == "text":
+            return "text"
+        return "toolcall"
     return HARNESS_LABELS.get(h, h or "unknown")
 
 
