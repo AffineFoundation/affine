@@ -20,7 +20,8 @@ RUNNERS = ("verifiers", "verifiers_chat", "mini_swe")
 KING_POLICY_PREFIX = "king_"
 CATALOG_KINDS = ("hf", "hf_swebench", "swesmith", "terminal_lego",
                  "terminal_bench_2", "harbor_swe", "nl2repobench",
-                 "general_agent", "procedural", "tmax", "longcot", "autobench")
+                 "general_agent", "procedural", "tmax", "longcot", "autobench",
+                 "rgym", "rcore", "oolong")
 SELECT_MODES = ("filter_fn", "tasks")
 
 _PKG_DIR = Path(__file__).resolve().parent
