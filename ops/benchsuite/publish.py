@@ -110,7 +110,7 @@ def scorecard(run_dir: Path) -> dict:
                 "cost": (manifest.get("cells", {}).get(f"{env_id}__{tkey}") or {}),
             })
     unfinished = sorted(str(d.relative_to(run_dir)) for d in run_dir.glob("*/*")
-                        if d.is_dir() and (d / "traces.jsonl").exists() and not (d / "summary.json").exists())
+                        if d.is_dir() and (d / "cmd.txt").exists() and not (d / "summary.json").exists())
     return {
         "run_id": manifest.get("run_id"),
         "status": "partial" if unfinished else "complete",
