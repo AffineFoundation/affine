@@ -11,6 +11,9 @@ Definitions. n = tasks graded. score = mean reward (a solve rate for binary
 graders). CI = 95% Wilson score interval for binary graders, normal
 approximation otherwise. delta = king − teacher in percentage points. "cap"
 = share of king rollouts whose last model call stopped at the token cap.
+"t/o/ctx" = rollouts that ran out of the time budget / overflowed the context
+(both score 0: the model did not finish the task). Infrastructure errors are
+excluded from n and listed as errored.
 """
 
 from __future__ import annotations
@@ -79,10 +82,12 @@ def scorecard(card: dict, markdown: bool) -> str:
             side(kk), side(tt),
             "–" if d is None else f"{100 * d:+.1f}",
             "–" if not kk else pct(kk.get("finish_length_frac"), 0),
+            "–" if not kk else f"{kk.get('n_timeout') or 0}/{kk.get('n_context_overflow') or 0}",
+            "–" if not tt else f"{tt.get('n_timeout') or 0}/{tt.get('n_context_overflow') or 0}",
             "–" if not kk else f"{(kk.get('wall_seconds') or 0) / 60:.0f}",
         ])
     header = ["benchmark", "group", "T", "n", "king % [95% CI]", "teacher % [95% CI]",
-              "Δ pt", "king cap %", "min"]
+              "Δ pt", "king cap %", "king t/o/ctx", "teacher t/o/ctx", "min"]
     out = "\n".join(head) + "\n\n" + table(body, header, markdown)
     sk = card.get("skipped") or []
     if sk:

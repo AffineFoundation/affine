@@ -142,8 +142,24 @@ def summarize_traces(path: Path, reward_name: str) -> dict:
                 "stop_condition": t.get("stop_condition"),
                 "ok": bool(e.get("ok")) and bool(t.get("ok")),
                 "errors": episode_errors + [x.get("type") for x in (t.get("errors") or [])],
+                "error_messages": [(x.get("message") or "")[:120] for x in (e.get("errors") or []) + (t.get("errors") or [])],
                 "n_nodes": len(t.get("nodes") or []),
             })
+    # Error classes. A rollout that ran out of its time budget or overflowed
+    # the model's context is the MODEL failing the task (score 0, like any
+    # benchmark harness treats budget exhaustion); an infrastructure error
+    # (sandbox died, proxy cut, tool server bug) is excluded from n.
+    def err_class(r):
+        msgs = " ".join(r["error_messages"])
+        if "agent timeout" in msgs:
+            return "timeout"
+        if "maximum context length" in msgs:
+            return "context_overflow"
+        return "infra" if r["errors"] else None
+    for r in rows:
+        r["error_class"] = err_class(r)
+        if r["error_class"] in ("timeout", "context_overflow") and r["score"] is None:
+            r["score"] = 0.0
     scored = [r["score"] for r in rows if r["score"] is not None]
     binary = all(s in (0.0, 1.0) for s in scored)
     if binary:
@@ -154,7 +170,9 @@ def summarize_traces(path: Path, reward_name: str) -> dict:
         mean, lo, hi = mean_ci(scored)
     return {
         "n": len(rows), "n_scored": len(scored),
-        "n_errored": sum(1 for r in rows if r["errors"]),
+        "n_errored": sum(1 for r in rows if r["error_class"] == "infra"),
+        "n_timeout": sum(1 for r in rows if r["error_class"] == "timeout"),
+        "n_context_overflow": sum(1 for r in rows if r["error_class"] == "context_overflow"),
         "score": round(mean, 4), "ci95": [round(lo, 4), round(hi, 4)],
         "binary": binary,
         "prompt_tokens": sum(r["prompt_tokens"] for r in rows),
