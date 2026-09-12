@@ -17,8 +17,12 @@ duel corpus:
   * a real *system* message (the base ships none). The permutation is a
     `boxed` answer, but the rollout is a shell-harness trajectory - the shell
     harness supplies the dialect word and the final reply carries the box;
-  * `solved` = 1.0 iff upstream's reward is 1.0 (exact reconstruction);
-    upstream's graded `ordering_reward` stays a metric.
+  * `solved` = 1.0 iff upstream's reward is >= SOLVED_THRESHOLD (0.9: the
+    paragraphs are all assigned to the paper and the within-paper Kendall
+    concordance is >= 0.9 - one or two adjacent swaps on a 30-paragraph
+    paper). Exact reconstruction was 2/12 on the teacher probe (below the
+    20 % band); >= 0.9 was 4/12. Upstream's graded `ordering_reward` stays a
+    metric.
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ from deshuffle_papers.taskset import (
 )
 
 DEFAULT_NUM_TASKS = 3000
+SOLVED_THRESHOLD = 0.9
 SYSTEM = (
     "You reconstruct a document whose paragraphs were shuffled. The file "
     "paragraphs.jsonl in the working directory holds them, one JSON line per "
@@ -50,7 +55,7 @@ class DeshuffleTask(BaseDeshuffleTask):
     async def solved(self, trace: vf.Trace) -> float:
         reward, metrics = analyze_ordering(trace.last_reply or "", self.data.gold)
         trace.record_metrics({**metrics, "ordering_reward": reward})
-        return 1.0 if reward >= 1.0 else 0.0
+        return 1.0 if reward >= SOLVED_THRESHOLD else 0.0
 
     async def ordering_reward(self, trace: vf.Trace) -> float:
         # Undecorated override: counted once, under `solved` (graded value is a metric).

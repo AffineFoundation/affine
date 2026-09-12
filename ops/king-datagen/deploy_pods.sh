@@ -73,10 +73,9 @@ ENV_GIT_DEPS=("longcot @ git+https://github.com/LongHorizonReasoning/longcot.git
               "automation-bench @ git+https://github.com/mikasenghaas/AutomationBench.git@6f0e683")
 # EnterpriseOps-Gym service images (digest-pinned, Docker Hub) are pulled once
 # so the first rollouts do not pay for them; python:3.12-slim is the sql
-# sandbox. The numina Mathlib image (projectnumina/kimina-lean-server:2.0.0,
-# 2.9 GB) is pulled only while affine_numina has share > 0 (pulled lazily by
-# the runtime otherwise).
-ENV_IMAGES=(swipl:latest python:3.12-slim
+# sandbox; projectnumina/kimina-lean-server:2.0.0 (2.9 GB compressed) is the
+# Lean 4.15 + Mathlib box for affine_numina (live since 2026-09-12).
+ENV_IMAGES=(swipl:latest python:3.12-slim projectnumina/kimina-lean-server:2.0.0
   shivakrishnareddyma225/enterpriseops-gym-mcp-calendar@sha256:994c5421a6dd065861bc7f813a177f6d408875e9df60fe8d012959bc4510da02
   shivakrishnareddyma225/enterpriseops-gym-mcp-csm@sha256:eaa456ac9aa85728426e7d3813a0bbca0949d6a8695be30e26f03894e6e6b189
   shivakrishnareddyma225/enterpriseops-gym-mcp-drive@sha256:3475962fcf6da7675e194dbf138de01fa3e96134a302ad47316e4111a5e63f32
@@ -126,7 +125,11 @@ vend=(); for p in '"${VENDOR_ENVS[*]}"'; do vend+=(-e "/root/rollouts/vendor/$p"
 uv pip install --python .venv/bin/python -q --no-deps "${vend[@]}" || exit 1
 wrap=(); for p in '"${ENV_PKGS[*]}"'; do wrap+=(-e "/root/rollouts/envs/$p"); done
 uv pip install --python .venv/bin/python -q --no-deps "${wrap[@]}" || exit 1
-uv pip install --python .venv/bin/python -q '"${ENV_EXTRA_DEPS[*]}"' || exit 1
+# Extra deps resolve WITH their dependencies but under a constraints file
+# frozen from the venv itself, so nothing already installed (verifiers, the
+# prime-* packages, pydantic, ...) can change version.
+.venv/bin/python -m pip freeze --exclude-editable 2>/dev/null > /tmp/venv-constraints.txt || uv pip freeze --python .venv/bin/python | grep -v "^-e" > /tmp/venv-constraints.txt
+uv pip install --python .venv/bin/python -q -c /tmp/venv-constraints.txt '"${ENV_EXTRA_DEPS[*]}"' || exit 1
 uv pip install --python .venv/bin/python -q --no-deps '"$(printf "%q " "${ENV_GIT_DEPS[@]}")"' || exit 1
 .venv/bin/python -c "import '"$(IFS=,; echo "${ENV_PKGS[*]}")"'; import verifiers; assert verifiers.__file__.startswith(\"/root/prime-pilot/verifiers/\"), verifiers.__file__; print(\"ENV_IMPORT_OK\")" || exit 1
 for img in '"${ENV_IMAGES[*]}"'; do docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null || echo "WARNING: pull failed $img"; done' \
