@@ -56,6 +56,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import sys
 import tempfile
 import tomllib
@@ -672,11 +673,51 @@ MAX_PREFIX_TOKENS = 110_000
 TOKEN_GUARD_FROM_CHARS = 120_000
 
 
+class PrefixTokenCache:
+    """sha256(prefix text) -> token count, on disk (sqlite under CACHE_DIR).
+
+    Tokenizing a 100-300k-char prefix with the teacher tokenizer costs
+    ~0.5 s and the same prefixes come back on every dry run / re-derive
+    (2026-09-12: a 213-chunk multi-root back-fill ran > 1.5 h in
+    tokenization alone before its real run). The count is a pure function
+    of the text and the pinned tokenizer, so caching it changes nothing."""
+
+    def __init__(self, path: Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(str(path), timeout=60)
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("CREATE TABLE IF NOT EXISTS tok (k TEXT PRIMARY KEY, n INTEGER)")
+        self.conn.commit()
+        self.hits = self.misses = 0
+
+    def count(self, text: str, baker: ToolBaker) -> int:
+        k = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        row = self.conn.execute("SELECT n FROM tok WHERE k = ?", (k,)).fetchone()
+        if row is not None:
+            self.hits += 1
+            return int(row[0])
+        n = len(baker.tok(text, add_special_tokens=False)["input_ids"])
+        self.conn.execute("INSERT OR IGNORE INTO tok (k, n) VALUES (?, ?)", (k, n))
+        self.conn.commit()
+        self.misses += 1
+        return n
+
+
+_TOKEN_CACHE: PrefixTokenCache | None = None
+
+
+def token_cache() -> PrefixTokenCache:
+    global _TOKEN_CACHE
+    if _TOKEN_CACHE is None:
+        _TOKEN_CACHE = PrefixTokenCache(CACHE_DIR / "prefix_tokens.sqlite")
+    return _TOKEN_CACHE
+
+
 def prefix_over_token_cap(turn: dict, baker: ToolBaker) -> bool:
     if int(turn.get("n_prefix_chars") or 0) <= TOKEN_GUARD_FROM_CHARS:
         return False
     text = "\n".join(m.get("content", "") for m in turn.get("prefix") or [])
-    n = len(baker.tok(text, add_special_tokens=False)["input_ids"])
+    n = token_cache().count(text, baker)
     return n + 8 * len(turn.get("prefix") or []) > MAX_PREFIX_TOKENS
 
 
@@ -1435,6 +1476,8 @@ def main() -> None:
             log(f"derived {i}/{len(unfolded)} chunks: {len(candidates)} rollouts, "
                 f"{sum(len(r['turns']) for r in candidates)} turns")
     log(f"drops: {drops or 'none'}")
+    if _TOKEN_CACHE is not None:
+        log(f"prefix token cache: {_TOKEN_CACHE.hits} hits / {_TOKEN_CACHE.misses} misses")
     if king_loop:
         log(f"king loop onsets: labelled {notes.get('king_loop_labelled_rollouts', 0)} "
             f"failed king rollouts -> {notes.get('king_loop_onset_labels', 0)} onset / "
