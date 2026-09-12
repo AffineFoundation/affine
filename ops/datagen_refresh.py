@@ -82,8 +82,9 @@ MIN_NEW_TURNS = 200
 STALE_AFTER_S = 48 * 3600
 # Bittensor guild -> SN120 community channel (120・ⴷffine・ⴷ), same venue as
 # the manual epoch-2 announcement (message 1535361517502070917).
-DISCORD_GUILD_ID = "799672011265015819"
-DISCORD_CHANNEL_ID = "1381987595881414656"
+# Private Arbos ops channel (operator directive 2026-09-12); legacy script.
+DISCORD_GUILD_ID = "1489753158883344497"
+DISCORD_CHANNEL_ID = "1510910974498967613"
 # Read-only fetch of the datagen pod's env file (pod owned by another agent;
 # we only ever read the token line).
 DATAGEN_POD_SSH = [
