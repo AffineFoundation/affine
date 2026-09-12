@@ -54,7 +54,7 @@
     tbody.innerHTML = "";
     if (!r) { $("#bench-meta").textContent = "no benchmark runs published yet"; return; }
     const w = r.where || {};
-    $("#bench-meta").textContent = `${r.rows.length} rows · run created ${(r.created_at || "").replace("T", " ")} · ` +
+    $("#bench-meta").textContent = `${r.rows.length} rows · ${r.status === "partial" ? "PARTIAL (still running) · " : ""}run created ${(r.created_at || "").replace("T", " ")} · ` +
       `${w.provider || ""} ${w.gpu || ""} · teacher ${(r.teacher || {}).hf_repo || ""}` +
       (r.prime_spent_usd !== undefined && r.prime_spent_usd !== null ? ` · pod cost ≈ $${r.prime_spent_usd}` : "");
     const rows = [...r.rows].sort((a, b) => (a.group || "").localeCompare(b.group || "") || a.env.localeCompare(b.env) || a.temperature - b.temperature);

@@ -109,8 +109,12 @@ def scorecard(run_dir: Path) -> dict:
                 "delta": None if not (k and t) else round(k["score"] - t["score"], 4),
                 "cost": (manifest.get("cells", {}).get(f"{env_id}__{tkey}") or {}),
             })
+    unfinished = sorted(str(d.relative_to(run_dir)) for d in run_dir.glob("*/*")
+                        if d.is_dir() and (d / "traces.jsonl").exists() and not (d / "summary.json").exists())
     return {
         "run_id": manifest.get("run_id"),
+        "status": "partial" if unfinished else "complete",
+        "unfinished_cells": unfinished,
         "king": manifest.get("king"), "teacher": manifest.get("teacher"),
         "where": manifest.get("where"), "code": manifest.get("code"),
         "created_at": manifest.get("created_at"),
