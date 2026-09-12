@@ -80,7 +80,8 @@ def eval_cmd(cfg: RolloutsConfig, source: Source, endpoint: Endpoint,
         "--env.agent.timeout.rollout", str(cfg.rollout_timeout_s),
         "--env.agent.timeout.scoring", "1800",
         "--push", "False", "--rich", "False",
-        "-c", str(min(cfg.max_containers, len(uids))),
+        "-c", str(min(cfg.max_containers, source.max_concurrency or cfg.max_containers,
+                      len(uids))),
         "-o", str(run_dir),
     ]
     # Policy sampling rides the v1 eval CLI's dotted SamplingConfig; unset

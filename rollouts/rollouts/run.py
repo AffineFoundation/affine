@@ -303,7 +303,7 @@ def main() -> None:
         else:
             policy = scheduler.pick_policy(name, pools[name])
         pending = scheduler.pending(name, pools[name], policy)
-        batch = pending[: cfg.batch_size]
+        batch = pending[: min(cfg.batch_size, source.max_batch or cfg.batch_size)]
         log.info("cycle: source=%s policy=%s batch=%d seat_pending=%d "
                  "remaining=%s", name, policy.id, len(batch), len(pending),
                  remaining)

@@ -62,6 +62,14 @@ class Source:
     # of a seeded generator; catalog.PROCEDURAL_META[row_meta] names each
     # index the way the taskset does, so no taskset import is needed here.
     procedural_uids: int = 0
+    # Per-source ceilings on the batch (tasks per eval) and on concurrent
+    # containers, below the pod-wide ROLLOUTS_BATCH_SIZE / MAX_CONTAINERS.
+    # 0 = the pod-wide value. For heavy sandboxes (tmax compiler / fuzzing
+    # tasks at 2 GB each, Lean compiles, EOG service containers): on
+    # 2026-09-12 datagen-4 went ssh-dark under 24 such containers on top of
+    # a production batch.
+    max_batch: int = 0
+    max_concurrency: int = 0
 
 
 @dataclass(frozen=True)
@@ -171,6 +179,8 @@ def _load_sources(path: Path, policies: dict[str, Policy],
             strata_buckets=int(cfg.get("strata_buckets", 0)),
             strata_offset=int(cfg.get("strata_offset", 0)),
             procedural_uids=int(cfg.get("procedural_uids", 0)),
+            max_batch=int(cfg.get("max_batch", 0)),
+            max_concurrency=int(cfg.get("max_concurrency", 0)),
         )
         if src.group not in mix:
             raise ValueError(f"source {name!r} group {src.group!r} missing "
