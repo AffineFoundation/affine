@@ -202,6 +202,11 @@ def bootstrap_dz(d1: list[float], d0: list[float], n_boot: int = 1000, seed: int
     return vals[int(0.025 * len(vals))], vals[int(0.975 * len(vals)) - 1]
 
 
+def smean(xs) -> float:
+    xs = [x for x in xs if x is not None and not (isinstance(x, float) and math.isnan(x))]
+    return st.mean(xs) if xs else float("nan")
+
+
 def frac(xs):
     xs = [x for x in xs if x is not None]
     return st.mean(1.0 if x else 0.0 for x in xs) if xs else float("nan")
@@ -221,22 +226,22 @@ def summarize(tcs_by_cond: dict[str, list[dict]], groups: list[str], label: str)
                    "n_hinted": sum(1 for t in sub if t["effective"] != "H0"),
                    "grounded_frac": frac([t["grounded"] for t in sub if t["cond"] != "H0"]),
                    "leak_frac": frac([t["leaks_future"] for t in sub if t["cond"] != "H0"]),
-                   "ref_yield": st.mean(t["n_valid"] / 3 for t in sub),
-                   "cap_hit": st.mean(t["cap_hit"] for t in sub),
+                   "ref_yield": smean(t["n_valid"] / 3 for t in sub),
+                   "cap_hit": smean(t["cap_hit"] for t in sub),
                    "identical_frac": frac([t["identical"] for t in sub if t["n_valid"] >= 2]),
                    "r_dead_frac": frac([t["r_dead"] for t in sub]),
-                   "ref_z_len": st.mean(t["ref_z_len"] for t in sub if t["ref_z_len"] is not None) if any(t["ref_z_len"] is not None for t in sub) else float("nan"),
-                   "ref_leak": st.mean(t["ref_leak"] for t in sub if t["ref_leak"] is not None) if any(t["ref_leak"] is not None for t in sub) else float("nan"),
-                   "t_in_band0": st.mean(t["t_in_band0"] for t in sub if t["t_in_band0"] is not None) if any(t["t_in_band0"] is not None for t in sub) else float("nan"),
-                   "t_pos0": st.mean(t["t_pos0"] for t in sub if t["t_pos0"] is not None) if any(t["t_pos0"] is not None for t in sub) else float("nan"),
+                   "ref_z_len": smean(t["ref_z_len"] for t in sub if t["ref_z_len"] is not None) if any(t["ref_z_len"] is not None for t in sub) else float("nan"),
+                   "ref_leak": smean(t["ref_leak"] for t in sub if t["ref_leak"] is not None) if any(t["ref_leak"] is not None for t in sub) else float("nan"),
+                   "t_in_band0": smean(t["t_in_band0"] for t in sub if t["t_in_band0"] is not None) if any(t["t_in_band0"] is not None for t in sub) else float("nan"),
+                   "t_pos0": smean(t["t_pos0"] for t in sub if t["t_pos0"] is not None) if any(t["t_pos0"] is not None for t in sub) else float("nan"),
                    }
             for mname in ("teacher_heldout", "king_live", "recorded", "stored_king", "stored_chal"):
                 ms = [t["miners"][mname] for t in sub if mname in t["miners"] and not t["miners"][mname]["forfeit"]]
                 if ms:
-                    row[f"R_{mname}"] = st.mean(m["R"] for m in ms if m["R"] is not None)
-                    row[f"asd_{mname}"] = st.mean(m["a_sd"] for m in ms)
-                    row[f"G0_{mname}"] = st.mean(m["G0"] for m in ms if m["G0"] is not None) if any(m["G0"] is not None for m in ms) else float("nan")
-                    row[f"score_{mname}"] = st.mean(m["score"] for m in ms if m["score"] is not None) if any(m["score"] is not None for m in ms) else float("nan")
+                    row[f"R_{mname}"] = smean(m["R"] for m in ms if m["R"] is not None)
+                    row[f"asd_{mname}"] = smean(m["a_sd"] for m in ms)
+                    row[f"G0_{mname}"] = smean(m["G0"] for m in ms if m["G0"] is not None) if any(m["G0"] is not None for m in ms) else float("nan")
+                    row[f"score_{mname}"] = smean(m["score"] for m in ms if m["score"] is not None) if any(m["score"] is not None for m in ms) else float("nan")
                     row[f"forfeit_{mname}"] = 1 - len(ms) / sum(1 for t in sub if mname in t["miners"])
             for a, b in PAIRS:
                 d = paired(sub, a, b)
