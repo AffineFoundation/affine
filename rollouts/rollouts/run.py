@@ -40,7 +40,11 @@ from rollouts.r2mirror import R2TraceMirror
 from rollouts.registry import Registry, load_registry
 from rollouts.runners.base import BatchResult, EndpointHealth
 from rollouts.runners.mini_swe import MiniSweRunner
-from rollouts.runners.verifiers import VerifiersChatRunner, VerifiersRunner
+from rollouts.runners.verifiers import (
+    VerifiersChatRunner,
+    VerifiersRunner,
+    reap_all_verifiers_containers,
+)
 from rollouts.scheduler import Scheduler, UnifiedState
 from rollouts.store import TraceStore
 from rollouts.uploader import TraceMirror
@@ -196,6 +200,11 @@ def main() -> None:
                          "every cycle (diagnostics; with --source)")
     ap.add_argument("--no-mirror", action="store_true",
                     help="skip the HF cold copy of trace chunks")
+    ap.add_argument("--reap-all", action="store_true",
+                    help="at start-up, remove EVERY container in the verifiers "
+                         "image namespaces, whoever created it (pod-start "
+                         "orphan sweep; the per-batch reaper only touches this "
+                         "supervisor's and dead supervisors' containers)")
     args = ap.parse_args()
     logging.basicConfig(
         level=logging.INFO,
@@ -217,6 +226,8 @@ def main() -> None:
         sys.exit("no policy endpoint has its key env set (fail-closed)")
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(cfg.data_dir / "runs", ignore_errors=True)
+    if args.reap_all:
+        reap_all_verifiers_containers()
 
     state = UnifiedState(cfg.state_path, harness_of={
         pid: p.harness for pid, p in registry.policies.items()})
