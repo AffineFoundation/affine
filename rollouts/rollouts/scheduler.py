@@ -14,14 +14,24 @@ Kept-turn counts come from the unified state (one jsonl row per processed
 task, written after its batch converts) — the same numbers the Parquet
 index carries, but restart-cheap to load.
 
-Seats (2026-09-10): "done" is per (source, SEAT), not per source. The
-teacher seat is every non-king policy (one pass over each task, as before).
-Each king is its own seat, `king:<served model>`, so the king replays tasks
-the teacher already solved — its failures on the teacher's tasks are the
-whole point of the king seat (DAgger) — and a newly crowned king starts
-over. Before this, the king could only pick tasks the teacher had not
-reached yet: every exhausted pool (terminal, math, tool_use, nl2repo) was
-closed to it and king failures came from three coding sources only.
+Seats (2026-09-10): "done" is per (source, SEAT), not per source. Each
+king is its own seat, `king:<served model>`, so the king replays tasks the
+teacher already solved — its failures on the teacher's tasks are the whole
+point of the king seat (DAgger) — and a newly crowned king starts over.
+Before this, the king could only pick tasks the teacher had not reached
+yet: every exhausted pool (terminal, math, tool_use, nl2repo) was closed to
+it and king failures came from three coding sources only.
+
+Teacher seats per (model, harness) (2026-09-11): a non-king policy's seat
+is `<served model>:<harness>`. Before, every non-king policy shared ONE
+seat, so a task rolled once by any of them (GLM-era `glm_textbased`, or the
+teacher under mini-swe) was closed to every other teacher harness for
+good: `teacher_terminus` / `teacher_kimi` / `teacher_hermes` had never run
+a single task, terminal_bench_2 and nl2repobench had only GLM rollouts,
+and 1,848 math problems only a GLM `boxed` answer — while the king seat
+replays all of them on every harness. Now each teacher harness makes its
+own pass over each source, the king's tasks first (`pending`), so every
+(env, harness) the king runs gets a teacher baseline on the same tasks.
 """
 
 from __future__ import annotations
@@ -41,20 +51,27 @@ log = logging.getLogger("rollouts.scheduler")
 ZERO_YIELD_STRIKES = 3        # consecutive zero-kept batches -> cooldown
 ZERO_YIELD_COOLDOWN_S = 4 * 3600
 KING_POLICY_PREFIX = "king_"
-TEACHER_SEAT = "teacher"
+KING_SEAT_PREFIX = "king:"
 
 
-def seat_of(policy_id: str, model: str) -> str:
-    """The seat a (policy, served model) plays. `model` is the endpoint's
-    model name (the `provider` label on state rows is `<endpoint>/<model>`)."""
+def seat_of(policy_id: str, model: str, harness: str = "") -> str:
+    """The seat a (policy, served model, harness) plays. `model` is the
+    endpoint's model name (the `provider` label on state rows is
+    `<endpoint>/<model>`). Kings: one seat per served model, all harnesses
+    (one pass over each task). Everyone else: one seat per (model,
+    harness), so each teacher harness passes over every task once."""
     if policy_id.startswith(KING_POLICY_PREFIX):
-        return f"king:{model or 'unknown'}"
-    return TEACHER_SEAT
+        return f"{KING_SEAT_PREFIX}{model or 'unknown'}"
+    return f"{model or 'unknown'}:{harness or 'unknown'}"
+
+
+def is_king_seat(seat: str) -> bool:
+    return seat.startswith(KING_SEAT_PREFIX)
 
 
 def policy_seat(policy: Policy, env: dict) -> str:
     eps = policy.available_endpoints(env)
-    return seat_of(policy.id, eps[0].model if eps else "")
+    return seat_of(policy.id, eps[0].model if eps else "", policy.harness)
 
 
 class UnifiedState:
@@ -63,9 +80,17 @@ class UnifiedState:
     (restart-safe; rows are written only after its batch's traces were
     parsed)."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, harness_of: dict[str, str] | None = None):
+        # policy id -> harness, to place legacy rows (no harness column) in
+        # their (model, harness) seat; a retired policy id lands in
+        # `<model>:unknown`, which no live policy claims.
+        self.harness_of = harness_of or {}
         self.path = path
         self.done: dict[tuple[str, str], set[str]] = {}
+        # (source, harness) -> tasks some KING already rolled under that
+        # harness: the teacher's first pick, so king failures get a teacher
+        # baseline on the same task and harness.
+        self.king_done: dict[tuple[str, str], set[str]] = {}
         self.kept_by_source: dict[str, int] = {}
         self.kept_by_policy: dict[tuple[str, str], int] = {}
         if path.exists():
@@ -79,8 +104,12 @@ class UnifiedState:
         source, uid = rec["source"], rec["uid"]
         provider = str(rec.get("provider") or "")
         model = provider.split("/", 1)[1] if "/" in provider else provider
-        seat = seat_of(str(rec.get("policy_id") or ""), model)
+        pid = str(rec.get("policy_id") or "")
+        harness = str(rec.get("harness") or self.harness_of.get(pid, ""))
+        seat = seat_of(pid, model, harness)
         self.done.setdefault((source, seat), set()).add(uid)
+        if is_king_seat(seat) and harness:
+            self.king_done.setdefault((source, harness), set()).add(uid)
         n = int(rec.get("n_turns") or 0)
         self.kept_by_source[source] = self.kept_by_source.get(source, 0) + n
         pid = rec.get("policy_id") or ""
@@ -98,8 +127,16 @@ class UnifiedState:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         self._absorb(rec)
 
-    def done_for(self, source: str, seat: str = TEACHER_SEAT) -> set[str]:
-        return self.done.get((source, seat), set())
+    def done_for(self, source: str, seat: str | None = None) -> set[str]:
+        """Tasks `seat` has processed; seat None = the union over every
+        non-king seat (the source's tasks some teacher-side policy rolled)."""
+        if seat is not None:
+            return self.done.get((source, seat), set())
+        out: set[str] = set()
+        for (src, s), uids in self.done.items():
+            if src == source and not is_king_seat(s):
+                out |= uids
+        return out
 
 
 class Scheduler:
@@ -123,16 +160,30 @@ class Scheduler:
                 and self._usable_policies(name)]
 
     def pick_source(self, remaining: dict[str, int]) -> str | None:
+        """The source furthest below its target, measured RELATIVE to the
+        target: shortfall = 1 - kept / expected, where expected is the
+        source's share of all kept turns so far. 1.0 = nothing generated
+        yet, 0 = on target, negative = over.
+
+        Ranking by absolute deficit (until 2026-09-12) starved every small
+        source: the eight `general` sources at targets 0.005-0.009 sat at
+        +2-4k turns of deficit with zero batches while terminal_bench_2 at
+        +25k (already 18 % of its target) won every pick — a source's
+        deficit in turns scales with its target, so the big groups always
+        outranked the small ones. Absolute deficit stays the tie-break."""
         cands = self.eligible(remaining)
         if not cands:
             return None
         total_target = sum(self.targets[n] for n in cands)
         total_kept = sum(self.state.kept_by_source.get(n, 0)
                          for n in cands) + 1
-        def deficit(name: str) -> float:
-            share = self.targets[name] / total_target
-            return share * total_kept - self.state.kept_by_source.get(name, 0)
-        return max(cands, key=lambda n: (deficit(n), self.targets[n], n))
+        def rank(name: str) -> tuple[float, float, float, str]:
+            expected = self.targets[name] / total_target * total_kept
+            kept = self.state.kept_by_source.get(name, 0)
+            deficit = expected - kept
+            shortfall = deficit / expected if expected > 0 else 0.0
+            return (shortfall, deficit, self.targets[name], name)
+        return max(cands, key=rank)
 
     # -- policy pick -------------------------------------------------------------
 
@@ -154,9 +205,19 @@ class Scheduler:
     # -- seats: per-(source, seat) work ------------------------------------------
 
     def pending(self, source: str, rows: list[dict], policy: Policy) -> list[dict]:
-        """Pool rows this policy's seat has not processed, in pool order."""
+        """Pool rows this policy's seat has not processed, in pool order —
+        except that a teacher-side policy takes the tasks a king already
+        rolled under the same harness FIRST (the paired baseline), then the
+        rest of the pool."""
         done = self.state.done_for(source, policy_seat(policy, self.env))
-        return [r for r in rows if r["uid"] not in done]
+        todo = [r for r in rows if r["uid"] not in done]
+        if policy.id.startswith(KING_POLICY_PREFIX):
+            return todo
+        king_first = self.state.king_done.get((source, policy.harness), set())
+        if not king_first:
+            return todo
+        return ([r for r in todo if r["uid"] in king_first]
+                + [r for r in todo if r["uid"] not in king_first])
 
     def remaining(self, source: str, rows: list[dict]) -> int:
         """Tasks some usable policy of this source still has to run — the
