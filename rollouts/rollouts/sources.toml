@@ -695,8 +695,9 @@ max_concurrency = 8
 # Teacher-first: the four terminal-style harnesses; king_* and the IDE
 # agents follow the first fold read (wave-1 rule).
 policies = ["teacher_textbased", "teacher_bashtool", "teacher_pi", "teacher_terminus"]
-# share 0.0 until the 12-task probe grades (datagen-4 went dark mid-probe, 2026-09-12); flip to 1.0 then.
-share = 0.0
+# Probe 2026-09-12 (bash harness, 12 tasks at 6 concurrent): 9/12 solved, 85 kept
+# turns, 10 agent_completed + 2 errored; 12 images built on the pod.
+share = 1.0
 
 [source.affine_longcot]
 # LongCoT (longcot-v1): ~2,000 long-horizon reasoning tasks in five domains
@@ -928,7 +929,7 @@ share = 0.0
 [source.affine_rcore]
 # reasoning-core (v1 port of sileod/reasoning-core-env, 15 stars): formally
 # verified planning / logic / regex / math rows from
-# reasoning-core/formal-reasoning-env (train), scored by reasoning_core.
+# reasoning-core/symbolic-reasoning-env (train), scored by reasoning_core.
 # `text` dialect, answer in <answer> tags.
 group = "general"
 runner = "verifiers_chat"
