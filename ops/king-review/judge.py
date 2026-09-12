@@ -198,6 +198,10 @@ class Judge:
             try:
                 r = await client.post(f"{self.base_url}/chat/completions", json=body,
                                       headers=headers, timeout=900)
+                if r.status_code in (401, 403, 402):
+                    # a dead key / no credit does not get better with retries
+                    raise SystemExit(f"judge: API refused the key ({r.status_code}): "
+                                     f"{r.text[:160]}")
                 if r.status_code in (429, 500, 502, 503, 504, 524):
                     raise httpx.HTTPStatusError(f"{r.status_code}: {r.text[:200]}",
                                                 request=r.request, response=r)
@@ -342,16 +346,18 @@ class Judge:
 
     async def run(self, sample: list[dict], ts: TraceStore, env_groups: dict[str, str],
                   log=print) -> list[dict]:
+        async def guarded(item: dict) -> dict | None:
+            try:
+                return await self.judge_one(client, item, ts, env_groups, log)
+            except SystemExit:
+                raise
+            except Exception as ex:  # one bad rollout must not sink the run
+                log(f"  FAILED {item['rollout_id']}: {type(ex).__name__}: {str(ex)[:200]}",
+                    flush=True)
+                return None
         async with httpx.AsyncClient() as client:
-            tasks = [self.judge_one(client, item, ts, env_groups, log) for item in sample]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-        out = []
-        for item, r in zip(sample, results):
-            if isinstance(r, Exception):
-                log(f"  FAILED {item['rollout_id']}: {type(r).__name__}: {str(r)[:200]}")
-            elif r is not None:
-                out.append(r)
-        return out
+            results = await asyncio.gather(*(guarded(item) for item in sample))
+        return [r for r in results if r is not None]
 
 
 def load_api_key(env_names: list[str], key_file: str | None) -> str:
