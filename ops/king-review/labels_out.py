@@ -20,13 +20,110 @@ belong to the fold worker.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import io
+import json
+import os
+import time
 from pathlib import Path
 
+import httpx
+import pyarrow.parquet as pq
+
 from aggregate import all_pivots, category_of, load_judgments
-from krlib import read_jsonl, write_jsonl
+from krlib import load_king_pivot_config, read_jsonl, write_jsonl
 
 DEFAULT_MIN_CONFIDENCE = 0.7
 STRATA_BUCKETS = 1000
+DEFAULT_CORPUS_MANIFEST = "https://data.affine.io/corpus/manifest.json"
+
+
+def merge_side_table(path: Path, rows: list[dict]) -> dict:
+    """Merge `rows` into the side-table at `path` by turn_id and write it
+    atomically (the fold may read it at any moment). A row already there is
+    updated with the new judgment, except that `admit` never flips back to
+    false once it was true: the fold is forward-only, a turn it already
+    routed must keep its row. `first_written_at` is preserved."""
+    existing = {r["turn_id"]: r for r in read_jsonl(path)} if path.exists() else {}
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    added = updated = kept_admit = 0
+    for r in rows:
+        prev = existing.get(r["turn_id"])
+        row = dict(r)
+        if prev is None:
+            row["first_written_at"] = now
+            added += 1
+        else:
+            row["first_written_at"] = prev.get("first_written_at", now)
+            if prev.get("admit") and not row["admit"]:
+                row["admit"] = True
+                row["admit_kept_from_earlier_run"] = True
+                kept_admit += 1
+            updated += 1
+        row["written_at"] = now
+        existing[r["turn_id"]] = row
+    merged = sorted(existing.values(), key=lambda r: (r["rollout_id"], r["turn_idx"], r.get("pivot_rank", 0)))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + f".tmp-{os.getpid()}")
+    with open(tmp, "w") as f:
+        for r in merged:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    os.replace(tmp, path)
+    return {"rows": len(merged), "added": added, "updated": updated,
+            "admit_kept": kept_admit, "admitted": sum(1 for r in merged if r["admit"])}
+
+
+def published_strata(manifest_url: str = DEFAULT_CORPUS_MANIFEST) -> dict[str, str]:
+    """{turn_id: stratum} of the live corpus D (sha-verified index parquet
+    from the public corpus manifest). Empty when the corpus has no
+    schema-3 index."""
+    base = manifest_url.rsplit("/corpus/", 1)[0]
+    m = httpx.get(manifest_url, timeout=60).json()
+    idx = m.get("index")
+    if not idx:
+        return {}
+    raw = httpx.get(f"{base}/{idx['key']}", timeout=300).content
+    if hashlib.sha256(raw).hexdigest() != idx["sha256"]:
+        raise SystemExit(f"live index sha mismatch for {idx['key']}")
+    t = pq.read_table(io.BytesIO(raw), columns=["turn_id", "stratum"])
+    return dict(zip(t.column("turn_id").to_pylist(), t.column("stratum").to_pylist()))
+
+
+def routing_summary(rows: list[dict], fold: dict, published: dict[str, str] | None) -> dict:
+    """What the fold will do with the admitted rows: excluded by source or
+    category, already published (stays in its group), or new (routes)."""
+    out = {"rows": len(rows), "admitted": 0, "fold_excluded_source": 0,
+           "fold_excluded_category": 0, "below_fold_min_confidence": 0,
+           "already_published": 0, "already_published_by_stratum_prefix": {},
+           "will_route": 0, "will_route_by_harness": {}, "will_route_rollouts": 0}
+    route_rollouts = set()
+    for r in rows:
+        if not r["admit"]:
+            continue
+        out["admitted"] += 1
+        if r["source"] in fold["exclude_sources"]:
+            out["fold_excluded_source"] += 1
+            continue
+        if r["failure_category"] in fold["exclude_categories"]:
+            out["fold_excluded_category"] += 1
+            continue
+        if r["confidence"] < fold["min_confidence"]:
+            out["below_fold_min_confidence"] += 1
+            continue
+        if published is not None and r["turn_id"] in published:
+            out["already_published"] += 1
+            prefix = str(published[r["turn_id"]]).split(":")[0].split("|")[0]
+            d = out["already_published_by_stratum_prefix"]
+            d[prefix] = d.get(prefix, 0) + 1
+            continue
+        out["will_route"] += 1
+        h = out["will_route_by_harness"]
+        h[r["harness"]] = h.get(r["harness"], 0) + 1
+        route_rollouts.add(r["rollout_id"])
+    out["will_route_rollouts"] = len(route_rollouts)
+    if published is None:
+        out["note"] = "published index not checked; will_route counts every routable row"
+    return out
 
 
 def det_label_at(rec: dict, turn: int) -> list[str]:
@@ -85,7 +182,16 @@ def side_table(recs: list[dict], *, min_confidence: float, reign: str | None) ->
                 "judge_model": rec["judge_model"], "prompt_version": rec["prompt_version"],
                 "prompt_hash": rec["prompt_hash"], "judged_at": rec["judged_at"],
             })
-    return rows
+    # One row per turn_id: the blind and the revealed lists can name the same
+    # turn, and the fold keeps the LAST row it reads for a (rollout, turn) --
+    # an admitted pivot must not be shadowed by its own lower-ranked twin.
+    best: dict[str, dict] = {}
+    for r in rows:
+        prev = best.get(r["turn_id"])
+        key = (r["admit"], -r["pivot_rank"], r["confidence"])
+        if prev is None or key > (prev["admit"], -prev["pivot_rank"], prev["confidence"]):
+            best[r["turn_id"]] = r
+    return sorted(best.values(), key=lambda r: (r["rollout_id"], r["turn_idx"]))
 
 
 PATCH_TEMPLATE = '''PROPOSED (not applied) -- phase 2 of the per-reign king review.
@@ -260,6 +366,13 @@ def main() -> None:
     ap.add_argument("--sample", type=Path, default=None)
     ap.add_argument("--reign", default=None)
     ap.add_argument("--min-confidence", type=float, default=DEFAULT_MIN_CONFIDENCE)
+    ap.add_argument("--merge-into-dir", type=Path, default=None,
+                    help="the fold's side-table dir (affine/state/king_pivots): merge "
+                         "<digest>.jsonl there by turn_id, keeping earlier admits")
+    ap.add_argument("--check-published", action="store_true",
+                    help="fetch the live corpus index and report which admitted "
+                         "pivots are already in D (they stay king_fail) vs will route")
+    ap.add_argument("--corpus-manifest", default=DEFAULT_CORPUS_MANIFEST)
     args = ap.parse_args()
     sample = read_jsonl(args.sample or (args.out_dir / "sample.jsonl"))
     recs = load_judgments(args.out_dir, sample)
@@ -279,6 +392,19 @@ def main() -> None:
     print(f"side-table: {table_path} ({len(rows)} pivot rows, {n_admit} admissible at "
           f"confidence >= {args.min_confidence}); patch: "
           f"{out_dir / 'route_king_pivot.proposed.patch.txt'}")
+    fold = load_king_pivot_config()
+    published = published_strata(args.corpus_manifest) if args.check_published else None
+    if args.merge_into_dir:
+        merged = merge_side_table(args.merge_into_dir / f"{digest}.jsonl", rows)
+        print(f"merged into {args.merge_into_dir / f'{digest}.jsonl'}: {merged}")
+        rows = read_jsonl(args.merge_into_dir / f"{digest}.jsonl")
+    summary = routing_summary(rows, fold, published)
+    summary["fold_config"] = {"min_confidence": fold["min_confidence"],
+                              "exclude_sources": sorted(fold["exclude_sources"]),
+                              "exclude_categories": sorted(fold["exclude_categories"]),
+                              "configured": fold["configured"]}
+    (out_dir / "routing_summary.json").write_text(json.dumps(summary, indent=1))
+    print("routing: " + json.dumps(summary))
 
 
 if __name__ == "__main__":

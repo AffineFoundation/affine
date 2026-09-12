@@ -336,7 +336,8 @@ class Judge:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             self.cache[cache_key] = rec
             log(f"  judged {ro.harness:<18} {ro.source:<16} {ro.n_turns:>3} turns "
-                f"${c1 + c2:.3f}  total ${self.spent_usd:.2f} ({self.n_calls} calls)")
+                f"${c1 + c2:.3f}  total ${self.spent_usd:.2f} ({self.n_calls} calls)",
+                flush=True)
             return rec
 
     async def run(self, sample: list[dict], ts: TraceStore, env_groups: dict[str, str],
@@ -396,7 +397,7 @@ def main() -> None:
                   reasoning_effort=None if args.reasoning_effort == "none" else args.reasoning_effort)
     n_cached = sum(1 for _ in judge.cache)
     print(f"judge: {len(sample)} rollouts, model {args.model}, {n_cached} cached judgments, "
-          f"budget ${args.max_usd:.2f}")
+          f"budget ${args.max_usd:.2f}", flush=True)
     results = asyncio.run(judge.run(sample, ts, env_groups))
     cost = {"judge_model": args.model, "n_rollouts_judged": len(results),
             "n_calls_this_run": judge.n_calls, "prompt_tokens_this_run": judge.tokens_in,
@@ -405,6 +406,11 @@ def main() -> None:
             "usd_all_cached": round(sum(r["usage"]["cost_usd"] for r in results), 4),
             "stopped_on_budget": judge.stop}
     (args.out_dir / "cost.json").write_text(json.dumps(cost, indent=1))
+    # Append-only ledger: one line per run, so spend on the shared key can be
+    # attributed to this pipeline precisely.
+    with open(args.out_dir / "ledger.jsonl", "a") as f:
+        f.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            "sample": str(args.sample), "n_sample": len(sample), **cost}) + "\n")
     print(json.dumps(cost, indent=1))
 
 

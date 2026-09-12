@@ -24,7 +24,8 @@ from collections import defaultdict
 from pathlib import Path
 
 from krlib import (KING_PREFIX, TEACHER_PREFIX, TraceStore, digest12,
-                   load_env_groups, resolve_current_king, write_jsonl)
+                   load_env_groups, load_king_pivot_config, resolve_current_king,
+                   write_jsonl)
 
 
 def pick_teacher(candidates: list[dict], harness: str) -> dict | None:
@@ -40,11 +41,33 @@ def pick_teacher(candidates: list[dict], harness: str) -> dict | None:
     return {**best, "same_harness": best["harness"] == harness}
 
 
+def interleave(cells: dict[tuple[str, str], list[dict]]) -> list[dict]:
+    """Round-robin over the cells so a budget stop leaves every cell
+    represented instead of exhausting the first one."""
+    out: list[dict] = []
+    queues = {k: list(v) for k, v in sorted(cells.items())}
+    while queues:
+        for k in list(queues):
+            if queues[k]:
+                out.append(queues[k].pop(0))
+            if not queues[k]:
+                del queues[k]
+    return out
+
+
 def select_sample(rows: list[dict], *, king: str, per_cell: int, max_total: int,
-                  seed: int, env_groups: dict[str, str]) -> list[dict]:
+                  seed: int, env_groups: dict[str, str],
+                  exclude_sources: frozenset[str] = frozenset(),
+                  all_failed: bool = False) -> list[dict]:
+    """`all_failed`: every failed rollout of the king (the daily / bulk
+    mode), single-reply harnesses last, cells interleaved; `per_cell` /
+    `max_total` are ignored. Sources in `exclude_sources` (the fold's
+    `[king_pivot].exclude_sources`) are skipped: the fold would not route
+    their pivots, so judging them buys nothing for D."""
     king_id = f"king-{digest12(king)}"
     failed = [r for r in rows if r["king"] == king_id and r["outcome"] == "failed"
-              and r["n_replies"] > 0 and r["policy_id"].startswith(KING_PREFIX)]
+              and r["n_replies"] > 0 and r["policy_id"].startswith(KING_PREFIX)
+              and r["source"] not in exclude_sources]
     teacher_by_sid: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
         if r["policy_id"].startswith(TEACHER_PREFIX):
@@ -54,6 +77,17 @@ def select_sample(rows: list[dict], *, king: str, per_cell: int, max_total: int,
         cells[(env_groups.get(r["source"], "?"), r["harness"])].append(r)
     rng = random.Random(f"{seed}:{king_id}")
     picked: list[dict] = []
+    if all_failed:
+        multi: dict[tuple[str, str], list[dict]] = {}
+        single: dict[tuple[str, str], list[dict]] = {}
+        for key, pool in cells.items():
+            pool = sorted(pool, key=lambda r: r["rollout_id"])
+            rng.shuffle(pool)
+            pool.sort(key=lambda r: r["sid"] not in teacher_by_sid)
+            target = multi if key[1] != "null" else single
+            target[key] = [{**r, "env_group": key[0]} for r in pool]
+        picked = interleave(multi) + interleave(single)
+        return finish_sample(picked, king_id, teacher_by_sid)
     for key in sorted(cells):
         pool = sorted(cells[key], key=lambda r: r["rollout_id"])
         rng.shuffle(pool)
@@ -71,6 +105,11 @@ def select_sample(rows: list[dict], *, king: str, per_cell: int, max_total: int,
             biggest = max(by_cell, key=lambda k: (len(by_cell[k]), k))
             by_cell[biggest].pop()
         picked = [r for k in sorted(by_cell) for r in by_cell[k]]
+    return finish_sample(picked, king_id, teacher_by_sid)
+
+
+def finish_sample(picked: list[dict], king_id: str,
+                  teacher_by_sid: dict[str, list[dict]]) -> list[dict]:
     out = []
     for r in picked:
         t = pick_teacher(teacher_by_sid.get(r["sid"], []), r["harness"])
@@ -115,16 +154,30 @@ def main() -> None:
     ap.add_argument("--max-total", type=int, default=250)
     ap.add_argument("--seed", type=int, default=11)
     ap.add_argument("--no-sync", action="store_true", help="use the chunk cache as is")
+    ap.add_argument("--all", action="store_true",
+                    help="every failed rollout of the king (daily / bulk mode); "
+                         "per-cell and max-total are ignored")
+    ap.add_argument("--include-excluded-sources", action="store_true",
+                    help="also select sources the fold's [king_pivot] excludes")
+    ap.add_argument("--state-json", type=Path, default=None,
+                    help="resolve --king current from this validator state.json")
+    ap.add_argument("--procs", type=int, default=4)
     args = ap.parse_args()
 
-    king = resolve_current_king()["digest12"] if args.king == "current" else digest12(args.king)
+    king = (resolve_current_king(state_json=args.state_json)["digest12"]
+            if args.king == "current" else digest12(args.king))
     ts = TraceStore()
     if not args.no_sync:
         ts.sync()
-    rows = ts.index()
+    rows = ts.index(procs=args.procs)
     env_groups = load_env_groups()
+    fold = load_king_pivot_config()
+    excluded = frozenset() if args.include_excluded_sources else fold["exclude_sources"]
+    if excluded:
+        print(f"skipping sources the fold's [king_pivot] excludes: {sorted(excluded)}")
     sample = select_sample(rows, king=king, per_cell=args.per_cell,
-                           max_total=args.max_total, seed=args.seed, env_groups=env_groups)
+                           max_total=args.max_total, seed=args.seed, env_groups=env_groups,
+                           exclude_sources=excluded, all_failed=args.all)
     write_jsonl(args.out, sample)
     table = cell_table(sample, rows, king, env_groups)
     (args.out.parent / "sample_cells.json").write_text(json.dumps(table, indent=1))

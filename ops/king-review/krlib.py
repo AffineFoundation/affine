@@ -101,12 +101,17 @@ def digest12(king: str) -> str:
     return k[:12]
 
 
-def resolve_current_king(snapshot_url: str = DEFAULT_SNAPSHOT_URL) -> dict:
-    """The live king from the public dashboard API: {digest12, revision,
-    reign_number, crowned_at}."""
-    r = httpx.get(snapshot_url, timeout=30)
-    r.raise_for_status()
-    king = r.json()["king"]
+def resolve_current_king(snapshot_url: str = DEFAULT_SNAPSHOT_URL,
+                         state_json: Path | None = None) -> dict:
+    """The live king: from the validator's own `affine/state/state.json`
+    when a path is given (on the box), else from the public dashboard API.
+    {digest12, revision, reign_number, crowned_at}."""
+    if state_json is not None:
+        king = json.loads(Path(state_json).read_text())["king"]
+    else:
+        r = httpx.get(snapshot_url, timeout=30)
+        r.raise_for_status()
+        king = r.json()["king"]
     return {"digest12": king["revision"][:12], "revision": king["revision"],
             "reign_number": king.get("reign_number"),
             "crowned_at": king.get("crowned_at")}
@@ -115,6 +120,19 @@ def resolve_current_king(snapshot_url: str = DEFAULT_SNAPSHOT_URL) -> dict:
 def load_env_groups(path: Path = SOURCES_TOML) -> dict[str, str]:
     raw = tomllib.loads(path.read_text())
     return {name: cfg.get("group", "?") for name, cfg in raw.get("source", {}).items()}
+
+
+def load_king_pivot_config(path: Path = SOURCES_TOML) -> dict:
+    """The fold's `[king_pivot]` block (what it will route), with defaults
+    when the tree has no such block yet: {min_confidence, exclude_sources,
+    exclude_categories, side_table_dir}."""
+    raw = tomllib.loads(path.read_text()) if path.exists() else {}
+    cfg = raw.get("king_pivot") or {}
+    return {"min_confidence": float(cfg.get("min_confidence", 0.7)),
+            "exclude_sources": frozenset(str(s) for s in (cfg.get("exclude_sources") or [])),
+            "exclude_categories": frozenset(str(s) for s in (cfg.get("exclude_categories") or [])),
+            "side_table_dir": str(cfg.get("side_table_dir") or "affine/state/king_pivots"),
+            "configured": bool(cfg)}
 
 
 def canon_args(args) -> str:
