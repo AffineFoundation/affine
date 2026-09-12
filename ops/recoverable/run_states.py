@@ -27,6 +27,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -48,6 +49,7 @@ TEACHER = Endpoint(name="engy2", model="qwen3.8-27b",
                    base_url="https://api.engy.ai/v1", key_env="ENGY_2")
 HARNESS_ID = "recoverable_resume"
 SHADOW_NS = "recoverable.local"   # plugin/recoverable_resume/shield.py
+TRACE_NAME_RE = re.compile(r"^[0-9a-f]{32}$")
 DOCKER_KINDS = ("textbased", "bash", "terminus")
 EVAL_TIMEOUT_S = 3 * 3600
 # Engy list price for qwen3.8-27b (USD per token), 2026-09-11.
@@ -65,10 +67,14 @@ def reap_own_containers(untag: bool = False) -> None:
     removes each container itself at rollout end; this catches what a killed
     driver left behind. Safe because one driver runs per pod at a time."""
     try:
-        out = subprocess.run(["docker", "ps", "-a", "--format", "{{.ID}} {{.Image}}"],
+        out = subprocess.run(["docker", "ps", "-a", "--format", "{{.ID}} {{.Names}} {{.Image}}"],
                              capture_output=True, text=True, timeout=60).stdout
+        # verifiers names a rollout's container by its 32-hex trace id; a
+        # container someone else started from one of our tags keeps a
+        # different name and is left alone.
         mine = [l.split()[0] for l in out.splitlines()
-                if len(l.split()) == 2 and l.split()[1].startswith(SHADOW_NS + "/")]
+                if len(l.split()) == 3 and TRACE_NAME_RE.match(l.split()[1])
+                and l.split()[2].startswith(SHADOW_NS + "/")]
         if mine:
             subprocess.run(["docker", "rm", "-f", *mine], capture_output=True, timeout=300)
             log.info("removed %d leftover container(s) of ours", len(mine))
@@ -215,6 +221,8 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--only", default="", help="comma-separated state ids")
     ap.add_argument("--retry-errored", action="store_true")
+    ap.add_argument("--untag", action="store_true",
+                    help="also remove the recoverable.local/ image tags on exit")
     ap.add_argument("--shard", default="0/1",
                     help="i/n: run only states with blake2b(state_id) %% n == i "
                          "(split the work across pods)")
@@ -277,7 +285,9 @@ def main() -> None:
         with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
             list(ex.map(work, todo))
     finally:
-        reap_own_containers(untag=True)
+        # Tags stay: another process on the pod may have started a container
+        # from one of them; `--untag` at the very end removes them.
+        reap_own_containers(untag=args.untag)
 
 
 if __name__ == "__main__":
