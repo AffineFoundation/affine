@@ -7,19 +7,42 @@
 # targets at fold time.
 
 [mix]
-# Generation targets. Dialect cutover (2026-09-01): math + tool_use are
-# generated from now on so a backlog stages behind the closed
-# [dataset].allowed_action_kinds gate and lands on day one of the fork.
-# 2026-09-10: + king_fail (see [king_fail]); the other five scaled by 0.9
-# so the table still sums to 1. king_fail has no source of its own — the
-# fold assigns it (the scheduler ignores a group without sources), so the
-# generation targets of the five real groups are unchanged in ratio.
-coding = 0.45
-terminal = 0.225
-nl2repo = 0.045
-math = 0.09
-tool_use = 0.09
-king_fail = 0.10
+# ONE table for generation (rollouts scheduler: deficit per source-backed
+# group) and for the fold (ops/corpus_build.py: slice-strata shares
+# enforced by cap_fill). The [fold_mix] override existed 2026-09-11 only
+# to hold `general` at 0.0 while its sources built a backlog; phase 3
+# (2026-09-12) sets general = 0.05 and folds the two tables back into one.
+# Groups without a source (king_*, completion) are fold-routed; the
+# scheduler ignores them.
+#
+# History: 2026-09-01 math + tool_use generated ahead of the wvk-11 fork;
+# 2026-09-10 + king_fail 0.10; 2026-09-11 king_fail 0.07 + king_loop_onset
+# 0.03, then + king_pivot 0.02 (out of king_fail) and completion 0.03 (out
+# of coding / terminal / math); env wave 1 + general.
+#
+# 2026-09-12 phase 3 (docs/duel-signal-by-group.md, 52 verdicts joined to
+# the view index): coding and terminal carry 87 % of the paired variance
+# and terminal has the best signal per slot; math is 92 % R-dead (teacher
+# refs identical -> centered R = 0) and tool_use 58 %; king_fail's strata
+# were 83 % wiki + math king failures. Operator vector (addendum, general
+# 0.05 taken from tool_use): coding 0.44 / terminal 0.27 / king_fail 0.08 /
+# king_loop_onset 0.03 / king_pivot 0.02 / completion 0.03 / nl2repo 0.03 /
+# math 0.03 / tool_use 0.02 / general 0.05. cap_fill's anchor rule (target
+# >= 0.1: coding, terminal) holds terminal to 0.27/0.44 of coding's strata
+# while coding is never capped, so the epoch-25 overshoot (terminal 36.5 %)
+# unwinds as coding grows. `general` strata are the fold-assigned hashed
+# buckets `general:<offset + sha256(task) % n>` per source (see the
+# strata_offset table under "-- general --"), like math / tool_use.
+coding = 0.44
+terminal = 0.27
+nl2repo = 0.03
+math = 0.03
+tool_use = 0.02
+king_fail = 0.08
+king_loop_onset = 0.03
+king_pivot = 0.02
+completion = 0.03
+general = 0.05
 
 [king_fail]
 # The king's FAILED rollouts (policies king_*, rewards.solved == 0), any
@@ -33,8 +56,104 @@ king_fail = 0.10
 # ≈ 2.5% of the slice). Re-derive UPWARD as D grows; never lower.
 # Successful and unscored king rollouts are dropped at the fold
 # (`king_not_failed` / `king_unscored` in the drop counts).
-strata_buckets = 1000
+# 2026-09-12 (phase 3): wiki / agent / math king failures leave the seat --
+# the teacher's references are identical there (centered R = 0), so the
+# turns carried no signal; 83 % of king_fail's strata were such turns.
+# Forward-only: turns already published under king_fail stay in D.
+# 2026-09-12 (phase 4): buckets 1000 -> 2000 -- the 1,000-bucket ceiling
+# (~8 % of the slice) binds before variance does (docs/duel-signal-by-group.md).
+# New rollouts of a task whose sha256 % 2000 >= 1000 open a new bucket name
+# above the old range; published strata keep theirs.
+strata_buckets = 2000
 policy_prefix = "king_"
+exclude_sources = ["affine_wiki", "affine_agent", "affine_math"]
+
+[king_loop_onset]
+# The first turn of every LOOP in the king's failed rollouts (2026-09-11,
+# operator directive; data event, no weight_version_key change). A loop:
+# the king re-issues a command it already ran and gets the same
+# observation back (affine/corpus/loops.py; 93 % of onsets are verbatim
+# repeats). Measured 2026-09-11: 49-100 % of the king's failed agent
+# rollouts loop (teacher 8-13 %), yet 1.1 % of king_fail turns were loop
+# turns — a repeated command is a "reference leaked into the prefix" for
+# the slicer, so 86 % of onsets never reached D. The fold waives THAT rule
+# for onset turns only (the stored reference is never scored under
+# min(R,G); teacher refs are sampled fresh at duel time); caps, dialect
+# gate, panel and action-count rules still apply. Later turns of the same
+# loop are dropped (king_in_loop: near-duplicate prefixes); the turns
+# before / after a loop keep the king_fail path. Strata
+# `king_loop_onset:NNNN` = sha256(instance_id) % buckets, own namespace as
+# for king_fail; ~665 looping tasks in the first 36 h -> ~480 buckets
+# occupied at 1000, ~1,000 onsets/day arrive at the current seat rate.
+# exclude_sources: tool_use — the teacher's next tool call is
+# near-deterministic there (centered R ~ 0, wvk-11 findings), so a wiki
+# loop prefix carries no signal; those rollouts stay on king_fail.
+strata_buckets = 2000   # 1000 -> 2000, phase 4 (2026-09-12), see [king_fail]
+policy_prefix = "king_"
+exclude_sources = ["affine_wiki", "affine_agent", "affine_math"]   # + math 2026-09-12 (phase 3)
+
+[king_pivot]
+# The turns an LLM judge marked as the DECISION POINT of a failed king
+# rollout (ops/king-review, PR #8; data plan §5, 2026-09-11). Rows come
+# from the per-king side-tables under side_table_dir (`<digest>.jsonl`,
+# one JSON line per (rollout_id, turn_idx), written by the review
+# pipeline's labels_out.py); the fold reads every table there so earlier
+# kings' pivots stay routable. Routed: `admit == true`, judge confidence
+# >= min_confidence, failure_category not excluded. A turn that is both a
+# pivot and a loop onset is a pivot (the judge's pivot is the earlier
+# decision point on 67 % of looping rollouts). Leak rule waived as for
+# king_loop_onset (a pivot that re-issues an earlier command is a "leak" by
+# construction; the duel never echoes the stored reference). Strata
+# `king_pivot:NNNN` = sha256(instance_id) % buckets. Forward-only: a pivot
+# turn already published as king_fail keeps its turn_id and stays there
+# (first table: 146 of 172 admitted pivots were already in D).
+strata_buckets = 2000   # 1000 -> 2000, phase 4 (2026-09-12), see [king_fail]
+policy_prefix = "king_"
+min_confidence = 0.7
+side_table_dir = "affine/state/king_pivots"
+exclude_categories = ["format_error"]
+exclude_sources = ["affine_wiki", "affine_agent", "affine_math"]   # phase 3, 2026-09-12
+
+[completion]
+# The reply that ENDED a solved rollout on purpose — teacher and king
+# alike (data plan §6, 2026-09-11): stop_condition agent_completed,
+# outcome solved, final reply satisfying the per-harness rule in
+# affine/corpus/completion.py (mini-swe `submit`, a finish tool call, a
+# final visible `text` report, Terminus task_complete, \boxed{}).
+# Reasoning-only finishes carry no visible text and match nothing. That
+# final turn moves out of its source group into `completion:NNNN` =
+# sha256(instance_id) % buckets; the rollout's other turns are untouched.
+# leak_exempt = false: a final reply is expected to be new text. The fold
+# logs `completion_leaked` (candidates the leak rule refused) so the
+# assumption is measured; mini-swe's COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT
+# command is quoted in the task prompt and IS a leak by the rule.
+# min_replies = 2: a one-reply rollout (math, single-shot answer envs) has
+# no "decide to stop" state -- its only turn is the answer -- and routing
+# it would drain the source group's growth into this one. Sources whose
+# fold-mix share is 0 (general, until set) are excluded by the fold too.
+strata_buckets = 1000
+exclude_sources = ["affine_wiki"]
+leak_exempt = false
+min_replies = 2
+
+[math_filter]
+# Math re-source (phase 3, 2026-09-12; docs/duel-signal-by-group.md). Math
+# is 92 % dead on the R leg: the teacher boxes the same answer on 75 % of
+# its turns, so its k = 3 references are identical and centered R = 0; the
+# 8 % where it disagrees with itself carry R = 0.145/byte, 15x a coding
+# turn. The fold cannot see duel-time references, so it uses the traces as
+# a PROXY: a problem is kept when the teacher's datagen rollouts on it show
+# disagreement (>= 2 distinct normalized \boxed{} strings across its
+# samples, or the teacher failed it at least once) or the king failed it.
+# Deterministic problems: new candidates are dropped (`math_deterministic`)
+# and, with retire_published, their already-published turns are removed
+# from the INDEX at the next revision (chunk objects and old manifests are
+# untouched, so past verdicts replay). If fewer than min_surviving_strata
+# strata would survive, the fold keeps the old pool at the [mix] share.
+enabled = true
+source = "affine_math"
+retire_published = true
+min_surviving_strata = 100
 
 # Language targets for NEWLY FOLDED coding turns (2026-09-01). Enforced by
 # ops/datagen_refresh.py as a second waterfill (after the group waterfill)
@@ -42,6 +161,16 @@ policy_prefix = "king_"
 # Existing corpus turns are never rebalanced. Tag → bucket aliasing lives in
 # the fold script: rust→rs, js/ts/typescript/javascript→tsjs, cpp/c→rs,
 # php→tsjs, missing/unknown→python.
+# 2026-09-12 (phase 4): these targets are HARD only while coding is at or
+# above its group target. Below it (coding's supply ratio under terminal's,
+# the group stage's own test) the fold admits every language, python
+# included, under a per-language ceiling of 55 % of coding's strata (0.45
+# -> 0.55, operator decision 2026-09-12; diversity comes from non-python
+# supply, not the fold) and a
+# per-fold budget of 4.5 share points (ops/corpus_build.py
+# LANG_SOFT_CEILING / CATCHUP_SHIFT_BUDGET). The hard cap had frozen python
+# at 0.25/0.20 x go's supply and starved coding (epoch 26: 0 of 4,139
+# coding rollouts kept).
 [lang_mix.coding]
 python = 0.25
 go = 0.20
@@ -337,4 +466,192 @@ pass_dataset = false
 policies = ["teacher_toolcall", "king_toolcall"]
 strata_buckets = 500
 strata_offset = 470
+share = 1.0
+
+# -- general (env wave 1, 2026-09-11; data plan W3 "environment breadth") ---------
+#
+# Eight Prime RL environments outside the coding / terminal axis, onboarded
+# TEACHER-FIRST: teacher policies only; king_* policies follow a fold read of
+# mean_r_leg / ref yield per source (AGENTS.md teacher-first rule). Every
+# source is a thin wrapper under rollouts/envs/affine_<x>_v1 over the
+# research-environments taskset: a real system message (the fold drops
+# prefixes without one), a `tasks` selector, and the grade under a fold key
+# (`correct` / `solved`). Dialects are admitted ones only: `text` (whole
+# visible reply), `boxed`, `tool_call`, and the shell dialects for prolog.
+#
+# One fold group `general` = one slice dial ([fold_mix].general, 0.0 until
+# the operator sets it). Bucket names are per group, so the sources take
+# disjoint `strata_offset` ranges (0-1829 in total = the group's CEILING;
+# the [fold_mix] share caps what a slice actually holds):
+#   affine_logic       0000-0339   affine_trivia      0340-0569
+#   affine_ifeval      0570-0799   affine_science     0800-1139
+#   affine_unscramble  1140-1254   affine_prolog      1255-1484
+#   affine_needle      1485-1599   affine_wikispeedia 1600-1829
+# Probe numbers (12 teacher rollouts each, datagen-4, 2026-09-11/12) are in
+# the env-wave-1 report; shares below weight the GENERATION deficit inside
+# the group only.
+
+[source.affine_logic]
+# INTELLECT-3-RL `logic` train: 11,647 puzzles in 29 families (zebra,
+# cipher, futoshiki, sudoku, BBH/BBEH, ...), per-family Python verifier in
+# process. Difficulty band [0.1, 0.9] on the shipped Qwen3-4B solve rate
+# (catalog + taskset agree) -> ~7.4k rows. Answer format is stated by each
+# puzzle; the visible reply is the action (`text`). Probe: 8/12 solved,
+# replies p50 4.7k tokens (33% under the duel's 1,792-token ref cap).
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-logic-v1"          # rollouts/envs/affine_logic_v1
+catalog = "hf"
+dataset = "PrimeIntellect/INTELLECT-3-RL"
+dataset_config = "logic"
+split = "train"
+row_meta = "i3_logic"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_text"]
+strata_buckets = 340
+strata_offset = 0
+share = 1.0
+
+[source.affine_trivia]
+# TriviaQA rc.wikipedia.nocontext TRAIN (61,888 questions; validation stays
+# out of D as a held-out scorecard), zero-shot, closed book, alias
+# exact-match on the first line of the visible reply. Probe: 8/12 solved,
+# replies p50 308 tokens (83% under the duel ref cap); visible answers are
+# 5-17 chars, the value is in the thought.
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-trivia-v1"         # rollouts/envs/affine_trivia_v1
+catalog = "hf"
+dataset = "mandarjoshi/trivia_qa"
+dataset_config = "rc.wikipedia.nocontext"
+dataset_revision = "0f7faf33a3908546c6fd5b73a660e0f8ff173c2f"
+split = "train"
+row_meta = "triviaqa"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_text"]
+strata_buckets = 230
+strata_offset = 340
+share = 1.0
+
+[source.affine_ifeval]
+# Verifiable instruction following: allenai/RLVR-IFeval train (14,973
+# prompts, one checkable constraint each, open-instruct checker vendored in
+# the wrapper). google/IFEval's 541 prompts stay OUT of D (benchmark;
+# `--env.taskset.include-ifeval True` would add them).
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-ifeval-v1"         # rollouts/envs/affine_ifeval_v1
+catalog = "hf"
+dataset = "allenai/RLVR-IFeval"
+split = "train"
+row_meta = "rlvr_ifeval"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_text"]
+strata_buckets = 230
+strata_offset = 570
+# Probe: 12/12 solved (one constraint per prompt is easy for the teacher;
+# above the 20-90% headroom band) — kept at half share for the prompt
+# shape; the first mean_r_leg read decides whether it stays.
+share = 0.5
+
+[source.affine_science]
+# INTELLECT-3-RL `science` train (29,307 problems), \boxed{} answer graded by
+# math-verify ONLY (the upstream LLM-judge fallback is removed: no judge
+# endpoint on the pods). Same difficulty band as logic -> ~17k rows.
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-science-v1"        # rollouts/envs/affine_science_v1
+catalog = "hf"
+dataset = "PrimeIntellect/INTELLECT-3-RL"
+dataset_config = "science"
+split = "train"
+row_meta = "i3_science"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_boxed"]
+strata_buckets = 340
+strata_offset = 800
+# Probe: 3/12 by math-verify (a lower bound: free-text golds), replies p50
+# 4.5k tokens — far past the duel's 1,792-token ref cap, so duel yield on
+# these prefixes will be low until that knob moves. Half share.
+share = 0.5
+
+[source.affine_unscramble]
+# kalomaze/unscramble-mix-it2 (10,300): reorder scrambled text blocks; the
+# wrapper grades `correct` = exact order (base similarity kept as a metric).
+# Probe: 3/12 exact, replies p50 2.4k tokens (42% under the duel ref cap).
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-unscramble-v1"     # rollouts/envs/affine_unscramble_v1
+catalog = "hf"
+dataset = "kalomaze/unscramble-mix-it2"
+split = "train"
+row_meta = "unscramble"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_text"]
+strata_buckets = 115
+strata_offset = 1140
+share = 0.5
+
+[source.affine_prolog]
+# SWI-Prolog constraint problems (9 kinds x procedural), `medium` tier, in a
+# swipl:latest sandbox under the shell harnesses; `solved` reward. Pool =
+# 3,000 per-index-seeded tasks (affine_prolog_v1 names them from the index).
+group = "general"
+runner = "verifiers"
+taskset_id = "affine-prolog-v1"         # rollouts/envs/affine_prolog_v1
+catalog = "procedural"
+row_meta = "prolog"
+procedural_uids = 3000
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
+extra_flags = ["--env.taskset.difficulty", "medium"]
+strata_buckets = 230
+strata_offset = 1255
+share = 1.0
+
+[source.affine_needle]
+# Patterned needle-in-a-haystack: 200 lines of a hidden word-order pattern,
+# 2 outlier lines to name in \boxed{}; synthetic long-context read. Pool =
+# 5,000 per-index-seeded tasks. STAGED AT SHARE 0.0 (probe 2026-09-11):
+# headroom is fine (8/12 at 200 lines, 7/12 at 100) but the teacher spends
+# 25-28k completion tokens per reply (3-4 of 12 hit the 32k cap), ~4 min
+# wall, and 0-8% of replies fit the duel's 1,792-token ref cap — the most
+# expensive 1-turn rollout in the wave with near-zero duel yield. Flip
+# share > 0 only if [duel] max_thought_tokens moves.
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-needle-v1"         # rollouts/envs/affine_needle_v1
+catalog = "procedural"
+row_meta = "needle"
+procedural_uids = 5000
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_boxed"]
+strata_buckets = 115
+strata_offset = 1485
+share = 0.0
+
+[source.affine_wikispeedia]
+# Wikispeedia: reach a target article by clicking links (stateful
+# wiki_click_link / wiki_go_back tools, 4-7 hop pairs on the SNAP graph —
+# 3-hop pairs were 12/12 for the teacher);
+# the episode ends on arrival. `tool_call` dialect; `solved` reward. Pool =
+# 4,000 seeded pairs.
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-wikispeedia-v1"    # rollouts/envs/affine_wikispeedia_v1
+catalog = "procedural"
+row_meta = "wikispeedia"
+procedural_uids = 4000
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_toolcall"]
+strata_buckets = 230
+strata_offset = 1600
 share = 1.0
