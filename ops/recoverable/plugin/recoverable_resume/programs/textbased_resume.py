@@ -1,7 +1,10 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["mini-swe-agent=={version}", "litellm[proxy]"]
+# dependencies = ["mini-swe-agent=={version}", "litellm[proxy]==1.97.0"]
 # ///
+# litellm >= 1.98.0 imports typing.NotRequired (Python 3.11+) at module load
+# and crashes on the Python 3.10 task images; 1.97.0 is the last release that
+# does not.
 """Resume a mini-swe-agent *textbased* rollout from a stored prefix.
 
 Runs inside the task container (same place the `mini_swe_textbased` harness

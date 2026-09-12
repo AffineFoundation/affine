@@ -40,6 +40,11 @@ WORKERS="${RECOVERABLE_WORKERS:-4}"
 KINDS="${RECOVERABLE_KINDS:-textbased,bash,terminus}"
 CHUNKS="${RECOVERABLE_CHUNKS:-$REPO/ops/corpus_build/cache/traces/chunks}"
 POLL_S="${RECOVERABLE_POLL_S:-300}"
+# RECOVERABLE_RETRY_ERRORED=1: errored side-table rows become candidates again
+# and errored results in the pod's out dir are re-run (manual use; a 3,600 s
+# timeout costs an hour per retry, so the cron run does not do this).
+RETRY_FLAG=""
+[[ "${RECOVERABLE_RETRY_ERRORED:-0}" == "1" ]] && RETRY_FLAG="--retry-errored"
 POD_DIR=/root/recoverable
 RUN="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="$STATE/runs/$RUN"
@@ -89,7 +94,7 @@ log "king $DIGEST; pivots $PIVOTS; side-table $TABLE ($( [[ -f "$TABLE" ]] && wc
 # 1. candidates ---------------------------------------------------------------
 "$PY" "$OPS/candidates.py" --chunks "$CHUNKS" --pivots "$PIVOTS" --side-table "$TABLE" \
   --king-digest "$DIGEST" --out "$RUN_DIR/states" --kinds "$KINDS" \
-  --max-states "$MAX_STATES" 2>&1 | tee "$RUN_DIR/candidates.log" | sed "s/^/  /"
+  --max-states "$MAX_STATES" $RETRY_FLAG 2>&1 | tee "$RUN_DIR/candidates.log" | sed "s/^/  /"
 N_STATES="$(wc -l < "$RUN_DIR/states/states.jsonl")"
 if [[ "$N_STATES" -eq 0 ]]; then
   log "no new states; done"
@@ -120,7 +125,7 @@ tar -C "$REPO/ops" -czf - recoverable | "${SSH[@]}" "mkdir -p $POD_DIR && tar -C
 tar -C "$RUN_DIR" -czf - states | "${SSH[@]}" "mkdir -p $POD_DIR/daily/$RUN && tar -C $POD_DIR/daily/$RUN -xzf -"
 "${SSH[@]}" "cd $POD_DIR && tmux new-session -d -s rec-daily \
   \"bash ./recoverable/pod_run.sh --states daily/$RUN/states/states.jsonl --out $POD_DIR/daily/out \
-     --kinds $KINDS --workers $WORKERS --deadline-hours $DEADLINE_H --untag \
+     --kinds $KINDS --workers $WORKERS --deadline-hours $DEADLINE_H --untag $RETRY_FLAG \
      > daily/$RUN/run.log 2>&1; touch daily/$RUN/DONE\""
 
 T0=$(date +%s)
