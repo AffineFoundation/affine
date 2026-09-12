@@ -510,13 +510,16 @@ def cap_fill(records: list[dict], keyf, have: dict[str, set[str]],
     for rec in records:
         pools.setdefault(keyf(rec), []).append(rec)
     keyed = {k: v for k, v in pools.items() if targets.get(k, 0.0) > 0}
-    avail: dict[str, set[str]] = {k: set(have.get(k, ())) for k in targets}
+    # A key held at 0 (env wave 1: `general = 0.0` in [fold_mix]) is deferred
+    # whole below; it has no supply ratio and must not enter the cap math.
+    positive = {k: v for k, v in targets.items() if v > 0}
+    avail: dict[str, set[str]] = {k: set(have.get(k, ())) for k in positive}
     for k, pool in keyed.items():
         for rec in pool:
             avail[k] |= record_strata(rec)
-    supply = sorted((len(avail[k]) / targets[k] for k in targets), reverse=True)
+    supply = sorted((len(avail[k]) / positive[k] for k in positive), reverse=True)
     ref_total = supply[1] if len(supply) > 1 else float("inf")
-    cap = {k: targets[k] * ref_total for k in targets}
+    cap = {k: positive[k] * ref_total for k in positive}
     selected: list[dict] = []
     deferred: list[dict] = []
     added: dict[str, set[str]] = {}
