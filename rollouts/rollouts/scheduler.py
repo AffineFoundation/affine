@@ -160,16 +160,30 @@ class Scheduler:
                 and self._usable_policies(name)]
 
     def pick_source(self, remaining: dict[str, int]) -> str | None:
+        """The source furthest below its target, measured RELATIVE to the
+        target: shortfall = 1 - kept / expected, where expected is the
+        source's share of all kept turns so far. 1.0 = nothing generated
+        yet, 0 = on target, negative = over.
+
+        Ranking by absolute deficit (until 2026-09-12) starved every small
+        source: the eight `general` sources at targets 0.005-0.009 sat at
+        +2-4k turns of deficit with zero batches while terminal_bench_2 at
+        +25k (already 18 % of its target) won every pick — a source's
+        deficit in turns scales with its target, so the big groups always
+        outranked the small ones. Absolute deficit stays the tie-break."""
         cands = self.eligible(remaining)
         if not cands:
             return None
         total_target = sum(self.targets[n] for n in cands)
         total_kept = sum(self.state.kept_by_source.get(n, 0)
                          for n in cands) + 1
-        def deficit(name: str) -> float:
-            share = self.targets[name] / total_target
-            return share * total_kept - self.state.kept_by_source.get(name, 0)
-        return max(cands, key=lambda n: (deficit(n), self.targets[n], n))
+        def rank(name: str) -> tuple[float, float, float, str]:
+            expected = self.targets[name] / total_target * total_kept
+            kept = self.state.kept_by_source.get(name, 0)
+            deficit = expected - kept
+            shortfall = deficit / expected if expected > 0 else 0.0
+            return (shortfall, deficit, self.targets[name], name)
+        return max(cands, key=rank)
 
     # -- policy pick -------------------------------------------------------------
 
