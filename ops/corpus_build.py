@@ -922,9 +922,11 @@ def sha8_of(instance_id: str) -> str:
 
 
 def math_retire_plan(pub: PublicCorpus, live: dict | None, cfg: dict,
-                     keep: set[str]) -> tuple[list[str], set[str], set[str]]:
+                     keep: set[str], group: str) -> tuple[list[str], set[str], set[str]]:
     """(turn ids to retire from the live index, surviving published math
-    strata, retired math strata)."""
+    strata, retired math strata). Only rows in the math GROUP's own strata
+    (`<group>:NNNN`) are considered: a king math failure published under
+    `king_fail:NNNN` stays where it is (forward-only, phase 3 decision)."""
     table = index_table(pub, live, ["turn_id", "traj_id", "source", "stratum"])
     if table is None:
         return [], set(), set()
@@ -934,7 +936,7 @@ def math_retire_plan(pub: PublicCorpus, live: dict | None, cfg: dict,
     retired_strata: set[str] = set()
     for tid, traj, src, stratum in zip(*(table.column(c).to_pylist()
                                           for c in ("turn_id", "traj_id", "source", "stratum"))):
-        if src != cfg["source"]:
+        if src != cfg["source"] or not str(stratum).startswith(f"{group}:"):
             continue
         m = TRAJ_SHA8_RE.search(traj or "")
         if m and m.group(1) in keep_sha8:
@@ -1369,7 +1371,7 @@ def main() -> None:
         keep, mstats = math_keep_set(pub, traces_manifest, math_cfg)
         log(f"math re-source: {mstats}")
         retire_ids, math_surviving, math_retired_strata = math_retire_plan(
-            pub, live, math_cfg, keep)
+            pub, live, math_cfg, keep, src2grp.get(math_cfg["source"], DEFAULT_GROUP))
         cand_math = [r for r in candidates if str(r.get("source") or "") == math_cfg["source"]]
         cand_keep = [r for r in cand_math if str(r.get("instance_id")) in keep]
         # Survival = strata the kept published turns hold + what kept
@@ -1460,8 +1462,7 @@ def main() -> None:
     have_groups = {g: set(v) for g, v in (state.get("group_strata") or {}).items()}
     if retire_ids:
         # The retired math strata are gone from D; the cap sees what survives.
-        mg = src2grp.get(math_cfg["source"], DEFAULT_GROUP)
-        have_groups[mg] = have_groups.get(mg, set()) - math_retired_strata
+        have_groups[src2grp.get(math_cfg["source"], DEFAULT_GROUP)] = set(math_surviving)
     selected, deferred, group_added = cap_fill(
         candidates, lambda r: group_of(r, src2grp, mix), have_groups, mix,
         anchor_min_target=ANCHOR_MIN_TARGET)
@@ -1489,7 +1490,7 @@ def main() -> None:
     after = dict(before)
     if retire_ids:
         mg = src2grp.get(math_cfg["source"], DEFAULT_GROUP)
-        after[mg] = len(set(state["group_strata"].get(mg, [])) - math_retired_strata)
+        after[mg] = len(math_surviving)
     for g, keys in group_added.items():
         after[g] = after.get(g, 0) + len(keys)
     rows = composition_table(before, after)
@@ -1547,9 +1548,8 @@ def main() -> None:
         "folded_chunks": [c["key"] for c in unfolded], "init": bool(args.init),
         "retire_turn_ids": retire_ids,
         "group_strata_after_retire": (
-            {src2grp.get(math_cfg["source"], DEFAULT_GROUP): sorted(
-                set(state["group_strata"].get(src2grp.get(math_cfg["source"], DEFAULT_GROUP), []))
-                - math_retired_strata)} if retire_ids else {}),
+            {src2grp.get(math_cfg["source"], DEFAULT_GROUP): sorted(math_surviving)}
+            if retire_ids else {}),
     }
     save_state(state)
     finalize(state, *publish_pending(state, publisher, traces_sha, legacy_sha))
