@@ -139,6 +139,7 @@ def process_batch(cfg: RolloutsConfig, source, policy, batch: list[dict],
         state.mark(
             source.name, uid, _outcome(row),
             policy_id=policy.id,
+            harness=policy.harness,
             n_turns=kept_by_sid.get(sid, 0),
             provider=endpoint_label,
             detail=row.get("error") or row.get("stop") or "",
@@ -153,9 +154,14 @@ def process_batch(cfg: RolloutsConfig, source, policy, batch: list[dict],
         log.info("%d task(s) produced no trace; will be re-selected",
                  len(missing))
 
-    log.info("batch %s [%s/%s]: %d rollouts, %d kept turns in %.0fs",
-             tag, policy.id, endpoint_label, len(result.envelopes),
-             len(kept), time.time() - t0)
+    stops: dict[str, int] = {}
+    for env in result.envelopes:
+        stop = str(env["trace"].get("stop_condition") or "none")
+        stops[stop] = stops.get(stop, 0) + 1
+    log.info("batch %s [%s/%s]: %d rollouts, %d kept turns in %.0fs; "
+             "stops=%s", tag, policy.id, endpoint_label,
+             len(result.envelopes), len(kept), time.time() - t0,
+             dict(sorted(stops.items())))
     shutil.rmtree(run_dir, ignore_errors=True)
     return result.produced_output, len(kept)
 
@@ -209,7 +215,8 @@ def main() -> None:
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(cfg.data_dir / "runs", ignore_errors=True)
 
-    state = UnifiedState(cfg.state_path)
+    state = UnifiedState(cfg.state_path, harness_of={
+        pid: p.harness for pid, p in registry.policies.items()})
     health = EndpointHealth()
     scheduler = Scheduler(registry, state, env, health)
     store = TraceStore(cfg.store_dir)
@@ -244,8 +251,8 @@ def main() -> None:
     pools = {name: ordered_rows(cfg, name, load_catalog(cfg, src))
              for name, src in registry.sources.items()}
     for name, rows in pools.items():
-        log.info("source %s: %d selectable tasks (%d processed by the teacher "
-                 "seat)", name, len(rows), len(state.done_for(name)))
+        log.info("source %s: %d selectable tasks (%d processed by some "
+                 "teacher-side seat)", name, len(rows), len(state.done_for(name)))
 
     fails = 0
     while True:

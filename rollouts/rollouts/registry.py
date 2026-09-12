@@ -13,12 +13,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from affine import dialects
+from rollouts import loopguard
 from rollouts.schema import Endpoint, Policy
 
 RUNNERS = ("verifiers", "verifiers_chat", "mini_swe")
+KING_POLICY_PREFIX = "king_"
 CATALOG_KINDS = ("hf", "hf_swebench", "swesmith", "terminal_lego",
                  "terminal_bench_2", "harbor_swe", "nl2repobench",
-                 "general_agent")
+                 "general_agent", "procedural")
 SELECT_MODES = ("filter_fn", "tasks")
 
 _PKG_DIR = Path(__file__).resolve().parent
@@ -33,6 +35,10 @@ class Source:
     policies: tuple[str, ...]
     taskset_id: str = ""
     dataset: str = ""
+    # HF dataset config name (`load_dataset(dataset, dataset_config, ...)`)
+    # and revision pin; empty = the default config / latest revision.
+    dataset_config: str = ""
+    dataset_revision: str = ""
     split: str = "train"
     uid_field: str = "instance_id"
     row_meta: str = ""
@@ -52,6 +58,10 @@ class Source:
     # Bucket names are per group; a second bucketed source in the same
     # group starts its range here so the two do not collide.
     strata_offset: int = 0
+    # catalog = "procedural": the pool is the index range [0, procedural_uids)
+    # of a seeded generator; catalog.PROCEDURAL_META[row_meta] names each
+    # index the way the taskset does, so no taskset import is needed here.
+    procedural_uids: int = 0
 
 
 @dataclass(frozen=True)
@@ -103,11 +113,19 @@ def _load_policies(path: Path) -> dict[str, Policy]:
             raise ValueError(
                 f"policy {pid!r}: action_kind {action_kind!r} is not a "
                 f"registered dialect ({sorted(dialects.DIALECTS)})")
+        # Loop guard default: on for the king seat, off for everyone else
+        # (rollouts.loopguard). An explicit `loop_guard_repeats` wins; 0 = off.
+        default_repeats = (loopguard.DEFAULT_KING_REPEATS
+                           if pid.startswith(KING_POLICY_PREFIX) else 0)
+        repeats = int(cfg.get("loop_guard_repeats", default_repeats))
+        if repeats < 0:
+            raise ValueError(f"policy {pid!r}: loop_guard_repeats must be >= 0")
         policies[pid] = Policy(
             id=pid, harness=cfg["harness"], endpoints=endpoints,
             sampling=cfg.get("sampling", {}),
             share=float(cfg.get("share", 1.0)),
-            action_kind=action_kind)
+            action_kind=action_kind,
+            loop_guard_repeats=repeats)
     if not policies:
         raise ValueError(f"no policies defined in {path}")
     return policies
@@ -138,6 +156,8 @@ def _load_sources(path: Path, policies: dict[str, Policy],
             policies=pids,
             taskset_id=cfg.get("taskset_id", ""),
             dataset=cfg.get("dataset", ""),
+            dataset_config=cfg.get("dataset_config", ""),
+            dataset_revision=cfg.get("dataset_revision", ""),
             split=cfg.get("split", "train"),
             uid_field=cfg.get("uid_field", "instance_id"),
             row_meta=cfg.get("row_meta", ""),
@@ -150,6 +170,7 @@ def _load_sources(path: Path, policies: dict[str, Policy],
             extra_flags=tuple(cfg.get("extra_flags", ())),
             strata_buckets=int(cfg.get("strata_buckets", 0)),
             strata_offset=int(cfg.get("strata_offset", 0)),
+            procedural_uids=int(cfg.get("procedural_uids", 0)),
         )
         if src.group not in mix:
             raise ValueError(f"source {name!r} group {src.group!r} missing "

@@ -14,12 +14,39 @@
 # so the table still sums to 1. king_fail has no source of its own — the
 # fold assigns it (the scheduler ignores a group without sources), so the
 # generation targets of the five real groups are unchanged in ratio.
+# 2026-09-11 (env wave 1, data plan W3): + general = 0.10 (eight new Prime
+# RL sources, see "-- general --" below); the six others scaled by 0.9.
+# GENERATION target only — the fold reads [fold_mix] while that block
+# exists (ops/corpus_build.py load_mix), so the slice share of `general`
+# is decided there, not here.
+coding = 0.405
+terminal = 0.2025
+nl2repo = 0.0405
+math = 0.081
+tool_use = 0.081
+king_fail = 0.09
+general = 0.10
+
+[fold_mix]
+# FOLD targets (slice strata shares) — overrides [mix] for ops/corpus_build.py
+# while this block exists. Added 2026-09-11 with env wave 1 so the eight
+# `general` sources GENERATE (teacher-first: traces land on R2, the
+# scheduler steers by [mix]) while their slice share stays an operator
+# decision: at 0.0 the fold defers every `general` record whole (cap_fill:
+# "keys without a positive target are deferred") and admits nothing from
+# the group until the value is raised. The first fold read of mean_r_leg /
+# ref yield per source decides the share. To decide: set `general` here
+# (proposal: 0.05 = about 570 strata at today's 11.4k, the six others
+# scaled to sum 1.0) or delete this block to let [mix] drive the fold too.
+# KEEP IN STEP WITH [mix] for every other group: a group present in [mix]
+# but missing here folds into DEFAULT_GROUP (coding).
 coding = 0.45
 terminal = 0.225
 nl2repo = 0.045
 math = 0.09
 tool_use = 0.09
 king_fail = 0.10
+general = 0.0
 
 [king_fail]
 # The king's FAILED rollouts (policies king_*, rewards.solved == 0), any
@@ -337,4 +364,192 @@ pass_dataset = false
 policies = ["teacher_toolcall", "king_toolcall"]
 strata_buckets = 500
 strata_offset = 470
+share = 1.0
+
+# -- general (env wave 1, 2026-09-11; data plan W3 "environment breadth") ---------
+#
+# Eight Prime RL environments outside the coding / terminal axis, onboarded
+# TEACHER-FIRST: teacher policies only; king_* policies follow a fold read of
+# mean_r_leg / ref yield per source (AGENTS.md teacher-first rule). Every
+# source is a thin wrapper under rollouts/envs/affine_<x>_v1 over the
+# research-environments taskset: a real system message (the fold drops
+# prefixes without one), a `tasks` selector, and the grade under a fold key
+# (`correct` / `solved`). Dialects are admitted ones only: `text` (whole
+# visible reply), `boxed`, `tool_call`, and the shell dialects for prolog.
+#
+# One fold group `general` = one slice dial ([fold_mix].general, 0.0 until
+# the operator sets it). Bucket names are per group, so the sources take
+# disjoint `strata_offset` ranges (0-1829 in total = the group's CEILING;
+# the [fold_mix] share caps what a slice actually holds):
+#   affine_logic       0000-0339   affine_trivia      0340-0569
+#   affine_ifeval      0570-0799   affine_science     0800-1139
+#   affine_unscramble  1140-1254   affine_prolog      1255-1484
+#   affine_needle      1485-1599   affine_wikispeedia 1600-1829
+# Probe numbers (12 teacher rollouts each, datagen-4, 2026-09-11/12) are in
+# the env-wave-1 report; shares below weight the GENERATION deficit inside
+# the group only.
+
+[source.affine_logic]
+# INTELLECT-3-RL `logic` train: 11,647 puzzles in 29 families (zebra,
+# cipher, futoshiki, sudoku, BBH/BBEH, ...), per-family Python verifier in
+# process. Difficulty band [0.1, 0.9] on the shipped Qwen3-4B solve rate
+# (catalog + taskset agree) -> ~7.4k rows. Answer format is stated by each
+# puzzle; the visible reply is the action (`text`). Probe: 8/12 solved,
+# replies p50 4.7k tokens (33% under the duel's 1,792-token ref cap).
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-logic-v1"          # rollouts/envs/affine_logic_v1
+catalog = "hf"
+dataset = "PrimeIntellect/INTELLECT-3-RL"
+dataset_config = "logic"
+split = "train"
+row_meta = "i3_logic"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_text"]
+strata_buckets = 340
+strata_offset = 0
+share = 1.0
+
+[source.affine_trivia]
+# TriviaQA rc.wikipedia.nocontext TRAIN (61,888 questions; validation stays
+# out of D as a held-out scorecard), zero-shot, closed book, alias
+# exact-match on the first line of the visible reply. Probe: 8/12 solved,
+# replies p50 308 tokens (83% under the duel ref cap); visible answers are
+# 5-17 chars, the value is in the thought.
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-trivia-v1"         # rollouts/envs/affine_trivia_v1
+catalog = "hf"
+dataset = "mandarjoshi/trivia_qa"
+dataset_config = "rc.wikipedia.nocontext"
+dataset_revision = "0f7faf33a3908546c6fd5b73a660e0f8ff173c2f"
+split = "train"
+row_meta = "triviaqa"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_text"]
+strata_buckets = 230
+strata_offset = 340
+share = 1.0
+
+[source.affine_ifeval]
+# Verifiable instruction following: allenai/RLVR-IFeval train (14,973
+# prompts, one checkable constraint each, open-instruct checker vendored in
+# the wrapper). google/IFEval's 541 prompts stay OUT of D (benchmark;
+# `--env.taskset.include-ifeval True` would add them).
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-ifeval-v1"         # rollouts/envs/affine_ifeval_v1
+catalog = "hf"
+dataset = "allenai/RLVR-IFeval"
+split = "train"
+row_meta = "rlvr_ifeval"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_text"]
+strata_buckets = 230
+strata_offset = 570
+# Probe: 12/12 solved (one constraint per prompt is easy for the teacher;
+# above the 20-90% headroom band) — kept at half share for the prompt
+# shape; the first mean_r_leg read decides whether it stays.
+share = 0.5
+
+[source.affine_science]
+# INTELLECT-3-RL `science` train (29,307 problems), \boxed{} answer graded by
+# math-verify ONLY (the upstream LLM-judge fallback is removed: no judge
+# endpoint on the pods). Same difficulty band as logic -> ~17k rows.
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-science-v1"        # rollouts/envs/affine_science_v1
+catalog = "hf"
+dataset = "PrimeIntellect/INTELLECT-3-RL"
+dataset_config = "science"
+split = "train"
+row_meta = "i3_science"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_boxed"]
+strata_buckets = 340
+strata_offset = 800
+# Probe: 3/12 by math-verify (a lower bound: free-text golds), replies p50
+# 4.5k tokens — far past the duel's 1,792-token ref cap, so duel yield on
+# these prefixes will be low until that knob moves. Half share.
+share = 0.5
+
+[source.affine_unscramble]
+# kalomaze/unscramble-mix-it2 (10,300): reorder scrambled text blocks; the
+# wrapper grades `correct` = exact order (base similarity kept as a metric).
+# Probe: 3/12 exact, replies p50 2.4k tokens (42% under the duel ref cap).
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-unscramble-v1"     # rollouts/envs/affine_unscramble_v1
+catalog = "hf"
+dataset = "kalomaze/unscramble-mix-it2"
+split = "train"
+row_meta = "unscramble"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_text"]
+strata_buckets = 115
+strata_offset = 1140
+share = 0.5
+
+[source.affine_prolog]
+# SWI-Prolog constraint problems (9 kinds x procedural), `medium` tier, in a
+# swipl:latest sandbox under the shell harnesses; `solved` reward. Pool =
+# 3,000 per-index-seeded tasks (affine_prolog_v1 names them from the index).
+group = "general"
+runner = "verifiers"
+taskset_id = "affine-prolog-v1"         # rollouts/envs/affine_prolog_v1
+catalog = "procedural"
+row_meta = "prolog"
+procedural_uids = 3000
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
+extra_flags = ["--env.taskset.difficulty", "medium"]
+strata_buckets = 230
+strata_offset = 1255
+share = 1.0
+
+[source.affine_needle]
+# Patterned needle-in-a-haystack: 200 lines of a hidden word-order pattern,
+# 2 outlier lines to name in \boxed{}; synthetic long-context read. Pool =
+# 5,000 per-index-seeded tasks. STAGED AT SHARE 0.0 (probe 2026-09-11):
+# headroom is fine (8/12 at 200 lines, 7/12 at 100) but the teacher spends
+# 25-28k completion tokens per reply (3-4 of 12 hit the 32k cap), ~4 min
+# wall, and 0-8% of replies fit the duel's 1,792-token ref cap — the most
+# expensive 1-turn rollout in the wave with near-zero duel yield. Flip
+# share > 0 only if [duel] max_thought_tokens moves.
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-needle-v1"         # rollouts/envs/affine_needle_v1
+catalog = "procedural"
+row_meta = "needle"
+procedural_uids = 5000
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_boxed"]
+strata_buckets = 115
+strata_offset = 1485
+share = 0.0
+
+[source.affine_wikispeedia]
+# Wikispeedia: reach a target article by clicking links (stateful
+# wiki_click_link / wiki_go_back tools, 4-7 hop pairs on the SNAP graph —
+# 3-hop pairs were 12/12 for the teacher);
+# the episode ends on arrival. `tool_call` dialect; `solved` reward. Pool =
+# 4,000 seeded pairs.
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-wikispeedia-v1"    # rollouts/envs/affine_wikispeedia_v1
+catalog = "procedural"
+row_meta = "wikispeedia"
+procedural_uids = 4000
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_toolcall"]
+strata_buckets = 230
+strata_offset = 1600
 share = 1.0
