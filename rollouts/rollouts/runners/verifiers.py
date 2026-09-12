@@ -7,6 +7,7 @@ not hardcoded config.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -146,9 +147,75 @@ def build_local_images(batch: list[dict]) -> tuple[list[dict], list[str]]:
     return ok, failed
 
 
-def reap_containers() -> None:
-    """Remove leftover containers from verifiers image namespaces only —
-    mini_swe's swerebench/sweb.eval containers never match."""
+# Container ownership (2026-09-12). Every container the eval subprocess
+# creates is stamped by the `dockerwrap/docker` shim with
+# `rollouts.supervisor=<pid>@<boot id>` and `rollouts.batch=<run tag>`. The
+# per-batch reaper removes only containers whose supervisor is this process
+# or is gone (crashed supervisor -> orphans); containers of another live
+# supervisor or without the label (a one-off `uv run eval`, another agent's
+# experiment) are left alone. Before this, the reaper removed every
+# container in the verifiers image namespaces — two workers' one-offs on a
+# pod and the live supervisor were killing each other's rollouts (exit 137).
+DOCKERWRAP_DIR = str(Path(__file__).resolve().parent.parent / "dockerwrap")
+SUPERVISOR_LABEL = "rollouts.supervisor"
+BATCH_LABEL = "rollouts.batch"
+
+
+def _boot_id() -> str:
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text().strip()[:8]
+    except OSError:
+        return "noboot"
+
+
+def supervisor_id(pid: int | None = None) -> str:
+    """`<pid>@<boot id>`: a pid alone could be reused after a reboot."""
+    return f"{pid if pid is not None else os.getpid()}@{_boot_id()}"
+
+
+def supervisor_alive(label: str) -> bool:
+    pid_s, _, boot = label.partition("@")
+    if boot != _boot_id():
+        return False
+    try:
+        os.kill(int(pid_s), 0)
+    except (ValueError, ProcessLookupError):
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def reap_containers(owner: str | None = None) -> None:
+    """Remove this supervisor's leftover containers and any orphan whose
+    supervisor no longer runs. Unlabeled and other live supervisors'
+    containers are untouched."""
+    owner = owner or supervisor_id()
+    try:
+        out = subprocess.run(
+            ["docker", "ps", "-a", "--format",
+             '{{.ID}}\t{{.Label "' + SUPERVISOR_LABEL + '"}}'],
+            capture_output=True, text=True, timeout=60).stdout
+        stale = []
+        for line in out.splitlines():
+            cid, _, label = line.partition("\t")
+            label = label.strip()
+            if label and (label == owner or not supervisor_alive(label)):
+                stale.append(cid)
+        if stale:
+            subprocess.run(["docker", "rm", "-f", *stale],
+                           capture_output=True, timeout=120)
+            log.info("reaped %d leftover container(s) owned by this or a "
+                     "dead supervisor", len(stale))
+    except Exception:
+        log.warning("container reap failed", exc_info=True)
+
+
+def reap_all_verifiers_containers() -> None:
+    """The pre-2026-09-12 reaper: every container in the verifiers image
+    namespaces, whoever created it (mini_swe's swerebench/sweb.eval
+    containers never match). Explicit `rollouts.run --reap-all` only — for
+    a pod start where unlabeled orphans must be cleared; never per batch."""
     try:
         out = subprocess.run(
             ["docker", "ps", "-a", "--format", "{{.ID}} {{.Image}}"],
@@ -159,7 +226,7 @@ def reap_containers() -> None:
         if stale:
             subprocess.run(["docker", "rm", "-f", *stale],
                            capture_output=True, timeout=120)
-            log.info("reaped %d leftover container(s)", len(stale))
+            log.info("reaped %d verifiers container(s) (--reap-all)", len(stale))
     except Exception:
         log.warning("container reap failed", exc_info=True)
 
@@ -229,6 +296,12 @@ class VerifiersRunner:
             attempt_dir.mkdir(parents=True, exist_ok=True)
             env = dict(self.env)
             env["PATH"] = f"{Path.home()}/.local/bin:" + env.get("PATH", "")
+            if self.RUNTIME == "docker":
+                # dockerwrap/docker stamps ownership labels on every
+                # container this eval creates (see reap_containers).
+                env["PATH"] = DOCKERWRAP_DIR + ":" + env["PATH"]
+                env["ROLLOUTS_SUPERVISOR"] = supervisor_id()
+                env["ROLLOUTS_BATCH"] = run_dir.name
             if policy.loop_guard_repeats > 0:
                 # rollouts.loopguard: sitecustomize installs the `loop_guard`
                 # @stop in the eval process; the threshold rides the env.
