@@ -1,0 +1,59 @@
+# Discord mirror config (ops/discord-mirror/mirror.py).
+#
+# Every channel listed under [[channels]] is mirrored: full history on the
+# first run, then an incremental poll every poll_interval_s. Threads under a
+# mirrored channel (active + archived public) are mirrored too.
+
+[mirror]
+# Where the archive lives. Relative paths resolve against the repo root.
+data_dir = "affine/state/discord"
+poll_interval_s = 60
+# Re-list threads (active per guild + archived per channel) this often.
+thread_scan_interval_s = 600
+# Re-fetch this many of the newest messages per channel each poll so edits,
+# deletions and reactions inside the recent window are picked up.
+recent_window = 50
+# Env var that holds the bot token. Falls back to ~/.affine-validator.env and
+# the repo .env (same lookup order as ops/king-datagen/kingctl.py).
+token_env = "DISCORD_BOT_TOKEN_ARBOS_BITTENSOR"
+
+# Auto-discovery: at startup (and every thread scan) list the guilds the bot
+# is in and add any text channel whose name or guild name matches one of these
+# substrings (case-insensitive). Set to [] to mirror only the explicit list.
+discover_patterns = ["120", "affine", "sn120"]
+
+# Users whose DM channel with the bot is opened and mirrored (kind "dm",
+# channel name "dm:<username>"). Opening a DM channel sends nothing; Discord
+# does not list bot DMs via GET /users/@me/channels, so this list is what
+# makes a DM visible to read.py / alan_inbox.py.
+dm_user_ids = ["1429458949790371980"]   # Alan (allan_ww)
+
+# Alan liaison (standing duty, Jacob 2026-09-12): alan_inbox.py reads his
+# messages, alan_post.py posts the daily update to him.
+[alan]
+user_id = "1429458949790371980"
+username = "allan_ww"
+display = "AIIan"
+# Posting target: "dm" (default) or a channel id.
+target = "dm"
+
+# Known SN120 channels (discovered 2026-09-11 with the "Arbos" bot).
+[[channels]]
+id = "1381987595881414656"
+guild_id = "799672011265015819"
+name = "120・ⴷffine・ⴷ"
+aliases = ["bittensor", "public", "sn120"]   # read.py channel selectors
+note = "Bittensor server, category Subnets 100-149 — the public SN120 channel"
+
+[[channels]]
+id = "1510910974498967613"
+guild_id = "1489753158883344497"
+name = "ⴷ・ⴷffine・120"
+aliases = ["arbos"]
+note = "Arbos server (operator) — empty at discovery"
+
+[[channels]]
+id = "1510950265446993930"
+guild_id = "1489753158883344497"
+name = "120・name・x"
+note = "Arbos server (operator) — empty at discovery"
