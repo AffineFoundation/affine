@@ -15,8 +15,10 @@ into the view the duel scores:
      admitted by [dataset].allowed_action_kinds, prefix shape/cap, exactly
      one action, no verbatim leakage; dedupe turn_ids against the live
      index. King-seat rollouts route to `king_fail` (failed only) and,
-     since 2026-09-11, the first turn of each of their loops to
-     `king_loop_onset` (leakage rule waived for those turns only);
+     since 2026-09-11, single turns are routed to their own groups: the
+     first turn of each king loop to `king_loop_onset`, the judge's pivot
+     turns to `king_pivot` (leakage rule waived for those two), the reply
+     that ended a solved rollout to `completion` (teacher and king);
   3. enforce [mix] group targets from rollouts/rollouts/sources.toml in
      SLICE STRATA (cap_fill: what a duel slice is made of; turn counts are
      not) at ROLLOUT granularity (a rollout's turns enter together, so a
@@ -68,6 +70,7 @@ sys.path.insert(0, str(REPO / "affine"))
 
 from affine import dialects  # noqa: E402
 from affine.config import load_config  # noqa: E402
+from affine.corpus.completion import final_completion  # noqa: E402
 from affine.corpus.loops import IN_LOOP, ONSET, label_loops  # noqa: E402
 from affine.corpus.materialize import stratum_key  # noqa: E402
 from affine.corpus.pack import PackResult  # noqa: E402
@@ -88,6 +91,7 @@ from affine.corpus.view import (  # noqa: E402
 )
 from affine.corpus.viewpack import FORMAT, pack_view_records  # noqa: E402
 from affine.toolbake import ToolBaker  # noqa: E402
+from datagen.slicer import _normalize as normalize_fence  # noqa: E402
 
 STATE_DIR = REPO / "ops" / "corpus_build"
 STATE_PATH = STATE_DIR / "state.json"
@@ -216,22 +220,94 @@ def load_king_fail() -> dict:
             "policy_prefix": str(cfg.get("policy_prefix") or "king_")}
 
 
+# Turn-routed fold groups (2026-09-11, data events): derive_chunk splits
+# single turns of a rollout off into a second record of the same rollout
+# with `fold_group` set and a bucketed stratum `<group>:NNNN`. Precedence
+# when one turn qualifies for several: king_pivot > king_loop_onset >
+# completion (a turn can only be one of them by construction: the first two
+# need a FAILED king rollout, completion a SOLVED one).
 KING_LOOP_GROUP = "king_loop_onset"
+KING_PIVOT_GROUP = "king_pivot"
+COMPLETION_GROUP = "completion"
+ROUTED_GROUPS = (KING_PIVOT_GROUP, KING_LOOP_GROUP, COMPLETION_GROUP)
+
+
+def _group_cfg(group: str) -> dict:
+    """Common keys of a `[<group>]` block in sources.toml; {} when absent."""
+    raw = tomllib.loads(SOURCES_TOML.read_text())
+    cfg = raw.get(group) or {}
+    if not cfg:
+        return {}
+    return {"group": group,
+            "strata_buckets": int(cfg.get("strata_buckets", 0) or 0),
+            "policy_prefix": str(cfg.get("policy_prefix") or ""),
+            "exclude_sources": frozenset(str(s) for s in
+                                         (cfg.get("exclude_sources") or [])),
+            "leak_exempt": bool(cfg.get("leak_exempt", False)),
+            "raw": cfg}
 
 
 def load_king_loop_onset() -> dict:
-    """[king_loop_onset] from sources.toml: the fold group for the first
-    turn of every loop in the king seat's failed rollouts (2026-09-11,
-    data event). {} when the block is absent (feature off)."""
-    raw = tomllib.loads(SOURCES_TOML.read_text())
-    cfg = raw.get(KING_LOOP_GROUP) or {}
+    """[king_loop_onset]: the first turn of every loop in the king seat's
+    failed rollouts. The leak rule is always waived for this group."""
+    cfg = _group_cfg(KING_LOOP_GROUP)
+    if cfg:
+        cfg["policy_prefix"] = cfg["policy_prefix"] or "king_"
+        cfg["leak_exempt"] = True
+    return cfg
+
+
+def load_king_pivot() -> dict:
+    """[king_pivot]: the turns an LLM judge marked as the decision point of
+    a failed king rollout (ops/king-review, PR #8). Rows come from the
+    per-king side-tables under `side_table_dir` (`<digest>.jsonl`, one JSON
+    line per (rollout_id, turn_idx)); only `admit == true` rows at or above
+    `min_confidence` and outside `exclude_categories` route. Every table in
+    the directory is read: an earlier king's pivots stay valid states. The
+    leak rule is waived as for king_loop_onset. `table` =
+    {rollout_id: {turn_idx: row}}."""
+    cfg = _group_cfg(KING_PIVOT_GROUP)
     if not cfg:
         return {}
-    return {"group": KING_LOOP_GROUP,
-            "strata_buckets": int(cfg.get("strata_buckets", 0) or 0),
-            "policy_prefix": str(cfg.get("policy_prefix") or "king_"),
-            "exclude_sources": frozenset(str(s) for s in
-                                         (cfg.get("exclude_sources") or []))}
+    raw = cfg["raw"]
+    cfg["policy_prefix"] = cfg["policy_prefix"] or "king_"
+    cfg["leak_exempt"] = True
+    excluded = {str(c) for c in (raw.get("exclude_categories") or [])}
+    min_conf = float(raw.get("min_confidence", 0.7))
+    side_dir = REPO / str(raw.get("side_table_dir") or "affine/state/king_pivots")
+    table: dict[str, dict[int, dict]] = {}
+    n_rows = n_files = 0
+    for path in sorted(side_dir.glob("*.jsonl")) if side_dir.is_dir() else []:
+        n_files += 1
+        for line in path.read_text().split("\n"):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            n_rows += 1
+            if not row.get("admit") or str(row.get("failure_category")) in excluded:
+                continue
+            if float(row.get("confidence") or 0) < min_conf:
+                continue
+            table.setdefault(str(row["rollout_id"]), {})[int(row["turn_idx"])] = row
+    cfg.update(table=table, side_table_dir=str(side_dir), n_files=n_files,
+               n_rows=n_rows)
+    return cfg
+
+
+def load_completion() -> dict:
+    """[completion]: the reply that ended a SOLVED rollout on purpose
+    (affine.corpus.completion), teacher and king alike. `policy_prefix`
+    is empty = any policy."""
+    return _group_cfg(COMPLETION_GROUP)
+
+
+def _policy_ok(env: dict, cfg: dict) -> bool:
+    if not cfg or cfg["strata_buckets"] <= 0:
+        return False
+    pid = str((env.get("policy") or {}).get("id") or "")
+    if cfg["policy_prefix"] and not pid.startswith(cfg["policy_prefix"]):
+        return False
+    return str(env.get("source") or "") not in cfg["exclude_sources"]
 
 
 def king_loop_candidate(env: dict, cfg: dict) -> bool:
@@ -240,32 +316,44 @@ def king_loop_candidate(env: dict, cfg: dict) -> bool:
     the group admits. tool_use sources are excluded by config: the teacher's
     next tool call is near-deterministic there, so centered R is ~0 and a
     loop prefix carries no signal (wvk-11 findings)."""
-    if not cfg or cfg["strata_buckets"] <= 0:
-        return False
-    pid = str((env.get("policy") or {}).get("id") or "")
-    if not pid.startswith(cfg["policy_prefix"]):
-        return False
-    if str(env.get("source") or "") in cfg["exclude_sources"]:
-        return False
-    return rollout_outcome(env["trace"]) == "failed"
+    return _policy_ok(env, cfg) and rollout_outcome(env["trace"]) == "failed"
 
 
-def king_loop_stratum(rec: dict, cfg: dict) -> str:
+def king_pivot_turns(env: dict, cfg: dict) -> dict[int, dict]:
+    """Admitted pivot rows for this rollout, {turn_idx: row}; {} when the
+    rollout has none or is not a failed king rollout."""
+    if not _policy_ok(env, cfg):
+        return {}
+    rows = cfg["table"].get(str(env.get("rollout_id") or ""))
+    if not rows or rollout_outcome(env["trace"]) != "failed":
+        return {}
+    return dict(rows)
+
+
+def completion_candidate(env: dict, cfg: dict) -> bool:
+    """A SOLVED rollout the agent ended itself (`agent_completed`)."""
+    return (_policy_ok(env, cfg)
+            and env["trace"].get("stop_condition") == "agent_completed"
+            and rollout_outcome(env["trace"]) == "solved")
+
+
+def group_stratum(rec: dict, cfg: dict) -> str:
     key = str(rec.get("instance_id") or rec.get("traj_id"))
     h = int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:8], 16)
     return f"{cfg['group']}:{h % cfg['strata_buckets']:04d}"
 
 
-def stamp_king_loop_onset(records: list[dict], cfg: dict) -> int:
-    """Bucketed stratum `king_loop_onset:NNNN` on the onset records derive
-    split off. Runs after `assign_bucket_strata` and `route_king_fail` so
-    it wins over both; idempotent for deferred carryover. Returns the
-    number of records stamped."""
-    n = 0
+def stamp_routed_groups(records: list[dict], cfgs: dict[str, dict]) -> dict[str, int]:
+    """Bucketed stratum `<group>:NNNN` on the records derive split off.
+    Runs after `assign_bucket_strata` and `route_king_fail` so it wins over
+    both; idempotent for deferred carryover. Returns records stamped per
+    group."""
+    n: dict[str, int] = {}
     for rec in records:
-        if rec.get("fold_group") == KING_LOOP_GROUP:
-            rec["stratum"] = king_loop_stratum(rec, cfg)
-            n += 1
+        g = rec.get("fold_group")
+        if g in cfgs and cfgs[g]:
+            rec["stratum"] = group_stratum(rec, cfgs[g])
+            n[g] = n.get(g, 0) + 1
     return n
 
 
@@ -282,7 +370,7 @@ def route_king_fail(records: list[dict], king: dict, drops: dict[str, int]
     records pass through untouched. Without a
     [king_fail] block every king record is dropped (fail-closed: the seat's
     data never lands unlabelled in the teacher groups). A king record
-    another fold step already routed (`king_loop_onset`, split off in
+    another fold step already routed (ROUTED_GROUPS, split off in
     derive_chunk) passes through untouched too."""
     prefix = (king or {}).get("policy_prefix") or "king_"
     n = int((king or {}).get("strata_buckets") or 0)
@@ -292,7 +380,7 @@ def route_king_fail(records: list[dict], king: dict, drops: dict[str, int]
         if not pid.startswith(prefix):
             out.append(rec)
             continue
-        if rec.get("fold_group") == KING_LOOP_GROUP:
+        if rec.get("fold_group") in ROUTED_GROUPS:
             out.append(rec)
             continue
         if not king or n <= 0:
@@ -464,101 +552,175 @@ def _count(counter: dict[str, int], key: str, n: int = 1) -> None:
 def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                  published: set[str], drops: dict[str, int],
                  king_loop: dict | None = None,
+                 king_pivot: dict | None = None,
+                 completion: dict | None = None,
                  notes: dict[str, int] | None = None) -> list[dict]:
     """View records for one trace chunk, with only the turns that pass the
     fold contract and are not yet published. Records with no surviving
     turn are dropped.
 
-    `king_loop` ([king_loop_onset], 2026-09-11): a failed king rollout's
-    replies are loop-labelled first (affine.corpus.loops). Its loop-onset
-    turns are sliced and validated WITHOUT the reference-leakage rule
-    (only that rule; caps, dialect gate, panel, action count still apply)
-    and split off into a second record of the same rollout with
-    `fold_group = king_loop_onset`; its in-loop turns are dropped
-    (`king_in_loop`); its other turns keep the `king_fail` path unchanged.
-    `notes` collects telemetry that is not a drop (`king_loop_leak_exempt`:
-    onset turns admitted that the leak rule would have refused)."""
+    Turn-routed groups (2026-09-11; each `{}`/None = off):
+    `king_loop`  [king_loop_onset] -- a failed king rollout's replies are
+                 loop-labelled (affine.corpus.loops); loop-onset turns route
+                 to `king_loop_onset`, in-loop turns are dropped
+                 (`king_in_loop`), the rest keep the `king_fail` path.
+    `king_pivot` [king_pivot] -- the judge's admitted pivot turns of a
+                 failed king rollout route to `king_pivot`; a turn that is
+                 both a pivot and an onset is a pivot.
+    `completion` [completion] -- the final reply of a SOLVED
+                 `agent_completed` rollout that satisfies the per-harness
+                 completion rule (affine.corpus.completion) routes to
+                 `completion`, teacher and king alike.
+    Routed turns of groups with `leak_exempt` are sliced and validated
+    WITHOUT the reference-leakage rule (only that rule; caps, dialect gate,
+    panel, action count, token cap still apply) and land in one extra
+    record per group of the same rollout (`fold_group`, bucketed stratum).
+    Every other turn is derived exactly as before. `notes` collects
+    telemetry that is not a drop (`<group>_leak_exempt`: routed turns
+    admitted that the leak rule would have refused; `<group>_leaked`:
+    candidate turns the leak rule did refuse because the group is not
+    exempt)."""
     notes = notes if notes is not None else {}
+    cfgs = {KING_LOOP_GROUP: king_loop, KING_PIVOT_GROUP: king_pivot,
+            COMPLETION_GROUP: completion}
     out: list[dict] = []
     for env in iter_jsonl_gz(path):
         convs = None
-        onsets: dict[int, int] = {}
+        route: dict[int, str] = {}          # turn_idx -> group (final)
+        extra: dict[int, dict] = {}         # turn_idx -> meta fields to stamp
         in_loop: set[int] = set()
-        if king_loop and king_loop_candidate(env, king_loop):
+        kind = (env.get("policy") or {}).get("action_kind") or "bash"
+        want_loop = bool(king_loop) and king_loop_candidate(env, king_loop)
+        pivots = king_pivot_turns(env, king_pivot) if king_pivot else {}
+        want_completion = bool(completion) and completion_candidate(env, completion)
+        if want_loop or want_completion:
             try:
                 convs = trace_conversations(env["trace"], baker)
             except (ToolParityError, TraceShapeError) as e:
                 _count(drops, type(e).__name__)
                 continue
-            kind = (env.get("policy") or {}).get("action_kind") or "bash"
+        if want_completion and convs:
+            ckind = final_completion(convs, kind)
+            _count(notes, "completion_candidates")
+            if ckind:
+                i = len(convs) - 1
+                route[i] = COMPLETION_GROUP
+                extra[i] = {"completion_kind": ckind}
+                _count(notes, f"completion_kind_{ckind}")
+        if want_loop and convs:
+            n_on = 0
             for i, lab in enumerate(label_loops(convs, kind)):
                 if lab.label == ONSET:
-                    onsets[i] = int(lab.repeats)
+                    route[i] = KING_LOOP_GROUP
+                    extra[i] = {"loop_onset_of": int(lab.repeats)}
+                    n_on += 1
                 elif lab.label == IN_LOOP:
                     in_loop.add(i)
             _count(notes, "king_loop_labelled_rollouts")
-            _count(notes, "king_loop_onset_labels", len(onsets))
+            _count(notes, "king_loop_onset_labels", n_on)
             _count(notes, "king_loop_in_loop_labels", len(in_loop))
+        if pivots:
+            _count(notes, "king_pivot_rollouts")
+            for i, row in pivots.items():
+                if route.get(i) == KING_LOOP_GROUP:
+                    _count(notes, "king_pivot_over_onset")
+                route[i] = KING_PIVOT_GROUP
+                in_loop.discard(i)
+                extra[i] = {"pivot": {
+                    "category": row.get("failure_category"),
+                    "confidence": row.get("confidence"),
+                    "judge": row.get("judge_model"),
+                    "prompt_hash": row.get("prompt_hash")}}
+        leak_exempt = frozenset(i for i, g in route.items() if cfgs[g]["leak_exempt"])
         try:
             rec = build_view_record(env, baker=baker,
                                     generated_at=env.get("stored_at"),
-                                    convs=convs,
-                                    leak_exempt=frozenset(onsets))
+                                    convs=convs, leak_exempt=leak_exempt)
         except (ToolParityError, TraceShapeError) as e:
             _count(drops, type(e).__name__)
             continue
         if rec is None:
+            if route and convs:
+                _count_leaked(route, convs, kind, leak_exempt, notes)
             _count(drops, "no_scorable_turn")
             continue
         turns = view_turns(rec)
-        onset_turns = [t for t in turns if t["turn_idx"] in onsets]
-        rest = [t for t in turns if t["turn_idx"] not in onsets
+        present = {t["turn_idx"] for t in turns}
+        if route and convs:
+            _count_leaked({i: g for i, g in route.items() if i not in present},
+                          convs, kind, leak_exempt, notes)
+        rest = [t for t in turns if t["turn_idx"] not in route
                 and t["turn_idx"] not in in_loop]
-        n_in_loop = len(turns) - len(onset_turns) - len(rest)
+        routed = [t for t in turns if t["turn_idx"] in route]
+        n_in_loop = len(turns) - len(routed) - len(rest)
         if n_in_loop:
             _count(drops, "king_in_loop", n_in_loop)
         kept, d = validate_turns(rest, panel=panel, allowed_kinds=allowed_kinds)
         for k, v in d.items():
             _count(drops, k, v)
-        kept_onsets: list[dict] = []
-        if onset_turns:
-            kept_onsets, d = validate_turns(onset_turns, panel=panel,
-                                            allowed_kinds=allowed_kinds,
-                                            leak_check=False)
+        kept_routed: list[dict] = []
+        for g in ROUTED_GROUPS:
+            gturns = [t for t in routed if route[t["turn_idx"]] == g]
+            if not gturns:
+                continue
+            kg, d = validate_turns(gturns, panel=panel, allowed_kinds=allowed_kinds,
+                                   leak_check=not cfgs[g]["leak_exempt"])
+            kept_routed += kg
             for k, v in d.items():
                 _count(drops, k, v)
         keep_idx: set[int] = set()
-        keep_onset_idx: set[int] = set()
-        for t in [*kept, *kept_onsets]:
+        keep_routed: dict[str, set[int]] = {}
+        for t in [*kept, *kept_routed]:
             tid = f"{t['traj_id']}:{t['turn_idx']}"
+            g = route.get(t["turn_idx"])
             if tid in published:
                 _count(drops, "already_published")
+                if g is not None:
+                    _count(notes, f"{g}_already_published")
                 continue
             if prefix_over_token_cap(t, baker):
                 _count(drops, "prefix_too_many_tokens")
                 continue
-            if t["turn_idx"] in onsets:
-                keep_onset_idx.add(t["turn_idx"])
-                if reference_leaks(t["prefix"], dialects.last_action(
-                        t["reference_turn"], t["action_kind"])):
-                    _count(notes, "king_loop_leak_exempt")
-                else:
-                    _count(notes, "king_loop_onset_not_leaking")
-            else:
+            if g is None:
                 keep_idx.add(t["turn_idx"])
+                continue
+            keep_routed.setdefault(g, set()).add(t["turn_idx"])
+            leaks = reference_leaks(t["prefix"], dialects.last_action(
+                t["reference_turn"], t["action_kind"]))
+            _count(notes, f"{g}_leak_exempt" if leaks else f"{g}_not_leaking")
         metas = rec["turns"]
         rec["turns"] = [m for m in metas if m["turn_idx"] in keep_idx]
         if rec["turns"]:
             out.append(rec)
-        if keep_onset_idx:
-            onset_rec = dict(rec)
-            onset_rec["turns"] = [
-                {**m, "loop_onset_of": onsets[m["turn_idx"]]}
-                for m in metas if m["turn_idx"] in keep_onset_idx]
-            onset_rec["fold_group"] = KING_LOOP_GROUP
-            onset_rec["stratum"] = king_loop_stratum(onset_rec, king_loop)
-            out.append(onset_rec)
+        for g in ROUTED_GROUPS:
+            idx = keep_routed.get(g)
+            if not idx:
+                continue
+            grec = dict(rec)
+            grec["turns"] = [{**m, **extra.get(m["turn_idx"], {})}
+                             for m in metas if m["turn_idx"] in idx]
+            grec["fold_group"] = g
+            grec["stratum"] = group_stratum(grec, cfgs[g])
+            out.append(grec)
     return out
+
+
+def _count_leaked(missing: dict[int, str], convs: list[list[dict]], kind: str,
+                  leak_exempt: frozenset[int], notes: dict[str, int]) -> None:
+    """Routed turns the slicer did not admit: was it the leak rule? (Only
+    non-exempt groups can lose a turn to it; the count answers "does this
+    group need the exemption".)"""
+    for i, g in missing.items():
+        if i in leak_exempt or i >= len(convs):
+            continue
+        conv = convs[i]
+        acts = dialects.get(kind).actions(normalize_fence(conv[-1]["content"]))
+        if len(acts) != 1:
+            _count(notes, f"{g}_missing_other")
+            continue
+        prefix = [{"role": m["role"], "content": m["content"]} for m in conv[:-1]]
+        _count(notes, f"{g}_leaked" if reference_leaks(prefix, acts[0])
+               else f"{g}_missing_other")
 
 
 def legacy_records(pub: PublicCorpus, turns_manifest: dict) -> list[dict]:
@@ -907,12 +1069,22 @@ def main() -> None:
             f"{sum(len(r['turns']) for r in legacy)} turns from v2 epochs")
 
     mix, src2grp, lang_mix, buckets = load_mix(ignore_fold_mix=args.ignore_fold_mix)
-    king_loop = load_king_loop_onset()
-    if king_loop and mix.get(KING_LOOP_GROUP, 0.0) <= 0:
-        # Fail closed: group_of would file the onset records under coding.
-        fatal(f"[{KING_LOOP_GROUP}] is configured but [mix] has no "
-              f"{KING_LOOP_GROUP} share")
-    log(f"king loop onsets: {'off' if not king_loop else king_loop}")
+    routed = {KING_LOOP_GROUP: load_king_loop_onset(),
+              KING_PIVOT_GROUP: load_king_pivot(),
+              COMPLETION_GROUP: load_completion()}
+    for g, cfg in routed.items():
+        if cfg and mix.get(g, 0.0) <= 0:
+            # Fail closed: group_of would file the routed records under coding.
+            fatal(f"[{g}] is configured but the fold mix has no {g} share")
+        shown = {k: v for k, v in (cfg or {}).items() if k not in ("raw", "table")}
+        log(f"{g}: {'off' if not cfg else shown}")
+    king_loop, king_pivot, completion = (routed[g] for g in
+                                         (KING_LOOP_GROUP, KING_PIVOT_GROUP, COMPLETION_GROUP))
+    if king_pivot:
+        log(f"{KING_PIVOT_GROUP}: {king_pivot['n_rows']} side-table rows in "
+            f"{king_pivot['n_files']} file(s) -> admitted pivots on "
+            f"{len(king_pivot['table'])} rollouts / "
+            f"{sum(len(v) for v in king_pivot['table'].values())} turns")
 
     baker = ToolBaker.from_pretrained()
     panel = panel_keys()
@@ -922,7 +1094,8 @@ def main() -> None:
     for i, c in enumerate(unfolded, 1):
         path = pub.cached(c["key"], c["sha256"], gz_sha=True)
         recs = derive_chunk(path, baker, panel, allowed, published, drops,
-                            king_loop=king_loop, notes=notes)
+                            king_loop=king_loop, king_pivot=king_pivot,
+                            completion=completion, notes=notes)
         for rec in recs:
             for m in rec["turns"]:
                 published.add(f"{rec['traj_id']}:{m['turn_idx']}")
@@ -935,9 +1108,26 @@ def main() -> None:
         log(f"king loop onsets: labelled {notes.get('king_loop_labelled_rollouts', 0)} "
             f"failed king rollouts -> {notes.get('king_loop_onset_labels', 0)} onset / "
             f"{notes.get('king_loop_in_loop_labels', 0)} in-loop labels; "
-            f"admitted onsets {notes.get('king_loop_leak_exempt', 0)} leak-exempt + "
-            f"{notes.get('king_loop_onset_not_leaking', 0)} not leaking; "
+            f"admitted onsets {notes.get(f'{KING_LOOP_GROUP}_leak_exempt', 0)} leak-exempt + "
+            f"{notes.get(f'{KING_LOOP_GROUP}_not_leaking', 0)} not leaking; "
             f"king_in_loop dropped {drops.get('king_in_loop', 0)}")
+    if king_pivot:
+        log(f"king pivots: {notes.get('king_pivot_rollouts', 0)} rollouts with admitted "
+            f"pivots seen; admitted {notes.get(f'{KING_PIVOT_GROUP}_leak_exempt', 0)} "
+            f"leak-exempt + {notes.get(f'{KING_PIVOT_GROUP}_not_leaking', 0)} not leaking; "
+            f"{notes.get(f'{KING_PIVOT_GROUP}_already_published', 0)} already published "
+            f"(stay in their current group); {notes.get('king_pivot_over_onset', 0)} "
+            f"took precedence over an onset")
+    if completion:
+        kinds = {k[len('completion_kind_'):]: v for k, v in notes.items()
+                 if k.startswith('completion_kind_')}
+        log(f"completion: {notes.get('completion_candidates', 0)} solved agent_completed "
+            f"rollouts -> final replies by kind {kinds}; admitted "
+            f"{notes.get(f'{COMPLETION_GROUP}_not_leaking', 0)} not leaking + "
+            f"{notes.get(f'{COMPLETION_GROUP}_leak_exempt', 0)} leak-exempt; "
+            f"refused by the leak rule {notes.get(f'{COMPLETION_GROUP}_leaked', 0)}; "
+            f"missing for other reasons {notes.get(f'{COMPLETION_GROUP}_missing_other', 0)}; "
+            f"{notes.get(f'{COMPLETION_GROUP}_already_published', 0)} already published")
 
     n_bucketed = assign_bucket_strata(candidates, buckets, src2grp)
     log(f"bucket strata assigned on {n_bucketed} rollouts "
@@ -954,12 +1144,13 @@ def main() -> None:
         f"dropped {n_before - len(candidates)} {king_drops or ''}")
     for k, v in king_drops.items():
         drops[k] = drops.get(k, 0) + v
-    if king_loop:
-        n_loop = stamp_king_loop_onset(candidates, king_loop)
-        loop_recs = [r for r in candidates if r.get("fold_group") == KING_LOOP_GROUP]
-        log(f"king loop onsets: {n_loop} onset records -> {KING_LOOP_GROUP} "
-            f"({sum(len(r['turns']) for r in loop_recs)} turns, "
-            f"{len({r['stratum'] for r in loop_recs})} strata)")
+    stamped = stamp_routed_groups(candidates, routed)
+    for g in ROUTED_GROUPS:
+        if not routed[g]:
+            continue
+        recs_g = [r for r in candidates if r.get("fold_group") == g]
+        log(f"{g}: {stamped.get(g, 0)} records ({sum(len(r['turns']) for r in recs_g)} "
+            f"turns, {len({r['stratum'] for r in recs_g})} strata)")
     if not state.get("mix_seeded"):
         state["mix_seeded"] = True
         # Mix state is the set of slice strata each group / language bucket

@@ -22,13 +22,19 @@
 # GENERATION target only — the fold reads [fold_mix] while that block
 # exists (ops/corpus_build.py load_mix), so the slice share of `general`
 # is decided there, not here.
-coding = 0.405
-terminal = 0.2025
+# 2026-09-11 (late): + king_pivot 0.02 (out of king_fail) and completion
+# 0.03 (out of coding / terminal / math, proportionally) in the FOLD table
+# below; this generation table carries the same ratios x0.9 (general keeps
+# 0.1). Neither group has a source: the fold routes single turns into them.
+coding = 0.3892
+terminal = 0.1946
 nl2repo = 0.0405
-math = 0.081
+math = 0.0777
 tool_use = 0.081
-king_fail = 0.063
+king_fail = 0.045
 king_loop_onset = 0.027
+king_pivot = 0.018
+completion = 0.027
 general = 0.1
 
 [fold_mix]
@@ -44,13 +50,18 @@ general = 0.1
 # let [mix] drive the fold too. KEEP IN STEP WITH [mix] for every other
 # group: a group present in [mix] but missing here folds into
 # DEFAULT_GROUP (coding).
-coding = 0.45
-terminal = 0.225
+# 2026-09-11 (late, data plan §5-6): king_fail 0.07 -> 0.05 + king_pivot
+# 0.02; completion 0.03 taken proportionally from coding 0.45 -> 0.4324,
+# terminal 0.225 -> 0.2162, math 0.09 -> 0.0864 (x 0.735/0.765).
+coding = 0.4324
+terminal = 0.2162
 nl2repo = 0.045
-math = 0.09
+math = 0.0864
 tool_use = 0.09
-king_fail = 0.07
+king_fail = 0.05
 king_loop_onset = 0.03
+king_pivot = 0.02
+completion = 0.03
 general = 0.0
 
 [king_fail]
@@ -91,6 +102,44 @@ policy_prefix = "king_"
 strata_buckets = 1000
 policy_prefix = "king_"
 exclude_sources = ["affine_wiki", "affine_agent"]
+
+[king_pivot]
+# The turns an LLM judge marked as the DECISION POINT of a failed king
+# rollout (ops/king-review, PR #8; data plan §5, 2026-09-11). Rows come
+# from the per-king side-tables under side_table_dir (`<digest>.jsonl`,
+# one JSON line per (rollout_id, turn_idx), written by the review
+# pipeline's labels_out.py); the fold reads every table there so earlier
+# kings' pivots stay routable. Routed: `admit == true`, judge confidence
+# >= min_confidence, failure_category not excluded. A turn that is both a
+# pivot and a loop onset is a pivot (the judge's pivot is the earlier
+# decision point on 67 % of looping rollouts). Leak rule waived as for
+# king_loop_onset (a pivot that re-issues an earlier command is a "leak" by
+# construction; the duel never echoes the stored reference). Strata
+# `king_pivot:NNNN` = sha256(instance_id) % buckets. Forward-only: a pivot
+# turn already published as king_fail keeps its turn_id and stays there
+# (first table: 146 of 172 admitted pivots were already in D).
+strata_buckets = 1000
+policy_prefix = "king_"
+min_confidence = 0.7
+side_table_dir = "affine/state/king_pivots"
+exclude_categories = ["format_error"]
+
+[completion]
+# The reply that ENDED a solved rollout on purpose — teacher and king
+# alike (data plan §6, 2026-09-11): stop_condition agent_completed,
+# outcome solved, final reply satisfying the per-harness rule in
+# affine/corpus/completion.py (mini-swe `submit`, a finish tool call, a
+# final visible `text` report, Terminus task_complete, \boxed{}).
+# Reasoning-only finishes carry no visible text and match nothing. That
+# final turn moves out of its source group into `completion:NNNN` =
+# sha256(instance_id) % buckets; the rollout's other turns are untouched.
+# leak_exempt = false: a final reply is expected to be new text. The fold
+# logs `completion_leaked` (candidates the leak rule refused) so the
+# assumption is measured; mini-swe's COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT
+# command is quoted in the task prompt and IS a leak by the rule.
+strata_buckets = 1000
+exclude_sources = ["affine_wiki"]
+leak_exempt = false
 
 # Language targets for NEWLY FOLDED coding turns (2026-09-01). Enforced by
 # ops/datagen_refresh.py as a second waterfill (after the group waterfill)
