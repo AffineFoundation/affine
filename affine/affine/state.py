@@ -91,6 +91,14 @@ class King:
     # and when known reign_number / crowned_at / block. Deduped by hotkey when
     # building the rolling payout chain (Albedo / Teutonic last-N design).
     previous: list[dict] = field(default_factory=list)
+    # Decaying crown margin (staged 2026-09-12). `crown_block` is the chain
+    # block the crown was decided at (the clock origin of the δ cycle; NOT
+    # `block`, which is the winning challenge's reveal block).
+    # `min_margin_peak` is the δ the cycle started from. Both None for kings
+    # crowned before the fields existed — the validator then falls back to
+    # the reveal block and the peak cap, and stamps that it did.
+    crown_block: int | None = None
+    min_margin_peak: float | None = None
 
 
 class State:
@@ -316,7 +324,12 @@ class State:
             reign_number=int(last_crown.get("reign_number", 0)),
             crowned_at=last_crown.get("at", now_iso()),
             score=float(score) if score is not None else None,
-            previous=prev)
+            previous=prev,
+            crown_block=(int(last_crown["crown_block"])
+                         if last_crown.get("crown_block") is not None else None),
+            min_margin_peak=(float(last_crown["min_margin_peak"])
+                             if last_crown.get("min_margin_peak") is not None
+                             else None))
 
     # -- intake / queue ------------------------------------------------------
     def next_id(self) -> str:
@@ -527,7 +540,9 @@ class State:
 
     def record_verdict(self, entry: QueueEntry, verdict: dict, *,
                        uid: int | None = None,
-                       duration_s: float | None = None) -> "King | None":
+                       duration_s: float | None = None,
+                       crown_block: int | None = None,
+                       min_margin_peak: float | None = None) -> "King | None":
         """Terminal duel outcome — exactly ONE history row per duel.
 
         A winning verdict crowns inline: the single `crowned` row carries the
@@ -535,6 +550,8 @@ class State:
         shape wrote a `verdict` row then a bare `crowned` row, which doubled
         the duel on every chart and left the crown row without values.
         Returns the new King when the challenger won, else None.
+        `crown_block` / `min_margin_peak` seed the new king's δ cycle
+        (decaying-margin mode); None keeps the pre-2026-09-12 row shape.
         """
         accepted = bool(verdict.get("challenger_wins"))
         self.stats["accepted" if accepted else "rejected"] += 1
@@ -550,7 +567,8 @@ class State:
                 entry.hotkey, entry.repo, entry.revision, entry.block,
                 entry.challenge_id,
                 score=float(score) if score is not None else None,
-                history_extra=extra)
+                history_extra=extra, crown_block=crown_block,
+                min_margin_peak=min_margin_peak)
             self._clear_in_flight(entry)
             return king
         row = {
@@ -564,18 +582,28 @@ class State:
 
     @staticmethod
     def _king_lineage_entry(king: King) -> dict:
-        return {
+        row = {
             "hotkey": king.hotkey, "repo": king.repo, "revision": king.revision,
             "reign_number": king.reign_number, "crowned_at": king.crowned_at,
             "block": king.block, "score": king.score,
         }
+        if king.crown_block is not None:
+            row["crown_block"] = king.crown_block
+        if king.min_margin_peak is not None:
+            row["min_margin_peak"] = king.min_margin_peak
+        return row
 
     def set_king(self, hotkey: str, repo: str, revision: str, block: int,
                  challenge_id: str, score: float | None = None,
-                 history_extra: dict | None = None) -> King:
+                 history_extra: dict | None = None,
+                 crown_block: int | None = None,
+                 min_margin_peak: float | None = None) -> King:
         """Crown a king. `history_extra` merges duel context (verdict payload,
         uid, duration) into the single `crowned` history row — duels must not
-        write a second row for the same challenge."""
+        write a second row for the same challenge. `crown_block` and
+        `min_margin_peak` (decaying-margin mode) are stored on the king and
+        in the row only when given, so the row shape is unchanged until the
+        mode is on."""
         with self._lock:
             prev = []
             reign = 0
@@ -586,7 +614,9 @@ class State:
             self.king = King(hotkey=hotkey, repo=repo, revision=revision,
                              block=block, challenge_id=challenge_id,
                              reign_number=reign, crowned_at=now_iso(),
-                             score=score, previous=prev)
+                             score=score, previous=prev,
+                             crown_block=crown_block,
+                             min_margin_peak=min_margin_peak)
             log.info("CROWNED reign #%d: %s@%s (challenge %s, score=%s)",
                      reign, repo, revision[:12], challenge_id, score)
             row = {
@@ -594,14 +624,23 @@ class State:
                 "hotkey": hotkey, "repo": repo, "revision": revision,
                 "block": block, "reign_number": reign, "score": score,
             }
+            if crown_block is not None:
+                row["crown_block"] = int(crown_block)
+            if min_margin_peak is not None:
+                row["min_margin_peak"] = float(min_margin_peak)
             if history_extra:
                 row.update(history_extra)
             self._append_history(row)
             self.flush()
             return self.king
 
-    def revert_king(self, reason: str) -> King | None:
+    def revert_king(self, reason: str,
+                    crown_block: int | None = None) -> King | None:
         """Drop the reigning king and promote the most recent prior king.
+
+        `crown_block` (decaying-margin mode): the throne changed hands, so
+        the restored king starts a FRESH δ cycle at the cap from this block
+        (`min_margin_peak` None = cap). None keeps the legacy row shape.
 
         Used when the sitting king can no longer be served (repo deleted or
         gated): a dead king that stays crowned wedges every duel and keeps
@@ -632,8 +671,10 @@ class State:
                 reign_number=reign,
                 crowned_at=now_iso(),
                 score=entry.get("score"),
-                previous=rest)
-            self._append_history({
+                previous=rest,
+                crown_block=crown_block,
+                min_margin_peak=None)
+            row = {
                 "event": "crowned", "at": now_iso(), "challenge_id": challenge_id,
                 "hotkey": self.king.hotkey, "repo": self.king.repo,
                 "revision": self.king.revision, "block": self.king.block,
@@ -641,7 +682,10 @@ class State:
                 "via": "revert", "reason": reason[:2000],
                 "reverted_from_repo": dead.repo,
                 "reverted_from_revision": dead.revision,
-            })
+            }
+            if crown_block is not None:
+                row["crown_block"] = int(crown_block)
+            self._append_history(row)
             self.flush()
             return self.king
 

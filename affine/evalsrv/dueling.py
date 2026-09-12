@@ -50,9 +50,11 @@ from affine.corpus.materialize import stratum_key
 from affine.score import (
     DEFAULT_NEAR_MISS_HIGH,
     DEFAULT_NEAR_MISS_LOW,
+    NEAR_MISS_WINDOW_MODES,
     DuelResult,
     duel as score_duel,
     near_miss_triggered,
+    near_miss_window,
     score_miner,
 )
 
@@ -181,12 +183,51 @@ def near_miss_settings(duel_cfg: dict) -> dict:
     low = float(duel_cfg.get("near_miss_low", DEFAULT_NEAR_MISS_LOW))
     high = float(duel_cfg.get("near_miss_high", DEFAULT_NEAR_MISS_HIGH))
     extra = int(duel_cfg.get("near_miss_extra_slices", 1))
+    window_mode = str(duel_cfg.get("near_miss_window_mode", "absolute"))
     if enabled and not (0.0 <= low < high):
         raise ValueError(f"near-miss window needs 0 <= low < high, got "
                          f"low={low} high={high}")
     if enabled and extra < 1:
         raise ValueError(f"near_miss_extra_slices must be >= 1, got {extra}")
-    return {"enabled": enabled, "low": low, "high": high, "extra_slices": extra}
+    if window_mode not in NEAR_MISS_WINDOW_MODES:
+        raise ValueError(f"near_miss_window_mode must be one of "
+                         f"{NEAR_MISS_WINDOW_MODES}, got {window_mode!r}")
+    return {"enabled": enabled, "low": low, "high": high, "extra_slices": extra,
+            "window_mode": window_mode}
+
+
+# Keys of the validator's margin context that are stamped verbatim under
+# duel_params (decaying crown margin, staged 2026-09-12).
+MARGIN_STAMP_KEYS = ("min_margin_mode", "min_margin_base", "min_margin_peak",
+                     "min_margin_floor", "min_margin_peak_cap",
+                     "min_margin_decay_hours", "min_margin_decay_shape",
+                     "crown_block", "crown_block_source", "decision_block",
+                     "blocks_since_crown")
+
+
+def margin_stamp_for(duel_cfg: dict, margin: dict | None) -> dict:
+    """The δ context this duel is decided under, as stamped on the verdict.
+
+    With a validator-supplied ``margin`` carrying ``min_margin_effective``,
+    that value is the δ of the crown test and the context keys ride along.
+    Without one (older validator, offline harness) the pod's own
+    ``[duel].min_margin`` is the δ, stamped as mode "fixed" — so every
+    verdict from now on carries ``min_margin_effective`` and
+    ``min_margin_mode`` and a replayer never has to guess."""
+    base = float(duel_cfg.get("min_margin", 0.0))
+    stamp: dict = {"min_margin_mode": "fixed", "min_margin_base": base,
+                   "min_margin_effective": base}
+    if not margin:
+        return stamp
+    eff = margin.get("min_margin_effective")
+    if eff is None or not math.isfinite(float(eff)) or float(eff) < 0:
+        raise ValueError(f"margin.min_margin_effective must be a finite "
+                         f"non-negative number, got {eff!r}")
+    stamp["min_margin_effective"] = float(eff)
+    for key in MARGIN_STAMP_KEYS:
+        if key in margin:
+            stamp[key] = margin[key]
+    return stamp
 
 
 def _slice_stats(slice_info: dict, result: DuelResult) -> dict:
@@ -559,7 +600,8 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
                    block_hash: str, hotkey: str, corpus_info: dict,
                    on_progress,
                    corpus: "CorpusSync | None" = None,
-                   abort_event=None) -> tuple[dict, dict]:
+                   abort_event=None,
+                   margin: dict | None = None) -> tuple[dict, dict]:
     """Full duel. Returns (verdict, artifact).
 
     The verdict is the small audit summary streamed to the validator. The
@@ -570,8 +612,16 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
 
     schema_version>=2: sample the Parquet index via ``corpus``, materialize
     only the drawn turns. schema v1 / ``turns_path``: load flat turns.jsonl.
+
+    ``margin`` (decaying crown margin, staged 2026-09-12): the validator's
+    δ context for this duel. Its ``min_margin_effective`` replaces
+    ``[duel].min_margin`` in the crown test (and in the "bar" near-miss
+    window); the whole dict is stamped under ``duel_params``. None = the
+    pod's own toml δ, stamped as mode "fixed".
     """
-    duel_cfg = engine_cfg["duel"]
+    duel_cfg = dict(engine_cfg["duel"])
+    margin_stamp = margin_stamp_for(duel_cfg, margin)
+    duel_cfg["min_margin"] = margin_stamp["min_margin_effective"]
     started = time.monotonic()
     n = int(duel_cfg["n_turns"])
     near_miss = near_miss_settings(duel_cfg)
@@ -692,10 +742,13 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         # Absent = the per-byte design (length-biased; replay of the 09-04 probe).
         _anb = duel_cfg.get("action_norm_bytes")
         action_norm_bytes = float(_anb) if _anb is not None else None
+        # Minimum z safeguard (staged 2026-09-12; 0 = off).
+        min_z = float(duel_cfg.get("min_z", 0.0) or 0.0)
 
         def decide(c_rows: list[dict], k_rows: list[dict]) -> DuelResult:
             """The crown rule on a set of paired rows — one slice or the
-            pool of all slices, the same call either way."""
+            pool of all slices, the same call either way. δ is the
+            effective margin for this duel (`margin_stamp`)."""
             return score_duel(
                 c_rows, k_rows,
                 k_sigma=float(duel_cfg["k_sigma"]),
@@ -707,7 +760,8 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
                 tau=tau,
                 score_mode=score_mode, band_c=band_c, band_floor=band_floor,
                 forfeit_turn_score=forfeit_turn_score,
-                action_norm_bytes=action_norm_bytes)
+                action_norm_bytes=action_norm_bytes,
+                min_z=min_z)
 
         # Fresh teacher references every duel (see RefCache docstring): the
         # cache lives and dies inside this call.
@@ -747,12 +801,17 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         # of every slice, the pooled SE is sd/√n_pooled, forfeits keep
         # their floor, and the gates are read over the pooled challenger
         # rows. Nothing about a single turn's score changes.
+        # Window placement: "absolute" = the configured pair; "bar" = around
+        # this slice's own crown bar max(k_sigma·SE, δ_effective), so a
+        # decayed δ moves the window with it.
+        nm_low, nm_high = near_miss_window(
+            result, near_miss["window_mode"], near_miss["low"], near_miss["high"])
         triggered = bool(near_miss["enabled"]) and near_miss_triggered(
-            result, near_miss["low"], near_miss["high"])
+            result, nm_low, nm_high)
         if triggered:
-            log.info("near-miss: margin=%.5f in (%.4f, %.4f), z=%.2f — drawing "
-                     "%d extra slice(s) of %d turns", result.margin,
-                     near_miss["low"], near_miss["high"], result.z,
+            log.info("near-miss: margin=%.5f in (%.4f, %.4f) [%s], z=%.2f — "
+                     "drawing %d extra slice(s) of %d turns", result.margin,
+                     nm_low, nm_high, near_miss["window_mode"], result.z,
                      near_miss["extra_slices"], n)
             for index in range(1, int(near_miss["extra_slices"]) + 1):
                 if abort_event is not None and abort_event.is_set():
@@ -844,10 +903,27 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     if require_think_close:
         ranking_formula += "; a rollout without </think> is a forfeit"
     if near_miss["enabled"]:
+        if near_miss["window_mode"] == "bar":
+            ranking_formula += (
+                f"; first-slice margin in (0.5·bar, 1.5·bar), bar = "
+                f"max(k_sigma·SE, δ), draws {near_miss['extra_slices']} more "
+                f"slice(s) and the crown is decided on the pooled turns")
+        else:
+            ranking_formula += (
+                f"; first-slice margin in ({near_miss['low']:g}, "
+                f"{near_miss['high']:g}) draws {near_miss['extra_slices']} more "
+                f"slice(s) and the crown is decided on the pooled turns")
+    if margin_stamp["min_margin_mode"] == "decay":
         ranking_formula += (
-            f"; first-slice margin in ({near_miss['low']:g}, "
-            f"{near_miss['high']:g}) draws {near_miss['extra_slices']} more "
-            f"slice(s) and the crown is decided on the pooled turns")
+            f"; δ = {margin_stamp['min_margin_effective']:.6g} for this duel "
+            f"(decaying margin: {margin_stamp.get('min_margin_decay_shape', '?')} "
+            f"from peak {margin_stamp.get('min_margin_peak')} at crown block "
+            f"{margin_stamp.get('crown_block')} to floor "
+            f"{margin_stamp.get('min_margin_floor')} over "
+            f"{margin_stamp.get('min_margin_decay_hours')} h; "
+            f"{margin_stamp.get('blocks_since_crown')} blocks since crown)")
+    if min_z > 0:
+        ranking_formula += f"; a crown also needs z ≥ {min_z:g}"
 
     # Sequential near-miss stamp: the window, what each slice said on its
     # own, and (when pooled) the pooled decision — the top-level margin /
@@ -855,6 +931,9 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     near_miss_stamp = {
         "enabled": near_miss["enabled"],
         "low": near_miss["low"], "high": near_miss["high"],
+        "window_mode": near_miss["window_mode"],
+        # The window actually tested on the first slice ("bar" mode moves it).
+        "window": [nm_low, nm_high],
         "extra_slices": near_miss["extra_slices"],
         "triggered": triggered,
         "slices": slice_results,
@@ -874,6 +953,7 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         "rejection_reason": (
             "thought_too_short" if result.thought_floor_blocked
             else "causality_fail" if result.causality_blocked
+            else "z_below_min" if result.min_z_blocked
             else None),
         "margin": result.margin if math.isfinite(result.margin) else None,
         "se": result.se if math.isfinite(result.se) else None,
@@ -909,6 +989,11 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "near_miss_low": near_miss["low"],
             "near_miss_high": near_miss["high"],
             "near_miss_extra_slices": near_miss["extra_slices"],
+            "near_miss_window_mode": near_miss["window_mode"],
+            "min_z": min_z,
+            # Decaying crown margin (staged 2026-09-12): `min_margin` above
+            # is already the effective δ; these say where it came from.
+            **margin_stamp,
         },
         "near_miss": near_miss_stamp,
         "king": king_sum,

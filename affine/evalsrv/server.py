@@ -238,6 +238,11 @@ class DuelRequest(BaseModel):
     # Servable-weight bytes of the challenger (from the root validator's
     # metadata scan). 0 = unknown → skip the pre-download disk-fit check.
     challenger_weight_bytes: int = 0
+    # Decaying crown margin context from the validator (staged 2026-09-12):
+    # `min_margin_effective` overrides [duel].min_margin for this duel's
+    # crown test; the other keys (mode, peak, crown_block, decision_block,
+    # blocks_since_crown, …) are stamped on the verdict. None = pod toml δ.
+    margin: dict | None = None
 
 
 def _run_duel_job(job_id: str, req: DuelRequest) -> None:
@@ -367,7 +372,8 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
                 corpus_info=_corpus.info(),
                 on_progress=on_progress,
                 corpus=_corpus,
-                abort_event=_abort_duel))
+                abort_event=_abort_duel,
+                margin=req.margin))
         except ContextLengthError as e:
             # Serving config / corpus length — requeue without burning miner.
             raise DuelFault(Fault.CONTEXT_LIMIT, str(e)) from e

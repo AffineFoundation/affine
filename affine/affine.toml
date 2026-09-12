@@ -451,6 +451,57 @@ near_miss_enabled = true
 near_miss_low = 0.001
 near_miss_high = 0.003
 near_miss_extra_slices = 1
+# Where the near-miss window sits (staged 2026-09-12). "absolute" = the
+# fixed (near_miss_low, near_miss_high) pair above — today's rule. "bar" =
+# the window follows THIS slice's own crown bar, bar = max(k_sigma·SE,
+# δ_effective): (0.5·bar, 1.5·bar). At δ = 0.002 with a typical SE the bar
+# is δ and the two placements coincide, so "bar" is the drop-in choice
+# once min_margin_mode = "decay" (an absolute window around 0.002 would
+# miss every near-miss once δ has decayed to 0.001). Sampling rule, no
+# weight_version_key event on its own.
+near_miss_window_mode = "absolute"
+#
+# Decaying crown margin (STAGED 2026-09-12, OFF). Operator request
+# (2026-09-12): "the margin doubles every time there is a new king, then
+# decreases down to almost zero over a two-day period, then doubles again
+# … so that we are guaranteed a new king by that period."
+#   min_margin_mode = "fixed"   δ = min_margin on every duel (today).
+#   min_margin_mode = "decay"   δ follows a cycle:
+#     peak  = min(min_margin_double_factor · δ_at_crown, min_margin_peak_cap)
+#             at every crown (or = min_margin_peak_cap when
+#             min_margin_double_on_crown = false); the very first cycle, and
+#             any king without a stored peak, starts at the cap;
+#     δ(b)  = decays from peak to min_margin_floor over
+#             min_margin_decay_hours, clocked in BLOCKS since the crown
+#             block (b; finney 12 s/block) — never wall time — and stays at
+#             the floor until the next crown;
+#             linear:      δ = peak − (peak − floor)·min(b,B)/B
+#             exponential: δ = peak·(floor/peak)^(min(b,B)/B)
+#             with B = decay_hours·3600/12 blocks.
+# Every verdict stamps duel_params.min_margin (= the δ used),
+# min_margin_effective, min_margin_mode, min_margin_peak, crown_block,
+# decision_block, blocks_since_crown, so a replay is exact from the stamp.
+# peak_cap = min_margin (0.002) means the rule is never STRICTER than
+# today; the floor is where the δ leg of the bar stops mattering — below
+# k_sigma·SE (live 2·SE ≈ 0.0010–0.0018) the 2σ test alone decides, and a
+# zero-edge challenger passes that 1 duel in 44. Read
+# research/docs or the operator doc before flipping: flipping the mode
+# CHANGES WHICH MARGINS CROWN and is a weight_version_key event (explicit
+# dated operator directive + community notice) — never an agent edit.
+min_margin_mode = "fixed"
+min_margin_peak_cap = 0.002
+min_margin_floor = 0.0001
+min_margin_decay_hours = 48.0
+min_margin_decay_shape = "linear"
+min_margin_double_on_crown = true
+min_margin_double_factor = 2.0
+# Minimum z = margin/SE a crown needs, independent of δ (staged 2026-09-12,
+# 0 = off = today). The safeguard that pairs with a decaying δ: with δ near
+# the floor the crown bar is k_sigma·SE alone, which a zero-edge
+# challenger (an ε-copy, a same-tier sibling) clears 1 duel in 44; min_z =
+# 2.5 makes that ~1 in 160, 3.0 ~1 in 740. Contract knob: changing it is a
+# weight_version_key event.
+min_z = 0.0
 # Median stripped thought length, in characters (2026-08-13, wvk=5).
 # Invalid challenger cannot crown. 80 sits above live cue phrases
 # ("Next command:" = 13, "Next bash command:" = 18) and below guass (~290)

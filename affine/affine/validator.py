@@ -48,7 +48,8 @@ from .hippius import Hippius
 from .provisioner import BenchMachineManager, ChatMachineManager, EvalMachineManager
 from .r2protocol import is_r2_ref, parse_r2_ref
 from .registrations import AccessController
-from .state import QueueEntry, State, now_iso
+from .score import effective_min_margin
+from .state import King, QueueEntry, State, now_iso
 
 log = logging.getLogger("affine.validator")
 
@@ -339,8 +340,10 @@ class Validator:
         emissions, and requeue the blameless challenge (no burn) to duel the
         restored king next tick. With no prior king to fall back to, nothing
         can be dueled until an operator restores one: defer to the tail (so we
-        don't hot-spin the head) and page loudly."""
-        reverted = self.state.revert_king(reason)
+        don't hot-spin the head) and page loudly. The restored king starts a
+        fresh δ cycle from this block (decaying-margin mode)."""
+        reverted = self.state.revert_king(
+            reason, crown_block=chain.safe_block(self.subtensor) or None)
         if reverted is not None:
             log.error("reverted dead king → %s@%s (reign #%d): %s",
                       reverted.repo, reverted.revision[:12],
@@ -436,6 +439,102 @@ class Validator:
         if t0 is not None:
             meta["duration_s"] = max(0.0, time.monotonic() - t0)
         return meta
+
+    # -- decaying crown margin (staged 2026-09-12) -------------------------------
+    def _margin_context(self, king: King) -> dict:
+        """The δ this duel is decided under, plus the clock it came from.
+
+        mode "fixed" (today): δ = [duel].min_margin, stamped as such.
+        mode "decay": δ = the king's cycle curve read at the current chain
+        block (`decision_block`), `blocks_since_crown` blocks after the
+        king's `crown_block`. Kings crowned before the field existed fall
+        back to their reveal block (on-chain, a few hours before the crown
+        at most) and a peak of the cap; the stamp says so. A chain that
+        will not report the current block fails CLOSED in decay mode — the
+        challenge is requeued, never dueled at a guessed δ.
+        """
+        sched = self.cfg.duel.margin_schedule()
+        decision_block = chain.safe_block(self.subtensor)
+        if decision_block <= 0:
+            if sched.mode == "decay":
+                raise BlockHashUnavailable(
+                    "current block unavailable: cannot place the decaying "
+                    "margin clock")
+            decision_block = None
+        crown_block, source = king.crown_block, "king"
+        if crown_block is None:
+            crown_block = king.block if king.block else None
+            source = "reveal_block" if crown_block is not None else "unknown"
+        eff, since = effective_min_margin(sched, king.min_margin_peak,
+                                          crown_block, decision_block)
+        ctx = {
+            "min_margin_mode": sched.mode,
+            "min_margin_base": sched.min_margin,
+            "min_margin_effective": eff,
+            "decision_block": decision_block,
+            "crown_block": crown_block,
+            "crown_block_source": source,
+            "blocks_since_crown": since,
+        }
+        if sched.mode == "decay":
+            ctx.update({
+                "min_margin_peak": (king.min_margin_peak
+                                    if king.min_margin_peak is not None
+                                    else sched.peak_cap),
+                "min_margin_floor": sched.floor,
+                "min_margin_peak_cap": sched.peak_cap,
+                "min_margin_decay_hours": sched.decay_hours,
+                "min_margin_decay_shape": sched.shape,
+            })
+            log.info("decaying margin: δ=%.6f (peak %s, %s blocks since crown "
+                     "block %s [%s], decision block %s)", eff,
+                     ctx["min_margin_peak"], since, crown_block, source,
+                     decision_block)
+        return ctx
+
+    def _crown_cycle(self, margin: dict) -> dict:
+        """`crown_block` / `min_margin_peak` for the king a winning verdict
+        creates: the block the crown lands on and the peak the next cycle
+        starts from (min(double·δ_now, cap) in decay mode; min_margin in
+        fixed mode, so a later flip finds a meaningful stored value)."""
+        sched = self.cfg.duel.margin_schedule()
+        block = chain.safe_block(self.subtensor) or margin.get("decision_block")
+        return {
+            "crown_block": int(block) if block else None,
+            "min_margin_peak": sched.next_peak(float(margin["min_margin_effective"])),
+        }
+
+    def _apply_crown_bar(self, verdict: dict, margin: dict) -> None:
+        """Re-check the crown test with the δ the validator computed.
+
+        The pod decides with the same δ (sent in the request and echoed in
+        `duel_params.min_margin`); this copy catches a stale pod that
+        ignored the override and crowned on its own toml δ. Like the other
+        validator-side gates it can only DENY a crown, never grant one: a
+        stale pod that applied a stricter δ than the effective one is
+        logged loudly so the operator redeploys, but its verdict stands.
+        """
+        m, se = verdict.get("margin"), verdict.get("se")
+        if m is None or se is None:
+            return
+        eff = float(margin["min_margin_effective"])
+        stamped = (verdict.get("duel_params") or {}).get("min_margin")
+        if stamped is None or abs(float(stamped) - eff) > 1e-12:
+            log.error("pod decided with δ=%s but the validator's effective δ is "
+                      "%.6f — stale eval pod? redeploy (scripts/redeploy_pods.py)",
+                      stamped, eff)
+        k_sigma = float(self.cfg.duel.k_sigma)
+        if verdict.get("challenger_wins") and not (float(m) > max(k_sigma * float(se), eff)):
+            verdict["challenger_wins"] = False
+            if not verdict.get("rejection_reason"):
+                verdict["rejection_reason"] = "margin_below_bar"
+        min_z = float(self.cfg.duel.min_z)
+        z = verdict.get("z")
+        if (min_z > 0 and verdict.get("challenger_wins")
+                and (z is None or float(z) < min_z)):
+            verdict["challenger_wins"] = False
+            if not verdict.get("rejection_reason"):
+                verdict["rejection_reason"] = "z_below_min"
 
     def _hygiene_reason(self, info: model_store.RepoInfo) -> str | None:
         """Contract hygiene gates on a repo's metadata; one definition so the
@@ -546,7 +645,8 @@ class Validator:
                 # No duel S* for copy-arbitration crowns.
                 self.state.record_verdict(entry, {
                     "challenger_wins": True, "verdict": "crown_earlier",
-                    "reason": copy.reason}, **self._history_meta(entry, t0))
+                    "reason": copy.reason}, **self._history_meta(entry, t0),
+                    **self._crown_cycle(self._margin_context(king)))
                 await self._maybe_set_weights(force=True)
                 self.bench.enqueue_for(entry.repo, entry.revision, entry.hotkey,
                                        accepted=True, label=f"reign-{self.state.king.reign_number}")
@@ -560,6 +660,9 @@ class Validator:
         # BlockHashUnavailable propagates to the safety wrapper: fail CLOSED
         # and requeue rather than duel on a predictable fallback slice.
         block_hash = chain.block_hash_at(self.subtensor, entry.block)
+        # δ for this duel (fixed today; the decaying-margin curve once the
+        # mode flips). Same failure contract as the seed: no block, no duel.
+        margin = self._margin_context(king)
         self.state.current_eval = {
             "challenge_id": cid, "repo": entry.repo, "hotkey": entry.hotkey,
             "stage": "dispatching", "progress": {},
@@ -601,12 +704,14 @@ class Validator:
             challenger_repo=entry.repo, challenger_revision=entry.revision,
             challenger_hotkey=entry.hotkey, block_hash=block_hash,
             challenger_weight_bytes=info.total_safetensors_bytes,
+            margin=margin,
             on_progress=on_progress)
         self.state.current_eval = None
 
         verdict["block_hash"] = block_hash
         self._apply_thought_floor(verdict)
         self._apply_causality_gate(verdict)
+        self._apply_crown_bar(verdict, margin)
         accepted = bool(verdict.get("challenger_wins"))
         crowned_entry = entry
         if accepted and is_r2_ref(entry.repo):
@@ -620,9 +725,11 @@ class Validator:
                 crowned_entry = replace(entry, repo=public_ref)
                 verdict["private_repo"] = entry.repo
         # One history row per duel: a winning verdict crowns inside
-        # record_verdict, so the crowned row carries the full verdict payload.
+        # record_verdict, so the crowned row carries the full verdict payload
+        # (+ the δ cycle the new king starts: crown block, next peak).
         self.state.record_verdict(crowned_entry, verdict,
-                                  **self._history_meta(entry, t0))
+                                  **self._history_meta(entry, t0),
+                                  **(self._crown_cycle(margin) if accepted else {}))
         log.info("verdict %s: challenger_wins=%s z=%s reason=%s", cid, accepted,
                  verdict.get("z"), verdict.get("rejection_reason"))
         await self._publish_eval_artifact(entry, verdict)

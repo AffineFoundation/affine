@@ -68,6 +68,16 @@ v5 (score_mode="min_rg", the live rule):
               near-miss losers bench like kings — δ blocks a real improver
               at n = 1300 exactly as often as it blocks noise, and only a
               larger n can tell the two apart.
+  Decaying crown margin (staged 2026-09-12, OFF: min_margin_mode="fixed"):
+              under mode="decay" the δ in the crown test is not the fixed
+              min_margin but δ(b) = a curve from `peak` down to
+              min_margin_floor over min_margin_decay_hours, clocked in
+              BLOCKS since the crown block (b), and a crown starts a new
+              cycle at peak = min(2·δ_at_crown, min_margin_peak_cap). See
+              MarginSchedule. Operator request: "a new king roughly every
+              day". Changing the mode changes which margins crown, so it is
+              a weight_version_key event. min_z (0 = off) is the paired
+              safeguard: a crown also needs z ≥ min_z, whatever δ is.
 
 Why v5 (2026-08-27): the wvk-9 king crowned on a constant filler suffix — a
 flat, task-independent lift that raises every a_i equally and benches 0/50
@@ -198,6 +208,47 @@ DEFAULT_CAUSALITY_GAMMA = 0.0
 # of the bar at the live SE scale (2·SE ≈ 0.0010–0.0018).
 DEFAULT_NEAR_MISS_LOW = 0.001
 DEFAULT_NEAR_MISS_HIGH = 0.003
+# Near-miss window placement (staged 2026-09-12, inert unless the decaying
+# margin is on). "absolute" = the fixed (low, high) window above. "bar" =
+# the window follows the crown bar of the first slice, bar = max(k_sigma·SE,
+# δ_effective): (BAR_LOW_FRAC·bar, BAR_HIGH_FRAC·bar). At δ = 0.002 with a
+# typical SE the bar is δ and the two placements coincide — (0.001, 0.003).
+NEAR_MISS_WINDOW_MODES = ("absolute", "bar")
+NEAR_MISS_BAR_LOW_FRAC = 0.5
+NEAR_MISS_BAR_HIGH_FRAC = 1.5
+
+# Decaying crown margin (staged 2026-09-12, operator request: "roughly a
+# new king every day"). OFF by default — mode "fixed" is today's contract
+# (δ = min_margin on every duel). Turning mode to "decay" changes the crown
+# test and is a weight_version_key event that needs an explicit dated
+# operator directive plus a community notice.
+#
+#   δ(b) for blocks_since_crown b, decay window B = decay_hours·3600/12:
+#     linear:       δ = peak − (peak − floor)·min(b, B)/B
+#     exponential:  δ = peak·(floor/peak)^(min(b, B)/B)   (same factor every
+#                   block; reaches `floor` exactly at B, stays there)
+#   at a crown:     next peak = min(double·δ_at_crown, peak_cap) when
+#                   double_on_crown, else peak_cap
+#
+# The clock is BLOCKS since the crown block (finney: 12 s/block), never wall
+# time, so a verdict replays from its stamp alone. `peak_cap` bounds the
+# rule from above: with peak_cap = min_margin the decaying rule can never be
+# stricter than today's fixed δ.
+MIN_MARGIN_MODES = ("fixed", "decay")
+MIN_MARGIN_DECAY_SHAPES = ("linear", "exponential")
+DEFAULT_MIN_MARGIN_MODE = "fixed"
+DEFAULT_MIN_MARGIN_PEAK_CAP = DEFAULT_MIN_MARGIN
+DEFAULT_MIN_MARGIN_FLOOR = 0.0001
+DEFAULT_MIN_MARGIN_DECAY_HOURS = 48.0
+DEFAULT_MIN_MARGIN_DECAY_SHAPE = "linear"
+DEFAULT_MIN_MARGIN_DOUBLE_ON_CROWN = True
+DEFAULT_MIN_MARGIN_DOUBLE_FACTOR = 2.0
+SECONDS_PER_BLOCK = 12.0
+# Minimum z (margin / SE) a crown needs, independent of δ. 0 = off (today).
+# A safeguard for the decaying margin: when δ → 0 the 2σ test alone crowns
+# a zero-edge challenger 1 duel in 44; min_z = 2.5 makes that ~1 in 160,
+# 3.0 ~1 in 740. Contract knob — a weight_version_key event.
+DEFAULT_MIN_Z = 0.0
 
 # Telemetry constants (non-consensus): thresholds used only to report the
 # legacy causality/leakage pass rate. Changing them is NOT a chain fork.
@@ -704,6 +755,10 @@ class DuelResult:
     forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE
     n_forfeit_turns: int = 0          # paired turns where at least one side forfeited
     action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
+    # Minimum z safeguard (staged 2026-09-12; 0 = off). `min_z_blocked` is
+    # True when the margin cleared max(k_sigma·SE, δ) but z < min_z.
+    min_z: float = DEFAULT_MIN_Z
+    min_z_blocked: bool = False
 
 
 def duel(challenger_rows: list[dict], king_rows: list[dict],
@@ -718,12 +773,19 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
          band_c: float = DEFAULT_BAND_C,
          band_floor: float = DEFAULT_BAND_FLOOR,
          forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE,
-         action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
+         action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES,
+         min_z: float = DEFAULT_MIN_Z
          ) -> DuelResult:
     """Paired duel on the per-turn score: wins iff
     mean > max(k_sigma·SE, min_margin) AND the challenger's median stripped
     thought length is ≥ min_thought_chars AND (if causality_gamma > 0) the
-    challenger's teacher-side B pass rate is ≥ causality_gamma.
+    challenger's teacher-side B pass rate is ≥ causality_gamma AND (if
+    min_z > 0) z = mean/SE ≥ min_z.
+
+    `min_margin` is the δ in force for THIS duel: the fixed contract value
+    today, or the decayed value `effective_min_margin()` computed by the
+    caller when the decaying-margin mode is on — this function does not
+    know or care which.
 
     Each turn's score on each side is turn_score(pairs, ...): tempered
     Reason under score_mode="reason" (k=1 or tau <= 0 recovers the v3 plain
@@ -788,6 +850,10 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
         if rate is None or rate < causality_gamma:
             wins = False
             causality_blocked = True
+    min_z_blocked = False
+    if min_z > 0 and wins and z < min_z:
+        wins = False
+        min_z_blocked = True
     return DuelResult(
         challenger=cs.miner, king=ks.miner, margin=mean, se=se, z=z,
         k_sigma=k_sigma, challenger_wins=wins, n_paired_turns=n,
@@ -802,6 +868,8 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
         forfeit_turn_score=forfeit_turn_score,
         n_forfeit_turns=n_forfeit_turns,
         action_norm_bytes=action_norm_bytes,
+        min_z=min_z,
+        min_z_blocked=min_z_blocked,
     )
 
 
@@ -827,3 +895,121 @@ def near_miss_triggered(result: DuelResult,
     if not math.isfinite(result.margin) or not math.isfinite(result.se):
         return False
     return low < result.margin < high
+
+
+def near_miss_window(result: DuelResult, mode: str = "absolute",
+                     low: float = DEFAULT_NEAR_MISS_LOW,
+                     high: float = DEFAULT_NEAR_MISS_HIGH
+                     ) -> tuple[float, float]:
+    """The (low, high) margin window the near-miss rule tests this slice
+    against.
+
+    "absolute" returns the configured pair unchanged (today's rule).
+    "bar" places the window around the crown bar of this very slice,
+    bar = max(k_sigma·SE, min_margin) as `duel()` saw it, at
+    (NEAR_MISS_BAR_LOW_FRAC·bar, NEAR_MISS_BAR_HIGH_FRAC·bar). With δ =
+    0.002 and SE below δ/k_sigma the bar is δ and "bar" reproduces
+    (0.001, 0.003) exactly; when δ decays below k_sigma·SE the window
+    follows the SE bar instead of a δ that no longer binds. A non-finite SE
+    (n < 2) falls back to the absolute pair so the rule cannot trigger."""
+    if mode not in NEAR_MISS_WINDOW_MODES:
+        raise ValueError(f"near_miss_window_mode must be one of "
+                         f"{NEAR_MISS_WINDOW_MODES}, got {mode!r}")
+    if mode == "absolute" or not math.isfinite(result.se):
+        return low, high
+    bar = max(result.k_sigma * result.se, result.min_margin)
+    return NEAR_MISS_BAR_LOW_FRAC * bar, NEAR_MISS_BAR_HIGH_FRAC * bar
+
+
+# -- decaying crown margin (staged 2026-09-12) ---------------------------------
+
+@dataclass(frozen=True)
+class MarginSchedule:
+    """`[duel].min_margin_*` as one value object. `mode="fixed"` is today's
+    contract: `effective()` returns `min_margin` whatever the clock says."""
+
+    min_margin: float = DEFAULT_MIN_MARGIN
+    mode: str = DEFAULT_MIN_MARGIN_MODE
+    peak_cap: float = DEFAULT_MIN_MARGIN_PEAK_CAP
+    floor: float = DEFAULT_MIN_MARGIN_FLOOR
+    decay_hours: float = DEFAULT_MIN_MARGIN_DECAY_HOURS
+    shape: str = DEFAULT_MIN_MARGIN_DECAY_SHAPE
+    double_on_crown: bool = DEFAULT_MIN_MARGIN_DOUBLE_ON_CROWN
+    double_factor: float = DEFAULT_MIN_MARGIN_DOUBLE_FACTOR
+    seconds_per_block: float = SECONDS_PER_BLOCK
+
+    def __post_init__(self) -> None:
+        if self.mode not in MIN_MARGIN_MODES:
+            raise ValueError(f"min_margin_mode must be one of "
+                             f"{MIN_MARGIN_MODES}, got {self.mode!r}")
+        if self.shape not in MIN_MARGIN_DECAY_SHAPES:
+            raise ValueError(f"min_margin_decay_shape must be one of "
+                             f"{MIN_MARGIN_DECAY_SHAPES}, got {self.shape!r}")
+        if self.mode == "decay":
+            if not (0.0 < self.floor <= self.peak_cap):
+                raise ValueError(
+                    f"decaying margin needs 0 < floor <= peak_cap, got "
+                    f"floor={self.floor} peak_cap={self.peak_cap}")
+            if self.decay_hours <= 0:
+                raise ValueError(
+                    f"min_margin_decay_hours must be > 0, got {self.decay_hours}")
+            if self.double_factor <= 1.0:
+                raise ValueError(
+                    f"min_margin_double_factor must be > 1, got {self.double_factor}")
+            if self.seconds_per_block <= 0:
+                raise ValueError("seconds_per_block must be > 0")
+
+    @property
+    def decay_blocks(self) -> float:
+        """Blocks from peak to floor: decay_hours × 3600 / seconds_per_block."""
+        return self.decay_hours * 3600.0 / self.seconds_per_block
+
+    def effective(self, peak: float | None, blocks_since_crown: int | None
+                  ) -> float:
+        """δ in force `blocks_since_crown` blocks after a crown that started
+        the cycle at `peak`.
+
+        fixed mode → `min_margin`, always. decay mode →
+          linear:      peak − (peak − floor)·t         with t = min(b, B)/B
+          exponential: peak·(floor/peak)^t
+        Missing inputs (no crown block known, no stored peak) mean "the
+        cycle just started at the cap": δ = peak_cap. Negative block counts
+        (a decision block before the crown block — clock skew, replay of an
+        older stamp) clamp to 0 = the peak. The result never leaves
+        [floor, peak_cap]."""
+        if self.mode == "fixed":
+            return self.min_margin
+        p = self.peak_cap if peak is None else min(max(peak, self.floor),
+                                                   self.peak_cap)
+        if blocks_since_crown is None:
+            return p
+        b = max(0.0, float(blocks_since_crown))
+        t = min(b, self.decay_blocks) / self.decay_blocks
+        if self.shape == "linear":
+            d = p - (p - self.floor) * t
+        else:
+            d = p * (self.floor / p) ** t
+        return min(self.peak_cap, max(self.floor, d))
+
+    def next_peak(self, delta_at_crown: float) -> float:
+        """Peak of the cycle a crown starts: min(double·δ_at_crown, cap)
+        with doubling, else the cap. Fixed mode reports `min_margin` so a
+        stored peak is always meaningful if the mode flips later."""
+        if self.mode == "fixed":
+            return self.min_margin
+        if not self.double_on_crown:
+            return self.peak_cap
+        return min(self.peak_cap,
+                   max(self.floor, self.double_factor * delta_at_crown))
+
+
+def effective_min_margin(schedule: MarginSchedule, peak: float | None,
+                         crown_block: int | None, decision_block: int | None
+                         ) -> tuple[float, int | None]:
+    """(δ in force, blocks since the crown) for a duel decided at
+    `decision_block` against a king crowned at `crown_block` whose cycle
+    started at `peak`. Unknown blocks → (peak-of-cycle, None)."""
+    if crown_block is None or decision_block is None:
+        return schedule.effective(peak, None), None
+    since = int(decision_block) - int(crown_block)
+    return schedule.effective(peak, since), since
