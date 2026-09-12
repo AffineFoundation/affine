@@ -659,3 +659,154 @@ policies = ["teacher_toolcall", "king_toolcall"]   # + king seat 2026-09-12
 strata_buckets = 230
 strata_offset = 1600
 share = 1.0
+
+# -- env wave 2 (2026-09-12; data plan W3, teacher-first) ------------------------
+#
+# Seven more environments, probed on datagen-4 (12 teacher rollouts each, see
+# the env-wave-2 report) and staged behind `share`: a source whose probe did
+# not pass ships at share 0.0 (defined, catalog builds, one-line flip).
+# Groups: tmax joins `terminal` (it IS a terminal pool, the largest one),
+# the rest join `general` with their own strata_offset ranges above wave 1
+# (1830+): affine_longcot 1830-1999, affine_eog 2000-2199,
+# affine_numina 2200-2429, affine_sql 2430-2659, affine_autobench 2660-2859,
+# affine_uuidctf 2860-2974. Teacher policies only
+# until the first fold read (king_* follow as in wave 1 part A).
+
+[source.affine_tmax]
+# TMax (research-environments tmax@2026-07-01): 14,600 Harbor terminal
+# tasks from the PUBLIC PrimeIntellect-ai/prime-tasks repo, each with its
+# Dockerfile context. The upstream taskset pins Prime-internal images that
+# only Prime sandboxes can pull; the pod builds each task image itself
+# (local_docker_build, terminal_lego's path) under the declared tag - tasks
+# of one base_image share the apt layer via the build cache. Harbor
+# verifier -> `solved`. Share 1.0 next to terminal_lego 3.0 / tb2 1.0.
+group = "terminal"
+runner = "verifiers"
+taskset_id = "affine-tmax-v1"           # rollouts/envs/affine_tmax_v1
+catalog = "tmax"                        # sparse clone of prime-tasks datasets/tmax
+select = "tasks"
+pass_dataset = false
+task_id_basename = true     # harbor names tasks `tmax/<dir>`; the filter takes the dir
+local_docker_build = true
+share = 1.0
+
+[source.affine_longcot]
+# LongCoT (longcot-v1): ~2,000 long-horizon reasoning tasks in five domains
+# (logic / cs / chemistry / chess / math), solved by an agent in a sandbox
+# that writes /workspace/answer.txt; upstream `longcot.verify` grades
+# (`correct`). `medium` tier first (catalog and taskset agree on the tier
+# through extra_flags). Pool ~1,000 medium questions.
+group = "general"
+runner = "verifiers"
+taskset_id = "affine-longcot-v1"        # rollouts/envs/affine_longcot_v1
+catalog = "longcot"                     # ids via the verifiers env's longcot package
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
+extra_flags = ["--env.taskset.difficulty", "medium"]
+strata_buckets = 170
+strata_offset = 1830
+share = 1.0
+
+[source.affine_eog]
+# EnterpriseOps-Gym (649 oracle tasks, 7 ServiceNow-style MCP services +
+# hybrids): 1-2 digest-pinned service containers per rollout started by the
+# taskset's toolset in local Docker, fresh seeded databases, final-state
+# SQL verifiers -> `solved`. Null harness (native tool calling); heaviest
+# infra of the wave - capacity-probed at 8 concurrent.
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-eog-v1"            # rollouts/envs/affine_eog_v1
+catalog = "hf"
+dataset = "ServiceNow-AI/EnterpriseOps-Gym"
+dataset_config = "oracle"
+dataset_revision = "c8e538eae8a6205294f0a86675fefdc1fac408f6"
+split = "calendar+csm+drive+email+hr+itsm+teams+hybrid"
+row_meta = "eog"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_toolcall"]
+strata_buckets = 200
+strata_offset = 2000
+share = 1.0
+
+[source.affine_numina]
+# NuminaMath-LEAN (104k statements) in a Mathlib sandbox, `solved` = clean
+# `lake env lean` compile with the statement intact. The upstream image is a
+# Prime TEAM image (not pullable outside Prime sandboxes); the image and the
+# Mathlib project path are set here to a public Docker Hub Mathlib build.
+# STAGED AT SHARE 0.0 until the probe confirms the statements compile against
+# that image's Mathlib (see the env-wave-2 report).
+group = "general"
+runner = "verifiers"
+taskset_id = "affine-numina-v1"         # rollouts/envs/affine_numina_v1
+catalog = "hf"
+dataset = "AI-MO/NuminaMath-LEAN"
+split = "train"
+row_meta = "numina"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
+extra_flags = ["--env.taskset.docker-image", "projectnumina/kimina-lean-server:2.0.0",
+               "--env.taskset.task.lean-project-path", "/mathlib4"]
+strata_buckets = 230
+strata_offset = 2200
+share = 0.0
+
+[source.affine_sql]
+# Text-to-SQL over Spider train (7,000 questions / 146 sqlite databases,
+# CC-BY-SA-4.0; dev split held out): the task database in a python:3.12-slim
+# sandbox with the sqlite3 CLI, schema + question in the prompt, final reply
+# one ```sql block, `correct` = result-set equality with the gold query on a
+# fresh copy of the database. In-house taskset rollouts/envs/affine_sql_v1.
+group = "general"
+runner = "verifiers"
+taskset_id = "affine-sql-v1"
+catalog = "hf"
+dataset = "xlangai/spider"
+split = "train"
+row_meta = "spider"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
+strata_buckets = 230
+strata_offset = 2430
+share = 1.0
+
+[source.affine_autobench]
+# Zapier AutomationBench (Environments Hub `zapier/AutomationBench`, 29 stars
+# - the hub's most-starred tool-use env; v1 taskset in research-environments):
+# 600 business-workflow tasks (sales / marketing / operations / support /
+# finance / hr) over a simulated 47-app SaaS workspace served in-process
+# through `api_search` / `api_fetch`; deterministic final-state assertions
+# -> `solved` (all pass). Null harness, no container, no external service.
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-autobench-v1"      # rollouts/envs/affine_autobench_v1
+catalog = "autobench"                   # task names via the verifiers env's automationbench package
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_toolcall"]
+strata_buckets = 200
+strata_offset = 2660
+share = 1.0
+
+[source.affine_uuidctf]
+# uuid-ctf (research-environments reasoning/uuid_ctf_v1): forensic CTF in a
+# sandbox - five shard UUIDs hidden in five encodings across a synthetic
+# incident filesystem; the derived recovery UUID is graded exactly
+# (`solved`). Procedural, per-index seeded (affine_uuidctf_v1 names the
+# pool); `standard` difficulty. Fills the games / puzzles / security-
+# forensics gap.
+group = "general"
+runner = "verifiers"
+taskset_id = "affine-uuidctf-v1"        # rollouts/envs/affine_uuidctf_v1
+catalog = "procedural"
+row_meta = "uuidctf"
+procedural_uids = 3000
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
+strata_buckets = 115
+strata_offset = 2860
+share = 1.0
