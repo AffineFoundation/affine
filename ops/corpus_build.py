@@ -594,8 +594,11 @@ def cap_fill(records: list[dict], keyf, have: dict[str, set[str]],
 # target every language is admitted, python included, subject to a
 # per-language ceiling of LANG_SOFT_CEILING of coding's strata and to a
 # per-fold budget that keeps coding's share move under the shift guard.
-# At or above target the hard cap_fill rule applies again.
-LANG_SOFT_CEILING = 0.45
+# At or above target the hard cap_fill rule applies again. The ceiling was
+# raised 0.45 -> 0.55 the same day so coding reaches its ratio target from
+# the existing (python-heavy) backlog in ~3 folds; language diversity is
+# to come from non-python coding supply, not from the fold.
+LANG_SOFT_CEILING = 0.55   # 0.45 -> 0.55, operator decision 2026-09-12 06:04 UTC
 CATCHUP_SHIFT_BUDGET = 0.045   # points of slice share per fold, under MAX_SHARE_SHIFT
 
 
