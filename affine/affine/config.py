@@ -19,6 +19,9 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .score import (CROWN_MODES, MIN_MARGIN_MODES, NEAR_MISS_WINDOW_MODES,
+                    MarginSchedule)
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
@@ -193,11 +196,72 @@ class DuelCfg:
     # None = legacy (turn dropped from pairing). Contract knob: changing it
     # is a weight_version_key event.
     forfeit_turn_score: float | None = None
+    # Staged 2026-09-10 (inert unless score_mode="min_rga"): the A leg's
+    # summed action lift is divided by this many bytes instead of the
+    # action's own length. None = per-byte (the length-biased 09-04 probe).
+    action_norm_bytes: float | None = None
     # Staged 2026-09-07, OFF: a miner rollout that never emits </think> is
     # a forfeit (same floor as no parseable action). Contract knob — turning
     # it on changes which turns score and is a weight_version_key event.
     # The </think> rate is measured and published either way.
     require_think_close: bool = False
+    # Sequential near-miss (2026-09-11): a first-slice margin strictly inside
+    # (near_miss_low, near_miss_high) makes the eval draw
+    # near_miss_extra_slices more n_turns slices (different seed, disjoint
+    # turns) and decide the crown on the pooled turns with the unchanged
+    # rule. Sampling-size knob, not a per-turn scoring change — no
+    # weight_version_key event. Off by default so pre-2026-09-11 replays
+    # and the offline harness see exactly one slice.
+    near_miss_enabled: bool = False
+    near_miss_low: float = 0.001
+    near_miss_high: float = 0.003
+    near_miss_extra_slices: int = 1
+    # Where the near-miss window sits (staged 2026-09-12): "absolute" = the
+    # fixed (low, high) pair above; "bar" = around this slice's own crown
+    # bar max(k_sigma·SE, δ_effective), so it follows a decaying δ.
+    near_miss_window_mode: str = "absolute"
+    # Decaying crown margin (staged 2026-09-12, OFF). mode "fixed" = δ is
+    # min_margin on every duel (today). mode "decay" = δ starts a cycle at
+    # `peak` when a king is crowned and falls to min_margin_floor over
+    # min_margin_decay_hours (linear or exponential), clocked in blocks
+    # since the crown block; the next crown starts a new cycle at
+    # min(min_margin_double_factor·δ_at_crown, min_margin_peak_cap) when
+    # min_margin_double_on_crown, else at the cap. Contract knobs: flipping
+    # the mode is a weight_version_key event (explicit dated directive).
+    min_margin_mode: str = "fixed"
+    min_margin_peak_cap: float = 0.002
+    min_margin_floor: float = 0.0001
+    min_margin_decay_hours: float = 48.0
+    min_margin_decay_shape: str = "linear"
+    min_margin_double_on_crown: bool = True
+    min_margin_double_factor: float = 2.0
+    # Minimum z = margin/SE a crown needs regardless of δ (staged
+    # 2026-09-12; 0 = off = today). Contract knob — weight_version_key event.
+    min_z: float = 0.0
+    # Crown mode (staged 2026-09-12, operator rule 16:39 UTC). "duel" = the
+    # contract since wvk 3: every duel crowns on its own bar. "window_best"
+    # = the king is frozen for windows of crown_window_blocks chain blocks
+    # (id = block // W); at the window close the candidate with the largest
+    # positive paired margin is crowned after a confirmation slice
+    # (crown_confirm_slice; up to crown_confirm_max candidates tried), one
+    # candidate per hotkey (crown_one_entry_per_hotkey). Flipping the mode
+    # changes who crowns: a weight_version_key event.
+    crown_mode: str = "duel"
+    crown_window_blocks: int = 3600
+    crown_confirm_slice: bool = True
+    crown_confirm_max: int = 2
+    crown_one_entry_per_hotkey: bool = True
+
+    def margin_schedule(self) -> MarginSchedule:
+        """The decaying-margin rule as a value object (fixed mode returns
+        min_margin from `effective()` unconditionally)."""
+        return MarginSchedule(
+            min_margin=self.min_margin, mode=self.min_margin_mode,
+            peak_cap=self.min_margin_peak_cap, floor=self.min_margin_floor,
+            decay_hours=self.min_margin_decay_hours,
+            shape=self.min_margin_decay_shape,
+            double_on_crown=self.min_margin_double_on_crown,
+            double_factor=self.min_margin_double_factor)
 
 
 @dataclass(frozen=True)
@@ -397,7 +461,44 @@ def _r2(r: dict) -> R2Cfg:
 
 def _duel(raw: dict) -> DuelCfg:
     d = raw["duel"]
-    return DuelCfg(
+    near_miss_enabled = bool(d.get("near_miss_enabled", False))
+    near_miss_low = float(d.get("near_miss_low", 0.001))
+    near_miss_high = float(d.get("near_miss_high", 0.003))
+    near_miss_extra_slices = int(d.get("near_miss_extra_slices", 1))
+    if near_miss_enabled and not (0.0 <= near_miss_low < near_miss_high):
+        raise ValueError(
+            f"[duel] near-miss window must satisfy 0 <= low < high, got "
+            f"near_miss_low={near_miss_low} near_miss_high={near_miss_high}")
+    if near_miss_enabled and near_miss_extra_slices < 1:
+        raise ValueError(
+            f"[duel] near_miss_extra_slices must be >= 1 when enabled, got "
+            f"{near_miss_extra_slices}")
+    near_miss_window_mode = str(d.get("near_miss_window_mode", "absolute"))
+    if near_miss_window_mode not in NEAR_MISS_WINDOW_MODES:
+        raise ValueError(
+            f"[duel] near_miss_window_mode must be one of "
+            f"{NEAR_MISS_WINDOW_MODES}, got {near_miss_window_mode!r}")
+    min_margin_mode = str(d.get("min_margin_mode", "fixed"))
+    if min_margin_mode not in MIN_MARGIN_MODES:
+        raise ValueError(
+            f"[duel] min_margin_mode must be one of {MIN_MARGIN_MODES}, "
+            f"got {min_margin_mode!r}")
+    min_z = float(d.get("min_z", 0.0))
+    if min_z < 0:
+        raise ValueError(f"[duel] min_z must be >= 0, got {min_z}")
+    crown_mode = str(d.get("crown_mode", "duel"))
+    if crown_mode not in CROWN_MODES:
+        raise ValueError(
+            f"[duel] crown_mode must be one of {CROWN_MODES}, got {crown_mode!r}")
+    crown_window_blocks = int(d.get("crown_window_blocks", 3600))
+    if crown_window_blocks <= 0:
+        raise ValueError(
+            f"[duel] crown_window_blocks must be > 0, got {crown_window_blocks}")
+    crown_confirm_max = int(d.get("crown_confirm_max", 2))
+    if crown_confirm_max < 1:
+        raise ValueError(
+            f"[duel] crown_confirm_max must be >= 1, got {crown_confirm_max}")
+    cfg = DuelCfg(
         n_turns=int(d["n_turns"]), k_sigma=float(d["k_sigma"]),
         min_margin=float(d.get("min_margin", 0.0)),
         min_thought_chars=int(d.get("min_thought_chars", 0)),
@@ -418,8 +519,33 @@ def _duel(raw: dict) -> DuelCfg:
         band_floor=float(d.get("band_floor", 0.002)),
         forfeit_turn_score=(float(d["forfeit_turn_score"])
                             if d.get("forfeit_turn_score") is not None else None),
+        action_norm_bytes=(float(d["action_norm_bytes"])
+                           if d.get("action_norm_bytes") is not None else None),
         require_think_close=bool(d.get("require_think_close", False)),
+        near_miss_enabled=near_miss_enabled,
+        near_miss_low=near_miss_low,
+        near_miss_high=near_miss_high,
+        near_miss_extra_slices=near_miss_extra_slices,
+        near_miss_window_mode=near_miss_window_mode,
+        min_margin_mode=min_margin_mode,
+        min_margin_peak_cap=float(d.get("min_margin_peak_cap",
+                                        d.get("min_margin", 0.0))),
+        min_margin_floor=float(d.get("min_margin_floor", 0.0001)),
+        min_margin_decay_hours=float(d.get("min_margin_decay_hours", 48.0)),
+        min_margin_decay_shape=str(d.get("min_margin_decay_shape", "linear")),
+        min_margin_double_on_crown=bool(d.get("min_margin_double_on_crown", True)),
+        min_margin_double_factor=float(d.get("min_margin_double_factor", 2.0)),
+        min_z=min_z,
+        crown_mode=crown_mode,
+        crown_window_blocks=crown_window_blocks,
+        crown_confirm_slice=bool(d.get("crown_confirm_slice", True)),
+        crown_confirm_max=crown_confirm_max,
+        crown_one_entry_per_hotkey=bool(d.get("crown_one_entry_per_hotkey", True)),
     )
+    # MarginSchedule validates the decay knobs (floor/cap/hours/shape) and
+    # raises at load time, so a malformed [duel] never reaches a duel.
+    cfg.margin_schedule()
+    return cfg
 
 
 def _machine_cfg(section: dict) -> EvalMachineCfg:
