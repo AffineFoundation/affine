@@ -137,6 +137,14 @@ class State:
         # restart could wrongly withhold a restored model's share.
         self.inaccessible_hotkeys: set[str] = set()
         self.current_eval: dict | None = None
+        # Window-best crown mode (staged 2026-09-12): the open window the
+        # king is frozen for. {"window_id", "window_blocks", "opened_block",
+        # "king_challenge_id", "king_reign", "verdicts": [...], "close":
+        # {"attempts": n, "last_error": str}}. Each verdict entry is the
+        # candidate view of one scored duel (challenge_id, hotkey, repo,
+        # revision, block, uid, margin, se, z, n_paired_turns,
+        # rejection_reason, decision_block, at). None until the mode is on.
+        self.crown_window: dict | None = None
         self.phase: dict = {"name": "boot", "since": now_iso()}
         self._last_flush = 0.0
         # State is touched from the main loop AND the provisioner thread
@@ -221,6 +229,7 @@ class State:
             self.eval_machine = d.get("eval_machine", {})
             self.bench_machine = d.get("bench_machine", {})
             self.chat_machine = d.get("chat_machine", {})
+            self.crown_window = d.get("crown_window") or None
             self.intake = list(d.get("intake") or [])[-INTAKE_MAX:]
             decided = d.get("intake_decided")
             if isinstance(decided, list) and decided:
@@ -284,6 +293,8 @@ class State:
                 "chat_machine": self.chat_machine,
                 "flushed_at": now_iso(),
             }
+            if self.crown_window is not None:
+                d["crown_window"] = self.crown_window
             tmp = self._state_path.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(d, indent=1))
             tmp.replace(self._state_path)
@@ -579,6 +590,65 @@ class State:
         self._append_history(row)
         self._clear_in_flight(entry)
         return None
+
+    # -- window-best crown mode (staged 2026-09-12) ----------------------------
+    def open_crown_window(self, window_id: int, window_blocks: int,
+                          block: int) -> dict:
+        """Start (or replace) the open window the king is frozen for."""
+        with self._lock:
+            self.crown_window = {
+                "window_id": int(window_id), "window_blocks": int(window_blocks),
+                "opened_block": int(block), "opened_at": now_iso(),
+                "king_challenge_id": self.king.challenge_id if self.king else None,
+                "king_reign": self.king.reign_number if self.king else None,
+                "verdicts": [], "close": {"attempts": 0, "last_error": None},
+            }
+            return self.crown_window
+
+    def record_window_verdict(self, entry: QueueEntry, verdict: dict, *,
+                              uid: int | None = None,
+                              duration_s: float | None = None) -> None:
+        """A scored duel under crown_mode = "window_best": ONE `verdict`
+        history row (never a crown — the window close decides) plus the
+        candidate view appended to the open window. The verdict must
+        already carry crown_mode / window_id / decision_block /
+        duel_rule_wins / crown_decision (validator stamps them)."""
+        self.stats["rejected"] += 1
+        row = {
+            "event": "verdict", "at": now_iso(), "challenge_id": entry.challenge_id,
+            "hotkey": entry.hotkey, "repo": entry.repo, "revision": entry.revision,
+            "accepted": False, "verdict": verdict,
+        }
+        if uid is not None:
+            row["uid"] = int(uid)
+        if duration_s is not None:
+            row["duration_s"] = round(float(duration_s), 1)
+        with self._lock:
+            self._append_history(row)
+            if self.crown_window is not None:
+                self.crown_window["verdicts"].append({
+                    "challenge_id": entry.challenge_id, "hotkey": entry.hotkey,
+                    "repo": entry.repo, "revision": entry.revision,
+                    "block": entry.block, "uid": uid, "at": row["at"],
+                    "margin": verdict.get("margin"), "se": verdict.get("se"),
+                    "z": verdict.get("z"),
+                    "n_paired_turns": verdict.get("n_paired_turns"),
+                    "rejection_reason": verdict.get("rejection_reason"),
+                    "duel_rule_wins": verdict.get("duel_rule_wins"),
+                    "decision_block": verdict.get("decision_block"),
+                    "n_slices": 1 + len(((verdict.get("slice") or {})
+                                         .get("extra_slices") or [])),
+                    "block_hash": verdict.get("block_hash"),
+                    "job_id": verdict.get("job_id"),
+                    "score": (verdict.get("challenger") or {}).get("reason"),
+                })
+            self._clear_in_flight(entry)
+
+    def record_window_close(self, row: dict) -> None:
+        """The `window_close` history row: everything a replayer needs to
+        re-derive the decision (candidates, drops, confirmations, winner)."""
+        with self._lock:
+            self._append_history({"event": "window_close", "at": now_iso(), **row})
 
     @staticmethod
     def _king_lineage_entry(king: King) -> dict:

@@ -48,6 +48,20 @@ min_submission_block = 8938619
 # 13→14 terminus_json dialect (2026-09-10): the Terminus 2 (terminal-bench
 # agent) JSON command batch is a scored action (allowed_action_kinds +=
 # terminus_json). min(R,G) math unchanged. Forward-only; reign stands.
+# 14→15 window-best crown (2026-09-12): the crown is no longer decided duel
+# by duel. The king is FROZEN for fixed windows of crown_window_blocks =
+# 3600 chain blocks (12 h; window id = decision block // 3600); every
+# challenger judged inside a window duels that king; at the window close
+# the candidate with the largest positive paired margin (one per hotkey,
+# gates passed) is crowned once ONE fresh n_turns slice keeps its pooled
+# margin > 0 (crown_confirm_slice; next-best tried up to
+# crown_confirm_max = 2); nobody confirms → the king stays. The
+# max(k_sigma·SE, δ) bar is still computed and stamped (duel_rule_wins)
+# but no longer decides. min(R,G) math, gates, reign chain / payouts
+# unchanged. Every verdict stamps crown_mode / window_id / decision_block;
+# every close writes a window_close row (candidates, drops,
+# confirmations, winner). Forward-only; reign 11 stands;
+# min_submission_block unchanged.
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -55,7 +69,7 @@ min_submission_block = 8938619
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 14
+weight_version_key = 15
 
 [wallet]
 name = "default"
@@ -502,6 +516,61 @@ min_margin_double_factor = 2.0
 # 2.5 makes that ~1 in 160, 3.0 ~1 in 740. Contract knob: changing it is a
 # weight_version_key event.
 min_z = 0.0
+#
+# Crown mode (STAGED 2026-09-12, OFF = "duel"). Operator rule (Jacob,
+# 2026-09-12 16:39 UTC): "best positive margin of the last 12 hours",
+# replacing the decaying-δ proposal above (kept in code, mode "fixed").
+#   crown_mode = "duel"         every duel crowns on its own bar
+#                               max(k_sigma·SE, δ) + gates — the contract
+#                               since wvk 3 (today).
+#   crown_mode = "window_best"  the king is FROZEN for fixed windows of
+#                               crown_window_blocks chain blocks aligned on
+#                               the block number (window id = decision_block
+#                               // crown_window_blocks; 3600 = 12 h at 12
+#                               s/block). Every challenger judged inside a
+#                               window duels that king, so the paired
+#                               margins are comparable. At the window close
+#                               the candidate with the LARGEST POSITIVE
+#                               margin is crowned. Candidates = verdicts
+#                               with a finite margin > 0 and no gate
+#                               rejection (thought floor, B license, probe,
+#                               min_z); probe rejects, unservable
+#                               checkpoints and infra faults are not
+#                               candidates. The δ / k_sigma bar is still
+#                               computed and stamped on every verdict
+#                               (`duel_rule_wins`) but no longer decides.
+#   crown_confirm_slice = true  the window winner gets ONE fresh n_turns
+#                               slice vs the frozen king (the near-miss
+#                               second-slice draw: seed block_hash ‖ hotkey
+#                               ‖ "|slice<k>", turns disjoint from its
+#                               original slice(s)) and is crowned only if
+#                               the POOLED margin over both slices is still
+#                               > 0; if it fails, the next-best candidate is
+#                               confirmed, up to crown_confirm_max tries.
+#                               The confirmation runs at the start of the
+#                               next window, before that window's first
+#                               duel, and is not a verdict of that window.
+#   crown_one_entry_per_hotkey  one candidate per hotkey per window (its
+#                               best margin); the rest are dropped.
+#   If no positive candidate confirms, the king stays. A window crown
+#   changes nothing else (reign chain / payouts as before). Every close
+#   writes a `window_close` history row: crown_mode, window_id, every
+#   verdict considered (id, hotkey, margin, se, z), the ranked candidates,
+#   the drops with reasons, each confirmation's slice + pooled numbers,
+#   the winner; every verdict stamps crown_mode / window_id /
+#   decision_block / duel_rule_wins / crown_decision.
+#   Flipping the mode CHANGES WHO CROWNS: a weight_version_key event
+#   (explicit dated operator directive + community notice), never an
+#   agent edit.
+# 2026-09-12 (weight_version_key 14→15, explicit dated operator directive
+# 2026-09-12 16:39/16:43 UTC): ON. The king is frozen per 12 h window;
+# the best positive margin of the window is crowned at its close after a
+# confirmation slice. The δ / k_sigma bar below is telemetry from here.
+crown_mode = "window_best"
+crown_window_blocks = 3600
+crown_confirm_slice = true
+crown_confirm_max = 2
+crown_one_entry_per_hotkey = true
 # Median stripped thought length, in characters (2026-08-13, wvk=5).
 # Invalid challenger cannot crown. 80 sits above live cue phrases
 # ("Next command:" = 13, "Next bash command:" = 18) and below guass (~290)

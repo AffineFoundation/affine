@@ -243,6 +243,10 @@ async def miner_terms(teacher: TeacherClient, miner: MinerClient, prefix: list[d
         b_by_rollout[j] = {
             "lpC_ya_za": res[base + 2 * t]["lp_per_byte"],
             "lpC_ya_e": res[base + 2 * t + 1]["lp_per_byte"],
+            # Byte length of the echoed action span. The A leg (v6,
+            # normalization 2026-09-10) turns the per-byte lifts back into
+            # summed nats with it; additive telemetry otherwise.
+            "n_bytes_ya": res[base + 2 * t + 1]["n_bytes"],
         }
     m_by_rollout: dict[int, float] = {}
     g_base = base + 2 * len(b_rollouts)

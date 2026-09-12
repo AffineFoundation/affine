@@ -25,7 +25,7 @@ eval = [
     "transformers>=4.51",
     # >=0.28: the Qwen3.8-27B teacher's GDN kernels ICE cutlass-DSL JIT on
     # 0.22.x (verified on B200 2026-08-27, all backend-flag combos + eager).
-    "vllm>=0.28",
+    "vllm>=0.28,<0.29",
     # Rust multi-stream HF downloader; huggingface_hub uses it when
     # HF_HUB_ENABLE_HF_TRANSFER=1 (set in bootstrap.sh). Takes challenger
     # downloads from ~100 MB/s python-requests to near pod line rate.

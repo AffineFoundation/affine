@@ -19,7 +19,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .score import MIN_MARGIN_MODES, NEAR_MISS_WINDOW_MODES, MarginSchedule
+from .score import (CROWN_MODES, MIN_MARGIN_MODES, NEAR_MISS_WINDOW_MODES,
+                    MarginSchedule)
 
 
 def _repo_root() -> Path:
@@ -237,6 +238,19 @@ class DuelCfg:
     # Minimum z = margin/SE a crown needs regardless of δ (staged
     # 2026-09-12; 0 = off = today). Contract knob — weight_version_key event.
     min_z: float = 0.0
+    # Crown mode (staged 2026-09-12, operator rule 16:39 UTC). "duel" = the
+    # contract since wvk 3: every duel crowns on its own bar. "window_best"
+    # = the king is frozen for windows of crown_window_blocks chain blocks
+    # (id = block // W); at the window close the candidate with the largest
+    # positive paired margin is crowned after a confirmation slice
+    # (crown_confirm_slice; up to crown_confirm_max candidates tried), one
+    # candidate per hotkey (crown_one_entry_per_hotkey). Flipping the mode
+    # changes who crowns: a weight_version_key event.
+    crown_mode: str = "duel"
+    crown_window_blocks: int = 3600
+    crown_confirm_slice: bool = True
+    crown_confirm_max: int = 2
+    crown_one_entry_per_hotkey: bool = True
 
     def margin_schedule(self) -> MarginSchedule:
         """The decaying-margin rule as a value object (fixed mode returns
@@ -472,6 +486,18 @@ def _duel(raw: dict) -> DuelCfg:
     min_z = float(d.get("min_z", 0.0))
     if min_z < 0:
         raise ValueError(f"[duel] min_z must be >= 0, got {min_z}")
+    crown_mode = str(d.get("crown_mode", "duel"))
+    if crown_mode not in CROWN_MODES:
+        raise ValueError(
+            f"[duel] crown_mode must be one of {CROWN_MODES}, got {crown_mode!r}")
+    crown_window_blocks = int(d.get("crown_window_blocks", 3600))
+    if crown_window_blocks <= 0:
+        raise ValueError(
+            f"[duel] crown_window_blocks must be > 0, got {crown_window_blocks}")
+    crown_confirm_max = int(d.get("crown_confirm_max", 2))
+    if crown_confirm_max < 1:
+        raise ValueError(
+            f"[duel] crown_confirm_max must be >= 1, got {crown_confirm_max}")
     cfg = DuelCfg(
         n_turns=int(d["n_turns"]), k_sigma=float(d["k_sigma"]),
         min_margin=float(d.get("min_margin", 0.0)),
@@ -510,6 +536,11 @@ def _duel(raw: dict) -> DuelCfg:
         min_margin_double_on_crown=bool(d.get("min_margin_double_on_crown", True)),
         min_margin_double_factor=float(d.get("min_margin_double_factor", 2.0)),
         min_z=min_z,
+        crown_mode=crown_mode,
+        crown_window_blocks=crown_window_blocks,
+        crown_confirm_slice=bool(d.get("crown_confirm_slice", True)),
+        crown_confirm_max=crown_confirm_max,
+        crown_one_entry_per_hotkey=bool(d.get("crown_one_entry_per_hotkey", True)),
     )
     # MarginSchedule validates the decay knobs (floor/cap/hours/shape) and
     # raises at load time, so a malformed [duel] never reaches a duel.

@@ -114,6 +114,7 @@ class EvalClient:
                        challenger_hotkey: str, block_hash: str,
                        challenger_weight_bytes: int = 0,
                        margin: dict | None = None,
+                       confirm: dict | None = None,
                        on_progress=None) -> dict:
         """Dispatch a duel and stream to verdict. Raises TransientEvalError on
         infra failure; returns the verdict dict on completion.
@@ -133,6 +134,10 @@ class EvalClient:
         }
         if margin:
             payload["margin"] = margin
+        if confirm:
+            # Window-best confirmation: one fresh slice pooled with the
+            # original verdict (see evalsrv.dueling.run_duel `confirm`).
+            payload["confirm"] = confirm
         timeout = httpx.Timeout(self.duel_timeout_s, connect=30.0)
         async with httpx.AsyncClient(timeout=timeout,
                                      headers=self._headers) as client:

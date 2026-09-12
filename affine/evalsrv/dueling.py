@@ -55,6 +55,7 @@ from affine.score import (
     duel as score_duel,
     near_miss_triggered,
     near_miss_window,
+    pooled_margin_stats,
     score_miner,
 )
 
@@ -203,6 +204,42 @@ MARGIN_STAMP_KEYS = ("min_margin_mode", "min_margin_base", "min_margin_peak",
                      "min_margin_decay_hours", "min_margin_decay_shape",
                      "crown_block", "crown_block_source", "decision_block",
                      "blocks_since_crown")
+
+
+def confirmation_stamp(confirm: dict, slice_info: dict, result: DuelResult) -> dict:
+    """The `confirmation` block of a window-best confirmation verdict: this
+    slice's own numbers, the original (pooled) numbers it is pooled with,
+    and the exact pooled (n, margin, se, z). `passed` = pooled margin > 0.
+    A slice with no finite margin (every turn forfeited on both sides, or a
+    gate the original passed now failing) does not pass."""
+    base = dict(confirm.get("base") or {})
+    n1 = int(base.get("n") or 0)
+    m1, se1 = base.get("margin"), base.get("se")
+    own = {"index": slice_info.get("index"), "seed": slice_info.get("seed"),
+           "n": slice_info.get("n"), "digest": slice_info.get("digest"),
+           "n_paired_turns": result.n_paired_turns,
+           "n_forfeit_turns": result.n_forfeit_turns,
+           "margin": result.margin if math.isfinite(result.margin) else None,
+           "se": result.se if math.isfinite(result.se) else None,
+           "z": result.z if math.isfinite(result.z) else None,
+           "rejection_reason": (
+               "thought_too_short" if result.thought_floor_blocked
+               else "causality_fail" if result.causality_blocked else None)}
+    stamp = {"challenge_id": confirm.get("challenge_id"),
+             "slice_index": int(confirm.get("slice_index", 1)),
+             "base": {"n": n1, "margin": m1, "se": se1},
+             "slice": own, "pooled": None, "passed": False}
+    ok = (n1 > 0 and isinstance(m1, (int, float)) and isinstance(se1, (int, float))
+          and own["margin"] is not None and own["se"] is not None
+          and result.n_paired_turns > 0 and own["rejection_reason"] is None)
+    if ok:
+        N, M, se, z = pooled_margin_stats(n1, float(m1), float(se1),
+                                          result.n_paired_turns, result.margin,
+                                          result.se)
+        stamp["pooled"] = {"n": N, "margin": M, "se": se,
+                           "z": z if math.isfinite(z) else None}
+        stamp["passed"] = bool(M > 0.0)
+    return stamp
 
 
 def margin_stamp_for(duel_cfg: dict, margin: dict | None) -> dict:
@@ -601,8 +638,20 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
                    on_progress,
                    corpus: "CorpusSync | None" = None,
                    abort_event=None,
-                   margin: dict | None = None) -> tuple[dict, dict]:
+                   margin: dict | None = None,
+                   confirm: dict | None = None) -> tuple[dict, dict]:
     """Full duel. Returns (verdict, artifact).
+
+    ``confirm`` (window-best crown mode, staged 2026-09-12): score ONE fresh
+    slice for a window winner instead of a full duel. ``slice_index`` (k ≥
+    1) names the draw: slices 0..k−1 are re-derived from the same
+    block_hash ‖ hotkey seeds and excluded, exactly as the near-miss extra
+    draw does, so the confirmation turns are disjoint from every turn the
+    original duel scored. ``base`` = {n, margin, se} of the original
+    (pooled) verdict; the verdict gains ``confirmation`` with this slice's
+    own numbers and the exact pooled (n, margin, se, z) over both —
+    ``passed`` iff the pooled margin is > 0. Probes are skipped (the model
+    was admitted by its original duel); the near-miss rule does not apply.
 
     The verdict is the small audit summary streamed to the validator. The
     artifact is the full training-grade record — sliced turn ids, teacher
@@ -664,6 +713,25 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
 
     turns, slice_info = draw_slice(0, set())
     turn_ids = [turn_id(rec) for rec in turns]
+    if confirm:
+        # Re-derive every slice the original duel scored (same seeds) only
+        # to exclude their turns; the confirmation slice is draw k.
+        k = int(confirm.get("slice_index", 1))
+        if k < 1:
+            raise ValueError("confirm.slice_index must be >= 1")
+        drawn = set(turn_ids)
+        prior = [slice_info]
+        for idx in range(1, k):
+            prev_turns, prev_info = draw_slice(idx, drawn)
+            drawn |= {turn_id(r) for r in prev_turns}
+            prior.append(prev_info)
+        turns, slice_info = draw_slice(k, drawn)
+        turn_ids = [turn_id(rec) for rec in turns]
+        slice_info["confirmation_of"] = [
+            {key: i[key] for key in ("index", "seed", "n", "digest")} for i in prior]
+        log.info("confirmation slice %d for %s: n=%d (excluding %d turns of %d "
+                 "prior slice(s))", k, confirm.get("challenge_id"), len(turns),
+                 len(drawn), len(prior))
     # Every slice actually scored, in order; slice 0 is `slice_info`.
     slices: list[dict] = [{"info": slice_info, "turn_ids": list(turn_ids)}]
 
@@ -692,7 +760,7 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         king_m = _pool(king, require_think_close)
         chall_m = _pool(challenger, require_think_close)
 
-        rejection = await probe_injectable(
+        rejection = None if confirm else await probe_injectable(
             chall_m, turns, float(duel_cfg["temperature"]),
             int(duel_cfg["max_thought_tokens"]), int(duel_cfg["max_action_tokens"]))
         if rejection:
@@ -711,7 +779,7 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         # minutes. mode: off (default) | shadow (publish only) | enforce.
         probe_cfg = probe_settings(engine_cfg.get("protocol_probe"))
         protocol = None
-        if probe_cfg["mode"] != "off":
+        if probe_cfg["mode"] != "off" and not confirm:
             protocol = await run_probe(chall_m, probe_cfg)
             log.info("protocol probe (%s): pass_rate=%.2f think_close=%.2f %s",
                      probe_cfg["mode"], protocol["pass_rate"],
@@ -806,8 +874,8 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         # decayed δ moves the window with it.
         nm_low, nm_high = near_miss_window(
             result, near_miss["window_mode"], near_miss["low"], near_miss["high"])
-        triggered = bool(near_miss["enabled"]) and near_miss_triggered(
-            result, nm_low, nm_high)
+        triggered = (bool(near_miss["enabled"]) and not confirm
+                     and near_miss_triggered(result, nm_low, nm_high))
         if triggered:
             log.info("near-miss: margin=%.5f in (%.4f, %.4f) [%s], z=%.2f — "
                      "drawing %d extra slice(s) of %d turns", result.margin,
@@ -1004,6 +1072,11 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     }
     if protocol is not None:
         verdict["protocol_probe"] = _probe_public(protocol)
+    if confirm:
+        verdict["confirmation"] = confirmation_stamp(confirm, slice_info, result)
+        verdict["ranking_formula"] += (
+            "; CONFIRMATION SLICE (window-best crown): pooled margin over the "
+            "original slice(s) and this one must be > 0")
     artifact = {
         "slice": slice_info,
         # Every turn scored, in slice order (slice 0 first); `slices` splits

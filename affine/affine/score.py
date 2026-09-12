@@ -249,6 +249,22 @@ SECONDS_PER_BLOCK = 12.0
 # a zero-edge challenger 1 duel in 44; min_z = 2.5 makes that ~1 in 160,
 # 3.0 ~1 in 740. Contract knob — a weight_version_key event.
 DEFAULT_MIN_Z = 0.0
+# Crown mode (staged 2026-09-12, operator rule of 16:39 UTC). "duel" = every
+# duel decides on its own: the challenger crowns iff it clears
+# max(k_sigma·SE, δ) + gates (the contract since wvk 3). "window_best" =
+# the king is FROZEN for a fixed window of `crown_window_blocks` chain
+# blocks (window id = block // crown_window_blocks); every challenger judged
+# inside the window duels that king, so their paired margins are
+# comparable; at the window close the candidate with the LARGEST POSITIVE
+# margin is crowned — after a confirmation slice when enabled. The δ /
+# k_sigma bar is still computed and stamped but no longer decides. Flipping
+# the mode changes who crowns: a weight_version_key event.
+CROWN_MODES = ("duel", "window_best")
+DEFAULT_CROWN_MODE = "duel"
+DEFAULT_CROWN_WINDOW_BLOCKS = 3600            # 12 h at 12 s/block
+DEFAULT_CROWN_CONFIRM_SLICE = True
+DEFAULT_CROWN_CONFIRM_MAX = 2
+DEFAULT_CROWN_ONE_ENTRY_PER_HOTKEY = True
 
 # Telemetry constants (non-consensus): thresholds used only to report the
 # legacy causality/leakage pass rate. Changing them is NOT a chain fork.
@@ -1001,6 +1017,101 @@ class MarginSchedule:
             return self.peak_cap
         return min(self.peak_cap,
                    max(self.floor, self.double_factor * delta_at_crown))
+
+
+# -- window-best crown (staged 2026-09-12) ---------------------------------------
+def window_id_of(block: int, window_blocks: int = DEFAULT_CROWN_WINDOW_BLOCKS) -> int:
+    """Fixed windows aligned on the block number: window id = block // W.
+    Window N covers blocks [N·W, (N+1)·W). Not wall time, so a replay reads
+    the same id from the stamped decision block."""
+    if window_blocks <= 0:
+        raise ValueError(f"crown_window_blocks must be > 0, got {window_blocks}")
+    return int(block) // int(window_blocks)
+
+
+def window_candidate_reason(verdict: dict) -> str | None:
+    """Why a verdict is NOT a window candidate, or None when it is one.
+
+    A candidate is a scored duel whose margin is a finite number, whose
+    validity gates passed (`rejection_reason` is None — thought floor, B
+    license, protocol / injectability probe, min_z), and whose paired margin
+    is strictly positive. Probe rejections and unservable checkpoints carry
+    no margin; infra faults never produce a verdict row at all.
+    """
+    m = verdict.get("margin")
+    if m is None or not isinstance(m, (int, float)) or not math.isfinite(float(m)):
+        return "no_margin"
+    if verdict.get("rejection_reason"):
+        return f"gate:{verdict['rejection_reason']}"
+    if float(m) <= 0.0:
+        return "margin_not_positive"
+    return None
+
+
+def rank_window_candidates(verdicts: list[dict],
+                           one_entry_per_hotkey: bool = DEFAULT_CROWN_ONE_ENTRY_PER_HOTKEY
+                           ) -> tuple[list[dict], list[dict]]:
+    """Order a window's verdicts for the crown.
+
+    Each item needs `challenge_id`, `hotkey`, `margin`, and may carry
+    `se`, `z`, `rejection_reason`. Returns (ranked candidates, dropped),
+    where `dropped` lists every excluded verdict with its `reason`.
+    Candidates are sorted by margin descending; ties break on the higher z,
+    then on the earlier challenge id — deterministic for a replay. With
+    `one_entry_per_hotkey` only the best margin of each hotkey survives
+    (the others are dropped as `hotkey_duplicate`).
+    """
+    ranked: list[dict] = []
+    dropped: list[dict] = []
+    for v in verdicts:
+        why = window_candidate_reason(v)
+        if why:
+            dropped.append({"challenge_id": v.get("challenge_id"),
+                            "hotkey": v.get("hotkey"), "margin": v.get("margin"),
+                            "reason": why})
+        else:
+            ranked.append(dict(v))
+
+    def key(v: dict) -> tuple:
+        z = v.get("z")
+        z = float(z) if isinstance(z, (int, float)) and math.isfinite(float(z)) else float("-inf")
+        return (-float(v["margin"]), -z, str(v.get("challenge_id", "")))
+
+    ranked.sort(key=key)
+    if one_entry_per_hotkey:
+        seen: set[str] = set()
+        kept: list[dict] = []
+        for v in ranked:
+            hk = str(v.get("hotkey", ""))
+            if hk in seen:
+                dropped.append({"challenge_id": v.get("challenge_id"), "hotkey": hk,
+                                "margin": v.get("margin"), "reason": "hotkey_duplicate"})
+                continue
+            seen.add(hk)
+            kept.append(v)
+        ranked = kept
+    return ranked, dropped
+
+
+def pooled_margin_stats(n1: int, m1: float, se1: float,
+                        n2: int, m2: float, se2: float) -> tuple[int, float, float, float]:
+    """Exact pooled (n, mean, SE, z) of two disjoint paired-turn samples
+    from their summary statistics. `se_i = s_i/√n_i` with `s_i` the sample
+    standard deviation, so `s_i² = n_i·se_i²`. Pooled sample variance:
+    ((n1−1)s1² + (n2−1)s2² + n1(m1−M)² + n2(m2−M)²)/(N−1). This is what
+    `score.duel` would compute on the concatenated rows (the near-miss pool)
+    when both samples are complete paired-turn sets."""
+    n1, n2 = int(n1), int(n2)
+    if n1 <= 0 or n2 <= 0:
+        raise ValueError("pooled_margin_stats needs n1, n2 > 0")
+    N = n1 + n2
+    M = (n1 * m1 + n2 * m2) / N
+    s1sq, s2sq = n1 * se1 * se1, n2 * se2 * se2
+    var = ((n1 - 1) * s1sq + (n2 - 1) * s2sq
+           + n1 * (m1 - M) ** 2 + n2 * (m2 - M) ** 2) / max(1, N - 1)
+    se = math.sqrt(max(0.0, var) / N)
+    z = M / se if se > 0 else (math.inf if M > 0 else -math.inf if M < 0 else 0.0)
+    return N, M, se, z
 
 
 def effective_min_margin(schedule: MarginSchedule, peak: float | None,

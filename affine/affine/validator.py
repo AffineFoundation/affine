@@ -48,7 +48,8 @@ from .hippius import Hippius
 from .provisioner import BenchMachineManager, ChatMachineManager, EvalMachineManager
 from .r2protocol import is_r2_ref, parse_r2_ref
 from .registrations import AccessController
-from .score import effective_min_margin
+from .score import (effective_min_margin, rank_window_candidates,
+                    window_candidate_reason, window_id_of)
 from .state import King, QueueEntry, State, now_iso
 
 log = logging.getLogger("affine.validator")
@@ -536,6 +537,282 @@ class Validator:
             if not verdict.get("rejection_reason"):
                 verdict["rejection_reason"] = "z_below_min"
 
+    # -- window-best crown mode (staged 2026-09-12) -------------------------------
+    def _stamp_window_verdict(self, verdict: dict, margin: dict) -> None:
+        """Under crown_mode = "window_best" a duel does not crown. Keep the
+        duel-rule outcome as telemetry (`duel_rule_wins`), force
+        `challenger_wins` off, and stamp the window the duel belongs to: the
+        window of the block the validator read at DISPATCH (`decision_block`
+        in the δ context). A duel that starts in window N and finishes after
+        the boundary still dueled window N's frozen king (the close waits
+        for it), so it is window N's candidate."""
+        W = int(self.cfg.duel.crown_window_blocks)
+        block = margin.get("decision_block")
+        verdict["duel_rule_wins"] = bool(verdict.get("challenger_wins"))
+        verdict["challenger_wins"] = False
+        verdict["crown_mode"] = "window_best"
+        verdict["window_blocks"] = W
+        verdict["decision_block"] = block
+        verdict["window_id"] = window_id_of(int(block), W) if block else None
+        why = window_candidate_reason(verdict)
+        verdict["crown_decision"] = ("window_candidate" if why is None
+                                     else f"not_candidate:{why}")
+        cw = self.state.crown_window
+        if cw is not None and verdict["window_id"] is not None \
+                and int(cw["window_id"]) != int(verdict["window_id"]):
+            # Can only happen if the clock jumped between open and dispatch;
+            # the candidate still files under the OPEN window (its king).
+            log.warning("verdict window %s != open window %s; filing under the "
+                        "open window", verdict["window_id"], cw["window_id"])
+            verdict["window_id_dispatch"] = verdict["window_id"]
+            verdict["window_id"] = int(cw["window_id"])
+
+    def _window_due(self) -> tuple[bool, int]:
+        """(a window is past its close, current block). Opens the first
+        window when none is open. Never true in duel mode."""
+        if self.cfg.duel.crown_mode != "window_best":
+            return False, 0
+        block = chain.safe_block(self.subtensor)
+        if block <= 0:
+            return False, 0
+        W = int(self.cfg.duel.crown_window_blocks)
+        wid = window_id_of(block, W)
+        cw = self.state.crown_window
+        if cw is None or int(cw.get("window_blocks", W)) != W:
+            self.state.open_crown_window(wid, W, block)
+            log.info("crown window %d opened at block %d (W=%d, king reign #%s)",
+                     wid, block, W, self.state.king.reign_number if self.state.king else None)
+            return False, block
+        return int(cw["window_id"]) < wid, block
+
+    async def _close_window_safely(self, block: int) -> None:
+        cw = self.state.crown_window
+        try:
+            await self._close_window(block)
+        except (TransientEvalError, BlockHashUnavailable, Exception) as e:
+            # Infra: keep the window open and retry next tick; after a bound
+            # the close finalizes with the king staying, so the queue is not
+            # wedged forever. Miners are never burned by this path.
+            close = cw.setdefault("close", {"attempts": 0, "last_error": None})
+            close["attempts"] = int(close.get("attempts", 0)) + 1
+            close["last_error"] = f"{type(e).__name__}: {e}"[:500]
+            log.exception("window %s close attempt %d failed", cw.get("window_id"),
+                          close["attempts"])
+            if close["attempts"] >= self.WINDOW_CLOSE_MAX_ATTEMPTS:
+                log.error("window %s: giving up on confirmation after %d attempts; "
+                          "king stays", cw.get("window_id"), close["attempts"])
+                await self._finalize_window(
+                    cw, block, winner=None,
+                    outcome="king_stays_confirmation_unavailable",
+                    confirmations=cw.get("_confirmations", []),
+                    error=close["last_error"])
+        finally:
+            self.state.current_eval = None
+            self.state.flush()
+
+    WINDOW_CLOSE_MAX_ATTEMPTS = 6
+
+    def _window_row(self, cw: dict, block: int) -> tuple[dict, list[dict]]:
+        ranked, dropped = rank_window_candidates(
+            cw.get("verdicts", []), bool(self.cfg.duel.crown_one_entry_per_hotkey))
+        king = self.state.king
+        row = {
+            "crown_mode": "window_best",
+            "window_id": int(cw["window_id"]),
+            "window_blocks": int(cw["window_blocks"]),
+            "window_blocks_range": [int(cw["window_id"]) * int(cw["window_blocks"]),
+                                    (int(cw["window_id"]) + 1) * int(cw["window_blocks"]) - 1],
+            "decision_block": int(block),
+            "king": ({"challenge_id": king.challenge_id, "reign_number": king.reign_number,
+                      "hotkey": king.hotkey, "revision": king.revision} if king else None),
+            "crown_confirm_slice": bool(self.cfg.duel.crown_confirm_slice),
+            "crown_confirm_max": int(self.cfg.duel.crown_confirm_max),
+            "crown_one_entry_per_hotkey": bool(self.cfg.duel.crown_one_entry_per_hotkey),
+            "verdicts_considered": [
+                {k: v.get(k) for k in ("challenge_id", "hotkey", "margin", "se", "z",
+                                       "rejection_reason", "duel_rule_wins",
+                                       "decision_block", "at")}
+                for v in cw.get("verdicts", [])],
+            "candidates": [
+                {k: v.get(k) for k in ("challenge_id", "hotkey", "margin", "se", "z",
+                                       "n_paired_turns", "n_slices")}
+                for v in ranked],
+            "dropped": dropped,
+            "close_attempts": int((cw.get("close") or {}).get("attempts", 0)),
+        }
+        return row, ranked
+
+    async def _close_window(self, block: int) -> None:
+        """Window close: rank the window's verdicts, confirm the best
+        positive margin on a fresh slice (up to crown_confirm_max
+        candidates), crown the first that confirms; otherwise the king
+        stays. One `window_close` history row either way; then the next
+        window opens at the current block."""
+        cw = self.state.crown_window
+        assert cw is not None
+        king = self.state.king
+        assert king is not None
+        row, ranked = self._window_row(cw, block)
+        self.state.set_phase("window_close", window_id=cw["window_id"])
+        log.info("closing crown window %s: %d verdicts, %d candidates, %d dropped",
+                 cw["window_id"], len(row["verdicts_considered"]), len(ranked),
+                 len(row["dropped"]))
+        confirmations: list[dict] = list(cw.get("_confirmations", []))
+        cw["_confirmations"] = confirmations
+        already = {c.get("challenge_id") for c in confirmations}
+        tries = (ranked[:int(self.cfg.duel.crown_confirm_max)]
+                 if self.cfg.duel.crown_confirm_slice else ranked[:1])
+        winner: dict | None = None
+        for cand in tries:
+            if self.cfg.duel.crown_confirm_slice:
+                conf = next((c for c in confirmations
+                             if c.get("challenge_id") == cand["challenge_id"]), None)
+                if conf is None:
+                    conf = await self._confirm_candidate(cand, king, cw)
+                    confirmations.append(conf)
+                    self.state.flush()
+                if not conf.get("passed"):
+                    log.info("window %s: %s did not confirm (%s)", cw["window_id"],
+                             cand["challenge_id"],
+                             conf.get("error") or (conf.get("pooled") or {}).get("margin"))
+                    continue
+            winner = cand
+            break
+        outcome = ("crowned" if winner else
+                   "king_stays_no_candidates" if not ranked else
+                   "king_stays_none_confirmed")
+        await self._finalize_window(cw, block, winner=winner, outcome=outcome,
+                                    confirmations=confirmations)
+        if winner is not None:
+            await self._maybe_set_weights(force=True)
+            self.bench.enqueue_for(self.state.king.repo, winner["revision"],
+                                   winner["hotkey"], accepted=True,
+                                   label=f"reign-{self.state.king.reign_number}")
+        self.dashboard.flush(force=True)
+
+    async def _finalize_window(self, cw: dict, block: int, *, winner: dict | None,
+                               outcome: str, confirmations: list[dict],
+                               error: str | None = None) -> None:
+        row, _ = self._window_row(cw, block)
+        row["confirmations"] = [
+            {k: c.get(k) for k in ("challenge_id", "slice_index", "base", "slice",
+                                   "pooled", "passed", "error", "job_id")}
+            for c in confirmations]
+        row["winner"] = ({k: winner.get(k) for k in ("challenge_id", "hotkey", "repo",
+                                                     "revision", "margin", "se", "z")}
+                         if winner else None)
+        row["outcome"] = outcome
+        if error:
+            row["error"] = error
+        crown_block = max(chain.safe_block(self.subtensor) or 0, int(block))
+        row["crown_block"] = int(crown_block) if winner else None
+        if winner is not None:
+            conf = next((c for c in confirmations
+                         if c.get("challenge_id") == winner["challenge_id"]), None)
+            entry = QueueEntry(challenge_id=winner["challenge_id"], hotkey=winner["hotkey"],
+                               repo=winner["repo"], revision=winner["revision"],
+                               block=int(winner.get("block") or 0), queued_at="")
+            repo = winner["repo"]
+            if is_r2_ref(repo):
+                public_ref = await asyncio.to_thread(self._promote_or_none, entry)
+                if public_ref:
+                    repo = public_ref
+            verdict = {
+                "challenger_wins": True, "via": "window_best",
+                "crown_mode": "window_best", "window_id": int(cw["window_id"]),
+                "margin": winner.get("margin"), "se": winner.get("se"),
+                "z": winner.get("z"), "n_paired_turns": winner.get("n_paired_turns"),
+                "duel_rule_wins": winner.get("duel_rule_wins"),
+                "confirmation": conf,
+                "candidates": row["candidates"], "outcome": outcome,
+            }
+            if repo != winner["repo"]:
+                verdict["private_repo"] = winner["repo"]
+            sched = self.cfg.duel.margin_schedule()
+            self.state.record_window_close(row)
+            self.state.set_king(
+                winner["hotkey"], repo, winner["revision"], int(winner.get("block") or 0),
+                winner["challenge_id"], score=winner.get("score"),
+                history_extra={"accepted": True, "verdict": verdict, "via": "window_best",
+                               "uid": winner.get("uid")},
+                crown_block=int(crown_block),
+                min_margin_peak=sched.next_peak(sched.min_margin))
+            log.info("window %s: CROWNED %s (margin %s, z %s) → reign #%d",
+                     cw["window_id"], winner["challenge_id"], winner.get("margin"),
+                     winner.get("z"), self.state.king.reign_number)
+        else:
+            self.state.record_window_close(row)
+            log.info("window %s closed: %s", cw["window_id"], outcome)
+        W = int(self.cfg.duel.crown_window_blocks)
+        now_block = max(chain.safe_block(self.subtensor) or 0, int(block))
+        self.state.open_crown_window(window_id_of(now_block, W), W, now_block)
+
+    async def _confirm_candidate(self, cand: dict, king: King, cw: dict) -> dict:
+        """One fresh n_turns slice for a window candidate against the frozen
+        king, pooled with its original verdict on the pod. Returns the
+        `confirmation` stamp (passed / pooled numbers). A candidate whose
+        checkpoint can no longer be read fails confirmation (not an infra
+        retry): the miner's own upload is gone."""
+        cid = cand["challenge_id"]
+        ref = model_store.ModelRef(cand["repo"], cand["revision"])
+        try:
+            info = model_store.fetch_repo_info(ref, self.cfg.secrets.hf_token,
+                                               self.r2_reader)
+        except Exception as e:
+            return {"challenge_id": cid, "passed": False,
+                    "error": f"checkpoint unreadable: {e}"[:300]}
+        block_hash = cand.get("block_hash") or chain.block_hash_at(
+            self.subtensor, int(cand["block"]))
+        margin = self._margin_context(king)
+        n_slices = int(cand.get("n_slices") or 1)
+        confirm = {"challenge_id": cid, "slice_index": n_slices,
+                   "base": {"n": int(cand.get("n_paired_turns") or 0),
+                            "margin": cand.get("margin"), "se": cand.get("se")}}
+        self.state.current_eval = {
+            "challenge_id": f"{cid} (confirmation, window {cw['window_id']})",
+            "repo": cand["repo"], "hotkey": cand["hotkey"],
+            "stage": "dispatching", "progress": {}, "started_at": now_iso(),
+        }
+        self.state.set_phase("window_confirm", challenge_id=cid)
+        self.dashboard.flush(force=True)
+
+        def on_progress(data: dict) -> None:
+            self.watchdog.beat()
+            if self.state.current_eval is not None:
+                self.state.current_eval["stage"] = data.get("phase", "scoring")
+                self.state.current_eval["progress"] = data
+            self.dashboard.flush()
+
+        verdict = await self.eval_client.run_duel(
+            king_repo=king.repo, king_revision=king.revision,
+            challenger_repo=cand["repo"], challenger_revision=cand["revision"],
+            challenger_hotkey=cand["hotkey"], block_hash=block_hash,
+            challenger_weight_bytes=info.total_safetensors_bytes,
+            margin=margin, confirm=confirm, on_progress=on_progress)
+        self.state.current_eval = None
+        conf = dict(verdict.get("confirmation") or {})
+        if not conf:
+            conf = {"passed": False,
+                    "error": "pod returned no confirmation stamp (stale eval pod? "
+                             "redeploy scripts/redeploy_pods.py)"}
+            log.error("confirmation of %s: %s", cid, conf["error"])
+        conf.setdefault("challenge_id", cid)
+        conf["job_id"] = verdict.get("job_id")
+        conf["duel_rule_wins_on_slice"] = bool(verdict.get("challenger_wins"))
+        conf["rejection_reason_on_slice"] = verdict.get("rejection_reason")
+        if verdict.get("rejection_reason") in ("thought_too_short", "causality_fail"):
+            conf["passed"] = False
+        entry = QueueEntry(challenge_id=f"{cid}-confirm", hotkey=cand["hotkey"],
+                           repo=cand["repo"], revision=cand["revision"],
+                           block=int(cand.get("block") or 0), queued_at="")
+        verdict.update({"crown_mode": "window_best", "window_id": int(cw["window_id"]),
+                        "confirmation_of": cid})
+        await self._publish_eval_artifact(entry, verdict)
+        log.info("confirmation %s: slice margin=%s pooled=%s passed=%s", cid,
+                 (conf.get("slice") or {}).get("margin"),
+                 (conf.get("pooled") or {}).get("margin"), conf.get("passed"))
+        return conf
+
     def _hygiene_reason(self, info: model_store.RepoInfo) -> str | None:
         """Contract hygiene gates on a repo's metadata; one definition so the
         dispatch gate and the prefetch precheck can never drift."""
@@ -712,6 +989,21 @@ class Validator:
         self._apply_thought_floor(verdict)
         self._apply_causality_gate(verdict)
         self._apply_crown_bar(verdict, margin)
+        if self.cfg.duel.crown_mode == "window_best":
+            # The window close decides the crown; this duel only files its
+            # candidate view. One `verdict` row, never a crown here.
+            self._stamp_window_verdict(verdict, margin)
+            self.state.record_window_verdict(entry, verdict,
+                                             **self._history_meta(entry, t0))
+            log.info("verdict %s (window %s): margin=%s z=%s duel_rule_wins=%s "
+                     "crown_decision=%s", cid, verdict.get("window_id"),
+                     verdict.get("margin"), verdict.get("z"),
+                     verdict.get("duel_rule_wins"), verdict.get("crown_decision"))
+            await self._publish_eval_artifact(entry, verdict)
+            self.bench.enqueue_for(entry.repo, entry.revision, entry.hotkey,
+                                   accepted=False, label=cid)
+            self.dashboard.flush(force=True)
+            return
         accepted = bool(verdict.get("challenger_wins"))
         crowned_entry = entry
         if accepted and is_r2_ref(entry.repo):
@@ -823,6 +1115,17 @@ class Validator:
             if exc is not None:
                 log.error("duel task died outside the safety wrapper: %s", exc)
             self._duel_task = None
+
+        # Window-best crown mode: a window past its close is settled BEFORE
+        # the next duel is dispatched (its confirmation slice runs against the
+        # frozen king; the next window's first duel faces the new king).
+        if machine_healthy and not self._duel_running():
+            due, block = self._window_due()
+            if due:
+                cw = self.state.crown_window
+                self._duel_task = asyncio.create_task(
+                    self._close_window_safely(block),
+                    name=f"window-close-{cw['window_id']}")
 
         if machine_healthy and not self._duel_running() and self.state.queue:
             entry = self.state.pop_next()

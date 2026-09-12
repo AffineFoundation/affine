@@ -203,25 +203,25 @@ class NearMissWindowTests(unittest.TestCase):
 
 class ConfigTests(unittest.TestCase):
     def test_shipped_toml_is_the_live_contract(self):
-        """Pre-flip (wvk ≤ 14) the shipped toml is today's fixed δ. From the
-        wvk-15 flip (operator directive 2026-09-12 15:27 UTC) it is the
-        decaying margin: reset-to-cap, 48 h linear, block clock, "bar"
-        near-miss window, plus one tie safeguard (min_z or a δ floor of
-        half the cap). Either state must be exactly one of these two."""
+        """The shipped toml is either today's fixed δ (the decaying-margin
+        proposal was superseded on 2026-09-12 by the window-best crown; the
+        mechanism stays in code, mode "fixed") or — should the operator ever
+        flip it — the decaying margin: reset-to-cap, 48 h linear, block
+        clock, "bar" near-miss window, plus one tie safeguard (min_z or a
+        δ floor of half the cap). Either state must be exactly one of the
+        two."""
         cfg = load_config(REPO / "affine.toml")
         d = cfg.duel
         self.assertEqual(d.min_margin, DEFAULT_MIN_MARGIN)
         self.assertEqual(d.min_margin_peak_cap, d.min_margin)
         sched = d.margin_schedule()
         if d.min_margin_mode == "fixed":
-            self.assertLessEqual(cfg.weight_version_key, 14)
             self.assertEqual(d.min_z, 0.0)
             self.assertEqual(d.near_miss_window_mode, "absolute")
             self.assertEqual(sched.effective(0.0001, 10**6), d.min_margin)
             self.assertEqual(sched.next_peak(0.0), d.min_margin)
             return
         self.assertEqual(d.min_margin_mode, "decay")
-        self.assertGreaterEqual(cfg.weight_version_key, 15)
         self.assertFalse(d.min_margin_double_on_crown)
         self.assertEqual(d.min_margin_decay_hours, 48.0)
         self.assertEqual(d.min_margin_decay_shape, "linear")

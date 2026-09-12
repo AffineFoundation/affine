@@ -243,6 +243,11 @@ class DuelRequest(BaseModel):
     # crown test; the other keys (mode, peak, crown_block, decision_block,
     # blocks_since_crown, …) are stamped on the verdict. None = pod toml δ.
     margin: dict | None = None
+    # Window-best crown mode (staged 2026-09-12): when set, score ONE fresh
+    # confirmation slice for a window winner instead of a full duel —
+    # {slice_index, base: {n, margin, se}, challenge_id}; the verdict gains
+    # `confirmation` (slice numbers, pooled numbers, passed). None = a duel.
+    confirm: dict | None = None
 
 
 def _run_duel_job(job_id: str, req: DuelRequest) -> None:
@@ -373,7 +378,8 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
                 on_progress=on_progress,
                 corpus=_corpus,
                 abort_event=_abort_duel,
-                margin=req.margin))
+                margin=req.margin,
+                confirm=req.confirm))
         except ContextLengthError as e:
             # Serving config / corpus length — requeue without burning miner.
             raise DuelFault(Fault.CONTEXT_LIMIT, str(e)) from e
