@@ -65,28 +65,64 @@ def run_tag(trace: dict) -> str:
         json.dumps(trace, sort_keys=True).encode()).hexdigest()[:8]
 
 
-def deliberate_final_reply(trace: dict) -> bool:
-    """Did the model END this rollout on purpose, with an untruncated reply?
-
-    True iff the harness stopped because the agent said it was done
-    (`stop_condition == "agent_completed"`, not max_turns / timeout) and the
-    last sampled reply's model call finished with `stop` (not `length`).
-    Only such a final reply may become a `text` turn — the report the model
-    chose to close on, not a cap it ran into. Traces without call records
-    (older dumps) are treated as untruncated: the stop condition alone
-    decides."""
-    if trace.get("stop_condition") != "agent_completed":
-        return False
+def sampled_roots(trace: dict) -> list[tuple[int, int]]:
+    """(node id, root node id) for every sampled assistant node, in node
+    order — the same nodes `trace.sampled_paths` turns into conversations.
+    A linear trace (no `parent` keys) has root 0."""
     nodes = trace.get("nodes") or []
-    sampled = [i for i, nd in enumerate(nodes)
-               if nd.get("sampled")
-               and (nd.get("message") or {}).get("role") == "assistant"]
-    if not sampled:
-        return False
-    last = sampled[-1]
+    linear = bool(nodes) and "parent" not in nodes[-1]
+    out: list[tuple[int, int]] = []
+    for i, nd in enumerate(nodes):
+        if not nd.get("sampled") or (nd.get("message") or {}).get("role") != "assistant":
+            continue
+        if linear:
+            out.append((i, 0))
+            continue
+        j = i
+        while nodes[j].get("parent") is not None:
+            j = nodes[j]["parent"]
+        out.append((i, j))
+    return out
+
+
+def main_root_indices(trace: dict) -> list[int]:
+    """Positions (in sampled order = `turn_idx`) of the replies on the MAIN
+    conversation: the root of the first sampled reply. Side conversations a
+    harness runs against the same model (Claude Code WebFetch summaries,
+    Kimi sub-agents, pi compaction) are other roots and are excluded."""
+    roots = sampled_roots(trace)
+    if not roots:
+        return []
+    main = roots[0][1]
+    return [k for k, (_, r) in enumerate(roots) if r == main]
+
+
+def main_final_index(trace: dict) -> int | None:
+    """turn_idx of the reply that ENDED the rollout on purpose, or None.
+
+    The harness must have stopped because the agent said it was done
+    (`stop_condition == "agent_completed"`, not max_turns / timeout), the
+    reply is the last one on the MAIN root (2026-09-12: a compaction summary
+    or sub-agent reply on another root can never be the final report), and
+    its model call finished with `stop` (not `length`). Traces without call
+    records (older dumps) are treated as untruncated."""
+    if trace.get("stop_condition") != "agent_completed":
+        return None
+    roots = sampled_roots(trace)
+    main = main_root_indices(trace)
+    if not main:
+        return None
+    k = main[-1]
+    node = roots[k][0]
     finishes = [c.get("finish_reason") for c in (trace.get("calls") or [])
-                if c.get("node") == last]
-    return not finishes or finishes[-1] != "length"
+                if c.get("node") == node]
+    return k if (not finishes or finishes[-1] != "length") else None
+
+
+def deliberate_final_reply(trace: dict) -> bool:
+    """Did the model END this rollout on purpose, with an untruncated reply
+    on the main conversation? (see `main_final_index`)"""
+    return main_final_index(trace) is not None
 
 
 # `loop_guard` (rollouts/loopguard.py, live 2026-09-11 ~22:00 UTC): the
@@ -175,7 +211,7 @@ def build_view_record(envelope: dict, *, baker=None,
         # Pre-dialect envelopes carry no action_kind: they were all bash.
         action_kind=policy.get("action_kind") or dialects.DEFAULT_KIND)
 
-    final_is_text = deliberate_final_reply(trace)
+    final_idx = main_final_index(trace)
 
     nodes: list[dict] = []
     by_key: dict[tuple[int | None, str, str], int] = {}
@@ -183,7 +219,7 @@ def build_view_record(envelope: dict, *, baker=None,
     traj_id = ""
     for i, conv in enumerate(convs):
         recs = slice_messages(conv, turn=(i, len(convs)),
-                              text_final=(final_is_text and i == len(convs) - 1),
+                              text_final=(i == final_idx),
                               leak_check=i not in leak_exempt,
                               **common)
         if not recs:

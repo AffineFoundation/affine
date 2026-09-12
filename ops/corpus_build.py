@@ -49,6 +49,7 @@ secret.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import gzip
 import hashlib
 import io
@@ -56,6 +57,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import sys
 import tempfile
 import tomllib
@@ -87,6 +89,7 @@ from affine.corpus.view import (  # noqa: E402
     VIEW_SPEC,
     build_view_record,
     legacy_view_record,
+    main_root_indices,
     reference_leaks,
     rollout_outcome,
     validate_turns,
@@ -522,7 +525,8 @@ ANCHOR_MIN_TARGET = 0.1
 
 
 def cap_fill(records: list[dict], keyf, have: dict[str, set[str]],
-             targets: dict[str, float], *, anchor_min_target: float = 0.0
+             targets: dict[str, float], *, anchor_min_target: float = 0.0,
+             max_new: dict[str, int] | None = None
              ) -> tuple[list[dict], list[dict], dict[str, set[str]]]:
     """Mix enforcement in SLICE STRATA, not turns.
 
@@ -549,7 +553,11 @@ def cap_fill(records: list[dict], keyf, have: dict[str, set[str]],
     reference and lift the big groups' caps, and is itself held to
     target_k x reference. Trimmed rollouts defer and re-enter as the
     reference key grows. Keys without a positive target are deferred
-    whole, as before."""
+    whole, as before. `max_new` (2026-09-12): per-key ceiling on the strata
+    opened in this fold -- the catch-up budget that keeps every group's
+    share move under the shift guard, so a backlog enters over several
+    folds instead of tripping the guard (general: 111 chunks landed between
+    a dry run and its real fold and the group jumped +5.4 points)."""
     pools: dict[str, list[dict]] = {}
     for rec in records:
         pools.setdefault(keyf(rec), []).append(rec)
@@ -573,16 +581,20 @@ def cap_fill(records: list[dict], keyf, have: dict[str, set[str]],
             deferred.extend(pool)
             continue
         strata = set(have.get(k, ()))
+        opened = 0
+        limit = (max_new or {}).get(k)
         for rec in pool:
             new = record_strata(rec) - strata
             # A rollout in strata the corpus already holds adds within-stratum
             # variety and moves no share; a rollout opening new strata must fit
-            # under the cap.
-            if new and len(strata) + len(new) > cap[k] + 1e-9:
+            # under the cap and under this fold's budget.
+            if new and (len(strata) + len(new) > cap[k] + 1e-9
+                        or (limit is not None and opened + len(new) > limit)):
                 deferred.append(rec)
                 continue
             selected.append(rec)
             strata |= new
+            opened += len(new)
             added.setdefault(k, set()).update(new)
     return selected, deferred, added
 
@@ -671,11 +683,51 @@ MAX_PREFIX_TOKENS = 110_000
 TOKEN_GUARD_FROM_CHARS = 120_000
 
 
+class PrefixTokenCache:
+    """sha256(prefix text) -> token count, on disk (sqlite under CACHE_DIR).
+
+    Tokenizing a 100-300k-char prefix with the teacher tokenizer costs
+    ~0.5 s and the same prefixes come back on every dry run / re-derive
+    (2026-09-12: a 213-chunk multi-root back-fill ran > 1.5 h in
+    tokenization alone before its real run). The count is a pure function
+    of the text and the pinned tokenizer, so caching it changes nothing."""
+
+    def __init__(self, path: Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(str(path), timeout=60)
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("CREATE TABLE IF NOT EXISTS tok (k TEXT PRIMARY KEY, n INTEGER)")
+        self.conn.commit()
+        self.hits = self.misses = 0
+
+    def count(self, text: str, baker: ToolBaker) -> int:
+        k = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        row = self.conn.execute("SELECT n FROM tok WHERE k = ?", (k,)).fetchone()
+        if row is not None:
+            self.hits += 1
+            return int(row[0])
+        n = len(baker.tok(text, add_special_tokens=False)["input_ids"])
+        self.conn.execute("INSERT OR IGNORE INTO tok (k, n) VALUES (?, ?)", (k, n))
+        self.conn.commit()
+        self.misses += 1
+        return n
+
+
+_TOKEN_CACHE: PrefixTokenCache | None = None
+
+
+def token_cache() -> PrefixTokenCache:
+    global _TOKEN_CACHE
+    if _TOKEN_CACHE is None:
+        _TOKEN_CACHE = PrefixTokenCache(CACHE_DIR / "prefix_tokens.sqlite")
+    return _TOKEN_CACHE
+
+
 def prefix_over_token_cap(turn: dict, baker: ToolBaker) -> bool:
     if int(turn.get("n_prefix_chars") or 0) <= TOKEN_GUARD_FROM_CHARS:
         return False
     text = "\n".join(m.get("content", "") for m in turn.get("prefix") or [])
-    n = len(baker.tok(text, add_special_tokens=False)["input_ids"])
+    n = token_cache().count(text, baker)
     return n + 8 * len(turn.get("prefix") or []) > MAX_PREFIX_TOKENS
 
 
@@ -733,20 +785,28 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             except (ToolParityError, TraceShapeError) as e:
                 _count(drops, type(e).__name__)
                 continue
-        if want_completion and convs:
-            ckind = final_completion(convs, kind)
+        # Side conversations (other roots: WebFetch summaries, sub-agents,
+        # compaction) are real turns but not part of the main loop, so loop
+        # labels and the completion rule see the MAIN root's replies only.
+        main = main_root_indices(env["trace"]) if convs else []
+        main_convs = [convs[i] for i in main] if convs else []
+        if convs and len(main) != len(convs):
+            _count(notes, "multi_root_rollouts")
+        if want_completion and main_convs:
+            ckind = final_completion(main_convs, kind)
             _count(notes, "completion_candidates")
             if ckind:
-                i = len(convs) - 1
+                i = main[-1]
                 route[i] = COMPLETION_GROUP
                 extra[i] = {"completion_kind": ckind}
                 _count(notes, f"completion_kind_{ckind}")
-        if want_loop and convs:
+        if want_loop and main_convs:
             n_on = 0
-            for i, lab in enumerate(label_loops(convs, kind)):
+            for j, lab in enumerate(label_loops(main_convs, kind)):
+                i = main[j]
                 if lab.label == ONSET:
                     route[i] = KING_LOOP_GROUP
-                    extra[i] = {"loop_onset_of": int(lab.repeats)}
+                    extra[i] = {"loop_onset_of": int(main[int(lab.repeats)])}
                     n_on += 1
                 elif lab.label == IN_LOOP:
                     in_loop.add(i)
@@ -1250,6 +1310,13 @@ def main() -> None:
                          "prefix (hours); a data event that touches only recent "
                          "traces (king_loop_onset, 2026-09-11: the king seat "
                          "went live 2026-09-10T13:00Z) needs only these.")
+    ap.add_argument("--rederive-chunks", default=None, metavar="FILE",
+                    help="like --rederive-since, for the published chunk keys "
+                         "listed in FILE (one per line): re-derive exactly those "
+                         "chunks and drop their deferred copies. Used 2026-09-12 "
+                         "to back-fill the multi-root rollouts (Claude Code "
+                         "WebFetch / Kimi sub-agent / pi compaction side chats) "
+                         "the fold had dropped as TraceShapeError.")
     ap.add_argument("--allow-shift", action="store_true",
                     help="publish even if a group's slice share (share of "
                          f"strata) moves by more than {MAX_SHARE_SHIFT:.0%} in "
@@ -1260,6 +1327,14 @@ def main() -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    # One fold at a time: the pm2 cron and an operator's manual run share
+    # state.json, the pack dir and the deferred file. The lock lives for the
+    # process; a second instance exits at once instead of racing.
+    lock = open(STATE_DIR / "fold.lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fatal("another fold is running (ops/corpus_build/fold.lock held); exiting")
     cfg = load_config()
     public_base = cfg.data_r2["public_base_url"].rstrip("/")
     pub = PublicCorpus(public_base)
@@ -1310,14 +1385,22 @@ def main() -> None:
                if args.allowed_kinds else tuple(cfg.dataset.allowed_action_kinds))
     log(f"allowed action kinds: {list(allowed)}")
 
-    if args.rederive and args.rederive_since:
-        fatal("--rederive and --rederive-since are exclusive")
+    if sum(bool(x) for x in (args.rederive, args.rederive_since, args.rederive_chunks)) > 1:
+        fatal("--rederive, --rederive-since and --rederive-chunks are exclusive")
     since = (datetime.fromisoformat(args.rederive_since)
              if args.rederive_since else None)
     if since is not None and since.tzinfo is None:
         since = since.replace(tzinfo=timezone.utc)
+    listed: set[str] = set()
+    if args.rederive_chunks:
+        listed = {l.strip() for l in Path(args.rederive_chunks).read_text().split("\n")
+                  if l.strip()}
+        known = {c["key"] for c in traces_manifest["chunks"]}
+        if listed - known:
+            fatal(f"--rederive-chunks: {len(listed - known)} key(s) not in the traces manifest")
     unfolded = [c for c in traces_manifest["chunks"]
                 if args.rederive or c["key"] not in state["folded_chunks"]
+                or c["key"] in listed
                 or (since is not None
                     and datetime.fromisoformat(c["created_at"]) >= since)]
     # split("\n"), not splitlines(): JSON strings may carry U+2028 / U+0085.
@@ -1327,7 +1410,7 @@ def main() -> None:
         log(f"--rederive: all {len(unfolded)} chunks re-derived; "
             f"{len(carryover)} deferred rollouts dropped (regenerated from traces)")
         carryover = []
-    if since is not None:
+    if since is not None or listed:
         # The deferred copies of rollouts in a re-derived chunk are stale
         # (they were cut under the previous contract); the chunk regenerates
         # them, so drop them here or the pack would hold each turn twice.
@@ -1340,7 +1423,8 @@ def main() -> None:
         n0 = len(carryover)
         carryover = [r for r in carryover
                      if str(r.get("rollout_id") or "") not in rederived_rollouts]
-        log(f"--rederive-since {since.isoformat()}: {len(unfolded)} chunk(s) "
+        log(f"--rederive-since {since.isoformat() if since else '-'} / "
+            f"--rederive-chunks {len(listed)}: {len(unfolded)} chunk(s) "
             f"derived ({sum(c['key'] in state['folded_chunks'] for c in unfolded)} "
             f"already folded); {n0 - len(carryover)} deferred rollouts from those "
             f"chunks dropped (regenerated from traces), {len(carryover)} kept")
@@ -1410,6 +1494,8 @@ def main() -> None:
             log(f"derived {i}/{len(unfolded)} chunks: {len(candidates)} rollouts, "
                 f"{sum(len(r['turns']) for r in candidates)} turns")
     log(f"drops: {drops or 'none'}")
+    if _TOKEN_CACHE is not None:
+        log(f"prefix token cache: {_TOKEN_CACHE.hits} hits / {_TOKEN_CACHE.misses} misses")
     if king_loop:
         log(f"king loop onsets: labelled {notes.get('king_loop_labelled_rollouts', 0)} "
             f"failed king rollouts -> {notes.get('king_loop_onset_labels', 0)} onset / "
@@ -1546,9 +1632,11 @@ def main() -> None:
     if retire_ids:
         # The retired math strata are gone from D; the cap sees what survives.
         have_groups[src2grp.get(math_cfg["source"], DEFAULT_GROUP)] = set(math_surviving)
+    budgets = {g: catchup_budget(state.get("group_strata") or {}, g)
+               for g, v in mix.items() if v > 0}
     selected, deferred, group_added = cap_fill(
         candidates, lambda r: group_of(r, src2grp, mix), have_groups, mix,
-        anchor_min_target=ANCHOR_MIN_TARGET)
+        anchor_min_target=ANCHOR_MIN_TARGET, max_new=budgets)
     deferred += lang_deferred
     log(f"mix: selected {len(selected)} rollouts (+{ {g: len(v) for g, v in group_added.items()} } "
         f"strata), deferred {len(deferred)}")
