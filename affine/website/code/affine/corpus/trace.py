@@ -23,8 +23,8 @@ class ToolParityError(ValueError):
 
 
 class TraceShapeError(ValueError):
-    """The message graph has no single root, or a node points at a parent
-    that does not exist — the trace cannot be walked."""
+    """The message graph has no root, or a node points at a parent that does
+    not exist (or comes later) — the trace cannot be walked."""
 
 
 def message_text(content) -> str:
@@ -55,6 +55,17 @@ def sampled_paths(trace: dict) -> list[list[dict]]:
     path (a harness re-stating or rewriting an earlier reply) stay as
     prefix history; only sampled nodes are replies to score.
 
+    The graph may be a forest. Agent harnesses run side conversations
+    against the same model inside one rollout — Claude Code asks it to
+    summarize a fetched web page (WebFetch), Kimi Code delegates to a
+    sub-agent with its own task, pi compacts its history through a
+    "context summarization assistant" — and verifiers commits each as its
+    own root, because each was a separate prompt with its own system
+    message. Every sampled node's prefix is the path to ITS root, which is
+    exactly what the model saw for that reply; until 2026-09-12 a second
+    root failed the whole rollout (37 % of the teacher's Claude Code
+    rollouts, 20 of 92 of the king's).
+
     Traces without `parent` (mini_swe adapter, older dumps) are linear by
     construction: the path to node i is nodes[:i+1]."""
     nodes = trace["nodes"]
@@ -67,8 +78,8 @@ def sampled_paths(trace: dict) -> list[list[dict]]:
             parent = nd.get("parent")
             if parent is not None and not 0 <= parent < i:
                 raise TraceShapeError(f"node {i} has parent {parent}")
-        if sum(nd.get("parent") is None for nd in nodes) != 1:
-            raise TraceShapeError("graph does not have exactly one root")
+        if not any(nd.get("parent") is None for nd in nodes):
+            raise TraceShapeError("graph has no root")
     paths: list[list[dict]] = []
     for i, nd in enumerate(nodes):
         if msgs[i] is None or msgs[i]["role"] != "assistant":
@@ -133,23 +144,28 @@ def trace_conversations(trace: dict, baker=None) -> list[list[dict]]:
 
 
 TURN_CAP_STOP = "max_turns"
-TURN_CAP_ARTIFACT = "rollout stopped: max_turns"
+# The datagen loop guard (rollouts.loopguard, 2026-09-11): the rollout was
+# refused after the same action repeated N times with the same observation.
+# Surfaces through harnesses exactly like the turn cap.
+LOOP_GUARD_STOP = "loop_guard"
+REFUSAL_STOPS = frozenset({TURN_CAP_STOP, LOOP_GUARD_STOP})
 
 
 def is_turn_cap_artifact(err: dict, trace: dict) -> bool:
-    """The error is only the turn cap surfacing through a harness.
+    """The error is only a refused model call surfacing through a harness.
 
-    When interception refuses the call past `max_turns`, ACP agents (Claude
-    Code and friends) raise the refusal as their own runtime error, so the
-    trace carries `stop_condition == max_turns` AND a HarnessError whose
-    message quotes "rollout stopped: max_turns". Nothing failed: the model
-    used its whole turn budget. Live 2026-09-10: 15-20 % of the teacher's
-    Claude Code rollouts and 24/24 of the king's looked like this and were
-    dropped as errored — the king looping to the cap is exactly the
-    failure the king seat exists to capture."""
-    if trace.get("stop_condition") != TURN_CAP_STOP:
+    When interception refuses the call past `max_turns` (or on the loop
+    guard), ACP agents (Claude Code and friends) raise the refusal as their
+    own runtime error, so the trace carries `stop_condition == max_turns`
+    AND a HarnessError whose message quotes "rollout stopped: max_turns".
+    Nothing failed: the model used its whole turn budget. Live 2026-09-10:
+    15-20 % of the teacher's Claude Code rollouts and 24/24 of the king's
+    looked like this and were dropped as errored — the king looping to the
+    cap is exactly the failure the king seat exists to capture."""
+    stop = trace.get("stop_condition")
+    if stop not in REFUSAL_STOPS:
         return False
-    return TURN_CAP_ARTIFACT in str(err.get("message") or "")
+    return f"rollout stopped: {stop}" in str(err.get("message") or "")
 
 
 def real_errors(trace: dict) -> list[dict]:
