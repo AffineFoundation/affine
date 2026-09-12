@@ -42,6 +42,10 @@ RE_REPO=$(read_toml research_envs_repo); RE_COMMIT=$(read_toml research_envs_com
 #     rejects tools=[] / tools=null with 400).
 #  3. research-environments bfcl_v3: import SingleAgentEnv from its module (the
 #     eval CLI imports the taskset while `verifiers.v1` is half-initialised).
+#  4. verifiers Lean taskset: `trace.has_error` (= not trace.ok) is always True
+#     while rewards run because rollout.py sets `trace.ok` after scoring, so
+#     every miniF2F proof scored 0 (teacher 0/244 on the first pass). Check
+#     `trace.errors` instead.
 python3 - "$BENCH_HOME" <<'PY'
 import re, sys
 from pathlib import Path
@@ -56,6 +60,11 @@ old = '    kwargs = {"model": model, "messages": messages, "tools": tools or Non
 new = ('    kwargs = {"model": model, "messages": messages}  # affine benchsuite patch 2\n'
        '    if tools:\n        kwargs["tools"] = tools\n')
 if old in s: p.write_text(s.replace(old, new)); print("patched core.chat tools")
+p = home / "verifiers/verifiers/v1/tasksets/lean/taskset.py"
+s = p.read_text()
+old = "        if trace.has_error:\n            return 0.0\n"
+new = "        if trace.errors:  # affine benchsuite patch 4: Trace.ok is only set after scoring, so has_error was always True here\n            return 0.0\n"
+if old in s: p.write_text(s.replace(old, new)); print("patched lean has_error")
 p = home / "research-environments/environments/tool_use/bfcl_v3/bfcl_v3/taskset.py"
 s = p.read_text()
 if "class BFCLEnv(vf.SingleAgentEnv):" in s:
