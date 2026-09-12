@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -124,7 +125,8 @@ def tick(a: argparse.Namespace) -> None:
         return
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     logp = STATE_DIR / f"pass-{run_id}.log"
-    cmd = ["bash", str(HERE / "run_pass.sh"), king["digest"], str(king["reign"]), run_id]
+    cmd = ["bash", str(HERE / "run_pass.sh"), king["digest"], str(king["reign"]), run_id,
+           os.environ.get("BENCHSUITE_MODE") or SUITE["modes"]["default"]]
     with logp.open("a") as fh:
         proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, cwd=str(HERE),
                                 start_new_session=True)

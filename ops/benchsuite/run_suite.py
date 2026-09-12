@@ -275,6 +275,77 @@ def run_cell(env: dict, model_label: str, model: str, url: str, key_env: str,
     results[(model_label, env["id"], temp)] = summ
 
 
+def temps_of(a: argparse.Namespace) -> list[float]:
+    out = []
+    if "primary" in a.temps.split(","):
+        out.append(float(SUITE["sampling"]["primary_temperature"]))
+    if "secondary" in a.temps.split(","):
+        out.append(float(SUITE["sampling"]["secondary_temperature"]))
+    return out
+
+
+def copy_teacher_cells(src_run: Path, dst_run: Path, envs: list[dict], temps: list[float]) -> int:
+    """Copy the teacher's summary.json of every requested cell from an earlier
+    run (rollout rows dropped, `reused_from` stamped). The traces stay in the
+    source run's R2 prefix, which the stamp points at."""
+    n = 0
+    for env in envs:
+        for temp in temps:
+            if temp != float(SUITE["sampling"]["primary_temperature"]) and not env.get("secondary"):
+                continue
+            src = cell_dir(src_run, "teacher", env["id"], temp) / "summary.json"
+            dst = cell_dir(dst_run, "teacher", env["id"], temp) / "summary.json"
+            if not src.exists() or dst.exists():
+                continue
+            summ = json.loads(src.read_text())
+            summ.pop("rollouts", None)
+            summ["reused_from"] = src_run.name
+            summ["traces"] = f"{SUITE['suite']['r2_prefix']}{src_run.name}/teacher/{src.parent.name}/traces.jsonl.gz"
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_text(json.dumps(summ, indent=1))
+            n += 1
+    return n
+
+
+def cmd_compare(a: argparse.Namespace) -> int:
+    """Did the king move? For every finished king cell of --run-id, compare its
+    score with the same cell of --against (a run id or a published scorecard
+    JSON): "moved" when the new score lies outside the previous run's 95%
+    interval or the previous interval's centre lies outside the new one.
+    Prints the moved envs; exit 0 = moved (or no baseline), 1 = all inside."""
+    out = Path(a.out).expanduser()
+    new_run = out / a.run_id
+    prev_cells = {}
+    against = Path(a.against).expanduser()
+    if against.suffix == ".json" and against.exists():
+        card = json.loads(against.read_text())
+        for r in card.get("rows", []):
+            if r.get("king"):
+                prev_cells[(r["env"], float(r["temperature"]))] = r["king"]
+    else:
+        for summ in (out / a.against).glob("king/*/summary.json"):
+            s = json.loads(summ.read_text())
+            prev_cells[(s["env"], float(s["temperature"]))] = s
+    moved = []
+    for summ in sorted(new_run.glob("king/*/summary.json")):
+        s = json.loads(summ.read_text())
+        key = (s["env"], float(s["temperature"]))
+        prev = prev_cells.get(key)
+        if prev is None:
+            moved.append((s["env"], s["temperature"], s["score"], None, "no baseline"))
+            continue
+        lo, hi = prev["ci95"]
+        nlo, nhi = s["ci95"]
+        prev_mid = prev["score"]
+        if not (lo <= s["score"] <= hi) or not (nlo <= prev_mid <= nhi):
+            moved.append((s["env"], s["temperature"], s["score"], prev_mid, f"outside [{lo:.3f}, {hi:.3f}]"))
+    for env, temp, new, old, why in moved:
+        print(f"MOVED {env} t={temp:g}: {new} vs {old} ({why})")
+    if not moved:
+        print("no king cell moved beyond the previous run's 95% interval")
+    return 0 if moved else 1
+
+
 def cmd_run(a: argparse.Namespace) -> int:
     out = Path(a.out).expanduser() / a.run_id
     out.mkdir(parents=True, exist_ok=True)
@@ -290,6 +361,11 @@ def cmd_run(a: argparse.Namespace) -> int:
         models["king"] = (a.king_model, a.king_url)
     if "teacher" in a.models.split(","):
         models["teacher"] = (a.teacher_model, a.teacher_url)
+    if a.teacher_from:
+        # Cheap mode: the teacher is frozen and the tasks are fixed, so its
+        # baseline is copied forward from an earlier run instead of re-served.
+        n_copied = copy_teacher_cells(Path(a.out).expanduser() / a.teacher_from, out, envs, temps_of(a))
+        log(f"teacher baseline: {n_copied} cells reused from run {a.teacher_from}")
     temps = []
     if "primary" in a.temps.split(","):
         temps.append(("primary", float(SUITE["sampling"]["primary_temperature"])))
@@ -442,6 +518,10 @@ def cmd_retry(a: argparse.Namespace) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
+    cp = sub.add_parser("compare")
+    cp.add_argument("--run-id", required=True)
+    cp.add_argument("--out", required=True)
+    cp.add_argument("--against", required=True, help="previous run id under --out, or a scorecard JSON")
     rt = sub.add_parser("retry")
     rt.add_argument("--run-id", required=True)
     rt.add_argument("--out", required=True)
@@ -467,6 +547,8 @@ def main() -> int:
     r.add_argument("--rollout-timeout", type=int, default=7200)
     r.add_argument("--pod-usd-per-hour", type=float, default=0.0)
     r.add_argument("--push", action="store_true")
+    r.add_argument("--teacher-from", default="",
+                   help="cheap mode: reuse the teacher cells of this earlier run id instead of serving the teacher")
     r.add_argument("--manifest", default="manifest.json",
                    help="manifest file name under the run dir (a concurrent runner on other "
                         "envs must use a different name; publish.py merges manifest*.json)")

@@ -104,7 +104,8 @@ def scorecard(run_dir: Path) -> dict:
                 "teacher": None if not t else {"score": t["score"], "ci95": t["ci95"], "n": t["n"],
                                                "n_errored": t["n_errored"], "completion_tokens": t["completion_tokens"],
                                                "prompt_tokens": t["prompt_tokens"], "wall_seconds": t.get("wall_seconds"),
-                                               "finish_length_frac": t.get("finish_length_frac")},
+                                               "finish_length_frac": t.get("finish_length_frac"),
+                                               "reused_from": t.get("reused_from")},
                 "delta": None if not (k and t) else round(k["score"] - t["score"], 4),
                 "cost": (manifest.get("cells", {}).get(f"{env_id}__{tkey}") or {}),
             })
@@ -115,6 +116,8 @@ def scorecard(run_dir: Path) -> dict:
         "created_at": manifest.get("created_at"),
         "published_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "prime_spent_usd": manifest.get("prime_spent_usd"),
+        "mode": manifest.get("mode"),
+        "sandbox_trigger": manifest.get("sandbox_trigger"),
         "pod": manifest.get("pod"),
         "r2_prefix": f"{SUITE['suite']['r2_prefix']}{manifest.get('run_id')}/",
         "rows": rows,

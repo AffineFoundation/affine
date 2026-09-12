@@ -34,9 +34,7 @@ import httpx
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO / "ops" / "teacher-swarm"))
-sys.path.insert(0, str(REPO / "ops" / "king-datagen"))
 
-import kingctl  # noqa: E402  (ssh helpers, env_file_value)
 import lium_api  # noqa: E402
 
 STATE_DIR = HERE / "state"

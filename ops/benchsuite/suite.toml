@@ -41,6 +41,35 @@ max_num_seqs = 64
 reasoning_parser = "qwen3"
 tool_call_parser = "qwen3_xml"
 
+# ------------------------------------------------------------------ modes
+# Two ways to run a pass (run_pass.sh MODE). The standing per-reign runs
+# (watch.py: on every crown + weekly) use `cheap`; `full` is the reference
+# pass (first run on reign 11, 2026-09-12).
+#
+#   cheap  king only, on a Lium 1x H200 rented for the run (kingpod.py, ~$3/h)
+#          and released after; the teacher baseline is copied forward from
+#          `teacher_from` (frozen teacher + fixed tasks + T=0 => the baseline
+#          does not change until the suite version does); chat sets only.
+#          SWE-bench Verified / miniF2F / long-context run on Prime sandboxes
+#          ONLY when a king chat cell moves outside the previous run's 95%
+#          interval (run_suite.py compare) or BENCHSUITE_FORCE_SANDBOX=1.
+#          Target < $50 per reign (~5 h of H200 for the chat sets).
+#   full   king + teacher served side by side on a Prime pod ([prime]), every
+#          env, chat sets on docker, sandbox sets on Prime sandboxes.
+#
+# The bench pod (AFFINE_ROLE=bench) was checked as a free host for the king
+# engine and rejected: evalsrv loads the miner per bench job and unloads it
+# in `finally` (no persistent engine), holds one busy lock per pod, and its
+# vLLM port is not tunnelled — hosting the suite there means changing
+# production evalsrv code, which this monitoring tool must not do.
+[modes]
+default = "cheap"
+cheap_plan = "h200-1x"                 # [pods.plans.*] entry for kingpod.py
+cheap_teacher_from = "20260912T1455Z-0ce59769300c"   # run whose teacher cells are reused
+cheap_chat_envs = ["aime25", "math500", "gpqa-diamond", "mmlu-pro", "ifbench", "ifeval", "humaneval", "livecodebench", "bfcl-v3"]
+cheap_sandbox_envs = ["swebench-verified", "minif2f", "graphwalks", "oolong-synth", "mrcr-v2"]
+cheap_max_usd = 50.0                   # the recurring-run budget; sandbox phase reports if it will exceed it
+
 # ---------------------------------------------------------------- Prime path
 # Prime Intellect pod that serves both models (pod_bootstrap.sh) and runs
 # the eval driver. Chosen 2026-09-12 from live availability: no H200/B200
