@@ -65,31 +65,78 @@ def run_tag(trace: dict) -> str:
         json.dumps(trace, sort_keys=True).encode()).hexdigest()[:8]
 
 
-def deliberate_final_reply(trace: dict) -> bool:
-    """Did the model END this rollout on purpose, with an untruncated reply?
-
-    True iff the harness stopped because the agent said it was done
-    (`stop_condition == "agent_completed"`, not max_turns / timeout) and the
-    last sampled reply's model call finished with `stop` (not `length`).
-    Only such a final reply may become a `text` turn — the report the model
-    chose to close on, not a cap it ran into. Traces without call records
-    (older dumps) are treated as untruncated: the stop condition alone
-    decides."""
-    if trace.get("stop_condition") != "agent_completed":
-        return False
+def sampled_roots(trace: dict) -> list[tuple[int, int]]:
+    """(node id, root node id) for every sampled assistant node, in node
+    order — the same nodes `trace.sampled_paths` turns into conversations.
+    A linear trace (no `parent` keys) has root 0."""
     nodes = trace.get("nodes") or []
-    sampled = [i for i, nd in enumerate(nodes)
-               if nd.get("sampled")
-               and (nd.get("message") or {}).get("role") == "assistant"]
-    if not sampled:
-        return False
-    last = sampled[-1]
+    linear = bool(nodes) and "parent" not in nodes[-1]
+    out: list[tuple[int, int]] = []
+    for i, nd in enumerate(nodes):
+        if not nd.get("sampled") or (nd.get("message") or {}).get("role") != "assistant":
+            continue
+        if linear:
+            out.append((i, 0))
+            continue
+        j = i
+        while nodes[j].get("parent") is not None:
+            j = nodes[j]["parent"]
+        out.append((i, j))
+    return out
+
+
+def main_root_indices(trace: dict) -> list[int]:
+    """Positions (in sampled order = `turn_idx`) of the replies on the MAIN
+    conversation: the root of the first sampled reply. Side conversations a
+    harness runs against the same model (Claude Code WebFetch summaries,
+    Kimi sub-agents, pi compaction) are other roots and are excluded."""
+    roots = sampled_roots(trace)
+    if not roots:
+        return []
+    main = roots[0][1]
+    return [k for k, (_, r) in enumerate(roots) if r == main]
+
+
+def main_final_index(trace: dict) -> int | None:
+    """turn_idx of the reply that ENDED the rollout on purpose, or None.
+
+    The harness must have stopped because the agent said it was done
+    (`stop_condition == "agent_completed"`, not max_turns / timeout), the
+    reply is the last one on the MAIN root (2026-09-12: a compaction summary
+    or sub-agent reply on another root can never be the final report), and
+    its model call finished with `stop` (not `length`). Traces without call
+    records (older dumps) are treated as untruncated."""
+    if trace.get("stop_condition") != "agent_completed":
+        return None
+    roots = sampled_roots(trace)
+    main = main_root_indices(trace)
+    if not main:
+        return None
+    k = main[-1]
+    node = roots[k][0]
     finishes = [c.get("finish_reason") for c in (trace.get("calls") or [])
-                if c.get("node") == last]
-    return not finishes or finishes[-1] != "length"
+                if c.get("node") == node]
+    return k if (not finishes or finishes[-1] != "length") else None
 
 
-CLEAN_STOP_CONDITIONS = frozenset({"agent_completed", "max_turns"})
+def deliberate_final_reply(trace: dict) -> bool:
+    """Did the model END this rollout on purpose, with an untruncated reply
+    on the main conversation? (see `main_final_index`)"""
+    return main_final_index(trace) is not None
+
+
+# `loop_guard` (rollouts/loopguard.py, live 2026-09-11 ~22:00 UTC): the
+# datagen pod ends a looping king rollout early instead of letting it run
+# to the turn cap. The agent did not finish, so it is a clean stop that
+# grades as a failure -- the material the king seat exists to capture.
+LOOP_GUARD_STOP = "loop_guard"
+# `no_visible_reply` (pi adapter, live 2026-09-11 22:57 UTC): the model
+# finished with reasoning only -- no tool call, no visible text after
+# `</think>`. It said nothing, so the rollout is a failure whatever the env
+# graded (the v7 "models must work as chat models" defect, seen in datagen).
+NO_VISIBLE_REPLY_STOP = "no_visible_reply"
+CLEAN_STOP_CONDITIONS = frozenset({"agent_completed", "max_turns",
+                                   LOOP_GUARD_STOP, NO_VISIBLE_REPLY_STOP})
 # The env's primary grade, first key present: `solved` (SWE / terminal /
 # agent envs), `correct` (affine-math), `passed_fraction` (nl2repo — a
 # partial pass is not a solve). Surveyed on the pods' chunks 2026-09-10;
@@ -106,13 +153,15 @@ def rollout_outcome(trace: dict) -> str:
     than the agent's own finish / the turn cap — the env may still have
     graded such a rollout 0, but that is an infrastructure failure, not the
     model's. Then the env's primary grade (`PRIMARY_REWARD_KEYS`); missing
-    or non-numeric is unscored, except at the turn cap, where an ungraded
-    rollout is a failure. The
+    or non-numeric is unscored, except at the turn cap or a loop-guard
+    stop, where an ungraded rollout is a failure. The
     fold uses it for the king seat: only the king's FAILED rollouts enter D."""
     if real_errors(trace):
         return "errored"
     if trace.get("stop_condition") not in CLEAN_STOP_CONDITIONS:
         return "errored"
+    if trace.get("stop_condition") == NO_VISIBLE_REPLY_STOP:
+        return "failed"
     rewards = trace.get("rewards") or {}
     score = next(((rewards.get(k) or {}).get("score")
                   for k in PRIMARY_REWARD_KEYS if rewards.get(k)), None)
@@ -121,7 +170,8 @@ def rollout_outcome(trace: dict) -> str:
         # raise on the refused call past max_turns, so verifiers skips
         # scoring (`rewards == {}`). The agent did not finish — for the king
         # seat that IS the failure (loops to the cap), not a missing label.
-        if trace.get("stop_condition") == TURN_CAP_STOP:
+        # Same for a rollout the pod's loop guard cut short.
+        if trace.get("stop_condition") in (TURN_CAP_STOP, LOOP_GUARD_STOP):
             return "failed"
         return "unscored"
     try:
@@ -132,16 +182,25 @@ def rollout_outcome(trace: dict) -> str:
 
 
 def build_view_record(envelope: dict, *, baker=None,
-                      generated_at: str | None = None) -> dict | None:
+                      generated_at: str | None = None,
+                      convs: list[list[dict]] | None = None,
+                      leak_exempt: frozenset[int] | set[int] = frozenset(),
+                      ) -> dict | None:
     """View record for one envelope, or None when nothing is scorable
     (errored rollout, no reply passes the slicer). Raises ToolParityError /
-    TraceShapeError for traces that cannot be represented plain."""
+    TraceShapeError for traces that cannot be represented plain.
+
+    `convs`: the trace's baked conversations when the caller already has
+    them (the fold labels loops on them first); None derives them here.
+    `leak_exempt`: reply indices sliced without the reference-leakage
+    predicate (the fold's `king_loop_onset` turns, see datagen.slicer)."""
     trace = envelope["trace"]
     task = envelope["task"]
     policy = envelope["policy"]
     if trace_error_type(trace) is not None:
         return None
-    convs = trace_conversations(trace, baker)
+    if convs is None:
+        convs = trace_conversations(trace, baker)
     stamped_at = (trace.get("info") or {}).get("generated_at")
     common = dict(
         instance_id=task["sid"],
@@ -152,7 +211,7 @@ def build_view_record(envelope: dict, *, baker=None,
         # Pre-dialect envelopes carry no action_kind: they were all bash.
         action_kind=policy.get("action_kind") or dialects.DEFAULT_KIND)
 
-    final_is_text = deliberate_final_reply(trace)
+    final_idx = main_final_index(trace)
 
     nodes: list[dict] = []
     by_key: dict[tuple[int | None, str, str], int] = {}
@@ -160,7 +219,8 @@ def build_view_record(envelope: dict, *, baker=None,
     traj_id = ""
     for i, conv in enumerate(convs):
         recs = slice_messages(conv, turn=(i, len(convs)),
-                              text_final=(final_is_text and i == len(convs) - 1),
+                              text_final=(i == final_idx),
+                              leak_check=i not in leak_exempt,
                               **common)
         if not recs:
             continue
@@ -248,6 +308,13 @@ def legacy_view_record(traj: dict, *, legacy_epoch: int) -> dict:
     return record
 
 
+def reference_leaks(prefix: list[dict], action: str) -> bool:
+    """The v2-era leakage predicate: the reference's action (whitespace
+    collapsed, lower-cased, > 40 chars) is a substring of a prefix message."""
+    body = _norm(action)
+    return len(body) > 40 and any(body in _norm(m["content"]) for m in prefix)
+
+
 def view_turns(record: dict) -> list[dict]:
     """Every scorable turn of a view record as a v1-shaped turn dict
     (prefix + reference_turn + tags) — what validate_turns and the duel
@@ -265,13 +332,16 @@ def view_turns(record: dict) -> list[dict]:
 
 def validate_turns(records: list[dict], *, panel: PanelKeys | None = None,
                    allowed_kinds: tuple[str, ...] | list[str] | None = None,
+                   leak_check: bool = True,
                    ) -> tuple[list[dict], dict[str, int]]:
     """The fold's per-turn admission contract (was ops/datagen_refresh.py's
     prefilter + rollouts validate_records). Returns (kept, drop counts).
 
     `allowed_kinds`: [dataset].allowed_action_kinds for the fold — a
     dialect outside it is refused; None admits every REGISTERED dialect
-    (staging semantics: a not-yet-admitted dialect builds its backlog)."""
+    (staging semantics: a not-yet-admitted dialect builds its backlog).
+    `leak_check=False` waives `reference_leaked_into_prefix` only (the
+    fold's `king_loop_onset` turns); every other rule still applies."""
     panel_ids, panel_repos, panel_bare = panel or (set(), set(), set())
     kinds = tuple(allowed_kinds) if allowed_kinds is not None \
         else tuple(dialects.DIALECTS)
@@ -318,8 +388,7 @@ def validate_turns(records: list[dict], *, panel: PanelKeys | None = None,
         if reason:
             drop(reason)
             continue
-        body = _norm(action)
-        if len(body) > 40 and any(body in _norm(m["content"]) for m in prefix):
+        if leak_check and reference_leaks(prefix, action):
             drop("reference_leaked_into_prefix")
             continue
         seen.add(turn_id)

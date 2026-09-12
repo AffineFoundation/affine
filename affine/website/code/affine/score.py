@@ -6,7 +6,9 @@ Shared between root validator and eval server. Any change here is a chain fork
 
 v6 additions (2026-09-04, operator directive; both OFF until the contract
 flips them — score_mode="min_rga" and forfeit_turn_score set in [duel]):
-  A leg:      b_i = lpC(y_A | z_C^i) − lpC(y_A | ∅)   (per ref, per byte)
+  A leg:      S_i = Σ_bytes [ lpC(y_A | z_C^i) − lpC(y_A | ∅) ]   (per ref, SUMMED
+              over the action's bytes = per-byte lift × n_bytes(y_A))
+              b_i = S_i / action_norm_bytes                (fixed-byte normalization)
               A   = tau·log((1/k)·Σ_i exp(b_i/tau))
               ("would the teacher, thinking its own thought, take the
               miner's action?" — the dual of R; teacher-side only, so no
@@ -14,6 +16,17 @@ flips them — score_mode="min_rga" and forfeit_turn_score set in [duel]):
               refs, and an action every teacher thought licenses is the
               target, not a flat-lift attack — a generic action earns less
               lift than the right one, unlike filler in the thought.)
+              Why a FIXED byte count and not the action's own length
+              (2026-09-10, research/results/v6_action_leg_norm.txt): the
+              summed lift of the teacher's own actions is ~0.6 nats and
+              does not grow with length (Spearman(S, len) = +0.05, n=2388),
+              so dividing by the real length rewards short actions ~10x
+              (the 2026-09-04 probe: king short 0.021 vs long 0.002).
+              Dividing by a constant keeps A in the per-byte units R and G
+              use, at the scale of one typical action (~128 bytes), and
+              makes the leg length-neutral (short/long ratio 0.77; paired
+              z on the probed duel +0.48 → +2.32, min(R,G) alone +3.53).
+              action_norm_bytes = None replays the per-byte design.
   Per turn:   turn = min(R, G, A)                     (score_mode="min_rga")
   Forfeit:    a turn where a side emits no parseable action scores
               forfeit_turn_score (a constant floor) instead of being dropped
@@ -43,6 +56,28 @@ v5 (score_mode="min_rg", the live rule):
               AND median(len(z_A.strip())) ≥ min_thought_chars
               AND (if causality_gamma > 0) B pass rate ≥ causality_gamma
               with SE = stdev(diffs) / sqrt(n) over paired turns.
+  Sequential near-miss (2026-09-11, sampling rule, not a scoring change):
+              if the first slice's margin lands strictly inside
+              (near_miss_low, near_miss_high) — default (0.001, 0.003), the
+              band around δ where 2·SE and δ compete — the eval draws
+              near_miss_extra_slices more slices of n_turns each (different
+              seed, disjoint turns) and the SAME rule above decides on the
+              pooled turns (pooled mean, pooled SE, pooled gates). Per-turn
+              scores are untouched, so weight_version_key does not move.
+              Why: 12 of 349 stored duels had z > 2 but margin < δ, and the
+              near-miss losers bench like kings — δ blocks a real improver
+              at n = 1300 exactly as often as it blocks noise, and only a
+              larger n can tell the two apart.
+  Decaying crown margin (staged 2026-09-12, OFF: min_margin_mode="fixed"):
+              under mode="decay" the δ in the crown test is not the fixed
+              min_margin but δ(b) = a curve from `peak` down to
+              min_margin_floor over min_margin_decay_hours, clocked in
+              BLOCKS since the crown block (b), and a crown starts a new
+              cycle at peak = min(2·δ_at_crown, min_margin_peak_cap). See
+              MarginSchedule. Operator request: "a new king roughly every
+              day". Changing the mode changes which margins crown, so it is
+              a weight_version_key event. min_z (0 = off) is the paired
+              safeguard: a crown also needs z ≥ min_z, whatever δ is.
 
 Why v5 (2026-08-27): the wvk-9 king crowned on a constant filler suffix — a
 flat, task-independent lift that raises every a_i equally and benches 0/50
@@ -154,11 +189,82 @@ DEFAULT_BAND_FLOOR = 0.002
 # turn with no parseable action. None = legacy behaviour (the turn is dropped
 # from pairing and from the side's mean). Live contract sets it in [duel].
 DEFAULT_FORFEIT_TURN_SCORE: float | None = None
+# A-leg normalizer (v6 redesign, 2026-09-10): the summed action lift is
+# divided by this many bytes, not by the action's own length. None = the
+# 2026-09-04 per-byte design (replay only; length-biased). Contract knob:
+# changing it changes scores under score_mode="min_rga".
+DEFAULT_ACTION_NORM_BYTES: float | None = 128.0
 SCORE_MODES = ("reason", "min_rg", "min_rga")
 # Teacher-side causality gate B (off unless causality_gamma > 0).
 # B = lpC(y_A|z_A) − lpC(y_A|∅). Same τ/γ as retired v2 miner-side A9.
 DEFAULT_CAUSALITY_TAU = 0.02
 DEFAULT_CAUSALITY_GAMMA = 0.0
+
+# Sequential near-miss window (2026-09-11): a first-slice margin strictly
+# inside (low, high) triggers extra slices; the crown is then decided on the
+# pooled turns by the unchanged rule. A sampling-size rule, not a per-turn
+# scoring change (no weight_version_key event). Defaults bracket δ = 0.002:
+# below `low` the challenger is clearly behind, above `high` clearly ahead
+# of the bar at the live SE scale (2·SE ≈ 0.0010–0.0018).
+DEFAULT_NEAR_MISS_LOW = 0.001
+DEFAULT_NEAR_MISS_HIGH = 0.003
+# Near-miss window placement (staged 2026-09-12, inert unless the decaying
+# margin is on). "absolute" = the fixed (low, high) window above. "bar" =
+# the window follows the crown bar of the first slice, bar = max(k_sigma·SE,
+# δ_effective): (BAR_LOW_FRAC·bar, BAR_HIGH_FRAC·bar). At δ = 0.002 with a
+# typical SE the bar is δ and the two placements coincide — (0.001, 0.003).
+NEAR_MISS_WINDOW_MODES = ("absolute", "bar")
+NEAR_MISS_BAR_LOW_FRAC = 0.5
+NEAR_MISS_BAR_HIGH_FRAC = 1.5
+
+# Decaying crown margin (staged 2026-09-12, operator request: "roughly a
+# new king every day"). OFF by default — mode "fixed" is today's contract
+# (δ = min_margin on every duel). Turning mode to "decay" changes the crown
+# test and is a weight_version_key event that needs an explicit dated
+# operator directive plus a community notice.
+#
+#   δ(b) for blocks_since_crown b, decay window B = decay_hours·3600/12:
+#     linear:       δ = peak − (peak − floor)·min(b, B)/B
+#     exponential:  δ = peak·(floor/peak)^(min(b, B)/B)   (same factor every
+#                   block; reaches `floor` exactly at B, stays there)
+#   at a crown:     next peak = min(double·δ_at_crown, peak_cap) when
+#                   double_on_crown, else peak_cap
+#
+# The clock is BLOCKS since the crown block (finney: 12 s/block), never wall
+# time, so a verdict replays from its stamp alone. `peak_cap` bounds the
+# rule from above: with peak_cap = min_margin the decaying rule can never be
+# stricter than today's fixed δ.
+MIN_MARGIN_MODES = ("fixed", "decay")
+MIN_MARGIN_DECAY_SHAPES = ("linear", "exponential")
+DEFAULT_MIN_MARGIN_MODE = "fixed"
+DEFAULT_MIN_MARGIN_PEAK_CAP = DEFAULT_MIN_MARGIN
+DEFAULT_MIN_MARGIN_FLOOR = 0.0001
+DEFAULT_MIN_MARGIN_DECAY_HOURS = 48.0
+DEFAULT_MIN_MARGIN_DECAY_SHAPE = "linear"
+DEFAULT_MIN_MARGIN_DOUBLE_ON_CROWN = True
+DEFAULT_MIN_MARGIN_DOUBLE_FACTOR = 2.0
+SECONDS_PER_BLOCK = 12.0
+# Minimum z (margin / SE) a crown needs, independent of δ. 0 = off (today).
+# A safeguard for the decaying margin: when δ → 0 the 2σ test alone crowns
+# a zero-edge challenger 1 duel in 44; min_z = 2.5 makes that ~1 in 160,
+# 3.0 ~1 in 740. Contract knob — a weight_version_key event.
+DEFAULT_MIN_Z = 0.0
+# Crown mode (staged 2026-09-12, operator rule of 16:39 UTC). "duel" = every
+# duel decides on its own: the challenger crowns iff it clears
+# max(k_sigma·SE, δ) + gates (the contract since wvk 3). "window_best" =
+# the king is FROZEN for a fixed window of `crown_window_blocks` chain
+# blocks (window id = block // crown_window_blocks); every challenger judged
+# inside the window duels that king, so their paired margins are
+# comparable; at the window close the candidate with the LARGEST POSITIVE
+# margin is crowned — after a confirmation slice when enabled. The δ /
+# k_sigma bar is still computed and stamped but no longer decides. Flipping
+# the mode changes who crowns: a weight_version_key event.
+CROWN_MODES = ("duel", "window_best")
+DEFAULT_CROWN_MODE = "duel"
+DEFAULT_CROWN_WINDOW_BLOCKS = 3600            # 12 h at 12 s/block
+DEFAULT_CROWN_CONFIRM_SLICE = True
+DEFAULT_CROWN_CONFIRM_MAX = 2
+DEFAULT_CROWN_ONE_ENTRY_PER_HOTKEY = True
 
 # Telemetry constants (non-consensus): thresholds used only to report the
 # legacy causality/leakage pass rate. Changing them is NOT a chain fork.
@@ -337,19 +443,38 @@ def turn_min_rg(pairs: list[dict],
     return min(centered_reason(pairs, tau), g)
 
 
-def action_lift(pair: dict) -> float | None:
-    """Per-reference action lift b_i = lpC(y_A|z_C^i) − lpC(y_A|∅) (per byte).
+def action_lift(pair: dict,
+                norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
+                ) -> float | None:
+    """Per-reference action lift b_i for the A leg.
 
-    How much the teacher's OWN thought i makes the miner's action likely.
-    None when the action echoes are absent (pre-v6 rows)."""
+        per-byte lift  = lpC(y_A|z_C^i) − lpC(y_A|∅)      (what the echoes store)
+        S_i            = per-byte lift × n_bytes(y_A)      (summed over the action)
+        b_i            = S_i / norm_bytes                  (fixed-byte normalization)
+
+    How much the teacher's OWN thought i makes the miner's action likely,
+    in nats per `norm_bytes` bytes. The sum is used because the lift the
+    thought gives an action is concentrated on its few decision tokens and
+    does not grow with the action's length; dividing by the real length
+    (norm_bytes=None, the 2026-09-04 probe design) paid short actions ~10x.
+    None when the action echoes are absent (pre-v6 rows), or when the
+    action byte count is absent and a fixed normalizer is requested."""
     try:
-        return pair["lpC_ya_zc"] - pair["lpC_ya_e"]
+        per_byte = pair["lpC_ya_zc"] - pair["lpC_ya_e"]
     except (KeyError, TypeError):
         return None
+    if norm_bytes is None:
+        return per_byte
+    n_bytes = pair.get("n_bytes_ya")
+    if n_bytes is None:
+        return None
+    return per_byte * n_bytes / norm_bytes
 
 
 def action_leg(pairs: list[dict],
-               tau: float | None = DEFAULT_TEMPER_TAU) -> float | None:
+               tau: float | None = DEFAULT_TEMPER_TAU,
+               norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
+               ) -> float | None:
     """A leg of min(R,G,A): tempered log-mean-exp of the per-ref action lifts.
 
         A = tau · log( (1/k) · Σ_i exp(b_i / tau) )
@@ -362,7 +487,7 @@ def action_leg(pairs: list[dict],
     no analog here because a generic action earns less lift than the right
     one. None when the echoes are missing.
     """
-    b = [v for p in pairs if (v := action_lift(p)) is not None]
+    b = [v for p in pairs if (v := action_lift(p, norm_bytes)) is not None]
     if not b:
         return None
     if tau is None or tau <= 0 or len(b) == 1:
@@ -374,8 +499,10 @@ def action_leg(pairs: list[dict],
 def turn_min_rga(pairs: list[dict],
                  tau: float | None = DEFAULT_TEMPER_TAU,
                  band_c: float = DEFAULT_BAND_C,
-                 band_floor: float = DEFAULT_BAND_FLOOR) -> float:
-    """Turn score under min(R,G,A) (v6, 2026-09-04).
+                 band_floor: float = DEFAULT_BAND_FLOOR,
+                 action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
+                 ) -> float:
+    """Turn score under min(R,G,A) (v6, 2026-09-04; A normalization 2026-09-10).
 
     min(R,G) plus the action leg: the miner is also paid the worse of its
     thought legs and "would the teacher have taken that action". A thought
@@ -383,11 +510,12 @@ def turn_min_rga(pairs: list[dict],
     not take is paid the action. Fails loudly without the action echoes —
     older rows replay through their own score_mode."""
     rg = turn_min_rg(pairs, tau, band_c, band_floor)
-    a = action_leg(pairs, tau)
+    a = action_leg(pairs, tau, action_norm_bytes)
     if a is None:
         raise ValueError(
-            "min_rga scoring requires action echoes (lpC_ya_zc / lpC_ya_e); "
-            "replay older rows with their stamped score_mode")
+            "min_rga scoring requires action echoes (lpC_ya_zc / lpC_ya_e"
+            + (" / n_bytes_ya" if action_norm_bytes is not None else "")
+            + "); replay older rows with their stamped score_mode")
     return min(rg, a)
 
 
@@ -395,10 +523,12 @@ def turn_score(pairs: list[dict],
                tau: float | None = DEFAULT_TEMPER_TAU,
                score_mode: str = DEFAULT_SCORE_MODE,
                band_c: float = DEFAULT_BAND_C,
-               band_floor: float = DEFAULT_BAND_FLOOR) -> float:
+               band_floor: float = DEFAULT_BAND_FLOOR,
+               action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
+               ) -> float:
     """Dispatch the per-turn score by contract score_mode."""
     if score_mode == "min_rga":
-        return turn_min_rga(pairs, tau, band_c, band_floor)
+        return turn_min_rga(pairs, tau, band_c, band_floor, action_norm_bytes)
     if score_mode == "min_rg":
         return turn_min_rg(pairs, tau, band_c, band_floor)
     return turn_reason(pairs, tau)
@@ -419,7 +549,8 @@ def side_turn_score(row: dict,
                     score_mode: str = DEFAULT_SCORE_MODE,
                     band_c: float = DEFAULT_BAND_C,
                     band_floor: float = DEFAULT_BAND_FLOOR,
-                    forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE
+                    forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE,
+                    action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
                     ) -> float | None:
     """One side's score on one turn: the turn rule, or the forfeit floor.
 
@@ -427,7 +558,8 @@ def side_turn_score(row: dict,
     the turn is dropped)."""
     if is_forfeit(row):
         return forfeit_turn_score
-    return turn_score(row["pairs"], tau, score_mode, band_c, band_floor)
+    return turn_score(row["pairs"], tau, score_mode, band_c, band_floor,
+                      action_norm_bytes)
 
 
 def l1_lift(pair: dict) -> float | None:
@@ -528,7 +660,8 @@ def score_miner(rows: list[dict],
                 score_mode: str = DEFAULT_SCORE_MODE,
                 band_c: float = DEFAULT_BAND_C,
                 band_floor: float = DEFAULT_BAND_FLOOR,
-                forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE
+                forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE,
+                action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
                 ) -> MinerScore:
     """Score one miner: mean per-turn score + telemetry.
 
@@ -564,7 +697,7 @@ def score_miner(rows: list[dict],
     if score_mode in ("min_rg", "min_rga"):
         r_legs = [centered_reason(r["pairs"], tau) for r in valid]
         g_legs = [grounding(r["pairs"], band_c, band_floor) for r in valid]
-        a_legs = ([action_leg(r["pairs"], tau) for r in valid]
+        a_legs = ([action_leg(r["pairs"], tau, action_norm_bytes) for r in valid]
                   if score_mode == "min_rga" else [None] * len(valid))
         have = [(r, g, a) for r, g, a in zip(r_legs, g_legs, a_legs)
                 if g is not None]
@@ -584,7 +717,8 @@ def score_miner(rows: list[dict],
                         1.0 if (a < r and a < g) else 0.0 for r, g, a in have_a)
             else:
                 g_bind_frac = st.mean(1.0 if g < r else 0.0 for r, g, _ in have)
-    turn_scores = [turn_score(r["pairs"], tau, score_mode, band_c, band_floor)
+    turn_scores = [turn_score(r["pairs"], tau, score_mode, band_c, band_floor,
+                              action_norm_bytes)
                    for r in valid]
     if forfeit_turn_score is not None:
         turn_scores += [forfeit_turn_score] * len(forfeits)
@@ -636,6 +770,11 @@ class DuelResult:
     band_floor: float = DEFAULT_BAND_FLOOR
     forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE
     n_forfeit_turns: int = 0          # paired turns where at least one side forfeited
+    action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES
+    # Minimum z safeguard (staged 2026-09-12; 0 = off). `min_z_blocked` is
+    # True when the margin cleared max(k_sigma·SE, δ) but z < min_z.
+    min_z: float = DEFAULT_MIN_Z
+    min_z_blocked: bool = False
 
 
 def duel(challenger_rows: list[dict], king_rows: list[dict],
@@ -649,12 +788,20 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
          score_mode: str = DEFAULT_SCORE_MODE,
          band_c: float = DEFAULT_BAND_C,
          band_floor: float = DEFAULT_BAND_FLOOR,
-         forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE
+         forfeit_turn_score: float | None = DEFAULT_FORFEIT_TURN_SCORE,
+         action_norm_bytes: float | None = DEFAULT_ACTION_NORM_BYTES,
+         min_z: float = DEFAULT_MIN_Z
          ) -> DuelResult:
     """Paired duel on the per-turn score: wins iff
     mean > max(k_sigma·SE, min_margin) AND the challenger's median stripped
     thought length is ≥ min_thought_chars AND (if causality_gamma > 0) the
-    challenger's teacher-side B pass rate is ≥ causality_gamma.
+    challenger's teacher-side B pass rate is ≥ causality_gamma AND (if
+    min_z > 0) z = mean/SE ≥ min_z.
+
+    `min_margin` is the δ in force for THIS duel: the fixed contract value
+    today, or the decayed value `effective_min_margin()` computed by the
+    caller when the decaying-margin mode is on — this function does not
+    know or care which.
 
     Each turn's score on each side is turn_score(pairs, ...): tempered
     Reason under score_mode="reason" (k=1 or tau <= 0 recovers the v3 plain
@@ -673,20 +820,22 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
     cs = score_miner(challenger_rows, challenger_bank_frac, tau=tau,
                      score_mode=score_mode, band_c=band_c,
                      band_floor=band_floor,
-                     forfeit_turn_score=forfeit_turn_score)
+                     forfeit_turn_score=forfeit_turn_score,
+                     action_norm_bytes=action_norm_bytes)
     ks = score_miner(king_rows, king_bank_frac, tau=tau,
                      score_mode=score_mode, band_c=band_c,
                      band_floor=band_floor,
-                     forfeit_turn_score=forfeit_turn_score)
+                     forfeit_turn_score=forfeit_turn_score,
+                     action_norm_bytes=action_norm_bytes)
     c_by = {r["turn_id"]: r for r in challenger_rows}
     k_by = {r["turn_id"]: r for r in king_rows}
     diffs = []
     n_forfeit_turns = 0
     for tid in sorted(set(c_by) & set(k_by)):
         rc = side_turn_score(c_by[tid], tau, score_mode, band_c, band_floor,
-                             forfeit_turn_score)
+                             forfeit_turn_score, action_norm_bytes)
         rk = side_turn_score(k_by[tid], tau, score_mode, band_c, band_floor,
-                             forfeit_turn_score)
+                             forfeit_turn_score, action_norm_bytes)
         if rc is None or rk is None:
             continue  # legacy: a forfeit drops the turn from pairing
         if is_forfeit(c_by[tid]) or is_forfeit(k_by[tid]):
@@ -700,7 +849,8 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
                           score_mode=score_mode, band_c=band_c,
                           band_floor=band_floor,
                           forfeit_turn_score=forfeit_turn_score,
-                          n_forfeit_turns=n_forfeit_turns)
+                          n_forfeit_turns=n_forfeit_turns,
+                          action_norm_bytes=action_norm_bytes)
     mean = st.mean(diffs)
     se = st.stdev(diffs) / math.sqrt(n)
     z = mean / se if se > 0 else (math.inf if mean > 0 else 0.0)
@@ -716,6 +866,10 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
         if rate is None or rate < causality_gamma:
             wins = False
             causality_blocked = True
+    min_z_blocked = False
+    if min_z > 0 and wins and z < min_z:
+        wins = False
+        min_z_blocked = True
     return DuelResult(
         challenger=cs.miner, king=ks.miner, margin=mean, se=se, z=z,
         k_sigma=k_sigma, challenger_wins=wins, n_paired_turns=n,
@@ -729,4 +883,244 @@ def duel(challenger_rows: list[dict], king_rows: list[dict],
         band_floor=band_floor,
         forfeit_turn_score=forfeit_turn_score,
         n_forfeit_turns=n_forfeit_turns,
+        action_norm_bytes=action_norm_bytes,
+        min_z=min_z,
+        min_z_blocked=min_z_blocked,
     )
+
+
+def near_miss_triggered(result: DuelResult,
+                        low: float = DEFAULT_NEAR_MISS_LOW,
+                        high: float = DEFAULT_NEAR_MISS_HIGH) -> bool:
+    """Sequential near-miss rule (2026-09-11): does this slice's verdict call
+    for more turns before the crown is decided?
+
+    True iff the paired margin lands strictly inside (low, high) AND no
+    validity gate already blocks the crown. Inside the window the standard
+    bar max(k_sigma·SE, δ) is decided by a few 1e-4 of margin — at n = 1300
+    that is one slice's worth of noise, so the eval draws another slice and
+    re-runs the same rule on the pooled turns. A gate block (thought floor,
+    B license) is not a statistical near-miss: no margin can crown that
+    challenger, so no extra slice is spent. Pooling is nothing more than
+    ``duel()`` on the concatenated per-turn rows of all slices — same
+    per-turn scores, same forfeit floor, one mean and one SE over the
+    pooled paired turns.
+    """
+    if result.thought_floor_blocked or result.causality_blocked:
+        return False
+    if not math.isfinite(result.margin) or not math.isfinite(result.se):
+        return False
+    return low < result.margin < high
+
+
+def near_miss_window(result: DuelResult, mode: str = "absolute",
+                     low: float = DEFAULT_NEAR_MISS_LOW,
+                     high: float = DEFAULT_NEAR_MISS_HIGH
+                     ) -> tuple[float, float]:
+    """The (low, high) margin window the near-miss rule tests this slice
+    against.
+
+    "absolute" returns the configured pair unchanged (today's rule).
+    "bar" places the window around the crown bar of this very slice,
+    bar = max(k_sigma·SE, min_margin) as `duel()` saw it, at
+    (NEAR_MISS_BAR_LOW_FRAC·bar, NEAR_MISS_BAR_HIGH_FRAC·bar). With δ =
+    0.002 and SE below δ/k_sigma the bar is δ and "bar" reproduces
+    (0.001, 0.003) exactly; when δ decays below k_sigma·SE the window
+    follows the SE bar instead of a δ that no longer binds. A non-finite SE
+    (n < 2) falls back to the absolute pair so the rule cannot trigger."""
+    if mode not in NEAR_MISS_WINDOW_MODES:
+        raise ValueError(f"near_miss_window_mode must be one of "
+                         f"{NEAR_MISS_WINDOW_MODES}, got {mode!r}")
+    if mode == "absolute" or not math.isfinite(result.se):
+        return low, high
+    bar = max(result.k_sigma * result.se, result.min_margin)
+    return NEAR_MISS_BAR_LOW_FRAC * bar, NEAR_MISS_BAR_HIGH_FRAC * bar
+
+
+# -- decaying crown margin (staged 2026-09-12) ---------------------------------
+
+@dataclass(frozen=True)
+class MarginSchedule:
+    """`[duel].min_margin_*` as one value object. `mode="fixed"` is today's
+    contract: `effective()` returns `min_margin` whatever the clock says."""
+
+    min_margin: float = DEFAULT_MIN_MARGIN
+    mode: str = DEFAULT_MIN_MARGIN_MODE
+    peak_cap: float = DEFAULT_MIN_MARGIN_PEAK_CAP
+    floor: float = DEFAULT_MIN_MARGIN_FLOOR
+    decay_hours: float = DEFAULT_MIN_MARGIN_DECAY_HOURS
+    shape: str = DEFAULT_MIN_MARGIN_DECAY_SHAPE
+    double_on_crown: bool = DEFAULT_MIN_MARGIN_DOUBLE_ON_CROWN
+    double_factor: float = DEFAULT_MIN_MARGIN_DOUBLE_FACTOR
+    seconds_per_block: float = SECONDS_PER_BLOCK
+
+    def __post_init__(self) -> None:
+        if self.mode not in MIN_MARGIN_MODES:
+            raise ValueError(f"min_margin_mode must be one of "
+                             f"{MIN_MARGIN_MODES}, got {self.mode!r}")
+        if self.shape not in MIN_MARGIN_DECAY_SHAPES:
+            raise ValueError(f"min_margin_decay_shape must be one of "
+                             f"{MIN_MARGIN_DECAY_SHAPES}, got {self.shape!r}")
+        if self.mode == "decay":
+            if not (0.0 < self.floor <= self.peak_cap):
+                raise ValueError(
+                    f"decaying margin needs 0 < floor <= peak_cap, got "
+                    f"floor={self.floor} peak_cap={self.peak_cap}")
+            if self.decay_hours <= 0:
+                raise ValueError(
+                    f"min_margin_decay_hours must be > 0, got {self.decay_hours}")
+            if self.double_factor <= 1.0:
+                raise ValueError(
+                    f"min_margin_double_factor must be > 1, got {self.double_factor}")
+            if self.seconds_per_block <= 0:
+                raise ValueError("seconds_per_block must be > 0")
+
+    @property
+    def decay_blocks(self) -> float:
+        """Blocks from peak to floor: decay_hours × 3600 / seconds_per_block."""
+        return self.decay_hours * 3600.0 / self.seconds_per_block
+
+    def effective(self, peak: float | None, blocks_since_crown: int | None
+                  ) -> float:
+        """δ in force `blocks_since_crown` blocks after a crown that started
+        the cycle at `peak`.
+
+        fixed mode → `min_margin`, always. decay mode →
+          linear:      peak − (peak − floor)·t         with t = min(b, B)/B
+          exponential: peak·(floor/peak)^t
+        Missing inputs (no crown block known, no stored peak) mean "the
+        cycle just started at the cap": δ = peak_cap. Negative block counts
+        (a decision block before the crown block — clock skew, replay of an
+        older stamp) clamp to 0 = the peak. The result never leaves
+        [floor, peak_cap]."""
+        if self.mode == "fixed":
+            return self.min_margin
+        p = self.peak_cap if peak is None else min(max(peak, self.floor),
+                                                   self.peak_cap)
+        if blocks_since_crown is None:
+            return p
+        b = max(0.0, float(blocks_since_crown))
+        t = min(b, self.decay_blocks) / self.decay_blocks
+        if self.shape == "linear":
+            d = p - (p - self.floor) * t
+        else:
+            d = p * (self.floor / p) ** t
+        return min(self.peak_cap, max(self.floor, d))
+
+    def next_peak(self, delta_at_crown: float) -> float:
+        """Peak of the cycle a crown starts: min(double·δ_at_crown, cap)
+        with doubling, else the cap. Fixed mode reports `min_margin` so a
+        stored peak is always meaningful if the mode flips later."""
+        if self.mode == "fixed":
+            return self.min_margin
+        if not self.double_on_crown:
+            return self.peak_cap
+        return min(self.peak_cap,
+                   max(self.floor, self.double_factor * delta_at_crown))
+
+
+# -- window-best crown (staged 2026-09-12) ---------------------------------------
+def window_id_of(block: int, window_blocks: int = DEFAULT_CROWN_WINDOW_BLOCKS) -> int:
+    """Fixed windows aligned on the block number: window id = block // W.
+    Window N covers blocks [N·W, (N+1)·W). Not wall time, so a replay reads
+    the same id from the stamped decision block."""
+    if window_blocks <= 0:
+        raise ValueError(f"crown_window_blocks must be > 0, got {window_blocks}")
+    return int(block) // int(window_blocks)
+
+
+def window_candidate_reason(verdict: dict) -> str | None:
+    """Why a verdict is NOT a window candidate, or None when it is one.
+
+    A candidate is a scored duel whose margin is a finite number, whose
+    validity gates passed (`rejection_reason` is None — thought floor, B
+    license, protocol / injectability probe, min_z), and whose paired margin
+    is strictly positive. Probe rejections and unservable checkpoints carry
+    no margin; infra faults never produce a verdict row at all.
+    """
+    m = verdict.get("margin")
+    if m is None or not isinstance(m, (int, float)) or not math.isfinite(float(m)):
+        return "no_margin"
+    if verdict.get("rejection_reason"):
+        return f"gate:{verdict['rejection_reason']}"
+    if float(m) <= 0.0:
+        return "margin_not_positive"
+    return None
+
+
+def rank_window_candidates(verdicts: list[dict],
+                           one_entry_per_hotkey: bool = DEFAULT_CROWN_ONE_ENTRY_PER_HOTKEY
+                           ) -> tuple[list[dict], list[dict]]:
+    """Order a window's verdicts for the crown.
+
+    Each item needs `challenge_id`, `hotkey`, `margin`, and may carry
+    `se`, `z`, `rejection_reason`. Returns (ranked candidates, dropped),
+    where `dropped` lists every excluded verdict with its `reason`.
+    Candidates are sorted by margin descending; ties break on the higher z,
+    then on the earlier challenge id — deterministic for a replay. With
+    `one_entry_per_hotkey` only the best margin of each hotkey survives
+    (the others are dropped as `hotkey_duplicate`).
+    """
+    ranked: list[dict] = []
+    dropped: list[dict] = []
+    for v in verdicts:
+        why = window_candidate_reason(v)
+        if why:
+            dropped.append({"challenge_id": v.get("challenge_id"),
+                            "hotkey": v.get("hotkey"), "margin": v.get("margin"),
+                            "reason": why})
+        else:
+            ranked.append(dict(v))
+
+    def key(v: dict) -> tuple:
+        z = v.get("z")
+        z = float(z) if isinstance(z, (int, float)) and math.isfinite(float(z)) else float("-inf")
+        return (-float(v["margin"]), -z, str(v.get("challenge_id", "")))
+
+    ranked.sort(key=key)
+    if one_entry_per_hotkey:
+        seen: set[str] = set()
+        kept: list[dict] = []
+        for v in ranked:
+            hk = str(v.get("hotkey", ""))
+            if hk in seen:
+                dropped.append({"challenge_id": v.get("challenge_id"), "hotkey": hk,
+                                "margin": v.get("margin"), "reason": "hotkey_duplicate"})
+                continue
+            seen.add(hk)
+            kept.append(v)
+        ranked = kept
+    return ranked, dropped
+
+
+def pooled_margin_stats(n1: int, m1: float, se1: float,
+                        n2: int, m2: float, se2: float) -> tuple[int, float, float, float]:
+    """Exact pooled (n, mean, SE, z) of two disjoint paired-turn samples
+    from their summary statistics. `se_i = s_i/√n_i` with `s_i` the sample
+    standard deviation, so `s_i² = n_i·se_i²`. Pooled sample variance:
+    ((n1−1)s1² + (n2−1)s2² + n1(m1−M)² + n2(m2−M)²)/(N−1). This is what
+    `score.duel` would compute on the concatenated rows (the near-miss pool)
+    when both samples are complete paired-turn sets."""
+    n1, n2 = int(n1), int(n2)
+    if n1 <= 0 or n2 <= 0:
+        raise ValueError("pooled_margin_stats needs n1, n2 > 0")
+    N = n1 + n2
+    M = (n1 * m1 + n2 * m2) / N
+    s1sq, s2sq = n1 * se1 * se1, n2 * se2 * se2
+    var = ((n1 - 1) * s1sq + (n2 - 1) * s2sq
+           + n1 * (m1 - M) ** 2 + n2 * (m2 - M) ** 2) / max(1, N - 1)
+    se = math.sqrt(max(0.0, var) / N)
+    z = M / se if se > 0 else (math.inf if M > 0 else -math.inf if M < 0 else 0.0)
+    return N, M, se, z
+
+
+def effective_min_margin(schedule: MarginSchedule, peak: float | None,
+                         crown_block: int | None, decision_block: int | None
+                         ) -> tuple[float, int | None]:
+    """(δ in force, blocks since the crown) for a duel decided at
+    `decision_block` against a king crowned at `crown_block` whose cycle
+    started at `peak`. Unknown blocks → (peak-of-cycle, None)."""
+    if crown_block is None or decision_block is None:
+        return schedule.effective(peak, None), None
+    since = int(decision_block) - int(crown_block)
+    return schedule.effective(peak, since), since
