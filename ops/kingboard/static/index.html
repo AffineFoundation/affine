@@ -16,6 +16,43 @@
 </header>
 
 <main>
+  <nav class="tabs" id="tabs">
+    <a href="#envs" data-tab="envs" class="active">Environments</a>
+    <a href="#benchmarks" data-tab="benchmarks">Benchmarks</a>
+  </nav>
+
+  <section id="tab-benchmarks" class="tab hidden">
+    <h2>Standard benchmarks <span class="muted small">king vs teacher on held-out Hub benchmarks (never in D); greedy T=0 unless marked; Wilson 95% intervals. Monitoring only — not part of the score.</span></h2>
+    <div class="controls inline">
+      <label>Run <select id="bench-run"></select></label>
+      <span id="bench-meta" class="muted small"></span>
+    </div>
+    <div class="table-wrap">
+      <table id="bench-table">
+        <thead>
+          <tr>
+            <th>benchmark</th>
+            <th>group</th>
+            <th class="num">T</th>
+            <th class="num">n</th>
+            <th class="num">king <span class="muted small">[95% CI]</span></th>
+            <th class="num">teacher <span class="muted small">[95% CI]</span></th>
+            <th class="num">Δ king−teacher</th>
+            <th class="num">king tokens out</th>
+            <th class="num">hit cap</th>
+            <th class="num">wall</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <h2 style="margin-top:22px">History across reigns <span class="muted small">king score per benchmark, one column per run (T=0 rows)</span></h2>
+    <div class="table-wrap"><table id="bench-history"><thead></thead><tbody></tbody></table></div>
+    <div id="bench-skipped" class="muted small"></div>
+    <div id="bench-links" class="muted small"></div>
+  </section>
+
+  <div id="tab-envs" class="tab">
   <section class="controls">
     <label>Reign
       <select id="reign"></select>
@@ -90,6 +127,7 @@
       <div id="stops" class="muted small"></div>
     </details>
   </section>
+  </div>
 </main>
 
 <footer class="muted small">
@@ -97,5 +135,6 @@
 </footer>
 
 <script src="/static/app.js"></script>
+<script src="/static/bench.js"></script>
 </body>
 </html>

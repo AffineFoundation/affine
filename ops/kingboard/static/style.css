@@ -72,3 +72,13 @@ details li b { color: var(--fg); }
 footer { padding: 0 28px 28px; }
 .empty { padding: 28px; text-align: center; color: var(--muted); }
 .status { padding: 24px 28px; color: var(--muted); }
+
+/* tabs (Environments | Benchmarks) */
+.tabs { display: flex; gap: 4px; margin-top: 12px; border-bottom: 1px solid var(--border); }
+.tabs a { padding: 8px 14px; color: var(--muted); border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; }
+.tabs a.active { color: var(--fg); background: var(--panel); border-color: var(--border); }
+.tab.hidden { display: none; }
+.king-col { color: var(--king); }
+.teacher-col { color: var(--teacher); }
+td.good { color: var(--good); }
+td.bad { color: var(--bad); }

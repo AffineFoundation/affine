@@ -1,0 +1,307 @@
+# Affine benchmark suite (data-only plan W7): a per-reign evaluation
+# scorecard of the king against the teacher on standard, held-out
+# benchmarks. MONITORING ONLY — nothing here feeds the duel, the fold, D,
+# affine.toml or weight_version_key. Benchmark rollouts are written to
+# R2 `research/benchsuite/<run_id>/` (affine-data bucket), never to
+# `traces/` or any prefix the fold reads.
+#
+# Every env is a Prime Intellect research-environments v1 taskset run with
+# `uv run eval` (verifiers). Fixed task order per env: the taskset's own
+# order (`n = -1` = every task) or a `--shuffle` view under verifiers' fixed
+# seed 0 for a fixed-size subset, so reigns are comparable. Greedy decoding
+# (temperature 0) is the primary row; temperature 0.8 is a secondary row on
+# the cheap chat sets only.
+
+[suite]
+name = "affine-benchsuite"
+version = 2
+# Pinned upstream code; recorded in every run manifest.
+verifiers_repo = "https://github.com/PrimeIntellect-ai/verifiers.git"
+verifiers_commit = "a32cc09"
+research_envs_repo = "https://github.com/PrimeIntellect-ai/research-environments.git"
+research_envs_commit = "c4d04df"
+# R2 destination (affine-data bucket). Read back publicly at
+# https://data.affine.io/research/benchsuite/<run_id>/.
+r2_bucket = "affine-data"
+r2_prefix = "research/benchsuite/"
+# Local scorecard summaries the kingboard reads.
+state_dir = "affine/state/benchsuite"
+
+[teacher]
+hf_repo = "Qwen/Qwen3.8-27B"
+served_name = "teacher"
+
+[serving]
+# vLLM flags shared by the king and the teacher: the chat-box stack.
+vllm_version = "0.28.0"
+max_model_len = 131072
+gpu_memory_utilization = 0.90
+max_num_batched_tokens = 16384
+max_num_seqs = 64
+reasoning_parser = "qwen3"
+tool_call_parser = "qwen3_xml"
+
+# ---------------------------------------------------------------- Prime path
+# Prime Intellect pod that serves both models (pod_bootstrap.sh) and runs
+# the eval driver. Chosen 2026-09-12 from live availability: no H200/B200
+# on Prime that day; 8x A100 80GB gives 2 TP2 replicas per model.
+[prime]
+gpu_type = "A100_80GB"
+gpu_count = 8
+cloud_id = "gpu_8x_a100_80gb_sxm4"
+image = "ubuntu_22_cuda_12"
+king_replicas = "31001:0,1:2;31002:2,3:2"
+teacher_replicas = "32001:4,5:2;32002:6,7:2"
+king_url = "http://127.0.0.1:8001/v1"
+teacher_url = "http://127.0.0.1:8002/v1"
+# Hard stops (USD). The runner refuses to start a new env past either.
+max_total_usd = 1200.0
+
+# ------------------------------------------------------- Lium fallback path
+# kingpod.py: our own rented box serving the king only (teacher via Engy).
+[pods]
+template_id = "345273fa-4818-46f7-a8fa-32f0e331713c"   # Pytorch (Cuda+DinD) cu13.0.2, same as the swarm
+ttl_hours = 48
+bootstrap_timeout_min = 60
+vllm_version = "0.28.0"
+max_model_len = 131072
+gpu_memory_utilization = 0.90
+max_num_batched_tokens = 16384
+max_num_seqs = 64
+
+[pods.plans.h200-1x]
+match = "H200"
+gpu_count = 1
+tp = 1
+replicas = 1
+max_price = 5.0
+
+[pods.plans.h200-8x]
+match = "H200"
+gpu_count = 8
+tp = 2
+replicas = 4
+max_price = 50.0
+
+[pods.plans.b200-8x]
+match = "B200"
+gpu_count = 8
+tp = 1
+replicas = 8
+max_price = 60.0
+
+# ------------------------------------------------------------------ sampling
+[sampling]
+primary_temperature = 0.0
+secondary_temperature = 0.8
+
+# ------------------------------------------------------------------ envs
+# Fields:
+#   id        row name on the scorecard
+#   taskset   verifiers taskset id (`uv run eval <taskset>`)
+#   install   research-environments path (or local `envs/<pkg>` for our wrappers)
+#   group     scorecard group
+#   n         -1 = every task; N>0 = the first N of the seed-0 shuffled view
+#   harness   verifiers harness id
+#   runtime   "none" (single-turn chat; still a container per task because the
+#             tasksets carry a network policy), "sandbox" (agent in a box)
+#   sandbox_vm  Prime runtime only: micro-VM sandbox (needed when the task
+#             restricts egress); container sandbox otherwise
+#   taskset_config  typed taskset knobs, passed as a TOML overlay
+#   max_tokens completion cap per model call
+#   reward    the reward name that is the headline score
+#   secondary  also run the temperature-0.8 row (cheap chat sets only)
+#   args      extra `--env.taskset.*` flags
+
+[[envs]]
+id = "aime25"
+taskset = "aime25"
+install = "math/aime25"
+group = "math"
+n = -1
+harness = "null"
+runtime = "none"
+max_tokens = 32768
+reward = "correct"
+secondary = true
+secondary_rollouts = 4
+note = "AIME 2025 I+II, 30 problems; math-verify on the boxed integer."
+
+[[envs]]
+id = "math500"
+taskset = "math500"
+install = "math/math500"
+group = "math"
+n = -1
+harness = "null"
+runtime = "none"
+max_tokens = 16384
+reward = "correct"
+secondary = true
+note = "MATH-500; math-verify on the boxed answer."
+
+[[envs]]
+id = "gpqa-diamond"
+taskset = "gpqa-strict"
+install = "envs/gpqa_strict"
+group = "knowledge"
+n = -1
+harness = "null"
+runtime = "none"
+max_tokens = 16384
+reward = "correct"
+secondary = true
+note = "GPQA diamond (198). Deterministic letter extraction only; upstream's LLM-judge fallback is removed (no judge anywhere in the suite)."
+
+[[envs]]
+id = "mmlu-pro"
+taskset = "mmlu-pro"
+install = "knowledge/mmlu_pro"
+group = "knowledge"
+n = -1
+harness = "null"
+runtime = "none"
+max_tokens = 8192
+reward = "correct"
+secondary = false
+note = "MMLU-Pro test, all 12,032 questions, 0-shot, boxed letter."
+
+[[envs]]
+id = "ifbench"
+taskset = "ifbench"
+install = "if/ifbench"
+group = "instruction-following"
+n = -1
+harness = "null"
+runtime = "none"
+max_tokens = 8192
+reward = "followed_instructions"
+secondary = true
+note = "IFBench test (300), loose mode (upstream default); reward = all constraints met."
+
+[[envs]]
+id = "ifeval"
+taskset = "ifeval"
+install = "if/ifeval"
+group = "instruction-following"
+n = -1
+harness = "null"
+runtime = "none"
+max_tokens = 8192
+reward = "followed_instructions"
+secondary = false
+note = "Google IFEval (541), strict mode (upstream default)."
+
+[[envs]]
+id = "humaneval"
+taskset = "humaneval"
+install = "code/humaneval"
+group = "coding"
+n = -1
+harness = "null"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "passed"
+secondary = false
+note = "HumanEval (164), simple-evals prompt; tests run in the sandbox."
+
+[[envs]]
+id = "livecodebench"
+taskset = "livecodebench"
+install = "code/livecodebench"
+group = "coding"
+n = -1
+harness = "null"
+runtime = "sandbox"
+max_tokens = 16384
+reward = "passed"
+secondary = false
+note = "LiveCodeBench code_generation_lite v6, official window 2024-08-01..2025-05-01; hidden tests run in the sandbox."
+
+[[envs]]
+id = "bfcl-v3"
+taskset = "bfcl-v3"
+install = "tool_use/bfcl_v3"
+group = "tool-use"
+n = -1
+harness = "null"
+runtime = "sandbox"
+max_tokens = 4096
+reward = "correct"
+secondary = false
+note = "BFCL v3, every scoring category (single-turn AST/relevance + multi-turn); official bfcl_eval checkers; tools served as MCP."
+
+[[envs]]
+id = "minif2f"
+taskset = "minif2f"
+install = "lean/minif2f"
+group = "formal-math"
+n = -1
+harness = "bash"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "lean_compiled"
+secondary = false
+sandbox_vm = true
+note = "miniF2F Lean 4 test (244), agentic proving in the Mathlib image; needs the Prime registry image."
+
+[[envs]]
+id = "oolong-synth"
+taskset = "oolong-synth"
+install = "long_context/oolong_synth"
+group = "long-context"
+n = -1
+harness = "bash"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "correct"
+secondary = false
+sandbox_vm = true
+taskset_config = { context_len = 65536 }
+note = "Oolong synth validation split at the 64K context bucket; agent reads /workspace/context.txt from a shell; deterministic Oolong rules (judge off)."
+
+[[envs]]
+id = "mrcr-v2"
+taskset = "mrcr-v2"
+install = "long_context/mrcr_v2"
+group = "long-context"
+n = -1
+harness = "bash"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "correct"
+secondary = false
+sandbox_vm = true
+taskset_config = { needle_count = 8, context_range = "64k-128k" }
+note = "MRCR v2, 8 needles, 64k-128k bucket; SequenceMatcher ratio gated on the hash prefix."
+
+[[envs]]
+id = "graphwalks"
+taskset = "graphwalks"
+install = "long_context/graphwalks"
+group = "long-context"
+n = 500
+harness = "bash"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "correct"
+secondary = false
+sandbox_vm = true
+note = "GraphWalks (openai/graphwalks), 500 seed-0 tasks; exact set match."
+
+[[envs]]
+id = "swebench-verified"
+taskset = "swebench-verified"
+install = "swe/swebench_verified"
+group = "coding-agent"
+n = -1
+harness = "mini_swe_agent"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "solved"
+secondary = false
+max_turns = 300
+rollout_timeout = 3600
+note = "SWE-bench Verified, all 500, mini-swe-agent harness, prebuilt swebench/sweb.eval images; the task's own hidden tests grade."
+
+# Skipped by rule (no judge in the suite): HLE (judge-only reward).
