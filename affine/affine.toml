@@ -415,6 +415,42 @@ k_sigma = 2.0
 # still crown. Forward-only: reigns crowned under wvk 8 stand; no
 # retroactive re-verdicts.
 min_margin = 0.002
+# Sequential near-miss (2026-09-11). A SAMPLING-SIZE rule, not a scoring
+# change: per-turn scores, the crown formula and δ are untouched, so
+# weight_version_key stays where it is. After the normal n_turns slice, if
+# the paired margin (challenger − king) lands strictly inside
+# (near_miss_low, near_miss_high), the eval draws near_miss_extra_slices
+# more slices of n_turns each — seed = blake2b(block_hash ‖ hotkey ‖
+# "|slice<i>"), turns disjoint from the earlier slices, same stratified
+# draw — and decides the crown with the SAME rule on the pooled turns:
+# pooled mean, pooled SE = sd/√n_pooled, pooled gates (median thought
+# length, B pass rate). Outside the window the first slice decides as
+# before. A challenger already blocked by a validity gate (thought floor,
+# B license) gets no extra slice: no margin can crown it.
+# Why (analysis of 349 stored duels, 2026-08-27 → 2026-09-10): the crown bar
+# is max(2·SE, δ) with live 2·SE ≈ 0.0010–0.0018, so δ = 0.002 binds. 12
+# challengers passed the 2σ test (z 2.02–3.76) with margins 0.0014–0.0019
+# and were blocked by δ alone; on the advisory bench those near-miss
+# losers score like kings. At n = 1300 a true +0.002 improver lands below
+# δ about half the time — δ blocks real improvers exactly as often as it
+# blocks noise, and only more turns can separate the two. Doubling n
+# shrinks SE by √2 and halves the width of the noise band around δ; the
+# winner's-curse argument for keeping δ (2026-08-22) is honoured because
+# δ itself does not move, the estimate it is compared against just gets
+# sharper on the duels where it matters. Cost: one extra ~30 min scoring
+# pass on ~10% of duels (35/349 historical margins fell in the window:
+# the 12 near-miss losers, 6 crowns at margins 0.0022–0.0028, and 17
+# sub-2σ losers at 0.0010–0.0019). Window edges: `low` is the margin
+# below which no plausible second slice reaches δ; `high` is where the
+# first slice already clears δ by more than one SE. Every verdict stamps
+# `near_miss` (window, per-slice seed/n/digest/margin/SE/z, pooled stats)
+# and `duel_params.near_miss_*`; `slice` keeps the first slice's seed and
+# digest, `slice.extra_slices` lists the others. `[duel].timeout_s` must
+# cover (1 + near_miss_extra_slices) scoring passes.
+near_miss_enabled = true
+near_miss_low = 0.001
+near_miss_high = 0.003
+near_miss_extra_slices = 1
 # Median stripped thought length, in characters (2026-08-13, wvk=5).
 # Invalid challenger cannot crown. 80 sits above live cue phrases
 # ("Next command:" = 13, "Next bash command:" = 18) and below guass (~290)
@@ -463,6 +499,26 @@ forfeit_turn_score = -0.1
 #     (2026-09-04) show commands shrinking 426→150–250 chars while thoughts
 #     grow and steps multiply — the rule was indifferent. Cost: +k teacher
 #     echoes per turn per side (lpC_ya_zc; lpC_ya_e is the B baseline).
+#     Probe 2026-09-04 (research/results/v6_action_leg_probe.txt): as
+#     built, per-byte A paid short actions ~10x (king short 0.021 vs long
+#     0.002) and collapsed the crown z +3.5 → +0.5. DO NOT flip that form.
+#
+#   action_norm_bytes = 128    A-leg normalizer (2026-09-10 redesign, staged)
+#     b_i = Σ_bytes[lpC(y_A|z_C^i) − lpC(y_A|∅)] / action_norm_bytes: the
+#     lift is SUMMED over the action's bytes and divided by a fixed byte
+#     count, not by the action's own length. Offline re-normalization of
+#     the 09-04 probe (research/results/v6_action_leg_norm.txt): the summed
+#     lift of the teacher's own actions is ~0.6 nats and independent of
+#     length (Spearman +0.05, n=2388), so per-real-byte was the bias. At
+#     128 (≈ one median teacher action): short/long ratio 10.9 → 0.77,
+#     `ls -la` still negative on 89% of turns, A binds ~37% (R 40 / G 23),
+#     paired z on the probed duel +0.48 → +2.32 (min(R,G) alone +3.53).
+#     Larger values shrink A toward 0 and make it bind more (256: z +3.4,
+#     A binds 43%); 128 keeps the three legs on one scale. Inert unless
+#     score_mode = "min_rga". Absent = the per-byte design (replay only).
+#     Needs a live re-probe (the offline numbers reuse the 09-04 echoes)
+#     before any flip; the flip is a weight_version_key event.
+action_norm_bytes = 128
 #
 #   forfeit_turn_score = -0.1  per-turn score for a side with no parseable action
 #     Until v6 a forfeit was DROPPED from pairing (score.duel paired only
