@@ -62,7 +62,7 @@ Write the JSON object with "fact", "plan" and "action" for the agent acting at t
 JSON_RE = re.compile(r"\{.*\}", re.S)
 WORD_RE = re.compile(r"[A-Za-z0-9_./:\\-]+")
 BACKTICK_RE = re.compile(r"`([^`]{2,120})`")
-QUOTE_RE = re.compile(r"[\"']([^\"']{3,120})[\"']")
+QUOTE_RE = re.compile(r"\"([^\"\n]{3,120})\"|(?<![A-Za-z])'([^'\n]{3,120})'(?![A-Za-z])")
 PATH_RE = re.compile(r"(?<![\w/])((?:[\w.-]+/)+[\w.-]+|[\w-]+\.(?:py|go|js|ts|tsx|jsx|java|rs|c|h|cpp|hpp|rb|php|sh|md|txt|json|toml|yaml|yml|cfg|ini|scm|tex|html|css|sql|xml|lock|csv))(?![\w/])")
 IDENT_RE = re.compile(r"\b(?:[a-z0-9]+_[a-z0-9_]+|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+|[a-z]+[A-Z][A-Za-z0-9]+|[A-Za-z_][\w]*(?:::|\.)[A-Za-z_][\w.]*)\b")
 NUM_RE = re.compile(r"(?<![\w.])(\d{2,})(?![\w.])")
@@ -189,7 +189,7 @@ def entities(hint: str) -> list[str]:
         ents.add(m.group(1).strip())
     stripped = BACKTICK_RE.sub(" ", hint)
     for m in QUOTE_RE.finditer(stripped):
-        ents.add(m.group(1).strip())
+        ents.add((m.group(1) or m.group(2) or "").strip())
     stripped = QUOTE_RE.sub(" ", stripped)
     for m in PATH_RE.finditer(stripped):
         if _is_path(m.group(1)):

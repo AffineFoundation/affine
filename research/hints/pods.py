@@ -74,6 +74,10 @@ TYPES = {
     "b200-1x": TypePlan("b200-1x", "B200", 1, 1, 0.75, 7.0),
     "b300-1x": TypePlan("b300-1x", "B300", 1, 1, 0.75, 8.5),
     "h100-8x": TypePlan("h100-8x", "H100", 8, 2, 0.85, 24.0),
+    # CPU-heavy cheap box for the E4 continuation harness (docker task images);
+    # rented --raw: no vLLM bootstrap.
+    "ada6000-1x": TypePlan("ada6000-1x", "RTX 6000 Ada", 1, 1, 0.0, 1.3),
+    "a6000-1x": TypePlan("a6000-1x", "RTX A6000", 1, 1, 0.0, 1.0),
 }
 
 SSH_OPTS = [
@@ -180,7 +184,7 @@ def cmd_rent(args) -> None:
             "type": plan.name, "executor_id": str(cand["id"]),
             "machine": cand.get("machine_name"), "price": price,
             "rented_at": time.time(), "key": secrets.token_hex(24),
-            "pod_id": res,
+            "pod_id": res, "raw": bool(args.raw),
         }
         save_state(st)
         ledger_add({"event": "rent", "pod": name, "type": plan.name,
@@ -250,8 +254,27 @@ def cmd_bootstrap(args) -> None:
         if name not in mine:
             log(f"{name}: not in the Lium listing yet")
             continue
+        if mem.get("raw"):
+            _record_ssh(name, mine[name], mem)
+            continue
         _bootstrap_one(name, mine[name], mem)
     save_state(st)
+
+
+def _record_ssh(name: str, pod: dict, mem: dict) -> None:
+    ssh = lium_api.parse_ssh(pod)
+    if ssh:
+        mem["ssh"] = list(ssh)
+        mem["ports"] = lium_api.data_ports(pod)
+        mem["ip"] = lium_api.pod_ip(pod)
+        log(f"{name}: raw box ssh root@{ssh[0]} -p {ssh[1]}")
+
+
+def cmd_ssh(args) -> None:
+    st = load_state()
+    mem = st["pods"][args.name]
+    host, port = mem["ssh"]
+    print(f"ssh -i {POD_KEY} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile={KNOWN_HOSTS} -p {port} root@{host}")
 
 
 def probe(mem: dict) -> dict:
@@ -278,7 +301,7 @@ def cmd_status(args) -> None:
     mine = my_pods(sess)
     for name, mem in st["pods"].items():
         listed = name in mine
-        pr = probe(mem) if listed else {"up": False}
+        pr = (probe(mem) if listed else {"up": False}) if not mem.get("raw") else {"raw": True, "ssh": mem.get("ssh")}
         age_h = (time.time() - mem["rented_at"]) / 3600
         print(f"{name:28s} {mem['type']:9s} ${mem['price']:.2f}/h "
               f"age={age_h:.1f}h listed={listed} {pr}")
@@ -292,6 +315,11 @@ def cmd_wait(args) -> None:
         mine = my_pods(sess)
         pending = []
         for name, mem in st["pods"].items():
+            if mem.get("raw"):
+                if name in mine and not mem.get("ssh"):
+                    _record_ssh(name, mine[name], mem)
+                    save_state(st)
+                continue
             if name not in mine:
                 pending.append(name)
                 continue
@@ -380,7 +408,10 @@ def main() -> None:
     r = sub.add_parser("rent")
     r.add_argument("--type", required=True, choices=sorted(TYPES))
     r.add_argument("--name")
+    r.add_argument("--raw", action="store_true", help="rent only; no vLLM bootstrap")
     sub.add_parser("bootstrap")
+    sh = sub.add_parser("ssh")
+    sh.add_argument("name")
     sub.add_parser("status")
     w = sub.add_parser("wait")
     w.add_argument("--timeout-min", type=int, default=50)
@@ -389,7 +420,7 @@ def main() -> None:
     rl.add_argument("--name")
     sub.add_parser("ledger")
     args = ap.parse_args()
-    {"rent": cmd_rent, "bootstrap": cmd_bootstrap, "status": cmd_status,
+    {"rent": cmd_rent, "bootstrap": cmd_bootstrap, "status": cmd_status, "ssh": cmd_ssh,
      "wait": cmd_wait, "release": cmd_release, "ledger": cmd_ledger}[args.cmd](args)
 
 

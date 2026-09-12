@@ -104,6 +104,25 @@ def pivot_rows(turn: dict) -> list[dict]:
     return out
 
 
+def regate(path: Path, turns_path: str) -> None:
+    turns = {}
+    for line in open(turns_path):
+        t = json.loads(line)
+        turns[t["turn_id"]] = t
+    rows = [json.loads(l) for l in open(path)]
+    n = 0
+    for r in rows:
+        if r.get("ok") and r.get("text") and r["turn_id"] in turns:
+            r.update(gate(turns[r["turn_id"]], r["text"]))
+            n += 1
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    tmp.replace(path)
+    print(f"regated {n} hints in {path}", file=sys.stderr)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--turns", required=True)
@@ -118,7 +137,12 @@ def main() -> None:
     ap.add_argument("--pod-index", type=int, default=0)
     ap.add_argument("--self-model", default="Qwen/Qwen3.8-27B")
     ap.add_argument("--max-usd", type=float, default=60.0)
+    ap.add_argument("--regate", action="store_true",
+                    help="recompute the grounding / leak gates on an existing hints.jsonl and exit")
     args = ap.parse_args()
+    if args.regate:
+        regate(Path(args.run_dir) / "hints.jsonl", args.turns)
+        return
     run_dir = Path(args.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     out_path = run_dir / "hints.jsonl"

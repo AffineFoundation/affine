@@ -46,6 +46,10 @@ TEMPERATURE = 0.8            # [duel].temperature
 MAX_TOKENS = 1024 + 768      # max_thought_tokens + max_action_tokens
 K_REFS = 3                   # [duel].n_teacher_samples
 EMPTY = ""
+# A turn that has not finished in this long is abandoned and recorded as
+# failed (2026-09-12: a client-side stall froze the run for 6 h with both
+# engines idle; the per-turn cap keeps the queue moving).
+TURN_TIMEOUT_S = 1500
 
 # condition name -> (generator, level); H0 is the unhinted baseline.
 CONDITIONS = {
@@ -230,7 +234,8 @@ async def worker(box: Box, queue: asyncio.Queue, out, hints, cond_names, king, s
             queue.task_done()
             return
         try:
-            row = await run_turn(turn, box, king, hints, cond_names, seed)
+            row = await asyncio.wait_for(run_turn(turn, box, king, hints, cond_names, seed),
+                                         timeout=TURN_TIMEOUT_S)
         except Exception as e:  # noqa: BLE001 — record, continue with the next turn
             row = {"turn_id": turn["turn_id"], "group": turn["group"], "box": box.name,
                    "failed": f"{type(e).__name__}: {str(e)[:300]}",
