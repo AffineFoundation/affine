@@ -24,22 +24,24 @@
 # the view index): coding and terminal carry 87 % of the paired variance
 # and terminal has the best signal per slot; math is 92 % R-dead (teacher
 # refs identical -> centered R = 0) and tool_use 58 %; king_fail's strata
-# were 83 % wiki + math king failures. Signal vector coding 0.46 /
-# terminal 0.28 / king_fail 0.08 / king_loop_onset 0.03 / king_pivot 0.02 /
-# completion 0.03 / nl2repo 0.03 / math 0.03 / tool_use 0.04, scaled by
-# 0.95 to make room for general 0.05. cap_fill's anchor rule (target >=
-# 0.1: coding, terminal) holds terminal to 0.266/0.437 of coding's strata
+# were 83 % wiki + math king failures. Operator vector (addendum, general
+# 0.05 taken from tool_use): coding 0.44 / terminal 0.27 / king_fail 0.08 /
+# king_loop_onset 0.03 / king_pivot 0.02 / completion 0.03 / nl2repo 0.03 /
+# math 0.03 / tool_use 0.02 / general 0.05. cap_fill's anchor rule (target
+# >= 0.1: coding, terminal) holds terminal to 0.27/0.44 of coding's strata
 # while coding is never capped, so the epoch-25 overshoot (terminal 36.5 %)
-# unwinds as coding grows (~2,900 coding strata at today's ratio).
-coding = 0.437
-terminal = 0.266
-nl2repo = 0.0285
-math = 0.0285
-tool_use = 0.038
-king_fail = 0.076
-king_loop_onset = 0.0285
-king_pivot = 0.019
-completion = 0.0285
+# unwinds as coding grows. `general` strata are the fold-assigned hashed
+# buckets `general:<offset + sha256(task) % n>` per source (see the
+# strata_offset table under "-- general --"), like math / tool_use.
+coding = 0.44
+terminal = 0.27
+nl2repo = 0.03
+math = 0.03
+tool_use = 0.02
+king_fail = 0.08
+king_loop_onset = 0.03
+king_pivot = 0.02
+completion = 0.03
 general = 0.05
 
 [king_fail]
