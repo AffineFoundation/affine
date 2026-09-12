@@ -47,6 +47,7 @@ log = logging.getLogger("recoverable.run")
 TEACHER = Endpoint(name="engy2", model="qwen3.8-27b",
                    base_url="https://api.engy.ai/v1", key_env="ENGY_2")
 HARNESS_ID = "recoverable_resume"
+SHADOW_NS = "recoverable.local"   # plugin/recoverable_resume/shield.py
 DOCKER_KINDS = ("textbased", "bash", "terminus")
 EVAL_TIMEOUT_S = 3 * 3600
 # Engy list price for qwen3.8-27b (USD per token), 2026-09-11.
@@ -55,6 +56,31 @@ PRICE_OUT = 0.32e-6
 PRICE_CACHE = 0.015e-6
 
 _lock = threading.Lock()
+
+
+def reap_own_containers(untag: bool = False) -> None:
+    """Remove containers (and, optionally, the shadow tags) this driver's
+    evals created — only the `recoverable.local/` namespace (plugin
+    shield.py), never the supervisor's task-image namespaces. verifiers
+    removes each container itself at rollout end; this catches what a killed
+    driver left behind. Safe because one driver runs per pod at a time."""
+    try:
+        out = subprocess.run(["docker", "ps", "-a", "--format", "{{.ID}} {{.Image}}"],
+                             capture_output=True, text=True, timeout=60).stdout
+        mine = [l.split()[0] for l in out.splitlines()
+                if len(l.split()) == 2 and l.split()[1].startswith(SHADOW_NS + "/")]
+        if mine:
+            subprocess.run(["docker", "rm", "-f", *mine], capture_output=True, timeout=300)
+            log.info("removed %d leftover container(s) of ours", len(mine))
+        if untag:
+            tags = subprocess.run(["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"],
+                                  capture_output=True, text=True, timeout=60).stdout
+            ours = [t for t in tags.splitlines() if t.startswith(SHADOW_NS + "/")]
+            if ours:
+                subprocess.run(["docker", "rmi", *ours], capture_output=True, timeout=300)
+                log.info("untagged %d shadow image tag(s)", len(ours))
+    except Exception:  # noqa: BLE001 - cleanup is best-effort
+        log.warning("own-container cleanup failed", exc_info=True)
 
 
 def owns(state_id: str, i: int, n: int) -> bool:
@@ -246,8 +272,12 @@ def main() -> None:
                  state["state_id"], r.get("status"), r.get("outcome"),
                  r.get("stop_condition"), r.get("n_turns"), r.get("wall_s"))
 
-    with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-        list(ex.map(work, todo))
+    reap_own_containers()
+    try:
+        with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
+            list(ex.map(work, todo))
+    finally:
+        reap_own_containers(untag=True)
 
 
 if __name__ == "__main__":
