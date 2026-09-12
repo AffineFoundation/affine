@@ -1,0 +1,13 @@
+[project]
+name = "affine-i3code-v1"
+version = "0.1.0"
+description = "affine-i3code-v1 — INTELLECT-3-RL code (single-turn Python, hidden tests run in the rollout runtime); system message, task selector, difficulty band, solved reward."
+requires-python = ">=3.10"
+dependencies = ["i3-code-v1"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["affine_i3code_v1"]

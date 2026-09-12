@@ -1,0 +1,13 @@
+[project]
+name = "affine-deshuffle-v1"
+version = "0.1.0"
+description = "affine-deshuffle-v1 — reorder a shuffled research paper's paragraphs from a file in the sandbox (deshuffle-papers); index-named tasks, system message, solved = exact reconstruction."
+requires-python = ">=3.10"
+dependencies = ["deshuffle-papers"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["affine_deshuffle_v1"]

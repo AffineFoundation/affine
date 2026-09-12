@@ -397,7 +397,69 @@ def _spider_meta(row: dict) -> dict | None:
     }
 
 
+# -- env wave 3 (2026-09-12) ------------------------------------------------------
+I3_V1_DIFFICULTY_COLUMN = "avg@8_qwen3_4b_instruct_2507"   # i3_code_v1 / i3_math_v1 Filter.column
+
+
+def _i3_v1_in_band(row: dict) -> bool:
+    value = row.get(I3_V1_DIFFICULTY_COLUMN)
+    return value is not None and I3_DIFFICULTY_MIN <= float(value) <= I3_DIFFICULTY_MAX
+
+
+def _i3_code_meta(row: dict) -> dict | None:
+    """PrimeIntellect/INTELLECT-3-RL `code` (train). Name =
+    affine_i3code_v1.taskset.task_name(question)."""
+    question = row.get("question") or ""
+    if not question or not _i3_v1_in_band(row):
+        return None
+    try:
+        source = str(json.loads(row.get("info") or "{}").get("source") or "code")
+    except json.JSONDecodeError:
+        source = "code"
+    uid, num = _text_uid("i3code", question)
+    return {
+        "uid": uid,
+        "sid": f"i3code_{_dotless_task(source)}-{num}",
+        "repo": f"i3code/{source}",
+        "language": "python",
+    }
+
+
+def _i3_math_meta(row: dict) -> dict | None:
+    """PrimeIntellect/INTELLECT-3-RL `math` (train). Name =
+    affine_i3math_v1.taskset.task_name(question)."""
+    question = str(row.get("question") or "")
+    if not question or row.get("answer") in (None, "") or not _i3_v1_in_band(row):
+        return None
+    uid, num = _text_uid("i3math", question)
+    return {
+        "uid": uid,
+        "sid": f"i3math-{num}",
+        "repo": "i3math/rl",
+        "language": "math",
+    }
+
+
+def _pydantic_meta(row: dict) -> dict | None:
+    """justus27/pydantic-adherance-test (train). Name =
+    affine_pydantic_v1.taskset.task_name(prompt)."""
+    prompt = str(row.get("prompt") or "")
+    if not prompt or not row.get("verification_info"):
+        return None
+    uid, num = _text_uid("pydantic", prompt)
+    kind = re.sub(r"[^a-z0-9]+", "_", str(row.get("task_type") or "schema").lower())
+    return {
+        "uid": uid,
+        "sid": f"pydantic_{kind}-{num}",
+        "repo": f"pydantic/{kind}",
+        "language": "json",
+    }
+
+
 ROW_META = {
+    "i3_code": _i3_code_meta,
+    "i3_math": _i3_math_meta,
+    "pydantic": _pydantic_meta,
     "eog": _eog_meta,
     "numina": _numina_meta,
     "spider": _spider_meta,
@@ -462,7 +524,19 @@ def _uuidctf_meta(i: int) -> dict:
     }
 
 
+def _verbatim_meta(i: int) -> dict:
+    return {"uid": f"verbatim-{i:05d}", "sid": f"verbatim-{i}",
+            "repo": "verbatim/copy", "language": "text"}
+
+
+def _deshuffle_meta(i: int) -> dict:
+    return {"uid": f"deshuffle-{i:05d}", "sid": f"deshuffle-{i}",
+            "repo": "deshuffle/papers", "language": "shell"}
+
+
 PROCEDURAL_META = {
+    "verbatim": _verbatim_meta,
+    "deshuffle": _deshuffle_meta,
     "uuidctf": _uuidctf_meta,
     "prolog": _prolog_meta,
     "needle": _needle_meta,
@@ -1187,8 +1261,113 @@ def build_autobench_catalog(cfg: RolloutsConfig, src: Source) -> dict:
     })
 
 
+# -- env wave 3 listings through the verifiers interpreter (the generators /
+# scorers live in that env only). Same pattern as longcot / autobench.
+RGYM_LIST = r"""
+import json, sys
+from affine_rgym_v1.taskset import default_generators
+json.dump(default_generators(), sys.stdout)
+"""
+RCORE_LIST = r"""
+import json, sys
+from datasets import load_dataset
+from affine_rcore_v1.taskset import DATASET, SPLIT, generator_of, task_name
+from reasoning_core import list_tasks
+available = set(list_tasks()); max_rows = int(sys.argv[1]); out = []
+for i, row in enumerate(load_dataset(DATASET, split=SPLIT, streaming=True)):
+    if i >= max_rows: break
+    gen = generator_of(row)
+    if gen in available:
+        out.append({"uid": task_name(str(row["prompt"])), "generator": gen})
+json.dump(out, sys.stdout)
+"""
+OOLONG_LIST = r"""
+import json, sys
+from datasets import load_dataset
+from affine_oolong_v1.taskset import DATASET, task_name
+context_len = int(sys.argv[1]); split = sys.argv[2]; out = []
+ds = load_dataset(DATASET, split=split, streaming=True).select_columns(["context_len", "answer_type"])
+for i, row in enumerate(ds):
+    if row.get("context_len") == context_len:
+        out.append({"uid": task_name(context_len, i), "answer_type": str(row.get("answer_type") or "")})
+json.dump(out, sys.stdout)
+"""
+
+
+def _flag_value(src: Source, flag: str, default: str) -> str:
+    flags = list(src.extra_flags)
+    for i, f in enumerate(flags[:-1]):
+        if f == flag:
+            return flags[i + 1]
+    return default
+
+
+def _verifiers_listing(cfg: RolloutsConfig, code: str, *args: str, what: str) -> list:
+    python = cfg.verifiers_dir / ".venv" / "bin" / "python"
+    proc = subprocess.run([str(python), "-c", code, *args],
+                          capture_output=True, text=True, timeout=1800)
+    if proc.returncode != 0:
+        raise RuntimeError(f"{what} listing failed: {proc.stderr[-800:]}")
+    return json.loads(proc.stdout)
+
+
+def _bucketed(src: Source, row: dict) -> dict:
+    if src.strata_buckets:
+        row["stratum"] = bucket_stratum(src.group, row["uid"], src.strata_buckets,
+                                        src.strata_offset)
+    return row
+
+
+def build_rgym_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    gens = _verifiers_listing(cfg, RGYM_LIST, what="reasoning-gym")
+    per = int(_flag_value(src, "--env.taskset.per-generator", "60"))
+    kept = [_bucketed(src, {
+        "uid": f"rgym-{g}-{i:04d}", "sid": f"rgym_{_dotless_task(g)}-{i}",
+        "repo": f"rgym/{g}", "language": "puzzle", "generator": g,
+    }) for g in gens for i in range(per)]
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": "reasoning-gym", "generators": len(gens),
+        "per_generator": per, "total": len(kept), "kept": len(kept),
+        "panel_excluded": 0, "unusable": 0})
+
+
+def build_rcore_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    max_rows = _flag_value(src, "--env.taskset.max-rows", "20000")
+    rows = _verifiers_listing(cfg, RCORE_LIST, max_rows, what="reasoning-core")
+    kept: list[dict] = []
+    seen: set[str] = set()
+    for r in rows:
+        if r["uid"] in seen:
+            continue
+        seen.add(r["uid"])
+        _, num = _text_uid("rcore", r["uid"])
+        kept.append(_bucketed(src, {
+            "uid": r["uid"], "sid": f"rcore_{_dotless_task(r['generator'])}-{num}",
+            "repo": f"rcore/{r['generator']}", "language": "formal", "generator": r["generator"]}))
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": "reasoning-core/formal-reasoning-env",
+        "total": len(rows), "kept": len(kept), "panel_excluded": 0,
+        "unusable": len(rows) - len(kept)})
+
+
+def build_oolong_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    context_len = _flag_value(src, "--env.taskset.context-len", "16384")
+    split = _flag_value(src, "--env.taskset.split", "validation")
+    rows = _verifiers_listing(cfg, OOLONG_LIST, context_len, split, what="oolong-synth")
+    kept = [_bucketed(src, {
+        "uid": r["uid"], "sid": f"oolong-{r['uid'].rsplit('-', 1)[-1]}",
+        "repo": f"oolong/{context_len}", "language": "shell",
+        "answer_type": r["answer_type"]}) for r in rows]
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": f"oolongbench/oolong-synth@{split}/{context_len}",
+        "total": len(rows), "kept": len(kept), "panel_excluded": 0, "unusable": 0})
+
+
 BUILDERS = {
     "hf": build_hf_catalog,
+    "rgym": build_rgym_catalog,
+    "rcore": build_rcore_catalog,
+    "oolong": build_oolong_catalog,
     "tmax": build_tmax_catalog,
     "longcot": build_longcot_catalog,
     "autobench": build_autobench_catalog,

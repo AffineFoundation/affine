@@ -833,3 +833,164 @@ max_concurrency = 8
 # completion tokens per rollout, 85 % of completions under the ref cap, 53 kept
 # turns. At the top of the headroom band; no harder preset exists upstream.
 share = 1.0
+
+# -- env wave 3 (2026-09-12; Hub survey top-40, teacher-first) -------------------
+#
+# Eight more environments from docs/prime-hub-survey.md §3.3 (uuid-ctf, the
+# survey's #4, already shipped in wave 2 as affine_uuidctf). Five are
+# single-turn chat tasks (`text` / `boxed`), two are sandbox tasks, and the
+# three Hub picks are v1 ports (rgym / rcore / pydantic). Every stanza ships
+# at share 0.0 until its 12-task teacher probe grades; the report flips them.
+# Strata offsets in `general` above wave 2 (2975+): i3code 2975-3314,
+# deshuffle 3315-3429, rgym 3430-3659, rcore 3660-3889, pydantic 3890-4004,
+# verbatim 4005-4119, oolong 4120-4234. affine_i3math joins `math` at
+# offset 830 (affine_math owns 0-829).
+
+[source.affine_i3code]
+# INTELLECT-3-RL code (8,579): one Python solution in a fenced block, hidden
+# tests run IN the rollout runtime -> docker runtime (`verifiers`) with the
+# null harness, never the subprocess runner (tests would run on the pod).
+# `text` dialect (a ```python fence is not a dialect). Difficulty band
+# [0.1, 0.9] on the shipped Qwen3-4B solve rate, as logic / science.
+group = "general"
+runner = "verifiers"
+taskset_id = "affine-i3code-v1"         # rollouts/envs/affine_i3code_v1
+catalog = "hf"
+dataset = "PrimeIntellect/INTELLECT-3-RL"
+dataset_config = "code"
+split = "train"
+row_meta = "i3_code"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_text"]
+strata_buckets = 340
+strata_offset = 2975
+max_batch = 24
+max_concurrency = 12
+share = 0.0
+
+[source.affine_i3math]
+# INTELLECT-3-RL math (train), \boxed{} + math-verify in the runtime; the
+# boxed mandate in a real system message. Same difficulty band. Joins the
+# `math` group next to affine_math (MATH train; 92 % R-dead per phase 3) as
+# the harder, fresher pool.
+group = "math"
+runner = "verifiers_chat"
+taskset_id = "affine-i3math-v1"         # rollouts/envs/affine_i3math_v1
+catalog = "hf"
+dataset = "PrimeIntellect/INTELLECT-3-RL"
+dataset_config = "math"
+split = "train"
+row_meta = "i3_math"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_boxed"]
+strata_buckets = 400
+strata_offset = 830
+share = 0.0
+
+[source.affine_deshuffle]
+# deshuffle-papers (prime-envs c4d04dfe, vendored under rollouts/vendor):
+# reorder one CC-BY paper's shuffled paragraphs from paragraphs.jsonl in the
+# box; \boxed{} JSON permutation; `solved` = exact reconstruction (upstream's
+# graded ordering_reward is a metric). network_allow=[] (docker honours it).
+group = "general"
+runner = "verifiers"
+taskset_id = "affine-deshuffle-v1"      # rollouts/envs/affine_deshuffle_v1
+catalog = "procedural"
+row_meta = "deshuffle"
+procedural_uids = 3000
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
+strata_buckets = 115
+strata_offset = 3315
+max_batch = 16
+max_concurrency = 8
+share = 0.0
+
+[source.affine_rgym]
+# reasoning-gym (v1 port of primeintellect/reasoning-gym-env): ~100
+# procedural puzzle generators at curriculum level 3 (the teacher solved 6/6
+# at the library defaults). `text` dialect, answer in <answer> tags.
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-rgym-v1"           # rollouts/envs/affine_rgym_v1
+catalog = "rgym"                        # generators x per_generator via the verifiers env
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_text"]
+extra_flags = ["--env.taskset.curriculum-level", "3", "--env.taskset.per-generator", "60"]
+strata_buckets = 230
+strata_offset = 3430
+share = 0.0
+
+[source.affine_rcore]
+# reasoning-core (v1 port of sileod/reasoning-core-env, 15 stars): formally
+# verified planning / logic / regex / math rows from
+# reasoning-core/formal-reasoning-env (train), scored by reasoning_core.
+# `text` dialect, answer in <answer> tags.
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-rcore-v1"          # rollouts/envs/affine_rcore_v1
+catalog = "rcore"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_text"]
+extra_flags = ["--env.taskset.max-rows", "20000"]
+strata_buckets = 230
+strata_offset = 3660
+share = 0.0
+
+[source.affine_pydantic]
+# pydantic-adherence (v1 port of primeintellect/pydantic-adherence): reply =
+# one JSON object validated against a per-row Pydantic model (1,971 rows).
+# Structured output, `text` dialect; survey probe 3/6.
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-pydantic-v1"       # rollouts/envs/affine_pydantic_v1
+catalog = "hf"
+dataset = "justus27/pydantic-adherance-test"
+split = "train"
+row_meta = "pydantic"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_text"]
+strata_buckets = 115
+strata_offset = 3890
+share = 0.0
+
+[source.affine_verbatim]
+# verbatim-copy (prime-envs): copy ~1.5k chars of generated text exactly
+# inside <answer> tags; per-index seeded pool of 5,000; `text` dialect.
+group = "general"
+runner = "verifiers_chat"
+taskset_id = "affine-verbatim-v1"       # rollouts/envs/affine_verbatim_v1
+catalog = "procedural"
+row_meta = "verbatim"
+procedural_uids = 5000
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_text"]
+strata_buckets = 115
+strata_offset = 4005
+share = 0.0
+
+[source.affine_oolong]
+# oolong-synth (prime-envs): long-context questions answered from
+# /workspace/context.txt in the box (16k-token bucket of the validation
+# split, ~100 rows; test stays out of D); deterministic Oolong rules, judge
+# off; shell harnesses.
+group = "general"
+runner = "verifiers"
+taskset_id = "affine-oolong-v1"         # rollouts/envs/affine_oolong_v1
+catalog = "oolong"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
+extra_flags = ["--env.taskset.context-len", "16384", "--env.taskset.split", "validation"]
+strata_buckets = 115
+strata_offset = 4120
+max_batch = 16
+max_concurrency = 8
+share = 0.0
