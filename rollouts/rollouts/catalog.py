@@ -20,6 +20,7 @@ Catalogs are deterministic snapshots; rebuild by deleting the file or
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import importlib
 import json
@@ -80,7 +81,22 @@ VERIFIERS_IMAGE_PREFIXES = (
     "terminal-lego/",
     "alexgshaw/",
     "ghcr.io/multimodal-art-projection/nl2repobench",
+    "swipl",
 )
+
+# Env wave 1 (2026-09-11): the INTELLECT-3-RL logic / science subsets ship a
+# per-row solve rate of Qwen3-4B (`avg@16_qwen3_4b_instruct_2507`); rows a 4B
+# model always or never solves are dropped on both sides — here and in the
+# tasksets (rollouts/envs/affine_{logic,science}_v1) — so the catalog and the
+# taskset agree on the pool. Mirrors the tasksets' constants; keep in step.
+I3_DIFFICULTY_COLUMN = "avg@16_qwen3_4b_instruct_2507"
+I3_DIFFICULTY_MIN = 0.1
+I3_DIFFICULTY_MAX = 0.9
+I3_LOGIC_SKIP = ("arc_agi", "arc_agi_2", "buggy_tables")
+# prolog_v1 generator kinds, sorted — kind = KINDS[index % 9]
+# (affine_prolog_v1.taskset.kind_of).
+PROLOG_KINDS = ("bin_packing", "cryptarithm", "graph_coloring", "hamiltonian",
+                "nonogram", "nqueens", "scheduling", "sudoku", "zebra")
 
 
 def _dotless(stem: str) -> str:
@@ -230,7 +246,223 @@ def _commit0_meta(row: dict) -> dict | None:
     }
 
 
+def _i3_in_band(row: dict) -> bool:
+    value = row.get(I3_DIFFICULTY_COLUMN)
+    return value is not None and I3_DIFFICULTY_MIN <= float(value) <= I3_DIFFICULTY_MAX
+
+
+def _i3_logic_meta(row: dict) -> dict | None:
+    """PrimeIntellect/INTELLECT-3-RL `logic` (train): question / info{task_name}.
+    Name = affine_logic_v1.taskset.task_name(question)."""
+    question = row.get("question") or ""
+    if not question or not _i3_in_band(row):
+        return None
+    family = str(json.loads(row["info"]).get("task_name") or "logic")
+    if family in I3_LOGIC_SKIP:
+        return None
+    uid, num = _text_uid("logic", question)
+    return {
+        "uid": uid,
+        "sid": f"logic_{_dotless_task(family)}-{num}",
+        "repo": f"logic/{family}",
+        "language": "logic",
+        "family": family,
+    }
+
+
+def _i3_science_meta(row: dict) -> dict | None:
+    """PrimeIntellect/INTELLECT-3-RL `science` (train): question / answer.
+    Name = affine_science_v1.taskset.task_name(question)."""
+    question = str(row.get("question") or "")
+    if not question or row.get("answer") in (None, "") or not _i3_in_band(row):
+        return None
+    uid, num = _text_uid("science", question)
+    return {
+        "uid": uid,
+        "sid": f"science-{num}",
+        "repo": "science/i3",
+        "language": "science",
+    }
+
+
+def _rlvr_ifeval_meta(row: dict) -> dict | None:
+    """allenai/RLVR-IFeval (train): messages[0].content is the prompt,
+    ground_truth JSON names the checker. Name =
+    affine_ifeval_v1.taskset.task_name(prompt)."""
+    messages = row.get("messages")
+    if isinstance(messages, str):
+        messages = ast.literal_eval(messages)
+    if not messages:
+        return None
+    prompt = str(messages[0].get("content") or "")
+    if not prompt:
+        return None
+    func = str(json.loads(row.get("ground_truth") or "{}").get("func_name") or "")
+    if not func:
+        return None
+    uid, num = _text_uid("ifeval", prompt)
+    return {
+        "uid": uid,
+        "sid": f"ifeval_{func}-{num}",
+        "repo": f"ifeval/{func}",
+        "language": "chat",
+        "constraint_type": str(row.get("constraint_type") or ""),
+    }
+
+
+def _unscramble_meta(row: dict) -> dict | None:
+    """kalomaze/unscramble-mix-it2 (train): problem_id / task_type / prompt.
+    Name = affine_unscramble_v1.taskset.task_name(problem_id)."""
+    pid = str(row.get("problem_id") or "")
+    if not pid or not row.get("prompt"):
+        return None
+    kind = re.sub(r"[^a-z0-9]+", "_", str(row.get("task_type") or "mix").lower())
+    _, num = _text_uid("unscr", row["prompt"])
+    return {
+        "uid": f"unscr-{pid}",
+        "sid": f"unscramble_{kind}-{num}",
+        "repo": f"unscramble/{kind}",
+        "language": "chat",
+        "difficulty": str(row.get("difficulty") or ""),
+    }
+
+
+def _triviaqa_meta(row: dict) -> dict | None:
+    """mandarjoshi/trivia_qa rc.wikipedia.nocontext (train): question_id is
+    the task name (affine_trivia_v1 keeps TriviaQA's own ids)."""
+    qid = str(row.get("question_id") or "")
+    question = row.get("question") or ""
+    if not qid or not question:
+        return None
+    _, num = _text_uid("trivia", question)
+    return {
+        "uid": qid,
+        "sid": f"trivia-{num}",
+        "repo": "trivia/qa",
+        "language": "chat",
+    }
+
+
+# -- env wave 2 (2026-09-12) ------------------------------------------------------
+
+def _eog_meta(row: dict) -> dict | None:
+    """ServiceNow-AI/EnterpriseOps-Gym `oracle` (splits = the seven service
+    domains + hybrid, loaded as one `a+b+...` split): task_id is the task
+    name the upstream taskset filters on (affine_eog_v1 `tasks`)."""
+    tid = str(row.get("task_id") or "")
+    domain = str(row.get("domain") or "")
+    if not tid or not row.get("user_prompt"):
+        return None
+    _, num = _text_uid("eog", tid)
+    return {
+        "uid": tid,
+        "sid": f"eog_{_dotless_task(domain or 'task')}-{num}",
+        "repo": f"eog/{domain or 'task'}",
+        "language": "tool",
+        "domain": domain,
+    }
+
+
+def _numina_meta(row: dict) -> dict | None:
+    """AI-MO/NuminaMath-LEAN (train): uuid is the task name the lean base
+    taskset uses (name_column = uuid); rows without a formal statement are
+    skipped by the taskset too."""
+    uuid = str(row.get("uuid") or "")
+    stmt = row.get("formal_statement")
+    if not uuid or not isinstance(stmt, str) or not stmt.strip():
+        return None
+    _, num = _text_uid("numina", uuid)
+    return {
+        "uid": uuid,
+        "sid": f"numina-{num}",
+        "repo": "numina/lean",
+        "language": "lean",
+    }
+
+
+def _spider_meta(row: dict) -> dict | None:
+    """xlangai/spider (train): db_id / question / query. Name =
+    affine_sql_v1.taskset.task_name(db_id, question, query)."""
+    db_id = str(row.get("db_id") or "")
+    question = str(row.get("question") or "")
+    query = str(row.get("query") or "")
+    if not db_id or not question or not query:
+        return None
+    digest = hashlib.sha256(f"{db_id}\n{question}\n{query}".encode("utf-8")).hexdigest()
+    return {
+        "uid": f"spider-{db_id}-{digest[:10]}",
+        "sid": f"spider_{_dotless_task(db_id)}-{int(digest[:6], 16)}",
+        "repo": f"spider/{db_id}",
+        "language": "sql",
+    }
+
+
+# -- env wave 3 (2026-09-12) ------------------------------------------------------
+I3_V1_DIFFICULTY_COLUMN = "avg@8_qwen3_4b_instruct_2507"   # i3_code_v1 / i3_math_v1 Filter.column
+
+
+def _i3_v1_in_band(row: dict) -> bool:
+    value = row.get(I3_V1_DIFFICULTY_COLUMN)
+    return value is not None and I3_DIFFICULTY_MIN <= float(value) <= I3_DIFFICULTY_MAX
+
+
+def _i3_code_meta(row: dict) -> dict | None:
+    """PrimeIntellect/INTELLECT-3-RL `code` (train). Name =
+    affine_i3code_v1.taskset.task_name(question)."""
+    question = row.get("question") or ""
+    if not question or not _i3_v1_in_band(row):
+        return None
+    try:
+        source = str(json.loads(row.get("info") or "{}").get("source") or "code")
+    except json.JSONDecodeError:
+        source = "code"
+    uid, num = _text_uid("i3code", question)
+    return {
+        "uid": uid,
+        "sid": f"i3code_{_dotless_task(source)}-{num}",
+        "repo": f"i3code/{source}",
+        "language": "python",
+    }
+
+
+def _i3_math_meta(row: dict) -> dict | None:
+    """PrimeIntellect/INTELLECT-3-RL `math` (train). Name =
+    affine_i3math_v1.taskset.task_name(question)."""
+    question = str(row.get("question") or "")
+    if not question or row.get("answer") in (None, "") or not _i3_v1_in_band(row):
+        return None
+    uid, num = _text_uid("i3math", question)
+    return {
+        "uid": uid,
+        "sid": f"i3math-{num}",
+        "repo": "i3math/rl",
+        "language": "math",
+    }
+
+
+def _pydantic_meta(row: dict) -> dict | None:
+    """justus27/pydantic-adherance-test (train). Name =
+    affine_pydantic_v1.taskset.task_name(prompt)."""
+    prompt = str(row.get("prompt") or "")
+    if not prompt or not row.get("verification_info"):
+        return None
+    uid, num = _text_uid("pydantic", prompt)
+    kind = re.sub(r"[^a-z0-9]+", "_", str(row.get("task_type") or "schema").lower())
+    return {
+        "uid": uid,
+        "sid": f"pydantic_{kind}-{num}",
+        "repo": f"pydantic/{kind}",
+        "language": "json",
+    }
+
+
 ROW_META = {
+    "i3_code": _i3_code_meta,
+    "i3_math": _i3_math_meta,
+    "pydantic": _pydantic_meta,
+    "eog": _eog_meta,
+    "numina": _numina_meta,
+    "spider": _spider_meta,
     "commit0": _commit0_meta,
     "scaleswe": _scaleswe_meta,
     "swerebench_v2": _swerebench_v2_meta,
@@ -239,6 +471,76 @@ ROW_META = {
     "swelego": _swelego_meta,
     "math": _math_meta,
     "wiki_trivia": _wiki_trivia_meta,
+    "i3_logic": _i3_logic_meta,
+    "i3_science": _i3_science_meta,
+    "rlvr_ifeval": _rlvr_ifeval_meta,
+    "unscramble": _unscramble_meta,
+    "triviaqa": _triviaqa_meta,
+}
+
+
+# -- procedural pools (catalog kind "procedural") ---------------------------------
+# Infinite / generated tasksets have no dataset rows to scan. Their wrappers
+# (rollouts/envs/affine_{prolog,needle,wikispeedia}_v1) name task `i` from
+# the index alone and generate it from a per-index seed, so the pool is
+# simply range(procedural_uids) and these functions reproduce the names.
+
+def _prolog_meta(i: int) -> dict:
+    kind = PROLOG_KINDS[i % len(PROLOG_KINDS)]
+    # No `image`: swipl:latest is shared by every task, so the per-batch
+    # prune (runners.verifiers) must not remove it.
+    return {
+        "uid": f"prolog-{kind}-{i:04d}",
+        "sid": f"prolog_{kind}-{i}",
+        "repo": f"prolog/{kind}",
+        "language": "prolog",
+    }
+
+
+def _needle_meta(i: int) -> dict:
+    return {
+        "uid": f"needle-{i:05d}",
+        "sid": f"needle-{i}",
+        "repo": "needle/patterned",
+        "language": "text",
+    }
+
+
+def _wikispeedia_meta(i: int) -> dict:
+    return {
+        "uid": f"wikispeedia-{i:05d}",
+        "sid": f"wikispeedia-{i}",
+        "repo": "wikispeedia/snap",
+        "language": "tool",
+    }
+
+
+def _uuidctf_meta(i: int) -> dict:
+    return {
+        "uid": f"uuidctf-{i:05d}",
+        "sid": f"uuidctf-{i}",
+        "repo": "uuidctf/forensics",
+        "language": "shell",
+    }
+
+
+def _verbatim_meta(i: int) -> dict:
+    return {"uid": f"verbatim-{i:05d}", "sid": f"verbatim-{i}",
+            "repo": "verbatim/copy", "language": "text"}
+
+
+def _deshuffle_meta(i: int) -> dict:
+    return {"uid": f"deshuffle-{i:05d}", "sid": f"deshuffle-{i}",
+            "repo": "deshuffle/papers", "language": "shell"}
+
+
+PROCEDURAL_META = {
+    "verbatim": _verbatim_meta,
+    "deshuffle": _deshuffle_meta,
+    "uuidctf": _uuidctf_meta,
+    "prolog": _prolog_meta,
+    "needle": _needle_meta,
+    "wikispeedia": _wikispeedia_meta,
 }
 
 
@@ -295,10 +597,31 @@ def _write_catalog(cfg: RolloutsConfig, name: str, kept: list[dict],
     return summary
 
 
+def build_procedural_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    meta = PROCEDURAL_META[src.row_meta]
+    if src.procedural_uids <= 0:
+        raise ValueError(f"source {src.name!r}: catalog 'procedural' needs "
+                         "procedural_uids > 0")
+    kept: list[dict] = []
+    for i in range(src.procedural_uids):
+        row = meta(i)
+        if src.strata_buckets:
+            row["stratum"] = bucket_stratum(src.group, row["uid"],
+                                            src.strata_buckets, src.strata_offset)
+        kept.append(row)
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": f"procedural:{src.row_meta}",
+        "total": len(kept), "kept": len(kept),
+        "panel_excluded": 0, "unusable": 0,
+    })
+
+
 def build_hf_catalog(cfg: RolloutsConfig, src: Source) -> dict:
     row_meta = ROW_META[src.row_meta]
     panel = panel_keys()
-    rows = load_dataset(src.dataset, split=src.split)
+    rows = load_dataset(src.dataset, src.dataset_config or None,
+                        split=src.split,
+                        revision=src.dataset_revision or None)
     kept: list[dict] = []
     n_panel = n_unusable = 0
     seen: set[str] = set()
@@ -723,8 +1046,333 @@ def build_general_agent_catalog(cfg: RolloutsConfig, src: Source) -> dict:
     })
 
 
+# -- tmax (env wave 2, 2026-09-12): terminal_lego's pattern over the public
+# prime-tasks repo. The upstream tmax-v1 pins every task to a Prime-internal
+# image that only Prime sandboxes can resolve; the task dirs carry the full
+# Dockerfile context, so the pod builds each image itself under the declared
+# tag (`local_docker_build`), exactly like terminal_lego.
+TMAX_REPO = "https://github.com/PrimeIntellect-ai/prime-tasks.git"
+TMAX_COMMIT = "8b38d35b53271a5f955dfc5dd8197d562cebf46e"   # registry.json tmax@2026-07-01
+TMAX_SUBDIR = "datasets/tmax"
+TMAX_REQUIRED_FILES = ("task.toml", "instruction.md", "tests/test.sh",
+                       "environment/Dockerfile")
+
+
+def tmax_root() -> Path:
+    """Match affine_tmax_v1.taskset.tmax_root (TMAX_ROOT env or the cache dir)."""
+    root = os.environ.get("TMAX_ROOT")
+    if root:
+        return Path(root).expanduser()
+    return Path("~/.cache/affine/prime-tasks").expanduser()
+
+
+def ensure_tmax_checkout() -> Path:
+    """Sparse clone of datasets/tmax at the pinned commit (~90 MB, one-off)."""
+    root = tmax_root()
+    if (root / ".git").is_dir() and any((root / TMAX_SUBDIR).glob("task_*")):
+        return root
+    root.parent.mkdir(parents=True, exist_ok=True)
+    tmp = root.parent / f".tmp-{root.name}"
+    if tmp.exists():
+        subprocess.run(["rm", "-rf", str(tmp)], check=False)
+    run = lambda *args: subprocess.run(args, check=True, cwd=str(tmp),  # noqa: E731
+                                       capture_output=True)
+    subprocess.run(["git", "init", "-q", str(tmp)], check=True, capture_output=True)
+    run("git", "remote", "add", "origin", TMAX_REPO)
+    run("git", "sparse-checkout", "init", "--cone")
+    run("git", "sparse-checkout", "set", TMAX_SUBDIR)
+    run("git", "fetch", "-q", "--depth", "1", "origin", TMAX_COMMIT)
+    run("git", "checkout", "-q", "FETCH_HEAD")
+    if root.exists():
+        subprocess.run(["rm", "-rf", str(root)], check=False)
+    tmp.rename(root)
+    return root
+
+
+_TMAX_LANG_RE = re.compile(r"^[a-z0-9+#.-]+$")
+
+
+def _tmax_language(value: object) -> str:
+    """task.toml [metadata].language is free text ("any (model's choice)",
+    "multi-language", "C++"); keep clean single tokens, else "shell"."""
+    lang = str(value or "").strip().lower()
+    return lang if lang and _TMAX_LANG_RE.match(lang) and lang != "multi-language" else "shell"
+
+
+def build_tmax_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    root = ensure_tmax_checkout() / TMAX_SUBDIR
+    kept: list[dict] = []
+    n_unusable = n_unbuildable = 0
+    for task_dir in sorted(root.iterdir()):
+        if not task_dir.is_dir() or not task_dir.name.startswith("task_"):
+            continue
+        if not all((task_dir / f).is_file() for f in TMAX_REQUIRED_FILES):
+            n_unusable += 1
+            continue
+        dockerfile = task_dir / "environment" / "Dockerfile"
+        if _dockerfile_missing_sources(dockerfile.parent, dockerfile):
+            n_unbuildable += 1
+            continue
+        try:
+            toml = tomllib.loads((task_dir / "task.toml").read_text())
+        except Exception:
+            n_unusable += 1
+            continue
+        image = toml.get("environment", {}).get("docker_image") or ""
+        if not image:
+            n_unusable += 1
+            continue
+        meta = toml.get("metadata", {})
+        # Harbor names the task `<dataset dir>/<task dir>` (traces key on
+        # that); the taskset filter takes the dir basename (task_id_basename).
+        short = task_dir.name
+        uid = f"{task_dir.parent.name}/{short}"
+        kept.append({
+            "uid": uid,
+            "sid": f"tmax__{_dotless_task(short)}-0",
+            "repo": f"tmax/{short}",
+            "language": _tmax_language(meta.get("language")),
+            "image": image,
+            "task_dir": str(task_dir),
+            "domain": str(meta.get("domain") or ""),
+            "base_image": str(meta.get("base_image") or ""),
+        })
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": f"prime-tasks@{TMAX_COMMIT[:8]}/{TMAX_SUBDIR}",
+        "total": len(kept) + n_unusable + n_unbuildable, "kept": len(kept),
+        "panel_excluded": 0, "unusable": n_unusable, "unbuildable": n_unbuildable,
+    })
+
+
+# -- longcot (env wave 2): the questions ship as JSON inside the `longcot`
+# git package (`data/<domain>/<difficulty>.json`), which lives in the pod's
+# VERIFIERS env only. The listing runs through that interpreter but reads
+# the JSON files by path - `import longcot` would pull rdkit / chess / sympy
+# (its verifier deps), and a missing one took both production supervisors
+# into a 45-min crash loop on 2026-09-12 (catalog build at start-up).
+LONGCOT_LIST = r"""
+import importlib.util, json, pathlib, sys
+spec = importlib.util.find_spec("longcot")
+root = pathlib.Path(spec.submodule_search_locations[0]) / "data"
+out = []
+for domain in ("logic", "cs", "chemistry", "chess", "math"):
+    for difficulty in ("medium", "hard"):
+        path = root / domain / f"{difficulty}.json"
+        if not path.is_file():
+            continue
+        data = json.loads(path.read_text())
+        rows = data if isinstance(data, list) else data.get("questions") or data.get("data") or []
+        for q in rows:
+            qid = q.get("question_id") or q.get("id")
+            if not qid:
+                continue
+            problem = q.get("problem") or {}
+            out.append({"question_id": qid, "domain": domain, "difficulty": difficulty,
+                        "template": str(problem.get("template", "") if isinstance(problem, dict) else "")})
+json.dump(out, sys.stdout)
+"""
+
+
+def build_longcot_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    python = cfg.verifiers_dir / ".venv" / "bin" / "python"
+    proc = subprocess.run([str(python), "-c", LONGCOT_LIST],
+                          capture_output=True, text=True, timeout=600)
+    if proc.returncode != 0:
+        raise RuntimeError(f"longcot listing failed: {proc.stderr[-800:]}")
+    rows = json.loads(proc.stdout)
+    # `--env.taskset.difficulty <tier>` in extra_flags narrows the pool the
+    # taskset loads; the catalog keeps the same tier so the two agree.
+    tiers = {src.extra_flags[i + 1] for i, f in enumerate(src.extra_flags[:-1])
+             if f == "--env.taskset.difficulty"}
+    kept: list[dict] = []
+    seen: set[str] = set()
+    for r in rows:
+        if tiers and r["difficulty"] not in tiers:
+            continue
+        uid = r["question_id"]
+        if uid in seen:
+            continue
+        seen.add(uid)
+        _, num = _text_uid("longcot", uid)
+        row = {
+            "uid": uid,
+            "sid": f"longcot_{_dotless_task(r['domain'])}-{num}",
+            "repo": f"longcot/{r['domain']}",
+            "language": r["domain"],
+            "difficulty": r["difficulty"],
+            "template": r["template"],
+        }
+        if src.strata_buckets:
+            row["stratum"] = bucket_stratum(src.group, uid, src.strata_buckets,
+                                            src.strata_offset)
+        kept.append(row)
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": "longcot@6a569ab", "tiers": sorted(tiers),
+        "total": len(rows), "kept": len(kept), "panel_excluded": 0,
+        "unusable": len(rows) - len(kept),
+    })
+
+
+# -- automationbench (env wave 2): tasks are Python builders inside the
+# `automation-bench` package (verifiers env only); same subprocess listing.
+AUTOBENCH_LIST = r"""
+import json, sys
+from automationbench.domains import PUBLIC_DOMAINS, get_domain_dataset
+out = []
+for domain in PUBLIC_DOMAINS:
+    for row in get_domain_dataset(domain):
+        out.append({"task": row["task"], "domain": domain})
+json.dump(out, sys.stdout)
+"""
+
+
+def build_autobench_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    python = cfg.verifiers_dir / ".venv" / "bin" / "python"
+    proc = subprocess.run([str(python), "-c", AUTOBENCH_LIST],
+                          capture_output=True, text=True, timeout=600)
+    if proc.returncode != 0:
+        raise RuntimeError(f"automationbench listing failed: {proc.stderr[-800:]}")
+    rows = json.loads(proc.stdout)
+    kept: list[dict] = []
+    seen: set[str] = set()
+    n_dup = 0
+    for r in rows:
+        uid = r["task"]
+        if uid in seen:
+            n_dup += 1
+            continue
+        seen.add(uid)
+        _, num = _text_uid("autobench", uid)
+        row = {
+            "uid": uid,
+            "sid": f"autobench_{_dotless_task(r['domain'])}-{num}",
+            "repo": f"autobench/{r['domain']}",
+            "language": "tool",
+            "domain": r["domain"],
+        }
+        if src.strata_buckets:
+            row["stratum"] = bucket_stratum(src.group, uid, src.strata_buckets,
+                                            src.strata_offset)
+        kept.append(row)
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": "zapier/AutomationBench@6f0e683",
+        "total": len(rows), "kept": len(kept), "panel_excluded": 0,
+        "unusable": n_dup,
+    })
+
+
+# -- env wave 3 listings through the verifiers interpreter (the generators /
+# scorers live in that env only). Same pattern as longcot / autobench.
+RGYM_LIST = r"""
+import json, sys
+from affine_rgym_v1.taskset import default_generators
+json.dump(default_generators(), sys.stdout)
+"""
+RCORE_LIST = r"""
+import json, os, sys
+from datasets import load_dataset
+from affine_rcore_v1.taskset import DATASET, SPLIT, generator_of, task_name
+from reasoning_core import list_tasks
+available = set(list_tasks()); max_rows = int(sys.argv[1]); out = []
+for i, row in enumerate(load_dataset(DATASET, split=SPLIT, streaming=True)):
+    if i >= max_rows: break
+    gen = generator_of(row)
+    if gen in available:
+        out.append({"uid": task_name(str(row["prompt"])), "generator": gen})
+json.dump(out, sys.stdout); sys.stdout.flush()
+os._exit(0)   # datasets' streaming reader crashes this venv at interpreter shutdown
+"""
+OOLONG_LIST = r"""
+import json, os, sys
+from datasets import load_dataset
+from affine_oolong_v1.taskset import DATASET, task_name
+context_len = int(sys.argv[1]); split = sys.argv[2]; out = []
+ds = load_dataset(DATASET, split=split, streaming=True).select_columns(["context_len", "answer_type"])
+for i, row in enumerate(ds):
+    if row.get("context_len") == context_len:
+        out.append({"uid": task_name(context_len, i), "answer_type": str(row.get("answer_type") or "")})
+json.dump(out, sys.stdout); sys.stdout.flush()
+os._exit(0)
+"""
+
+
+def _flag_value(src: Source, flag: str, default: str) -> str:
+    flags = list(src.extra_flags)
+    for i, f in enumerate(flags[:-1]):
+        if f == flag:
+            return flags[i + 1]
+    return default
+
+
+def _verifiers_listing(cfg: RolloutsConfig, code: str, *args: str, what: str) -> list:
+    python = cfg.verifiers_dir / ".venv" / "bin" / "python"
+    proc = subprocess.run([str(python), "-c", code, *args],
+                          capture_output=True, text=True, timeout=1800)
+    if proc.returncode != 0:
+        raise RuntimeError(f"{what} listing failed: {proc.stderr[-800:]}")
+    return json.loads(proc.stdout)
+
+
+def _bucketed(src: Source, row: dict) -> dict:
+    if src.strata_buckets:
+        row["stratum"] = bucket_stratum(src.group, row["uid"], src.strata_buckets,
+                                        src.strata_offset)
+    return row
+
+
+def build_rgym_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    gens = _verifiers_listing(cfg, RGYM_LIST, what="reasoning-gym")
+    per = int(_flag_value(src, "--env.taskset.per-generator", "60"))
+    kept = [_bucketed(src, {
+        "uid": f"rgym-{g}-{i:04d}", "sid": f"rgym_{_dotless_task(g)}-{i}",
+        "repo": f"rgym/{g}", "language": "puzzle", "generator": g,
+    }) for g in gens for i in range(per)]
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": "reasoning-gym", "generators": len(gens),
+        "per_generator": per, "total": len(kept), "kept": len(kept),
+        "panel_excluded": 0, "unusable": 0})
+
+
+def build_rcore_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    max_rows = _flag_value(src, "--env.taskset.max-rows", "20000")
+    rows = _verifiers_listing(cfg, RCORE_LIST, max_rows, what="reasoning-core")
+    kept: list[dict] = []
+    seen: set[str] = set()
+    for r in rows:
+        if r["uid"] in seen:
+            continue
+        seen.add(r["uid"])
+        _, num = _text_uid("rcore", r["uid"])
+        kept.append(_bucketed(src, {
+            "uid": r["uid"], "sid": f"rcore_{_dotless_task(r['generator'])}-{num}",
+            "repo": f"rcore/{r['generator']}", "language": "formal", "generator": r["generator"]}))
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": "reasoning-core/symbolic-reasoning-env",
+        "total": len(rows), "kept": len(kept), "panel_excluded": 0,
+        "unusable": len(rows) - len(kept)})
+
+
+def build_oolong_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    context_len = _flag_value(src, "--env.taskset.context-len", "16384")
+    split = _flag_value(src, "--env.taskset.split", "validation")
+    rows = _verifiers_listing(cfg, OOLONG_LIST, context_len, split, what="oolong-synth")
+    kept = [_bucketed(src, {
+        "uid": r["uid"], "sid": f"oolong-{r['uid'].rsplit('-', 1)[-1]}",
+        "repo": f"oolong/{context_len}", "language": "shell",
+        "answer_type": r["answer_type"]}) for r in rows]
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": f"oolongbench/oolong-synth@{split}/{context_len}",
+        "total": len(rows), "kept": len(kept), "panel_excluded": 0, "unusable": 0})
+
+
 BUILDERS = {
     "hf": build_hf_catalog,
+    "rgym": build_rgym_catalog,
+    "rcore": build_rcore_catalog,
+    "oolong": build_oolong_catalog,
+    "tmax": build_tmax_catalog,
+    "longcot": build_longcot_catalog,
+    "autobench": build_autobench_catalog,
     "general_agent": build_general_agent_catalog,
     "hf_swebench": build_hf_swebench_catalog,
     "swesmith": build_swesmith_catalog,
@@ -732,6 +1380,7 @@ BUILDERS = {
     "terminal_bench_2": build_terminal_bench_2_catalog,
     "harbor_swe": build_harbor_swe_catalog,
     "nl2repobench": build_nl2repobench_catalog,
+    "procedural": build_procedural_catalog,
 }
 
 

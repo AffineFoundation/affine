@@ -276,12 +276,22 @@ key_env = "ENGY"
 # `king-<digest12>` (KING_MODEL), so the envelope's policy.model label reads
 # `king/king-0ce59769300c` and every trace names the king it came from;
 # KING_DIGEST / KING_REIGN ride along for the log.
-# Shares: 1.0 against the teacher's 2.0 -> ~1/3 of new rollouts per source
-# are king rollouts while the seat is up. Sampling 0.8 = [duel] temperature.
+# Shares: 2.0 against the teacher's 2.0 (1.0 until 2026-09-11, operator
+# directive) -> ~1/2 of new rollouts per source are king rollouts while the
+# seat is up. Sampling 0.8 = [duel] temperature.
+#
+# Loop guard (2026-09-11, rollouts.loopguard): `loop_guard_repeats = N` ends
+# a rollout with stop_condition `loop_guard` once the same action repeats N
+# times in a row with the same observation (label_loops.py definition:
+# exact after whitespace normalization, observation first 200 chars). The
+# onset and its repeats stay in the trace for the `king_loop_onset` fold
+# group; the fold classifies the rollout as failed. Default: 6 for every
+# `king_*` policy, 0 (off) for the others — set the key to override.
+
 
 [policy.king_textbased]
 harness = "mini_swe_textbased"
-share = 1.0
+share = 2.0
 
 [policy.king_textbased.sampling]
 temperature = 0.8
@@ -295,7 +305,7 @@ key_env = "KING_KEY"
 [policy.king_bashtool]
 harness = "bash"
 action_kind = "tool_call"
-share = 1.0
+share = 2.0
 
 [policy.king_bashtool.sampling]
 temperature = 0.8
@@ -309,7 +319,7 @@ key_env = "KING_KEY"
 [policy.king_pi]
 harness = "pi"
 action_kind = "tool_call"
-share = 1.0
+share = 2.0
 
 [policy.king_pi.sampling]
 temperature = 0.8
@@ -323,7 +333,7 @@ key_env = "KING_KEY"
 [policy.king_claude_code]
 harness = "claude_code"
 action_kind = "tool_call"
-share = 1.0
+share = 2.0
 
 [policy.king_claude_code.sampling]
 temperature = 0.8
@@ -337,7 +347,7 @@ key_env = "KING_KEY"
 [policy.king_boxed]
 harness = "null"
 action_kind = "boxed"
-share = 1.0
+share = 2.0
 
 [policy.king_boxed.sampling]
 temperature = 0.8
@@ -357,7 +367,7 @@ key_env = "KING_KEY"
 [policy.king_toolcall]
 harness = "null"
 action_kind = "tool_call"
-share = 1.0
+share = 2.0
 
 [policy.king_toolcall.sampling]
 temperature = 0.8
@@ -399,7 +409,7 @@ key_env = "ENGY"
 [policy.king_hermes]
 harness = "hermes_agent"
 action_kind = "tool_call"
-share = 1.0
+share = 2.0
 [policy.king_hermes.sampling]
 temperature = 0.8
 [[policy.king_hermes.endpoints]]
@@ -423,7 +433,7 @@ key_env = "ENGY"
 [policy.king_kimi]
 harness = "kimi_code"
 action_kind = "tool_call"
-share = 1.0
+share = 2.0
 [policy.king_kimi.sampling]
 temperature = 0.8
 [[policy.king_kimi.endpoints]]
@@ -447,10 +457,55 @@ key_env = "ENGY"
 [policy.king_terminus]
 harness = "terminus_2"
 action_kind = "terminus_json"
-share = 1.0
+share = 2.0
 [policy.king_terminus.sampling]
 temperature = 0.8
 [[policy.king_terminus.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+# -- text dialect (env wave 1, 2026-09-11) --------------------------------------
+# Harness `null` again, but the action is the WHOLE visible reply
+# (affine/dialects.py `text`: no system marker; admitted since wvk 13).
+# For the single-turn chat sources (affine_logic / trivia / ifeval /
+# unscramble) the reply IS the answer. Teacher first (2026-09-11); the
+# king seat (king_text below) joined 2026-09-12 once the teacher's first
+# batches had landed on every wave-1 source (data plan W3, part A).
+[policy.teacher_text]
+harness = "null"
+action_kind = "text"
+share = 2.0
+[policy.teacher_text.sampling]
+temperature = 0.8
+# Runaway guard (probe 2026-09-11): 2 of 48 chat rollouts ran the teacher's
+# reasoning to 32k tokens with no visible reply (nothing derives from them);
+# completions are p50 0.3-5k tokens. Same cap as king_boxed / king_toolcall.
+max_tokens = 16384
+[[policy.teacher_text.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+# The king on the `text` sources (2026-09-12, data plan W3 part A): same
+# null harness / whole-visible-reply action as teacher_text, routed to the
+# served king like every other king_* policy (share 2.0 = the king seat's
+# share since 2026-09-11; loop guard on by the king_ default). The seat
+# scheduler replays the teacher's tasks, so every king_text rollout has a
+# teacher baseline on the same prompt (kings.affine.io king-vs-teacher).
+[policy.king_text]
+harness = "null"
+action_kind = "text"
+share = 2.0
+[policy.king_text.sampling]
+temperature = 0.8
+# Runaway guard as king_boxed / king_toolcall: the king box serves 262k
+# context and the null harness sets no cap; a chat reply past 16k tokens
+# has no answer worth grading.
+max_tokens = 16384
+[[policy.king_text.endpoints]]
 name = "king"
 model_env = "KING_MODEL"
 base_url_env = "KING_BASE_URL"

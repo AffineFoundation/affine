@@ -1,0 +1,25 @@
+#!/bin/bash
+# rollouts docker shim (2026-09-12): stamps ownership labels on every
+# container the eval subprocess creates, so the supervisor's reaper can tell
+# its own containers from another supervisor's or a one-off eval's.
+#
+# The runner puts this directory first on the eval subprocess PATH and sets
+# ROLLOUTS_SUPERVISOR=<pid>@<boot id> and ROLLOUTS_BATCH=<run tag>; verifiers'
+# docker runtime resolves `docker` through PATH (`docker run --detach ...
+# --name <rollout id> <image> sleep infinity`), so `run` / `create` get
+# `--label rollouts.supervisor=... --label rollouts.batch=...` inserted right
+# after the subcommand. Every other subcommand, and any call without
+# ROLLOUTS_SUPERVISOR in the environment, is passed through untouched.
+self_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+real=""
+IFS=: read -ra parts <<< "$PATH"
+for d in "${parts[@]}"; do
+  [ -n "$d" ] && [ "$d" != "$self_dir" ] && [ -x "$d/docker" ] && { real="$d/docker"; break; }
+done
+[ -n "$real" ] || real=/usr/bin/docker
+if [ -n "${ROLLOUTS_SUPERVISOR:-}" ] && { [ "${1:-}" = run ] || [ "${1:-}" = create ]; }; then
+  sub=$1; shift
+  exec "$real" "$sub" --label "rollouts.supervisor=$ROLLOUTS_SUPERVISOR" \
+       --label "rollouts.batch=${ROLLOUTS_BATCH:-}" "$@"
+fi
+exec "$real" "$@"

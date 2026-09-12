@@ -7,12 +7,18 @@ not hardcoded config.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 
 from datagen.providers import looks_like_provider_failure
 
-from rollouts.adapters.verifiers import envelopes_from_traces
+from rollouts import loopguard
+from rollouts.adapters.verifiers import (
+    NO_VISIBLE_REPLY_STOP,
+    envelopes_from_traces,
+    mark_no_visible_reply,
+)
 from rollouts.catalog import VERIFIERS_IMAGE_PREFIXES
 from rollouts.config import RolloutsConfig
 from rollouts.registry import Source
@@ -33,6 +39,22 @@ from rollouts.schema import (
 
 log = logging.getLogger("rollouts.runners.verifiers")
 
+# The mini-swe-agent harnesses install `mini-swe-agent==2.4.6` +
+# `litellm[proxy]` (unpinned) into every task container with a PEP 723 uv
+# script. litellm >= 1.98.0 (2026-08-22) no longer imports on Python 3.10
+# (`typing.NotRequired`) although it still declares `>= 3.10`, and on a
+# 3.10 image (r2e_gym, others) uv picks the image's interpreter, so every
+# such rollout died at start-up as "Unknown model class: litellm_textbased"
+# (600 r2e_gym + ~130 other king_textbased rollouts, 2026-09-10/11).
+# UV_PYTHON makes uv fetch a managed 3.12 for the script env instead
+# (~+15 s per container). Harness env vars ride `--env.agent.harness.env.*`.
+MINI_SWE_HARNESSES = ("mini_swe_agent", "mini_swe_textbased")
+MINI_SWE_HARNESS_ENV = {"UV_PYTHON": "3.12"}
+# Harnesses whose "agent completed" may hide a final reply with no visible
+# text (adapters.verifiers.mark_no_visible_reply). pi ends the agent when its
+# last tool completes even if the model then says nothing.
+NO_VISIBLE_REPLY_HARNESSES = ("pi",)
+
 
 def eval_cmd(cfg: RolloutsConfig, source: Source, endpoint: Endpoint,
              harness: str, batch: list[dict], run_dir: Path,
@@ -47,13 +69,19 @@ def eval_cmd(cfg: RolloutsConfig, source: Source, endpoint: Endpoint,
         "--client.base-url", endpoint.base_url,
         "--client.api-key-var", endpoint.key_env,
         "--env.agent.harness.id", harness,
+    ]
+    if harness in MINI_SWE_HARNESSES:
+        for key, value in MINI_SWE_HARNESS_ENV.items():
+            cmd.extend([f"--env.agent.harness.env.{key}", value])
+    cmd += [
         "--env.agent.runtime.type", runtime,
         "--env.agent.max-turns", str(cfg.max_turns),
         "--env.agent.timeout.setup", "1800",
         "--env.agent.timeout.rollout", str(cfg.rollout_timeout_s),
         "--env.agent.timeout.scoring", "1800",
         "--push", "False", "--rich", "False",
-        "-c", str(min(cfg.max_containers, len(uids))),
+        "-c", str(min(cfg.max_containers, source.max_concurrency or cfg.max_containers,
+                      len(uids))),
         "-o", str(run_dir),
     ]
     # Policy sampling rides the v1 eval CLI's dotted SamplingConfig; unset
@@ -120,9 +148,75 @@ def build_local_images(batch: list[dict]) -> tuple[list[dict], list[str]]:
     return ok, failed
 
 
-def reap_containers() -> None:
-    """Remove leftover containers from verifiers image namespaces only —
-    mini_swe's swerebench/sweb.eval containers never match."""
+# Container ownership (2026-09-12). Every container the eval subprocess
+# creates is stamped by the `dockerwrap/docker` shim with
+# `rollouts.supervisor=<pid>@<boot id>` and `rollouts.batch=<run tag>`. The
+# per-batch reaper removes only containers whose supervisor is this process
+# or is gone (crashed supervisor -> orphans); containers of another live
+# supervisor or without the label (a one-off `uv run eval`, another agent's
+# experiment) are left alone. Before this, the reaper removed every
+# container in the verifiers image namespaces — two workers' one-offs on a
+# pod and the live supervisor were killing each other's rollouts (exit 137).
+DOCKERWRAP_DIR = str(Path(__file__).resolve().parent.parent / "dockerwrap")
+SUPERVISOR_LABEL = "rollouts.supervisor"
+BATCH_LABEL = "rollouts.batch"
+
+
+def _boot_id() -> str:
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text().strip()[:8]
+    except OSError:
+        return "noboot"
+
+
+def supervisor_id(pid: int | None = None) -> str:
+    """`<pid>@<boot id>`: a pid alone could be reused after a reboot."""
+    return f"{pid if pid is not None else os.getpid()}@{_boot_id()}"
+
+
+def supervisor_alive(label: str) -> bool:
+    pid_s, _, boot = label.partition("@")
+    if boot != _boot_id():
+        return False
+    try:
+        os.kill(int(pid_s), 0)
+    except (ValueError, ProcessLookupError):
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def reap_containers(owner: str | None = None) -> None:
+    """Remove this supervisor's leftover containers and any orphan whose
+    supervisor no longer runs. Unlabeled and other live supervisors'
+    containers are untouched."""
+    owner = owner or supervisor_id()
+    try:
+        out = subprocess.run(
+            ["docker", "ps", "-a", "--format",
+             '{{.ID}}\t{{.Label "' + SUPERVISOR_LABEL + '"}}'],
+            capture_output=True, text=True, timeout=60).stdout
+        stale = []
+        for line in out.splitlines():
+            cid, _, label = line.partition("\t")
+            label = label.strip()
+            if label and (label == owner or not supervisor_alive(label)):
+                stale.append(cid)
+        if stale:
+            subprocess.run(["docker", "rm", "-f", *stale],
+                           capture_output=True, timeout=120)
+            log.info("reaped %d leftover container(s) owned by this or a "
+                     "dead supervisor", len(stale))
+    except Exception:
+        log.warning("container reap failed", exc_info=True)
+
+
+def reap_all_verifiers_containers() -> None:
+    """The pre-2026-09-12 reaper: every container in the verifiers image
+    namespaces, whoever created it (mini_swe's swerebench/sweb.eval
+    containers never match). Explicit `rollouts.run --reap-all` only — for
+    a pod start where unlabeled orphans must be cleared; never per batch."""
     try:
         out = subprocess.run(
             ["docker", "ps", "-a", "--format", "{{.ID}} {{.Image}}"],
@@ -133,7 +227,7 @@ def reap_containers() -> None:
         if stale:
             subprocess.run(["docker", "rm", "-f", *stale],
                            capture_output=True, timeout=120)
-            log.info("reaped %d leftover container(s)", len(stale))
+            log.info("reaped %d verifiers container(s) (--reap-all)", len(stale))
     except Exception:
         log.warning("container reap failed", exc_info=True)
 
@@ -203,6 +297,18 @@ class VerifiersRunner:
             attempt_dir.mkdir(parents=True, exist_ok=True)
             env = dict(self.env)
             env["PATH"] = f"{Path.home()}/.local/bin:" + env.get("PATH", "")
+            if self.RUNTIME == "docker":
+                # dockerwrap/docker stamps ownership labels on every
+                # container this eval creates (see reap_containers).
+                env["PATH"] = DOCKERWRAP_DIR + ":" + env["PATH"]
+                env["ROLLOUTS_SUPERVISOR"] = supervisor_id()
+                env["ROLLOUTS_BATCH"] = run_dir.name
+            if policy.loop_guard_repeats > 0:
+                # rollouts.loopguard: sitecustomize installs the `loop_guard`
+                # @stop in the eval process; the threshold rides the env.
+                env[loopguard.ENV_REPEATS] = str(policy.loop_guard_repeats)
+                env["PYTHONPATH"] = loopguard.SITE_DIR + (
+                    ":" + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
             code, out = run_streamed(
                 eval_cmd(self.cfg, source, endpoint, policy.harness, batch,
                          attempt_dir, policy.sampling, runtime=self.RUNTIME),
@@ -217,6 +323,11 @@ class VerifiersRunner:
             envelopes, _ = envelopes_from_traces(
                 traces_path, source=source.name, env_id=source.taskset_id,
                 meta_by_uid=meta_by_uid, policy=stamp)
+            if policy.harness in NO_VISIBLE_REPLY_HARNESSES:
+                n_silent = sum(mark_no_visible_reply(e["trace"]) for e in envelopes)
+                if n_silent:
+                    log.info("%d rollout(s) finished without a visible reply "
+                             "-> stop_condition=%s", n_silent, NO_VISIBLE_REPLY_STOP)
             per_task = _per_task_rows(envelopes)
             suspect = code != 0 or _batch_suspect(per_task,
                                                   traces_path.exists())
