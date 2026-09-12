@@ -33,6 +33,37 @@ RE_REPO=$(read_toml research_envs_repo); RE_COMMIT=$(read_toml research_envs_com
 (cd verifiers && git fetch -q origin && git checkout -q "$VF_COMMIT")
 (cd research-environments && git fetch -q origin && git checkout -q "$RE_COMMIT")
 
+# Local patches on the pinned checkouts (all found on the first full pass,
+# 2026-09-12; re-applied idempotently):
+#  1. verifiers docker egress proxy: 300 s per-read cut every model call slower
+#     than 5 min; with the SDK's 2 retries that was the 900 s "502" on long
+#     thinking (AIME/GPQA at 16k-32k tokens). 7200 s = the rollout budget.
+#  2. verifiers null/bash chat program: omit `tools` when empty (vLLM 0.28
+#     rejects tools=[] / tools=null with 400).
+#  3. research-environments bfcl_v3: import SingleAgentEnv from its module (the
+#     eval CLI imports the taskset while `verifiers.v1` is half-initialised).
+python3 - "$BENCH_HOME" <<'PY'
+import re, sys
+from pathlib import Path
+home = Path(sys.argv[1])
+p = home / "verifiers/verifiers/v1/runtimes/docker/egress.py"
+s = p.read_text()
+s2 = re.sub(r"^_IO_TIMEOUT = 300$", "_IO_TIMEOUT = 7200  # affine benchsuite patch 1", s, flags=re.M)
+if s2 != s: p.write_text(s2); print("patched egress _IO_TIMEOUT")
+p = home / "verifiers/verifiers/v1/harnesses/utils/core.py"
+s = p.read_text()
+old = '    kwargs = {"model": model, "messages": messages, "tools": tools or None}\n'
+new = ('    kwargs = {"model": model, "messages": messages}  # affine benchsuite patch 2\n'
+       '    if tools:\n        kwargs["tools"] = tools\n')
+if old in s: p.write_text(s.replace(old, new)); print("patched core.chat tools")
+p = home / "research-environments/environments/tool_use/bfcl_v3/bfcl_v3/taskset.py"
+s = p.read_text()
+if "class BFCLEnv(vf.SingleAgentEnv):" in s:
+    s = s.replace("import verifiers.v1 as vf\n", "import verifiers.v1 as vf\nfrom verifiers.v1.envs.single_agent import SingleAgentEnv as _SingleAgentEnv  # affine benchsuite patch 3\n", 1)
+    s = s.replace("class BFCLEnv(vf.SingleAgentEnv):", "class BFCLEnv(_SingleAgentEnv):")
+    p.write_text(s); print("patched bfcl SingleAgentEnv import")
+PY
+
 cd verifiers
 uv sync --extra harbor 2>&1 | tail -2
 export VIRTUAL_ENV="$BENCH_HOME/verifiers/.venv"
