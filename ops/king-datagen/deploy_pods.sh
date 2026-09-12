@@ -61,8 +61,10 @@ RESEARCH_ENVS=(reasoning/i3_logic_v1 knowledge/triviaqa_v1 if/ifeval_v1 science/
 # `load_questions` needs them on the host, so they are installed by name.
 # Wave 3 adds: orjson (i3_code), faker (verbatim_copy), python-dateutil
 # (oolong), reasoning-gym + reasoning-core (the Hub ports; pure python).
+# tarski is pinned to the version that resolves next to the venv's antlr4
+# 4.9.3 (tarski 0.9.1 wants antlr4 4.13 and the constrained resolve fails).
 ENV_EXTRA_DEPS=(immutabledict langdetect markdown rdkit chess sympy mpmath pyyaml
-                orjson faker python-dateutil reasoning-gym reasoning-core)
+                orjson faker python-dateutil reasoning-gym reasoning-core tarski==0.5.1)
 # Git-hosted data packages two bases import at load time (longcot: bundled
 # question JSON; automation-bench: task builders + rubric). ALWAYS --no-deps:
 # on 2026-09-12 a plain install of automation-bench on datagen-4 replaced the
