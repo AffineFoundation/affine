@@ -39,7 +39,7 @@ max_num_seqs = 32
 # recovered / datagen supervisor relaunched). One line each, never a secret.
 [discord]
 enabled = true
-channel_id = "1381987595881414656"           # same ops channel as corpus_build / exploit-audit
+channel_id = "1510910974498967613"           # private Arbos ops channel (operator directive 2026-09-12: no automated posts in the public SN120 channel)
 token_env = "DISCORD_BOT_TOKEN_ARBOS_BITTENSOR"  # read from ~/.affine-validator.env or the repo .env
 
 # Box types, in PREFERENCE order: the first type with stock under its price
