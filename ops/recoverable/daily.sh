@@ -111,7 +111,7 @@ SSH=(ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=
      -o LogLevel=ERROR -p "$POD_PORT" "root@$POD_HOST")
 log "pod $POD_NAME = $POD_HOST:$POD_PORT; $N_STATES state(s), $WORKERS workers, deadline ${DEADLINE_H} h"
 
-if "${SSH[@]}" "tmux has-session -t rec-daily 2>/dev/null || pgrep -f run_states.py >/dev/null"; then
+if "${SSH[@]}" "tmux has-session -t rec-daily 2>/dev/null || pgrep -f '[r]un_states.py' >/dev/null"; then
   log "a run_states / rec-daily session is still active on the pod; exiting"
   exit 0
 fi
