@@ -43,16 +43,26 @@ HARNESS_DST=/root/prime-pilot/mini-swe-textbased/mini_swe_textbased/__init__.py
 ENV_PKGS=(affine_logic_v1 affine_trivia_v1 affine_ifeval_v1 affine_science_v1
           affine_unscramble_v1 affine_prolog_v1 affine_needle_v1 affine_wikispeedia_v1
           affine_tmax_v1 affine_longcot_v1 affine_eog_v1 affine_numina_v1 affine_sql_v1
-          affine_autobench_v1 affine_uuidctf_v1)
+          affine_autobench_v1 affine_uuidctf_v1
+          affine_i3code_v1 affine_i3math_v1 affine_deshuffle_v1 affine_rgym_v1 affine_rcore_v1
+          affine_pydantic_v1 affine_verbatim_v1 affine_oolong_v1)
+# Env wave 3: prime-envs tasksets the pods' pinned checkout lacks are vendored
+# under rollouts/vendor/prime-envs (see its README) and installed from there.
+VENDOR_ENVS=(deshuffle_papers)
 RESEARCH_ENVS=(reasoning/i3_logic_v1 knowledge/triviaqa_v1 if/ifeval_v1 science/i3_science_v1
                reasoning/unscramble_v1 reasoning/prolog_v1
                long_context/patterned_needle_in_haystack_v1 reasoning/wikispeedia_v1
                terminal/tmax_v1 long_context/longcot_v1 tool_use/enterprise_ops_gym_v1
-               lean/numina_v1 tool_use/automationbench_v1 reasoning/uuid_ctf_v1)
+               lean/numina_v1 tool_use/automationbench_v1 reasoning/uuid_ctf_v1
+               code/i3_code_v1 math/i3_math_v1 long_context/verbatim_copy_v1
+               long_context/oolong_synth_v1)
 # longcot's package imports its verifiers (rdkit / chess / sympy) at import
 # time; the catalog listing avoids the import, but the taskset's own
 # `load_questions` needs them on the host, so they are installed by name.
-ENV_EXTRA_DEPS=(immutabledict langdetect markdown rdkit chess sympy mpmath pyyaml)
+# Wave 3 adds: orjson (i3_code), faker (verbatim_copy), python-dateutil
+# (oolong), reasoning-gym + reasoning-core (the Hub ports; pure python).
+ENV_EXTRA_DEPS=(immutabledict langdetect markdown rdkit chess sympy mpmath pyyaml
+                orjson faker python-dateutil reasoning-gym reasoning-core)
 # Git-hosted data packages two bases import at load time (longcot: bundled
 # question JSON; automation-bench: task builders + rubric). ALWAYS --no-deps:
 # on 2026-09-12 a plain install of automation-bench on datagen-4 replaced the
@@ -106,10 +116,14 @@ for t in "${TARGETS[@]}"; do
   $SSH 'chmod +x /root/rollouts/rollouts/dockerwrap/docker'
   tar -C rollouts/envs -czf - "${ENV_PKGS[@]}" | $SSH 'mkdir -p /root/rollouts/envs && tar -C /root/rollouts/envs -xzf -' \
     || { echo "ENV-COPY-FAILED"; rc=1; continue; }
+  tar -C rollouts/vendor/prime-envs -czf - "${VENDOR_ENVS[@]}" | $SSH 'mkdir -p /root/rollouts/vendor && tar -C /root/rollouts/vendor -xzf -' \
+    || { echo "VENDOR-COPY-FAILED"; rc=1; continue; }
   $SSH 'export PATH=$HOME/.local/bin:$PATH; cd /root/prime-pilot/verifiers || exit 1
 RE=/root/prime-pilot/research-environments/environments
 base=(); for d in '"${RESEARCH_ENVS[*]}"'; do [ -d "$RE/$d" ] && base+=(-e "$RE/$d") || echo "missing research env $d"; done
 uv pip install --python .venv/bin/python -q --no-deps "${base[@]}" || exit 1
+vend=(); for p in '"${VENDOR_ENVS[*]}"'; do vend+=(-e "/root/rollouts/vendor/$p"); done
+uv pip install --python .venv/bin/python -q --no-deps "${vend[@]}" || exit 1
 wrap=(); for p in '"${ENV_PKGS[*]}"'; do wrap+=(-e "/root/rollouts/envs/$p"); done
 uv pip install --python .venv/bin/python -q --no-deps "${wrap[@]}" || exit 1
 uv pip install --python .venv/bin/python -q '"${ENV_EXTRA_DEPS[*]}"' || exit 1
