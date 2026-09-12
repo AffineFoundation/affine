@@ -688,6 +688,13 @@ select = "tasks"
 pass_dataset = false
 task_id_basename = true     # harbor names tasks `tmax/<dir>`; the filter takes the dir
 local_docker_build = true
+# Heavy sandboxes (compilers, fuzzing, services; 2 GB each): 16 tasks per
+# batch, 8 at a time, next to the pod's 48-slot production batches.
+max_batch = 16
+max_concurrency = 8
+# Teacher-first: the four terminal-style harnesses; king_* and the IDE
+# agents follow the first fold read (wave-1 rule).
+policies = ["teacher_textbased", "teacher_bashtool", "teacher_pi", "teacher_terminus"]
 share = 1.0
 
 [source.affine_longcot]
@@ -706,7 +713,11 @@ policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
 extra_flags = ["--env.taskset.difficulty", "medium"]
 strata_buckets = 170
 strata_offset = 1830
-share = 1.0
+max_batch = 16
+max_concurrency = 8
+# STAGED AT SHARE 0.0 (probe 2026-09-12: 2/10 solved; 6 of 12 rollouts were one
+# ~30k-token reply with no action). Re-probe with a capped policy first.
+share = 0.0
 
 [source.affine_eog]
 # EnterpriseOps-Gym (649 oracle tasks, 7 ServiceNow-style MCP services +
@@ -728,6 +739,8 @@ pass_dataset = false
 policies = ["teacher_toolcall"]
 strata_buckets = 200
 strata_offset = 2000
+max_batch = 16
+max_concurrency = 8
 share = 1.0
 
 [source.affine_numina]
@@ -751,6 +764,8 @@ extra_flags = ["--env.taskset.docker-image", "projectnumina/kimina-lean-server:2
                "--env.taskset.task.lean-project-path", "/mathlib4"]
 strata_buckets = 230
 strata_offset = 2200
+max_batch = 16
+max_concurrency = 8
 share = 0.0
 
 [source.affine_sql]
@@ -809,4 +824,6 @@ pass_dataset = false
 policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
 strata_buckets = 115
 strata_offset = 2860
+max_batch = 16
+max_concurrency = 8
 share = 1.0
