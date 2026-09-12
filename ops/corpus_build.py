@@ -587,6 +587,77 @@ def cap_fill(records: list[dict], keyf, have: dict[str, set[str]],
     return selected, deferred, added
 
 
+# Phase 4 (2026-09-12): while coding is BELOW its group target the language
+# targets are soft. The hard language cap (python held to 0.25/0.20 of go's
+# supply) starved coding: epoch 26 kept 0 of 4,139 coding rollouts, so the
+# group could never grow back toward 0.44/0.27 against terminal. Below
+# target every language is admitted, python included, subject to a
+# per-language ceiling of LANG_SOFT_CEILING of coding's strata and to a
+# per-fold budget that keeps coding's share move under the shift guard.
+# At or above target the hard cap_fill rule applies again.
+LANG_SOFT_CEILING = 0.45
+CATCHUP_SHIFT_BUDGET = 0.045   # points of slice share per fold, under MAX_SHARE_SHIFT
+
+
+def coding_below_target(group_strata: dict[str, list], targets: dict[str, float]
+                        ) -> bool:
+    """Coding is below target while it is the group stage's reference
+    anchor: its supply ratio (strata / target) is not the highest among
+    the anchors -- the same test that caps terminal against coding."""
+    anchors = {k: v for k, v in targets.items()
+               if v >= ANCHOR_MIN_TARGET and k != "coding"}
+    if "coding" not in targets or not anchors:
+        return False
+    coding_supply = len(group_strata.get("coding", [])) / targets["coding"]
+    return coding_supply < max(len(group_strata.get(k, [])) / v for k, v in anchors.items())
+
+
+def catchup_budget(group_strata: dict[str, list], group: str) -> int:
+    """New strata `group` may open this fold without moving its share of
+    all strata by more than CATCHUP_SHIFT_BUDGET points."""
+    total = sum(len(v) for v in group_strata.values()) or 1
+    have = len(group_strata.get(group, []))
+    target_share = have / total + CATCHUP_SHIFT_BUDGET
+    if target_share >= 1:
+        return 10 ** 9
+    return max(0, int((target_share * total - have) / (1 - target_share)))
+
+
+def soft_lang_fill(records: list[dict], have: dict[str, set[str]], *,
+                   ceiling: float, budget: int
+                   ) -> tuple[list[dict], list[dict], dict[str, set[str]]]:
+    """Admit coding rollouts of every language; a rollout that opens new
+    strata must keep its language at or under `ceiling` of coding's strata
+    (after admission) and fit the fold's `budget` of new coding strata.
+    Non-python rollouts go first so the scarce languages are never crowded
+    out by the budget."""
+    counts = {b: len(v) for b, v in have.items()}
+    strata = {b: set(v) for b, v in have.items()}
+    total = sum(counts.values())
+    selected: list[dict] = []
+    deferred: list[dict] = []
+    added: dict[str, set[str]] = {}
+    used = 0
+    order = sorted(records, key=lambda r: lang_bucket(r) == "python")
+    for rec in order:
+        b = lang_bucket(rec)
+        new = record_strata(rec) - strata.setdefault(b, set())
+        if not new:
+            selected.append(rec)
+            continue
+        n = len(new)
+        if used + n > budget or (counts.get(b, 0) + n) > ceiling * (total + n) + 1e-9:
+            deferred.append(rec)
+            continue
+        selected.append(rec)
+        strata[b] |= new
+        counts[b] = counts.get(b, 0) + n
+        total += n
+        used += n
+        added.setdefault(b, set()).update(new)
+    return selected, deferred, added
+
+
 # -- derive ----------------------------------------------------------------------
 # The prefix cap in the unit that binds at duel time: the serving window is
 # max_model_len = 131072 tokens minus 1792 generated. MAX_PREFIX_CHARS (300k,
@@ -1453,10 +1524,19 @@ def main() -> None:
         coding = [r for r in candidates if group_of(r, src2grp, mix) == "coding"]
         other = [r for r in candidates if group_of(r, src2grp, mix) != "coding"]
         have_langs = {b: set(v) for b, v in (state.get("lang_strata") or {}).items()}
-        chosen, lang_deferred, lang_added = cap_fill(
-            coding, lang_bucket, have_langs, lang_mix)
+        gs = state.get("group_strata") or {}
+        if coding_below_target(gs, mix):
+            budget = catchup_budget(gs, "coding")
+            chosen, lang_deferred, lang_added = soft_lang_fill(
+                coding, have_langs, ceiling=LANG_SOFT_CEILING, budget=budget)
+            mode = (f"soft (coding below target: budget {budget} new strata, "
+                    f"per-language ceiling {LANG_SOFT_CEILING:.0%})")
+        else:
+            chosen, lang_deferred, lang_added = cap_fill(
+                coding, lang_bucket, have_langs, lang_mix)
+            mode = "hard (coding at/above target)"
         candidates = other + chosen
-        log(f"lang mix: kept {len(chosen)}/{len(coding)} coding rollouts "
+        log(f"lang mix [{mode}]: kept {len(chosen)}/{len(coding)} coding rollouts "
             f"(+{ {b: len(v) for b, v in lang_added.items()} } strata), "
             f"deferred {len(lang_deferred)}")
     have_groups = {g: set(v) for g, v in (state.get("group_strata") or {}).items()}
