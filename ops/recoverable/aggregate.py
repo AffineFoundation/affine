@@ -154,6 +154,9 @@ def main() -> None:
             teacher_stop=r.get("stop_condition"),
             teacher_turns=r.get("n_turns"),
             teacher_first_action=first,
+            teacher_first_action_kind=("tool_call" if (r.get("first_reply") or {}).get("tool_calls")
+                                       else st["action_kind"] if first else "text"),
+            teacher_first_reply_head=norm(((r.get("first_reply") or {}).get("content") or ""))[:300],
             teacher_error=(r.get("error") or "")[:300] if not ok else None,
         )
         rows.append(row)
@@ -176,6 +179,37 @@ def main() -> None:
         "by_depth": rate_table(ran, lambda r: depth_bucket(r["turn_idx"])),
         "by_kind_and_harness": rate_table(ran, lambda r: f"{r['state_kind']}/{r['harness']}"),
     }
+    docker = [r for r in ran if r["harness"] != "null"]
+    summary["by_depth_agent_harnesses"] = rate_table(docker, lambda r: depth_bucket(r["turn_idx"]))
+    summary["teacher_stop_by_harness"] = {
+        h: dict(collections.Counter(r["teacher_stop"] for r in ran if r["harness"] == h))
+        for h in sorted({r["harness"] for r in ran})}
+    turns = collections.defaultdict(list)
+    for r in ran:
+        if r["teacher_turns"] is not None:
+            turns[r["harness"]].append(r["teacher_turns"])
+    summary["teacher_turns_p50_by_harness"] = {
+        h: sorted(v)[len(v) // 2] for h, v in turns.items() if v}
+    # Replay fidelity (agent harnesses): replayed prefix commands whose
+    # output matched the recorded observation byte for byte.
+    fid: dict[str, dict] = {}
+    for st in states:
+        r = results.get(st["state_id"])
+        rep = (r or {}).get("report") or {}
+        if not rep.get("replay_n"):
+            continue
+        f = fid.setdefault(st["harness"], {"states": 0, "commands": 0, "output_match": 0,
+                                           "rc_match": 0, "replay_seconds": []})
+        f["states"] += 1
+        f["commands"] += rep["replay_n"]
+        f["output_match"] += rep.get("replay_match", 0)
+        f["rc_match"] += rep.get("replay_rc_match", 0)
+        f["replay_seconds"].append(rep.get("replay_seconds", 0))
+    for f in fid.values():
+        secs = sorted(f.pop("replay_seconds"))
+        f["replay_seconds_p50"] = secs[len(secs) // 2] if secs else None
+        f["output_match_rate"] = round(f["output_match"] / f["commands"], 3) if f["commands"] else None
+    summary["replay_fidelity"] = fid
     # Overlap: a rollout may carry both an onset and a pivot state.
     onset_admit = {(r["rollout_id"]) for r in ran if r["state_kind"] == "loop_onset" and r["admit"]}
     pivot_admit = {(r["rollout_id"]) for r in ran if r["state_kind"] == "pivot" and r["admit"]}
@@ -194,8 +228,15 @@ def main() -> None:
           f"states {len(rows)}, ran {len(ran)}, teacher {args.model}, cost ${cost:.2f}", ""]
     for title, key in (("By state kind", "by_state_kind"), ("By harness", "by_harness"),
                        ("By env (source)", "by_source"), ("By depth (turn_idx)", "by_depth"),
+                       ("By depth, agent harnesses only", "by_depth_agent_harnesses"),
                        ("By state kind × harness", "by_kind_and_harness")):
         md.append(md_table(title, summary[key]))
+    md.append("### Teacher stop condition by harness\n\n"
+              + "\n".join(f"- {h}: {v}" for h, v in summary["teacher_stop_by_harness"].items())
+              + "\n\n### Teacher turns used (p50) by harness\n\n"
+              + "\n".join(f"- {h}: {v}" for h, v in summary["teacher_turns_p50_by_harness"].items())
+              + "\n\n### Replay fidelity\n\n"
+              + "\n".join(f"- {h}: {v}" for h, v in summary["replay_fidelity"].items()) + "\n")
     md.append("### Overlap\n\n" + "\n".join(f"- {k}: {v}" for k, v in summary["overlap"].items()) + "\n")
     (args.out / "summary.md").write_text("\n".join(md))
     print("\n".join(md))
