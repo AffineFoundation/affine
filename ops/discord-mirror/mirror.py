@@ -12,6 +12,12 @@ Per channel (and per thread under a mirrored channel):
     page is short, plus a re-fetch of the newest `recent_window` messages so
     edits / reactions / deletions inside that window are recorded.
 
+DMs: every user id in [mirror].dm_user_ids gets its DM channel opened
+(POST /users/@me/channels {recipient_id}; idempotent, sends nothing) and
+polled like a channel (kind 'dm', guild_id ''). GET /users/@me/channels is
+listed too, but Discord returns [] for bots there, so the explicit list is
+what makes DMs visible. Message content in DMs needs no intent.
+
 Storage under [mirror].data_dir:
   discord.sqlite   messages + channels tables, FTS5 index for read.py search
   raw/<id>.jsonl   append-only mirror of every message object as fetched
@@ -62,6 +68,7 @@ USER_AGENT = "DiscordBot (https://affine.io, 1.0) affine-discord-mirror"
 PAGE = 100
 TEXT_CHANNEL_TYPES = {0, 5, 15, 16}         # text, announcement, forum, media
 THREAD_TYPES = {10, 11, 12}                  # news, public, private threads
+DM_CHANNEL_TYPE = 1
 FLAG_MESSAGE_CONTENT = 1 << 18               # GATEWAY_MESSAGE_CONTENT
 FLAG_MESSAGE_CONTENT_LIMITED = 1 << 19       # granted to bots in < 100 guilds
 INTENT_MIN_SAMPLE = 20                       # non-bot messages before judging
@@ -110,6 +117,7 @@ class Config:
     token_env: str
     discover_patterns: list[str]
     channels: list[ChannelCfg] = field(default_factory=list)
+    dm_user_ids: list[str] = field(default_factory=list)
 
 
 def load_config(path: Path = CONFIG) -> Config:
@@ -125,6 +133,7 @@ def load_config(path: Path = CONFIG) -> Config:
         recent_window=int(m.get("recent_window", 50)),
         token_env=str(m.get("token_env") or "DISCORD_BOT_TOKEN_ARBOS_BITTENSOR"),
         discover_patterns=[str(p).lower() for p in (m.get("discover_patterns") or [])],
+        dm_user_ids=[str(u) for u in (m.get("dm_user_ids") or [])],
         channels=[
             ChannelCfg(id=str(c["id"]), guild_id=str(c.get("guild_id") or ""),
                        name=str(c.get("name") or c["id"]), note=str(c.get("note") or ""))
@@ -152,12 +161,21 @@ class Discord:
         self.rate_sleeps = 0.0
 
     def get(self, route: str, **params) -> dict | list:
+        return self.request("GET", route, None, **params)
+
+    def post(self, route: str, body: dict) -> dict | list:
+        return self.request("POST", route, body)
+
+    def request(self, method: str, route: str, body: dict | None, **params) -> dict | list:
         query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
         url = API + route + (f"?{query}" if query else "")
+        payload = json.dumps(body).encode() if body is not None else None
+        headers = {"Authorization": f"Bot {self.token}", "User-Agent": USER_AGENT}
+        if payload is not None:
+            headers["Content-Type"] = "application/json"
         backoff = 1.0
         while True:
-            req = urllib.request.Request(url, headers={
-                "Authorization": f"Bot {self.token}", "User-Agent": USER_AGENT})
+            req = urllib.request.Request(url, data=payload, method=method, headers=headers)
             self.requests += 1
             try:
                 with urllib.request.urlopen(req, timeout=30) as resp:
@@ -214,7 +232,7 @@ CREATE TABLE IF NOT EXISTS channels (
     id TEXT PRIMARY KEY,           -- channel or thread id
     guild_id TEXT,
     name TEXT,
-    kind TEXT,                     -- 'channel' | 'thread'
+    kind TEXT,                     -- 'channel' | 'thread' | 'dm'
     parent_id TEXT,                -- thread -> parent channel id
     archived INTEGER DEFAULT 0,
     last_id INTEGER,               -- newest message id seen (poll cursor)
@@ -352,7 +370,7 @@ class Source:
     id: str
     guild_id: str
     name: str
-    kind: str                     # 'channel' | 'thread'
+    kind: str                     # 'channel' | 'thread' | 'dm'
     parent_id: str | None = None  # threads: the mirrored channel they hang off
 
     @property
@@ -432,9 +450,42 @@ class Mirror:
                 if row["match"] and row["id"] not in self.sources:
                     log(f"discover: adding {row['guild']} / #{row['name']} ({row['id']})")
                     self._add_source(Source(row["id"], row["guild_id"], row["name"], "channel"))
+        self.ensure_dms()
         for row in self.db.execute("SELECT * FROM channels"):
             if row["id"] not in self.sources and row["kind"] == "thread" and row["parent_id"] in self.sources:
                 self._add_source(Source(row["id"], row["guild_id"], row["name"], "thread", row["parent_id"]))
+            if row["id"] not in self.sources and row["kind"] == "dm":
+                self._add_source(Source(row["id"], "", row["name"], "dm"))
+
+    def ensure_dms(self) -> None:
+        """Open (or re-open) the DM channel of every configured user and pick up any
+        DM channel Discord lists for the bot. Opening a DM channel sends nothing."""
+        for uid in self.cfg.dm_user_ids:
+            try:
+                ch = self.api.post("/users/@me/channels", {"recipient_id": uid})
+            except DiscordError as exc:
+                msg = f"dm {uid}: cannot open DM channel ({exc})"
+                if self.blockers.get(f"dm:{uid}") != msg:
+                    log("BLOCKER " + msg)
+                self.blockers[f"dm:{uid}"] = msg
+                continue
+            self.blockers.pop(f"dm:{uid}", None)
+            self._add_dm(ch)
+        try:
+            listed = self.api.get("/users/@me/channels")
+        except DiscordError as exc:
+            log(f"dm: could not list DM channels ({exc})")
+            return
+        for ch in listed:
+            if ch.get("type") == DM_CHANNEL_TYPE:
+                self._add_dm(ch)
+
+    def _add_dm(self, ch: dict) -> None:
+        who = ",".join(r.get("username") or r.get("id") for r in ch.get("recipients") or []) or ch["id"]
+        new = ch["id"] not in self.sources
+        self._add_source(Source(str(ch["id"]), "", f"dm:{who}", "dm"))
+        if new:
+            log(f"dm: mirroring DM channel with {who} ({ch['id']})")
 
     def _add_source(self, s: Source) -> None:
         self.sources[s.id] = s

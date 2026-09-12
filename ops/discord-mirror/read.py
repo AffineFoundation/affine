@@ -8,8 +8,8 @@
   python read.py stats [--since ISO] [--channel C]  messages per channel per day, top authors
 
 CHANNEL is a channel id, a thread id, or a case-insensitive substring of the
-channel name ("affine"). Threads are shown under their parent channel; pass a
-thread id to read one thread. --since/--until accept ISO dates ("2026-09-01",
+channel name ("affine"; DM channels are named "dm:<username>"). Threads are
+shown under their parent channel; pass a thread id to read one thread. --since/--until accept ISO dates ("2026-09-01",
 "2026-09-01T12:00Z") or relative "14d" / "36h".
 QUERY uses SQLite FTS5 syntax when available ("stuck eval", '"weight version"',
 'miner OR miners', 'author_name:unconst'); falls back to LIKE otherwise.
@@ -32,6 +32,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 CONFIG = HERE / "channels.toml"
 RELATIVE = re.compile(r"^(\d+)([dhm])$")
+TOP_LEVEL = ("channel", "dm")   # sources that hold messages directly (threads hang off channels)
 
 
 def load_config(config: Path = CONFIG) -> tuple[Path, dict[str, list[str]]]:
@@ -81,12 +82,12 @@ class Archive:
     def resolve(self, spec: str | None) -> tuple[list[str], str | None]:
         """CHANNEL spec -> (parent channel ids, thread id or None)."""
         if not spec:
-            return [c for c, r in self.channels.items() if r["kind"] == "channel"], None
+            return [c for c, r in self.channels.items() if r["kind"] in TOP_LEVEL], None
         if spec in self.channels:
             r = self.channels[spec]
             return ([r["parent_id"]], spec) if r["kind"] == "thread" else ([spec], None)
         want = fold(spec)
-        hits = [c for c, r in self.channels.items() if r["kind"] == "channel"
+        hits = [c for c, r in self.channels.items() if r["kind"] in TOP_LEVEL
                 and (want in fold(r["name"]) or any(want in fold(a) for a in self.aliases.get(c, [])))]
         if not hits:
             raise SystemExit(f"read.py: no mirrored channel matches {spec!r}; try `read.py channels`")
@@ -160,8 +161,8 @@ def cmd_channels(a: Archive) -> None:
     counts = {}
     for r in a.db.execute("SELECT channel_id, thread_id, count(*) n, max(timestamp) t FROM messages GROUP BY 1,2"):
         counts[(r["channel_id"], r["thread_id"])] = (r["n"], r["t"])
-    for cid, c in sorted(a.channels.items(), key=lambda kv: (kv[1]["kind"] != "channel", kv[1]["name"] or "")):
-        if c["kind"] != "channel":
+    for cid, c in sorted(a.channels.items(), key=lambda kv: (kv[1]["kind"] not in TOP_LEVEL, kv[1]["name"] or "")):
+        if c["kind"] not in TOP_LEVEL:
             continue
         n, t = counts.get((cid, None), (0, None))
         threads = [t for t in a.channels.values() if t["parent_id"] == cid]
