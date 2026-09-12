@@ -60,11 +60,20 @@ RESEARCH_ENVS=(reasoning/i3_logic_v1 knowledge/triviaqa_v1 if/ifeval_v1 science/
 # time; the catalog listing avoids the import, but the taskset's own
 # `load_questions` needs them on the host, so they are installed by name.
 # Wave 3 adds: orjson (i3_code), faker (verbatim_copy), python-dateutil
-# (oolong), reasoning-gym + reasoning-core (the Hub ports; pure python).
-# tarski is pinned to the version that resolves next to the venv's antlr4
-# 4.9.3 (tarski 0.9.1 wants antlr4 4.13 and the constrained resolve fails).
+# (oolong), reasoning-gym (the Hub port; pure python). reasoning-core is
+# installed --no-deps (RCORE_NODEPS) with its dependencies listed by name
+# EXCEPT tarski: the pods already carry a tarski (0.9.1 on datagen-1, 0.5.1
+# on datagen-2) next to antlr4 4.9.3, and letting the resolver see tarski's
+# own pins makes the constrained install fail (tarski 0.9.1 wants antlr4
+# 4.13). Its planning generators run on whatever tarski is present.
 ENV_EXTRA_DEPS=(immutabledict langdetect markdown rdkit chess sympy mpmath pyyaml
-                orjson faker python-dateutil reasoning-gym reasoning-core tarski==0.5.1)
+                orjson faker python-dateutil reasoning-gym
+                appdirs beautifulsoup4 duckdb easydict exrex funcy gramforge greenery inflection
+                lazy-object-proxy multiprocess networkx nltk numpy pandas pgmpy pooch psutil
+                pyparsing rapidfuzz regex requests tabulate tiktoken timeoutcontext toolz tqdm
+                udocker unification unified-planning pyperplan up-pyperplan whatthepatch wordfreq
+                wrapt xpflow z3-solver)
+RCORE_NODEPS=(reasoning-core)
 # Git-hosted data packages two bases import at load time (longcot: bundled
 # question JSON; automation-bench: task builders + rubric). ALWAYS --no-deps:
 # on 2026-09-12 a plain install of automation-bench on datagen-4 replaced the
@@ -133,6 +142,7 @@ uv pip install --python .venv/bin/python -q --no-deps "${wrap[@]}" || exit 1
 .venv/bin/python -m pip freeze --exclude-editable 2>/dev/null > /tmp/venv-constraints.txt || uv pip freeze --python .venv/bin/python | grep -v "^-e" > /tmp/venv-constraints.txt
 uv pip install --python .venv/bin/python -q -c /tmp/venv-constraints.txt '"${ENV_EXTRA_DEPS[*]}"' || exit 1
 uv pip install --python .venv/bin/python -q --no-deps '"$(printf "%q " "${ENV_GIT_DEPS[@]}")"' || exit 1
+uv pip install --python .venv/bin/python -q --no-deps '"${RCORE_NODEPS[*]}"' || exit 1
 .venv/bin/python -c "import '"$(IFS=,; echo "${ENV_PKGS[*]}")"'; import verifiers; assert verifiers.__file__.startswith(\"/root/prime-pilot/verifiers/\"), verifiers.__file__; print(\"ENV_IMPORT_OK\")" || exit 1
 for img in '"${ENV_IMAGES[*]}"'; do docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null || echo "WARNING: pull failed $img"; done' \
     || { echo "ENV-INSTALL-FAILED"; rc=1; continue; }
