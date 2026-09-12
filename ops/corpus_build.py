@@ -482,8 +482,21 @@ def record_strata(rec: dict) -> set[str]:
                          "traj_id": rec.get("traj_id")}) for m in rec["turns"]}
 
 
+# Keys with a target at or above this are "anchors" for the GROUP mix: only
+# their supply can serve as the reference the other keys are capped
+# against (coding 0.43, terminal 0.22). Epoch 25 (2026-09-12) showed why:
+# `completion` entered with 759 strata at target 0.03 -- a supply ratio of
+# 25,300 against coding's 14,000 -- and became the reference, so terminal's
+# cap rose from 0.2162 x 14,000 = 3,025 to 0.2162 x 25,300 = 5,470 and
+# 2,443 deferred terminal strata (19,738 turns) entered at once; the slice
+# went coding 52 / terminal 26 % -> 41 / 37 %. Small groups can be far
+# "over-supplied" relative to a small target while being tiny in absolute
+# terms; they must never set the scale of the big ones.
+ANCHOR_MIN_TARGET = 0.1
+
+
 def cap_fill(records: list[dict], keyf, have: dict[str, set[str]],
-             targets: dict[str, float]
+             targets: dict[str, float], *, anchor_min_target: float = 0.0
              ) -> tuple[list[dict], list[dict], dict[str, set[str]]]:
     """Mix enforcement in SLICE STRATA, not turns.
 
@@ -495,17 +508,22 @@ def cap_fill(records: list[dict], keyf, have: dict[str, set[str]],
     traces-only rehearsal selected coding 9,677 turns = 186 strata against
     math 1,935 = 1,935 strata -- coding 4% of the slice.
 
-    Rule: every key takes all its candidates except the single most
-    over-supplied one, which is capped at the share it would hold if the
-    second-most over-supplied key were exactly on target. Over-supply of key
-    k is (strata available) / target_k -- the corpus size k alone could
-    support at its target. Exhausted keys (math, tool_use, small languages)
-    therefore never throttle the others (the strict waterfill froze D at the
-    first exhausted key), while the one flood (terminal 8.6k tasks vs coding
-    5.3k; python vs the other languages) is held to its target ratio against
-    the next-largest supply. At most one key is ever trimmed; trimmed
-    rollouts defer and re-enter as the reference key grows.
-    Keys without a positive target are deferred whole, as before."""
+    Rule: over-supply of key k is (strata available) / target_k -- the
+    corpus size k alone could support at its target. The reference is the
+    second-highest over-supply among the ANCHOR keys (target >=
+    `anchor_min_target`; 0.0 = every key, the rule until 2026-09-12), and
+    every key is capped at target_k x reference. With every key an anchor
+    only the single most over-supplied key can exceed its cap, so exhausted
+    keys (math, tool_use, small languages) never throttle the others (the
+    strict waterfill froze D at the first exhausted key) while the one
+    flood (terminal 8.6k tasks vs coding 5.3k; python vs the other
+    languages) is held to its target ratio against the next-largest
+    supply. With anchors restricted to the big groups (the group stage,
+    ANCHOR_MIN_TARGET), a small group with a tiny target cannot become the
+    reference and lift the big groups' caps, and is itself held to
+    target_k x reference. Trimmed rollouts defer and re-enter as the
+    reference key grows. Keys without a positive target are deferred
+    whole, as before."""
     pools: dict[str, list[dict]] = {}
     for rec in records:
         pools.setdefault(keyf(rec), []).append(rec)
@@ -517,7 +535,8 @@ def cap_fill(records: list[dict], keyf, have: dict[str, set[str]],
     for k, pool in keyed.items():
         for rec in pool:
             avail[k] |= record_strata(rec)
-    supply = sorted((len(avail[k]) / positive[k] for k in positive), reverse=True)
+    anchors = [k for k, v in positive.items() if v >= anchor_min_target] or list(positive)
+    supply = sorted((len(avail[k]) / positive[k] for k in anchors), reverse=True)
     ref_total = supply[1] if len(supply) > 1 else float("inf")
     cap = {k: positive[k] * ref_total for k in positive}
     selected: list[dict] = []
@@ -1210,7 +1229,8 @@ def main() -> None:
             f"deferred {len(lang_deferred)}")
     have_groups = {g: set(v) for g, v in (state.get("group_strata") or {}).items()}
     selected, deferred, group_added = cap_fill(
-        candidates, lambda r: group_of(r, src2grp, mix), have_groups, mix)
+        candidates, lambda r: group_of(r, src2grp, mix), have_groups, mix,
+        anchor_min_target=ANCHOR_MIN_TARGET)
     deferred += lang_deferred
     log(f"mix: selected {len(selected)} rollouts (+{ {g: len(v) for g, v in group_added.items()} } "
         f"strata), deferred {len(deferred)}")
