@@ -187,13 +187,13 @@ id = "mmlu-pro"
 taskset = "mmlu-pro"
 install = "knowledge/mmlu_pro"
 group = "knowledge"
-n = -1
+n = 2000
 harness = "null"
 runtime = "none"
 max_tokens = 8192
 reward = "correct"
 secondary = false
-note = "MMLU-Pro test, all 12,032 questions, 0-shot, boxed letter."
+note = "MMLU-Pro test, fixed 2,000-question subset (verifiers shuffle, seed 0, uniform over the 12,032 test rows so categories keep their natural shares), 0-shot, boxed letter. Full 12,032 was started on the first pass and cut for time (king pace ~20 questions/min under load)."
 
 [[envs]]
 id = "ifbench"
