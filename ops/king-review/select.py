@@ -58,7 +58,8 @@ def interleave(cells: dict[tuple[str, str], list[dict]]) -> list[dict]:
 def select_sample(rows: list[dict], *, king: str, per_cell: int, max_total: int,
                   seed: int, env_groups: dict[str, str],
                   exclude_sources: frozenset[str] = frozenset(),
-                  all_failed: bool = False) -> list[dict]:
+                  all_failed: bool = False,
+                  include_single_reply: bool = False) -> list[dict]:
     """`all_failed`: every failed rollout of the king (the daily / bulk
     mode), single-reply harnesses last, cells interleaved; `per_cell` /
     `max_total` are ignored. Sources in `exclude_sources` (the fold's
@@ -78,10 +79,18 @@ def select_sample(rows: list[dict], *, king: str, per_cell: int, max_total: int,
     rng = random.Random(f"{seed}:{king_id}")
     picked: list[dict] = []
     if all_failed:
+        # Single-reply rollouts (math, wiki, the `general` one-shot envs)
+        # have no decision point to find: their only turn IS the king_fail
+        # turn already, so a pivot there would move a turn, not add one.
+        # The bulk / daily run skips them; the stratified review keeps a
+        # cell of them for the report.
         multi: dict[tuple[str, str], list[dict]] = {}
         single: dict[tuple[str, str], list[dict]] = {}
         for key, pool in cells.items():
-            pool = sorted(pool, key=lambda r: r["rollout_id"])
+            pool = sorted((r for r in pool if include_single_reply or r["n_replies"] > 1),
+                          key=lambda r: r["rollout_id"])
+            if not pool:
+                continue
             rng.shuffle(pool)
             pool.sort(key=lambda r: r["sid"] not in teacher_by_sid)
             target = multi if key[1] != "null" else single
@@ -159,6 +168,8 @@ def main() -> None:
                          "per-cell and max-total are ignored")
     ap.add_argument("--include-excluded-sources", action="store_true",
                     help="also select sources the fold's [king_pivot] excludes")
+    ap.add_argument("--include-single-reply", action="store_true",
+                    help="--all: also judge one-reply rollouts (no pivot to find)")
     ap.add_argument("--state-json", type=Path, default=None,
                     help="resolve --king current from this validator state.json")
     ap.add_argument("--procs", type=int, default=4)
@@ -177,7 +188,8 @@ def main() -> None:
         print(f"skipping sources the fold's [king_pivot] excludes: {sorted(excluded)}")
     sample = select_sample(rows, king=king, per_cell=args.per_cell,
                            max_total=args.max_total, seed=args.seed, env_groups=env_groups,
-                           exclude_sources=excluded, all_failed=args.all)
+                           exclude_sources=excluded, all_failed=args.all,
+                           include_single_reply=args.include_single_reply)
     write_jsonl(args.out, sample)
     table = cell_table(sample, rows, king, env_groups)
     (args.out.parent / "sample_cells.json").write_text(json.dumps(table, indent=1))
