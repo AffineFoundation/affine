@@ -1265,8 +1265,8 @@ def build_autobench_catalog(cfg: RolloutsConfig, src: Source) -> dict:
 # scorers live in that env only). Same pattern as longcot / autobench.
 RGYM_LIST = r"""
 import json, sys
-from affine_rgym_v1.taskset import usable_generators
-json.dump(usable_generators(int(sys.argv[1])), sys.stdout)
+from affine_rgym_v1.taskset import default_generators
+json.dump(default_generators(), sys.stdout)
 """
 RCORE_LIST = r"""
 import json, os, sys
@@ -1321,8 +1321,7 @@ def _bucketed(src: Source, row: dict) -> dict:
 
 
 def build_rgym_catalog(cfg: RolloutsConfig, src: Source) -> dict:
-    level = _flag_value(src, "--env.taskset.curriculum-level", "3")
-    gens = _verifiers_listing(cfg, RGYM_LIST, level, what="reasoning-gym")
+    gens = _verifiers_listing(cfg, RGYM_LIST, what="reasoning-gym")
     per = int(_flag_value(src, "--env.taskset.per-generator", "60"))
     kept = [_bucketed(src, {
         "uid": f"rgym-{g}-{i:04d}", "sid": f"rgym_{_dotless_task(g)}-{i}",
