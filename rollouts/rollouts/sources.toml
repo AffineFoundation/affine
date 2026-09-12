@@ -164,7 +164,9 @@ min_surviving_strata = 100
 # 2026-09-12 (phase 4): these targets are HARD only while coding is at or
 # above its group target. Below it (coding's supply ratio under terminal's,
 # the group stage's own test) the fold admits every language, python
-# included, under a per-language ceiling of 45 % of coding's strata and a
+# included, under a per-language ceiling of 55 % of coding's strata (0.45
+# -> 0.55, operator decision 2026-09-12; diversity comes from non-python
+# supply, not the fold) and a
 # per-fold budget of 4.5 share points (ops/corpus_build.py
 # LANG_SOFT_CEILING / CATCHUP_SHIFT_BUDGET). The hard cap had frozen python
 # at 0.25/0.20 x go's supply and starved coding (epoch 26: 0 of 4,139
