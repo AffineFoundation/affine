@@ -285,6 +285,67 @@ unchanged.**
   2026-09-07 (through `chal-00359`) drained, projected 2026-09-09 — met.
   llms.txt "Upcoming changes" → "Fork history: wvk 13".
 
+### v9: window-best crown — LIVE 2026-09-12 17:01 UTC (wvk 14→15)
+Operator directive 2026-09-12 16:39 UTC (Jacob Steeves: "best positive
+margin of the last 12 hours"; confirmed 16:43 UTC "Yes I want to make this
+update … implement the full design and push the updated code"). It
+superseded, the same afternoon, the decaying-δ proposal approved at 15:27
+(`MarginSchedule` stays in code, `min_margin_mode = "fixed"`, never
+flipped). Contract (`[duel]`): `crown_mode = "window_best"`,
+`crown_window_blocks = 3600` (12 h at 12 s/block; window id =
+`decision_block // 3600`, aligned on the block number),
+`crown_confirm_slice = true`, `crown_confirm_max = 2`,
+`crown_one_entry_per_hotkey = true`. Rule: the king is FROZEN for a
+window; every challenger dispatched inside window N duels window N's king
+(a duel that crosses the boundary is still N's candidate — the close waits
+for it); at the close the verdicts with a finite margin > 0 and no gate
+rejection are ranked by margin (ties: higher z, earlier id), one per
+hotkey; the best gets ONE fresh 1,300-turn slice vs the frozen king (the
+near-miss draw: seed `block_hash ‖ hotkey ‖ "|slice<k>"`, k = the number
+of slices its duel scored, turns disjoint) and is crowned iff the exact
+pooled margin over both samples is > 0 (`score.pooled_margin_stats`);
+else the next-best, up to 2; nobody confirms → king stays. The
+confirmation runs at the start of N+1 before N+1's first duel and is not
+an N+1 verdict. `max(k_sigma·SE, δ)` + gates are still computed and
+stamped (`duel_rule_wins`) but do not decide; `challenger_wins` is false
+on every duel row. Reign chain / payouts unchanged. Code: PR #16 branch
+(`score.py`: `window_id_of`, `window_candidate_reason`,
+`rank_window_candidates`, `pooled_margin_stats`; `validator.py`:
+`_stamp_window_verdict`, `_window_due`, `_close_window[_safely]`,
+`_finalize_window`, `_confirm_candidate`, `WINDOW_CLOSE_MAX_ATTEMPTS = 6`
+→ after 6 failed infra attempts the window closes with
+`king_stays_confirmation_unavailable`; `state.py`: `crown_window` in
+state.json, `record_window_verdict`, `record_window_close`;
+`evalsrv/dueling.py` + `server.py` + `eval_client.py`: `confirm`
+request → `confirmation_stamp`, probes skipped, near-miss off on a
+confirmation; artifact `evals/<cid>-confirm.json.gz`). Stamps: verdict
+`crown_mode` / `window_id` / `window_blocks` / `decision_block` /
+`duel_rule_wins` / `crown_decision`; history `window_close` rows
+(`verdicts_considered`, `candidates`, `dropped`, `confirmations`,
+`winner`, `outcome`, `crown_block`); `crowned` row `via = "window_best"`.
+Replay (`affine/scripts/replay_window_best.py`, 364 scored duels /
+16 days / 11 real crowns; wall time → blocks from anchor 9052470 @
+15:45 UTC, dispatch = at − duration): 12 h windows → 26/32 windows with a
+positive candidate, ~22–23 crowns with confirmation (1.4 kings/day), 8
+winners at z < 2, 10/11 real crowns are window winners (`chal-00407` is
+not: same window as `chal-00409`); 24 h → 14/17, 0.8 kings/day, 4 at z <
+2. Confirmation modelled (no second-slice records exist yet): z ≥ 1
+pass, z < 1 coin. Flip: `ops/v9/wvk15_toml_edits.py --apply 2026-09-12
+--wvk-to 15 --mode window_best` (+ website mirror), `build_llms_txt.py`
+("Fork history: wvk 15 — window-best crown", `_margin_subs` renders the
+crown rule from the toml), box commit `2ebb3dc`, `/tmp/v9flip/deploy.sh`
+(keepalive ralph off → pod idle + no in_flight → pm2 stop → env from
+`/proc/<pm2 pid>/environ` → `redeploy_pods.py` → pod toml/code verified →
+pm2 start + `affine-dash` restart → keepalive on). Queue was empty; no
+duel interrupted. First window opened: 2514 at block 9052869 (17:03:05 UTC; window 2514 = blocks 9050400–9053999, closes ~20:50 UTC). First wvk-15
+verdict: none yet at flip time (queue empty since 15:30 UTC) — `bash /tmp/v9flip/verify_first_verdict.sh` prints the stamps of every verdict / window_close since the flip. Discord notice `…/1548378529534840892` (17:03:29 UTC). Forward-only:
+reign 11 stands, `min_submission_block` unchanged; pre-flip rows carry no
+`crown_mode` and replay bit-identically. Known gaps: tensor-level copy
+detection still not built (file-hash `check_model_copy` only); a window
+with zero verdicts closes with `king_stays_no_candidates`; the frozen king
+means a challenger that lands in the last minutes of a window is compared
+with the same king as the first — by design.
+
 ### The king seat — king-failure datagen (LIVE 2026-09-10, data event, no wvk)
 Operator directive 2026-09-10 ("do the simplest thing first: trigger on
 the new king, spin up the new king on our fleet, sample envs from Prime
@@ -609,7 +670,10 @@ Full writeups: `research/docs/REDTEAM.md`.
 - netuid **120**, finney
 - official site: **https://affine.io** (dashboard + llms.txt; Cloudflare-proxied
   to the validator box — sn120.arbos.life is a legacy alias via the CF tunnel)
-- `weight_version_key = 14` (2026-09-10 ~21:00 UTC, explicit operator
+- `weight_version_key = 15` (2026-09-12 ~17:01 UTC, explicit operator directive
+ 16:39/16:43 UTC: `crown_mode = "window_best"` — the crown is decided per 12 h
+ block window, best positive margin + confirmation slice, see §v9; forward-only,
+ reign 11 stands; 14 = 2026-09-10 ~21:00 UTC, explicit operator
   directive "do it now yes": `allowed_action_kinds` += `terminus_json`, the
   Terminus 2 / terminal-bench agent JSON command batch; forward-only, reign
   11 stands; 13 = 2026-09-09 ~02:00 UTC, explicit operator
@@ -1084,7 +1148,9 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 ## 12. One-paragraph resume
 
 > Affine SN120: teacher-anchored thought-injection duels. Since 2026-08-27
-> (`weight_version_key=14` since the 2026-09-10 terminus_json fork; the
+> (`weight_version_key=15` since the 2026-09-12 window-best crown fork —
+> crown decided per 12 h window, best positive margin, confirmed on a
+> fresh slice; the
 > scoring rule itself dates from wvk 10) the contract is **min(R,G) v5: centered Reason
 > + banded Grounding + δ floor + thought-length floor + B gate**: per turn
 > the teacher samples k=3 refs, a_i = lpC(y_i|z_A) − lpC(y_i|∅);
