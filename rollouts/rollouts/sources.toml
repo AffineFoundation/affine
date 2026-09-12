@@ -38,9 +38,11 @@ terminal = 0.27
 nl2repo = 0.03
 math = 0.03
 tool_use = 0.02
-king_fail = 0.08
+# 2026-09-12 phase 5: + king_recoverable 0.02 out of king_fail (0.08 -> 0.06).
+king_fail = 0.06
 king_loop_onset = 0.03
 king_pivot = 0.02
+king_recoverable = 0.02
 completion = 0.03
 general = 0.05
 
@@ -119,6 +121,28 @@ exclude_sources = ["affine_wiki", "affine_agent", "affine_math"]   # phase 3, 20
 # retirement) and readmits the turns as king_pivot in the SAME run -- the
 # rollouts' trace chunks must be in the run (--rederive-chunks); a turn not
 # readmitted stays in king_fail. Pivots under king_loop_onset stay there.
+readmit_published = true
+
+[king_recoverable]
+# Phase 5 (2026-09-12, docs/teacher-recoverable-filter.md): failure states
+# of the king that the TEACHER recovers from. ops/recoverable (PR #13)
+# replays the king's prefix in a fresh container and lets the teacher
+# continue; a state is admitted when the teacher solved the task from
+# there AND its first action differs from the king's. Any state kind (loop
+# onset, pivot). Teacher recovery is only 23-28 % on agent harnesses, so
+# this is a GROUP, not a filter: king_loop_onset / king_pivot keep every
+# state, and a state admitted here leaves them (recoverable wins). Rows
+# from `<digest>.jsonl` under side_table_dir (written by the recoverable
+# pipeline). Leak rule waived like the other king groups. Strata
+# `king_recoverable:NNNN` = sha256(instance_id) % buckets. readmit_published:
+# states already in D under king_fail / king_loop_onset / king_pivot are
+# retired there and readmitted here in the same run (chunks untouched).
+# exclude_sources as for every king group (phase 3): the side-table is 88 %
+# wiki states (534 of 607 admits) -- drop the exclusion to let them in.
+strata_buckets = 2000
+policy_prefix = "king_"
+side_table_dir = "affine/state/recoverable"
+exclude_sources = ["affine_wiki", "affine_agent", "affine_math"]
 readmit_published = true
 
 [completion]

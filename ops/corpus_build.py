@@ -231,13 +231,15 @@ def load_king_fail() -> dict:
 # Turn-routed fold groups (2026-09-11, data events): derive_chunk splits
 # single turns of a rollout off into a second record of the same rollout
 # with `fold_group` set and a bucketed stratum `<group>:NNNN`. Precedence
-# when one turn qualifies for several: king_pivot > king_loop_onset >
-# completion (a turn can only be one of them by construction: the first two
-# need a FAILED king rollout, completion a SOLVED one).
+# when one turn qualifies for several: king_recoverable > king_pivot >
+# king_loop_onset > completion (completion needs a SOLVED rollout, the king
+# groups a FAILED one, so only the king groups can overlap).
 KING_LOOP_GROUP = "king_loop_onset"
 KING_PIVOT_GROUP = "king_pivot"
+KING_RECOVERABLE_GROUP = "king_recoverable"
 COMPLETION_GROUP = "completion"
-ROUTED_GROUPS = (KING_PIVOT_GROUP, KING_LOOP_GROUP, COMPLETION_GROUP)
+# Precedence order when one turn qualifies for several.
+ROUTED_GROUPS = (KING_RECOVERABLE_GROUP, KING_PIVOT_GROUP, KING_LOOP_GROUP, COMPLETION_GROUP)
 
 
 def _group_cfg(group: str) -> dict:
@@ -265,24 +267,13 @@ def load_king_loop_onset() -> dict:
     return cfg
 
 
-def load_king_pivot() -> dict:
-    """[king_pivot]: the turns an LLM judge marked as the decision point of
-    a failed king rollout (ops/king-review, PR #8). Rows come from the
-    per-king side-tables under `side_table_dir` (`<digest>.jsonl`, one JSON
-    line per (rollout_id, turn_idx)); only `admit == true` rows at or above
-    `min_confidence` and outside `exclude_categories` route. Every table in
-    the directory is read: an earlier king's pivots stay valid states. The
-    leak rule is waived as for king_loop_onset. `table` =
-    {rollout_id: {turn_idx: row}}."""
-    cfg = _group_cfg(KING_PIVOT_GROUP)
-    if not cfg:
-        return {}
+def _load_side_table(cfg: dict, *, default_dir: str, row_ok) -> dict:
+    """Per-king side-tables `<digest>.jsonl` under `side_table_dir`: one JSON
+    line per (rollout_id, turn_idx); rows passing `row_ok` become
+    `table[rollout_id][turn_idx]`. Every table in the directory is read:
+    an earlier king's states stay valid prefixes."""
     raw = cfg["raw"]
-    cfg["policy_prefix"] = cfg["policy_prefix"] or "king_"
-    cfg["leak_exempt"] = True
-    excluded = {str(c) for c in (raw.get("exclude_categories") or [])}
-    min_conf = float(raw.get("min_confidence", 0.7))
-    side_dir = REPO / str(raw.get("side_table_dir") or "affine/state/king_pivots")
+    side_dir = REPO / str(raw.get("side_table_dir") or default_dir)
     table: dict[str, dict[int, dict]] = {}
     n_rows = n_files = 0
     for path in sorted(side_dir.glob("*.jsonl")) if side_dir.is_dir() else []:
@@ -292,15 +283,45 @@ def load_king_pivot() -> dict:
                 continue
             row = json.loads(line)
             n_rows += 1
-            if not row.get("admit") or str(row.get("failure_category")) in excluded:
-                continue
-            if float(row.get("confidence") or 0) < min_conf:
-                continue
-            table.setdefault(str(row["rollout_id"]), {})[int(row["turn_idx"])] = row
+            if row_ok(row):
+                table.setdefault(str(row["rollout_id"]), {})[int(row["turn_idx"])] = row
     cfg.update(table=table, side_table_dir=str(side_dir), n_files=n_files,
-               n_rows=n_rows,
+               n_rows=n_rows, leak_exempt=True,
+               policy_prefix=cfg["policy_prefix"] or "king_",
                readmit_published=bool(raw.get("readmit_published", False)))
     return cfg
+
+
+def load_king_pivot() -> dict:
+    """[king_pivot]: the turns an LLM judge marked as the decision point of
+    a failed king rollout (ops/king-review, PR #8). Routed: `admit == true`
+    at or above `min_confidence`, category not excluded. Leak rule waived
+    as for king_loop_onset."""
+    cfg = _group_cfg(KING_PIVOT_GROUP)
+    if not cfg:
+        return {}
+    raw = cfg["raw"]
+    excluded = {str(c) for c in (raw.get("exclude_categories") or [])}
+    min_conf = float(raw.get("min_confidence", 0.7))
+    return _load_side_table(
+        cfg, default_dir="affine/state/king_pivots",
+        row_ok=lambda row: (bool(row.get("admit"))
+                            and str(row.get("failure_category")) not in excluded
+                            and float(row.get("confidence") or 0) >= min_conf))
+
+
+def load_king_recoverable() -> dict:
+    """[king_recoverable] (phase 5, 2026-09-12): failure states of the king
+    the TEACHER recovers from -- ops/recoverable (PR #13) replays the king's
+    prefix and lets the teacher continue; `admit` = teacher solved from the
+    state AND its first action differs from the king's. Any state kind
+    (loop onset, pivot). Wins over king_pivot / king_loop_onset for the same
+    turn. Leak rule waived as for the other king groups."""
+    cfg = _group_cfg(KING_RECOVERABLE_GROUP)
+    if not cfg:
+        return {}
+    return _load_side_table(cfg, default_dir="affine/state/recoverable",
+                            row_ok=lambda row: bool(row.get("admit")))
 
 
 def load_completion() -> dict:
@@ -334,15 +355,19 @@ def king_loop_candidate(env: dict, cfg: dict) -> bool:
     return _policy_ok(env, cfg) and rollout_outcome(env["trace"]) == "failed"
 
 
-def king_pivot_turns(env: dict, cfg: dict) -> dict[int, dict]:
-    """Admitted pivot rows for this rollout, {turn_idx: row}; {} when the
-    rollout has none or is not a failed king rollout."""
-    if not _policy_ok(env, cfg):
+def side_table_turns(env: dict, cfg: dict) -> dict[int, dict]:
+    """Admitted side-table rows for this rollout, {turn_idx: row}; {} when
+    the rollout has none or is not a failed king rollout of an admitted
+    source (king_pivot, king_recoverable)."""
+    if not cfg or not _policy_ok(env, cfg):
         return {}
     rows = cfg["table"].get(str(env.get("rollout_id") or ""))
     if not rows or rollout_outcome(env["trace"]) != "failed":
         return {}
     return dict(rows)
+
+
+king_pivot_turns = side_table_turns
 
 
 def completion_candidate(env: dict, cfg: dict) -> bool:
@@ -741,6 +766,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                  king_loop: dict | None = None,
                  king_pivot: dict | None = None,
                  completion: dict | None = None,
+                 king_recoverable: dict | None = None,
                  notes: dict[str, int] | None = None) -> list[dict]:
     """View records for one trace chunk, with only the turns that pass the
     fold contract and are not yet published. Records with no surviving
@@ -769,7 +795,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
     exempt)."""
     notes = notes if notes is not None else {}
     cfgs = {KING_LOOP_GROUP: king_loop, KING_PIVOT_GROUP: king_pivot,
-            COMPLETION_GROUP: completion}
+            COMPLETION_GROUP: completion, KING_RECOVERABLE_GROUP: king_recoverable}
     out: list[dict] = []
     for env in iter_jsonl_gz(path):
         convs = None
@@ -778,7 +804,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         in_loop: set[int] = set()
         kind = (env.get("policy") or {}).get("action_kind") or "bash"
         want_loop = bool(king_loop) and king_loop_candidate(env, king_loop)
-        pivots = king_pivot_turns(env, king_pivot) if king_pivot else {}
+        pivots = side_table_turns(env, king_pivot) if king_pivot else {}
+        recoverable = side_table_turns(env, king_recoverable) if king_recoverable else {}
         want_completion = bool(completion) and completion_candidate(env, completion)
         if want_loop or want_completion:
             try:
@@ -826,6 +853,18 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                     "confidence": row.get("confidence"),
                     "judge": row.get("judge_model"),
                     "prompt_hash": row.get("prompt_hash")}}
+        if recoverable:
+            _count(notes, "king_recoverable_rollouts")
+            for i, row in recoverable.items():
+                if route.get(i) in (KING_LOOP_GROUP, KING_PIVOT_GROUP):
+                    _count(notes, f"king_recoverable_over_{route[i]}")
+                route[i] = KING_RECOVERABLE_GROUP
+                in_loop.discard(i)
+                extra[i] = {"recoverable": {
+                    "state_kind": row.get("state_kind"),
+                    "teacher_turns": row.get("teacher_turns"),
+                    "teacher_first_action_kind": row.get("teacher_first_action_kind"),
+                    "timestamp": row.get("timestamp")}}
         leak_exempt = frozenset(i for i, g in route.items() if cfgs[g]["leak_exempt"])
         try:
             rec = build_view_record(env, baker=baker,
@@ -1082,34 +1121,40 @@ def math_retire_plan(pub: PublicCorpus, live: dict | None, cfg: dict,
     return retire, surviving, retired_strata - surviving
 
 
-def pivot_readmit_plan(pub: PublicCorpus, live: dict | None, cfg: dict
-                       ) -> tuple[list[str], set[str], set[str]]:
-    """Retire-and-readmit (2026-09-12): admitted pivot turns that were
-    published under `king_fail:*` before the judge saw them. Returns (turn
-    ids to retire from the index, surviving king_fail strata, king_fail
-    strata lost). The caller removes those ids from `published` and
-    re-derives their chunks so derive_chunk readmits them as `king_pivot`;
-    a turn that is not readmitted in the same run stays in king_fail (its
-    id is dropped from the retire list). Pivots already under
-    `king_loop_onset:*` are left where they are."""
+def readmit_plan(pub: PublicCorpus, live: dict | None, cfg: dict,
+                 from_groups: tuple[str, ...]) -> dict[str, list[str]]:
+    """Retire-and-readmit (2026-09-12): side-table turns already published
+    under one of `from_groups` (`<group>:*` strata). Returns
+    {from_group: [turn ids]}. The caller removes those ids from `published`
+    and re-derives their chunks so derive_chunk readmits them under the
+    side-table's group; a turn not readmitted in the same run stays where
+    it is (its id is dropped from the retire list)."""
     admitted = {str(row.get("turn_id") or "")
                 for rows in cfg["table"].values() for row in rows.values()}
     table = index_table(pub, live, ["turn_id", "stratum"])
+    plan: dict[str, list[str]] = {g: [] for g in from_groups}
     if table is None:
-        return [], set(), set()
-    retire: list[str] = []
-    surviving: set[str] = set()
-    lost: set[str] = set()
+        return plan
     for tid, stratum in zip(table.column("turn_id").to_pylist(),
                             table.column("stratum").to_pylist()):
-        if not str(stratum).startswith("king_fail:"):
-            continue
-        if tid in admitted:
-            retire.append(tid)
-            lost.add(stratum)
-        else:
-            surviving.add(stratum)
-    return retire, surviving, lost - surviving
+        ns = str(stratum).split(":")[0]
+        if ns in plan and tid in admitted:
+            plan[ns].append(tid)
+    return plan
+
+
+def strata_after_retire(pub: PublicCorpus, live: dict | None, group: str,
+                        retire: set[str]) -> set[str]:
+    """Strata of `group:*` index rows that keep at least one turn."""
+    table = index_table(pub, live, ["turn_id", "stratum"])
+    out: set[str] = set()
+    if table is None:
+        return out
+    for tid, stratum in zip(table.column("turn_id").to_pylist(),
+                            table.column("stratum").to_pylist()):
+        if str(stratum).startswith(f"{group}:") and tid not in retire:
+            out.add(stratum)
+    return out
 
 
 # -- composition guard ----------------------------------------------------------
@@ -1484,6 +1529,7 @@ def main() -> None:
     mix, src2grp, lang_mix, buckets = load_mix(ignore_fold_mix=args.ignore_fold_mix)
     routed = {KING_LOOP_GROUP: load_king_loop_onset(),
               KING_PIVOT_GROUP: load_king_pivot(),
+              KING_RECOVERABLE_GROUP: load_king_recoverable(),
               COMPLETION_GROUP: load_completion()}
     for g, cfg in routed.items():
         if cfg and mix.get(g, 0.0) <= 0:
@@ -1491,8 +1537,9 @@ def main() -> None:
             fatal(f"[{g}] is configured but the fold mix has no {g} share")
         shown = {k: v for k, v in (cfg or {}).items() if k not in ("raw", "table")}
         log(f"{g}: {'off' if not cfg else shown}")
-    king_loop, king_pivot, completion = (routed[g] for g in
-                                         (KING_LOOP_GROUP, KING_PIVOT_GROUP, COMPLETION_GROUP))
+    king_loop, king_pivot, completion, king_recoverable = (
+        routed[g] for g in (KING_LOOP_GROUP, KING_PIVOT_GROUP, COMPLETION_GROUP,
+                            KING_RECOVERABLE_GROUP))
     if completion:
         # A group the fold mix holds at 0 contributes nothing to D -- not
         # even its finals (env wave 1: `general` = 0.0 until the operator
@@ -1501,21 +1548,24 @@ def main() -> None:
         completion["exclude_sources"] = completion["exclude_sources"] | zero
         log(f"{COMPLETION_GROUP}: excluding sources {sorted(completion['exclude_sources'])} "
             f"(config + zero-share groups); min_replies {completion['min_replies']}")
-    if king_pivot:
-        log(f"{KING_PIVOT_GROUP}: {king_pivot['n_rows']} side-table rows in "
-            f"{king_pivot['n_files']} file(s) -> admitted pivots on "
-            f"{len(king_pivot['table'])} rollouts / "
-            f"{sum(len(v) for v in king_pivot['table'].values())} turns")
+    for g, cfg in ((KING_PIVOT_GROUP, king_pivot), (KING_RECOVERABLE_GROUP, king_recoverable)):
+        if cfg:
+            log(f"{g}: {cfg['n_rows']} side-table rows in {cfg['n_files']} file(s) -> "
+                f"admitted on {len(cfg['table'])} rollouts / "
+                f"{sum(len(v) for v in cfg['table'].values())} turns")
 
-    pivot_retire: list[str] = []
-    kf_surviving: set[str] = set()
-    kf_lost: set[str] = set()
-    if king_pivot and king_pivot.get("readmit_published"):
-        pivot_retire, kf_surviving, kf_lost = pivot_readmit_plan(pub, live, king_pivot)
-        log(f"{KING_PIVOT_GROUP}: readmit -- {len(pivot_retire)} admitted pivot turns are "
-            f"published under king_fail; unpublishing them for this run "
-            f"({len(kf_lost)} king_fail strata would empty)")
-        published -= set(pivot_retire)
+    # Retire-and-readmit plans: side-table groups whose turns were published
+    # under another king group before the side-table existed.
+    readmit_from = {KING_PIVOT_GROUP: ("king_fail",),
+                    KING_RECOVERABLE_GROUP: ("king_fail", KING_LOOP_GROUP, KING_PIVOT_GROUP)}
+    readmits: dict[str, dict[str, list[str]]] = {}
+    for g, cfg in ((KING_PIVOT_GROUP, king_pivot), (KING_RECOVERABLE_GROUP, king_recoverable)):
+        if cfg and cfg.get("readmit_published"):
+            readmits[g] = readmit_plan(pub, live, cfg, readmit_from[g])
+            ids = {t for v in readmits[g].values() for t in v}
+            log(f"{g}: readmit -- {len(ids)} admitted turns are published under "
+                f"{ {k: len(v) for k, v in readmits[g].items()} }; unpublishing them for this run")
+            published -= ids
 
     baker = ToolBaker.from_pretrained()
     panel = panel_keys()
@@ -1526,7 +1576,8 @@ def main() -> None:
         path = pub.cached(c["key"], c["sha256"], gz_sha=True)
         recs = derive_chunk(path, baker, panel, allowed, published, drops,
                             king_loop=king_loop, king_pivot=king_pivot,
-                            completion=completion, notes=notes)
+                            completion=completion, king_recoverable=king_recoverable,
+                            notes=notes)
         for rec in recs:
             for m in rec["turns"]:
                 published.add(f"{rec['traj_id']}:{m['turn_idx']}")
@@ -1551,6 +1602,13 @@ def main() -> None:
             f"{notes.get(f'{KING_PIVOT_GROUP}_already_published', 0)} already published "
             f"(stay in their current group); {notes.get('king_pivot_over_onset', 0)} "
             f"took precedence over an onset")
+    if king_recoverable:
+        log(f"king recoverable: {notes.get('king_recoverable_rollouts', 0)} rollouts with admitted "
+            f"states seen; admitted {notes.get(f'{KING_RECOVERABLE_GROUP}_leak_exempt', 0)} "
+            f"leak-exempt + {notes.get(f'{KING_RECOVERABLE_GROUP}_not_leaking', 0)} not leaking; "
+            f"{notes.get(f'{KING_RECOVERABLE_GROUP}_already_published', 0)} already published; "
+            f"took precedence over onset {notes.get(f'king_recoverable_over_{KING_LOOP_GROUP}', 0)} / "
+            f"pivot {notes.get(f'king_recoverable_over_{KING_PIVOT_GROUP}', 0)}")
     if completion:
         kinds = {k[len('completion_kind_'):]: v for k, v in notes.items()
                  if k.startswith('completion_kind_')}
@@ -1620,33 +1678,26 @@ def main() -> None:
         log(f"routed groups: dropped {n_before - len(candidates)} carryover records "
             f"from excluded sources")
     stamped = stamp_routed_groups(candidates, routed)
-    if pivot_retire:
+    extra_retire: dict[str, set[str]] = {}   # from_group -> retired ids
+    for g, plan in readmits.items():
         readmitted = {f"{r['traj_id']}:{m['turn_idx']}" for r in candidates
-                      if r.get("fold_group") == KING_PIVOT_GROUP for m in r["turns"]}
-        missing = [t for t in pivot_retire if t not in readmitted]
-        if missing:
-            # Not re-derived in this run (chunk not listed) or refused: keep
-            # them in king_fail rather than lose them; redo the strata math.
-            log(f"{KING_PIVOT_GROUP}: {len(missing)} retire candidates were not readmitted "
-                f"as king_pivot in this run -> they stay in king_fail")
-            pivot_retire = [t for t in pivot_retire if t in readmitted]
-            rs = set(pivot_retire)
-            table = index_table(pub, live, ["turn_id", "stratum"])
-            kf_surviving, lost = set(), set()
-            for tid, stratum in zip(table.column("turn_id").to_pylist(),
-                                    table.column("stratum").to_pylist()):
-                if str(stratum).startswith("king_fail:"):
-                    (lost if tid in rs else kf_surviving).add(stratum)
-            kf_lost = lost - kf_surviving
-        log(f"{KING_PIVOT_GROUP}: retiring {len(pivot_retire)} king_fail index rows, "
-            f"readmitted as king_pivot; king_fail strata {len(kf_surviving)} survive, "
-            f"{len(kf_lost)} empty")
-    for g in ROUTED_GROUPS:
-        if not routed[g]:
-            continue
-        recs_g = [r for r in candidates if r.get("fold_group") == g]
-        log(f"{g}: {stamped.get(g, 0)} records ({sum(len(r['turns']) for r in recs_g)} "
-            f"turns, {len({r['stratum'] for r in recs_g})} strata)")
+                      if r.get("fold_group") == g for m in r["turns"]}
+        n_missing = 0
+        for src_g, ids in plan.items():
+            kept = [t for t in ids if t in readmitted]
+            n_missing += len(ids) - len(kept)
+            extra_retire.setdefault(src_g, set()).update(kept)
+        if n_missing:
+            log(f"{g}: {n_missing} retire candidates were not readmitted in this run "
+                f"-> they stay where they are")
+        log(f"{g}: retiring {sum(len([t for t in ids if t in readmitted]) for ids in plan.values())} "
+            f"index rows, readmitted as {g}")
+    retire_surviving: dict[str, set[str]] = {}
+    for src_g, ids in extra_retire.items():
+        if ids:
+            retire_surviving[src_g] = strata_after_retire(pub, live, src_g, ids)
+            log(f"{src_g}: {len(retire_surviving[src_g])} strata survive the retirement")
+    pivot_retire = sorted(set().union(*extra_retire.values())) if extra_retire else []
     if not state.get("mix_seeded"):
         state["mix_seeded"] = True
         # Mix state is the set of slice strata each group / language bucket
@@ -1694,8 +1745,8 @@ def main() -> None:
     if retire_ids:
         # The retired math strata are gone from D; the cap sees what survives.
         have_groups[src2grp.get(math_cfg["source"], DEFAULT_GROUP)] = set(math_surviving)
-    if pivot_retire:
-        have_groups["king_fail"] = set(kf_surviving)
+    for src_g, surv in retire_surviving.items():
+        have_groups[src_g] = set(surv)
     budgets = {g: catchup_budget(state.get("group_strata") or {}, g)
                for g, v in mix.items() if v > 0}
     selected, deferred, group_added = cap_fill(
@@ -1726,8 +1777,8 @@ def main() -> None:
     if retire_ids:
         mg = src2grp.get(math_cfg["source"], DEFAULT_GROUP)
         after[mg] = len(math_surviving)
-    if pivot_retire:
-        after["king_fail"] = len(kf_surviving)
+    for src_g, surv in retire_surviving.items():
+        after[src_g] = len(surv)
     for g, keys in group_added.items():
         after[g] = after.get(g, 0) + len(keys)
     rows = composition_table(before, after)
@@ -1787,7 +1838,7 @@ def main() -> None:
         "group_strata_after_retire": {
             **({src2grp.get(math_cfg["source"], DEFAULT_GROUP): sorted(math_surviving)}
                if retire_ids else {}),
-            **({"king_fail": sorted(kf_surviving)} if pivot_retire else {}),
+            **{src_g: sorted(surv) for src_g, surv in retire_surviving.items()},
         },
     }
     save_state(state)
