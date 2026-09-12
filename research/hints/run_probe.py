@@ -269,11 +269,17 @@ async def main_async(args) -> None:
     rng = random.Random(args.seed)
     rng.shuffle(turns)
     turns = [t for t in turns if t["turn_id"] not in done]
+    if args.shard:
+        i, n = (int(x) for x in args.shard.split("/"))
+        turns = [t for k, t in enumerate(sorted(turns, key=lambda t: t["turn_id"])) if k % n == i]
+        rng.shuffle(turns)
     if args.limit:
         turns = turns[: args.limit]
     hints = load_hints(Path(args.hints)) if args.hints else {}
     cond_names = args.conditions.split(",")
-    boxes = load_boxes(Path(args.pods_state), concurrency=args.box_conc)
+    boxes = load_boxes(Path(args.pods_state), concurrency=args.box_conc,
+                       only=set(args.boxes.split(",")) if args.boxes else None,
+                       local=os.environ.get("HINTS_LOCAL_BOX"))
     king = load_king(Path(args.king_tok_dir)) if args.king else None
     log(f"{len(turns)} turns to do ({len(done)} done), boxes={[b.name for b in boxes]}, "
         f"king={'yes' if king else 'no'}, conditions={cond_names}, hints={len(hints)}")
@@ -311,6 +317,8 @@ def main() -> None:
     ap.add_argument("--king-tok-dir", default=os.environ.get("HINTS_KING_TOK", "/tmp/hints-data/king_tok"))
     ap.add_argument("--pods-state", default=os.environ.get("HINTS_PODS_STATE", "/tmp/hints-secrets/pods.json"))
     ap.add_argument("--retry-failed", action="store_true")
+    ap.add_argument("--shard", default="", help="i/n: take every n-th turn (sorted by id) starting at i")
+    ap.add_argument("--boxes", default="", help="comma list of pod names to use (default: all ready)")
     args = ap.parse_args()
     asyncio.run(main_async(args))
 

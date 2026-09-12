@@ -89,13 +89,21 @@ class Box:
         await self.http.aclose()
 
 
-def load_boxes(state_json: Path, concurrency: int = 48) -> list[Box]:
+def load_boxes(state_json: Path, concurrency: int = 48, only: set[str] | None = None,
+               local: str | None = None) -> list[Box]:
+    """Teacher boxes from pods.json. `local` = the name of the pod this
+    process runs ON: its engine is reached over loopback (the public path
+    between the agent VM and Lium boxes silently drops long responses)."""
     st = json.loads(Path(state_json).read_text())
     boxes = []
     for name, mem in st["pods"].items():
+        if only and name not in only:
+            continue
         if mem.get("base_url") and mem.get("ready_at"):
-            boxes.append(Box(name, mem["base_url"], mem["key"], TEACHER_REPO,
-                             concurrency=concurrency))
+            base = mem["base_url"]
+            if local and name == local:
+                base = f"http://127.0.0.1:{mem['internal_port']}/v1"
+            boxes.append(Box(name, base, mem["key"], TEACHER_REPO, concurrency=concurrency))
     if not boxes:
         raise SystemExit("no ready teacher box in pods.json")
     return boxes
