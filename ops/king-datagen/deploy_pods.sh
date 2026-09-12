@@ -49,7 +49,10 @@ RESEARCH_ENVS=(reasoning/i3_logic_v1 knowledge/triviaqa_v1 if/ifeval_v1 science/
                long_context/patterned_needle_in_haystack_v1 reasoning/wikispeedia_v1
                terminal/tmax_v1 long_context/longcot_v1 tool_use/enterprise_ops_gym_v1
                lean/numina_v1 tool_use/automationbench_v1 reasoning/uuid_ctf_v1)
-ENV_EXTRA_DEPS=(immutabledict langdetect markdown)
+# longcot's package imports its verifiers (rdkit / chess / sympy) at import
+# time; the catalog listing avoids the import, but the taskset's own
+# `load_questions` needs them on the host, so they are installed by name.
+ENV_EXTRA_DEPS=(immutabledict langdetect markdown rdkit chess sympy mpmath pyyaml)
 # Git-hosted data packages two bases import at load time (longcot: bundled
 # question JSON; automation-bench: task builders + rubric). ALWAYS --no-deps:
 # on 2026-09-12 a plain install of automation-bench on datagen-4 replaced the

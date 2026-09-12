@@ -1071,19 +1071,30 @@ def build_tmax_catalog(cfg: RolloutsConfig, src: Source) -> dict:
 
 
 # -- longcot (env wave 2): the questions ship as JSON inside the `longcot`
-# git package, which lives in the pod's VERIFIERS env only (a git dependency
-# of longcot_v1). The rollouts venv enumerates them through that interpreter
-# in a subprocess; names = question ids (affine_longcot_v1 `tasks`).
+# git package (`data/<domain>/<difficulty>.json`), which lives in the pod's
+# VERIFIERS env only. The listing runs through that interpreter but reads
+# the JSON files by path - `import longcot` would pull rdkit / chess / sympy
+# (its verifier deps), and a missing one took both production supervisors
+# into a 45-min crash loop on 2026-09-12 (catalog build at start-up).
 LONGCOT_LIST = r"""
-import json, sys
-from longcot import load_questions
+import importlib.util, json, pathlib, sys
+spec = importlib.util.find_spec("longcot")
+root = pathlib.Path(spec.submodule_search_locations[0]) / "data"
 out = []
 for domain in ("logic", "cs", "chemistry", "chess", "math"):
     for difficulty in ("medium", "hard"):
-        for q in load_questions(domain=domain, difficulty=difficulty):
-            out.append({"question_id": q.question_id, "domain": domain,
-                        "difficulty": difficulty,
-                        "template": str((q.problem or {}).get("template", ""))})
+        path = root / domain / f"{difficulty}.json"
+        if not path.is_file():
+            continue
+        data = json.loads(path.read_text())
+        rows = data if isinstance(data, list) else data.get("questions") or data.get("data") or []
+        for q in rows:
+            qid = q.get("question_id") or q.get("id")
+            if not qid:
+                continue
+            problem = q.get("problem") or {}
+            out.append({"question_id": qid, "domain": domain, "difficulty": difficulty,
+                        "template": str(problem.get("template", "") if isinstance(problem, dict) else "")})
 json.dump(out, sys.stdout)
 """
 

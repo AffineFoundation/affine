@@ -85,6 +85,21 @@ def ordered_rows(cfg: RolloutsConfig, name: str,
     return rows
 
 
+def load_catalog_or_empty(cfg: RolloutsConfig, src) -> list[dict]:
+    """A STAGED source (share 0) whose catalog cannot be built must not take
+    the supervisor down: on 2026-09-12 the longcot listing failed on a
+    missing verifier dependency and both production supervisors crash-looped
+    for 45 min at start-up. Live sources still fail loudly."""
+    try:
+        return load_catalog(cfg, src)
+    except Exception:
+        if src.share > 0:
+            raise
+        log.error("catalog for staged source %s failed; pool left empty",
+                  src.name, exc_info=True)
+        return []
+
+
 def _outcome(row: dict) -> str:
     if row.get("error"):
         return "error"
@@ -262,7 +277,7 @@ def main() -> None:
              cfg.batch_size, cfg.max_containers, cfg.shard[0], cfg.shard[1],
              cfg.r2_bucket, cfg.r2_prefix)
 
-    pools = {name: ordered_rows(cfg, name, load_catalog(cfg, src))
+    pools = {name: ordered_rows(cfg, name, load_catalog_or_empty(cfg, src))
              for name, src in registry.sources.items()}
     for name, rows in pools.items():
         log.info("source %s: %d selectable tasks (%d processed by some "
