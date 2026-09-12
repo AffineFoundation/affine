@@ -470,8 +470,9 @@ key_env = "KING_KEY"
 # Harness `null` again, but the action is the WHOLE visible reply
 # (affine/dialects.py `text`: no system marker; admitted since wvk 13).
 # For the single-turn chat sources (affine_logic / trivia / ifeval /
-# unscramble) the reply IS the answer. Teacher only for now — the king
-# seat follows the first fold read (teacher-first rule).
+# unscramble) the reply IS the answer. Teacher first (2026-09-11); the
+# king seat (king_text below) joined 2026-09-12 once the teacher's first
+# batches had landed on every wave-1 source (data plan W3, part A).
 [policy.teacher_text]
 harness = "null"
 action_kind = "text"
@@ -487,3 +488,25 @@ name = "engy"
 model = "qwen3.8-27b"
 base_url = "https://api.engy.ai/v1"
 key_env = "ENGY"
+
+# The king on the `text` sources (2026-09-12, data plan W3 part A): same
+# null harness / whole-visible-reply action as teacher_text, routed to the
+# served king like every other king_* policy (share 2.0 = the king seat's
+# share since 2026-09-11; loop guard on by the king_ default). The seat
+# scheduler replays the teacher's tasks, so every king_text rollout has a
+# teacher baseline on the same prompt (kings.affine.io king-vs-teacher).
+[policy.king_text]
+harness = "null"
+action_kind = "text"
+share = 2.0
+[policy.king_text.sampling]
+temperature = 0.8
+# Runaway guard as king_boxed / king_toolcall: the king box serves 262k
+# context and the null harness sets no cap; a chat reply past 16k tokens
+# has no answer worth grading.
+max_tokens = 16384
+[[policy.king_text.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"

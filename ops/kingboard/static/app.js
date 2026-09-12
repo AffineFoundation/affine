@@ -3,7 +3,7 @@
   "use strict";
 
   const REFRESH_S = 60;
-  const GROUP_ORDER = ["coding", "terminal", "math", "tool_use", "nl2repo", "agent", "other"];
+  const GROUP_ORDER = ["coding", "terminal", "math", "tool_use", "nl2repo", "general", "agent", "other"];
 
   const state = {
     stats: null,
