@@ -202,22 +202,41 @@ class NearMissWindowTests(unittest.TestCase):
 
 
 class ConfigTests(unittest.TestCase):
-    def test_shipped_toml_is_todays_contract(self):
+    def test_shipped_toml_is_the_live_contract(self):
+        """Pre-flip (wvk ≤ 14) the shipped toml is today's fixed δ. From the
+        wvk-15 flip (operator directive 2026-09-12 15:27 UTC) it is the
+        decaying margin: reset-to-cap, 48 h linear, block clock, "bar"
+        near-miss window, plus one tie safeguard (min_z or a δ floor of
+        half the cap). Either state must be exactly one of these two."""
         cfg = load_config(REPO / "affine.toml")
         d = cfg.duel
-        self.assertEqual(d.min_margin_mode, "fixed")
         self.assertEqual(d.min_margin, DEFAULT_MIN_MARGIN)
         self.assertEqual(d.min_margin_peak_cap, d.min_margin)
-        self.assertEqual(d.min_z, 0.0)
-        self.assertEqual(d.near_miss_window_mode, "absolute")
         sched = d.margin_schedule()
-        self.assertEqual(sched.effective(0.0001, 10**6), d.min_margin)
-        self.assertEqual(sched.next_peak(0.0), d.min_margin)
+        if d.min_margin_mode == "fixed":
+            self.assertLessEqual(cfg.weight_version_key, 14)
+            self.assertEqual(d.min_z, 0.0)
+            self.assertEqual(d.near_miss_window_mode, "absolute")
+            self.assertEqual(sched.effective(0.0001, 10**6), d.min_margin)
+            self.assertEqual(sched.next_peak(0.0), d.min_margin)
+            return
+        self.assertEqual(d.min_margin_mode, "decay")
+        self.assertGreaterEqual(cfg.weight_version_key, 15)
+        self.assertFalse(d.min_margin_double_on_crown)
+        self.assertEqual(d.min_margin_decay_hours, 48.0)
+        self.assertEqual(d.min_margin_decay_shape, "linear")
+        self.assertEqual(d.near_miss_window_mode, "bar")
+        self.assertTrue(d.min_z >= 2.5 or d.min_margin_floor >= 0.001,
+                        "wvk 15 ships with a tie safeguard: min_z ≥ 2.5 or floor ≥ 0.001")
+        self.assertEqual(sched.effective(None, 0), d.min_margin_peak_cap)
+        self.assertAlmostEqual(sched.effective(None, 48 * BLOCKS_PER_HOUR), d.min_margin_floor)
+        self.assertEqual(sched.next_peak(d.min_margin_floor), d.min_margin_peak_cap)
 
     def test_decay_knobs_parse_and_validate(self):
         src = (REPO / "affine.toml").read_text()
-        flipped = src.replace('min_margin_mode = "fixed"', 'min_margin_mode = "decay"')
-        self.assertNotEqual(src, flipped)
+        fixed = src.replace('min_margin_mode = "decay"', 'min_margin_mode = "fixed"')
+        flipped = fixed.replace('min_margin_mode = "fixed"', 'min_margin_mode = "decay"')
+        self.assertNotEqual(fixed, flipped)
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "affine.toml"
             p.write_text(flipped)
@@ -225,11 +244,16 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(d.margin_schedule().mode, "decay")
             self.assertAlmostEqual(d.margin_schedule().effective(
                 0.002, 48 * BLOCKS_PER_HOUR), d.min_margin_floor)
-            p.write_text(flipped.replace("min_margin_floor = 0.0001",
-                                         "min_margin_floor = 0.5"))
+            floor_line = f"min_margin_floor = {d.min_margin_floor:g}"
+            self.assertIn(floor_line, flipped)
+            p.write_text(flipped.replace(floor_line, "min_margin_floor = 0.5"))
             with self.assertRaises(ValueError):
                 load_config(p)
-            p.write_text(src.replace("min_z = 0.0", "min_z = -1"))
+            minz_line = f"min_z = {load_config(REPO / 'affine.toml').duel.min_z:g}"
+            if minz_line == "min_z = 0":
+                minz_line = "min_z = 0.0"
+            self.assertIn(minz_line, src)
+            p.write_text(src.replace(minz_line, "min_z = -1"))
             with self.assertRaises(ValueError):
                 load_config(p)
 
@@ -273,10 +297,13 @@ class ValidatorSideTests(unittest.TestCase):
     stub `self` (no chain, no wallet)."""
 
     def _stub(self, mode: str, block: int, min_z: float = 0.0) -> SimpleNamespace:
-        cfg = load_config(REPO / "affine.toml")
-        dcfg = cfg.duel
-        if mode == "decay" or min_z:
-            dcfg = replace(dcfg, min_margin_mode=mode, min_z=min_z)
+        # Pin the knobs these tests reason about, so they hold before and
+        # after the shipped toml flips to decay mode.
+        dcfg = replace(load_config(REPO / "affine.toml").duel,
+                       min_margin_mode=mode, min_z=min_z,
+                       min_margin_peak_cap=0.002, min_margin_floor=0.0001,
+                       min_margin_decay_hours=48.0, min_margin_decay_shape="linear",
+                       min_margin_double_on_crown=True, min_margin_double_factor=2.0)
         return SimpleNamespace(cfg=SimpleNamespace(duel=dcfg),
                                subtensor=SimpleNamespace(block=block))
 

@@ -1,0 +1,64 @@
+--- a/affine/affine.toml
++++ b/affine/affine.toml
+@@ -48,6 +48,17 @@
+ # 13→14 terminus_json dialect (2026-09-10): the Terminus 2 (terminal-bench
+ # agent) JSON command batch is a scored action (allowed_action_kinds +=
+ # terminus_json). min(R,G) math unchanged. Forward-only; reign stands.
++# 14→15 decaying crown margin (YYYY-MM-DD): δ is no longer a fixed 0.002.
++# At every crown δ resets to min_margin_peak_cap (0.002) and falls
++# linearly to min_margin_floor (0.001) over min_margin_decay_hours
++# (48 h), clocked in blocks since the crown block (decision block −
++# crown block; 12 s/block); it stays at the floor until the next crown.
++# The near-miss second slice triggers on (0.5·bar, 1.5·bar) of the
++# slice's own bar (near_miss_window_mode = "bar"). Crown formula
++# max(k_sigma·SE, δ) + gates and the min(R,G) math are unchanged. Every
++# verdict stamps duel_params.min_margin_effective / min_margin_mode /
++# crown_block / decision_block / blocks_since_crown. Forward-only; reign
++# stands; the sitting king's cycle is read from its reveal block.
+ #
+ # ############################################################################
+ # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
+@@ -55,7 +66,7 @@
+ # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
+ # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
+ # ############################################################################
+-weight_version_key = 14
++weight_version_key = 15
+ 
+ [wallet]
+ name = "default"
+@@ -459,7 +470,9 @@
+ # once min_margin_mode = "decay" (an absolute window around 0.002 would
+ # miss every near-miss once δ has decayed to 0.001). Sampling rule, no
+ # weight_version_key event on its own.
+-near_miss_window_mode = "absolute"
++# YYYY-MM-DD: "bar" — the second-slice window follows this slice's own
++# crown bar now that δ moves (drop-in at δ = 0.002; see above).
++near_miss_window_mode = "bar"
+ #
+ # Decaying crown margin (STAGED 2026-09-12, OFF). Operator request
+ # (2026-09-12): "the margin doubles every time there is a new king, then
+@@ -488,12 +501,20 @@
+ # research/docs or the operator doc before flipping: flipping the mode
+ # CHANGES WHICH MARGINS CROWN and is a weight_version_key event (explicit
+ # dated operator directive + community notice) — never an agent edit.
+-min_margin_mode = "fixed"
++# YYYY-MM-DD (weight_version_key 14→15, explicit dated operator directive
++# 2026-09-12 15:27 UTC, "reset-to-cap at each crown — let's do that and
++# launch this"): ON. δ resets to min_margin_peak_cap at every crown and
++# decays to min_margin_floor over min_margin_decay_hours, block-clocked.
++min_margin_mode = "decay"
+ min_margin_peak_cap = 0.002
+-min_margin_floor = 0.0001
++# YYYY-MM-DD (weight_version_key 14→15): floor = half the cap, the hard δ
++# floor that stands in for a minimum z ("the min Z of half the margin").
++min_margin_floor = 0.001
+ min_margin_decay_hours = 48.0
+ min_margin_decay_shape = "linear"
+-min_margin_double_on_crown = true
++# YYYY-MM-DD: false = reset to the cap at every crown (operator choice; the
++# literal doubling collapses to 2·floor after one full cycle).
++min_margin_double_on_crown = false
+ min_margin_double_factor = 2.0
+ # Minimum z = margin/SE a crown needs, independent of δ (staged 2026-09-12,
+ # 0 = off = today). The safeguard that pairs with a decaying δ: with δ near
