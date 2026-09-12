@@ -398,9 +398,56 @@ def cmd_summarize(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_retry(a: argparse.Namespace) -> int:
+    """Re-run the errored rollouts of finished cells in place (`eval @ <resolved>
+    --resume` re-runs only missing/errored rollouts), then re-summarize.
+    Infra hiccups (a proxy 502, a sandbox that never came up) otherwise count
+    as score 0 for that task."""
+    out = Path(a.out).expanduser() / a.run_id
+    verifiers_dir = Path(a.verifiers_dir).expanduser()
+    by_id = {e["id"]: e for e in SUITE["envs"]}
+    todo = []
+    for summ_path in sorted(out.glob("*/*/summary.json")):
+        s = json.loads(summ_path.read_text())
+        if int(s.get("n_errored") or 0) >= a.min_errors and (summ_path.parent / "configs/resolved/eval.json").exists():
+            todo.append((summ_path.parent, s))
+    log(f"{len(todo)} cells with errored rollouts")
+    threads = []
+    sem = threading.Semaphore(a.parallel)
+
+    def one(d: Path, s: dict) -> None:
+        with sem:
+            env = by_id[s["env"]]
+            cmd = [str(verifiers_dir / ".venv/bin/eval"), "@", str(d / "configs/resolved/eval.json"), "--resume"]
+            log(f"retry {d.parent.name}/{d.name}: {s['n_errored']} errored")
+            t0 = time.time()
+            with (d / "eval.log").open("a") as fh:
+                subprocess.run(cmd, cwd=str(verifiers_dir), stdout=fh, stderr=subprocess.STDOUT)
+            new = summarize_traces(d / "traces.jsonl", env["reward"])
+            s.update({k: new[k] for k in new})
+            s["wall_seconds"] = round(float(s.get("wall_seconds") or 0) + time.time() - t0, 1)
+            s["retried"] = int(s.get("retried") or 0) + 1
+            (d / "summary.json").write_text(json.dumps(s, indent=1))
+            log(f"retry done {d.parent.name}/{d.name}: n={s['n']} errored={s['n_errored']} score={s['score']}")
+
+    for d, s in todo:
+        th = threading.Thread(target=one, args=(d, s), daemon=True)
+        th.start()
+        threads.append(th)
+    for th in threads:
+        th.join()
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
+    rt = sub.add_parser("retry")
+    rt.add_argument("--run-id", required=True)
+    rt.add_argument("--out", required=True)
+    rt.add_argument("--verifiers-dir", required=True)
+    rt.add_argument("--min-errors", type=int, default=1)
+    rt.add_argument("--parallel", type=int, default=4)
     r = sub.add_parser("run")
     r.add_argument("--run-id", required=True)
     r.add_argument("--verifiers-dir", required=True)

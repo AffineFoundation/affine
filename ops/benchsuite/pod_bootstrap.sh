@@ -147,6 +147,7 @@ server_block() {  # listen upstream
 }
 {
   echo "worker_processes 4;
+worker_rlimit_nofile 65536;
 error_log /root/logs/nginx_error.log warn;
 events { worker_connections 4096; }
 http {"
