@@ -140,6 +140,19 @@ def trace_summary(trace: dict) -> dict:
     }
 
 
+def resolve_state_path(state: dict, states_file: Path) -> str:
+    """The state JSON: the recorded path when it exists, else the file of the
+    same name in `states/` next to states.jsonl (states built on the box,
+    shipped to a pod as a directory)."""
+    p = Path(state["path"])
+    if p.is_file():
+        return str(p)
+    local = states_file.parent / "states" / p.name
+    if local.is_file():
+        return str(local)
+    raise FileNotFoundError(f"state file for {state['state_id']} not found: {p} / {local}")
+
+
 def build_cmd(cfg, registry, state: dict, run_dir: Path, report_dir: Path) -> list[str]:
     source = registry.sources[state["source"]]
     kind = state["resume_kind"]
@@ -226,6 +239,9 @@ def main() -> None:
     ap.add_argument("--shard", default="0/1",
                     help="i/n: run only states with blake2b(state_id) %% n == i "
                          "(split the work across pods)")
+    ap.add_argument("--deadline-hours", type=float, default=0.0,
+                    help="start no new state after this many hours (0 = no "
+                         "deadline); states already running finish")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
@@ -246,6 +262,8 @@ def main() -> None:
     kinds = set(args.kinds.split(","))
     only = set(args.only.split(",")) if args.only else None
     states = [json.loads(l) for l in open(args.states, encoding="utf-8")]
+    for s in states:
+        s["path"] = resolve_state_path(s, args.states)
     shard_i, shard_n = (int(x) for x in args.shard.split("/"))
     states = [s for s in states if s["resume_kind"] in kinds
               and (only is None or s["state_id"] in only)
@@ -261,11 +279,16 @@ def main() -> None:
     todo = [s for s in states if s["state_id"] not in done]
     if args.limit:
         todo = todo[: args.limit]
-    log.info("%d states selected, %d done, %d to run, %d workers",
-             len(states), len(done), len(todo), args.workers)
+    log.info("%d states selected, %d done, %d to run, %d workers, deadline %s h",
+             len(states), len(done), len(todo), args.workers, args.deadline_hours or "none")
+    deadline = time.time() + args.deadline_hours * 3600 if args.deadline_hours else None
+    skipped = []
 
     def work(state: dict) -> None:
         sid = state["state_id"].replace(":", "_")
+        if deadline and time.time() > deadline:
+            skipped.append(state["state_id"])
+            return
         try:
             r = run_one(cfg, registry, state, args.out, env)
         except Exception as e:  # noqa: BLE001 - one state must not kill the batch
@@ -284,6 +307,8 @@ def main() -> None:
     try:
         with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
             list(ex.map(work, todo))
+        if skipped:
+            log.info("deadline reached: %d state(s) not started", len(skipped))
     finally:
         # Tags stay: another process on the pod may have started a container
         # from one of them; `--untag` at the very end removes them.

@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import os
 import re
 import sys
 import time
@@ -134,9 +135,16 @@ def main() -> None:
     ap.add_argument("--states", required=True, type=Path, nargs="+",
                     help="states.jsonl files (e.g. first onsets + pivots, later onsets)")
     ap.add_argument("--out", required=True, type=Path)
-    ap.add_argument("--side-table", required=True, type=Path)
+    ap.add_argument("--side-table", type=Path,
+                    help="directory: writes <digest12>.jsonl with this run's rows")
+    ap.add_argument("--merge-into", type=Path,
+                    help="existing side-table file: this run's rows replace rows "
+                         "with the same (rollout_id, turn_idx, state_kind), every "
+                         "other row is kept; rewritten atomically")
     ap.add_argument("--model", default="engy2/qwen3.8-27b")
     args = ap.parse_args()
+    if not args.side_table and not args.merge_into:
+        ap.error("one of --side-table / --merge-into is required")
 
     states: list[dict] = []
     seen: set[str] = set()
@@ -207,17 +215,43 @@ def main() -> None:
         rows.append(row)
 
     digest = digest12(next((s.get("king_model") for s in states if s.get("king_model")), ""))
-    args.side_table.mkdir(parents=True, exist_ok=True)
-    table_path = args.side_table / f"{digest}.jsonl"
-    with open(table_path, "w", encoding="utf-8") as f:
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    run_rows = rows
+    if args.merge_into:
+        merged = {}
+        if args.merge_into.is_file():
+            for line in args.merge_into.read_text(encoding="utf-8").split("\n"):
+                if line.strip():
+                    row = json.loads(line)
+                    merged[(row["rollout_id"], int(row["turn_idx"]), row["state_kind"])] = row
+        n_before = len(merged)
+        for row in run_rows:
+            merged[(row["rollout_id"], int(row["turn_idx"]), row["state_kind"])] = row
+        rows = list(merged.values())
+        args.merge_into.parent.mkdir(parents=True, exist_ok=True)
+        tmp = args.merge_into.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        os.chmod(tmp, 0o644)
+        tmp.replace(args.merge_into)
+        table_path = args.merge_into
+        print(f"merged {len(run_rows)} row(s) into {table_path}: {n_before} -> {len(rows)} rows")
+    else:
+        args.side_table.mkdir(parents=True, exist_ok=True)
+        table_path = args.side_table / f"{digest}.jsonl"
+        with open(table_path, "w", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
+    # Rate, stop, turn and wall-time tables cover the whole (merged) table;
+    # cost, tokens and replay fidelity come from this run's results only.
     ran = [r for r in rows if r["teacher_status"] != "not_run"]
     summary = {
         "king_digest12": digest, "generated_at": stamp, "model": args.model,
         "n_states": len(rows), "n_ran": len(ran),
         "n_admit": sum(1 for r in rows if r["admit"]),
+        "n_states_this_run": len(run_rows),
+        "n_admit_this_run": sum(1 for r in run_rows if r["admit"]),
         "cost_usd": round(cost, 2),
         "tokens": dict(tokens),
         "by_state_kind": rate_table(rows, lambda r: r["state_kind"]),
@@ -298,7 +332,8 @@ def main() -> None:
     }
     (args.out / "summary.json").write_text(json.dumps(summary, indent=1))
     md = [f"# Teacher-recoverable filter — king {digest}", "",
-          f"states {len(rows)}, ran {len(ran)}, admitted {summary['n_admit']}, "
+          f"states {len(rows)}, ran {len(ran)}, admitted {summary['n_admit']} "
+          f"(this run: {len(run_rows)} states, {summary['n_admit_this_run']} admitted), "
           f"teacher {args.model}, cost ${cost:.2f}, tokens {dict(tokens)}, "
           f"wall {summary['wall_time_total_h']} h", ""]
     for title, key in (("By state kind", "by_state_kind"), ("By harness", "by_harness"),
