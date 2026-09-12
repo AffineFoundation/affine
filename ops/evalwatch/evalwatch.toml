@@ -38,6 +38,6 @@ machines = ["eval_machine", "bench_machine", "chat_machine"]
 
 [discord]
 enabled = true
-channel_id = "1381987595881414656"            # same ops channel as kingctl / corpus_build
+channel_id = "1510910974498967613"            # private Arbos ops channel (operator directive 2026-09-12: no automated posts in the public SN120 channel)
 token_env = "DISCORD_BOT_TOKEN_ARBOS_BITTENSOR"  # ~/.affine-validator.env or the repo .env
 prefix = "[evalwatch]"
