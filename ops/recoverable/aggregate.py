@@ -35,6 +35,9 @@ sys.path.insert(0, str(REPO / "affine"))
 
 from affine import dialects  # noqa: E402
 
+sys.path.insert(0, str(HERE))
+from grade_wiki import undecided  # noqa: E402
+
 FOREIGN_FENCE_RE = re.compile(r"```mswea_bash_command[ \t]*\n")
 WS_RE = re.compile(r"\s+")
 DEPTH_BUCKETS = ((0, 10), (10, 20), (20, 40), (40, 81))
@@ -177,7 +180,7 @@ def main() -> None:
         ok = r.get("status") == "ok"
         if st["source"] == "affine_wiki":
             grade = r.get("wiki_grade")
-            if grade is None:
+            if grade is None or undecided(grade):
                 ok = False
             solved = bool(grade and grade.get("solved"))
             row.update(wiki_judge=(grade or {}).get("judge"),

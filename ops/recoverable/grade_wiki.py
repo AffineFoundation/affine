@@ -51,7 +51,7 @@ def judge(client: httpx.Client, key: str, question: str, gold: str, reply: str) 
     for attempt in range(4):
         try:
             r = client.post(f"{BASE_URL}/chat/completions", json=body,
-                            headers={"Authorization": f"Bearer {key}"}, timeout=120)
+                            headers={"Authorization": f"Bearer {key}"}, timeout=180)
             r.raise_for_status()
             text = (r.json()["choices"][0]["message"].get("content") or "").strip()
             tail = text.upper().split()
@@ -59,6 +59,11 @@ def judge(client: httpx.Client, key: str, question: str, gold: str, reply: str) 
                 return "correct"
             if "WRONG" in tail[-3:]:
                 return "wrong"
+            if not text and body["max_tokens"] < 8192:
+                # The model's reasoning ate the whole budget; the visible
+                # verdict never came. Once more with room.
+                body["max_tokens"] = 8192
+                continue
             return "unparsed:" + text[-80:]
         except (httpx.HTTPError, KeyError, ValueError) as e:
             if attempt == 3:
@@ -67,11 +72,20 @@ def judge(client: httpx.Client, key: str, question: str, gold: str, reply: str) 
     return "error"
 
 
+def undecided(grade: dict | None) -> bool:
+    """A grade whose judge call produced no verdict (empty / unparsed /
+    transport error) -- not a WRONG."""
+    j = (grade or {}).get("judge") or ""
+    return j.startswith("unparsed") or j.startswith("error")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--states", required=True, type=Path)
     ap.add_argument("--out", required=True, type=Path)
-    ap.add_argument("--force", action="store_true")
+    ap.add_argument("--force", action="store_true", help="re-grade every wiki result")
+    ap.add_argument("--redo-undecided", action="store_true",
+                    help="re-grade only results whose judge gave no verdict")
     args = ap.parse_args()
     key = os.environ.get("ENGY_2")
     if not key:
@@ -85,7 +99,8 @@ def main() -> None:
         st = states.get(r["state_id"])
         if not st or st["source"] != "affine_wiki" or r.get("status") != "ok":
             continue
-        if r.get("wiki_grade") and not args.force:
+        if r.get("wiki_grade") and not args.force \
+                and not (args.redo_undecided and undecided(r["wiki_grade"])):
             continue
         full = json.loads(Path(st["path"]).read_text(encoding="utf-8"))
         gold = str(st.get("task_answer") or full.get("task_answer") or "")
