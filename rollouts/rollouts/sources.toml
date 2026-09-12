@@ -750,8 +750,7 @@ share = 1.0
 # `lake env lean` compile with the statement intact. The upstream image is a
 # Prime TEAM image (not pullable outside Prime sandboxes); the image and the
 # Mathlib project path are set here to a public Docker Hub Mathlib build.
-# STAGED AT SHARE 0.0 until the probe confirms the statements compile against
-# that image's Mathlib (see the env-wave-2 report).
+# Live at half share since the 2026-09-12 probe (below).
 group = "general"
 runner = "verifiers"
 taskset_id = "affine-numina-v1"         # rollouts/envs/affine_numina_v1
@@ -766,9 +765,12 @@ extra_flags = ["--env.taskset.docker-image", "projectnumina/kimina-lean-server:2
                "--env.taskset.task.lean-project-path", "/mathlib4"]
 strata_buckets = 230
 strata_offset = 2200
-max_batch = 16
-max_concurrency = 8
-share = 0.0
+# Probe 2026-09-12 (datagen-2, bash, 8 tasks at 4 concurrent): 4/8 compiled, 185 kept
+# tool_call turns (232/274 completions under the ref cap), 6 agent_completed + 1 max_turns
+# + 1 errored, 22 min for the batch. Lean compiles are CPU-heavy: <= 6 at a time.
+max_batch = 12
+max_concurrency = 6
+share = 0.5
 
 [source.affine_sql]
 # Text-to-SQL over Spider train (7,000 questions / 146 sqlite databases,
@@ -868,7 +870,10 @@ strata_buckets = 340
 strata_offset = 2975
 max_batch = 24
 max_concurrency = 12
-share = 0.0
+# Probe 2026-09-12 (docker runtime, null harness, 12 at 6 concurrent): 8/12 solved,
+# 8 kept turns; 4 replies hit the 16k cap with no code; completions p50 9k tokens
+# (25 % under the duel ref cap - the logic / science caveat).
+share = 1.0
 
 [source.affine_i3math]
 # INTELLECT-3-RL math (train), \boxed{} + math-verify in the runtime; the
@@ -888,7 +893,10 @@ pass_dataset = false
 policies = ["teacher_boxed"]
 strata_buckets = 400
 strata_offset = 830
-share = 0.0
+# Probe 2026-09-12: 8/12 solved, 11 kept turns, completions p50 12.7k tokens
+# (1/12 under the duel ref cap) - hard problems; half share, same caveat as
+# affine_science.
+share = 0.5
 
 [source.affine_deshuffle]
 # deshuffle-papers (prime-envs c4d04dfe, vendored under rollouts/vendor):
@@ -908,12 +916,17 @@ strata_buckets = 115
 strata_offset = 3315
 max_batch = 16
 max_concurrency = 8
-share = 0.0
+# Probe 2026-09-12 (bash, 12 at 6 concurrent): 2/12 exact, 4/12 at ordering >= 0.9
+# (the wrapper's solved threshold), 64 kept tool_call turns (62/77 under the ref cap),
+# 8 of 12 final replies hit the completion cap while composing the permutation.
+# Rich shell trajectories on a long document; half share.
+share = 0.5
 
 [source.affine_rgym]
 # reasoning-gym (v1 port of primeintellect/reasoning-gym-env): ~100
-# procedural puzzle generators at curriculum level 3 (the teacher solved 6/6
-# at the library defaults). `text` dialect, answer in <answer> tags.
+# procedural puzzle generators at curriculum level 1 (the survey's teacher
+# solved 6/6 at the library defaults; levels 2-3 send half the replies to the
+# 16k cap - see the probe note). `text` dialect, answer in <answer> tags.
 group = "general"
 runner = "verifiers_chat"
 taskset_id = "affine-rgym-v1"           # rollouts/envs/affine_rgym_v1
@@ -921,10 +934,14 @@ catalog = "rgym"                        # generators x per_generator via the ver
 select = "tasks"
 pass_dataset = false
 policies = ["teacher_text"]
-extra_flags = ["--env.taskset.curriculum-level", "3", "--env.taskset.per-generator", "60"]
+extra_flags = ["--env.taskset.curriculum-level", "1", "--env.taskset.per-generator", "60"]
 strata_buckets = 230
 strata_offset = 3430
-share = 0.0
+# Probe 2026-09-12: level 3 -> 5/12 with 6 replies at the 16k cap, level 2 -> 6/12
+# with 5 at the cap (0 under the ref cap), level 1 -> 10/12, 11 kept turns, 6/12
+# under the ref cap, completions p50 1.8k. Level 1 ships; puzzle identity is
+# (generator, index, level) - do not change the level without a new pool.
+share = 1.0
 
 [source.affine_rcore]
 # reasoning-core (v1 port of sileod/reasoning-core-env, 15 stars): formally
@@ -941,7 +958,9 @@ policies = ["teacher_text"]
 extra_flags = ["--env.taskset.max-rows", "20000"]
 strata_buckets = 230
 strata_offset = 3660
-share = 0.0
+# Probe 2026-09-12: 9/12 solved, 11 kept turns, completions p50 1.4k tokens, 8/12
+# under the duel ref cap - the best-fitting chat source of the wave.
+share = 1.0
 
 [source.affine_pydantic]
 # pydantic-adherence (v1 port of primeintellect/pydantic-adherence): reply =
@@ -959,7 +978,9 @@ pass_dataset = false
 policies = ["teacher_text"]
 strata_buckets = 115
 strata_offset = 3890
-share = 0.0
+# Probe 2026-09-12 (after the forward-reference fix): 10/12 validated, 12 kept turns,
+# completions p50 2.3k tokens, 5/12 under the ref cap.
+share = 1.0
 
 [source.affine_verbatim]
 # verbatim-copy (prime-envs): copy ~1.5k chars of generated text exactly
@@ -975,7 +996,9 @@ pass_dataset = false
 policies = ["teacher_text"]
 strata_buckets = 115
 strata_offset = 4005
-share = 0.0
+# Probe 2026-09-12 (1.5k-char texts): 11/12 exact, 12 kept turns, completions p50 3.1k
+# tokens (the teacher reasons about the copy), 2/12 under the ref cap. Half share.
+share = 0.5
 
 [source.affine_oolong]
 # oolong-synth (prime-envs): long-context questions answered from
@@ -994,4 +1017,6 @@ strata_buckets = 115
 strata_offset = 4120
 max_batch = 16
 max_concurrency = 8
-share = 0.0
+# Probe 2026-09-12 (bash, 12 at 6 concurrent): 7/12 solved, 96 kept tool_call turns,
+# 11 agent_completed + 1 errored, 605 s for the batch.
+share = 1.0
