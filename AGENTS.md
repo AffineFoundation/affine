@@ -118,10 +118,61 @@ legacy drop-from-pairing path (210/210 checked).
   two live miners and raised the paired SE 0.00057→0.00086, turning this
   crown's z from +3.5 to +0.5; (iii) **per-byte A rewards short actions
   ~10×** (king short 0.021 vs long 0.002; challenger 0.019 vs 0.0025) —
-  the fence bytes dominate a short span — which is the opposite of the
-  directive's intent. Redesign candidates: score the dialect's action
-  *body* only (drop fence bytes via `affine/dialects.py`), or a
-  non-per-byte normalization; re-probe before any flip.
+ the fence bytes dominate a short span — which is the opposite of the
+ directive's intent.
+ **Redesign staged 2026-09-10 (`research/results/v6_action_leg_norm.txt`,
+ offline re-normalization of the same 1,222-turn echoes):** the summed
+ lift of the teacher's own actions is `S = 0.61 + 0.00007·len` nats
+ (Spearman(S, len) = +0.05) — a thought lifts an action by a near-constant
+ ~0.6 nats concentrated on its decision tokens, so dividing by the real
+ length *was* the length bias, and a body-only/fence-subtracted proxy
+ makes it worse (ratio 11× → 30×). Fix: `b_i = S_i / action_norm_bytes`
+ (fixed byte count, new `[duel].action_norm_bytes = 128`, inert under
+ `min_rg`; pairs now carry `n_bytes_ya`). At 128: short/long ratio 0.77,
+ `ls -la` negative on 89 %, A binds 37 % (R 40 / G 23), paired z on the
+ probed duel +0.48 → +2.32 (min(R,G) alone +3.53; L0=192 gives +2.93 but
+ A binds more as it shrinks toward 0). Teacher-own `A<0` stays ~30 % under
+ every normalization (refs disagree by 1.5 nats median; symmetric noise).
+ `v6_action_leg_probe.py` now reports both forms.
+ **Isomorphism check before any flip (2026-09-10, same day):**
+ (a) `research/results/v6_bench_renorm.txt` — the kings' real bench steps
+ (1,348 + 1,600 steps, reigns 0–5) re-scored with fixed-byte A: length
+ bias gone on-bench (5.4× → 0.90); A alone sees repeat steps (z +3.0)
+ but `min(R,G,A)` does not (z −0.3) because A's large negatives (~30 %
+ of steps, refs disagree) dominate the min; a downside floor
+ `max(A, −0.01)` recovers it (bench repeat z +1.9; duel-probe z +2.32 →
+ +3.94 with SE 0.00053 < min(R,G)'s 0.00057). Run-outcome AUC is
+ untestable there (7 mixed tasks, sign flips between step samples).
+ A_fixed rises monotonically over reigns 0→5 while their bench was
+ flat/down — RT-7 shape. (b) `research/results/v6_action_leg_panel.txt`
+ (`v6_action_leg_panel.py`, 11 crown-chain duels × 400 turns re-echoed
+ on the swarm, both sides benched on `swe_rebench_lite_300`): the rules
+ make the same crown decisions (10/11 identical; `chal-00169` differs on
+ the subsample only), Spearman(margin, Δbench) ≈ 0 for every rule
+ (min(R,G) +0.21, A +0.01, A floor 0.01 +0.14; n=11 CI ≈ ±0.6), and the
+ per-duel A difference agrees with the bench sign on 3/7 nonzero moves
+ (the three large moves ≥ 0.08 all agree, p = 0.125). Caveat on the
+ bench itself: `swe_rebench_lite_300` is the pinned **25-task** panel at a
+ 300-step budget (not 300 tasks) → SE ≈ 0.10 per model, Δbench SE ≈ 0.14;
+ only moves ≥ 0.2 are clear. **The panel is winners-only, so it cannot
+ discriminate rules.** The decisive test needs benched LOSERS.
+ **Step 1 done 2026-09-10 (`research/scripts/v6_loser_panel.py` →
+ `research/results/v6_loser_panel.{txt,json}`):** 12 rejected challengers,
+ 12 distinct hotkeys, all Sep 9–10 (schema-3 D, kings 4f7dea97 0.56 /
+ 93b1f299 0.60 / 0ce59769 0.68), all weights verified fetchable
+ (private R2), stratified by min(R,G) margin: near_miss 3 (+0.0011…
+ +0.0018, z 1.4–2.4), tie 3 (−0.0010…−0.0023), mid 3 (−0.0034…−0.0038),
+ far 3 (−0.0129…−0.0257; B pass ≥ 0.45, forfeit < 0.15). Launched the same
+ day: the 12 benches sequentially on the always-on bench pod via
+ `affine/scripts/bench_run.py --label loser-<id>` (~0.3–1 h each; rows land
+ in `bench_history.jsonl` / `benches/index.jsonl` with hotkey ""), and the
+ A echoes for their 12 duels (`v6_action_leg_panel.py --records … --out
+ research/results/v6_action_leg_losers`). When both finish, re-run the
+ panel script with `--resume` to fold the new bench scores into the
+ report, then compute Spearman(margin, Δbench) over winners + losers
+ (n = 23). Until then A is not shown isomorphic with performance; the
+ floor is the recommended form if it ships (needs a staged `action_floor`
+ knob, not yet added).
   `ops/v6/v6_toml_edits.py --forfeit-only` flips the floor alone.
 - **Forfeit floor** (`forfeit_turn_score = -0.1`): a turn with no parseable
   action scores the floor instead of being dropped from pairing
