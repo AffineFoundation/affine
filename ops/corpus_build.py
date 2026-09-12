@@ -87,6 +87,7 @@ from affine.corpus.view import (  # noqa: E402
     VIEW_SPEC,
     build_view_record,
     legacy_view_record,
+    main_root_indices,
     reference_leaks,
     rollout_outcome,
     validate_turns,
@@ -733,20 +734,28 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             except (ToolParityError, TraceShapeError) as e:
                 _count(drops, type(e).__name__)
                 continue
-        if want_completion and convs:
-            ckind = final_completion(convs, kind)
+        # Side conversations (other roots: WebFetch summaries, sub-agents,
+        # compaction) are real turns but not part of the main loop, so loop
+        # labels and the completion rule see the MAIN root's replies only.
+        main = main_root_indices(env["trace"]) if convs else []
+        main_convs = [convs[i] for i in main] if convs else []
+        if convs and len(main) != len(convs):
+            _count(notes, "multi_root_rollouts")
+        if want_completion and main_convs:
+            ckind = final_completion(main_convs, kind)
             _count(notes, "completion_candidates")
             if ckind:
-                i = len(convs) - 1
+                i = main[-1]
                 route[i] = COMPLETION_GROUP
                 extra[i] = {"completion_kind": ckind}
                 _count(notes, f"completion_kind_{ckind}")
-        if want_loop and convs:
+        if want_loop and main_convs:
             n_on = 0
-            for i, lab in enumerate(label_loops(convs, kind)):
+            for j, lab in enumerate(label_loops(main_convs, kind)):
+                i = main[j]
                 if lab.label == ONSET:
                     route[i] = KING_LOOP_GROUP
-                    extra[i] = {"loop_onset_of": int(lab.repeats)}
+                    extra[i] = {"loop_onset_of": int(main[int(lab.repeats)])}
                     n_on += 1
                 elif lab.label == IN_LOOP:
                     in_loop.add(i)
@@ -1250,6 +1259,13 @@ def main() -> None:
                          "prefix (hours); a data event that touches only recent "
                          "traces (king_loop_onset, 2026-09-11: the king seat "
                          "went live 2026-09-10T13:00Z) needs only these.")
+    ap.add_argument("--rederive-chunks", default=None, metavar="FILE",
+                    help="like --rederive-since, for the published chunk keys "
+                         "listed in FILE (one per line): re-derive exactly those "
+                         "chunks and drop their deferred copies. Used 2026-09-12 "
+                         "to back-fill the multi-root rollouts (Claude Code "
+                         "WebFetch / Kimi sub-agent / pi compaction side chats) "
+                         "the fold had dropped as TraceShapeError.")
     ap.add_argument("--allow-shift", action="store_true",
                     help="publish even if a group's slice share (share of "
                          f"strata) moves by more than {MAX_SHARE_SHIFT:.0%} in "
@@ -1310,14 +1326,22 @@ def main() -> None:
                if args.allowed_kinds else tuple(cfg.dataset.allowed_action_kinds))
     log(f"allowed action kinds: {list(allowed)}")
 
-    if args.rederive and args.rederive_since:
-        fatal("--rederive and --rederive-since are exclusive")
+    if sum(bool(x) for x in (args.rederive, args.rederive_since, args.rederive_chunks)) > 1:
+        fatal("--rederive, --rederive-since and --rederive-chunks are exclusive")
     since = (datetime.fromisoformat(args.rederive_since)
              if args.rederive_since else None)
     if since is not None and since.tzinfo is None:
         since = since.replace(tzinfo=timezone.utc)
+    listed: set[str] = set()
+    if args.rederive_chunks:
+        listed = {l.strip() for l in Path(args.rederive_chunks).read_text().split("\n")
+                  if l.strip()}
+        known = {c["key"] for c in traces_manifest["chunks"]}
+        if listed - known:
+            fatal(f"--rederive-chunks: {len(listed - known)} key(s) not in the traces manifest")
     unfolded = [c for c in traces_manifest["chunks"]
                 if args.rederive or c["key"] not in state["folded_chunks"]
+                or c["key"] in listed
                 or (since is not None
                     and datetime.fromisoformat(c["created_at"]) >= since)]
     # split("\n"), not splitlines(): JSON strings may carry U+2028 / U+0085.
@@ -1327,7 +1351,7 @@ def main() -> None:
         log(f"--rederive: all {len(unfolded)} chunks re-derived; "
             f"{len(carryover)} deferred rollouts dropped (regenerated from traces)")
         carryover = []
-    if since is not None:
+    if since is not None or listed:
         # The deferred copies of rollouts in a re-derived chunk are stale
         # (they were cut under the previous contract); the chunk regenerates
         # them, so drop them here or the pack would hold each turn twice.
@@ -1340,7 +1364,8 @@ def main() -> None:
         n0 = len(carryover)
         carryover = [r for r in carryover
                      if str(r.get("rollout_id") or "") not in rederived_rollouts]
-        log(f"--rederive-since {since.isoformat()}: {len(unfolded)} chunk(s) "
+        log(f"--rederive-since {since.isoformat() if since else '-'} / "
+            f"--rederive-chunks {len(listed)}: {len(unfolded)} chunk(s) "
             f"derived ({sum(c['key'] in state['folded_chunks'] for c in unfolded)} "
             f"already folded); {n0 - len(carryover)} deferred rollouts from those "
             f"chunks dropped (regenerated from traces), {len(carryover)} kept")
