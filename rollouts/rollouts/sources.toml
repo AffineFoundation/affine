@@ -7,62 +7,40 @@
 # targets at fold time.
 
 [mix]
-# Generation targets. Dialect cutover (2026-09-01): math + tool_use are
-# generated from now on so a backlog stages behind the closed
-# [dataset].allowed_action_kinds gate and lands on day one of the fork.
-# 2026-09-10: + king_fail (see [king_fail]); the other five scaled by 0.9
-# so the table still sums to 1. king_fail has no source of its own — the
-# fold assigns it (the scheduler ignores a group without sources), so the
-# generation targets of the five real groups are unchanged in ratio.
-# 2026-09-11: king_fail 0.10 -> 0.07 + king_loop_onset 0.03 (see
-# [king_loop_onset]); the share moves inside the king seat, the five real
-# groups are untouched.
-# 2026-09-11 (env wave 1, data plan W3): + general = 0.10 (eight new Prime
-# RL sources, see "-- general --" below); every other group scaled by 0.9.
-# GENERATION target only — the fold reads [fold_mix] while that block
-# exists (ops/corpus_build.py load_mix), so the slice share of `general`
-# is decided there, not here.
-# 2026-09-11 (late): + king_pivot 0.02 (out of king_fail) and completion
-# 0.03 (out of coding / terminal / math, proportionally) in the FOLD table
-# below; this generation table carries the same ratios x0.9 (general keeps
-# 0.1). Neither group has a source: the fold routes single turns into them.
-coding = 0.3892
-terminal = 0.1946
-nl2repo = 0.0405
-math = 0.0777
-tool_use = 0.081
-king_fail = 0.045
-king_loop_onset = 0.027
-king_pivot = 0.018
-completion = 0.027
-general = 0.1
-
-[fold_mix]
-# FOLD targets (slice strata shares) — overrides [mix] for ops/corpus_build.py
-# while this block exists. Added 2026-09-11 with env wave 1 so the eight
-# `general` sources GENERATE (teacher-first: traces land on R2, the
-# scheduler steers by [mix]) while their slice share stays an operator
-# decision: at 0.0 the fold defers every `general` record whole (cap_fill:
-# "keys without a positive target are deferred") and admits nothing from
-# the group until the value is raised. The first fold read of mean_r_leg /
-# ref yield per source decides the share. To decide: set `general` here
-# (proposal: 0.05, the others scaled to sum 1.0) or delete this block to
-# let [mix] drive the fold too. KEEP IN STEP WITH [mix] for every other
-# group: a group present in [mix] but missing here folds into
-# DEFAULT_GROUP (coding).
-# 2026-09-11 (late, data plan §5-6): king_fail 0.07 -> 0.05 + king_pivot
-# 0.02; completion 0.03 taken proportionally from coding 0.45 -> 0.4324,
-# terminal 0.225 -> 0.2162, math 0.09 -> 0.0864 (x 0.735/0.765).
-coding = 0.4324
-terminal = 0.2162
-nl2repo = 0.045
-math = 0.0864
-tool_use = 0.09
-king_fail = 0.05
-king_loop_onset = 0.03
-king_pivot = 0.02
-completion = 0.03
-general = 0.0
+# ONE table for generation (rollouts scheduler: deficit per source-backed
+# group) and for the fold (ops/corpus_build.py: slice-strata shares
+# enforced by cap_fill). The [fold_mix] override existed 2026-09-11 only
+# to hold `general` at 0.0 while its sources built a backlog; phase 3
+# (2026-09-12) sets general = 0.05 and folds the two tables back into one.
+# Groups without a source (king_*, completion) are fold-routed; the
+# scheduler ignores them.
+#
+# History: 2026-09-01 math + tool_use generated ahead of the wvk-11 fork;
+# 2026-09-10 + king_fail 0.10; 2026-09-11 king_fail 0.07 + king_loop_onset
+# 0.03, then + king_pivot 0.02 (out of king_fail) and completion 0.03 (out
+# of coding / terminal / math); env wave 1 + general.
+#
+# 2026-09-12 phase 3 (docs/duel-signal-by-group.md, 52 verdicts joined to
+# the view index): coding and terminal carry 87 % of the paired variance
+# and terminal has the best signal per slot; math is 92 % R-dead (teacher
+# refs identical -> centered R = 0) and tool_use 58 %; king_fail's strata
+# were 83 % wiki + math king failures. Signal vector coding 0.46 /
+# terminal 0.28 / king_fail 0.08 / king_loop_onset 0.03 / king_pivot 0.02 /
+# completion 0.03 / nl2repo 0.03 / math 0.03 / tool_use 0.04, scaled by
+# 0.95 to make room for general 0.05. cap_fill's anchor rule (target >=
+# 0.1: coding, terminal) holds terminal to 0.266/0.437 of coding's strata
+# while coding is never capped, so the epoch-25 overshoot (terminal 36.5 %)
+# unwinds as coding grows (~2,900 coding strata at today's ratio).
+coding = 0.437
+terminal = 0.266
+nl2repo = 0.0285
+math = 0.0285
+tool_use = 0.038
+king_fail = 0.076
+king_loop_onset = 0.0285
+king_pivot = 0.019
+completion = 0.0285
+general = 0.05
 
 [king_fail]
 # The king's FAILED rollouts (policies king_*, rewards.solved == 0), any
@@ -76,8 +54,13 @@ general = 0.0
 # ≈ 2.5% of the slice). Re-derive UPWARD as D grows; never lower.
 # Successful and unscored king rollouts are dropped at the fold
 # (`king_not_failed` / `king_unscored` in the drop counts).
+# 2026-09-12 (phase 3): wiki / agent / math king failures leave the seat --
+# the teacher's references are identical there (centered R = 0), so the
+# turns carried no signal; 83 % of king_fail's strata were such turns.
+# Forward-only: turns already published under king_fail stay in D.
 strata_buckets = 1000
 policy_prefix = "king_"
+exclude_sources = ["affine_wiki", "affine_agent", "affine_math"]
 
 [king_loop_onset]
 # The first turn of every LOOP in the king's failed rollouts (2026-09-11,
@@ -101,7 +84,7 @@ policy_prefix = "king_"
 # loop prefix carries no signal; those rollouts stay on king_fail.
 strata_buckets = 1000
 policy_prefix = "king_"
-exclude_sources = ["affine_wiki", "affine_agent"]
+exclude_sources = ["affine_wiki", "affine_agent", "affine_math"]   # + math 2026-09-12 (phase 3)
 
 [king_pivot]
 # The turns an LLM judge marked as the DECISION POINT of a failed king
@@ -123,6 +106,7 @@ policy_prefix = "king_"
 min_confidence = 0.7
 side_table_dir = "affine/state/king_pivots"
 exclude_categories = ["format_error"]
+exclude_sources = ["affine_wiki", "affine_agent", "affine_math"]   # phase 3, 2026-09-12
 
 [completion]
 # The reply that ENDED a solved rollout on purpose — teacher and king
@@ -145,6 +129,25 @@ strata_buckets = 1000
 exclude_sources = ["affine_wiki"]
 leak_exempt = false
 min_replies = 2
+
+[math_filter]
+# Math re-source (phase 3, 2026-09-12; docs/duel-signal-by-group.md). Math
+# is 92 % dead on the R leg: the teacher boxes the same answer on 75 % of
+# its turns, so its k = 3 references are identical and centered R = 0; the
+# 8 % where it disagrees with itself carry R = 0.145/byte, 15x a coding
+# turn. The fold cannot see duel-time references, so it uses the traces as
+# a PROXY: a problem is kept when the teacher's datagen rollouts on it show
+# disagreement (>= 2 distinct normalized \boxed{} strings across its
+# samples, or the teacher failed it at least once) or the king failed it.
+# Deterministic problems: new candidates are dropped (`math_deterministic`)
+# and, with retire_published, their already-published turns are removed
+# from the INDEX at the next revision (chunk objects and old manifests are
+# untouched, so past verdicts replay). If fewer than min_surviving_strata
+# strata would survive, the fold keeps the old pool at the [mix] share.
+enabled = true
+source = "affine_math"
+retire_published = true
+min_surviving_strata = 100
 
 # Language targets for NEWLY FOLDED coding turns (2026-09-01). Enforced by
 # ops/datagen_refresh.py as a second waterfill (after the group waterfill)
