@@ -27,7 +27,7 @@ into the view the duel scores:
      manifest revision, pointer last, local state after the manifest. A
      `pending` record makes a crashed publish resumable (same bytes, remote
      sha verified instead of re-uploaded);
-  6. announce on the SN120 Discord channel; a failed post is retried next
+  6. announce on the private Arbos ops Discord channel; a failed post is retried next
      cycle.
 
 `--init` bootstraps the first schema-3 revision: imports the live v2 corpus
@@ -92,8 +92,10 @@ OFFICIAL_EXCLUDE_PATH = (REPO / "affine" / "evalsrv" / "data"
 DEFAULT_GROUP = "coding"
 MIN_NEW_TURNS = 200
 STALE_AFTER_S = 48 * 3600
-DISCORD_GUILD_ID = "799672011265015819"
-DISCORD_CHANNEL_ID = "1381987595881414656"
+# Private Arbos ops channel. Operator directive 2026-09-12: automated posts
+# never go to the public SN120 channel (1381987595881414656) again.
+DISCORD_GUILD_ID = "1489753158883344497"
+DISCORD_CHANNEL_ID = "1510910974498967613"
 
 LANG_BUCKETS = {
     "python": "python", "py": "python",

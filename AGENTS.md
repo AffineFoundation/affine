@@ -275,8 +275,11 @@ only teacher-trajectory prefixes (covariate shift; DAgger fix). Pieces:
   watchdog every 5 min (`pgrep -f -x` on the supervisor + bootstrap loop;
   both gone `watchdog_relaunch_min = 10` → relaunch `bootstrap.sh`; loop
   alive but supervisor gone → crash-loop alert; ssh unreachable → alert);
-  every state change is one Discord line (`[discord]`, channel
-  1381987595881414656, token `DISCORD_BOT_TOKEN_ARBOS_BITTENSOR`).
+  every state change is one Discord line (`[discord]`, token
+  `DISCORD_BOT_TOKEN_ARBOS_BITTENSOR`; since 2026-09-12 the private Arbos
+  ops channel 1510910974498967613 — operator directive 2026-09-12: no
+  automated bot post goes to the public SN120 channel 1381987595881414656;
+  the same applies to the fold announce, evalwatch and the audit daemon).
   Deploy to the pods with `ops/king-datagen/deploy_pods.sh [--restart]
   --all` (scp + registry import check + `/root/rollouts/RESTART` flag —
   the supervisor exits at its next cycle boundary and the bootstrap loop
