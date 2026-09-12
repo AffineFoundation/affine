@@ -805,8 +805,9 @@ pass_dataset = false
 policies = ["teacher_toolcall"]
 strata_buckets = 200
 strata_offset = 2660
-# share 0.0 until the post-fix 12-task probe grades (2026-09-12); flip to 1.0 then.
-share = 0.0
+# Probe 2026-09-12 (after the tool-server bridge): 4/12 solved, partial credit
+# 0.6-0.86 on most misses, 10.5 calls p50, 92 % of completions under the ref cap.
+share = 1.0
 
 [source.affine_uuidctf]
 # uuid-ctf (research-environments reasoning/uuid_ctf_v1): forensic CTF in a
@@ -828,5 +829,7 @@ strata_buckets = 115
 strata_offset = 2860
 max_batch = 16
 max_concurrency = 8
-# share 0.0 until the 12-task probe grades (2026-09-12); flip to 1.0 then.
-share = 0.0
+# Probe 2026-09-12 (`standard`): 11/12 solved, 12 calls p50, 43k prompt / 12k
+# completion tokens per rollout, 85 % of completions under the ref cap, 53 kept
+# turns. At the top of the headroom band; no harder preset exists upstream.
+share = 1.0
