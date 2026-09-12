@@ -54,6 +54,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -63,6 +64,7 @@ from pathlib import Path
 
 import httpx
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 REPO = Path(__file__).resolve().parents[1]
@@ -78,6 +80,7 @@ from affine.corpus.publish import CorpusPublisher  # noqa: E402
 from affine.corpus.trace import (  # noqa: E402
     ToolParityError,
     TraceShapeError,
+    message_text,
     trace_conversations,
 )
 from affine.corpus.view import (  # noqa: E402
@@ -217,7 +220,9 @@ def load_king_fail() -> dict:
         return {}
     return {"group": "king_fail",
             "strata_buckets": int(cfg.get("strata_buckets", 0) or 0),
-            "policy_prefix": str(cfg.get("policy_prefix") or "king_")}
+            "policy_prefix": str(cfg.get("policy_prefix") or "king_"),
+            "exclude_sources": frozenset(str(x) for x in
+                                         (cfg.get("exclude_sources") or []))}
 
 
 # Turn-routed fold groups (2026-09-11, data events): derive_chunk splits
@@ -355,6 +360,22 @@ def group_stratum(rec: dict, cfg: dict) -> str:
     return f"{cfg['group']}:{h % cfg['strata_buckets']:04d}"
 
 
+def drop_excluded_routed(records: list[dict], cfgs: dict[str, dict],
+                         drops: dict[str, int]) -> list[dict]:
+    """Routed records (deferred carryover included) whose source the
+    group's `exclude_sources` now names are dropped (`<group>_excluded_source`);
+    derive_chunk never creates new ones, this catches the backlog."""
+    out: list[dict] = []
+    for rec in records:
+        g = rec.get("fold_group")
+        cfg = cfgs.get(g) if g else None
+        if cfg and str(rec.get("source") or "") in cfg["exclude_sources"]:
+            _count(drops, f"{g}_excluded_source")
+            continue
+        out.append(rec)
+    return out
+
+
 def stamp_routed_groups(records: list[dict], cfgs: dict[str, dict]) -> dict[str, int]:
     """Bucketed stratum `<group>:NNNN` on the records derive split off.
     Runs after `assign_bucket_strata` and `route_king_fail` so it wins over
@@ -397,6 +418,11 @@ def route_king_fail(records: list[dict], king: dict, drops: dict[str, int]
             continue
         if not king or n <= 0:
             drops["king_no_fold_group"] = drops.get("king_no_fold_group", 0) + 1
+            continue
+        if str(rec.get("source") or "") in king.get("exclude_sources", ()):
+            # 2026-09-12: wiki / agent / math king failures carry no R
+            # signal (teacher refs identical there); they leave the seat.
+            drops["king_excluded_source"] = drops.get("king_excluded_source", 0) + 1
             continue
         outcome = rec.get("outcome") or "unscored"
         if outcome == "solved":
@@ -795,6 +821,145 @@ def published_turn_ids(pub: PublicCorpus, manifest: dict | None) -> set[str]:
     return set(table.column("turn_id").to_pylist())
 
 
+def index_table(pub: PublicCorpus, manifest: dict | None,
+                columns: list[str]) -> pa.Table | None:
+    """The live index (sha-verified) with the given columns; None when the
+    corpus has no schema-3 manifest yet."""
+    if not manifest or not manifest.get("index"):
+        return None
+    idx = manifest["index"]
+    raw = pub.get(idx["key"])
+    if hashlib.sha256(raw).hexdigest() != idx["sha256"]:
+        fatal(f"live index sha mismatch for {idx['key']}")
+    return pq.read_table(io.BytesIO(raw), columns=columns)
+
+
+# -- math re-source (2026-09-12, data plan phase 3) -----------------------------
+# Math is 92 % dead on the R leg: the teacher boxes the same answer on 75 %
+# of math turns, so its k = 3 references are identical and centered R is
+# exactly 0. The 8 % of turns where the teacher disagrees with itself carry
+# R = 0.145 per byte, 15x a coding turn (docs/duel-signal-by-group.md). The
+# fold cannot see duel-time references, so it uses the traces as a proxy:
+# a problem is KEPT when the teacher's own datagen rollouts on it show
+# disagreement (>= 2 distinct normalized \boxed{} strings across its
+# samples, or the teacher failed it at least once) or the king failed it.
+# Everything else is deterministic for the teacher and leaves D: new
+# candidates are dropped (`math_deterministic`) and, with
+# `retire_published`, the published turns of those problems are removed
+# from the INDEX (the chunk objects stay; old manifests replay unchanged).
+TRAJ_SHA8_RE = re.compile(r"\.([0-9a-f]{8})\.pr_")
+
+
+def load_math_filter() -> dict:
+    raw = tomllib.loads(SOURCES_TOML.read_text())
+    cfg = raw.get("math_filter") or {}
+    if not cfg or not cfg.get("enabled", True):
+        return {}
+    return {"source": str(cfg.get("source") or "affine_math"),
+            "retire_published": bool(cfg.get("retire_published", True)),
+            "min_surviving_strata": int(cfg.get("min_surviving_strata", 100) or 0),
+            "teacher_prefix": str(cfg.get("teacher_prefix") or "teacher_"),
+            "king_prefix": str(cfg.get("king_prefix") or "king_")}
+
+
+def boxed_answer(trace: dict) -> str | None:
+    """Normalized content of the LAST \boxed{} in the rollout's final reply."""
+    nodes = trace.get("nodes") or []
+    final = next((nd for nd in reversed(nodes)
+                  if nd.get("sampled") and (nd.get("message") or {}).get("role") == "assistant"),
+                 None)
+    if final is None:
+        return None
+    acts = dialects.get("boxed").actions(message_text((final["message"] or {}).get("content")))
+    if not acts:
+        return None
+    body = acts[-1].strip()
+    if body.startswith("\\boxed{") and body.endswith("}"):
+        body = body[len("\\boxed{"):-1]
+    return " ".join(body.split())
+
+
+def math_keep_set(pub: PublicCorpus, traces_manifest: dict, cfg: dict
+                  ) -> tuple[set[str], dict]:
+    """Problems (task sid) the proxy keeps, plus the survey."""
+    per: dict[str, dict] = {}
+    n_chunks = 0
+    for c in traces_manifest["chunks"]:
+        if not c["key"].rsplit("/", 1)[-1].startswith(f"{cfg['source']}-"):
+            continue
+        n_chunks += 1
+        for env in iter_jsonl_gz(pub.cached(c["key"], c["sha256"], gz_sha=True)):
+            if str(env.get("source") or "") != cfg["source"]:
+                continue
+            sid = str((env.get("task") or {}).get("sid") or "")
+            pid = str((env.get("policy") or {}).get("id") or "")
+            outcome = rollout_outcome(env["trace"])
+            row = per.setdefault(sid, {"answers": set(), "teacher_failed": False,
+                                       "king_failed": False, "n_teacher": 0, "n_king": 0})
+            if pid.startswith(cfg["teacher_prefix"]):
+                if outcome in ("solved", "failed"):
+                    row["n_teacher"] += 1
+                    ans = boxed_answer(env["trace"])
+                    if ans is not None:
+                        row["answers"].add(ans)
+                    row["teacher_failed"] |= outcome == "failed"
+            elif pid.startswith(cfg["king_prefix"]):
+                if outcome in ("solved", "failed"):
+                    row["n_king"] += 1
+                    row["king_failed"] |= outcome == "failed"
+    keep = {sid for sid, r in per.items()
+            if len(r["answers"]) >= 2 or r["teacher_failed"] or r["king_failed"]}
+    stats = {"chunks": n_chunks, "problems": len(per), "kept": len(keep),
+             "multi_sample": sum(r["n_teacher"] >= 2 for r in per.values()),
+             "disagree": sum(len(r["answers"]) >= 2 for r in per.values()),
+             "teacher_failed": sum(r["teacher_failed"] for r in per.values()),
+             "king_failed": sum(r["king_failed"] for r in per.values())}
+    return keep, stats
+
+
+def sha8_of(instance_id: str) -> str:
+    return hashlib.sha256(instance_id.encode()).hexdigest()[:8]
+
+
+def math_retire_plan(pub: PublicCorpus, live: dict | None, cfg: dict,
+                     keep: set[str]) -> tuple[list[str], set[str], set[str]]:
+    """(turn ids to retire from the live index, surviving published math
+    strata, retired math strata)."""
+    table = index_table(pub, live, ["turn_id", "traj_id", "source", "stratum"])
+    if table is None:
+        return [], set(), set()
+    keep_sha8 = {sha8_of(sid) for sid in keep}
+    retire: list[str] = []
+    surviving: set[str] = set()
+    retired_strata: set[str] = set()
+    for tid, traj, src, stratum in zip(*(table.column(c).to_pylist()
+                                          for c in ("turn_id", "traj_id", "source", "stratum"))):
+        if src != cfg["source"]:
+            continue
+        m = TRAJ_SHA8_RE.search(traj or "")
+        if m and m.group(1) in keep_sha8:
+            surviving.add(stratum)
+        else:
+            retire.append(tid)
+            retired_strata.add(stratum)
+    return retire, surviving, retired_strata - surviving
+
+
+# -- composition guard ----------------------------------------------------------
+MAX_SHARE_SHIFT = 0.05
+
+
+def composition_table(before: dict[str, int], after: dict[str, int]) -> list[tuple]:
+    """(group, strata before, strata after, share before, share after, delta)."""
+    tb = sum(before.values()) or 1
+    ta = sum(after.values()) or 1
+    rows = []
+    for g in sorted(set(before) | set(after), key=lambda k: -after.get(k, 0)):
+        b, a = before.get(g, 0), after.get(g, 0)
+        rows.append((g, b, a, b / tb, a / ta, a / ta - b / tb))
+    return rows
+
+
 # -- publish -------------------------------------------------------------------
 def pack_pending(records: list[dict], epoch: int) -> PackResult:
     pack_dir = WORK_DIR / f"pack_{epoch:04d}"
@@ -830,16 +995,26 @@ def resume_pack(pending: dict) -> PackResult:
 
 
 def merge_index(pack: PackResult, publisher: CorpusPublisher,
-                prev: dict | None, epoch: int) -> None:
+                prev: dict | None, epoch: int,
+                retire_turn_ids: list[str] | None = None) -> None:
     """Previous active index + the new pack's rows -> one parquet the
-    manifest points at (evalsrv reads exactly one index)."""
+    manifest points at (evalsrv reads exactly one index). `retire_turn_ids`
+    (math re-source, 2026-09-12): rows of the previous index dropped from
+    the merged one -- the turns leave D while their chunk objects stay."""
     if not prev or not prev.get("index"):
         return
     prev_raw = publisher.get(prev["index"]["key"])
     if hashlib.sha256(prev_raw).hexdigest() != prev["index"]["sha256"]:
         fatal("previous index sha mismatch on the bucket")
-    merged = pa.concat_tables([pq.read_table(io.BytesIO(prev_raw)),
-                               pq.read_table(pack.index_path)])
+    prev_table = pq.read_table(io.BytesIO(prev_raw))
+    if retire_turn_ids:
+        mask = pc.invert(pc.is_in(prev_table.column("turn_id"),
+                                  value_set=pa.array(retire_turn_ids, pa.string())))
+        kept = prev_table.filter(mask)
+        log(f"index: retired {prev_table.num_rows - kept.num_rows} of "
+            f"{len(retire_turn_ids)} listed turn rows from the previous index")
+        prev_table = kept
+    merged = pa.concat_tables([prev_table, pq.read_table(pack.index_path)])
     merged_path = pack.index_path.with_name(f"turns_{epoch:04d}_merged.parquet")
     pq.write_table(merged, merged_path, compression="zstd")
     pack.index_path = merged_path
@@ -856,7 +1031,8 @@ def publish_pending(state: dict, publisher: CorpusPublisher,
         log(f"pending epoch {epoch} already in manifest; finalizing state only")
         return prev, prev_sha
     pack = resume_pack(pending)
-    merge_index(pack, publisher, prev, epoch)
+    merge_index(pack, publisher, prev, epoch,
+                retire_turn_ids=pending.get("retire_turn_ids") or [])
     if prev is not None:
         prev_manifest = f"{publisher.manifests_prefix}/{prev_sha}.json"
         prev_shards = list(prev["shards"])
@@ -880,6 +1056,8 @@ def finalize(state: dict, manifest: dict, mhash: str) -> None:
                                     | set(pending["folded_chunks"]))
     for group, n in (pending.get("group_turns") or {}).items():
         state["group_counts"][group] = int(state["group_counts"].get(group, 0)) + int(n)
+    for group, keys in (pending.get("group_strata_after_retire") or {}).items():
+        state["group_strata"][group] = sorted(set(keys))
     for group, keys in (pending.get("group_strata_added") or {}).items():
         state["group_strata"][group] = sorted(
             set(state["group_strata"].get(group, [])) | set(keys))
@@ -893,6 +1071,7 @@ def finalize(state: dict, manifest: dict, mhash: str) -> None:
         "by_group": pending.get("group_turns") or {},
         "strata": {g: len(v) for g, v in state["group_strata"].items()},
         "init": bool(pending.get("init")),
+        "n_retired": len(pending.get("retire_turn_ids") or []),
     }
     state["history"].append({
         "epoch": int(pending["epoch"]), "n_turns": int(pending["n_turns"]),
@@ -924,7 +1103,11 @@ def announce(state: dict, public_base: str) -> None:
         f"(corpus total: {info['total']:,} turns). New turns by dialect: "
         f"{dialects_line}; by group: {groups_line}.\n"
         f"Slice composition (share of strata = share of every duel slice): "
-        f"{strata_line}.\n\n"
+        f"{strata_line}.\n"
+        + (f"Retired from the index: {info['n_retired']:,} math turns of problems the "
+           "teacher answers deterministically (chunks unchanged; see llms.txt).\n"
+           if info.get("n_retired") else "")
+        + "\n"
         f"- corpus_epoch: **{epoch}**\n"
         f"- schema_version: **3** (view `{VIEW_SPEC}`: one record per rollout "
         "holding the message graph the model saw + turn metas; prefix = "
@@ -991,6 +1174,11 @@ def main() -> None:
                          "prefix (hours); a data event that touches only recent "
                          "traces (king_loop_onset, 2026-09-11: the king seat "
                          "went live 2026-09-10T13:00Z) needs only these.")
+    ap.add_argument("--allow-shift", action="store_true",
+                    help="publish even if a group's slice share (share of "
+                         f"strata) moves by more than {MAX_SHARE_SHIFT:.0%} in "
+                         "this epoch (guard added after the epoch-25 terminal "
+                         "flood, 2026-09-12)")
     args = ap.parse_args()
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1171,6 +1359,43 @@ def main() -> None:
             f"missing for other reasons {notes.get(f'{COMPLETION_GROUP}_missing_other', 0)}; "
             f"{notes.get(f'{COMPLETION_GROUP}_already_published', 0)} already published")
 
+    # Math re-source (phase 3): drop candidates of teacher-deterministic
+    # problems and plan the retirement of their published turns.
+    math_cfg = load_math_filter()
+    retire_ids: list[str] = []
+    math_surviving: set[str] = set()
+    math_retired_strata: set[str] = set()
+    if math_cfg:
+        keep, mstats = math_keep_set(pub, traces_manifest, math_cfg)
+        log(f"math re-source: {mstats}")
+        retire_ids, math_surviving, math_retired_strata = math_retire_plan(
+            pub, live, math_cfg, keep)
+        cand_math = [r for r in candidates if str(r.get("source") or "") == math_cfg["source"]]
+        cand_keep = [r for r in cand_math if str(r.get("instance_id")) in keep]
+        # Survival = strata the kept published turns hold + what kept
+        # candidates would open (bucket assignment happens below; recompute
+        # the bucket here from the source's setting).
+        n_b, off = buckets.get(math_cfg["source"], (0, 0))
+        grp = src2grp.get(math_cfg["source"], DEFAULT_GROUP)
+        cand_strata = {f"{grp}:{off + int(hashlib.sha256(str(r['instance_id']).encode()).hexdigest()[:8], 16) % n_b:04d}"
+                       for r in cand_keep} if n_b else set()
+        surviving_total = len(math_surviving | cand_strata)
+        log(f"math re-source: published math turns {len(retire_ids) + 0} to retire, "
+            f"surviving published strata {len(math_surviving)}, retired strata "
+            f"{len(math_retired_strata)}; candidates {len(cand_math)} -> kept {len(cand_keep)}; "
+            f"surviving strata incl. candidates {surviving_total}")
+        if surviving_total < math_cfg["min_surviving_strata"]:
+            log(f"math re-source: only {surviving_total} strata would survive "
+                f"(< {math_cfg['min_surviving_strata']}); keeping the old math pool")
+            retire_ids, math_surviving, math_retired_strata = [], set(), set()
+        else:
+            n0 = len(candidates)
+            keep_ids = {id(r) for r in cand_keep}
+            candidates = [r for r in candidates
+                          if str(r.get("source") or "") != math_cfg["source"] or id(r) in keep_ids]
+            _count(drops, "math_deterministic", n0 - len(candidates))
+            if not math_cfg["retire_published"]:
+                retire_ids, math_surviving, math_retired_strata = [], set(), set()
     n_bucketed = assign_bucket_strata(candidates, buckets, src2grp)
     log(f"bucket strata assigned on {n_bucketed} rollouts "
         f"({ {k: (n if not off else f'{n}@{off}') for k, (n, off) in buckets.items() if n} })")
@@ -1186,6 +1411,11 @@ def main() -> None:
         f"dropped {n_before - len(candidates)} {king_drops or ''}")
     for k, v in king_drops.items():
         drops[k] = drops.get(k, 0) + v
+    n_before = len(candidates)
+    candidates = drop_excluded_routed(candidates, routed, drops)
+    if len(candidates) != n_before:
+        log(f"routed groups: dropped {n_before - len(candidates)} carryover records "
+            f"from excluded sources")
     stamped = stamp_routed_groups(candidates, routed)
     for g in ROUTED_GROUPS:
         if not routed[g]:
@@ -1228,6 +1458,10 @@ def main() -> None:
             f"(+{ {b: len(v) for b, v in lang_added.items()} } strata), "
             f"deferred {len(lang_deferred)}")
     have_groups = {g: set(v) for g, v in (state.get("group_strata") or {}).items()}
+    if retire_ids:
+        # The retired math strata are gone from D; the cap sees what survives.
+        mg = src2grp.get(math_cfg["source"], DEFAULT_GROUP)
+        have_groups[mg] = have_groups.get(mg, set()) - math_retired_strata
     selected, deferred, group_added = cap_fill(
         candidates, lambda r: group_of(r, src2grp, mix), have_groups, mix,
         anchor_min_target=ANCHOR_MIN_TARGET)
@@ -1251,12 +1485,33 @@ def main() -> None:
         group_turns[g] = group_turns.get(g, 0) + len(r["turns"])
     log(f"mix: turns by group {group_turns}")
 
+    before = {g: len(v) for g, v in (state.get("group_strata") or {}).items()}
+    after = dict(before)
+    if retire_ids:
+        mg = src2grp.get(math_cfg["source"], DEFAULT_GROUP)
+        after[mg] = len(set(state["group_strata"].get(mg, [])) - math_retired_strata)
+    for g, keys in group_added.items():
+        after[g] = after.get(g, 0) + len(keys)
+    rows = composition_table(before, after)
+    log("projected slice composition (share of strata): " + "; ".join(
+        f"{g} {b}->{a} ({100 * sb:.1f}% -> {100 * sa:.1f}%, {100 * d:+.1f})"
+        for g, b, a, sb, sa, d in rows))
+    shifted = [(g, d) for g, _, _, _, _, d in rows if abs(d) > MAX_SHARE_SHIFT]
+    if shifted and not args.allow_shift:
+        msg = (f"slice share of {shifted} would move by more than "
+               f"{MAX_SHARE_SHIFT:.0%} in one epoch; rerun with --allow-shift to accept")
+        if args.no_publish:
+            log(f"GUARD (dry run): {msg}")
+        else:
+            fatal(msg)
+
     n_new = sum(len(r["turns"]) for r in selected)
     stale = False
     if unfolded:
         newest = max(datetime.fromisoformat(c["created_at"]) for c in unfolded)
         stale = (datetime.now(timezone.utc) - newest).total_seconds() >= STALE_AFTER_S
-    if n_new < MIN_NEW_TURNS and not stale and not args.force and not args.init:
+    if n_new < MIN_NEW_TURNS and not stale and not args.force and not args.init \
+            and not retire_ids:
         log(f"only {n_new} mix-eligible new turns (< {MIN_NEW_TURNS}); skipping")
         return
     if not selected and not legacy:
@@ -1290,6 +1545,11 @@ def main() -> None:
         "lang_strata_added": {b: sorted(v) for b, v in lang_added.items()},
         "by_dialect": by_dialect, "allowed_kinds": list(allowed),
         "folded_chunks": [c["key"] for c in unfolded], "init": bool(args.init),
+        "retire_turn_ids": retire_ids,
+        "group_strata_after_retire": (
+            {src2grp.get(math_cfg["source"], DEFAULT_GROUP): sorted(
+                set(state["group_strata"].get(src2grp.get(math_cfg["source"], DEFAULT_GROUP), []))
+                - math_retired_strata)} if retire_ids else {}),
     }
     save_state(state)
     finalize(state, *publish_pending(state, publisher, traces_sha, legacy_sha))
