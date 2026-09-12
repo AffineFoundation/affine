@@ -22,6 +22,21 @@ token_env = "DISCORD_BOT_TOKEN_ARBOS_BITTENSOR"
 # substrings (case-insensitive). Set to [] to mirror only the explicit list.
 discover_patterns = ["120", "affine", "sn120"]
 
+# Users whose DM channel with the bot is opened and mirrored (kind "dm",
+# channel name "dm:<username>"). Opening a DM channel sends nothing; Discord
+# does not list bot DMs via GET /users/@me/channels, so this list is what
+# makes a DM visible to read.py / alan_inbox.py.
+dm_user_ids = ["1429458949790371980"]   # Alan (allan_ww)
+
+# Alan liaison (standing duty, Jacob 2026-09-12): alan_inbox.py reads his
+# messages, alan_post.py posts the daily update to him.
+[alan]
+user_id = "1429458949790371980"
+username = "allan_ww"
+display = "AIIan"
+# Posting target: "dm" (default) or a channel id.
+target = "dm"
+
 # Known SN120 channels (discovered 2026-09-11 with the "Arbos" bot).
 [[channels]]
 id = "1381987595881414656"
