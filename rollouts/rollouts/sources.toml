@@ -695,7 +695,8 @@ max_concurrency = 8
 # Teacher-first: the four terminal-style harnesses; king_* and the IDE
 # agents follow the first fold read (wave-1 rule).
 policies = ["teacher_textbased", "teacher_bashtool", "teacher_pi", "teacher_terminus"]
-share = 1.0
+# share 0.0 until the 12-task probe grades (datagen-4 went dark mid-probe, 2026-09-12); flip to 1.0 then.
+share = 0.0
 
 [source.affine_longcot]
 # LongCoT (longcot-v1): ~2,000 long-horizon reasoning tasks in five domains
@@ -804,7 +805,8 @@ pass_dataset = false
 policies = ["teacher_toolcall"]
 strata_buckets = 200
 strata_offset = 2660
-share = 1.0
+# share 0.0 until the post-fix 12-task probe grades (2026-09-12); flip to 1.0 then.
+share = 0.0
 
 [source.affine_uuidctf]
 # uuid-ctf (research-environments reasoning/uuid_ctf_v1): forensic CTF in a
@@ -826,4 +828,5 @@ strata_buckets = 115
 strata_offset = 2860
 max_batch = 16
 max_concurrency = 8
-share = 1.0
+# share 0.0 until the 12-task probe grades (2026-09-12); flip to 1.0 then.
+share = 0.0
