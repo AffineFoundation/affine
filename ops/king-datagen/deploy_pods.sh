@@ -38,13 +38,39 @@ AFFINE_FILES=(affine/dialects.py affine/corpus/trace.py)
 # truth is rollouts/harnesses/mini_swe_textbased in this repo.
 HARNESS_SRC=rollouts/harnesses/mini_swe_textbased/mini_swe_textbased/__init__.py
 HARNESS_DST=/root/prime-pilot/mini-swe-textbased/mini_swe_textbased/__init__.py
+# Env wave 2 (2026-09-12): + tmax, longcot, enterprise-ops-gym, numina, sql,
+# automationbench, uuid-ctf wrappers and their research-environments bases.
 ENV_PKGS=(affine_logic_v1 affine_trivia_v1 affine_ifeval_v1 affine_science_v1
-          affine_unscramble_v1 affine_prolog_v1 affine_needle_v1 affine_wikispeedia_v1)
+          affine_unscramble_v1 affine_prolog_v1 affine_needle_v1 affine_wikispeedia_v1
+          affine_tmax_v1 affine_longcot_v1 affine_eog_v1 affine_numina_v1 affine_sql_v1
+          affine_autobench_v1 affine_uuidctf_v1)
 RESEARCH_ENVS=(reasoning/i3_logic_v1 knowledge/triviaqa_v1 if/ifeval_v1 science/i3_science_v1
                reasoning/unscramble_v1 reasoning/prolog_v1
-               long_context/patterned_needle_in_haystack_v1 reasoning/wikispeedia_v1)
+               long_context/patterned_needle_in_haystack_v1 reasoning/wikispeedia_v1
+               terminal/tmax_v1 long_context/longcot_v1 tool_use/enterprise_ops_gym_v1
+               lean/numina_v1 tool_use/automationbench_v1 reasoning/uuid_ctf_v1)
 ENV_EXTRA_DEPS=(immutabledict langdetect markdown)
-ENV_IMAGES=(swipl:latest)
+# Git-hosted data packages two bases import at load time (longcot: bundled
+# question JSON; automation-bench: task builders + rubric). ALWAYS --no-deps:
+# on 2026-09-12 a plain install of automation-bench on datagen-4 replaced the
+# editable verifiers checkout with PyPI verifiers 0.3.1 and broke every eval
+# for ~10 min (restored from datagen-2's site-packages). Their host-side
+# imports need nothing beyond what the pod venv already has.
+ENV_GIT_DEPS=("longcot @ git+https://github.com/LongHorizonReasoning/longcot.git@6a569ab"
+              "automation-bench @ git+https://github.com/mikasenghaas/AutomationBench.git@6f0e683")
+# EnterpriseOps-Gym service images (digest-pinned, Docker Hub) are pulled once
+# so the first rollouts do not pay for them; python:3.12-slim is the sql
+# sandbox. The numina Mathlib image (projectnumina/kimina-lean-server:2.0.0,
+# 2.9 GB) is pulled only while affine_numina has share > 0 (pulled lazily by
+# the runtime otherwise).
+ENV_IMAGES=(swipl:latest python:3.12-slim
+  shivakrishnareddyma225/enterpriseops-gym-mcp-calendar@sha256:994c5421a6dd065861bc7f813a177f6d408875e9df60fe8d012959bc4510da02
+  shivakrishnareddyma225/enterpriseops-gym-mcp-csm@sha256:eaa456ac9aa85728426e7d3813a0bbca0949d6a8695be30e26f03894e6e6b189
+  shivakrishnareddyma225/enterpriseops-gym-mcp-drive@sha256:3475962fcf6da7675e194dbf138de01fa3e96134a302ad47316e4111a5e63f32
+  shivakrishnareddyma225/enterpriseops-gym-mcp-email@sha256:69c2081fe4ab0962b86233f9fb52b307b8ad0019f6746ba64ce75851036201cd
+  shivakrishnareddyma225/enterpriseops-gym-mcp-hr@sha256:1ea1c1d64d4be35e8062e56f00b8318e9e6c09289cfa56bcfd0595bfa59ac64d
+  shivakrishnareddyma225/enterpriseops-gym-mcp-itsm@sha256:a234ae3fb7cee196ba25e6b9957969dea829919b6e8271dddae128f065aaf39f
+  shivakrishnareddyma225/enterpriseops-gym-mcp-teams@sha256:602655e46f6501885540c36dc9b12114cb173c75063d7f25c17ed0652695fa78)
 RESTART=0; TARGETS=()
 for a in "$@"; do
   case "$a" in
@@ -84,7 +110,8 @@ uv pip install --python .venv/bin/python -q --no-deps "${base[@]}" || exit 1
 wrap=(); for p in '"${ENV_PKGS[*]}"'; do wrap+=(-e "/root/rollouts/envs/$p"); done
 uv pip install --python .venv/bin/python -q --no-deps "${wrap[@]}" || exit 1
 uv pip install --python .venv/bin/python -q '"${ENV_EXTRA_DEPS[*]}"' || exit 1
-.venv/bin/python -c "import '"$(IFS=,; echo "${ENV_PKGS[*]}")"'; print(\"ENV_IMPORT_OK\")" || exit 1
+uv pip install --python .venv/bin/python -q --no-deps '"$(printf "%q " "${ENV_GIT_DEPS[@]}")"' || exit 1
+.venv/bin/python -c "import '"$(IFS=,; echo "${ENV_PKGS[*]}")"'; import verifiers; assert verifiers.__file__.startswith(\"/root/prime-pilot/verifiers/\"), verifiers.__file__; print(\"ENV_IMPORT_OK\")" || exit 1
 for img in '"${ENV_IMAGES[*]}"'; do docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null || echo "WARNING: pull failed $img"; done' \
     || { echo "ENV-INSTALL-FAILED"; rc=1; continue; }
   $SSH "/root/prime-pilot/verifiers/.venv/bin/python -m py_compile $HARNESS_DST && echo HARNESS_OK" || { echo "HARNESS-COMPILE-FAILED (restored from .bak)"; $SSH "cp $(dirname "$HARNESS_DST")/.bak/__init__.py $HARNESS_DST"; rc=1; continue; }
