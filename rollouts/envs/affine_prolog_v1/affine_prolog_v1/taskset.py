@@ -83,14 +83,19 @@ def build_prompt(description: str, path: str) -> str:
 # swipl ...` and `swipl -g "repeat, ..."` pegged 4 containers again), and the
 # bash harness's own command timeout is a hard-coded 3600 s. So the sandbox
 # enforces it: at setup `swipl` becomes a shim that runs the real binary
-# under `timeout`. The scorer's `solve/1` query goes through the same shim
-# (its own 60 s wrapper is tighter, so nothing changes for grading).
+# under `timeout` and clamps its output — one probe rollout printed itself
+# into a 2.1M-token prompt ("exceeds the model's context window") and
+# errored. The scorer's `solve/1` query goes through the same shim (its own
+# 60 s wrapper is tighter; `pipefail` keeps swipl's exit status; the answer
+# is the last line and far below the clamp).
 SWIPL_CMD_TIMEOUT_S = 120
+SWIPL_OUTPUT_BYTES = 200_000
 SWIPL_SHIM = (
     'set -e; real=$(command -v swipl); '
     '[ -e "$real.real" ] || mv "$real" "$real.real"; '
-    "printf '#!/bin/sh\\nexec timeout " + str(SWIPL_CMD_TIMEOUT_S)
-    + ' "%s.real" "$@"\\n\' "$real" > "$real"; '
+    "printf '#!/bin/bash\\nset -o pipefail\\ntimeout " + str(SWIPL_CMD_TIMEOUT_S)
+    + ' "%s.real" "$@" 2>&1 | head -c ' + str(SWIPL_OUTPUT_BYTES)
+    + '\\n\' "$real" > "$real"; '
     'chmod +x "$real"; swipl --version'
 )
 
