@@ -136,7 +136,7 @@ def failed_rollouts_for(king12: str, procs: int, log_fn=log) -> int:
     rows = ts.index(log=log_fn, procs=procs)
     fold = load_king_pivot_config()
     return sum(1 for r in rows if r["king"] == f"king-{king12}" and r["outcome"] == "failed"
-               and r["n_replies"] > 0 and r["policy_id"].startswith(KING_PREFIX)
+               and r["n_replies"] > 1 and r["policy_id"].startswith(KING_PREFIX)
                and r["source"] not in fold["exclude_sources"])
 
 
