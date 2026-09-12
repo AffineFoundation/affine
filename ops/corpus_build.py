@@ -525,7 +525,8 @@ ANCHOR_MIN_TARGET = 0.1
 
 
 def cap_fill(records: list[dict], keyf, have: dict[str, set[str]],
-             targets: dict[str, float], *, anchor_min_target: float = 0.0
+             targets: dict[str, float], *, anchor_min_target: float = 0.0,
+             max_new: dict[str, int] | None = None
              ) -> tuple[list[dict], list[dict], dict[str, set[str]]]:
     """Mix enforcement in SLICE STRATA, not turns.
 
@@ -552,7 +553,11 @@ def cap_fill(records: list[dict], keyf, have: dict[str, set[str]],
     reference and lift the big groups' caps, and is itself held to
     target_k x reference. Trimmed rollouts defer and re-enter as the
     reference key grows. Keys without a positive target are deferred
-    whole, as before."""
+    whole, as before. `max_new` (2026-09-12): per-key ceiling on the strata
+    opened in this fold -- the catch-up budget that keeps every group's
+    share move under the shift guard, so a backlog enters over several
+    folds instead of tripping the guard (general: 111 chunks landed between
+    a dry run and its real fold and the group jumped +5.4 points)."""
     pools: dict[str, list[dict]] = {}
     for rec in records:
         pools.setdefault(keyf(rec), []).append(rec)
@@ -576,16 +581,20 @@ def cap_fill(records: list[dict], keyf, have: dict[str, set[str]],
             deferred.extend(pool)
             continue
         strata = set(have.get(k, ()))
+        opened = 0
+        limit = (max_new or {}).get(k)
         for rec in pool:
             new = record_strata(rec) - strata
             # A rollout in strata the corpus already holds adds within-stratum
             # variety and moves no share; a rollout opening new strata must fit
-            # under the cap.
-            if new and len(strata) + len(new) > cap[k] + 1e-9:
+            # under the cap and under this fold's budget.
+            if new and (len(strata) + len(new) > cap[k] + 1e-9
+                        or (limit is not None and opened + len(new) > limit)):
                 deferred.append(rec)
                 continue
             selected.append(rec)
             strata |= new
+            opened += len(new)
             added.setdefault(k, set()).update(new)
     return selected, deferred, added
 
@@ -1623,9 +1632,11 @@ def main() -> None:
     if retire_ids:
         # The retired math strata are gone from D; the cap sees what survives.
         have_groups[src2grp.get(math_cfg["source"], DEFAULT_GROUP)] = set(math_surviving)
+    budgets = {g: catchup_budget(state.get("group_strata") or {}, g)
+               for g, v in mix.items() if v > 0}
     selected, deferred, group_added = cap_fill(
         candidates, lambda r: group_of(r, src2grp, mix), have_groups, mix,
-        anchor_min_target=ANCHOR_MIN_TARGET)
+        anchor_min_target=ANCHOR_MIN_TARGET, max_new=budgets)
     deferred += lang_deferred
     log(f"mix: selected {len(selected)} rollouts (+{ {g: len(v) for g, v in group_added.items()} } "
         f"strata), deferred {len(deferred)}")
