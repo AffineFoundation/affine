@@ -75,12 +75,14 @@ if ! flock -n 9; then
   exit 0
 fi
 
-DIGEST="$("$PY" - "$REPO/affine/state/state.json" <<'PY'
+# RECOVERABLE_KING_DIGEST=<digest12>: work on that king instead of the current
+# one (backlog of a previous reign).
+DIGEST="${RECOVERABLE_KING_DIGEST:-$("$PY" - "$REPO/affine/state/state.json" <<'PY'
 import json, sys
 king = json.load(open(sys.argv[1])).get("king") or {}
 print(str(king.get("revision") or "")[:12])
 PY
-)"
+)}"
 if [[ -z "$DIGEST" ]]; then
   log "no king in affine/state/state.json; nothing to do"
   exit 0
