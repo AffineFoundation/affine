@@ -298,7 +298,8 @@ def load_king_pivot() -> dict:
                 continue
             table.setdefault(str(row["rollout_id"]), {})[int(row["turn_idx"])] = row
     cfg.update(table=table, side_table_dir=str(side_dir), n_files=n_files,
-               n_rows=n_rows)
+               n_rows=n_rows,
+               readmit_published=bool(raw.get("readmit_published", False)))
     return cfg
 
 
@@ -1081,6 +1082,36 @@ def math_retire_plan(pub: PublicCorpus, live: dict | None, cfg: dict,
     return retire, surviving, retired_strata - surviving
 
 
+def pivot_readmit_plan(pub: PublicCorpus, live: dict | None, cfg: dict
+                       ) -> tuple[list[str], set[str], set[str]]:
+    """Retire-and-readmit (2026-09-12): admitted pivot turns that were
+    published under `king_fail:*` before the judge saw them. Returns (turn
+    ids to retire from the index, surviving king_fail strata, king_fail
+    strata lost). The caller removes those ids from `published` and
+    re-derives their chunks so derive_chunk readmits them as `king_pivot`;
+    a turn that is not readmitted in the same run stays in king_fail (its
+    id is dropped from the retire list). Pivots already under
+    `king_loop_onset:*` are left where they are."""
+    admitted = {str(row.get("turn_id") or "")
+                for rows in cfg["table"].values() for row in rows.values()}
+    table = index_table(pub, live, ["turn_id", "stratum"])
+    if table is None:
+        return [], set(), set()
+    retire: list[str] = []
+    surviving: set[str] = set()
+    lost: set[str] = set()
+    for tid, stratum in zip(table.column("turn_id").to_pylist(),
+                            table.column("stratum").to_pylist()):
+        if not str(stratum).startswith("king_fail:"):
+            continue
+        if tid in admitted:
+            retire.append(tid)
+            lost.add(stratum)
+        else:
+            surviving.add(stratum)
+    return retire, surviving, lost - surviving
+
+
 # -- composition guard ----------------------------------------------------------
 MAX_SHARE_SHIFT = 0.05
 
@@ -1476,6 +1507,16 @@ def main() -> None:
             f"{len(king_pivot['table'])} rollouts / "
             f"{sum(len(v) for v in king_pivot['table'].values())} turns")
 
+    pivot_retire: list[str] = []
+    kf_surviving: set[str] = set()
+    kf_lost: set[str] = set()
+    if king_pivot and king_pivot.get("readmit_published"):
+        pivot_retire, kf_surviving, kf_lost = pivot_readmit_plan(pub, live, king_pivot)
+        log(f"{KING_PIVOT_GROUP}: readmit -- {len(pivot_retire)} admitted pivot turns are "
+            f"published under king_fail; unpublishing them for this run "
+            f"({len(kf_lost)} king_fail strata would empty)")
+        published -= set(pivot_retire)
+
     baker = ToolBaker.from_pretrained()
     panel = panel_keys()
     drops: dict[str, int] = {}
@@ -1579,6 +1620,27 @@ def main() -> None:
         log(f"routed groups: dropped {n_before - len(candidates)} carryover records "
             f"from excluded sources")
     stamped = stamp_routed_groups(candidates, routed)
+    if pivot_retire:
+        readmitted = {f"{r['traj_id']}:{m['turn_idx']}" for r in candidates
+                      if r.get("fold_group") == KING_PIVOT_GROUP for m in r["turns"]}
+        missing = [t for t in pivot_retire if t not in readmitted]
+        if missing:
+            # Not re-derived in this run (chunk not listed) or refused: keep
+            # them in king_fail rather than lose them; redo the strata math.
+            log(f"{KING_PIVOT_GROUP}: {len(missing)} retire candidates were not readmitted "
+                f"as king_pivot in this run -> they stay in king_fail")
+            pivot_retire = [t for t in pivot_retire if t in readmitted]
+            rs = set(pivot_retire)
+            table = index_table(pub, live, ["turn_id", "stratum"])
+            kf_surviving, lost = set(), set()
+            for tid, stratum in zip(table.column("turn_id").to_pylist(),
+                                    table.column("stratum").to_pylist()):
+                if str(stratum).startswith("king_fail:"):
+                    (lost if tid in rs else kf_surviving).add(stratum)
+            kf_lost = lost - kf_surviving
+        log(f"{KING_PIVOT_GROUP}: retiring {len(pivot_retire)} king_fail index rows, "
+            f"readmitted as king_pivot; king_fail strata {len(kf_surviving)} survive, "
+            f"{len(kf_lost)} empty")
     for g in ROUTED_GROUPS:
         if not routed[g]:
             continue
@@ -1632,6 +1694,8 @@ def main() -> None:
     if retire_ids:
         # The retired math strata are gone from D; the cap sees what survives.
         have_groups[src2grp.get(math_cfg["source"], DEFAULT_GROUP)] = set(math_surviving)
+    if pivot_retire:
+        have_groups["king_fail"] = set(kf_surviving)
     budgets = {g: catchup_budget(state.get("group_strata") or {}, g)
                for g, v in mix.items() if v > 0}
     selected, deferred, group_added = cap_fill(
@@ -1662,6 +1726,8 @@ def main() -> None:
     if retire_ids:
         mg = src2grp.get(math_cfg["source"], DEFAULT_GROUP)
         after[mg] = len(math_surviving)
+    if pivot_retire:
+        after["king_fail"] = len(kf_surviving)
     for g, keys in group_added.items():
         after[g] = after.get(g, 0) + len(keys)
     rows = composition_table(before, after)
@@ -1683,7 +1749,7 @@ def main() -> None:
         newest = max(datetime.fromisoformat(c["created_at"]) for c in unfolded)
         stale = (datetime.now(timezone.utc) - newest).total_seconds() >= STALE_AFTER_S
     if n_new < MIN_NEW_TURNS and not stale and not args.force and not args.init \
-            and not retire_ids:
+            and not retire_ids and not pivot_retire:
         log(f"only {n_new} mix-eligible new turns (< {MIN_NEW_TURNS}); skipping")
         return
     if not selected and not legacy:
@@ -1717,10 +1783,12 @@ def main() -> None:
         "lang_strata_added": {b: sorted(v) for b, v in lang_added.items()},
         "by_dialect": by_dialect, "allowed_kinds": list(allowed),
         "folded_chunks": [c["key"] for c in unfolded], "init": bool(args.init),
-        "retire_turn_ids": retire_ids,
-        "group_strata_after_retire": (
-            {src2grp.get(math_cfg["source"], DEFAULT_GROUP): sorted(math_surviving)}
-            if retire_ids else {}),
+        "retire_turn_ids": retire_ids + pivot_retire,
+        "group_strata_after_retire": {
+            **({src2grp.get(math_cfg["source"], DEFAULT_GROUP): sorted(math_surviving)}
+               if retire_ids else {}),
+            **({"king_fail": sorted(kf_surviving)} if pivot_retire else {}),
+        },
     }
     save_state(state)
     finalize(state, *publish_pending(state, publisher, traces_sha, legacy_sha))

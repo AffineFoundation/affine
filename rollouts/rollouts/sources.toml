@@ -113,6 +113,13 @@ min_confidence = 0.7
 side_table_dir = "affine/state/king_pivots"
 exclude_categories = ["format_error"]
 exclude_sources = ["affine_wiki", "affine_agent", "affine_math"]   # phase 3, 2026-09-12
+# readmit_published (2026-09-12): the judge runs after the fold, so its
+# pivots were already in D under king_fail. With this on, the fold retires
+# those index rows (chunks / old manifests untouched, like the math
+# retirement) and readmits the turns as king_pivot in the SAME run -- the
+# rollouts' trace chunks must be in the run (--rederive-chunks); a turn not
+# readmitted stays in king_fail. Pivots under king_loop_onset stay there.
+readmit_published = true
 
 [completion]
 # The reply that ENDED a solved rollout on purpose — teacher and king
