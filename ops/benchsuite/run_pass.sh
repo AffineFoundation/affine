@@ -154,6 +154,10 @@ remote_suite() {  # models policy sandbox_runtime user@host port key known_hosts
   rm -f "/tmp/benchsuite-$RUN_ID.tgz"
   "${SSH[@]}" "mkdir -p $RHOME/affine $RHOME/benchsuite/runs && cd $RHOME/affine && tar xzf /tmp/benchsuite.tgz && BENCH_HOME=$RHOME/benchsuite bash $RHOME/affine/ops/benchsuite/install_eval_env.sh > $RHOME/install.log 2>&1; tail -1 $RHOME/install.log" || finish 5
   "${SSH[@]}" "${SUDO}docker pull -q python:3.11-slim >/dev/null 2>&1; ${SUDO}usermod -aG docker \$USER 2>/dev/null; true"
+  if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+    # authenticated pulls: the anonymous Docker Hub cap (100 pulls / 6 h per IP) is below the 500 SWE-bench images
+    "${SSH[@]}" "echo '${DOCKERHUB_TOKEN}' | ${SUDO}docker login -u '${DOCKERHUB_USER}' --password-stdin >/dev/null 2>&1 && echo 'docker hub login ok'" || log "docker hub login failed; anonymous pulls"
+  fi
   # the lock: the pod's env must match suite.lock.json (code commits, patches, grader packages, serving)
   "${SSH[@]}" "cd $RHOME/affine/ops/benchsuite && $RHOME/benchsuite/verifiers/.venv/bin/python lock.py check --bench-home $RHOME/benchsuite" || { log "LOCK MISMATCH on the pod — refusing to run"; finish 10; }
   if [ "$MODELS" = "king" ] && [ -d "$BENCH_HOME/runs/$TEACHER_FROM" ]; then
@@ -186,8 +190,15 @@ PY
   [ "$SANDBOX_POLICY" = "never" ] && TRIGGER="never"
   stamp_trigger "$TRIGGER"
   if [ "$TRIGGER" != "none" ] && [ "$TRIGGER" != "never" ]; then
-    log "sandbox sets ($TRIGGER) under the $SB_RUNTIME runtime"
-    "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" "$SB_RUNTIME" "$SANDBOX_ENVS" primary 48 manifest-sandbox.json)" || log "sandbox suite returned non-zero; continuing"
+    if [ "$SB_RUNTIME" = "docker" ]; then
+      # Lium: docker on the pod for the public-image sets, Prime sandboxes for the Lean set.
+      log "sandbox sets ($TRIGGER): docker on the pod for $(toml modes.lium_docker_sandbox_envs); Prime sandboxes for $(toml modes.lium_prime_sandbox_envs)"
+      "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" docker "$(toml modes.lium_docker_sandbox_envs)" primary 48 manifest-sandbox.json)" || log "docker sandbox suite returned non-zero; continuing"
+      "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" prime "$(toml modes.lium_prime_sandbox_envs)" primary 32 manifest-sandbox-prime.json)" || log "prime sandbox suite returned non-zero; continuing"
+    else
+      log "sandbox sets ($TRIGGER) on Prime sandboxes"
+      "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" prime "$SANDBOX_ENVS" primary 48 manifest-sandbox.json)" || log "sandbox suite returned non-zero; continuing"
+    fi
   else
     log "no king chat cell moved beyond the previous run's interval; sandbox sets skipped"
   fi
