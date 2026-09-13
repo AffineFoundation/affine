@@ -143,6 +143,11 @@ def main() -> int:
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / f"{run_id}.json").write_text(json.dumps(card, indent=1))
     log(f"scorecard -> {state_dir / (run_id + '.json')} ({len(card['rows'])} rows)")
+    if card.get("status") == "complete" and (card.get("king") or {}).get("digest"):
+        marker = HERE / "state" / f"inflight-{card['king']['digest'][:12]}"
+        if marker.exists():
+            marker.unlink()
+            log(f"removed {marker.name} (watch mode resumes for this king)")
     if a.no_r2 or a.only_state:
         return 0
 

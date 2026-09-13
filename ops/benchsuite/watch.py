@@ -107,6 +107,12 @@ def tick(a: argparse.Namespace) -> None:
                  finished_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         save_watch(w)
         log(f"pass {p['run_id']} finished exit={code}")
+    # An operator-driven pass for this king (e.g. the reference full pass on a
+    # Prime pod) is marked by state/inflight-<digest12>; the watcher stands down
+    # for that king until the marker is removed (publish.py removes it).
+    if (STATE_DIR / f"inflight-{king['digest'][:12]}").exists():
+        log(f"pass for {king['digest'][:12]} in flight elsewhere (inflight marker); standing down")
+        return
     card = latest_card_for(king["digest"])
     why = None
     if card is None:

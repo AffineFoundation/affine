@@ -9,9 +9,15 @@
 #
 # Contract via /root/bench/env (mode 0600):
 #   KING_DIGEST        sha256 model_digest of the king (public bucket, no creds)
+#   KING_REPLICAS      "port:gpus:tp;..." e.g. "31001:0,1:2;31002:2,3:2" (empty = do not serve)
 #   TEACHER_HF         HF repo id of the teacher; TEACHER_REV optional; HF_TOKEN optional
-#   KING_REPLICAS      "port:gpus:tp;..." e.g. "31001:0,1:2;31002:2,3:2"
 #   TEACHER_REPLICAS   e.g. "32001:4,5:2;32002:6,7:2"   (empty = do not serve the teacher)
+#   KING2_DIGEST / KING2_REPLICAS   optional second king (a new reign while the previous
+#                      pass drains), served on 127.0.0.1:8003 as king-<digest12>
+#   Weights live under /root/bench/king-<digest12>/ so several kings can coexist.
+#   Re-running the script adopts replicas that already answer (pid + /v1/models)
+#   and only launches the missing ones, so a model can be added or removed by
+#   editing the env, killing its replicas and relaunching.
 #   API_KEY            bearer every replica enforces
 #   MAX_MODEL_LEN, GPU_UTIL, BATCHED_TOKENS, MAX_NUM_SEQS, VLLM_VERSION
 #
@@ -66,11 +72,16 @@ fi
 command -v nginx >/dev/null 2>&1 || { apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq nginx >/dev/null 2>&1 || fail nginx; }
 
 # 2. King weights: manifest-driven, sha-verified, resumable, PUBLIC bucket.
-KING_DIR=/root/bench/king
-if [ ! -f "$KING_DIR/.complete" ]; then
-  mkdir -p "$KING_DIR"
-  log "downloading king $KING_DIGEST from models.affine.io"
-  MODEL_DIR="$KING_DIR" DIGEST="$KING_DIGEST" /root/venv/bin/python - <<'PY' || fail download-king
+download_king() {  # digest -> dir
+  local dir="/root/bench/king-${1:0:12}"
+  if [ ! -f "$dir/.complete" ]; then
+    mkdir -p "$dir"
+    log "downloading king $1 from models.affine.io -> $dir"
+    MODEL_DIR="$dir" DIGEST="$1" /root/venv/bin/python /root/bench/dl_king.py || fail "download-king-${1:0:12}"
+    touch "$dir/.complete"
+  fi
+}
+cat > /root/bench/dl_king.py <<'PY'
 import hashlib, json, os, subprocess
 from concurrent.futures import ThreadPoolExecutor
 base = f"https://models.affine.io/models/sha256/{os.environ['DIGEST']}/"
@@ -104,7 +115,12 @@ with ThreadPoolExecutor(8) as ex:
 json.dump(man, open(os.path.join(d, ".manifest.json"), "w"))
 print("download complete", flush=True)
 PY
-  touch "$KING_DIR/.complete"
+KING_DIR="/root/bench/king-${KING_DIGEST:0:12}"
+[ -n "${KING_REPLICAS:-}" ] && download_king "$KING_DIGEST"
+KING2_DIR=""
+if [ -n "${KING2_REPLICAS:-}" ]; then
+  download_king "$KING2_DIGEST"
+  KING2_DIR="/root/bench/king-${KING2_DIGEST:0:12}"
 fi
 
 # 3. Teacher weights: HF snapshot at the pinned revision.
@@ -151,11 +167,17 @@ worker_rlimit_nofile 65536;
 error_log /root/logs/nginx_error.log warn;
 events { worker_connections 4096; }
 http {"
-  upstream_block king "$KING_REPLICAS"
-  server_block 8001 king
+  if [ -n "${KING_REPLICAS:-}" ]; then
+    upstream_block king "$KING_REPLICAS"
+    server_block 8001 king
+  fi
   if [ -n "${TEACHER_REPLICAS:-}" ]; then
     upstream_block teacher "$TEACHER_REPLICAS"
     server_block 8002 teacher
+  fi
+  if [ -n "${KING2_REPLICAS:-}" ]; then
+    upstream_block king2 "$KING2_REPLICAS"
+    server_block 8003 king2
   fi
   echo "}"
 } > /etc/nginx/nginx.conf
@@ -196,11 +218,17 @@ replica_proc_alive() {
 
 # 5. Supervisor over both models' replicas.
 declare -a ALL
-IFS=';' read -ra K <<< "$KING_REPLICAS"
-for s in "${K[@]}"; do ALL+=("king:$KING_DIR:$s"); done
+if [ -n "${KING_REPLICAS:-}" ]; then
+  IFS=';' read -ra K <<< "$KING_REPLICAS"
+  for s in "${K[@]}"; do ALL+=("king:$KING_DIR:$s"); done
+fi
 if [ -n "${TEACHER_REPLICAS:-}" ]; then
   IFS=';' read -ra T <<< "$TEACHER_REPLICAS"
   for s in "${T[@]}"; do ALL+=("teacher:$TEACHER_DIR:$s"); done
+fi
+if [ -n "${KING2_REPLICAS:-}" ]; then
+  IFS=';' read -ra K2 <<< "$KING2_REPLICAS"
+  for s in "${K2[@]}"; do ALL+=("king-${KING2_DIGEST:0:12}:$KING2_DIR:$s"); done
 fi
 declare -A launched_at fails
 log "supervising ${#ALL[@]} replicas"
