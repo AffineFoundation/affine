@@ -27,6 +27,10 @@ HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
 STATE_DIR = Path(os.environ.get("KINGBOARD_STATE_DIR", HERE / "state"))
 STATS_PATH = STATE_DIR / "stats.json"
+# Benchmark-suite scorecards (ops/benchsuite/publish.py writes one JSON per
+# run): the "Benchmarks" tab reads them straight from disk.
+BENCHSUITE_DIR = Path(os.environ.get("BENCHSUITE_STATE_DIR",
+                                     HERE.parents[1] / "affine" / "state" / "benchsuite"))
 REFRESH_S = float(os.environ.get("KINGBOARD_REFRESH_S", "180"))
 BUILD_TIMEOUT_S = float(os.environ.get("KINGBOARD_BUILD_TIMEOUT_S", "5400"))
 BUILD_CMD = [sys.executable, str(HERE / "build.py")]
@@ -91,6 +95,23 @@ def api_stats() -> Response:
                             status_code=503, headers={"Cache-Control": "no-store"})
     return Response(body, media_type="application/json",
                     headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/benchsuite.json")
+def api_benchsuite() -> JSONResponse:
+    """Every published benchmark-suite scorecard, newest first (rollout rows
+    are not in these files; they live on R2 under research/benchsuite/)."""
+    runs = []
+    for p in sorted(BENCHSUITE_DIR.glob("*.json")):
+        try:
+            card = json.loads(p.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(card, dict) and card.get("rows") is not None:
+            runs.append(card)
+    runs.sort(key=lambda c: c.get("created_at") or "", reverse=True)
+    return JSONResponse({"runs": runs, "generated_at": time.time()},
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/health")
