@@ -78,6 +78,11 @@ TYPES = {
     # rented --raw: no vLLM bootstrap.
     "ada6000-1x": TypePlan("ada6000-1x", "RTX 6000 Ada", 1, 1, 0.0, 1.3),
     "a6000-1x": TypePlan("a6000-1x", "RTX A6000", 1, 1, 0.0, 1.0),
+    # Coached-recovery continuation boxes (2026-09-13): many cores, lots of
+    # RAM, docker; the GPU is idle. Rented --raw.
+    "ada6000-2x": TypePlan("ada6000-2x", "RTX 6000 Ada", 2, 1, 0.0, 1.5),
+    "3090-4x": TypePlan("3090-4x", "RTX 3090", 4, 1, 0.0, 0.8),
+    "4090-1x": TypePlan("4090-1x", "RTX 4090", 1, 1, 0.0, 0.4),
 }
 
 SSH_OPTS = [
