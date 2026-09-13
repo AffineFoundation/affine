@@ -1144,10 +1144,15 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             _count(drops, "king_one_reply")
             continue
         leak_exempt = frozenset(i for i, g in route.items() if cfgs[g]["leak_exempt"])
+        # Turns scored under `text` may be recorded from a reply with no action
+        # in the policy dialect (the affine_sql king answers with a bare
+        # ```sql block; 26 of 28 refused king_done states, 2026-09-13).
+        text_replies = frozenset(i for i, k in kind_stamp.items() if k == dialects.TEXT_KIND)
         try:
             rec = build_view_record(env, baker=baker,
                                     generated_at=env.get("stored_at"),
-                                    convs=convs, leak_exempt=leak_exempt)
+                                    convs=convs, leak_exempt=leak_exempt,
+                                    text_replies=text_replies)
         except (ToolParityError, TraceShapeError) as e:
             _count(drops, type(e).__name__)
             continue
