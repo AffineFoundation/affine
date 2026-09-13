@@ -125,7 +125,7 @@ def turn_condition(row: dict, cname: str, mix: int | None = None, gate: bool = F
         "r_dead": len(acts) < 2 or len(set(acts)) == 1,
         "grounded": cond.get("grounded"), "leaks_future": cond.get("leaks_future"),
         "hint_len": len(cond.get("hint") or "") if cond.get("hint") else None,
-        "cap_hit": sum(1 for r in cond["refs"] if not r.get("think_closed")) / max(1, len(cond["refs"])),
+        "cap_hit": sum(1 for r in cond["refs"] if r.get("think_closed") is False) / max(1, len(cond["refs"])),
         "ref_z_len": st.mean(len(r["z"]) for r in cond["refs"] if r.get("valid")) if any(r.get("valid") for r in cond["refs"]) else None,
         "ref_leak": (st.mean(1.0 if S.leakage(r["z"], r["y"]) else 0.0 for r in cond["refs"] if r.get("valid"))
                      if any(r.get("valid") for r in cond["refs"]) else None),
@@ -171,6 +171,7 @@ def turn_condition(row: dict, cname: str, mix: int | None = None, gate: bool = F
             "B": (m["lpC_ya_za"] - m["lpC_ya_e"]) if m.get("lpC_ya_za") is not None else None,
             "len_z": len(m.get("z") or ""),
             "Rc": Rc, "score_c": (min(Rc, G0) if (Rc is not None and G0 is not None) else None),
+            "score_gc": (min(R, Gc) if (R is not None and Gc is not None and not math.isnan(R)) else None),
         }
     return out
 
@@ -276,6 +277,19 @@ def summarize(tcs_by_cond: dict[str, list[dict]], groups: list[str], label: str)
                     if dc:
                         row[f"zc_{key}"] = zstat(dc)[2]
                         row[f"nc_{key}"] = len(dc)
+                if a.startswith("coached_") or a == "teacher_heldout":
+                    # diagnostics: R leg alone, and min(R, G from the arm's own band)
+                    dr = paired(sub, a, b, key="R")
+                    if dr:
+                        row[f"zR_{key}"] = zstat(dr)[2]
+                        row[f"dR_{key}"] = zstat(dr)[0]
+                    dg = paired(sub, a, b, key="score_gc")
+                    if dg:
+                        row[f"zGc_{key}"] = zstat(dg)[2]
+                    ga = [t["miners"][a]["G0"] for t in sub if a in t["miners"] and not t["miners"][a]["forfeit"] and t["miners"][a].get("G0") is not None]
+                    if ga:
+                        row[f"G0_{a}"] = st.mean(ga)
+                        row[f"G0neg_{a}"] = st.mean(1.0 if g < 0 else 0.0 for g in ga)
                 if cname != "H0" and base_by:
                     # paired bootstrap on the same turns; a coached pair is
                     # compared with the unhinted held-out pair.
@@ -327,7 +341,7 @@ def main() -> None:
     ok = [r for r in rows if not r.get("failed") and "H0" in r.get("conditions", {})]
     print(f"{len(rows)} rows, {len(ok)} usable, {len(rows) - len(ok)} failed", file=sys.stderr)
     conds = sorted({c for r in ok for c in r["conditions"]}, key=lambda c: (c != "H0", c))
-    groups = ["all", "king_loop_onset", "king_pivot", "completion"]
+    groups = ["all"] + sorted({r["group"] for r in ok})
 
     # E1 / E3: every condition, gate off and gate on.
     e1_off = {c: [tc for r in ok if (tc := turn_condition(r, c)) is not None] for c in conds}
@@ -374,7 +388,17 @@ def main() -> None:
                  "dz_lo_teacher_-king_liv", "dz_hi_teacher_-king_liv",
                  "d_stored_c-stored_k", "z_stored_c-stored_k", "n_stored_c-stored_k",
                  "d_teacher_-recorded", "z_teacher_-recorded", "n_teacher_-recorded"]
+    e5_cols = ["cond", "group", "n_turns", "ref_yield", "cap_hit", "identical_frac", "r_dead_frac", "t_in_band0",
+               "asd_teacher_heldout", "d_teacher_-king_liv", "z_teacher_-king_liv", "n_teacher_-king_liv"]
+    e5_cols += ["zR_teacher_-king_liv", "G0_teacher_heldout", "G0neg_teacher_heldout"]
+    for a in E5_ARMS:
+        e5_cols += [f"d_{a}-king", f"z_{a}-king", f"n_{a}-king", f"dz_{a}-king", f"dz_lo_{a}-king", f"dz_hi_{a}-king",
+                    f"zR_{a}-king", f"zGc_{a}-king", f"zc_{a}-king", f"G0_coached_{a}", f"G0neg_coached_{a}"]
     md = ["# Hinted-teacher probe — tables\n"]
+    if any(k.startswith("z_fact_") or k.startswith("z_mix3") for r in tables for k in r):
+        md.append("\n## E5 — coached held-out vs live king, per arm\n")
+        rows_e5 = [r for r in tables if r["table"] == "E1_gate_off"]
+        md.append(md_table(rows_e5, [c for c in e5_cols if any(c in r for r in rows_e5)]))
     for label in ("E1_gate_off", "E1_gate_on", "E2_mix"):
         md.append(f"\n## {label}\n")
         md.append(md_table([r for r in tables if r["table"] == label], main_cols))
