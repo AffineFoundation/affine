@@ -32,6 +32,17 @@ and 1,848 math problems only a GLM `boxed` answer — while the king seat
 replays all of them on every harness. Now each teacher harness makes its
 own pass over each source, the king's tasks first (`pending`), so every
 (env, harness) the king runs gets a teacher baseline on the same tasks.
+
+King share (2026-09-13): while the king seat is served, at least
+KING_BATCH_SHARE of the picks are KING cycles — the source is chosen among
+the sources that have a warm king policy with work left, ranked by the
+king seat's OWN relative shortfall, and the policy pick is restricted to
+king policies. Without this the king starved: the source pick ranks by
+relative shortfall across ALL kept turns, so the fifteen teacher-only env
+wave-2/3 sources (shortfall ~1.0, nothing generated yet) outranked every
+source that carries a king policy (best 0.85), and between 2026-09-12
+13:24 UTC and 2026-09-13 05:48 UTC the three pods ran ~200 teacher cycles
+and zero king batches while reign 12 sat published on every pod.
 """
 
 from __future__ import annotations
@@ -52,6 +63,13 @@ ZERO_YIELD_STRIKES = 3        # consecutive zero-kept batches -> cooldown
 ZERO_YIELD_COOLDOWN_S = 4 * 3600
 KING_POLICY_PREFIX = "king_"
 KING_SEAT_PREFIX = "king:"
+# Guaranteed fraction of picks that go to the king seat while it is served
+# (ROLLOUTS_KING_BATCH_SHARE overrides; 0 disables the guarantee).
+KING_BATCH_SHARE = float(os.environ.get("ROLLOUTS_KING_BATCH_SHARE", "0.4"))
+
+
+def is_king_policy(policy_id: str) -> bool:
+    return policy_id.startswith(KING_POLICY_PREFIX)
 
 
 def seat_of(policy_id: str, model: str, harness: str = "") -> str:
@@ -149,6 +167,13 @@ class Scheduler:
         self.targets = registry.target_shares()
         self._cooldown_until: dict[str, float] = {}
         self._zero_streak: dict[str, int] = {}
+        self.king_share = KING_BATCH_SHARE
+        # Picks made by this supervisor (in-memory; a restart starts the
+        # ratio over). `king_cycle` is the verdict of the last pick_source:
+        # True = this cycle belongs to the king seat (pick_policy honours it).
+        self.picks_total = 0
+        self.picks_king = 0
+        self.king_cycle = False
 
     # -- source pick -------------------------------------------------------------
 
@@ -159,7 +184,28 @@ class Scheduler:
                 and self._cooldown_until.get(name, 0.0) <= now
                 and self._usable_policies(name)]
 
-    def pick_source(self, remaining: dict[str, int]) -> str | None:
+    def _king_eligible(self, king_remaining: dict[str, int]) -> list[str]:
+        """Sources with a WARM king policy and work left for the king seat
+        (`king_remaining` = per-source count from `remaining(..., king_only=
+        True)`). Share-0 sources (retired pools, public benches) are never
+        king cycles."""
+        now = time.time()
+        return [name for name in self.registry.sources
+                if king_remaining.get(name, 0) > 0
+                and self.targets.get(name, 0.0) > 0
+                and self._cooldown_until.get(name, 0.0) <= now
+                and self._warm_king_policies(name)]
+
+    def _king_due(self) -> bool:
+        """Would handing this pick to the teacher drop the king's share of
+        picks below the target? With share 0.4 the sequence is K T K T T
+        K T K T T ... = 40 % king cycles exactly."""
+        if self.king_share <= 0:
+            return False
+        return self.picks_king / (self.picks_total + 1) < self.king_share
+
+    def pick_source(self, remaining: dict[str, int],
+                    king_remaining: dict[str, int] | None = None) -> str | None:
         """The source furthest below its target, measured RELATIVE to the
         target: shortfall = 1 - kept / expected, where expected is the
         source's share of all kept turns so far. 1.0 = nothing generated
@@ -170,20 +216,42 @@ class Scheduler:
         +2-4k turns of deficit with zero batches while terminal_bench_2 at
         +25k (already 18 % of its target) won every pick — a source's
         deficit in turns scales with its target, so the big groups always
-        outranked the small ones. Absolute deficit stays the tie-break."""
+        outranked the small ones. Absolute deficit stays the tie-break.
+
+        King cycles (see the module docstring): when the king's share of
+        picks is due and some source has a warm king policy with work
+        left, the pick is made among THOSE sources only, ranked by the
+        same shortfall on the king seat's own kept turns, and
+        `self.king_cycle` is set so pick_policy stays on the king. The
+        teacher's ranking is untouched on its own cycles."""
+        self.king_cycle = False
+        if king_remaining is not None and self._king_due():
+            king_cands = self._king_eligible(king_remaining)
+            if king_cands:
+                self.king_cycle = True
+                self.picks_total += 1
+                self.picks_king += 1
+                return self._rank_pick(king_cands, self._king_kept)
         cands = self.eligible(remaining)
         if not cands:
             return None
+        self.picks_total += 1
+        return self._rank_pick(cands, lambda n: self.state.kept_by_source.get(n, 0))
+
+    def _rank_pick(self, cands: list[str], kept_of) -> str:
         total_target = sum(self.targets[n] for n in cands)
-        total_kept = sum(self.state.kept_by_source.get(n, 0)
-                         for n in cands) + 1
+        total_kept = sum(kept_of(n) for n in cands) + 1
         def rank(name: str) -> tuple[float, float, float, str]:
             expected = self.targets[name] / total_target * total_kept
-            kept = self.state.kept_by_source.get(name, 0)
+            kept = kept_of(name)
             deficit = expected - kept
             shortfall = deficit / expected if expected > 0 else 0.0
             return (shortfall, deficit, self.targets[name], name)
         return max(cands, key=rank)
+
+    def _king_kept(self, source: str) -> int:
+        return sum(n for (src, pid), n in self.state.kept_by_policy.items()
+                   if src == source and is_king_policy(pid))
 
     # -- policy pick -------------------------------------------------------------
 
@@ -202,6 +270,17 @@ class Scheduler:
         warm = [p for p in cands if not self.health.all_cooling(p, self.env)]
         return warm or cands
 
+    def _warm_king_policies(self, source: str) -> list[Policy]:
+        """King policies of the source whose endpoint is keyed (the seat is
+        served) and not cooling. A struck king box makes every source
+        king-ineligible for the cooldown, so a dark seat costs teacher
+        cycles, never a spin."""
+        cands = [p for p in self._usable_policies(source)
+                 if is_king_policy(p.id)]
+        if self.health is None:
+            return cands
+        return [p for p in cands if not self.health.all_cooling(p, self.env)]
+
     # -- seats: per-(source, seat) work ------------------------------------------
 
     def pending(self, source: str, rows: list[dict], policy: Policy) -> list[dict]:
@@ -219,19 +298,38 @@ class Scheduler:
         return ([r for r in todo if r["uid"] in king_first]
                 + [r for r in todo if r["uid"] not in king_first])
 
-    def remaining(self, source: str, rows: list[dict]) -> int:
+    def remaining(self, source: str, rows: list[dict],
+                  king_only: bool = False) -> int:
         """Tasks some usable policy of this source still has to run — the
         union over seats (a task the teacher finished is still work for the
-        king)."""
-        seats = {policy_seat(p, self.env) for p in self._usable_policies(source)}
+        king). `king_only` counts the king seat's work alone."""
+        pols = self._usable_policies(source)
+        if king_only:
+            pols = [p for p in pols if is_king_policy(p.id)]
+        seats = {policy_seat(p, self.env) for p in pols}
         if not seats:
             return 0
         dones = [self.state.done_for(source, s) for s in seats]
         return sum(1 for r in rows if any(r["uid"] not in d for d in dones))
 
-    def pick_policy(self, source: str, rows: list[dict] | None = None) -> Policy:
+    def pick_policy(self, source: str, rows: list[dict] | None = None,
+                    king_only: bool = False) -> Policy:
+        """Largest per-policy deficit among the source's healthy policies
+        with work. `king_only` (a king cycle) keeps the pick on the king
+        policies; if none of them can run here it falls back to the normal
+        pick rather than idling the cycle."""
         cands = self._healthy_policies(source)
-        if rows is not None:
+        if king_only:
+            kings = [p for p in cands if is_king_policy(p.id)]
+            if rows is not None:
+                kings = [p for p in kings if self.pending(source, rows, p)]
+            if kings:
+                cands = kings
+            else:
+                log.warning("king cycle on %s: no king policy can run; "
+                            "falling back to the normal pick", source)
+                king_only = False
+        if rows is not None and not king_only:
             with_work = [p for p in cands if self.pending(source, rows, p)]
             if not with_work:
                 # Every warm policy is finished here; fall back to any usable
@@ -270,6 +368,8 @@ class Scheduler:
         return {
             "targets": self.targets,
             "kept_by_source": dict(self.state.kept_by_source),
+            "picks": {"total": self.picks_total, "king": self.picks_king,
+                      "king_share_target": self.king_share},
             "cooldowns": {n: round(t - time.time())
                           for n, t in self._cooldown_until.items()
                           if t > time.time()},
