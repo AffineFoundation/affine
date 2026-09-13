@@ -241,12 +241,14 @@ KING_LOOP_GROUP = "king_loop_onset"
 KING_PIVOT_GROUP = "king_pivot"
 KING_RECOVERABLE_GROUP = "king_recoverable"
 KING_DONE_GROUP = "king_done"
+KING_TOOLUSE_GROUP = "king_tooluse"
 COMPLETION_GROUP = "completion"
-KING_GROUPS = ("king_fail", KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_PIVOT_GROUP,
-               KING_LOOP_GROUP)
+COMPLETION_PRE_GROUP = "completion_pre"
+KING_GROUPS = ("king_fail", KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_TOOLUSE_GROUP,
+               KING_PIVOT_GROUP, KING_LOOP_GROUP)
 # Precedence order when one turn qualifies for several (king-data spec §3.3).
-ROUTED_GROUPS = (KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_PIVOT_GROUP, KING_LOOP_GROUP,
-                 COMPLETION_GROUP)
+ROUTED_GROUPS = (KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_TOOLUSE_GROUP, KING_PIVOT_GROUP,
+                 KING_LOOP_GROUP, COMPLETION_GROUP, COMPLETION_PRE_GROUP)
 
 
 def load_king_common() -> dict:
@@ -283,9 +285,17 @@ def _group_cfg(group: str) -> dict:
            "leak_exempt": bool(cfg.get("leak_exempt", False)),
            "raw": cfg}
     if group in KING_GROUPS:
-        common = load_king_common()
+        common = dict(load_king_common())
         out["policy_prefix"] = out["policy_prefix"] or common["policy_prefix"]
-        out["exclude_sources"] = out["exclude_sources"] | common["exclude_sources"]
+        # `inherit_exclude = false`: the group keeps only its own list (a tool
+        # group must see the tool sources the others exclude). `lift_exclude`:
+        # sources taken back out of the inherited list.
+        if cfg.get("inherit_exclude", True):
+            out["exclude_sources"] = out["exclude_sources"] | common["exclude_sources"]
+        out["exclude_sources"] = out["exclude_sources"] - frozenset(
+            str(x) for x in (cfg.get("lift_exclude") or []))
+        if "one_reply_ok" in cfg:
+            common["one_reply_ok"] = bool(cfg["one_reply_ok"])
         out["common"] = common
     return out
 
@@ -353,8 +363,18 @@ def load_king_recoverable() -> dict:
     cfg = _group_cfg(KING_RECOVERABLE_GROUP)
     if not cfg:
         return {}
-    return _load_side_table(cfg, default_dir="affine/state/recoverable",
-                            row_ok=lambda row: bool(row.get("admit")))
+    cfg = _load_side_table(cfg, default_dir="affine/state/recoverable",
+                           row_ok=lambda row: bool(row.get("admit")))
+    # Every tested state (admitted or not): king_tooluse reads the teacher's
+    # first-action kind from it.
+    all_rows: dict[str, dict[int, dict]] = {}
+    for path in sorted(Path(cfg["side_table_dir"]).glob("*.jsonl")):
+        for line in path.read_text().split("\n"):
+            if line.strip():
+                row = json.loads(line)
+                all_rows.setdefault(str(row["rollout_id"]), {})[int(row["turn_idx"])] = row
+    cfg["all_rows"] = all_rows
+    return cfg
 
 
 def load_king_done() -> dict:
@@ -370,6 +390,45 @@ def load_king_done() -> dict:
     if cfg:
         cfg["leak_exempt"] = True
         cfg["min_more_turns"] = int(cfg["raw"].get("min_more_turns", 2) or 2)
+    return cfg
+
+
+def load_king_tooluse() -> dict:
+    """[king_tooluse] (improvement loop P1, 2026-09-13): states where the
+    king called a tool and the TEACHER answered in prose. Two readings of
+    "what the teacher does there": (a) one-shot -- the teacher's own
+    rollout on the same task (same source, same sid) opens with a prose
+    reply while the king's opens with a tool call: the routed state is the
+    king's turn 0; (b) mid-rollout -- the recoverable side-table row for the
+    state says `teacher_first_action_kind == "text"` and the king's reply
+    there is a tool call. Kind-by-teacher: the routed turn's `action_kind`
+    is stamped `text` (admitted since wvk 13; a routing decision, the parser
+    follows the teacher's reference) so a prose reference and any miner
+    reply parse. Sources listed explicitly; one-reply rollouts allowed
+    (the state IS the prompt-with-tools); the common exclusions are not
+    inherited."""
+    cfg = _group_cfg(KING_TOOLUSE_GROUP)
+    if not cfg:
+        return {}
+    raw = cfg["raw"]
+    cfg.update(leak_exempt=True,
+               sources=frozenset(str(x) for x in (raw.get("sources") or [])),
+               teacher_prefix=str(raw.get("teacher_prefix") or "teacher_"),
+               kind_by_teacher=bool(raw.get("kind_by_teacher", True)),
+               use_recoverable_rows=bool(raw.get("use_recoverable_rows", True)))
+    return cfg
+
+
+def load_completion_pre() -> dict:
+    """[completion_pre] (improvement loop P3, 2026-09-13): the 1-2 teacher
+    turns right before a solved stop (run the tests, check the diff, THEN
+    finish). Teacher-only, forward-only relabel of turns that would enter
+    their source group; `n_before` turns, only if they are scorable turns
+    themselves. Not leak-exempt (ordinary turns)."""
+    cfg = _group_cfg(COMPLETION_PRE_GROUP)
+    if cfg:
+        cfg["n_before"] = int(cfg["raw"].get("n_before", 2) or 2)
+        cfg["teacher_prefix"] = str(cfg["raw"].get("teacher_prefix") or "teacher_")
     return cfg
 
 
@@ -441,6 +500,53 @@ def king_done_turn(main_convs: list[list[dict]], kind: str, min_more: int) -> in
                 and completion_kind(prev[-1]["content"], kind) is not None:
             return k
     return None
+
+
+def first_reply_is_tool_call(convs: list[list[dict]], main: list[int], kind: str) -> bool | None:
+    """Does the first main-root reply carry a tool call (`<tool_call>` block
+    or native tool_calls baked into the content)? None when there is no
+    reply."""
+    if not main:
+        return None
+    reply = convs[main[0]][-1]["content"]
+    return len(dialects.get("tool_call").actions(reply)) >= 1
+
+
+def teacher_prose_survey(pub: PublicCorpus, traces_manifest: dict, cfg: dict,
+                         baker) -> tuple[set[str], dict]:
+    """Task sids (per listed source) whose TEACHER rollouts open with a prose
+    reply (no tool call) -- the P1 "do not act" prompts. Reads every chunk of
+    the listed sources; a sid counts when at least one teacher rollout on it
+    opened in prose and none opened with a tool call."""
+    prose: dict[str, set[str]] = {}
+    tool: dict[str, set[str]] = {}
+    n_chunks = 0
+    for c in traces_manifest["chunks"]:
+        name = c["key"].rsplit("/", 1)[-1]
+        if not any(name.startswith(f"{src}-") for src in cfg["sources"]):
+            continue
+        n_chunks += 1
+        for env in iter_jsonl_gz(pub.cached(c["key"], c["sha256"], gz_sha=True)):
+            src = str(env.get("source") or "")
+            pid = str((env.get("policy") or {}).get("id") or "")
+            if src not in cfg["sources"] or not pid.startswith(cfg["teacher_prefix"]):
+                continue
+            nodes = env["trace"].get("nodes") or []
+            first = next((nd for nd in nodes if nd.get("sampled")
+                          and (nd.get("message") or {}).get("role") == "assistant"), None)
+            if first is None:
+                continue
+            m = first["message"]
+            is_tool = bool(m.get("tool_calls")) or bool(
+                dialects.get("tool_call").actions(message_text(m.get("content"))))
+            key = f"{src}|{(env.get('task') or {}).get('sid')}"
+            (tool if is_tool else prose).setdefault(src, set()).add(key)
+    keep = {k for src in prose for k in prose[src] if k not in tool.get(src, set())}
+    stats = {"chunks": n_chunks,
+             "teacher_prose_sids": sum(len(v) for v in prose.values()),
+             "teacher_tool_sids": sum(len(v) for v in tool.values()),
+             "prose_only_sids": len(keep)}
+    return keep, stats
 
 
 def cap_king_fail_turns(idx: set[int], escapes: set[int], cap: int) -> set[int]:
@@ -865,7 +971,10 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                  king_fail_cfg: dict | None = None,
                  notes: dict[str, int] | None = None,
                  published_king_ns: dict[str, str] | None = None,
-                 reclaimed: dict[str, set[str]] | None = None) -> list[dict]:
+                 reclaimed: dict[str, set[str]] | None = None,
+                 king_tooluse: dict | None = None,
+                 teacher_prose: set[str] | None = None,
+                 completion_pre: dict | None = None) -> list[dict]:
     """View records for one trace chunk, with only the turns that pass the
     fold contract and are not yet published. Records with no surviving
     turn are dropped.
@@ -899,7 +1008,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
     notes = notes if notes is not None else {}
     cfgs = {KING_LOOP_GROUP: king_loop, KING_PIVOT_GROUP: king_pivot,
             COMPLETION_GROUP: completion, KING_RECOVERABLE_GROUP: king_recoverable,
-            KING_DONE_GROUP: king_done}
+            KING_DONE_GROUP: king_done, KING_TOOLUSE_GROUP: king_tooluse,
+            COMPLETION_PRE_GROUP: completion_pre}
     common = (king_fail_cfg or {}).get("common") or load_king_common()
     out: list[dict] = []
     for env in iter_jsonl_gz(path):
@@ -912,12 +1022,17 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         pivots = side_table_turns(env, king_pivot) if king_pivot else {}
         recoverable = side_table_turns(env, king_recoverable) if king_recoverable else {}
         want_done = bool(king_done) and king_loop_candidate(env, king_done)
+        want_tooluse = (bool(king_tooluse) and _policy_ok(env, king_tooluse)
+                        and str(env.get("source") or "") in king_tooluse["sources"])
         is_king_fail = (bool(king_fail_cfg) and _policy_ok(env, king_fail_cfg)
                         and rollout_outcome(env["trace"]) == "failed")
         one_reply_king = (is_king_fail and not king_multi_turn(env, king_fail_cfg))
         escapes: set[int] = set()
         want_completion = bool(completion) and completion_candidate(env, completion)
-        if want_loop or want_completion or want_done:
+        want_pre = (bool(completion_pre) and want_completion
+                    and str((env.get("policy") or {}).get("id") or "")
+                    .startswith(completion_pre["teacher_prefix"]))
+        if want_loop or want_completion or want_done or want_tooluse:
             try:
                 convs = trace_conversations(env["trace"], baker)
             except (ToolParityError, TraceShapeError) as e:
@@ -938,6 +1053,14 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                 route[i] = COMPLETION_GROUP
                 extra[i] = {"completion_kind": ckind}
                 _count(notes, f"completion_kind_{ckind}")
+                if want_pre:
+                    for back in range(1, completion_pre["n_before"] + 1):
+                        j = len(main) - 1 - back
+                        if j < 0:
+                            break
+                        route[main[j]] = COMPLETION_PRE_GROUP
+                        extra[main[j]] = {"pre_of": i, "pre_rank": back}
+                        _count(notes, "completion_pre_states")
         later_onsets: set[int] = set()
         if want_loop and main_convs:
             n_on = 0
@@ -997,6 +1120,37 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                     "teacher_turns": row.get("teacher_turns"),
                     "teacher_first_action_kind": row.get("teacher_first_action_kind"),
                     "timestamp": row.get("timestamp")}}
+        tool_kind_stamp: set[int] = set()
+        if want_tooluse and convs and main:
+            src = str(env.get("source") or "")
+            key = f"{src}|{(env.get('task') or {}).get('sid')}"
+            # (a) one-shot: the teacher opens in prose on this task, the king
+            # with a tool call.
+            if teacher_prose and key in teacher_prose and first_reply_is_tool_call(convs, main, kind):
+                i = main[0]
+                if route.get(i) not in (KING_DONE_GROUP, KING_RECOVERABLE_GROUP):
+                    route[i] = KING_TOOLUSE_GROUP
+                    in_loop.discard(i); later_onsets.discard(i)
+                    extra[i] = {"tooluse": {"rule": "teacher_prose_same_task"}}
+                    tool_kind_stamp.add(i)
+                    _count(notes, "king_tooluse_one_shot")
+            # (b) mid-rollout: the recoverable table says the teacher's first
+            # action at this state is prose; the king's reply there is a tool call.
+            all_rows = ((king_recoverable or {}).get("all_rows") or {}).get(str(env.get("rollout_id") or ""), {})
+            if king_tooluse.get("use_recoverable_rows"):
+                for i, row in all_rows.items():
+                    if i >= len(convs) or route.get(i) in (KING_DONE_GROUP, KING_RECOVERABLE_GROUP):
+                        continue
+                    if str(row.get("teacher_first_action_kind") or "") != "text":
+                        continue
+                    if not dialects.get("tool_call").actions(convs[i][-1]["content"]):
+                        continue
+                    route[i] = KING_TOOLUSE_GROUP
+                    in_loop.discard(i); later_onsets.discard(i)
+                    extra[i] = {"tooluse": {"rule": "teacher_prose_at_state",
+                                            "state_kind": row.get("state_kind")}}
+                    tool_kind_stamp.add(i)
+                    _count(notes, "king_tooluse_mid_rollout")
         if done_route is not None:
             if route.get(done_route) in (KING_RECOVERABLE_GROUP, KING_PIVOT_GROUP):
                 _count(notes, f"king_done_over_{route[done_route]}")
@@ -1004,9 +1158,10 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             in_loop.discard(done_route)
             later_onsets.discard(done_route)
             extra[done_route] = {"done": {"after_turn": int(done_route) - 1}}
-        if one_reply_king:
+        if one_reply_king and not tool_kind_stamp:
             # The state is the task prompt, which the teacher's own rollout
-            # already puts in D: nothing of this rollout enters a king group.
+            # already puts in D: nothing of this rollout enters a king group
+            # (king_tooluse is the exception: the prompt-with-tools IS the state).
             _count(drops, "king_one_reply")
             continue
         leak_exempt = frozenset(i for i, g in route.items() if cfgs[g]["leak_exempt"])
@@ -1022,6 +1177,14 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                 _count_leaked(route, convs, kind, leak_exempt, notes)
             _count(drops, "no_scorable_turn")
             continue
+        if tool_kind_stamp and king_tooluse.get("kind_by_teacher"):
+            # Kind-by-teacher: the turn is scored under the `text` dialect --
+            # the teacher's reference there is prose. Stamped on the meta so
+            # the record, the index and the duel all see it.
+            for m in rec["turns"]:
+                if m["turn_idx"] in tool_kind_stamp:
+                    m["action_kind"] = dialects.TEXT_KIND
+                    _count(notes, "king_tooluse_kind_text")
         turns = view_turns(rec)
         present = {t["turn_idx"] for t in turns}
         if route and convs:
@@ -1729,7 +1892,9 @@ def main() -> None:
               KING_PIVOT_GROUP: load_king_pivot(),
               KING_RECOVERABLE_GROUP: load_king_recoverable(),
               KING_DONE_GROUP: load_king_done(),
-              COMPLETION_GROUP: load_completion()}
+              KING_TOOLUSE_GROUP: load_king_tooluse(),
+              COMPLETION_GROUP: load_completion(),
+              COMPLETION_PRE_GROUP: load_completion_pre()}
     king = load_king_fail()
     log(f"king_common: {load_king_common()}")
     for g, cfg in routed.items():
@@ -1738,9 +1903,11 @@ def main() -> None:
             fatal(f"[{g}] is configured but the fold mix has no {g} share")
         shown = {k: v for k, v in (cfg or {}).items() if k not in ("raw", "table")}
         log(f"{g}: {'off' if not cfg else shown}")
-    king_loop, king_pivot, completion, king_recoverable, king_done = (
+    king_loop, king_pivot, completion, king_recoverable, king_done, king_tooluse, completion_pre = (
         routed[g] for g in (KING_LOOP_GROUP, KING_PIVOT_GROUP, COMPLETION_GROUP,
-                            KING_RECOVERABLE_GROUP, KING_DONE_GROUP))
+                            KING_RECOVERABLE_GROUP, KING_DONE_GROUP, KING_TOOLUSE_GROUP,
+                            COMPLETION_PRE_GROUP))
+    teacher_prose: set[str] = set()
     if completion:
         # A group the fold mix holds at 0 contributes nothing to D -- not
         # even its finals (env wave 1: `general` = 0.0 until the operator
@@ -1782,6 +1949,9 @@ def main() -> None:
     reclaimed: dict[str, set[str]] = {}
 
     baker = ToolBaker.from_pretrained()
+    if king_tooluse and king_tooluse["sources"]:
+        teacher_prose, tstats = teacher_prose_survey(pub, traces_manifest, king_tooluse, baker)
+        log(f"{KING_TOOLUSE_GROUP}: teacher-prose survey over {sorted(king_tooluse['sources'])}: {tstats}")
     panel = panel_keys()
     drops: dict[str, int] = {}
     notes: dict[str, int] = {}
@@ -1792,7 +1962,9 @@ def main() -> None:
                             king_loop=king_loop, king_pivot=king_pivot,
                             completion=completion, king_recoverable=king_recoverable,
                             king_done=king_done, king_fail_cfg=king, notes=notes,
-                            published_king_ns=published_king_ns, reclaimed=reclaimed)
+                            published_king_ns=published_king_ns, reclaimed=reclaimed,
+                            king_tooluse=king_tooluse, teacher_prose=teacher_prose,
+                            completion_pre=completion_pre)
         for rec in recs:
             for m in rec["turns"]:
                 published.add(f"{rec['traj_id']}:{m['turn_idx']}")
@@ -1828,6 +2000,17 @@ def main() -> None:
             f"{drops.get('king_later_onset', 0)} (labels {notes.get('king_later_onset_labels', 0)}); "
             f"one-reply king rollouts dropped {drops.get('king_one_reply', 0)}; king_fail "
             f"per-rollout cap dropped {drops.get('king_fail_cap', 0)} turns")
+    if king_tooluse:
+        log(f"king tooluse: one-shot {notes.get('king_tooluse_one_shot', 0)} + mid-rollout "
+            f"{notes.get('king_tooluse_mid_rollout', 0)} states; kind stamped text "
+            f"{notes.get('king_tooluse_kind_text', 0)}; admitted "
+            f"{notes.get(f'{KING_TOOLUSE_GROUP}_leak_exempt', 0) + notes.get(f'{KING_TOOLUSE_GROUP}_not_leaking', 0)}; "
+            f"already published {notes.get(f'{KING_TOOLUSE_GROUP}_already_published', 0)}")
+    if completion_pre:
+        log(f"completion_pre: {notes.get('completion_pre_states', 0)} pre-finish states; admitted "
+            f"{notes.get(f'{COMPLETION_PRE_GROUP}_not_leaking', 0)}; refused by the leak rule "
+            f"{notes.get(f'{COMPLETION_PRE_GROUP}_leaked', 0)}; already published "
+            f"{notes.get(f'{COMPLETION_PRE_GROUP}_already_published', 0)}")
     if king_recoverable:
         log(f"king recoverable: {notes.get('king_recoverable_rollouts', 0)} rollouts with admitted "
             f"states seen; admitted {notes.get(f'{KING_RECOVERABLE_GROUP}_leak_exempt', 0)} "
