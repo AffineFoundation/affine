@@ -263,6 +263,13 @@ def run_cell(env: dict, model_label: str, model: str, url: str, key_env: str,
     resolved = d / "configs" / "resolved" / "eval.json"
     if resolved.exists() and (d / "traces.jsonl").exists():
         # An interrupted cell: re-run only its missing/errored rollouts in place.
+        chat_image = os.environ.get("BENCHSUITE_CHAT_IMAGE", "")
+        if chat_image:
+            cfg = json.loads(resolved.read_text())
+            rt = cfg.get("env", {}).get("agent", {}).get("runtime", {})
+            if rt.get("type") == "docker" and rt.get("image") != chat_image:
+                rt["image"] = chat_image
+                resolved.write_text(json.dumps(cfg, indent=1))
         cmd = [str(verifiers_dir / ".venv" / "bin" / "eval"), "@", str(resolved), "--resume"]
         log(f"resume {model_label}/{env['id']} t={temp:g}")
     else:
