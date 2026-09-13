@@ -100,7 +100,7 @@ def build(bench_home: Path) -> dict:
             "max_tokens": e["max_tokens"], "reward": e["reward"],
             "subset": {"n": e["n"], "shuffle_seed": 0} if int(e.get("n", -1)) > 0 else {"n": "all"},
             "taskset_config": e.get("taskset_config"), "max_turns": e.get("max_turns"),
-            "rollout_timeout_s": e.get("rollout_timeout"),
+            "rollout_timeout_s": e.get("rollout_timeout"), "concurrency": e.get("concurrency"),
             "datasets": dataset_pins(tdir) if tdir.exists() else None,
         }
     lock = {

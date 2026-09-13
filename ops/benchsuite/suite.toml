@@ -188,6 +188,8 @@ secondary_temperature = 0.8
 #   sandbox_vm  Prime runtime only: micro-VM sandbox (needed when the task
 #             restricts egress); container sandbox otherwise
 #   taskset_config  typed taskset knobs, passed as a TOML overlay
+#   concurrency  fixed tasks-in-flight for the env (overrides the run's -c); with
+#             rollout_timeout it is the env's budget, identical for every reign
 #   max_tokens completion cap per model call
 #   reward    the reward name that is the headline score
 #   secondary  also run the temperature-0.8 row (cheap chat sets only)
@@ -381,7 +383,8 @@ max_tokens = 8192
 reward = "solved"
 secondary = false
 max_turns = 300
-rollout_timeout = 3600
+rollout_timeout = 3600      # fixed budget: same for every reign
+concurrency = 48            # fixed: 48 tasks in flight, run alone on the pod (parallel_envs 1 in the sandbox phase)
 note = "SWE-bench Verified, all 500, mini-swe-agent harness, prebuilt swebench/sweb.eval images; the task's own hidden tests grade."
 
 # Skipped by rule (no judge in the suite): HLE (judge-only reward).

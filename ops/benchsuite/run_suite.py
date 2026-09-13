@@ -170,12 +170,21 @@ def summarize_traces(path: Path, reward_name: str) -> dict:
         mean = k / len(scored) if scored else 0.0
     else:
         mean, lo, hi = mean_ci(scored)
+    # "finished-only": rollouts that ended inside their time/context budget.
+    # Shown next to the full score so a change in timeout count cannot
+    # masquerade as movement (the improvement loop's request).
+    fin = [r["score"] for r in rows if r["score"] is not None and r["error_class"] is None]
+    if fin and all(s in (0.0, 1.0) for s in fin):
+        fk = int(sum(fin)); flo, fhi = wilson(fk, len(fin)); fmean = fk / len(fin)
+    else:
+        fmean, flo, fhi = mean_ci(fin)
     return {
         "n": len(rows), "n_scored": len(scored),
         "n_errored": sum(1 for r in rows if r["error_class"] == "infra"),
         "n_timeout": sum(1 for r in rows if r["error_class"] == "timeout"),
         "n_context_overflow": sum(1 for r in rows if r["error_class"] == "context_overflow"),
         "score": round(mean, 4), "ci95": [round(lo, 4), round(hi, 4)],
+        "finished_only": {"n": len(fin), "score": round(fmean, 4), "ci95": [round(flo, 4), round(fhi, 4)]},
         "binary": binary,
         "prompt_tokens": sum(r["prompt_tokens"] for r in rows),
         "completion_tokens": sum(r["completion_tokens"] for r in rows),
@@ -194,6 +203,9 @@ def build_cmd(env: dict, model: str, url: str, key_env: str, temp: float,
               rollouts: int, out: Path, dirname: str, runtime: str,
               concurrency: int, push: bool, run_name: str,
               rollout_timeout: int, verifiers_dir: Path, chat_image: str = "") -> list[str]:
+    # A fixed budget per env (SWE-bench Verified: 48 concurrent, 3600 s) beats the
+    # command-line default so every reign gets the same one.
+    concurrency = int(env.get("concurrency") or concurrency)
     cmd = [
         str(verifiers_dir / ".venv" / "bin" / "eval"), env["taskset"],
         "-m", model,

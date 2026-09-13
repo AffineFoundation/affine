@@ -56,8 +56,8 @@ PREV_CARD=$(ls -t "$REPO/$(toml suite.state_dir)"/*.json 2>/dev/null | head -1)
 
 # The eval driver, run either here or on the pod (RUNNER="ssh ..." prefix).
 # $1 = extra run_suite.py flags, $2 = runtime, $3 = envs, $4 = temps, $5 = concurrency, $6 = manifest
-suite_cmd() {
-  echo "run_suite.py run --run-id $RUN_ID --key-env BENCH_API_KEY --pod-usd-per-hour ${USD_HR:-0} --meta meta.json $1 --runtime $2 --envs $3 --temps $4 --concurrency $5 --parallel-envs 2 --manifest $6"
+suite_cmd() {  # $7 = parallel envs (default 2; the sandbox phase uses 1 so SWE-bench runs alone with its fixed budget)
+  echo "run_suite.py run --run-id $RUN_ID --key-env BENCH_API_KEY --pod-usd-per-hour ${USD_HR:-0} --meta meta.json $1 --runtime $2 --envs $3 --temps $4 --concurrency $5 --parallel-envs ${7:-2} --manifest $6"
 }
 
 # Sandbox gate: did a king chat cell move vs the newest published scorecard?
@@ -185,6 +185,8 @@ PY
   local PYR="$RHOME/benchsuite/verifiers/.venv/bin/python"
   "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" docker "$CHAT_ENVS" primary,secondary 64 manifest.json)" || log "chat suite returned non-zero; continuing"
   pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"
+  # PARTIAL card now (chat cells): the attribution job watches affine/state/benchsuite/*.json
+  "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" --only-state || log "partial publish failed; continuing"
   local TRIGGER="always"
   [ "$SANDBOX_POLICY" = "gated" ] && TRIGGER=$(sandbox_trigger)
   [ "$SANDBOX_POLICY" = "never" ] && TRIGGER="never"
@@ -193,11 +195,11 @@ PY
     if [ "$SB_RUNTIME" = "docker" ]; then
       # Lium: docker on the pod for the public-image sets, Prime sandboxes for the Lean set.
       log "sandbox sets ($TRIGGER): docker on the pod for $(toml modes.lium_docker_sandbox_envs); Prime sandboxes for $(toml modes.lium_prime_sandbox_envs)"
-      "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" docker "$(toml modes.lium_docker_sandbox_envs)" primary 48 manifest-sandbox.json)" || log "docker sandbox suite returned non-zero; continuing"
+      "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" docker "$(toml modes.lium_docker_sandbox_envs)" primary 48 manifest-sandbox.json 1)" || log "docker sandbox suite returned non-zero; continuing"
       "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" prime "$(toml modes.lium_prime_sandbox_envs)" primary 32 manifest-sandbox-prime.json)" || log "prime sandbox suite returned non-zero; continuing"
     else
       log "sandbox sets ($TRIGGER) on Prime sandboxes"
-      "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" prime "$SANDBOX_ENVS" primary 48 manifest-sandbox.json)" || log "sandbox suite returned non-zero; continuing"
+      "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" prime "$SANDBOX_ENVS" primary 48 manifest-sandbox.json 1)" || log "sandbox suite returned non-zero; continuing"
     fi
   else
     log "no king chat cell moved beyond the previous run's interval; sandbox sets skipped"

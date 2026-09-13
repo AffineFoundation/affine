@@ -73,6 +73,8 @@
         el("td", { class: "num king-col" }, k ? pct(k.score) + ci(k) : "–"),
         el("td", { class: "num teacher-col" }, t ? pct(t.score) + ci(t) : "–"),
         el("td", { class: "num " + dcls }, d === null || d === undefined ? "–" : (d > 0 ? "+" : "") + (100 * d).toFixed(1) + " pt"),
+        el("td", { class: "num muted", title: "score over rollouts that finished inside the time/context budget" },
+          k && k.finished_only ? `${pct(k.finished_only.score)} (n=${k.finished_only.n})` : "–"),
         el("td", { class: "num muted" }, k ? kfmt(k.completion_tokens) : "–"),
         el("td", { class: "num muted" }, k && k.finish_length_frac !== undefined ? pct(k.finish_length_frac, 0) : "–"),
         el("td", { class: "num muted" }, k ? mins(k.wall_seconds) : "–")));

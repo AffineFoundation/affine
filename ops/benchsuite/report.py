@@ -81,13 +81,14 @@ def scorecard(card: dict, markdown: bool) -> str:
             r["env"], r.get("group") or "", f"{r['temperature']:g}", str(r.get("n") or "–"),
             side(kk), side(tt),
             "–" if d is None else f"{100 * d:+.1f}",
+            "–" if not (kk and kk.get("finished_only")) else f"{pct(kk['finished_only']['score'])} (n={kk['finished_only']['n']})",
             "–" if not kk else pct(kk.get("finish_length_frac"), 0),
             "–" if not kk else f"{kk.get('n_timeout') or 0}/{kk.get('n_context_overflow') or 0}",
             "–" if not tt else f"{tt.get('n_timeout') or 0}/{tt.get('n_context_overflow') or 0}",
             "–" if not kk else f"{(kk.get('wall_seconds') or 0) / 60:.0f}",
         ])
     header = ["benchmark", "group", "T", "n", "king % [95% CI]", "teacher % [95% CI]",
-              "Δ pt", "king cap %", "king t/o/ctx", "teacher t/o/ctx", "min"]
+              "Δ pt", "king finished-only", "king cap %", "king t/o/ctx", "teacher t/o/ctx", "min"]
     out = "\n".join(head) + "\n\n" + table(body, header, markdown)
     sk = card.get("skipped") or []
     if sk:
