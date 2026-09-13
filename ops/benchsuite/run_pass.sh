@@ -3,6 +3,14 @@
 #
 #   run_pass.sh <model_ref> <label> <run_id> [MODE]        MODE defaults to [modes].default
 #
+#   lium         DEFAULT (operator decision 2026-09-13: in-house GPUs, paid in TAO).
+#                <model_ref> = king digest, <label> = reign. King on a Lium pod rented for
+#                the run (kingpod.py -> ops/king-datagen/bootstrap_king.sh: the king-seat
+#                stack, vLLM 0.28.0, qwen3 parsers), the eval driver on the same pod
+#                (Lium DinD templates ship docker), teacher reused from [modes].teacher_from,
+#                the SAME cells/seeds/caps as the Prime runs (suite.lock.json is checked on
+#                the pod before the first cell). Chat sets always; sandbox sets under the
+#                docker runtime on the pod when a chat cell moved (or BENCHSUITE_FORCE_SANDBOX=1).
 #   prime        <model_ref> = king sha256 digest (public models.affine.io copy),
 #                <label> = reign number. King only on a Prime pod (4 TP2 replicas),
 #                teacher reused from [modes].teacher_from; chat sets always,
@@ -118,17 +126,7 @@ EOF
   local ENV_BN; ENV_BN=$(basename "$ENV_TMP"); rm -f "$ENV_TMP"
   "${SSH[@]}" "sudo mkdir -p /root/bench /root/logs && sudo mv /tmp/$ENV_BN /root/bench/env && sudo chmod 600 /root/bench/env && sudo mv /tmp/pod_bootstrap.sh /root/bench/bootstrap.sh && sudo bash -c 'cd /root && HOME=/root nohup setsid bash /root/bench/bootstrap.sh >> /root/bench/bootstrap.log 2>&1 < /dev/null &'; sudo usermod -aG docker \$USER 2>/dev/null; echo launched" || finish 4
 
-  # eval env + suite code + teacher baseline copy, while weights download
-  tar -C "$REPO" -czf "/tmp/benchsuite-$RUN_ID.tgz" ops/benchsuite
-  "${SCP[@]}" "/tmp/benchsuite-$RUN_ID.tgz" "$USER_HOST:/tmp/benchsuite.tgz" || finish 4
-  rm -f "/tmp/benchsuite-$RUN_ID.tgz"
-  "${SSH[@]}" 'mkdir -p ~/affine ~/benchsuite/runs && cd ~/affine && tar xzf /tmp/benchsuite.tgz && BENCH_HOME=$HOME/benchsuite bash ~/affine/ops/benchsuite/install_eval_env.sh > ~/install.log 2>&1; tail -1 ~/install.log' || finish 5
-  "${SSH[@]}" 'docker pull -q python:3.11-slim >/dev/null 2>&1 || sudo docker pull -q python:3.11-slim >/dev/null'
-  if [ "$MODELS" = "king" ] && [ -d "$BENCH_HOME/runs/$TEACHER_FROM" ]; then
-    tar -C "$BENCH_HOME/runs" -czf "/tmp/teacher-$RUN_ID.tgz" --exclude 'traces.jsonl*' --exclude 'logs' "$TEACHER_FROM/teacher"
-    "${SCP[@]}" "/tmp/teacher-$RUN_ID.tgz" "$USER_HOST:/tmp/teacher.tgz" && "${SSH[@]}" 'cd ~/benchsuite/runs && tar xzf /tmp/teacher.tgz'
-    rm -f "/tmp/teacher-$RUN_ID.tgz"
-  fi
+  # wait for every replica (bootstrap writes /root/bench/ready)
   for _ in $(seq 1 120); do
     "${SSH[@]}" 'sudo test -f /root/bench/ready' 2>/dev/null && break
     if "${SSH[@]}" 'sudo test -f /root/bench/bootstrap.failed' 2>/dev/null; then log "bootstrap failed: $("${SSH[@]}" 'sudo cat /root/bench/bootstrap.failed')"; finish 6; fi
@@ -136,45 +134,70 @@ EOF
   done
   "${SSH[@]}" 'sudo test -f /root/bench/ready' || { log "serving never became ready"; finish 6; }
   log "serving ready ($MODELS)"
+  remote_suite "$MODELS" "$SANDBOX_POLICY" prime "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$API_KEY" \
+    "$USD_HR" "$POD_ID" "http://127.0.0.1:8001/v1" king "http://127.0.0.1:8002/v1" teacher "Prime Intellect pod"
+  finish 0
+}
 
-  local META; META=$("$PY" - "$REF" "$LABEL" "$POD_ID" "$USD_HR" "$CODE_COMMIT" "$MODE" "$TEACHER_FROM" "$MODELS" <<'PY'
+# Install the eval env on a remote pod, copy the teacher baseline, run the chat cells,
+# apply the sandbox gate, run the sandbox cells (runtime $3: prime|docker), retry infra
+# errors, pull the run back and publish. Used by the Prime and the Lium paths.
+remote_suite() {  # models policy sandbox_runtime user@host port key known_hosts api_key usd_hr pod_id king_url king_model teacher_url teacher_model provider
+  local MODELS="$1" SANDBOX_POLICY="$2" SB_RUNTIME="$3" USER_HOST="$4" PORT="$5" SSH_KEY="$6" KH="$7"
+  local API_KEY="$8" USD_HR="$9" POD_ID="${10}" KING_URL="${11}" KING_MODEL="${12}" TEACHER_URL="${13}" TEACHER_MODEL="${14}" PROVIDER="${15}"
+  SSH=(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$KH" -o ConnectTimeout=20 -o LogLevel=ERROR -p "$PORT" "$USER_HOST")
+  SCP=(scp -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$KH" -o LogLevel=ERROR -P "$PORT")
+  local RHOME; RHOME=$("${SSH[@]}" 'echo $HOME')
+  local SUDO=""; [ "$USER_HOST" = "${USER_HOST#root@}" ] && SUDO="sudo "
+  tar -C "$REPO" -czf "/tmp/benchsuite-$RUN_ID.tgz" ops/benchsuite
+  "${SCP[@]}" "/tmp/benchsuite-$RUN_ID.tgz" "$USER_HOST:/tmp/benchsuite.tgz" || finish 4
+  rm -f "/tmp/benchsuite-$RUN_ID.tgz"
+  "${SSH[@]}" "mkdir -p $RHOME/affine $RHOME/benchsuite/runs && cd $RHOME/affine && tar xzf /tmp/benchsuite.tgz && BENCH_HOME=$RHOME/benchsuite bash $RHOME/affine/ops/benchsuite/install_eval_env.sh > $RHOME/install.log 2>&1; tail -1 $RHOME/install.log" || finish 5
+  "${SSH[@]}" "${SUDO}docker pull -q python:3.11-slim >/dev/null 2>&1; ${SUDO}usermod -aG docker \$USER 2>/dev/null; true"
+  # the lock: the pod's env must match suite.lock.json (code commits, patches, grader packages, serving)
+  "${SSH[@]}" "cd $RHOME/affine/ops/benchsuite && $RHOME/benchsuite/verifiers/.venv/bin/python lock.py check --bench-home $RHOME/benchsuite" || { log "LOCK MISMATCH on the pod — refusing to run"; finish 10; }
+  if [ "$MODELS" = "king" ] && [ -d "$BENCH_HOME/runs/$TEACHER_FROM" ]; then
+    tar -C "$BENCH_HOME/runs" -czf "/tmp/teacher-$RUN_ID.tgz" --exclude 'traces.jsonl*' --exclude 'logs' "$TEACHER_FROM/teacher"
+    "${SCP[@]}" "/tmp/teacher-$RUN_ID.tgz" "$USER_HOST:/tmp/teacher.tgz" && "${SSH[@]}" "cd $RHOME/benchsuite/runs && tar xzf /tmp/teacher.tgz"
+    rm -f "/tmp/teacher-$RUN_ID.tgz"
+  fi
+  local META; META=$("$PY" - "$REF" "$LABEL" "$POD_ID" "$USD_HR" "$CODE_COMMIT" "$MODE" "$TEACHER_FROM" "$MODELS" "$PROVIDER" "$SB_RUNTIME" <<'PY'
 import json, sys
-ref, label, pod, usd, commit, mode, tfrom, models = sys.argv[1:]
+ref, label, pod, usd, commit, mode, tfrom, models, provider, sbr = sys.argv[1:]
 king = {"digest": ref} if not ref.startswith("r2://") else {"repo": ref}
 if label.isdigit(): king["reign"] = int(label)
 else: king["label"] = label
 meta = {"mode": mode, "king": king,
-        "where": {"provider": "Prime Intellect pod", "pod_id": pod, "usd_per_hour": float(usd),
-                  "eval_driver": "same pod; docker runtime for chat sets, Prime sandboxes for sandbox sets"},
+        "where": {"provider": provider, "pod_id": pod, "usd_per_hour": float(usd),
+                  "eval_driver": f"same pod; docker runtime for chat sets, {sbr} runtime for sandbox sets"},
         "code": {"affine_commit": commit}}
 if models == "king": meta["teacher"] = {"reused_from": tfrom}
 print(json.dumps(meta))
 PY
 )
-  local MODEL_FLAGS="--king-url http://127.0.0.1:8001/v1 --king-model king --models $MODELS --verifiers-dir ~/benchsuite/verifiers --out ~/benchsuite/runs --push"
-  [ "$MODELS" = "king,teacher" ] && MODEL_FLAGS="$MODEL_FLAGS --teacher-url http://127.0.0.1:8002/v1 --teacher-model teacher" || MODEL_FLAGS="$MODEL_FLAGS --teacher-from $TEACHER_FROM"
-  local REMOTE_ENV="export BENCH_API_KEY='$API_KEY' PRIME_API_KEY='${PRIME_API_KEY:-}' HF_TOKEN='${HF_TOKEN:-}'; cd ~/affine/ops/benchsuite && echo '$META' > meta.json"
-  "${SSH[@]}" "$REMOTE_ENV && ~/benchsuite/verifiers/.venv/bin/python $(suite_cmd "$MODEL_FLAGS" docker "$CHAT_ENVS" primary,secondary 64 manifest.json)" || log "chat suite returned non-zero; continuing"
-  # pull the chat results back now so the gate can compare against the published card
-  pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH"
+  local MODEL_FLAGS="--king-url $KING_URL --king-model $KING_MODEL --models $MODELS --verifiers-dir $RHOME/benchsuite/verifiers --out $RHOME/benchsuite/runs --push"
+  [ "$MODELS" = "king,teacher" ] && MODEL_FLAGS="$MODEL_FLAGS --teacher-url $TEACHER_URL --teacher-model $TEACHER_MODEL" || MODEL_FLAGS="$MODEL_FLAGS --teacher-from $TEACHER_FROM"
+  local REMOTE_ENV="export BENCH_API_KEY='$API_KEY' PRIME_API_KEY='${PRIME_API_KEY:-}' HF_TOKEN='${HF_TOKEN:-}'; cd $RHOME/affine/ops/benchsuite && echo '$META' > meta.json"
+  local PYR="$RHOME/benchsuite/verifiers/.venv/bin/python"
+  "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" docker "$CHAT_ENVS" primary,secondary 64 manifest.json)" || log "chat suite returned non-zero; continuing"
+  pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"
   local TRIGGER="always"
-  if [ "$SANDBOX_POLICY" = "gated" ]; then TRIGGER=$(sandbox_trigger); fi
-  if [ "$SANDBOX_POLICY" = "never" ]; then TRIGGER="never"; fi
+  [ "$SANDBOX_POLICY" = "gated" ] && TRIGGER=$(sandbox_trigger)
+  [ "$SANDBOX_POLICY" = "never" ] && TRIGGER="never"
   stamp_trigger "$TRIGGER"
   if [ "$TRIGGER" != "none" ] && [ "$TRIGGER" != "never" ]; then
-    log "sandbox sets ($TRIGGER): SWE-bench Verified + miniF2F + long-context on Prime sandboxes"
-    "${SSH[@]}" "$REMOTE_ENV && ~/benchsuite/verifiers/.venv/bin/python $(suite_cmd "$MODEL_FLAGS" prime "$SANDBOX_ENVS" primary 48 manifest-sandbox.json)" || log "sandbox suite returned non-zero; continuing"
+    log "sandbox sets ($TRIGGER) under the $SB_RUNTIME runtime"
+    "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" "$SB_RUNTIME" "$SANDBOX_ENVS" primary 48 manifest-sandbox.json)" || log "sandbox suite returned non-zero; continuing"
   else
     log "no king chat cell moved beyond the previous run's interval; sandbox sets skipped"
   fi
-  "${SSH[@]}" "$REMOTE_ENV && ~/benchsuite/verifiers/.venv/bin/python run_suite.py retry --run-id $RUN_ID --out ~/benchsuite/runs --verifiers-dir ~/benchsuite/verifiers && ~/benchsuite/verifiers/.venv/bin/python run_suite.py summarize --run-id $RUN_ID --out ~/benchsuite/runs" || log "retry/summarize returned non-zero"
-  pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH"
+  "${SSH[@]}" "$REMOTE_ENV && $PYR run_suite.py retry --run-id $RUN_ID --out $RHOME/benchsuite/runs --verifiers-dir $RHOME/benchsuite/verifiers && $PYR run_suite.py summarize --run-id $RUN_ID --out $RHOME/benchsuite/runs" || log "retry/summarize returned non-zero"
+  pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"
   "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" || finish 8
-  finish 0
 }
 
-pull_run() {  # user@host port key known_hosts
-  tar_cmd="cd ~/benchsuite/runs && tar czf - --exclude='*/logs/attempt_*' $RUN_ID"
+pull_run() {  # user@host port key known_hosts remote_home
+  tar_cmd="cd $5/benchsuite/runs && tar czf - --exclude='*/logs/attempt_*' $RUN_ID"
   ssh -i "$3" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$4" -o LogLevel=ERROR -p "$2" "$1" "$tar_cmd" | tar xzf - -C "$BENCH_HOME/runs" || log "pull failed (will retry at the end)"
 }
 
@@ -199,33 +222,36 @@ PY
   finish 0
 }
 
-# ========================================================== cheap ===========
-run_cheap() {
+# ========================================================== lium (default) ==
+run_lium() {  # $1 = sandbox policy (gated|never)
   local POD=""
-  cleanup_cheap() { [ -n "$POD" ] && { log "releasing Lium pod $POD"; "$PY" "$HERE/kingpod.py" release "$POD" || true; }; }
-  trap cleanup_cheap EXIT
+  cleanup_lium() { [ -n "$POD" ] && { log "releasing Lium pod $POD"; "$PY" "$HERE/kingpod.py" release "$POD" || true; }; }
+  trap cleanup_lium EXIT
   export LIUM_API_KEY="${LIUM_API_KEY:-${LIUM:-}}"
-  POD=$("$PY" "$HERE/kingpod.py" rent --plan "$(toml modes.cheap_plan)" --digest "$REF" | tail -1) || finish 2
-  local BASE; BASE=$("$PY" "$HERE/kingpod.py" wait "$POD" | tail -1) || finish 3
-  export BENCH_API_KEY; BENCH_API_KEY=$("$PY" -c 'import json; print(json.load(open("'"$HERE"'/state/pods.json"))["'"$POD"'"]["key"])')
-  USD_HR=$("$PY" -c 'import json; print(json.load(open("'"$HERE"'/state/pods.json"))["'"$POD"'"]["price"])')
-  echo "{\"mode\": \"cheap\", \"king\": {\"digest\": \"$REF\", \"reign\": $LABEL}, \"teacher\": {\"reused_from\": \"$TEACHER_FROM\"}, \"where\": {\"provider\": \"Lium (our fleet)\", \"pod\": \"$POD\", \"usd_per_hour\": $USD_HR}, \"code\": {\"affine_commit\": \"$CODE_COMMIT\"}}" > "$RUN_DIR/meta.json"
-  local MF="--king-url $BASE --king-model king-${REF:0:12} --models king --teacher-from $TEACHER_FROM --verifiers-dir $BENCH_HOME/verifiers --out $BENCH_HOME/runs"
-  cd "$HERE" && "$PY" $(suite_cmd "$MF" docker "$CHAT_ENVS" primary,secondary 64 manifest.json) --meta "$RUN_DIR/meta.json" || log "chat suite returned non-zero"
-  local TRIGGER; TRIGGER=$(sandbox_trigger); stamp_trigger "$TRIGGER"
-  if [ "$TRIGGER" != "none" ]; then
-    "$PY" $(suite_cmd "$MF" prime "$SANDBOX_ENVS" primary 32 manifest-sandbox.json) --meta "$RUN_DIR/meta.json" || log "sandbox suite returned non-zero"
-  fi
-  "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" || finish 8
+  POD=$("$PY" "$HERE/kingpod.py" rent --plan "$(toml modes.lium_plan)" --digest "$REF" | tail -1) || finish 2
+  "$PY" "$HERE/kingpod.py" wait "$POD" > /dev/null || finish 3
+  local MEM; MEM=$("$PY" -c 'import json; m=json.load(open("'"$HERE"'/state/pods.json"))["'"$POD"'"]; print(json.dumps({k:m[k] for k in ("ssh_host","ssh_port","key","price","served","base_url")}))')
+  local HOST PORT API_KEY USD_HR SERVED
+  HOST=$(echo "$MEM" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["ssh_host"])')
+  PORT=$(echo "$MEM" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["ssh_port"])')
+  API_KEY=$(echo "$MEM" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["key"])')
+  USD_HR=$(echo "$MEM" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["price"])')
+  SERVED=$(echo "$MEM" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["served"])')
+  local FRONT; FRONT=$("$PY" -c 'import json; print(json.load(open("'"$HERE"'/state/pods.json"))["'"$POD"'"]["front_internal"])' 2>/dev/null || echo "")
+  # on the pod itself the king answers on the nginx front port (loopback); the driver runs there
+  local KING_URL="http://127.0.0.1:${FRONT}/v1"
+  log "Lium pod $POD ($USD_HR/h) serving $SERVED; driver on the pod"
+  remote_suite king "$1" docker "root@$HOST" "$PORT" "$HOME/.ssh/id_ed25519" "$HERE/state/known_hosts" "$API_KEY" \
+    "$USD_HR" "$POD" "$KING_URL" "$SERVED" "" "" "Lium (our fleet, TAO)"
   finish 0
 }
 
 log "pass $RUN_ID mode=$MODE ref=$REF label=$LABEL code=$CODE_COMMIT"
 case "$MODE" in
+  lium)        run_lium gated ;;
   prime)       run_on_prime_pod king gated ;;
   full)        run_on_prime_pod king,teacher always ;;
   challenger)  run_on_prime_pod king never ;;
   comparables) run_comparables ;;
-  cheap)       run_cheap ;;
   *) log "unknown mode $MODE"; finish 9 ;;
 esac

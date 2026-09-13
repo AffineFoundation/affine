@@ -1,0 +1,377 @@
+{
+ "lock_version": 1,
+ "suite": {
+  "name": "affine-benchsuite",
+  "version": 2
+ },
+ "code": {
+  "verifiers": {
+   "repo": "https://github.com/PrimeIntellect-ai/verifiers.git",
+   "commit": "a32cc09c5"
+  },
+  "research_environments": {
+   "repo": "https://github.com/PrimeIntellect-ai/research-environments.git",
+   "commit": "c4d04dfe2"
+  },
+  "patched_files_sha256": {
+   "verifiers/verifiers/v1/runtimes/docker/egress.py": "1a590b3af64aaad2dfd1e2b128aded72410c2b54f9eeb26389590e7776f0478d",
+   "verifiers/verifiers/v1/harnesses/utils/core.py": "64c7e7b3b8c74b1bf3b4d0d4b992cf192a741807866499e221a1fcbfe1e6da9e",
+   "verifiers/verifiers/v1/tasksets/lean/taskset.py": "0d9dbdfdfc5a460b1c0b4fd31480015406c25b3cad5bc0459df1ece666a7cfe8",
+   "research-environments/environments/tool_use/bfcl_v3/bfcl_v3/taskset.py": "cb4e2d65fb55ff92e851474c7a35e4bdb7ce60570fda4d528f2e668ceba8fd06"
+  }
+ },
+ "python": {
+  "verifiers": "0.3.2.dev85",
+  "math-verify": "0.9.0",
+  "datasets": "5.0.1",
+  "bfcl-eval": "0.0.0.dev0",
+  "openai": "2.54.0",
+  "httpx": "0.28.1",
+  "nltk": "3.10.3",
+  "langdetect": "1.0.9",
+  "spacy": "3.8.16",
+  "prime": null,
+  "prime-sandboxes": "0.2.40",
+  "harbor": "0.21.0",
+  "huggingface-hub": "1.28.0"
+ },
+ "serving": {
+  "vllm_version": "0.28.0",
+  "max_model_len": 131072,
+  "gpu_memory_utilization": 0.9,
+  "max_num_batched_tokens": 16384,
+  "max_num_seqs": 64,
+  "reasoning_parser": "qwen3",
+  "tool_call_parser": "qwen3_xml",
+  "dtype": "bfloat16",
+  "enable_prefix_caching": true,
+  "teacher": {
+   "hf_repo": "Qwen/Qwen3.8-27B",
+   "served_name": "teacher"
+  }
+ },
+ "seeds": {
+  "verifiers_shuffle_seed": 0,
+  "gpqa_option_shuffle_seed": 0,
+  "sampling_seed": null,
+  "note": "T=0 is greedy; the T=0.8 row is unseeded and stochastic by design"
+ },
+ "sandbox": {
+  "chat_cell_image": "python:3.11-slim"
+ },
+ "envs": {
+  "aime25": {
+   "taskset": "aime25",
+   "package_version": "0.1.0",
+   "install": "math/aime25",
+   "harness": "null",
+   "runtime": "none",
+   "temperatures": [
+    0.0,
+    0.8
+   ],
+   "secondary_rollouts": 4,
+   "max_tokens": 32768,
+   "reward": "correct",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "datasets": {
+    "dataset": "opencompass/AIME2025",
+    "revision": "a6ad95f611d72cf628a80b58bd0432ef6638f958"
+   }
+  },
+  "math500": {
+   "taskset": "math500",
+   "package_version": "0.1.0",
+   "install": "math/math500",
+   "harness": "null",
+   "runtime": "none",
+   "temperatures": [
+    0.0,
+    0.8
+   ],
+   "secondary_rollouts": 1,
+   "max_tokens": 16384,
+   "reward": "correct",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "datasets": {
+    "dataset": "HuggingFaceH4/MATH-500",
+    "revision": "6e4ed1a2a79af7d8630a6b768ec859cb5af4d3be"
+   }
+  },
+  "gpqa-diamond": {
+   "taskset": "gpqa-strict",
+   "package_version": "0.1.0",
+   "install": "envs/gpqa_strict",
+   "harness": "null",
+   "runtime": "none",
+   "temperatures": [
+    0.0,
+    0.8
+   ],
+   "secondary_rollouts": 1,
+   "max_tokens": 16384,
+   "reward": "correct",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "datasets": {}
+  },
+  "mmlu-pro": {
+   "taskset": "mmlu-pro",
+   "package_version": "0.1.0",
+   "install": "knowledge/mmlu_pro",
+   "harness": "null",
+   "runtime": "none",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "correct",
+   "subset": {
+    "n": 2000,
+    "shuffle_seed": 0
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "datasets": {
+    "dataset": "TIGER-Lab/MMLU-Pro",
+    "revision": "b189ec765aa7ed75c8acfea42df31fdae71f97be"
+   }
+  },
+  "ifbench": {
+   "taskset": "ifbench",
+   "package_version": "0.1.0",
+   "install": "if/ifbench",
+   "harness": "null",
+   "runtime": "none",
+   "temperatures": [
+    0.0,
+    0.8
+   ],
+   "secondary_rollouts": 1,
+   "max_tokens": 8192,
+   "reward": "followed_instructions",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "datasets": {
+    "dataset": "allenai/IFBench_test"
+   }
+  },
+  "ifeval": {
+   "taskset": "ifeval",
+   "package_version": "0.1.0",
+   "install": "if/ifeval",
+   "harness": "null",
+   "runtime": "none",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "followed_instructions",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "datasets": {
+    "dataset": "google/IFEval"
+   }
+  },
+  "humaneval": {
+   "taskset": "humaneval",
+   "package_version": "0.1.0",
+   "install": "code/humaneval",
+   "harness": "null",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "passed",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "datasets": {
+    "dataset": "openai/openai_humaneval"
+   }
+  },
+  "livecodebench": {
+   "taskset": "livecodebench",
+   "package_version": "0.1.0",
+   "install": "code/livecodebench",
+   "harness": "null",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 16384,
+   "reward": "passed",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "datasets": {
+    "dataset": "livecodebench/code_generation_lite"
+   }
+  },
+  "bfcl-v3": {
+   "taskset": "bfcl-v3",
+   "package_version": "0.3.0",
+   "install": "tool_use/bfcl_v3",
+   "harness": "null",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 4096,
+   "reward": "correct",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "datasets": {}
+  },
+  "minif2f": {
+   "taskset": "minif2f",
+   "package_version": "0.1.0",
+   "install": "lean/minif2f",
+   "harness": "bash",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "lean_compiled",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "datasets": {}
+  },
+  "oolong-synth": {
+   "taskset": "oolong-synth",
+   "package_version": "0.1.0",
+   "install": "long_context/oolong_synth",
+   "harness": "bash",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "correct",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": {
+    "context_len": 65536
+   },
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "datasets": {
+    "dataset": "oolongbench/oolong-synth"
+   }
+  },
+  "mrcr-v2": {
+   "taskset": "mrcr-v2",
+   "package_version": "0.1.0",
+   "install": "long_context/mrcr_v2",
+   "harness": "bash",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "correct",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": {
+    "needle_count": 8,
+    "context_range": "64k-128k"
+   },
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "datasets": {}
+  },
+  "graphwalks": {
+   "taskset": "graphwalks",
+   "package_version": "0.1.0",
+   "install": "long_context/graphwalks",
+   "harness": "bash",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "correct",
+   "subset": {
+    "n": 500,
+    "shuffle_seed": 0
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "datasets": {
+    "dataset": "openai/graphwalks"
+   }
+  },
+  "swebench-verified": {
+   "taskset": "swebench-verified",
+   "package_version": "0.1.0",
+   "install": "swe/swebench_verified",
+   "harness": "mini_swe_agent",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "solved",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": 300,
+   "rollout_timeout_s": 3600,
+   "datasets": {}
+  }
+ },
+ "lock_sha256": "88bc68f1aa4ec934"
+}

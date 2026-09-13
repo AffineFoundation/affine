@@ -43,9 +43,18 @@ tool_call_parser = "qwen3_xml"
 
 # ------------------------------------------------------------------ modes
 # Where a pass runs (run_pass.sh <digest|ref> <reign|label> <run_id> [MODE]).
-# Operator decision 2026-09-13: ALL benchmarking stays on Prime Intellect's
-# stack (consistency, third-party credibility, comparables). The standing
-# per-reign runs (watch.py: every crown + weekly) therefore use `prime`.
+# Operator decisions 2026-09-13: first "all on Prime" (consistency), then
+# "in-house on Lium, paid in TAO" for the standing per-reign runs. The design
+# centre is the fixed serving stack + pinned versions (suite.lock.json), so a
+# Lium run and a Prime run of the same king are comparable; the parity check
+# (docs/benchsuite.md §9) measures the residual hardware effect.
+#
+#   lium    DEFAULT. King on a Lium pod from our fleet (kingpod.py ->
+#           ops/king-datagen/bootstrap_king.sh: vLLM 0.28.0, qwen3 parsers,
+#           same layout as the king seat), eval driver on the same pod (Lium
+#           DinD templates ship docker), teacher reused from `teacher_from`,
+#           same cells/seeds/caps as Prime. Chat sets always; sandbox sets
+#           under docker on the pod when a chat cell moved (or the flag).
 #
 #   prime   DEFAULT. King only, served on a Prime pod ([prime]; 4 TP2 replicas
 #           on 8 GPUs), teacher baseline copied forward from `teacher_from`
@@ -73,7 +82,8 @@ tool_call_parser = "qwen3_xml"
 # evalsrv loads the miner per bench job and unloads it in `finally`, holds one
 # busy lock per pod, and its vLLM port is not tunnelled.
 [modes]
-default = "prime"
+default = "lium"            # operator decision 2026-09-13 (later the same day): in-house GPUs paid in TAO
+lium_plan = "h200-1x"       # [pods.plans.*]: 1x H200 = one TP1 replica, ~$3/h; the whole pass runs on that pod
 teacher_from = "20260912T1455Z-0ce59769300c"   # reference run whose teacher cells are reused
 chat_envs = ["aime25", "math500", "gpqa-diamond", "mmlu-pro", "ifbench", "ifeval", "humaneval", "livecodebench", "bfcl-v3"]
 sandbox_envs = ["swebench-verified", "minif2f", "graphwalks", "oolong-synth", "mrcr-v2"]

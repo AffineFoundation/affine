@@ -201,6 +201,7 @@ def bootstrap(name: str, mem: dict, pod: dict, cfg: dict) -> bool:
         log(f"{name}: launch failed: {p.stderr.strip()[:160]}")
         return False
     mem.update(state="booting", boot_started=time.time(), ssh_host=host, ssh_port=port,
+               front_internal=front, front_external=ports[front],
                base_url=f"http://{lium_api.pod_ip(pod)}:{ports[front]}/v1")
     log(f"{name}: bootstrap launched ({len(specs)} replicas) -> {mem['base_url']}")
     return True
