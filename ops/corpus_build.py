@@ -863,7 +863,9 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                  king_recoverable: dict | None = None,
                  king_done: dict | None = None,
                  king_fail_cfg: dict | None = None,
-                 notes: dict[str, int] | None = None) -> list[dict]:
+                 notes: dict[str, int] | None = None,
+                 published_king_ns: dict[str, str] | None = None,
+                 reclaimed: dict[str, set[str]] | None = None) -> list[dict]:
     """View records for one trace chunk, with only the turns that pass the
     fold contract and are not yet published. Records with no surviving
     turn are dropped.
@@ -888,7 +890,12 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
     telemetry that is not a drop (`<group>_leak_exempt`: routed turns
     admitted that the leak rule would have refused; `<group>_leaked`:
     candidate turns the leak rule did refuse because the group is not
-    exempt)."""
+    exempt).
+    `published_king_ns` ({turn_id: king group it is published under}) lets a
+    routed king group RECLAIM a turn already in D under a lower-precedence
+    king group: the turn is admitted here and its id recorded in
+    `reclaimed[<old group>]` so the caller retires the old index row in the
+    same revision (one group per turn, precedence wins)."""
     notes = notes if notes is not None else {}
     cfgs = {KING_LOOP_GROUP: king_loop, KING_PIVOT_GROUP: king_pivot,
             COMPLETION_GROUP: completion, KING_RECOVERABLE_GROUP: king_recoverable,
@@ -1048,10 +1055,18 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             tid = f"{t['traj_id']}:{t['turn_idx']}"
             g = route.get(t["turn_idx"])
             if tid in published:
-                _count(drops, "already_published")
-                if g is not None:
-                    _count(notes, f"{g}_already_published")
-                continue
+                old_ns = (published_king_ns or {}).get(tid)
+                rank = {grp: i for i, grp in enumerate(ROUTED_GROUPS)}
+                if (g in KING_GROUPS and old_ns in KING_GROUPS and old_ns != g
+                        and rank.get(g, 99) < rank.get(old_ns, 99)
+                        and reclaimed is not None):
+                    reclaimed.setdefault(old_ns, set()).add(tid)
+                    _count(notes, f"{g}_reclaimed_from_{old_ns}")
+                else:
+                    _count(drops, "already_published")
+                    if g is not None:
+                        _count(notes, f"{g}_already_published")
+                    continue
             if prefix_over_token_cap(t, baker):
                 _count(drops, "prefix_too_many_tokens")
                 continue
@@ -1750,6 +1765,19 @@ def main() -> None:
                 f"{ {k: len(v) for k, v in readmits[g].items()} }; unpublishing them for this run")
             published -= ids
 
+    # King rows in the live index by group: lets a higher-precedence king
+    # group reclaim a turn published under a lower one (king_done over
+    # king_fail, ...); the old row is retired in this revision.
+    published_king_ns: dict[str, str] = {}
+    kt = index_table(pub, live, ["turn_id", "stratum"])
+    if kt is not None:
+        for tid, stratum in zip(kt.column("turn_id").to_pylist(),
+                                kt.column("stratum").to_pylist()):
+            ns = str(stratum).split(":")[0]
+            if ns in KING_GROUPS:
+                published_king_ns[tid] = ns
+    reclaimed: dict[str, set[str]] = {}
+
     baker = ToolBaker.from_pretrained()
     panel = panel_keys()
     drops: dict[str, int] = {}
@@ -1760,7 +1788,8 @@ def main() -> None:
         recs = derive_chunk(path, baker, panel, allowed, published, drops,
                             king_loop=king_loop, king_pivot=king_pivot,
                             completion=completion, king_recoverable=king_recoverable,
-                            king_done=king_done, king_fail_cfg=king, notes=notes)
+                            king_done=king_done, king_fail_cfg=king, notes=notes,
+                            published_king_ns=published_king_ns, reclaimed=reclaimed)
         for rec in recs:
             for m in rec["turns"]:
                 published.add(f"{rec['traj_id']}:{m['turn_idx']}")
@@ -1872,6 +1901,14 @@ def main() -> None:
             f"from excluded sources")
     stamped = stamp_routed_groups(candidates, routed)
     extra_retire: dict[str, set[str]] = {}   # from_group -> retired ids
+    # Reclaimed turns: admitted above under a higher-precedence king group;
+    # retire their old rows (only those actually kept in a candidate record).
+    kept_now = {f"{r['traj_id']}:{m['turn_idx']}" for r in candidates
+                if r.get("fold_group") in KING_GROUPS for m in r["turns"]}
+    for old_ns, ids in reclaimed.items():
+        ok = {t for t in ids if t in kept_now}
+        extra_retire.setdefault(old_ns, set()).update(ok)
+        log(f"{old_ns}: {len(ok)} published rows reclaimed by higher-precedence king groups")
     common = king.get("common") or load_king_common()
     if common.get("retire_excluded_published") and king:
         ids = king_fail_source_retire(pub, live, king["exclude_sources"])
