@@ -46,7 +46,7 @@ from pydantic import BaseModel
 from affine.config import load_config
 from affine.eval_client import Fault
 
-from . import benchrunner, dueling, swerunner
+from . import benchrunner, dueling, r2store, swerunner
 from .corpus import CorpusSync
 from .engine import Engine
 from .r2store import FetchCancelled, FetchError, IntegrityError
@@ -238,6 +238,96 @@ class DuelRequest(BaseModel):
     # Servable-weight bytes of the challenger (from the root validator's
     # metadata scan). 0 = unknown → skip the pre-download disk-fit check.
     challenger_weight_bytes: int = 0
+    # Decaying crown margin context from the validator (staged 2026-09-12):
+    # `min_margin_effective` overrides [duel].min_margin for this duel's
+    # crown test; the other keys (mode, peak, crown_block, decision_block,
+    # blocks_since_crown, …) are stamped on the verdict. None = pod toml δ.
+    margin: dict | None = None
+    # Window-best crown mode (staged 2026-09-12): when set, score ONE fresh
+    # confirmation slice for a window winner instead of a full duel —
+    # {slice_index, base: {n, margin, se}, challenge_id}; the verdict gains
+    # `confirmation` (slice numbers, pooled numbers, passed). None = a duel.
+    confirm: dict | None = None
+    # Weight-identity gate (2026-09-13): weight fingerprints of every
+    # checkpoint that has already duelled or reigned (validator state). A
+    # challenger whose fingerprint is in this list — or equals the king's,
+    # which the pod checks on its own — is rejected before any GPU load with
+    # rejection_reason "weights_duplicate:<what it duplicates>". Empty = only
+    # the king comparison.
+    reject_weight_fingerprints: list[str] = []
+
+
+def _weights_identity_gate(job_id: str, req: DuelRequest, events: Queue) -> dict | None:
+    """Reject a challenger whose TENSOR content is the king's — exactly, or
+    with cosmetic edits — or equals a known past checkpoint's. Returns the
+    rejection verdict, or None (fingerprints + near-duplicate stats kept on
+    the job for the final verdict's telemetry).
+
+    Runs on the verified snapshot only (r2store hashes tensors after the
+    sha256 pass). Fail-open on HF refs and when the king's own snapshot
+    cannot be materialized: the validator's fingerprint list still applies,
+    and an unreadable king is a pod state, not the challenger's doing. Also
+    runs for a window confirmation slice: a copy that slipped through the
+    original duel (older pod code) must not be crowned on confirmation."""
+    fps: dict[str, str | None] = {"challenger": None, "king": None}
+    events.put({"type": "progress",
+                "data": {"phase": "fingerprint", "repo": req.challenger_repo}})
+    fps["challenger"] = _engine.weights_fingerprint(
+        req.challenger_repo, req.challenger_revision, cancel=_abort_duel)
+    if fps["challenger"] is None:
+        return None
+    near: dict | None = None
+    duplicate_of: str | None = None
+    try:
+        # The king must be on disk for the duel anyway (prepare_miners fetches
+        # it); fetching it here only moves that read earlier. A king fetch
+        # failure is a pod fault that prepare_miners reports properly
+        # (KING_LAUNCH) — here it just means "no king comparison".
+        fps["king"] = _engine.weights_fingerprint(
+            req.king_repo, req.king_revision, cancel=_abort_duel)
+    except FetchCancelled:
+        raise
+    except Exception as e:  # noqa: BLE001 — fail open on the king side only
+        log.warning("%s: king snapshot unavailable for the weight-identity gate "
+                    "(%s); comparing against the fingerprint list only", job_id, e)
+        fps["king"] = None
+    if fps["king"]:
+        king_snap = r2store.snapshot_dir(req.king_repo, req.king_revision)
+        if fps["challenger"] == fps["king"]:
+            duplicate_of = f"king {req.king_revision[:12]} (identical tensors)"
+        else:
+            sub = _cfg.submission
+            near = r2store.near_duplicate_stats(
+                r2store.snapshot_dir(req.challenger_repo, req.challenger_revision),
+                king_snap, seed=req.block_hash)
+            why = r2store.near_duplicate_reason(
+                near, sub.near_duplicate_max_identical_bytes_frac,
+                sub.near_duplicate_min_changed_frac)
+            if why:
+                duplicate_of = f"king {req.king_revision[:12]} with cosmetic edits: {why}"
+    if duplicate_of is None and fps["challenger"] in set(req.reject_weight_fingerprints):
+        duplicate_of = "a previously duelled checkpoint (identical tensors)"
+    _jobs[job_id]["fingerprints"] = fps
+    _jobs[job_id]["near_duplicate"] = near
+    if duplicate_of is None:
+        return None
+    log.warning("%s: challenger %s@%s has the weights of %s (fingerprint %s) — "
+                "rejected without a duel", job_id, req.challenger_repo,
+                req.challenger_revision[:12], duplicate_of, fps["challenger"][:16])
+    verdict = {"challenger_wins": False, "job_id": job_id,
+               "rejection_reason": f"weights_duplicate:{duplicate_of}"[:400],
+               "challenger_weight_fingerprint": fps["challenger"],
+               "king_weight_fingerprint": fps["king"],
+               "near_duplicate": near}
+    if req.confirm:
+        # The validator reads `confirmation.passed`; a failed confirmation
+        # moves the window on to the next candidate.
+        verdict["confirmation"] = {
+            "challenge_id": (req.confirm or {}).get("challenge_id"),
+            "slice_index": (req.confirm or {}).get("slice_index"),
+            "base": (req.confirm or {}).get("base"), "slice": None, "pooled": None,
+            "passed": False, "error": verdict["rejection_reason"]}
+    return verdict
 
 
 def _run_duel_job(job_id: str, req: DuelRequest) -> None:
@@ -291,6 +381,25 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
                 f"challenger weights ~{req.challenger_weight_bytes / 1e9:.0f} GB "
                 f"do not fit {free_gb:.0f} GB free after cache prune; provision "
                 "a larger pod or lower submission.max_model_size_gb")
+        # Weight-identity gate: the challenger lands on disk (usually already
+        # prefetched) and its tensor fingerprint is compared before either
+        # engine loads. Same fetch exceptions as prepare_miners below.
+        job["phase"] = "fingerprint"
+        _check_superseded()
+        try:
+            rejected = _weights_identity_gate(job_id, req, events)
+        except FetchCancelled as e:
+            raise dueling.DuelAborted(f"superseded during download: {e}") from e
+        except IntegrityError as e:
+            rejected = {"challenger_wins": False, "job_id": job_id,
+                        "rejection_reason": f"integrity:{str(e)[:300]}"}
+        except FetchError as e:
+            raise DuelFault(Fault.CHALLENGER_INFRA, f"r2 fetch failed: {e}") from e
+        if rejected is not None:
+            job["verdict"] = rejected
+            events.put({"type": "verdict", "data": rejected})
+            job["state"] = "completed"
+            return
         # King + challenger occupy disjoint GPUs: launch together so a cold
         # pair (evalsrv bounce) pays one vLLM start, not two in series.
         try:
@@ -367,7 +476,9 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
                 corpus_info=_corpus.info(),
                 on_progress=on_progress,
                 corpus=_corpus,
-                abort_event=_abort_duel))
+                abort_event=_abort_duel,
+                margin=req.margin,
+                confirm=req.confirm))
         except ContextLengthError as e:
             # Serving config / corpus length — requeue without burning miner.
             raise DuelFault(Fault.CONTEXT_LIMIT, str(e)) from e
@@ -384,6 +495,10 @@ def _run_duel_job(job_id: str, req: DuelRequest) -> None:
                 code = Fault.CHALLENGER_INFRA
             raise DuelFault(code, str(e)) from e
         verdict["job_id"] = job_id  # lets the root fetch the artifact post-verdict
+        fps = job.get("fingerprints") or {}
+        verdict["challenger_weight_fingerprint"] = fps.get("challenger")
+        verdict["king_weight_fingerprint"] = fps.get("king")
+        verdict["near_duplicate"] = job.get("near_duplicate")
         _save_artifact(job_id, req, verdict, artifact)
 
         # Set the verdict on the job and enqueue the event BEFORE flipping the

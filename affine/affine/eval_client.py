@@ -113,9 +113,19 @@ class EvalClient:
                        challenger_repo: str, challenger_revision: str,
                        challenger_hotkey: str, block_hash: str,
                        challenger_weight_bytes: int = 0,
+                       margin: dict | None = None,
+                       confirm: dict | None = None,
+                       reject_weight_fingerprints: list[str] | None = None,
                        on_progress=None) -> dict:
         """Dispatch a duel and stream to verdict. Raises TransientEvalError on
-        infra failure; returns the verdict dict on completion."""
+        infra failure; returns the verdict dict on completion.
+
+        `margin` (decaying crown margin, staged 2026-09-12) is the δ context
+        the validator computed for this duel — `min_margin_effective` plus
+        the clock stamps (mode, peak, crown/decision block). The pod uses
+        `min_margin_effective` as the δ of the crown test and stamps the
+        rest on the verdict. Omitted = the pod's own [duel].min_margin, as
+        before."""
         payload = {
             "king_repo": king_repo, "king_revision": king_revision,
             "challenger_repo": challenger_repo,
@@ -123,6 +133,17 @@ class EvalClient:
             "challenger_hotkey": challenger_hotkey, "block_hash": block_hash,
             "challenger_weight_bytes": challenger_weight_bytes,
         }
+        if margin:
+            payload["margin"] = margin
+        if confirm:
+            # Window-best confirmation: one fresh slice pooled with the
+            # original verdict (see evalsrv.dueling.run_duel `confirm`).
+            payload["confirm"] = confirm
+        if reject_weight_fingerprints:
+            # Weight-identity gate: fingerprints of every checkpoint that
+            # already duelled or reigned; the pod rejects a challenger whose
+            # tensors match one of them (or the king's) before any GPU load.
+            payload["reject_weight_fingerprints"] = sorted(set(reject_weight_fingerprints))
         timeout = httpx.Timeout(self.duel_timeout_s, connect=30.0)
         async with httpx.AsyncClient(timeout=timeout,
                                      headers=self._headers) as client:
