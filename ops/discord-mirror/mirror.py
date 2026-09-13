@@ -65,6 +65,7 @@ REPO_ENV = REPO / ".env"
 
 API = "https://discord.com/api/v10"
 USER_AGENT = "DiscordBot (https://affine.io, 1.0) affine-discord-mirror"
+USER_AGENT_BROWSER = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
 PAGE = 100
 TEXT_CHANNEL_TYPES = {0, 5, 15, 16}         # text, announcement, forum, media
 THREAD_TYPES = {10, 11, 12}                  # news, public, private threads
@@ -153,10 +154,11 @@ class DiscordError(Exception):
 class Discord:
     """Minimal REST client with rate-limit bookkeeping and retries."""
 
-    def __init__(self, token: str):
+    def __init__(self, token: str, bot: bool = True):
         if not token:
-            raise SystemExit("mirror: no Discord bot token (env / ~/.affine-validator.env / repo .env)")
+            raise SystemExit("mirror: no Discord token (env / ~/.affine-validator.env / repo .env)")
         self.token = token
+        self.bot = bot          # False = a user account token (alan_post.py "user" poster only)
         self.requests = 0
         self.rate_sleeps = 0.0
 
@@ -170,7 +172,8 @@ class Discord:
         query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
         url = API + route + (f"?{query}" if query else "")
         payload = json.dumps(body).encode() if body is not None else None
-        headers = {"Authorization": f"Bot {self.token}", "User-Agent": USER_AGENT}
+        headers = {"Authorization": f"Bot {self.token}" if self.bot else self.token,
+                   "User-Agent": USER_AGENT if self.bot else USER_AGENT_BROWSER}
         if payload is not None:
             headers["Content-Type"] = "application/json"
         backoff = 1.0

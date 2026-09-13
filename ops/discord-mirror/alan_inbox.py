@@ -60,7 +60,8 @@ def load_alan(config: Path = CONFIG) -> dict:
     if not a.get("user_id"):
         raise SystemExit("alan_inbox: channels.toml has no [alan].user_id")
     return {"user_id": str(a["user_id"]), "username": str(a.get("username") or ""),
-            "display": str(a.get("display") or ""), "target": str(a.get("target") or "dm")}
+            "display": str(a.get("display") or ""), "target": str(a.get("target") or "dm"),
+            "bot_dm_channel": str(a.get("bot_dm_channel") or "")}
 
 
 def is_idea(content: str) -> tuple[bool, str]:
@@ -85,10 +86,15 @@ def message_link(a: Archive, r: sqlite3.Row) -> str:
 
 
 def posting_channels(a: Archive, alan: dict) -> list[str]:
-    if alan["target"] != "dm":
-        return [alan["target"]] if alan["target"] in a.channels else []
-    return [cid for cid, c in a.channels.items()
-            if c["kind"] == "dm" and (alan["username"] and alan["username"] in (c["name"] or ""))]
+    """Mirrored channels where Alan's replies to us land: the bot's DM with him
+    (always, if mirrored) plus [alan].target when it is a mirrored channel. The
+    Jacob<->Alan DM is not readable by the bot and never appears here."""
+    out = [cid for cid, c in a.channels.items()
+           if c["kind"] == "dm" and (alan["username"] and alan["username"] in (c["name"] or ""))]
+    for cid in (alan["bot_dm_channel"], alan["target"]):
+        if cid and cid != "dm" and cid in a.channels and cid not in out:
+            out.append(cid)
+    return out
 
 
 def select(a: Archive, alan: dict, since: str | None, until: str | None) -> list[sqlite3.Row]:
