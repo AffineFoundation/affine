@@ -36,6 +36,14 @@ DEFAULT_LEVEL = 3
 # their level-3 config, jugs / number_sequence take > 6 s per puzzle, and
 # composite is a meta-generator). A static tuple, so the catalog and the
 # taskset agree without sweeping the library at every load.
+# 2026-09-13: modulo_grid removed - its level-1 curriculum config fails
+# `validate()` (max_target 0), and sources.toml runs this pool at level 1
+# since 975bd8e; one bad generator in a batch crashed the whole eval in ~7 s
+# on every pod, struck the TEACHER endpoint each time (mis-attributed as a
+# provider fault) and cooled the source for 4 h. Level-1 sweep: every other
+# generator validates. Pod catalogs cache the pool: delete
+# catalogs/affine_rgym.jsonl there so it rebuilds without the 60
+# rgym-modulo_grid-* tasks.
 DEFAULT_GENERATORS = (
     "ab", "acre", "advanced_geometry", "aiw", "arc_1d", "arc_agi", "base_conversion",
     "basic_arithmetic", "bf", "binary_alternation", "binary_matrix", "bitwise_arithmetic",
@@ -46,7 +54,7 @@ DEFAULT_GENERATORS = (
     "game_of_life_halting", "gcd", "graph_color", "group_anagrams", "gsm_symbolic",
     "intermediate_integration", "isomorphic_strings", "knights_knaves", "largest_island",
     "lcm", "leg_counting", "letter_counting", "letter_jumble", "list_functions",
-    "mahjong_puzzle", "manipulate_matrix", "maze", "modulo_grid", "n_queens",
+    "mahjong_puzzle", "manipulate_matrix", "maze", "n_queens",
     "needle_haystack", "number_filtering", "number_format", "number_sorting",
     "palindrome_generation", "palindrome_partitioning", "path_star", "polynomial_equations",
     "polynomial_multiplication", "pool_matrix", "power_function", "prime_factorization",
