@@ -62,6 +62,23 @@ min_submission_block = 8938619
 # every close writes a window_close row (candidates, drops,
 # confirmations, winner). Forward-only; reign 11 stands;
 # min_submission_block unchanged.
+# 15→16 per-duel crown restored (2026-09-13): explicit dated operator
+# directive 2026-09-13 12:10 UTC ("go back to the original delta
+# threshold, the original system we had more than a day ago; uncrown the
+# copied model"). crown_mode window_best → duel and near_miss_enabled
+# → false: a challenger crowns iff its paired mean(turn_c − turn_k) >
+# max(k_sigma·SE, min_margin) = max(2·SE, 0.002) on ONE seeded n_turns
+# slice, plus the unchanged thought-length floor and B gate — the rule of
+# wvk 3–14. Why: under the window rule reign 13 (chal-00461) was crowned
+# with reign 12's exact weights (every tensor byte-identical; only the
+# shard split differed) on a z = 0.93 margin whose confirmation slice
+# was negative (pooled +0.000045, z 0.08); a second entry with 26
+# single-element edits was the best candidate of the next window. Under
+# δ = 0.002 a copy's noise margin crowns at ~1e-4 per duel. Reign 13 is
+# uncrowned (chal-00461 → rejected_model_copy in history); reign 12
+# stands. Window / near-miss / decaying-δ code stays behind its knobs so
+# wvk-15 verdicts replay bit-identically. min(R,G) math unchanged.
+# Forward-only; min_submission_block unchanged.
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -69,7 +86,7 @@ min_submission_block = 8938619
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 15
+weight_version_key = 16
 
 [wallet]
 name = "default"
@@ -461,7 +478,9 @@ min_margin = 0.002
 # and `duel_params.near_miss_*`; `slice` keeps the first slice's seed and
 # digest, `slice.extra_slices` lists the others. `[duel].timeout_s` must
 # cover (1 + near_miss_extra_slices) scoring passes.
-near_miss_enabled = true
+# 2026-09-13 (weight_version_key 15→16): OFF with the window rule — one
+# seeded slice decides, as before 2026-09-11. Code kept for replay.
+near_miss_enabled = false
 near_miss_low = 0.001
 near_miss_high = 0.003
 near_miss_extra_slices = 1
@@ -566,7 +585,13 @@ min_z = 0.0
 # 2026-09-12 16:39/16:43 UTC): ON. The king is frozen per 12 h window;
 # the best positive margin of the window is crowned at its close after a
 # confirmation slice. The δ / k_sigma bar below is telemetry from here.
-crown_mode = "window_best"
+# 2026-09-13 (weight_version_key 15→16, explicit dated operator directive
+# 2026-09-13 12:10 UTC "go back to the original delta threshold"): OFF.
+# Reign 13 was a re-upload of reign 12's weights (1,026/1,026 tensors
+# identical, re-sharded 16→2 files) that won window 2515 on z = 0.93 and
+# a pooled confirmation of +0.000045. Every duel crowns on its own bar
+# max(k_sigma·SE, δ) again; the window code stays for replay.
+crown_mode = "duel"
 crown_window_blocks = 3600
 crown_confirm_slice = true
 crown_confirm_max = 2
