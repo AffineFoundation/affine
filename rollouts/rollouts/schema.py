@@ -138,11 +138,19 @@ class PolicyStamp:
     harness: str
     endpoint: str     # endpoint name, e.g. "engy"
     action_kind: str = "bash"
+    # Sampling temperature the policy declared (None = the harness default).
+    # Additive envelope key (2026-09-13): the greedy king variants
+    # (`king_*_greedy`, T = 0) share the sampled king's seat and strata, so
+    # this is how telemetry tells the two apart.
+    temperature: float | None = None
 
     def to_dict(self) -> dict:
-        return {"id": self.policy_id, "model": self.model,
-                "harness": self.harness, "endpoint": self.endpoint,
-                "action_kind": self.action_kind}
+        out = {"id": self.policy_id, "model": self.model,
+               "harness": self.harness, "endpoint": self.endpoint,
+               "action_kind": self.action_kind}
+        if self.temperature is not None:
+            out["temperature"] = self.temperature
+        return out
 
 
 def utc_now_iso() -> str:
