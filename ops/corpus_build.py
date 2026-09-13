@@ -1079,7 +1079,13 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                     "state_kind": row.get("state_kind"),
                     "teacher_turns": row.get("teacher_turns"),
                     "teacher_first_action_kind": row.get("teacher_first_action_kind"),
+                    # PR #13: "same_task" = the ACP same-task proxy (the teacher
+                    # solved the task, not necessarily from this state); the
+                    # pipeline caps it at RECOVERABLE_ACP_MAX_SHARE. Tagged so
+                    # the duel telemetry can compare proxy vs continuation rows.
+                    "proxy": row.get("proxy"),
                     "timestamp": row.get("timestamp")}}
+                _count(notes, f"king_recoverable_proxy_{row.get('proxy') or 'continuation'}")
         kind_stamp: dict[int, str] = {}     # turn -> duel-time action_kind
         if want_tooluse and convs and main:
             src = str(env.get("source") or "")
