@@ -65,6 +65,7 @@ ACP_MAX_SHARE="${RECOVERABLE_ACP_MAX_SHARE:-0.5}"
 BUDGET_USD="${RECOVERABLE_BUDGET_USD:-40}"
 CHUNKS="${RECOVERABLE_CHUNKS:-$REPO/ops/corpus_build/cache/traces/chunks}"
 POLL_S="${RECOVERABLE_POLL_S:-300}"
+MERGE_EVERY_MIN="${RECOVERABLE_MERGE_EVERY_MIN:-120}"   # checkpoint merges during a long run
 # RECOVERABLE_RETRY_ERRORED=1: errored side-table rows become candidates again
 # and errored results in the pod's out dir are re-run (manual use; a 3,600 s
 # timeout costs an hour per retry, so the cron run does not do this).
@@ -197,7 +198,24 @@ for i in "${USE[@]}"; do
   shard=$((shard + 1))
 done
 
+# 3. merge (also every RECOVERABLE_MERGE_EVERY_MIN while a long run goes on,
+# so the 16:00 fold sees what has finished; merging is idempotent by trace id)
+merge_now() {
+  mkdir -p "$RUN_DIR/out"
+  for i in "${USE[@]}"; do
+    pod_ssh "$i" "cd $POD_DIR/daily/out && tar -czf - --ignore-failed-read results reports" | tar -C "$RUN_DIR/out" -xzf -
+    pod_ssh "$i" "cat $POD_DIR/daily/$RUN/run.log" > "$RUN_DIR/run.${NAMES[$i]}.log" || true
+  done
+  (
+    flock 9   # one merge into the side-table at a time (waits, never skips)
+    "$PY" "$OPS/aggregate.py" --states "$RUN_DIR/states/states.jsonl" --out "$RUN_DIR/out" \
+      --continuations "$CONTINUATIONS" --acp-max-share "$ACP_MAX_SHARE" --merge-into "$TABLE" \
+      | { grep -E "^(merged|states |rule |same-task|side-table)" || true; } | sed "s/^/  /"
+  ) 9>"$STATE/lock"
+}
+
 T0=$(date +%s)
+LAST_MERGE=$T0
 if [[ "$DEADLINE_H" == "0" ]]; then HARD_S=0; else
   HARD_S=$(awk -v h="$DEADLINE_H" 'BEGIN {printf "%d", (h + 1.5) * 3600}')
 fi
@@ -210,24 +228,18 @@ while true; do
     DONE_N=$((DONE_N + ${n:-0}))
   done
   [[ "$all_done" == 1 ]] && break
-  ELAPSED=$(( $(date +%s) - T0 ))
+  NOW=$(date +%s); ELAPSED=$(( NOW - T0 ))
   log "running: ${DONE_N}/$N_CONT continuation(s) finished on $N_PODS pod(s), $((ELAPSED / 60)) min"
   if [[ "$HARD_S" -gt 0 && "$ELAPSED" -gt "$HARD_S" ]]; then
     log "hard cap reached; leaving the pod run(s) to finish, merging what is there"
     break
   fi
+  if [[ "$DONE_N" -gt 0 && $(( NOW - LAST_MERGE )) -ge $(( MERGE_EVERY_MIN * 60 )) ]]; then
+    log "checkpoint merge"
+    merge_now
+    LAST_MERGE=$NOW
+  fi
 done
 
-# 3. merge --------------------------------------------------------------------
-mkdir -p "$RUN_DIR/out"
-for i in "${USE[@]}"; do
-  pod_ssh "$i" "cd $POD_DIR/daily/out && tar -czf - --ignore-failed-read results reports" | tar -C "$RUN_DIR/out" -xzf -
-  pod_ssh "$i" "cat $POD_DIR/daily/$RUN/run.log" > "$RUN_DIR/run.${NAMES[$i]}.log" || true
-done
-(
-  flock 9   # one merge into the side-table at a time (waits, never skips)
-  "$PY" "$OPS/aggregate.py" --states "$RUN_DIR/states/states.jsonl" --out "$RUN_DIR/out" \
-    --continuations "$CONTINUATIONS" --acp-max-share "$ACP_MAX_SHARE" --merge-into "$TABLE" \
-    | { grep -E "^(merged|states |rule |same-task|side-table)" || true; } | sed "s/^/  /"
-) 9>"$STATE/lock"
+merge_now
 log "done; summary $RUN_DIR/out/summary.md"
