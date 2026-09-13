@@ -109,7 +109,7 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   DOCKERFILE=$(mktemp -d)
   cat > "$DOCKERFILE/Dockerfile" <<'DF'
 FROM python:3.11-slim
-RUN pip install -q --no-cache-dir uv==0.9.5 \
+RUN pip install -q --no-cache-dir uv \
  && mkdir -p /tmp/w \
  && printf '# /// script\n# requires-python = ">=3.10"\n# dependencies = ["openai", "mcp==2.0.0", "httpx", "httpx2", "tenacity"]\n# ///\nprint(1)\n' > /tmp/w/s.py \
  && uv sync --script /tmp/w/s.py -q --no-config && rm -rf /tmp/w
