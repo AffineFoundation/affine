@@ -166,8 +166,8 @@ def main() -> int:
                 with p.open("rb") as fi, gzip.open(gz, "wb", compresslevel=6) as fo:
                     shutil.copyfileobj(fi, fo)
             p, rel = gz, rel + ".gz"
-        elif rel.endswith("traces.jsonl.gz"):
-            continue
+        elif rel.endswith("traces.jsonl.gz") and p.with_suffix("").exists():
+            continue      # uploaded via its .jsonl sibling above
         files.append((p, rel))
     index = []
     for p, rel in files:
