@@ -205,6 +205,9 @@ PY
     log "no king chat cell moved beyond the previous run's interval; sandbox sets skipped"
   fi
   "${SSH[@]}" "$REMOTE_ENV && $PYR run_suite.py retry --run-id $RUN_ID --out $RHOME/benchsuite/runs --verifiers-dir $RHOME/benchsuite/verifiers && $PYR run_suite.py summarize --run-id $RUN_ID --out $RHOME/benchsuite/runs" || log "retry/summarize returned non-zero"
+  # Prime Evals: the live --push streams while cells run; this replays anything it missed
+  # (one platform run per cell, account `arbos`) and records the URLs in the summaries/manifest.
+  "${SSH[@]}" "$REMOTE_ENV && $PYR push_evals.py --run-dir $RHOME/benchsuite/runs/$RUN_ID --models king" || log "push_evals returned non-zero; continuing"
   pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"
   "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" || finish 8
 }

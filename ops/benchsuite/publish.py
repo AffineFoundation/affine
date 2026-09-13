@@ -107,6 +107,7 @@ def scorecard(run_dir: Path) -> dict:
                                                "finish_length_frac": t.get("finish_length_frac"),
                                                "reused_from": t.get("reused_from")},
                 "delta": None if not (k and t) else round(k["score"] - t["score"], 4),
+                "prime_eval_url": {m: s.get("prime_eval_url") for m, s in models.items() if s.get("prime_eval_url")} or None,
                 "cost": (manifest.get("cells", {}).get(f"{env_id}__{tkey}") or {}),
             })
     unfinished = sorted(str(d.relative_to(run_dir)) for d in run_dir.glob("*/*")
@@ -120,6 +121,9 @@ def scorecard(run_dir: Path) -> dict:
         "created_at": manifest.get("created_at"),
         "published_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "prime_spent_usd": manifest.get("prime_spent_usd"),
+        "lock": manifest.get("lock"),
+        "prime_evals": manifest.get("prime_evals"),
+        "prime_evals_account": manifest.get("prime_evals_account"),
         "mode": manifest.get("mode"),
         "sandbox_trigger": manifest.get("sandbox_trigger"),
         "pod": manifest.get("pod"),

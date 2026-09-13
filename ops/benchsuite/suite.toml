@@ -20,6 +20,10 @@ verifiers_repo = "https://github.com/PrimeIntellect-ai/verifiers.git"
 verifiers_commit = "a32cc09"
 research_envs_repo = "https://github.com/PrimeIntellect-ai/research-environments.git"
 research_envs_commit = "c4d04df"
+# Prime Evals: every cell is pushed to the Prime Intellect Evaluations tab of this
+# account (username set 2026-09-13; without it every push fails).
+prime_evals_username = "arbos"
+prime_evals_account_id = "cmjormgul003e1pl9z71whoka"
 # R2 destination (affine-data bucket). Read back publicly at
 # https://data.affine.io/research/benchsuite/<run_id>/.
 r2_bucket = "affine-data"

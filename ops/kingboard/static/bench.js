@@ -82,6 +82,10 @@
     const sk = (r.skipped || []).map((s) => `${s.env}: ${s.why}`);
     $("#bench-skipped").textContent = sk.length ? "Not run — " + sk.join(" · ") : "";
     $("#bench-links").innerHTML = "";
+    if (r.prime_evals && Object.keys(r.prime_evals).length) {
+      $("#bench-links").append(el("span", {}, `Prime Evals: ${Object.keys(r.prime_evals).length} runs on account ${r.prime_evals_account || "arbos"} · `),
+        el("a", { href: "https://app.primeintellect.ai/dashboard/evaluations", target: "_blank" }, "Evaluations tab"), " · ");
+    }
     if (r.r2_prefix) {
       $("#bench-links").append("Every rollout (prompts, replies, grades, tokens, timing): ",
         el("a", { href: `https://data.affine.io/${r.r2_prefix}index.json`, target: "_blank" }, `data.affine.io/${r.r2_prefix}`));

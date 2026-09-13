@@ -425,6 +425,13 @@ def cmd_run(a: argparse.Namespace) -> int:
         manifest.update(json.loads(meta_path.read_text() if meta_path.exists() else a.meta))
     manifest.setdefault("suite", {k: SUITE["suite"][k] for k in
                                   ("name", "version", "verifiers_commit", "research_envs_commit")})
+    lock_path = HERE / "suite.lock.json"
+    if lock_path.exists() and "lock" not in manifest:
+        lock = json.loads(lock_path.read_text())
+        manifest["lock"] = {"lock_sha256": lock.get("lock_sha256"), "path": "ops/benchsuite/suite.lock.json",
+                            "verifiers": lock["code"]["verifiers"]["commit"],
+                            "research_environments": lock["code"]["research_environments"]["commit"],
+                            "vllm": lock["serving"]["vllm_version"]}
     manifest.setdefault("serving", SUITE["serving"])
     manifest.setdefault("sampling", SUITE["sampling"])
     manifest.setdefault("envs", {e["id"]: {k: v for k, v in e.items() if k != "note"}
