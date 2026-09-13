@@ -982,8 +982,34 @@ class Validator:
             challenger_hotkey=entry.hotkey, block_hash=block_hash,
             challenger_weight_bytes=info.total_safetensors_bytes,
             margin=margin,
+            reject_weight_fingerprints=list(self.state.weight_fingerprints),
             on_progress=on_progress)
         self.state.current_eval = None
+
+        # Weight-identity gate (2026-09-13): the pod fingerprints the
+        # challenger's tensors before loading it. Identical weights to the
+        # king or to any duelled checkpoint = not a new model. Recorded like
+        # the file-level copy check above (model_copy, slot burned), never a
+        # window candidate. The fingerprint of every scored challenger is
+        # remembered so the next re-upload of the same weights is refused.
+        reason = str(verdict.get("rejection_reason") or "")
+        if reason.startswith("weights_duplicate:"):
+            self.state.record_failure(
+                entry, "model_copy",
+                f"weights identical to {reason.split(':', 1)[1]} (tensor fingerprint "
+                f"{str(verdict.get('challenger_weight_fingerprint'))[:16]})",
+                **self._history_meta(entry, t0))
+            self.dashboard.flush(force=True)
+            return
+        first = self.state.record_weight_fingerprint(
+            verdict.get("challenger_weight_fingerprint"), cid)
+        if first is not None and first != cid:
+            log.error("%s: weight fingerprint already seen on %s but the pod scored "
+                      "it — stale eval pod? redeploy (scripts/redeploy_pods.py)",
+                      cid, first)
+        if king.revision and verdict.get("king_weight_fingerprint"):
+            self.state.record_weight_fingerprint(
+                verdict.get("king_weight_fingerprint"), king.challenge_id)
 
         verdict["block_hash"] = block_hash
         self._apply_thought_floor(verdict)

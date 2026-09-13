@@ -109,6 +109,11 @@ class State:
         self.queue: list[QueueEntry] = []
         self.seen_hotkeys: set[str] = set()
         self.completed_revisions: set[str] = set()
+        # Weight-content fingerprint → first challenge that carried it
+        # (kings included). The pod computes the fingerprint over the
+        # tensors, so a re-sharded / re-saved copy of a duelled checkpoint
+        # maps to the same key and is rejected at the next duel (2026-09-13).
+        self.weight_fingerprints: dict[str, str] = {}
         self.bench_jobs: list[dict] = []
         self.stats = {"queued": 0, "accepted": 0, "rejected": 0, "failed": 0}
         self._id_counter = 0
@@ -222,6 +227,8 @@ class State:
             self._sort_queue()
             self.seen_hotkeys = set(d.get("seen_hotkeys", []))
             self.completed_revisions = set(d.get("completed_revisions", []))
+            self.weight_fingerprints = {
+                str(k): str(v) for k, v in (d.get("weight_fingerprints") or {}).items()}
             self.last_weights_at = d.get("last_weights_at", "")
             self.bench_jobs = d.get("bench_jobs", [])
             self.stats = d.get("stats", self.stats)
@@ -282,6 +289,7 @@ class State:
                 "in_flight": asdict(self.in_flight) if self.in_flight else None,
                 "seen_hotkeys": sorted(self.seen_hotkeys),
                 "completed_revisions": sorted(self.completed_revisions),
+                "weight_fingerprints": dict(sorted(self.weight_fingerprints.items())),
                 "last_weights_at": self.last_weights_at,
                 "bench_jobs": self.bench_jobs,
                 "stats": self.stats,
@@ -533,6 +541,20 @@ class State:
             row["duration_s"] = round(float(duration_s), 1)
         self._append_history(row)
         self._clear_in_flight(entry)
+
+    def record_weight_fingerprint(self, fingerprint: str | None,
+                                  challenge_id: str) -> str | None:
+        """Remember a duelled checkpoint's weight fingerprint. Returns the
+        challenge that first carried it when it was already known (an
+        identical-weights resubmission that slipped past the pod gate —
+        e.g. a pod on old code), else None."""
+        if not fingerprint or len(str(fingerprint)) != 64:
+            return None
+        with self._lock:
+            first = self.weight_fingerprints.get(fingerprint)
+            if first is None:
+                self.weight_fingerprints[fingerprint] = challenge_id
+            return first
 
     def record_failure_raw(self, hotkey: str, repo: str, revision: str,
                            code: str, detail: str, *,

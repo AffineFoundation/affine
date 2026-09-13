@@ -636,6 +636,18 @@ class Engine:
         return (WARM_SWAP and self.role == "duel"
                 and slot in (self.chall_slot, self.chal2_slot))
 
+    def weights_fingerprint(self, repo: str, revision: str | None,
+                            cancel: threading.Event | None = None) -> str | None:
+        """Weight-content fingerprint of an r2 checkpoint (see
+        r2store.compute_weights_fingerprint), materializing it first when it
+        is not on disk yet. None for HF repos (vLLM downloads those itself;
+        the file-level copy check on the validator still covers them).
+        Same exception contract as _ensure_snapshot."""
+        if not r2store.is_r2(repo) or not revision:
+            return None
+        self._ensure_snapshot(repo, revision, cancel)
+        return r2store.weights_fingerprint(r2store.snapshot_dir(repo, revision))
+
     def _ensure_snapshot(self, repo: str, revision: str | None,
                          cancel: threading.Event | None = None) -> None:
         """r2 refs must be on disk and verified before vLLM starts (HF repos

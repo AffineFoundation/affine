@@ -29,6 +29,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import shutil
 import sys
 import threading
@@ -36,6 +37,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
 
+import numpy as np
 from botocore.exceptions import BotoCoreError, ClientError
 
 from affine import r2, r2protocol as proto
@@ -75,6 +77,19 @@ PROGRESS_FLUSH_S = 2.0
 # after a sha256 pass matched the manifest; trusted only while size+mtime
 # match. Same trust level as the snapshot's completion marker.
 VERIFIED_SUFFIX = ".sha256ok"
+# Weight-content identity (2026-09-13, reign-13 byte-copy incident): the
+# sha256 of every TENSOR's raw bytes, keyed by tensor name, independent of
+# how the checkpoint is sharded or what the shard files are called. Two
+# checkpoints with the same fingerprint serve the same weights even when
+# every file hash differs (reign 13 was reign 12 re-saved from 16 shards
+# into 2). Cached in the snapshot so the duel path pays the read once.
+FINGERPRINT_FILE = ".affine_weights_fingerprint"
+TENSOR_HASHES_FILE = ".affine_tensor_hashes.json"
+FINGERPRINT_DOMAIN = b"affine-weights-fingerprint-v1\n"
+# Element-level near-duplicate probe: how many hash-different tensors are
+# read from both snapshots (challenger + king) per duel. 32 tensors of a
+# 35B MoE ≈ 2–5 GB read, seconds on NVMe.
+NEAR_DUP_SAMPLE_TENSORS = 32
 
 
 class IntegrityError(Exception):
@@ -230,6 +245,195 @@ def _sha256_file(path: Path, progress: Progress | None = None) -> str:
             if progress is not None:
                 progress.add(len(b))
     return h.hexdigest()
+
+
+def _shard_tensor_hashes(path: Path, progress: Progress | None = None
+                         ) -> dict[str, tuple[str, list[int], str, int]]:
+    """{tensor name: (dtype, shape, sha256 of the tensor's raw bytes, nbytes)} for
+    one safetensors file. Header layout per the safetensors spec: 8-byte
+    little-endian header length, JSON header, then the byte buffer that
+    `data_offsets` index into."""
+    out: dict[str, tuple[str, list[int], str, int]] = {}
+    with open(path, "rb") as f:
+        hlen = int.from_bytes(f.read(8), "little")
+        if hlen <= 0 or hlen > 256 << 20:
+            raise IntegrityError(f"{path.name}: bad safetensors header length {hlen}")
+        header = json.loads(f.read(hlen))
+        base = 8 + hlen
+        for name, meta in header.items():
+            if name == "__metadata__":
+                continue
+            start, end = (int(x) for x in meta["data_offsets"])
+            f.seek(base + start)
+            h = hashlib.sha256()
+            left = end - start
+            while left > 0:
+                b = f.read(min(CHUNK, left))
+                if not b:
+                    raise IntegrityError(f"{path.name}: short read inside tensor {name}")
+                h.update(b)
+                left -= len(b)
+                if progress is not None:
+                    progress.add(len(b))
+            out[name] = (str(meta["dtype"]), [int(s) for s in meta["shape"]],
+                         h.hexdigest(), end - start)
+    return out
+
+
+def tensor_hashes(snap: Path, progress: Progress | None = None
+                  ) -> dict[str, list]:
+    """{tensor name: [dtype, shape, sha256, nbytes, shard]} for every
+    *.safetensors under `snap`; cached in TENSOR_HASHES_FILE once computed
+    (a complete snapshot never changes). A tensor name present in two
+    shards is an integrity fault (the safetensors index would be
+    ambiguous)."""
+    side = snap / TENSOR_HASHES_FILE
+    try:
+        cached = json.loads(side.read_text())
+        if isinstance(cached, dict) and cached:
+            return cached
+    except (OSError, ValueError):
+        pass
+    rows: dict[str, list] = {}
+    for shard in sorted(snap.glob("*.safetensors")):
+        for name, (dtype, shape, sha, nbytes) in _shard_tensor_hashes(shard, progress).items():
+            if name in rows:
+                raise IntegrityError(f"tensor {name} appears in two shards")
+            rows[name] = [dtype, shape, sha, nbytes, shard.name]
+    tmp = side.with_suffix(".tmp")
+    tmp.write_text(json.dumps(rows, sort_keys=True))
+    tmp.replace(side)
+    return rows
+
+
+def fingerprint_of(rows: dict[str, list]) -> str:
+    """sha256(FINGERPRINT_DOMAIN + canonical JSON of the sorted rows
+    [name, dtype, shape, tensor_sha256]). Shard count, shard names, header
+    metadata, config / tokenizer bytes and the manifest do not enter it;
+    only the tensors do."""
+    canon = json.dumps(sorted((n, r[0], r[1], r[2]) for n, r in rows.items()),
+                       separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(FINGERPRINT_DOMAIN + canon.encode()).hexdigest()
+
+
+def compute_weights_fingerprint(snap: Path, progress: Progress | None = None
+                                ) -> tuple[str, int]:
+    """(fingerprint, n_tensors) of the checkpoint under `snap`."""
+    rows = tensor_hashes(snap, progress)
+    return fingerprint_of(rows), len(rows)
+
+
+def weights_fingerprint(snap: Path) -> str | None:
+    """Cached weight fingerprint of a complete snapshot; computed and cached
+    on first use for snapshots fetched before this file existed. None when
+    the snapshot is not complete (never fingerprint a partial download)."""
+    if not (snap / COMPLETE_MARKER).is_file():
+        return None
+    side = snap / FINGERPRINT_FILE
+    try:
+        rec = json.loads(side.read_text())
+        fp = str(rec.get("fingerprint") or "")
+        if len(fp) == 64:
+            return fp
+    except (OSError, ValueError):
+        pass
+    t0 = time.time()
+    fp, n = compute_weights_fingerprint(snap)
+    _write_fingerprint(snap, fp, n)
+    log.info("weights fingerprint of %s: %s (%d tensors, %.0fs)", snap.name[:12],
+             fp[:16], n, time.time() - t0)
+    return fp
+
+
+def _write_fingerprint(snap: Path, fp: str, n_tensors: int) -> None:
+    (snap / FINGERPRINT_FILE).write_text(json.dumps({
+        "fingerprint": fp, "n_tensors": n_tensors,
+        "computed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }))
+
+
+def _read_tensor(snap: Path, row: list, name: str) -> "np.ndarray":
+    """Raw bytes of one tensor as a flat uint8/uint16/uint32 view (element
+    width from the safetensors dtype; unknown widths fall back to bytes)."""
+    shard = snap / row[4]
+    with open(shard, "rb") as f:
+        hlen = int.from_bytes(f.read(8), "little")
+        header = json.loads(f.read(hlen))
+        start, end = (int(x) for x in header[name]["data_offsets"])
+        f.seek(8 + hlen + start)
+        buf = f.read(end - start)
+    width = {"BF16": 2, "F16": 2, "F32": 4, "I32": 4, "U32": 4, "I16": 2,
+             "U16": 2, "I8": 1, "U8": 1, "BOOL": 1, "F8_E4M3": 1,
+             "F8_E5M2": 1, "I64": 8, "F64": 8, "U64": 8}.get(row[0], 1)
+    dt = {1: np.uint8, 2: np.uint16, 4: np.uint32, 8: np.uint64}[width]
+    return np.frombuffer(buf, dtype=dt)
+
+
+def near_duplicate_stats(chall: Path, king: Path, seed: str,
+                         sample_tensors: int = NEAR_DUP_SAMPLE_TENSORS) -> dict:
+    """How much of the challenger IS the king, tensor by tensor.
+
+    Hash level (free, both tables cached): the fraction of tensors, and of
+    weight bytes, that are byte-identical to the king. Element level (a
+    seeded sample of up to `sample_tensors` of the tensors whose hashes
+    differ, read from both snapshots): the fraction of elements that
+    actually changed. A trained model changes most elements of every tensor
+    it touched; a copy with a few flipped values (reign-12 → chal-00466:
+    26 elements out of 3.5e10, one per shard so every file hash moved)
+    changes ~1e-6 of them. The sample is seeded by the duel's block hash so
+    a copier cannot know which tensors will be read."""
+    ch, kh = tensor_hashes(chall), tensor_hashes(king)
+    common = [n for n in ch if n in kh and ch[n][0] == kh[n][0] and ch[n][1] == kh[n][1]]
+    stats = {"n_tensors": len(ch), "n_king_tensors": len(kh), "n_comparable": len(common),
+             "identical_tensors": 0, "identical_bytes_frac": 0.0,
+             "sampled_tensors": 0, "sampled_elements": 0, "sampled_changed_elements": 0,
+             "sampled_changed_frac": None}
+    if not common:
+        return stats
+    total_bytes = sum(int(ch[n][3]) for n in ch) or 1
+    same = [n for n in common if ch[n][2] == kh[n][2]]
+    differ = [n for n in common if ch[n][2] != kh[n][2]]
+    stats["identical_tensors"] = len(same)
+    stats["identical_bytes_frac"] = sum(int(ch[n][3]) for n in same) / total_bytes
+    if not differ:
+        stats["sampled_changed_frac"] = 0.0
+        return stats
+    rng = random.Random(seed)
+    picked = differ if len(differ) <= sample_tensors else rng.sample(differ, sample_tensors)
+    changed = elements = 0
+    for name in picked:
+        a, b = _read_tensor(chall, ch[name], name), _read_tensor(king, kh[name], name)
+        if a.shape != b.shape:
+            continue
+        elements += int(a.size)
+        changed += int(np.count_nonzero(a != b))
+    stats.update(sampled_tensors=len(picked), sampled_elements=elements,
+                 sampled_changed_elements=changed,
+                 sampled_changed_frac=(changed / elements) if elements else None)
+    return stats
+
+
+def near_duplicate_reason(stats: dict, max_identical_bytes_frac: float,
+                          min_changed_frac: float) -> str | None:
+    """Why `stats` mean 'this is the king with cosmetic edits', or None.
+
+    Two independent tests, either one rejects:
+      * identical_bytes_frac > max_identical_bytes_frac — most of the weight
+        bytes ARE the king's (1.0 = exact copy, disabled with >= 1.0);
+      * sampled_changed_frac < min_changed_frac — the tensors that do differ
+        differ in a vanishing fraction of their elements (0 disables).
+    """
+    ib = float(stats.get("identical_bytes_frac") or 0.0)
+    if max_identical_bytes_frac < 1.0 and ib > max_identical_bytes_frac:
+        return (f"{ib:.4%} of the weight bytes are byte-identical to the king "
+                f"({stats.get('identical_tensors')}/{stats.get('n_tensors')} tensors)")
+    cf = stats.get("sampled_changed_frac")
+    if min_changed_frac > 0 and cf is not None and stats.get("sampled_elements", 0) > 0 \
+            and cf < min_changed_frac:
+        return (f"only {cf:.2e} of the elements differ from the king in the "
+                f"{stats.get('sampled_tensors')} sampled non-identical tensors "
+                f"({stats.get('sampled_changed_elements')} of {stats.get('sampled_elements')})")
+    return None
 
 
 def _verified_sidecar(dest: Path) -> Path:
@@ -587,12 +791,20 @@ def _fetch(repo: str, revision: str, bucket: str, prefix: str, snap: Path,
                     fut.cancel()
                 wait(futs)
                 raise
+        # One more read pass over the verified shards (NVMe, ~1 GB/s): the
+        # weight fingerprint the duel's identity gate compares against the
+        # king and every past challenger. Done here, at prefetch time, so
+        # the duel itself never waits for it.
+        progress.set_phase("fingerprinting")
+        fp, n_tensors = compute_weights_fingerprint(snap, progress)
         progress.set_phase("complete")
     (snap / COMPLETE_MARKER).write_text(json.dumps({
         "repo": repo, "model_digest": revision,
         "files": len(manifest["files"]),
         "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "weights_fingerprint": fp, "n_tensors": n_tensors,
     }))
+    _write_fingerprint(snap, fp, n_tensors)
     (snap / PROGRESS_FILE).unlink(missing_ok=True)
     log.info("snapshot %s@%s complete in %.0fs (%.0f MB/s over the run)",
              repo, revision[:12], time.time() - t0,

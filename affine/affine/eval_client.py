@@ -115,6 +115,7 @@ class EvalClient:
                        challenger_weight_bytes: int = 0,
                        margin: dict | None = None,
                        confirm: dict | None = None,
+                       reject_weight_fingerprints: list[str] | None = None,
                        on_progress=None) -> dict:
         """Dispatch a duel and stream to verdict. Raises TransientEvalError on
         infra failure; returns the verdict dict on completion.
@@ -138,6 +139,11 @@ class EvalClient:
             # Window-best confirmation: one fresh slice pooled with the
             # original verdict (see evalsrv.dueling.run_duel `confirm`).
             payload["confirm"] = confirm
+        if reject_weight_fingerprints:
+            # Weight-identity gate: fingerprints of every checkpoint that
+            # already duelled or reigned; the pod rejects a challenger whose
+            # tensors match one of them (or the king's) before any GPU load.
+            payload["reject_weight_fingerprints"] = sorted(set(reject_weight_fingerprints))
         timeout = httpx.Timeout(self.duel_timeout_s, connect=30.0)
         async with httpx.AsyncClient(timeout=timeout,
                                      headers=self._headers) as client:

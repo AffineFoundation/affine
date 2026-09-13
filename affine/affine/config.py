@@ -110,6 +110,17 @@ class SubmissionCfg:
     allow_auto_map: bool
     max_repo_files: int
     max_config_bytes: int
+    # Weight-identity gate (2026-09-13, eval pod, before any GPU load). A
+    # challenger whose tensors are the king's — exactly (same fingerprint,
+    # any shard layout), or with cosmetic edits — is rejected as model_copy:
+    #   near_duplicate_max_identical_bytes_frac — reject when MORE than this
+    #     fraction of the weight bytes are byte-identical to the king's
+    #     tensors (1.0 = only the exact-fingerprint test);
+    #   near_duplicate_min_changed_frac — reject when the tensors that do
+    #     differ from the king differ in FEWER than this fraction of their
+    #     elements (seeded sample; 0 = off).
+    near_duplicate_max_identical_bytes_frac: float
+    near_duplicate_min_changed_frac: float
     # Nested config.json subset every submission must match exactly
     # (validate_repo_arch). Empty dict = no restriction.
     pinned_arch: dict
@@ -438,6 +449,10 @@ def _submission(raw: dict) -> SubmissionCfg:
         allow_auto_map=bool(s["allow_auto_map"]),
         max_repo_files=int(s["max_repo_files"]),
         max_config_bytes=int(s["max_config_bytes"]),
+        near_duplicate_max_identical_bytes_frac=float(
+            s.get("near_duplicate_max_identical_bytes_frac", 1.0)),
+        near_duplicate_min_changed_frac=float(
+            s.get("near_duplicate_min_changed_frac", 0.0)),
         pinned_arch=dict(s.get("pinned_arch") or {}),
         pinned_arch_alt=[dict(p) for p in (s.get("pinned_arch_alt") or [])],
         r2=_r2(s.get("r2") or {}),
