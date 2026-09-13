@@ -309,19 +309,12 @@ def main() -> None:
             policy = scheduler.pick_policy(name, pools[name],
                                            king_only=scheduler.king_cycle)
         pending = scheduler.pending(name, pools[name], policy)
-<<<<<<< HEAD
         batch = pending[: cfg.batch_size]
-        log.info("cycle: source=%s policy=%s batch=%d seat_pending=%d "
-                 "remaining=%s", name, policy.id, len(batch), len(pending),
-                 remaining)
-=======
-        batch = pending[: min(cfg.batch_size, source.max_batch or cfg.batch_size)]
         log.info("cycle: source=%s policy=%s seat=%s picks=%d/%d batch=%d "
                  "seat_pending=%d remaining=%s", name, policy.id,
                  "king" if scheduler.king_cycle else "teacher",
                  scheduler.picks_king, scheduler.picks_total, len(batch),
                  len(pending), remaining)
->>>>>>> rollouts: guaranteed king share of picks (40 %) — king cycles pick among king-capable sources by the king seat's own shortfall
         if not health.preflight(policy, env):
             # A dynamic endpoint (the king seat) does not answer: struck, so
             # the scheduler prefers another policy while it cools. Not a
