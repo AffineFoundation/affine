@@ -69,8 +69,8 @@ def tick(w: dict, out_dir: Path, discord: bool, dry_run: bool) -> None:
             continue
         w["done"][run_id] = {"status": status, "answer": res["answer"], "against": res["against"],
                              "at": res["generated_at"]}
-        save_watch(w)
         log(f"{run_id}: attributed ({status}) -> {res['answer']}")
+    save_watch(w)
 
 
 def main() -> int:
