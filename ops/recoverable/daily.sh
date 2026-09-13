@@ -7,16 +7,20 @@
 #                        the CURRENT king on a resumable harness that the
 #                        side-table affine/state/recoverable/<digest12>.jsonl
 #                        does not have yet (fold's own loop labeler + the
-#                        king-review pivot table), then RE-RUN states: rows
-#                        with fewer than $RECOVERABLE_CONTINUATIONS (3) OK
-#                        continuations (`pending_reruns`), unsolved first;
-#   2. ship them to the datagen pod ($RECOVERABLE_POD, default
-#                        affine-datagen-2) and run run_states.py there in a
-#                        tmux session: <= $RECOVERABLE_WORKERS containers,
-#                        3 continuations per state (T = 0.8), no new
-#                        continuation after $RECOVERABLE_DEADLINE_HOURS
-#                        (running ones finish, so the pod is busy <= deadline
-#                        + 1 h);
+#                        king-review pivot table); then the ACP same-task
+#                        proxy tasks (Claude Code / pi / Kimi / Hermes king
+#                        failures: the teacher replays the whole task); then
+#                        RE-RUN states: rows with fewer than
+#                        $RECOVERABLE_CONTINUATIONS (3) OK continuations
+#                        (`pending_reruns`), unsolved first;
+#   2. ship them to the datagen pod(s) ($RECOVERABLE_PODS, default
+#                        affine-datagen-2; several = sharded) and run
+#                        run_states.py there in a tmux session: <=
+#                        $RECOVERABLE_WORKERS containers per pod, 3
+#                        continuations per state / task (T = 0.8), no new
+#                        continuation after $RECOVERABLE_DEADLINE_HOURS or
+#                        $RECOVERABLE_BUDGET_USD (running ones finish, so a
+#                        pod is busy <= deadline + 1 h);
 #   3. pull the results back and aggregate.py --merge-into the side-table
 #                        (existing rows kept, continuations unioned, verdict =
 #                        majority of the OK continuations; rewritten atomically).
@@ -41,13 +45,24 @@ PY="$REPO/.venv/bin/python"
 OPS="$REPO/ops/recoverable"
 STATE="$REPO/affine/state/recoverable"
 POD_NAME="${RECOVERABLE_POD:-affine-datagen-2}"
+PODS="${RECOVERABLE_PODS:-$POD_NAME}"        # space-separated; sharded
 DEADLINE_H="${RECOVERABLE_DEADLINE_HOURS:-6}"
 MAX_STATES="${RECOVERABLE_MAX_STATES:-400}"
 # 6 containers next to the pod's production batches (24-28 cores, 94 GB):
 # 3 continuations per state at ~25 min each is 3x the pre-rule work.
 WORKERS="${RECOVERABLE_WORKERS:-6}"
 CONTINUATIONS="${RECOVERABLE_CONTINUATIONS:-3}"
-KINDS="${RECOVERABLE_KINDS:-textbased,bash,terminus}"
+# same_task = the ACP same-task proxy (claude_code / pi / kimi_code /
+# hermes_agent; states.py PROXY_HARNESSES): 3 fresh teacher rollouts of the
+# whole task under the king's harness, admit = solved in a majority, rows
+# marked proxy="same_task", capped at RECOVERABLE_ACP_MAX_SHARE of the
+# admitted tasks (king-data spec §2.4). Ordered after new resumable states
+# and before re-runs, so the deadline bounds it.
+KINDS="${RECOVERABLE_KINDS:-textbased,bash,terminus,same_task}"
+ACP_MAX_SHARE="${RECOVERABLE_ACP_MAX_SHARE:-0.5}"
+# Engy list-price cap per pod run (a same-task ACP rollout is ~10x a
+# continuation in tokens); the daily run stops launching past it.
+BUDGET_USD="${RECOVERABLE_BUDGET_USD:-40}"
 CHUNKS="${RECOVERABLE_CHUNKS:-$REPO/ops/corpus_build/cache/traces/chunks}"
 POLL_S="${RECOVERABLE_POLL_S:-300}"
 # RECOVERABLE_RETRY_ERRORED=1: errored side-table rows become candidates again
@@ -117,33 +132,71 @@ if [[ "$N_STATES" -eq 0 ]]; then
   exit 0
 fi
 
-# 2. pod ----------------------------------------------------------------------
+# 2. pods ---------------------------------------------------------------------
+# RECOVERABLE_PODS="affine-datagen-2 affine-datagen-5": the work is split by
+# run_states.py --shard i/n over the pods that are free (a pod still running
+# a rec-daily session is skipped, not waited for). One pod is the default.
+declare -a HOSTS PORTS NAMES
 if [[ -n "${RECOVERABLE_POD_SSH:-}" ]]; then
-  read -r POD_HOST POD_PORT <<<"$RECOVERABLE_POD_SSH" || true
+  read -r h p <<<"$RECOVERABLE_POD_SSH" || true
+  HOSTS+=("$h"); PORTS+=("$p"); NAMES+=("$POD_NAME")
 else
-  read -r POD_HOST POD_PORT <<<"$("$PY" "$REPO/ops/king-datagen/kingctl.py" pods \
-    | awk -v n="$POD_NAME" '$1 == n {print $2, $3}')" || true
+  PODS_TABLE="$("$PY" "$REPO/ops/king-datagen/kingctl.py" pods)"
+  for name in $PODS; do
+    read -r h p <<<"$(awk -v n="$name" '$1 == n {print $2, $3}' <<<"$PODS_TABLE")" || true
+    if [[ -z "${h:-}" || -z "${p:-}" ]]; then
+      log "pod $name not found (kingctl.py pods); skipping it"
+      continue
+    fi
+    HOSTS+=("$h"); PORTS+=("$p"); NAMES+=("$name")
+  done
 fi
-if [[ -z "${POD_HOST:-}" || -z "${POD_PORT:-}" ]]; then
-  log "pod $POD_NAME not found (kingctl.py pods); set RECOVERABLE_POD_SSH='host port'"
+if [[ ${#HOSTS[@]} -eq 0 ]]; then
+  log "no pod resolved (RECOVERABLE_PODS='$PODS'); set RECOVERABLE_POD_SSH='host port'"
   exit 1
 fi
-SSH=(ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20
-     -o LogLevel=ERROR -p "$POD_PORT" "root@$POD_HOST")
-N_CONT="$("$PY" -c 'import json,sys; print(sum(int(json.loads(l).get("continuations_needed") or 0) for l in open(sys.argv[1])))' "$RUN_DIR/states/states.jsonl")"
-log "pod $POD_NAME = $POD_HOST:$POD_PORT; $N_STATES state(s) / $N_CONT continuation(s) needed, $WORKERS workers, deadline ${DEADLINE_H} h"
+pod_ssh() {  # pod_ssh <index> <remote command...>
+  local i="$1"; shift
+  ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 \
+      -o LogLevel=ERROR -p "${PORTS[$i]}" "root@${HOSTS[$i]}" "$@"
+}
+N_CONT="$("$PY" -c 'import json,sys
+seen=set(); n=0
+for l in open(sys.argv[1]):
+    s=json.loads(l); k=s.get("proxy_key") or s["state_id"]
+    if k in seen: continue
+    seen.add(k); n+=int(s.get("continuations_needed") or 0)
+print(n)' "$RUN_DIR/states/states.jsonl")"
 
-if "${SSH[@]}" "tmux has-session -t rec-daily 2>/dev/null || pgrep -f '[r]un_states.py' >/dev/null"; then
-  log "a run_states / rec-daily session is still active on the pod; exiting"
+# Free pods only.
+declare -a USE
+for i in "${!HOSTS[@]}"; do
+  if pod_ssh "$i" "tmux has-session -t rec-daily 2>/dev/null || pgrep -f '[r]un_states.py' >/dev/null"; then
+    log "pod ${NAMES[$i]}: a run_states / rec-daily session is still active; skipping it"
+  else
+    USE+=("$i")
+  fi
+done
+N_PODS=${#USE[@]}
+if [[ "$N_PODS" -eq 0 ]]; then
+  log "every pod is busy; exiting"
   exit 0
 fi
-# Code and states to the pod (the pod copy of ops/recoverable follows the box).
-tar -C "$REPO/ops" -czf - recoverable | "${SSH[@]}" "mkdir -p $POD_DIR && tar -C $POD_DIR -xzf -"
-tar -C "$RUN_DIR" -czf - states | "${SSH[@]}" "mkdir -p $POD_DIR/daily/$RUN && tar -C $POD_DIR/daily/$RUN -xzf -"
-"${SSH[@]}" "cd $POD_DIR && tmux new-session -d -s rec-daily \
-  \"bash ./recoverable/pod_run.sh --states daily/$RUN/states/states.jsonl --out $POD_DIR/daily/out \
-     --kinds $KINDS --workers $WORKERS --deadline-hours $DEADLINE_H --continuations $CONTINUATIONS \
-     --untag $RETRY_FLAG > daily/$RUN/run.log 2>&1; touch daily/$RUN/DONE\""
+log "$N_STATES state(s) / $N_CONT continuation(s) needed on $N_PODS pod(s), $WORKERS workers each, deadline ${DEADLINE_H} h, budget \$${BUDGET_USD}/pod"
+
+# Code and states to each pod (the pod copy of ops/recoverable follows the box).
+shard=0
+for i in "${USE[@]}"; do
+  log "pod ${NAMES[$i]} = ${HOSTS[$i]}:${PORTS[$i]} shard $shard/$N_PODS"
+  tar -C "$REPO/ops" -czf - recoverable | pod_ssh "$i" "mkdir -p $POD_DIR && tar -C $POD_DIR -xzf -"
+  tar -C "$RUN_DIR" -czf - states | pod_ssh "$i" "mkdir -p $POD_DIR/daily/$RUN && tar -C $POD_DIR/daily/$RUN -xzf -"
+  pod_ssh "$i" "cd $POD_DIR && tmux new-session -d -s rec-daily \
+    \"bash ./recoverable/pod_run.sh --states daily/$RUN/states/states.jsonl --out $POD_DIR/daily/out \
+       --kinds $KINDS --workers $WORKERS --deadline-hours $DEADLINE_H --continuations $CONTINUATIONS \
+       --shard $shard/$N_PODS --budget-usd $BUDGET_USD --untag $RETRY_FLAG \
+       > daily/$RUN/run.log 2>&1; touch daily/$RUN/DONE\""
+  shard=$((shard + 1))
+done
 
 T0=$(date +%s)
 if [[ "$DEADLINE_H" == "0" ]]; then HARD_S=0; else
@@ -151,21 +204,28 @@ if [[ "$DEADLINE_H" == "0" ]]; then HARD_S=0; else
 fi
 while true; do
   sleep "$POLL_S"
-  if "${SSH[@]}" "test -f $POD_DIR/daily/$RUN/DONE"; then break; fi
+  all_done=1; DONE_N=0
+  for i in "${USE[@]}"; do
+    pod_ssh "$i" "test -f $POD_DIR/daily/$RUN/DONE" || all_done=0
+    n="$(pod_ssh "$i" "grep -c ' -> ' $POD_DIR/daily/$RUN/run.log 2>/dev/null || true")"
+    DONE_N=$((DONE_N + ${n:-0}))
+  done
+  [[ "$all_done" == 1 ]] && break
   ELAPSED=$(( $(date +%s) - T0 ))
-  DONE_N="$("${SSH[@]}" "grep -c ' -> ' $POD_DIR/daily/$RUN/run.log 2>/dev/null || true")"
-  log "running: ${DONE_N:-0}/$N_CONT continuation(s) finished, $((ELAPSED / 60)) min"
+  log "running: ${DONE_N}/$N_CONT continuation(s) finished on $N_PODS pod(s), $((ELAPSED / 60)) min"
   if [[ "$HARD_S" -gt 0 && "$ELAPSED" -gt "$HARD_S" ]]; then
-    log "hard cap reached; leaving the pod run to finish, merging what is there"
+    log "hard cap reached; leaving the pod run(s) to finish, merging what is there"
     break
   fi
 done
 
 # 3. merge --------------------------------------------------------------------
 mkdir -p "$RUN_DIR/out"
-"${SSH[@]}" "cd $POD_DIR/daily/out && tar -czf - --ignore-failed-read results reports" | tar -C "$RUN_DIR/out" -xzf -
-"${SSH[@]}" "cat $POD_DIR/daily/$RUN/run.log" > "$RUN_DIR/run.log" || true
+for i in "${USE[@]}"; do
+  pod_ssh "$i" "cd $POD_DIR/daily/out && tar -czf - --ignore-failed-read results reports" | tar -C "$RUN_DIR/out" -xzf -
+  pod_ssh "$i" "cat $POD_DIR/daily/$RUN/run.log" > "$RUN_DIR/run.${NAMES[$i]}.log" || true
+done
 "$PY" "$OPS/aggregate.py" --states "$RUN_DIR/states/states.jsonl" --out "$RUN_DIR/out" \
-  --continuations "$CONTINUATIONS" --merge-into "$TABLE" \
-  | { grep -E "^(merged|states |rule |side-table)" || true; } | sed "s/^/  /"
+  --continuations "$CONTINUATIONS" --acp-max-share "$ACP_MAX_SHARE" --merge-into "$TABLE" \
+  | { grep -E "^(merged|states |rule |same-task|side-table)" || true; } | sed "s/^/  /"
 log "done; summary $RUN_DIR/out/summary.md"
