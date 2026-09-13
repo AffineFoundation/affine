@@ -1,0 +1,202 @@
+#!/bin/bash
+# affine-deadman — dead-man check for the SN120 validator box (runs as root
+# from affine-deadman.timer every 2 min; see install.sh).
+#
+# Question it answers every tick: "is the pm2 app `affine-validator` online?"
+# If not, bring it back and say so with ONE line in the PRIVATE Arbos Discord
+# channel. It never touches a healthy validator.
+#
+# Decision table (one tick = one run):
+#   pm2 God daemon dead, unit pm2-const inactive  -> systemctl start pm2-const
+#                                                   (= pm2 resurrect as const)
+#   pm2 God daemon dead, unit pm2-const active    -> systemctl restart pm2-const
+#                                                   (systemd's own Restart=always
+#                                                   normally beats us to it)
+#   daemon alive, validator not online, 1st tick  -> remember, do nothing (a
+#                                                   deliberate `pm2 stop` for a
+#                                                   redeploy looks the same)
+#   daemon alive, validator not online, 2nd tick  -> pm2 restart affine-validator
+#   pause file present and younger than PAUSE_MAX -> do nothing, say nothing
+#
+# Pause during a deploy:  touch /home/const/.affine/deadman.pause
+# (auto-expires after 6 h; delete it when done). Documented in AGENTS.md §9.
+#
+# Discord: channel 1510910974498967613 (private Arbos ops channel — never the
+# public #120 channel), bot token DISCORD_BOT_TOKEN_ARBOS_BITTENSOR read from
+# ~const/.affine-validator.env or ~const/subnet120/.env. Alerts are rate
+# limited to one per ALERT_EVERY seconds while the condition persists;
+# recovery posts once.
+#
+# Manual: `affine-deadman --dry-run` prints the decision, changes nothing,
+# posts nothing. `affine-deadman --status` prints one line and exits.
+set -uo pipefail
+
+USER_NAME=const
+HOME_DIR=/home/$USER_NAME
+PM2_HOME=$HOME_DIR/.pm2
+PM2=/usr/lib/node_modules/pm2/bin/pm2
+UNIT=pm2-const.service
+APP=affine-validator
+CHANNEL_ID=${AFFINE_DEADMAN_CHANNEL:-1510910974498967613}
+TOKEN_ENV=DISCORD_BOT_TOKEN_ARBOS_BITTENSOR
+ENV_FILES=("$HOME_DIR/.affine-validator.env" "$HOME_DIR/subnet120/.env")
+PAUSE_FILE=$HOME_DIR/.affine/deadman.pause
+PAUSE_MAX=$((6 * 3600))
+STATE_DIR=/run/affine-deadman
+ALERT_EVERY=600
+PM2_PATH="$HOME_DIR/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+DRY=0; STATUS_ONLY=0
+for a in "$@"; do
+  case "$a" in
+    --dry-run) DRY=1 ;;
+    --status) STATUS_ONLY=1 ;;
+    *) echo "usage: affine-deadman [--dry-run] [--status]" >&2; exit 2 ;;
+  esac
+done
+
+mkdir -p "$STATE_DIR"
+log() { echo "affine-deadman: $*"; }
+
+# setpriv, not runuser: no PAM session, so no journal noise per tick.
+as_const() { setpriv --reuid="$USER_NAME" --regid="$USER_NAME" --init-groups env HOME="$HOME_DIR" USER="$USER_NAME" PM2_HOME="$PM2_HOME" PATH="$PM2_PATH" "$@"; }
+
+god_alive() {
+  local p
+  p=$(cat "$PM2_HOME/pm2.pid" 2>/dev/null) || return 1
+  [ -n "$p" ] && [ -r "/proc/$p/cmdline" ] && tr "\0" " " < "/proc/$p/cmdline" | grep -q "God Daemon" \
+    && [ -S "$PM2_HOME/rpc.sock" ]
+}
+
+# Prints the pm2 status of $APP ("online", "stopped", "errored", "launching",
+# ...), "absent" if the app is not in the list, or "unknown" if pm2 did not
+# answer. Only called when the daemon is alive: `pm2 jlist` against a dead
+# daemon would SPAWN a new one outside the systemd unit.
+app_status() {
+  local out
+  out=$(timeout 60 setpriv --reuid="$USER_NAME" --regid="$USER_NAME" --init-groups env HOME="$HOME_DIR" USER="$USER_NAME" PM2_HOME="$PM2_HOME" PATH="$PM2_PATH" "$PM2" jlist 2>/dev/null) || { echo unknown; return; }
+  out=$(printf '%s\n' "$out" | grep -v '^\[PM2\]' | sed -n '/^\[/,$p')
+  printf '%s' "$out" | jq -r --arg n "$APP" 'map(select(.name == $n)) | if length == 0 then "absent" else .[0].pm2_env.status end' 2>/dev/null || echo unknown
+}
+
+read_token() {
+  local f line
+  for f in "${ENV_FILES[@]}"; do
+    [ -r "$f" ] || continue
+    line=$(grep -E "^(export )?$TOKEN_ENV=" "$f" | tail -1) || true
+    [ -n "$line" ] || continue
+    line=${line#*=}
+    line=${line#\"}; line=${line%\"}; line=${line#\'}; line=${line%\'}
+    [ -n "$line" ] && { printf '%s' "$line"; return 0; }
+  done
+  return 1
+}
+
+post() {
+  local msg=$1 token
+  log "discord: $msg"
+  [ "$DRY" = 1 ] && return 0
+  token=$(read_token) || { log "no $TOKEN_ENV in ${ENV_FILES[*]}; not posted"; return 1; }
+  curl -fsS -m 15 -o /dev/null \
+    -H "Authorization: Bot $token" -H "Content-Type: application/json" \
+    -d "$(jq -cn --arg c "$msg" '{content: $c}')" \
+    "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \
+    || log "discord post failed"
+}
+
+# Alert at most once per ALERT_EVERY while a condition persists.
+alert() {
+  local key=$1 msg=$2 now last
+  now=$(date +%s)
+  last=$(cat "$STATE_DIR/alert.$key" 2>/dev/null || echo 0)
+  if (( now - last >= ALERT_EVERY )); then
+    post "$msg" && [ "$DRY" = 0 ] && echo "$now" > "$STATE_DIR/alert.$key"
+  else
+    log "alert '$key' suppressed (last $((now - last)) s ago): $msg"
+  fi
+}
+
+clear_alerts() { rm -f "$STATE_DIR"/alert.* "$STATE_DIR/miss.$APP"; }
+
+run_action() {
+  log "action: $*"
+  [ "$DRY" = 1 ] && return 0
+  "$@"
+}
+
+host=$(hostname -s)
+stamp=$(date -u +%H:%M:%SZ)
+unit_state=$(systemctl is-active "$UNIT" 2>/dev/null || true)
+
+if god_alive; then
+  status=$(app_status)
+else
+  status=daemon-dead
+fi
+
+if [ "$STATUS_ONLY" = 1 ]; then
+  echo "pm2-const=$unit_state $APP=$status"
+  exit 0
+fi
+
+# Pause file: a deploy is in progress. Silent no-op while it is fresh.
+if [ -e "$PAUSE_FILE" ]; then
+  age=$(( $(date +%s) - $(stat -c %Y "$PAUSE_FILE") ))
+  if (( age < PAUSE_MAX )); then
+    log "paused by $PAUSE_FILE (${age}s old); $APP=$status"
+    exit 0
+  fi
+  log "pause file is ${age}s old (> $PAUSE_MAX); ignoring it"
+fi
+
+case "$status" in
+  online|launching|"waiting restart")
+    if [ -e "$STATE_DIR/miss.$APP" ] || ls "$STATE_DIR"/alert.* >/dev/null 2>&1; then
+      post "[$host $stamp] deadman: $APP back online (pm2-const=$unit_state)"
+    fi
+    clear_alerts
+    log "ok: $APP=$status pm2-const=$unit_state"
+    exit 0
+    ;;
+  daemon-dead)
+    if [ "$unit_state" = active ]; then
+      run_action systemctl restart "$UNIT"
+      how="systemctl restart $UNIT"
+    else
+      run_action systemctl start "$UNIT"
+      how="systemctl start $UNIT (was $unit_state)"
+    fi
+    sleep 20
+    god_alive && after=$(app_status) || after=daemon-dead
+    alert daemon "[$host $stamp] deadman: pm2 daemon was DEAD (unit $unit_state) -> $how -> $APP=$after"
+    [ "$after" = online ] || [ "$after" = launching ] || exit 1
+    exit 0
+    ;;
+  stopped|errored|stopping|absent|unknown)
+    if [ ! -e "$STATE_DIR/miss.$APP" ]; then
+      [ "$DRY" = 1 ] || date +%s > "$STATE_DIR/miss.$APP"
+      log "$APP=$status (first miss; acting next tick unless it recovers or $PAUSE_FILE appears)"
+      exit 0
+    fi
+    if [ "$status" = absent ]; then
+      alert absent "[$host $stamp] deadman: $APP is NOT in the pm2 list and pm2-const=$unit_state; not touching it — check ~/.pm2/dump.pm2"
+      exit 1
+    fi
+    if [ "$status" = unknown ]; then
+      alert unknown "[$host $stamp] deadman: pm2 daemon alive but did not answer jlist (pm2-const=$unit_state); no action"
+      exit 1
+    fi
+    # No --update-env: the app keeps the env it was saved with (a restart from
+    # this minimal root env would give it a PATH without ~/.local/bin).
+    run_action as_const "$PM2" restart "$APP"
+    sleep 10
+    after=$(app_status)
+    alert app "[$host $stamp] deadman: $APP was $status -> pm2 restart -> $after (pm2-const=$unit_state)"
+    [ "$after" = online ] || [ "$after" = launching ] || exit 1
+    exit 0
+    ;;
+  *)
+    alert other "[$host $stamp] deadman: $APP in unexpected pm2 state '$status' (pm2-const=$unit_state); no action"
+    exit 1
+    ;;
+esac
