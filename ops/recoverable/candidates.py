@@ -12,8 +12,14 @@ rollout on a resumable harness and emits one state per
 
 that is not already a row of the recoverable side-table
 (`(rollout_id, turn_idx, state_kind)`; errored rows count as done unless
---retry-errored). Pivots come first, then onsets by rank (earliest onset of a
-rollout first) and depth; --max-states caps the batch.
+--retry-errored), plus RE-RUN candidates: table rows with `pending_reruns > 0`
+(fewer OK continuations than the 3 the majority rule wants; aggregate.py)
+get a state again with `continuations_needed` = the missing count, so
+run_states.py only adds what is missing. Order: new pivots, new onsets by
+rank (earliest onset of a rollout first) and depth, then re-runs — states
+the teacher has NOT solved so far first (they can flip to admitted), then
+solved-once states, each pivots / first onsets / shallow first.
+--max-states caps the batch; --reruns-only / --no-reruns select one half.
 
   python candidates.py --chunks ops/corpus_build/cache/traces/chunks \
       --pivots affine/state/king_pivots/0ce59769300c.jsonl \
@@ -55,18 +61,34 @@ def king_digest12(policy: dict) -> str:
     return m.group(1) if m else ""
 
 
-def load_side_table(path: Path, retry_errored: bool) -> set[tuple]:
+def load_side_table(path: Path, retry_errored: bool,
+                    target: int) -> tuple[set[tuple], dict[tuple, dict]]:
+    """(done, reruns): `done` = states the table settles (no candidate);
+    `reruns` = key -> row for states with OK continuations but fewer than
+    `target` (pending_reruns > 0). Errored rows are done unless
+    --retry-errored; not_run rows are never done (they never ran)."""
     done: set[tuple] = set()
+    reruns: dict[tuple, dict] = {}
     if not path.is_file():
-        return done
+        return done, reruns
     for line in path.read_text(encoding="utf-8").split("\n"):
         if not line.strip():
             continue
         row = json.loads(line)
-        if retry_errored and row.get("teacher_status") == "errored":
+        key = (row["rollout_id"], int(row["turn_idx"]), row["state_kind"])
+        status = row.get("teacher_status")
+        if status == "not_run":
             continue
-        done.add((row["rollout_id"], int(row["turn_idx"]), row["state_kind"]))
-    return done
+        if status == "errored" and retry_errored:
+            continue
+        pending = row.get("pending_reruns")
+        if pending is None:   # pre-rule row: one continuation stored
+            pending = target - 1 if status == "ok" else target
+        if status == "ok" and pending > 0:
+            reruns[key] = row
+        else:
+            done.add(key)
+    return done, reruns
 
 
 def load_pivots(path: Path, min_confidence: float,
@@ -142,16 +164,25 @@ def main() -> None:
     ap.add_argument("--retry-errored", action="store_true")
     ap.add_argument("--no-onsets", action="store_true")
     ap.add_argument("--no-pivots", action="store_true")
+    ap.add_argument("--continuations", type=int, default=3,
+                    help="OK continuations a state needs (aggregate.py majority rule)")
+    ap.add_argument("--reruns-only", action="store_true",
+                    help="only states already in the table with pending_reruns > 0")
+    ap.add_argument("--no-reruns", action="store_true", help="new states only")
     args = ap.parse_args()
 
     kinds = set(args.kinds.split(","))
-    done = load_side_table(args.side_table, args.retry_errored)
+    done, reruns = load_side_table(args.side_table, args.retry_errored, args.continuations)
+    if args.no_reruns:
+        done |= set(reruns)
+        reruns = {}
     pivots = {} if args.no_pivots else load_pivots(
         args.pivots, args.min_confidence,
         {c for c in args.exclude_categories.split(",") if c})
     baker = None if args.no_onsets else ToolBaker.from_pretrained()
     counts: collections.Counter = collections.Counter()
-    cands: list[tuple[tuple, dict, int, str, dict]] = []   # (sort key, env, turn, kind, label)
+    # (sort key, env, turn, kind, label, continuations_needed)
+    cands: list[tuple[tuple, dict, int, str, dict, int]] = []
 
     for env in iter_king_envelopes(args.chunks, args.king_digest, kinds):
         counts["failed_rollouts"] += 1
@@ -162,20 +193,37 @@ def main() -> None:
                 onsets = onset_turns(env, baker)
             except (ToolParityError, TraceShapeError) as e:
                 counts[f"label_error:{type(e).__name__}"] += 1
-        for rank, (turn, repeats) in enumerate(sorted(onsets.items()), start=1):
-            counts["onsets_seen"] += 1
-            if (rid, turn, "loop_onset") in done:
-                counts["onsets_in_table"] += 1
+        ranks = {turn: rank for rank, turn in enumerate(sorted(onsets), start=1)}
+        if not args.reruns_only:
+            for rank, (turn, repeats) in enumerate(sorted(onsets.items()), start=1):
+                counts["onsets_seen"] += 1
+                if (rid, turn, "loop_onset") in done or (rid, turn, "loop_onset") in reruns:
+                    counts["onsets_in_table"] += 1
+                    continue
+                cands.append(((1, rank, turn), env, turn, "loop_onset",
+                              {"loop_onset_of": repeats, "onset_rank": rank,
+                               "labeler": "affine.corpus.loops"}, args.continuations))
+            for turn, row in pivots.get(rid, {}).items():
+                counts["pivots_seen"] += 1
+                if (rid, turn, "pivot") in done or (rid, turn, "pivot") in reruns:
+                    counts["pivots_in_table"] += 1
+                    continue
+                cands.append(((0, 0, turn), env, turn, "pivot", row, args.continuations))
+        for (r_rid, turn, kind), row in reruns.items():
+            if r_rid != rid:
                 continue
-            cands.append(((1, rank, turn), env, turn, "loop_onset",
-                          {"loop_onset_of": repeats, "onset_rank": rank,
-                           "labeler": "affine.corpus.loops"}))
-        for turn, row in pivots.get(rid, {}).items():
-            counts["pivots_seen"] += 1
-            if (rid, turn, "pivot") in done:
-                counts["pivots_in_table"] += 1
-                continue
-            cands.append(((0, 0, turn), env, turn, "pivot", row))
+            counts["reruns_seen"] += 1
+            pending = int(row.get("pending_reruns") or (args.continuations - 1))
+            if kind == "pivot":
+                label = pivots.get(rid, {}).get(turn) or {"node_id": row.get("node_id")}
+                prio = 0
+            else:
+                rank = ranks.get(turn) or int(row.get("onset_rank") or 0)
+                label = {"loop_onset_of": onsets.get(turn), "onset_rank": rank,
+                         "labeler": "affine.corpus.loops"}
+                prio = rank
+            unsolved_first = 0 if not row.get("teacher_solved") else 1
+            cands.append(((2 + unsolved_first, prio, turn), env, turn, kind, label, pending))
 
     cands.sort(key=lambda c: c[0])
     if args.max_states and len(cands) > args.max_states:
@@ -184,7 +232,7 @@ def main() -> None:
 
     (args.out / "states").mkdir(parents=True, exist_ok=True)
     rows = []
-    for _, env, turn, kind, label in cands:
+    for key, env, turn, kind, label, needed in cands:
         st = build_state(env, turn, kind, label)
         if st is None:
             counts["bad_turn_idx"] += 1
@@ -195,8 +243,15 @@ def main() -> None:
                 if k not in ("messages", "king_reply", "task_system_prompt",
                              "task_prompt", "label")}
         meta["path"] = str(path)
+        meta["continuations_needed"] = needed
+        meta["rerun"] = key[0] >= 2
+        # Continuations the table already counts: run_states.py does not
+        # let a stored result with one of these trace ids fill the need.
+        row = reruns.get((env["rollout_id"], turn, kind)) or {}
+        meta["table_trace_ids"] = [c["trace_id"] for c in row.get("continuations") or []
+                                   if c.get("trace_id")]
         rows.append(meta)
-        counts[f"state:{kind}:{st['harness']}"] += 1
+        counts[f"state:{'rerun:' if key[0] >= 2 else ''}{kind}:{st['harness']}"] += 1
     with open(args.out / "states.jsonl", "w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")

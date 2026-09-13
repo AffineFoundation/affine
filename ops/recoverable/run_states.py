@@ -1,10 +1,17 @@
-"""Run one teacher continuation per candidate state on a datagen pod.
+"""Run teacher continuations per candidate state on a datagen pod.
 
-For every row of states.jsonl (ops/recoverable/states.py) this launches one
-verifiers eval — the task's own taskset, image and reward, the
-`recoverable_resume` harness (plugin/) on the state file, the teacher as the
-model, `max_turns` = the state's remaining budget — parses the resulting
-trace and writes results/<state_id>.json (+ results.jsonl).
+For every row of states.jsonl (ops/recoverable/states.py) this launches N
+verifiers evals (`--continuations`, default 3; a state row's
+`continuations_needed` overrides it) — the task's own taskset, image and
+reward, the `recoverable_resume` harness (plugin/) on the state file, the
+teacher as the model, `max_turns` = the state's remaining budget — parses
+each resulting trace and writes one result per continuation:
+results/<state_id>.json (the first) and results/<state_id>.c<k>.json
+(k >= 1), plus results.jsonl. Idempotent: existing OK results count toward
+the target, so a re-run only adds what is missing. aggregate.py decides
+`teacher_solved` / `admit` by majority over a state's continuations (one
+continuation at T = 0.8 is a noisy label: the unhinted re-run of "failed"
+states recovered 35 % of them, hinted-teacher explorations §E4b).
 
 Runs next to the datagen supervisor without touching it: its own working
 directory, its own env file, low container concurrency. The rollouts package
@@ -170,18 +177,34 @@ def build_cmd(cfg, registry, state: dict, run_dir: Path, report_dir: Path) -> li
     return cmd
 
 
-def run_one(cfg, registry, state: dict, out: Path, env: dict) -> dict:
-    sid = state["state_id"].replace(":", "_")
-    run_dir = out / "runs" / sid
+def file_stem(state_id: str, k: int) -> str:
+    """results/<stem>.json: `<sid>` for the first continuation (the pre-N
+    layout), `<sid>.c<k>` for the others."""
+    sid = state_id.replace(":", "_")
+    return sid if k == 0 else f"{sid}.c{k}"
+
+
+def continuation_index(path: Path, sid: str) -> int:
+    m = re.fullmatch(re.escape(sid) + r"(?:\.c(\d+))?", path.stem)
+    return int(m.group(1)) if m and m.group(1) else 0
+
+
+def run_one(cfg, registry, state: dict, out: Path, env: dict, k: int = 0) -> dict:
+    stem = file_stem(state["state_id"], k)
+    run_dir = out / "runs" / stem
     report_dir = out / "reports"
     if run_dir.exists():
         shutil.rmtree(run_dir, ignore_errors=True)
     run_dir.mkdir(parents=True)
     result: dict = {"state_id": state["state_id"], "resume_kind": state["resume_kind"],
+                    "continuation": k,
                     "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     source = registry.sources[state["source"]]
     if source.local_docker_build:
-        ok, failed = build_local_images([dict(state["task"])])
+        # rollouts >= 2026-09-13 also returns the tasks deferred by its
+        # per-batch build cap (none here: one task, no cap).
+        built = build_local_images([dict(state["task"])])
+        failed = built[1]
         if failed:
             result.update(status="errored", error="docker_build_failed")
             return result
@@ -221,8 +244,49 @@ def run_one(cfg, registry, state: dict, out: Path, env: dict) -> dict:
     result["status"] = "ok" if summary["outcome"] != "errored" else "errored"
     # Keep the trace for provenance; the run dir (images, logs) is disposable.
     (out / "traces").mkdir(exist_ok=True)
-    (out / "traces" / f"{sid}.json").write_text(json.dumps(trace))
+    (out / "traces" / f"{stem}.json").write_text(json.dumps(trace))
     return result
+
+
+def existing_results(results_dir: Path, state_id: str) -> dict[int, dict]:
+    """k -> stored result of this state (both file layouts)."""
+    sid = state_id.replace(":", "_")
+    found: dict[int, dict] = {}
+    for p in [results_dir / f"{sid}.json", *results_dir.glob(f"{sid}.c*.json")]:
+        if p.is_file():
+            found[continuation_index(p, sid)] = json.loads(p.read_text())
+    return found
+
+
+def plan_continuations(state: dict, have: dict[int, dict], target: int,
+                       retry_errored: bool) -> list[int]:
+    """Which continuation indices to run for this state.
+
+    Standalone (no `continuations_needed` on the row): fresh indices until
+    `target` continuations exist in this out dir; an errored slot counts as
+    filled unless --retry-errored re-runs it in place (a 3,600 s timeout
+    would otherwise cost an hour per re-run).
+
+    From candidates.py (`continuations_needed` = what the side-table still
+    lacks, `table_trace_ids` = the continuations it already counts): run
+    that many, minus OK results stored here that the table does not know
+    yet (an earlier run that was never merged)."""
+    known = set(state.get("table_trace_ids") or [])
+    ok_uncounted = [k for k, r in have.items()
+                    if r.get("status") == "ok" and r.get("trace_id") not in known]
+    errored = sorted(k for k, r in have.items() if r.get("status") != "ok")
+    todo = list(errored) if retry_errored else []
+    if state.get("continuations_needed") is not None:
+        need = int(state["continuations_needed"]) - len(ok_uncounted)
+    else:
+        need = target - len(ok_uncounted) - (0 if retry_errored else len(errored))
+    need -= len(todo)
+    next_k = max(have, default=-1) + 1
+    while need > 0:
+        todo.append(next_k)
+        next_k += 1
+        need -= 1
+    return todo
 
 
 def main() -> None:
@@ -240,8 +304,11 @@ def main() -> None:
                     help="i/n: run only states with blake2b(state_id) %% n == i "
                          "(split the work across pods)")
     ap.add_argument("--deadline-hours", type=float, default=0.0,
-                    help="start no new state after this many hours (0 = no "
-                         "deadline); states already running finish")
+                    help="start no new continuation after this many hours (0 = "
+                         "no deadline); continuations already running finish")
+    ap.add_argument("--continuations", type=int, default=3,
+                    help="OK continuations wanted per state (a state row's "
+                         "`continuations_needed` overrides); existing results count")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
@@ -271,36 +338,45 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     results_dir = args.out / "results"
     results_dir.mkdir(exist_ok=True)
-    done = set()
-    for p in results_dir.glob("*.json"):
-        r = json.loads(p.read_text())
-        if r.get("status") == "ok" or not args.retry_errored:
-            done.add(r["state_id"])
-    todo = [s for s in states if s["state_id"] not in done]
+    # Work items are (state, k): a state's missing continuations, in state
+    # order so the priority the candidates file expresses (pivots, first
+    # onsets, shallow states first) is kept across states.
+    todo: list[tuple[dict, int]] = []
+    n_have = n_complete = 0
+    for s in states:
+        have = existing_results(results_dir, s["state_id"])
+        n_have += len(have)
+        ks = plan_continuations(s, have, args.continuations, args.retry_errored)
+        if not ks:
+            n_complete += 1
+        todo.extend((s, k) for k in ks)
     if args.limit:
         todo = todo[: args.limit]
-    log.info("%d states selected, %d done, %d to run, %d workers, deadline %s h",
-             len(states), len(done), len(todo), args.workers, args.deadline_hours or "none")
+    log.info("%d states selected, %d complete, %d stored continuation(s), %d "
+             "continuation(s) to run, %d workers, deadline %s h",
+             len(states), n_complete, n_have, len(todo), args.workers,
+             args.deadline_hours or "none")
     deadline = time.time() + args.deadline_hours * 3600 if args.deadline_hours else None
     skipped = []
 
-    def work(state: dict) -> None:
-        sid = state["state_id"].replace(":", "_")
+    def work(item: tuple[dict, int]) -> None:
+        state, k = item
         if deadline and time.time() > deadline:
             skipped.append(state["state_id"])
             return
         try:
-            r = run_one(cfg, registry, state, args.out, env)
+            r = run_one(cfg, registry, state, args.out, env, k)
         except Exception as e:  # noqa: BLE001 - one state must not kill the batch
-            log.exception("state %s crashed", state["state_id"])
+            log.exception("state %s c%d crashed", state["state_id"], k)
             r = {"state_id": state["state_id"], "resume_kind": state["resume_kind"],
-                 "status": "errored", "error": f"driver: {type(e).__name__}: {e}"}
+                 "continuation": k, "status": "errored",
+                 "error": f"driver: {type(e).__name__}: {e}"}
         with _lock:
-            (results_dir / f"{sid}.json").write_text(json.dumps(r))
+            (results_dir / f"{file_stem(state['state_id'], k)}.json").write_text(json.dumps(r))
             with open(args.out / "results.jsonl", "a", encoding="utf-8") as f:
                 f.write(json.dumps(r) + "\n")
-        log.info("%s -> %s outcome=%s stop=%s turns=%s wall=%ss",
-                 state["state_id"], r.get("status"), r.get("outcome"),
+        log.info("%s c%d -> %s outcome=%s stop=%s turns=%s wall=%ss",
+                 state["state_id"], k, r.get("status"), r.get("outcome"),
                  r.get("stop_condition"), r.get("n_turns"), r.get("wall_s"))
 
     reap_own_containers()
@@ -308,7 +384,7 @@ def main() -> None:
         with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
             list(ex.map(work, todo))
         if skipped:
-            log.info("deadline reached: %d state(s) not started", len(skipped))
+            log.info("deadline reached: %d continuation(s) not started", len(skipped))
     finally:
         # Tags stay: another process on the pod may have started a container
         # from one of them; `--untag` at the very end removes them.
