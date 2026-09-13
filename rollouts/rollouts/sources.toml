@@ -33,8 +33,8 @@
 # unwinds as coding grows. `general` strata are the fold-assigned hashed
 # buckets `general:<offset + sha256(task) % n>` per source (see the
 # strata_offset table under "-- general --"), like math / tool_use.
-coding = 0.4276
-terminal = 0.2624
+coding = 0.3966
+terminal = 0.2434
 nl2repo = 0.03
 math = 0.03
 tool_use = 0.02
@@ -49,12 +49,19 @@ tool_use = 0.02
 # king_done 0.03 (NEW: the king said/attempted "done" and kept going).
 # Shares are caps; the supply-limited groups fill as king datagen and the
 # side-table pipelines produce states.
+# 2026-09-13 phase 7 (docs/improvement-loop.md P1 + P3): + king_tooluse 0.02
+# (the king tool-calls where the teacher answers in prose; kind-by-teacher
+# `text`), completion 0.03 -> 0.05, + completion_pre 0.01 (the 1-2 teacher
+# turns before a solved stop). The 0.05 comes from coding and terminal
+# proportionally (0.4276/0.2624 -> 0.3966/0.2434).
 king_fail = 0.02
 king_loop_onset = 0.03
 king_pivot = 0.03
 king_recoverable = 0.04
 king_done = 0.03
-completion = 0.03
+king_tooluse = 0.02
+completion = 0.05
+completion_pre = 0.01
 general = 0.05
 
 [king_common]
@@ -175,6 +182,39 @@ readmit_published = true
 # waived like every king group. Strata king_done:NNNN.
 strata_buckets = 4000
 min_more_turns = 2
+# kind: at a done state the teacher stops -- a prose report or a finish
+# tool call; `text` parses both (Jacob 2026-09-13).
+kind = "text"
+# 2026-09-13 phase 7 (P1): affine_agent and wikispeedia states feed this
+# group again (73 turns were waiting against a 3 % cap; affine_agent king
+# rollouts hit the loop guard 79 % of the time).
+lift_exclude = ["affine_agent", "affine_wikispeedia"]
+
+[king_tooluse]
+# Improvement loop P1 (BFCL irrelevance: the king calls a tool on 95 % of
+# prompts where none applies). Jacob 2026-09-13 14:58 UTC: route by the
+# KING's behaviour -- the points where the king failed -- not by what the
+# teacher did. Selection:
+#   (a) one-shot: on a prose-answer prompt set served with tool schemas
+#       (prose_sources -- the datagen worker's P1 source; append its name
+#       when it lands, its records route by the king_ policy prefix), the
+#       king's first reply is a tool call -> the king's turn 0;
+#   (b) persist: on a tool source (tool_sources), the king repeats the same
+#       tool call after an error / empty / nudge observation -> that turn
+#       (affine/corpus/loops.py `persist`).
+# kind: the duel-time action_kind of these turns. `text` parses a whole
+# visible reply, tool XML included, so the teacher's references stay
+# parseable whether the teacher answers in prose or calls a tool; under
+# `tool_call` a prose reference drops and zeroes the group. `text` has been
+# an admitted dialect since wvk 13 -- a routing decision, not a contract
+# change. One-reply rollouts allowed (the prompt-with-tools IS the state);
+# the common exclusions are not inherited (they exclude these sources).
+strata_buckets = 2000
+inherit_exclude = false
+one_reply_ok = true
+prose_sources = []
+tool_sources = ["affine_agent", "affine_wikispeedia", "affine_sql", "affine_eog", "affine_autobench"]
+kind = "text"
 
 [king_recoverable]
 # Phase 5 (2026-09-12, docs/teacher-recoverable-filter.md): failure states
@@ -197,6 +237,20 @@ policy_prefix = "king_"
 side_table_dir = "affine/state/recoverable"
 exclude_sources = ["affine_wiki", "affine_agent", "affine_math"]
 readmit_published = true
+
+[completion_pre]
+# Improvement loop P3 (premature finish: 6 % of king failures, Terminus
+# 29 %). King-selected (Jacob 2026-09-13): the king finished on its own
+# (`agent_completed`, final reply completion-eligible by the harness rule)
+# and the env graded the rollout FAILED. The routed states are the n_before
+# turns right before that final reply -- where the king should have
+# verified (run the tests, check the diff) instead of finishing. kind
+# `text` so a teacher that verifies with a tool and one that finishes in
+# prose both parse. A king group: leak rule waived, common exclusions
+# inherited. Strata completion_pre:NNNN.
+strata_buckets = 4000
+n_before = 2
+kind = "text"
 
 [completion]
 # The reply that ENDED a solved rollout on purpose — teacher and king
@@ -555,6 +609,41 @@ pass_dataset = false
 policies = ["teacher_toolcall", "king_toolcall", "king_toolcall_greedy"]   # + king seat + greedy king 2026-09-13
 strata_buckets = 500
 strata_offset = 470
+share = 1.0
+
+[source.affine_notool]
+# "Do not act" states (improvement-loop P1, 2026-09-13): knowledge
+# questions served WITH 3-6 unrelated tool schemas — the BFCL-irrelevance
+# shape, built in-house (rollouts/envs/affine_notool_v1; BFCL itself is a
+# held-out benchmark and is never used). Items = TriviaQA rc.wikipedia
+# .nocontext TRAIN questions (61,888; validation stays out of D), tools
+# sampled per question id from a 24-tool pool of calendar / email / smart-
+# home / travel / finance / file actions that cannot answer anything. The
+# right reply is prose: `solved` = correct alias AND zero tool calls;
+# `correct` and `tool_called` are metrics. A rollout that keeps calling
+# tools is cut at 4 turns under the name `max_turns` (clean failure).
+# Probe 2026-09-13 (datagen-2): teacher 0/5 tool calls, 3/5 solved; king
+# (reign 12) 5/8 called a tool and looped to the cap, 1/8 solved.
+# Policies are the tool_call trio (null harness with tool schemas): the
+# teacher's prose answer folds as a `text` turn (text_final rule), the
+# king's tool call as `tool_call` — the `king_tooluse` material; the fold
+# worker adds this source to [king_tooluse].sources (see the
+# improvement-loop doc). tool_use bucket namespace: wiki 0-469, agent
+# 470-969, this source 970-1199.
+group = "tool_use"
+runner = "verifiers_chat"
+taskset_id = "affine-notool-v1"          # rollouts/envs/affine_notool_v1
+catalog = "hf"
+dataset = "mandarjoshi/trivia_qa"
+dataset_config = "rc.wikipedia.nocontext"
+dataset_revision = "0f7faf33a3908546c6fd5b73a660e0f8ff173c2f"
+split = "train"
+row_meta = "notool"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_toolcall", "king_toolcall", "king_toolcall_greedy"]
+strata_buckets = 230
+strata_offset = 970
 share = 1.0
 
 # -- general (env wave 1, 2026-09-11; data plan W3 "environment breadth") ---------

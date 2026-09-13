@@ -46,11 +46,47 @@ IN_LOOP = "in_loop"
 ESCAPE = "escape"
 
 
+ERROR_RE = re.compile(
+    r"traceback|error|exception|no such file|not found|command not found|"
+    r"permission denied|<returncode>[1-9]|exit code [1-9]|exit status [1-9]|"
+    r"failed|fatal:|cannot |syntax|wasted call|is not a terminal|timed out|"
+    r"killed|segmentation fault", re.I)
+NUDGE_RE = re.compile(
+    r"exactly one|format error|please always provide|did not include|"
+    r"no (?:bash )?code block|your response must|must contain|"
+    r"could not parse|invalid json|malformed|wasted call|"
+    r"refer to that earlier|unknown tool|tool .* not found", re.I)
+EMPTY_OBS_RE = re.compile(
+    r"^(?:<returncode>\d+</returncode>\s*)?<output>\s*</output>$|"
+    r"^\(?(?:no output|empty)\)?$|^current terminal screen:\s*$", re.I)
+BAD_OBS = frozenset({"error", "empty", "nudge"})
+
+
+def obs_kind(obs: str | None) -> str:
+    """empty | nudge | error | ok | none -- what came back after a reply."""
+    if obs is None:
+        return "none"
+    stripped = obs.strip()
+    if not stripped or EMPTY_OBS_RE.match(norm_ws(stripped)):
+        return "empty"
+    head = stripped[:1500]
+    if NUDGE_RE.search(head):
+        return "nudge"
+    if ERROR_RE.search(head):
+        return "error"
+    return "ok"
+
+
 @dataclass(frozen=True)
 class LoopLabel:
     label: str
     # For an onset / in-loop turn: the earlier turn whose action it repeats.
     repeats: int | None = None
+    # The previous action-bearing turn got a bad observation (error / empty /
+    # nudge) and this turn repeats its action anyway (normalized).
+    persist: bool = False
+    # Kind of the observation the PREVIOUS action-bearing turn received.
+    prev_obs: str = "none"
 
 
 def norm_ws(s: str) -> str:
@@ -133,22 +169,25 @@ def label_loops(convs: list[list[dict]], action_kind: str) -> list[LoopLabel]:
         repeats = earlier[-1] if earlier else None
         same_obs = (repeats is not None and ohead is not None
                     and ohead == obs_heads[repeats])
+        prev_kind = obs_kind(obs[prev[0]]) if prev is not None else "none"
+        persist = prev is not None and prev_kind in BAD_OBS and a_norm == prev[1]
         if repeats is not None and same_obs:
-            labels.append(LoopLabel(ONSET if state == NORMAL else IN_LOOP, repeats))
+            labels.append(LoopLabel(ONSET if state == NORMAL else IN_LOOP, repeats,
+                                    persist, prev_kind))
             state = IN_LOOP
         elif state == IN_LOOP and prev is not None:
             changed_act = a_norm != prev[1]
             changed_obs = ohead is not None and ohead != prev[2]
             if changed_act and changed_obs:
-                labels.append(LoopLabel(ESCAPE))
+                labels.append(LoopLabel(ESCAPE, None, persist, prev_kind))
                 state = NORMAL
             elif changed_act and ohead is None:
                 # Final turn: no observation, so an escape is undecidable.
-                labels.append(LoopLabel(NORMAL))
+                labels.append(LoopLabel(NORMAL, None, persist, prev_kind))
             else:
-                labels.append(LoopLabel(IN_LOOP, repeats))
+                labels.append(LoopLabel(IN_LOOP, repeats, persist, prev_kind))
         else:
-            labels.append(LoopLabel(NORMAL))
+            labels.append(LoopLabel(NORMAL, None, persist, prev_kind))
         norm_seen.setdefault(a_norm, []).append(k)
         prev = (k, a_norm, ohead)
     return labels
