@@ -76,7 +76,7 @@ from affine import dialects  # noqa: E402
 from affine.config import load_config  # noqa: E402
 from affine.corpus.completion import completion_kind, final_completion  # noqa: E402
 from affine.corpus.loops import ESCAPE, IN_LOOP, ONSET, label_loops  # noqa: E402
-from affine.corpus.materialize import stratum_key  # noqa: E402
+from affine.corpus.materialize import node_path, stratum_key  # noqa: E402
 from affine.corpus.pack import PackResult  # noqa: E402
 from affine.corpus.publish import CorpusPublisher  # noqa: E402
 from affine.corpus.trace import (  # noqa: E402
@@ -1114,7 +1114,9 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                     if j < 0:
                         break
                     i = main[j]
-                    if route.get(i) in (KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_TOOLUSE_GROUP):
+                    if i in route:
+                        # Lowest king precedence: never displaces an onset,
+                        # pivot, recoverable, tooluse or done state.
                         continue
                     route[i] = COMPLETION_PRE_GROUP
                     in_loop.discard(i); later_onsets.discard(i)
@@ -1152,11 +1154,19 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             # Duel-time kind per routed turn (Jacob 2026-09-13: whatever keeps
             # the teacher's references parseable at the state). Stamped on
             # the meta so the record, the index and the duel all see it.
+            # `text` needs a system message in the prefix (its mandate check);
+            # Terminus prefixes have none, so those keep the policy dialect.
             for m in rec["turns"]:
                 k_new = kind_stamp.get(m["turn_idx"])
-                if k_new and k_new != m["action_kind"]:
-                    m["action_kind"] = k_new
-                    _count(notes, f"{route[m['turn_idx']]}_kind_{k_new}")
+                if not k_new or k_new == m["action_kind"]:
+                    continue
+                prefix = [{"role": nd["role"], "content": nd["content"]}
+                          for nd in node_path(rec["nodes"], int(m["node_id"]))[:-1]]
+                if not dialects.get(k_new).mandate_ok(prefix):
+                    _count(notes, f"{route[m['turn_idx']]}_kind_kept_{m['action_kind']}")
+                    continue
+                m["action_kind"] = k_new
+                _count(notes, f"{route[m['turn_idx']]}_kind_{k_new}")
         turns = view_turns(rec)
         present = {t["turn_idx"] for t in turns}
         if route and convs:
