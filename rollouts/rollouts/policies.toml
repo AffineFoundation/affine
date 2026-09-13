@@ -510,3 +510,143 @@ name = "king"
 model_env = "KING_MODEL"
 base_url_env = "KING_BASE_URL"
 key_env = "KING_KEY"
+
+# -- greedy king variants (2026-09-13, king-data spec §3.2 / operator directive) --
+# The bench and every real harness decode the king at T = 0; datagen only
+# ever sampled it at 0.8, so D held none of the king's GREEDY failure
+# states (longer loops, deterministic dead ends). One `king_<x>_greedy`
+# per king policy: same harness, dialect, endpoint and runaway caps,
+# `temperature = 0.0`, share 1.0 against the sampled king's 2.0 -> ~1/3 of
+# the king's picks per source. Verifiers' interception proxy makes the
+# eval's temperature authoritative for every dialect (chat / anthropic /
+# responses), so T = 0 also holds through the ACP agents (Claude Code, pi,
+# Kimi, Hermes).
+# SEAT: the greedy variants share the sampled king's seat (`king:<served
+# model>`, scheduler.seat_of keys on the `king_` prefix) — each task gets
+# ONE king pass, at 0.8 or at 0 by per-policy deficit, so "done" and the
+# teacher-first pairing (`king_done`) are unchanged and no task is rolled
+# twice by the same king. Fold routing is by prefix (`policy_prefix =
+# "king_"`) and needs nothing new; the envelope stamps `policy.temperature`
+# so telemetry can split sampled from greedy. Loop guard: king_ default (6).
+
+[policy.king_textbased_greedy]
+harness = "mini_swe_textbased"
+share = 1.0
+[policy.king_textbased_greedy.sampling]
+temperature = 0.0
+[[policy.king_textbased_greedy.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_bashtool_greedy]
+harness = "bash"
+action_kind = "tool_call"
+share = 1.0
+[policy.king_bashtool_greedy.sampling]
+temperature = 0.0
+[[policy.king_bashtool_greedy.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_pi_greedy]
+harness = "pi"
+action_kind = "tool_call"
+share = 1.0
+[policy.king_pi_greedy.sampling]
+temperature = 0.0
+[[policy.king_pi_greedy.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_claude_code_greedy]
+harness = "claude_code"
+action_kind = "tool_call"
+share = 1.0
+[policy.king_claude_code_greedy.sampling]
+temperature = 0.0
+[[policy.king_claude_code_greedy.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_kimi_greedy]
+harness = "kimi_code"
+action_kind = "tool_call"
+share = 1.0
+[policy.king_kimi_greedy.sampling]
+temperature = 0.0
+[[policy.king_kimi_greedy.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_hermes_greedy]
+harness = "hermes_agent"
+action_kind = "tool_call"
+share = 1.0
+[policy.king_hermes_greedy.sampling]
+temperature = 0.0
+[[policy.king_hermes_greedy.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_terminus_greedy]
+harness = "terminus_2"
+action_kind = "terminus_json"
+share = 1.0
+[policy.king_terminus_greedy.sampling]
+temperature = 0.0
+[[policy.king_terminus_greedy.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_boxed_greedy]
+harness = "null"
+action_kind = "boxed"
+share = 1.0
+[policy.king_boxed_greedy.sampling]
+temperature = 0.0
+max_tokens = 16384   # runaway guard as king_boxed
+[[policy.king_boxed_greedy.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_toolcall_greedy]
+harness = "null"
+action_kind = "tool_call"
+share = 1.0
+[policy.king_toolcall_greedy.sampling]
+temperature = 0.0
+max_tokens = 16384   # runaway guard as king_toolcall
+[[policy.king_toolcall_greedy.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_text_greedy]
+harness = "null"
+action_kind = "text"
+share = 1.0
+[policy.king_text_greedy.sampling]
+temperature = 0.0
+max_tokens = 16384   # runaway guard as king_text
+[[policy.king_text_greedy.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"

@@ -241,11 +241,13 @@ tsjs = 0.15
 # Seats (scheduler.py): the king replays tasks the teacher has finished,
 # so terminal / math / tool_use / nl2repo pools exhausted by the teacher
 # are open to the king — before, king failures came from 3 coding sources.
-policies = ["teacher_textbased", "teacher_bashtool", "teacher_pi",
-            "teacher_claude_code", "teacher_kimi", "teacher_hermes",
-            "teacher_terminus",
+policies = ["teacher_textbased", "teacher_bashtool", "teacher_pi", "teacher_claude_code",
+            "teacher_kimi", "teacher_hermes", "teacher_terminus",
             "king_textbased", "king_bashtool", "king_pi", "king_claude_code",
-            "king_kimi", "king_hermes", "king_terminus"]
+            "king_kimi", "king_hermes", "king_terminus",
+            "king_textbased_greedy", "king_bashtool_greedy",
+            "king_pi_greedy", "king_claude_code_greedy", "king_kimi_greedy",
+            "king_hermes_greedy", "king_terminus_greedy"]
 
 # -- coding --------------------------------------------------------------------
 
@@ -450,7 +452,7 @@ split = "train"
 row_meta = "math"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_boxed", "king_boxed"]   # teacher-only since 2026-09-02; + king seat 2026-09-10
+policies = ["teacher_boxed", "king_boxed", "king_boxed_greedy"]   # teacher-only since 2026-09-02; + king seat 2026-09-10; + greedy 2026-09-13
 strata_buckets = 830                    # 470 -> 830 at T0 (2026-09-04), see above
 share = 1.0
 
@@ -466,7 +468,7 @@ split = "train"
 row_meta = "wiki_trivia"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_toolcall", "king_toolcall"]   # teacher-only since 2026-09-02; + king seat 2026-09-10
+policies = ["teacher_toolcall", "king_toolcall", "king_toolcall_greedy"]   # teacher-only since 2026-09-02; + king seat 2026-09-10; + greedy 2026-09-13
 # 478 tasks total, so strata <= tasks; 470 already ~one task per bucket.
 # Exhausted 2026-09-02 (one pass, tasks never re-run); affine_agent below is
 # the second tool source that lets tool_use approach 10% of the slice.
@@ -494,7 +496,7 @@ taskset_id = "affine-agent-v1"
 catalog = "general_agent"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_toolcall", "king_toolcall"]
+policies = ["teacher_toolcall", "king_toolcall", "king_toolcall_greedy"]   # + king seat + greedy king 2026-09-13
 strata_buckets = 500
 strata_offset = 470
 share = 1.0
@@ -542,7 +544,7 @@ split = "train"
 row_meta = "i3_logic"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_text", "king_text"]   # + king seat 2026-09-12 (W3 part A)
+policies = ["teacher_text", "king_text", "king_text_greedy"]   # + king seat 2026-09-12 (W3 part A); + greedy 2026-09-13
 strata_buckets = 340
 strata_offset = 0
 share = 1.0
@@ -564,7 +566,7 @@ split = "train"
 row_meta = "triviaqa"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_text", "king_text"]   # + king seat 2026-09-12
+policies = ["teacher_text", "king_text", "king_text_greedy"]   # + king seat 2026-09-12; + greedy 2026-09-13
 strata_buckets = 230
 strata_offset = 340
 share = 1.0
@@ -583,7 +585,7 @@ split = "train"
 row_meta = "rlvr_ifeval"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_text", "king_text"]   # + king seat 2026-09-12
+policies = ["teacher_text", "king_text", "king_text_greedy"]   # + king seat 2026-09-12; + greedy 2026-09-13
 strata_buckets = 230
 strata_offset = 570
 # Probe: 12/12 solved (one constraint per prompt is easy for the teacher;
@@ -605,7 +607,7 @@ split = "train"
 row_meta = "i3_science"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_boxed", "king_boxed"]   # + king seat 2026-09-12
+policies = ["teacher_boxed", "king_boxed", "king_boxed_greedy"]   # + king seat 2026-09-12; + greedy 2026-09-13
 strata_buckets = 340
 strata_offset = 800
 # Probe: 3/12 by math-verify (a lower bound: free-text golds), replies p50
@@ -626,7 +628,7 @@ split = "train"
 row_meta = "unscramble"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_text", "king_text"]   # + king seat 2026-09-12
+policies = ["teacher_text", "king_text", "king_text_greedy"]   # + king seat 2026-09-12; + greedy 2026-09-13
 strata_buckets = 115
 strata_offset = 1140
 share = 0.5
@@ -643,8 +645,9 @@ row_meta = "prolog"
 procedural_uids = 3000
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased",
-            "king_bashtool", "king_pi", "king_textbased"]   # + king seat 2026-09-12
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased", "king_bashtool",
+            "king_pi", "king_textbased", "king_bashtool_greedy",
+            "king_pi_greedy", "king_textbased_greedy"]   # + king seat 2026-09-12; + greedy 2026-09-13
 extra_flags = ["--env.taskset.difficulty", "medium"]
 strata_buckets = 230
 strata_offset = 1255
@@ -667,7 +670,7 @@ row_meta = "needle"
 procedural_uids = 5000
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_boxed", "king_boxed"]   # + king seat 2026-09-12 (idle at share 0.0)
+policies = ["teacher_boxed", "king_boxed", "king_boxed_greedy"]   # + king seat 2026-09-12 (idle at share 0.0); + greedy 2026-09-13
 strata_buckets = 115
 strata_offset = 1485
 share = 0.0
@@ -686,7 +689,7 @@ row_meta = "wikispeedia"
 procedural_uids = 4000
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_toolcall", "king_toolcall"]   # + king seat 2026-09-12
+policies = ["teacher_toolcall", "king_toolcall", "king_toolcall_greedy"]   # + king seat 2026-09-12; + greedy 2026-09-13
 strata_buckets = 230
 strata_offset = 1600
 share = 1.0
@@ -700,8 +703,11 @@ share = 1.0
 # the rest join `general` with their own strata_offset ranges above wave 1
 # (1830+): affine_longcot 1830-1999, affine_eog 2000-2199,
 # affine_numina 2200-2429, affine_sql 2430-2659, affine_autobench 2660-2859,
-# affine_uuidctf 2860-2974. Teacher policies only
-# until the first fold read (king_* follow as in wave 1 part A).
+# affine_uuidctf 2860-2974. Teacher policies only until 2026-09-13, when
+# the king seat (king_* mirroring each teacher harness) and its greedy
+# variants (king_*_greedy, T = 0) joined every wave-2/3 source (king-data
+# spec: BFCL / tool-use / long-context are where the king loses and D held
+# no king material there).
 
 [source.affine_tmax]
 # TMax (research-environments tmax@2026-07-01): 14,600 Harbor terminal
@@ -723,9 +729,12 @@ local_docker_build = true
 # batch, 8 at a time, next to the pod's 48-slot production batches.
 max_batch = 16
 max_concurrency = 8
-# Teacher-first: the four terminal-style harnesses; king_* and the IDE
-# agents follow the first fold read (wave-1 rule).
-policies = ["teacher_textbased", "teacher_bashtool", "teacher_pi", "teacher_terminus"]
+# The four terminal-style harnesses, teacher + king + greedy king
+# (2026-09-13); the IDE agents (claude_code / kimi / hermes) stay out here.
+policies = ["teacher_textbased", "teacher_bashtool", "teacher_pi", "teacher_terminus",
+            "king_textbased", "king_bashtool", "king_pi", "king_terminus",
+            "king_textbased_greedy", "king_bashtool_greedy",
+            "king_pi_greedy", "king_terminus_greedy"]
 # Probe 2026-09-12 (bash harness, 12 tasks at 6 concurrent): 9/12 solved, 85 kept
 # turns, 10 agent_completed + 2 errored; 12 images built on the pod.
 share = 1.0
@@ -742,7 +751,9 @@ taskset_id = "affine-longcot-v1"        # rollouts/envs/affine_longcot_v1
 catalog = "longcot"                     # ids via the verifiers env's longcot package
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased", "king_bashtool",
+            "king_pi", "king_textbased", "king_bashtool_greedy",
+            "king_pi_greedy", "king_textbased_greedy"]   # + king seat + greedy king 2026-09-13
 extra_flags = ["--env.taskset.difficulty", "medium"]
 strata_buckets = 170
 strata_offset = 1830
@@ -769,7 +780,7 @@ split = "calendar+csm+drive+email+hr+itsm+teams+hybrid"
 row_meta = "eog"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_toolcall"]
+policies = ["teacher_toolcall", "king_toolcall", "king_toolcall_greedy"]   # + king seat + greedy king 2026-09-13
 strata_buckets = 200
 strata_offset = 2000
 max_batch = 16
@@ -791,7 +802,9 @@ split = "train"
 row_meta = "numina"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased", "king_bashtool",
+            "king_pi", "king_textbased", "king_bashtool_greedy",
+            "king_pi_greedy", "king_textbased_greedy"]   # + king seat + greedy king 2026-09-13
 extra_flags = ["--env.taskset.docker-image", "projectnumina/kimina-lean-server:2.0.0",
                "--env.taskset.task.lean-project-path", "/mathlib4"]
 strata_buckets = 230
@@ -818,7 +831,9 @@ split = "train"
 row_meta = "spider"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased", "king_bashtool",
+            "king_pi", "king_textbased", "king_bashtool_greedy",
+            "king_pi_greedy", "king_textbased_greedy"]   # + king seat + greedy king 2026-09-13
 strata_buckets = 230
 strata_offset = 2430
 share = 1.0
@@ -836,7 +851,7 @@ taskset_id = "affine-autobench-v1"      # rollouts/envs/affine_autobench_v1
 catalog = "autobench"                   # task names via the verifiers env's automationbench package
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_toolcall"]
+policies = ["teacher_toolcall", "king_toolcall", "king_toolcall_greedy"]   # + king seat + greedy king 2026-09-13
 strata_buckets = 200
 strata_offset = 2660
 # Probe 2026-09-12 (after the tool-server bridge): 4/12 solved, partial credit
@@ -858,7 +873,9 @@ row_meta = "uuidctf"
 procedural_uids = 3000
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased", "king_bashtool",
+            "king_pi", "king_textbased", "king_bashtool_greedy",
+            "king_pi_greedy", "king_textbased_greedy"]   # + king seat + greedy king 2026-09-13
 strata_buckets = 115
 strata_offset = 2860
 max_batch = 16
@@ -896,7 +913,7 @@ split = "train"
 row_meta = "i3_code"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_text"]
+policies = ["teacher_text", "king_text", "king_text_greedy"]   # + king seat + greedy king 2026-09-13
 strata_buckets = 340
 strata_offset = 2975
 max_batch = 24
@@ -921,7 +938,7 @@ split = "train"
 row_meta = "i3_math"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_boxed"]
+policies = ["teacher_boxed", "king_boxed", "king_boxed_greedy"]   # + king seat + greedy king 2026-09-13
 strata_buckets = 400
 strata_offset = 830
 # Probe 2026-09-12: 8/12 solved, 11 kept turns, completions p50 12.7k tokens
@@ -942,7 +959,9 @@ row_meta = "deshuffle"
 procedural_uids = 3000
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased", "king_bashtool",
+            "king_pi", "king_textbased", "king_bashtool_greedy",
+            "king_pi_greedy", "king_textbased_greedy"]   # + king seat + greedy king 2026-09-13
 strata_buckets = 115
 strata_offset = 3315
 max_batch = 16
@@ -964,7 +983,7 @@ taskset_id = "affine-rgym-v1"           # rollouts/envs/affine_rgym_v1
 catalog = "rgym"                        # generators x per_generator via the verifiers env
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_text"]
+policies = ["teacher_text", "king_text", "king_text_greedy"]   # + king seat + greedy king 2026-09-13
 extra_flags = ["--env.taskset.curriculum-level", "1", "--env.taskset.per-generator", "60"]
 strata_buckets = 230
 strata_offset = 3430
@@ -985,7 +1004,7 @@ taskset_id = "affine-rcore-v1"          # rollouts/envs/affine_rcore_v1
 catalog = "rcore"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_text"]
+policies = ["teacher_text", "king_text", "king_text_greedy"]   # + king seat + greedy king 2026-09-13
 extra_flags = ["--env.taskset.max-rows", "20000"]
 strata_buckets = 230
 strata_offset = 3660
@@ -1006,7 +1025,7 @@ split = "train"
 row_meta = "pydantic"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_text"]
+policies = ["teacher_text", "king_text", "king_text_greedy"]   # + king seat + greedy king 2026-09-13
 strata_buckets = 115
 strata_offset = 3890
 # Probe 2026-09-12 (after the forward-reference fix): 10/12 validated, 12 kept turns,
@@ -1024,7 +1043,7 @@ row_meta = "verbatim"
 procedural_uids = 5000
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_text"]
+policies = ["teacher_text", "king_text", "king_text_greedy"]   # + king seat + greedy king 2026-09-13
 strata_buckets = 115
 strata_offset = 4005
 # Probe 2026-09-12 (1.5k-char texts): 11/12 exact, 12 kept turns, completions p50 3.1k
@@ -1042,7 +1061,9 @@ taskset_id = "affine-oolong-v1"         # rollouts/envs/affine_oolong_v1
 catalog = "oolong"
 select = "tasks"
 pass_dataset = false
-policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased"]
+policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased", "king_bashtool",
+            "king_pi", "king_textbased", "king_bashtool_greedy",
+            "king_pi_greedy", "king_textbased_greedy"]   # + king seat + greedy king 2026-09-13
 extra_flags = ["--env.taskset.context-len", "16384", "--env.taskset.split", "validation"]
 strata_buckets = 115
 strata_offset = 4120
