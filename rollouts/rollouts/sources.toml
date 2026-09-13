@@ -46,12 +46,51 @@ tool_use = 0.02
 # king_recoverable are supply-limited (258 / 372 / 41 strata on 09-12) and
 # fill only as king datagen + the review / recoverable pipelines produce
 # states; the fold admits every admissible turn up to the cap.
-king_fail = 0.07
-king_loop_onset = 0.04
+# 2026-09-13 revision (docs/king-data-spec.md; Jacob 07:08 UTC): a blind
+# upsample would amplify junk -- 60 % of king_fail draws were one-reply
+# prompts or R-dead wiki loops, 447/710 onsets were later onsets of the same
+# wreck. Re-cut by state kind, total still 0.15: king_fail 0.02 (agent
+# multi-turn only, <= 8 turns per rollout), king_loop_onset 0.03 (first
+# onset per rollout), king_pivot 0.03, king_recoverable 0.04, king_done 0.03
+# (NEW: the king said/attempted "done" and kept going). Shares are caps;
+# the supply-limited groups fill as king datagen + the side-table pipelines
+# produce states.
+king_fail = 0.02
+king_loop_onset = 0.03
 king_pivot = 0.03
-king_recoverable = 0.01
+king_recoverable = 0.04
+king_done = 0.03
 completion = 0.03
 general = 0.05
+
+[king_common]
+# Rules every king_* group inherits (king-data spec §3.1, 2026-09-13).
+# exclude_sources: unioned into each group's own list -- wiki / agent / math
+# (phase 3, R-dead) + the one-reply `general` sources (the state is the task
+# prompt; the teacher's own rollout already puts it in D). prolog and
+# wikispeedia are multi-turn and stay admissible.
+# one_reply_ok = false: a rollout with < 2 main-root replies never routes to
+# a king group (`king_one_reply`).
+# first_onset_only: one loop onset per rollout (`king_later_onset` dropped;
+# later onsets are near-duplicate prefixes: first onsets recover 28 %, later
+# 13 %). max_turns_per_rollout: king_fail keeps <= 8 turns per rollout --
+# the labeler's escape turns first, then evenly over depth (`king_fail_cap`).
+# retire_*: one-off index retirements of already-published rows (chunks and
+# old manifests untouched, old verdicts replay) -- king_fail rows from
+# excluded sources, king_loop_onset later-onset rows.
+# kind_by_teacher: KNOB ONLY, NOT IMPLEMENTED -- stamping a king turn `text`
+# when the teacher answers in prose changes which parser scores it; Jacob's
+# call (spec §2.1 rule 3).
+policy_prefix = "king_"
+exclude_sources = ["affine_wiki", "affine_agent", "affine_math",
+                   "affine_logic", "affine_trivia", "affine_ifeval", "affine_science",
+                   "affine_unscramble", "affine_needle"]
+one_reply_ok = false
+first_onset_only = true
+max_turns_per_rollout = 8
+retire_excluded_published = true
+retire_later_onsets = true
+kind_by_teacher = false
 
 [king_fail]
 # The king's FAILED rollouts (policies king_*, rewards.solved == 0), any
@@ -130,6 +169,18 @@ exclude_sources = ["affine_wiki", "affine_agent", "affine_math"]   # phase 3, 20
 # rollouts' trace chunks must be in the run (--rederive-chunks); a turn not
 # readmitted stays in king_fail. Pivots under king_loop_onset stay there.
 readmit_published = true
+
+[king_done]
+# Done-blind states (king-data spec §2.2, 2026-09-13): the king's reply at
+# turn k-1 was completion-eligible by the harness rule
+# (affine/corpus/completion.py: `submit`, a finish tool call, Terminus
+# task_complete, a prose report with no action) yet the rollout went on for
+# >= min_more_turns more main-root replies. The routed state is turn k --
+# the first turn where the king kept going instead of stopping and
+# reporting; one per rollout. Highest precedence among the king groups.
+# Leak rule waived like every king group. Strata king_done:NNNN.
+strata_buckets = 4000
+min_more_turns = 2
 
 [king_recoverable]
 # Phase 5 (2026-09-12, docs/teacher-recoverable-filter.md): failure states
