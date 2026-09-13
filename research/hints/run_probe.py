@@ -63,6 +63,27 @@ CONDITIONS = {
     "pivot_action": ("pivot", "action"),
     "pivot_plan": ("pivot", "plan"),
 }
+# E5 arms (round 2): per-condition sampling options. `hints` lists the
+# (generator, level) used for ref 1, 2, 3 (a single entry = same hint on
+# every ref); `max_tokens` = the reference cap; `think` False renders the
+# prompt with an empty, closed <think> block so the hint replaces the
+# deliberation; `heldout` samples a 4th coached rollout as the arm's own
+# positive-control miner (`coached_<arm>`). `coached` = the store's
+# coached-states hints (generator "coached", level "fact").
+FACT = ("deepseek", "fact")
+ARMS = {
+    "H0": {"hints": None, "max_tokens": MAX_TOKENS, "think": True, "heldout": True},
+    "fact_1792": {"hints": [FACT], "max_tokens": MAX_TOKENS, "think": True, "heldout": True},
+    "fact_4096": {"hints": [FACT], "max_tokens": 4096, "think": True, "heldout": True},
+    "fact_nothink": {"hints": [FACT], "max_tokens": MAX_TOKENS, "think": False, "heldout": True},
+    "mix3": {"hints": [FACT, ("deepseek", "plan"), ("deepseek", "action")], "max_tokens": MAX_TOKENS,
+             "think": True, "heldout": True},
+    "coached_1792": {"hints": [("coached", "fact")], "max_tokens": MAX_TOKENS, "think": True, "heldout": True},
+}
+for _name, _gl in CONDITIONS.items():
+    if _gl is not None:
+        ARMS.setdefault(_name, {"hints": [_gl], "max_tokens": MAX_TOKENS, "think": True, "heldout": False})
+NOTHINK_SUFFIX = "\n</think>\n\n"
 
 
 def log(msg: str) -> None:
@@ -104,15 +125,22 @@ def stored_miners(turn: dict) -> dict[str, tuple[str, str]]:
 
 
 async def sample_side(box: Box, prefix: list[dict], n: int, *, action_kind: str,
-                      require_think_close: bool) -> list[dict]:
-    texts = await asyncio.gather(*[box.sample_raw(prefix, TEMPERATURE, MAX_TOKENS)
+                      require_think_close: bool, max_tokens: int = MAX_TOKENS,
+                      think: bool = True) -> list[dict]:
+    suffix = "" if think else NOTHINK_SUFFIX
+    texts = await asyncio.gather(*[box.sample_raw(prefix, TEMPERATURE, max_tokens, prompt_suffix=suffix)
                                    for _ in range(n)])
     out = []
     for raw in texts:
-        z, y = split_rollout(raw, action_kind, require_think_close=require_think_close)
+        if think:
+            z, y = split_rollout(raw, action_kind, require_think_close=require_think_close)
+        else:
+            # The prompt already closed the (empty) think block: the whole
+            # completion is visible text; z = what precedes the action.
+            z, y = split_rollout("</think>" + raw, action_kind, require_think_close=False)
         out.append({"raw": raw, "z": z, "y": y, "valid": bool(y),
-                    "think_closed": think_closed(raw),
-                    "n_chars": len(raw)})
+                    "think_closed": think_closed(raw) if think else None,
+                    "n_chars": len(raw), "max_tokens": max_tokens, "think": think})
     return out
 
 
@@ -164,39 +192,64 @@ async def run_turn(turn: dict, box: Box, king: Box | None, hints, cond_names: li
            "n_prefix_chars": turn["n_prefix_chars"], "turn_idx": turn["turn_idx"],
            "box": box.name, "seed": seed, "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
            "conditions": {}, "miners": {}, "errors": []}
-    # 1. teacher samples per condition (H0 samples one extra held-out).
+    # 1. teacher samples per arm (+1 held-out coached / unhinted sample).
     cond_specs = []
     for cname in cond_names:
-        if cname == "H0":
-            cond_specs.append((cname, None))
+        arm = ARMS[cname]
+        if arm["hints"] is None:
+            cond_specs.append((cname, arm, [None] * K_REFS))
             continue
-        gen, level = CONDITIONS[cname]
-        h = hints.get((turn["turn_id"], gen, level))
-        if h is None:
+        hs = [hints.get((turn["turn_id"], g, l)) for g, l in arm["hints"]]
+        if any(h is None for h in hs):
             continue
-        cond_specs.append((cname, h))
-    samples = await asyncio.gather(*[
-        sample_side(box, with_hint(prefix, h["text"] if h else None),
-                    K_REFS + (1 if cname == "H0" else 0), action_kind=kind,
-                    require_think_close=False)
-        for cname, h in cond_specs])
+        per_ref = [hs[i % len(hs)] for i in range(K_REFS)]
+        cond_specs.append((cname, arm, per_ref))
+
+    async def sample_arm(cname, arm, per_ref):
+        # refs may carry different hints (mix3): sample each ref's prefix separately.
+        n_extra = 1 if arm["heldout"] else 0
+        groups = []
+        for i in range(K_REFS + n_extra):
+            h = per_ref[i % K_REFS]
+            groups.append(sample_side(box, with_hint(prefix, h["text"] if h else None), 1,
+                                      action_kind=kind, require_think_close=False,
+                                      max_tokens=arm["max_tokens"], think=arm["think"]))
+        res = await asyncio.gather(*groups)
+        return [g[0] for g in res]
+
+    samples = await asyncio.gather(*[sample_arm(c, a, pr) for c, a, pr in cond_specs])
     heldout = None
-    for (cname, h), sm in zip(cond_specs, samples):
-        if cname == "H0":
-            # The 4th unhinted sample is the teacher-as-miner control; it
-            # must satisfy the miner rule (closed </think>).
-            extra = sm[K_REFS]
+    for (cname, arm, per_ref), sm in zip(cond_specs, samples):
+        extra = None
+        if arm["heldout"]:
+            extra, sm = sm[K_REFS], sm[:K_REFS]
+        if cname == "H0" and extra is not None:
+            # The unhinted held-out is the round-1 positive control; it must
+            # satisfy the miner rule (closed </think>).
             z, y = split_rollout(extra["raw"], kind, require_think_close=True)
             heldout = {"source": "teacher_heldout", "raw": extra["raw"], "z": z, "y": y,
                        "valid": bool(y), "think_closed": extra["think_closed"]}
-            sm = sm[:K_REFS]
+        elif extra is not None:
+            # Coached held-out: the teacher + coach as the ideal miner. Under
+            # think=False there is no </think> to close, so validity = parsed action.
+            if arm["think"]:
+                z, y = split_rollout(extra["raw"], kind, require_think_close=True)
+            else:
+                z, y = extra["z"], extra["y"]
+            row.setdefault("coached", {})[cname] = {
+                "source": f"coached_{cname}", "raw": extra["raw"], "z": z, "y": y,
+                "valid": bool(y), "think_closed": extra["think_closed"],
+                "hint_id": per_ref[0].get("hint_id") if per_ref[0] else None}
+        h0 = per_ref[0]
         row["conditions"][cname] = {
-            "hint_id": h.get("hint_id") if h else None,
-            "hint": h.get("text") if h else None,
-            "generator": h.get("generator") if h else None,
-            "level": h.get("level") if h else None,
-            "grounded": (h.get("grounding") or {}).get("grounded") if h else None,
-            "leaks_future": (h.get("leak") or {}).get("leaks_future") if h else None,
+            "hint_id": h0.get("hint_id") if h0 else None,
+            "hint": h0.get("text") if h0 else None,
+            "hints_per_ref": [h.get("hint_id") if h else None for h in per_ref],
+            "generator": h0.get("generator") if h0 else None,
+            "level": h0.get("level") if h0 else None,
+            "grounded": (h0.get("grounding") or {}).get("grounded") if h0 else None,
+            "leaks_future": (h0.get("leak") or {}).get("leaks_future") if h0 else None,
+            "max_tokens": arm["max_tokens"], "think": arm["think"],
             "refs": sm, "n_valid": sum(1 for r in sm if r["valid"]),
         }
     # 2. ref echoes under plain x.
@@ -205,6 +258,9 @@ async def run_turn(turn: dict, box: Box, king: Box | None, hints, cond_names: li
     miners: dict[str, dict] = {}
     if heldout:
         miners["teacher_heldout"] = heldout
+    for cname, m in (row.get("coached") or {}).items():
+        miners[f"coached_{cname}"] = m
+    row.pop("coached", None)
     rec = recorded_miner(turn)
     if rec:
         miners["recorded"] = {"source": turn.get("policy_id"), "z": rec[0], "y": rec[1], "valid": True}
@@ -307,7 +363,8 @@ def main() -> None:
     ap.add_argument("--turns", required=True)
     ap.add_argument("--hints")
     ap.add_argument("--run-dir", required=True)
-    ap.add_argument("--conditions", default="H0,ds_fact,ds_plan,ds_action,self_fact,pivot_action")
+    ap.add_argument("--conditions", default="H0,ds_fact,ds_plan,ds_action,self_fact,pivot_action",
+                    help="arm names (ARMS / CONDITIONS)")
     ap.add_argument("--groups", default="")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--seed", type=int, default=20260912)

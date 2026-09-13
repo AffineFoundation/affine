@@ -44,6 +44,11 @@ FORFEIT = -0.1
 WS = re.compile(r"\s+")
 PAIRS = [("teacher_heldout", "king_live"), ("stored_chal", "stored_king"),
          ("teacher_heldout", "recorded")]
+# E5: each hinted arm's own coached held-out sample vs the live king; the
+# no-hint comparator for its Δz is the unhinted held-out vs king pair.
+E5_ARMS = ("fact_1792", "fact_4096", "fact_nothink", "mix3", "coached_1792")
+PAIRS += [(f"coached_{a}", "king_live") for a in E5_ARMS]
+PAIRS += [(f"coached_{a}", "recorded") for a in E5_ARMS]
 MIX_LABELS = {3: "3h/0u", 2: "2h/1u", 1: "1h/2u", 0: "0h/3u"}
 
 
@@ -145,11 +150,27 @@ def turn_condition(row: dict, cname: str, mix: int | None = None, gate: bool = F
         G0 = g_of(m["m"], b0)
         Gc = g_of(m["m"], bc)
         score = min(R, G0) if (R is not None and G0 is not None and not math.isnan(R)) else None
+        # R' contrast (E5 lever 3, research-only): tempered LME over the
+        # HINTED a_i minus the plain mean over the UNHINTED (H0) a_i of the
+        # same miner thought — "does the thought predict the coached
+        # teacher better than the plain teacher".
+        Rc = None
+        if effective != "H0" and a:
+            a0 = []
+            for i, r in refs_of(row, "H0"):
+                vals = (m.get("lpC_yc_za") or {}).get("H0") or []
+                if i < len(vals) and vals[i] is not None:
+                    a0.append(vals[i] - r["lp_empty"])
+            if a0:
+                mx = max(a)
+                lme_raw = mx + TAU * math.log(st.mean(math.exp((x - mx) / TAU) for x in a)) if len(a) > 1 else a[0]
+                Rc = lme_raw - st.mean(a0)
         out["miners"][mname] = {
             "forfeit": False, "R": R, "a_sd": (st.pstdev(a) if len(a) >= 2 else 0.0),
             "a": a, "G0": G0, "Gc": Gc, "m": m["m"], "score": score,
             "B": (m["lpC_ya_za"] - m["lpC_ya_e"]) if m.get("lpC_ya_za") is not None else None,
             "len_z": len(m.get("z") or ""),
+            "Rc": Rc, "score_c": (min(Rc, G0) if (Rc is not None and G0 is not None) else None),
         }
     return out
 
@@ -162,17 +183,17 @@ def mean_se(xs: list[float]) -> tuple[float, float, int]:
     return st.mean(xs), st.stdev(xs) / math.sqrt(n), n
 
 
-def paired(tcs: list[dict], a: str, b: str) -> list[float]:
+def paired(tcs: list[dict], a: str, b: str, key: str = "score") -> list[float]:
     out = []
     for tc in tcs:
         ma, mb = tc["miners"].get(a), tc["miners"].get(b)
         if ma is None or mb is None:
             continue
-        if ma.get("score") is None and not ma.get("forfeit"):
+        sa = FORFEIT if ma.get("forfeit") else ma.get(key)
+        sb = FORFEIT if mb.get("forfeit") else mb.get(key)
+        if sa is None or sb is None:
             continue
-        if mb.get("score") is None and not mb.get("forfeit"):
-            continue
-        out.append(ma["score"] - mb["score"])
+        out.append(sa - sb)
     return out
 
 
@@ -245,14 +266,30 @@ def summarize(tcs_by_cond: dict[str, list[dict]], groups: list[str], label: str)
                     row[f"forfeit_{mname}"] = 1 - len(ms) / sum(1 for t in sub if mname in t["miners"])
             for a, b in PAIRS:
                 d = paired(sub, a, b)
+                if not d:
+                    continue
                 m, se, z, n = zstat(d)
-                key = f"{a[:8]}-{b[:8]}"
+                key = f"{a[:8]}-{b[:8]}" if not a.startswith("coached_") else f"{a[8:]}-{b[:4]}"
                 row[f"d_{key}"], row[f"se_{key}"], row[f"z_{key}"], row[f"n_{key}"] = m, se, z, n
+                if a.startswith("coached_") and cname != "H0":
+                    dc = paired(sub, a, b, key="score_c")
+                    if dc:
+                        row[f"zc_{key}"] = zstat(dc)[2]
+                        row[f"nc_{key}"] = len(dc)
                 if cname != "H0" and base_by:
-                    # paired bootstrap on the same turns
+                    # paired bootstrap on the same turns; a coached pair is
+                    # compared with the unhinted held-out pair.
+                    a0 = "teacher_heldout" if a.startswith("coached_") else a
                     tids = [t["turn_id"] for t in sub if t["turn_id"] in base_by]
-                    d1 = paired([t for t in sub if t["turn_id"] in base_by], a, b)
-                    d0 = paired([base_by[t] for t in tids], a, b)
+                    sub_b = [t for t in sub if t["turn_id"] in base_by]
+                    d1 = paired(sub_b, a, b)
+                    d0 = paired([base_by[t["turn_id"]] for t in sub_b], a0, b)
+                    if len(d1) != len(d0):
+                        # align on turns present in both
+                        common = [t["turn_id"] for t in sub_b if a in t["miners"] and b in t["miners"]
+                                  and a0 in base_by[t["turn_id"]]["miners"] and b in base_by[t["turn_id"]]["miners"]]
+                        d1 = paired([t for t in sub_b if t["turn_id"] in set(common)], a, b)
+                        d0 = paired([base_by[x] for x in common], a0, b)
                     z0 = zstat(d0)[2]
                     lo, hi = bootstrap_dz(d1, d0)
                     row[f"dz_{key}"] = z - z0 if not math.isnan(z0) else float("nan")

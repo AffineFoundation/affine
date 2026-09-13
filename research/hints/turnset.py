@@ -47,7 +47,7 @@ from affine.corpus.trace import message_text, sampled_paths  # noqa: E402
 
 DATA = Path(os.environ.get("HINTS_DATA", "/tmp/hints-data"))
 BASE = "https://data.affine.io"
-INDEX = DATA / "turns_0027.parquet"
+INDEX = Path(os.environ.get("HINTS_INDEX", str(DATA / "turns_0027.parquet")))
 VIEWS = DATA / "views"
 TRACES = DATA / "box" / "king_review" / "traces"
 EVALS = DATA / "box" / "evals"
@@ -81,8 +81,8 @@ def fetch(key: str) -> Path:
     return dst
 
 
-def load_index() -> list[dict]:
-    return pq.read_table(INDEX).to_pylist()
+def load_index(path: Path | None = None) -> list[dict]:
+    return pq.read_table(path or INDEX).to_pylist()
 
 
 def group_of(stratum: str | None) -> str:
@@ -106,16 +106,40 @@ def load_view_records(rows: list[dict]) -> dict[tuple[str, int], dict]:
 
 
 def load_trace_index() -> dict[str, dict]:
+    """rollout_id -> {chunk, line}. The local mirror's index first, then any
+    extra index named in HINTS_TRACE_INDEX_EXTRA (a fresher mirror whose
+    chunks are fetched on demand by fetch_trace_chunk)."""
     idx = {}
-    with open(TRACES / "rollout_index.jsonl") as f:
-        for line in f:
-            r = json.loads(line)
-            idx[r["rollout_id"]] = r
+    for path in [TRACES / "rollout_index.jsonl"] + [Path(p) for p in os.environ.get("HINTS_TRACE_INDEX_EXTRA", "").split(",") if p]:
+        if not path.exists():
+            continue
+        with open(path) as f:
+            for line in f:
+                r = json.loads(line)
+                idx.setdefault(r["rollout_id"], r)
     return idx
 
 
+def fetch_trace_chunk(name: str) -> Path:
+    """Chunk from the local mirror, else from data.affine.io (public,
+    sha-named immutable objects under traces/chunks/)."""
+    local = TRACES / "chunks" / name
+    if local.exists():
+        return local
+    dst = DATA / "traces_extra" / name
+    if not dst.exists():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        req = urllib.request.Request(f"{BASE}/traces/chunks/{name}", headers={"User-Agent": "affine-hints/1"})
+        with urllib.request.urlopen(req, timeout=600) as r:
+            blob = r.read()
+        tmp = dst.with_suffix(".tmp")
+        tmp.write_bytes(blob)
+        tmp.replace(dst)
+    return dst
+
+
 def load_trace(ri: dict) -> dict:
-    with gzip.open(TRACES / "chunks" / ri["chunk"], "rt", encoding="utf-8") as f:
+    with gzip.open(fetch_trace_chunk(ri["chunk"]), "rt", encoding="utf-8") as f:
         for i, line in enumerate(f):
             if i == ri["line"]:
                 return json.loads(line)
@@ -282,6 +306,118 @@ def pick(rows: list[dict], n: int, rng: random.Random, prefer: set[str],
     return picked[:n]
 
 
+def select_spec(index: list[dict], args, rng: random.Random) -> None:
+    """E5 selection: per fold group, n turns, stored-duel turns first, one
+    turn per rollout for the big king_fail pool, stratified by dialect."""
+    spec = [(k, int(v)) for k, v in (kv.split(":") for kv in args.spec.split(","))]
+    pools: dict[str, list[dict]] = {}
+    for g, _ in spec:
+        rows = [r for r in index if group_of(r["stratum"]) == g
+                and r["n_prefix_chars"] <= MAX_PREFIX_CHARS
+                and r["source"] not in ("affine_wiki", "affine_math", "affine_i3math")]
+        pools[g] = rows
+    all_tids = {r["turn_id"] for rows in pools.values() for r in rows}
+    stored = load_stored(all_tids)
+    prefer = {tid for tid, recs in stored.items() if any(x["king"] and x["chal"] for x in recs)}
+    print(f"turns with stored both-side rows: {len(prefer)}", file=sys.stderr)
+    chosen: list[tuple[dict, str]] = []
+    seen_roll: set[str] = set()
+    for g, n in spec:
+        rows = pools[g]
+        if g == "king_fail":
+            # one turn per rollout: the stored one if any, else a random one
+            by_roll: dict[str, list[dict]] = collections.defaultdict(list)
+            for r in rows:
+                by_roll[r["rollout_id"]].append(r)
+            rows = []
+            for rid, rs in by_roll.items():
+                st = [r for r in rs if r["turn_id"] in prefer]
+                rows.append(st[0] if st else rng.choice(rs))
+        # round-robin over dialects, stored-first inside each
+        cells: dict[str, list[dict]] = collections.defaultdict(list)
+        for r in rows:
+            cells[r["action_kind"]].append(r)
+        for cell in cells.values():
+            rng.shuffle(cell)
+            cell.sort(key=lambda r: 0 if r["turn_id"] in prefer else 1)
+        picked: list[dict] = []
+        while len(picked) < n and any(cells.values()):
+            for k in sorted(cells):
+                if cells[k] and len(picked) < n:
+                    picked.append(cells[k].pop(0))
+        chosen += [(r, g) for r in picked]
+        print(f"{g}: pool {len(pools[g])} -> {len(picked)}", file=sys.stderr)
+    seen: set[str] = set()
+    chosen = [(r, g) for r, g in chosen if not (r["turn_id"] in seen or seen.add(r["turn_id"]))]
+    write_turns(chosen, stored, args.out)
+
+
+def write_turns(chosen, stored, out_path: str) -> None:
+    records = load_view_records([r for r, _ in chosen])
+    tidx = load_trace_index()
+    pivots = load_pivots()
+    recov = load_recoverable()
+    n_out = 0
+    counts = collections.Counter()
+    with open(out_path, "w", encoding="utf-8") as out:
+        for r, grp in chosen:
+            rec = records[(r["chunk_key"], int(r["traj_line"]))]
+            meta = next(m for m in rec["turns"] if int(m["turn_idx"]) == int(r["turn_idx"]))
+            turn = materialize_turn(rec, meta)
+            kind = turn["action_kind"]
+            ref_action = dialects.last_action(turn["reference_turn"], kind)
+            ri = tidx.get(r["rollout_id"])
+            hs: dict = {}
+            ref_thought = ""
+            if ri is not None:
+                try:
+                    env = load_trace(ri)
+                except Exception as e:  # noqa: BLE001 — a missing chunk loses hindsight, not the turn
+                    counts[f"trace_error:{type(e).__name__}"] += 1
+                    env = None
+                if env is not None:
+                    trace = env["trace"]
+                    try:
+                        hs = hindsight(trace, ri.get("outcome") or rec.get("outcome") or "")
+                    except Exception as e:  # noqa: BLE001 — multi-root / odd graphs: no hindsight, skip the turn
+                        counts[f"hindsight_error:{type(e).__name__}"] += 1
+                        continue
+                    hs["task"] = {k: env.get("task", {}).get(k) for k in ("sid", "repo", "language", "uid")}
+                    replies = raw_reply_nodes(trace)
+                    if int(r["turn_idx"]) < len(replies):
+                        ref_thought = (replies[int(r["turn_idx"])].get("reasoning_content") or "").strip()
+            else:
+                counts["no_trace"] += 1
+            key = (r["rollout_id"], int(r["turn_idx"]))
+            piv = pivots.get(key)
+            row = {
+                "turn_id": r["turn_id"], "group": grp, "stratum": r["stratum"],
+                "fold_group": rec.get("fold_group"), "source": r["source"], "language": r["language"],
+                "harness": (rec.get("policy") or {}).get("harness"),
+                "policy_id": (rec.get("policy") or {}).get("id"), "model": rec.get("model"),
+                "action_kind": kind, "rollout_id": r["rollout_id"], "traj_id": r["traj_id"],
+                "turn_idx": int(r["turn_idx"]), "node_id": int(r["node_id"]),
+                "n_prefix_chars": int(r["n_prefix_chars"]), "n_prefix_msgs": len(turn["prefix"]),
+                "phase": r["phase"], "loop_onset_of": meta.get("loop_onset_of"),
+                "outcome": rec.get("outcome"), "prefix": turn["prefix"],
+                "reference_turn": turn["reference_turn"], "reference_action": ref_action,
+                "reference_thought": ref_thought, "hindsight": hs,
+                "pivot": ({k: piv.get(k) for k in ("rationale", "should_have", "failure_category",
+                                                    "pivot_pattern", "confidence", "admit", "recoverable")} if piv else None),
+                "recoverable": ({k: recov[key].get(k) for k in ("teacher_solved", "admit", "teacher_first_action_kind", "teacher_status")}
+                                if key in recov else None),
+                "stored": stored.get(r["turn_id"], []),
+            }
+            out.write(json.dumps(row, ensure_ascii=False) + "\n")
+            n_out += 1
+            counts[(grp, kind)] += 1
+            counts[f"{grp}:stored"] += bool(row["stored"])
+            counts[f"{grp}:hindsight"] += bool(hs)
+    print(f"wrote {n_out} turns -> {out_path}", file=sys.stderr)
+    for k, v in sorted(counts.items(), key=str):
+        print(f"  {k}: {v}", file=sys.stderr)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(DATA / "turns.jsonl"))
@@ -289,10 +425,17 @@ def main() -> None:
     ap.add_argument("--n-pivot", type=int, default=120)
     ap.add_argument("--n-completion", type=int, default=100)
     ap.add_argument("--seed", type=int, default=20260912)
+    ap.add_argument("--spec", default="",
+                    help="group:n,... (e.g. king_loop_onset:400,king_fail:300,completion:150); "
+                         "one turn per rollout for king_fail; overrides the --n-* knobs")
+    ap.add_argument("--index", default="")
     args = ap.parse_args()
     rng = random.Random(args.seed)
 
-    index = load_index()
+    index = load_index(Path(args.index) if args.index else None)
+    if args.spec:
+        select_spec(index, args, rng)
+        return
     by_tid = {r["turn_id"]: r for r in index}
     pivots = load_pivots()
     recov = load_recoverable()

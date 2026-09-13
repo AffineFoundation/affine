@@ -66,11 +66,14 @@ class Box:
                                require_think_close=require_think_close)
         self.n_calls = 0
 
-    async def sample_raw(self, prefix: list[dict], temperature: float, max_tokens: int) -> str:
-        """Natural rollout text (starts inside <think>), unsplit — recorded verbatim."""
+    async def sample_raw(self, prefix: list[dict], temperature: float, max_tokens: int,
+                         prompt_suffix: str = "") -> str:
+        """Natural rollout text (starts inside <think>), unsplit — recorded
+        verbatim. `prompt_suffix` lets a caller close the think block up
+        front (thinking-off references)."""
         d = await self.model._post({
             "model": self.model.cfg.request_model,
-            "prompt": gen_prompt(self.model.cfg.repo, self.model.cfg.revision, prefix),
+            "prompt": gen_prompt(self.model.cfg.repo, self.model.cfg.revision, prefix) + prompt_suffix,
             "max_tokens": max_tokens, "temperature": temperature,
             "add_special_tokens": False,
         })
