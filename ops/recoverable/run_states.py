@@ -57,7 +57,11 @@ TEACHER = Endpoint(name="engy2", model="qwen3.8-27b",
 HARNESS_ID = "recoverable_resume"
 SHADOW_NS = "recoverable.local"   # plugin/recoverable_resume/shield.py
 TRACE_NAME_RE = re.compile(r"^[0-9a-f]{32}$")
-DOCKER_KINDS = ("textbased", "bash", "terminus")
+# Same-task proxy (states.SAME_TASK): the teacher replays the whole task under
+# the king's own ACP harness (claude_code / pi / kimi_code / hermes_agent) —
+# no resume plugin, full turn budget, the task image as datagen runs it.
+SAME_TASK = "same_task"
+DOCKER_KINDS = ("textbased", "bash", "terminus", SAME_TASK)
 EVAL_TIMEOUT_S = 3 * 3600
 # Engy list price for qwen3.8-27b (USD per token), 2026-09-11.
 PRICE_IN = 0.045e-6
@@ -160,13 +164,30 @@ def resolve_state_path(state: dict, states_file: Path) -> str:
     raise FileNotFoundError(f"state file for {state['state_id']} not found: {p} / {local}")
 
 
+def unit_key(state: dict) -> str:
+    """What one teacher run answers for: the state itself, or — same-task
+    proxy — the whole task (`proxy_key`, shared by every state of the
+    rollout)."""
+    return state.get("proxy_key") or state["state_id"]
+
+
 def build_cmd(cfg, registry, state: dict, run_dir: Path, report_dir: Path) -> list[str]:
     source = registry.sources[state["source"]]
     kind = state["resume_kind"]
     runtime = "docker" if kind in DOCKER_KINDS else "subprocess"
     row = dict(state["task"])
+    sampling = state.get("sampling") or {"temperature": 0.8}
+    if kind == SAME_TASK:
+        # The stock harness on the task from the start, exactly as the
+        # teacher_<harness> datagen policy runs it (T = 0.8, full budget).
+        cmd = eval_cmd(cfg, source, TEACHER, state["harness"], [row], run_dir,
+                       {"temperature": float(sampling.get("temperature", 0.8))},
+                       runtime=runtime)
+        i = cmd.index("--env.agent.max-turns")
+        cmd[i + 1] = str(int(state["max_turns"]))
+        return cmd
     cmd = eval_cmd(cfg, source, TEACHER, HARNESS_ID, [row], run_dir,
-                   state.get("sampling") or {"temperature": 0.8}, runtime=runtime)
+                   sampling, runtime=runtime)
     # eval_cmd sets the pod's default turn cap; the state carries its own.
     i = cmd.index("--env.agent.max-turns")
     cmd[i + 1] = str(int(state["max_turns"]))
@@ -177,10 +198,11 @@ def build_cmd(cfg, registry, state: dict, run_dir: Path, report_dir: Path) -> li
     return cmd
 
 
-def file_stem(state_id: str, k: int) -> str:
-    """results/<stem>.json: `<sid>` for the first continuation (the pre-N
-    layout), `<sid>.c<k>` for the others."""
-    sid = state_id.replace(":", "_")
+def file_stem(key: str, k: int) -> str:
+    """results/<stem>.json: `<key>` for the first continuation (the pre-N
+    layout), `<key>.c<k>` for the others. `key` is a state id or a same-task
+    proxy key (`task:<rollout_id>`)."""
+    sid = key.replace(":", "_")
     return sid if k == 0 else f"{sid}.c{k}"
 
 
@@ -190,14 +212,17 @@ def continuation_index(path: Path, sid: str) -> int:
 
 
 def run_one(cfg, registry, state: dict, out: Path, env: dict, k: int = 0) -> dict:
-    stem = file_stem(state["state_id"], k)
+    key = unit_key(state)
+    stem = file_stem(key, k)
     run_dir = out / "runs" / stem
     report_dir = out / "reports"
     if run_dir.exists():
         shutil.rmtree(run_dir, ignore_errors=True)
     run_dir.mkdir(parents=True)
-    result: dict = {"state_id": state["state_id"], "resume_kind": state["resume_kind"],
-                    "continuation": k,
+    # result["state_id"] is the unit key: aggregate.py looks a state's
+    # results up by its proxy_key when it has one.
+    result: dict = {"state_id": key, "resume_kind": state["resume_kind"],
+                    "harness": state["harness"], "continuation": k,
                     "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     source = registry.sources[state["source"]]
     if source.local_docker_build:
@@ -209,6 +234,17 @@ def run_one(cfg, registry, state: dict, out: Path, env: dict, k: int = 0) -> dic
             result.update(status="errored", error="docker_build_failed")
             return result
     cmd = build_cmd(cfg, registry, state, run_dir, report_dir)
+    if state["resume_kind"] == SAME_TASK:
+        # Real task images, no shadow tag: stamp the containers with the
+        # supervisor-ownership label (rollouts.runners.verifiers dockerwrap)
+        # so the pod's per-batch reaper leaves them alone while this driver
+        # lives and clears them if it dies.
+        import rollouts.runners.verifiers as rv
+        if hasattr(rv, "DOCKERWRAP_DIR"):
+            env = dict(env)
+            env["PATH"] = rv.DOCKERWRAP_DIR + ":" + env["PATH"]
+            env["ROLLOUTS_SUPERVISOR"] = rv.supervisor_id()
+            env["ROLLOUTS_BATCH"] = f"recoverable-{stem}"
     t0 = time.time()
     log_path = run_dir / "eval.log"
     with open(log_path, "w") as logf:
@@ -248,9 +284,9 @@ def run_one(cfg, registry, state: dict, out: Path, env: dict, k: int = 0) -> dic
     return result
 
 
-def existing_results(results_dir: Path, state_id: str) -> dict[int, dict]:
-    """k -> stored result of this state (both file layouts)."""
-    sid = state_id.replace(":", "_")
+def existing_results(results_dir: Path, key: str) -> dict[int, dict]:
+    """k -> stored result of this unit (both file layouts)."""
+    sid = key.replace(":", "_")
     found: dict[int, dict] = {}
     for p in [results_dir / f"{sid}.json", *results_dir.glob(f"{sid}.c*.json")]:
         if p.is_file():
@@ -309,6 +345,9 @@ def main() -> None:
     ap.add_argument("--continuations", type=int, default=3,
                     help="OK continuations wanted per state (a state row's "
                          "`continuations_needed` overrides); existing results count")
+    ap.add_argument("--budget-usd", type=float, default=0.0,
+                    help="start no new continuation once this run's summed "
+                         "cost_usd (Engy list price) passes this (0 = no budget)")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
@@ -338,13 +377,18 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     results_dir = args.out / "results"
     results_dir.mkdir(exist_ok=True)
-    # Work items are (state, k): a state's missing continuations, in state
+    # Work items are (unit, k): a unit's missing continuations, in state
     # order so the priority the candidates file expresses (pivots, first
-    # onsets, shallow states first) is kept across states.
+    # onsets, shallow states first) is kept across units. A unit is a state,
+    # or for the same-task proxy the task (`proxy_key`): every state of that
+    # rollout shares the run, the first one in the file represents it.
     todo: list[tuple[dict, int]] = []
-    n_have = n_complete = 0
+    units: dict[str, dict] = {}
     for s in states:
-        have = existing_results(results_dir, s["state_id"])
+        units.setdefault(unit_key(s), s)
+    n_have = n_complete = 0
+    for key, s in units.items():
+        have = existing_results(results_dir, key)
         n_have += len(have)
         ks = plan_continuations(s, have, args.continuations, args.retry_errored)
         if not ks:
@@ -352,39 +396,46 @@ def main() -> None:
         todo.extend((s, k) for k in ks)
     if args.limit:
         todo = todo[: args.limit]
-    log.info("%d states selected, %d complete, %d stored continuation(s), %d "
-             "continuation(s) to run, %d workers, deadline %s h",
-             len(states), n_complete, n_have, len(todo), args.workers,
-             args.deadline_hours or "none")
+    log.info("%d states / %d units selected, %d complete, %d stored continuation(s), "
+             "%d continuation(s) to run, %d workers, deadline %s h, budget %s",
+             len(states), len(units), n_complete, n_have, len(todo), args.workers,
+             args.deadline_hours or "none",
+             f"${args.budget_usd:.0f}" if args.budget_usd else "none")
     deadline = time.time() + args.deadline_hours * 3600 if args.deadline_hours else None
-    skipped = []
+    skipped: list[str] = []
+    spent = {"usd": 0.0}
 
     def work(item: tuple[dict, int]) -> None:
         state, k = item
-        if deadline and time.time() > deadline:
-            skipped.append(state["state_id"])
+        key = unit_key(state)
+        if (deadline and time.time() > deadline) or \
+                (args.budget_usd and spent["usd"] >= args.budget_usd):
+            skipped.append(key)
             return
         try:
             r = run_one(cfg, registry, state, args.out, env, k)
         except Exception as e:  # noqa: BLE001 - one state must not kill the batch
-            log.exception("state %s c%d crashed", state["state_id"], k)
-            r = {"state_id": state["state_id"], "resume_kind": state["resume_kind"],
-                 "continuation": k, "status": "errored",
+            log.exception("unit %s c%d crashed", key, k)
+            r = {"state_id": key, "resume_kind": state["resume_kind"],
+                 "harness": state["harness"], "continuation": k, "status": "errored",
                  "error": f"driver: {type(e).__name__}: {e}"}
         with _lock:
-            (results_dir / f"{file_stem(state['state_id'], k)}.json").write_text(json.dumps(r))
+            spent["usd"] += float(r.get("cost_usd") or 0.0)
+            (results_dir / f"{file_stem(key, k)}.json").write_text(json.dumps(r))
             with open(args.out / "results.jsonl", "a", encoding="utf-8") as f:
                 f.write(json.dumps(r) + "\n")
-        log.info("%s c%d -> %s outcome=%s stop=%s turns=%s wall=%ss",
-                 state["state_id"], k, r.get("status"), r.get("outcome"),
-                 r.get("stop_condition"), r.get("n_turns"), r.get("wall_s"))
+        log.info("%s c%d -> %s outcome=%s stop=%s turns=%s wall=%ss cost=$%.3f (run $%.2f)",
+                 key, k, r.get("status"), r.get("outcome"),
+                 r.get("stop_condition"), r.get("n_turns"), r.get("wall_s"),
+                 float(r.get("cost_usd") or 0.0), spent["usd"])
 
     reap_own_containers()
     try:
         with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
             list(ex.map(work, todo))
         if skipped:
-            log.info("deadline reached: %d continuation(s) not started", len(skipped))
+            log.info("deadline or budget reached: %d continuation(s) not started",
+                     len(skipped))
     finally:
         # Tags stay: another process on the pod may have started a container
         # from one of them; `--untag` at the very end removes them.

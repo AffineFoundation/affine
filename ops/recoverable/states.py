@@ -51,6 +51,22 @@ RESUMABLE = {
 # ACP agents keep session state inside their own scaffold (todo lists, task
 # trackers, subagents, compaction); a transcript is not enough to rebuild it.
 NOT_RESUMABLE = {"claude_code", "pi", "kimi_code", "hermes_agent", "codex"}
+# Same-task proxy (king-data spec §2.4, improvement loop P2, 2026-09-13):
+# for these harnesses the teacher is re-run on the SAME task under the SAME
+# harness from the start (3 rollouts, T = 0.8), and a king state is admitted
+# when the teacher solves the task in a majority of them. Weaker than a
+# continuation (it says the task is solvable, not that this state is); the
+# side-table marks such rows `proxy = "same_task"`. codex stays out (its
+# harness is not run in datagen).
+PROXY_HARNESSES = {"claude_code", "pi", "kimi_code", "hermes_agent"}
+SAME_TASK = "same_task"
+
+
+def resume_kind_of(harness: str) -> str | None:
+    """The run_states.py `resume_kind` for a harness: a plugin resume kind,
+    `same_task` for the ACP proxy, None when neither applies."""
+    return RESUMABLE.get(harness) or (SAME_TASK if harness in PROXY_HARNESSES else None)
+
 
 MAX_TURNS_ORIGINAL = 80
 MIN_REMAINING_TURNS = 20
@@ -179,10 +195,17 @@ def build_state(envelope: dict, turn_idx: int, kind: str, label: dict) -> dict |
     action_kind = policy.get("action_kind") or "bash"
     sid = envelope["task"]["sid"]
     traj_id = make_traj_id(sid, run_tag(trace))
-    remaining = max(MAX_TURNS_ORIGINAL - turn_idx, MIN_REMAINING_TURNS)
+    resume_kind = resume_kind_of(harness)
+    # A continuation gets what the king had left (floor 20); the same-task
+    # proxy replays the whole task, so it gets the full budget.
+    remaining = (MAX_TURNS_ORIGINAL if resume_kind == SAME_TASK
+                 else max(MAX_TURNS_ORIGINAL - turn_idx, MIN_REMAINING_TURNS))
     state_id = f"{envelope['rollout_id']}:{turn_idx}:{kind}"
     return {
         "state_id": state_id,
+        # One teacher run per TASK serves every state of the rollout: the
+        # driver keys its work on proxy_key, aggregate fans the verdict out.
+        "proxy_key": f"task:{envelope['rollout_id']}" if resume_kind == SAME_TASK else None,
         "state_kind": kind,
         "rollout_id": envelope["rollout_id"],
         "traj_id": traj_id,
@@ -200,7 +223,7 @@ def build_state(envelope: dict, turn_idx: int, kind: str, label: dict) -> dict |
         "task_answer": task_data.get("answer"),
         "policy_id": policy["id"],
         "harness": harness,
-        "resume_kind": RESUMABLE.get(harness),
+        "resume_kind": resume_kind,
         "action_kind": action_kind,
         "king_model": policy.get("model"),
         "king_stop_condition": trace.get("stop_condition"),
