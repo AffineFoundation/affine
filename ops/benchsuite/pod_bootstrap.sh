@@ -9,6 +9,8 @@
 #
 # Contract via /root/bench/env (mode 0600):
 #   KING_DIGEST        sha256 model_digest of the king (public bucket, no creds)
+#   KING_R2            optional r2://<bucket>/<prefix>/ for a private (challenger) ref,
+#                      read with AFFINE_EVAL_R2_ENDPOINT/ACCESS_KEY_ID/SECRET_ACCESS_KEY
 #   KING_REPLICAS      "port:gpus:tp;..." e.g. "31001:0,1:2;31002:2,3:2" (empty = do not serve)
 #   TEACHER_HF         HF repo id of the teacher; TEACHER_REV optional; HF_TOKEN optional
 #   TEACHER_REPLICAS   e.g. "32001:4,5:2;32002:6,7:2"   (empty = do not serve the teacher)
@@ -62,6 +64,7 @@ if ! /root/venv/bin/python -c "import vllm" 2>/dev/null; then
       > /root/logs/pip_vllm.log 2>&1 || { tail -5 /root/logs/pip_vllm.log; fail pip; }
   fi
 fi
+/root/venv/bin/python -c "import boto3" 2>/dev/null || VIRTUAL_ENV=/root/venv uv pip install -q boto3 >> /root/logs/pip_vllm.log 2>&1
 if ! /root/venv/bin/python -c "import flashinfer_jit_cache" 2>/dev/null; then
   log "installing prebuilt flashinfer kernels ($VLLM_CUDA)"
   VIRTUAL_ENV=/root/venv uv pip install "flashinfer-cubin==0.6.16.post3" \
@@ -77,19 +80,37 @@ download_king() {  # digest -> dir
   if [ ! -f "$dir/.complete" ]; then
     mkdir -p "$dir"
     log "downloading king $1 from models.affine.io -> $dir"
-    MODEL_DIR="$dir" DIGEST="$1" /root/venv/bin/python /root/bench/dl_king.py || fail "download-king-${1:0:12}"
+    MODEL_DIR="$dir" DIGEST="$1" KING_R2="${2:-}" /root/venv/bin/python /root/bench/dl_king.py || fail "download-king-${1:0:12}"
     touch "$dir/.complete"
   fi
 }
 cat > /root/bench/dl_king.py <<'PY'
+"""King weights: the PUBLIC models.affine.io copy (crowned kings) or, for a
+challenger, the private bucket via the eval pods' read-only key
+(KING_R2=r2://<bucket>/<prefix>/ + AFFINE_EVAL_R2_*). Same manifest format,
+every file sha256-verified."""
 import hashlib, json, os, subprocess
 from concurrent.futures import ThreadPoolExecutor
-base = f"https://models.affine.io/models/sha256/{os.environ['DIGEST']}/"
-man = json.loads(subprocess.run(["curl", "-sSL", "--retry", "5", base + "manifest.json"],
-                                check=True, capture_output=True, text=True).stdout)
+d = os.environ["MODEL_DIR"]
+r2 = os.environ.get("KING_R2") or ""
+if r2:
+    import boto3
+    bucket, _, prefix = r2.removeprefix("r2://").partition("/")
+    s3 = boto3.client("s3", endpoint_url=os.environ["AFFINE_EVAL_R2_ENDPOINT"],
+                      aws_access_key_id=os.environ["AFFINE_EVAL_R2_ACCESS_KEY_ID"],
+                      aws_secret_access_key=os.environ["AFFINE_EVAL_R2_SECRET_ACCESS_KEY"], region_name="auto")
+    man = json.loads(s3.get_object(Bucket=bucket, Key=prefix + "manifest.json")["Body"].read())
+    def get(path, dst):
+        s3.download_file(bucket, prefix + path, dst)
+else:
+    base = f"https://models.affine.io/models/sha256/{os.environ['DIGEST']}/"
+    man = json.loads(subprocess.run(["curl", "-sSL", "--retry", "5", base + "manifest.json"],
+                                    check=True, capture_output=True, text=True).stdout)
+    def get(path, dst):
+        subprocess.run(["curl", "-sSL", "--http1.1", "--retry", "8", "--retry-all-errors",
+                        "-C", "-", "-o", dst, base + path], check=True)
 if man.get("model_digest") not in (None, os.environ["DIGEST"]):
     raise SystemExit(f"manifest digest {man.get('model_digest')} != {os.environ['DIGEST']}")
-d = os.environ["MODEL_DIR"]
 
 def fetch(f):
     path, size, sha = f["path"], f["size"], f.get("sha256")
@@ -97,8 +118,7 @@ def fetch(f):
     if os.path.exists(dst) and os.path.getsize(dst) == size:
         return "cached " + path
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    subprocess.run(["curl", "-sSL", "--http1.1", "--retry", "8", "--retry-all-errors",
-                    "-C", "-", "-o", dst, base + path], check=True)
+    get(path, dst)
     if sha:
         h = hashlib.sha256()
         with open(dst, "rb") as fh:
@@ -116,7 +136,7 @@ json.dump(man, open(os.path.join(d, ".manifest.json"), "w"))
 print("download complete", flush=True)
 PY
 KING_DIR="/root/bench/king-${KING_DIGEST:0:12}"
-[ -n "${KING_REPLICAS:-}" ] && download_king "$KING_DIGEST"
+[ -n "${KING_REPLICAS:-}" ] && download_king "$KING_DIGEST" "${KING_R2:-}"
 KING2_DIR=""
 if [ -n "${KING2_REPLICAS:-}" ]; then
   download_king "$KING2_DIGEST"

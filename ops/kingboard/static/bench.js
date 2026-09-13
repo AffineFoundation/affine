@@ -33,10 +33,12 @@
 
   function runLabel(r) {
     const k = r.king || {};
-    const reign = k.reign !== undefined ? `reign ${k.reign}` : "";
+    if (k.model) return `${r.run_id} · ${k.label || k.model} (Prime Inference)`;
+    const reign = k.reign !== undefined ? `reign ${k.reign}` : (k.label || "");
     const digest = k.digest ? `king-${String(k.digest).slice(0, 12)}` : "";
     return `${r.run_id} · ${reign} ${digest}`.trim();
   }
+  const colLabel = (r) => { const k = (r && r.king) || {}; return k.model ? (k.label || k.model) : k.reign !== undefined ? `reign ${k.reign}` : (k.label || r.run_id); };
 
   function renderRunSelect() {
     const sel = $("#bench-run");
@@ -92,7 +94,7 @@
     const head = el("tr", {}, el("th", {}, "benchmark"));
     for (const r of runs) {
       const k = r.king || {};
-      head.append(el("th", { class: "num", title: r.run_id }, k.reign !== undefined ? `reign ${k.reign}` : r.run_id));
+      head.append(el("th", { class: "num", title: r.run_id }, colLabel(r)));
     }
     head.append(el("th", { class: "num" }, "teacher (latest)"));
     thead.append(head);

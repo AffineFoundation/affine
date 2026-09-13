@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 """Benchmark-suite watcher (pm2 `affine-benchsuite`): run the suite on every
-crown and re-run the current king weekly.
+crown, re-run the current king weekly, and (when [challenger].enabled) bench
+the day's top-k near-miss challengers chat-only — all on Prime's stack
+([modes].default = prime).
 
 Loop every --interval seconds:
   1. read affine/state/state.json -> king (digest, reign, hotkey).
@@ -26,6 +28,8 @@ import sys
 import time
 import tomllib
 from pathlib import Path
+
+from challengers import near_misses
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
@@ -85,6 +89,51 @@ def iso_to_ts(s: str | None) -> float:
     return time.mktime(time.strptime(s[:19], "%Y-%m-%dT%H:%M:%S"))
 
 
+def start_pass(w: dict, ref: str, label: str, run_id: str, mode: str, why: str,
+               extra_env: dict | None = None, **fields) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    logp = STATE_DIR / f"pass-{run_id}.log"
+    env = dict(os.environ)
+    env.update(extra_env or {})
+    cmd = ["bash", str(HERE / "run_pass.sh"), ref, label, run_id, mode]
+    with logp.open("a") as fh:
+        proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, cwd=str(HERE),
+                                start_new_session=True, env=env)
+    w["passes"].append({"run_id": run_id, "mode": mode, "state": "running", "pid": proc.pid,
+                        "log": str(logp), "why": why,
+                        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **fields})
+    save_watch(w)
+    log(f"start pass {run_id} mode={mode}: {why}")
+
+
+def start_challenger_if_due(w: dict, a: argparse.Namespace) -> bool:
+    """Once per UTC day, queue the top-k losing challengers (margin > 0) of the
+    last window and start them one at a time (chat sets only, Prime pod)."""
+    cfg = SUITE.get("challenger") or {}
+    if not cfg.get("enabled"):
+        return False
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    if w.get("challenger_day") != today:
+        picks = near_misses(float(cfg.get("window_hours", 24)), int(cfg.get("per_day", 3)))
+        done = {p.get("revision") for p in w["passes"] if p.get("mode") == "challenger"}
+        king = current_king() or {}
+        # skip revisions already benched and the sitting king (it has its own pass)
+        w["challenger_queue"] = [p for p in picks if p["revision"] not in done
+                                 and p["revision"] != king.get("digest")]
+        w["challenger_day"] = today
+        save_watch(w)
+        log(f"challenger picks for {today}: {[p['challenge_id'] for p in w['challenger_queue']]}")
+    if not w.get("challenger_queue"):
+        return False
+    pick = w["challenger_queue"].pop(0)
+    run_id = time.strftime("%Y%m%dT%H%MZ", time.gmtime()) + f"-{pick['challenge_id']}"
+    start_pass(w, pick["repo"], pick["challenge_id"], run_id, "challenger",
+               f"near-miss loser margin {pick['margin']:+.5f} (z {pick.get('z')})",
+               extra_env={"CHALLENGER_REVISION": pick["revision"]},
+               revision=pick["revision"], challenge_id=pick["challenge_id"])
+    return True
+
+
 def tick(a: argparse.Namespace) -> None:
     w = load_watch()
     king = current_king()
@@ -113,6 +162,8 @@ def tick(a: argparse.Namespace) -> None:
     if (STATE_DIR / f"inflight-{king['digest'][:12]}").exists():
         log(f"pass for {king['digest'][:12]} in flight elsewhere (inflight marker); standing down")
         return
+    if start_challenger_if_due(w, a):
+        return
     card = latest_card_for(king["digest"])
     why = None
     if card is None:
@@ -126,20 +177,12 @@ def tick(a: argparse.Namespace) -> None:
         log(f"last pass for this king failed < {a.retry_hours} h ago; waiting")
         return
     run_id = time.strftime("%Y%m%dT%H%MZ", time.gmtime()) + f"-{king['digest'][:12]}"
-    log(f"start pass {run_id}: {why}")
     if a.dry_run:
+        log(f"would start pass {run_id}: {why}")
         return
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    logp = STATE_DIR / f"pass-{run_id}.log"
-    cmd = ["bash", str(HERE / "run_pass.sh"), king["digest"], str(king["reign"]), run_id,
-           os.environ.get("BENCHSUITE_MODE") or SUITE["modes"]["default"]]
-    with logp.open("a") as fh:
-        proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, cwd=str(HERE),
-                                start_new_session=True)
-    w["passes"].append({"run_id": run_id, "digest": king["digest"], "reign": king["reign"],
-                        "state": "running", "pid": proc.pid, "log": str(logp), "why": why,
-                        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
-    save_watch(w)
+    start_pass(w, king["digest"], str(king["reign"]), run_id,
+               os.environ.get("BENCHSUITE_MODE") or SUITE["modes"]["default"], why,
+               digest=king["digest"], reign=king["reign"])
 
 
 def main() -> int:
