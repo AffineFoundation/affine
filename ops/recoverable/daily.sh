@@ -97,11 +97,10 @@ else
 fi
 
 mkdir -p "$STATE/runs"
-exec 9>"$STATE/lock"
-if ! flock -n 9; then
-  log "another run holds $STATE/lock; exiting"
-  exit 0
-fi
+# Runs may overlap (the cron on the current king, a backlog on another pod):
+# pods are protected by the per-pod busy check below, the side-table by the
+# lock around the merge step (read-modify-write, seconds). Two runs that pick
+# the same state land the same continuation twice at worst (merged by trace id).
 
 # RECOVERABLE_KING_DIGEST=<digest12>: work on that king instead of the current
 # one (backlog of a previous reign).
@@ -225,7 +224,10 @@ for i in "${USE[@]}"; do
   pod_ssh "$i" "cd $POD_DIR/daily/out && tar -czf - --ignore-failed-read results reports" | tar -C "$RUN_DIR/out" -xzf -
   pod_ssh "$i" "cat $POD_DIR/daily/$RUN/run.log" > "$RUN_DIR/run.${NAMES[$i]}.log" || true
 done
-"$PY" "$OPS/aggregate.py" --states "$RUN_DIR/states/states.jsonl" --out "$RUN_DIR/out" \
-  --continuations "$CONTINUATIONS" --acp-max-share "$ACP_MAX_SHARE" --merge-into "$TABLE" \
-  | { grep -E "^(merged|states |rule |same-task|side-table)" || true; } | sed "s/^/  /"
+(
+  flock 9   # one merge into the side-table at a time (waits, never skips)
+  "$PY" "$OPS/aggregate.py" --states "$RUN_DIR/states/states.jsonl" --out "$RUN_DIR/out" \
+    --continuations "$CONTINUATIONS" --acp-max-share "$ACP_MAX_SHARE" --merge-into "$TABLE" \
+    | { grep -E "^(merged|states |rule |same-task|side-table)" || true; } | sed "s/^/  /"
+) 9>"$STATE/lock"
 log "done; summary $RUN_DIR/out/summary.md"
