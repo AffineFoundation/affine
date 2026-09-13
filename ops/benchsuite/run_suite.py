@@ -27,6 +27,7 @@ copies the run to R2 and writes the scorecard JSON the kingboard reads.
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import math
 import os
@@ -93,7 +94,8 @@ def prime_wallet(api_key: str | None) -> float | None:
 def summarize_traces(path: Path, reward_name: str) -> dict:
     """Per-rollout records + aggregate from a verifiers traces.jsonl."""
     rows = []
-    with path.open() as fh:
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt") as fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -475,8 +477,12 @@ def cmd_summarize(a: argparse.Namespace) -> int:
     """Re-derive summary.json for every cell that has traces (after edits or a crash)."""
     out = Path(a.out).expanduser() / a.run_id
     by_id = {e["id"]: e for e in SUITE["envs"]}
-    for traces in sorted(out.glob("*/*/traces.jsonl")):
+    seen = set()
+    for traces in sorted(list(out.glob("*/*/traces.jsonl")) + list(out.glob("*/*/traces.jsonl.gz"))):
         d = traces.parent
+        if d in seen:
+            continue          # prefer the plain file when both exist
+        seen.add(d)
         env_id, _, temp = d.name.rpartition("__t")
         env = by_id.get(env_id)
         if env is None:
