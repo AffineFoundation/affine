@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..config import Config, load_config
-from .corpus import REFRESH_TTL_S, DatasetView
+from .corpus import REFRESH_TTL_S, DatasetBusy, DatasetView
 from .index import DashIndex
 from .project import project_duel_summary, project_series, project_turn_detail
 from .readers import (
@@ -216,7 +216,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     @app.get("/api/v1/dataset/turn")
     def api_dataset_turn(request: Request,
                          turn_id: str = Query(..., min_length=1)):
-        detail = dataset.turn_detail(turn_id)
+        try:
+            detail = dataset.turn_detail(turn_id)
+        except DatasetBusy:
+            # Crawler flood: answer fast instead of holding a worker thread
+            # (the same pool serves the static site) — see corpus.CHUNK_WAIT_S.
+            return JSONResponse(
+                {"error": "dataset_busy", "turn_id": turn_id},
+                status_code=503, headers={"Retry-After": "5"})
         if detail is None:
             return JSONResponse(
                 {"error": "turn_not_found", "turn_id": turn_id},
