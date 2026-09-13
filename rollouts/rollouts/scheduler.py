@@ -225,18 +225,26 @@ class Scheduler:
         `self.king_cycle` is set so pick_policy stays on the king. The
         teacher's ranking is untouched on its own cycles."""
         self.king_cycle = False
-        if king_remaining is not None and self._king_due():
-            king_cands = self._king_eligible(king_remaining)
-            if king_cands:
-                self.king_cycle = True
-                self.picks_total += 1
-                self.picks_king += 1
-                return self._rank_pick(king_cands, self._king_kept)
+        king_cands = (self._king_eligible(king_remaining)
+                      if king_remaining is not None else [])
+        if king_cands and self._king_due():
+            return self._king_pick(king_cands)
         cands = self.eligible(remaining)
         if not cands:
+            # `remaining` is the teacher's work when run.py passes it
+            # seat-scoped: nothing left for the teacher, so the king takes
+            # the cycle if it has any (its share is a floor, not a cap).
+            if king_cands:
+                return self._king_pick(king_cands)
             return None
         self.picks_total += 1
-        return self._rank_pick(cands, lambda n: self.state.kept_by_source.get(n, 0))
+        return self._rank_pick(cands, self._teacher_kept)
+
+    def _king_pick(self, king_cands: list[str]) -> str:
+        self.king_cycle = True
+        self.picks_total += 1
+        self.picks_king += 1
+        return self._rank_pick(king_cands, self._king_kept)
 
     def _rank_pick(self, cands: list[str], kept_of) -> str:
         total_target = sum(self.targets[n] for n in cands)
@@ -252,6 +260,13 @@ class Scheduler:
     def _king_kept(self, source: str) -> int:
         return sum(n for (src, pid), n in self.state.kept_by_policy.items()
                    if src == source and is_king_policy(pid))
+
+    def _teacher_kept(self, source: str) -> int:
+        """Kept turns of the non-king seats: the teacher's own shortfall
+        ranks teacher cycles (king turns on a source are not teacher supply).
+        Legacy rows without a policy id count as teacher."""
+        return sum(n for (src, pid), n in self.state.kept_by_policy.items()
+                   if src == source and not is_king_policy(pid))
 
     # -- policy pick -------------------------------------------------------------
 
@@ -299,13 +314,16 @@ class Scheduler:
                 + [r for r in todo if r["uid"] not in king_first])
 
     def remaining(self, source: str, rows: list[dict],
-                  king_only: bool = False) -> int:
+                  king_only: bool = False, teacher_only: bool = False) -> int:
         """Tasks some usable policy of this source still has to run — the
         union over seats (a task the teacher finished is still work for the
-        king). `king_only` counts the king seat's work alone."""
+        king). `king_only` counts the king seat's work alone, `teacher_only`
+        the non-king seats' work alone."""
         pols = self._usable_policies(source)
         if king_only:
             pols = [p for p in pols if is_king_policy(p.id)]
+        elif teacher_only:
+            pols = [p for p in pols if not is_king_policy(p.id)]
         seats = {policy_seat(p, self.env) for p in pols}
         if not seats:
             return 0
@@ -313,23 +331,33 @@ class Scheduler:
         return sum(1 for r in rows if any(r["uid"] not in d for d in dones))
 
     def pick_policy(self, source: str, rows: list[dict] | None = None,
-                    king_only: bool = False) -> Policy:
+                    king_only: bool = False, teacher_only: bool = False) -> Policy:
         """Largest per-policy deficit among the source's healthy policies
-        with work. `king_only` (a king cycle) keeps the pick on the king
-        policies; if none of them can run here it falls back to the normal
-        pick rather than idling the cycle."""
+        with work. Cycles are seat-scoped: `king_only` (a king cycle) keeps
+        the pick on the king policies, `teacher_only` (a teacher cycle) on
+        the non-king ones; if the seat has nothing runnable here the pick
+        falls back to every policy rather than idling the cycle.
+
+        Why teacher cycles are scoped too (2026-09-13 15:00 UTC): without
+        it the per-policy deficit picked the KING on teacher cycles as
+        well — a freshly added king policy has zero kept turns next to a
+        teacher policy with thousands, so it out-deficits the teacher on
+        every source until it holds 60 % of that source's turns. With king
+        policies on every source since 07:20 UTC the three pods ran ~0
+        teacher turns/h for eight hours (674 / 742 / 506 king turns/h)."""
         cands = self._healthy_policies(source)
-        if king_only:
-            kings = [p for p in cands if is_king_policy(p.id)]
+        if king_only or teacher_only:
+            mine = [p for p in cands if is_king_policy(p.id) == king_only]
             if rows is not None:
-                kings = [p for p in kings if self.pending(source, rows, p)]
-            if kings:
-                cands = kings
+                mine = [p for p in mine if self.pending(source, rows, p)]
+            if mine:
+                cands = mine
             else:
-                log.warning("king cycle on %s: no king policy can run; "
-                            "falling back to the normal pick", source)
-                king_only = False
-        if rows is not None and not king_only:
+                log.warning("%s cycle on %s: no %s policy can run; falling "
+                            "back to any policy", "king" if king_only else "teacher",
+                            source, "king" if king_only else "teacher")
+                king_only = teacher_only = False
+        if rows is not None and not (king_only or teacher_only):
             with_work = [p for p in cands if self.pending(source, rows, p)]
             if not with_work:
                 # Every warm policy is finished here; fall back to any usable
