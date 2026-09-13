@@ -1191,7 +1191,9 @@ def load_math_filter() -> dict:
     cfg = raw.get("math_filter") or {}
     if not cfg or not cfg.get("enabled", True):
         return {}
-    return {"source": str(cfg.get("source") or "affine_math"),
+    sources = cfg.get("sources") or [cfg.get("source") or "affine_math"]
+    return {"source": str(sources[0]),
+            "sources": frozenset(str(x) for x in sources),
             "retire_published": bool(cfg.get("retire_published", True)),
             "min_surviving_strata": int(cfg.get("min_surviving_strata", 100) or 0),
             "teacher_prefix": str(cfg.get("teacher_prefix") or "teacher_"),
@@ -1221,11 +1223,12 @@ def math_keep_set(pub: PublicCorpus, traces_manifest: dict, cfg: dict
     per: dict[str, dict] = {}
     n_chunks = 0
     for c in traces_manifest["chunks"]:
-        if not c["key"].rsplit("/", 1)[-1].startswith(f"{cfg['source']}-"):
+        name = c["key"].rsplit("/", 1)[-1]
+        if not any(name.startswith(f"{src}-") for src in cfg["sources"]):
             continue
         n_chunks += 1
         for env in iter_jsonl_gz(pub.cached(c["key"], c["sha256"], gz_sha=True)):
-            if str(env.get("source") or "") != cfg["source"]:
+            if str(env.get("source") or "") not in cfg["sources"]:
                 continue
             sid = str((env.get("task") or {}).get("sid") or "")
             pid = str((env.get("policy") or {}).get("id") or "")
@@ -1272,7 +1275,7 @@ def math_retire_plan(pub: PublicCorpus, live: dict | None, cfg: dict,
     retired_strata: set[str] = set()
     for tid, traj, src, stratum in zip(*(table.column(c).to_pylist()
                                           for c in ("turn_id", "traj_id", "source", "stratum"))):
-        if src != cfg["source"] or not str(stratum).startswith(f"{group}:"):
+        if src not in cfg["sources"] or not str(stratum).startswith(f"{group}:"):
             continue
         m = TRAJ_SHA8_RE.search(traj or "")
         if m and m.group(1) in keep_sha8:
@@ -1854,15 +1857,18 @@ def main() -> None:
         log(f"math re-source: {mstats}")
         retire_ids, math_surviving, math_retired_strata = math_retire_plan(
             pub, live, math_cfg, keep, src2grp.get(math_cfg["source"], DEFAULT_GROUP))
-        cand_math = [r for r in candidates if str(r.get("source") or "") == math_cfg["source"]]
+        cand_math = [r for r in candidates if str(r.get("source") or "") in math_cfg["sources"]]
         cand_keep = [r for r in cand_math if str(r.get("instance_id")) in keep]
         # Survival = strata the kept published turns hold + what kept
         # candidates would open (bucket assignment happens below; recompute
         # the bucket here from the source's setting).
-        n_b, off = buckets.get(math_cfg["source"], (0, 0))
-        grp = src2grp.get(math_cfg["source"], DEFAULT_GROUP)
-        cand_strata = {f"{grp}:{off + int(hashlib.sha256(str(r['instance_id']).encode()).hexdigest()[:8], 16) % n_b:04d}"
-                       for r in cand_keep} if n_b else set()
+        cand_strata: set[str] = set()
+        for r in cand_keep:
+            n_b, off = buckets.get(str(r.get("source") or ""), (0, 0))
+            if n_b:
+                grp = src2grp.get(str(r.get("source") or ""), DEFAULT_GROUP)
+                h = int(hashlib.sha256(str(r["instance_id"]).encode()).hexdigest()[:8], 16)
+                cand_strata.add(f"{grp}:{off + h % n_b:04d}")
         surviving_total = len(math_surviving | cand_strata)
         log(f"math re-source: published math turns {len(retire_ids) + 0} to retire, "
             f"surviving published strata {len(math_surviving)}, retired strata "
@@ -1876,7 +1882,7 @@ def main() -> None:
             n0 = len(candidates)
             keep_ids = {id(r) for r in cand_keep}
             candidates = [r for r in candidates
-                          if str(r.get("source") or "") != math_cfg["source"] or id(r) in keep_ids]
+                          if str(r.get("source") or "") not in math_cfg["sources"] or id(r) in keep_ids]
             _count(drops, "math_deterministic", n0 - len(candidates))
             if not math_cfg["retire_published"]:
                 retire_ids, math_surviving, math_retired_strata = [], set(), set()
