@@ -5,6 +5,9 @@
 # exported through a shell-safe parser (never `source` them directly).
 # Uses PRIME_API_KEY (Prime pods + sandboxes + evals), HF_TOKEN (gated
 # benchmark data), DATA_R2_* (publish to research/benchsuite/ on affine-data).
+# ~/.affine-op.env (0600) holds OP_SERVICE_ACCOUNT_TOKEN so run_pass.sh can read
+# the Docker Hub pull-cap login from the Arbos vault at pod time (op CLI in
+# ~/.local/bin; never stored in the repo or the validator env snapshot).
 #
 #   pm2 start ops/benchsuite/run.sh --name affine-benchsuite --interpreter bash
 set -euo pipefail
@@ -12,7 +15,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 PY="${BENCHSUITE_PYTHON:-$REPO/.venv/bin/python}"
 
-for ENV_FILE in "${AFFINE_VALIDATOR_ENV:-$HOME/.affine-validator.env}" "$REPO/.env"; do
+for ENV_FILE in "${AFFINE_VALIDATOR_ENV:-$HOME/.affine-validator.env}" "$REPO/.env" "$HOME/.affine-op.env"; do
   [[ -r "$ENV_FILE" ]] || continue
   eval "$("$PY" - "$ENV_FILE" <<'PY'
 import re, shlex, sys

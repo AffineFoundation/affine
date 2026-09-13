@@ -30,6 +30,9 @@
 # Env (ops/benchsuite/run.sh loads the box snapshot): PRIME_API_KEY (or PRIME),
 # HF_TOKEN, DATA_R2_*, LIUM_API_KEY (cheap), AFFINE_EVAL_R2_* (challenger),
 # PRIME_SSH_KEY (default ~/.ssh/prime_bench, registered on the Prime account).
+# Docker Hub pull-cap login for the pod: DOCKERHUB_USER / DOCKERHUB_TOKEN, or —
+# when unset — read at pod time from the Arbos vault (op CLI +
+# OP_SERVICE_ACCOUNT_TOKEN from ~/.affine-op.env; item DOCKERHUB_OP_ITEM).
 # Exit code -> ops/benchsuite/state/pass-<run_id>.exit for watch.py.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,6 +56,30 @@ TEACHER_FROM=$(toml modes.teacher_from)
 CHAT_ENVS=$(toml modes.chat_envs)
 SANDBOX_ENVS=$(toml modes.sandbox_envs)
 PREV_CARD=$(ls -t "$REPO/$(toml suite.state_dir)"/*.json 2>/dev/null | head -1)
+
+# Docker Hub login on the pod. Measured 2026-09-13: anonymous = 100 pulls/h per IP,
+# the thebes1618 login = 200 pulls/h per user (free plan); a SWE-bench pass pulls
+# 500 images. Values come from DOCKERHUB_USER / DOCKERHUB_TOKEN or, when unset, from
+# the Arbos vault item (Login "Docker Hub — thebes1618 (pull-cap login for Lium
+# bench/datagen pods)"). The token goes to the pod over ssh stdin, never on a
+# command line (no `ps` exposure on the box or the pod).
+DOCKERHUB_OP_ITEM="${DOCKERHUB_OP_ITEM:-op://Arbos/e7y3qzb2flaczam4rindajho4m}"
+dockerhub_creds() {
+  if [ -z "${DOCKERHUB_TOKEN:-}" ] && [ -n "${OP_SERVICE_ACCOUNT_TOKEN:-}" ] && command -v op >/dev/null 2>&1; then
+    DOCKERHUB_USER=$(op read --no-newline "$DOCKERHUB_OP_ITEM/username" 2>/dev/null) || DOCKERHUB_USER=""
+    DOCKERHUB_TOKEN=$(op read --no-newline "$DOCKERHUB_OP_ITEM/credential" 2>/dev/null) || DOCKERHUB_TOKEN=""
+    [ -n "$DOCKERHUB_TOKEN" ] && log "docker hub credential read from the vault (user ${DOCKERHUB_USER})"
+  fi
+  [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]
+}
+dockerhub_login() {  # $1 = sudo prefix ("" or "sudo "); uses the caller's SSH array
+  if ! dockerhub_creds; then log "no docker hub credential; anonymous pulls (100/h per IP)"; return 0; fi
+  if printf '%s' "$DOCKERHUB_TOKEN" | "${SSH[@]}" "$1docker login -u '$DOCKERHUB_USER' --password-stdin >/dev/null 2>&1"; then
+    log "docker hub login ok on the pod (user $DOCKERHUB_USER)"
+  else
+    log "docker hub login failed; anonymous pulls"
+  fi
+}
 
 # The eval driver, run either here or on the pod (RUNNER="ssh ..." prefix).
 # $1 = extra run_suite.py flags, $2 = runtime, $3 = envs, $4 = temps, $5 = concurrency, $6 = manifest
@@ -153,11 +180,9 @@ remote_suite() {  # models policy sandbox_runtime user@host port key known_hosts
   "${SCP[@]}" "/tmp/benchsuite-$RUN_ID.tgz" "$USER_HOST:/tmp/benchsuite.tgz" || finish 4
   rm -f "/tmp/benchsuite-$RUN_ID.tgz"
   "${SSH[@]}" "mkdir -p $RHOME/affine $RHOME/benchsuite/runs && cd $RHOME/affine && tar xzf /tmp/benchsuite.tgz && BENCH_HOME=$RHOME/benchsuite bash $RHOME/affine/ops/benchsuite/install_eval_env.sh > $RHOME/install.log 2>&1; tail -1 $RHOME/install.log" || finish 5
-  "${SSH[@]}" "${SUDO}docker pull -q python:3.11-slim >/dev/null 2>&1; ${SUDO}usermod -aG docker \$USER 2>/dev/null; true"
-  if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
-    # authenticated pulls: the anonymous Docker Hub cap (100 pulls / 6 h per IP) is below the 500 SWE-bench images
-    "${SSH[@]}" "echo '${DOCKERHUB_TOKEN}' | ${SUDO}docker login -u '${DOCKERHUB_USER}' --password-stdin >/dev/null 2>&1 && echo 'docker hub login ok'" || log "docker hub login failed; anonymous pulls"
-  fi
+  "${SSH[@]}" "${SUDO}usermod -aG docker \$USER 2>/dev/null; true"
+  dockerhub_login "$SUDO"
+  "${SSH[@]}" "${SUDO}docker pull -q python:3.11-slim >/dev/null 2>&1; true"
   # the lock: the pod's env must match suite.lock.json (code commits, patches, grader packages, serving)
   "${SSH[@]}" "cd $RHOME/affine/ops/benchsuite && $RHOME/benchsuite/verifiers/.venv/bin/python lock.py check --bench-home $RHOME/benchsuite" || { log "LOCK MISMATCH on the pod — refusing to run"; finish 10; }
   if [ "$MODELS" = "king" ] && [ -d "$BENCH_HOME/runs/$TEACHER_FROM" ]; then
