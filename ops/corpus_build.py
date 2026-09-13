@@ -1063,6 +1063,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                     _count(notes, "king_pivot_over_onset")
                 route[i] = KING_PIVOT_GROUP
                 in_loop.discard(i)
+                later_onsets.discard(i)
                 extra[i] = {"pivot": {
                     "category": row.get("failure_category"),
                     "confidence": row.get("confidence"),
@@ -1186,7 +1187,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         rest = [t for t in turns if t["turn_idx"] not in route
                 and t["turn_idx"] not in in_loop and t["turn_idx"] not in later_onsets]
         routed = [t for t in turns if t["turn_idx"] in route]
-        n_later = sum(1 for t in turns if t["turn_idx"] in later_onsets)
+        n_later = sum(1 for t in turns if t["turn_idx"] in later_onsets
+                      and t["turn_idx"] not in route)
         n_in_loop = len(turns) - len(routed) - len(rest) - n_later
         if n_in_loop:
             _count(drops, "king_in_loop", n_in_loop)
