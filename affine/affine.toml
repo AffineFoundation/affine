@@ -48,6 +48,20 @@ min_submission_block = 8938619
 # 13→14 terminus_json dialect (2026-09-10): the Terminus 2 (terminal-bench
 # agent) JSON command batch is a scored action (allowed_action_kinds +=
 # terminus_json). min(R,G) math unchanged. Forward-only; reign stands.
+# 14→15 window-best crown (2026-09-12): the crown is no longer decided duel
+# by duel. The king is FROZEN for fixed windows of crown_window_blocks =
+# 3600 chain blocks (12 h; window id = decision block // 3600); every
+# challenger judged inside a window duels that king; at the window close
+# the candidate with the largest positive paired margin (one per hotkey,
+# gates passed) is crowned once ONE fresh n_turns slice keeps its pooled
+# margin > 0 (crown_confirm_slice; next-best tried up to
+# crown_confirm_max = 2); nobody confirms → the king stays. The
+# max(k_sigma·SE, δ) bar is still computed and stamped (duel_rule_wins)
+# but no longer decides. min(R,G) math, gates, reign chain / payouts
+# unchanged. Every verdict stamps crown_mode / window_id / decision_block;
+# every close writes a window_close row (candidates, drops,
+# confirmations, winner). Forward-only; reign 11 stands;
+# min_submission_block unchanged.
 #
 # ############################################################################
 # #  NEVER CHANGE THIS NUMBER. (operator directive, 2026-08-10)              #
@@ -55,7 +69,7 @@ min_submission_block = 8938619
 # #  or any "cleanup". Only a NEW, EXPLICIT, DATED operator directive that   #
 # #  names this key may change it. If you think it needs a bump: STOP ASK.   #
 # ############################################################################
-weight_version_key = 14
+weight_version_key = 15
 
 [wallet]
 name = "default"
@@ -415,6 +429,148 @@ k_sigma = 2.0
 # still crown. Forward-only: reigns crowned under wvk 8 stand; no
 # retroactive re-verdicts.
 min_margin = 0.002
+# Sequential near-miss (2026-09-11). A SAMPLING-SIZE rule, not a scoring
+# change: per-turn scores, the crown formula and δ are untouched, so
+# weight_version_key stays where it is. After the normal n_turns slice, if
+# the paired margin (challenger − king) lands strictly inside
+# (near_miss_low, near_miss_high), the eval draws near_miss_extra_slices
+# more slices of n_turns each — seed = blake2b(block_hash ‖ hotkey ‖
+# "|slice<i>"), turns disjoint from the earlier slices, same stratified
+# draw — and decides the crown with the SAME rule on the pooled turns:
+# pooled mean, pooled SE = sd/√n_pooled, pooled gates (median thought
+# length, B pass rate). Outside the window the first slice decides as
+# before. A challenger already blocked by a validity gate (thought floor,
+# B license) gets no extra slice: no margin can crown it.
+# Why (analysis of 349 stored duels, 2026-08-27 → 2026-09-10): the crown bar
+# is max(2·SE, δ) with live 2·SE ≈ 0.0010–0.0018, so δ = 0.002 binds. 12
+# challengers passed the 2σ test (z 2.02–3.76) with margins 0.0014–0.0019
+# and were blocked by δ alone; on the advisory bench those near-miss
+# losers score like kings. At n = 1300 a true +0.002 improver lands below
+# δ about half the time — δ blocks real improvers exactly as often as it
+# blocks noise, and only more turns can separate the two. Doubling n
+# shrinks SE by √2 and halves the width of the noise band around δ; the
+# winner's-curse argument for keeping δ (2026-08-22) is honoured because
+# δ itself does not move, the estimate it is compared against just gets
+# sharper on the duels where it matters. Cost: one extra ~30 min scoring
+# pass on ~10% of duels (35/349 historical margins fell in the window:
+# the 12 near-miss losers, 6 crowns at margins 0.0022–0.0028, and 17
+# sub-2σ losers at 0.0010–0.0019). Window edges: `low` is the margin
+# below which no plausible second slice reaches δ; `high` is where the
+# first slice already clears δ by more than one SE. Every verdict stamps
+# `near_miss` (window, per-slice seed/n/digest/margin/SE/z, pooled stats)
+# and `duel_params.near_miss_*`; `slice` keeps the first slice's seed and
+# digest, `slice.extra_slices` lists the others. `[duel].timeout_s` must
+# cover (1 + near_miss_extra_slices) scoring passes.
+near_miss_enabled = true
+near_miss_low = 0.001
+near_miss_high = 0.003
+near_miss_extra_slices = 1
+# Where the near-miss window sits (staged 2026-09-12). "absolute" = the
+# fixed (near_miss_low, near_miss_high) pair above — today's rule. "bar" =
+# the window follows THIS slice's own crown bar, bar = max(k_sigma·SE,
+# δ_effective): (0.5·bar, 1.5·bar). At δ = 0.002 with a typical SE the bar
+# is δ and the two placements coincide, so "bar" is the drop-in choice
+# once min_margin_mode = "decay" (an absolute window around 0.002 would
+# miss every near-miss once δ has decayed to 0.001). Sampling rule, no
+# weight_version_key event on its own.
+near_miss_window_mode = "absolute"
+#
+# Decaying crown margin (STAGED 2026-09-12, OFF). Operator request
+# (2026-09-12): "the margin doubles every time there is a new king, then
+# decreases down to almost zero over a two-day period, then doubles again
+# … so that we are guaranteed a new king by that period."
+#   min_margin_mode = "fixed"   δ = min_margin on every duel (today).
+#   min_margin_mode = "decay"   δ follows a cycle:
+#     peak  = min(min_margin_double_factor · δ_at_crown, min_margin_peak_cap)
+#             at every crown (or = min_margin_peak_cap when
+#             min_margin_double_on_crown = false); the very first cycle, and
+#             any king without a stored peak, starts at the cap;
+#     δ(b)  = decays from peak to min_margin_floor over
+#             min_margin_decay_hours, clocked in BLOCKS since the crown
+#             block (b; finney 12 s/block) — never wall time — and stays at
+#             the floor until the next crown;
+#             linear:      δ = peak − (peak − floor)·min(b,B)/B
+#             exponential: δ = peak·(floor/peak)^(min(b,B)/B)
+#             with B = decay_hours·3600/12 blocks.
+# Every verdict stamps duel_params.min_margin (= the δ used),
+# min_margin_effective, min_margin_mode, min_margin_peak, crown_block,
+# decision_block, blocks_since_crown, so a replay is exact from the stamp.
+# peak_cap = min_margin (0.002) means the rule is never STRICTER than
+# today; the floor is where the δ leg of the bar stops mattering — below
+# k_sigma·SE (live 2·SE ≈ 0.0010–0.0018) the 2σ test alone decides, and a
+# zero-edge challenger passes that 1 duel in 44. Read
+# research/docs or the operator doc before flipping: flipping the mode
+# CHANGES WHICH MARGINS CROWN and is a weight_version_key event (explicit
+# dated operator directive + community notice) — never an agent edit.
+min_margin_mode = "fixed"
+min_margin_peak_cap = 0.002
+min_margin_floor = 0.0001
+min_margin_decay_hours = 48.0
+min_margin_decay_shape = "linear"
+min_margin_double_on_crown = true
+min_margin_double_factor = 2.0
+# Minimum z = margin/SE a crown needs, independent of δ (staged 2026-09-12,
+# 0 = off = today). The safeguard that pairs with a decaying δ: with δ near
+# the floor the crown bar is k_sigma·SE alone, which a zero-edge
+# challenger (an ε-copy, a same-tier sibling) clears 1 duel in 44; min_z =
+# 2.5 makes that ~1 in 160, 3.0 ~1 in 740. Contract knob: changing it is a
+# weight_version_key event.
+min_z = 0.0
+#
+# Crown mode (STAGED 2026-09-12, OFF = "duel"). Operator rule (Jacob,
+# 2026-09-12 16:39 UTC): "best positive margin of the last 12 hours",
+# replacing the decaying-δ proposal above (kept in code, mode "fixed").
+#   crown_mode = "duel"         every duel crowns on its own bar
+#                               max(k_sigma·SE, δ) + gates — the contract
+#                               since wvk 3 (today).
+#   crown_mode = "window_best"  the king is FROZEN for fixed windows of
+#                               crown_window_blocks chain blocks aligned on
+#                               the block number (window id = decision_block
+#                               // crown_window_blocks; 3600 = 12 h at 12
+#                               s/block). Every challenger judged inside a
+#                               window duels that king, so the paired
+#                               margins are comparable. At the window close
+#                               the candidate with the LARGEST POSITIVE
+#                               margin is crowned. Candidates = verdicts
+#                               with a finite margin > 0 and no gate
+#                               rejection (thought floor, B license, probe,
+#                               min_z); probe rejects, unservable
+#                               checkpoints and infra faults are not
+#                               candidates. The δ / k_sigma bar is still
+#                               computed and stamped on every verdict
+#                               (`duel_rule_wins`) but no longer decides.
+#   crown_confirm_slice = true  the window winner gets ONE fresh n_turns
+#                               slice vs the frozen king (the near-miss
+#                               second-slice draw: seed block_hash ‖ hotkey
+#                               ‖ "|slice<k>", turns disjoint from its
+#                               original slice(s)) and is crowned only if
+#                               the POOLED margin over both slices is still
+#                               > 0; if it fails, the next-best candidate is
+#                               confirmed, up to crown_confirm_max tries.
+#                               The confirmation runs at the start of the
+#                               next window, before that window's first
+#                               duel, and is not a verdict of that window.
+#   crown_one_entry_per_hotkey  one candidate per hotkey per window (its
+#                               best margin); the rest are dropped.
+#   If no positive candidate confirms, the king stays. A window crown
+#   changes nothing else (reign chain / payouts as before). Every close
+#   writes a `window_close` history row: crown_mode, window_id, every
+#   verdict considered (id, hotkey, margin, se, z), the ranked candidates,
+#   the drops with reasons, each confirmation's slice + pooled numbers,
+#   the winner; every verdict stamps crown_mode / window_id /
+#   decision_block / duel_rule_wins / crown_decision.
+#   Flipping the mode CHANGES WHO CROWNS: a weight_version_key event
+#   (explicit dated operator directive + community notice), never an
+#   agent edit.
+# 2026-09-12 (weight_version_key 14→15, explicit dated operator directive
+# 2026-09-12 16:39/16:43 UTC): ON. The king is frozen per 12 h window;
+# the best positive margin of the window is crowned at its close after a
+# confirmation slice. The δ / k_sigma bar below is telemetry from here.
+crown_mode = "window_best"
+crown_window_blocks = 3600
+crown_confirm_slice = true
+crown_confirm_max = 2
+crown_one_entry_per_hotkey = true
 # Median stripped thought length, in characters (2026-08-13, wvk=5).
 # Invalid challenger cannot crown. 80 sits above live cue phrases
 # ("Next command:" = 13, "Next bash command:" = 18) and below guass (~290)
@@ -463,6 +619,26 @@ forfeit_turn_score = -0.1
 #     (2026-09-04) show commands shrinking 426→150–250 chars while thoughts
 #     grow and steps multiply — the rule was indifferent. Cost: +k teacher
 #     echoes per turn per side (lpC_ya_zc; lpC_ya_e is the B baseline).
+#     Probe 2026-09-04 (research/results/v6_action_leg_probe.txt): as
+#     built, per-byte A paid short actions ~10x (king short 0.021 vs long
+#     0.002) and collapsed the crown z +3.5 → +0.5. DO NOT flip that form.
+#
+#   action_norm_bytes = 128    A-leg normalizer (2026-09-10 redesign, staged)
+#     b_i = Σ_bytes[lpC(y_A|z_C^i) − lpC(y_A|∅)] / action_norm_bytes: the
+#     lift is SUMMED over the action's bytes and divided by a fixed byte
+#     count, not by the action's own length. Offline re-normalization of
+#     the 09-04 probe (research/results/v6_action_leg_norm.txt): the summed
+#     lift of the teacher's own actions is ~0.6 nats and independent of
+#     length (Spearman +0.05, n=2388), so per-real-byte was the bias. At
+#     128 (≈ one median teacher action): short/long ratio 10.9 → 0.77,
+#     `ls -la` still negative on 89% of turns, A binds ~37% (R 40 / G 23),
+#     paired z on the probed duel +0.48 → +2.32 (min(R,G) alone +3.53).
+#     Larger values shrink A toward 0 and make it bind more (256: z +3.4,
+#     A binds 43%); 128 keeps the three legs on one scale. Inert unless
+#     score_mode = "min_rga". Absent = the per-byte design (replay only).
+#     Needs a live re-probe (the offline numbers reuse the 09-04 echoes)
+#     before any flip; the flip is a weight_version_key event.
+action_norm_bytes = 128
 #
 #   forfeit_turn_score = -0.1  per-turn score for a side with no parseable action
 #     Until v6 a forfeit was DROPPED from pairing (score.duel paired only

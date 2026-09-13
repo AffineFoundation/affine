@@ -111,6 +111,9 @@ WORKER_EXTENSION = "evalsrv.vllm_ext.WeightTools"
 # Fixed served-model alias for the challenger slots so requests keep
 # resolving across swaps (the repo name is added too, for logs).
 CHALLENGER_ALIAS = "challenger"
+# Stable public model id on the chat pod (chatsrv.KING_ALIAS): clients keep
+# `model = "affine-king"` across crowns.
+CHAT_ALIAS = "affine-king"
 SWAP_CONFIG_IGNORE_KEYS = ("_name_or_path", "transformers_version")
 # generation_config.json keys vLLM turns into request defaults (see
 # ModelConfig.get_diff_sampling_param) plus the stop-token set. Anything
@@ -347,6 +350,46 @@ def _vllm_log_tail(slot_label: str, max_chars: int = 1200) -> str:
     return text.strip()
 
 
+# A vLLM launch whose log shows one of these has already lost its engine
+# core or a TP worker. The API server process usually stays alive anyway
+# (observed 2026-09-11: warmup CUDA assert on vLLM 0.29.0 killed both TP
+# workers, the leader idled, and `_wait_ready` sat out the full 3600 s
+# before failing the duel). Match on the text written AFTER this launch
+# started — the per-slot log is append-only across launches.
+VLLM_FATAL_MARKERS = (
+    "EngineCore failed to start",
+    "Engine core initialization failed",
+    "WorkerProc failed to start",
+    "WorkerProc hit an exception",
+    "device-side assert triggered",
+    "CUDA out of memory",
+    "flashinfer-cubin version",
+)
+
+
+def _vllm_log_fatal(slot_label: str, since_offset: int) -> str:
+    """First fatal marker written to the slot's log since `since_offset`,
+    with a little context; '' when none."""
+    path = LOG_DIR / f"vllm_{slot_label}.log"
+    try:
+        with path.open("rb") as fh:
+            fh.seek(max(0, since_offset))
+            data = fh.read()
+    except OSError:
+        return ""
+    if not data:
+        return ""
+    text = data.decode("utf-8", errors="replace")
+    best = None
+    for needle in VLLM_FATAL_MARKERS:
+        idx = text.find(needle)
+        if idx >= 0 and (best is None or idx < best):
+            best = idx
+    if best is None:
+        return ""
+    return text[max(0, best - 80):best + 400].strip()
+
+
 @dataclass
 class Slot:
     label: str
@@ -361,6 +404,10 @@ class Slot:
     # from `proc` so orphaned workers can still be reaped after the leader
     # process has already crashed (proc.poll() is not None ⇒ getpgid fails).
     pgid: int | None = None
+    # Byte offset of the slot's append-only vllm log when this launch
+    # started; fatal-marker scans (`_vllm_log_fatal`) read from here so an
+    # earlier launch's crash cannot fail the current one.
+    log_offset: int = 0
 
 
 @dataclass
@@ -493,13 +540,16 @@ class Engine:
             # 65k is sized for corpus prefixes, not for 300-step agent runs.
             max_len = int(bs.get("max_model_len", max_len))
         if self.role == "chat":
-            # Chat serves short interactive contexts, not 64k corpus prefixes:
-            # a smaller KV pool leaves the 2-GPU pod headroom, and no echo
-            # traffic means the higher util + big chunks are safe.
+            # No echo traffic on the chat pod, so the higher util + big
+            # chunks are safe. Context: [chat].max_model_len, or the pod's
+            # AFFINE_CHAT_MAX_MODEL_LEN override (.chat_env, pushed by
+            # ops/king-chat/chatbox.sh) — IDE agent clients (Cursor) send
+            # 20-60k-token prompts, far past the website chat's 16k.
             cs = self.cfg.get("chat") or {}
             batched_tokens = int(cs.get("max_num_batched_tokens", 16384))
             gpu_util = cs.get("gpu_memory_utilization", gpu_util)
-            max_len = int(cs.get("max_model_len", max_len))
+            max_len = int(os.environ.get("AFFINE_CHAT_MAX_MODEL_LEN")
+                          or cs.get("max_model_len", max_len))
         # r2 refs are served from their verified local snapshot; the model is
         # still *named* by the ref so client requests (model=<ref>) match.
         cmd = [
@@ -543,13 +593,33 @@ class Engine:
         # effect. Not used on remote teacher.
         if not slot.label.startswith("teacher"):
             cmd += ["--safetensors-load-strategy", "prefetch"]
-        if self.role == "chat":
-            # The chat pod's wire plane serves agent clients (arbos, Cursor)
-            # that drive tool loops over /v1/chat/completions. Qwen-family
-            # kings emit hermes-style <tool_call> blocks. Never set on duel/
-            # bench pods — scoring must see raw completions.
-            cmd += ["--enable-auto-tool-choice", "--tool-call-parser", "hermes"]
+            # vLLM 0.29.0 on 8×H200 (lunar-raven-18, 2026-09-11): CUDA-graph
+            # capture inside compile_or_warm_up_model dies with
+            # "CUDA error: device-side assert" on Qwen3.6-35B TP=2 (king +
+            # challenger). Eager skips capture. Score-invariant (same logits;
+            # slower decode only). Teacher stays graph-enabled when local.
+            # Not on the chat pod: it pins vLLM 0.28 (no assert there) and
+            # serves interactive clients, where eager decode is a visible
+            # slowdown.
+            if self.role != "chat":
+                cmd += ["--enforce-eager"]
         served_names = [repo] if r2store.is_r2(repo) else []
+        if self.role == "chat":
+            # The chat pod's wire plane serves agent clients (Cursor, arbos)
+            # that drive tool loops over /v1/chat/completions. The Qwen3.6
+            # template emits <tool_call><function=NAME><parameter=K>V…
+            # (XML-ish), which the hermes (JSON) parser passes through as
+            # plain text — qwen3_xml is the matching parser (same as the
+            # king-datagen box). The qwen3 reasoning parser files the
+            # <think> block under `reasoning` so IDE clients get a clean
+            # visible answer; since wvk 13 every king closes </think>.
+            # Never set on duel/bench pods — scoring must see raw text.
+            cmd += ["--enable-auto-tool-choice", "--tool-call-parser", "qwen3_xml",
+                    "--reasoning-parser", "qwen3"]
+            # --served-model-name replaces the default id; vLLM echoes the
+            # FIRST name in every response, so the alias leads and the repo
+            # id stays listed (HF kings included) for clients that send it.
+            served_names = [CHAT_ALIAS, repo]
         if not r2store.is_r2(repo) and revision:
             cmd += ["--revision", revision]
         if self._warm_swap_slot(slot):
@@ -687,6 +757,7 @@ class Engine:
                 # /collective_rpc + /reset_prefix_cache for weight swaps.
                 env["VLLM_SERVER_DEV_MODE"] = "1"
             logf = open(LOG_DIR / f"vllm_{slot.label}.log", "a")
+            slot.log_offset = logf.tell()
             log.info("launching %s: %s (gpus=%s)", slot.label, repo, slot.gpus)
             slot.proc = subprocess.Popen(
                 self._vllm_cmd(slot, repo, revision), env=env,
@@ -857,6 +928,17 @@ class Engine:
         detail = f"{reason}" + (f" | {tail}" if tail else "")
         slot.load_error = detail[:1500]
         log.error("%s load failed: %s", slot.label, slot.load_error[:500])
+        # Kill on failure. prepare_miners skips relaunch when same_target +
+        # proc_alive (to let a still-warming engine finish), so a hung /
+        # non-ready process left alive would be waited on again for another
+        # full timeout — seen 2026-09-11 on lunar-raven-18: duel-17b933
+        # hit "not ready after 3600s", zombie kings held GPUs 0–3, and
+        # duel-f4a70e waited on the same dead procs instead of relaunching.
+        try:
+            self._kill(slot)
+        except Exception:
+            log.warning("could not kill %s after load failure", slot.label,
+                        exc_info=True)
         return False
 
     def _probe_http_ready(self, slot: Slot) -> bool:
@@ -871,13 +953,27 @@ class Engine:
         except httpx.HTTPError:
             return False
 
+    def _launch_dead(self, slot: Slot) -> str:
+        """Non-empty when this launch can no longer become ready: the leader
+        exited, or its log shows a fatal engine/worker marker while the
+        leader idles. The lingering leader is killed so the GPUs free up."""
+        if slot.proc is not None and slot.proc.poll() is not None:
+            return f"vllm process exited with {slot.proc.returncode}"
+        fatal = _vllm_log_fatal(slot.label, slot.log_offset)
+        if fatal:
+            log.error("%s: fatal vllm marker while leader alive; killing: %s",
+                      slot.label, fatal[:300])
+            self._kill(slot)
+            return f"vllm engine died during startup: {fatal[:400]}"
+        return ""
+
     def _wait_ready(self, slot: Slot, timeout_s: int = 3600,
                     *, required: bool = True) -> bool:
         t0 = time.time()
         while time.time() - t0 < timeout_s:
-            if slot.proc is not None and slot.proc.poll() is not None:
-                return self._fail_load(
-                    slot, f"vllm process exited with {slot.proc.returncode}")
+            dead = self._launch_dead(slot)
+            if dead:
+                return self._fail_load(slot, dead)
             if self._probe_http_ready(slot):
                 log.info("%s ready in %.0fs", slot.label, time.time() - t0)
                 return True
@@ -908,10 +1004,10 @@ class Engine:
                     log.info("%s ready in %.0fs (first copy)",
                              slot.label, time.time() - t0)
                     return True
-            if all(s.proc is None or s.proc.poll() is not None for s in live):
+            dead = {s.label: self._launch_dead(s) for s in live}
+            if all(dead.values()):
                 for slot in live:
-                    rc = None if slot.proc is None else slot.proc.returncode
-                    self._fail_load(slot, f"vllm process exited with {rc}")
+                    self._fail_load(slot, dead[slot.label])
                 return False
             time.sleep(10)
         for slot in live:
@@ -1369,11 +1465,15 @@ class Engine:
         for slot in (self.chall_slot, self.chal2_slot):
             if slot is None:
                 continue
-            if self._warm_swap_slot(slot) and self._proc_alive(slot):
+            if (self._warm_swap_slot(slot) and slot.ready
+                    and self._proc_alive(slot)):
                 # Keep the engine (compile, CUDA graphs, KV pool) for the
                 # next challenger's in-place weight swap. Nothing else uses
                 # these GPUs between duels. Its snapshot stays in the prune
                 # keep set via slot.served until the swap replaces it.
+                # Require ready: a process that never answered /v1/models
+                # (timeout / CUDA assert) must not be "kept warm" — that
+                # left GPU zombies after the 2026-09-11 3600s hangs.
                 log.info("%s kept warm for the next challenger (%s)",
                          slot.label, (slot.served.repo if slot.served else "?"))
                 continue
