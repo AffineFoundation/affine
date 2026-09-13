@@ -289,9 +289,17 @@ key_env = "ENGY"
 # `king_*` policy, 0 (off) for the others — set the key to override.
 
 
+# -- P2 (improvement-loop, 2026-09-13): the king under the RESUMABLE harnesses
+# (mini_swe_textbased, bash, pi) at share 3.0 (sampled) / 2.0 (greedy) vs
+# 2.0 / 1.0 under the ACP agents and terminus. king_recoverable (83 strata
+# vs a 4 % cap) and king_pivot (376 vs 3 %) are supply-starved and the
+# recoverable pipeline can only replay king states from harnesses it can
+# resume; greedy is where the loops show. Within a [defaults] source the
+# king now takes 27/41 of the turns (was 21/35), 15/27 of them resumable.
+
 [policy.king_textbased]
 harness = "mini_swe_textbased"
-share = 2.0
+share = 3.0
 
 [policy.king_textbased.sampling]
 temperature = 0.8
@@ -305,7 +313,7 @@ key_env = "KING_KEY"
 [policy.king_bashtool]
 harness = "bash"
 action_kind = "tool_call"
-share = 2.0
+share = 3.0
 
 [policy.king_bashtool.sampling]
 temperature = 0.8
@@ -319,7 +327,7 @@ key_env = "KING_KEY"
 [policy.king_pi]
 harness = "pi"
 action_kind = "tool_call"
-share = 2.0
+share = 3.0
 
 [policy.king_pi.sampling]
 temperature = 0.8
@@ -531,7 +539,7 @@ key_env = "KING_KEY"
 
 [policy.king_textbased_greedy]
 harness = "mini_swe_textbased"
-share = 1.0
+share = 2.0
 [policy.king_textbased_greedy.sampling]
 temperature = 0.0
 [[policy.king_textbased_greedy.endpoints]]
@@ -543,7 +551,7 @@ key_env = "KING_KEY"
 [policy.king_bashtool_greedy]
 harness = "bash"
 action_kind = "tool_call"
-share = 1.0
+share = 2.0
 [policy.king_bashtool_greedy.sampling]
 temperature = 0.0
 [[policy.king_bashtool_greedy.endpoints]]
@@ -555,7 +563,7 @@ key_env = "KING_KEY"
 [policy.king_pi_greedy]
 harness = "pi"
 action_kind = "tool_call"
-share = 1.0
+share = 2.0
 [policy.king_pi_greedy.sampling]
 temperature = 0.0
 [[policy.king_pi_greedy.endpoints]]

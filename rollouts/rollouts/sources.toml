@@ -557,6 +557,41 @@ strata_buckets = 500
 strata_offset = 470
 share = 1.0
 
+[source.affine_notool]
+# "Do not act" states (improvement-loop P1, 2026-09-13): knowledge
+# questions served WITH 3-6 unrelated tool schemas — the BFCL-irrelevance
+# shape, built in-house (rollouts/envs/affine_notool_v1; BFCL itself is a
+# held-out benchmark and is never used). Items = TriviaQA rc.wikipedia
+# .nocontext TRAIN questions (61,888; validation stays out of D), tools
+# sampled per question id from a 24-tool pool of calendar / email / smart-
+# home / travel / finance / file actions that cannot answer anything. The
+# right reply is prose: `solved` = correct alias AND zero tool calls;
+# `correct` and `tool_called` are metrics. A rollout that keeps calling
+# tools is cut at 4 turns under the name `max_turns` (clean failure).
+# Probe 2026-09-13 (datagen-2): teacher 0/5 tool calls, 3/5 solved; king
+# (reign 12) 5/8 called a tool and looped to the cap, 1/8 solved.
+# Policies are the tool_call trio (null harness with tool schemas): the
+# teacher's prose answer folds as a `text` turn (text_final rule), the
+# king's tool call as `tool_call` — the `king_tooluse` material; the fold
+# worker adds this source to [king_tooluse].sources (see the
+# improvement-loop doc). tool_use bucket namespace: wiki 0-469, agent
+# 470-969, this source 970-1199.
+group = "tool_use"
+runner = "verifiers_chat"
+taskset_id = "affine-notool-v1"          # rollouts/envs/affine_notool_v1
+catalog = "hf"
+dataset = "mandarjoshi/trivia_qa"
+dataset_config = "rc.wikipedia.nocontext"
+dataset_revision = "0f7faf33a3908546c6fd5b73a660e0f8ff173c2f"
+split = "train"
+row_meta = "notool"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_toolcall", "king_toolcall", "king_toolcall_greedy"]
+strata_buckets = 230
+strata_offset = 970
+share = 1.0
+
 # -- general (env wave 1, 2026-09-11; data plan W3 "environment breadth") ---------
 #
 # Eight Prime RL environments outside the coding / terminal axis, onboarded
