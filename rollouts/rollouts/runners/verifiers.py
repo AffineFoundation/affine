@@ -246,20 +246,44 @@ def _per_task_rows(envelopes: list[dict]) -> list[dict]:
     return rows
 
 
-def _batch_suspect(per_task: list[dict], produced_traces: bool) -> bool:
-    """A batch with no traces, or where nothing resolved and most rollouts
-    errored with provider-failure signatures, is retried on the fallback
-    endpoint."""
+BATCH_OK = "ok"
+BATCH_PROVIDER = "provider-suspect"
+BATCH_ENV = "env-failure"
+
+
+def classify_batch(code: int, out_tail: str, per_task: list[dict],
+                   produced_traces: bool) -> str:
+    """Who is to blame for a bad batch.
+
+    BATCH_PROVIDER — the endpoint: rollouts (or, with no traces at all, the
+    eval's own output) carry provider-failure signatures (429 / 401 / 5xx /
+    connection / timeout, datagen.providers.FAILURE_SIGNATURES). Strikes the
+    endpoint and retries on the policy's fallback chain.
+
+    BATCH_ENV — the source / harness: the eval exited non-zero or produced
+    nothing, or every rollout errored, WITHOUT a provider signature (a
+    taskset that fails to load, a docker build, a harness crash). The
+    endpoint is left alone and there is no fallback retry (the same code
+    would crash again); the supervisor's zero-yield streak cools the SOURCE.
+    Until 2026-09-13 this case struck the endpoint: `affine_rgym`'s taskset
+    crashed in ~7 s on every pod and each crash cooled the TEACHER endpoint
+    60 / 120 / 240 s, so the whole teacher seat idled — and once the source
+    had a king policy, teacher cycles were routed onto the king.
+
+    BATCH_OK — anything that resolved, or fewer than half errored."""
     if not produced_traces or not per_task:
-        return True
-    errored = [r for r in per_task if r.get("error")]
+        return (BATCH_PROVIDER if looks_like_provider_failure(out_tail)
+                else BATCH_ENV)
     if any(r["resolved"] == 1.0 for r in per_task):
-        return False
+        return BATCH_OK if code == 0 else BATCH_ENV
+    errored = [r for r in per_task if r.get("error")]
     if len(errored) < max(1, len(per_task) // 2):
-        return False
+        return BATCH_OK if code == 0 else BATCH_ENV
     blob = " ".join(str(r.get("error") or "") + str(r.get("stop") or "")
                     for r in errored)
-    return looks_like_provider_failure(blob) or len(errored) == len(per_task)
+    if looks_like_provider_failure(blob):
+        return BATCH_PROVIDER
+    return BATCH_ENV if (code != 0 or len(errored) == len(per_task)) else BATCH_OK
 
 
 class VerifiersRunner:
@@ -328,17 +352,26 @@ class VerifiersRunner:
                     log.info("%d rollout(s) finished without a visible reply "
                              "-> stop_condition=%s", n_silent, NO_VISIBLE_REPLY_STOP)
             per_task = _per_task_rows(envelopes)
-            suspect = code != 0 or _batch_suspect(per_task,
-                                                  traces_path.exists())
-            log.info("batch via %s: exit=%s tasks=%d resolved=%d%s",
+            # Only the tail is read for provider signatures: the eval prints
+            # its config first, and a crash's exception sits on the last lines.
+            verdict = classify_batch(code, out[-1500:], per_task,
+                                     traces_path.exists())
+            log.info("batch via %s: exit=%s tasks=%d resolved=%d [%s]",
                      endpoint.name, code, len(per_task),
-                     sum(1 for r in per_task if r["resolved"] == 1.0),
-                     " [provider-suspect]" if suspect else "")
-            if suspect:
+                     sum(1 for r in per_task if r["resolved"] == 1.0), verdict)
+            if verdict == BATCH_PROVIDER:
                 self.health.strike(endpoint.name, f"eval exit {code}")
-            else:
+            elif verdict == BATCH_OK:
                 self.health.mark_ok(endpoint.name)
-            if not suspect or attempt == len(endpoints) - 1:
+            else:
+                # Source-side failure: the endpoint keeps its health and the
+                # source takes the zero-yield strike (run.py
+                # record_batch_yield -> scheduler cooldown after 3).
+                log.warning("source %s: env/harness failure on %s (exit %s, "
+                            "%d traces) — not an endpoint fault; no strike, "
+                            "no fallback retry", source.name, endpoint.name,
+                            code, len(per_task))
+            if verdict != BATCH_PROVIDER or attempt == len(endpoints) - 1:
                 result.envelopes = envelopes
                 result.per_task.extend(per_task)
                 result.endpoint = endpoint
