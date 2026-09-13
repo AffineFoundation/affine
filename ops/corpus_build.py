@@ -74,8 +74,8 @@ sys.path.insert(0, str(REPO / "affine"))
 
 from affine import dialects  # noqa: E402
 from affine.config import load_config  # noqa: E402
-from affine.corpus.completion import final_completion  # noqa: E402
-from affine.corpus.loops import IN_LOOP, ONSET, label_loops  # noqa: E402
+from affine.corpus.completion import completion_kind, final_completion  # noqa: E402
+from affine.corpus.loops import ESCAPE, IN_LOOP, ONSET, label_loops  # noqa: E402
 from affine.corpus.materialize import stratum_key  # noqa: E402
 from affine.corpus.pack import PackResult  # noqa: E402
 from affine.corpus.publish import CorpusPublisher  # noqa: E402
@@ -221,11 +221,14 @@ def load_king_fail() -> dict:
     cfg = raw.get("king_fail") or {}
     if not cfg:
         return {}
+    common = load_king_common()
     return {"group": "king_fail",
             "strata_buckets": int(cfg.get("strata_buckets", 0) or 0),
-            "policy_prefix": str(cfg.get("policy_prefix") or "king_"),
+            "policy_prefix": str(cfg.get("policy_prefix") or common["policy_prefix"]),
             "exclude_sources": frozenset(str(x) for x in
-                                         (cfg.get("exclude_sources") or []))}
+                                         (cfg.get("exclude_sources") or []))
+            | common["exclude_sources"],
+            "common": common}
 
 
 # Turn-routed fold groups (2026-09-11, data events): derive_chunk splits
@@ -237,9 +240,33 @@ def load_king_fail() -> dict:
 KING_LOOP_GROUP = "king_loop_onset"
 KING_PIVOT_GROUP = "king_pivot"
 KING_RECOVERABLE_GROUP = "king_recoverable"
+KING_DONE_GROUP = "king_done"
 COMPLETION_GROUP = "completion"
-# Precedence order when one turn qualifies for several.
-ROUTED_GROUPS = (KING_RECOVERABLE_GROUP, KING_PIVOT_GROUP, KING_LOOP_GROUP, COMPLETION_GROUP)
+KING_GROUPS = ("king_fail", KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_PIVOT_GROUP,
+               KING_LOOP_GROUP)
+# Precedence order when one turn qualifies for several (king-data spec §3.3).
+ROUTED_GROUPS = (KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_PIVOT_GROUP, KING_LOOP_GROUP,
+                 COMPLETION_GROUP)
+
+
+def load_king_common() -> dict:
+    """[king_common] (king-data spec, 2026-09-13): rules every king_* group
+    inherits. `exclude_sources` are unioned into each group's own list;
+    `one_reply_ok = false` keeps one-reply rollouts (the state is just the
+    task prompt, already in D through the teacher) out of every king group;
+    `first_onset_only` keeps one loop onset per rollout; `max_turns_per_
+    rollout` caps king_fail; `kind_by_teacher` is a KNOB ONLY (not
+    implemented -- it would change which parser scores a turn; Jacob's
+    call)."""
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("king_common") or {}
+    return {"policy_prefix": str(raw.get("policy_prefix") or "king_"),
+            "exclude_sources": frozenset(str(x) for x in (raw.get("exclude_sources") or [])),
+            "one_reply_ok": bool(raw.get("one_reply_ok", False)),
+            "first_onset_only": bool(raw.get("first_onset_only", True)),
+            "max_turns_per_rollout": int(raw.get("max_turns_per_rollout", 0) or 0),
+            "kind_by_teacher": bool(raw.get("kind_by_teacher", False)),
+            "retire_excluded_published": bool(raw.get("retire_excluded_published", False)),
+            "retire_later_onsets": bool(raw.get("retire_later_onsets", False))}
 
 
 def _group_cfg(group: str) -> dict:
@@ -248,13 +275,19 @@ def _group_cfg(group: str) -> dict:
     cfg = raw.get(group) or {}
     if not cfg:
         return {}
-    return {"group": group,
-            "strata_buckets": int(cfg.get("strata_buckets", 0) or 0),
-            "policy_prefix": str(cfg.get("policy_prefix") or ""),
-            "exclude_sources": frozenset(str(s) for s in
-                                         (cfg.get("exclude_sources") or [])),
-            "leak_exempt": bool(cfg.get("leak_exempt", False)),
-            "raw": cfg}
+    out = {"group": group,
+           "strata_buckets": int(cfg.get("strata_buckets", 0) or 0),
+           "policy_prefix": str(cfg.get("policy_prefix") or ""),
+           "exclude_sources": frozenset(str(s) for s in
+                                        (cfg.get("exclude_sources") or [])),
+           "leak_exempt": bool(cfg.get("leak_exempt", False)),
+           "raw": cfg}
+    if group in KING_GROUPS:
+        common = load_king_common()
+        out["policy_prefix"] = out["policy_prefix"] or common["policy_prefix"]
+        out["exclude_sources"] = out["exclude_sources"] | common["exclude_sources"]
+        out["common"] = common
+    return out
 
 
 def load_king_loop_onset() -> dict:
@@ -324,6 +357,22 @@ def load_king_recoverable() -> dict:
                             row_ok=lambda row: bool(row.get("admit")))
 
 
+def load_king_done() -> dict:
+    """[king_done] (king-data spec §2.2, 2026-09-13): done-blind states.
+    The king's reply at turn k-1 was completion-eligible by the harness
+    rule (affine.corpus.completion: `submit`, a finish tool, Terminus
+    `task_complete`, a prose report with no action) yet the rollout went on
+    for >= `min_more_turns` more replies on the main root; the routed state
+    is turn k -- the first turn where the king kept going instead of
+    stopping. One per rollout (the first). Leak rule waived like every king
+    group."""
+    cfg = _group_cfg(KING_DONE_GROUP)
+    if cfg:
+        cfg["leak_exempt"] = True
+        cfg["min_more_turns"] = int(cfg["raw"].get("min_more_turns", 2) or 2)
+    return cfg
+
+
 def load_completion() -> dict:
     """[completion]: the reply that ended a SOLVED rollout on purpose
     (affine.corpus.completion), teacher and king alike. `policy_prefix`
@@ -346,25 +395,66 @@ def _policy_ok(env: dict, cfg: dict) -> bool:
     return str(env.get("source") or "") not in cfg["exclude_sources"]
 
 
+def main_reply_count(env: dict) -> int:
+    return len(main_root_indices(env["trace"]))
+
+
+def king_multi_turn(env: dict, cfg: dict) -> bool:
+    """One-reply rollouts never route to a king group unless the common
+    block says so (`one_reply_ok`)."""
+    common = (cfg or {}).get("common") or {}
+    return bool(common.get("one_reply_ok")) or main_reply_count(env) >= 2
+
+
 def king_loop_candidate(env: dict, cfg: dict) -> bool:
     """A rollout the loop labeler runs on: played by a king policy, graded
     FAILED by its env (the same test as `route_king_fail`), from a source
     the group admits. tool_use sources are excluded by config: the teacher's
     next tool call is near-deterministic there, so centered R is ~0 and a
     loop prefix carries no signal (wvk-11 findings)."""
-    return _policy_ok(env, cfg) and rollout_outcome(env["trace"]) == "failed"
+    return (_policy_ok(env, cfg) and king_multi_turn(env, cfg)
+            and rollout_outcome(env["trace"]) == "failed")
 
 
 def side_table_turns(env: dict, cfg: dict) -> dict[int, dict]:
     """Admitted side-table rows for this rollout, {turn_idx: row}; {} when
     the rollout has none or is not a failed king rollout of an admitted
     source (king_pivot, king_recoverable)."""
-    if not cfg or not _policy_ok(env, cfg):
+    if not cfg or not _policy_ok(env, cfg) or not king_multi_turn(env, cfg):
         return {}
     rows = cfg["table"].get(str(env.get("rollout_id") or ""))
     if not rows or rollout_outcome(env["trace"]) != "failed":
         return {}
     return dict(rows)
+
+
+def king_done_turn(main_convs: list[list[dict]], kind: str, min_more: int) -> int | None:
+    """Position (within the main-root replies) of the first turn that
+    follows a completion-eligible reply while >= `min_more` replies follow
+    it -- the king said/attempted "done" and kept going. None if no such
+    turn."""
+    for k in range(1, len(main_convs)):
+        if len(main_convs) - k < min_more:
+            return None
+        prev = main_convs[k - 1]
+        if prev and prev[-1]["role"] == "assistant" \
+                and completion_kind(prev[-1]["content"], kind) is not None:
+            return k
+    return None
+
+
+def cap_king_fail_turns(idx: set[int], escapes: set[int], cap: int) -> set[int]:
+    """At most `cap` king_fail turns per rollout: labeler escape turns first
+    (recovery states), then the rest spread evenly over depth."""
+    if cap <= 0 or len(idx) <= cap:
+        return set(idx)
+    keep = sorted(i for i in idx if i in escapes)[:cap]
+    rest = sorted(i for i in idx if i not in keep)
+    room = cap - len(keep)
+    if room > 0 and rest:
+        step = len(rest) / room
+        keep += [rest[min(len(rest) - 1, int(j * step))] for j in range(room)]
+    return set(keep)
 
 
 king_pivot_turns = side_table_turns
@@ -452,6 +542,10 @@ def route_king_fail(records: list[dict], king: dict, drops: dict[str, int]
             # 2026-09-12: wiki / agent / math king failures carry no R
             # signal (teacher refs identical there); they leave the seat.
             drops["king_excluded_source"] = drops.get("king_excluded_source", 0) + 1
+            continue
+        if (not (king.get("common") or {}).get("one_reply_ok")
+                and int(rec.get("n_replies", 99)) < 2):
+            drops["king_one_reply"] = drops.get("king_one_reply", 0) + 1
             continue
         outcome = rec.get("outcome") or "unscored"
         if outcome == "solved":
@@ -767,7 +861,11 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                  king_pivot: dict | None = None,
                  completion: dict | None = None,
                  king_recoverable: dict | None = None,
-                 notes: dict[str, int] | None = None) -> list[dict]:
+                 king_done: dict | None = None,
+                 king_fail_cfg: dict | None = None,
+                 notes: dict[str, int] | None = None,
+                 published_king_ns: dict[str, str] | None = None,
+                 reclaimed: dict[str, set[str]] | None = None) -> list[dict]:
     """View records for one trace chunk, with only the turns that pass the
     fold contract and are not yet published. Records with no surviving
     turn are dropped.
@@ -792,10 +890,17 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
     telemetry that is not a drop (`<group>_leak_exempt`: routed turns
     admitted that the leak rule would have refused; `<group>_leaked`:
     candidate turns the leak rule did refuse because the group is not
-    exempt)."""
+    exempt).
+    `published_king_ns` ({turn_id: king group it is published under}) lets a
+    routed king group RECLAIM a turn already in D under a lower-precedence
+    king group: the turn is admitted here and its id recorded in
+    `reclaimed[<old group>]` so the caller retires the old index row in the
+    same revision (one group per turn, precedence wins)."""
     notes = notes if notes is not None else {}
     cfgs = {KING_LOOP_GROUP: king_loop, KING_PIVOT_GROUP: king_pivot,
-            COMPLETION_GROUP: completion, KING_RECOVERABLE_GROUP: king_recoverable}
+            COMPLETION_GROUP: completion, KING_RECOVERABLE_GROUP: king_recoverable,
+            KING_DONE_GROUP: king_done}
+    common = (king_fail_cfg or {}).get("common") or load_king_common()
     out: list[dict] = []
     for env in iter_jsonl_gz(path):
         convs = None
@@ -806,8 +911,13 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         want_loop = bool(king_loop) and king_loop_candidate(env, king_loop)
         pivots = side_table_turns(env, king_pivot) if king_pivot else {}
         recoverable = side_table_turns(env, king_recoverable) if king_recoverable else {}
+        want_done = bool(king_done) and king_loop_candidate(env, king_done)
+        is_king_fail = (bool(king_fail_cfg) and _policy_ok(env, king_fail_cfg)
+                        and rollout_outcome(env["trace"]) == "failed")
+        one_reply_king = (is_king_fail and not king_multi_turn(env, king_fail_cfg))
+        escapes: set[int] = set()
         want_completion = bool(completion) and completion_candidate(env, completion)
-        if want_loop or want_completion:
+        if want_loop or want_completion or want_done:
             try:
                 convs = trace_conversations(env["trace"], baker)
             except (ToolParityError, TraceShapeError) as e:
@@ -828,19 +938,41 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                 route[i] = COMPLETION_GROUP
                 extra[i] = {"completion_kind": ckind}
                 _count(notes, f"completion_kind_{ckind}")
+        later_onsets: set[int] = set()
         if want_loop and main_convs:
             n_on = 0
             for j, lab in enumerate(label_loops(main_convs, kind)):
                 i = main[j]
                 if lab.label == ONSET:
-                    route[i] = KING_LOOP_GROUP
-                    extra[i] = {"loop_onset_of": int(main[int(lab.repeats)])}
                     n_on += 1
+                    if n_on > 1 and common["first_onset_only"]:
+                        # Later onsets are near-duplicate prefixes of the same
+                        # wreck (first onsets recover 28 %, later 13 %).
+                        later_onsets.add(i)
+                        continue
+                    route[i] = KING_LOOP_GROUP
+                    extra[i] = {"loop_onset_of": int(main[int(lab.repeats)]),
+                                "onset_rank": n_on}
                 elif lab.label == IN_LOOP:
                     in_loop.add(i)
+                elif lab.label == ESCAPE:
+                    escapes.add(i)
             _count(notes, "king_loop_labelled_rollouts")
             _count(notes, "king_loop_onset_labels", n_on)
             _count(notes, "king_loop_in_loop_labels", len(in_loop))
+            _count(notes, "king_later_onset_labels", len(later_onsets))
+        if want_done and main_convs:
+            k = king_done_turn(main_convs, kind, king_done["min_more_turns"])
+            if k is not None:
+                i = main[k]
+                _count(notes, "king_done_states")
+                if route.get(i) == KING_LOOP_GROUP:
+                    _count(notes, "king_done_over_onset")
+                done_route = i
+            else:
+                done_route = None
+        else:
+            done_route = None
         if pivots:
             _count(notes, "king_pivot_rollouts")
             for i, row in pivots.items():
@@ -865,6 +997,18 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                     "teacher_turns": row.get("teacher_turns"),
                     "teacher_first_action_kind": row.get("teacher_first_action_kind"),
                     "timestamp": row.get("timestamp")}}
+        if done_route is not None:
+            if route.get(done_route) in (KING_RECOVERABLE_GROUP, KING_PIVOT_GROUP):
+                _count(notes, f"king_done_over_{route[done_route]}")
+            route[done_route] = KING_DONE_GROUP
+            in_loop.discard(done_route)
+            later_onsets.discard(done_route)
+            extra[done_route] = {"done": {"after_turn": int(done_route) - 1}}
+        if one_reply_king:
+            # The state is the task prompt, which the teacher's own rollout
+            # already puts in D: nothing of this rollout enters a king group.
+            _count(drops, "king_one_reply")
+            continue
         leak_exempt = frozenset(i for i, g in route.items() if cfgs[g]["leak_exempt"])
         try:
             rec = build_view_record(env, baker=baker,
@@ -884,11 +1028,14 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             _count_leaked({i: g for i, g in route.items() if i not in present},
                           convs, kind, leak_exempt, notes)
         rest = [t for t in turns if t["turn_idx"] not in route
-                and t["turn_idx"] not in in_loop]
+                and t["turn_idx"] not in in_loop and t["turn_idx"] not in later_onsets]
         routed = [t for t in turns if t["turn_idx"] in route]
-        n_in_loop = len(turns) - len(routed) - len(rest)
+        n_later = sum(1 for t in turns if t["turn_idx"] in later_onsets)
+        n_in_loop = len(turns) - len(routed) - len(rest) - n_later
         if n_in_loop:
             _count(drops, "king_in_loop", n_in_loop)
+        if n_later:
+            _count(drops, "king_later_onset", n_later)
         kept, d = validate_turns(rest, panel=panel, allowed_kinds=allowed_kinds)
         for k, v in d.items():
             _count(drops, k, v)
@@ -908,10 +1055,18 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             tid = f"{t['traj_id']}:{t['turn_idx']}"
             g = route.get(t["turn_idx"])
             if tid in published:
-                _count(drops, "already_published")
-                if g is not None:
-                    _count(notes, f"{g}_already_published")
-                continue
+                old_ns = (published_king_ns or {}).get(tid)
+                rank = {grp: i for i, grp in enumerate(ROUTED_GROUPS)}
+                if (g in KING_GROUPS and old_ns in KING_GROUPS and old_ns != g
+                        and rank.get(g, 99) < rank.get(old_ns, 99)
+                        and reclaimed is not None):
+                    reclaimed.setdefault(old_ns, set()).add(tid)
+                    _count(notes, f"{g}_reclaimed_from_{old_ns}")
+                else:
+                    _count(drops, "already_published")
+                    if g is not None:
+                        _count(notes, f"{g}_already_published")
+                    continue
             if prefix_over_token_cap(t, baker):
                 _count(drops, "prefix_too_many_tokens")
                 continue
@@ -922,8 +1077,15 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             leaks = reference_leaks(t["prefix"], dialects.last_action(
                 t["reference_turn"], t["action_kind"]))
             _count(notes, f"{g}_leak_exempt" if leaks else f"{g}_not_leaking")
+        if is_king_fail and common["max_turns_per_rollout"] \
+                and len(keep_idx) > common["max_turns_per_rollout"]:
+            capped = cap_king_fail_turns(keep_idx, escapes, common["max_turns_per_rollout"])
+            _count(drops, "king_fail_cap", len(keep_idx) - len(capped))
+            keep_idx = capped
         metas = rec["turns"]
         rec["turns"] = [m for m in metas if m["turn_idx"] in keep_idx]
+        if is_king_fail:
+            rec["n_replies"] = len(main)
         if rec["turns"]:
             out.append(rec)
         for g in ROUTED_GROUPS:
@@ -1029,7 +1191,9 @@ def load_math_filter() -> dict:
     cfg = raw.get("math_filter") or {}
     if not cfg or not cfg.get("enabled", True):
         return {}
-    return {"source": str(cfg.get("source") or "affine_math"),
+    sources = cfg.get("sources") or [cfg.get("source") or "affine_math"]
+    return {"source": str(sources[0]),
+            "sources": frozenset(str(x) for x in sources),
             "retire_published": bool(cfg.get("retire_published", True)),
             "min_surviving_strata": int(cfg.get("min_surviving_strata", 100) or 0),
             "teacher_prefix": str(cfg.get("teacher_prefix") or "teacher_"),
@@ -1059,11 +1223,12 @@ def math_keep_set(pub: PublicCorpus, traces_manifest: dict, cfg: dict
     per: dict[str, dict] = {}
     n_chunks = 0
     for c in traces_manifest["chunks"]:
-        if not c["key"].rsplit("/", 1)[-1].startswith(f"{cfg['source']}-"):
+        name = c["key"].rsplit("/", 1)[-1]
+        if not any(name.startswith(f"{src}-") for src in cfg["sources"]):
             continue
         n_chunks += 1
         for env in iter_jsonl_gz(pub.cached(c["key"], c["sha256"], gz_sha=True)):
-            if str(env.get("source") or "") != cfg["source"]:
+            if str(env.get("source") or "") not in cfg["sources"]:
                 continue
             sid = str((env.get("task") or {}).get("sid") or "")
             pid = str((env.get("policy") or {}).get("id") or "")
@@ -1110,7 +1275,7 @@ def math_retire_plan(pub: PublicCorpus, live: dict | None, cfg: dict,
     retired_strata: set[str] = set()
     for tid, traj, src, stratum in zip(*(table.column(c).to_pylist()
                                           for c in ("turn_id", "traj_id", "source", "stratum"))):
-        if src != cfg["source"] or not str(stratum).startswith(f"{group}:"):
+        if src not in cfg["sources"] or not str(stratum).startswith(f"{group}:"):
             continue
         m = TRAJ_SHA8_RE.search(traj or "")
         if m and m.group(1) in keep_sha8:
@@ -1155,6 +1320,39 @@ def strata_after_retire(pub: PublicCorpus, live: dict | None, group: str,
         if str(stratum).startswith(f"{group}:") and tid not in retire:
             out.add(stratum)
     return out
+
+
+def king_fail_source_retire(pub: PublicCorpus, live: dict | None,
+                            excluded: frozenset[str]) -> list[str]:
+    """Published `king_fail:*` rows whose source the king groups now exclude
+    (wiki / agent / math and the one-reply general sources): the state is
+    the task prompt or an R-dead tool loop (king-data spec §1.2)."""
+    table = index_table(pub, live, ["turn_id", "stratum", "source"])
+    if table is None:
+        return []
+    return [tid for tid, stratum, src in zip(table.column("turn_id").to_pylist(),
+                                              table.column("stratum").to_pylist(),
+                                              table.column("source").to_pylist())
+            if str(stratum).startswith("king_fail:") and str(src) in excluded]
+
+
+def later_onset_retire(pub: PublicCorpus, live: dict | None) -> list[str]:
+    """Published `king_loop_onset:*` rows that are not the FIRST onset of
+    their rollout (lowest turn_idx per traj_id): near-duplicate prefixes of
+    the same wreck (king-data spec §1.3)."""
+    table = index_table(pub, live, ["turn_id", "traj_id", "turn_idx", "stratum"])
+    if table is None:
+        return []
+    first: dict[str, tuple[int, str]] = {}
+    rows: list[tuple[str, str, int]] = []
+    for tid, traj, tix, stratum in zip(*(table.column(c).to_pylist()
+                                         for c in ("turn_id", "traj_id", "turn_idx", "stratum"))):
+        if not str(stratum).startswith("king_loop_onset:"):
+            continue
+        rows.append((tid, traj, int(tix)))
+        if traj not in first or int(tix) < first[traj][0]:
+            first[traj] = (int(tix), tid)
+    return [tid for tid, traj, _ in rows if first[traj][1] != tid]
 
 
 # -- composition guard ----------------------------------------------------------
@@ -1530,16 +1728,19 @@ def main() -> None:
     routed = {KING_LOOP_GROUP: load_king_loop_onset(),
               KING_PIVOT_GROUP: load_king_pivot(),
               KING_RECOVERABLE_GROUP: load_king_recoverable(),
+              KING_DONE_GROUP: load_king_done(),
               COMPLETION_GROUP: load_completion()}
+    king = load_king_fail()
+    log(f"king_common: {load_king_common()}")
     for g, cfg in routed.items():
         if cfg and mix.get(g, 0.0) <= 0:
             # Fail closed: group_of would file the routed records under coding.
             fatal(f"[{g}] is configured but the fold mix has no {g} share")
         shown = {k: v for k, v in (cfg or {}).items() if k not in ("raw", "table")}
         log(f"{g}: {'off' if not cfg else shown}")
-    king_loop, king_pivot, completion, king_recoverable = (
+    king_loop, king_pivot, completion, king_recoverable, king_done = (
         routed[g] for g in (KING_LOOP_GROUP, KING_PIVOT_GROUP, COMPLETION_GROUP,
-                            KING_RECOVERABLE_GROUP))
+                            KING_RECOVERABLE_GROUP, KING_DONE_GROUP))
     if completion:
         # A group the fold mix holds at 0 contributes nothing to D -- not
         # even its finals (env wave 1: `general` = 0.0 until the operator
@@ -1567,6 +1768,19 @@ def main() -> None:
                 f"{ {k: len(v) for k, v in readmits[g].items()} }; unpublishing them for this run")
             published -= ids
 
+    # King rows in the live index by group: lets a higher-precedence king
+    # group reclaim a turn published under a lower one (king_done over
+    # king_fail, ...); the old row is retired in this revision.
+    published_king_ns: dict[str, str] = {}
+    kt = index_table(pub, live, ["turn_id", "stratum"])
+    if kt is not None:
+        for tid, stratum in zip(kt.column("turn_id").to_pylist(),
+                                kt.column("stratum").to_pylist()):
+            ns = str(stratum).split(":")[0]
+            if ns in KING_GROUPS:
+                published_king_ns[tid] = ns
+    reclaimed: dict[str, set[str]] = {}
+
     baker = ToolBaker.from_pretrained()
     panel = panel_keys()
     drops: dict[str, int] = {}
@@ -1577,7 +1791,8 @@ def main() -> None:
         recs = derive_chunk(path, baker, panel, allowed, published, drops,
                             king_loop=king_loop, king_pivot=king_pivot,
                             completion=completion, king_recoverable=king_recoverable,
-                            notes=notes)
+                            king_done=king_done, king_fail_cfg=king, notes=notes,
+                            published_king_ns=published_king_ns, reclaimed=reclaimed)
         for rec in recs:
             for m in rec["turns"]:
                 published.add(f"{rec['traj_id']}:{m['turn_idx']}")
@@ -1602,6 +1817,17 @@ def main() -> None:
             f"{notes.get(f'{KING_PIVOT_GROUP}_already_published', 0)} already published "
             f"(stay in their current group); {notes.get('king_pivot_over_onset', 0)} "
             f"took precedence over an onset")
+    if king_done:
+        log(f"king done: {notes.get('king_done_states', 0)} done-blind states; admitted "
+            f"{notes.get(f'{KING_DONE_GROUP}_leak_exempt', 0)} leak-exempt + "
+            f"{notes.get(f'{KING_DONE_GROUP}_not_leaking', 0)} not leaking; "
+            f"{notes.get(f'{KING_DONE_GROUP}_already_published', 0)} already published; "
+            f"over onset {notes.get('king_done_over_onset', 0)} / recoverable "
+            f"{notes.get(f'king_done_over_{KING_RECOVERABLE_GROUP}', 0)} / pivot "
+            f"{notes.get(f'king_done_over_{KING_PIVOT_GROUP}', 0)}; later onsets dropped "
+            f"{drops.get('king_later_onset', 0)} (labels {notes.get('king_later_onset_labels', 0)}); "
+            f"one-reply king rollouts dropped {drops.get('king_one_reply', 0)}; king_fail "
+            f"per-rollout cap dropped {drops.get('king_fail_cap', 0)} turns")
     if king_recoverable:
         log(f"king recoverable: {notes.get('king_recoverable_rollouts', 0)} rollouts with admitted "
             f"states seen; admitted {notes.get(f'{KING_RECOVERABLE_GROUP}_leak_exempt', 0)} "
@@ -1631,15 +1857,18 @@ def main() -> None:
         log(f"math re-source: {mstats}")
         retire_ids, math_surviving, math_retired_strata = math_retire_plan(
             pub, live, math_cfg, keep, src2grp.get(math_cfg["source"], DEFAULT_GROUP))
-        cand_math = [r for r in candidates if str(r.get("source") or "") == math_cfg["source"]]
+        cand_math = [r for r in candidates if str(r.get("source") or "") in math_cfg["sources"]]
         cand_keep = [r for r in cand_math if str(r.get("instance_id")) in keep]
         # Survival = strata the kept published turns hold + what kept
         # candidates would open (bucket assignment happens below; recompute
         # the bucket here from the source's setting).
-        n_b, off = buckets.get(math_cfg["source"], (0, 0))
-        grp = src2grp.get(math_cfg["source"], DEFAULT_GROUP)
-        cand_strata = {f"{grp}:{off + int(hashlib.sha256(str(r['instance_id']).encode()).hexdigest()[:8], 16) % n_b:04d}"
-                       for r in cand_keep} if n_b else set()
+        cand_strata: set[str] = set()
+        for r in cand_keep:
+            n_b, off = buckets.get(str(r.get("source") or ""), (0, 0))
+            if n_b:
+                grp = src2grp.get(str(r.get("source") or ""), DEFAULT_GROUP)
+                h = int(hashlib.sha256(str(r["instance_id"]).encode()).hexdigest()[:8], 16)
+                cand_strata.add(f"{grp}:{off + h % n_b:04d}")
         surviving_total = len(math_surviving | cand_strata)
         log(f"math re-source: published math turns {len(retire_ids) + 0} to retire, "
             f"surviving published strata {len(math_surviving)}, retired strata "
@@ -1653,7 +1882,7 @@ def main() -> None:
             n0 = len(candidates)
             keep_ids = {id(r) for r in cand_keep}
             candidates = [r for r in candidates
-                          if str(r.get("source") or "") != math_cfg["source"] or id(r) in keep_ids]
+                          if str(r.get("source") or "") not in math_cfg["sources"] or id(r) in keep_ids]
             _count(drops, "math_deterministic", n0 - len(candidates))
             if not math_cfg["retire_published"]:
                 retire_ids, math_surviving, math_retired_strata = [], set(), set()
@@ -1662,7 +1891,6 @@ def main() -> None:
         f"({ {k: (n if not off else f'{n}@{off}') for k, (n, off) in buckets.items() if n} })")
     # King seat: after the source buckets so `king_fail:NNNN` wins for king
     # rollouts on bucketed sources (math / tool_use) too.
-    king = load_king_fail()
     n_before = len(candidates)
     king_drops: dict[str, int] = {}
     candidates = route_king_fail(candidates, king, king_drops)
@@ -1679,6 +1907,24 @@ def main() -> None:
             f"from excluded sources")
     stamped = stamp_routed_groups(candidates, routed)
     extra_retire: dict[str, set[str]] = {}   # from_group -> retired ids
+    # Reclaimed turns: admitted above under a higher-precedence king group;
+    # retire their old rows (only those actually kept in a candidate record).
+    kept_now = {f"{r['traj_id']}:{m['turn_idx']}" for r in candidates
+                if r.get("fold_group") in KING_GROUPS for m in r["turns"]}
+    for old_ns, ids in reclaimed.items():
+        ok = {t for t in ids if t in kept_now}
+        extra_retire.setdefault(old_ns, set()).update(ok)
+        log(f"{old_ns}: {len(ok)} published rows reclaimed by higher-precedence king groups")
+    common = king.get("common") or load_king_common()
+    if common.get("retire_excluded_published") and king:
+        ids = king_fail_source_retire(pub, live, king["exclude_sources"])
+        extra_retire.setdefault("king_fail", set()).update(ids)
+        log(f"king_fail: retiring {len(ids)} published rows from excluded sources "
+            f"{sorted(king['exclude_sources'])}")
+    if common.get("retire_later_onsets"):
+        ids = later_onset_retire(pub, live)
+        extra_retire.setdefault(KING_LOOP_GROUP, set()).update(ids)
+        log(f"{KING_LOOP_GROUP}: retiring {len(ids)} published later-onset rows (first onset per rollout kept)")
     for g, plan in readmits.items():
         readmitted = {f"{r['traj_id']}:{m['turn_idx']}" for r in candidates
                       if r.get("fold_group") == g for m in r["turns"]}
