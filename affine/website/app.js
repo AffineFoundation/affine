@@ -622,11 +622,37 @@ function opponentKing(r) {
   return best;
 }
 
+// wvk 15 (2026-09-12 17:01 -> 2026-09-13 13:01 UTC) crowned per 12 h window;
+// retired by wvk 16. Its rows stay in the history as audit trail and are
+// labelled so they do not read as a live rule.
+const RETIRED_WINDOW_TAG = "retired rule (wvk 15)";
+function isRetiredWindowRow(r) {
+  return r.crown_mode === "window_best" || r.event === "window_close"
+    || r.event === "crown_revoked" || r.via === "window_best";
+}
+function retiredTag(title) {
+  return ` <span class="dim" title="${esc(title)}">${esc(RETIRED_WINDOW_TAG)}</span>`;
+}
+
 function outcomeBadge(r) {
-  if (r.event === "crowned") return badge("crowned", `crowned #${r.reign_number ?? "?"}`);
+  if (r.event === "crowned") {
+    return badge("crowned", `crowned #${r.reign_number ?? "?"}`)
+      + (isRetiredWindowRow(r) ? retiredTag("crowned by the 12 h window rule, retired 2026-09-13 13:01 UTC (wvk 16)") : "");
+  }
+  if (r.event === "crown_revoked") {
+    return badge("failed", `crown revoked #${r.reign_number ?? "?"} - model copy`)
+      + retiredTag(r.revoked_reason || "crown revoked");
+  }
+  if (r.event === "window_close") {
+    return badge("queued", `window ${r.window_id ?? "?"} closed - ${r.outcome || "-"}`)
+      + retiredTag("12 h window rule: every window close wrote one row. Retired 2026-09-13 13:01 UTC (wvk 16); no window runs now.");
+  }
   if (r.event === "failed") return badge("failed", r.error_code || "failed");
   if (r.accepted) return badge("accepted", "accepted");
-  if (r.accepted === false) return badge("rejected", "rejected");
+  if (r.accepted === false) {
+    return badge("rejected", "rejected")
+      + (isRetiredWindowRow(r) ? retiredTag("judged as a window candidate under the 12 h window rule (wvk 15), retired 2026-09-13 13:01 UTC") : "");
+  }
   return badge("queued", r.event || "event");
 }
 
@@ -650,9 +676,9 @@ function renderHistory(h) {
   const rule = liveCrownShort(cache.contract);
   const meta = $("history-meta");
   const shown = rows.length + audits.length;
-  meta.textContent = rule
-    ? `${rule} · ${shown} shown`
-    : `${shown} shown`;
+  const retired = rows.some(isRetiredWindowRow);
+  meta.textContent = (rule ? `${rule} · ${shown} shown` : `${shown} shown`)
+    + (retired ? ` · rows tagged "${RETIRED_WINDOW_TAG}" were judged under the 12 h window rule (2026-09-12 17:01 -> 2026-09-13 13:01 UTC), kept for audit; no window runs now` : "");
   if (rule) meta.title = rule;
   if (!shown) {
     $("history-wrap").innerHTML = `<div class="empty">empty</div>`;
@@ -2033,7 +2059,9 @@ function duelPageHtml(duel, series, logLines) {
       <div class="kv"><span class="k">revision</span><span class="v mono">${esc(short(revision || "—", 14))}${copyBtn(revision)}</span></div>
       <div class="kv"><span class="k">when</span><span class="v" title="${esc(fmtTime(duel.at))}">${esc(fmtTime(duel.at))} · ${esc(fmtAge(duel.at))}</span></div>
       <div class="kv"><span class="k">duration</span><span class="v">${esc(fmtDuration(duel.duration_s))}</span></div>
-      <div class="kv"><span class="k">paired turns</span><span class="v">${esc(duel.n_paired_turns ?? paired.length ?? "—")}</span></div>
+      <div class="kv"><span class="k">paired turns</span><span class="v">${esc(duel.n_paired_turns ?? paired.length ?? "—")}${
+        duel.near_miss?.triggered ? ` <span class="dim" title="sequential near-miss: the first slice's margin fell inside the near-miss window, so a second seeded slice was scored and the crown decided on the pooled turns">· pooled over ${esc(String((duel.near_miss.slices || []).length))} slices</span>` : ""
+      }</span></div>
       <div class="kv"><span class="k">artifact</span><span class="v">${artifactLink}${duel.challenge_id ? copyBtn(hippiusEvalUrl(duel.challenge_id)) : ""}</span></div>
     </div>`;
 
@@ -2074,6 +2102,20 @@ function duelPageHtml(duel, series, logLines) {
       ${card("challenger Reason", esc(fine(chR)), "mean over the slice",
         chR != null && kgR != null ? passCls(Number(chR) >= Number(kgR)) : "")}
       ${card("king Reason", esc(fine(kgR)), "same slice, same teacher")}
+      ${(() => {
+        // Sequential near-miss (2026-09-11): one card per extra slice the
+        // rule drew, showing what each slice said on its own. Rendered only
+        // when the rule fired — single-slice verdicts look as before.
+        const nm = duel.near_miss;
+        if (!nm || !nm.triggered || !Array.isArray(nm.slices)) return "";
+        return nm.slices.map((s) => card(
+          `slice ${esc(String(s.index))} alone`,
+          esc(fine(s.margin)),
+          `z = ${esc(fmtZ(s.z))} · ${esc(String(s.n_paired_turns ?? "—"))} paired turns · seed ${esc(short(String(s.seed ?? ""), 10))}`,
+          s.challenger_wins == null ? "" : passCls(Boolean(s.challenger_wins)))).join("")
+          + card("near-miss window", `(${esc(fine(nm.low))}, ${esc(fine(nm.high))})`,
+            `first-slice margin inside → ${esc(String(nm.extra_slices))} extra slice(s), decided on the pool`);
+      })()}
       ${(() => {
         // The two non-margin crown conditions (wvk=5/6). Render only when the
         // duel recorded them — pre-fork rows have neither.

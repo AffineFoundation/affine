@@ -311,6 +311,7 @@ def history_row_from_raw(r: dict) -> dict:
         "margin": v.get("margin"),
         "se": v.get("se"),
         "n_paired_turns": v.get("n_paired_turns"),
+        "near_miss": v.get("near_miss"),         # sequential near-miss stamp
         "rejection_reason": v.get("rejection_reason"),
         "reign_number": r.get("reign_number"),
         "score": r.get("score", _side_score(v.get("challenger"))),
@@ -322,6 +323,14 @@ def history_row_from_raw(r: dict) -> dict:
         "challenger": v.get("challenger"),
         "king": v.get("king"),
         "challenger_wins": v.get("challenger_wins"),
+        # wvk-15 era (2026-09-12 17:01 -> 2026-09-13 13:01 UTC, retired):
+        # window stamps on verdicts, and the window_close / crown_revoked
+        # rows themselves. The site labels these as the retired rule.
+        "crown_mode": v.get("crown_mode") or r.get("crown_mode"),
+        "window_id": v.get("window_id", r.get("window_id")),
+        "outcome": r.get("outcome"),
+        "via": r.get("via") or v.get("via"),
+        "revoked_reason": r.get("revoked_reason"),
     }
 
 
