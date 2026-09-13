@@ -285,7 +285,8 @@ class MiniSweRunner:
 
         stamp = PolicyStamp(policy_id=policy.id, model=endpoint.label,
                             harness=policy.harness, endpoint=endpoint.name,
-                            action_kind=policy.action_kind)
+                            action_kind=policy.action_kind,
+                            temperature=policy.sampling.get("temperature", 0.7))
         for iid, detail in attempted.items():
             traj_path = preds_dir / iid / f"{iid}.traj.json"
             verdict: float | None = None

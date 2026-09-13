@@ -340,7 +340,8 @@ class VerifiersRunner:
             stamp = PolicyStamp(policy_id=policy.id, model=endpoint.label,
                                 harness=policy.harness,
                                 endpoint=endpoint.name,
-                                action_kind=policy.action_kind)
+                                action_kind=policy.action_kind,
+                                temperature=policy.sampling.get("temperature"))
             traces_path = attempt_dir / "traces.jsonl"
             envelopes, _ = envelopes_from_traces(
                 traces_path, source=source.name, env_id=source.taskset_id,
