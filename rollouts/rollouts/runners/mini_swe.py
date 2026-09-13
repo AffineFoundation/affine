@@ -33,6 +33,7 @@ from datagen.instances import materialize_subset
 from rollouts import loopguard
 from rollouts.adapters.mini_swe import envelope_from_traj
 from rollouts.config import RolloutsConfig
+from rollouts.diskgc import gc_if_low
 from rollouts.registry import Source
 from rollouts.runners.base import (
     BatchResult,
@@ -206,6 +207,7 @@ class MiniSweRunner:
                   run_dir: Path) -> BatchResult:
         result = BatchResult()
         reap_stale_containers()
+        gc_if_low(f"{source.name} batch")
         all_rows = _dataset_rows(source.dataset, source.split)
         meta_by_uid = {r["uid"]: r for r in batch}
         rows = []
