@@ -456,6 +456,23 @@ def _pydantic_meta(row: dict) -> dict | None:
     }
 
 
+def _notool_meta(row: dict) -> dict | None:
+    """TriviaQA train rows again, for affine_notool_v1 (questions served
+    with unrelated tool schemas): uid `notool-<question_id>` = the
+    taskset's task name, own namespace next to affine_trivia's bare ids."""
+    qid = str(row.get("question_id") or "")
+    question = row.get("question") or ""
+    if not qid or not question:
+        return None
+    _, num = _text_uid("notool", question)
+    return {
+        "uid": f"notool-{qid}",
+        "sid": f"notool-{num}",
+        "repo": "notool/trivia",
+        "language": "tool",
+    }
+
+
 ROW_META = {
     "i3_code": _i3_code_meta,
     "i3_math": _i3_math_meta,
@@ -476,6 +493,7 @@ ROW_META = {
     "rlvr_ifeval": _rlvr_ifeval_meta,
     "unscramble": _unscramble_meta,
     "triviaqa": _triviaqa_meta,
+    "notool": _notool_meta,
 }
 
 

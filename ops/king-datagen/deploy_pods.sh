@@ -40,7 +40,7 @@ HARNESS_SRC=rollouts/harnesses/mini_swe_textbased/mini_swe_textbased/__init__.py
 HARNESS_DST=/root/prime-pilot/mini-swe-textbased/mini_swe_textbased/__init__.py
 # Env wave 2 (2026-09-12): + tmax, longcot, enterprise-ops-gym, numina, sql,
 # automationbench, uuid-ctf wrappers and their research-environments bases.
-ENV_PKGS=(affine_logic_v1 affine_trivia_v1 affine_ifeval_v1 affine_science_v1
+ENV_PKGS=(affine_notool_v1 affine_logic_v1 affine_trivia_v1 affine_ifeval_v1 affine_science_v1
           affine_unscramble_v1 affine_prolog_v1 affine_needle_v1 affine_wikispeedia_v1
           affine_tmax_v1 affine_longcot_v1 affine_eog_v1 affine_numina_v1 affine_sql_v1
           affine_autobench_v1 affine_uuidctf_v1
