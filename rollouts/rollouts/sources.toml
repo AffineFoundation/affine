@@ -235,7 +235,10 @@ min_replies = 2
 # untouched, so past verdicts replay). If fewer than min_surviving_strata
 # strata would survive, the fold keeps the old pool at the [mix] share.
 enabled = true
-source = "affine_math"
+# 2026-09-13: + affine_i3math (wave 2/3, group math). The same proxy applies
+# to every source of the math group: a problem the teacher answers
+# deterministically is R-dead whatever the pool it came from.
+sources = ["affine_math", "affine_i3math"]
 retire_published = true
 min_surviving_strata = 100
 
