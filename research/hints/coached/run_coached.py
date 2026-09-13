@@ -175,6 +175,12 @@ def main() -> None:
     ap.add_argument("--shard", default="0/1")
     ap.add_argument("--deadline-hours", type=float, default=0.0)
     ap.add_argument("--untag", action="store_true")
+    ap.add_argument("--no-reap", action="store_true",
+                    help="do not remove leftover recoverable.local/ containers at start / end. "
+                         "REQUIRED when another driver shares the pod: the reaper kills every "
+                         "container of the namespace, including the other driver's in-flight "
+                         "continuations (2026-09-13: a retry pass launched next to the main run "
+                         "killed 56 continuations with exit 137)")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if not os.environ.get(args.key_env):
@@ -255,14 +261,16 @@ def main() -> None:
                  r.get("status"), r.get("outcome"), r.get("stop_condition"), r.get("n_turns"),
                  r.get("wall_s"), float(r.get("cost_usd") or 0))
 
-    RS.reap_own_containers()
+    if not args.no_reap:
+        RS.reap_own_containers()
     try:
         with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
             list(ex.map(work, todo))
         if skipped:
             log.info("deadline reached: %d continuation(s) not started", len(skipped))
     finally:
-        RS.reap_own_containers(untag=args.untag)
+        if not args.no_reap:
+            RS.reap_own_containers(untag=args.untag)
 
 
 if __name__ == "__main__":
