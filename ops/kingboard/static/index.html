@@ -40,6 +40,8 @@
             <th data-key="unscored" class="num">unscored</th>
             <th data-key="median_turns" class="num">med. turns</th>
             <th data-key="timeout_rate" class="num">timeouts</th>
+            <th data-key="loop_guard_rate" class="num" title="share of rollouts the datagen loop guard cut short (stop_condition loop_guard); loop onsets inside finished rollouts are not counted">loop rate <span class="muted small">(guard)</span></th>
+            <th data-key="greedy_rate" class="num" title="king solve rate at T=0 (king_*_greedy) vs T=0.8 (sampled); n in brackets">greedy / sampled</th>
             <th data-key="teacher_rate" class="num">teacher <span class="muted small">(graded n)</span></th>
             <th data-key="delta" class="num">Δ king−teacher</th>
             <th class="spark">14 d</th>
@@ -66,6 +68,8 @@
               <th data-key="unscored" class="num">unscored</th>
               <th data-key="median_turns" class="num">med. turns</th>
               <th data-key="timeout_rate" class="num">timeouts</th>
+              <th data-key="loop_guard_rate" class="num">loop rate <span class="muted small">(guard)</span></th>
+              <th data-key="greedy_rate" class="num">greedy / sampled</th>
             </tr>
           </thead>
           <tbody></tbody>
