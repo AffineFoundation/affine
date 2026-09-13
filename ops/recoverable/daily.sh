@@ -7,17 +7,24 @@
 #                        the CURRENT king on a resumable harness that the
 #                        side-table affine/state/recoverable/<digest12>.jsonl
 #                        does not have yet (fold's own loop labeler + the
-#                        king-review pivot table);
+#                        king-review pivot table), then RE-RUN states: rows
+#                        with fewer than $RECOVERABLE_CONTINUATIONS (3) OK
+#                        continuations (`pending_reruns`), unsolved first;
 #   2. ship them to the datagen pod ($RECOVERABLE_POD, default
 #                        affine-datagen-2) and run run_states.py there in a
-#                        tmux session: <= $RECOVERABLE_WORKERS containers, no
-#                        new state after $RECOVERABLE_DEADLINE_HOURS (running
-#                        ones finish, so the pod is busy <= deadline + 1 h);
+#                        tmux session: <= $RECOVERABLE_WORKERS containers,
+#                        3 continuations per state (T = 0.8), no new
+#                        continuation after $RECOVERABLE_DEADLINE_HOURS
+#                        (running ones finish, so the pod is busy <= deadline
+#                        + 1 h);
 #   3. pull the results back and aggregate.py --merge-into the side-table
-#                        (existing rows kept, rewritten atomically).
+#                        (existing rows kept, continuations unioned, verdict =
+#                        majority of the OK continuations; rewritten atomically).
 #
 #   ops/recoverable/daily.sh                 # one run (what pm2 executes)
 #   RECOVERABLE_DEADLINE_HOURS=0 ops/recoverable/daily.sh   # no cap (backlog)
+#   RECOVERABLE_RERUNS_ONLY=1 ops/recoverable/daily.sh      # only top up existing rows
+#   RECOVERABLE_NO_RERUNS=1 ops/recoverable/daily.sh        # new states only
 #
 # Env comes from the same frozen snapshot the other services use
 # (~/.affine-validator.env, parsed not sourced; HF_TOKEN for the teacher
@@ -36,7 +43,10 @@ STATE="$REPO/affine/state/recoverable"
 POD_NAME="${RECOVERABLE_POD:-affine-datagen-2}"
 DEADLINE_H="${RECOVERABLE_DEADLINE_HOURS:-6}"
 MAX_STATES="${RECOVERABLE_MAX_STATES:-400}"
-WORKERS="${RECOVERABLE_WORKERS:-4}"
+# 6 containers next to the pod's production batches (24-28 cores, 94 GB):
+# 3 continuations per state at ~25 min each is 3x the pre-rule work.
+WORKERS="${RECOVERABLE_WORKERS:-6}"
+CONTINUATIONS="${RECOVERABLE_CONTINUATIONS:-3}"
 KINDS="${RECOVERABLE_KINDS:-textbased,bash,terminus}"
 CHUNKS="${RECOVERABLE_CHUNKS:-$REPO/ops/corpus_build/cache/traces/chunks}"
 POLL_S="${RECOVERABLE_POLL_S:-300}"
@@ -45,6 +55,9 @@ POLL_S="${RECOVERABLE_POLL_S:-300}"
 # timeout costs an hour per retry, so the cron run does not do this).
 RETRY_FLAG=""
 [[ "${RECOVERABLE_RETRY_ERRORED:-0}" == "1" ]] && RETRY_FLAG="--retry-errored"
+RERUN_FLAG=""
+[[ "${RECOVERABLE_RERUNS_ONLY:-0}" == "1" ]] && RERUN_FLAG="--reruns-only"
+[[ "${RECOVERABLE_NO_RERUNS:-0}" == "1" ]] && RERUN_FLAG="--no-reruns"
 POD_DIR=/root/recoverable
 RUN="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="$STATE/runs/$RUN"
@@ -96,7 +109,8 @@ log "king $DIGEST; pivots $PIVOTS; side-table $TABLE ($( [[ -f "$TABLE" ]] && wc
 # 1. candidates ---------------------------------------------------------------
 "$PY" "$OPS/candidates.py" --chunks "$CHUNKS" --pivots "$PIVOTS" --side-table "$TABLE" \
   --king-digest "$DIGEST" --out "$RUN_DIR/states" --kinds "$KINDS" \
-  --max-states "$MAX_STATES" $RETRY_FLAG 2>&1 | tee "$RUN_DIR/candidates.log" | sed "s/^/  /"
+  --max-states "$MAX_STATES" --continuations "$CONTINUATIONS" $RETRY_FLAG $RERUN_FLAG \
+  2>&1 | tee "$RUN_DIR/candidates.log" | sed "s/^/  /"
 N_STATES="$(wc -l < "$RUN_DIR/states/states.jsonl")"
 if [[ "$N_STATES" -eq 0 ]]; then
   log "no new states; done"
@@ -116,7 +130,8 @@ if [[ -z "${POD_HOST:-}" || -z "${POD_PORT:-}" ]]; then
 fi
 SSH=(ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20
      -o LogLevel=ERROR -p "$POD_PORT" "root@$POD_HOST")
-log "pod $POD_NAME = $POD_HOST:$POD_PORT; $N_STATES state(s), $WORKERS workers, deadline ${DEADLINE_H} h"
+N_CONT="$("$PY" -c 'import json,sys; print(sum(int(json.loads(l).get("continuations_needed") or 0) for l in open(sys.argv[1])))' "$RUN_DIR/states/states.jsonl")"
+log "pod $POD_NAME = $POD_HOST:$POD_PORT; $N_STATES state(s) / $N_CONT continuation(s) needed, $WORKERS workers, deadline ${DEADLINE_H} h"
 
 if "${SSH[@]}" "tmux has-session -t rec-daily 2>/dev/null || pgrep -f '[r]un_states.py' >/dev/null"; then
   log "a run_states / rec-daily session is still active on the pod; exiting"
@@ -127,8 +142,8 @@ tar -C "$REPO/ops" -czf - recoverable | "${SSH[@]}" "mkdir -p $POD_DIR && tar -C
 tar -C "$RUN_DIR" -czf - states | "${SSH[@]}" "mkdir -p $POD_DIR/daily/$RUN && tar -C $POD_DIR/daily/$RUN -xzf -"
 "${SSH[@]}" "cd $POD_DIR && tmux new-session -d -s rec-daily \
   \"bash ./recoverable/pod_run.sh --states daily/$RUN/states/states.jsonl --out $POD_DIR/daily/out \
-     --kinds $KINDS --workers $WORKERS --deadline-hours $DEADLINE_H --untag $RETRY_FLAG \
-     > daily/$RUN/run.log 2>&1; touch daily/$RUN/DONE\""
+     --kinds $KINDS --workers $WORKERS --deadline-hours $DEADLINE_H --continuations $CONTINUATIONS \
+     --untag $RETRY_FLAG > daily/$RUN/run.log 2>&1; touch daily/$RUN/DONE\""
 
 T0=$(date +%s)
 if [[ "$DEADLINE_H" == "0" ]]; then HARD_S=0; else
@@ -139,7 +154,7 @@ while true; do
   if "${SSH[@]}" "test -f $POD_DIR/daily/$RUN/DONE"; then break; fi
   ELAPSED=$(( $(date +%s) - T0 ))
   DONE_N="$("${SSH[@]}" "grep -c ' -> ' $POD_DIR/daily/$RUN/run.log 2>/dev/null || true")"
-  log "running: ${DONE_N:-0}/$N_STATES finished, $((ELAPSED / 60)) min"
+  log "running: ${DONE_N:-0}/$N_CONT continuation(s) finished, $((ELAPSED / 60)) min"
   if [[ "$HARD_S" -gt 0 && "$ELAPSED" -gt "$HARD_S" ]]; then
     log "hard cap reached; leaving the pod run to finish, merging what is there"
     break
@@ -151,5 +166,6 @@ mkdir -p "$RUN_DIR/out"
 "${SSH[@]}" "cd $POD_DIR/daily/out && tar -czf - --ignore-failed-read results reports" | tar -C "$RUN_DIR/out" -xzf -
 "${SSH[@]}" "cat $POD_DIR/daily/$RUN/run.log" > "$RUN_DIR/run.log" || true
 "$PY" "$OPS/aggregate.py" --states "$RUN_DIR/states/states.jsonl" --out "$RUN_DIR/out" \
-  --merge-into "$TABLE" | { grep -E "^(merged|states |side-table)" || true; } | sed "s/^/  /"
+  --continuations "$CONTINUATIONS" --merge-into "$TABLE" \
+  | { grep -E "^(merged|states |rule |side-table)" || true; } | sed "s/^/  /"
 log "done; summary $RUN_DIR/out/summary.md"
