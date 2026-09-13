@@ -227,13 +227,17 @@ def apply_verdict(row: dict, conts: list[dict], target: int) -> dict:
     """Majority rule over the OK continuations; scalar teacher_* fields come
     from a representative continuation (a solved one when there is one) so
     readers of the pre-rule layout (the fold copies teacher_turns /
-    teacher_first_action_kind) keep working."""
+    teacher_first_action_kind) keep working. Same-task proxy rows
+    (`proxy == "same_task"`): the teacher replayed the whole task, so its
+    first action is not comparable with the king's — `admit` = solved in a
+    majority, `teacher_first_action_differs` stays None."""
+    proxy = row.get("proxy") == "same_task"
     ok = [c for c in conts if c["status"] == "ok"]
     n_ok = len(ok)
     n_solved = sum(1 for c in ok if c["solved"])
     n_differs = sum(1 for c in ok if c["first_action_differs"])
     solved = (n_solved * 2 > n_ok) if n_ok else None
-    differs = (n_differs * 2 > n_ok) if n_ok else None
+    differs = None if proxy else ((n_differs * 2 > n_ok) if n_ok else None)
     rep = next((c for c in ok if c["solved"]), None) or (ok[0] if ok else (conts[0] if conts else None))
     if n_ok:
         status = "ok"
@@ -249,9 +253,11 @@ def apply_verdict(row: dict, conts: list[dict], target: int) -> dict:
         continuations_target=target, pending_reruns=max(0, target - n_ok),
         rule=f"majority_of_{target}",
         teacher_status=status, teacher_solved=solved, teacher_first_action_differs=differs,
-        admit=bool(solved and differs),
-        admit_first_continuation=bool(first and first["solved"] and first["first_action_differs"]),
-        admit_any_continuation=any(c["solved"] and c["first_action_differs"] for c in ok),
+        admit=bool(solved) if proxy else bool(solved and differs),
+        admit_first_continuation=bool(first and first["solved"]
+                                      and (proxy or first["first_action_differs"])),
+        admit_any_continuation=any(c["solved"] and (proxy or c["first_action_differs"])
+                                   for c in ok),
         teacher_stop=rep["stop"] if rep else None,
         teacher_turns=rep["turns"] if rep else None,
         teacher_wall_s=rep["wall_s"] if rep else None,
@@ -264,6 +270,42 @@ def apply_verdict(row: dict, conts: list[dict], target: int) -> dict:
         wiki_contains=rep.get("wiki_contains") if rep else None,
     )
     return row
+
+
+def apply_acp_cap(rows: list[dict], share: float) -> dict:
+    """King-data spec §2.4: same-task proxy states carry half weight — they
+    may fill at most `share` of the group's strata. Strata are per task, so
+    the cap is on TASKS (rollouts): proxy tasks admitted <= share/(1-share) x
+    resumable tasks admitted. Proxy tasks are ranked by how firmly the
+    teacher solved (n_solved desc, then the earliest state depth); rows of
+    tasks past the cap get admit=false with admit_uncapped=true so a later
+    run (more resumable admits, or a higher share) lets them in without a
+    re-run. Rows already in the table are re-ranked every run."""
+    # Wiki / math (null harness) are excluded from the king groups by the
+    # fold config, so they do not count toward the group's strata here.
+    resumable_tasks = {r["rollout_id"] for r in rows
+                       if r["admit"] and r.get("proxy") != "same_task" and r["harness"] != "null"}
+    proxy_rows = [r for r in rows if r.get("proxy") == "same_task"]
+    for r in proxy_rows:
+        r["admit_uncapped"] = bool(r.get("admit_uncapped") or r["admit"])
+        r["admit"] = r["admit_uncapped"]
+    if share >= 1.0 or not proxy_rows:
+        return {"resumable_tasks": len(resumable_tasks), "proxy_tasks_admitted":
+                len({r["rollout_id"] for r in proxy_rows if r["admit"]}), "proxy_tasks_capped": 0}
+    allowed = int(len(resumable_tasks) * share / (1.0 - share))
+    by_task: dict[str, list[dict]] = collections.defaultdict(list)
+    for r in proxy_rows:
+        if r["admit_uncapped"]:
+            by_task[r["rollout_id"]].append(r)
+    ranked = sorted(by_task.items(),
+                    key=lambda kv: (-max(x.get("n_solved", 0) for x in kv[1]),
+                                    min(int(x["turn_idx"]) for x in kv[1]), kv[0]))
+    kept = {rid for rid, _ in ranked[:allowed]}
+    for rid, rs in ranked[allowed:]:
+        for r in rs:
+            r["admit"] = False
+    return {"resumable_tasks": len(resumable_tasks), "proxy_tasks_admitted": len(kept),
+            "proxy_tasks_capped": len(ranked) - len(kept), "acp_max_share": share}
 
 
 def main() -> None:
@@ -281,6 +323,11 @@ def main() -> None:
     ap.add_argument("--continuations", type=int, default=3,
                     help="OK continuations a state needs to be complete "
                          "(majority rule; pending_reruns = the missing count)")
+    ap.add_argument("--acp-max-share", type=float, default=0.5,
+                    help="same-task proxy rows may hold at most this share of the "
+                         "table's admitted TASKS (king-data spec §2.4: ACP at 50 %% "
+                         "of the group's strata); rows past the cap keep "
+                         "admit_uncapped=true but admit=false. 1 = no cap")
     args = ap.parse_args()
     if not args.side_table and not args.merge_into:
         ap.error("one of --side-table / --merge-into is required")
@@ -304,6 +351,7 @@ def main() -> None:
     rows = []
     cost = 0.0
     tokens = collections.Counter()
+    costed: set[str] = set()
     for st in states:
         row = {
             "turn_id": st["turn_id"], "node_id": st.get("node_id"),
@@ -314,12 +362,18 @@ def main() -> None:
             "king_action": st.get("king_action") or "",
             "model": args.model, "timestamp": stamp,
         }
+        if st.get("proxy_key"):
+            row["proxy"] = "same_task"
+            row["proxy_prior"] = st.get("proxy_prior")
+        unit = st.get("proxy_key") or st["state_id"]
         conts = []
-        for r in results.get(st["state_id"], []):
-            cost += float(r.get("cost_usd") or 0.0)
-            for key in ("prompt_tokens", "completion_tokens", "cached_tokens"):
-                tokens[key] += int(r.get(key) or 0)
+        for r in results.get(unit, []):
+            if unit not in costed:    # a proxy run is shared by its rollout's states
+                cost += float(r.get("cost_usd") or 0.0)
+                for key in ("prompt_tokens", "completion_tokens", "cached_tokens"):
+                    tokens[key] += int(r.get(key) or 0)
             conts.append(continuation_of(r, st))
+        costed.add(unit)
         rows.append(apply_verdict(row, merge_continuations([], conts), target))
 
     digest = digest12(next((s.get("king_model") for s in states if s.get("king_model")), ""))
@@ -348,6 +402,7 @@ def main() -> None:
                 # continuation list and its pending_reruns marker.
                 apply_verdict(row, legacy_continuations(row), target)
         rows = list(merged.values())
+        cap_stats = apply_acp_cap(rows, args.acp_max_share)
         args.merge_into.parent.mkdir(parents=True, exist_ok=True)
         tmp = args.merge_into.with_suffix(".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
@@ -358,6 +413,7 @@ def main() -> None:
         table_path = args.merge_into
         print(f"merged {len(run_rows)} row(s) into {table_path}: {n_before} -> {len(rows)} rows")
     else:
+        cap_stats = apply_acp_cap(rows, args.acp_max_share)
         args.side_table.mkdir(parents=True, exist_ok=True)
         table_path = args.side_table / f"{digest}.jsonl"
         with open(table_path, "w", encoding="utf-8") as f:
@@ -378,6 +434,29 @@ def main() -> None:
         "n_states_complete": sum(1 for r in rows if r.get("pending_reruns") == 0),
         "n_pending_reruns": sum(r.get("pending_reruns", 0) for r in rows),
         "by_n_continuations": rate_table(rows, lambda r: r.get("n_continuations", 0)),
+        # Same-task proxy (ACP harnesses) next to the resumable rows.
+        "n_admit_resumable": sum(1 for r in rows if r["admit"] and r.get("proxy") != "same_task"),
+        "n_admit_proxy": sum(1 for r in rows if r["admit"] and r.get("proxy") == "same_task"),
+        "n_admit_proxy_uncapped": sum(1 for r in rows if r.get("admit_uncapped")),
+        "acp_cap": cap_stats,
+        "by_proxy": rate_table(rows, lambda r: r.get("proxy") or "continuation"),
+        "proxy_tasks": {
+            "tasks": len({r["rollout_id"] for r in rows if r.get("proxy") == "same_task"}),
+            "ran": len({r["rollout_id"] for r in rows if r.get("proxy") == "same_task"
+                        and r["teacher_status"] == "ok"}),
+            "solved": len({r["rollout_id"] for r in rows if r.get("proxy") == "same_task"
+                           and r.get("teacher_solved")}),
+            "admitted": len({r["rollout_id"] for r in rows if r.get("proxy") == "same_task"
+                             and r["admit"]}),
+            "by_harness_solved": dict(collections.Counter(
+                r["harness"] for r in {r["rollout_id"]: r for r in rows
+                                       if r.get("proxy") == "same_task"
+                                       and r.get("teacher_solved")}.values())),
+            "by_harness_ran": dict(collections.Counter(
+                r["harness"] for r in {r["rollout_id"]: r for r in rows
+                                       if r.get("proxy") == "same_task"
+                                       and r["teacher_status"] == "ok"}.values())),
+        },
         "n_states_this_run": len(run_rows),
         "n_admit_this_run": sum(1 for r in run_rows if r["admit"]),
         "n_continuations_this_run": sum(len(v) for v in results.values()),
@@ -471,8 +550,14 @@ def main() -> None:
           f"{summary['n_pending_reruns']} continuations pending; admitted under the "
           f"one-sample rule (first continuation) {summary['n_admit_first_continuation']}, "
           f"by any continuation {summary['n_admit_any_continuation']}, "
-          f"by majority {summary['n_admit']}", ""]
+          f"by majority {summary['n_admit']}", "",
+          f"same-task proxy (ACP harnesses): {summary['proxy_tasks']['tasks']} tasks, "
+          f"{summary['proxy_tasks']['ran']} ran, {summary['proxy_tasks']['solved']} solved "
+          f"(majority), {summary['proxy_tasks']['admitted']} admitted after the ACP cap "
+          f"({summary['acp_cap']}); rows admitted resumable {summary['n_admit_resumable']} / "
+          f"proxy {summary['n_admit_proxy']} (uncapped {summary['n_admit_proxy_uncapped']})", ""]
     for title, key in (("By state kind", "by_state_kind"), ("By harness", "by_harness"),
+                       ("By continuation type (proxy vs resume)", "by_proxy"),
                        ("By number of OK continuations", "by_n_continuations"),
                        ("By env (source)", "by_source"), ("By depth (turn_idx)", "by_depth"),
                        ("By depth, agent harnesses only", "by_depth_agent_harnesses"),
