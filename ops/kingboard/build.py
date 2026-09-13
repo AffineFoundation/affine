@@ -17,13 +17,27 @@ Outcome labelling mirrors `affine/affine/corpus/view.py::rollout_outcome`
 (the fold's king_fail rule) so the board and D agree on what "failed"
 means:
 
-    errored   real error recorded, or stop_condition not in
-              {agent_completed, max_turns}
+    errored   real error recorded (the refused-call artifact of ACP
+              harnesses at max_turns / loop_guard is not one), or
+              stop_condition not in {agent_completed, max_turns,
+              loop_guard, no_visible_reply}
+    failed    stop_condition no_visible_reply (the model said nothing),
+              whatever the grade
     solved    primary grade >= 1.0   (keys tried in order:
               rewards.solved.score, rewards.correct.score,
               rewards.passed_fraction.score)
-    failed    primary grade < 1.0, or no grade at the turn cap
-    unscored  no numeric grade and not at the turn cap
+    failed    primary grade < 1.0, or no grade at the turn cap / loop guard
+    unscored  no numeric grade otherwise
+
+(2026-09-13: loop_guard and no_visible_reply were counted as errored here
+while the fold graded them; reign 12's 85 affine_agent loop-guard stops,
+72 of them graded solved, showed as errors.)
+
+Per row the board also keeps the loop-guard flag (`loop rate` = share of
+rollouts the pod's loop guard cut short; loop ONSETS need the baked
+conversations and are not computed here) and the policy's sampling
+temperature (`policy.temperature`, stamped since 2026-09-13) for the
+greedy (T = 0, `king_*_greedy`) vs sampled (T = 0.8) split.
 
 Solve rate = solved / (solved + failed). Errored and unscored rollouts are
 counted but excluded from the rate.
@@ -88,10 +102,19 @@ ROLLOUT_TIMEOUT_S = 3600.0   # datagen rollout wall cap (rollouts/run.py)
 TIMEOUT_MARGIN_S = 100.0     # a rollout this close to the cap is a timeout
 TIMEOUT_MARKER = "agent timeout"
 
-CLEAN_STOP_CONDITIONS = {"agent_completed", "max_turns"}
 TURN_CAP_STOP = "max_turns"
-TURN_CAP_ARTIFACT = "rollout stopped: max_turns"
+LOOP_GUARD_STOP = "loop_guard"                # rollouts/loopguard.py
+NO_VISIBLE_REPLY_STOP = "no_visible_reply"    # pi adapter: reasoning only
+CLEAN_STOP_CONDITIONS = {"agent_completed", TURN_CAP_STOP,
+                         LOOP_GUARD_STOP, NO_VISIBLE_REPLY_STOP}
+# ACP harnesses raise interception's refusal past the cap / on the loop
+# guard as their own error ("rollout stopped: <stop>"): not a real error.
+REFUSAL_STOPS = {TURN_CAP_STOP, LOOP_GUARD_STOP}
 PRIMARY_REWARD_KEYS = ("solved", "correct", "passed_fraction")
+# Bump when a row's derivation changes: every chunk is re-read on mismatch.
+SCHEMA_VERSION = "2"
+GREEDY = "greedy"      # policy.temperature == 0 (king_*_greedy)
+SAMPLED = "sampled"    # T > 0, or unstamped rows (all sampled at 0.8 before 2026-09-13)
 
 # policy.harness (+ action_kind for the null harness) -> board label
 HARNESS_LABELS = {
@@ -117,7 +140,7 @@ CREATE TABLE IF NOT EXISTS rollouts (
     task_uid TEXT, task_sid TEXT, repo TEXT, language TEXT,
     ts REAL, stored_at TEXT,
     outcome TEXT, score REAL, stop TEXT, n_calls INTEGER,
-    error_type TEXT, wall_s REAL, timeout INTEGER
+    error_type TEXT, wall_s REAL, timeout INTEGER, temperature REAL
 );
 CREATE INDEX IF NOT EXISTS rollouts_seat_ts ON rollouts (seat, ts);
 CREATE INDEX IF NOT EXISTS rollouts_digest ON rollouts (digest12);
@@ -161,12 +184,20 @@ class Fetcher:
 
 
 # -- envelope -> row -------------------------------------------------------------
+def is_refusal_artifact(err: dict, stop: str | None) -> bool:
+    """affine.corpus.trace.is_turn_cap_artifact: the harness surfacing the
+    refused model call past max_turns / on the loop guard."""
+    return stop in REFUSAL_STOPS and f"rollout stopped: {stop}" in str(err.get("message") or "")
+
+
+def real_errors(trace: dict) -> list[dict]:
+    stop = trace.get("stop_condition")
+    return [e for e in (trace.get("errors") or []) if not is_refusal_artifact(e, stop)]
+
+
 def rollout_outcome(trace: dict) -> tuple[str, float | None]:
     """(outcome, primary score) — same rule as affine.corpus.view."""
     stop = trace.get("stop_condition")
-    errors = [e for e in (trace.get("errors") or [])
-              if not (stop == TURN_CAP_STOP
-                      and TURN_CAP_ARTIFACT in str(e.get("message") or ""))]
     rewards = trace.get("rewards") or {}
     score = next(((rewards.get(k) or {}).get("score")
                   for k in PRIMARY_REWARD_KEYS if rewards.get(k)), None)
@@ -176,20 +207,31 @@ def rollout_outcome(trace: dict) -> tuple[str, float | None]:
             value = float(score)
         except (TypeError, ValueError):
             value = None
-    if errors or stop not in CLEAN_STOP_CONDITIONS:
+    if real_errors(trace) or stop not in CLEAN_STOP_CONDITIONS:
         return "errored", value
+    if stop == NO_VISIBLE_REPLY_STOP:
+        return "failed", value
     if value is None:
-        return ("failed" if stop == TURN_CAP_STOP else "unscored"), None
+        return ("failed" if stop in REFUSAL_STOPS else "unscored"), None
     return ("solved" if value >= 1.0 else "failed"), value
 
 
 def error_type(trace: dict) -> str | None:
-    stop = trace.get("stop_condition")
-    for e in trace.get("errors") or []:
-        if stop == TURN_CAP_STOP and TURN_CAP_ARTIFACT in str(e.get("message") or ""):
-            continue
-        return e.get("type") or e.get("error") or "unknown"
-    return None
+    errors = real_errors(trace)
+    if not errors:
+        return None
+    return errors[0].get("type") or errors[0].get("error") or "unknown"
+
+
+def temperature_of(policy: dict) -> float | None:
+    t = policy.get("temperature")
+    if isinstance(t, bool) or not isinstance(t, (int, float)):
+        return None
+    return float(t)
+
+
+def temp_class(temperature: float | None) -> str:
+    return GREEDY if temperature is not None and temperature <= 0.0 else SAMPLED
 
 
 def is_timeout(trace: dict, wall: float | None) -> bool:
@@ -276,7 +318,7 @@ def envelope_row(env: dict, chunk_key: str, groups: dict[str, str]) -> tuple:
         str(task.get("repo") or ""), str(task.get("language") or ""),
         float(ts), env.get("stored_at") or "",
         outcome, score, stop, len(trace.get("calls") or []),
-        error_type(trace), wall, timeout,
+        error_type(trace), wall, timeout, temperature_of(policy),
     )
 
 
@@ -291,6 +333,24 @@ def parse_chunk(blob: bytes, chunk_key: str, groups: dict[str, str]) -> list[tup
 
 
 # -- ingest ----------------------------------------------------------------------
+def migrate(conn: sqlite3.Connection) -> None:
+    """Add columns newer rows carry and, when the row derivation changed
+    (SCHEMA_VERSION), forget every processed chunk so the next ingest
+    re-reads the whole store with the current rules."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(rollouts)")}
+    with conn:
+        if "temperature" not in cols:
+            conn.execute("ALTER TABLE rollouts ADD COLUMN temperature REAL")
+        row = conn.execute("SELECT v FROM meta WHERE k = 'schema_version'").fetchone()
+        if (row[0] if row else None) != SCHEMA_VERSION:
+            log.info("row schema %s -> %s: re-reading every chunk",
+                     row[0] if row else None, SCHEMA_VERSION)
+            conn.execute("DELETE FROM chunks")
+            conn.execute("DELETE FROM rollouts")
+            conn.execute("INSERT OR REPLACE INTO meta VALUES ('schema_version', ?)",
+                         (SCHEMA_VERSION,))
+
+
 def load_groups() -> dict[str, str]:
     """source name -> fold group (coding / terminal / math / ...)."""
     if not SOURCES_TOML.exists():
@@ -341,7 +401,7 @@ def ingest(conn: sqlite3.Connection, fetcher: Fetcher, groups: dict[str, str]) -
             with conn:
                 conn.execute("DELETE FROM rollouts WHERE chunk = ?", (c["key"],))
                 conn.executemany(
-                    "INSERT OR REPLACE INTO rollouts VALUES (" + ",".join("?" * 23) + ")", rows)
+                    "INSERT OR REPLACE INTO rollouts VALUES (" + ",".join("?" * 24) + ")", rows)
                 conn.execute(
                     "INSERT OR REPLACE INTO chunks VALUES (?,?,?,?,?)",
                     (c["key"], c["sha256"], c.get("n_rollouts"), c.get("created_at"), time.time()))
@@ -371,24 +431,28 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float | None, float | None,
 
 
 class Agg:
-    __slots__ = ("n", "solved", "failed", "errored", "unscored", "timeouts", "turns", "walls")
+    __slots__ = ("n", "solved", "failed", "errored", "unscored", "timeouts",
+                 "loop_guards", "turns", "walls")
 
     def __init__(self) -> None:
         self.n = self.solved = self.failed = self.errored = self.unscored = self.timeouts = 0
+        self.loop_guards = 0
         self.turns: list[int] = []
         self.walls: list[float] = []
 
-    def add(self, outcome: str, timeout: int, n_calls: int | None, wall: float | None) -> None:
+    def add(self, outcome: str, timeout: int, n_calls: int | None, wall: float | None,
+            stop: str | None = None) -> None:
         self.n += 1
         setattr(self, outcome, getattr(self, outcome) + 1)
         self.timeouts += int(timeout or 0)
+        self.loop_guards += int(stop == LOOP_GUARD_STOP)
         if n_calls:
             self.turns.append(int(n_calls))
         if wall is not None and wall > 0:
             self.walls.append(float(wall))
 
     def merge(self, other: "Agg") -> None:
-        for f in ("n", "solved", "failed", "errored", "unscored", "timeouts"):
+        for f in ("n", "solved", "failed", "errored", "unscored", "timeouts", "loop_guards"):
             setattr(self, f, getattr(self, f) + getattr(other, f))
         self.turns += other.turns
         self.walls += other.walls
@@ -402,6 +466,8 @@ class Agg:
             "rate": rate, "lo": lo, "hi": hi,
             "timeouts": self.timeouts,
             "timeout_rate": (self.timeouts / self.n) if self.n else None,
+            "loop_guards": self.loop_guards,
+            "loop_guard_rate": (self.loop_guards / self.n) if self.n else None,
             "median_turns": statistics.median(self.turns) if self.turns else None,
             "median_wall_s": statistics.median(self.walls) if self.walls else None,
         }
@@ -438,7 +504,7 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
     now = time.time()
     cur = conn.execute(
         "SELECT source, env_id, grp, harness, seat, digest12, ts, outcome, stop, "
-        "n_calls, wall_s, timeout, policy_id FROM rollouts")
+        "n_calls, wall_s, timeout, policy_id, temperature FROM rollouts")
     rows = cur.fetchall()
 
     kings = load_kings()
@@ -459,7 +525,7 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
         return int((now - ts) // 86400)
 
     for (source, env_id, grp, harness, seat, digest12, ts, outcome,
-         stop, n_calls, wall, timeout, policy_id) in rows:
+         stop, n_calls, wall, timeout, policy_id, temperature) in rows:
         env_ids.setdefault(source, env_id)
         src_group.setdefault(source, grp or "other")
         stops[stop or "none"] = stops.get(stop or "none", 0) + 1
@@ -471,7 +537,7 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
             recent["all_24h"] += 1
         if seat == "teacher":
             n_teacher += 1
-            teacher_env.setdefault(source, Agg()).add(outcome, timeout, n_calls, wall)
+            teacher_env.setdefault(source, Agg()).add(outcome, timeout, n_calls, wall, stop)
             b = bucket(ts or 0.0)
             if 0 <= b < TREND_BUCKETS and outcome in ("solved", "failed"):
                 cell = teacher_trend.setdefault(source, {}).setdefault(b, [0, 0])
@@ -483,6 +549,7 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
         n_king += 1
         k = per_king.setdefault(digest12, {
             "env": {}, "harness": {}, "env_harness": {}, "trend": {},
+            "env_temp": {}, "harness_temp": {}, "temp": {},
             "first_ts": ts, "last_ts": ts, "n": 0, "recent_1h": 0, "recent_24h": 0})
         k["n"] += 1
         k["first_ts"] = min(k["first_ts"], ts)
@@ -491,9 +558,13 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
             k["recent_1h"] += 1
         if age <= 86400:
             k["recent_24h"] += 1
-        k["env"].setdefault(source, Agg()).add(outcome, timeout, n_calls, wall)
-        k["harness"].setdefault(harness, Agg()).add(outcome, timeout, n_calls, wall)
-        k["env_harness"].setdefault((source, harness), Agg()).add(outcome, timeout, n_calls, wall)
+        k["env"].setdefault(source, Agg()).add(outcome, timeout, n_calls, wall, stop)
+        k["harness"].setdefault(harness, Agg()).add(outcome, timeout, n_calls, wall, stop)
+        k["env_harness"].setdefault((source, harness), Agg()).add(outcome, timeout, n_calls, wall, stop)
+        tc = temp_class(temperature)
+        k["env_temp"].setdefault((source, tc), Agg()).add(outcome, timeout, n_calls, wall, stop)
+        k["harness_temp"].setdefault((harness, tc), Agg()).add(outcome, timeout, n_calls, wall, stop)
+        k["temp"].setdefault(tc, Agg()).add(outcome, timeout, n_calls, wall, stop)
         b = bucket(ts or 0.0)
         if 0 <= b < TREND_BUCKETS and outcome in ("solved", "failed"):
             cell = k["trend"].setdefault(source, {}).setdefault(b, [0, 0])
@@ -515,6 +586,12 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
         return out
 
     teacher_rows = {s: a.out() for s, a in teacher_env.items()}
+
+    def temp_split(table: dict, key) -> dict:
+        """{greedy: Agg.out() | None, sampled: Agg.out() | None} for one key."""
+        return {tc: (table[(key, tc)].out() if (key, tc) in table else None)
+                for tc in (GREEDY, SAMPLED)}
+
     reigns_out = []
     for digest12, k in sorted(per_king.items(), key=lambda kv: -kv[1]["last_ts"]):
         meta = by_digest.get(digest12, {})
@@ -528,12 +605,14 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
             row["delta"] = (row["rate"] - t["rate"]) if (t and t["rate"] is not None
                                                           and row["rate"] is not None) else None
             row["harnesses"] = sorted({h for (s, h) in k["env_harness"] if s == source})
+            row["by_temp"] = temp_split(k["env_temp"], source)
             env_rows.append(row)
         env_rows.sort(key=lambda r: (r["group"], r["source"]))
         harness_rows = []
         for h, agg in k["harness"].items():
             row = agg.out()
             row["harness"] = h
+            row["by_temp"] = temp_split(k["harness_temp"], h)
             harness_rows.append(row)
         harness_rows.sort(key=lambda r: -r["n"])
         eh_rows = []
@@ -554,6 +633,8 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
             "n_rollouts": k["n"], "first_ts": k["first_ts"], "last_ts": k["last_ts"],
             "recent_1h": k["recent_1h"], "recent_24h": k["recent_24h"],
             "total": total.out(),
+            "by_temp": {tc: (k["temp"][tc].out() if tc in k["temp"] else None)
+                        for tc in (GREEDY, SAMPLED)},
             "envs": env_rows, "harnesses": harness_rows, "env_harness": eh_rows,
             "trend": trend_out(k["trend"]),
         })
@@ -579,9 +660,20 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
                  for s in sorted(env_ids)],
         "stop_conditions": stops,
         "definitions": {
-            "outcome": "errored: real error or stop_condition not in {agent_completed, max_turns}; "
-                       "solved: primary grade >= 1.0; failed: grade < 1.0 or ungraded at max_turns; "
-                       "unscored: no numeric grade",
+            "outcome": "same rule as the fold (affine.corpus.view.rollout_outcome): errored = a real "
+                       "error (the ACP 'rollout stopped: max_turns/loop_guard' artifact is not one) or "
+                       "stop_condition not in {agent_completed, max_turns, loop_guard, no_visible_reply}; "
+                       "no_visible_reply = failed whatever the grade; solved = primary grade >= 1.0; "
+                       "failed = grade < 1.0 or ungraded at max_turns / loop_guard; unscored = no numeric grade",
+            "loop rate": "share of the row's rollouts the datagen loop guard cut short "
+                         "(stop_condition loop_guard: the same action repeated 6x with the same "
+                         "observation; king policies only). Loop ONSETS inside rollouts that ran to the "
+                         "end are not counted here (they need the baked conversations), so this is a "
+                         "lower bound on looping",
+            "greedy / sampled": "policy.temperature stamped on the envelope since 2026-09-13: greedy = "
+                                "T 0 (king_*_greedy policies), sampled = T 0.8 (every king policy before "
+                                "the stamp existed sampled at 0.8 and counts as sampled). Solve rate and "
+                                "n per class",
             "grade_keys": list(PRIMARY_REWARD_KEYS),
             "rate": "solved / (solved + failed); Wilson 95% interval",
             "timeout": f"an error message containing '{TIMEOUT_MARKER}' (the {ROLLOUT_TIMEOUT_S:.0f} s "
@@ -602,6 +694,7 @@ def main() -> int:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.executescript(SCHEMA)
+    migrate(conn)
     groups = load_groups()
     fetcher = Fetcher()
     manifest_info = ingest(conn, fetcher, groups)

@@ -68,10 +68,14 @@
     ];
     if (reign) {
       const t = reign.total;
+      const bt = reign.by_temp || {};
+      const g = bt.greedy, sm = bt.sampled;
       cards.push(el("div", { class: "card" },
         el("div", { class: "k" }, `selected reign overall`),
         el("div", { class: "v" }, pct(t.rate), el("small", {}, `${t.solved}/${t.graded} graded`)),
-        el("div", { class: "small muted" }, `teacher ${pct(st.teacher.total.rate)} on ${num(st.teacher.total.graded)} graded`)));
+        el("div", { class: "small muted" }, `teacher ${pct(st.teacher.total.rate)} on ${num(st.teacher.total.graded)} graded`),
+        el("div", { class: "small muted" },
+          `loop guard ${pct(t.loop_guard_rate)} · greedy T=0 ${g && g.n ? pct(g.rate) + " (" + num(g.n) + ")" : "–"} · sampled T=0.8 ${sm && sm.n ? pct(sm.rate) + " (" + num(sm.n) + ")" : "–"}`)));
     }
     const box = $("#cards");
     box.replaceChildren(...cards);
@@ -112,6 +116,23 @@
     const bar = el("span", { class: "bar" + (cls || ""), style: `width:${Math.round(44 * row.rate)}px` });
     return el("td", { class: "num" }, bar, pct(row.rate),
       el("span", { class: "ci" }, `[${pct(row.lo, 0)}–${pct(row.hi, 0)}]`));
+  }
+
+  function loopCell(row) {
+    if (!row.n) return el("td", { class: "num muted" }, "–");
+    return el("td", { class: "num" + (row.loop_guard_rate >= 0.5 ? " neg" : "") }, pct(row.loop_guard_rate),
+      el("span", { class: "n" }, `(${num(row.loop_guards)})`));
+  }
+
+  function tempCell(row) {
+    // greedy (T=0, king_*_greedy) vs sampled (T=0.8) solve rate with graded n
+    const bt = row.by_temp || {};
+    const one = (a, label) => a && a.n
+      ? el("span", { class: "temp " + label, title: `${label}: ${a.solved}/${a.graded} graded of ${a.n} rollouts` },
+          a.rate === null || a.rate === undefined ? "–" : pct(a.rate, 0), el("span", { class: "n" }, `(${num(a.graded)})`))
+      : el("span", { class: "muted" }, "–");
+    if (!(bt.greedy && bt.greedy.n) && !(bt.sampled && bt.sampled.n)) return el("td", { class: "num muted" }, "–");
+    return el("td", { class: "num" }, one(bt.greedy, "greedy"), " / ", one(bt.sampled, "sampled"));
   }
 
   function sparkline(series) {
@@ -161,10 +182,11 @@
     const spec = state.sort.env;
     markSorted("#env-table", spec);
     if (!r) {
-      tbody.replaceChildren(el("tr", {}, el("td", { colspan: 12, class: "empty" }, "No king rollouts in the trace store yet.")));
+      tbody.replaceChildren(el("tr", {}, el("td", { colspan: 14, class: "empty" }, "No king rollouts in the trace store yet.")));
       return;
     }
-    const get = (row, k) => k === "teacher_rate" ? (row.teacher ? row.teacher.rate : null) : row[k];
+    const get = (row, k) => k === "teacher_rate" ? (row.teacher ? row.teacher.rate : null)
+      : k === "greedy_rate" ? (row.by_temp && row.by_temp.greedy ? row.by_temp.greedy.rate : null) : row[k];
     const groups = new Map();
     for (const row of r.envs) {
       if (!groups.has(row.group)) groups.set(row.group, []);
@@ -182,7 +204,7 @@
       const graded = rows.reduce((s, x) => s + x.graded, 0);
       const tSolved = rows.reduce((s, x) => s + (x.teacher ? x.teacher.solved : 0), 0);
       const tGraded = rows.reduce((s, x) => s + (x.teacher ? x.teacher.graded : 0), 0);
-      out.push(el("tr", { class: "group" }, el("td", { colspan: 12 }, g,
+      out.push(el("tr", { class: "group" }, el("td", { colspan: 14 }, g,
         el("span", { class: "muted" }, `${n.toLocaleString()} king rollouts · king ${graded ? pct(solved / graded) : "–"} vs teacher ${tGraded ? pct(tSolved / tGraded) : "–"}`))));
       for (const row of rows) {
         const t = row.teacher;
@@ -197,6 +219,8 @@
           el("td", { class: "num" }, num(row.unscored)),
           el("td", { class: "num" }, num(row.median_turns)),
           el("td", { class: "num" }, pct(row.timeout_rate)),
+          loopCell(row),
+          tempCell(row),
           t && t.rate !== null && t.rate !== undefined
             ? el("td", { class: "num" }, el("span", { class: "bar t", style: `width:${Math.round(44 * t.rate)}px` }), pct(t.rate), el("span", { class: "n" }, `(${t.graded.toLocaleString()})`))
             : el("td", { class: "num muted" }, t ? `– (${t.n} ungraded)` : "no teacher data"),
@@ -224,7 +248,9 @@
       el("td", { class: "num" + (row.errored ? " neg" : "") }, num(row.errored)),
       el("td", { class: "num" }, num(row.unscored)),
       el("td", { class: "num" }, num(row.median_turns)),
-      el("td", { class: "num" }, pct(row.timeout_rate)))));
+      el("td", { class: "num" }, pct(row.timeout_rate)),
+      loopCell(row),
+      tempCell(row))));
   }
 
   function markSorted(tableSel, spec) {
@@ -361,8 +387,8 @@
 
   $("#reign").addEventListener("change", (e) => { state.reign = e.target.value; render(); });
   $("#trend-env").addEventListener("change", (e) => { state.trendEnv = e.target.value; renderTrend(state.stats); });
-  bindSorting("#env-table", "env", ["n", "rate", "solved", "failed", "errored", "unscored", "median_turns", "timeout_rate", "teacher_rate", "delta"]);
-  bindSorting("#harness-table", "harness", ["n", "rate", "solved", "failed", "errored", "unscored", "median_turns", "timeout_rate"]);
+  bindSorting("#env-table", "env", ["n", "rate", "solved", "failed", "errored", "unscored", "median_turns", "timeout_rate", "loop_guard_rate", "greedy_rate", "teacher_rate", "delta"]);
+  bindSorting("#harness-table", "harness", ["n", "rate", "solved", "failed", "errored", "unscored", "median_turns", "timeout_rate", "loop_guard_rate", "greedy_rate"]);
 
   load();
   setInterval(() => {
