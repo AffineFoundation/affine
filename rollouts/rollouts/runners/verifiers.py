@@ -21,6 +21,7 @@ from rollouts.adapters.verifiers import (
 )
 from rollouts.catalog import VERIFIERS_IMAGE_PREFIXES
 from rollouts.config import RolloutsConfig
+from rollouts.diskgc import gc_if_low
 from rollouts.registry import Source
 from rollouts.runners.base import (
     BatchResult,
@@ -115,10 +116,22 @@ def eval_cmd(cfg: RolloutsConfig, source: Source, endpoint: Endpoint,
     return cmd
 
 
-def build_local_images(batch: list[dict]) -> tuple[list[dict], list[str]]:
-    """Local-build per-task images (terminal_lego); (ok_batch, failed_uids)."""
+# Per-task local builds per batch (terminal_lego, affine_tmax: ~2 GB each).
+# Tasks past the cap are DEFERRED, not failed: they stay unmarked and the
+# scheduler re-selects them, so a batch adds at most this many new images
+# to the disk (2026-09-13; datagen-2 filled its disk twice on tmax builds).
+MAX_LOCAL_BUILDS_PER_BATCH = int(os.environ.get("ROLLOUTS_MAX_LOCAL_BUILDS", 6))
+
+
+def build_local_images(batch: list[dict], max_builds: int = 0,
+                       ) -> tuple[list[dict], list[str], list[str]]:
+    """Local-build per-task images (terminal_lego, tmax):
+    (ok_batch, failed_uids, deferred_uids). Images that already exist do
+    not count against `max_builds` (0 = no cap)."""
     ok: list[dict] = []
     failed: list[str] = []
+    deferred: list[str] = []
+    n_built = 0
     for row in batch:
         uid = row["uid"]
         image = row.get("image") or ""
@@ -134,6 +147,10 @@ def build_local_images(batch: list[dict]) -> tuple[list[dict], list[str]]:
         if probe.returncode == 0:
             ok.append(row)
             continue
+        if max_builds and n_built >= max_builds:
+            deferred.append(uid)
+            continue
+        n_built += 1
         log.info("docker build %s <- %s", image, dockerfile)
         proc = subprocess.run(
             ["docker", "build", "-t", image, "-f", str(dockerfile),
@@ -145,7 +162,10 @@ def build_local_images(batch: list[dict]) -> tuple[list[dict], list[str]]:
             failed.append(uid)
             continue
         ok.append(row)
-    return ok, failed
+    if deferred:
+        log.info("%d task(s) deferred: batch build cap %d reached (re-selected "
+                 "later)", len(deferred), max_builds)
+    return ok, failed, deferred
 
 
 # Container ownership (2026-09-12). Every container the eval subprocess
@@ -279,9 +299,11 @@ class VerifiersRunner:
         result = BatchResult()
         if self.RUNTIME == "docker":
             reap_containers()
+            gc_if_low(f"{source.name} batch")
 
         if source.local_docker_build:
-            batch, build_failed = build_local_images(batch)
+            batch, build_failed, _deferred = build_local_images(
+                batch, MAX_LOCAL_BUILDS_PER_BATCH)
             for uid in build_failed:
                 result.per_task.append({
                     "uid": uid, "resolved": None, "stop": None,
