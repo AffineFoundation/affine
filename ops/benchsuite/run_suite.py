@@ -193,7 +193,7 @@ def cell_dir(out: Path, model: str, env_id: str, temp: float) -> Path:
 def build_cmd(env: dict, model: str, url: str, key_env: str, temp: float,
               rollouts: int, out: Path, dirname: str, runtime: str,
               concurrency: int, push: bool, run_name: str,
-              rollout_timeout: int, verifiers_dir: Path) -> list[str]:
+              rollout_timeout: int, verifiers_dir: Path, chat_image: str = "") -> list[str]:
     cmd = [
         str(verifiers_dir / ".venv" / "bin" / "eval"), env["taskset"],
         "-m", model,
@@ -223,6 +223,10 @@ def build_cmd(env: dict, model: str, url: str, key_env: str, temp: float,
     # container runtime given on the command line (docker: python:3.11-slim,
     # ~5 s boot per task).
     cmd += ["--env.agent.runtime.type", runtime]
+    if runtime == "docker" and chat_image:
+        # A pre-baked python:3.11-slim with uv + the harness script deps in the
+        # uv cache: on Lium DinD pods the per-container PyPI fetch took ~6 min.
+        cmd += ["--env.agent.runtime.image", chat_image]
     if runtime == "prime":
         # Tasks that restrict egress (`network_allow = []`) need a micro-VM
         # sandbox; container sandboxes cannot enforce a policy. The first use
@@ -263,7 +267,8 @@ def run_cell(env: dict, model_label: str, model: str, url: str, key_env: str,
         log(f"resume {model_label}/{env['id']} t={temp:g}")
     else:
         cmd = build_cmd(env, model, url, key_env, temp, rollouts, out, dirname, runtime,
-                        concurrency, push, run_name, rollout_timeout, verifiers_dir)
+                        concurrency, push, run_name, rollout_timeout, verifiers_dir,
+                        os.environ.get("BENCHSUITE_CHAT_IMAGE", ""))
     with (d / "cmd.txt").open("a") as fh:
         fh.write(" ".join(cmd) + "\n")
     log(f"start {model_label}/{env['id']} t={temp:g}: {' '.join(cmd[:6])} ...")

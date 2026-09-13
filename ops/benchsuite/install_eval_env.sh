@@ -101,6 +101,23 @@ uv tool install -q prime   # separate tool env: prime depends on PyPI verifiers,
 uv pip install -q --no-deps -e .   # re-assert the editable verifiers checkout
 .venv/bin/python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
 
+# Chat-cell image: python:3.11-slim + uv + the harness script's deps already in
+# the uv cache. The runtime's default image fetches them from PyPI in every
+# container (5 s on a Prime pod, ~6 min on a Lium DinD pod). run_suite.py uses
+# it when BENCHSUITE_CHAT_IMAGE is set (run.sh / run_pass.sh set it).
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  DOCKERFILE=$(mktemp -d)
+  cat > "$DOCKERFILE/Dockerfile" <<'DF'
+FROM python:3.11-slim
+RUN pip install -q --no-cache-dir uv==0.9.5 \
+ && mkdir -p /tmp/w \
+ && printf '# /// script\n# requires-python = ">=3.10"\n# dependencies = ["openai", "mcp==2.0.0", "httpx", "httpx2", "tenacity"]\n# ///\nprint(1)\n' > /tmp/w/s.py \
+ && uv sync --script /tmp/w/s.py -q --no-config && rm -rf /tmp/w
+DF
+  docker build -q -t affine-bench-chat:py311 "$DOCKERFILE" >/dev/null && echo "chat image affine-bench-chat:py311 built"
+  rm -rf "$DOCKERFILE"
+fi
+
 echo "== check"
 for ts in aime25 math500 mmlu-pro gpqa-strict ifbench ifeval humaneval livecodebench bfcl-v3 minif2f oolong-synth mrcr-v2 graphwalks swebench-verified; do
   .venv/bin/eval "$ts" --dry-run -n 1 --no-rich --no-push -m x >/dev/null 2>&1 && echo "ok  $ts" || echo "BAD $ts"

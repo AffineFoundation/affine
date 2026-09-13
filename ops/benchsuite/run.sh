@@ -49,7 +49,7 @@ PY
 done
 
 cd "$HERE"
-export PATH="$HOME/.local/bin:$PATH" BENCHSUITE_PYTHON="$PY" BENCHSUITE_FP_WORKDIR="$HOME/benchsuite/tmp"
+export PATH="$HOME/.local/bin:$PATH" BENCHSUITE_PYTHON="$PY" BENCHSUITE_FP_WORKDIR="$HOME/benchsuite/tmp" BENCHSUITE_CHAT_IMAGE="affine-bench-chat:py311"
 mkdir -p "$HOME/benchsuite/tmp"
 # the box env snapshot names the Prime key PRIME; the Prime CLI/SDK want PRIME_API_KEY
 export PRIME_API_KEY="${PRIME_API_KEY:-${PRIME:-}}"

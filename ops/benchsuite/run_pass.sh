@@ -177,7 +177,7 @@ PY
 )
   local MODEL_FLAGS="--king-url $KING_URL --king-model $KING_MODEL --models $MODELS --verifiers-dir $RHOME/benchsuite/verifiers --out $RHOME/benchsuite/runs --push"
   [ "$MODELS" = "king,teacher" ] && MODEL_FLAGS="$MODEL_FLAGS --teacher-url $TEACHER_URL --teacher-model $TEACHER_MODEL" || MODEL_FLAGS="$MODEL_FLAGS --teacher-from $TEACHER_FROM"
-  local REMOTE_ENV="export BENCH_API_KEY='$API_KEY' PRIME_API_KEY='${PRIME_API_KEY:-}' HF_TOKEN='${HF_TOKEN:-}'; cd $RHOME/affine/ops/benchsuite && echo '$META' > meta.json"
+  local REMOTE_ENV="export BENCH_API_KEY='$API_KEY' PRIME_API_KEY='${PRIME_API_KEY:-}' HF_TOKEN='${HF_TOKEN:-}' BENCHSUITE_CHAT_IMAGE=affine-bench-chat:py311; cd $RHOME/affine/ops/benchsuite && echo '$META' > meta.json"
   local PYR="$RHOME/benchsuite/verifiers/.venv/bin/python"
   "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" docker "$CHAT_ENVS" primary,secondary 64 manifest.json)" || log "chat suite returned non-zero; continuing"
   pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"

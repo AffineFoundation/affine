@@ -116,7 +116,7 @@ def build(bench_home: Path) -> dict:
                     "teacher": SUITE["teacher"]},
         "seeds": {"verifiers_shuffle_seed": 0, "gpqa_option_shuffle_seed": 0,
                   "sampling_seed": None, "note": "T=0 is greedy; the T=0.8 row is unseeded and stochastic by design"},
-        "sandbox": {"chat_cell_image": "python:3.11-slim"},
+        "sandbox": {"chat_cell_image": "affine-bench-chat:py311 (python:3.11-slim + uv + harness deps pre-cached; built by install_eval_env.sh)"},
         "envs": envs,
     }
     lock["lock_sha256"] = hashlib.sha256(json.dumps({k: v for k, v in lock.items()}, sort_keys=True).encode()).hexdigest()[:16]
