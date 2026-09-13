@@ -36,7 +36,7 @@
 # /root/recoverable/.env (ENGY_2, the teacher key) through pod_run.sh.
 # Everything the job writes lives under affine/state/recoverable/ (gitignored
 # state): <digest12>.jsonl side-tables, runs/<stamp>/ (states, results,
-# summary), lock. A run that finds another run's lock exits 0 and says so.
+# summary), lock (held only while a run merges into the side-table).
 set -euo pipefail
 
 REPO="${AFFINE_REPO:-/home/const/subnet120}"
