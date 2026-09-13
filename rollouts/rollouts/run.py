@@ -281,17 +281,21 @@ def main() -> None:
         # Per source: tasks some usable seat still has to run (the king seat
         # replays the teacher's tasks, so an exhausted teacher pool is not
         # an exhausted source while the king is up).
+        # Per seat: the teacher's work and the king's work per source.
+        # Cycles are seat-scoped (scheduler.pick_source / pick_policy): the
+        # king's guaranteed share (KING_BATCH_SHARE) picks among sources
+        # with king work, every other cycle among sources with teacher work.
         remaining = {name: scheduler.remaining(name, rows)
                      for name, rows in pools.items()}
-        # The king seat's own work per source: the guaranteed king cycles
-        # (scheduler.KING_BATCH_SHARE) pick among these sources only.
+        teacher_remaining = {name: scheduler.remaining(name, rows, teacher_only=True)
+                             for name, rows in pools.items()}
         king_remaining = {name: scheduler.remaining(name, rows, king_only=True)
                           for name, rows in pools.items()}
         if args.source:
             name = args.source if remaining.get(args.source) else None
             scheduler.king_cycle = False
         else:
-            name = scheduler.pick_source(remaining, king_remaining)
+            name = scheduler.pick_source(teacher_remaining, king_remaining)
         if name is None:
             log.info("all pools exhausted or cooling; sleeping %ds",
                      POOL_EXHAUSTED_SLEEP_S)
@@ -306,8 +310,9 @@ def main() -> None:
         if args.policy:
             policy = registry.policies[args.policy]
         else:
-            policy = scheduler.pick_policy(name, pools[name],
-                                           king_only=scheduler.king_cycle)
+            policy = scheduler.pick_policy(
+                name, pools[name], king_only=scheduler.king_cycle,
+                teacher_only=not scheduler.king_cycle and not args.source)
         pending = scheduler.pending(name, pools[name], policy)
         batch = pending[: cfg.batch_size]
         log.info("cycle: source=%s policy=%s seat=%s picks=%d/%d batch=%d "
