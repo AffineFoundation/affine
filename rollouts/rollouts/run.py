@@ -283,10 +283,15 @@ def main() -> None:
         # an exhausted source while the king is up).
         remaining = {name: scheduler.remaining(name, rows)
                      for name, rows in pools.items()}
+        # The king seat's own work per source: the guaranteed king cycles
+        # (scheduler.KING_BATCH_SHARE) pick among these sources only.
+        king_remaining = {name: scheduler.remaining(name, rows, king_only=True)
+                          for name, rows in pools.items()}
         if args.source:
             name = args.source if remaining.get(args.source) else None
+            scheduler.king_cycle = False
         else:
-            name = scheduler.pick_source(remaining)
+            name = scheduler.pick_source(remaining, king_remaining)
         if name is None:
             log.info("all pools exhausted or cooling; sleeping %ds",
                      POOL_EXHAUSTED_SLEEP_S)
@@ -301,12 +306,22 @@ def main() -> None:
         if args.policy:
             policy = registry.policies[args.policy]
         else:
-            policy = scheduler.pick_policy(name, pools[name])
+            policy = scheduler.pick_policy(name, pools[name],
+                                           king_only=scheduler.king_cycle)
         pending = scheduler.pending(name, pools[name], policy)
+<<<<<<< HEAD
         batch = pending[: cfg.batch_size]
         log.info("cycle: source=%s policy=%s batch=%d seat_pending=%d "
                  "remaining=%s", name, policy.id, len(batch), len(pending),
                  remaining)
+=======
+        batch = pending[: min(cfg.batch_size, source.max_batch or cfg.batch_size)]
+        log.info("cycle: source=%s policy=%s seat=%s picks=%d/%d batch=%d "
+                 "seat_pending=%d remaining=%s", name, policy.id,
+                 "king" if scheduler.king_cycle else "teacher",
+                 scheduler.picks_king, scheduler.picks_total, len(batch),
+                 len(pending), remaining)
+>>>>>>> rollouts: guaranteed king share of picks (40 %) — king cycles pick among king-capable sources by the king seat's own shortfall
         if not health.preflight(policy, env):
             # A dynamic endpoint (the king seat) does not answer: struck, so
             # the scheduler prefers another policy while it cools. Not a
