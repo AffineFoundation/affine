@@ -34,8 +34,18 @@ dm_user_ids = ["1429458949790371980"]   # Alan (allan_ww)
 user_id = "1429458949790371980"
 username = "allan_ww"
 display = "AIIan"
-# Posting target: "dm" (default) or a channel id.
-target = "dm"
+# Who posts (Jacob, 2026-09-13 17:47 UTC): "user" = Jacob's own account
+# `consttt` (389189199514959893) via a user token piped in at post time
+# (alan_post.py --token-stdin; vault note "Const discord header"); "bot" =
+# the Arbos bot. The bot stays the reader/mirror in both modes.
+poster = "user"
+user_token_env = "DISCORD_USER_TOKEN_CONST"
+# Posting target: the existing Jacob<->Alan DM (type 1, found 2026-09-13).
+# For poster = "bot" use "dm" (opens the bot's DM with user_id) or a channel id.
+target = "1429838371399663646"
+# The bot's own DM with Alan (mirrored via dm_user_ids); alan_inbox.py always
+# counts it as an inbox channel. The bot cannot read the Jacob<->Alan DM.
+bot_dm_channel = "1548346444354818051"
 
 # Known SN120 channels (discovered 2026-09-11 with the "Arbos" bot).
 [[channels]]
