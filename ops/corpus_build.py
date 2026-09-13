@@ -1063,6 +1063,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                     _count(notes, "king_pivot_over_onset")
                 route[i] = KING_PIVOT_GROUP
                 in_loop.discard(i)
+                later_onsets.discard(i)
                 extra[i] = {"pivot": {
                     "category": row.get("failure_category"),
                     "confidence": row.get("confidence"),
@@ -1144,10 +1145,15 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             _count(drops, "king_one_reply")
             continue
         leak_exempt = frozenset(i for i, g in route.items() if cfgs[g]["leak_exempt"])
+        # Turns scored under `text` may be recorded from a reply with no action
+        # in the policy dialect (the affine_sql king answers with a bare
+        # ```sql block; 26 of 28 refused king_done states, 2026-09-13).
+        text_replies = frozenset(i for i, k in kind_stamp.items() if k == dialects.TEXT_KIND)
         try:
             rec = build_view_record(env, baker=baker,
                                     generated_at=env.get("stored_at"),
-                                    convs=convs, leak_exempt=leak_exempt)
+                                    convs=convs, leak_exempt=leak_exempt,
+                                    text_replies=text_replies)
         except (ToolParityError, TraceShapeError) as e:
             _count(drops, type(e).__name__)
             continue
@@ -1181,7 +1187,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         rest = [t for t in turns if t["turn_idx"] not in route
                 and t["turn_idx"] not in in_loop and t["turn_idx"] not in later_onsets]
         routed = [t for t in turns if t["turn_idx"] in route]
-        n_later = sum(1 for t in turns if t["turn_idx"] in later_onsets)
+        n_later = sum(1 for t in turns if t["turn_idx"] in later_onsets
+                      and t["turn_idx"] not in route)
         n_in_loop = len(turns) - len(routed) - len(rest) - n_later
         if n_in_loop:
             _count(drops, "king_in_loop", n_in_loop)
