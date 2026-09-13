@@ -118,6 +118,7 @@ def main() -> None:
     ap.add_argument("--turns", help="turns.jsonl to include (copied into the run)")
     ap.add_argument("--ledger", help="pods ledger to include")
     ap.add_argument("--seed", type=int, default=20260912)
+    ap.add_argument("--readme", help="README text file to upload instead of the E1 template")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
     run_dir = Path(args.run_dir)
@@ -133,7 +134,8 @@ def main() -> None:
     }
     staging = run_dir.parent / f"{run_dir.name}.staging"
     files = stage(run_dir, staging)
-    (staging / "README").write_text(README.format(run_id=args.run_id, seed=args.seed))
+    (staging / "README").write_text(Path(args.readme).read_text() if args.readme
+                                    else README.format(run_id=args.run_id, seed=args.seed))
     files.append(staging / "README")
     for p in files:
         manifest["files"][str(p.relative_to(staging))] = {"bytes": p.stat().st_size, "sha256": sha256(p)}

@@ -168,6 +168,8 @@ def main() -> None:
     ap.add_argument("--reuse-plain", action="store_true",
                     help="skip the plain arm for states with a side-table plain_control")
     ap.add_argument("--limit-states", type=int, default=0)
+    ap.add_argument("--block", type=int, default=50,
+                    help="states per block; a block finishes all its arms before the next starts")
     ap.add_argument("--only", default="", help="comma-separated state ids")
     ap.add_argument("--retry-errored", action="store_true")
     ap.add_argument("--shard", default="0/1")
@@ -220,9 +222,13 @@ def main() -> None:
                 nk += 1
                 need -= 1
             todo.extend((s, arm, k) for k in ks)
-    # Interleave arms and states so both arms progress together (a paired
-    # read is possible at any checkpoint) and no unit hogs the workers.
-    todo.sort(key=lambda t: (t[2], states.index(units[RS.unit_key(t[0])]), t[1]))
+    # Blocks of --block states complete (all arms, all continuations) before
+    # the next block starts, so the first block can be reported early; inside
+    # a block, continuation k of every unit runs before k+1 and the two arms
+    # interleave (a paired read is possible at any checkpoint).
+    order = {u: i for i, u in enumerate(units)}
+    todo.sort(key=lambda t: (order[RS.unit_key(t[0])] // args.block, t[2],
+                             order[RS.unit_key(t[0])], t[1]))
     log.info("%d states / %d units, %d stored, %d continuation(s) to run (%s), %d workers",
              len(states), len(units), n_have, len(todo), ",".join(arms), args.workers)
     deadline = time.time() + args.deadline_hours * 3600 if args.deadline_hours else None

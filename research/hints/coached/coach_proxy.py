@@ -138,7 +138,7 @@ class Coach:
             rec["reason"] = "no_openrouter_key"
             return rec
         coach_msgs = C.build_coach_messages(ctx, cont_text, n_cont)
-        raw = H.openrouter_hints(coach_msgs, self.key, model=COACH_MODEL, max_tokens=1500,
+        raw = H.openrouter_hints(coach_msgs, self.key, model=COACH_MODEL, max_tokens=4000,
                                  timeout=180.0)
         cost = float(raw.get("cost_usd") or 0)
         with self.lock:
@@ -165,7 +165,7 @@ class Coach:
             rw = coach_msgs + [{"role": "assistant", "content": json.dumps(levels)},
                                {"role": "user", "content": C.REWRITE_TMPL.format(
                                    missing=", ".join(g["grounding"]["missing"][:12]))}]
-            raw2 = H.openrouter_hints(rw, self.key, model=COACH_MODEL, max_tokens=1500,
+            raw2 = H.openrouter_hints(rw, self.key, model=COACH_MODEL, max_tokens=4000,
                                       timeout=180.0)
             cost2 = float(raw2.get("cost_usd") or 0)
             with self.lock:
