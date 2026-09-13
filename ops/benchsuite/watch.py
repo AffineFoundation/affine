@@ -30,6 +30,7 @@ import tomllib
 from pathlib import Path
 
 from challengers import near_misses
+from weights_fingerprint import fingerprint, identical
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
@@ -87,6 +88,53 @@ def iso_to_ts(s: str | None) -> float:
     if not s:
         return 0.0
     return time.mktime(time.strptime(s[:19], "%Y-%m-%dT%H:%M:%S"))
+
+
+def latest_card() -> dict | None:
+    best = None
+    for p in CARDS_DIR.glob("*.json"):
+        try:
+            c = json.loads(p.read_text())
+        except (OSError, ValueError):
+            continue
+        if c.get("status") in ("complete", "partial") and (c.get("king") or {}).get("digest"):
+            if best is None or (c.get("created_at") or "") > (best.get("created_at") or ""):
+                best = c
+    return best
+
+
+def skip_if_identical_weights(king: dict, run_id: str) -> bool:
+    """Guard: if the new king's TENSOR set equals the last benchmarked king's,
+    do not spend a pass — publish a stub card that points at the previous run
+    (the kingboard shows the previous numbers under the new reign with a note)."""
+    prev = latest_card()
+    if prev is None or prev["king"]["digest"] == king["digest"]:
+        return False
+    try:
+        fp_new = fingerprint(king["digest"])
+        fp_prev = fingerprint(prev["king"]["digest"])
+    except Exception as e:  # download / parse trouble: fall through and bench
+        log(f"fingerprint failed ({e!r}); benching anyway")
+        return False
+    if not identical(fp_new, fp_prev):
+        log(f"weights differ from reign {prev['king'].get('reign')} "
+            f"({fp_new['tensor_set_sha256'][:12]} vs {fp_prev['tensor_set_sha256'][:12]}); benching")
+        return False
+    stub = dict(prev)
+    stub.update({
+        "run_id": run_id, "king": king, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "published_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "status": "skipped_identical_weights",
+        "identical_to": {"run_id": prev["run_id"], "digest": prev["king"]["digest"],
+                         "reign": prev["king"].get("reign"), "tensor_set_sha256": fp_new["tensor_set_sha256"],
+                         "n_tensors": fp_new["n_tensors"]},
+        "mode": "skipped", "prime_spent_usd": 0.0,
+    })
+    CARDS_DIR.mkdir(parents=True, exist_ok=True)
+    (CARDS_DIR / f"{run_id}.json").write_text(json.dumps(stub, indent=1))
+    log(f"reign {king.get('reign')} ({king['digest'][:12]}) has the same {fp_new['n_tensors']} tensors as "
+        f"reign {prev['king'].get('reign')} ({prev['king']['digest'][:12]}); pass skipped, stub card written")
+    return True
 
 
 def start_pass(w: dict, ref: str, label: str, run_id: str, mode: str, why: str,
@@ -179,6 +227,8 @@ def tick(a: argparse.Namespace) -> None:
     run_id = time.strftime("%Y%m%dT%H%MZ", time.gmtime()) + f"-{king['digest'][:12]}"
     if a.dry_run:
         log(f"would start pass {run_id}: {why}")
+        return
+    if card is None and skip_if_identical_weights(king, run_id):
         return
     start_pass(w, king["digest"], str(king["reign"]), run_id,
                os.environ.get("BENCHSUITE_MODE") or SUITE["modes"]["default"], why,

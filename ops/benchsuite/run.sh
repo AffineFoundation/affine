@@ -49,7 +49,8 @@ PY
 done
 
 cd "$HERE"
-export PATH="$HOME/.local/bin:$PATH" BENCHSUITE_PYTHON="$PY"
+export PATH="$HOME/.local/bin:$PATH" BENCHSUITE_PYTHON="$PY" BENCHSUITE_FP_WORKDIR="$HOME/benchsuite/tmp"
+mkdir -p "$HOME/benchsuite/tmp"
 # the box env snapshot names the Prime key PRIME; the Prime CLI/SDK want PRIME_API_KEY
 export PRIME_API_KEY="${PRIME_API_KEY:-${PRIME:-}}"
 exec "$PY" watch.py --interval "${BENCHSUITE_INTERVAL_S:-300}"
