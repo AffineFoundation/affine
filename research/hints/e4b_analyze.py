@@ -63,6 +63,32 @@ def first_action(reply: dict | None, action_kind: str) -> str:
         return ""
 
 
+def lenient_action(raw: str, action_kind: str) -> str:
+    """Ref action for the diversity join: the dialect's action if present,
+    else the visible reply (the teacher often ends a failure state with a
+    final text answer — a `text`-kind action the contract would forfeit under
+    a tool_call turn, but a distinct action for the identical-refs count).
+    mini-swe fences are normalized the way the fold does."""
+    txt = FENCE_RE.sub("```bash\n", raw or "")
+    if "</think>" not in txt:
+        return ""
+    rest = txt.split("</think>", 1)[1]
+    try:
+        y = dialects.last_action(rest, action_kind)
+    except dialects.UnknownDialect:
+        y = ""
+    return norm(y) if y else norm(rest)
+
+
+def probe_cell(row: dict, cond: str) -> dict | None:
+    cd = row.get("conditions", {}).get(cond)
+    if not cd:
+        return None
+    acts = [a for a in (lenient_action(x["raw"], row["action_kind"]) for x in cd["refs"]) if a]
+    return {"n_valid": len(acts), "identical": len(acts) >= 2 and len(set(acts)) == 1,
+            "n_distinct": len(set(acts)), "cap_hit": cd.get("refs") and sum(1 for x in cd["refs"] if not x.get("think_closed")) / len(cd["refs"])}
+
+
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     if n == 0:
         return float("nan"), float("nan")
@@ -109,7 +135,7 @@ def main() -> None:
             if r.get("failed"):
                 continue
             for cond in r.get("conditions", {}):
-                tc = A.turn_condition(r, cond)
+                tc = probe_cell(r, cond)
                 if tc:
                     probe[(r["turn_id"], cond)] = tc
     rows = []
@@ -127,9 +153,9 @@ def main() -> None:
             "first_differs": st.mean(1.0 if x else 0.0 for x in d["differs"]),
             "mean_turns": st.mean(d["turns"]) if d["turns"] else None,
             "errored": d["errored"],
-            "identical_refs": (pc["identical"] if pc else None),
+            "identical_refs": (pc["identical"] if pc and pc["n_valid"] >= 2 else None),
             "ref_valid": (pc["n_valid"] if pc else None),
-            "a_sd_heldout": (pc["miners"].get("teacher_heldout", {}).get("a_sd") if pc else None),
+            "n_distinct": (pc["n_distinct"] if pc else None),
         })
     with open(out / "e4b_turns.jsonl", "w") as f:
         for r in rows:
@@ -168,10 +194,26 @@ def main() -> None:
                 lo, hi = wilson(k, len(sub))
                 lines.append(f"| {arm} | {v} | {len(sub)} | {k / len(sub):.2f} | [{lo:.2f}, {hi:.2f}] | "
                              f"{st.mean(r['rate'] for r in sub):.2f} | {st.mean(r['first_differs'] for r in sub):.2f} |")
+    # paired read on the control subset: the same states, hinted vs the unhinted re-run
+    ctrl = {r["turn_id"]: r for r in rows if r["arm"] == "nohint"}
+    if ctrl:
+        lines.append("\n## Paired on the control subset (same states: hinted arm vs the unhinted re-run)\n")
+        lines.append("| arm | paired states | unhinted recovered ≥1 | hinted recovered ≥1 | hinted better | unhinted better | per-continuation Δ (hinted − unhinted) |")
+        lines.append("|---|---|---|---|---|---|---|")
+        for arm in ARM_ORDER[1:]:
+            pairs = [(ctrl[r["turn_id"]], r) for r in rows if r["arm"] == arm and r["turn_id"] in ctrl]
+            if not pairs:
+                continue
+            lines.append(f"| {arm} | {len(pairs)} | {sum(1 for c, _ in pairs if c['recovered_any'])} | "
+                         f"{sum(1 for _, h in pairs if h['recovered_any'])} | "
+                         f"{sum(1 for c, h in pairs if h['rate'] > c['rate'])} | {sum(1 for c, h in pairs if h['rate'] < c['rate'])} | "
+                         f"{st.mean(h['rate'] - c['rate'] for c, h in pairs):+.2f} |")
     if probe:
         lines.append("\n## Recovers AND keeps spread (hinted k = 3 refs at the same turn)\n")
-        lines.append("| arm | states with probe | recovered | recovered & refs not identical | recovered & identical | not recovered & identical | identical frac (all) |")
-        lines.append("|---|---|---|---|---|---|---|")
+        lines.append("Refs parsed leniently (dialect action, else the visible reply; mini-swe fence normalized); "
+                     "`identical` needs ≥ 2 parsed refs.\n")
+        lines.append("| arm | states with ≥2 refs | recovered | recovered & refs NOT identical | recovered & identical | not recovered & identical | identical frac (all) | mean distinct actions of 3 |")
+        lines.append("|---|---|---|---|---|---|---|---|")
         for arm in ARM_ORDER:
             sub = [r for r in rows if r["arm"] == arm and r["identical_refs"] is not None]
             if not sub:
@@ -179,7 +221,8 @@ def main() -> None:
             rec = [r for r in sub if r["recovered_any"]]
             lines.append(f"| {arm} | {len(sub)} | {len(rec)} | {sum(1 for r in rec if not r['identical_refs'])} | "
                          f"{sum(1 for r in rec if r['identical_refs'])} | {sum(1 for r in sub if not r['recovered_any'] and r['identical_refs'])} | "
-                         f"{st.mean(1.0 if r['identical_refs'] else 0.0 for r in sub):.2f} |")
+                         f"{st.mean(1.0 if r['identical_refs'] else 0.0 for r in sub):.2f} | "
+                         f"{st.mean(r['n_distinct'] for r in sub):.2f} |")
     (out / "e4b_tables.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
 
