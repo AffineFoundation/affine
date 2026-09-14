@@ -57,6 +57,9 @@ def tick(w: dict, out_dir: Path, discord: bool, dry_run: bool) -> None:
         prior = w["done"].get(run_id)
         if prior and (prior.get("status") == "complete" or prior.get("status") == status):
             continue
+        if card.get("mode") == "challenger" or not (card.get("king") or {}).get("reign"):
+            w["done"][run_id] = {"status": status, "skipped": "not a crowned king (challenger / comparables card)"}
+            continue
         if not pick_previous(cards, card):
             w["done"][run_id] = {"status": status, "skipped": "no previous reign"}
             continue

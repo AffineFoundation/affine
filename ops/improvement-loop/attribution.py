@@ -318,15 +318,16 @@ def block_time(block: int, anchors: list[tuple[int, float]]) -> float | None:
 
 
 def king_submission(digest: str, anchors) -> dict:
-    for v in crowned_events():
-        if str(v.get("revision", "")).startswith(digest[:12]):
+    for v in crowned_events(("crowned", "crown_revoked")):
+        if str(v.get("revision", "")).startswith(digest[:12]) and v.get("block"):
             block = int(v["block"]) if v.get("block") else None
             crowned_at = parse_ts(v["at"])
             sub = block_time(block, anchors) if block else None
             return {"digest": digest, "reign": int(v.get("reign_number") or 0), "block": block,
                     "submitted_at": sub, "crowned_at": crowned_at, "challenge_id": v.get("challenge_id"),
                     "hotkey": v.get("hotkey"), "margin": (v.get("verdict") or {}).get("margin"),
-                    "z": (v.get("verdict") or {}).get("z"), "via": (v.get("verdict") or {}).get("via")}
+                    "z": (v.get("verdict") or {}).get("z"), "via": (v.get("verdict") or {}).get("via"),
+                    "revoked": v.get("event") == "crown_revoked"}
     return {"digest": digest, "reign": None, "block": None, "submitted_at": None, "crowned_at": None}
 
 
