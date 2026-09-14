@@ -25,7 +25,7 @@ burn_uid = 0
 king_payout_window_hours = 72
 # When the window rule took effect (validator restart; ISO-8601 UTC). Before
 # this instant the rolling last-king_chain_size design below paid.
-king_payout_rule_effective_at = ""
+king_payout_rule_effective_at = "2026-09-14T11:38:08Z"
 # RETIRED 2026-09-14 (kept so older readers of api/v1/contract still see the
 # key): the rolling last-N kings payout (Albedo / Teutonic design) — current
 # king + up to N-1 prior distinct kings sharing emissions equally. It no
