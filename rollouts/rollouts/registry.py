@@ -54,6 +54,14 @@ class Source:
     # Bucket names are per group; a second bucketed source in the same
     # group starts its range here so the two do not collide.
     strata_offset: int = 0
+    # King-seat floor (2026-09-14, lever 1 for king_tooluse): the scheduler
+    # takes a king cycle on this source whenever the CURRENT king's rollouts
+    # here over the last hour fall below this rate, ahead of the shortfall
+    # ranking. Turn-based targets starve one-turn sources (a chat source
+    # at 1 turn/rollout meets a 0.7 % turn target with one batch a day),
+    # and a source where an earlier king left thousands of turns ranks
+    # below zero for every later king. 0 = no floor.
+    king_rollouts_per_hour: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -160,6 +168,7 @@ def _load_sources(path: Path, policies: dict[str, Policy],
             extra_flags=tuple(cfg.get("extra_flags", ())),
             strata_buckets=int(cfg.get("strata_buckets", 0)),
             strata_offset=int(cfg.get("strata_offset", 0)),
+            king_rollouts_per_hour=float(cfg.get("king_rollouts_per_hour", 0.0)),
         )
         if src.group not in mix:
             raise ValueError(f"source {name!r} group {src.group!r} missing "

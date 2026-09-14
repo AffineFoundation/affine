@@ -47,6 +47,7 @@ and zero king batches while reign 12 sat published on every pod.
 
 from __future__ import annotations
 
+import calendar
 import json
 import logging
 import os
@@ -66,6 +67,11 @@ KING_SEAT_PREFIX = "king:"
 # Guaranteed fraction of picks that go to the king seat while it is served
 # (ROLLOUTS_KING_BATCH_SHARE overrides; 0 disables the guarantee).
 KING_BATCH_SHARE = float(os.environ.get("ROLLOUTS_KING_BATCH_SHARE", "0.4"))
+# Window over which a source's king_rollouts_per_hour floor is measured. A
+# batch is 16-48 rollouts, larger than any floor, so a 1 h window would fire
+# one batch every hour whatever the floor says; over 6 h the floor sets how
+# many batches land per 6 h (floor x 6 / batch size).
+KING_FLOOR_WINDOW_S = 6 * 3600.0
 
 
 def is_king_policy(policy_id: str) -> bool:
@@ -85,6 +91,17 @@ def seat_of(policy_id: str, model: str, harness: str = "") -> str:
 
 def is_king_seat(seat: str) -> bool:
     return seat.startswith(KING_SEAT_PREFIX)
+
+
+def _row_ts(at) -> float | None:
+    """State rows stamp `at` as ISO-8601 Z (mark); older rows may carry a
+    float. None when unparsable."""
+    if isinstance(at, (int, float)):
+        return float(at)
+    try:
+        return calendar.timegm(time.strptime(str(at), "%Y-%m-%dT%H:%M:%SZ"))
+    except (TypeError, ValueError):
+        return None
 
 
 def policy_seat(policy: Policy, env: dict) -> str:
@@ -111,6 +128,14 @@ class UnifiedState:
         self.king_done: dict[tuple[str, str], set[str]] = {}
         self.kept_by_source: dict[str, int] = {}
         self.kept_by_policy: dict[tuple[str, str], int] = {}
+        # (source, seat) -> kept turns: the king ranking reads the CURRENT
+        # king's own turns (a new king starts every source from zero; before
+        # this, kept_by_policy carried every earlier king's turns and a
+        # source like affine_agent with 16k reign-11 turns was never picked
+        # for reign 12). (source, seat) -> row timestamps of king rollouts,
+        # for the per-source king floor (king_rollouts_per_hour).
+        self.kept_by_seat: dict[tuple[str, str], int] = {}
+        self.king_times: dict[tuple[str, str], list[float]] = {}
         if path.exists():
             for line in open(path, encoding="utf-8"):
                 if not line.strip():
@@ -133,6 +158,11 @@ class UnifiedState:
         pid = rec.get("policy_id") or ""
         key = (source, pid)
         self.kept_by_policy[key] = self.kept_by_policy.get(key, 0) + n
+        self.kept_by_seat[(source, seat)] = self.kept_by_seat.get((source, seat), 0) + n
+        if is_king_seat(seat):
+            ts = _row_ts(rec.get("at"))
+            if ts is not None:
+                self.king_times.setdefault((source, seat), []).append(ts)
 
     def mark(self, source: str, uid: str, outcome: str, *,
              policy_id: str = "", n_turns: int = 0, **extra) -> None:
@@ -227,6 +257,16 @@ class Scheduler:
         self.king_cycle = False
         king_cands = (self._king_eligible(king_remaining)
                       if king_remaining is not None else [])
+        # Per-source king floors come first and may take a cycle beyond the
+        # 40 % share (the share is a floor, not a cap): the king_tooluse
+        # feeders must see the king several times a day whatever their
+        # turn target says.
+        floor_due = self._king_floor_due(king_cands) if king_cands else []
+        if floor_due:
+            self.king_cycle = True
+            self.picks_total += 1
+            self.picks_king += 1
+            return floor_due[0]
         if king_cands and self._king_due():
             return self._king_pick(king_cands)
         cands = self.eligible(remaining)
@@ -257,9 +297,41 @@ class Scheduler:
             return (shortfall, deficit, self.targets[name], name)
         return max(cands, key=rank)
 
+    def king_seat(self) -> str | None:
+        """The seat the served king plays right now (None while unserved)."""
+        for p in self.registry.policies.values():
+            if is_king_policy(p.id) and p.available_endpoints(self.env):
+                return policy_seat(p, self.env)
+        return None
+
     def _king_kept(self, source: str) -> int:
-        return sum(n for (src, pid), n in self.state.kept_by_policy.items()
-                   if src == source and is_king_policy(pid))
+        """The CURRENT king's kept turns on the source (a new king starts
+        every source over; earlier kings' turns do not count against it)."""
+        seat = self.king_seat()
+        return self.state.kept_by_seat.get((source, seat), 0) if seat else 0
+
+    def king_rate(self, source: str, window_s: float = 3600.0) -> float:
+        """The current king's rollouts on `source` in the last `window_s`,
+        per hour."""
+        seat = self.king_seat()
+        if not seat:
+            return 0.0
+        cutoff = time.time() - window_s
+        times = self.state.king_times.get((source, seat), ())
+        return sum(1 for t in times if t >= cutoff) * 3600.0 / window_s
+
+    def _king_floor_due(self, king_cands: list[str]) -> list[str]:
+        """Feeder sources (king_rollouts_per_hour > 0) whose current king
+        rate is below their floor, most-behind first (relative gap)."""
+        due = []
+        for name in king_cands:
+            floor = self.registry.sources[name].king_rollouts_per_hour
+            if floor <= 0:
+                continue
+            rate = self.king_rate(name, KING_FLOOR_WINDOW_S)
+            if rate < floor:
+                due.append(((floor - rate) / floor, name))
+        return [n for _, n in sorted(due, reverse=True)]
 
     def _teacher_kept(self, source: str) -> int:
         """Kept turns of the non-king seats: the teacher's own shortfall
