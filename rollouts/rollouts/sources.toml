@@ -295,6 +295,12 @@ enabled = true
 sources = ["affine_math", "affine_i3math"]
 retire_published = true
 min_surviving_strata = 100
+# P4 (2026-09-14): 47 % of math strata were dead -- the teacher hits the
+# 1,792-token duel cap. Keep a problem only if >= 2 of the teacher's datagen
+# samples boxed an answer within ~1,792 tokens (cap_chars ~ 4 chars/token,
+# thought + answer). No new inference.
+min_boxed_within_cap = 2
+cap_chars = 7000
 
 # Language targets for NEWLY FOLDED coding turns (2026-09-01). Enforced by
 # ops/datagen_refresh.py as a second waterfill (after the group waterfill)
@@ -312,6 +318,28 @@ min_surviving_strata = 100
 # LANG_SOFT_CEILING / CATCHUP_SHIFT_BUDGET). The hard cap had frozen python
 # at 0.25/0.20 x go's supply and starved coding (epoch 26: 0 of 4,139
 # coding rollouts kept).
+[teacher_probe]
+# Improvement loop P4 (2026-09-14): "can the teacher answer here?" A turn
+# of a gated group enters D only with a probe row in the side-table
+# (ops/teacher_probe/probe.py: 3 teacher samples at the prefix, T 0.8,
+# 1,792 tokens, the turn's dialect parser) showing >= min_valid parsed
+# actions that are not all identical (identical refs = R == 0). Turns
+# without a row are held (record deferred, turn written to `pending` for
+# the probe job); failing turns drop (`probe_failed`); published rows of
+# the gated groups whose probe fails are retired once
+# (retire_failed_published). Measured before the gate: ~25 % of king-group
+# strata dead (onset 29 %, pivot 26 %, king_fail 24 %, recoverable 17 %,
+# done 12 %; Claude Code states 61 %). NOT a prefix-length cap and NOT a
+# band filter (both measured useless). The probe runs on Engy's copy of the
+# teacher, never on the duel pods' swarm.
+enabled = true
+side_table = "affine/state/teacher_probe/probes.jsonl"
+pending = "affine/state/teacher_probe/pending.jsonl"
+groups = ["king_fail", "king_done", "king_recoverable", "king_tooluse", "king_pivot", "king_loop_onset", "completion_pre"]
+min_valid = 2
+require_distinct = true
+retire_failed_published = true
+
 [lang_mix.coding]
 python = 0.25
 go = 0.20
