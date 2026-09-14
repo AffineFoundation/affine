@@ -658,3 +658,47 @@ name = "king"
 model_env = "KING_MODEL"
 base_url_env = "KING_BASE_URL"
 key_env = "KING_KEY"
+
+# -- When2Call (2026-09-14, improvement-loop P1 via Jacob): the null harness
+# with the row's own tool schemas, `tool_call` dialect. Source-specific ids
+# so the fold and the board can address the "when (not) to call" material
+# by policy; the king_ prefix routes the king's wrong calls into king_tooluse
+# like every other king policy. Same caps and shares as the *_toolcall trio.
+[policy.teacher_when2call]
+harness = "null"
+action_kind = "tool_call"
+share = 2.0
+[policy.teacher_when2call.sampling]
+temperature = 0.8
+max_tokens = 16384
+[[policy.teacher_when2call.endpoints]]
+name = "engy"
+model = "qwen3.8-27b"
+base_url = "https://api.engy.ai/v1"
+key_env = "ENGY"
+
+[policy.king_when2call]
+harness = "null"
+action_kind = "tool_call"
+share = 2.0
+[policy.king_when2call.sampling]
+temperature = 0.8
+max_tokens = 16384
+[[policy.king_when2call.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"
+
+[policy.king_when2call_greedy]
+harness = "null"
+action_kind = "tool_call"
+share = 1.0
+[policy.king_when2call_greedy.sampling]
+temperature = 0.0
+max_tokens = 16384
+[[policy.king_when2call_greedy.endpoints]]
+name = "king"
+model_env = "KING_MODEL"
+base_url_env = "KING_BASE_URL"
+key_env = "KING_KEY"

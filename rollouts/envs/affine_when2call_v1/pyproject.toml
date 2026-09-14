@@ -1,0 +1,13 @@
+[project]
+name = "affine-when2call-v1"
+version = "0.1.0"
+description = "affine-when2call-v1 — NVIDIA When2Call TRAIN (preference split) as a verifiers env: a question plus its tool schemas; the right move is one tool call, a request for more information, or a refusal. Graded against the When2Call label (tool name + arguments when a call is right; text class otherwise)."
+requires-python = ">=3.10"
+dependencies = ["datasets"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["affine_when2call_v1"]
