@@ -51,8 +51,8 @@ check("config.v4_temper", cfg.duel.tau == 0.03)
 check("config.v7_fork_key", cfg.weight_version_key >= 7)
 # min(R,G) v5 (2026-08-27, weight_version_key=10).
 check("config.v5_min_rg",
-      cfg.duel.score_mode == "min_rg" and cfg.duel.band_c == 2.0
-      and cfg.duel.band_floor == 0.002)
+      cfg.duel.score_mode == "min_rg" and cfg.duel.band_c >= 2.0
+      and cfg.duel.band_floor == 0.002)  # band_c 2.0 -> 4.0 at wvk 17
 check("config.v10_fork_key", cfg.weight_version_key >= 10)
 check("config.genesis_qwen",
       cfg.seed_king["repo"] == "Qwen/Qwen3.6-35B-A3B"
