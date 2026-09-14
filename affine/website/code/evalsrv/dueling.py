@@ -310,6 +310,33 @@ def token_caps(duel_cfg: dict):
     return caps
 
 
+def ref_token_caps(duel_cfg: dict):
+    """(max_thought, max_action) the TEACHER samples its k references under.
+
+    `[duel].ref_max_tokens` (staged 2026-09-14, wvk 17) is a teacher-only
+    total budget: a reference may run to ref_max_tokens (thought + action)
+    where the miners stay at max_thought_tokens + max_action_tokens. The
+    action share is the kind's max_action; the thought share takes the
+    rest. Absent / None = exactly the miners' caps (pre-wvk-17 behaviour;
+    wvk <= 16 verdicts replay unchanged). Never below the kind's own cap.
+    Why: at the shared 1,792-token cap the teacher's own reference finished
+    `length` on ~21% of deep turns (mean_refs 2.6–2.8 of 3, boxed 1.75), so
+    those turns lost references or were dropped (refs < 2) — the miner was
+    judged against fewer, truncated references exactly where the task is
+    hardest.
+    """
+    caps = token_caps(duel_cfg)
+    ref_total = duel_cfg.get("ref_max_tokens")
+    ref_total = int(ref_total) if ref_total is not None else None
+
+    def ref_caps(action_kind: str | None) -> tuple[int, int]:
+        thought, action = caps(action_kind)
+        if ref_total is None or ref_total <= thought + action:
+            return thought, action
+        return ref_total - action, action
+    return ref_caps
+
+
 async def probe_injectable(model: VllmModel | ModelPool, turns: list[dict],
                            temperature: float, max_thought: int,
                            max_action: int, n_probe_turns: int = 3) -> str | None:
@@ -450,6 +477,7 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
     n_miner = int(duel_cfg["n_miner_samples"])
     temperature = float(duel_cfg["temperature"])
     caps = token_caps(duel_cfg)
+    ref_caps = ref_token_caps(duel_cfg)
     score_bank = bool(duel_cfg.get("score_bank", False))
     reason_only = bool(duel_cfg.get("reason_only", True))
     causality_gate = bool(duel_cfg.get("causality_gate", False))
@@ -467,6 +495,7 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
         # which means bash (affine.dialects.DEFAULT_KIND).
         action_kind = rec.get("action_kind")
         max_thought, max_action = caps(action_kind)
+        ref_thought, ref_action = ref_caps(action_kind)
         async with turn_sem:
             if abort_event is not None and abort_event.is_set():
                 raise DuelAborted("superseded by a new duel request")
@@ -479,7 +508,7 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
             raw, miner_rollouts = await asyncio.gather(
                 refs.ensure_raw(
                     tid, teacher, prefix, n_teacher, temperature,
-                    max_thought, max_action, action_kind),
+                    ref_thought, ref_action, action_kind),
                 sample_miner_rollouts(
                     miner, prefix, n_miner, temperature,
                     max_thought, max_action, action_kind=action_kind),
@@ -1050,6 +1079,9 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "allowed_action_kinds": allowed_kinds,
             "max_thought_tokens": int(duel_cfg["max_thought_tokens"]),
             "max_action_tokens": int(duel_cfg["max_action_tokens"]),
+            # Teacher-only reference budget (wvk 17); None = shared cap.
+            "ref_max_tokens": (int(duel_cfg["ref_max_tokens"])
+                               if duel_cfg.get("ref_max_tokens") is not None else None),
             "max_tokens_by_kind": {
                 str(k): {str(f): int(n) for f, n in v.items()}
                 for k, v in (duel_cfg.get("max_tokens_by_kind") or {}).items()},
