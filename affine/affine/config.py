@@ -364,7 +364,21 @@ class Config:
 
     @property
     def king_chain_size(self) -> int:
+        """Retired 2026-09-14 (payout window rule); still published for
+        older readers of api/v1/contract."""
         return int(self.raw["subnet"]["king_chain_size"])
+
+    @property
+    def king_payout_window_s(self) -> float:
+        """Seconds a crown is paid for after `crowned_at` (toml hours)."""
+        hours = float(self.raw["subnet"].get("king_payout_window_hours", 72))
+        if hours <= 0:
+            raise ValueError("[subnet].king_payout_window_hours must be > 0")
+        return hours * 3600.0
+
+    @property
+    def king_payout_rule_effective_at(self) -> str:
+        return str(self.raw["subnet"].get("king_payout_rule_effective_at", "") or "")
 
     @property
     def min_submission_block(self) -> int:

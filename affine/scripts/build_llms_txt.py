@@ -75,6 +75,20 @@ WVK16_EFFECTIVE = "2026-09-13"
 WVK17_EFFECTIVE = "2026-09-14"
 
 
+def _payout_subs() -> dict[str, str]:
+    """Payout-window facts (`[subnet].king_payout_window_hours`,
+    `king_payout_rule_effective_at`) from the toml so the published payout
+    rule can never drift from the one the validator runs."""
+    sub = _toml()["subnet"]
+    hours = float(sub.get("king_payout_window_hours", 72))
+    effective = str(sub.get("king_payout_rule_effective_at") or "").strip()
+    return {
+        "{PAYOUT_WINDOW_H}": f"{hours:g}",
+        "{PAYOUT_EFFECTIVE}": (effective.replace("+00:00", "Z")
+                               if effective else "the validator restart that shipped it"),
+    }
+
+
 def _margin_subs() -> dict[str, str]:
     """Crown-margin facts (`[duel] min_margin_*`, `min_z`,
     `near_miss_window_mode`) substituted from the toml so the published
@@ -237,7 +251,11 @@ SOURCES: list[tuple[str, str]] = [
     ("evalsrv/r2store.py", "how the eval pod fetches your private prefix and "
      "verifies every file against the signed manifest before vLLM loads it"),
     ("affine/priors.py", "published prior bank behind the bank telemetry"),
-    ("affine/chain.py", "reveal payload contract + commit builders"),
+    ("affine/chain.py", "reveal payload contract + commit builders + "
+     "set_payout_weights (hotkey shares → uids, burn fallback)"),
+    ("affine/payout.py", "payout rule: which crowns are paid (the "
+     "{PAYOUT_WINDOW_H}-hour window per crown), the equal shares, the burn "
+     "case — the exact computation behind api/v1/snapshot payout"),
     ("evalsrv/dueling.py", "live duel: slice seeding, injectability probe, scoring loop"),
     ("evalsrv/protocol_probe.py", "chat-protocol conformance probe (staged "
      "admission check, see Upcoming changes): the fixed prompt set, the pass "
@@ -319,6 +337,10 @@ root ({BASE}/).
 **In this file (read on)**
 
 - How the game works — rules, duel flow, emissions
+- **Payout rule (effective {PAYOUT_EFFECTIVE}) — a crown is paid for at most \
+{PAYOUT_WINDOW_H} hours; every crown inside its window gets one equal share; \
+older crowns earn nothing even on the throne; no paid crown = burn.** \
+Throne / duel rules unchanged, no `weight_version_key` bump
 - Submit checklist — Ed25519 hotkey, private R2 upload, the two on-chain \
 signals, what "private" means (and the retiring HF path)
 - Serving stack — how your checkpoint is loaded; pre-flight before you burn \
@@ -479,8 +501,11 @@ king iff the paired mean `turn_c − turn_k` beats `max(k_sigma·SE, δ)` \
 length is at least `min_thought_chars = 80` **and** at least \
 `causality_gamma = 0.30` of pairs pass teacher-side B \
 (`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no leakage). No lpA gates.{CROWN_RULE}
-6. Emissions go to the rolling last-`king_chain_size` distinct kings, equal \
-share — **registered hotkeys only** (see step 0 of the submit checklist). \
+6. Emissions go to every crown that is less than \
+`king_payout_window_hours = {PAYOUT_WINDOW_H}` hours old, one equal share per \
+crown — **registered hotkeys only** (see step 0 of the submit checklist). A \
+crown older than that earns nothing, even while it still holds the throne; no \
+crown inside the window → the emission burns. See "Payout rule" below. \
 Advisory tau2 benches never affect Reason or crowning.
 7. Every dethrone is reviewed post-crown by a published LLM audit (see the \
 exploit-audit section below). An `exploit = true` verdict reverts the crown \
@@ -494,6 +519,73 @@ Replayability is the trust model: two checkpoints + public D + \
 after {RETENTION_DAYS} days); every crowned model is published under \
 `{MODELS_URL}/models/sha256/<model_digest>/` together with its signed \
 manifest, so every verdict that changed the board is replayable.
+
+---
+
+## Payout rule — {PAYOUT_WINDOW_H}-hour crown window (effective {PAYOUT_EFFECTIVE})
+
+Explicit dated operator directive (Jacob Steeves, 2026-09-14 11:09 UTC): \
+"A king can only get paid for max 3 days. Once they have been a king for \
+this long they no longer get paid, and the prize pool for the next slot goes \
+up as those older kings get cycled out. This way if you have the king models \
+you are always incentivized to train a new model. If there are no kings to \
+set weights to, the subnet burns the emission. Otherwise if there are only 2 \
+kings they get 50/50."
+
+**The rule, in plain words.**
+
+- A **crown** is one win of the throne (one `crowned` row, one reign number).
+- Every crown is **paid for at most `king_payout_window_hours = \
+{PAYOUT_WINDOW_H}` hours** after its `crowned_at` — from the instant the \
+verdict lands, not from the next weight sweep.
+- At every weight sweep the validator lists every crown that is still inside \
+its window. That is the **paid set**. Each paid crown gets **one equal \
+share**: 1 paid crown → 100%, 2 → 50/50, 3 → one third each, n → 1/n.
+- A crown **older than {PAYOUT_WINDOW_H} hours earns nothing** — even while \
+that model still holds the throne and keeps judging challengers. The throne \
+is a duel fact; the payout is a clock fact.
+- **No crown inside the window → the emission burns** (`[subnet].burn_uid`, \
+the same path the unpaid genesis used).
+- Revoked or reverted reigns are out of the lineage and are never paid. \
+Genesis / seed kings (no hotkey) never earn.
+- **One share per crown, not per hotkey.** If you dethrone your own king \
+with a new model, both crowns are paid while both are inside their windows \
+(you hold 2/n). That is the point of the rule: holding the throne is not \
+income after three days; winning it again is.
+- A paid crown whose hotkey is not registered on the metagraph is skipped \
+for that sweep and its share goes to the other paid crowns (none left → \
+burn). A crown whose model is provably gone or gated forfeits its share \
+while it is dark (unchanged accessibility sweep).
+- Weights are re-set at least every `weight_interval_s = 300` s (chain rate \
+limit 100 blocks ≈ 20 min), so an expiry takes effect within ~20 minutes.
+
+**Worked example (the lineage at the effective time).** Reign 12 was crowned \
+2026-09-12 21:48 UTC, reign 11 on 2026-09-10 03:55 UTC, reign 10 on \
+2026-09-10 02:02 UTC. At {PAYOUT_EFFECTIVE} only reign 12 is younger than \
+{PAYOUT_WINDOW_H} hours, so its hotkey holds 100% of the miner emission; \
+reigns 11 and 10 (and older) hold 0%. Reign 12 stops being paid at \
+2026-09-15 21:48 UTC even if nobody has dethroned it by then — from that \
+instant the emission burns until a challenger wins a new crown. If a \
+challenger wins on 2026-09-15 at 10:00 UTC, the paid set is reign 13 + \
+reign 12 at 50/50 until 21:48 UTC, then reign 13 alone at 100%. Before \
+this rule the last five distinct kings each held 20% indefinitely.
+
+**What does not change.** The crown rule (`margin > max(2·SE, δ)`, \
+thought-length floor, B gate), min(R, G), the corpus, admission, the \
+one-slot-per-hotkey policy. This is a payout rule, not a scoring rule, so \
+`weight_version_key` is **not** bumped (this validator is the only one \
+judging duels on netuid 120; the two other permit holders mirror its weight \
+vector). Forward-only: nothing before {PAYOUT_EFFECTIVE} is re-decided.
+
+**Where to read it live.** `api/v1/snapshot` → `payout` (the paid set right \
+now: reign, hotkey, uid, `share`, `paid_until`, `burn`) and `reign.members` \
+(every reign with `earning` / `share` / `paid_until` / `expired`); \
+`api/v1/contract` → `payout` (rule text, window, effective time) and \
+`subnet.king_payout_window_hours`; the dashboard Reign table (`weight` \
+column shows the share and "expired" once the window closed). The exact \
+computation is `annotate_lineage` in `code/affine/payout.py`; the chain \
+call is `set_payout_weights` in `code/affine/chain.py`; the validator logs \
+`payout sweep (window {PAYOUT_WINDOW_H}h): …` on every sweep.
 
 ---
 
@@ -537,11 +629,13 @@ pre-flight or train (see the serving stack section — Lium). Then \
 Registration maps your hotkey to a UID, and weights can only be set on UIDs: \
 **an unregistered hotkey earns nothing, even if it wins the crown**. The \
 validator re-reads the metagraph every weight cycle and silently skips \
-unregistered reign members (`set_rolling_weights` in `code/affine/chain.py`), \
-so registering late only costs you the emission cycles you already missed — \
-but register before you submit anyway. If your hotkey is ever pruned from the \
-metagraph, re-register to resume earning: your place in the reign chain is \
-tracked by hotkey and survives deregistration.
+unregistered paid crowns (`set_payout_weights` in `code/affine/chain.py`; \
+their share goes to the other paid crowns), so registering late only costs \
+you the emission cycles you already missed — but register before you submit \
+anyway. If your hotkey is ever pruned from the metagraph, re-register to \
+resume earning: your crown is tracked by hotkey and survives deregistration, \
+but its {PAYOUT_WINDOW_H}-hour payout window keeps running while you are \
+unregistered.
 
 **Step 1 — train.** Distill a coding model that emits closed bash-fenced \
 actions and usable thoughts under the Affine chat contract (see the probe in \
@@ -1831,13 +1925,14 @@ def build() -> str:
                   .replace("{BASE}", _site_base())
                   .replace("{DATA}", _data_base())
                   .replace("{DASH}", _dash_base()))
-    for token, value in {**_serving_subs(), **_r2_subs(), **_margin_subs()}.items():
+    for token, value in {**_serving_subs(), **_r2_subs(), **_margin_subs(),
+                         **_payout_subs()}.items():
         text = text.replace(token, value)
     # Fail closed if we somehow produced a broken index.
     if "## Table of contents" not in text or "data/validator_log.txt" not in text:
         raise RuntimeError("llms.txt build failed closed: missing table of contents")
     leftovers = ["{BASE}", "{DATA}", "{DASH}", "{CODE_LINKS}", *_serving_subs(), *_r2_subs(),
-                 *_margin_subs()]
+                 *_margin_subs(), *_payout_subs()]
     if any(t in text for t in leftovers):
         raise RuntimeError("llms.txt build failed closed: unsubstituted placeholder")
     score_copy = CODE_DIR / "affine" / "score.py"

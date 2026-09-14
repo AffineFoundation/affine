@@ -37,7 +37,7 @@ from pathlib import Path
 
 import bittensor as bt
 
-from . import chain, model_store
+from . import chain, model_store, payout
 from .bench import BenchOrchestrator
 from .chain import BlockHashUnavailable
 from .config import Config, load_config
@@ -137,6 +137,8 @@ class Validator:
         self.subtensor = bt.subtensor(network=cfg.network)
         self.wallet = bt.Wallet(name=cfg.wallet_name, hotkey=cfg.wallet_hotkey)
         self._last_weights = 0.0
+        # Last logged paid set (reign, hotkey, bps) — changes are WARNING-logged.
+        self._last_paid_key: tuple | None = None
         # (repo, revision) -> (status, monotonic ts) from the payout
         # accessibility sweep, so force-triggered weight sets (crowns/reverts)
         # don't re-probe HF within one weight interval.
@@ -222,10 +224,10 @@ class Validator:
         provably gone/gated ⇒ forfeit the slot (deeper kings backfill); the
         slot returns if the repo comes back. "unknown" probes keep the
         member's previous status — an HF hiccup must never flip payouts."""
-        depth = self.cfg.king_chain_size
-        # 2x headroom so backfill candidates behind excluded members are
-        # probed too; beyond that the lineage tail is dashboard-only.
-        candidates = self.state.king_lineage_members(depth)[:depth * 2]
+        # Only crowns still inside their payout window can earn; expired
+        # crowns are dashboard-only and are not probed.
+        candidates = [m for m in self.state.king_lineage_members(
+            self.cfg.king_payout_window_s) if not m["expired"]]
         ttl = self.cfg.validator.weight_interval_s
         gone = set(self.state.inaccessible_hotkeys)
         for m in candidates:
@@ -253,10 +255,22 @@ class Validator:
                           < self.cfg.validator.weight_interval_s):
             return
         await asyncio.to_thread(self._sweep_payout_accessibility)
-        hotkeys = self.state.king_chain_hotkeys(self.cfg.king_chain_size)
-        ok = chain.set_rolling_weights(
+        window_s = self.cfg.king_payout_window_s
+        lineage = self.state.king_lineage_members(window_s)
+        shares = payout.shares_by_hotkey(lineage)
+        paid_desc = payout.describe(lineage)
+        paid_key = tuple((m["reign_number"], m["hotkey"], m["weight_bps"])
+                         for m in payout.paid_crowns(lineage))
+        if paid_key != self._last_paid_key:
+            log.warning("payout set changed (window %.0fh): %s",
+                        window_s / 3600, paid_desc)
+            self._last_paid_key = paid_key
+        log.info("payout sweep (window %.0fh): %s | shares by hotkey: %s",
+                 window_s / 3600, paid_desc,
+                 {hk[:8]: round(s, 4) for hk, s in shares.items()})
+        ok = chain.set_payout_weights(
             self.subtensor, self.wallet, self.cfg.netuid,
-            hotkeys, self.metagraph, self.cfg.burn_uid,
+            shares, self.metagraph, self.cfg.burn_uid,
             max_metagraph_age_s=self.cfg.validator.metagraph_max_age_s,
             version_key=self.cfg.weight_version_key)
         if ok:

@@ -137,6 +137,8 @@ export function fmtZ(z) {
 export function reignMembers(d) {
   const fromReign = d?.reign?.members;
   if (Array.isArray(fromReign) && fromReign.length) return fromReign;
+  // Fallback for snapshots without `reign.members`: every hotkey in
+  // `reign_chain` is a paid crown (equal shares); no expiry is known here.
   const chain = d?.reign_chain || [];
   const king = d?.king;
   if (!king && !chain.length) return [];
