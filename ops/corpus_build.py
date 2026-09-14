@@ -1423,16 +1423,22 @@ def math_keep_set(pub: PublicCorpus, traces_manifest: dict, cfg: dict
                 if outcome in ("solved", "failed"):
                     row["n_king"] += 1
                     row["king_failed"] |= outcome == "failed"
-    keep = {sid for sid, r in per.items()
-            if (len(r["answers"]) >= 2 or r["teacher_failed"] or r["king_failed"])
-            and r["n_boxed_in_cap"] >= cfg["min_boxed_within_cap"]}
-    stats = {"chunks": n_chunks, "problems": len(per), "kept": len(keep),
-             "boxed_in_cap_ge_min": sum(r["n_boxed_in_cap"] >= cfg["min_boxed_within_cap"]
-                                        for r in per.values()),
+    base = {sid for sid, r in per.items()
+            if len(r["answers"]) >= 2 or r["teacher_failed"] or r["king_failed"]}
+    # In-cap rule (P4): the teacher must box within the duel cap on at least
+    # min(min_boxed_within_cap, its sample count) of its samples -- most
+    # problems have a single teacher sample, so "2 of 1" cannot be asked.
+    def in_cap_ok(r: dict) -> bool:
+        need = min(cfg["min_boxed_within_cap"], max(1, r["n_teacher"]))
+        return r["n_boxed_in_cap"] >= need
+    keep = {sid for sid in base if in_cap_ok(per[sid])} if cfg["min_boxed_within_cap"] else base
+    stats = {"chunks": n_chunks, "problems": len(per), "kept": len(keep), "kept_base_rule": len(base),
+             "in_cap_ok": sum(in_cap_ok(r) for r in per.values()),
              "multi_sample": sum(r["n_teacher"] >= 2 for r in per.values()),
              "disagree": sum(len(r["answers"]) >= 2 for r in per.values()),
              "teacher_failed": sum(r["teacher_failed"] for r in per.values()),
              "king_failed": sum(r["king_failed"] for r in per.values())}
+    stats["_base_keep"] = base
     return keep, stats
 
 
@@ -2150,6 +2156,7 @@ def main() -> None:
     math_retired_strata: set[str] = set()
     if math_cfg:
         keep, mstats = math_keep_set(pub, traces_manifest, math_cfg)
+        base_keep = mstats.pop("_base_keep")
         log(f"math re-source: {mstats}")
         retire_ids, math_surviving, math_retired_strata = math_retire_plan(
             pub, live, math_cfg, keep, src2grp.get(math_cfg["source"], DEFAULT_GROUP))
@@ -2170,6 +2177,19 @@ def main() -> None:
             f"surviving published strata {len(math_surviving)}, retired strata "
             f"{len(math_retired_strata)}; candidates {len(cand_math)} -> kept {len(cand_keep)}; "
             f"surviving strata incl. candidates {surviving_total}")
+        if surviving_total < math_cfg["min_surviving_strata"] and keep != base_keep:
+            # The in-cap rule alone would empty the group: fall back to the
+            # phase-3 proxy (disagreement / failure), never to "no filter".
+            log(f"math re-source: only {surviving_total} strata would survive the in-cap rule "
+                f"(< {math_cfg['min_surviving_strata']}); falling back to the base proxy")
+            keep = base_keep
+            retire_ids, math_surviving, math_retired_strata = math_retire_plan(
+                pub, live, math_cfg, keep, src2grp.get(math_cfg["source"], DEFAULT_GROUP))
+            cand_keep = [r for r in cand_math if str(r.get("instance_id")) in keep]
+            surviving_total = len(math_surviving | {
+                f"{src2grp.get(str(r.get('source') or ''), DEFAULT_GROUP)}:{buckets.get(str(r.get('source') or ''), (0, 0))[1] + int(hashlib.sha256(str(r['instance_id']).encode()).hexdigest()[:8], 16) % buckets.get(str(r.get('source') or ''), (1, 0))[0]:04d}"
+                for r in cand_keep if buckets.get(str(r.get("source") or ""), (0, 0))[0]})
+            log(f"math re-source (base proxy): retire {len(retire_ids)}, surviving strata {surviving_total}")
         if surviving_total < math_cfg["min_surviving_strata"]:
             log(f"math re-source: only {surviving_total} strata would survive "
                 f"(< {math_cfg['min_surviving_strata']}); keeping the old math pool")
