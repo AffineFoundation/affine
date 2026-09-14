@@ -1312,6 +1312,18 @@ for i, row in enumerate(ds):
 json.dump(out, sys.stdout); sys.stdout.flush()
 os._exit(0)
 """
+# When2Call (affine_when2call_v1): the taskset's own row walk decides which
+# train_pref rows are usable and what their label is, so the catalog can
+# never disagree with the env about a task's existence or class.
+WHEN2CALL_LIST = r"""
+import json, os, sys
+from affine_when2call_v1.taskset import iter_rows, task_name
+out = [{"uid": task_name(q), "label": label, "n_tools": len(tools),
+        "tool": (gold or {}).get("name") or ""}
+       for q, tools, label, gold in iter_rows()]
+json.dump(out, sys.stdout); sys.stdout.flush()
+os._exit(0)
+"""
 
 
 def _flag_value(src: Source, flag: str, default: str) -> str:
@@ -1336,6 +1348,27 @@ def _bucketed(src: Source, row: dict) -> dict:
         row["stratum"] = bucket_stratum(src.group, row["uid"], src.strata_buckets,
                                         src.strata_offset)
     return row
+
+
+def build_when2call_catalog(cfg: RolloutsConfig, src: Source) -> dict:
+    """One row per usable When2Call train_pref question; `repo` carries the
+    label (when2call/<class>) so the board and the fold can read the class
+    off the task without the env."""
+    rows = _verifiers_listing(cfg, WHEN2CALL_LIST, what="when2call")
+    kept = []
+    for r in rows:
+        _, num = _text_uid("w2c", r["uid"])
+        kept.append(_bucketed(src, {
+            "uid": r["uid"], "sid": f"w2c_{r['label']}-{num}",
+            "repo": f"when2call/{r['label']}", "language": "tool",
+            "label": r["label"], "n_tools": r["n_tools"], "tool": r["tool"],
+        }))
+    by_label = Counter(r["label"] for r in kept)
+    return _write_catalog(cfg, src.name, kept, {
+        "source": src.name, "dataset": "nvidia/When2Call@0582f77 train_pref",
+        "total": len(rows), "kept": len(kept), "panel_excluded": 0,
+        "unusable": 0, "by_label": dict(by_label),
+    })
 
 
 def build_rgym_catalog(cfg: RolloutsConfig, src: Source) -> dict:
@@ -1386,6 +1419,7 @@ def build_oolong_catalog(cfg: RolloutsConfig, src: Source) -> dict:
 BUILDERS = {
     "hf": build_hf_catalog,
     "rgym": build_rgym_catalog,
+    "when2call": build_when2call_catalog,
     "rcore": build_rcore_catalog,
     "oolong": build_oolong_catalog,
     "tmax": build_tmax_catalog,

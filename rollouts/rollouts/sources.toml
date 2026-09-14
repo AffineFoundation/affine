@@ -677,6 +677,51 @@ pass_dataset = false
 policies = ["teacher_toolcall", "king_toolcall", "king_toolcall_greedy"]
 strata_buckets = 230
 strata_offset = 970
+# STAGED AT SHARE 0.0 (2026-09-14): superseded as the P1 source by
+# affine_when2call below (Jacob's pick: real "call / ask / refuse" labels
+# instead of trivia with distractor tools). The stanza stays so the ~12
+# batches already folded keep resolving. Also: on the pods the teacher's
+# prose answers here counted 0 kept turns (yield accounting only) until the
+# text_final view shipped with the when2call deploy.
+share = 0.0
+
+[source.affine_when2call]
+# NVIDIA When2Call, TRAIN ONLY (github.com/NVIDIA/When2Call; HF
+# nvidia/When2Call @0582f77, dataset CC-BY-4.0, code Apache-2.0; NAACL 2025).
+# The P1 "do not act" source (improvement-loop; operator 2026-09-14): a user
+# request plus the tool schemas offered, where the right move is ONE of
+#   tool_call         call the one tool that fits, with the given arguments
+#   request_for_info  a required argument is missing -> ask for it
+#   cannot_answer     no offered tool can do it -> say so (no call)
+# Items = the train_pref split (9,000 rows -> 8,154 usable unique questions,
+# ~2.7k per class; the chosen_response IS the label). The SFT split holds
+# only the two text classes and is not used; When2Call has no `direct`
+# class. TEST (built from BFCL v2 live) is held out entirely - the
+# benchsuite worker's benchmark - and so is BFCL: the one train question
+# also present in BFCL v3 is excluded (EXCLUDE_QUESTIONS; 0 exact / 1
+# normalized overlap over 5,528 BFCL v3 user prompts, 2026-09-14).
+# Tools are served as MCP tools built from each row's schemas (simulated
+# results); `solved` = gold name + arguments for tool_call, "asks, no call"
+# for request_for_info, "no call" for cannot_answer (a direct answer counts:
+# these items were made by removing the tool from a tool_call item);
+# class_match = the strict When2Call class; pred_* metrics give the per-
+# class confusion. Catalog kind `when2call` (the env's own row walk, in the
+# verifiers venv); repo = when2call/<label>. Probe 2026-09-14 (datagen-2,
+# 15 tasks, 5 per class): teacher 12/15 solved, called a tool on 1/10
+# no-tool items; king (reign 12) 4/15, called a tool on 9/10 no-tool items
+# and ran 14/15 rollouts to the turn cap. Policies: the when2call trio
+# (null harness, tool_call dialect) - the king's tool call on a no-tool
+# item folds as tool_call (king_tooluse, fold worker), the teacher's prose
+# as text (text_final). tool_use buckets 1200-1429.
+group = "tool_use"
+runner = "verifiers_chat"
+taskset_id = "affine-when2call-v1"       # rollouts/envs/affine_when2call_v1
+catalog = "when2call"
+select = "tasks"
+pass_dataset = false
+policies = ["teacher_when2call", "king_when2call", "king_when2call_greedy"]
+strata_buckets = 230
+strata_offset = 1200
 share = 1.0
 
 # -- general (env wave 1, 2026-09-11; data plan W3 "environment breadth") ---------

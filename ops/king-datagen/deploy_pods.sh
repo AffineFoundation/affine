@@ -32,7 +32,11 @@ FILES=(schema.py registry.py catalog.py run.py king.py scheduler.py policies.tom
        loopguard.py loopguard_site/sitecustomize.py adapters/mini_swe.py adapters/verifiers.py
        dockerwrap/docker diskgc.py
        runners/base.py runners/verifiers.py runners/mini_swe.py)
-AFFINE_FILES=(affine/dialects.py affine/corpus/trace.py)
+# + view.py / slicer.py (2026-09-14): the pods derive turns for YIELD
+# ACCOUNTING only, but with the pre-wvk-13 copies a teacher's prose reply
+# under a tool_call policy counted 0 kept turns (no text_final rule), which
+# struck the source into 4 h cooldowns (affine_notool, 13 batches).
+AFFINE_FILES=(affine/dialects.py affine/corpus/trace.py affine/corpus/view.py affine/datagen/slicer.py)
 # The mini_swe_textbased verifiers harness is a tiny package of ours installed
 # editable on every pod at /root/prime-pilot/mini-swe-textbased; its source of
 # truth is rollouts/harnesses/mini_swe_textbased in this repo.
@@ -40,7 +44,7 @@ HARNESS_SRC=rollouts/harnesses/mini_swe_textbased/mini_swe_textbased/__init__.py
 HARNESS_DST=/root/prime-pilot/mini-swe-textbased/mini_swe_textbased/__init__.py
 # Env wave 2 (2026-09-12): + tmax, longcot, enterprise-ops-gym, numina, sql,
 # automationbench, uuid-ctf wrappers and their research-environments bases.
-ENV_PKGS=(affine_notool_v1 affine_logic_v1 affine_trivia_v1 affine_ifeval_v1 affine_science_v1
+ENV_PKGS=(affine_when2call_v1 affine_notool_v1 affine_logic_v1 affine_trivia_v1 affine_ifeval_v1 affine_science_v1
           affine_unscramble_v1 affine_prolog_v1 affine_needle_v1 affine_wikispeedia_v1
           affine_tmax_v1 affine_longcot_v1 affine_eog_v1 affine_numina_v1 affine_sql_v1
           affine_autobench_v1 affine_uuidctf_v1
@@ -111,7 +115,7 @@ for t in "${TARGETS[@]}"; do
   SSH="ssh -o UserKnownHostsFile=$KH -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15 -o LogLevel=ERROR -p $P root@$H"
   SCP="scp -o UserKnownHostsFile=$KH -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o LogLevel=ERROR -P $P"
   echo "== $H:$P"
-  $SSH 'mkdir -p /root/rollouts/rollouts/{runners,adapters,loopguard_site,dockerwrap} /root/rollouts/rollouts/.bak/{runners,adapters,loopguard_site,dockerwrap} /root/affine/.bak/affine/corpus && cd /root/rollouts/rollouts && for f in '"${FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; cd /root/affine && for f in '"${AFFINE_FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; mkdir -p "$(dirname '"$HARNESS_DST"')/.bak" && [ -f '"$HARNESS_DST"' ] && cp '"$HARNESS_DST"' "$(dirname '"$HARNESS_DST"')/.bak/__init__.py"; echo backed-up' || { echo "SSH-FAILED"; rc=1; continue; }
+  $SSH 'mkdir -p /root/rollouts/rollouts/{runners,adapters,loopguard_site,dockerwrap} /root/rollouts/rollouts/.bak/{runners,adapters,loopguard_site,dockerwrap} /root/affine/.bak/affine/corpus /root/affine/.bak/datagen && cd /root/rollouts/rollouts && for f in '"${FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; cd /root/affine && for f in '"${AFFINE_FILES[*]}"'; do [ -f "$f" ] && cp "$f" ".bak/$f"; done; mkdir -p "$(dirname '"$HARNESS_DST"')/.bak" && [ -f '"$HARNESS_DST"' ] && cp '"$HARNESS_DST"' "$(dirname '"$HARNESS_DST"')/.bak/__init__.py"; echo backed-up' || { echo "SSH-FAILED"; rc=1; continue; }
   ok=1
   for f in "${FILES[@]}"; do
     $SCP "rollouts/rollouts/$f" "root@$H:/root/rollouts/rollouts/$f" || { echo "SCP-FAILED $f"; ok=0; break; }
