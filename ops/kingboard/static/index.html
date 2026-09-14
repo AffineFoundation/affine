@@ -19,7 +19,14 @@
   <nav class="tabs" id="tabs">
     <a href="#envs" data-tab="envs" class="active">Environments</a>
     <a href="#benchmarks" data-tab="benchmarks">Benchmarks</a>
+    <a href="#challengers" data-tab="challengers">Challengers</a>
   </nav>
+
+  <section id="tab-challengers" class="tab hidden">
+    <h2>Losing challengers, benchmarked <span class="muted small">chat sets only (T=0), each challenger vs the king it duelled; Δ in points with the king card's 95% half-width; the duel margin next to it — does the meter's ordering match the benchmarks? Monitoring only.</span></h2>
+    <div class="table-wrap"><table id="chal-table"><thead></thead><tbody></tbody></table></div>
+    <div id="chal-note" class="muted small"></div>
+  </section>
 
   <section id="tab-benchmarks" class="tab hidden">
     <h2>Standard benchmarks <span class="muted small">king vs teacher on held-out Hub benchmarks (never in D); greedy T=0 unless marked; Wilson 95% intervals. Monitoring only — not part of the score.</span></h2>

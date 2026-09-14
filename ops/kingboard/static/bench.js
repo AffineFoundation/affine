@@ -28,7 +28,52 @@
     document.querySelectorAll("#tabs a").forEach((a) => a.classList.toggle("active", a.dataset.tab === name));
     $("#tab-envs").classList.toggle("hidden", name !== "envs");
     $("#tab-benchmarks").classList.toggle("hidden", name !== "benchmarks");
-    if (name === "benchmarks" && !state.runs.length) load();
+    $("#tab-challengers").classList.toggle("hidden", name !== "challengers");
+    if ((name === "benchmarks" || name === "challengers") && !state.runs.length) load();
+  }
+
+  // -- Challengers tab: challenger cards (mode "challenger") vs the king they duelled --
+  const CHAL_ENVS = ["aime25", "math500", "gpqa-diamond", "mmlu-pro", "ifbench", "ifeval", "humaneval", "livecodebench", "bfcl-v3"];
+  function kingCardFor(card) {
+    const d = card.duel || {};
+    const byDigest = state.runs.filter((r) => r.mode !== "challenger" && r.mode !== "comparables" && r.king && r.king.digest === d.vs_king_digest && r.status !== "skipped_identical_weights");
+    if (byDigest.length) return byDigest.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0];
+    const byReign = state.runs.filter((r) => r.mode !== "challenger" && r.king && String(r.king.reign) === String(d.vs_reign));
+    return byReign.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null;
+  }
+  function renderChallengers() {
+    const thead = $("#chal-table thead"), tbody = $("#chal-table tbody");
+    thead.innerHTML = ""; tbody.innerHTML = "";
+    const cards = state.runs.filter((r) => r.mode === "challenger" || (r.king && r.king.duel));
+    if (!cards.length) { $("#chal-note").textContent = "no challenger cards yet"; return; }
+    const envs = CHAL_ENVS.filter((e) => cards.some((c) => c.rows.some((x) => x.env === e && x.temperature === 0)));
+    const head = el("tr", {}, el("th", {}, "challenger"), el("th", { class: "num" }, "duel margin"), el("th", { class: "num" }, "z"), el("th", {}, "vs king"), el("th", {}, "status"));
+    for (const e of envs) head.append(el("th", { class: "num" }, e));
+    head.append(el("th", { class: "num" }, "mean Δ"));
+    thead.append(head);
+    cards.sort((a, b) => ((b.duel || {}).margin || 0) - ((a.duel || {}).margin || 0));
+    for (const c of cards) {
+      const d = c.duel || {}; const base = kingCardFor(c);
+      const tr = el("tr", {}, el("td", { title: c.run_id }, (c.king && c.king.label) || c.run_id),
+        el("td", { class: "num" }, d.margin !== undefined && d.margin !== null ? (d.margin > 0 ? "+" : "") + Number(d.margin).toFixed(5) : "–"),
+        el("td", { class: "num" }, d.z !== undefined && d.z !== null ? Number(d.z).toFixed(2) : "–"),
+        el("td", { class: "muted" }, base ? `reign ${base.king.reign}` : (d.vs_reign ? `reign ${d.vs_reign} (no card)` : "–")),
+        el("td", { class: "muted" }, c.status === "partial" ? "running" : c.status));
+      const deltas = [];
+      for (const e of envs) {
+        const row = c.rows.find((x) => x.env === e && x.temperature === 0 && x.king);
+        const brow = base ? base.rows.find((x) => x.env === e && x.temperature === 0 && x.king) : null;
+        if (!row) { tr.append(el("td", { class: "num muted" }, "…")); continue; }
+        if (!brow) { tr.append(el("td", { class: "num" }, pct(row.king.score))); continue; }
+        const delta = 100 * (row.king.score - brow.king.score), hw = 100 * (brow.king.ci95[1] - brow.king.ci95[0]) / 2;
+        deltas.push(delta);
+        const cls = Math.abs(delta) > hw ? (delta > 0 ? "good" : "bad") : "";
+        tr.append(el("td", { class: "num " + cls, title: `${pct(row.king.score)} vs king ${pct(brow.king.score)} [±${hw.toFixed(1)}]` }, `${delta > 0 ? "+" : ""}${delta.toFixed(1)}${Math.abs(delta) > hw ? "*" : ""}`));
+      }
+      tr.append(el("td", { class: "num" }, deltas.length ? `${(deltas.reduce((a, b) => a + b, 0) / deltas.length).toFixed(1)} pt` : "–"));
+      tbody.append(tr);
+    }
+    $("#chal-note").textContent = "* = outside the king card's 95% interval. Rows sorted by duel margin (the meter's order); if the meter tracked the benchmarks, mean Δ would fall down the table.";
   }
 
   function runLabel(r) {
@@ -129,10 +174,12 @@
     renderRunSelect();
     renderTable();
     renderHistory();
+    renderChallengers();
   }
 
   $("#bench-run").addEventListener("change", (e) => { state.runId = e.target.value; renderTable(); });
-  window.addEventListener("hashchange", () => showTab(location.hash === "#benchmarks" ? "benchmarks" : "envs"));
-  showTab(location.hash === "#benchmarks" ? "benchmarks" : "envs");
-  setInterval(() => { if (location.hash === "#benchmarks") load(); }, 300000);
+  const tabOf = () => location.hash === "#benchmarks" ? "benchmarks" : location.hash === "#challengers" ? "challengers" : "envs";
+  window.addEventListener("hashchange", () => showTab(tabOf()));
+  showTab(tabOf());
+  setInterval(() => { if (tabOf() !== "envs") load(); }, 300000);
 })();

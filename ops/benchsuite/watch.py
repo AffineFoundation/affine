@@ -175,9 +175,14 @@ def start_challenger_if_due(w: dict, a: argparse.Namespace) -> bool:
         return False
     pick = w["challenger_queue"].pop(0)
     run_id = time.strftime("%Y%m%dT%H%MZ", time.gmtime()) + f"-{pick['challenge_id']}"
+    king = current_king() or {}
     start_pass(w, pick["repo"], pick["challenge_id"], run_id, "challenger",
                f"near-miss loser margin {pick['margin']:+.5f} (z {pick.get('z')})",
-               extra_env={"CHALLENGER_REVISION": pick["revision"]},
+               extra_env={"CHALLENGER_REVISION": pick["revision"],
+                          "CHALLENGER_MARGIN": str(pick["margin"]), "CHALLENGER_Z": str(pick.get("z") or ""),
+                          "CHALLENGER_VS_REIGN": str(king.get("reign") or ""),
+                          "CHALLENGER_VS_KING_DIGEST": str(king.get("digest") or ""),
+                          "CHALLENGER_JUDGED_AT": str(pick.get("at") or ""), "CHALLENGER_HOTKEY": str(pick.get("hotkey") or "")},
                revision=pick["revision"], challenge_id=pick["challenge_id"])
     return True
 

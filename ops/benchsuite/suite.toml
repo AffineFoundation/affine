@@ -120,10 +120,12 @@ models = [
 
 [challenger]
 # watch.py: once per UTC day, the top-k LOSING challengers of the last
-# `window_hours` with margin > 0 (the near-misses) get a chat-only pass.
-per_day = 3
+# `window_hours` by duel margin (margin > 0 = the near-misses) get a chat-only
+# card on a Lium 1x H200 (~$15 each), published under the kingboard
+# "Challengers" tab next to their duel margin. Enabled 2026-09-14 (operator).
+per_day = 2
 window_hours = 24
-enabled = false          # flip to true to start the daily challenger benches
+enabled = true
 
 # ---------------------------------------------------------------- Prime path
 # Prime Intellect pod that serves both models (pod_bootstrap.sh) and runs

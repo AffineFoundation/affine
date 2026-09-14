@@ -122,6 +122,7 @@ def scorecard(run_dir: Path) -> dict:
         "published_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "prime_spent_usd": manifest.get("prime_spent_usd"),
         "lock": manifest.get("lock"),
+        "duel": (manifest.get("king") or {}).get("duel"),
         "prime_evals": manifest.get("prime_evals"),
         "prime_evals_account": manifest.get("prime_evals_account"),
         "mode": manifest.get("mode"),

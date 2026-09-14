@@ -19,8 +19,9 @@
 #   full         same pod, king + teacher served (2 TP2 each), every env, no gate.
 #                The reference pass that refreshes the teacher baseline.
 #   challenger   <model_ref> = r2://affine-private-models/models/registrations/<reg>/
-#                (+ CHALLENGER_REVISION=<sha256>), <label> = chal-NNNNN. King-only pod,
-#                chat sets only, teacher reused. Needs AFFINE_EVAL_R2_* (read-only key).
+#                (+ CHALLENGER_REVISION=<sha256>, CHALLENGER_MARGIN/Z/VS_REIGN for the card),
+#                <label> = chal-NNNNN. Lium 1x H200 (king-seat bootstrap reading the private
+#                bucket with the eval pods' read-only key), chat sets only, teacher reused.
 #   comparables  <model_ref> = Prime Inference model id (e.g. qwen/qwen3.6-35b-a3b),
 #                <label> = display label. No pod: the eval driver runs here (docker),
 #                the model is Prime Inference, chat sets only, teacher reused.
@@ -191,11 +192,14 @@ remote_suite() {  # models policy sandbox_runtime user@host port key known_hosts
     rm -f "/tmp/teacher-$RUN_ID.tgz"
   fi
   local META; META=$("$PY" - "$REF" "$LABEL" "$POD_ID" "$USD_HR" "$CODE_COMMIT" "$MODE" "$TEACHER_FROM" "$MODELS" "$PROVIDER" "$SB_RUNTIME" <<'PY'
-import json, sys
+import json, os, sys
 ref, label, pod, usd, commit, mode, tfrom, models, provider, sbr = sys.argv[1:]
-king = {"digest": ref} if not ref.startswith("r2://") else {"repo": ref}
+king = {"digest": ref} if not ref.startswith("r2://") else {"repo": ref, "digest": os.environ.get("CHALLENGER_REVISION", "")}
 if label.isdigit(): king["reign"] = int(label)
 else: king["label"] = label
+duel = {k: os.environ.get(f"CHALLENGER_{k.upper()}") for k in ("margin", "z", "vs_reign", "vs_king_digest", "judged_at", "hotkey")}
+if any(duel.values()):
+    king["duel"] = {k: (float(v) if k in ("margin", "z") and v not in (None, "") else v) for k, v in duel.items()}
 meta = {"mode": mode, "king": king,
         "where": {"provider": provider, "pod_id": pod, "usd_per_hour": float(usd),
                   "eval_driver": f"same pod; docker runtime for chat sets, {sbr} runtime for sandbox sets"},
@@ -269,7 +273,14 @@ run_lium() {  # $1 = sandbox policy (gated|never)
   cleanup_lium() { [ -n "$POD" ] && { log "releasing Lium pod $POD"; "$PY" "$HERE/kingpod.py" release "$POD" || true; }; }
   trap cleanup_lium EXIT
   export LIUM_API_KEY="${LIUM_API_KEY:-${LIUM:-}}"
-  POD=$("$PY" "$HERE/kingpod.py" rent --plan "$(toml modes.lium_plan)" --digest "$REF" | tail -1) || finish 2
+  local DIGEST="$REF" R2FLAG=""
+  if [[ "$REF" == r2://* ]]; then
+    DIGEST="${CHALLENGER_REVISION:?CHALLENGER_REVISION (sha256 model_digest) required for an r2:// ref}"
+    R2FLAG="--r2 $REF"
+    export AFFINE_EVAL_R2_ENDPOINT="${AFFINE_EVAL_R2_ENDPOINT:-${R2_ENDPOINT:-}}"
+  fi
+  # shellcheck disable=SC2086
+  POD=$("$PY" "$HERE/kingpod.py" rent --plan "$(toml modes.lium_plan)" --digest "$DIGEST" $R2FLAG | tail -1) || finish 2
   "$PY" "$HERE/kingpod.py" wait "$POD" > /dev/null || finish 3
   local MEM; MEM=$("$PY" -c 'import json; m=json.load(open("'"$HERE"'/state/pods.json"))["'"$POD"'"]; print(json.dumps({k:m[k] for k in ("ssh_host","ssh_port","key","price","served","base_url")}))')
   local HOST PORT API_KEY USD_HR SERVED
@@ -292,7 +303,7 @@ case "$MODE" in
   lium)        run_lium gated ;;
   prime)       run_on_prime_pod king gated ;;
   full)        run_on_prime_pod king,teacher always ;;
-  challenger)  run_on_prime_pod king never ;;
+  challenger)  run_lium never ;;
   comparables) run_comparables ;;
   *) log "unknown mode $MODE"; finish 9 ;;
 esac

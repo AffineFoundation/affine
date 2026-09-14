@@ -127,6 +127,8 @@ def cmd_rent(args: argparse.Namespace) -> int:
     plan = plan_of(args.plan)
     digest = args.digest
     name = f"{POD_PREFIX}{digest[:12]}-{secrets.token_hex(2)}"
+    if args.r2 and not (os.environ.get("AFFINE_EVAL_R2_ACCESS_KEY_ID") and os.environ.get("AFFINE_EVAL_R2_SECRET_ACCESS_KEY")):
+        raise SystemExit("--r2 needs AFFINE_EVAL_R2_ACCESS_KEY_ID / AFFINE_EVAL_R2_SECRET_ACCESS_KEY in the environment")
     sess = lium_api.session()
     pubkey = (Path.home() / ".ssh/id_ed25519.pub").read_text().strip()
     stock = match_stock(lium_api.executors(sess), plan)
@@ -142,7 +144,7 @@ def cmd_rent(args: argparse.Namespace) -> int:
             continue
         pods = load_pods()
         pods[name] = {
-            "digest": digest, "served": f"king-{digest[:12]}", "plan": plan,
+            "digest": digest, "served": f"king-{digest[:12]}", "plan": plan, "r2": args.r2 or "",
             "executor_id": str(cand["id"]), "machine": cand.get("machine_name"),
             "price": price, "rented_at": time.time(), "key": secrets.token_hex(24),
             "state": "rented",
@@ -177,6 +179,12 @@ def bootstrap(name: str, mem: dict, pod: dict, cfg: dict) -> bool:
         f'MAX_NUM_SEQS="{cfg["max_num_seqs"]}"',
         f'VLLM_VERSION="{cfg["vllm_version"]}"', f'DIGEST="{mem["digest"]}"',
     ]
+    if mem.get("r2"):
+        # a private (challenger) ref: the pod downloads with the eval pods' read-only key
+        endpoint = os.environ.get("AFFINE_EVAL_R2_ENDPOINT") or os.environ.get("R2_ENDPOINT") or ""
+        lines += [f'KING_R2="{mem["r2"]}"', f'AFFINE_EVAL_R2_ENDPOINT="{endpoint}"',
+                  f'AFFINE_EVAL_R2_ACCESS_KEY_ID="{os.environ.get("AFFINE_EVAL_R2_ACCESS_KEY_ID", "")}"',
+                  f'AFFINE_EVAL_R2_SECRET_ACCESS_KEY="{os.environ.get("AFFINE_EVAL_R2_SECRET_ACCESS_KEY", "")}"']
     subprocess.run(["ssh-keygen", "-R", f"[{host}]:{port}", "-f", str(KNOWN_HOSTS)],
                    capture_output=True)
     try:
@@ -309,6 +317,7 @@ def main() -> int:
     r = sub.add_parser("rent")
     r.add_argument("--plan", required=True)
     r.add_argument("--digest", required=True)
+    r.add_argument("--r2", default="", help="private r2://bucket/prefix/ ref (challenger); needs AFFINE_EVAL_R2_* in the env")
     for c in ("wait", "endpoint", "release"):
         sub.add_parser(c).add_argument("name")
     sub.add_parser("status")
