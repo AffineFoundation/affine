@@ -214,6 +214,10 @@ inherit_exclude = false
 one_reply_ok = true
 prose_sources = ["affine_when2call", "affine_notool"]   # datagen P1 sources (2026-09-14); when2call rows carry repo = when2call/<label> -- only request_for_info / cannot_answer items are no-tool prompts
 tool_sources = ["affine_agent", "affine_wikispeedia", "affine_sql", "affine_eog", "affine_autobench"]
+# When2Call stamps repo = when2call/<label>; on tool_call items the king's
+# first-reply call is correct, so rule (a) skips them (route only the
+# request_for_info / cannot_answer rows where the king called a tool).
+prose_skip_repos = ["when2call/tool_call"]
 kind = "text"
 
 [king_recoverable]
