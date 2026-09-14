@@ -122,6 +122,30 @@ def fig_e4b(e4b_path: Path, out: Path) -> None:
     ax.legend(fontsize=8); fig.tight_layout(); fig.savefig(out / "e4b_recovery.png", dpi=130); plt.close(fig)
 
 
+def fig_e5(tables, out: Path) -> None:
+    arms = ["fact_1792", "fact_4096", "fact_nothink", "mix3"]
+    groups = ["all", "king_loop_onset", "king_pivot", "king_fail", "king_recoverable", "king_done", "completion_pre", "completion"]
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5), sharey=False)
+    for ax, (key, title) in zip(axes, (("z", "turn score min(R, G unhinted band)"), ("zR", "R leg only"), ("zGc", "min(R, G from the arm's own band)"))):
+        w = 0.8 / len(arms)
+        for j, a in enumerate(arms):
+            xs, ys = [], []
+            for i, g in enumerate(groups):
+                r = next((r for r in tables if r["table"] == "E1_gate_off" and r["cond"] == a and r["group"] == g), None)
+                v = r.get(f"{key}_{a}-king") if r else None
+                if v is None or (isinstance(v, float) and math.isnan(v)):
+                    continue
+                xs.append(i + (j - len(arms) / 2) * w + w / 2); ys.append(max(-20, min(20, v)))
+            ax.bar(xs, ys, w, label=a)
+        h0 = [next((r for r in tables if r["table"] == "E1_gate_off" and r["cond"] == "H0" and r["group"] == g), None) for g in groups]
+        ax.plot(range(len(groups)), [(r.get("z_teacher_-king_liv") if r else float("nan")) for r in h0], "k_", markersize=14, label="unhinted held-out (H0)")
+        ax.axhline(0, color="k", lw=0.8); ax.axhline(3, color="green", ls="--", lw=0.8)
+        ax.set_xticks(range(len(groups))); ax.set_xticklabels(groups, rotation=35, fontsize=8)
+        ax.set_title(f"E5 — coached held-out vs live king: {title}", fontsize=9)
+    axes[0].set_ylabel("paired z (clipped ±20)"); axes[0].legend(fontsize=7)
+    fig.tight_layout(); fig.savefig(out / "e5_z.png", dpi=130); plt.close(fig)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--analysis", required=True)
@@ -136,6 +160,8 @@ def main() -> None:
     fig_band(an / "turn_conditions.jsonl", out)
     fig_dz(tables, out)
     fig_e2(tables, out)
+    if any("z_fact_1792-king" in r for r in tables):
+        fig_e5(tables, out)
     if args.e4b and Path(args.e4b).exists():
         fig_e4b(Path(args.e4b), out)
     print("figures ->", out)
