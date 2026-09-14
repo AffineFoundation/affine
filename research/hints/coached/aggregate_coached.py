@@ -77,6 +77,7 @@ def main() -> None:
     ap.add_argument("--run-out", required=True, type=Path, help="run_coached.py --out")
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--run-id", default="")
+    ap.add_argument("--max-tries", type=int, default=3)
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -103,9 +104,12 @@ def main() -> None:
         res = results.get(unit, {})
         co = res.get("coached", {})
         pl_fresh = res.get("plain", {})
-        co_ok = [r for r in co.values() if r.get("status") == "ok"]
+        # First --max-tries OK continuations per arm (by continuation index),
+        # so every state is read on the same number of tries even where a
+        # retry pass added slots.
+        co_ok = [r for _, r in sorted(co.items()) if r.get("status") == "ok"][: args.max_tries]
         co_err = [r for r in co.values() if r.get("status") != "ok"]
-        pl_ok = [r for r in pl_fresh.values() if r.get("status") == "ok"]
+        pl_ok = [r for _, r in sorted(pl_fresh.items()) if r.get("status") == "ok"][: args.max_tries]
         teacher_cost += sum(float(r.get("cost_usd") or 0) for r in list(co.values()) + list(pl_fresh.values()))
         plain: dict
         if pl_ok:
@@ -147,8 +151,9 @@ def main() -> None:
             "hints": {},
         }
         # per-continuation hint rows for the SOLVED coached continuations
-        for k, r in co.items():
-            if not solved(r):
+        counted = {id(r) for r in co_ok}
+        for k, r in sorted(co.items()):
+            if not solved(r) or id(r) not in counted:
                 continue
             key = f"{C.unit_stem(unit)}/c{k}/coached"
             steps = sorted(by_key.get(key, []), key=lambda h: (h.get("cont_turn", 0), h.get("ts", "")))

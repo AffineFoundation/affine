@@ -222,6 +222,7 @@ def main() -> None:
             errored = [k for k, r in have.items() if r.get("status") != "ok"]
             need = args.continuations - len(ok) - (0 if args.retry_errored else len(errored))
             ks = list(errored) if args.retry_errored else []
+            need -= len(ks)   # a re-run errored slot fills one missing continuation
             nk = max(have, default=-1) + 1
             while need > 0:
                 ks.append(nk)
