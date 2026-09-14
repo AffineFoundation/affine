@@ -2112,6 +2112,23 @@ function duelPageHtml(duel, series, logLines) {
         chR != null && kgR != null ? passCls(Number(chR) >= Number(kgR)) : "")}
       ${card("king Reason", esc(fine(kgR)), "same slice, same teacher")}
       ${(() => {
+        // A_match telemetry (2026-09-14, not scored): share of the teacher's
+        // k reference actions equal to the side's action after dialect
+        // normalisation; `pair` = the refs' own agreement. Rendered only
+        // on verdicts that carry it.
+        const am = duel.challenger?.a_match, ak = duel.king?.a_match;
+        if (am == null && ak == null) return "";
+        const pct = (v) => (v == null ? "—" : `${Math.round(Number(v) * 100)}%`);
+        const pair = duel.teacher?.ref_pair_agreement;
+        const sub = `share of the teacher's reference actions equal to the side's action (dialect-normalised) · telemetry, not scored`
+          + (pair != null ? ` · refs agree with each other ${pct(pair)}` : "");
+        return card("A_match chall / king", `${esc(pct(am))} / ${esc(pct(ak))}`, esc(sub),
+          am != null && ak != null ? passCls(Number(am) >= Number(ak)) : "")
+          + (duel.challenger?.a_match_centered != null
+            ? card("A_match − pair", `${esc(fine(duel.challenger.a_match_centered))} / ${esc(fine(duel.king?.a_match_centered))}`,
+              "chall / king · per-turn A_match minus the refs' own agreement, averaged") : "");
+      })()}
+      ${(() => {
         // Sequential near-miss (2026-09-11): one card per extra slice the
         // rule drew, showing what each slice said on its own. Rendered only
         // when the rule fired — single-slice verdicts look as before.

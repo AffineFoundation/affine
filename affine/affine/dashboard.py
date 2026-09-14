@@ -70,6 +70,8 @@ _SIDE_FIELDS = ("reason", "mean_l1lift", "mean_eta", "mean_len_z",
                 "n_turns", "n_pairs",
                 # min(R,G) v5 leg telemetry
                 "mean_r_leg", "mean_g_leg", "g_bind_frac",
+                # A_match telemetry (2026-09-14, not scored)
+                "a_match", "a_match_n", "a_match_centered",
                 # wvk 11 action-dialect telemetry (per action_kind)
                 "by_dialect",
                 # legacy (pre-fork verdicts)

@@ -65,6 +65,7 @@ from .terms import (
     sample_teacher_rollouts,
     score_teacher_rollouts,
 )
+from . import amatch
 from .protocol_probe import probe_settings, rejection_detail, run_probe
 from .vllm_client import EngineUnreachableError, ModelPool, Served, VllmModel
 
@@ -534,6 +535,13 @@ async def score_side(teacher: VllmModel | ModelPool, miner: VllmModel | ModelPoo
             sticky_key=tid, action_kind=action_kind,
             rollouts=miner_rollouts)
         t.update({"turn_id": tid, "miner": miner.cfg.name})
+        # A_match telemetry (2026-09-14, not scored): does the side's
+        # action literally match the teacher's reference actions, and how
+        # often do the refs agree with each other. Forfeit rows (no
+        # parseable action) carry None.
+        y_side = miner_rollouts[0][1] if (t.get("valid") and miner_rollouts) else None
+        t["a_match"], t["ref_pair"] = amatch.turn_agreement(
+            y_side, [r["y"] for r in ref], action_kind)
         rows.append(t)
         done += 1
         on_progress(miner.cfg.name, done, total)
@@ -582,6 +590,9 @@ def _miner_summary(rows: list[dict], tau: float | None,
     if score_mode == "min_rga":
         out["mean_a_leg"] = s.mean_a_leg
         out["a_bind_frac"] = s.a_bind_frac
+    # A_match telemetry (2026-09-14): share of reference actions equal to
+    # the side's action, and the same minus the refs' own agreement.
+    out.update(amatch.summarize(rows))
     return out
 
 
@@ -620,6 +631,7 @@ def _by_dialect(rows: list[dict], kind_by_tid: dict[str, str],
         if score_mode == "min_rga":
             out[kind]["mean_a_leg"] = s.mean_a_leg
             out[kind]["a_bind_frac"] = s.a_bind_frac
+        out[kind].update(amatch.summarize(grp))
     return out
 
 
@@ -630,13 +642,22 @@ def _teacher_by_dialect(turns: list[dict],
     out: dict[str, dict] = {}
     for rec in turns:
         kind = rec.get("action_kind") or dialects.DEFAULT_KIND
-        d = out.setdefault(kind, {"n_turns": 0, "zero_ref_turns": 0, "_refs": 0})
-        n = len(refs_used.get(turn_id(rec)) or [])
+        d = out.setdefault(kind, {"n_turns": 0, "zero_ref_turns": 0, "_refs": 0, "_pairs": []})
+        refs = refs_used.get(turn_id(rec)) or []
+        n = len(refs)
         d["n_turns"] += 1
         d["zero_ref_turns"] += (n == 0)
         d["_refs"] += n
+        # Teacher self-agreement on this turn's reference actions (A_match
+        # telemetry, 2026-09-14): None below two normalisable refs / `text`.
+        _, pair = amatch.turn_agreement(None, [r["y"] for r in refs], kind)
+        if pair is not None:
+            d["_pairs"].append(pair)
     for d in out.values():
         d["mean_refs"] = d.pop("_refs") / d["n_turns"] if d["n_turns"] else None
+        pairs = d.pop("_pairs")
+        d["ref_pair_agreement"] = sum(pairs) / len(pairs) if pairs else None
+        d["ref_pair_n"] = len(pairs)
     return out
 
 
@@ -968,6 +989,13 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         chall_rows, kind_by_tid, tau, score_mode, band_c, band_floor,
         forfeit_turn_score, action_norm_bytes)
     teacher_sum["by_dialect"] = _teacher_by_dialect(turns, refs_used)
+    # Overall teacher self-agreement = turn-weighted mean over the dialects
+    # that have a normal form (A_match telemetry, 2026-09-14).
+    _pairs = [(d["ref_pair_agreement"], d["ref_pair_n"])
+              for d in teacher_sum["by_dialect"].values() if d.get("ref_pair_agreement") is not None]
+    _n = sum(n for _, n in _pairs)
+    teacher_sum["ref_pair_agreement"] = (sum(p * n for p, n in _pairs) / _n) if _n else None
+    teacher_sum["ref_pair_n"] = _n
     # Counted over every scored turn (all slices when the near-miss rule
     # pooled), matching the by_dialect telemetry above.
     slice_info["dialects"] = {
