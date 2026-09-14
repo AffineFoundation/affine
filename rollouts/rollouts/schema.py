@@ -112,6 +112,11 @@ class Policy:
     # shell-agent default. A harness that emits <tool_call> blocks or
     # \boxed{} answers declares it here, else its turns slice to nothing.
     action_kind: str = "bash"
+    # Loop guard (rollouts.loopguard): end the rollout with stop_condition
+    # `loop_guard` once the same action repeats this many times in a row
+    # with the same observation. 0 = off. The registry defaults it to 6 for
+    # `king_*` policies (the king loops; the teacher does not).
+    loop_guard_repeats: int = 0
 
     def available_endpoints(self, env: dict) -> list[Endpoint]:
         """Keyed endpoints, in chain order, with dynamic routes resolved
@@ -133,11 +138,19 @@ class PolicyStamp:
     harness: str
     endpoint: str     # endpoint name, e.g. "engy"
     action_kind: str = "bash"
+    # Sampling temperature the policy declared (None = the harness default).
+    # Additive envelope key (2026-09-13): the greedy king variants
+    # (`king_*_greedy`, T = 0) share the sampled king's seat and strata, so
+    # this is how telemetry tells the two apart.
+    temperature: float | None = None
 
     def to_dict(self) -> dict:
-        return {"id": self.policy_id, "model": self.model,
-                "harness": self.harness, "endpoint": self.endpoint,
-                "action_kind": self.action_kind}
+        out = {"id": self.policy_id, "model": self.model,
+               "harness": self.harness, "endpoint": self.endpoint,
+               "action_kind": self.action_kind}
+        if self.temperature is not None:
+            out["temperature"] = self.temperature
+        return out
 
 
 def utc_now_iso() -> str:
@@ -189,14 +202,24 @@ def trace_stats(trace: dict) -> dict:
             "cost_usd": round(cost, 5), "agent_wall_s": wall}
 
 
+# The env's primary grade, first key present — the same tuple the fold reads
+# (affine.corpus.view.PRIMARY_REWARD_KEYS): `solved` (SWE / terminal / agent /
+# prolog / wikispeedia), `correct` (math, logic, science, trivia, ifeval,
+# unscramble, needle), `passed_fraction` (nl2repo).
+PRIMARY_REWARD_KEYS = ("solved", "correct", "passed_fraction")
+
+
 def trace_reward_score(trace: dict) -> float | None:
-    """Primary scalar outcome as telemetry: `solved` if the env publishes
-    it, else `passed_fraction`. None when the env scored nothing."""
+    """Primary scalar outcome as telemetry (state rows, batch health).
+    None when the env scored nothing. Until 2026-09-11 this read `solved` /
+    `passed_fraction` only, so every `correct`-graded rollout (affine_math)
+    was logged unresolved."""
     rewards = trace.get("rewards") or {}
-    score = (rewards.get("solved") or {}).get("score")
-    if score is None:
-        score = (rewards.get("passed_fraction") or {}).get("score")
-    return score
+    for key in PRIMARY_REWARD_KEYS:
+        score = (rewards.get(key) or {}).get("score")
+        if score is not None:
+            return score
+    return None
 
 
 def trace_task_name(trace: dict) -> str:

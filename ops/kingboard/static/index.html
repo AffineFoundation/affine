@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Affine kingboard — king vs teacher per datagen env</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="title">
+    <h1>Affine kingboard</h1>
+    <div class="sub">How the current SN120 king performs on each Prime RL environment in the datagen pipeline, next to the teacher (<code>Qwen/Qwen3.8-27B</code>).</div>
+  </div>
+  <div class="cards" id="cards"></div>
+</header>
+
+<main>
+  <section class="controls">
+    <label>Reign
+      <select id="reign"></select>
+    </label>
+    <span id="reign-meta" class="muted"></span>
+    <span class="spacer"></span>
+    <span class="muted" id="refresh-note">auto-refresh in <span id="countdown">60</span> s</span>
+  </section>
+
+  <section>
+    <h2>Per environment <span class="muted small">king rollouts for the selected reign; teacher baseline = all teacher rollouts on the same env. Click a header to sort within each group.</span></h2>
+    <div class="table-wrap">
+      <table id="env-table">
+        <thead>
+          <tr>
+            <th data-key="source">env / source</th>
+            <th data-key="n" class="num">king n</th>
+            <th data-key="rate" class="num">king solve rate <span class="muted small">[95% CI]</span></th>
+            <th data-key="solved" class="num">solved</th>
+            <th data-key="failed" class="num">failed</th>
+            <th data-key="errored" class="num">errored</th>
+            <th data-key="unscored" class="num">unscored</th>
+            <th data-key="median_turns" class="num">med. turns</th>
+            <th data-key="timeout_rate" class="num">timeouts</th>
+            <th data-key="teacher_rate" class="num">teacher <span class="muted small">(graded n)</span></th>
+            <th data-key="delta" class="num">Δ king−teacher</th>
+            <th class="spark">14 d</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="two-col">
+    <div>
+      <h2>Per harness <span class="muted small">king, selected reign</span></h2>
+      <div class="table-wrap">
+        <table id="harness-table">
+          <thead>
+            <tr>
+              <th data-key="harness">harness</th>
+              <th data-key="n" class="num">rollouts</th>
+              <th data-key="rate" class="num">solve rate <span class="muted small">95% CI</span></th>
+              <th data-key="solved" class="num">solved</th>
+              <th data-key="failed" class="num">failed</th>
+              <th data-key="errored" class="num">errored</th>
+              <th data-key="unscored" class="num">unscored</th>
+              <th data-key="median_turns" class="num">med. turns</th>
+              <th data-key="timeout_rate" class="num">timeouts</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <h2>Trend <span class="muted small">solve rate per rolling 24 h bucket</span></h2>
+      <div class="controls inline">
+        <label>env <select id="trend-env"></select></label>
+        <span class="legend"><i class="sw king"></i>king (selected reign) <i class="sw teacher"></i>teacher <i class="sw other"></i>other reigns</span>
+      </div>
+      <svg id="trend" viewBox="0 0 640 260" preserveAspectRatio="none"></svg>
+      <div id="trend-note" class="muted small"></div>
+    </div>
+  </section>
+
+  <section>
+    <details>
+      <summary>How the numbers are computed</summary>
+      <ul id="definitions"></ul>
+      <div id="stops" class="muted small"></div>
+    </details>
+  </section>
+</main>
+
+<footer class="muted small">
+  Source: trace envelopes on <a href="https://data.affine.io/traces/manifest.json">data.affine.io</a> (R2 bucket <code>affine-data</code>). Stats regenerate every few minutes; the page refreshes every 60 s. <span id="build-info"></span>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
