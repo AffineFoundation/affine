@@ -14,9 +14,9 @@
    "commit": "c4d04dfe2"
   },
   "patched_files_sha256": {
-   "verifiers/verifiers/v1/runtimes/docker/egress.py": "1a590b3af64aaad2dfd1e2b128aded72410c2b54f9eeb26389590e7776f0478d",
+   "verifiers/verifiers/v1/runtimes/docker/egress.py": "ddc65876659ee2328bfec9ef3311c08e963ec444815f5564aa94ab3f9b4ccfb5",
    "verifiers/verifiers/v1/harnesses/utils/core.py": "64c7e7b3b8c74b1bf3b4d0d4b992cf192a741807866499e221a1fcbfe1e6da9e",
-   "verifiers/verifiers/v1/tasksets/lean/taskset.py": "0d9dbdfdfc5a460b1c0b4fd31480015406c25b3cad5bc0459df1ece666a7cfe8",
+   "verifiers/verifiers/v1/tasksets/lean/taskset.py": "dc3693fd815a98507459db6544a2ef9150edf85f199d8ad9ae63f84445fa96ff",
    "research-environments/environments/tool_use/bfcl_v3/bfcl_v3/taskset.py": "cb4e2d65fb55ff92e851474c7a35e4bdb7ce60570fda4d528f2e668ceba8fd06"
   }
  },
@@ -57,7 +57,7 @@
   "note": "T=0 is greedy; the T=0.8 row is unseeded and stochastic by design"
  },
  "sandbox": {
-  "chat_cell_image": "python:3.11-slim"
+  "chat_cell_image": "affine-bench-chat:py311 (python:3.11-slim + uv + harness deps pre-cached; built by install_eval_env.sh)"
  },
  "envs": {
   "aime25": {
@@ -79,6 +79,7 @@
    "taskset_config": null,
    "max_turns": null,
    "rollout_timeout_s": null,
+   "concurrency": null,
    "datasets": {
     "dataset": "opencompass/AIME2025",
     "revision": "a6ad95f611d72cf628a80b58bd0432ef6638f958"
@@ -103,6 +104,7 @@
    "taskset_config": null,
    "max_turns": null,
    "rollout_timeout_s": null,
+   "concurrency": null,
    "datasets": {
     "dataset": "HuggingFaceH4/MATH-500",
     "revision": "6e4ed1a2a79af7d8630a6b768ec859cb5af4d3be"
@@ -127,6 +129,7 @@
    "taskset_config": null,
    "max_turns": null,
    "rollout_timeout_s": null,
+   "concurrency": null,
    "datasets": {}
   },
   "mmlu-pro": {
@@ -148,6 +151,7 @@
    "taskset_config": null,
    "max_turns": null,
    "rollout_timeout_s": null,
+   "concurrency": null,
    "datasets": {
     "dataset": "TIGER-Lab/MMLU-Pro",
     "revision": "b189ec765aa7ed75c8acfea42df31fdae71f97be"
@@ -172,6 +176,7 @@
    "taskset_config": null,
    "max_turns": null,
    "rollout_timeout_s": null,
+   "concurrency": null,
    "datasets": {
     "dataset": "allenai/IFBench_test"
    }
@@ -194,6 +199,7 @@
    "taskset_config": null,
    "max_turns": null,
    "rollout_timeout_s": null,
+   "concurrency": null,
    "datasets": {
     "dataset": "google/IFEval"
    }
@@ -216,6 +222,7 @@
    "taskset_config": null,
    "max_turns": null,
    "rollout_timeout_s": null,
+   "concurrency": null,
    "datasets": {
     "dataset": "openai/openai_humaneval"
    }
@@ -238,6 +245,7 @@
    "taskset_config": null,
    "max_turns": null,
    "rollout_timeout_s": null,
+   "concurrency": null,
    "datasets": {
     "dataset": "livecodebench/code_generation_lite"
    }
@@ -260,7 +268,39 @@
    "taskset_config": null,
    "max_turns": null,
    "rollout_timeout_s": null,
+   "concurrency": null,
    "datasets": {}
+  },
+  "when2call": {
+   "taskset": "when2call-mcq",
+   "package_version": "0.1.0",
+   "install": "envs/when2call_mcq",
+   "harness": "null",
+   "runtime": "none",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "correct",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": null,
+   "rollout_timeout_s": null,
+   "concurrency": null,
+   "datasets": {
+    "dataset": "nvidia/When2Call",
+    "revision": "0582f7749df63a96fdc3070932e83e72396ace53",
+    "benchmark_split": {
+     "test/when2call_test_mcq.jsonl": "8c3694e583eeeb8dbc297e6cd90da70efc68efa4b6adb7227523e828c6b7b14c"
+    },
+    "excluded_splits_in_d": {
+     "train/when2call_train_sft.jsonl": "3eb20258557513579995ff55c09fcc33fabf2cd2004dea49dc3a0ba9880e631c",
+     "train/when2call_train_pref.jsonl": "d90637f108fabf1b097493c5818c3692e1d73140259d2f8e490536255e765bc4"
+    }
+   }
   },
   "minif2f": {
    "taskset": "minif2f",
@@ -280,6 +320,7 @@
    "taskset_config": null,
    "max_turns": null,
    "rollout_timeout_s": null,
+   "concurrency": null,
    "datasets": {}
   },
   "oolong-synth": {
@@ -302,6 +343,7 @@
    },
    "max_turns": null,
    "rollout_timeout_s": null,
+   "concurrency": null,
    "datasets": {
     "dataset": "oolongbench/oolong-synth"
    }
@@ -327,6 +369,7 @@
    },
    "max_turns": null,
    "rollout_timeout_s": null,
+   "concurrency": null,
    "datasets": {}
   },
   "graphwalks": {
@@ -348,6 +391,7 @@
    "taskset_config": null,
    "max_turns": null,
    "rollout_timeout_s": null,
+   "concurrency": null,
    "datasets": {
     "dataset": "openai/graphwalks"
    }
@@ -370,8 +414,9 @@
    "taskset_config": null,
    "max_turns": 300,
    "rollout_timeout_s": 3600,
+   "concurrency": 48,
    "datasets": {}
   }
  },
- "lock_sha256": "88bc68f1aa4ec934"
+ "lock_sha256": "3baad03a77531890"
 }
