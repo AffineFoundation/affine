@@ -30,6 +30,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from affine import payout
+
 log = logging.getLogger("affine.state")
 
 # Recent reveal→intake decisions for the dashboard (commit ≠ queue row).
@@ -333,7 +335,9 @@ class State:
             revision=last_crown["revision"], block=int(last_crown.get("block", 0)),
             challenge_id=last_crown.get("challenge_id", "recovered"),
             reign_number=int(last_crown.get("reign_number", 0)),
-            crowned_at=last_crown.get("at", now_iso()),
+            # A revert row carries the restored king's ORIGINAL crowned_at
+            # (payout window); a normal crown's time is the row's `at`.
+            crowned_at=last_crown.get("crowned_at") or last_crown.get("at", now_iso()),
             score=float(score) if score is not None else None,
             previous=prev,
             crown_block=(int(last_crown["crown_block"])
@@ -724,6 +728,10 @@ class State:
         `_reconcile_from_history` — which replays the latest crown — restores
         the SAME king after a crash restart instead of resurrecting the dead
         one. Reign numbers stay monotonic across crowns and reverts alike.
+
+        The restored king keeps its ORIGINAL `crowned_at` (payout window
+        rule, 2026-09-14): a revert must not mint a fresh 72 h payout window
+        for a model that was already king. The row's `at` is the revert time.
         """
         with self._lock:
             if not self.king or not self.king.previous:
@@ -739,7 +747,7 @@ class State:
                 block=int(entry.get("block", 0)),
                 challenge_id=challenge_id,
                 reign_number=reign,
-                crowned_at=now_iso(),
+                crowned_at=entry.get("crowned_at") or now_iso(),
                 score=entry.get("score"),
                 previous=rest,
                 crown_block=crown_block,
@@ -749,6 +757,7 @@ class State:
                 "hotkey": self.king.hotkey, "repo": self.king.repo,
                 "revision": self.king.revision, "block": self.king.block,
                 "reign_number": reign, "score": self.king.score,
+                "crowned_at": self.king.crowned_at,
                 "via": "revert", "reason": reason[:2000],
                 "reverted_from_repo": dead.repo,
                 "reverted_from_revision": dead.revision,
@@ -778,73 +787,46 @@ class State:
             self.flush()
         return changed
 
-    def king_lineage_members(self, payout_depth: int) -> list[dict]:
-        """Full stored king lineage (current first) for the dashboard.
+    def king_lineage_members(self, window_s: float,
+                             now: datetime | None = None) -> list[dict]:
+        """Full stored king lineage (current first), one row per reign, each
+        stamped with its payout status (`affine.payout.annotate_lineage`).
 
-        The rolling payout window is the first `payout_depth` distinct hotkeys
-        whose model is still accessible on HF (`earning=True`, equal-share
-        `weight_bps`). Members in `inaccessible_hotkeys` (repo@revision gone or
-        gated — validator sweep) forfeit their slot for as long as the repo
-        stays dark; deeper accessible kings backfill the window. Older kings
-        stay listed with `earning=False` / zero weight so miners can see the
-        full reign history, not only the last-N earners.
+        Payout window rule (2026-09-14): a crown is paid for `window_s`
+        seconds after its `crowned_at`; every crown inside its window holds
+        one equal share (`earning=True`, `share`, `weight_bps`,
+        `paid_until`); expired crowns stay listed with `earning=False` so
+        miners see the whole reign history. Members in `inaccessible_hotkeys`
+        (repo@revision gone or gated — validator sweep) forfeit their share
+        while the repo stays dark. Genesis/seed rows (empty hotkey) never
+        earn. Revoked reigns are not in the lineage at all.
         """
         if not self.king:
             return []
-        members = [{
-            "reign_number": self.king.reign_number,
-            "repo": self.king.repo,
-            "revision": self.king.revision,
-            "hotkey": self.king.hotkey,
-            "crowned_at": self.king.crowned_at,
-            "block": self.king.block,
-            "score": self.king.score,
-            "current": True,
-        }]
-        seen = {self.king.hotkey}
-        for p in self.king.previous:
-            hk = p.get("hotkey", "")
-            if not hk or hk in seen:
-                continue
-            seen.add(hk)
-            row = {
-                "reign_number": p.get("reign_number"),
-                "repo": p.get("repo", ""),
-                "revision": p.get("revision", ""),
-                "hotkey": hk,
-                "crowned_at": p.get("crowned_at"),
-                "block": p.get("block"),
-                "score": p.get("score"),
-                "current": False,
-            }
-            if p.get("uid") is not None:
-                row["uid"] = int(p["uid"])
-            members.append(row)
-        depth = max(int(payout_depth), 0)
-        n_earners = 0
-        for m in members:
-            m["inaccessible"] = m["hotkey"] in self.inaccessible_hotkeys
-            # Seed/genesis rows use an empty hotkey and cannot take a metagraph
-            # slot — they must never consume a payout window seat.
-            m["earning"] = (bool(m["hotkey"]) and not m["inaccessible"]
-                            and n_earners < depth)
-            n_earners += m["earning"]
-        weight_bps = (10000 // n_earners) if n_earners else 0
-        for m in members:
-            m["weight_bps"] = weight_bps if m["earning"] else 0
-        return members
+        rows = payout.lineage_rows(asdict(self.king))
+        return payout.annotate_lineage(
+            rows, window_s=window_s,
+            now=now or datetime.now(timezone.utc),
+            inaccessible=self.inaccessible_hotkeys)
 
-    def king_chain_members(self, depth: int) -> list[dict]:
-        """Rolling last-N king chain (current first), equal-share weights.
+    def king_chain_members(self, window_s: float,
+                           now: datetime | None = None) -> list[dict]:
+        """The paid set: every crown inside its payout window (current first)."""
+        return payout.paid_crowns(self.king_lineage_members(window_s, now))
 
-        Same payout shape as Albedo / Teutonic: up to `depth` distinct
-        hotkeys, each receiving 1/N of emissions. Used for weight-setting.
-        """
-        return [m for m in self.king_lineage_members(depth) if m.get("earning")]
+    def king_chain_hotkeys(self, window_s: float,
+                           now: datetime | None = None) -> list[str]:
+        """Distinct paid hotkeys, current king first (older readers' view)."""
+        out: list[str] = []
+        for m in self.king_chain_members(window_s, now):
+            if m["hotkey"] not in out:
+                out.append(m["hotkey"])
+        return out
 
-    def king_chain_hotkeys(self, depth: int) -> list[str]:
-        """Current king first, then prior distinct kings, deduped by hotkey."""
-        return [m["hotkey"] for m in self.king_chain_members(depth)]
+    def king_payout_shares(self, window_s: float,
+                           now: datetime | None = None) -> dict[str, float]:
+        """hotkey → emission share (a hotkey with two paid crowns gets 2/n)."""
+        return payout.shares_by_hotkey(self.king_lineage_members(window_s, now))
 
     # -- bench jobs ------------------------------------------------------------
     def enqueue_bench(self, repo: str, revision: str, hotkey: str,

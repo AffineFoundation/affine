@@ -254,12 +254,14 @@ function renderReign(d) {
   const pct = earners.length
     ? ((earners[0].weight_bps || 0) / 100).toFixed(0)
     : "0";
+  const windowH = d?.reign?.payout_window_hours ?? d?.payout?.window_hours;
+  const windowTxt = windowH != null ? `${Number(windowH).toFixed(0)} h payout window` : "payout window";
   const benchBits = [];
   if (bench.qwen != null) benchBits.push(`qwen ${fmtPct(bench.qwen)}`);
   if (bench.genesis != null) benchBits.push(`Affine-I ${fmtPct(bench.genesis)}`);
   if (bench.teacher != null) benchBits.push(`teacher ${fmtPct(bench.teacher)}`);
   $("reign-meta").textContent =
-    `${members.length} kings · ${earners.length} earning · ${pct}% each`
+    `${members.length} reigns · ${earners.length ? `${earners.length} paid · ${pct}% each` : "none paid · emissions burn"} · ${windowTxt}`
     + (benchBits.length ? ` · swe: ${benchBits.join(" / ")}` : "");
   // swe delta vs the previous king in the reign chain (reign 0 = genesis).
   const sweOf = (m) => (bench.scores.has(m.repo) ? bench.scores.get(m.repo) : null);
@@ -291,11 +293,13 @@ function renderReign(d) {
       <th class="r">swe</th><th class="r" title="swe vs the king it dethroned">vs prev</th>
       <th class="r">vs qwen</th><th class="r">vs Affine-I</th>
       <th class="r" title="swe vs the frozen teacher Qwen3.8-27B — the ceiling of min(R,G)">vs teacher</th>
-      <th class="r">Reason</th><th class="r">α/day</th><th class="r">$/day</th><th class="r">weight</th>
+      <th class="r">Reason</th><th class="r">α/day</th><th class="r">$/day</th>
+      <th class="r" title="each crown is paid one equal share until crowned_at + payout window; then it earns nothing even while it holds the throne">weight</th>
     </tr></thead>
     <tbody>${members.map((m) => {
       const earning = m.earning || (m.weight_bps || 0) > 0;
       const wPct = ((m.weight_bps || 0) / 100).toFixed(0);
+      const until = m.paid_until ? fmtTime(m.paid_until) : "";
       const alpha = earning ? fmtAlpha(m.alpha_per_day) : "—";
       const usd = earning ? fmtUsd(m.usd_per_day) : "—";
       const swe = bench.scores.has(m.repo) ? bench.scores.get(m.repo) : null;
@@ -314,10 +318,12 @@ function renderReign(d) {
         <td class="r ${earning ? "gold" : "dim"}">${esc(alpha)}</td>
         <td class="r ${earning ? "" : "dim"}">${esc(usd)}</td>
         <td class="r">${earning
-          ? `<span class="weight-cell">${esc(wPct)}% <span class="bar"><i style="width:${esc(wPct)}%"></i></span></span>`
+          ? `<span class="weight-cell" title="paid until ${esc(until)}">${esc(wPct)}% <span class="bar"><i style="width:${esc(wPct)}%"></i></span></span>`
           : m.inaccessible
-            ? `<span class="bad" title="model repo gone/gated on HF — forfeits payout while dark">gated</span>`
-            : `<span class="dim">—</span>`}</td>
+            ? `<span class="bad" title="model repo gone/gated — forfeits payout while dark">gated</span>`
+            : m.expired
+              ? `<span class="dim" title="payout window closed ${esc(until)}">expired</span>`
+              : `<span class="dim">—</span>`}</td>
       </tr>`;
     }).join("")}</tbody>
   </table>`;

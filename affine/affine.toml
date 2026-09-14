@@ -8,9 +8,28 @@ netuid = 120
 network = "finney"
 # Emission fallback when no king in the chain is registered.
 burn_uid = 0
-# Rolling last-N kings payout (Albedo / Teutonic design): current king + up
-# to N-1 prior distinct kings share emissions equally (1/N each). Unregistered
-# members of the chain are skipped at weight-set time; empty chain → burn_uid.
+# King payout window (explicit dated operator directive, Jacob Steeves,
+# 2026-09-14 11:09 UTC: "A king can only get paid for max 3 days"). A crown
+# is paid for at most king_payout_window_hours after its crowned_at; every
+# crown still inside its window holds ONE equal share (2 paid crowns →
+# 50/50, 3 → thirds); a crown past its window earns nothing even while it
+# still holds the throne for duels. No paid crown → emissions burn to
+# burn_uid. Revoked / reverted reigns are out of the lineage and never paid;
+# genesis (empty hotkey) never earns; a hotkey with several crowns inside the
+# window holds one share per crown. Unregistered hotkeys are skipped at
+# weight-set time (their share is redistributed). Payout rule only — the
+# throne / duel / min(R,G) rules are unchanged and weight_version_key is NOT
+# bumped (this validator is the only one judging duels on netuid 120; the
+# two other permit holders mirror its weight vector).
+# affine.payout.annotate_lineage is the exact computation.
+king_payout_window_hours = 72
+# When the window rule took effect (validator restart; ISO-8601 UTC). Before
+# this instant the rolling last-king_chain_size design below paid.
+king_payout_rule_effective_at = ""
+# RETIRED 2026-09-14 (kept so older readers of api/v1/contract still see the
+# key): the rolling last-N kings payout (Albedo / Teutonic design) — current
+# king + up to N-1 prior distinct kings sharing emissions equally. It no
+# longer selects who is paid; the window above does.
 king_chain_size = 5
 # Reveals at or below this block are ignored. MUST be set to a recent block
 # at go-live so pre-launch test reveals are not eligible (-1 = unset guard:
