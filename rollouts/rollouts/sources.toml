@@ -469,6 +469,7 @@ policies = ["teacher_toolcall", "king_toolcall", "king_toolcall_greedy"]   # + k
 strata_buckets = 500
 strata_offset = 470
 share = 1.0
+king_rollouts_per_hour = 6   # king_tooluse persist-state feeder (2026-09-14); 0 king rollouts here in the 24 h before
 
 [source.affine_notool]
 # "Do not act" states (improvement-loop P1, 2026-09-13): knowledge
@@ -548,7 +549,16 @@ pass_dataset = false
 policies = ["teacher_when2call", "king_when2call", "king_when2call_greedy"]
 strata_buckets = 230
 strata_offset = 1200
-share = 1.0
+# Lever 1 for king_tooluse (2026-09-14 23:30 UTC; 88 strata vs a 517 cap):
+# share 2.0 and a king floor. The king's wrong calls here are the group's
+# main supply (77 % of no-tool items at T 0.8, 92 % greedy), but a 1-turn
+# source meets its turn target with a batch a day; the floor makes the
+# king seat run ~16 rollouts/h per pod (~one 36-48 batch every 2.5-3 h,
+# ~2 min each; measured over a 6 h window, scheduler.KING_FLOOR_WINDOW_S)
+# -> ~48 king rollouts/h fleet-wide, ~25 wrong-call candidates/h before
+# the fold's gates.
+share = 2.0
+king_rollouts_per_hour = 16
 
 # -- general (env wave 1, 2026-09-11; data plan W3 "environment breadth") ---------
 #
@@ -742,6 +752,7 @@ policies = ["teacher_toolcall", "king_toolcall", "king_toolcall_greedy"]   # + k
 strata_buckets = 230
 strata_offset = 1600
 share = 1.0
+king_rollouts_per_hour = 6   # king_tooluse persist-state feeder (2026-09-14); 0 king rollouts here in the 24 h before
 
 # -- env wave 2 (2026-09-12; data plan W3, teacher-first) ------------------------
 #
@@ -835,6 +846,7 @@ strata_offset = 2000
 max_batch = 16
 max_concurrency = 8
 share = 1.0
+king_rollouts_per_hour = 3   # king_tooluse persist-state feeder (2026-09-14); 0 king rollouts here in the 24 h before
 
 [source.affine_numina]
 # NuminaMath-LEAN (104k statements) in a Mathlib sandbox, `solved` = clean
@@ -886,6 +898,7 @@ policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased", "king_bashtoo
 strata_buckets = 230
 strata_offset = 2430
 share = 1.0
+king_rollouts_per_hour = 4   # king_tooluse persist-state feeder (2026-09-14); 0 king rollouts here in the 24 h before
 
 [source.affine_autobench]
 # Zapier AutomationBench (Environments Hub `zapier/AutomationBench`, 29 stars
@@ -906,6 +919,7 @@ strata_offset = 2660
 # Probe 2026-09-12 (after the tool-server bridge): 4/12 solved, partial credit
 # 0.6-0.86 on most misses, 10.5 calls p50, 92 % of completions under the ref cap.
 share = 1.0
+king_rollouts_per_hour = 4   # king_tooluse persist-state feeder (2026-09-14); 0 king rollouts here in the 24 h before
 
 [source.affine_uuidctf]
 # uuid-ctf (research-environments reasoning/uuid_ctf_v1): forensic CTF in a
