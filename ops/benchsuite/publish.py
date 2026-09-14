@@ -142,6 +142,8 @@ def main() -> int:
     ap.add_argument("--state-dir", default=str(REPO / SUITE["suite"]["state_dir"]))
     ap.add_argument("--no-r2", action="store_true")
     ap.add_argument("--only-state", action="store_true", help="write the scorecard JSON only")
+    ap.add_argument("--only-cells", default="", help="comma list of <model>/<env>__t<T>: upload just those "
+                    "cell dirs (+ manifests), merge into the existing R2 index (a cell added to a published run)")
     a = ap.parse_args()
     run_dir = Path(a.run_dir).expanduser().resolve()
     run_id = run_dir.name
@@ -162,11 +164,14 @@ def main() -> int:
     assert not prefix.startswith(FORBIDDEN_PREFIXES), prefix
     bucket = SUITE["suite"]["r2_bucket"]
     s3 = r2_client()
+    only = [c.strip("/") for c in a.only_cells.split(",") if c.strip()]
     files = []
     for p in sorted(run_dir.rglob("*")):
         if not p.is_file():
             continue
         rel = p.relative_to(run_dir).as_posix()
+        if only and not (any(rel.startswith(c + "/") for c in only) or "/" not in rel):
+            continue      # partial publish: the named cells + the run's top-level manifests
         if rel.endswith("traces.jsonl"):
             gz = p.with_suffix(".jsonl.gz")
             if not gz.exists() or gz.stat().st_mtime < p.stat().st_mtime:
@@ -177,10 +182,18 @@ def main() -> int:
             continue      # uploaded via its .jsonl sibling above
         files.append((p, rel))
     index = []
+    if only:
+        try:
+            old = json.loads(s3.get_object(Bucket=bucket, Key=prefix + "index.json")["Body"].read())
+            uploaded = {rel for _, rel in files}
+            index = [f for f in old.get("files", []) if f["path"] not in uploaded]
+        except s3.exceptions.NoSuchKey:
+            index = []
     for p, rel in files:
         key = prefix + rel
         s3.upload_file(str(p), bucket, key)
         index.append({"path": rel, "bytes": p.stat().st_size, "sha256": sha256_file(p)})
+    index.sort(key=lambda f: f["path"])
     index_doc = {"run_id": run_id, "bucket": bucket, "prefix": prefix,
                  "public_base": f"https://data.affine.io/{prefix}",
                  "files": index, "published_at": card["published_at"]}
@@ -188,7 +201,7 @@ def main() -> int:
                   Body=json.dumps(index_doc, indent=1).encode(), ContentType="application/json")
     s3.put_object(Bucket=bucket, Key=prefix + "scorecard.json",
                   Body=json.dumps(card, indent=1).encode(), ContentType="application/json")
-    log(f"uploaded {len(files)} files ({sum(f['bytes'] for f in index)/1e6:.1f} MB) -> "
+    log(f"uploaded {len(files)} files ({sum(p.stat().st_size for p, _ in files)/1e6:.1f} MB; index {len(index)} files) -> "
         f"https://data.affine.io/{prefix}")
     return 0
 
