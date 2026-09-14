@@ -101,7 +101,7 @@
     tbody.innerHTML = "";
     if (!r) { $("#bench-meta").textContent = "no benchmark runs published yet"; return; }
     const w = r.where || {};
-    const ident = r.identical_to ? `IDENTICAL WEIGHTS — same ${r.identical_to.n_tensors} tensors as reign ${r.identical_to.reign} (${r.identical_to.run_id}); numbers shown are that run's, no new pass · ` : "";
+    const ident = r.identical_to ? `IDENTICAL WEIGHTS — same weights as reign ${r.identical_to.reign} (${r.identical_to.run_id}; ${r.identical_to.how || (r.identical_to.n_tensors + " tensors")}); numbers shown are that run's, no new pass · ` : "";
     $("#bench-meta").textContent = `${r.rows.length} rows · ${ident}${r.status === "partial" ? "PARTIAL (still running) · " : ""}run created ${(r.created_at || "").replace("T", " ")} · ` +
       `${w.provider || ""} ${w.gpu || ""} · teacher ${(r.teacher || {}).hf_repo || ""}` +
       (r.prime_spent_usd !== undefined && r.prime_spent_usd !== null ? ` · pod cost ≈ $${r.prime_spent_usd}` : "");

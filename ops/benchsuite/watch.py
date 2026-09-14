@@ -21,6 +21,7 @@ provider (Prime pod by default) and the budget guard.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import subprocess
@@ -30,12 +31,13 @@ import tomllib
 from pathlib import Path
 
 from challengers import near_misses
-from weights_fingerprint import fingerprint, identical
+from weights_fingerprint import same_weights
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 SUITE = tomllib.loads((HERE / "suite.toml").read_text())
 STATE_DIR = HERE / "state"
+FINGERPRINT_TIMEOUT_S = 120     # the identity check must not delay the pass
 WATCH_JSON = STATE_DIR / "watch.json"
 CARDS_DIR = REPO / SUITE["suite"]["state_dir"]
 VALIDATOR_STATE = REPO / "affine" / "state" / "state.json"
@@ -110,29 +112,38 @@ def skip_if_identical_weights(king: dict, run_id: str) -> bool:
     prev = latest_card()
     if prev is None or prev["king"]["digest"] == king["digest"]:
         return False
+    # Cheap by construction (manifest hashes, then sampled range reads — no
+    # shard is pulled) and hard-capped: a slow or broken check must never hold
+    # the pass. 2026-09-14 the old full-shard fingerprint took 90 min.
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    fut = pool.submit(same_weights, king["digest"], prev["king"]["digest"])
     try:
-        fp_new = fingerprint(king["digest"])
-        fp_prev = fingerprint(prev["king"]["digest"])
-    except Exception as e:  # download / parse trouble: fall through and bench
-        log(f"fingerprint failed ({e!r}); benching anyway")
+        same, how = fut.result(timeout=FINGERPRINT_TIMEOUT_S)
+    except concurrent.futures.TimeoutError:
+        log(f"weight-identity check did not finish in {FINGERPRINT_TIMEOUT_S} s; benching anyway")
+        pool.shutdown(wait=False, cancel_futures=True)
         return False
-    if not identical(fp_new, fp_prev):
-        log(f"weights differ from reign {prev['king'].get('reign')} "
-            f"({fp_new['tensor_set_sha256'][:12]} vs {fp_prev['tensor_set_sha256'][:12]}); benching")
+    except Exception as e:  # manifest / range trouble: fall through and bench
+        log(f"weight-identity check failed ({e!r}); benching anyway")
         return False
+    finally:
+        pool.shutdown(wait=False)
+    if not same:
+        log(f"weights differ from reign {prev['king'].get('reign')} ({how}); benching")
+        return False
+    log(f"identical weights: {how}")
     stub = dict(prev)
     stub.update({
         "run_id": run_id, "king": king, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "published_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "status": "skipped_identical_weights",
         "identical_to": {"run_id": prev["run_id"], "digest": prev["king"]["digest"],
-                         "reign": prev["king"].get("reign"), "tensor_set_sha256": fp_new["tensor_set_sha256"],
-                         "n_tensors": fp_new["n_tensors"]},
+                         "reign": prev["king"].get("reign"), "how": how},
         "mode": "skipped", "prime_spent_usd": 0.0,
     })
     CARDS_DIR.mkdir(parents=True, exist_ok=True)
     (CARDS_DIR / f"{run_id}.json").write_text(json.dumps(stub, indent=1))
-    log(f"reign {king.get('reign')} ({king['digest'][:12]}) has the same {fp_new['n_tensors']} tensors as "
+    log(f"reign {king.get('reign')} ({king['digest'][:12]}) has the same weights as "
         f"reign {prev['king'].get('reign')} ({prev['king']['digest'][:12]}); pass skipped, stub card written")
     return True
 
