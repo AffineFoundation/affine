@@ -634,7 +634,7 @@ function opponentKing(r) {
 const RETIRED_WINDOW_TAG = "retired rule (wvk 15)";
 function isRetiredWindowRow(r) {
   return r.crown_mode === "window_best" || r.event === "window_close"
-    || r.event === "crown_revoked" || r.via === "window_best";
+    || r.via === "window_best";
 }
 function retiredTag(title) {
   return ` <span class="dim" title="${esc(title)}">${esc(RETIRED_WINDOW_TAG)}</span>`;
@@ -646,8 +646,11 @@ function outcomeBadge(r) {
       + (isRetiredWindowRow(r) ? retiredTag("crowned by the 12 h window rule, retired 2026-09-13 13:01 UTC (wvk 16)") : "");
   }
   if (r.event === "crown_revoked") {
-    return badge("failed", `crown revoked #${r.reign_number ?? "?"} - model copy`)
-      + retiredTag(r.revoked_reason || "crown revoked");
+    const code = r.revoked_code || String(r.revoked_reason || "").split(":")[0] || "revoked";
+    const label = code.replace(/^revoked_/, "").replace(/_/g, " ");
+    const tag = isRetiredWindowRow(r) ? retiredTag(r.revoked_reason || "crown revoked")
+      : ` <span class="dim" title="${esc(r.revoked_reason || "")}">${esc(r.revoked_by || "operator decision")}</span>`;
+    return badge("failed", `crown revoked #${r.reign_number ?? "?"} - ${label}`) + tag;
   }
   if (r.event === "window_close") {
     return badge("queued", `window ${r.window_id ?? "?"} closed - ${r.outcome || "-"}`)
