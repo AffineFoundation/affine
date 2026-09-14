@@ -475,6 +475,15 @@ def king_loop_candidate(env: dict, cfg: dict) -> bool:
             and rollout_outcome(env["trace"]) == "failed")
 
 
+def king_done_candidate(env: dict, cfg: dict) -> bool:
+    """king_done needs no failed grade: the state is "the work is done and
+    the king kept going", which a SOLVED rollout shows just as well (bash-
+    tool harness 2026-09-14: 49/90 loop-guard stops graded solved). Errored
+    / unscored rollouts stay out."""
+    return (_policy_ok(env, cfg) and king_multi_turn(env, cfg)
+            and rollout_outcome(env["trace"]) in ("failed", "solved"))
+
+
 def side_table_turns(env: dict, cfg: dict) -> dict[int, dict]:
     """Admitted side-table rows for this rollout, {turn_idx: row}; {} when
     the rollout has none or is not a failed king rollout of an admitted
@@ -935,6 +944,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                  notes: dict[str, int] | None = None,
                  published_king_ns: dict[str, str] | None = None,
                  reclaimed: dict[str, set[str]] | None = None,
+                 probe_text: frozenset[str] = frozenset(),
                  king_tooluse: dict | None = None,
                  completion_pre: dict | None = None) -> list[dict]:
     """View records for one trace chunk, with only the turns that pass the
@@ -983,7 +993,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         want_loop = bool(king_loop) and king_loop_candidate(env, king_loop)
         pivots = side_table_turns(env, king_pivot) if king_pivot else {}
         recoverable = side_table_turns(env, king_recoverable) if king_recoverable else {}
-        want_done = bool(king_done) and king_loop_candidate(env, king_done)
+        want_done = bool(king_done) and king_done_candidate(env, king_done)
         want_tooluse = (bool(king_tooluse) and _policy_ok(env, king_tooluse)
                         and str(env.get("source") or "") in king_tooluse["sources"])
         # P3 (king-selected): the king finished by itself and still failed.
@@ -1220,6 +1230,13 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                         and reclaimed is not None):
                     reclaimed.setdefault(old_ns, set()).add(tid)
                     _count(notes, f"{g}_reclaimed_from_{old_ns}")
+                elif (g in KING_GROUPS and old_ns in KING_GROUPS and tid in probe_text
+                        and reclaimed is not None):
+                    # Probe says the teacher answers in prose here: the row is
+                    # re-published with kind `text` (chunk records are
+                    # immutable, so a new record replaces the old row).
+                    reclaimed.setdefault(old_ns, set()).add(tid)
+                    _count(notes, f"{g}_restamp_reclaimed")
                 else:
                     _count(drops, "already_published")
                     if g is not None:
@@ -1569,19 +1586,33 @@ def load_teacher_probe() -> dict:
             "min_valid": int(raw.get("min_valid", 2) or 2),
             "require_distinct": bool(raw.get("require_distinct", True)),
             "retire_failed_published": bool(raw.get("retire_failed_published", True)),
+            "restamp_text": bool(raw.get("restamp_text", True)),
             "pending_path": REPO / str(raw.get("pending") or "affine/state/teacher_probe/pending.jsonl")}
 
 
 def probe_verdict(cfg: dict, turn_id: str) -> str:
-    """pass | fail | missing"""
+    """pass | pass_text | fail | missing.
+    pass_text (Jacob's rule, 2026-09-14: select by king failure, label by
+    whatever keeps the teacher's references parseable): >= min_valid of the
+    teacher's samples are prose with no action in the turn's dialect and
+    not all identical -- the teacher answers / says "done" where the king
+    repeated a tool call. The turn is admitted with kind `text` instead of
+    dropped. Rows probed before the text fields existed with >= 2 prose
+    samples are `missing` (re-probed), not failed."""
     row = cfg["rows"].get(turn_id)
     if row is None:
         return "missing"
-    if int(row.get("n_valid") or 0) < cfg["min_valid"]:
-        return "fail"
-    if cfg["require_distinct"] and row.get("identical"):
-        return "fail"
-    return "pass"
+    n_valid = int(row.get("n_valid") or 0)
+    if n_valid >= cfg["min_valid"] and not (cfg["require_distinct"] and row.get("identical")):
+        return "pass"
+    if cfg["restamp_text"] and row.get("kind") != dialects.TEXT_KIND:
+        if "text_distinct" in row:
+            if int(row["text_valid"]) >= cfg["min_valid"] and \
+                    (int(row["text_distinct"]) >= 2 or not cfg["require_distinct"]):
+                return "pass_text"
+        elif sum(k == dialects.TEXT_KIND for k in (row.get("sample_kinds") or [])) >= cfg["min_valid"]:
+            return "missing"      # probed before the text fields existed
+    return "fail"
 
 
 def probe_gate(records: list[dict], cfg: dict, drops: dict[str, int],
@@ -1603,7 +1634,17 @@ def probe_gate(records: list[dict], cfg: dict, drops: dict[str, int],
         for m in rec["turns"]:
             tid = f"{rec['traj_id']}:{m['turn_idx']}"
             v = probe_verdict(cfg, tid)
-            if v == "pass":
+            if v == "pass_text":
+                prefix = [{"role": nd["role"], "content": nd["content"]}
+                          for nd in node_path(rec["nodes"], int(m["node_id"]))[:-1]]
+                if dialects.get(dialects.TEXT_KIND).mandate_ok(prefix):
+                    m["action_kind"] = dialects.TEXT_KIND
+                    _count(drops, f"probe_restamped_text_{g}")
+                    keep.append(m)
+                else:
+                    _count(drops, "probe_failed")
+                    _count(drops, f"probe_failed_{g}_text_mandate")
+            elif v == "pass":
                 keep.append(m)
             elif v == "fail":
                 _count(drops, "probe_failed")
@@ -2068,6 +2109,11 @@ def main() -> None:
             if ns in KING_GROUPS:
                 published_king_ns[tid] = ns
     reclaimed: dict[str, set[str]] = {}
+    probe_early = load_teacher_probe()
+    probe_text = frozenset(tid for tid in (probe_early.get("rows") or {})
+                           if probe_verdict(probe_early, tid) == "pass_text") if probe_early else frozenset()
+    if probe_text:
+        log(f"teacher probe: {len(probe_text)} turns pass as `text` (teacher answers in prose)")
 
     baker = ToolBaker.from_pretrained()
     panel = panel_keys()
@@ -2081,6 +2127,7 @@ def main() -> None:
                             completion=completion, king_recoverable=king_recoverable,
                             king_done=king_done, king_fail_cfg=king, notes=notes,
                             published_king_ns=published_king_ns, reclaimed=reclaimed,
+                            probe_text=probe_text,
                             king_tooluse=king_tooluse, completion_pre=completion_pre)
         for rec in recs:
             for m in rec["turns"]:

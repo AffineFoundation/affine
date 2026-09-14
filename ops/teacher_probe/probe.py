@@ -103,6 +103,7 @@ def probe_turn(teacher: Teacher, item: dict) -> dict:
     actions: list[str] = []
     kinds: list[str] = []
     finishes: list[str | None] = []
+    texts: list[str] = []       # prose samples with no action in the dialect
     visible = 0
     for _ in range(N_SAMPLES):
         content, fin = teacher.sample(prefix)
@@ -112,7 +113,14 @@ def probe_turn(teacher: Teacher, item: dict) -> dict:
         if len(acts) >= 1:
             actions.append(norm(acts[-1]))
             kinds.append(kind)
-        elif dialects.get("tool_call").actions(content):
+            continue
+        if content.strip() and kind != "text":
+            # Jacob's rule (2026-09-14): the teacher answers / says "done"
+            # in prose where the king acted -> the fold may admit the turn
+            # with kind `text`. `text` parses the whole visible reply, tool
+            # XML included, so a stray tool call still counts as prose here.
+            texts.append(norm(content))
+        if dialects.get("tool_call").actions(content):
             kinds.append("tool_call")
         elif content.strip():
             kinds.append("text")
@@ -123,24 +131,28 @@ def probe_turn(teacher: Teacher, item: dict) -> dict:
         "n": N_SAMPLES, "n_valid": len(actions),
         "identical": len(actions) >= 2 and len(set(actions)) == 1,
         "n_distinct": len(set(actions)), "visible": visible,
+        "text_valid": len(texts), "text_distinct": len(set(texts)),
         "finish": finishes, "sample_kinds": kinds,
         "prefix_sha": hashlib.sha256(json.dumps(prefix, sort_keys=True).encode()).hexdigest()[:16],
         "probed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
 
 
-def published_items(groups: list[str], per_stratum: int, seed: int = 7) -> list[dict]:
+def published_items(groups: list[str], per_stratum: int, seed: int = 7,
+                    manifest_sha: str = "", only_ids: set[str] | None = None) -> list[dict]:
     """Published turns of the given stratum namespaces, prefixes from the
-    view chunks."""
+    view chunks. `manifest_sha` reads a historical manifest (rows retired
+    since are still addressable through it); `only_ids` restricts."""
     h = httpx.Client(headers={"User-Agent": "affine-teacher-probe"}, follow_redirects=True, timeout=300)
-    m = h.get(f"{PUBLIC_BASE}/corpus/manifest.json").json()
+    mkey = f"corpus/manifests/{manifest_sha}.json" if manifest_sha else "corpus/manifest.json"
+    m = h.get(f"{PUBLIC_BASE}/{mkey}").json()
     t = pq.read_table(io.BytesIO(h.get(f"{PUBLIC_BASE}/{m['index']['key']}").content),
                       columns=["turn_id", "stratum", "chunk_key", "traj_line", "turn_idx", "action_kind"])
     rows = [dict(zip(t.column_names, r)) for r in zip(*(t.column(c).to_pylist() for c in t.column_names))]
     by_stratum: dict[str, list[dict]] = {}
     for r in rows:
         ns = str(r["stratum"]).split(":")[0]
-        if ns in groups:
+        if ns in groups and (only_ids is None or r["turn_id"] in only_ids):
             by_stratum.setdefault(r["stratum"], []).append(r)
     rng = random.Random(seed)
     picked: list[dict] = []
@@ -170,6 +182,11 @@ def main() -> None:
     ap.add_argument("--concurrency", type=int, default=12)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--force", action="store_true", help="re-probe already probed turn ids")
+    ap.add_argument("--manifest-sha", default="", help="read --published rows from this historical manifest")
+    ap.add_argument("--turn-ids", default="", help="file of turn ids to restrict --published to")
+    ap.add_argument("--reprobe-text", action="store_true",
+                    help="re-probe rows recorded before the text fields existed that have "
+                         ">= 2 prose samples and < 2 valid actions (combine with --published/--manifest-sha)")
     args = ap.parse_args()
     key = os.environ.get("ENGY_EVAL") or os.environ.get("ENGY_2")
     if not key:
@@ -185,11 +202,30 @@ def main() -> None:
                     seen.add(it["turn_id"])
                     items.append(it)
         log(f"pending: {len(items)} turns")
+    n_pending = len(items)
+    only_ids: set[str] | None = None
+    if args.turn_ids:
+        only_ids = {l.strip() for l in Path(args.turn_ids).read_text().split("\n") if l.strip()}
+    reprobe: set[str] = set()
+    if args.reprobe_text and PROBES_PATH.exists():
+        for l in PROBES_PATH.read_text().split("\n"):
+            if l.strip():
+                r = json.loads(l)
+                if "text_distinct" not in r and r["n_valid"] < 2 and r.get("kind") != "text" \
+                        and sum(k == "text" for k in r.get("sample_kinds") or []) >= 2:
+                    reprobe.add(r["turn_id"])
+        log(f"reprobe-text: {len(reprobe)} rows lack the text fields and have >= 2 prose samples")
+        only_ids = reprobe if only_ids is None else (only_ids & reprobe)
     if args.published:
         items += published_items([g.strip() for g in args.published.split(",") if g.strip()],
-                                 args.per_stratum)
-    done = set() if args.force else load_probed()
-    items = [it for it in items if it["turn_id"] not in done]
+                                 args.per_stratum, manifest_sha=args.manifest_sha, only_ids=only_ids)
+    done = set() if (args.force or args.reprobe_text) else load_probed()
+    if args.reprobe_text:
+        items = [it for it in items if it["turn_id"] in reprobe]
+    # The fold lists only turns it holds as unprobed (a row lacking the text
+    # fields counts as unprobed), so pending items are never skipped.
+    pending_ids = {it["turn_id"] for it in items[:n_pending]}
+    items = [it for it in items if it["turn_id"] not in done or it["turn_id"] in pending_ids]
     if args.limit:
         items = items[:args.limit]
     log(f"probing {len(items)} turns x {N_SAMPLES} samples with concurrency {args.concurrency}")
