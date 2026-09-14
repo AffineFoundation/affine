@@ -315,6 +315,8 @@ def history_row_from_raw(r: dict) -> dict:
         "outcome": r.get("outcome"),
         "via": r.get("via") or v.get("via"),
         "revoked_reason": r.get("revoked_reason"),
+        "revoked_code": r.get("revoked_code"),
+        "revoked_by": r.get("revoked_by"),
     }
 
 
