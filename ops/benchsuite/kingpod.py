@@ -20,6 +20,8 @@ mode 0600. Never prints a secret.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
 import os
 import secrets
@@ -64,12 +66,36 @@ def load_pods() -> dict:
     return {}
 
 
+@contextlib.contextmanager
+def pods_lock():
+    """Serialise read-modify-write of pods.json: two passes renting at once
+    (challengers run in parallel) clobbered each other's entry on 2026-09-14
+    and one pod went untracked."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(STATE_DIR / "pods.lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
 def save_pods(pods: dict) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = PODS_JSON.with_suffix(".tmp")
     tmp.write_text(json.dumps(pods, indent=1, sort_keys=True))
     os.chmod(tmp, 0o600)
     tmp.replace(PODS_JSON)
+
+
+def update_pod(name: str, **fields) -> dict:
+    """Atomic merge of `fields` into one pod's record (re-reads under the lock)."""
+    with pods_lock():
+        pods = load_pods()
+        mem = pods.setdefault(name, {})
+        mem.update(fields)
+        save_pods(pods)
+        return mem
 
 
 def ssh_run(host: str, port: int, cmd: str, *, input_text: str | None = None,
@@ -142,14 +168,9 @@ def cmd_rent(args: argparse.Namespace) -> int:
         if res in (None, "RATE_LIMITED"):
             log(f"rent on {str(cand['id'])[:12]} failed ({res}); next candidate")
             continue
-        pods = load_pods()
-        pods[name] = {
-            "digest": digest, "served": f"king-{digest[:12]}", "plan": plan, "r2": args.r2 or "",
-            "executor_id": str(cand["id"]), "machine": cand.get("machine_name"),
-            "price": price, "rented_at": time.time(), "key": secrets.token_hex(24),
-            "state": "rented",
-        }
-        save_pods(pods)
+        update_pod(name, digest=digest, served=f"king-{digest[:12]}", plan=plan, r2=args.r2 or "",
+                   executor_id=str(cand["id"]), machine=cand.get("machine_name"), price=price,
+                   rented_at=time.time(), key=secrets.token_hex(24), state="rented")
         log(f"rented {name}: {plan['name']} {cand.get('machine_name')} "
             f"${price:.2f}/h executor={str(cand['id'])[:12]}")
         print(name)
@@ -249,11 +270,11 @@ def cmd_wait(args: argparse.Namespace) -> int:
         pod = find_pod(sess, args.name)
         if mem["state"] == "rented" and pod is not None:
             if bootstrap(args.name, mem, pod, cfg):
-                save_pods(pods)
+                update_pod(args.name, **mem)
         elif mem["state"] == "booting":
             if probe(mem):
                 mem.update(state="ready", ready_at=time.time())
-                save_pods(pods)
+                update_pod(args.name, **mem)
                 log(f"{args.name}: READY at {mem['base_url']}")
                 print(mem["base_url"])
                 return 0
@@ -269,8 +290,7 @@ def cmd_wait(args: argparse.Namespace) -> int:
                         log(f"{args.name}: {tail[-1][:160]}")
                     if p.stdout.strip() and "FATAL" in p.stdout:
                         log(f"{args.name}: bootstrap FAILED")
-                        mem["state"] = "failed"
-                        save_pods(pods)
+                        update_pod(args.name, state="failed")
                         return 3
         time.sleep(30)
     log(f"{args.name}: timeout waiting for READY")
@@ -305,9 +325,8 @@ def cmd_release(args: argparse.Namespace) -> int:
     ok = lium_api.remove(args.name, POD_PREFIX)
     age = (time.time() - mem["rented_at"]) / 3600
     log(f"{args.name}: released={ok} after {age:.2f}h ≈ ${age * mem['price']:.2f}")
-    mem.update(state="released", released_at=time.time(),
+    update_pod(args.name, state="released", released_at=time.time(),
                cost_usd=round(age * mem["price"], 2))
-    save_pods(pods)
     return 0 if ok else 1
 
 
