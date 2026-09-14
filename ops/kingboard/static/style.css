@@ -82,3 +82,5 @@ footer { padding: 0 28px 28px; }
 .teacher-col { color: var(--teacher); }
 td.good { color: var(--good); }
 td.bad { color: var(--bad); }
+
+.subrow td { font-size: 0.85em; color: var(--muted, #888); }

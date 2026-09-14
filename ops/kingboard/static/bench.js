@@ -123,6 +123,25 @@
         el("td", { class: "num muted" }, k ? kfmt(k.completion_tokens) : "–"),
         el("td", { class: "num muted" }, k && k.finish_length_frac !== undefined ? pct(k.finish_length_frac, 0) : "–"),
         el("td", { class: "num muted" }, k ? mins(k.wall_seconds) : "–")));
+      // Per gold class (When2Call): accuracy per class and how often each side
+      // answered with the tool call — on a non-tool class that is the
+      // "called a tool when none was needed" rate.
+      const kb = (k && k.by_class) || {}, tb = (t && t.by_class) || {};
+      for (const cls of [...new Set([...Object.keys(kb), ...Object.keys(tb)])].sort()) {
+        const kc = kb[cls], tc = tb[cls];
+        const dd = kc && tc ? kc.score - tc.score : null;
+        const toolRate = (c) => c && c.metrics && c.metrics.pred_tool_call !== undefined ? ` · →tool ${pct(c.metrics.pred_tool_call, 0)}` : "";
+        tbody.append(el("tr", { class: "subrow", title: `${row.env}: rows whose gold answer is "${cls}"` },
+          el("td", { class: "muted" }, `  ↳ ${cls}`),
+          el("td", { class: "muted" }, "gold class"),
+          el("td", { class: "num muted" }, ""),
+          el("td", { class: "num muted" }, (kc || tc || {}).n),
+          el("td", { class: "num muted" }, kc ? pct(kc.score) + ci(kc) + toolRate(kc) : "–"),
+          el("td", { class: "num muted" }, tc ? pct(tc.score) + ci(tc) + toolRate(tc) : "–"),
+          el("td", { class: "num muted" }, dd === null ? "–" : (dd > 0 ? "+" : "") + (100 * dd).toFixed(1) + " pt"),
+          el("td", { class: "num muted" }, ""), el("td", { class: "num muted" }, ""),
+          el("td", { class: "num muted" }, ""), el("td", { class: "num muted" }, "")));
+      }
     }
     const sk = (r.skipped || []).map((s) => `${s.env}: ${s.why}`);
     $("#bench-skipped").textContent = sk.length ? "Not run — " + sk.join(" · ") : "";
