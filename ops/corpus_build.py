@@ -409,6 +409,10 @@ def load_king_tooluse() -> dict:
     cfg.update(leak_exempt=True,
                prose_sources=frozenset(str(x) for x in (raw.get("prose_sources") or [])),
                tool_sources=frozenset(str(x) for x in (raw.get("tool_sources") or [])),
+               # Rule (a) skips rollouts whose task repo is listed: When2Call
+               # stamps `repo = when2call/<label>`, and on `tool_call` items a
+               # first-reply call is the RIGHT move (datagen worker, 2026-09-14).
+               prose_skip_repos=frozenset(str(x) for x in (raw.get("prose_skip_repos") or [])),
                kind=str(raw.get("kind") or dialects.TEXT_KIND))
     cfg["sources"] = cfg["prose_sources"] | cfg["tool_sources"]
     return cfg
@@ -1101,7 +1105,10 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         if want_tooluse and convs and main:
             src = str(env.get("source") or "")
             # (a) one-shot on a prose-answer prompt set: the king opened with a tool call.
-            if src in king_tooluse["prose_sources"] and first_reply_is_tool_call(convs, main, kind):
+            repo = str((env.get("task") or {}).get("repo") or "")
+            if src in king_tooluse["prose_sources"] and repo in king_tooluse["prose_skip_repos"]:
+                _count(notes, "king_tooluse_skip_tool_call_label")
+            elif src in king_tooluse["prose_sources"] and first_reply_is_tool_call(convs, main, kind):
                 i = main[0]
                 if route.get(i) not in (KING_DONE_GROUP, KING_RECOVERABLE_GROUP):
                     route[i] = KING_TOOLUSE_GROUP
