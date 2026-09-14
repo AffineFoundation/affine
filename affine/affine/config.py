@@ -192,6 +192,11 @@ class DuelCfg:
     score_mode: str = "reason"
     band_c: float = 2.0
     band_floor: float = 0.002
+    # Teacher-only sampling budget (thought + action tokens) for the k
+    # reference rollouts (staged 2026-09-14, wvk 17). None = the miners'
+    # max_thought_tokens + max_action_tokens, i.e. the pre-wvk-17 shared
+    # cap. Miners' caps are not affected by this knob.
+    ref_max_tokens: int | None = None
     # v6 (2026-09-04): per-turn score for a side with no parseable action.
     # None = legacy (turn dropped from pairing). Contract knob: changing it
     # is a weight_version_key event.
@@ -444,6 +449,19 @@ def _submission(raw: dict) -> SubmissionCfg:
     )
 
 
+def _ref_max_tokens(d: dict) -> int | None:
+    v = d.get("ref_max_tokens")
+    if v is None:
+        return None
+    v = int(v)
+    shared = int(d["max_thought_tokens"]) + int(d["max_action_tokens"])
+    if v < shared:
+        raise ValueError(f"[duel] ref_max_tokens {v} must be >= max_thought_tokens + "
+                         f"max_action_tokens = {shared} (the teacher may not get a "
+                         f"smaller budget than the miners)")
+    return v
+
+
 def _r2(r: dict) -> R2Cfg:
     return R2Cfg(
         enabled=bool(r.get("enabled", False)),
@@ -507,6 +525,7 @@ def _duel(raw: dict) -> DuelCfg:
         temperature=float(d["temperature"]),
         max_thought_tokens=int(d["max_thought_tokens"]),
         max_action_tokens=int(d["max_action_tokens"]),
+        ref_max_tokens=_ref_max_tokens(d),
         concurrency=int(d["concurrency"]), timeout_s=int(d["timeout_s"]),
         score_bank=bool(d.get("score_bank", False)),
         reason_only=bool(d.get("reason_only", True)),

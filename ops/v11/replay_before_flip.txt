@@ -1,0 +1,34 @@
+challenge   wvk     margin        se      z  stored  restored  note
+chal-00458  15    -0.00073   0.00075  -0.97  False   False     window: not_candidate:margin_not_positive
+chal-00459  15    -0.00523   0.00093  -5.62  False   False     window: not_candidate:margin_not_positive
+chal-00461  15     0.00074   0.00079   0.93  False   False     window: window_candidate
+chal-00463  15    -0.00287   0.00083  -3.45  False   False     window: not_candidate:margin_not_positive
+chal-00464  15     0.00027   0.00078   0.34  False   False     window: window_candidate
+chal-00465  15    -0.00097   0.00083  -1.18  False   False     window: not_candidate:margin_not_positive
+chal-00461  15     0.00074   0.00079   0.93  False   False     window: crown_revoked -> crown_revoked (pooled z 0.08)
+chal-00466  15     0.00019   0.00072   0.26  False   False     window: window_candidate
+chal-00467  15    -0.00203   0.00086  -2.35  False   False     window: not_candidate:margin_not_positive
+chal-00468  15    -0.00091   0.00085  -1.07  False   False     window: not_candidate:margin_not_positive
+chal-00469  15    -0.00035   0.00068  -0.51  False   False     window: not_candidate:margin_not_positive
+chal-00470  <=14   0.00154   0.00071   2.17  False   False     pre-wvk-15
+chal-00472  <=14  -0.00154   0.00078  -1.97  False   False     pre-wvk-15
+chal-00473  <=14  -0.00104   0.00070  -1.50  False   False     pre-wvk-15
+chal-00474  <=14   0.00046   0.00087   0.53  False   False     pre-wvk-15
+chal-00475  <=14  -0.00022   0.00082  -0.27  False   False     pre-wvk-15
+chal-00476  <=14  -0.00018   0.00070  -0.26  False   False     pre-wvk-15
+chal-00477  <=14  -0.00006   0.00073  -0.08  False   False     pre-wvk-15
+chal-00478  <=14   0.00013   0.00071   0.19  False   False     pre-wvk-15
+chal-00480  <=14  -0.00141   0.00078  -1.81  False   False     pre-wvk-15
+chal-00481  <=14  -0.00097   0.00086  -1.13  False   False     pre-wvk-15
+chal-00482  <=14   0.00138   0.00073   1.90  False   False     pre-wvk-15
+chal-00483  <=14   0.00059   0.00081   0.72  False   False     pre-wvk-15
+chal-00484  <=14   0.00115   0.00085   1.36  False   False     pre-wvk-15
+chal-00485  <=14   0.00029   0.00089   0.33  False   False     pre-wvk-15
+chal-00488  <=14  -0.00530   0.00099  -5.37  False   False     pre-wvk-15
+chal-00489  <=14  -0.00052   0.00075  -0.70  False   False     pre-wvk-15
+chal-00490  <=14  -0.00022   0.00079  -0.28  False   False     pre-wvk-15
+chal-00491  <=14  -0.00211   0.00096  -2.21  False   False     pre-wvk-15
+chal-00492  <=14   0.00114   0.00082   1.38  False   False     pre-wvk-15
+
+wvk<=14 rows: 19/19 decisions reproduced bit-identically
+wvk 15 rows : 11/11 agree with the stamped duel_rule_wins; under the restored rule none of them would have crowned unless marked restored=True
