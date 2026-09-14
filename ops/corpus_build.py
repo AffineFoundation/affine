@@ -76,7 +76,7 @@ from affine import dialects  # noqa: E402
 from affine.config import load_config  # noqa: E402
 from affine.corpus.completion import completion_kind, final_completion  # noqa: E402
 from affine.corpus.loops import ESCAPE, IN_LOOP, ONSET, label_loops  # noqa: E402
-from affine.corpus.materialize import node_path, stratum_key  # noqa: E402
+from affine.corpus.materialize import materialize_turn, node_path, stratum_key  # noqa: E402
 from affine.corpus.pack import PackResult  # noqa: E402
 from affine.corpus.publish import CorpusPublisher  # noqa: E402
 from affine.corpus.trace import (  # noqa: E402
@@ -1352,6 +1352,11 @@ def load_math_filter() -> dict:
     sources = cfg.get("sources") or [cfg.get("source") or "affine_math"]
     return {"source": str(sources[0]),
             "sources": frozenset(str(x) for x in sources),
+            # P4 (2026-09-14): the teacher must have >= this many boxed answers
+            # that fit the duel's reference cap among its datagen samples;
+            # 0 disables. cap_chars approximates 1,792 tokens.
+            "min_boxed_within_cap": int(cfg.get("min_boxed_within_cap", 0) or 0),
+            "cap_chars": int(cfg.get("cap_chars", 7000) or 7000),
             "retire_published": bool(cfg.get("retire_published", True)),
             "min_surviving_strata": int(cfg.get("min_surviving_strata", 100) or 0),
             "teacher_prefix": str(cfg.get("teacher_prefix") or "teacher_"),
@@ -1375,6 +1380,17 @@ def boxed_answer(trace: dict) -> str | None:
     return " ".join(body.split())
 
 
+def final_reply_chars(trace: dict) -> int:
+    nodes = trace.get("nodes") or []
+    final = next((nd for nd in reversed(nodes)
+                  if nd.get("sampled") and (nd.get("message") or {}).get("role") == "assistant"),
+                 None)
+    if final is None:
+        return 0
+    m = final["message"] or {}
+    return len(message_text(m.get("content"))) + len(str(m.get("reasoning_content") or ""))
+
+
 def math_keep_set(pub: PublicCorpus, traces_manifest: dict, cfg: dict
                   ) -> tuple[set[str], dict]:
     """Problems (task sid) the proxy keeps, plus the survey."""
@@ -1392,21 +1408,27 @@ def math_keep_set(pub: PublicCorpus, traces_manifest: dict, cfg: dict
             pid = str((env.get("policy") or {}).get("id") or "")
             outcome = rollout_outcome(env["trace"])
             row = per.setdefault(sid, {"answers": set(), "teacher_failed": False,
-                                       "king_failed": False, "n_teacher": 0, "n_king": 0})
+                                       "king_failed": False, "n_teacher": 0, "n_king": 0,
+                                       "n_boxed_in_cap": 0})
             if pid.startswith(cfg["teacher_prefix"]):
                 if outcome in ("solved", "failed"):
                     row["n_teacher"] += 1
                     ans = boxed_answer(env["trace"])
                     if ans is not None:
                         row["answers"].add(ans)
+                        if final_reply_chars(env["trace"]) <= cfg["cap_chars"]:
+                            row["n_boxed_in_cap"] += 1
                     row["teacher_failed"] |= outcome == "failed"
             elif pid.startswith(cfg["king_prefix"]):
                 if outcome in ("solved", "failed"):
                     row["n_king"] += 1
                     row["king_failed"] |= outcome == "failed"
     keep = {sid for sid, r in per.items()
-            if len(r["answers"]) >= 2 or r["teacher_failed"] or r["king_failed"]}
+            if (len(r["answers"]) >= 2 or r["teacher_failed"] or r["king_failed"])
+            and r["n_boxed_in_cap"] >= cfg["min_boxed_within_cap"]}
     stats = {"chunks": n_chunks, "problems": len(per), "kept": len(keep),
+             "boxed_in_cap_ge_min": sum(r["n_boxed_in_cap"] >= cfg["min_boxed_within_cap"]
+                                        for r in per.values()),
              "multi_sample": sum(r["n_teacher"] >= 2 for r in per.values()),
              "disagree": sum(len(r["answers"]) >= 2 for r in per.values()),
              "teacher_failed": sum(r["teacher_failed"] for r in per.values()),
@@ -1511,6 +1533,105 @@ def later_onset_retire(pub: PublicCorpus, live: dict | None) -> list[str]:
         if traj not in first or int(tix) < first[traj][0]:
             first[traj] = (int(tix), tid)
     return [tid for tid, traj, _ in rows if first[traj][1] != tid]
+
+
+# -- teacher probe gate (improvement loop P4, 2026-09-14) -----------------------
+# ~25 % of king-group strata were dead for every miner: the teacher itself
+# gave <= 1 parseable reference or forfeited there. The gate: a turn of a
+# king group enters D only with a probe row (ops/teacher_probe/probe.py:
+# 3 teacher samples at the prefix under the duel's cap and parser) showing
+# >= `min_valid` parsed actions that are not all identical. Turns without a
+# row are held (record deferred, turn written to pending.jsonl for the
+# probe job); failing turns are dropped (`probe_failed`); published king
+# rows with a failing probe are retired once.
+PROBE_STATE_DIR = REPO / "affine" / "state" / "teacher_probe"
+
+
+def load_teacher_probe() -> dict:
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("teacher_probe") or {}
+    if not raw or not raw.get("enabled", False):
+        return {}
+    path = REPO / str(raw.get("side_table") or "affine/state/teacher_probe/probes.jsonl")
+    rows: dict[str, dict] = {}
+    if path.exists():
+        for line in path.read_text().split("\n"):
+            if line.strip():
+                row = json.loads(line)
+                rows[str(row["turn_id"])] = row     # last row wins (re-probes)
+    return {"rows": rows, "path": str(path),
+            "groups": frozenset(str(g) for g in (raw.get("groups") or KING_GROUPS)),
+            "min_valid": int(raw.get("min_valid", 2) or 2),
+            "require_distinct": bool(raw.get("require_distinct", True)),
+            "retire_failed_published": bool(raw.get("retire_failed_published", True)),
+            "pending_path": REPO / str(raw.get("pending") or "affine/state/teacher_probe/pending.jsonl")}
+
+
+def probe_verdict(cfg: dict, turn_id: str) -> str:
+    """pass | fail | missing"""
+    row = cfg["rows"].get(turn_id)
+    if row is None:
+        return "missing"
+    if int(row.get("n_valid") or 0) < cfg["min_valid"]:
+        return "fail"
+    if cfg["require_distinct"] and row.get("identical"):
+        return "fail"
+    return "pass"
+
+
+def probe_gate(records: list[dict], cfg: dict, drops: dict[str, int],
+               src2grp: dict[str, str], mix: dict[str, float]
+               ) -> tuple[list[dict], list[dict], list[dict]]:
+    """(records ready for the mix, records held for probing, pending turns).
+    Runs after routing on new and carryover records alike; a record whose
+    turns all pass proceeds, failing turns are dropped, and a record with
+    any unprobed turn is held whole."""
+    ready: list[dict] = []
+    held: list[dict] = []
+    pending: list[dict] = []
+    for rec in records:
+        g = group_of(rec, src2grp, mix)
+        if g not in cfg["groups"]:
+            ready.append(rec)
+            continue
+        keep, missing = [], []
+        for m in rec["turns"]:
+            tid = f"{rec['traj_id']}:{m['turn_idx']}"
+            v = probe_verdict(cfg, tid)
+            if v == "pass":
+                keep.append(m)
+            elif v == "fail":
+                _count(drops, "probe_failed")
+                _count(drops, f"probe_failed_{g}")
+            else:
+                missing.append(m)
+        if missing:
+            for m in missing:
+                t = materialize_turn(rec, m)
+                pending.append({"turn_id": f"{rec['traj_id']}:{m['turn_idx']}", "group": g,
+                                "kind": m.get("action_kind") or rec.get("action_kind"),
+                                "prefix": t["prefix"]})
+            rec["turns"] = keep + missing
+            held.append(rec)
+            continue
+        if keep:
+            rec["turns"] = keep
+            ready.append(rec)
+        else:
+            _count(drops, f"probe_emptied_{g}")
+    return ready, held, pending
+
+
+def failed_published(pub: PublicCorpus, live: dict | None, cfg: dict) -> dict[str, list[str]]:
+    """Published rows of the gated groups whose probe row fails: {group: [turn ids]}."""
+    table = index_table(pub, live, ["turn_id", "stratum"])
+    out: dict[str, list[str]] = {}
+    if table is None:
+        return out
+    for tid, stratum in zip(table.column("turn_id").to_pylist(), table.column("stratum").to_pylist()):
+        ns = str(stratum).split(":")[0]
+        if ns in cfg["groups"] and probe_verdict(cfg, tid) == "fail":
+            out.setdefault(ns, []).append(tid)
+    return out
 
 
 # -- composition guard ----------------------------------------------------------
@@ -2119,6 +2240,27 @@ def main() -> None:
             retire_surviving[src_g] = strata_after_retire(pub, live, src_g, ids)
             log(f"{src_g}: {len(retire_surviving[src_g])} strata survive the retirement")
     pivot_retire = sorted(set().union(*extra_retire.values())) if extra_retire else []
+    probe = load_teacher_probe()
+    probe_held: list[dict] = []
+    if probe:
+        candidates, probe_held, pending = probe_gate(candidates, probe, drops, src2grp, mix)
+        probe["pending_path"].parent.mkdir(parents=True, exist_ok=True)
+        probe["pending_path"].write_text("".join(json.dumps(p) + "\n" for p in pending))
+        log(f"teacher probe: {len(probe['rows'])} rows; held {len(probe_held)} records / "
+            f"{len(pending)} unprobed turns -> {probe['pending_path']}; "
+            f"dropped { {k: v for k, v in drops.items() if k.startswith('probe_')} }")
+        if probe["retire_failed_published"]:
+            fp = failed_published(pub, live, probe)
+            for src_g, ids in fp.items():
+                extra_retire.setdefault(src_g, set()).update(ids)
+            if fp:
+                log(f"teacher probe: retiring published rows that fail the probe "
+                    f"{ {k: len(v) for k, v in fp.items()} }")
+                for src_g in fp:
+                    retire_surviving[src_g] = strata_after_retire(
+                        pub, live, src_g, extra_retire[src_g])
+                    log(f"{src_g}: {len(retire_surviving[src_g])} strata survive the retirement")
+                pivot_retire = sorted(set().union(*extra_retire.values()))
     if not state.get("mix_seeded"):
         state["mix_seeded"] = True
         # Mix state is the set of slice strata each group / language bucket
@@ -2173,7 +2315,7 @@ def main() -> None:
     selected, deferred, group_added = cap_fill(
         candidates, lambda r: group_of(r, src2grp, mix), have_groups, mix,
         anchor_min_target=ANCHOR_MIN_TARGET, max_new=budgets)
-    deferred += lang_deferred
+    deferred += lang_deferred + probe_held
     log(f"mix: selected {len(selected)} rollouts (+{ {g: len(v) for g, v in group_added.items()} } "
         f"strata), deferred {len(deferred)}")
     # Language strata credited only for coding rollouts that made it through
