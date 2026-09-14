@@ -283,7 +283,7 @@ def cmd_status(_: argparse.Namespace) -> int:
     for name, mem in load_pods().items():
         pod = listing.get(name)
         up = probe(mem, canary=False) if mem.get("base_url") else False
-        age = (time.time() - mem["rented_at"]) / 3600
+        age = ((mem.get("released_at") or time.time()) - mem["rented_at"]) / 3600
         print(f"{name}: {mem['plan']['name']} ${mem['price']:.2f}/h {mem['state']} "
               f"listed={'yes' if pod else 'no'} up={up} age={age:.1f}h "
               f"url={mem.get('base_url')} spent≈${age * mem['price']:.2f}")
