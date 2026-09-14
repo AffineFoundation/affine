@@ -54,7 +54,9 @@ RUN_DIR="$BENCH_HOME/runs/$RUN_ID"
 mkdir -p "$RUN_DIR"
 export PRIME_API_KEY="${PRIME_API_KEY:-${PRIME:-}}"
 TEACHER_FROM=$(toml modes.teacher_from)
-CHAT_ENVS=$(toml modes.chat_envs)
+# BENCHSUITE_CHAT_ENVS (comma list) restricts the chat cells — used to add one
+# new env to an existing card (When2Call on reign 11) without re-running the rest.
+CHAT_ENVS="${BENCHSUITE_CHAT_ENVS:-$(toml modes.chat_envs)}"
 SANDBOX_ENVS=$(toml modes.sandbox_envs)
 PREV_CARD=$(ls -t "$REPO/$(toml suite.state_dir)"/*.json 2>/dev/null | head -1)
 
@@ -185,7 +187,18 @@ remote_suite() {  # models policy sandbox_runtime user@host port key known_hosts
   dockerhub_login "$SUDO"
   "${SSH[@]}" "${SUDO}docker pull -q python:3.11-slim >/dev/null 2>&1; true"
   # the lock: the pod's env must match suite.lock.json (code commits, patches, grader packages, serving)
-  "${SSH[@]}" "cd $RHOME/affine/ops/benchsuite && $RHOME/benchsuite/verifiers/.venv/bin/python lock.py check --bench-home $RHOME/benchsuite" || { log "LOCK MISMATCH on the pod — refusing to run"; finish 10; }
+  # BENCHSUITE_LOCK_WRITE=1 is the deliberate way to re-pin (new env, new patch):
+  # the pod writes suite.lock.json from what install_eval_env.sh produced and the
+  # box copy is replaced; the diff is logged and the file is then committed.
+  if ! "${SSH[@]}" "cd $RHOME/affine/ops/benchsuite && $RHOME/benchsuite/verifiers/.venv/bin/python lock.py check --bench-home $RHOME/benchsuite"; then
+    if [ "${BENCHSUITE_LOCK_WRITE:-0}" = "1" ]; then
+      log "LOCK MISMATCH — BENCHSUITE_LOCK_WRITE=1: re-pinning suite.lock.json from the pod"
+      "${SSH[@]}" "cd $RHOME/affine/ops/benchsuite && $RHOME/benchsuite/verifiers/.venv/bin/python lock.py write --bench-home $RHOME/benchsuite" || finish 10
+      "${SCP[@]}" "$USER_HOST:$RHOME/affine/ops/benchsuite/suite.lock.json" "$HERE/suite.lock.json" || finish 10
+    else
+      log "LOCK MISMATCH on the pod — refusing to run"; finish 10
+    fi
+  fi
   if [ "$MODELS" = "king" ] && [ -d "$BENCH_HOME/runs/$TEACHER_FROM" ]; then
     tar -C "$BENCH_HOME/runs" -czf "/tmp/teacher-$RUN_ID.tgz" --exclude 'traces.jsonl*' --exclude 'logs' "$TEACHER_FROM/teacher"
     "${SCP[@]}" "/tmp/teacher-$RUN_ID.tgz" "$USER_HOST:/tmp/teacher.tgz" && "${SSH[@]}" "cd $RHOME/benchsuite/runs && tar xzf /tmp/teacher.tgz"

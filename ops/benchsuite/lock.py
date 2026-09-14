@@ -77,6 +77,21 @@ def dataset_pins(taskset_dir: Path) -> dict:
             pins.setdefault("revision", m.group(1))
         for m in re.finditer(r'load_dataset\("([^"]+)"', s):
             pins.setdefault("dataset", m.group(1))
+        # Split-pinned tasksets (when2call_mcq): the Hub repo + revision, the
+        # one file the benchmark reads (sha256-checked at load) and the sibling
+        # files that are a D source and must stay out of the card.
+        for m in re.finditer(r'^REPO_ID\s*=\s*"([^"]+)"', s, re.M):
+            pins.setdefault("dataset", m.group(1))
+        for m in re.finditer(r'^REVISION\s*=\s*"([0-9a-f]{40})"', s, re.M):
+            pins.setdefault("revision", m.group(1))
+        test_file = re.search(r'^TEST_FILE\s*=\s*"([^"]+)"', s, re.M)
+        test_sha = re.search(r'^TEST_SHA256\s*=\s*"([0-9a-f]{64})"', s, re.M)
+        if test_file and test_sha:
+            pins["benchmark_split"] = {test_file.group(1): test_sha.group(1)}
+        train_block = re.search(r'^TRAIN_FILES\s*=\s*\{(.*?)^\}', s, re.M | re.S)
+        if train_block:
+            pins["excluded_splits_in_d"] = dict(
+                re.findall(r'"([^"]+)":\s*"([0-9a-f]{64})"', train_block.group(1)))
     return pins
 
 

@@ -119,7 +119,7 @@ DF
 fi
 
 echo "== check"
-for ts in aime25 math500 mmlu-pro gpqa-strict ifbench ifeval humaneval livecodebench bfcl-v3 minif2f oolong-synth mrcr-v2 graphwalks swebench-verified; do
+for ts in aime25 math500 mmlu-pro gpqa-strict ifbench ifeval humaneval livecodebench bfcl-v3 when2call-mcq minif2f oolong-synth mrcr-v2 graphwalks swebench-verified; do
   .venv/bin/eval "$ts" --dry-run -n 1 --no-rich --no-push -m x >/dev/null 2>&1 && echo "ok  $ts" || echo "BAD $ts"
 done
 echo "INSTALL_DONE $(git -C "$BENCH_HOME/verifiers" rev-parse --short HEAD) $(git -C "$BENCH_HOME/research-environments" rev-parse --short HEAD)"

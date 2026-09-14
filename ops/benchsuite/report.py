@@ -90,10 +90,36 @@ def scorecard(card: dict, markdown: bool) -> str:
     header = ["benchmark", "group", "T", "n", "king % [95% CI]", "teacher % [95% CI]",
               "Δ pt", "king finished-only", "king cap %", "king t/o/ctx", "teacher t/o/ctx", "min"]
     out = "\n".join(head) + "\n\n" + table(body, header, markdown)
+    for r in rows:
+        if (r.get("king") or {}).get("by_class") or (r.get("teacher") or {}).get("by_class"):
+            out += f"\n\n{r['env']} T={r['temperature']:g} — per gold class (accuracy; share of rows the model answered with the tool call):\n"
+            out += table(*by_class_rows(r), markdown)
     sk = card.get("skipped") or []
     if sk:
         out += "\n\nnot run: " + "; ".join(f"{s['env']} — {s['why']}" for s in sk)
     return out
+
+
+def by_class_rows(r: dict) -> tuple[list[list[str]], list[str]]:
+    """Rows for an env with a per-class breakdown (When2Call). One line per
+    gold class: n, king / teacher accuracy with CI, and how often each side
+    picked the tool call — on a non-tool class that is the 'called a tool when
+    none was needed' rate."""
+    kb = (r.get("king") or {}).get("by_class") or {}
+    tb = (r.get("teacher") or {}).get("by_class") or {}
+    body = []
+    for cls in sorted(set(kb) | set(tb)):
+        k, t = kb.get(cls), tb.get(cls)
+        body.append([
+            cls, str((k or t or {}).get("n") or "–"),
+            side(k) if k else "–", side(t) if t else "–",
+            "–" if not (k and t) else f"{100 * (k['score'] - t['score']):+.1f}",
+            "–" if not k else pct((k.get("metrics") or {}).get("pred_tool_call")),
+            "–" if not t else pct((t.get("metrics") or {}).get("pred_tool_call")),
+        ])
+    header = ["gold class", "n", "king % [95% CI]", "teacher % [95% CI]", "Δ pt",
+              "king → tool %", "teacher → tool %"]
+    return body, header
 
 
 def history(runs: list[dict], markdown: bool) -> str:

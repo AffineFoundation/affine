@@ -91,7 +91,29 @@ def prime_wallet(api_key: str | None) -> float | None:
 
 
 # ------------------------------------------------------------- summaries
-def summarize_traces(path: Path, reward_name: str) -> dict:
+def by_class_summary(rows: list[dict]) -> dict:
+    """Per-class accuracy + per-class mean of every metric, over the rows that
+    carry a `class` (envs with `class_field` in suite.toml, e.g. When2Call's
+    gold decision). The metric means are what make the confusion readable:
+    `pred_tool_call` averaged over a non-tool class IS the "called a tool when
+    none was needed" rate for that class."""
+    out: dict = {}
+    for cls in sorted({r["class"] for r in rows if r.get("class")}):
+        sub = [r for r in rows if r.get("class") == cls and r["score"] is not None]
+        k = int(sum(r["score"] for r in sub))
+        lo, hi = wilson(k, len(sub))
+        names = sorted({m for r in sub for m in (r["metrics"] or {})})
+        metrics = {}
+        for m in names:
+            vals = [float(r["metrics"][m]) for r in sub if r["metrics"].get(m) is not None]
+            if vals:
+                metrics[m] = round(sum(vals) / len(vals), 4)
+        out[cls] = {"n": len(sub), "k": k, "score": round(k / len(sub), 4) if sub else 0.0,
+                    "ci95": [round(lo, 4), round(hi, 4)], "metrics": metrics}
+    return out
+
+
+def summarize_traces(path: Path, reward_name: str, class_field: str = "") -> dict:
     """Per-rollout records + aggregate from a verifiers traces.jsonl."""
     rows = []
     opener = gzip.open if path.suffix == ".gz" else open
@@ -131,6 +153,7 @@ def summarize_traces(path: Path, reward_name: str) -> dict:
                 "episode_id": e.get("id"), "trace_id": t.get("id"),
                 "task_idx": data.get("idx"),
                 "task_key": task.get("key") or data.get("name"),
+                "class": data.get(class_field) if class_field else None,
                 "score": score,
                 "rewards": {k: (v.get("score") if isinstance(v, dict) else v)
                             for k, v in rw.items()},
@@ -190,6 +213,7 @@ def summarize_traces(path: Path, reward_name: str) -> dict:
         "completion_tokens": sum(r["completion_tokens"] for r in rows),
         "reasoning_tokens": sum(r["reasoning_tokens"] for r in rows),
         "finish_length_frac": round(sum(1 for r in rows if "length" in (r["finish_reasons"] or [])) / max(1, len(rows)), 4),
+        "by_class": by_class_summary(rows) if class_field else {},
         "rollouts": rows,
     }
 
@@ -302,7 +326,7 @@ def run_cell(env: dict, model_label: str, model: str, url: str, key_env: str,
             f"(see {d / 'eval.log'})")
         results[(model_label, env["id"], temp)] = {"error": f"exit {p.returncode}", "wall_seconds": wall}
         return
-    summ = summarize_traces(traces, env["reward"])
+    summ = summarize_traces(traces, env["reward"], env.get("class_field", ""))
     summ.update({
         "env": env["id"], "taskset": env["taskset"], "model": model_label,
         "temperature": temp, "rollouts_per_task": rollouts,
@@ -518,7 +542,7 @@ def cmd_summarize(a: argparse.Namespace) -> int:
         env = by_id.get(env_id)
         if env is None:
             continue
-        summ = summarize_traces(traces, env["reward"])
+        summ = summarize_traces(traces, env["reward"], env.get("class_field", ""))
         prev = json.loads((d / "summary.json").read_text()) if (d / "summary.json").exists() else {}
         summ.update({k: prev.get(k) for k in ("wall_seconds", "exit_code") if k in prev})
         summ.update({"env": env_id, "taskset": env["taskset"], "model": d.parent.name,
@@ -554,7 +578,7 @@ def cmd_retry(a: argparse.Namespace) -> int:
             t0 = time.time()
             with (d / "eval.log").open("a") as fh:
                 subprocess.run(cmd, cwd=str(verifiers_dir), stdout=fh, stderr=subprocess.STDOUT)
-            new = summarize_traces(d / "traces.jsonl", env["reward"])
+            new = summarize_traces(d / "traces.jsonl", env["reward"], env.get("class_field", ""))
             s.update({k: new[k] for k in new})
             s["wall_seconds"] = round(float(s.get("wall_seconds") or 0) + time.time() - t0, 1)
             s["retried"] = int(s.get("retried") or 0) + 1

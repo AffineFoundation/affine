@@ -95,7 +95,7 @@ lium_plan = "h200-1x"       # [pods.plans.*]: 1x H200 = one TP1 replica, ~$3/h; 
 lium_docker_sandbox_envs = ["swebench-verified", "graphwalks", "oolong-synth", "mrcr-v2"]
 lium_prime_sandbox_envs = ["minif2f"]
 teacher_from = "20260912T1455Z-0ce59769300c"   # reference run whose teacher cells are reused
-chat_envs = ["aime25", "math500", "gpqa-diamond", "mmlu-pro", "ifbench", "ifeval", "humaneval", "livecodebench", "bfcl-v3"]
+chat_envs = ["aime25", "math500", "gpqa-diamond", "mmlu-pro", "ifbench", "ifeval", "humaneval", "livecodebench", "bfcl-v3", "when2call"]
 sandbox_envs = ["swebench-verified", "minif2f", "graphwalks", "oolong-synth", "mrcr-v2"]
 prime_king_replicas = "31001:0,1:2;31002:2,3:2;31003:4,5:2;31004:6,7:2"   # king-only pod layout
 cheap_plan = "h200-1x"
@@ -318,6 +318,20 @@ max_tokens = 4096
 reward = "correct"
 secondary = false
 note = "BFCL v3, every scoring category (single-turn AST/relevance + multi-turn); official bfcl_eval checkers; tools served as MCP."
+
+[[envs]]
+id = "when2call"
+taskset = "when2call-mcq"
+install = "envs/when2call_mcq"
+group = "tool-use"
+n = -1
+harness = "null"
+runtime = "none"
+max_tokens = 8192
+reward = "correct"
+secondary = false
+class_field = "correct_class"
+note = "NVIDIA When2Call TEST split (3,652 rows; gold: tool_call 1,295 / cannot_answer 1,295 / request_for_info 1,062 / direct 0), generative 4-way MCQ: pick the best reply — call the tool, answer, ask, or say cannot. Per-class accuracy + 'answered with the tool call' rate per class. TRAIN split is a D source (datagen P1); this env reads only test/ at a pinned revision and checks its sha256 (splits in suite.lock.json). Letter choice, not the paper's log-likelihood MCQ."
 
 [[envs]]
 id = "minif2f"
