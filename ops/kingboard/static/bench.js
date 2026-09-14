@@ -127,7 +127,9 @@
       // answered with the tool call — on a non-tool class that is the
       // "called a tool when none was needed" rate.
       const kb = (k && k.by_class) || {}, tb = (t && t.by_class) || {};
-      for (const cls of [...new Set([...Object.keys(kb), ...Object.keys(tb)])].sort()) {
+      const classes = [...new Set([...Object.keys(kb), ...Object.keys(tb)])].sort()
+        .filter((c) => !row.show_classes || row.show_classes.includes(c));
+      for (const cls of classes) {
         const kc = kb[cls], tc = tb[cls];
         const dd = kc && tc ? kc.score - tc.score : null;
         const toolRate = (c) => c && c.metrics && c.metrics.pred_tool_call !== undefined ? ` · →tool ${pct(c.metrics.pred_tool_call, 0)}` : "";

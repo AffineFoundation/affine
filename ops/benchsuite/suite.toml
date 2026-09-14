@@ -317,6 +317,8 @@ runtime = "sandbox"
 max_tokens = 4096
 reward = "correct"
 secondary = false
+class_field = "category"
+show_classes = ["irrelevance", "live_irrelevance", "live_relevance"]
 note = "BFCL v3, every scoring category (single-turn AST/relevance + multi-turn); official bfcl_eval checkers; tools served as MCP."
 
 [[envs]]
@@ -331,6 +333,7 @@ max_tokens = 8192
 reward = "correct"
 secondary = false
 class_field = "correct_class"
+show_classes = ["tool_call", "request_for_info", "cannot_answer", "direct"]
 note = "NVIDIA When2Call TEST split (3,652 rows; gold: tool_call 1,295 / cannot_answer 1,295 / request_for_info 1,062 / direct 0), generative 4-way MCQ: pick the best reply — call the tool, answer, ask, or say cannot. Per-class accuracy + 'answered with the tool call' rate per class. TRAIN split is a D source (datagen P1); this env reads only test/ at a pinned revision and checks its sha256 (splits in suite.lock.json). Letter choice, not the paper's log-likelihood MCQ."
 
 [[envs]]

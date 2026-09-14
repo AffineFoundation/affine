@@ -600,7 +600,9 @@ def cmd_summarize(a: argparse.Namespace) -> int:
             continue
         summ = summarize_traces(traces, env["reward"], env.get("class_field", ""))
         prev = json.loads((d / "summary.json").read_text()) if (d / "summary.json").exists() else {}
-        summ.update({k: prev.get(k) for k in ("wall_seconds", "exit_code") if k in prev})
+        # keep everything the run/rescore/publish steps recorded that is not re-derived
+        # from the traces (wall time, exit code, where, rescored, reused_from, ...)
+        summ.update({k: prev[k] for k in prev if k not in summ})
         summ.update({"env": env_id, "taskset": env["taskset"], "model": d.parent.name,
                      "temperature": float(temp), "reward": env["reward"],
                      "harness": env["harness"], "max_tokens": env["max_tokens"]})
