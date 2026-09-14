@@ -274,7 +274,10 @@ def axis_answer(cells: list[dict]) -> tuple[str, str]:
 
 # --------------------------------------------------------------- kings and D
 
-def crowned_events() -> list[dict]:
+def crowned_events(kinds: tuple[str, ...] = ("crowned",)) -> list[dict]:
+    """Crown events from the validator history. `crown_revoked` rows carry the
+    same block / reign fields and are the only trace left of a revoked king
+    (the revocation rewrites the crowned row)."""
     ev = []
     if not HISTORY.exists():
         return ev
@@ -283,7 +286,7 @@ def crowned_events() -> list[dict]:
             v = json.loads(line)
         except ValueError:
             continue
-        if v.get("event") == "crowned":
+        if v.get("event") in kinds:
             ev.append(v)
     return ev
 
