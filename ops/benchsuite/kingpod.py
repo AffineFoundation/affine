@@ -119,9 +119,21 @@ def plan_of(name: str) -> dict:
     return dict(plans[name], name=name)
 
 
+BLACKLIST = STATE_DIR / "blacklist.txt"   # executor ids that bootstrapped too slowly or failed
+
+
+def blacklist_ids() -> set[str]:
+    if not BLACKLIST.exists():
+        return set()
+    return {l.split()[0] for l in BLACKLIST.read_text().splitlines() if l.strip()}
+
+
 def match_stock(stock: list[dict], plan: dict) -> list[dict]:
     out = []
+    bl = blacklist_ids()
     for n in stock:
+        if str(n.get("id")) in bl:
+            continue
         if int(n.get("gpu_count") or 0) != plan["gpu_count"]:
             continue
         avail = n.get("available_gpu_count")
@@ -323,6 +335,11 @@ def cmd_release(args: argparse.Namespace) -> int:
     if mem is None:
         raise SystemExit(f"unknown pod {args.name}")
     ok = lium_api.remove(args.name, POD_PREFIX)
+    if args.strike and mem.get("executor_id"):
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        with BLACKLIST.open("a") as fh:
+            fh.write(f"{mem['executor_id']} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {args.strike}\n")
+        log(f"{args.name}: executor {mem['executor_id'][:12]} blacklisted ({args.strike})")
     age = (time.time() - mem["rented_at"]) / 3600
     log(f"{args.name}: released={ok} after {age:.2f}h ≈ ${age * mem['price']:.2f}")
     update_pod(args.name, state="released", released_at=time.time(),
@@ -337,8 +354,11 @@ def main() -> int:
     r.add_argument("--plan", required=True)
     r.add_argument("--digest", required=True)
     r.add_argument("--r2", default="", help="private r2://bucket/prefix/ ref (challenger); needs AFFINE_EVAL_R2_* in the env")
-    for c in ("wait", "endpoint", "release"):
+    for c in ("wait", "endpoint"):
         sub.add_parser(c).add_argument("name")
+    rel = sub.add_parser("release")
+    rel.add_argument("name")
+    rel.add_argument("--strike", default="", help="also blacklist the executor, with this reason")
     sub.add_parser("status")
     args = ap.parse_args()
     return {"rent": cmd_rent, "wait": cmd_wait, "status": cmd_status,
