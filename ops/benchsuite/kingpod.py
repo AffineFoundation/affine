@@ -261,11 +261,13 @@ def probe(mem: dict, canary: bool = True) -> bool:
         if not canary:
             return True
         r = httpx.post(f"{base}/chat/completions", headers=headers, timeout=180.0,
-                       json={"model": mem["served"], "max_tokens": 32, "temperature": 0,
+                       json={"model": mem["served"], "max_tokens": 64, "temperature": 0,
                              "messages": [{"role": "user", "content": "Say OK."}]})
         r.raise_for_status()
         msg = r.json()["choices"][0]["message"]
-        return bool(msg.get("content") or msg.get("reasoning_content"))
+        # vLLM 0.28's qwen3 reasoning parser returns the thinking as `reasoning`
+        # (older builds: `reasoning_content`); a short canary may be all thinking.
+        return bool(msg.get("content") or msg.get("reasoning_content") or msg.get("reasoning"))
     except (httpx.HTTPError, KeyError, TypeError, ValueError):
         return False
 
