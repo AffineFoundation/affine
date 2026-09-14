@@ -273,7 +273,7 @@
   },
   "when2call": {
    "taskset": "when2call-mcq",
-   "package_version": "0.1.0",
+   "package_version": "0.1.1",
    "install": "envs/when2call_mcq",
    "harness": "null",
    "runtime": "none",
@@ -418,5 +418,5 @@
    "datasets": {}
   }
  },
- "lock_sha256": "3baad03a77531890"
+ "lock_sha256": "0b4b8e7139ec2a0a"
 }

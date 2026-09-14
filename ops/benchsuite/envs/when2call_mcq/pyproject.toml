@@ -1,6 +1,6 @@
 [project]
 name = "when2call-mcq"
-version = "0.1.0"
+version = "0.1.1"
 description = "NVIDIA When2Call TEST split (MCQ), generative 4-way choice: call a tool / answer / ask / cannot answer. Affine benchmark suite, held out from D."
 requires-python = ">=3.11"
 tags = ["single-turn", "tool-use", "v1", "affine-benchsuite"]

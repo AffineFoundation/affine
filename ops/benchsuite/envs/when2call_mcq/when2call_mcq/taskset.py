@@ -24,6 +24,7 @@ split hashes are recorded in `suite.lock.json`.
 import hashlib
 import json
 import random
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -90,18 +91,49 @@ class When2CallData(vf.TaskData):
     source: str
 
 
+def acted_tool_call(reply: str) -> bool:
+    """True when the visible reply IS a tool call: one JSON object with `name`
+    and `arguments` (optionally inside a ``` fence). Seen on 20% of reign 11's
+    tool_call rows: the model picks the tool option in its reasoning, then
+    obeys the system prompt's "to use a tool, return JSON" and emits the call
+    instead of the letter. Decision-wise that is the tool_call class."""
+    s = reply.strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
+        s = re.sub(r"\s*```$", "", s).strip()
+    if not (s.startswith("{") and s.endswith("}")):
+        return False
+    try:
+        obj = json.loads(s)
+    except ValueError:
+        return False
+    return isinstance(obj, dict) and "name" in obj and "arguments" in obj
+
+
 class When2CallTask(vf.Task[When2CallData]):
     def predicted_class(self, trace: vf.Trace) -> str | None:
         letter = extract_mcq_answer(trace.last_reply)
-        return self.data.letter_to_class.get(letter) if letter else None
+        if letter:
+            return self.data.letter_to_class.get(letter)
+        return "tool_call" if acted_tool_call(trace.last_reply) else None
 
     @vf.reward(weight=1.0)
     async def correct(self, trace: vf.Trace) -> float:
-        return 1.0 if extract_mcq_answer(trace.last_reply) == self.data.answer else 0.0
+        return 1.0 if self.predicted_class(trace) == self.data.correct_class else 0.0
 
     @vf.metric
     async def letter_found(self, trace: vf.Trace) -> float:
         return 1.0 if extract_mcq_answer(trace.last_reply) else 0.0
+
+    @vf.metric
+    async def acted_tool_call(self, trace: vf.Trace) -> float:
+        """Reply was the tool-call JSON itself, no letter (counted as tool_call)."""
+        return 1.0 if not extract_mcq_answer(trace.last_reply) and acted_tool_call(trace.last_reply) else 0.0
+
+    @vf.metric
+    async def no_decision(self, trace: vf.Trace) -> float:
+        """Neither a letter nor a tool call could be read from the reply."""
+        return 1.0 if self.predicted_class(trace) is None else 0.0
 
     @vf.metric
     async def pred_tool_call(self, trace: vf.Trace) -> float:

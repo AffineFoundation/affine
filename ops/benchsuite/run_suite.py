@@ -31,6 +31,7 @@ import gzip
 import json
 import math
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -528,6 +529,61 @@ def cmd_run(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rescore(a: argparse.Namespace) -> int:
+    """Re-grade finished cells in place with the taskset as installed now
+    (verifiers `replay`: same messages and calls, only rewards/metrics change; no
+    model, no runtime). For grader fixes such as when2call-mcq 0.1.1's tool-call
+    fallback. The previous traces are kept as traces.pre-rescore-<k>.jsonl.gz and
+    summary.json records every rescoring (when, why, package version)."""
+    out = Path(a.out).expanduser() / a.run_id
+    verifiers_dir = Path(a.verifiers_dir).expanduser()
+    by_id = {e["id"]: e for e in SUITE["envs"]}
+    for cell in [c for c in a.cells.split(",") if c]:
+        d = out / cell
+        env_id = d.name.rpartition("__t")[0]
+        env = by_id[env_id]
+        traces = d / "traces.jsonl"
+        if not traces.exists():
+            with gzip.open(d / "traces.jsonl.gz", "rb") as fi, traces.open("wb") as fo:
+                shutil.copyfileobj(fi, fo)
+        tmp = d / "rescore.tmp"
+        shutil.rmtree(tmp, ignore_errors=True)
+        cmd = [str(verifiers_dir / ".venv/bin/replay"), str(d), "-o", str(tmp), "--no-rich", "--no-push"]
+        log(f"rescore {cell}: {' '.join(cmd)}")
+        with (d / "rescore.log").open("a") as fh:
+            p = subprocess.run(cmd, cwd=str(verifiers_dir), stdout=fh, stderr=subprocess.STDOUT,
+                               env=os.environ.copy())
+        new = tmp / "traces.jsonl"
+        if p.returncode != 0 or not new.exists():
+            log(f"rescore FAILED {cell}: exit={p.returncode} (see {d / 'rescore.log'})")
+            return 1
+        n_old = sum(1 for _ in traces.open()) if traces.exists() else 0
+        n_new = sum(1 for _ in new.open())
+        if n_new != n_old:
+            log(f"rescore FAILED {cell}: {n_new} replayed traces vs {n_old} original")
+            return 1
+        k = len(list(d.glob("traces.pre-rescore-*.jsonl.gz")))
+        keep = d / f"traces.pre-rescore-{k}.jsonl.gz"
+        with traces.open("rb") as fi, gzip.open(keep, "wb", compresslevel=6) as fo:
+            shutil.copyfileobj(fi, fo)
+        shutil.move(str(new), str(traces))
+        (d / "traces.jsonl.gz").unlink(missing_ok=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+        prev = json.loads((d / "summary.json").read_text()) if (d / "summary.json").exists() else {}
+        summ = summarize_traces(traces, env["reward"], env.get("class_field", ""))
+        summ.update({key: prev[key] for key in prev if key not in summ})
+        inst = env["install"]
+        pyproj = (HERE / inst if inst.startswith("envs/") else Path("/nonexistent")) / "pyproject.toml"
+        version = tomllib.loads(pyproj.read_text())["project"].get("version") if pyproj.exists() else None
+        summ["rescored"] = (prev.get("rescored") or []) + [{
+            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "why": a.why,
+            "taskset": env["taskset"], "package_version": version, "kept": keep.name,
+            "score_before": prev.get("score"), "score_after": summ["score"]}]
+        (d / "summary.json").write_text(json.dumps(summ, indent=1))
+        log(f"rescored {cell}: {prev.get('score')} -> {summ['score']} ci={summ['ci95']} (original kept as {keep.name})")
+    return 0
+
+
 def cmd_summarize(a: argparse.Namespace) -> int:
     """Re-derive summary.json for every cell that has traces (after edits or a crash)."""
     out = Path(a.out).expanduser() / a.run_id
@@ -636,11 +692,17 @@ def main() -> int:
     s = sub.add_parser("summarize")
     s.add_argument("--run-id", required=True)
     s.add_argument("--out", required=True)
+    rs = sub.add_parser("rescore", help="re-grade cells in place with the installed taskset (verifiers replay)")
+    rs.add_argument("--run-id", required=True)
+    rs.add_argument("--out", required=True)
+    rs.add_argument("--verifiers-dir", required=True)
+    rs.add_argument("--cells", required=True, help="comma list of <model>/<env>__t<T>")
+    rs.add_argument("--why", default="grader change")
     a = ap.parse_args()
     if a.cmd in ("run", "retry") and not (Path(a.verifiers_dir).expanduser() / ".venv/bin/eval").exists():
         raise SystemExit("verifiers venv missing: run install_eval_env.sh first")
     return {"run": cmd_run, "summarize": cmd_summarize, "retry": cmd_retry,
-            "compare": cmd_compare}[a.cmd](a)
+            "compare": cmd_compare, "rescore": cmd_rescore}[a.cmd](a)
 
 
 if __name__ == "__main__":
