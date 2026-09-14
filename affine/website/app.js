@@ -254,12 +254,14 @@ function renderReign(d) {
   const pct = earners.length
     ? ((earners[0].weight_bps || 0) / 100).toFixed(0)
     : "0";
+  const windowH = d?.reign?.payout_window_hours ?? d?.payout?.window_hours;
+  const windowTxt = windowH != null ? `${Number(windowH).toFixed(0)} h payout window` : "payout window";
   const benchBits = [];
   if (bench.qwen != null) benchBits.push(`qwen ${fmtPct(bench.qwen)}`);
   if (bench.genesis != null) benchBits.push(`Affine-I ${fmtPct(bench.genesis)}`);
   if (bench.teacher != null) benchBits.push(`teacher ${fmtPct(bench.teacher)}`);
   $("reign-meta").textContent =
-    `${members.length} kings · ${earners.length} earning · ${pct}% each`
+    `${members.length} reigns · ${earners.length ? `${earners.length} paid · ${pct}% each` : "none paid · emissions burn"} · ${windowTxt}`
     + (benchBits.length ? ` · swe: ${benchBits.join(" / ")}` : "");
   // swe delta vs the previous king in the reign chain (reign 0 = genesis).
   const sweOf = (m) => (bench.scores.has(m.repo) ? bench.scores.get(m.repo) : null);
@@ -291,11 +293,13 @@ function renderReign(d) {
       <th class="r">swe</th><th class="r" title="swe vs the king it dethroned">vs prev</th>
       <th class="r">vs qwen</th><th class="r">vs Affine-I</th>
       <th class="r" title="swe vs the frozen teacher Qwen3.8-27B — the ceiling of min(R,G)">vs teacher</th>
-      <th class="r">Reason</th><th class="r">α/day</th><th class="r">$/day</th><th class="r">weight</th>
+      <th class="r">Reason</th><th class="r">α/day</th><th class="r">$/day</th>
+      <th class="r" title="each crown is paid one equal share until crowned_at + payout window; then it earns nothing even while it holds the throne">weight</th>
     </tr></thead>
     <tbody>${members.map((m) => {
       const earning = m.earning || (m.weight_bps || 0) > 0;
       const wPct = ((m.weight_bps || 0) / 100).toFixed(0);
+      const until = m.paid_until ? fmtTime(m.paid_until) : "";
       const alpha = earning ? fmtAlpha(m.alpha_per_day) : "—";
       const usd = earning ? fmtUsd(m.usd_per_day) : "—";
       const swe = bench.scores.has(m.repo) ? bench.scores.get(m.repo) : null;
@@ -314,10 +318,12 @@ function renderReign(d) {
         <td class="r ${earning ? "gold" : "dim"}">${esc(alpha)}</td>
         <td class="r ${earning ? "" : "dim"}">${esc(usd)}</td>
         <td class="r">${earning
-          ? `<span class="weight-cell">${esc(wPct)}% <span class="bar"><i style="width:${esc(wPct)}%"></i></span></span>`
+          ? `<span class="weight-cell" title="paid until ${esc(until)}">${esc(wPct)}% <span class="bar"><i style="width:${esc(wPct)}%"></i></span></span>`
           : m.inaccessible
-            ? `<span class="bad" title="model repo gone/gated on HF — forfeits payout while dark">gated</span>`
-            : `<span class="dim">—</span>`}</td>
+            ? `<span class="bad" title="model repo gone/gated — forfeits payout while dark">gated</span>`
+            : m.expired
+              ? `<span class="dim" title="payout window closed ${esc(until)}">expired</span>`
+              : `<span class="dim">—</span>`}</td>
       </tr>`;
     }).join("")}</tbody>
   </table>`;
@@ -622,11 +628,37 @@ function opponentKing(r) {
   return best;
 }
 
+// wvk 15 (2026-09-12 17:01 -> 2026-09-13 13:01 UTC) crowned per 12 h window;
+// retired by wvk 16. Its rows stay in the history as audit trail and are
+// labelled so they do not read as a live rule.
+const RETIRED_WINDOW_TAG = "retired rule (wvk 15)";
+function isRetiredWindowRow(r) {
+  return r.crown_mode === "window_best" || r.event === "window_close"
+    || r.event === "crown_revoked" || r.via === "window_best";
+}
+function retiredTag(title) {
+  return ` <span class="dim" title="${esc(title)}">${esc(RETIRED_WINDOW_TAG)}</span>`;
+}
+
 function outcomeBadge(r) {
-  if (r.event === "crowned") return badge("crowned", `crowned #${r.reign_number ?? "?"}`);
+  if (r.event === "crowned") {
+    return badge("crowned", `crowned #${r.reign_number ?? "?"}`)
+      + (isRetiredWindowRow(r) ? retiredTag("crowned by the 12 h window rule, retired 2026-09-13 13:01 UTC (wvk 16)") : "");
+  }
+  if (r.event === "crown_revoked") {
+    return badge("failed", `crown revoked #${r.reign_number ?? "?"} - model copy`)
+      + retiredTag(r.revoked_reason || "crown revoked");
+  }
+  if (r.event === "window_close") {
+    return badge("queued", `window ${r.window_id ?? "?"} closed - ${r.outcome || "-"}`)
+      + retiredTag("12 h window rule: every window close wrote one row. Retired 2026-09-13 13:01 UTC (wvk 16); no window runs now.");
+  }
   if (r.event === "failed") return badge("failed", r.error_code || "failed");
   if (r.accepted) return badge("accepted", "accepted");
-  if (r.accepted === false) return badge("rejected", "rejected");
+  if (r.accepted === false) {
+    return badge("rejected", "rejected")
+      + (isRetiredWindowRow(r) ? retiredTag("judged as a window candidate under the 12 h window rule (wvk 15), retired 2026-09-13 13:01 UTC") : "");
+  }
   return badge("queued", r.event || "event");
 }
 
@@ -650,9 +682,9 @@ function renderHistory(h) {
   const rule = liveCrownShort(cache.contract);
   const meta = $("history-meta");
   const shown = rows.length + audits.length;
-  meta.textContent = rule
-    ? `${rule} · ${shown} shown`
-    : `${shown} shown`;
+  const retired = rows.some(isRetiredWindowRow);
+  meta.textContent = (rule ? `${rule} · ${shown} shown` : `${shown} shown`)
+    + (retired ? ` · rows tagged "${RETIRED_WINDOW_TAG}" were judged under the 12 h window rule (2026-09-12 17:01 -> 2026-09-13 13:01 UTC), kept for audit; no window runs now` : "");
   if (rule) meta.title = rule;
   if (!shown) {
     $("history-wrap").innerHTML = `<div class="empty">empty</div>`;
@@ -1490,7 +1522,9 @@ async function sendChatMessage() {
             continue;
           }
           const delta = j.choices?.[0]?.delta || {};
-          if (delta.reasoning_content) reply.rc = (reply.rc || "") + delta.reasoning_content;
+          // vLLM < 0.11 named the field reasoning_content; 0.28 says reasoning.
+          const rc = delta.reasoning_content || delta.reasoning;
+          if (rc) reply.rc = (reply.rc || "") + rc;
           if (delta.content) reply.raw = (reply.raw || "") + delta.content;
           // Kings trained for thought-duels emit reasoning inline, closed by
           // </think> — fold it into the collapsible thought block so the
@@ -1515,6 +1549,10 @@ async function sendChatMessage() {
     if (!reply.content && !reply.reasoning && !reply.error) {
       reply.error = true;
       reply.content = "the king returned nothing — try rephrasing";
+    } else if (!reply.content && !reply.error) {
+      // Thought right up to the reply cap and never answered — a real king
+      // failure mode worth seeing, not a transport error.
+      reply.content = "(the king used its whole reply budget thinking and never answered — try again or rephrase)";
     }
   } catch {
     reply.error = true;
@@ -2027,7 +2065,9 @@ function duelPageHtml(duel, series, logLines) {
       <div class="kv"><span class="k">revision</span><span class="v mono">${esc(short(revision || "—", 14))}${copyBtn(revision)}</span></div>
       <div class="kv"><span class="k">when</span><span class="v" title="${esc(fmtTime(duel.at))}">${esc(fmtTime(duel.at))} · ${esc(fmtAge(duel.at))}</span></div>
       <div class="kv"><span class="k">duration</span><span class="v">${esc(fmtDuration(duel.duration_s))}</span></div>
-      <div class="kv"><span class="k">paired turns</span><span class="v">${esc(duel.n_paired_turns ?? paired.length ?? "—")}</span></div>
+      <div class="kv"><span class="k">paired turns</span><span class="v">${esc(duel.n_paired_turns ?? paired.length ?? "—")}${
+        duel.near_miss?.triggered ? ` <span class="dim" title="sequential near-miss: the first slice's margin fell inside the near-miss window, so a second seeded slice was scored and the crown decided on the pooled turns">· pooled over ${esc(String((duel.near_miss.slices || []).length))} slices</span>` : ""
+      }</span></div>
       <div class="kv"><span class="k">artifact</span><span class="v">${artifactLink}${duel.challenge_id ? copyBtn(hippiusEvalUrl(duel.challenge_id)) : ""}</span></div>
     </div>`;
 
@@ -2068,6 +2108,20 @@ function duelPageHtml(duel, series, logLines) {
       ${card("challenger Reason", esc(fine(chR)), "mean over the slice",
         chR != null && kgR != null ? passCls(Number(chR) >= Number(kgR)) : "")}
       ${card("king Reason", esc(fine(kgR)), "same slice, same teacher")}
+      ${(() => {
+        // Sequential near-miss (2026-09-11): one card per extra slice the
+        // rule drew, showing what each slice said on its own. Rendered only
+        // when the rule fired — single-slice verdicts look as before.
+        const nm = duel.near_miss;
+        if (!nm || !nm.triggered || !Array.isArray(nm.slices)) return "";
+        return nm.slices.map((s) => card(
+          `slice ${esc(String(s.index))} alone`,
+          esc(fine(s.margin)),
+          `z = ${esc(fmtZ(s.z))} · ${esc(String(s.n_paired_turns ?? "—"))} paired turns · seed ${esc(short(String(s.seed ?? ""), 10))}`,
+          s.challenger_wins == null ? "" : passCls(Boolean(s.challenger_wins)))).join("")
+          + card("near-miss window", `(${esc(fine(nm.low))}, ${esc(fine(nm.high))})`,
+            `first-slice margin inside → ${esc(String(nm.extra_slices))} extra slice(s), decided on the pool`);
+      })()}
       ${(() => {
         // The two non-margin crown conditions (wvk=5/6). Render only when the
         // duel recorded them — pre-fork rows have neither.

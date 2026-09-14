@@ -6,9 +6,10 @@ import gzip
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
-from .. import __version__
+from .. import __version__, payout
 from ..config import Config
 from ..state import now_iso
 
@@ -115,44 +116,14 @@ def load_audit_detail(cfg: Config, reign: int) -> dict | None:
     }
 
 
-def _reign_members(king: dict | None, payout_depth: int) -> list[dict]:
-    """Mirror State.king_lineage_members without loading/mutating State."""
-    if not king:
-        return []
-    members = [{
-        "reign_number": king.get("reign_number"),
-        "repo": king.get("repo", ""),
-        "revision": king.get("revision", ""),
-        "hotkey": king.get("hotkey", ""),
-        "crowned_at": king.get("crowned_at"),
-        "block": king.get("block"),
-        "score": king.get("score"),
-        "current": True,
-    }]
-    seen = {king.get("hotkey", "")}
-    for p in king.get("previous") or []:
-        hk = p.get("hotkey", "")
-        if not hk or hk in seen:
-            continue
-        seen.add(hk)
-        members.append({
-            "reign_number": p.get("reign_number"),
-            "repo": p.get("repo", ""),
-            "revision": p.get("revision", ""),
-            "hotkey": hk,
-            "crowned_at": p.get("crowned_at"),
-            "block": p.get("block"),
-            "score": p.get("score"),
-            "current": False,
-        })
-    depth = max(int(payout_depth), 0)
-    earners = max(min(depth, len(members)), 1) if members and depth else 0
-    weight_bps = (10000 // earners) if earners else 0
-    for i, m in enumerate(members):
-        earning = bool(earners and i < earners)
-        m["earning"] = earning
-        m["weight_bps"] = weight_bps if earning else 0
-    return members
+def _reign_members(king: dict | None, window_s: float) -> list[dict]:
+    """Mirror State.king_lineage_members without loading/mutating State
+    (same pure computation: affine.payout). The accessibility sweep result
+    is memory-only in the validator, so this fallback treats every crown
+    inside its window as paid."""
+    return payout.annotate_lineage(
+        payout.lineage_rows(king), window_s=window_s,
+        now=datetime.now(timezone.utc))
 
 
 def reconstruct_snapshot(cfg: Config) -> dict:
@@ -167,7 +138,8 @@ def reconstruct_snapshot(cfg: Config) -> dict:
         raw = {}
     king = raw.get("king")
     members = _reign_members(king if isinstance(king, dict) else None,
-                             cfg.king_chain_size)
+                             cfg.king_payout_window_s)
+    paid = payout.paid_crowns(members)
     queue = raw.get("queue") or []
     return {
         "generated_at": now_iso(),
@@ -180,8 +152,17 @@ def reconstruct_snapshot(cfg: Config) -> dict:
             "crowned_at": king.get("crowned_at"), "block": king.get("block"),
             "score": king.get("score"),
         } if isinstance(king, dict) else None),
-        "reign": {"size": cfg.king_chain_size, "members": members},
-        "reign_chain": [m["hotkey"] for m in members if m.get("earning")],
+        "reign": {"size": cfg.king_chain_size,
+                  "payout_window_hours": cfg.king_payout_window_s / 3600,
+                  "members": members},
+        "payout": {
+            "rule": payout.rule_text(cfg.king_payout_window_s / 3600),
+            "window_hours": cfg.king_payout_window_s / 3600,
+            "effective_at": cfg.king_payout_rule_effective_at or None,
+            "burn": not paid, "n_paid": len(paid), "paid": paid,
+            "shares_by_hotkey": payout.shares_by_hotkey(members),
+        },
+        "reign_chain": list(dict.fromkeys(m["hotkey"] for m in paid)),
         "queue": [{
             "challenge_id": e.get("challenge_id"), "repo": e.get("repo"),
             "hotkey": e.get("hotkey"), "queued_at": e.get("queued_at"),
@@ -223,6 +204,9 @@ def contract_payload(cfg: Config) -> dict:
     return {
         "submission_r2": r2_block or {"enabled": False},
         "subnet": cfg.raw["subnet"],
+        "payout": payout.contract_block(
+            cfg.king_payout_window_s / 3600,
+            cfg.king_payout_rule_effective_at, cfg.burn_uid),
         "submission": cfg.raw["submission"],
         "teacher": {"repo": cfg.teacher.repo},
         "dataset": cfg.raw["dataset"],
@@ -311,6 +295,7 @@ def history_row_from_raw(r: dict) -> dict:
         "margin": v.get("margin"),
         "se": v.get("se"),
         "n_paired_turns": v.get("n_paired_turns"),
+        "near_miss": v.get("near_miss"),         # sequential near-miss stamp
         "rejection_reason": v.get("rejection_reason"),
         "reign_number": r.get("reign_number"),
         "score": r.get("score", _side_score(v.get("challenger"))),
@@ -322,6 +307,14 @@ def history_row_from_raw(r: dict) -> dict:
         "challenger": v.get("challenger"),
         "king": v.get("king"),
         "challenger_wins": v.get("challenger_wins"),
+        # wvk-15 era (2026-09-12 17:01 -> 2026-09-13 13:01 UTC, retired):
+        # window stamps on verdicts, and the window_close / crown_revoked
+        # rows themselves. The site labels these as the retired rule.
+        "crown_mode": v.get("crown_mode") or r.get("crown_mode"),
+        "window_id": v.get("window_id", r.get("window_id")),
+        "outcome": r.get("outcome"),
+        "via": r.get("via") or v.get("via"),
+        "revoked_reason": r.get("revoked_reason"),
     }
 
 
