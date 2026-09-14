@@ -81,9 +81,9 @@
     if (k.model) return `${r.run_id} · ${k.label || k.model} (Prime Inference)`;
     const reign = k.reign !== undefined ? `reign ${k.reign}` : (k.label || "");
     const digest = k.digest ? `king-${String(k.digest).slice(0, 12)}` : "";
-    return `${r.run_id} · ${reign} ${digest}`.trim();
+    return `${r.run_id} · ${reign}${k.uncrowned ? " (removed)" : ""} ${digest}`.trim();
   }
-  const colLabel = (r) => { const k = (r && r.king) || {}; return k.model ? (k.label || k.model) : k.reign !== undefined ? `reign ${k.reign}` : (k.label || r.run_id); };
+  const colLabel = (r) => { const k = (r && r.king) || {}; return k.model ? (k.label || k.model) : k.reign !== undefined ? `reign ${k.reign}${k.uncrowned ? " (removed)" : ""}` : (k.label || r.run_id); };
 
   function renderRunSelect() {
     const sel = $("#bench-run");
