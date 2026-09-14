@@ -416,14 +416,23 @@ with tempfile.TemporaryDirectory() as td:
     check("state.revert_king_promotes_prev",
           restored is not None and st4.king.hotkey == "hkK1"
           and st4.king.reign_number == 2
-          and "hkK2" not in st4.king_chain_hotkeys(5))
+          and "hkK2" not in st4.king_chain_hotkeys(72 * 3600))
     # P0 durability: a restart must NOT resurrect the reverted-away dead king
     # via history reconciliation.
     st4b = State(Path(td) / "sub")
     st4b.load()
     check("state.revert_king_durable_across_restart",
           st4b.king is not None and st4b.king.hotkey == "hkK1"
-          and "hkK2" not in st4b.king_chain_hotkeys(5))
+          and "hkK2" not in st4b.king_chain_hotkeys(72 * 3600))
+    # Payout window (2026-09-14): a fresh crown is paid; the restored king
+    # keeps its ORIGINAL crowned_at, so a revert never mints a new window.
+    check("state.payout_window_pays_fresh_crown",
+          st4.king_payout_shares(72 * 3600) == {"hkK1": 1.0}
+          and st4.king.crowned_at == st4b.king.crowned_at)
+    check("state.payout_window_expires",
+          st4.king_payout_shares(
+              72 * 3600, now=datetime.datetime.now(datetime.timezone.utc)
+              + datetime.timedelta(hours=73)) == {})
     # genesis with no prior king → no fallback.
     st5 = State(Path(td) / "sub2")
     st5.set_king("hkGen", "u/Affine-gen", "9" * 40, 400, "seed")
@@ -569,6 +578,13 @@ except chain.BlockHashUnavailable:
 mg = chain.Metagraph()
 check("chain.metagraph_stale_refuses", chain.set_rolling_weights(
     None, None, 120, ["hk"], mg, 0, max_metagraph_age_s=10) is False)
+check("chain.payout_stale_refuses", chain.set_payout_weights(
+    None, None, 120, {"hk": 1.0}, mg, 0, max_metagraph_age_s=10) is False)
+from affine import payout  # noqa: E402
+check("payout.uid_weights_burn_and_split",
+      payout.uid_weights({}, {}, 0) == ([0], [1.0])
+      and payout.uid_weights({"a": 0.5, "b": 0.5}, {"a": 3, "b": 4}, 0) == ([3, 4], [0.5, 0.5])
+      and payout.uid_weights({"a": 0.5, "b": 0.5}, {"a": 3}, 0) == ([3], [1.0]))
 
 # -- dashboard tail reads ------------------------------------------------------
 from affine.dashboard import Dashboard  # noqa: E402
