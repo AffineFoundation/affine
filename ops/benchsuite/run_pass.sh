@@ -279,9 +279,14 @@ run_lium() {  # $1 = sandbox policy (gated|never)
     R2FLAG="--r2 $REF"
     export AFFINE_EVAL_R2_ENDPOINT="${AFFINE_EVAL_R2_ENDPOINT:-${R2_ENDPOINT:-}}"
   fi
-  # shellcheck disable=SC2086
-  POD=$("$PY" "$HERE/kingpod.py" rent --plan "$(toml modes.lium_plan)" --digest "$DIGEST" $R2FLAG | tail -1) || finish 2
-  "$PY" "$HERE/kingpod.py" wait "$POD" > /dev/null || finish 3
+  if [ -n "${BENCHSUITE_REUSE_POD:-}" ]; then
+    POD="$BENCHSUITE_REUSE_POD"          # an already-serving pod (state ready in pods.json)
+    log "reusing Lium pod $POD"
+  else
+    # shellcheck disable=SC2086
+    POD=$("$PY" "$HERE/kingpod.py" rent --plan "$(toml modes.lium_plan)" --digest "$DIGEST" $R2FLAG | tail -1) || finish 2
+    "$PY" "$HERE/kingpod.py" wait "$POD" > /dev/null || finish 3
+  fi
   local MEM; MEM=$("$PY" -c 'import json; m=json.load(open("'"$HERE"'/state/pods.json"))["'"$POD"'"]; print(json.dumps({k:m[k] for k in ("ssh_host","ssh_port","key","price","served","base_url")}))')
   local HOST PORT API_KEY USD_HR SERVED
   HOST=$(echo "$MEM" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["ssh_host"])')
