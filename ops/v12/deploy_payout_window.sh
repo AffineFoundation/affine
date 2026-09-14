@@ -39,8 +39,8 @@ echo "$(ts) === deploy_payout_window.sh start (HEAD $(git rev-parse --short HEAD
 grep -q '^weight_version_key = 17$' affine/affine.toml || { echo "$(ts) toml is not at wvk 17 — the wvk-17 flip has not landed; abort"; exit 1; }
 git merge-base --is-ancestor HEAD "$BRANCH" || { echo "$(ts) $BRANCH does not contain HEAD (not a fast-forward); abort"; exit 1; }
 git show "$BRANCH":affine/affine/payout.py >/dev/null || { echo "$(ts) branch lacks affine/payout.py; abort"; exit 1; }
-git show "$BRANCH":affine/affine.toml | grep -q '^king_payout_window_hours = 72$' || { echo "$(ts) branch toml lacks king_payout_window_hours = 72; abort"; exit 1; }
-git show "$BRANCH":affine/affine.toml | grep -q '^weight_version_key = 17$' || { echo "$(ts) branch toml is not at wvk 17; abort"; exit 1; }
+git show "$BRANCH":affine/affine.toml | grep -c '^king_payout_window_hours = 72$' >/dev/null || { echo "$(ts) branch toml lacks king_payout_window_hours = 72; abort"; exit 1; }
+git show "$BRANCH":affine/affine.toml | grep -c '^weight_version_key = 17$' >/dev/null || { echo "$(ts) branch toml is not at wvk 17; abort"; exit 1; }
 has_wvk17_verdict() { python3 - <<'PY'
 import json, sys
 ok = False
