@@ -338,6 +338,11 @@ pending = "affine/state/teacher_probe/pending.jsonl"
 groups = ["king_fail", "king_done", "king_recoverable", "king_tooluse", "king_pivot", "king_loop_onset", "completion_pre"]
 min_valid = 2
 require_distinct = true
+# Jacob's rule (2026-09-14): when >= min_valid teacher samples are prose with
+# no action in the turn's dialect (the teacher answers / says "done" where
+# the king repeated a tool call), admit the turn with kind `text` instead of
+# dropping it; a published row is re-published with the new kind.
+restamp_text = true
 retire_failed_published = true
 
 [lang_mix.coding]
