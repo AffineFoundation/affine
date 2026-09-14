@@ -759,6 +759,20 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
         if corpus_info.get("view_spec"):
             info["view_spec"] = str(corpus_info["view_spec"])
             info["corpus_base_url"] = str(corpus_info.get("corpus_base_url", ""))
+        # Adaptive curriculum stamp (2026-09-14, additive telemetry): which
+        # curriculum rule / weights the manifest was folded under. Absent
+        # on manifests without a `curriculum` block (every epoch so far).
+        cur = corpus_info.get("curriculum")
+        if isinstance(cur, dict) and cur:
+            wsha = str(cur.get("weights_sha256") or "")
+            info["curriculum_version"] = f"v{cur.get('rule_version', 0)}@{wsha[:12]}"
+            info["curriculum"] = {
+                "rule_version": cur.get("rule_version"),
+                "mode": cur.get("mode"),
+                "ledger_sha256": cur.get("ledger_sha256"),
+                "weights_sha256": cur.get("weights_sha256") or None,
+                "manifest_sha256": info["manifest_sha256"],
+            }
         return turns, info
 
     turns, slice_info = draw_slice(0, set())
