@@ -118,9 +118,11 @@ def card_by_run(cards: list[dict], run_id: str) -> dict | None:
 
 
 def pick_previous(cards: list[dict], cur: dict) -> dict | None:
-    """The newest card of the highest reign below the current one; a card of
-    the same provider wins over a different one (hardware moves numbers a
-    little, see benchsuite.md 9.1)."""
+    """A merged view of the highest reign below the current one: every card
+    of that reign (full pass, Lium parity run, single-env add-ons) contributes
+    the cells it has; the newest card wins a cell. Rows carry `_run_id` so the
+    per-task summaries are fetched from the right run. Hardware moves numbers
+    a little (benchsuite.md 9.1), far less than a missing cell would."""
     reign = (cur.get("king") or {}).get("reign")
     digest = cur["king"]["digest"]
     older = [c for c in cards if c["king"]["digest"] != digest
@@ -129,10 +131,16 @@ def pick_previous(cards: list[dict], cur: dict) -> dict | None:
     if not older:
         return None
     best_reign = max(c["king"].get("reign") or 0 for c in older)
-    cands = [c for c in older if (c["king"].get("reign") or 0) == best_reign]
-    prov = (cur.get("where") or {}).get("provider")
-    same = [c for c in cands if (c.get("where") or {}).get("provider") == prov]
-    return (same or cands)[-1]
+    cands = sorted([c for c in older if (c["king"].get("reign") or 0) == best_reign],
+                   key=lambda c: c.get("created_at") or "")
+    rows: dict[str, dict] = {}
+    for c in cands:   # oldest first, so the newest card overwrites
+        for r in c["rows"]:
+            if r.get("king") and r["king"].get("score") is not None:
+                rows[cell_key(r)] = {**r, "_run_id": c["run_id"]}
+    base = cands[-1]
+    return {**base, "run_id": " + ".join(c["run_id"] for c in cands) if len(cands) > 1 else base["run_id"],
+            "rows": list(rows.values()), "merged_from": [c["run_id"] for c in cands]}
 
 
 # ------------------------------------------------------------ per-task rows
@@ -225,7 +233,7 @@ def compare_cards(cur: dict, prev: dict, cache_dir: Path) -> list[dict]:
         if not pr or not r.get("king") or not pr.get("king"):
             continue
         cur_s = load_summary(cur["run_id"], ck, cache_dir)
-        prev_s = load_summary(prev["run_id"], ck, cache_dir)
+        prev_s = load_summary(pr.get("_run_id") or prev["run_id"], ck, cache_dir)
         stat = paired(task_scores(prev_s), task_scores(cur_s))
         method = "paired"
         finished = None
