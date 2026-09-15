@@ -158,6 +158,7 @@ def write_fold_vector(cfg: dict, latest: dict, groups: dict, snapshot: Path) -> 
                 med = k
                 break
         row = {"share": r["share_after_clamp"], "share_shadow": r["share_after_clamp"],
+               "share_v11_informational": r.get("share_v11_after_clamp"),
                "share_raw": r["share_raw"], "share_current": r["share_current"],
                "share_static": r["share_static"], "reason": r["reason"], "m": med if n else 1,
                "m_hist_shadow": r.get("m_hist_shadow"), "n_strata": r["n_strata"]}

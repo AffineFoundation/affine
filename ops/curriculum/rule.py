@@ -66,6 +66,50 @@ def stratum_weight(m_t: float, s_t: float, *, eps: float, gamma: float) -> float
     return (max(m_t, 0.0) + eps) ** gamma * max(s_t, 0.0)
 
 
+def stratum_weight_v11(m_t: float, s_t: float, *, eps: float, gamma: float, s_gate: float) -> float:
+    """Rule v1.1 (informational, proposed 2026-09-15): S~ is a GATE, not a
+    multiplier -- a stratum is eligible when its live share is at least
+    s_gate, and then weighs the king's miss rate alone."""
+    return (max(m_t, 0.0) + eps) ** gamma if s_t >= s_gate else 0.0
+
+
+def shares_by_slice_key(strata: dict[str, dict], index_rows: list[dict], field: str) -> dict[str, float]:
+    """Σ over slice keys of the bucket-mean of `field`, normalised per group."""
+    from_key: dict[str, set[str]] = {}
+    for r in index_rows:
+        stratum = str(r.get("stratum") or "")
+        src = r.get("stratum_src")
+        from_key.setdefault(stratum, set()).add(str(src) if src else stratum)
+    acc: dict[str, float] = {}
+    for bases in from_key.values():
+        vals = [float(strata[b][field]) for b in bases if b in strata]
+        if not vals:
+            continue
+        g = strata[next(iter(b for b in bases if b in strata))]["group"]
+        acc[g] = acc.get(g, 0.0) + sum(vals) / len(vals)
+    return normalise(acc)
+
+
+def group_means_by_slice_key(strata: dict[str, dict], index_rows: list[dict],
+                             fields: tuple[str, ...]) -> dict[str, dict[str, float]]:
+    """Per group: mean over its slice keys of the bucket-mean of each field."""
+    from_key: dict[str, set[str]] = {}
+    for r in index_rows:
+        stratum = str(r.get("stratum") or "")
+        src = r.get("stratum_src")
+        from_key.setdefault(stratum, set()).add(str(src) if src else stratum)
+    acc: dict[str, dict[str, list[float]]] = {}
+    for bases in from_key.values():
+        bs = [b for b in bases if b in strata]
+        if not bs:
+            continue
+        g = strata[bs[0]]["group"]
+        slot = acc.setdefault(g, {f: [] for f in fields})
+        for f in fields:
+            slot[f].append(sum(float(strata[b][f]) for b in bs) / len(bs))
+    return {g: {f: (sum(v) / len(v) if v else 0.0) for f, v in d.items()} for g, d in acc.items()}
+
+
 # -- group shares ---------------------------------------------------------------
 def normalise(x: dict[str, float]) -> dict[str, float]:
     tot = sum(x.values())

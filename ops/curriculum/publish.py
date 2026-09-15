@@ -2,7 +2,8 @@
 the one-line private Discord note.
 
 Layout (bucket `affine-data`, the same R2 the fold publishes to):
-  curriculum/ledger/<ledger_sha>.rows.parquet | .rollup.parquet | .json   immutable
+  curriculum/ledger/<ledger_sha>.rows.parquet   immutable (the sha is over these rows)
+  curriculum/ledger/<ledger_sha>.rollup.parquet | .json   derived; rewritten on a rollup schema bump
   curriculum/ledger/latest.json                                          pointer
   curriculum/weights/<weights_sha>/{rule,groups,recurrence,deficit_by_source,
       counterfactual,criterion}.json + weights.parquet + diff.md          immutable
@@ -70,10 +71,14 @@ def put_file(pub: CorpusPublisher, local: Path, key: str, *, immutable: bool) ->
 def publish_snapshot(pub: CorpusPublisher, *, snapshot_dir: Path, ledger_dir: Path, ledger_sha: str,
                      weights_sha: str, for_epoch: int, latest_body: bytes) -> list[str]:
     keys: list[str] = []
-    for suffix in ("rows.parquet", "rollup.parquet", "json"):
+    # The rows are THE ledger (their canonical sha is the name): immutable.
+    # The rollup and the json are derived from them (the json records the
+    # rollup's own sha and the ledger_version), so a rollup schema change
+    # may rewrite them under the same ledger sha.
+    for suffix, immutable in (("rows.parquet", True), ("rollup.parquet", False), ("json", False)):
         local = ledger_dir / f"{ledger_sha}.{suffix}"
         key = f"curriculum/ledger/{ledger_sha}.{suffix}"
-        put_file(pub, local, key, immutable=True)
+        put_file(pub, local, key, immutable=immutable)
         keys.append(key)
     put_file(pub, ledger_dir / "latest.json", "curriculum/ledger/latest.json", immutable=False)
     for name in SNAPSHOT_FILES:
