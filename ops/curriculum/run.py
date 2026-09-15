@@ -115,7 +115,7 @@ def per_rule_criterion(*, cfg: dict, groups: dict, prev_groups: dict | None, row
             worst = max(deltas.items(), key=lambda kv: kv[1]) if deltas else ("", 0.0)
             stab = {"pass": worst[1] < cfg["max_share_shift"], "max_abs_delta": clean_float(worst[1]), "group": worst[0]}
         out[name] = {
-            "counted": name == "v1", "shares": {g: clean_float(v) for g, v in sorted(shares.items())},
+            "counted": name == str(cfg.get("counted_rule") or "v1"), "shares": {g: clean_float(v) for g, v in sorted(shares.items())},
             "3_counterfactual_plan": {"pass": bool(cf["pass"]), "mean_abs_z_shift": cf["mean_abs_z_shift"],
                                       "sign_flips_abs_z_ge_2": cf["sign_flips_abs_z_ge_2"]},
             "3b_counterfactual_variant": {"pass": bool(cf["pass_variant"])},
@@ -298,7 +298,7 @@ def main() -> None:
     crit["by_rule"] = per_rule_criterion(cfg=cfg, groups=groups, prev_groups=prev_groups,
                                          rows_path=LEDGER_DIR / f"{lsha}.rows.parquet", strata_m=strata_m,
                                          static=static_mix)
-    crit["counted_rule"] = "v1"
+    crit["counted_rule"] = str(cfg.get("counted_rule") or "v1")
     crit["pending_decision"] = ("coordinator 2026-09-15 00:55 UTC: v1.2 becomes the counted rule at fold 3 if it moves "
                                 "the vector toward the king groups as phase 9 did; v1 counted until then")
     write_json(crit["by_rule"], snapshot / "criterion_by_rule.json")

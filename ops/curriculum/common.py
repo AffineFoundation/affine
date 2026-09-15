@@ -65,6 +65,7 @@ CURRICULUM_DEFAULTS: dict = {
     "weights_path": "ops/curriculum/out/groups.json",
     "rule_version": 1,
     "share_unit": "slice_keys",
+    "counted_rule": "v1",          # v1 | v1.1 | v1.2 -- which rule's weights drive the published shares
     "v11_s_gate": 0.5,
     "half_life_verdicts": 60,
     "n_0": 8,

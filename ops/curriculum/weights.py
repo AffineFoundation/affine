@@ -44,7 +44,7 @@ WEIGHTS_SCHEMA = pa.schema([
     ("M", pa.float64()), ("S", pa.float64()), ("forfeit_rate", pa.float64()), ("forfeit_share", pa.float64()),
     ("M_t", pa.float64()), ("S_t", pa.float64()),
     ("prior_M", pa.float64()), ("prior_S", pa.float64()), ("probe_yield", pa.float64()),
-    ("w", pa.float64()), ("w_m_only", pa.float64()), ("w_v11", pa.float64()),
+    ("w", pa.float64()), ("w_counted", pa.float64()), ("w_m_only", pa.float64()), ("w_v11", pa.float64()),
     ("F_t", pa.float64()), ("Dp_t", pa.float64()), ("M12_t", pa.float64()), ("w_v12", pa.float64()),
     ("Dbar_plus", pa.float64()),
     ("rank_pct", pa.float64()), ("m_shadow", pa.int32()),
@@ -199,7 +199,14 @@ def compute(args) -> dict:
         rec["w_m_only"] = rule.stratum_weight(rec["M_t"], 1.0, eps=float(cfg["eps"]), gamma=float(cfg["gamma"]))
         rec["w_v11"] = rule.stratum_weight_v11(rec["M_t"], rec["S_t"], eps=float(cfg["eps"]),
                                                gamma=float(cfg["gamma"]), s_gate=s_gate)
-    rule.multiplicity(strata, m_max=int(cfg["m_max"]))
+    # The COUNTED rule ([curriculum].counted_rule, default v1): its weight
+    # drives the published shares and the multiplicity; the others are
+    # published next to it. Switching rules at fold 3 = one toml line.
+    counted = str(cfg.get("counted_rule") or "v1")
+    counted_field = {"v1": "w", "v1.1": "w_v11", "v1.2": "w_v12"}[counted]
+    for rec in strata.values():
+        rec["w_counted"] = rec[counted_field]
+    rule.multiplicity(strata, m_max=int(cfg["m_max"]), field="w_counted")
 
     tot_keys = sum(current_keys.values()) or 1
     current = {g: current_keys.get(g, 0) / tot_keys for g in sorted(groups | set(current_keys))}
@@ -209,8 +216,8 @@ def compute(args) -> dict:
     # merges. The plan's Σ over base strata is kept as a diagnostic column:
     # it re-imports coding's raw 14k stratum count and pulls the vector back
     # toward coding / terminal, against the directive.
-    raw_base = rule.raw_group_shares(strata)
-    raw_slicekeys = rule.raw_group_shares_by_slice_key(strata, index_rows)
+    raw_base = rule.raw_group_shares({k: {**r, "w": r["w_counted"]} for k, r in strata.items()})
+    raw_slicekeys = rule.shares_by_slice_key(strata, index_rows, "w_counted")
     share_unit = str(cfg.get("share_unit") or "slice_keys")
     raw_shares = raw_slicekeys if share_unit == "slice_keys" else raw_base
     vec = rule.group_vector(raw_shares, static, current, floor_frac=float(cfg["floor_frac_of_static"]),
@@ -245,13 +252,14 @@ def compute(args) -> dict:
         rec = strata[s]
         wrows.append({f.name: rec.get(f.name) for f in WEIGHTS_SCHEMA})
         for k in ("n_w", "M", "S", "forfeit_rate", "forfeit_share", "M_t", "S_t", "prior_M", "prior_S",
-                  "probe_yield", "w", "w_m_only", "w_v11", "F_t", "Dp_t", "M12_t", "w_v12", "Dbar_plus",
+                  "probe_yield", "w", "w_counted", "w_m_only", "w_v11", "F_t", "Dp_t", "M12_t", "w_v12", "Dbar_plus",
                   "rank_pct", "Dbar"):
             wrows[-1][k] = clean_float(wrows[-1][k])
     knobs = {k: cfg[k] for k in ("rule_version", "half_life_verdicts", "n_0", "gamma", "eps", "theta_pct",
                                  "m_max", "floor_coding_terminal", "floor_frac_of_static", "group_cap",
                                  "max_share_shift", "min_new_verdicts")}
     knobs["share_unit"] = share_unit
+    knobs["counted_rule"] = counted
     hashed = {"rule_version": int(cfg["rule_version"]), "knobs": knobs, "ledger_sha256": lsha,
               "manifest_sha256": msha, "theta": ledger_doc.get("theta"), "probes_sha256": probes_sha,
               "strata": wrows}
@@ -317,7 +325,7 @@ def compute(args) -> dict:
         }
     groups_doc = {"mode": mode, "rule_version": int(cfg["rule_version"]), "weights_sha256": wsha,
                   "share_unit": share_unit, "theta": ledger_doc.get("theta"),
-                  "counted_rule": "v1",
+                  "counted_rule": counted,
                   "v11": {"informational": True, "rule": "w = (M~ + eps)^gamma if S~ >= s_gate else 0",
                           "s_gate": s_gate, "counted": False},
                   "v12": {"informational": True, "counted": False, "s_gate": s_gate,
@@ -381,9 +389,9 @@ def compute(args) -> dict:
     write_json({"definition": "cell deficit = M~ * S~ averaged over the strata of (source, harness)",
                 "rows": deficit_rows}, out / "deficit_by_source.json")
 
-    top = sorted(strata.values(), key=lambda r: (-float(r["w"]), r["stratum"]))[:10]
+    top = sorted(strata.values(), key=lambda r: (-float(r["w_counted"]), r["stratum"]))[:10]
     rule_doc = {
-        "rule_version": int(cfg["rule_version"]), "mode": mode, "knobs": knobs,
+        "rule_version": int(cfg["rule_version"]), "mode": mode, "knobs": knobs, "counted_rule": counted,
         "formula": "w_s = (M~_s + eps)^gamma * S~_s; share_g ∝ Σ w over the group's slice keys (a phase-9 bucket "
                    "weighs the mean w of the base strata it merges; share_unit = base_strata sums base strata instead); floors (coding+terminal ≥ floor_coding_terminal, "
                    "every group ≥ floor_frac_of_static × [mix]); cap group_cap; clamp ± max_share_shift vs the live "
