@@ -370,7 +370,7 @@ share_unit = "slice_keys"
 # Which rule's weights drive the published shares: v1 (counted until fold 3),
 # v1.1 (S~ as a gate), v1.2 (king forfeit rate + scaled positive challenger
 # gap). The others are published next to it. Switch = coordinator decision.
-counted_rule = "v1"
+counted_rule = "v1.2"   # coordinator decision 2026-09-15 01:05 UTC (lever 2): v1.2 counted from shadow fold 2
 half_life_verdicts = 60
 n_0 = 8
 gamma = 1.0

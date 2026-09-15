@@ -71,14 +71,32 @@ apply check), `diff.md` (one page vs the previous fold). Pointer: \
 `curriculum.{rule_version, mode, ledger_sha256, weights_sha256, \
 manifest_sha256}`; verdicts stamp `slice.curriculum_version` = \
 `v<rule_version>@<weights_sha256[:12]>` and `slice.curriculum`.
+- **Rules published side by side.** `groups.json` carries three vectors: \
+**v1** (above), **v1.1** (S~ as a gate ≥ 0.5, weight = M~) and **v1.2** — \
+the counted rule since 2026-09-15 01:05 UTC: `M~_s = F~_s + c · Dbar⁺~_s` \
+where F is the king's forfeit rate on the stratum ("the king cannot answer \
+here"), Dbar⁺ the mean positive gap challenger − king on the same turns over \
+near-king verdicts ("a challenger can do better here"), c the constant that \
+makes the corpus mean of Dbar⁺ equal the corpus mean forfeit rate, S~ a gate \
+≥ 0.5; same shrinkage, floors, cap and clamp. Reason: on the king's own \
+failure states min(R, G) compresses to 0, so a global bottom-quartile θ on \
+the king's score cannot see them; challengers on the same turns can. \
+`[curriculum].counted_rule` names the rule whose weights are published as \
+`share`; the others stay in the file.
 - **Mode.** `shadow` = weights published, the static `[mix]` still decides the \
 slice. `apply` = the fold uses `share_after_clamp` and `m_applied`. Any \
 rebuild mismatch or guard trip falls back to the static mix; `off` is the \
 kill switch. The move to `apply` needs the seven-item criterion \
-(`criterion.json`: rebuild sha, ≥ 95 % turn join, counterfactual mean |z| \
-within ±10 % with no sign change at |z| ≥ 2, shadow vector stable across two \
-folds, recurrence within cap, floors and cap holding, a hand read of the top \
-ten upweighted strata) on two consecutive shadow folds.
+(`criterion.json`, printed as a fold-3 decision table in `diff.md`) on two \
+consecutive shadow folds: rebuild sha reproduces; ≥ 95 % turn-id join; \
+counterfactual re-weight of the last 20 verdicts shows 0 sign changes at \
+|z| ≥ 2 and a mean |z| change within [−10 %, +50 %] (amended 2026-09-15: a \
+larger |z| with no decision flip is the intended effect of concentrating \
+signal); the counted vector stable across the two folds (max group move < 5 \
+points); recurrence within cap (≤ 0.18 expected draws per turn per duel per \
+group, ≤ 0.20 for any single turn — a hard item: over the cap the rule lowers \
+a stratum's multiplicity before any share); floors and cap holding (hard); a \
+hand read of the top ten upweighted strata (≥ 7 decision states).
 - **What does not change:** the scoring rule min(R, G), the `[duel]` knobs, \
 `weight_version_key`, seeded slices (reveal block hash), fresh teacher \
 references per duel, the teacher-probe admission gate. Recurrence is capped \

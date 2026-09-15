@@ -76,7 +76,7 @@ def rescore(v: dict, weights: dict[str, float] | None, n: int = SLICE_N) -> dict
 
 
 def run(rows_path: Path, shares: dict[str, float], n_last: int, tol_z: float = 0.10,
-        variant_max_shift: float = 0.25) -> dict:
+        variant_max_shift: float = 0.25, amended_band: tuple[float, float] = (-0.10, 0.50)) -> dict:
     verd = load_verdict_groups(rows_path, n_last)
     per = []
     for cid, v in verd.items():
@@ -113,6 +113,11 @@ def run(rows_path: Path, shares: dict[str, float], n_last: int, tol_z: float = 0
         # with zero flips is the intended effect of concentrating signal
         "pass_variant": (shift is not None and shift <= variant_max_shift and not flips_strong),
         "variant_max_abs_z_shift": variant_max_shift,
+        # THE criterion since the coordinator amendment 2026-09-15 01:05 UTC: 0 sign flips at
+        # |z| >= 2 AND mean |z| change within [-10 %, +50 %] -- concentrating signal is the
+        # intended effect; a magnitude increase with zero decision flips is not a failure
+        "pass_amended": (shift is not None and amended_band[0] <= shift <= amended_band[1] and not flips_strong),
+        "amended_band": list(amended_band),
         "per_verdict": per,
     }
     return doc
