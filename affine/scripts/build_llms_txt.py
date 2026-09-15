@@ -73,6 +73,7 @@ R2_GO_LIVE_DATE = "2026-09-03"
 WVK15_EFFECTIVE = "2026-09-12"
 WVK16_EFFECTIVE = "2026-09-13"
 WVK17_EFFECTIVE = "2026-09-14"
+WVK18_EFFECTIVE = "2026-09-15"
 
 
 def _payout_subs() -> dict[str, str]:
@@ -192,6 +193,10 @@ def _margin_subs() -> dict[str, str]:
         "{WVK15_EFFECTIVE}": WVK15_EFFECTIVE,
         "{WVK16_EFFECTIVE}": WVK16_EFFECTIVE,
         "{WVK17_EFFECTIVE}": WVK17_EFFECTIVE,
+        "{WVK18_EFFECTIVE}": WVK18_EFFECTIVE,
+        "{MAX_THOUGHT}": str(int(d["max_thought_tokens"])),
+        "{MAX_ACTION}": str(int(d["max_action_tokens"])),
+        "{TEXT_FALLBACK}": str(bool(d.get("text_fallback_at_tool_turns", False))).lower(),
         "{BAND_C}": f"{float(d.get('band_c', 2.0)):g}",
         "{BAND_FLOOR}": f"{float(d.get('band_floor', 0.002)):g}",
         "{MINER_CAP}": str(int(d["max_thought_tokens"]) + int(d["max_action_tokens"])),
@@ -357,11 +362,16 @@ around it)
 - Sequential near-miss (2026-09-11, no fork; OFF since wvk 16) — a \
 first-slice margin in the near-miss window drew a second seeded slice; one \
 seeded slice decides again
+- **Fork history: wvk 18 — miner thought cap 2,048 + prose answers at tool \
+turns (effective {WVK18_EFFECTIVE})** — you may think up to {MAX_THOUGHT} \
+tokens (was 1024; action cap {MAX_ACTION} unchanged); at a tool-call turn a \
+visible prose reply with no tool call is scored as a `text` action instead \
+of forfeiting — for the teacher's references too
 - **Fork history: wvk 17 — wider grounding band + teacher reference cap \
 (effective {WVK17_EFFECTIVE})** — `band_c` 2 → {BAND_C} (the k = 3 band was so \
 tight the teacher's own thought fell outside it 25% of the time); the \
-teacher's references may run to {REF_MAX_TOKENS} tokens (miners stay at \
-{MINER_CAP}); nothing changes in what miners emit
+teacher's references may run to {REF_MAX_TOKENS} tokens (miners stayed at \
+1792); nothing changes in what miners emit
 - **Fork history: wvk 16 — per-duel crown restored (effective \
 {WVK16_EFFECTIVE})** — the 12 h window rule is retired after one day: reign \
 13 was a re-upload of reign 12's weights that won its window on noise; a \
@@ -1025,6 +1035,57 @@ near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
 
 ---
 
+## Fork history: wvk 18 — miner thought cap 2,048 + prose answers at tool turns (effective {WVK18_EFFECTIVE})
+
+**Effective {WVK18_EFFECTIVE} at the first duel dispatched after the eval \
+pod redeploy (explicit dated operator directive, 2026-09-15 20:12 UTC).** \
+`weight_version_key = 18`; `[duel].max_thought_tokens = {MAX_THOUGHT}` (was \
+1024; `max_action_tokens = {MAX_ACTION}` and the teacher's `ref_max_tokens = \
+{REF_MAX_TOKENS}` unchanged); new `[duel].text_fallback_at_tool_turns = \
+{TEXT_FALLBACK}`. The per-turn score min(R, G), the crown bar `margin > \
+max(2·SE, 0.002)`, the thought-length floor, the B gate, \
+`require_think_close` and the reign chain are unchanged.
+
+**1. You may think up to {MAX_THOUGHT} tokens.** A reply is cut at \
+`max_thought_tokens + max_action_tokens = {MINER_CAP}` tokens; a reply that \
+is cut before its action forfeits the turn (−0.1). At the old 1,024-token \
+thought cap that happened to careful thinkers for no reason the meter \
+cares about: on fresh samples the plain teacher's own forfeits fall from \
+21% at 1,024 to 7% at 2,048, and a coached (longer-thinking) teacher's from \
+29% to 16%. The G leg still judges your thought against the teacher's own \
+reference thoughts, so a longer thought earns nothing by being long — it \
+just stops being cut off. Expected cost on our side: a few percent of \
+verdict time (the wvk-17 reference-cap raise cost ≈ +5%).
+
+**2. A prose answer at a tool-call turn no longer forfeits — when it is \
+what the teacher would do too.** Turns whose dialect is `tool_call` expect \
+a tool call as the action. Sometimes the right move is to answer in words \
+(report the result, say the task is done, ask for the missing piece), and \
+the teacher itself does exactly that on about 14% of its own samples at \
+such turns. Until now such a reply was a dropped reference for the teacher \
+and a forfeit for you. From wvk 18, at a `tool_call` turn a reply that \
+**closed `</think>`**, contains **no tool call** and has a **non-empty \
+visible reply** is scored as a `text` action — the whole visible reply — \
+exactly like a `text` turn: your prose is scored against the teacher's \
+references, prose or tool call alike, and the teacher's prose references \
+count. Over the last 20 verdicts about 69 reference slots per verdict were \
+empty at tool-call turns and 17 (king) / 23 (challenger) miner turns per \
+verdict forfeited there; the prose share of those converts. **What stays a \
+forfeit:** an empty visible reply, and a reply that never closes `</think>` \
+(`require_think_close`): reasoning-only output still scores −0.1, so the \
+wvk-13 hole stays closed. Nothing changes at `bash`, `boxed`, `text` or \
+`terminus_json` turns. Verdicts publish `n_text_fallback` per side and for \
+the teacher (how many samples took this path).
+
+**What changes for you.** You may think longer, and you may answer in prose \
+at a tool turn when that is the right answer. Nothing else. Forward-only: \
+reign 13 stands; no re-verdicts; `min_submission_block` unchanged. Verdicts \
+stamp `duel_params.max_thought_tokens` and \
+`duel_params.text_fallback_at_tool_turns`; wvk ≤ 17 verdicts carry their own \
+stamps (1024 / absent = false) and replay unchanged.
+
+---
+
 ## Fork history: wvk 17 — wider grounding band + teacher reference cap (effective {WVK17_EFFECTIVE})
 
 **Effective {WVK17_EFFECTIVE} at the first duel dispatched after the eval \
@@ -1055,7 +1116,7 @@ in the operator's store, summarised in the toml history paragraph.
 
 **2. Why the teacher gets a longer reference.** Each turn is scored \
 against k = 3 teacher reference rollouts. Until now the teacher sampled \
-them under the same cap as miners, {MINER_CAP} tokens (thought + action). \
+them under the same cap as miners, 1792 tokens (thought + action). \
 On deep turns — long trajectories, hard states — the teacher's own \
 reference ran out of tokens on ~21% of samples, so those turns had fewer \
 or truncated references, or were dropped entirely (fewer than 2 refs). \
@@ -1064,8 +1125,9 @@ task is hardest. With `ref_max_tokens = {REF_MAX_TOKENS}` the references \
 may run to {REF_MAX_TOKENS} tokens: in the replay, references per turn \
 rise 1.99 → 2.27 and the share of turns with a dead R leg falls 41% → \
 30%. **Only the teacher's reference budget changes.** Your \
-`max_thought_tokens = 1024` / `max_action_tokens = 768` are the same; a \
-reply longer than that is cut exactly as before.
+`max_thought_tokens = 1024` / `max_action_tokens = 768` were the same; a \
+reply longer than that was cut exactly as before (the thought cap rose to \
+2048 with wvk 18, see below).
 
 **What changes for you.** Nothing in what you emit. G becomes fairer \
 (fewer honest thoughts pushed out of the band by noise), and more deep \
@@ -1399,7 +1461,7 @@ forfeiting beats answering on fewer than 1% of turns (unpredictable \
 catastrophes), and a 2% forfeit rate costs exactly one δ (0.002) of margin.
 
 **What to do.** Always emit a parseable action in the turn's dialect, \
-inside the token cap (`max_thought_tokens + max_action_tokens = 1792`). A \
+inside the token cap (`max_thought_tokens + max_action_tokens = {MINER_CAP}`). A \
 short, honest command scored by min(R, G) is always worth more than −0.1. \
 Verdicts now publish `n_forfeits` / `forfeit_rate` per side and \
 `n_forfeit_turns` on the pairing; `duel_params.forfeit_turn_score` stamps \
@@ -1949,15 +2011,16 @@ Reference kind `text`. 246 / 1.7%.
 prose final report (`text`). 1,738 / 11.7%.
 - `king_coached` (since epoch 41, 2026-09-15) — the TEACHER's hint-free \
 continuation from a king failure state where a coach was decisive: a coached \
-teacher solved the task in 2 or more of 3 continuations while the plain \
-teacher solved 0 of 3 (the coached-recovery run; `policy.id` starts with \
-`coached_`). The turns are the teacher's own replies after the king's \
+teacher solved the task while the plain teacher solved 0 of at least 6 \
+continuations (the 3-draw label was two-thirds noise; states the plain \
+teacher recovers within 6 draws are retired; `policy.id` starts with \
+`coached_` or `template_`). The turns are the teacher's own replies after the king's \
 failure point; the coach's per-turn notes exist only in a `privileged` block \
 the fold strips — they are never in a prefix, a record or a reference. \
 References at duel time are the ordinary fresh unhinted teacher refs. \
-Harness dialect. Small at first (21 states / 291 turns / 56 strata at \
-epoch 41; 74% of its turns passed the probe), grows with the coach loop; \
-share 0.02, 3 sub-strata per state.
+Harness dialect. Small (9 states / 131 turns / 24 strata at epoch 43 after \
+the 6-draw retirement; 74% of its turns passed the probe), grows with the \
+coach loop; share 0.02, 3 sub-strata per state.
 
 Precedence when one turn qualifies for several groups: king_done > \
 king_recoverable > king_tooluse > king_pivot > king_loop_onset > king_fail \
