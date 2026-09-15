@@ -170,8 +170,31 @@ BENCH_ABBR = {
     "bfcl-v3": "BFCL", "when2call": "W2C", "swebench-verified": "SWE", "minif2f": "F2F",
     "graphwalks": "GW", "mrcr-v2": "MRCR", "oolong-synth": "OOL",
 }
+# Horizontal header labels for the benchmark table (<= 10 chars).
+BENCH_SHORT = {
+    "mmlu-pro": "MMLU-Pro", "math500": "MATH-500", "gpqa-diamond": "GPQA", "aime25": "AIME25",
+    "ifbench": "IFBench", "ifeval": "IFEval", "humaneval": "HumanEval", "livecodebench": "LCB",
+    "bfcl-v3": "BFCL v3", "when2call": "When2Call", "swebench-verified": "SWE-bench",
+    "minif2f": "miniF2F", "graphwalks": "GraphWalks", "mrcr-v2": "MRCR", "oolong-synth": "Oolong",
+}
 GROUP_ABBR = {"coding": "code", "terminal": "term", "math": "math", "tool_use": "tool",
               "nl2repo": "nl2r", "general": "gen", "agent": "agent", "other": "other"}
+# Datagen sources -> 3-5 char headers (operator list 2026-09-15); unknown
+# sources fall back to the first 4 letters after `affine_`, upper-cased.
+ENV_ABBR = {
+    "multiswe": "MSWE", "r2e_gym": "R2E", "scaleswe": "SCSW", "swelego": "SWLG",
+    "swerebench_v2": "SWRB", "swesmith": "SWSM", "affine_tmax": "TMAX",
+    "terminal_bench_2": "TMB", "terminal_lego": "TML", "affine_i3math": "I3M",
+    "affine_math": "MATH", "affine_agent": "AGNT", "affine_notool": "NOTL",
+    "affine_when2call": "W2CT", "affine_wiki": "WIKI", "affine_nl2lib": "NL2L",
+    "nl2repobench": "NL2R", "affine_autobench": "AUTB", "affine_deshuffle": "DSHF",
+    "affine_eog": "EOG", "affine_i3code": "I3C", "affine_ifeval": "IFEV",
+    "affine_logic": "LGC", "affine_numina": "NUMI", "affine_oolong": "OOLG",
+    "affine_prolog": "PRLG", "affine_pydantic": "PYD", "affine_rcore": "RCOR",
+    "affine_rgym": "RGYM", "affine_science": "SCI", "affine_sql": "SQL",
+    "affine_trivia": "TRIV", "affine_unscramble": "UNSC", "affine_uuidctf": "UUID",
+    "affine_verbatim": "VERB", "affine_wikispeedia": "WKSP",
+}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS chunks (
@@ -907,7 +930,7 @@ def total_cell(cells: dict[str, dict], keys: list[str]) -> dict | None:
     return {"score": round(sum(scores) / len(scores), 2), "n_cols": len(vals),
             "cols": [k for k, _ in vals], "kind": "total",
             "n_bench": sum(1 for k, _ in vals if k.startswith("bench:")),
-            "n_env": sum(1 for k, _ in vals if k.startswith("group:"))}
+            "n_env": sum(1 for k, _ in vals if k.startswith("env:"))}
 
 
 def matrix_rows_meta(stats: dict) -> list[dict]:
@@ -987,11 +1010,12 @@ def build_matrix(stats: dict, cards: list[dict]) -> dict:
         [e for e in bench_envs_seen if e not in {b for b, _ in BENCH_COLUMNS}]
     labels = dict(BENCH_COLUMNS)
     columns = [{"key": "total", "label": "total", "abbr": "total", "kind": "total",
-                "note": "unweighted mean of the row's available benchmark and environment-group cells (0-100)"}]
+                "note": "unweighted mean of the row's available benchmark and environment cells (0-100)"}]
     for e in ordered_bench:
         meta = bench_notes.get(e, {})
         columns.append({
             "key": f"bench:{e}", "label": labels.get(e, e), "abbr": BENCH_ABBR.get(e, e[:4].upper()),
+            "short": BENCH_SHORT.get(e, labels.get(e, e)[:10]),
             "kind": "bench", "env": e,
             "group": meta.get("group"), "n": meta.get("n"), "note": meta.get("note"),
             "metric": "finished_only" if e in BENCH_FINISHED_ONLY else "score",
@@ -1008,9 +1032,18 @@ def build_matrix(stats: dict, cards: list[dict]) -> dict:
                         "kind": "group", "group": g, "envs": members,
                         "note": f"pooled solve rate over the {g} datagen environments: " + ", ".join(members)})
     for s in sorted(env_groups, key=lambda s: (gorder.get(env_groups[s], 99), s)):
-        columns.append({"key": f"env:{s}", "label": s, "abbr": s.replace("affine_", "")[:10],
+        columns.append({"key": f"env:{s}", "label": s,
+                        "abbr": ENV_ABBR.get(s, s.replace("affine_", "")[:4].upper()),
                         "kind": "env", "env": s, "group": env_groups[s], "env_id": env_ids.get(s, "")})
-    value_keys = [c["key"] for c in columns if c["kind"] in ("bench", "group")]
+    # `total` = mean over every benchmark + every environment; the page shows two
+    # tables, each with its own mean: total:bench and total:env
+    value_keys = [c["key"] for c in columns if c["kind"] in ("bench", "env")]
+    bench_keys = [c["key"] for c in columns if c["kind"] == "bench"]
+    env_keys = [c["key"] for c in columns if c["kind"] == "env"]
+    columns.insert(1, {"key": "total:bench", "label": "total", "abbr": "total", "short": "total",
+                       "kind": "total_bench", "note": "unweighted mean of the row's available benchmark cells"})
+    columns.insert(2, {"key": "total:env", "label": "total", "abbr": "total", "short": "total",
+                       "kind": "total_env", "note": "unweighted mean of the row's available environment cells"})
 
     # -- rows
     teacher_envs = (stats.get("teacher") or {}).get("envs") or {}
@@ -1038,9 +1071,10 @@ def build_matrix(stats: dict, cards: list[dict]) -> dict:
             v = group_cell([a for s, a in env_aggs.items() if env_groups.get(s) == g], g)
             if v is not None:
                 cells[f"group:{g}"] = v
-        tot = total_cell(cells, value_keys)
-        if tot:
-            cells["total"] = tot
+        for key, keys in (("total", value_keys), ("total:bench", bench_keys), ("total:env", env_keys)):
+            tot = total_cell(cells, keys)
+            if tot:
+                cells[key] = tot
         row["cells"] = cells
         row["n_cells"] = sum(1 for k in value_keys if cells.get(k) and cells[k].get("score") is not None)
         row["cards"] = sorted({v["run_id"] for v in bench.values() if v.get("run_id")})
@@ -1050,7 +1084,7 @@ def build_matrix(stats: dict, cards: list[dict]) -> dict:
     teacher_cells = rows[0]["cells"]
     for row in rows[1:]:
         for k, v in row["cells"].items():
-            if k == "total":
+            if k.startswith("total"):
                 same = [teacher_cells[c]["score"] for c in v["cols"]
                         if teacher_cells.get(c) and teacher_cells[c].get("score") is not None]
                 if same:
@@ -1086,7 +1120,7 @@ def build_matrix(stats: dict, cards: list[dict]) -> dict:
                      "= solved / (solved + failed) over the row's rollouts (king seat for kings, "
                      "teacher_* policies for the teacher), same outcome rule as the fold; a group "
                      "column pools solved / graded over its environments",
-            "total": "unweighted mean over the row's available benchmark and environment-group "
+            "total": "unweighted mean over the row's available benchmark and environment "
                      "columns; the tooltip shows how many entered and the teacher's mean on the "
                      "same columns",
             "blank": f"no measurement (no benchmark card for the model, or fewer than "
