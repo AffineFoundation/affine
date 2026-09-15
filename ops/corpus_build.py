@@ -687,6 +687,8 @@ def assign_bucket_strata(records: list[dict], buckets: dict[str, tuple[int, int]
     Returns records touched."""
     n_set = 0
     for rec in records:
+        if rec.get("fold_group"):
+            continue        # a routed group (king_coached, ...) owns its stratum
         n, offset = buckets.get(rec.get("source") or "", (0, 0))
         if n <= 0:
             continue
@@ -816,29 +818,83 @@ def curriculum_line(cur: dict, static_mix: dict[str, float]) -> str:
             + (f"; diff https://data.affine.io/curriculum/{epoch}/diff.md" if epoch else ""))
 
 
+def group_caps(src2grp: dict[str, str]) -> dict[str, int]:
+    """Strata ceiling per group (Jacob 2026-09-15, dataset table): the bucket
+    N for bucketed groups; strata_buckets x sub-strata k for the fold-routed
+    groups; the sum of the sources' strata_buckets otherwise (math)."""
+    raw = tomllib.loads(SOURCES_TOML.read_text())
+    caps: dict[str, int] = dict((STRATA_BUDGET.get("buckets") or {}))
+    sub = STRATA_BUDGET.get("sub_strata") or {}
+    for g in (*KING_GROUPS, COMPLETION_GROUP):
+        n = int((raw.get(g) or {}).get("strata_buckets", 0) or 0)
+        if n and g not in caps:
+            caps[g] = n * int(sub.get(g, 1))
+    per_src: dict[str, int] = {}
+    for name, cfg in (raw.get("source") or {}).items():
+        g = src2grp.get(name, DEFAULT_GROUP)
+        per_src[g] = per_src.get(g, 0) + int(cfg.get("strata_buckets", 0) or 0)
+    for g, n in per_src.items():
+        if g not in caps and n:
+            caps[g] = n
+    return caps
+
+
+def source_draws(rows: list[tuple[str, str, str]], n_strata: int, n: int = 1300) -> dict[str, dict]:
+    """Exact expected draws per duel per source under the evalsrv sampler
+    (every stratum drawn with probability n / N, one turn uniformly inside
+    it): sum over strata of the source's share of the stratum's turns."""
+    per_stratum: dict[str, dict[str, int]] = {}
+    for _tid, st, src in rows:
+        d = per_stratum.setdefault(st, {})
+        d[src] = d.get(src, 0) + 1
+    p = min(1.0, n / max(1, n_strata))
+    out: dict[str, dict] = {}
+    for st, d in per_stratum.items():
+        tot = sum(d.values())
+        for src, c in d.items():
+            o = out.setdefault(src, {"draws_per_duel": 0.0, "turns": 0, "strata": 0})
+            o["draws_per_duel"] += p * c / tot
+            o["turns"] += c
+            o["strata"] += 1
+    for o in out.values():
+        o["draws_per_duel"] = round(o["draws_per_duel"], 3)
+        o["draws_per_turn_per_duel"] = round(o["draws_per_duel"] / o["turns"], 6) if o["turns"] else None
+    return out
+
+
 def write_fold_stats(epoch: int, after: dict[str, int], turns_by_group: dict[str, int],
                      recurrence: dict | None, cur: dict | None, mix: dict[str, float],
-                     n_turns: int, publisher) -> None:
-    """Per-group draw statistics for the curriculum job (published next to
-    the manifest as corpus/fold_stats.json): strata, turns, slice share,
-    expected draws per 1,300-turn duel, draws per turn per duel, sub-strata
-    k / bucket N, and the simulated per-duel recurrence."""
+                     n_turns: int, publisher, sim_rows: list[tuple[str, str, str]] | None = None,
+                     src2grp: dict[str, str] | None = None) -> None:
+    """Per-group / per-source draw statistics for the curriculum job and the
+    dataset table (published next to the manifest as corpus/fold_stats.json):
+    strata, turns, slice share, expected draws per 1,300-turn duel, draws per
+    turn per duel, sub-strata k / bucket N, cap + supply_limited (strata <
+    cap), per-source draws, and the simulated per-duel recurrence."""
     tot = sum(after.values()) or 1
+    caps = group_caps(src2grp or SRC2GRP_GLOBAL)
     groups = {}
     for g, n_strata in sorted(after.items()):
         share = n_strata / tot
         draws = 1300 * share
         nt = turns_by_group.get(g, 0)
+        cap = caps.get(g)
         groups[g] = {"strata": n_strata, "turns": nt, "share": round(share, 5),
                      "draws_per_duel": round(draws, 2),
                      "draws_per_turn_per_duel": round(draws / nt, 6) if nt else None,
                      "sub_strata_k": (STRATA_BUDGET.get("sub_strata") or {}).get(g, 1),
                      "bucket_n": (STRATA_BUDGET.get("buckets") or {}).get(g),
-                     "static_mix": mix.get(g)}
+                     "static_mix": mix.get(g),
+                     "cap": cap,
+                     "supply_limited": (n_strata < cap) if cap else None,
+                     "below_static_mix": (share < float(mix.get(g) or 0)) if g in mix else None}
     doc = {"epoch": epoch, "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
            "n_turns": n_turns, "n_strata": tot, "n_per_duel": 1300,
            "sub_strata_separator": "#", "bucket_prefix": "b",
-           "groups": groups, "recurrence": recurrence,
+           "supply_limited_rule": "strata < cap; cap = bucket N (bucketed groups), strata_buckets x k (routed groups), sum of source strata_buckets (others)",
+           "groups": groups,
+           "sources": source_draws(sim_rows, tot) if sim_rows else None,
+           "recurrence": recurrence,
            "curriculum": {"mode": cur["mode"], "error": cur.get("error"), "groups": cur.get("groups"),
                           "m": cur.get("m"), "meta": cur.get("meta")} if cur else None}
     FOLD_STATS_PATH.write_text(json.dumps(doc, indent=1, sort_keys=True))
@@ -880,7 +936,7 @@ def budget_stratum(group: str, stratum_src: str, turn_id: str, cfg: dict | None 
 
 def group_from_row(stratum_src: str, source: str, src2grp: dict[str, str]) -> str:
     ns = str(stratum_src).split(":")[0]
-    return ns if ns in ROUTED_GROUPS or ns in ("math", "tool_use", "general", "king_fail") \
+    return ns if ns in ROUTED_GROUPS or ns in KING_GROUPS or ns in ("math", "tool_use", "general") \
         else src2grp.get(str(source), DEFAULT_GROUP)
 
 
@@ -895,17 +951,27 @@ def live_rows_for_budget(pub: PublicCorpus, live: dict | None) -> list[tuple[str
     t = pq.read_table(io.BytesIO(raw))
     src = t.column("stratum_src").to_pylist() if "stratum_src" in t.column_names \
         else t.column("stratum").to_pylist()
+    if SRC_OVERRIDE and "rollout_id" in t.column_names:
+        src = [SRC_OVERRIDE.get(str(r), s0) for r, s0 in zip(t.column("rollout_id").to_pylist(), src)]
     return list(zip(t.column("turn_id").to_pylist(), [str(x) for x in src],
                     [str(x) for x in t.column("source").to_pylist()]))
 
 
+SRC_OVERRIDE: dict[str, str] = {}      # rollout_id -> stratum_src (routed envelopes)
+
+
 def apply_budget_table(table: pa.Table, src2grp: dict[str, str], cfg: dict) -> pa.Table:
     """Index table -> same rows with `stratum` = budget key and `stratum_src`
-    = original key (added when missing)."""
+    = original key (added when missing). SRC_OVERRIDE re-keys whole rollouts
+    (the epoch-41 king_coached rows were stamped with their source group's
+    stratum before the routed-group guard existed)."""
     if not cfg:
         return table
     has_src = "stratum_src" in table.column_names
     src_col = table.column("stratum_src").to_pylist() if has_src else table.column("stratum").to_pylist()
+    if SRC_OVERRIDE and "rollout_id" in table.column_names:
+        rids = table.column("rollout_id").to_pylist()
+        src_col = [SRC_OVERRIDE.get(str(r), s0) for r, s0 in zip(rids, src_col)]
     tids = table.column("turn_id").to_pylist()
     sources = table.column("source").to_pylist()
     new = [budget_stratum(group_from_row(s0, src, src2grp), str(s0), tid, cfg)
@@ -1877,6 +1943,7 @@ def derive_coached(cfg: dict, baker: ToolBaker, panel, allowed_kinds, published:
     files = sorted(cfg["envelopes_dir"].glob("*.jsonl.gz")) if cfg["envelopes_dir"].exists() else []
     tmp_dir = WORK_DIR / "coached"
     tmp_dir.mkdir(parents=True, exist_ok=True)
+    n_buckets = cfg["strata_buckets"]
     for f in files:
         kept_envs: list[tuple[dict, dict]] = []
         n_all = 0
@@ -1886,16 +1953,20 @@ def derive_coached(cfg: dict, baker: ToolBaker, panel, allowed_kinds, published:
                     continue
                 env = json.loads(line)
                 n_all += 1
-                if str(env.get("rollout_id")) in folded:
-                    continue      # derived by an earlier fold (published or in the carryover)
                 if not coached_decisive(env, cfg):
                     _count(notes, "king_coached_not_decisive")
                     continue
+                sid0 = str(((env.get("privileged") or {}).get("origin") or {}).get("state_id") or env.get("rollout_id"))
+                h0 = int(hashlib.sha256(sid0.encode("utf-8")).hexdigest()[:8], 16)
+                SRC_OVERRIDE[str(env.get("rollout_id"))] = f"{KING_COACHED_GROUP}:{h0 % n_buckets:04d}"
+                if str(env.get("rollout_id")) in folded:
+                    continue      # derived by an earlier fold (published or in the carryover)
                 origin = dict(env["privileged"]["origin"])
                 env.pop("privileged", None)          # never in a record or prefix
                 kept_envs.append((env, origin))
         if not kept_envs:
-            log(f"king_coached: {f.name}: 0 of {n_all} envelopes decisive")
+            log(f"king_coached: {f.name}: no new decisive envelopes ({n_all} in file, "
+                f"{sum(1 for _ in folded)} already folded)")
             continue
         stripped = tmp_dir / f.name
         with gzip.open(stripped, "wt", encoding="utf-8") as fh:
@@ -2146,6 +2217,8 @@ def publish_pending(state: dict, publisher: CorpusPublisher,
         log(f"pending epoch {epoch} already in manifest; finalizing state only")
         return prev, prev_sha
     pack = resume_pack(pending)
+    if pending.get("src_override"):
+        SRC_OVERRIDE.update(pending["src_override"])
     merge_index(pack, publisher, prev, epoch,
                 retire_turn_ids=pending.get("retire_turn_ids") or [])
     if prev is not None:
@@ -2160,6 +2233,10 @@ def publish_pending(state: dict, publisher: CorpusPublisher,
              "allowed_action_kinds": pending["allowed_kinds"]}
     if legacy_sha:
         extra["legacy_turns_manifest_sha256"] = legacy_sha
+    # Top-level totals for the dataset table (index.n_turns stays the SSOT).
+    extra["n_turns"] = int(pack.n_turns)
+    extra["n_strata"] = int(pending.get("n_strata_after") or 0) or None
+    extra["published_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     if pending.get("curriculum_block"):
         # Adaptive curriculum stamp (plan §2.3 / §3.4; evalsrv reads it into
         # slice.curriculum_version). manifest_sha256 = the manifest the
@@ -2383,6 +2460,10 @@ def main() -> None:
         if publisher is None:
             fatal("pending publish exists; rerun without --no-publish")
         log(f"resuming pending publish for epoch {state['pending']['epoch']}")
+        # merge_index needs the budget + source->group map even on a resume
+        _b = load_strata_budget()
+        STRATA_BUDGET.clear(); STRATA_BUDGET.update(_b)
+        SRC2GRP_GLOBAL.clear(); SRC2GRP_GLOBAL.update(load_mix(ignore_fold_mix=args.ignore_fold_mix)[1])
         finalize(state, *publish_pending(state, publisher, traces_sha, legacy_sha))
     if state["unannounced"] and not args.no_announce and publisher is not None:
         announce(state, public_base)
@@ -2557,6 +2638,30 @@ def main() -> None:
         if i % 100 == 0 or i == len(unfolded):
             log(f"derived {i}/{len(unfolded)} chunks: {len(candidates)} rollouts, "
                 f"{sum(len(r['turns']) for r in candidates)} turns")
+    # One record per turn id across the candidate set: the carryover can hold
+    # two copies of a rollout (a --rederive-chunks pass re-derived chunks whose
+    # deferred copies were not all dropped, 2026-09-14) and a datagen chunk can
+    # repeat a rollout; the pack refuses duplicates, so drop them here.
+    seen_tids: set[str] = set()
+    deduped: list[dict] = []
+    n_dup_turns = n_dup_recs = 0
+    for rec in candidates:
+        keep = []
+        for m in rec["turns"]:
+            tid = f"{rec['traj_id']}:{m['turn_idx']}"
+            if tid in seen_tids:
+                n_dup_turns += 1
+                continue
+            seen_tids.add(tid)
+            keep.append(m)
+        if not keep:
+            n_dup_recs += 1
+            continue
+        rec["turns"] = keep
+        deduped.append(rec)
+    if n_dup_turns:
+        log(f"candidates: dropped {n_dup_turns} duplicate turn(s) / {n_dup_recs} whole duplicate record(s)")
+    candidates = deduped
     king_coached = load_king_coached()
     coached_folded: set[str] = set(state.get("coached_folded") or [])
     if king_coached:
@@ -2913,16 +3018,21 @@ def main() -> None:
         live_rows = live_rows_for_budget(pub, live)
         retired_now = set(retire_ids) | set(pivot_retire)
         sim_rows: list[tuple[str, str]] = []
+        sim_rows_src: list[tuple[str, str, str]] = []
         for tid, s0, src in live_rows:
             if tid in retired_now:
                 continue
-            sim_rows.append((tid, budget_stratum(group_from_row(s0, src, src2grp), s0, tid)))
+            key = budget_stratum(group_from_row(s0, src, src2grp), s0, tid)
+            sim_rows.append((tid, key))
+            sim_rows_src.append((tid, key, src))
         for r in selected:
             g = group_of(r, src2grp, mix)
             for m in r["turns"]:
                 tid = f"{r['traj_id']}:{m['turn_idx']}"
                 base = stratum_key({"stratum": m.get("stratum") or r.get("stratum"), "traj_id": r["traj_id"]})
-                sim_rows.append((tid, budget_stratum(g, base, tid)))
+                key = budget_stratum(g, base, tid)
+                sim_rows.append((tid, key))
+                sim_rows_src.append((tid, key, str(r.get("source") or "")))
         recurrence = simulate_recurrence(sim_rows)
         per_duel = {g: round(1300 * a / (sum(after.values()) or 1), 1) for g, a in after.items()}
         log(f"strata budget: simulated per-duel recurrence {recurrence}; projected turns per duel {per_duel}")
@@ -2935,7 +3045,8 @@ def main() -> None:
             g = group_of(r, src2grp, mix)
             turns_by_group[g] = turns_by_group.get(g, 0) + len(r["turns"])
         write_fold_stats((int(live["corpus_epoch"]) if live else 0) + 1, after, turns_by_group, recurrence,
-                         curriculum, mix, sum(turns_by_group.values()), None if args.no_publish else publisher)
+                         curriculum, mix, sum(turns_by_group.values()), None if args.no_publish else publisher,
+                         sim_rows=sim_rows_src, src2grp=src2grp)
 
     n_new = sum(len(r["turns"]) for r in selected)
     stale = False
@@ -2976,6 +3087,8 @@ def main() -> None:
         "group_strata_added": {g: sorted(v) for g, v in group_added.items()},
         "recurrence": recurrence,
         "coached_folded": sorted(coached_folded),
+        "src_override": dict(SRC_OVERRIDE),
+        "n_strata_after": int(sum(after.values())),
         "budget_signature": budget_cfg.get("signature") if budget_cfg else None,
         "budget_migrated": budget_migrated,
         "strata_raw_before_budget": state.get("group_strata_raw_before_budget") if budget_migrated else None,
