@@ -122,6 +122,31 @@ def build_diff(new: Path, prev: Path | None) -> str:
                      f"{'PASS' if cf_n.get('pass_variant') else 'FAIL'}.")
     else:
         lines.append("8. **Counterfactual:** not computed.")
+    # 9 decomposition (coordinator 2026-09-15 00:46 UTC): what drives each group's share
+    dec = []
+    for g, r in sorted(grp_n["groups"].items(), key=lambda kv: -(kv[1]["share_after_clamp"] or 0)):
+        if (r.get("n_strata") or 0) == 0:
+            continue
+        dec.append(f"{g}: M~ {_f(r.get('mean_M_t_slice_keys'), 3)} · S~ {_f(r.get('mean_S_t_slice_keys'), 3)} · "
+                   f"w {_f(r.get('mean_w_slice_keys'), 3)} → v1 {_pct(r['share_after_clamp'])} | M~-only "
+                   f"{_pct(r.get('share_m_only_after_clamp'))} | v1.1 gate {_pct(r.get('share_v11_after_clamp'))} "
+                   f"({r.get('v11_eligible_strata')}/{r.get('n_strata')} eligible) | floors-only {_pct(r.get('share_floors_only'))}")
+    v11 = grp_n.get("v11") or {}
+    lines.append("9. **Decomposition per group** (means over slice keys; shares after floors + clamp; v1 counted, "
+                 f"M~-only = same rule with S~ = 1, v1.1 = S~ as a gate ≥ {v11.get('s_gate', 0.5)} then weight = M~ "
+                 "(informational, not counted), floors-only = live share with only the plan's floors): "
+                 + "; ".join(dec) + ".")
+    # 10 the king's miss rate per group, raw from the ledger
+    km = []
+    for g, r in sorted(grp_n["groups"].items(), key=lambda kv: -((kv[1].get("king_M") or 0))):
+        if r.get("king_M") is None:
+            continue
+        km.append(f"{g}: M {_f(r['king_M'], 3)} (forfeit {_f(r.get('king_forfeit_rate'), 3)}, live-answered miss "
+                  f"{_f(r.get('king_M_live_answered'), 3)}, n {r.get('king_n_live_answered')}) · S {_f(r.get('king_S'), 3)} · "
+                  f"q25 live score {_f(r.get('king_q25_live_score'), 5)} vs θ {_f(grp_n.get('theta'), 5)}")
+    lines.append("10. **King miss rate per group** (decayed means over king rows; M = forfeit OR live score < θ; "
+                 "live-answered miss = share of answered live turns under the GLOBAL θ — 0.25 means the group sits on "
+                 "the corpus distribution, higher means θ is easier to fall under there): " + "; ".join(km) + ".")
     head = (f"# Curriculum diff — epoch {rule_n['corpus_epoch']} → next fold\n\n"
             f"Computed {rule_n.get('computed_at')} UTC. Files: `rule.json`, `weights.parquet`, `groups.json`, "
             f"`recurrence.json`, `deficit_by_source.json`, `counterfactual.json`, `criterion.json`.\n\n")

@@ -65,6 +65,7 @@ CURRICULUM_DEFAULTS: dict = {
     "weights_path": "ops/curriculum/out/groups.json",
     "rule_version": 1,
     "share_unit": "slice_keys",
+    "v11_s_gate": 0.5,
     "half_life_verdicts": 60,
     "n_0": 8,
     "gamma": 1.0,

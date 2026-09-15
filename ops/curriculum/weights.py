@@ -44,7 +44,8 @@ WEIGHTS_SCHEMA = pa.schema([
     ("M", pa.float64()), ("S", pa.float64()), ("forfeit_rate", pa.float64()), ("forfeit_share", pa.float64()),
     ("M_t", pa.float64()), ("S_t", pa.float64()),
     ("prior_M", pa.float64()), ("prior_S", pa.float64()), ("probe_yield", pa.float64()),
-    ("w", pa.float64()), ("rank_pct", pa.float64()), ("m_shadow", pa.int32()),
+    ("w", pa.float64()), ("w_m_only", pa.float64()), ("w_v11", pa.float64()),
+    ("rank_pct", pa.float64()), ("m_shadow", pa.int32()),
     ("m_applied", pa.int32()), ("draws_50", pa.int64()), ("distinct_turns_50", pa.int64()),
     ("max_turn_draws_50", pa.int64()), ("Dbar", pa.float64()),
 ])
@@ -172,9 +173,13 @@ def compute(args) -> dict:
                 if tot_w > 0 else 0.85)
     n0 = float(cfg["n_0"])
     rule.shrunk_rates(strata, cells, grp_stats, n0=n0, corpus_s=corpus_s, probe_s=probes)
+    s_gate = float(cfg.get("v11_s_gate", 0.5))
     for rec in strata.values():
         rec["w"] = rule.stratum_weight(rec["M_t"], rec["S_t"], eps=float(cfg["eps"]),
                                        gamma=float(cfg["gamma"]))
+        rec["w_m_only"] = rule.stratum_weight(rec["M_t"], 1.0, eps=float(cfg["eps"]), gamma=float(cfg["gamma"]))
+        rec["w_v11"] = rule.stratum_weight_v11(rec["M_t"], rec["S_t"], eps=float(cfg["eps"]),
+                                               gamma=float(cfg["gamma"]), s_gate=s_gate)
     rule.multiplicity(strata, m_max=int(cfg["m_max"]))
 
     tot_keys = sum(current_keys.values()) or 1
@@ -192,6 +197,20 @@ def compute(args) -> dict:
     vec = rule.group_vector(raw_shares, static, current, floor_frac=float(cfg["floor_frac_of_static"]),
                             floor_ct=float(cfg["floor_coding_terminal"]), cap=float(cfg["group_cap"]),
                             max_shift=float(cfg["max_share_shift"]))
+    fill_kw = dict(floor_frac=float(cfg["floor_frac_of_static"]), floor_ct=float(cfg["floor_coding_terminal"]),
+                   cap=float(cfg["group_cap"]), max_shift=float(cfg["max_share_shift"]))
+    # Decomposition (coordinator 2026-09-15 00:46 UTC): what drives the vector.
+    #   m_only     -- the same rule with S~ = 1 (king miss rate alone)
+    #   v1.1       -- S~ as a GATE (live share >= s_gate -> eligible), weight = miss rate; informational
+    #   floors_only -- the live slice share with only the plan's floors / cap applied (no rule)
+    vec_m_only = rule.group_vector(rule.shares_by_slice_key(strata, index_rows, "w_m_only"), static, current, **fill_kw)
+    vec_v11 = rule.group_vector(rule.shares_by_slice_key(strata, index_rows, "w_v11"), static, current, **fill_kw)
+    all_groups = sorted(set(current) | groups)
+    floors_only = rule.constrained_fill(
+        {g: current.get(g, 0.0) for g in all_groups},
+        {g: (fill_kw["floor_frac"] * static.get(g, 0.0) if current.get(g, 0.0) > 0 else 0.0) for g in all_groups},
+        {g: (fill_kw["cap"] if current.get(g, 0.0) > 0 else 0.0) for g in all_groups})
+    means = rule.group_means_by_slice_key(strata, index_rows, ("M_t", "S_t", "w", "w_v11"))
     applied = vec["after_clamp"] if mode == "apply" else current
     proj_shadow = rule.recurrence_projection(strata, vec["after_clamp"])
     proj_applied = rule.recurrence_projection(strata, applied)
@@ -206,7 +225,7 @@ def compute(args) -> dict:
         rec = strata[s]
         wrows.append({f.name: rec.get(f.name) for f in WEIGHTS_SCHEMA})
         for k in ("n_w", "M", "S", "forfeit_rate", "forfeit_share", "M_t", "S_t", "prior_M", "prior_S",
-                  "probe_yield", "w", "rank_pct", "Dbar"):
+                  "probe_yield", "w", "w_m_only", "w_v11", "rank_pct", "Dbar"):
             wrows[-1][k] = clean_float(wrows[-1][k])
     knobs = {k: cfg[k] for k in ("rule_version", "half_life_verdicts", "n_0", "gamma", "eps", "theta_pct",
                                  "m_max", "floor_coding_terminal", "floor_frac_of_static", "group_cap",
@@ -244,10 +263,31 @@ def compute(args) -> dict:
             "M_t": clean_float(rule.shrink(float(gr.get("n_w") or 0), gr.get("M"), rule.CORPUS_PRIOR_M, n0)),
             "S_t": clean_float(rule.shrink(float(gr.get("n_w") or 0), gr.get("S"), corpus_s, n0)),
             "n_w": clean_float(gr.get("n_w")), "n_obs": int(gr.get("n_obs") or 0),
+            # decomposition over the group's slice keys (what the sampler draws)
+            "mean_M_t_slice_keys": clean_float((means.get(g) or {}).get("M_t")),
+            "mean_S_t_slice_keys": clean_float((means.get(g) or {}).get("S_t")),
+            "mean_w_slice_keys": clean_float((means.get(g) or {}).get("w")),
+            "share_m_only_raw": clean_float(vec_m_only["raw"].get(g, 0.0)),
+            "share_m_only_after_clamp": clean_float(vec_m_only["after_clamp"].get(g, 0.0)),
+            "share_v11_raw": clean_float(vec_v11["raw"].get(g, 0.0)),
+            "share_v11_after_floor": clean_float(vec_v11["after_floor"].get(g, 0.0)),
+            "share_v11_after_clamp": clean_float(vec_v11["after_clamp"].get(g, 0.0)),
+            "v11_reason": vec_v11["reasons"].get(g, "no_supply"),
+            "v11_eligible_strata": sum(1 for r in ss if float(r["w_v11"]) > 0),
+            "share_floors_only": clean_float(floors_only.get(g, 0.0)),
+            # the king's miss rate, raw from the ledger (decayed means over king rows)
+            "king_M": clean_float(gr.get("M")), "king_S": clean_float(gr.get("S")),
+            "king_forfeit_rate": clean_float(gr.get("forfeit_rate")),
+            "king_M_live_answered": clean_float(gr.get("M_live")),
+            "king_mean_live_score": clean_float(gr.get("mean_live_score")),
+            "king_q25_live_score": clean_float(gr.get("q25_live_score")),
+            "king_n_live_answered": int(gr.get("n_live_answered") or 0),
             "m_hist_shadow": dict(sorted(Counter(int(r["m_shadow"]) for r in ss).items())),
         }
     groups_doc = {"mode": mode, "rule_version": int(cfg["rule_version"]), "weights_sha256": wsha,
-                  "share_unit": share_unit,
+                  "share_unit": share_unit, "theta": ledger_doc.get("theta"),
+                  "v11": {"informational": True, "rule": "w = (M~ + eps)^gamma if S~ >= s_gate else 0",
+                          "s_gate": s_gate, "counted": False},
                   "ledger_sha256": lsha, "manifest_sha256": msha, "corpus_epoch": epoch,
                   "joint_floor_applied": vec["joint_floor_applied"], "corpus_prior_M": rule.CORPUS_PRIOR_M,
                   "corpus_prior_S": clean_float(corpus_s), "groups": g_rows,
