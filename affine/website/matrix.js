@@ -64,9 +64,14 @@ function rowTip(r) {
 
 function cellTip(row, col, cell, teacherCell) {
   const head = `${rowName(row)} · ${col.label}${col.kind === "env" && col.group ? ` (${col.group})` : ""}`;
+  if (cell && cell.running) {
+    return `${head}\n${col.kind === "bench" ? "benchmark set" : "cell"} ${cell.state || "running"}`
+      + (cell.eta ? `\nETA ≈ ${when(cell.eta)} (pass average per cell; sandbox sets take longer)` : "\nETA: first cell not finished yet")
+      + `\npass ${cell.run_id}`;
+  }
   if (!cell || cell.score == null) {
     return `${head}\n${cell?.reason || "no measurement"}`
-      + (col.kind === "bench" ? "\nno benchmark card for this model yet" : "");
+      + (col.kind === "bench" ? "\nnever run for this model (no benchmark card)" : "");
   }
   const lines = [head];
   if (col.kind.startsWith("total")) {
@@ -94,19 +99,50 @@ function cellTip(row, col, cell, teacherCell) {
 }
 
 function tableColumns(m, spec) {
-  const total = m.columns.find((c) => c.key === spec.total);
-  return [total, ...m.columns.filter((c) => c.kind === spec.kind)].filter(Boolean);
+  return m.columns.filter((c) => c.kind === spec.kind);
+}
+
+const hasValue = (r, key) => r.cells[key] != null && r.cells[key].score != null;
+const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+
+/** Common column set = the columns every displayed row WITH data has a
+ * value for (rows still empty or running do not shrink it). */
+function commonColumns(rows, cols) {
+  const dataRows = rows.filter((r) => cols.some((c) => hasValue(r, c.key)));
+  if (!dataRows.length) return [];
+  return cols.filter((c) => dataRows.every((r) => hasValue(r, c.key)));
+}
+
+function totals(rows, cols, common, teacher) {
+  const over = (r, cs) => (cs.length && cs.every((c) => hasValue(r, c.key)) ? mean(cs.map((c) => r.cells[c.key].score)) : null);
+  const tCommon = teacher ? over(teacher, common) : null;
+  const tFull = teacher ? over(teacher, cols) : null;
+  const out = new Map();
+  for (const r of rows) {
+    const c = over(r, common), f = over(r, cols);
+    out.set(r.key, {
+      common: c, full: f,
+      commonDelta: c != null && tCommon != null && r.kind !== "teacher" ? c - tCommon : null,
+      fullDelta: f != null && tFull != null && r.kind !== "teacher" ? f - tFull : null,
+      running: c == null && cols.some((cc) => (r.cells[cc.key] || {}).running),
+    });
+  }
+  return out;
 }
 
 function visibleRows(m, spec) {
   const teacher = m.rows.find((r) => r.kind === "teacher");
   let rest = m.rows.filter((r) => r !== teacher);
   if (!state.showAll) {
-    rest = rest.filter((r) => r.current || r.kind === "genesis"
+    rest = rest.filter((r) => r.current || r.kind === "genesis" || r.inflight
       || Object.keys(r.cells).some((k) => k.startsWith(`${spec.kind}:`) && r.cells[k].score != null));
   }
   const sort = state.sort[spec.id] || { key: null, desc: true };
-  const val = (r) => (r.cells[sort.key] && r.cells[sort.key].score != null ? r.cells[sort.key].score : null);
+  const cols = tableColumns(m, spec);
+  const tot = totals([...(teacher ? [teacher] : []), ...rest], cols, commonColumns([...(teacher ? [teacher] : []), ...rest], cols), teacher);
+  const val = (r) => sort.key === "total" ? tot.get(r.key).common
+    : sort.key === "full" ? tot.get(r.key).full
+    : (r.cells[sort.key] && r.cells[sort.key].score != null ? r.cells[sort.key].score : null);
   rest.sort((a, b) => {
     if (!sort.key) return a.order - b.order;
     const va = val(a), vb = val(b);
@@ -138,15 +174,23 @@ function renderTable(m, spec) {
   const rows = visibleRows(m, spec);
   const teacher = m.rows.find((r) => r.kind === "teacher") || { cells: {} };
   const sort = state.sort[spec.id] || { key: null, desc: true };
+  const common = commonColumns(rows, cols);
+  const tot = totals(rows, cols, common, m.rows.find((r) => r.kind === "teacher"));
+  const commonTitle = `mean over the ${common.length} columns every displayed row with data has a value for:\n`
+    + (common.map((c) => c.short || c.abbr || c.label).join(", ") || "(none)")
+    + `\nrecomputed as rows change (show all reigns); Δ vs the teacher on the same columns`;
+  const fullTitle = `mean over all ${cols.length} columns — only for rows that have every column; blank otherwise`;
   const blocks = spec.kind === "env" ? groupBlocks(cols) : [];
   const sepAt = new Set(blocks.filter((b) => b.name).map((b) => b.first));
   const mark = (key) => (sort.key === key ? (sort.desc ? " ▾" : " ▴") : "");
 
   const groupRow = blocks.length
-    ? `<tr class="blocks"><th class="model"></th>${blocks.map((b) =>
+    ? `<tr class="blocks"><th class="model"></th><th></th><th></th>${blocks.map((b) =>
       `<th class="block${sepAt.has(b.first) ? " sep" : ""}" colspan="${b.n}" title="${esc(b.name)}">${esc(b.name.replace("_", " "))}</th>`).join("")}</tr>`
     : "";
   const head = `<tr><th class="model${sort.key ? "" : " sorted"}" data-sort="" title="reign order (newest first)">model</th>`
+    + `<th class="col total${sort.key === "total" ? " sorted" : ""}" data-sort="total" title="${esc(commonTitle)}\nclick to sort">total${mark("total")}</th>`
+    + `<th class="col full${sort.key === "full" ? " sorted" : ""}" data-sort="full" title="${esc(fullTitle)}\nclick to sort">full${mark("full")}</th>`
     + cols.map((c) => {
       const cls = ["col", c.kind, sepAt.has(c.key) ? "sep" : "", sort.key === c.key ? "sorted" : ""].filter(Boolean).join(" ");
       const title = `${c.label}${c.kind === "env" && c.group ? ` · ${c.group}` : ""}${c.kind === "bench" && c.n ? ` · n = ${c.n}` : ""}${c.note ? `\n${c.note}` : ""}\nclick to sort`;
@@ -155,21 +199,33 @@ function renderTable(m, spec) {
 
   const body = rows.map((r) => {
     const cls = [r.kind, r.current ? "current" : ""].filter(Boolean).join(" ");
+    const t = tot.get(r.key);
+    const d = spec.kind === "env" ? 0 : 1;
+    const totalTip = `${rowName(r)} · total (common columns)\n`
+      + (t.common != null ? `${fmt(t.common)} over ${common.length} columns` + (t.commonDelta != null ? ` · teacher on the same columns → Δ ${signed(t.commonDelta)} pt` : "")
+        : t.running ? "benchmark pass running — total appears when its cells land" : "no value on one of the common columns")
+      + `\n${common.map((c) => c.short || c.abbr || c.label).join(", ")}`;
+    const fullTip = `${rowName(r)} · full total\n` + (t.full != null ? `${fmt(t.full)} over all ${cols.length} columns` + (t.fullDelta != null ? ` · Δ ${signed(t.fullDelta)} pt vs teacher` : "")
+      : `blank: the row has ${cols.filter((c) => hasValue(r, c.key)).length} of ${cols.length} columns`);
+    const totalTd = `<td class="cell total${t.common == null ? " blank" : ""} duel-hit" data-tip="${esc(totalTip)}"`
+      + `${t.common != null && r.kind !== "teacher" ? ` style="${tint(t.commonDelta)}"` : ""}>${t.common != null ? fmt(t.common, d) : t.running ? "…" : "·"}</td>`;
+    const fullTd = `<td class="cell full${t.full == null ? " blank" : ""} duel-hit" data-tip="${esc(fullTip)}">${t.full != null ? fmt(t.full, d) : "·"}</td>`;
     const cells = cols.map((c) => {
       const cell = r.cells[c.key];
       const has = cell && cell.score != null;
-      const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? "" : "blank"].filter(Boolean).join(" ");
+      const running = !has && cell && cell.running;
+      const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? "" : running ? "running" : "blank"].filter(Boolean).join(" ");
       const style = has && r.kind !== "teacher" ? tint(cell.delta) : "";
       return `<td class="${tcls} duel-hit" data-tip="${esc(cellTip(r, c, cell, teacher.cells[c.key]))}"`
-        + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, spec.kind === "env" ? 0 : 1) : "·"}</td>`;
+        + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) : running ? "…" : "·"}</td>`;
     }).join("");
     return `<tr class="${cls}"><td class="model duel-hit" data-tip="${esc(rowTip(r))}">`
-      + `<span class="name">${esc(rowName(r))}</span>${r.current ? `<i class="cur" title="current king"></i>` : ""}</td>${cells}</tr>`;
+      + `<span class="name">${esc(rowName(r))}</span>${r.current ? `<i class="cur" title="current king"></i>` : ""}</td>${totalTd}${fullTd}${cells}</tr>`;
   }).join("");
 
   wrap.innerHTML = `<table class="data-table kings ${spec.kind}"><thead>${groupRow}${head}</thead><tbody>${body}</tbody></table>`;
   const meta = $(`${spec.id}-meta`);
-  if (meta) meta.textContent = `${cols.length - 1} columns · ${rows.length} of ${m.rows.length} rows · ${spec.caption}`;
+  if (meta) meta.textContent = `${cols.length} columns · total = mean over the ${common.length} columns every row with data shares · ${rows.length} of ${m.rows.length} rows · ${spec.caption}`;
 }
 
 // -- Dataset D: columns = sources (+ king groups), rows = metrics ----------
