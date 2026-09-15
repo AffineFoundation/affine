@@ -11,7 +11,10 @@ from dataclasses import dataclass
 import httpx
 import orjson
 
+from affine import dialects
+
 from .chat import (
+    TEXT_FALLBACK_KINDS,
     chat_prompt,
     extract_action,
     force_text,
@@ -128,6 +131,11 @@ class ModelPool:
         return sum(r.n_think_closed for r in self.replicas)
 
     @property
+    def n_text_fallback(self) -> int:
+        """Samples split as a prose `text` action at a tool_call turn (wvk 18)."""
+        return sum(r.n_text_fallback for r in self.replicas)
+
+    @property
     def think_close_rate(self) -> float | None:
         """Fraction of natural samples that emitted </think> (all replicas)."""
         n = self.n_samples
@@ -182,7 +190,8 @@ class ModelPool:
 
 class VllmModel:
     def __init__(self, cfg: Served, client: httpx.AsyncClient, sem: asyncio.Semaphore,
-                 require_think_close: bool = False):
+                 require_think_close: bool = False,
+                 text_fallback_at_tool_turns: bool = False):
         self.cfg = cfg
         if cfg.base_url:
             self.base = cfg.base_url.rstrip("/")
@@ -199,6 +208,10 @@ class VllmModel:
         # or not the knob is on, so the live rate is known before any flip.
         self.n_samples = 0
         self.n_think_closed = 0
+        # [duel].text_fallback_at_tool_turns (wvk 18): a closed-think prose
+        # reply at a tool_call turn is a `text` action. Counted per sample.
+        self.text_fallback_at_tool_turns = text_fallback_at_tool_turns
+        self.n_text_fallback = 0
 
     async def _post(self, payload: dict) -> dict:
         # Keep per-request timeout under vLLM hang windows but above worst-case
@@ -267,8 +280,14 @@ class VllmModel:
         text = d["choices"][0]["text"]
         self.n_samples += 1
         self.n_think_closed += int(think_closed(text))
-        return split_rollout(text, action_kind,
-                             require_think_close=self.require_think_close)
+        z, y = split_rollout(text, action_kind,
+                             require_think_close=self.require_think_close,
+                             text_fallback_at_tool_turns=self.text_fallback_at_tool_turns)
+        if (y and self.text_fallback_at_tool_turns
+                and (action_kind or dialects.DEFAULT_KIND) in TEXT_FALLBACK_KINDS
+                and dialects.count_actions(y, action_kind) == 0):
+            self.n_text_fallback += 1
+        return z, y
 
     async def complete(self, messages: list[dict], temperature: float,
                        max_tokens: int, *, tools: list[dict] | None = None
