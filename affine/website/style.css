@@ -1921,18 +1921,16 @@ table.data-table td.audit-summary {
   }
 }
 
-/* ---------- kings vs teacher matrix (#kings) ---------- */
+/* ---------- kings vs teacher matrix (#kings): two stacked tables ---------- */
 .kings-bar {
   display: flex;
   align-items: center;
   gap: 8px 14px;
   flex-wrap: wrap;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
-.kings-bar .note {
-  flex: 1 1 320px;
-}
+.kings-bar .note { flex: 1 1 320px; }
 
 .kings-toggle {
   border: 1px solid var(--color-border);
@@ -1945,25 +1943,54 @@ table.data-table td.audit-summary {
   white-space: nowrap;
 }
 
-.kings-toggle:hover {
-  color: var(--color-fg);
-  border-color: var(--color-border-hover);
+.kings-toggle:hover { color: var(--color-fg); border-color: var(--color-border-hover); }
+
+.kings-sub {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 14px 0 6px;
 }
 
-#kings-wrap { max-height: 70vh; overflow: auto; }
+.kings-sub-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-gold);
+}
+
+#kings-bench-wrap, #kings-env-wrap { overflow: auto; }
 
 table.data-table.kings {
   width: 100%;
-  font-size: 11px;
+  font-size: 10.5px;
 }
 
+table.data-table.kings thead { position: static; }
+
 table.data-table.kings th {
-  padding: 6px 4px;
+  padding: 5px 3px;
   font-size: 9px;
   letter-spacing: 0.02em;
   text-align: right;
   cursor: pointer;
   user-select: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+table.data-table.kings tr.blocks th {
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  color: var(--color-gold);
+  text-align: left;
+  border-bottom: 0;
+  padding: 2px 3px 0;
+  cursor: default;
+  max-width: 0;          /* colspan cells never widen their columns */
+  white-space: nowrap;
 }
 
 table.data-table.kings th.model,
@@ -1976,20 +2003,26 @@ table.data-table.kings td.model {
   padding-left: 6px;
   padding-right: 10px;
   white-space: nowrap;
+  width: 1%;
 }
 
 table.data-table.kings th.sorted { color: var(--color-gold); }
-table.data-table.kings th.total,
-table.data-table.kings td.total { border-right: 1px solid var(--color-border-hover); font-weight: 500; }
-table.data-table.kings th.first-env,
-table.data-table.kings td.first-env { border-left: 1px solid var(--color-border-hover); }
+table.data-table.kings th.total_bench, table.data-table.kings td.total_bench,
+table.data-table.kings th.total_env, table.data-table.kings td.total_env {
+  border-right: 1px solid var(--color-border-hover);
+  font-weight: 500;
+}
+table.data-table.kings th.sep, table.data-table.kings td.sep { border-left: 1px solid var(--color-border-hover); }
 
 table.data-table.kings td {
-  padding: 5px 4px;
+  padding: 4px 3px;
+  text-align: right;
   color: var(--color-fg);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
+table.data-table.kings.env td, table.data-table.kings.env th { padding-left: 2px; padding-right: 2px; }
 table.data-table.kings td.blank { color: var(--color-fg-4); text-align: center; }
 table.data-table.kings tr.teacher td { color: var(--color-fg-2); border-bottom: 1px solid var(--color-border-hover); }
 table.data-table.kings tr.teacher td.model .name { color: var(--color-accent); }
@@ -2001,15 +2034,20 @@ table.data-table.kings tbody tr.current td { background: none; }
 table.data-table.kings tbody tr.current td.model { box-shadow: inset 3px 0 0 var(--color-gold); }
 table.data-table.kings td.model .cur {
   display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-left: 6px;
+  width: 5px;
+  height: 5px;
+  margin-left: 5px;
   border-radius: 50%;
   background: var(--color-gold);
   vertical-align: middle;
 }
 
+@media (max-width: 1100px) {
+  table.data-table.kings.env { font-size: 9.5px; }
+  table.data-table.kings.env th { font-size: 8px; }
+  table.data-table.kings.env td, table.data-table.kings.env th { padding-left: 1px; padding-right: 1px; }
+}
+
 @media (max-width: 720px) {
-  table.data-table.kings th,
-  table.data-table.kings td { padding: 6px 4px; font-size: 10px; }
+  table.data-table.kings th, table.data-table.kings td { padding: 5px 3px; font-size: 10px; }
 }
