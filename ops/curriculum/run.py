@@ -89,7 +89,7 @@ def top10_cards(snapshot: Path, rows_path: Path) -> None:
     (snapshot / "top10_cards.md").write_text("".join(out), encoding="utf-8")
 
 
-RULE_SHARE_KEYS = {"v1": "share_after_clamp", "v1.1": "share_v11_after_clamp", "v1.2": "share_v12_after_clamp"}
+RULE_SHARE_KEYS = {"v1": "share_v1_after_clamp", "v1.1": "share_v11_after_clamp", "v1.2": "share_v12_after_clamp"}
 
 
 def per_rule_criterion(*, cfg: dict, groups: dict, prev_groups: dict | None, rows_path: Path,
@@ -116,8 +116,9 @@ def per_rule_criterion(*, cfg: dict, groups: dict, prev_groups: dict | None, row
             stab = {"pass": worst[1] < cfg["max_share_shift"], "max_abs_delta": clean_float(worst[1]), "group": worst[0]}
         out[name] = {
             "counted": name == str(cfg.get("counted_rule") or "v1"), "shares": {g: clean_float(v) for g, v in sorted(shares.items())},
-            "3_counterfactual_plan": {"pass": bool(cf["pass"]), "mean_abs_z_shift": cf["mean_abs_z_shift"],
-                                      "sign_flips_abs_z_ge_2": cf["sign_flips_abs_z_ge_2"]},
+            "3_counterfactual_amended": {"pass": bool(cf["pass_amended"]), "mean_abs_z_shift": cf["mean_abs_z_shift"],
+                                         "sign_flips_abs_z_ge_2": cf["sign_flips_abs_z_ge_2"], "band": cf["amended_band"]},
+            "3a_counterfactual_original_plan": {"pass": bool(cf["pass"])},
             "3b_counterfactual_variant": {"pass": bool(cf["pass_variant"])},
             "4_stable_vs_previous": stab if stab else {"pass": None},
             "5_recurrence": {"pass": not over_g and proj["max_turn_draws_per_duel"] <= cfg["recurrence_turn_cap"],
@@ -138,9 +139,13 @@ def criterion(*, cfg: dict, ledger_doc: dict, rebuild_ok: bool | None, groups: d
                                       if rebuild_ok is not None else "not run this cycle"}
     jr = (ledger_doc.get("window") or {}).get("join_rate")
     items["2_turn_join_ge_95pct"] = {"pass": jr is not None and jr >= 0.95, "join_rate": jr}
-    items["3_counterfactual"] = {"pass": bool(cf.get("pass")), "mean_abs_z_shift": cf.get("mean_abs_z_shift"),
+    items["3_counterfactual"] = {"pass": bool(cf.get("pass_amended")), "mean_abs_z_shift": cf.get("mean_abs_z_shift"),
                                  "sign_flips_abs_z_ge_2": cf.get("sign_flips_abs_z_ge_2"),
-                                 "rule": f"plan §7.3: |mean |z| shift| <= {cf.get('tolerance_abs_z_shift')} and 0 flips at |z| >= 2"}
+                                 "rule": f"coordinator amendment 2026-09-15 01:05 UTC: 0 sign flips at |z| >= 2 AND mean |z| "
+                                         f"change within {cf.get('amended_band')} (original plan §7.3: within ±"
+                                         f"{cf.get('tolerance_abs_z_shift')}; kept as 3a_original_plan_informational)"}
+    items["3a_original_plan_informational"] = {"pass": bool(cf.get("pass")), "counted": False,
+                                               "rule": f"plan §7.3 as written: |shift| <= {cf.get('tolerance_abs_z_shift')}, 0 flips"}
     # printed next to item 3, not counted (operator 2026-09-15 00:39 UTC: adopt at fold 3 if fold 2 shows the same shape)
     items["3b_counterfactual_variant_informational"] = {
         "pass": bool(cf.get("pass_variant")), "counted": False,
@@ -163,7 +168,7 @@ def criterion(*, cfg: dict, ledger_doc: dict, rebuild_ok: bool | None, groups: d
     fc = groups["floors_check"]
     items["6_floors_and_cap_hold"] = {"pass": bool(fc["ok"]), **{k: v for k, v in fc.items() if k != "ok"}}
     items["7_hand_read_top10"] = {"pass": None, "detail": "manual: read top10_cards.md; ≥ 7 of 10 decision states"}
-    informational = {"7_hand_read_top10", "3b_counterfactual_variant_informational"}
+    informational = {"7_hand_read_top10", "3a_original_plan_informational", "3b_counterfactual_variant_informational"}
     auto = [v["pass"] for k, v in items.items() if k not in informational]
     return {
         "counts_as_shadow_fold": n_new_verdicts >= cfg["min_new_verdicts"],
@@ -220,6 +225,49 @@ def write_fold_vector(cfg: dict, latest: dict, groups: dict, snapshot: Path) -> 
     write_json(doc, path)
     write_json(doc, snapshot / "fold_vector.json")
     return path
+
+
+DECISION_ITEMS = ("1_rebuild_sha_matches", "2_turn_join_ge_95pct", "3_counterfactual", "4_shadow_vector_stable",
+                  "5_recurrence_within_cap", "6_floors_and_cap_hold", "7_hand_read_top10")
+
+
+def shadow_fold_history(counted_rule: str) -> list[dict]:
+    """Previous runs that COUNT as shadow folds for this counted rule (>= min_new_verdicts new verdicts)."""
+    if not CRITERION_HISTORY.is_file():
+        return []
+    out = []
+    for line in CRITERION_HISTORY.read_text().splitlines():
+        if not line.strip():
+            continue
+        r = json.loads(line)
+        if r.get("counts_as_shadow_fold") and r.get("counted_rule", "v1") == counted_rule:
+            out.append(r)
+    return out
+
+
+def decision_table(crit: dict) -> str:
+    """The fold-3 apply decision, mechanical: every item PASS on shadow folds
+    2 and 3 (counted rule v1.2, coordinator amendment 2026-09-15 01:05 UTC)
+    -> APPLY; item 7 is the hand read; a FAIL -> one retry fold; a second
+    FAIL -> mode stays shadow."""
+    prev = shadow_fold_history(crit["counted_rule"])[-2:]
+    cols = [(r["computed_at"][:16], r["items"]) for r in prev] + [("this run", {k: v["pass"] for k, v in crit["items"].items()})]
+    fl = lambda x: "PASS" if x is True else "FAIL" if x is False else "n/a "  # noqa: E731
+    head = f"  === fold-3 decision table (counted rule {crit['counted_rule']}; APPLY iff every row PASS on two counting shadow folds) ==="
+    lines = [head, "  item".ljust(34) + "".join(c[0].ljust(18) for c in cols)]
+    for item in DECISION_ITEMS:
+        lines.append(f"  {item}".ljust(34) + "".join(fl(c[1].get(item)).ljust(18) for c in cols))
+    counting = [c for c in cols[:-1]] + ([cols[-1]] if crit["counts_as_shadow_fold"] else [])
+    two = counting[-2:]
+    if len(two) < 2:
+        verdict = f"HOLD -- {len(two)} counting shadow fold(s) so far, need 2"
+    else:
+        auto_ok = all(c[1].get(i) is True for c in two for i in DECISION_ITEMS if i != "7_hand_read_top10")
+        hand = [c[1].get("7_hand_read_top10") for c in two]
+        verdict = ("APPLY (pending item 7 hand read)" if auto_ok and not all(h is True for h in hand)
+                   else "APPLY" if auto_ok else "RETRY/HOLD -- an automatic item failed on one of the two folds")
+    lines.append(f"  verdict: {verdict}")
+    return "\n".join(lines)
 
 
 def previous_snapshot() -> tuple[dict | None, Path | None]:
@@ -299,14 +347,19 @@ def main() -> None:
                                          rows_path=LEDGER_DIR / f"{lsha}.rows.parquet", strata_m=strata_m,
                                          static=static_mix)
     crit["counted_rule"] = str(cfg.get("counted_rule") or "v1")
-    crit["pending_decision"] = ("coordinator 2026-09-15 00:55 UTC: v1.2 becomes the counted rule at fold 3 if it moves "
-                                "the vector toward the king groups as phase 9 did; v1 counted until then")
+    crit["amendment"] = ("coordinator 2026-09-15 01:05 UTC: counted rule v1.2 from fold 2; item 3 = 0 flips at |z| >= 2 AND "
+                         "mean |z| change in [-10 %, +50 %]; recurrence cap (<= 0.18 draws/turn/duel) and floors are hard; "
+                         "item 4 measured v1.2-vs-v1.2 across folds 2 and 3; recurrence over cap lowers k before share")
+    crit["decision_table"] = decision_table(crit)
     write_json(crit["by_rule"], snapshot / "criterion_by_rule.json")
     crit["weights_sha256"] = wsha
     crit["ledger_sha256"] = lsha
     crit["computed_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     write_json(crit, snapshot / "criterion.json")
     (snapshot / "diff.md").write_text(build_diff(snapshot, prev_dir), encoding="utf-8")
+    with open(snapshot / "diff.md", "a", encoding="utf-8") as f:
+        f.write("\n12. **Fold-3 decision table** (coordinator amendment 2026-09-15 01:05 UTC):\n\n```\n"
+                + crit["decision_table"] + "\n```\n")
 
     for_epoch = int(rule_doc["corpus_epoch"]) + 1
     latest = {
@@ -329,14 +382,15 @@ def main() -> None:
     for k, v in crit["items"].items():
         print(f"  {k}: {'PASS' if v['pass'] is True else 'FAIL' if v['pass'] is False else 'n/a'}  "
               f"{ {kk: vv for kk, vv in v.items() if kk != 'pass'} }")
-    print("  --- per rule (v1 counted; v1.1 / v1.2 informational) ---")
+    print(f"  --- per rule (* = counted rule {crit['counted_rule']}; the others informational) ---")
     for name, r in crit["by_rule"].items():
         flag = lambda x: "PASS" if x is True else "FAIL" if x is False else "n/a"  # noqa: E731
-        print(f"  {name:5s} cf-plan {flag(r['3_counterfactual_plan']['pass'])} ({100 * (r['3_counterfactual_plan']['mean_abs_z_shift'] or 0):+.1f}%, "
-              f"flips {len(r['3_counterfactual_plan']['sign_flips_abs_z_ge_2'])}) · cf-variant {flag(r['3b_counterfactual_variant']['pass'])} · "
+        print(f"  {name:5s}{' *' if r['counted'] else '  '} cf-amended {flag(r['3_counterfactual_amended']['pass'])} ({100 * (r['3_counterfactual_amended']['mean_abs_z_shift'] or 0):+.1f}%, "
+              f"flips {len(r['3_counterfactual_amended']['sign_flips_abs_z_ge_2'])}) · cf-plan-orig {flag(r['3a_counterfactual_original_plan']['pass'])} · "
               f"stable {flag(r['4_stable_vs_previous']['pass'])} · recurrence {flag(r['5_recurrence']['pass'])} "
               f"({r['5_recurrence']['max_turn_draws_per_duel']:.3f}) · floors {flag(r['6_floors_and_cap']['pass'])} · "
               + ", ".join(f"{g} {100 * v:.1f}" for g, v in sorted(r["shares"].items(), key=lambda kv: -kv[1])[:6]))
+    print(decision_table(crit))
     print(f"  counts_as_shadow_fold={crit['counts_as_shadow_fold']} (n_new_verdicts={n_new}); "
           f"automatic_items_pass={crit['automatic_items_pass']} pending={crit['automatic_items_pending']}")
     print((snapshot / "diff.md").read_text())
@@ -350,12 +404,13 @@ def main() -> None:
     write_json(latest, LATEST_PATH)
     with open(CRITERION_HISTORY, "a", encoding="utf-8") as f:
         f.write(json.dumps({"computed_at": crit["computed_at"], "weights_sha256": wsha, "ledger_sha256": lsha,
+                            "counted_rule": crit["counted_rule"],
                             "for_epoch": for_epoch, "counts_as_shadow_fold": crit["counts_as_shadow_fold"],
                             "automatic_items_pass": crit["automatic_items_pass"],
                             "items": {k: v["pass"] for k, v in crit["items"].items()}}, sort_keys=True) + "\n")
     moves = sorted(((g, shares[g] - (groups["groups"][g]["share_current"] or 0)) for g in shares),
                    key=lambda kv: -abs(kv[1]))[:3]
-    line = (f"curriculum {rule_doc['mode']} v{rule_doc['rule_version']}: ledger `{lsha[:12]}` "
+    line = (f"curriculum {rule_doc['mode']} rule {crit['counted_rule']} (v{rule_doc['rule_version']} family): ledger `{lsha[:12]}` "
             f"({ledger_doc['window']['n_verdicts']} verdicts, +{n_new}, θ {rule_doc['theta']:.4f}), weights "
             f"`{wsha[:12]}` for epoch {for_epoch}; top moves shadow vs live: "
             + ", ".join(f"{g} {100 * d:+.1f}pt" for g, d in moves)

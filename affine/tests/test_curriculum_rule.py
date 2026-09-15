@@ -217,7 +217,8 @@ class MultiplicityTests(unittest.TestCase):
                   "b": {"group": "g", "w": 2.0, "n_turns": 10, "m": 3}}
         p = rule.recurrence_projection(strata, {"g": 0.5}, slice_n=1300)
         self.assertAlmostEqual(p["groups"]["g"]["expected_draws_per_turn_per_duel"], 650 / 20)
-        self.assertAlmostEqual(p["per_stratum"]["b"], 650 * 3 / 4 / 10)
+        # a stratum is drawn at most m times per duel: min(650 * 3/4, 3) / 10
+        self.assertAlmostEqual(p["per_stratum"]["b"], 3 / 10)
         self.assertEqual(p["max_turn_stratum"], "b")
 
 
@@ -247,3 +248,32 @@ class DeterminismTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecurrenceGuardTests(unittest.TestCase):
+    def test_lowers_m_before_share(self):
+        # one 1-turn stratum with m = 3 in a group that owns 10 % of a 1300 slice
+        strata = {"a": {"group": "g", "w": 1.0, "n_turns": 1, "m": 3},
+                  "b": {"group": "g", "w": 1.0, "n_turns": 1000, "m": 1},
+                  "c": {"group": "h", "w": 1.0, "n_turns": 50000, "m": 1}}
+        shares = {"g": 0.10, "h": 0.90}
+        r = rule.recurrence_guard(strata, shares, group_cap=0.18, turn_cap=0.20)
+        self.assertEqual(strata["a"]["m"], 1)           # k lowered first (3 -> 2 -> 1)
+        # the 1-turn stratum is still drawn on every duel at m = 1 (2 strata, 130 slots):
+        # only now the share is cut so that 1300 * share / 2 <= 0.20
+        self.assertAlmostEqual(r["shares"]["g"], 0.20 * 1 * 2 / 1300)
+        self.assertTrue(r["ok"])
+        self.assertTrue(r["actions"][0].startswith("m a -> 2"))
+        self.assertTrue(r["actions"][1].startswith("m a -> 1"))
+        self.assertTrue(r["actions"][2].startswith("share g"))
+
+    def test_lowers_share_only_after_m_is_one(self):
+        strata = {"a": {"group": "g", "w": 1.0, "n_turns": 10, "m": 1},
+                  "c": {"group": "h", "w": 1.0, "n_turns": 50000, "m": 1}}
+        r = rule.recurrence_guard(strata, {"g": 0.10, "h": 0.90}, group_cap=0.18, turn_cap=0.20)
+        # 130 slots over 10 turns = 13 draws/turn -> share cut to 0.18 * 10 / 1300
+        self.assertAlmostEqual(r["shares"]["g"], 0.18 * 10 / 1300)
+        self.assertAlmostEqual(sum(r["shares"].values()), 1.0)
+        self.assertTrue(r["ok"])
+        self.assertTrue(any(a.startswith("share g") for a in r["actions"]))
+

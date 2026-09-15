@@ -286,7 +286,9 @@ def recurrence_projection(strata: dict[str, dict], shares: dict[str, float], *,
         turns = sum(int(strata[k].get("n_turns") or 1) for k in keys) or 1
         worst = (0.0, "")
         for k in keys:
-            per_turn = slots * float(strata[k].get("m") or 1) / m_tot / max(1, int(strata[k].get("n_turns") or 1))
+            m_k = float(strata[k].get("m") or 1)
+            # a stratum is drawn at most m_k times per duel (one turn per sub-stratum)
+            per_turn = min(slots * m_k / m_tot, m_k) / max(1, int(strata[k].get("n_turns") or 1))
             per_stratum[k] = per_turn
             if per_turn > worst[0]:
                 worst = (per_turn, k)
@@ -297,6 +299,63 @@ def recurrence_projection(strata: dict[str, dict], shares: dict[str, float], *,
             max_turn = worst
     return {"groups": groups_out, "max_turn_draws_per_duel": max_turn[0],
             "max_turn_stratum": max_turn[1], "per_stratum": per_stratum}
+
+
+def recurrence_guard(strata: dict[str, dict], shares: dict[str, float], *, group_cap: float,
+                     turn_cap: float, slice_n: int = SLICE_N, max_iter: int = 10) -> dict:
+    """Coordinator amendment 2026-09-15 01:05 UTC: the recurrence cap is a
+    hard safety item. If the counted vector would exceed it, lower the
+    multiplicity m of the offending strata FIRST (3 -> 2 -> 1); only when
+    every stratum of a group is at m = 1 and the group's expected draws per
+    turn per duel still exceed group_cap is the group's share lowered to
+    the cap level (share <= group_cap * n_turns / slice_n) and the freed
+    mass spread over the other groups. Mutates `m` in place; returns the
+    (possibly lowered) shares and a log of what it did."""
+    actions: list[str] = []
+    shares = dict(shares)
+    for _ in range(max_iter):
+        proj = recurrence_projection(strata, shares, slice_n=slice_n)
+        changed = False
+        # 1. single-turn cap: lower m on the strata over the cap
+        for s, per_turn in sorted(proj["per_stratum"].items()):
+            if per_turn > turn_cap + 1e-9 and int(strata[s].get("m") or 1) > 1:
+                strata[s]["m"] = int(strata[s]["m"]) - 1
+                actions.append(f"m {s} -> {strata[s]['m']} (turn draws {per_turn:.3f} > {turn_cap})")
+                changed = True
+        if changed:
+            continue
+        # 2. group cap, and single turns still over the cap at m = 1 (a 1-turn
+        #    stratum drawn on most duels): only now lower the group's share
+        over = {g: d for g, d in proj["groups"].items() if d["expected_draws_per_turn_per_duel"] > group_cap + 1e-9}
+        for s, per_turn in proj["per_stratum"].items():
+            if per_turn > turn_cap + 1e-9 and int(strata[s].get("m") or 1) <= 1:
+                g = strata[s]["group"]
+                d = proj["groups"][g]
+                m_tot = sum(float(strata[k].get("m") or 1) for k, r in strata.items() if r["group"] == g) or 1.0
+                # per_turn = slots / m_tot / n_turns <= turn_cap  ->  share <= turn_cap * n_turns * m_tot / slice_n
+                ceiling = turn_cap * max(1, int(strata[s].get("n_turns") or 1)) * m_tot / slice_n
+                if ceiling < shares.get(g, 0.0):
+                    over[g] = {**d, "_ceiling": min(ceiling, d.get("_ceiling", 1.0))}
+        if not over:
+            break
+        if len(over) == len(shares):
+            actions.append("every group over the cap: nothing to move mass to (slice larger than D allows)")
+            break
+        for g, d in sorted(over.items()):
+            ceiling = min(group_cap * d["n_turns"] / slice_n, d.get("_ceiling", 1.0))
+            actions.append(f"share {g} {shares[g]:.4f} -> {ceiling:.4f} (group draws {d['expected_draws_per_turn_per_duel']:.3f} > {group_cap})")
+            shares[g] = ceiling
+        tot_fixed = sum(shares[g] for g in over)
+        rest = [g for g in shares if g not in over]
+        rest_tot = sum(shares[g] for g in rest) or 1.0
+        for g in rest:
+            shares[g] = shares[g] * (1.0 - tot_fixed) / rest_tot
+    proj = recurrence_projection(strata, shares, slice_n=slice_n)
+    return {"shares": shares, "actions": actions,
+            "max_turn_draws_per_duel": proj["max_turn_draws_per_duel"],
+            "max_group_draws": max((d["expected_draws_per_turn_per_duel"] for d in proj["groups"].values()), default=0.0),
+            "ok": proj["max_turn_draws_per_duel"] <= turn_cap + 1e-12
+                  and all(d["expected_draws_per_turn_per_duel"] <= group_cap + 1e-12 for d in proj["groups"].values())}
 
 
 def check_floors(shares: dict[str, float], static: dict[str, float], *, floor_frac: float,

@@ -158,14 +158,19 @@ def build_diff(new: Path, prev: Path | None) -> str:
         fl = lambda x: "PASS" if x is True else "FAIL" if x is False else "n/a"  # noqa: E731
         parts = []
         for name, r in cbr.items():
-            parts.append(f"{name}{' (counted)' if r.get('counted') else ''}: counterfactual plan "
-                         f"{fl(r['3_counterfactual_plan']['pass'])} ({100 * (r['3_counterfactual_plan']['mean_abs_z_shift'] or 0):+.1f} %, "
-                         f"{len(r['3_counterfactual_plan']['sign_flips_abs_z_ge_2'])} flips) / variant {fl(r['3b_counterfactual_variant']['pass'])} · "
+            parts.append(f"{name}{' (counted)' if r.get('counted') else ''}: counterfactual amended "
+                         f"{fl(r['3_counterfactual_amended']['pass'])} ({100 * (r['3_counterfactual_amended']['mean_abs_z_shift'] or 0):+.1f} %, "
+                         f"{len(r['3_counterfactual_amended']['sign_flips_abs_z_ge_2'])} flips) / original plan "
+                         f"{fl(r['3a_counterfactual_original_plan']['pass'])} · "
                          f"stable {fl(r['4_stable_vs_previous'].get('pass'))} · recurrence {fl(r['5_recurrence']['pass'])} "
                          f"({_f(r['5_recurrence']['max_turn_draws_per_duel'], 3)}) · floors {fl(r['6_floors_and_cap']['pass'])}")
-        lines.append("11. **Criterion per rule** (items 3–6; 1, 2 and 7 are rule-independent): " + "; ".join(parts)
-                     + ". Decision pending (coordinator 2026-09-15 00:55 UTC): v1.2 becomes the counted rule at fold 3 if it "
-                       "moves the vector toward the king groups as phase 9 did; v1 counted until then.")
+        lines.append("11. **Criterion per rule** (items 3–6; 1, 2 and 7 are rule-independent; item 3 as amended by the "
+                     "coordinator 2026-09-15 01:05 UTC = 0 sign flips at |z| ≥ 2 AND mean |z| change within [−10 %, +50 %] — "
+                     "concentrating signal is the intended effect; recurrence cap ≤ 0.18 draws/turn/duel and the floors are the "
+                     "hard safety items; over-cap recurrence lowers multiplicity k before share): " + "; ".join(parts)
+                     + f". Counted rule: {grp_n.get('counted_rule', 'v1')}"
+                     + (f"; recurrence guard actions: {(grp_n.get('recurrence_guard') or {}).get('n_actions', 0)}" if grp_n.get("recurrence_guard") else "")
+                     + ".")
     head = (f"# Curriculum diff — epoch {rule_n['corpus_epoch']} → next fold\n\n"
             f"Computed {rule_n.get('computed_at')} UTC. Files: `rule.json`, `weights.parquet`, `groups.json`, "
             f"`recurrence.json`, `deficit_by_source.json`, `counterfactual.json`, `criterion.json`.\n\n")

@@ -232,12 +232,19 @@ def compute(args) -> dict:
     vec_m_only = rule.group_vector(rule.shares_by_slice_key(strata, index_rows, "w_m_only"), static, current, **fill_kw)
     vec_v11 = rule.group_vector(rule.shares_by_slice_key(strata, index_rows, "w_v11"), static, current, **fill_kw)
     vec_v12 = rule.group_vector(rule.shares_by_slice_key(strata, index_rows, "w_v12"), static, current, **fill_kw)
+    vec_v1 = rule.group_vector(rule.shares_by_slice_key(strata, index_rows, "w"), static, current, **fill_kw)
     all_groups = sorted(set(current) | groups)
     floors_only = rule.constrained_fill(
         {g: current.get(g, 0.0) for g in all_groups},
         {g: (fill_kw["floor_frac"] * static.get(g, 0.0) if current.get(g, 0.0) > 0 else 0.0) for g in all_groups},
         {g: (fill_kw["cap"] if current.get(g, 0.0) > 0 else 0.0) for g in all_groups})
     means = rule.group_means_by_slice_key(strata, index_rows, ("M_t", "S_t", "w", "w_v11", "F_t", "Dp_t", "M12_t", "w_v12"))
+    # recurrence guard on the counted vector: lower k before share (hard cap)
+    guard = rule.recurrence_guard(strata, vec["after_clamp"], group_cap=float(cfg["recurrence_group_cap"]),
+                                  turn_cap=float(cfg["recurrence_turn_cap"]))
+    if guard["actions"]:
+        log(f"weights: recurrence guard -- {len(guard['actions'])} actions, e.g. {guard['actions'][:3]}")
+    vec["after_clamp"] = guard["shares"]
     applied = vec["after_clamp"] if mode == "apply" else current
     proj_shadow = rule.recurrence_projection(strata, vec["after_clamp"])
     proj_applied = rule.recurrence_projection(strata, applied)
@@ -298,6 +305,10 @@ def compute(args) -> dict:
             "mean_w_slice_keys": clean_float((means.get(g) or {}).get("w")),
             "share_m_only_raw": clean_float(vec_m_only["raw"].get(g, 0.0)),
             "share_m_only_after_clamp": clean_float(vec_m_only["after_clamp"].get(g, 0.0)),
+            "share_v1_raw": clean_float(vec_v1["raw"].get(g, 0.0)),
+            "share_v1_after_floor": clean_float(vec_v1["after_floor"].get(g, 0.0)),
+            "share_v1_after_clamp": clean_float(vec_v1["after_clamp"].get(g, 0.0)),
+            "v1_reason": vec_v1["reasons"].get(g, "no_supply"),
             "share_v11_raw": clean_float(vec_v11["raw"].get(g, 0.0)),
             "share_v11_after_floor": clean_float(vec_v11["after_floor"].get(g, 0.0)),
             "share_v11_after_clamp": clean_float(vec_v11["after_clamp"].get(g, 0.0)),
@@ -326,6 +337,11 @@ def compute(args) -> dict:
     groups_doc = {"mode": mode, "rule_version": int(cfg["rule_version"]), "weights_sha256": wsha,
                   "share_unit": share_unit, "theta": ledger_doc.get("theta"),
                   "counted_rule": counted,
+                  "recurrence_guard": {"actions": guard["actions"][:200], "n_actions": len(guard["actions"]),
+                                       "ok": guard["ok"], "max_turn_draws_per_duel": clean_float(guard["max_turn_draws_per_duel"]),
+                                       "max_group_draws": clean_float(guard["max_group_draws"]),
+                                       "rule": "lower m (3->2->1) on strata over recurrence_turn_cap, then lower a group's "
+                                               "share to recurrence_group_cap * n_turns / 1300 -- k before share"},
                   "v11": {"informational": True, "rule": "w = (M~ + eps)^gamma if S~ >= s_gate else 0",
                           "s_gate": s_gate, "counted": False},
                   "v12": {"informational": True, "counted": False, "s_gate": s_gate,
