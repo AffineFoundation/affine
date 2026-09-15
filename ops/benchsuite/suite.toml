@@ -88,6 +88,7 @@ tool_call_parser = "qwen3_xml"
 [modes]
 default = "lium"            # operator decision 2026-09-13 (later the same day): in-house GPUs paid in TAO
 lium_plan = "h200-1x"       # [pods.plans.*]: 1x H200 = one TP1 replica, ~$3/h; the whole pass runs on that pod
+lium_plan_fallbacks = ["b200-1x"]   # tried in order when the primary plan has no stock
 # Sandbox sets on Lium: the pod's docker runs SWE-bench Verified (public Docker Hub
 # images; a Docker Hub login lifts the anonymous pull cap), GraphWalks, Oolong, MRCR.
 # miniF2F's Lean image lives in Prime's private Docker Hub org and pulls only through
@@ -165,6 +166,13 @@ gpu_count = 1
 tp = 1
 replicas = 1
 max_price = 5.0
+
+[pods.plans.b200-1x]          # fallback when no 1x H200 is listed (2026-09-15: three of ours held the stock)
+match = "B200"
+gpu_count = 1
+tp = 1
+replicas = 1
+max_price = 8.0
 
 [pods.plans.h200-8x]
 match = "H200"

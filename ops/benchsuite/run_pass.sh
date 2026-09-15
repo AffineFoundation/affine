@@ -377,7 +377,12 @@ run_lium() {  # $1 = sandbox policy (gated|never)
     log "reusing Lium pod $POD"
   else
     # shellcheck disable=SC2086
-    POD=$("$PY" "$HERE/kingpod.py" rent --plan "$(toml modes.lium_plan)" --digest "$DIGEST" $R2FLAG | tail -1) || finish 2
+    POD=""
+    for PLAN in $(toml modes.lium_plan) $(toml modes.lium_plan_fallbacks | tr "," " "); do
+      POD=$("$PY" "$HERE/kingpod.py" rent --plan "$PLAN" --digest "$DIGEST" $R2FLAG | tail -1) && [ -n "$POD" ] && break
+      log "no pod on plan $PLAN; trying the next plan"; POD=""
+    done
+    [ -n "$POD" ] || finish 2
     "$PY" "$HERE/kingpod.py" wait "$POD" > /dev/null || finish 3
   fi
   local MEM; MEM=$("$PY" -c 'import json; m=json.load(open("'"$HERE"'/state/pods.json"))["'"$POD"'"]; print(json.dumps({k:m[k] for k in ("ssh_host","ssh_port","key","price","served","base_url")}))')
