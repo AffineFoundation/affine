@@ -19,14 +19,13 @@ const TABLES = [
   { id: "kings-bench", title: "held-out benchmarks", total: "total:bench", kind: "bench",
     caption: "greedy T=0 · never in D · score = tasks passed" },
   { id: "kings-env", title: "datagen environments", total: "total:env", kind: "env",
-    caption: "solve rate over sampled (T=0.8) rollouts · king seat + coverage backfill · teacher = teacher_* rollouts · greyed = < 30 rollouts" },
+    caption: "solve rate over the king seat's rollouts · teacher = teacher_* rollouts" },
 ];
 
 const state = {
   matrix: null,
   dataset: null,
   sort: {},             // table id -> { key, desc }
-  showAll: false,       // rows without any measurement
 };
 
 const $ = (id) => document.getElementById(id);
@@ -88,9 +87,7 @@ function cellTip(row, col, cell, teacherCell) {
     if (cell.all_rollouts != null) lines.push(`all rollouts (timeouts count as failed): ${fmt(cell.all_rollouts)}`);
     lines.push(`card ${cell.run_id}${cell.mode ? ` · ${cell.mode}` : ""}`);
   } else {
-    lines.push(`${num(cell.solved)} solved / ${num(cell.n)} graded (${num(cell.rollouts)} rollouts, ${num(cell.errored)} errored)${cell.temp ? ` · ${cell.temp} T=0.8` : ""}`);
-    if (cell.low_n) lines.push(`fewer than 30 graded rollouts — provisional until the backfill lands`);
-    if (cell.greedy && cell.greedy.n) lines.push(`greedy T=0 (not pooled in): ${cell.greedy.score != null ? fmt(cell.greedy.score) : "–"} over ${num(cell.greedy.n)} graded`);
+    lines.push(`${num(cell.solved)} solved / ${num(cell.n)} graded (${num(cell.rollouts)} rollouts, ${num(cell.errored)} errored)`);
     lines.push(`datagen rollouts on ${col.env}${col.env_id ? ` · ${col.env_id}` : ""}`);
   }
   if (row.kind !== "teacher" && teacherCell && teacherCell.score != null) {
@@ -133,12 +130,10 @@ function totals(rows, cols, common, teacher) {
 }
 
 function visibleRows(m, spec) {
+  // the API's row set: teacher, kings newest first, genesis last (kings
+  // without any measurement are under m.hidden, never rendered)
   const teacher = m.rows.find((r) => r.kind === "teacher");
-  let rest = m.rows.filter((r) => r !== teacher);
-  if (!state.showAll) {
-    rest = rest.filter((r) => r.current || r.kind === "genesis" || r.inflight
-      || Object.keys(r.cells).some((k) => k.startsWith(`${spec.kind}:`) && r.cells[k].score != null));
-  }
+  const rest = m.rows.filter((r) => r !== teacher);
   const sort = state.sort[spec.id] || { key: null, desc: true };
   const cols = tableColumns(m, spec);
   const tot = totals([...(teacher ? [teacher] : []), ...rest], cols, commonColumns([...(teacher ? [teacher] : []), ...rest], cols), teacher);
@@ -180,7 +175,7 @@ function renderTable(m, spec) {
   const tot = totals(rows, cols, common, m.rows.find((r) => r.kind === "teacher"));
   const commonTitle = `mean over the ${common.length} columns every displayed row with data has a value for:\n`
     + (common.map((c) => c.short || c.abbr || c.label).join(", ") || "(none)")
-    + `\nrecomputed as rows change (show all reigns); Δ vs the teacher on the same columns`;
+    + `\nrecomputed as rows change; Δ vs the teacher on the same columns`;
   const fullTitle = `mean over all ${cols.length} columns — only for rows that have every column; blank otherwise`;
   const blocks = spec.kind === "env" ? groupBlocks(cols) : [];
   const sepAt = new Set(blocks.filter((b) => b.name).map((b) => b.first));
@@ -216,7 +211,7 @@ function renderTable(m, spec) {
       const cell = r.cells[c.key];
       const has = cell && cell.score != null;
       const running = !has && cell && cell.running;
-      const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? (cell.low_n ? "lown" : "") : running ? "running" : "blank"].filter(Boolean).join(" ");
+      const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? "" : running ? "running" : "blank"].filter(Boolean).join(" ");
       const style = has && r.kind !== "teacher" ? tint(cell.delta) : "";
       return `<td class="${tcls} duel-hit" data-tip="${esc(cellTip(r, c, cell, teacher.cells[c.key]))}"`
         + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) : running ? "…" : "·"}</td>`;
@@ -227,7 +222,7 @@ function renderTable(m, spec) {
 
   wrap.innerHTML = `<table class="data-table kings ${spec.kind}"><thead>${groupRow}${head}</thead><tbody>${body}</tbody></table>`;
   const meta = $(`${spec.id}-meta`);
-  if (meta) meta.textContent = `${cols.length} columns · total = mean over the ${common.length} columns every row with data shares · ${rows.length} of ${m.rows.length} rows · ${spec.caption}`;
+  if (meta) meta.textContent = `${cols.length} columns · total = mean over the ${common.length} columns every row with data shares · ${spec.caption}`;
 }
 
 // -- Dataset D: columns = sources (+ king groups), rows = metrics ----------
@@ -328,13 +323,8 @@ function render() {
   const kings = m.rows.filter((r) => r.kind === "king");
   const meta = $("kings-meta");
   if (meta) meta.textContent = `${kings.length} reigns · ${m.columns.filter((c) => c.kind === "bench").length} benchmarks · ${m.columns.filter((c) => c.kind === "env").length} environments · built ${when(m.generated_at)}`;
-  const withData = m.rows.filter((r) => r.n_cells > 0 || r.current || r.kind === "genesis" || r.kind === "teacher").length;
-  const hidden = m.rows.length - withData;
-  const showAll = $("kings-show-all");
-  if (showAll) {
-    showAll.textContent = state.showAll ? "hide reigns without data" : `show all reigns${hidden ? ` (+${hidden})` : ""}`;
-    showAll.hidden = !hidden && !state.showAll;
-  }
+  const hidden = (m.hidden || []).length;
+  if (meta && hidden) meta.textContent += ` · ${hidden} older reigns without measurements not shown`;
 }
 
 function wire() {
@@ -350,7 +340,6 @@ function wire() {
       render();
     });
   }
-  $("kings-show-all")?.addEventListener("click", () => { state.showAll = !state.showAll; render(); });
 }
 
 async function refresh() {
