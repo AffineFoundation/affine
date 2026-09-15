@@ -82,7 +82,8 @@ mapfile -t INSTALLS < <($PY - "$HERE/suite.toml" <<'PY'
 import sys, tomllib
 d = tomllib.load(open(sys.argv[1], "rb"))
 for e in d["envs"]:
-    print(e["install"])
+    if not e.get("venv"):          # side-venv tasksets are installed below
+        print(e["install"])
 PY
 )
 for inst in "${INSTALLS[@]}"; do
@@ -119,6 +120,19 @@ DF
   docker build -q -t affine-bench-chat:py311 "$DOCKERFILE" >/dev/null && echo "chat image affine-bench-chat:py311 built"
   rm -rf "$DOCKERFILE"
 fi
+
+# Side venv "tau3": tau3-bench pins tau2[knowledge]@58e5e1a (banking_knowledge domain), which
+# drops `tau2.user.base` that tau2-bench@337326e imports — the two cannot share a venv.
+# Same verifiers checkout (editable, so the patched files apply), python 3.12.
+SIDE="$BENCH_HOME/venvs/tau3"
+if [ ! -x "$SIDE/bin/eval" ]; then
+  uv venv -q "$SIDE" -p 3.12
+  VIRTUAL_ENV="$SIDE" uv pip install -q -e "$BENCH_HOME/verifiers" 2>&1 | tail -1
+  VIRTUAL_ENV="$SIDE" uv pip install -q --no-deps -e "$BENCH_HOME/research-environments/environments/tool_use/tau3_bench"
+  VIRTUAL_ENV="$SIDE" uv pip install -q "tau2[knowledge] @ git+https://github.com/sierra-research/tau2-bench.git@58e5e1a" 2>&1 | tail -1
+fi
+export VIRTUAL_ENV="$BENCH_HOME/verifiers/.venv"
+"$SIDE/bin/eval" tau3-bench --dry-run -n 1 --no-rich --no-push -m x >/dev/null 2>&1 && echo "ok  tau3-bench (venvs/tau3)" || echo "BAD tau3-bench (venvs/tau3)"
 
 echo "== check"
 for ts in aime25 math500 mmlu-pro gpqa-strict ifbench ifeval humaneval livecodebench bfcl-v3 when2call-mcq minif2f oolong-synth mrcr-v2 graphwalks swebench-verified terminal-bench-2 swebench-pro tau2-bench; do

@@ -319,6 +319,13 @@ def cmd_wait(args: argparse.Namespace) -> int:
     return 3
 
 
+def cmd_stock(args: argparse.Namespace) -> int:
+    """How many executors match a plan right now (price cap + blacklist applied)."""
+    n = len(match_stock(lium_api.executors(lium_api.session()), plan_of(args.plan)))
+    print(n)
+    return 0
+
+
 def cmd_status(_: argparse.Namespace) -> int:
     sess = lium_api.session()
     listing = {lium_api.pod_name(p): p for p in (lium_api.pods(sess) or [])}
@@ -370,9 +377,11 @@ def main() -> int:
     rel = sub.add_parser("release")
     rel.add_argument("name")
     rel.add_argument("--strike", default="", help="also blacklist the executor, with this reason")
+    st = sub.add_parser("stock", help="count of executors matching a plan")
+    st.add_argument("--plan", required=True)
     sub.add_parser("status")
     args = ap.parse_args()
-    return {"rent": cmd_rent, "wait": cmd_wait, "status": cmd_status,
+    return {"rent": cmd_rent, "wait": cmd_wait, "status": cmd_status, "stock": cmd_stock,
             "endpoint": cmd_endpoint, "release": cmd_release}[args.cmd](args)
 
 

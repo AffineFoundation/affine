@@ -99,6 +99,8 @@ def scorecard(run_dir: Path) -> dict:
                 "env": env_id, "group": e.get("group"), "temperature": float(tkey[1:]),
                 "note": e.get("note"),
                 "show_classes": e.get("show_classes"),
+                "graded": e.get("graded", "deterministic"),   # "llm_judge" = advisory, never in the score
+                "judge": e.get("judge"),
                 "n": (k or t or {}).get("n"),
                 "king": None if not k else {"score": k["score"], "ci95": k["ci95"], "n": k["n"],
                                             "n_errored": k["n_errored"], "n_timeout": k.get("n_timeout"), "n_context_overflow": k.get("n_context_overflow"), "finished_only": k.get("finished_only"), "completion_tokens": k["completion_tokens"],

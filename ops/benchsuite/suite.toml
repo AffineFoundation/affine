@@ -100,8 +100,8 @@ chat_envs = ["aime25", "math500", "gpqa-diamond", "mmlu-pro", "ifbench", "ifeval
 sandbox_envs = ["swebench-verified", "minif2f", "graphwalks", "oolong-synth", "mrcr-v2"]
 # `agentic` pass mode (own pod, king only, merged into the king's card): docker
 # on the pod for the Harbor sets, the tau2 orchestrator as a subprocess on the pod.
-agentic_envs = ["terminal-bench-2", "tau2-airline", "tau2-retail", "tau2-telecom", "swebench-pro"]
-agentic_cheap_envs = ["terminal-bench-2", "tau2-airline"]   # the first-look set (~$15 + ~$15 user-sim per model)
+agentic_envs = ["terminal-bench-2", "tau2-airline", "tau2-retail", "tau2-telecom", "tau3-banking", "swebench-pro"]
+agentic_std_envs = ["terminal-bench-2", "tau2-airline", "tau2-retail", "tau2-telecom", "tau3-banking"]   # every model that gets agentic cells (operator 2026-09-15); swebench-pro is queued separately
 prime_king_replicas = "31001:0,1:2;31002:2,3:2;31003:4,5:2;31004:6,7:2"   # king-only pod layout
 cheap_plan = "h200-1x"
 
@@ -508,5 +508,23 @@ rollout_timeout = 3600
 concurrency = 8
 taskset_config = { domain = "telecom" }
 note = "tau2-bench telecom (114 tasks, manual troubleshooting policy); see tau2-airline."
+
+[[envs]]
+id = "tau3-banking"
+taskset = "tau3-bench"
+install = "tool_use/tau3_bench"
+venv = "tau3"                 # tau3-bench pins tau2[knowledge]@58e5e1a, tau2-bench pins tau2@337326e: separate venv
+group = "agentic"
+n = -1
+harness = "tau3-bench"
+runtime = "subprocess"
+max_tokens = 8192
+reward = "tau3_reward"
+secondary = false
+rollout_timeout = 3600
+concurrency = 8
+graded = "llm_judge"          # ADVISORY ONLY (operator 2026-09-15): the card and the column tooltip mark it
+judge = { model = "openai/gpt-4.1", via = "Prime Inference (api.pinference.ai)", temperature = 0, role = "NL-assertion judge; the same model simulates the user", pinned_by = "tau3-bench 0.3.0 harness.py (evaluator_nl_assertions.DEFAULT_LLM_NL_ASSERTIONS)" }
+note = "tau3-bench banking_knowledge (97 tasks, Sierra tau2-bench@58e5e1a), the row Occamy reports as 'tau3-Bench (Banking)'. Official reward: DB state + NL assertions judged by gpt-4.1 (T=0, Prime Inference) — the suite's only judge-graded cell; advisory, never in the score."
 
 # Skipped by rule (no judge in the suite): HLE (judge-only reward).

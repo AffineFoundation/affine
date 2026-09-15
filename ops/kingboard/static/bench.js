@@ -110,13 +110,20 @@
       const k = row.king, t = row.teacher;
       const d = row.delta;
       const dcls = d === null || d === undefined ? "" : d > 0.005 ? "good" : d < -0.005 ? "bad" : "";
-      tbody.append(el("tr", { title: row.note || "" },
-        el("td", {}, row.env),
+      // cap-bound marker: > 20% of replies cut at the completion cap (scored 0) — the
+      // number is a cap effect, not knowledge (Genesis hit 25–50% on the reasoning sets)
+      const capMark = (side) => side && side.finish_length_frac > 0.2
+        ? el("span", { class: "cap-mark", title: `${pct(side.finish_length_frac, 0)} of replies hit the completion cap (scored 0): cap-bound, not a measure of what the model knows` }, " ‡cap")
+        : "";
+      const judge = row.graded === "llm_judge";
+      const judgeTitle = judge ? `LLM-judge graded (${(row.judge || {}).model || "judge"} via ${(row.judge || {}).via || "?"}, pinned in suite.lock.json) — ADVISORY, never part of the score. ` : "";
+      tbody.append(el("tr", { title: judgeTitle + (row.note || "") },
+        el("td", {}, row.env, judge ? el("span", { class: "judge-mark", title: judgeTitle }, " ⚖ judge") : ""),
         el("td", { class: "muted" }, row.group || ""),
         el("td", { class: "num" }, row.temperature === 0 ? "0" : String(row.temperature)),
         el("td", { class: "num" }, k ? k.n : (t ? t.n : "–")),
-        el("td", { class: "num king-col" }, k ? pct(k.score) + ci(k) : "–"),
-        el("td", { class: "num teacher-col" }, t ? pct(t.score) + ci(t) : "–"),
+        el("td", { class: "num king-col" }, k ? pct(k.score) + ci(k) : "–", capMark(k)),
+        el("td", { class: "num teacher-col" }, t ? pct(t.score) + ci(t) : "–", capMark(t)),
         el("td", { class: "num " + dcls }, d === null || d === undefined ? "–" : (d > 0 ? "+" : "") + (100 * d).toFixed(1) + " pt"),
         el("td", { class: "num muted", title: "score over rollouts that finished inside the time/context budget" },
           k && k.finished_only ? `${pct(k.finished_only.score)} (n=${k.finished_only.n})` : "–"),

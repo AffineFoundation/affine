@@ -44,7 +44,9 @@ PATCHED_FILES = [
     "research-environments/environments/tool_use/bfcl_v3/bfcl_v3/taskset.py",
 ]
 PY_PACKAGES = ["verifiers", "math-verify", "datasets", "bfcl-eval", "openai", "httpx", "nltk",
-               "langdetect", "spacy", "prime", "prime-sandboxes", "harbor", "huggingface-hub"]
+               "langdetect", "spacy", "prime", "prime-sandboxes", "harbor", "huggingface-hub", "tau2"]
+# side venvs under <bench_home>/venvs/<name> (suite.toml env.venv); their grader pins are locked too
+SIDE_VENVS = {"tau3": ["verifiers", "tau2", "tau3-bench", "litellm"]}
 
 
 def sha256_file(p: Path) -> str:
@@ -64,6 +66,15 @@ def pip_versions(venv_python: Path) -> dict:
                              capture_output=True, text=True)
     pkgs = {p["name"].lower().replace("_", "-"): p["version"] for p in json.loads(out.stdout or "[]")}
     return {k: pkgs.get(k) for k in PY_PACKAGES}
+
+
+def side_venv_versions(venv_python: Path, pkgs: list[str]) -> dict | None:
+    if not venv_python.exists():
+        return None
+    out = subprocess.run(["uv", "pip", "list", "--format=json", "--python", str(venv_python)],
+                         capture_output=True, text=True)
+    have = {p["name"].lower().replace("_", "-"): p["version"] for p in json.loads(out.stdout or "[]")}
+    return {k: have.get(k) for k in pkgs}
 
 
 def dataset_pins(taskset_dir: Path) -> dict:
@@ -117,6 +128,7 @@ def build(bench_home: Path) -> dict:
             "taskset_config": e.get("taskset_config"), "max_turns": e.get("max_turns"),
             "rollout_timeout_s": e.get("rollout_timeout"), "concurrency": e.get("concurrency"),
             "datasets": dataset_pins(tdir) if tdir.exists() else None,
+            "venv": e.get("venv"), "graded": e.get("graded", "deterministic"), "judge": e.get("judge"),
         }
     lock = {
         "lock_version": 1,
@@ -127,6 +139,8 @@ def build(bench_home: Path) -> dict:
             "patched_files_sha256": {f: (sha256_file(bench_home / f) if (bench_home / f).exists() else None) for f in PATCHED_FILES},
         },
         "python": pip_versions(vf / ".venv" / "bin" / "python") if (vf / ".venv").exists() else {},
+        "python_side_venvs": {name: side_venv_versions(bench_home / "venvs" / name / "bin" / "python", pkgs)
+                              for name, pkgs in SIDE_VENVS.items()},
         "serving": {**SUITE["serving"], "dtype": "bfloat16", "enable_prefix_caching": True,
                     "teacher": SUITE["teacher"]},
         "seeds": {"verifiers_shuffle_seed": 0, "gpqa_option_shuffle_seed": 0,
@@ -173,8 +187,8 @@ def main() -> int:
         print("no lockfile; run `lock.py write` first")
         return 1
     # hardware-independent fields only; python versions compared for the graders
-    d = diff({k: locked[k] for k in ("code", "python", "serving", "seeds", "sandbox", "envs")},
-             {k: cur[k] for k in ("code", "python", "serving", "seeds", "sandbox", "envs")})
+    keys = ("code", "python", "python_side_venvs", "serving", "seeds", "sandbox", "envs")
+    d = diff({k: locked.get(k) for k in keys}, {k: cur.get(k) for k in keys})
     if d:
         print("LOCK MISMATCH:")
         for line in d:

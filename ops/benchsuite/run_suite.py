@@ -220,6 +220,15 @@ def summarize_traces(path: Path, reward_name: str, class_field: str = "") -> dic
 
 
 # ------------------------------------------------------------- eval cells
+def eval_bin(env: dict, verifiers_dir: Path) -> Path:
+    """The `eval` console script for this env: the shared verifiers venv, or a
+    side venv under <bench_home>/venvs/<name> for tasksets whose dependency pins
+    cannot share it (tau3-bench pins a newer `tau2` than tau2-bench)."""
+    if env.get("venv"):
+        return verifiers_dir.parent / "venvs" / env["venv"] / "bin" / "eval"
+    return verifiers_dir / ".venv" / "bin" / "eval"
+
+
 def cell_dir(out: Path, model: str, env_id: str, temp: float) -> Path:
     return out / model / f"{env_id}__t{temp:g}"
 
@@ -232,7 +241,7 @@ def build_cmd(env: dict, model: str, url: str, key_env: str, temp: float,
     # command-line default so every reign gets the same one.
     concurrency = int(env.get("concurrency") or concurrency)
     cmd = [
-        str(verifiers_dir / ".venv" / "bin" / "eval"), env["taskset"],
+        str(eval_bin(env, verifiers_dir)), env["taskset"],
         "-m", model,
         "--client.base-url", url,
         "--client.api-key-var", key_env,
@@ -311,7 +320,7 @@ def run_cell(env: dict, model_label: str, model: str, url: str, key_env: str,
             if rt.get("type") == "docker" and rt.get("image") != chat_image:
                 rt["image"] = chat_image
                 resolved.write_text(json.dumps(cfg, indent=1))
-        cmd = [str(verifiers_dir / ".venv" / "bin" / "eval"), "@", str(resolved), "--resume"]
+        cmd = [str(eval_bin(env, verifiers_dir)), "@", str(resolved), "--resume"]
         log(f"resume {model_label}/{env['id']} t={temp:g}")
     else:
         cmd = build_cmd(env, model, url, key_env, temp, rollouts, out, dirname, runtime,
@@ -635,7 +644,7 @@ def cmd_retry(a: argparse.Namespace) -> int:
     def one(d: Path, s: dict) -> None:
         with sem:
             env = by_id[s["env"]]
-            cmd = [str(verifiers_dir / ".venv/bin/eval"), "@", str(d / "configs/resolved/eval.json"), "--resume"]
+            cmd = [str(eval_bin(env, verifiers_dir)), "@", str(d / "configs/resolved/eval.json"), "--resume"]
             log(f"retry {d.parent.name}/{d.name}: {s['n_errored']} errored")
             t0 = time.time()
             with (d / "eval.log").open("a") as fh:

@@ -84,3 +84,6 @@ td.good { color: var(--good); }
 td.bad { color: var(--bad); }
 
 .subrow td { font-size: 0.85em; color: var(--muted, #888); }
+
+.cap-mark { color: var(--bad, #c44); font-size: 0.8em; }
+.judge-mark { color: var(--muted, #888); font-size: 0.8em; }
