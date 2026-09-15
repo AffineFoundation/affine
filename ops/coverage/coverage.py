@@ -92,13 +92,35 @@ def classify(matrix: dict) -> dict:
     }
 
 
+def spend_line() -> str:
+    """Backfill spend from the queue (bench pods) and the pod ledger (env
+    backfill), when present; one short clause for the nightly post."""
+    parts = []
+    try:
+        q = json.loads((STATE_DIR / "bench_queue.json").read_text())
+        pods = sum(float(e.get("pod_usd") or 0) for e in q)
+        st = {}
+        for e in q:
+            st[e.get("status", "?")] = st.get(e.get("status", "?"), 0) + 1
+        parts.append(f"bench queue {st} pods ${pods:.0f}")
+    except (OSError, ValueError):
+        pass
+    try:
+        led = json.loads((STATE_DIR / "backfill_pods.json").read_text())
+        live = [e["pod"] for e in led if not e.get("released_at")]
+        parts.append(f"env-backfill pods live {len(live)}")
+    except (OSError, ValueError, KeyError):
+        pass
+    return "; ".join(parts)
+
+
 def summary_lines(rep: dict) -> list[str]:
     t = rep["totals"]
     lines = [f"kings coverage {rep['generated_at'][:16]}Z — {rep['n_rows']} rows × "
              f"({rep['n_bench']} benchmarks + {rep['n_env']} envs): {t['complete']}/{t['cells']} cells scored; "
              f"missing {t['missing_bench']} bench + {t['missing_env']} env, {t['low_env']} env cells on "
              f"< {rep['min_env_rollouts']} rollouts, {t['running_bench']} bench cells running, "
-             f"{t['unfillable_env']} env cells with no grader"]
+             f"{t['unfillable_env']} env cells with no grader" + (f" — {spend_line()}" if spend_line() else "")]
     for r in rep["rows"]:
         if r["complete"]:
             continue
