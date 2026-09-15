@@ -9,7 +9,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
   <link rel="stylesheet" href="fonts/fonts.css?v=20" />
-  <link rel="stylesheet" href="style.css?v=78" />
+  <link rel="stylesheet" href="style.css?v=79" />
 </head>
 <body>
   <header class="top-nav">
@@ -139,7 +139,7 @@
 
     <section class="section" id="environments">
       <div class="section-head">
-        <h2 class="section-title">Environments <span class="info" title="Datagen environments (the sources of the duel corpus D), grouped by fold group. Value = solve rate of the king seat's rollouts on the environment; the teacher row = teacher_* rollouts; blank under 5 graded rollouts. Same rows, tint and total rule as the Benchmarks table. Hover a header for the environment's full name, a cell for solved / graded and the 95% interval.">ⓘ</span></h2>
+        <h2 class="section-title">Environments <span class="info" title="Datagen environments (the sources of the duel corpus D), grouped by fold group. Value = solve rate over sampled (T=0.8) rollouts of the king seat plus the coverage backfill (greedy T=0 runs are shown in the tooltip, not pooled); the teacher row = teacher_* rollouts; blank under 5 graded rollouts, greyed italics under 30; environments without a grader (affine_wiki) stay blank. Same rows, tint and total rule as the Benchmarks table. Hover a header for the environment's full name, a cell for solved / graded and the 95% interval.">ⓘ</span></h2>
       </div>
       <div class="table-scroll" id="kings-env-wrap"><div class="empty">loading…</div></div>
     </section>
@@ -291,6 +291,6 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=89"></script>
+  <script type="module" src="app.js?v=90"></script>
 </body>
 </html>

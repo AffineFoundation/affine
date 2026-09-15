@@ -123,6 +123,9 @@ INFLIGHT_STALE_S = 2 * 3600      # a pass log untouched this long is dead, not r
 DATA_URL = os.environ.get("KINGBOARD_DATA_URL", "https://data.affine.io").rstrip("/")
 R2_BUCKET = os.environ.get("DATA_R2_BUCKET", "affine-data")
 MANIFEST_KEY = "traces/manifest.json"
+# coverage backfill rollouts (operator directive 2026-09-15): same envelope
+# schema, own prefix so the fold (which reads traces/manifest.json) never sees them
+BACKFILL_MANIFEST_KEY = "traces-backfill/manifest.json"
 USER_AGENT = "affine-kingboard/0.1"
 DOWNLOAD_WORKERS = int(os.environ.get("KINGBOARD_WORKERS", "8"))
 TREND_BUCKETS = 14           # 24 h buckets shown in the trend
@@ -181,6 +184,15 @@ MATRIX_MIN_GRADED = 5            # datagen env cell needs this many graded rollo
 # Kings before this reign are never rows (operator 2026-09-15 20:31 UTC:
 # Affine-XI and older are not backfilled); they are listed under `hidden`.
 MATRIX_MIN_REIGN = 11
+MATRIX_LOW_N = 30                # below this the cell is flagged `low_n` (operator 2026-09-15: an inconsistency)
+# Environments scored on the SAMPLED rollouts only (T = 0.8, the standard
+# king-seat / teacher sampling). The teacher seat never runs greedy, so a
+# king cell pooled over its greedy (T = 0) king_*_greedy rollouts was not
+# comparable with the teacher's (2026-09-15 audit: up to 6 pt on swesmith).
+MATRIX_ENV_TEMP = SAMPLED
+# An env whose rollouts carry a numeric grade less often than this has no
+# grader (affine_wiki: 0 of 288 teacher rollouts graded); no row gets a cell.
+NO_GRADER_SHARE = 0.05
 MATRIX_GROUP_ORDER = ["coding", "terminal", "math", "tool_use", "nl2repo", "general", "agent", "other"]
 # Short header labels for the compact matrix (full names travel in `label`).
 BENCH_ABBR = {
@@ -234,7 +246,8 @@ CREATE TABLE IF NOT EXISTS rollouts (
     task_uid TEXT, task_sid TEXT, repo TEXT, language TEXT,
     ts REAL, stored_at TEXT,
     outcome TEXT, score REAL, stop TEXT, n_calls INTEGER,
-    error_type TEXT, wall_s REAL, timeout INTEGER, temperature REAL
+    error_type TEXT, wall_s REAL, timeout INTEGER, temperature REAL,
+    backfill INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS rollouts_seat_ts ON rollouts (seat, ts);
 CREATE INDEX IF NOT EXISTS rollouts_digest ON rollouts (digest12);
@@ -341,11 +354,31 @@ def is_timeout(trace: dict, wall: float | None) -> bool:
     return wall is not None and wall >= ROLLOUT_TIMEOUT_S - TIMEOUT_MARGIN_S
 
 
+BACKFILL_PREFIX = "backfill_"      # coverage backfill rollouts (not the live king seat)
+BACKFILL_TEACHER = "backfill_teacher_"
+_HEX12 = re.compile(r"^[0-9a-f]{12}$")
+
+
+def backfill_digest12(policy_id: str) -> str | None:
+    """`backfill_<digest12>_<harness>` -> digest12 (None for the teacher /
+    a non-backfill id). The coverage backfill (operator directive
+    2026-09-15) replays every datagen env for a model that the live king
+    seat never served (genesis, past kings) and stamps its policies this
+    way; the fold ignores the prefix, the board scores it like the seat."""
+    if not policy_id.startswith(BACKFILL_PREFIX) or policy_id.startswith(BACKFILL_TEACHER):
+        return None
+    tail = policy_id[len(BACKFILL_PREFIX):]
+    d12 = tail.split("_", 1)[0]
+    return d12 if _HEX12.match(d12) else None
+
+
 def seat_of(policy_id: str) -> str:
     if policy_id.startswith("king_"):
         return "king"
-    if policy_id.startswith("teacher_"):
+    if policy_id.startswith("teacher_") or policy_id.startswith(BACKFILL_TEACHER):
         return "teacher"
+    if backfill_digest12(policy_id):
+        return "king"
     return "other"
 
 
@@ -366,9 +399,9 @@ def harness_label(policy: dict) -> str:
 def digest12_of(policy: dict) -> str | None:
     model = policy.get("model") or ""
     tail = model.rsplit("/", 1)[-1]
-    if tail.startswith("king-"):
-        return tail[len("king-"):]
-    return None
+    if tail.startswith("king-") and _HEX12.match(tail[len("king-"):][:12]):
+        return tail[len("king-"):][:12]
+    return backfill_digest12(policy.get("id") or "")
 
 
 def parse_iso(s: str | None) -> float | None:
@@ -413,7 +446,11 @@ def envelope_row(env: dict, chunk_key: str, groups: dict[str, str]) -> tuple:
         float(ts), env.get("stored_at") or "",
         outcome, score, stop, len(trace.get("calls") or []),
         error_type(trace), wall, timeout, temperature_of(policy),
+        int(policy_id.startswith(BACKFILL_PREFIX)),
     )
+
+
+ROW_WIDTH = 25   # columns of the rollouts table / envelope_row tuple
 
 
 def parse_chunk(blob: bytes, chunk_key: str, groups: dict[str, str]) -> list[tuple]:
@@ -435,6 +472,9 @@ def migrate(conn: sqlite3.Connection) -> None:
     with conn:
         if "temperature" not in cols:
             conn.execute("ALTER TABLE rollouts ADD COLUMN temperature REAL")
+        if "backfill" not in cols:
+            # no backfill rollout existed before the column: 0 for every stored row is exact
+            conn.execute("ALTER TABLE rollouts ADD COLUMN backfill INTEGER DEFAULT 0")
         row = conn.execute("SELECT v FROM meta WHERE k = 'schema_version'").fetchone()
         if (row[0] if row else None) != SCHEMA_VERSION:
             log.info("row schema %s -> %s: re-reading every chunk",
@@ -463,6 +503,18 @@ def ingest(conn: sqlite3.Connection, fetcher: Fetcher, groups: dict[str, str]) -
     log.info("manifest %s: %d chunks / %d rollouts; %d new (%s)",
              manifest_sha[:12], manifest["n_chunks"], manifest["n_rollouts"],
              len(todo), fetcher.mode)
+    # coverage backfill traces live under their own prefix (the fold never
+    # reads it); absent until the first backfill chunk lands
+    backfill: dict | None = None
+    try:
+        braw = fetcher.get(BACKFILL_MANIFEST_KEY)
+        backfill = loads(braw)
+        btodo = [c for c in backfill["chunks"] if seen.get(c["key"]) != c["sha256"]]
+        log.info("backfill manifest: %d chunks / %d rollouts; %d new",
+                 backfill.get("n_chunks", len(backfill["chunks"])), backfill.get("n_rollouts", 0), len(btodo))
+        todo += btodo
+    except Exception as e:  # 404 / not published yet / transient
+        log.info("no backfill manifest (%s)", str(e)[:80])
 
     def work(c: dict) -> tuple[dict, list[tuple]]:
         # R2 throttles bursts of simultaneous reads (ServiceUnavailable);
@@ -495,7 +547,7 @@ def ingest(conn: sqlite3.Connection, fetcher: Fetcher, groups: dict[str, str]) -
             with conn:
                 conn.execute("DELETE FROM rollouts WHERE chunk = ?", (c["key"],))
                 conn.executemany(
-                    "INSERT OR REPLACE INTO rollouts VALUES (" + ",".join("?" * 24) + ")", rows)
+                    "INSERT OR REPLACE INTO rollouts VALUES (" + ",".join("?" * ROW_WIDTH) + ")", rows)
                 conn.execute(
                     "INSERT OR REPLACE INTO chunks VALUES (?,?,?,?,?)",
                     (c["key"], c["sha256"], c.get("n_rollouts"), c.get("created_at"), time.time()))
@@ -510,7 +562,10 @@ def ingest(conn: sqlite3.Connection, fetcher: Fetcher, groups: dict[str, str]) -
             "n_rollouts": manifest["n_rollouts"],
             "published_at": manifest.get("published_at"),
             "new_chunks": len(todo) - failed, "failed_chunks": failed,
-            "new_rollouts": n_rows, "read_mode": fetcher.mode}
+            "new_rollouts": n_rows, "read_mode": fetcher.mode,
+            "backfill": ({"n_chunks": backfill.get("n_chunks", len(backfill["chunks"])),
+                          "n_rollouts": backfill.get("n_rollouts"),
+                          "published_at": backfill.get("published_at")} if backfill else None)}
 
 
 # -- stats -------------------------------------------------------------------------
@@ -638,7 +693,7 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
     now = time.time()
     cur = conn.execute(
         "SELECT source, env_id, grp, harness, seat, digest12, ts, outcome, stop, "
-        "n_calls, wall_s, timeout, policy_id, temperature FROM rollouts")
+        "n_calls, wall_s, timeout, policy_id, temperature, score, backfill FROM rollouts")
     rows = cur.fetchall()
 
     kings = load_kings()
@@ -654,15 +709,18 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
     recent = {"king_1h": 0, "king_24h": 0, "all_1h": 0, "all_24h": 0}
     # per source x seat: every rollout (any outcome), all time and last 24 h
     seat_counts: dict[str, dict[str, dict[str, int]]] = {}
+    # per source: rollouts (king + teacher seats) carrying a numeric grade vs
+    # all of them -> an env whose grader never writes a score has no cell
+    grade_presence: dict[str, list[int]] = {}
     last_ts = 0.0
-    n_king = n_teacher = 0
+    n_king = n_teacher = n_backfill = 0
 
     def bucket(ts: float) -> int:
         """0 = the 24 h ending now, 1 = the day before, ..."""
         return int((now - ts) // 86400)
 
     for (source, env_id, grp, harness, seat, digest12, ts, outcome,
-         stop, n_calls, wall, timeout, policy_id, temperature) in rows:
+         stop, n_calls, wall, timeout, policy_id, temperature, score, backfill) in rows:
         env_ids.setdefault(source, env_id)
         src_group.setdefault(source, grp or "other")
         stops[stop or "none"] = stops.get(stop or "none", 0) + 1
@@ -673,10 +731,18 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
         if age <= 86400:
             recent["all_24h"] += 1
         if seat in ("teacher", "king"):
-            sc = seat_counts.setdefault(source, {}).setdefault(seat, {"n": 0, "n_24h": 0})
+            sc = seat_counts.setdefault(source, {}).setdefault(
+                seat, {"n": 0, "n_24h": 0, "backfill": 0})
             sc["n"] += 1
             if age <= 86400:
                 sc["n_24h"] += 1
+            if backfill:
+                sc["backfill"] += 1
+                n_backfill += 1
+            if outcome != "errored":
+                gp = grade_presence.setdefault(source, [0, 0])
+                gp[1] += 1
+                gp[0] += int(score is not None)
         if seat == "teacher":
             n_teacher += 1
             teacher_env.setdefault(source, Agg()).add(outcome, timeout, n_calls, wall, stop)
@@ -792,7 +858,8 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
         "generated_ts": now,
         "manifest": manifest_info,
         "last_rollout_ts": last_ts or None,
-        "counts": {"rollouts": len(rows), "king": n_king, "teacher": n_teacher},
+        "counts": {"rollouts": len(rows), "king": n_king, "teacher": n_teacher,
+                   "backfill": n_backfill},
         "recent": recent,
         "king": current,
         "kings": kings,
@@ -801,7 +868,11 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
         "teacher": {"envs": teacher_rows, "total": teacher_total.out(),
                     "trend": trend_out(teacher_trend)},
         "envs": [{"source": s, "env_id": env_ids.get(s, ""),
-                  "group": src_group.get(s, "other")}
+                  "group": src_group.get(s, "other"),
+                  # share of (king + teacher, non-errored) rollouts with a numeric grade;
+                  # ~0 = the env has no grader (affine_wiki), so no row can be scored on it
+                  "graded_share": ((grade_presence[s][0] / grade_presence[s][1])
+                                   if grade_presence.get(s, [0, 0])[1] else None)}
                  for s in sorted(env_ids)],
         "seat_counts": seat_counts,
         "stop_conditions": stops,
@@ -921,8 +992,17 @@ def load_inflight_passes() -> list[dict]:
 
 
 def card_digest12(card: dict) -> str | None:
+    """First 12 hex of the model's identity: the R2 sha256 digest, or for a
+    Hugging Face reference (`hf://repo@revision`: the genesis and the HF-era
+    kings 1-5) the pinned revision, which is what state.json / history.jsonl
+    store as `revision` for those reigns."""
     k = card.get("king") or {}
+    rev = str(k.get("hf_revision") or "")
+    if rev:
+        return rev[:12]
     d = str(k.get("digest") or "")
+    if d.startswith("hf-"):
+        return None
     return d[:12] if d else None
 
 
@@ -987,6 +1067,20 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
     return out
 
 
+def env_agg(row_agg: dict | None) -> dict | None:
+    """The Agg.out() dict a matrix env cell is scored on: the SAMPLED
+    (T = 0.8) split when the row carries one (king rows since the
+    temperature stamp), else the row itself (teacher rows: never greedy;
+    stats.json written by an older builder). Keeps `source`."""
+    if not row_agg:
+        return None
+    split = (row_agg.get("by_temp") or {}).get(MATRIX_ENV_TEMP)
+    if split is None:
+        return row_agg
+    return {**split, "source": row_agg.get("source"), "temp": MATRIX_ENV_TEMP,
+            "greedy": (row_agg.get("by_temp") or {}).get(GREEDY)}
+
+
 def env_cell(agg: dict | None) -> dict | None:
     """Datagen environment cell from an Agg.out() dict (stats.json)."""
     if not agg or not agg.get("graded"):
@@ -995,14 +1089,21 @@ def env_cell(agg: dict | None) -> dict | None:
     if graded < MATRIX_MIN_GRADED:
         return {"score": None, "n": graded, "kind": "env",
                 "reason": f"only {graded} graded rollouts (< {MATRIX_MIN_GRADED})"}
-    return {
+    cell = {
         "score": round(100.0 * float(agg["rate"]), 2),
         "lo": None if agg.get("lo") is None else round(100.0 * float(agg["lo"]), 2),
         "hi": None if agg.get("hi") is None else round(100.0 * float(agg["hi"]), 2),
         "n": graded, "kind": "env",
         "solved": agg.get("solved"), "failed": agg.get("failed"),
         "errored": agg.get("errored"), "rollouts": agg.get("n"),
+        "low_n": graded < MATRIX_LOW_N,
+        "temp": agg.get("temp", MATRIX_ENV_TEMP),
     }
+    g = agg.get("greedy")
+    if g and g.get("graded"):
+        cell["greedy"] = {"score": (round(100.0 * float(g["rate"]), 2) if g.get("rate") is not None else None),
+                          "n": int(g["graded"])}
+    return cell
 
 
 def group_cell(aggs: list[dict], group: str) -> dict | None:
@@ -1127,6 +1228,9 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
         })
     env_groups = {e["source"]: e.get("group") or "other" for e in stats.get("envs") or []}
     env_ids = {e["source"]: e.get("env_id") or "" for e in stats.get("envs") or []}
+    # envs whose grader never writes a score: a column nobody can fill
+    no_grader = {e["source"] for e in stats.get("envs") or []
+                 if e.get("graded_share") is not None and e["graded_share"] < NO_GRADER_SHARE}
     gorder = {g: i for i, g in enumerate(MATRIX_GROUP_ORDER)}
     groups_present = sorted({g for g in env_groups.values()}, key=lambda g: (gorder.get(g, 99), g))
     # default view: one pooled column per fold group; the per-env columns
@@ -1137,9 +1241,15 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                         "kind": "group", "group": g, "envs": members,
                         "note": f"pooled solve rate over the {g} datagen environments: " + ", ".join(members)})
     for s in sorted(env_groups, key=lambda s: (gorder.get(env_groups[s], 99), s)):
-        columns.append({"key": f"env:{s}", "label": s,
-                        "abbr": ENV_ABBR.get(s, s.replace("affine_", "")[:4].upper()),
-                        "kind": "env", "env": s, "group": env_groups[s], "env_id": env_ids.get(s, "")})
+        col = {"key": f"env:{s}", "label": s,
+               "abbr": ENV_ABBR.get(s, s.replace("affine_", "")[:4].upper()),
+               "kind": "env", "env": s, "group": env_groups[s], "env_id": env_ids.get(s, ""),
+               "temp": MATRIX_ENV_TEMP}
+        if s in no_grader:
+            col["no_grader"] = True
+            col["note"] = ("this environment writes no numeric grade (its rollouts are unscored), "
+                           "so no model can be scored on it; the column is kept for the rollout counts")
+        columns.append(col)
     # `total` = mean over every benchmark + every environment; the page shows two
     # tables, each with its own mean: total:bench and total:env
     value_keys = [c["key"] for c in columns if c["kind"] in ("bench", "env")]
@@ -1168,12 +1278,19 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
             env_aggs = reign_envs.get(row["digest12"], {})
         for e, v in bench.items():
             cells[f"bench:{e}"] = v
+        env_aggs = {s: env_agg(a) for s, a in env_aggs.items()}
         for s, a in env_aggs.items():
+            if s in no_grader:
+                cells[f"env:{s}"] = {"score": None, "kind": "env", "n": 0, "no_grader": True,
+                                     "rollouts": (a or {}).get("n"),
+                                     "reason": "environment has no grader (rollouts are unscored)"}
+                continue
             v = env_cell(a)
             if v is not None:
                 cells[f"env:{s}"] = v
         for g in groups_present:
-            v = group_cell([a for s, a in env_aggs.items() if env_groups.get(s) == g], g)
+            v = group_cell([a for s, a in env_aggs.items()
+                            if env_groups.get(s) == g and s not in no_grader], g)
             if v is not None:
                 cells[f"group:{g}"] = v
         for key, keys in (("total", value_keys), ("total:bench", bench_keys), ("total:env", env_keys)):
@@ -1257,9 +1374,12 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
             "value": "average score 0-100 per cell. Benchmarks: the card's greedy (T=0) row, "
                      "score = share of tasks passed; SWE-bench Verified uses the finished-only score "
                      "(rollouts inside the time / context budget). Datagen environments: solve rate "
-                     "= solved / (solved + failed) over the row's rollouts (king seat for kings, "
-                     "teacher_* policies for the teacher), same outcome rule as the fold; a group "
-                     "column pools solved / graded over its environments",
+                     "= solved / (solved + failed) over the row's SAMPLED (T = 0.8) rollouts (king "
+                     "seat or coverage backfill for kings and the genesis, teacher_* policies for "
+                     "the teacher), same outcome rule as the fold; greedy (T = 0) king rollouts are "
+                     "reported in the tooltip, not pooled in; a group column pools solved / graded "
+                     "over its environments; `low_n` marks a cell on fewer than "
+                     f"{MATRIX_LOW_N} graded rollouts",
             "total": "unweighted mean over the row's available benchmark and environment "
                      "columns; the tooltip shows how many entered and the teacher's mean on the "
                      "same columns",
