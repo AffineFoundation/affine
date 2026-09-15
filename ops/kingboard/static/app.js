@@ -89,7 +89,7 @@
   }
 
   function reignLabel(r) {
-    const name = r.reign !== null && r.reign !== undefined ? `reign ${r.reign}` : "reign ? (not in state.json)";
+    const name = r.reign !== null && r.reign !== undefined ? `reign ${r.reign}${r.revoked ? " (removed)" : ""}` : "reign ? (not in state.json)";
     return `${name} · king-${r.digest12} · ${r.n_rollouts.toLocaleString()} rollouts${r.current ? " · current" : ""}`;
   }
 
@@ -312,12 +312,12 @@
     const y = (rate) => T + (1 - rate) * (H - T - B);
     for (let i = 0; i <= 4; i++) {
       const yy = y(i / 4);
-      svg.append(mk("line", { x1: L, x2: W - R, y1: yy, y2: yy, stroke: "#30363d", "stroke-width": 1 }));
-      svg.append(mk("text", { x: L - 6, y: yy + 4, fill: "#8b949e", "font-size": 11, "text-anchor": "end" }, `${i * 25}%`));
+      svg.append(mk("line", { x1: L, x2: W - R, y1: yy, y2: yy, stroke: "rgba(255,255,255,0.08)", "stroke-width": 1 }));
+      svg.append(mk("text", { x: L - 6, y: yy + 4, fill: "rgba(229,229,229,0.45)", "font-size": 11, "text-anchor": "end" }, `${i * 25}%`));
     }
     for (const b of [13, 9, 6, 3, 0]) {
       const anchor = b === 13 ? "start" : b === 0 ? "end" : "middle";
-      svg.append(mk("text", { x: x(b), y: H - 10, fill: "#8b949e", "font-size": 11, "text-anchor": anchor }, b === 0 ? "last 24 h" : `${b} d ago`));
+      svg.append(mk("text", { x: x(b), y: H - 10, fill: "rgba(229,229,229,0.45)", "font-size": 11, "text-anchor": anchor }, b === 0 ? "last 24 h" : `${b} d ago`));
     }
     const drawSeries = (series, color, width, dash) => {
       const pts = series.filter((p) => p.rate !== null);
@@ -335,10 +335,10 @@
     const cur = currentReign();
     for (const r of st.reigns) {
       if (cur && r.digest12 === cur.digest12) continue;
-      drawSeries(pooled(r.trend, state.trendEnv), "#6e7681", 1, "3 3");
+      drawSeries(pooled(r.trend, state.trendEnv), "rgba(229,229,229,0.3)", 1, "3 3");
     }
-    drawSeries(pooled(st.teacher.trend, state.trendEnv), "#58a6ff", 2);
-    if (cur) drawSeries(pooled(cur.trend, state.trendEnv), "#f2cc60", 2.5);
+    drawSeries(pooled(st.teacher.trend, state.trendEnv), "#5ac8fa", 2);
+    if (cur) drawSeries(pooled(cur.trend, state.trendEnv), "#f3c449", 2.5);
     const k = cur ? pooled(cur.trend, state.trendEnv) : [];
     const t = pooled(st.teacher.trend, state.trendEnv);
     const kn = k.reduce((s, p) => s + p.n, 0), tn = t.reduce((s, p) => s + p.n, 0);

@@ -24,11 +24,10 @@
 
   const state = { runs: [], runId: null };
 
+  const TABS = ["kings", "envs", "benchmarks", "challengers"];
   function showTab(name) {
-    document.querySelectorAll("#tabs a").forEach((a) => a.classList.toggle("active", a.dataset.tab === name));
-    $("#tab-envs").classList.toggle("hidden", name !== "envs");
-    $("#tab-benchmarks").classList.toggle("hidden", name !== "benchmarks");
-    $("#tab-challengers").classList.toggle("hidden", name !== "challengers");
+    document.querySelectorAll("#tabs a[data-tab]").forEach((a) => a.classList.toggle("active", a.dataset.tab === name));
+    for (const t of TABS) $(`#tab-${t}`).classList.toggle("hidden", name !== t);
     if ((name === "benchmarks" || name === "challengers") && !state.runs.length) load();
   }
 
@@ -199,8 +198,9 @@
   }
 
   $("#bench-run").addEventListener("change", (e) => { state.runId = e.target.value; renderTable(); });
-  const tabOf = () => location.hash === "#benchmarks" ? "benchmarks" : location.hash === "#challengers" ? "challengers" : "envs";
+  // the matrix (#kings) is the landing view; the older tabs stay behind the nav
+  const tabOf = () => { const h = location.hash.replace("#", ""); return TABS.includes(h) ? h : "kings"; };
   window.addEventListener("hashchange", () => showTab(tabOf()));
   showTab(tabOf());
-  setInterval(() => { if (tabOf() !== "envs") load(); }, 300000);
+  setInterval(() => { if (tabOf() === "benchmarks" || tabOf() === "challengers") load(); }, 300000);
 })();

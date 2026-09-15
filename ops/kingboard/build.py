@@ -42,9 +42,16 @@ greedy (T = 0, `king_*_greedy`) vs sampled (T = 0.8) split.
 Solve rate = solved / (solved + failed). Errored and unscored rollouts are
 counted but excluded from the rate.
 
+The same pass also writes `state/matrix.json` (served as /api/matrix): one
+row per model in reign order (teacher, genesis, every crowned king incl.
+revoked reigns), one column per held-out benchmark (benchsuite cards in
+affine/state/benchsuite/) and per datagen environment, value = average
+score 0-100. See build_matrix().
+
 Run once: `python build.py` (env: DATA_R2_ACCESS_KEY_ID /
 DATA_R2_SECRET_ACCESS_KEY / DATA_R2_ENDPOINT for S3 reads; without them the
-public HTTPS mirror is used).
+public HTTPS mirror is used). `python build.py --matrix-only` rebuilds the
+matrix from the existing stats.json without touching the trace store.
 """
 
 from __future__ import annotations
@@ -88,10 +95,15 @@ REPO = HERE.parents[1]
 STATE_DIR = Path(os.environ.get("KINGBOARD_STATE_DIR", HERE / "state"))
 DB_PATH = STATE_DIR / "rollouts.sqlite"
 STATS_PATH = STATE_DIR / "stats.json"
+MATRIX_PATH = STATE_DIR / "matrix.json"
 SOURCES_TOML = Path(os.environ.get(
     "KINGBOARD_SOURCES_TOML", REPO / "rollouts" / "rollouts" / "sources.toml"))
 VALIDATOR_STATE = Path(os.environ.get(
     "KINGBOARD_VALIDATOR_STATE", REPO / "affine" / "state" / "state.json"))
+VALIDATOR_HISTORY = Path(os.environ.get(
+    "KINGBOARD_VALIDATOR_HISTORY", REPO / "affine" / "state" / "history.jsonl"))
+BENCHSUITE_DIR = Path(os.environ.get(
+    "BENCHSUITE_STATE_DIR", REPO / "affine" / "state" / "benchsuite"))
 DATA_URL = os.environ.get("KINGBOARD_DATA_URL", "https://data.affine.io").rstrip("/")
 R2_BUCKET = os.environ.get("DATA_R2_BUCKET", "affine-data")
 MANIFEST_KEY = "traces/manifest.json"
@@ -127,6 +139,30 @@ HARNESS_LABELS = {
     "terminus_2": "terminus_2",
     "codex": "codex",
 }
+
+# -- matrix (api/matrix) -----------------------------------------------------------
+TEACHER_MODEL = "Qwen/Qwen3.8-27B"
+GENESIS_MODEL = "Qwen/Qwen3.6-35B-A3B"
+GENESIS_DIGEST12 = "995ad96eacd9"     # HF revision 995ad96e… = reign 0 (seed)
+# Held-out benchmarks in display order (benchsuite `[[envs]].id` -> label).
+# Cards may carry more ids; unknown ones are appended in card order.
+BENCH_COLUMNS = [
+    ("mmlu-pro", "MMLU-Pro"), ("math500", "MATH-500"), ("gpqa-diamond", "GPQA"),
+    ("aime25", "AIME25"), ("ifbench", "IFBench"), ("ifeval", "IFEval"),
+    ("humaneval", "HumanEval"), ("livecodebench", "LiveCodeBench"),
+    ("bfcl-v3", "BFCL v3"), ("when2call", "When2Call"),
+    ("swebench-verified", "SWE-bench Verified"), ("minif2f", "miniF2F"),
+    ("graphwalks", "GraphWalks"), ("mrcr-v2", "MRCR"), ("oolong-synth", "Oolong"),
+]
+# Benchmarks scored on the rollouts that finished inside the time / context
+# budget (card `finished_only`), per the 2026-09-15 directive.
+BENCH_FINISHED_ONLY = {"swebench-verified"}
+BENCH_TEMPERATURE = 0.0          # the primary (greedy) card row
+# Card modes that are not a king / genesis / teacher measurement.
+BENCH_SKIP_MODES = {"challenger", "comparables"}
+BENCH_SKIP_STATUS = {"skipped_identical_weights"}
+MATRIX_MIN_GRADED = 5            # datagen env cell needs this many graded rollouts
+MATRIX_GROUP_ORDER = ["coding", "terminal", "math", "tool_use", "nl2repo", "general", "agent", "other"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS chunks (
@@ -495,7 +531,47 @@ def load_kings() -> list[dict]:
             "crowned_at": k.get("crowned_at") or "",
             "challenge_id": k.get("challenge_id") or "",
             "current": k is king,
+            "revoked": False,
         })
+    return out
+
+
+def load_revoked_kings() -> list[dict]:
+    """Reigns the operator removed after the crown (`crown_revoked` events in
+    history.jsonl; the validator rewrites the `crowned` line in place, so
+    `at` is the crown time and `revoked_at` the removal). Their reign
+    numbers were re-used by later crowns, so rows label by date + digest."""
+    if not VALIDATOR_HISTORY.exists():
+        return []
+    out = []
+    try:
+        with VALIDATOR_HISTORY.open() as f:
+            for line in f:
+                if '"crown_revoked"' not in line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue
+                if ev.get("event") != "crown_revoked":
+                    continue
+                rev = str(ev.get("revision") or "")
+                if not rev:
+                    continue
+                out.append({
+                    "reign": int(ev.get("reign_number") or 0),
+                    "digest": rev, "digest12": rev[:12],
+                    "hotkey": ev.get("hotkey") or "",
+                    "repo": ev.get("repo") or "",
+                    "crowned_at": ev.get("at") or "",
+                    "challenge_id": ev.get("challenge_id") or "",
+                    "current": False,
+                    "revoked": True,
+                    "revoked_at": ev.get("revoked_at") or "",
+                    "revoked_reason": ev.get("revoked_reason") or ev.get("revoked_code") or "removed",
+                })
+    except OSError:
+        return []
     return out
 
 
@@ -508,7 +584,8 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
     rows = cur.fetchall()
 
     kings = load_kings()
-    by_digest = {k["digest12"]: k for k in kings}
+    revoked = load_revoked_kings()
+    by_digest = {k["digest12"]: k for k in [*revoked, *kings]}
 
     env_ids: dict[str, str] = {}
     src_group: dict[str, str] = dict(groups)
@@ -630,6 +707,8 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
             "hotkey": meta.get("hotkey", ""),
             "crowned_at": meta.get("crowned_at", ""),
             "current": bool(meta.get("current")),
+            "revoked": bool(meta.get("revoked")),
+            "revoked_at": meta.get("revoked_at", ""),
             "n_rollouts": k["n"], "first_ts": k["first_ts"], "last_ts": k["last_ts"],
             "recent_1h": k["recent_1h"], "recent_24h": k["recent_24h"],
             "total": total.out(),
@@ -652,6 +731,7 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
         "recent": recent,
         "king": current,
         "kings": kings,
+        "revoked_kings": revoked,
         "reigns": reigns_out,
         "teacher": {"envs": teacher_rows, "total": teacher_total.out(),
                     "trend": trend_out(teacher_trend)},
@@ -687,11 +767,312 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
     }
 
 
+# -- matrix ----------------------------------------------------------------------------
+def load_cards() -> list[dict]:
+    """Benchmark-suite scorecards (ops/benchsuite/publish.py), newest first."""
+    cards = []
+    if not BENCHSUITE_DIR.exists():
+        return cards
+    for p in sorted(BENCHSUITE_DIR.glob("*.json")):
+        try:
+            card = json.loads(p.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(card, dict) and isinstance(card.get("rows"), list):
+            cards.append(card)
+    cards.sort(key=lambda c: c.get("created_at") or "", reverse=True)
+    return cards
+
+
+def card_digest12(card: dict) -> str | None:
+    k = card.get("king") or {}
+    d = str(k.get("digest") or "")
+    return d[:12] if d else None
+
+
+def is_genesis_card(card: dict) -> bool:
+    k = card.get("king") or {}
+    d12 = card_digest12(card)
+    if d12 == GENESIS_DIGEST12:
+        return True
+    if k.get("reign") == 0 and d12 is None:
+        return True
+    ident = " ".join(str(k.get(f) or "") for f in ("label", "model", "hf_repo")).lower()
+    return "genesis" in ident or "qwen3.6-35b-a3b" in ident
+
+
+def is_model_card(card: dict) -> bool:
+    """A card measuring a king / genesis (not a challenger or comparable)."""
+    return (card.get("mode") not in BENCH_SKIP_MODES
+            and card.get("status") not in BENCH_SKIP_STATUS
+            and not (card.get("king") or {}).get("duel"))
+
+
+def bench_value(side: dict | None, env: str) -> dict | None:
+    """Score 0-100 + Wilson interval for one card cell (T=0 row)."""
+    if not side or side.get("score") is None:
+        return None
+    src = side
+    metric = "score"
+    if env in BENCH_FINISHED_ONLY and (side.get("finished_only") or {}).get("score") is not None:
+        src = side["finished_only"]
+        metric = "finished_only"
+    ci = src.get("ci95") or [None, None]
+    return {
+        "score": round(100.0 * float(src["score"]), 2),
+        "lo": None if ci[0] is None else round(100.0 * float(ci[0]), 2),
+        "hi": None if ci[1] is None else round(100.0 * float(ci[1]), 2),
+        "n": src.get("n") or side.get("n"),
+        "metric": metric,
+        "all_rollouts": (round(100.0 * float(side["score"]), 2)
+                         if metric == "finished_only" else None),
+    }
+
+
+def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
+    """env -> cell from the best card for each env. Cards are ordered
+    best-first by the caller; the first card carrying the env wins, later
+    cards only fill envs the earlier ones lack (a parity re-run of five chat
+    sets must not override the full pass)."""
+    out: dict[str, dict] = {}
+    for card in cards:
+        for row in card.get("rows") or []:
+            env = row.get("env")
+            if not env or env in out or row.get("temperature") != BENCH_TEMPERATURE:
+                continue
+            val = bench_value(row.get(side), env)
+            if val is None:
+                continue
+            val.update(run_id=card.get("run_id"), mode=card.get("mode"),
+                       created_at=card.get("created_at"), kind="bench")
+            if side == "teacher" and (row.get("teacher") or {}).get("reused_from"):
+                val["reused_from"] = row["teacher"]["reused_from"]
+            out[env] = val
+    return out
+
+
+def env_cell(agg: dict | None) -> dict | None:
+    """Datagen environment cell from an Agg.out() dict (stats.json)."""
+    if not agg or not agg.get("graded"):
+        return None
+    graded = int(agg["graded"])
+    if graded < MATRIX_MIN_GRADED:
+        return {"score": None, "n": graded, "kind": "env",
+                "reason": f"only {graded} graded rollouts (< {MATRIX_MIN_GRADED})"}
+    return {
+        "score": round(100.0 * float(agg["rate"]), 2),
+        "lo": None if agg.get("lo") is None else round(100.0 * float(agg["lo"]), 2),
+        "hi": None if agg.get("hi") is None else round(100.0 * float(agg["hi"]), 2),
+        "n": graded, "kind": "env",
+        "solved": agg.get("solved"), "failed": agg.get("failed"),
+        "errored": agg.get("errored"), "rollouts": agg.get("n"),
+    }
+
+
+def total_cell(cells: dict[str, dict], keys: list[str]) -> dict | None:
+    vals = [(k, cells[k]["score"]) for k in keys if cells.get(k) and cells[k].get("score") is not None]
+    if not vals:
+        return None
+    scores = [v for _, v in vals]
+    return {"score": round(sum(scores) / len(scores), 2), "n_cols": len(vals),
+            "cols": [k for k, _ in vals], "kind": "total",
+            "n_bench": sum(1 for k, _ in vals if k.startswith("bench:")),
+            "n_env": sum(1 for k, _ in vals if k.startswith("env:"))}
+
+
+def matrix_rows_meta(stats: dict) -> list[dict]:
+    """Row skeletons in display order: teacher, genesis, kings newest first
+    (revoked reigns sit where their crown date falls)."""
+    kings = [k for k in stats.get("kings") or [] if k.get("digest12") != GENESIS_DIGEST12
+             and int(k.get("reign") or 0) != 0]
+    revoked = stats.get("revoked_kings") or []
+    genesis = next((k for k in stats.get("kings") or []
+                    if k.get("digest12") == GENESIS_DIGEST12 or int(k.get("reign") or 0) == 0), None)
+    rows = [{
+        "key": "teacher", "kind": "teacher", "label": "Teacher", "model": TEACHER_MODEL,
+        "sub": TEACHER_MODEL, "order": 0,
+    }, {
+        "key": "genesis", "kind": "genesis", "label": "Genesis", "model": GENESIS_MODEL,
+        "reign": 0, "digest12": GENESIS_DIGEST12,
+        "crowned_at": (genesis or {}).get("crowned_at", ""),
+        "sub": f"{GENESIS_MODEL} · reign 0 (seed)", "order": 1,
+    }]
+    crowned = sorted([*kings, *revoked], key=lambda k: k.get("crowned_at") or "", reverse=True)
+    for i, k in enumerate(crowned):
+        rows.append({
+            "key": k["digest12"], "kind": "king",
+            "label": f"King {k['reign']}" + (" (removed)" if k.get("revoked") else ""),
+            "reign": k["reign"], "digest12": k["digest12"], "digest": k.get("digest", ""),
+            "hotkey": k.get("hotkey", ""), "crowned_at": k.get("crowned_at", ""),
+            "challenge_id": k.get("challenge_id", ""), "current": bool(k.get("current")),
+            "revoked": bool(k.get("revoked")), "revoked_at": k.get("revoked_at", ""),
+            "revoked_reason": k.get("revoked_reason", ""),
+            "sub": f"king-{k['digest12']} · crowned {str(k.get('crowned_at') or '')[:16].replace('T', ' ')}",
+            "order": 2 + i,
+        })
+    return rows
+
+
+def build_matrix(stats: dict, cards: list[dict]) -> dict:
+    now = time.time()
+    model_cards = [c for c in cards if is_model_card(c)]
+    # best-first per digest: the fullest card wins, ties -> newest
+    rank = lambda c: (-len({r.get("env") for r in c.get("rows") or []}), c.get("created_at") or "")
+    by_digest: dict[str, list[dict]] = {}
+    genesis_cards: list[dict] = []
+    for c in model_cards:
+        if is_genesis_card(c):
+            genesis_cards.append(c)
+            continue
+        d12 = card_digest12(c)
+        if d12:
+            by_digest.setdefault(d12, []).append(c)
+    for lst in by_digest.values():
+        lst.sort(key=rank)
+    genesis_cards.sort(key=rank)
+    # teacher: a card whose teacher cells were measured (not copied) first
+    teacher_cards = sorted(
+        cards, key=lambda c: (any((r.get("teacher") or {}).get("reused_from") for r in c.get("rows") or []),
+                              -len(c.get("rows") or []), c.get("created_at") or ""))
+
+    # -- columns
+    bench_envs_seen: list[str] = []
+    for c in cards:
+        for r in c.get("rows") or []:
+            if r.get("temperature") == BENCH_TEMPERATURE and r.get("env") and r["env"] not in bench_envs_seen:
+                bench_envs_seen.append(r["env"])
+    bench_notes: dict[str, dict] = {}
+    for c in cards:
+        for r in c.get("rows") or []:
+            if r.get("env") and r["env"] not in bench_notes:
+                bench_notes[r["env"]] = {"group": r.get("group"), "note": r.get("note"), "n": r.get("n")}
+    ordered_bench = [e for e, _ in BENCH_COLUMNS if e in bench_envs_seen] + \
+        [e for e in bench_envs_seen if e not in {b for b, _ in BENCH_COLUMNS}]
+    labels = dict(BENCH_COLUMNS)
+    columns = [{"key": "total", "label": "total", "kind": "total",
+                "note": "unweighted mean of the row's available benchmark and environment cells (0-100)"}]
+    for e in ordered_bench:
+        meta = bench_notes.get(e, {})
+        columns.append({
+            "key": f"bench:{e}", "label": labels.get(e, e), "kind": "bench", "env": e,
+            "group": meta.get("group"), "n": meta.get("n"), "note": meta.get("note"),
+            "metric": "finished_only" if e in BENCH_FINISHED_ONLY else "score",
+        })
+    env_groups = {e["source"]: e.get("group") or "other" for e in stats.get("envs") or []}
+    env_ids = {e["source"]: e.get("env_id") or "" for e in stats.get("envs") or []}
+    gorder = {g: i for i, g in enumerate(MATRIX_GROUP_ORDER)}
+    for s in sorted(env_groups, key=lambda s: (gorder.get(env_groups[s], 99), s)):
+        columns.append({"key": f"env:{s}", "label": s, "kind": "env", "env": s,
+                        "group": env_groups[s], "env_id": env_ids.get(s, "")})
+    value_keys = [c["key"] for c in columns if c["key"] != "total"]
+
+    # -- rows
+    teacher_envs = (stats.get("teacher") or {}).get("envs") or {}
+    reign_envs = {r["digest12"]: {e["source"]: e for e in r.get("envs") or []}
+                  for r in stats.get("reigns") or []}
+    rows = matrix_rows_meta(stats)
+    for row in rows:
+        cells: dict[str, dict] = {}
+        if row["kind"] == "teacher":
+            bench = card_cells(teacher_cards, "teacher")
+            envs = {s: env_cell(a) for s, a in teacher_envs.items()}
+        elif row["kind"] == "genesis":
+            bench = card_cells(genesis_cards, "king")
+            envs = {s: env_cell(a) for s, a in reign_envs.get(GENESIS_DIGEST12, {}).items()}
+        else:
+            bench = card_cells(by_digest.get(row["digest12"], []), "king")
+            envs = {s: env_cell(a) for s, a in reign_envs.get(row["digest12"], {}).items()}
+        for e, v in bench.items():
+            cells[f"bench:{e}"] = v
+        for s, v in envs.items():
+            if v is not None:
+                cells[f"env:{s}"] = v
+        tot = total_cell(cells, value_keys)
+        if tot:
+            cells["total"] = tot
+        row["cells"] = cells
+        row["n_cells"] = sum(1 for k in value_keys if cells.get(k) and cells[k].get("score") is not None)
+        row["cards"] = sorted({v["run_id"] for v in bench.values() if v.get("run_id")})
+    # delta vs the teacher row, per cell. The total compares against the
+    # teacher's mean over the SAME columns the row has (rows differ in
+    # coverage: a chat-only card has 10 benchmarks, the teacher has 15).
+    teacher_cells = rows[0]["cells"]
+    for row in rows[1:]:
+        for k, v in row["cells"].items():
+            if k == "total":
+                same = [teacher_cells[c]["score"] for c in v["cols"]
+                        if teacher_cells.get(c) and teacher_cells[c].get("score") is not None]
+                if same:
+                    v["teacher_same_cols"] = round(sum(same) / len(same), 2)
+                    v["n_same_cols"] = len(same)
+                    v["delta"] = round(v["score"] - v["teacher_same_cols"], 2)
+                continue
+            t = teacher_cells.get(k)
+            if v.get("score") is not None and t and t.get("score") is not None:
+                v["delta"] = round(v["score"] - t["score"], 2)
+
+    return {
+        "generated_at": datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds"),
+        "generated_ts": now,
+        "stats_generated_at": stats.get("generated_at"),
+        "columns": columns,
+        "rows": rows,
+        "n_cards": len(cards),
+        "cards": [{"run_id": c.get("run_id"), "mode": c.get("mode"), "status": c.get("status"),
+                   "created_at": c.get("created_at"), "digest12": card_digest12(c),
+                   "reign": (c.get("king") or {}).get("reign"),
+                   "label": (c.get("king") or {}).get("label"),
+                   "genesis": is_genesis_card(c), "used": is_model_card(c)}
+                  for c in cards],
+        "definitions": {
+            "rows": "models in reign order: the teacher, the genesis seed (reign 0), then every "
+                    "crowned king newest first. Reigns the operator removed after the crown "
+                    "(history.jsonl crown_revoked) stay in the table greyed as 'removed'; their "
+                    "reign numbers were re-used by later crowns, so rows are identified by crown "
+                    "date + digest",
+            "value": "average score 0-100 per cell. Benchmarks: the card's greedy (T=0) row, "
+                     "score = share of tasks passed; SWE-bench Verified uses the finished-only score "
+                     "(rollouts inside the time / context budget). Datagen environments: solve rate "
+                     "= solved / (solved + failed) over the row's rollouts (king seat for kings, "
+                     "teacher_* policies for the teacher), same outcome rule as the fold",
+            "total": "unweighted mean over the row's available columns (benchmarks and environments "
+                     "alike); the tooltip shows how many columns entered",
+            "blank": f"no measurement (no benchmark card for the model, or fewer than "
+                     f"{MATRIX_MIN_GRADED} graded rollouts on the environment)",
+            "colour": "cell tint = score minus the teacher's score in the same column: green above, "
+                      "red below, stronger with the gap",
+            "ci": "95% interval: Wilson on graded rollouts (environments) or the card's ci95 "
+                  "(benchmarks), shown in the tooltip",
+            "cards": "benchmark scorecards from affine/state/benchsuite/ (ops/benchsuite); when a "
+                     "model has several cards the fullest one wins per benchmark, others fill gaps; "
+                     "challenger and comparables cards are not model rows",
+        },
+    }
+
+
+def write_matrix(stats: dict) -> dict:
+    # reign lists re-read from the validator files: cheap, and a stats.json
+    # written by an older builder has no revoked_kings
+    stats = {**stats, "kings": load_kings() or stats.get("kings") or [],
+             "revoked_kings": load_revoked_kings()}
+    matrix = build_matrix(stats, load_cards())
+    tmp = MATRIX_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(matrix, separators=(",", ":")))
+    tmp.replace(MATRIX_PATH)
+    return matrix
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
                         stream=sys.stderr)
     t0 = time.time()
     STATE_DIR.mkdir(parents=True, exist_ok=True)
+    if "--matrix-only" in sys.argv[1:]:
+        stats = json.loads(STATS_PATH.read_text())
+        matrix = write_matrix(stats)
+        log.info("matrix.json written from existing stats: %d rows x %d columns, %d cards",
+                 len(matrix["rows"]), len(matrix["columns"]), matrix["n_cards"])
+        return 0
     conn = sqlite3.connect(DB_PATH)
     conn.executescript(SCHEMA)
     migrate(conn)
@@ -706,6 +1087,12 @@ def main() -> int:
     log.info("stats.json written: %d rollouts (%d king / %d teacher), %d reigns with data, %.1fs",
              stats["counts"]["rollouts"], stats["counts"]["king"], stats["counts"]["teacher"],
              len(stats["reigns"]), stats["build_seconds"])
+    try:
+        matrix = write_matrix(stats)
+        log.info("matrix.json written: %d rows x %d columns, %d cards",
+                 len(matrix["rows"]), len(matrix["columns"]), matrix["n_cards"])
+    except Exception:  # the env stats must still publish if a card is malformed
+        log.exception("matrix build failed")
     return 0
 
 

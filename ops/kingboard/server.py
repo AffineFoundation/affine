@@ -27,6 +27,11 @@ HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
 STATE_DIR = Path(os.environ.get("KINGBOARD_STATE_DIR", HERE / "state"))
 STATS_PATH = STATE_DIR / "stats.json"
+MATRIX_PATH = STATE_DIR / "matrix.json"
+# affine.io's self-hosted fonts (Inter / IBM Plex Mono): the kingboard shares
+# the main page's theme, so it serves the same files under /fonts.
+FONTS_DIR = Path(os.environ.get("KINGBOARD_FONTS_DIR",
+                                HERE.parents[1] / "affine" / "website" / "fonts"))
 # Benchmark-suite scorecards (ops/benchsuite/publish.py writes one JSON per
 # run): the "Benchmarks" tab reads them straight from disk.
 BENCHSUITE_DIR = Path(os.environ.get("BENCHSUITE_STATE_DIR",
@@ -43,6 +48,7 @@ status: dict = {
     "refresh_s": REFRESH_S, "log_tail": "",
 }
 _stats_cache: dict = {"mtime": None, "body": b""}
+_matrix_cache: dict = {"mtime": None, "body": b""}
 
 
 def run_build_once() -> None:
@@ -77,24 +83,43 @@ def _start_loop() -> None:
         threading.Thread(target=build_loop, name="kingboard-builder", daemon=True).start()
 
 
-def stats_bytes() -> bytes | None:
+def _cached_bytes(path: Path, cache: dict) -> bytes | None:
     try:
-        mtime = STATS_PATH.stat().st_mtime
+        mtime = path.stat().st_mtime
     except FileNotFoundError:
         return None
-    if _stats_cache["mtime"] != mtime:
-        _stats_cache.update(mtime=mtime, body=STATS_PATH.read_bytes())
-    return _stats_cache["body"]
+    if cache["mtime"] != mtime:
+        cache.update(mtime=mtime, body=path.read_bytes())
+    return cache["body"]
 
 
-@app.get("/api/stats.json")
-def api_stats() -> Response:
-    body = stats_bytes()
+def stats_bytes() -> bytes | None:
+    return _cached_bytes(STATS_PATH, _stats_cache)
+
+
+def matrix_bytes() -> bytes | None:
+    return _cached_bytes(MATRIX_PATH, _matrix_cache)
+
+
+def _json_file_response(body: bytes | None) -> Response:
     if body is None:
         return JSONResponse({"error": "first build not finished yet", "builder": status},
                             status_code=503, headers={"Cache-Control": "no-store"})
     return Response(body, media_type="application/json",
                     headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/stats.json")
+def api_stats() -> Response:
+    return _json_file_response(stats_bytes())
+
+
+@app.get("/api/matrix")
+@app.get("/api/matrix.json")
+def api_matrix() -> Response:
+    """Model x (benchmark | environment) score matrix (build.py::build_matrix),
+    rebuilt by the same refresh pass as stats.json."""
+    return _json_file_response(matrix_bytes())
 
 
 @app.get("/api/benchsuite.json")
@@ -133,3 +158,5 @@ def index() -> FileResponse:
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+if FONTS_DIR.is_dir():
+    app.mount("/fonts", StaticFiles(directory=FONTS_DIR), name="fonts")
