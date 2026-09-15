@@ -1,0 +1,170 @@
+/* Kingboard theme = affine.io main page (affine/website/style.css): same
+   variables, fonts (Inter / IBM Plex Mono served under /fonts), nav, table
+   look. The old kingboard variable names are kept as aliases so app.js /
+   bench.js markup keeps working. */
+:root {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", monospace;
+  --color-bg: #1c1c1c;
+  --color-bg-deep: #181818;
+  --color-surface: #1f1f1f;
+  --color-border: rgba(255, 255, 255, 0.06);
+  --color-border-subtle: rgba(255, 255, 255, 0.04);
+  --color-border-hover: rgba(255, 255, 255, 0.10);
+  --color-fg: #e5e5e5;
+  --color-fg-2: #a1a1a1;
+  --color-fg-3: rgba(229, 229, 229, 0.45);
+  --color-fg-4: rgba(229, 229, 229, 0.25);
+  --color-ok: #44ff9a;
+  --color-bad: #ff4747;
+  --color-activity: #ff9b4e;
+  --color-warn: #f5e663;
+  --color-accent: #5ac8fa;
+  --color-gold: #f3c449;
+  --color-bar: #c6bda8;
+  --color-bar-current: #bf9939;
+
+  /* aliases used by the older kingboard scripts */
+  --bg: var(--color-bg);
+  --panel: var(--color-surface);
+  --panel-2: rgba(255, 255, 255, 0.03);
+  --border: var(--color-border);
+  --fg: var(--color-fg);
+  --muted: var(--color-fg-3);
+  --accent: var(--color-gold);
+  --king: var(--color-gold);
+  --teacher: var(--color-accent);
+  --other: rgba(229, 229, 229, 0.3);
+  --good: #7fb98a;
+  --bad: #c98080;
+  --mono: var(--font-mono);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  letter-spacing: -0.15px;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "tnum";
+  min-height: 100%;
+}
+::-webkit-scrollbar { display: none; }
+* { scrollbar-width: none; }
+a { color: inherit; text-decoration: none; }
+a:hover { color: var(--color-gold); }
+button { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+::selection { color: var(--color-fg); background: rgba(90, 200, 250, 0.25); }
+code { font-family: var(--font-mono); font-size: 11.5px; color: var(--color-gold); }
+
+/* ---------- nav (copied from affine.io) ---------- */
+.top-nav { position: sticky; top: 0; z-index: 30; background: var(--color-bg); border-bottom: 1px solid var(--color-border); }
+.nav-inner { position: relative; width: 100%; height: 48px; padding: 0 20px; display: flex; align-items: center; justify-content: flex-start; gap: 12px; }
+.brand { display: flex; align-items: center; gap: 8px; z-index: 1; }
+.brand:hover { color: inherit; }
+.brand img { width: 18px; height: 18px; }
+.brand-name { font-weight: 600; font-size: 13px; letter-spacing: -0.01em; }
+.brand-sub { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-fg-3); margin-left: 2px; }
+.nav-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 8px; }
+.nav-chip {
+  height: 26px; display: inline-flex; align-items: center; padding: 0 10px;
+  border: 1px solid rgba(243, 196, 73, 0.45); background: var(--color-surface);
+  color: var(--color-fg); font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em;
+}
+.nav-chip:hover, .nav-chip.active { border-color: var(--color-gold); color: var(--color-gold); }
+.nav-chip.active { background: rgba(243, 196, 73, 0.08); }
+.nav-chip-home { border-color: var(--color-border); color: var(--color-fg-3); }
+.nav-right { margin-left: auto; display: flex; align-items: center; gap: 10px; z-index: 1; }
+.nav-icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; color: var(--color-fg-3); border: 1px solid transparent; }
+.nav-icon:hover { color: var(--color-gold); border-color: rgba(243, 196, 73, 0.35); }
+
+/* status strip under the nav = affine.io market bar; the header cards
+   (current king, last rollout, ...) render as its items */
+.market-bar { border-top: 1px solid rgba(243, 196, 73, 0.22); border-bottom: 1px solid var(--color-border); background: #161616; }
+.market-bar-inner { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px 28px; min-height: 36px; padding: 8px 20px; font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.02em; width: 100%; }
+.market-item { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; color: var(--color-fg); }
+.market-item.dim { color: var(--color-fg-4); text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; }
+.card { display: inline-flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+.card .k { color: var(--color-fg-3); text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; }
+.card .v { font-size: 12px; font-weight: 500; color: var(--color-fg); }
+.card .v small { font-size: 11px; color: var(--color-fg-3); font-weight: 400; margin-left: 6px; }
+.card .v.mono { font-size: 12px; }
+.card.king .v { color: var(--color-gold); }
+.card .small.muted { display: none; }   /* second line of the old cards: kept in the DOM, not shown in the strip */
+
+/* ---------- page ---------- */
+.page { max-width: 1680px; margin: 0 auto; padding: 28px 20px 60px; display: flex; flex-direction: column; gap: 40px; }
+.section { display: flex; flex-direction: column; gap: 12px; }
+.section-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1px solid var(--color-border); }
+.section-head.sub { margin-top: 14px; }
+.section-title { font-family: var(--font-mono); font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.14em; color: var(--color-fg); }
+.section-right { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--color-fg-3); }
+.section-right.note { text-transform: none; letter-spacing: 0; max-width: 70ch; text-align: right; }
+.section-note { font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: var(--color-fg-3); }
+.muted { color: var(--color-fg-3); }
+.small { font-size: 11px; font-weight: 400; font-family: var(--font-mono); }
+h2 { font-size: 12px; }
+.tab.hidden { display: none; }
+.two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
+@media (max-width: 1100px) { .two-col { grid-template-columns: 1fr; } }
+
+.controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-family: var(--font-mono); font-size: 11px; color: var(--color-fg-3); }
+.controls.inline { margin-bottom: 2px; }
+.controls label { display: inline-flex; align-items: center; gap: 8px; color: var(--color-fg-3); }
+.controls .spacer { flex: 1; }
+select { background: var(--color-surface); color: var(--color-fg); border: 1px solid var(--color-border); border-radius: 3px; padding: 6px 8px; font-family: var(--font-mono); font-size: 12px; min-width: 130px; }
+select:focus { outline: none; border-color: var(--color-border-hover); }
+
+/* ---------- tables (affine.io data-table) ---------- */
+.table-wrap { border: 1px solid var(--color-border); border-radius: 4px; overflow: auto; -webkit-overflow-scrolling: touch; }
+table { border-collapse: collapse; width: 100%; font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+thead { position: sticky; top: 0; z-index: 2; background: var(--color-bg); }
+th { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-fg-3); text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--color-border); white-space: nowrap; cursor: pointer; user-select: none; }
+th.sorted::after { content: " ▲"; font-size: 9px; }
+th.sorted.desc::after { content: " ▼"; }
+th.num, td.num { text-align: right; }
+tbody tr { border-bottom: 1px solid var(--color-border-subtle); transition: background 0.15s; }
+tbody tr:hover { background: rgba(90, 200, 250, 0.06); }
+td { padding: 7px 12px; vertical-align: middle; color: var(--color-fg-2); white-space: nowrap; }
+tr.group td { background: rgba(255, 255, 255, 0.025); color: var(--color-gold); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; padding-top: 6px; padding-bottom: 6px; }
+tr.group td .muted { text-transform: none; letter-spacing: 0; margin-left: 8px; }
+tbody tr.group:hover td { background: rgba(255, 255, 255, 0.025); }
+td .env-id { display: block; color: var(--color-fg-4); font-size: 10px; }
+td .ci, td .n { color: var(--color-fg-3); font-size: 10.5px; margin-left: 4px; }
+.pos, td.good { color: var(--good); }
+.neg, td.bad { color: var(--bad); }
+.bar { display: inline-block; height: 3px; background: var(--color-gold); border-radius: 2px; vertical-align: middle; margin-right: 6px; opacity: 0.85; }
+.bar.t { background: var(--color-accent); }
+td.spark svg { width: 90px; height: 22px; display: block; }
+.king-col { color: var(--color-gold); }
+.teacher-col { color: var(--color-accent); }
+.subrow td { font-size: 0.85em; color: var(--color-fg-3); }
+.empty { font-family: var(--font-mono); font-size: 12px; color: var(--color-fg-3); padding: 18px; text-align: center; }
+
+/* trend */
+#trend { width: 100%; height: 260px; background: rgba(255, 255, 255, 0.015); border: 1px solid var(--color-border); border-radius: 4px; }
+.legend { color: var(--color-fg-3); font-size: 11px; display: inline-flex; gap: 6px; align-items: center; margin-left: auto; }
+.sw { display: inline-block; width: 12px; height: 3px; margin: 0 4px 0 10px; vertical-align: middle; }
+.sw.king { background: var(--color-gold); }
+.sw.teacher { background: var(--color-accent); }
+.sw.other { background: var(--other); }
+
+/* definitions */
+details.defs { border: 1px solid var(--color-border); border-radius: 4px; padding: 10px 14px; background: rgba(255, 255, 255, 0.015); font-family: var(--font-mono); font-size: 11px; color: var(--color-fg-3); }
+summary { cursor: pointer; text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; }
+details ul { margin: 8px 0; padding-left: 18px; line-height: 1.55; }
+details li b { color: var(--color-fg-2); }
+footer { max-width: 1680px; margin: 0 auto; padding: 0 20px 40px; font-family: var(--font-mono); font-size: 11px; color: var(--color-fg-3); line-height: 1.5; }
+footer a { color: var(--color-fg-2); }
+.status { padding: 24px 28px; color: var(--color-fg-3); }
+
+@media (max-width: 720px) {
+  .nav-inner { height: auto; flex-wrap: wrap; padding: 8px 12px; row-gap: 6px; }
+  .nav-center { position: static; transform: none; order: 3; width: 100%; overflow-x: auto; }
+  .nav-chip { flex: none; height: 32px; padding: 0 12px; }
+  .top-nav { position: static; }
+  .page { padding: 20px 12px 40px; gap: 28px; }
+  .section-right.note { text-align: left; }
+}

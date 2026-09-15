@@ -4,7 +4,6 @@ import {
   duelTurnUrl,
   fetchAudit,
   fetchAudits,
-  fetchBenchmarks,
   fetchDataset,
   fetchDatasetTurn,
   fetchDatasetTurns,
@@ -18,7 +17,8 @@ import {
   fetchSnapshot,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=67";
+} from "./api.js?v=69";
+import { initMatrix } from "./matrix.js?v=9";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -50,8 +50,8 @@ import {
 const $ = (id) => document.getElementById(id);
 
 let filter = "";
-let cache = { dashboard: null, benchmarks: null, history: null, regHistory: null, contract: null, audits: null };
-let fps = { dashboard: "", benchmarks: "", history: "", hero: "", reg: "", gates: "", audits: "" };
+let cache = { dashboard: null, history: null, regHistory: null, contract: null, audits: null };
+let fps = { dashboard: "", history: "", hero: "", reg: "", gates: "", audits: "" };
 let closeWatch = null;
 
 // Public bucket root — audit workspaces live under audits/reign_NNNN/ and are
@@ -195,52 +195,14 @@ function renderMarketBar(d) {
 
 /* ---------- sections ---------- */
 
-// Advisory bench references shown as deltas in the reign table. As of the
-// min(R,G) era (wvk 10, 2026-08-27) the genesis IS the stock Qwen base, so
-// baseline and genesis coincide. Matched by label (repo as fallback).
-const BENCH_BASELINE = { label: "baseline", repo: "Qwen/Qwen3.6-35B-A3B" };
-const BENCH_GENESIS = {
-  label: "reign-0",
-  repo: "Qwen/Qwen3.6-35B-A3B",
-};
-// The frozen teacher C (affine.toml [teacher]). min(R,G) has its fixed point
-// at the teacher, so this is the ceiling the current mechanism can reach;
-// benched 2026-09-07 via scripts/bench_run.py (label "teacher").
-const BENCH_TEACHER = { label: "teacher", repo: "Qwen/Qwen3.8-27B" };
+// Genesis (reign 0 → Affine-I) is the stock Qwen base since the min(R,G)
+// era (wvk 10, 2026-08-27). Held-out benchmark scores per reign live in the
+// "Kings vs teacher" matrix (#kings, api/v1/matrix), not in this table.
+const GENESIS_REPO = "Qwen/Qwen3.6-35B-A3B";
 
-// Genesis (reign 0 → Affine-I) is known statically; the rest of the reign
-// lookup arrives with the first snapshot (see applySnapshot).
-setReignLookup([], BENCH_GENESIS.repo);
-
-function benchInfo(b) {
-  const suite = (Array.isArray(b?.suites) && b.suites[0]) || "swe_rebench_lite";
-  const scores = new Map();
-  for (const m of b?.models || []) {
-    const s = m?.suites?.[suite]?.score;
-    if (s != null && Number.isFinite(Number(s))) {
-      scores.set(m.model_repo, Number(s));
-    }
-  }
-  const refScore = (ref) => {
-    const hit = (b?.models || []).find(
-      (m) => m.label === ref.label || m.model_repo === ref.repo);
-    const s = hit?.suites?.[suite]?.score;
-    return s != null && Number.isFinite(Number(s)) ? Number(s) : null;
-  };
-  return { suite, scores, qwen: refScore(BENCH_BASELINE), genesis: refScore(BENCH_GENESIS),
-           teacher: refScore(BENCH_TEACHER) };
-}
-
-function deltaCell(score, ref) {
-  if (score == null || ref == null) return `<td class="r dim">—</td>`;
-  const d = score - ref;
-  const cls = d > 0 ? "delta-up" : d < 0 ? "delta-down" : "dim";
-  return `<td class="r ${cls}">${esc(fmtPctDelta(d))}</td>`;
-}
-
-// swe-rebench scores are fractions of 1; display as percentages.
-const fmtPct = (v) => (v == null ? "—" : `${(Number(v) * 100).toFixed(1)}%`);
-const fmtPctDelta = (d) => `${d > 0 ? "+" : ""}${(d * 100).toFixed(1)}%`;
+// Genesis is known statically; the rest of the reign lookup arrives with
+// the first snapshot (see applySnapshot).
+setReignLookup([], GENESIS_REPO);
 
 function renderReign(d) {
   const members = reignMembers(d);
@@ -249,75 +211,42 @@ function renderReign(d) {
     $("reign-wrap").innerHTML = `<div class="empty">no weight holders — emissions burn</div>`;
     return;
   }
-  const bench = benchInfo(cache.benchmarks);
   const earners = members.filter((m) => m.earning || (m.weight_bps || 0) > 0);
   const pct = earners.length
     ? ((earners[0].weight_bps || 0) / 100).toFixed(0)
     : "0";
-  const benchBits = [];
-  if (bench.qwen != null) benchBits.push(`qwen ${fmtPct(bench.qwen)}`);
-  if (bench.genesis != null) benchBits.push(`Affine-I ${fmtPct(bench.genesis)}`);
-  if (bench.teacher != null) benchBits.push(`teacher ${fmtPct(bench.teacher)}`);
+  const windowH = d?.reign?.payout_window_hours ?? d?.payout?.window_hours;
+  const windowTxt = windowH != null ? `${Number(windowH).toFixed(0)} h payout window` : "payout window";
   $("reign-meta").textContent =
-    `${members.length} kings · ${earners.length} earning · ${pct}% each`
-    + (benchBits.length ? ` · swe: ${benchBits.join(" / ")}` : "");
-  // swe delta vs the previous king in the reign chain (reign 0 = genesis).
-  const sweOf = (m) => (bench.scores.has(m.repo) ? bench.scores.get(m.repo) : null);
-  const sweByReign = new Map(members
-    .filter((m) => m.reign_number != null)
-    .map((m) => [Number(m.reign_number), sweOf(m)]));
-  if (!sweByReign.has(0) && bench.genesis != null) sweByReign.set(0, bench.genesis);
-  const prevDelta = (m) => {
-    const rn = m.reign_number;
-    const swe = sweOf(m);
-    const prev = rn != null && rn > 0 ? sweByReign.get(Number(rn) - 1) : null;
-    return swe != null && prev != null ? swe - prev : null;
-  };
-  const maxAbsPrev = Math.max(
-    ...members.map((m) => Math.abs(prevDelta(m) ?? 0)), 1e-9);
-  const prevCell = (m) => {
-    const dd = prevDelta(m);
-    if (dd == null) return `<td class="r dim">—</td>`;
-    const cls = dd > 0 ? "delta-up" : dd < 0 ? "delta-down" : "dim";
-    const w = Math.min(Math.abs(dd) / maxAbsPrev, 1) * 50;
-    const left = dd >= 0 ? 50 : 50 - w;
-    const color = dd > 0 ? "#7fb98a" : "#c98080";
-    return `<td class="r ${cls}" title="swe vs previous king"><span class="pm-cell">${esc(fmtPctDelta(dd))}
-      <span class="pm-bar"><i style="left:${left}%;width:${w}%;background:${color}"></i></span></span></td>`;
-  };
+    `${members.length} reigns · ${earners.length ? `${earners.length} paid · ${pct}% each` : "none paid · emissions burn"} · ${windowTxt}`;
   $("reign-wrap").innerHTML = `<table class="data-table">
     <thead><tr>
       <th>reign</th><th>crowned</th><th>uid</th><th>model</th><th>hotkey</th>
-      <th class="r">swe</th><th class="r" title="swe vs the king it dethroned">vs prev</th>
-      <th class="r">vs qwen</th><th class="r">vs Affine-I</th>
-      <th class="r" title="swe vs the frozen teacher Qwen3.8-27B — the ceiling of min(R,G)">vs teacher</th>
-      <th class="r">Reason</th><th class="r">α/day</th><th class="r">$/day</th><th class="r">weight</th>
+      <th class="r">Reason</th><th class="r">α/day</th><th class="r">$/day</th>
+      <th class="r" title="each crown is paid one equal share until crowned_at + payout window; then it earns nothing even while it holds the throne">weight</th>
     </tr></thead>
     <tbody>${members.map((m) => {
       const earning = m.earning || (m.weight_bps || 0) > 0;
       const wPct = ((m.weight_bps || 0) / 100).toFixed(0);
+      const until = m.paid_until ? fmtTime(m.paid_until) : "";
       const alpha = earning ? fmtAlpha(m.alpha_per_day) : "—";
       const usd = earning ? fmtUsd(m.usd_per_day) : "—";
-      const swe = bench.scores.has(m.repo) ? bench.scores.get(m.repo) : null;
       return `<tr class="${m.current ? "current" : ""}">
         <td class="${m.current ? "gold" : "dim"}">${m.reign_number != null ? `#${esc(m.reign_number)}` : "prior"}</td>
         <td class="when">${m.crowned_at ? esc(fmtTime(m.crowned_at)) : "—"}</td>
         <td class="dim">${m.uid != null ? esc(m.uid) : "—"}</td>
         <td>${modelLink(m.repo, m.hotkey, m.reign_number)}</td>
         <td>${hotkeyLink(m.hotkey)}</td>
-        <td class="r ${swe != null ? "" : "dim"}">${esc(fmtPct(swe))}</td>
-        ${prevCell(m)}
-        ${deltaCell(swe, bench.qwen)}
-        ${deltaCell(swe, bench.genesis)}
-        ${deltaCell(swe, bench.teacher)}
         <td class="r ${m.current ? "gold" : ""}">${esc(fmtScore(m.score))}</td>
         <td class="r ${earning ? "gold" : "dim"}">${esc(alpha)}</td>
         <td class="r ${earning ? "" : "dim"}">${esc(usd)}</td>
         <td class="r">${earning
-          ? `<span class="weight-cell">${esc(wPct)}% <span class="bar"><i style="width:${esc(wPct)}%"></i></span></span>`
+          ? `<span class="weight-cell" title="paid until ${esc(until)}">${esc(wPct)}% <span class="bar"><i style="width:${esc(wPct)}%"></i></span></span>`
           : m.inaccessible
-            ? `<span class="bad" title="model repo gone/gated on HF — forfeits payout while dark">gated</span>`
-            : `<span class="dim">—</span>`}</td>
+            ? `<span class="bad" title="model repo gone/gated — forfeits payout while dark">gated</span>`
+            : m.expired
+              ? `<span class="dim" title="payout window closed ${esc(until)}">expired</span>`
+              : `<span class="dim">—</span>`}</td>
       </tr>`;
     }).join("")}</tbody>
   </table>`;
@@ -603,7 +532,7 @@ function renderQueue(d) {
 function opponentKing(r) {
   const members = reignMembers(cache.dashboard || {})
     .filter((m) => m.reign_number != null && m.repo);
-  const genesis = { repo: BENCH_GENESIS.repo, hotkey: "", reign_number: 0 };
+  const genesis = { repo: GENESIS_REPO, hotkey: "", reign_number: 0 };
   if (r.event === "crowned" && r.reign_number != null) {
     const prevReign = Number(r.reign_number) - 1;
     return members.find((m) => m.reign_number === prevReign)
@@ -622,11 +551,40 @@ function opponentKing(r) {
   return best;
 }
 
+// wvk 15 (2026-09-12 17:01 -> 2026-09-13 13:01 UTC) crowned per 12 h window;
+// retired by wvk 16. Its rows stay in the history as audit trail and are
+// labelled so they do not read as a live rule.
+const RETIRED_WINDOW_TAG = "retired rule (wvk 15)";
+function isRetiredWindowRow(r) {
+  return r.crown_mode === "window_best" || r.event === "window_close"
+    || r.via === "window_best";
+}
+function retiredTag(title) {
+  return ` <span class="dim" title="${esc(title)}">${esc(RETIRED_WINDOW_TAG)}</span>`;
+}
+
 function outcomeBadge(r) {
-  if (r.event === "crowned") return badge("crowned", `crowned #${r.reign_number ?? "?"}`);
+  if (r.event === "crowned") {
+    return badge("crowned", `crowned #${r.reign_number ?? "?"}`)
+      + (isRetiredWindowRow(r) ? retiredTag("crowned by the 12 h window rule, retired 2026-09-13 13:01 UTC (wvk 16)") : "");
+  }
+  if (r.event === "crown_revoked") {
+    const code = r.revoked_code || String(r.revoked_reason || "").split(":")[0] || "revoked";
+    const label = code.replace(/^revoked_/, "").replace(/_/g, " ");
+    const tag = isRetiredWindowRow(r) ? retiredTag(r.revoked_reason || "crown revoked")
+      : ` <span class="dim" title="${esc(r.revoked_reason || "")}">${esc(r.revoked_by || "operator decision")}</span>`;
+    return badge("failed", `crown revoked #${r.reign_number ?? "?"} - ${label}`) + tag;
+  }
+  if (r.event === "window_close") {
+    return badge("queued", `window ${r.window_id ?? "?"} closed - ${r.outcome || "-"}`)
+      + retiredTag("12 h window rule: every window close wrote one row. Retired 2026-09-13 13:01 UTC (wvk 16); no window runs now.");
+  }
   if (r.event === "failed") return badge("failed", r.error_code || "failed");
   if (r.accepted) return badge("accepted", "accepted");
-  if (r.accepted === false) return badge("rejected", "rejected");
+  if (r.accepted === false) {
+    return badge("rejected", "rejected")
+      + (isRetiredWindowRow(r) ? retiredTag("judged as a window candidate under the 12 h window rule (wvk 15), retired 2026-09-13 13:01 UTC") : "");
+  }
   return badge("queued", r.event || "event");
 }
 
@@ -650,10 +608,13 @@ function renderHistory(h) {
   const rule = liveCrownShort(cache.contract);
   const meta = $("history-meta");
   const shown = rows.length + audits.length;
-  meta.textContent = rule
-    ? `${rule} · ${shown} shown`
-    : `${shown} shown`;
+  const retired = rows.some(isRetiredWindowRow);
+  meta.textContent = (rule ? `${rule} · ${shown} shown` : `${shown} shown`)
+    + (retired ? ` · rows tagged "${RETIRED_WINDOW_TAG}" were judged under the 12 h window rule (2026-09-12 17:01 -> 2026-09-13 13:01 UTC), kept for audit; no window runs now` : "");
   if (rule) meta.title = rule;
+  // the line itself is hidden (boilerplate); the rule sits in the header's ⓘ tooltip
+  const info = $("history-info");
+  if (info) info.title = meta.textContent;
   if (!shown) {
     $("history-wrap").innerHTML = `<div class="empty">empty</div>`;
     return;
@@ -1490,7 +1451,9 @@ async function sendChatMessage() {
             continue;
           }
           const delta = j.choices?.[0]?.delta || {};
-          if (delta.reasoning_content) reply.rc = (reply.rc || "") + delta.reasoning_content;
+          // vLLM < 0.11 named the field reasoning_content; 0.28 says reasoning.
+          const rc = delta.reasoning_content || delta.reasoning;
+          if (rc) reply.rc = (reply.rc || "") + rc;
           if (delta.content) reply.raw = (reply.raw || "") + delta.content;
           // Kings trained for thought-duels emit reasoning inline, closed by
           // </think> — fold it into the collapsible thought block so the
@@ -1515,6 +1478,10 @@ async function sendChatMessage() {
     if (!reply.content && !reply.reasoning && !reply.error) {
       reply.error = true;
       reply.content = "the king returned nothing — try rephrasing";
+    } else if (!reply.content && !reply.error) {
+      // Thought right up to the reply cap and never answered — a real king
+      // failure mode worth seeing, not a transport error.
+      reply.content = "(the king used its whole reply budget thinking and never answered — try again or rephrase)";
     }
   } catch {
     reply.error = true;
@@ -2027,7 +1994,9 @@ function duelPageHtml(duel, series, logLines) {
       <div class="kv"><span class="k">revision</span><span class="v mono">${esc(short(revision || "—", 14))}${copyBtn(revision)}</span></div>
       <div class="kv"><span class="k">when</span><span class="v" title="${esc(fmtTime(duel.at))}">${esc(fmtTime(duel.at))} · ${esc(fmtAge(duel.at))}</span></div>
       <div class="kv"><span class="k">duration</span><span class="v">${esc(fmtDuration(duel.duration_s))}</span></div>
-      <div class="kv"><span class="k">paired turns</span><span class="v">${esc(duel.n_paired_turns ?? paired.length ?? "—")}</span></div>
+      <div class="kv"><span class="k">paired turns</span><span class="v">${esc(duel.n_paired_turns ?? paired.length ?? "—")}${
+        duel.near_miss?.triggered ? ` <span class="dim" title="sequential near-miss: the first slice's margin fell inside the near-miss window, so a second seeded slice was scored and the crown decided on the pooled turns">· pooled over ${esc(String((duel.near_miss.slices || []).length))} slices</span>` : ""
+      }</span></div>
       <div class="kv"><span class="k">artifact</span><span class="v">${artifactLink}${duel.challenge_id ? copyBtn(hippiusEvalUrl(duel.challenge_id)) : ""}</span></div>
     </div>`;
 
@@ -2068,6 +2037,37 @@ function duelPageHtml(duel, series, logLines) {
       ${card("challenger Reason", esc(fine(chR)), "mean over the slice",
         chR != null && kgR != null ? passCls(Number(chR) >= Number(kgR)) : "")}
       ${card("king Reason", esc(fine(kgR)), "same slice, same teacher")}
+      ${(() => {
+        // A_match telemetry (2026-09-14, not scored): share of the teacher's
+        // k reference actions equal to the side's action after dialect
+        // normalisation; `pair` = the refs' own agreement. Rendered only
+        // on verdicts that carry it.
+        const am = duel.challenger?.a_match, ak = duel.king?.a_match;
+        if (am == null && ak == null) return "";
+        const pct = (v) => (v == null ? "—" : `${Math.round(Number(v) * 100)}%`);
+        const pair = duel.teacher?.ref_pair_agreement;
+        const sub = `share of the teacher's reference actions equal to the side's action (dialect-normalised) · telemetry, not scored`
+          + (pair != null ? ` · refs agree with each other ${pct(pair)}` : "");
+        return card("A_match chall / king", `${esc(pct(am))} / ${esc(pct(ak))}`, esc(sub),
+          am != null && ak != null ? passCls(Number(am) >= Number(ak)) : "")
+          + (duel.challenger?.a_match_centered != null
+            ? card("A_match − pair", `${esc(fine(duel.challenger.a_match_centered))} / ${esc(fine(duel.king?.a_match_centered))}`,
+              "chall / king · per-turn A_match minus the refs' own agreement, averaged") : "");
+      })()}
+      ${(() => {
+        // Sequential near-miss (2026-09-11): one card per extra slice the
+        // rule drew, showing what each slice said on its own. Rendered only
+        // when the rule fired — single-slice verdicts look as before.
+        const nm = duel.near_miss;
+        if (!nm || !nm.triggered || !Array.isArray(nm.slices)) return "";
+        return nm.slices.map((s) => card(
+          `slice ${esc(String(s.index))} alone`,
+          esc(fine(s.margin)),
+          `z = ${esc(fmtZ(s.z))} · ${esc(String(s.n_paired_turns ?? "—"))} paired turns · seed ${esc(short(String(s.seed ?? ""), 10))}`,
+          s.challenger_wins == null ? "" : passCls(Boolean(s.challenger_wins)))).join("")
+          + card("near-miss window", `(${esc(fine(nm.low))}, ${esc(fine(nm.high))})`,
+            `first-slice margin inside → ${esc(String(nm.extra_slices))} extra slice(s), decided on the pool`);
+      })()}
       ${(() => {
         // The two non-margin crown conditions (wvk=5/6). Render only when the
         // duel recorded them — pre-fork rows have neither.
@@ -2216,7 +2216,7 @@ function applySnapshot(snap) {
   if (fp === fps.dashboard) return;
   fps.dashboard = fp;
   cache.dashboard = snap;
-  setReignLookup(reignMembers(snap), BENCH_GENESIS.repo);
+  setReignLookup(reignMembers(snap), GENESIS_REPO);
   const navKing = $("nav-king");
   if (navKing && snap.king?.repo) {
     navKing.textContent =
@@ -2232,10 +2232,9 @@ function applySnapshot(snap) {
   renderFails(cache.history);
 }
 
-async function refreshHistoryAndBench() {
-  const [h, b, reg] = await Promise.all([
+async function refreshHistory() {
+  const [h, reg] = await Promise.all([
     fetchHistory({ limit: 100, q: filter }),
-    fetchBenchmarks(),
     fetchRegHistory(),
   ]);
   const hfp = fingerprint(h);
@@ -2248,13 +2247,6 @@ async function refreshHistoryAndBench() {
     renderHistory(cache.history);
     renderFails(cache.history);
     drawOpenChart();
-  }
-  const bfp = fingerprint(b);
-  if (b && bfp !== fps.benchmarks) {
-    fps.benchmarks = bfp;
-    cache.benchmarks = b;
-    // Bench scores render inside the reign table now.
-    if (cache.dashboard) renderReign(cache.dashboard);
   }
   if (reg?.points?.length) {
     const rfp = fingerprint({
@@ -2273,7 +2265,7 @@ async function refreshHistoryAndBench() {
 function wire() {
   $("filter-input")?.addEventListener("input", (e) => {
     filter = e.target.value.trim().toLowerCase();
-    refreshHistoryAndBench();
+    refreshHistory();
   });
   window.addEventListener("resize", () => {
     fps.hero = "";
@@ -2354,10 +2346,11 @@ function wire() {
 async function boot() {
   wire();
   wireChartTip();
+  initMatrix();
   route(); // deep link straight to a duel page (#duel/<cid>)
   cache.contract = await fetchContract().catch(() => null);
   renderLiveContract();
-  await Promise.all([refreshHistoryAndBench(), refreshAudits()]);
+  await Promise.all([refreshHistory(), refreshAudits()]);
   route(); // retry the duel render now that history is cached (static mode)
   closeWatch = watchSnapshot(applySnapshot, {
     onStatus: (s) => {
@@ -2366,7 +2359,7 @@ async function boot() {
     },
   });
   // History grows slower than live snapshot — refresh on an interval.
-  setInterval(refreshHistoryAndBench, 15000);
+  setInterval(refreshHistory, 15000);
   setInterval(refreshAudits, 30000);
 }
 
