@@ -158,11 +158,15 @@ def start_pass(w: dict, ref: str, label: str, run_id: str, mode: str, why: str,
     logp = STATE_DIR / f"pass-{run_id}.log"
     env = dict(os.environ)
     env.update(extra_env or {})
-    cmd = ["bash", str(HERE / "run_pass.sh"), ref, label, run_id, mode]
+    # setsid -f: the driver is re-parented to init, so a pm2 restart of the watcher
+    # (which kills the whole process tree) cannot take a running pass down with it
+    # (2026-09-15: the reign-13 driver died that way, its pod kept running). The
+    # driver's own pid comes from state/pass-<run_id>.pid, written by run_pass.sh.
+    cmd = ["setsid", "-f", "bash", str(HERE / "run_pass.sh"), ref, label, run_id, mode]
     with logp.open("a") as fh:
-        proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, cwd=str(HERE),
-                                start_new_session=True, env=env)
-    w["passes"].append({"run_id": run_id, "mode": mode, "state": "running", "pid": proc.pid,
+        subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, cwd=str(HERE), env=env).wait()
+    w["passes"].append({"run_id": run_id, "mode": mode, "state": "running", "pid": None,
+                        "pidfile": str(STATE_DIR / f"pass-{run_id}.pid"),
                         "log": str(logp), "why": why,
                         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **fields})
     save_watch(w)
@@ -211,6 +215,9 @@ def tick(a: argparse.Namespace) -> None:
     running = [p for p in w["passes"] if p.get("state") == "running"]
     if running:
         p = running[0]
+        if p.get("pid") is None and p.get("pidfile") and Path(p["pidfile"]).exists():
+            p["pid"] = int(Path(p["pidfile"]).read_text().strip() or 0) or None
+            save_watch(w)
         if a.dry_run or p.get("pid") is None:
             log(f"pass {p['run_id']} marked running")
             return

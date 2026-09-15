@@ -49,6 +49,7 @@ print(",".join(v) if isinstance(v,list) else v)' "$1"; }
 MODE="${4:-${BENCHSUITE_MODE:-$(toml modes.default)}}"
 mkdir -p "$HERE/state"
 LOG_EXIT="$HERE/state/pass-$RUN_ID.exit"
+echo $$ > "$HERE/state/pass-$RUN_ID.pid"   # watch.py polls this (the driver is detached from pm2's tree)
 log() { echo "[run_pass] $(date -u +%FT%TZ) $*"; }
 finish() { echo "$1" > "$LOG_EXIT"; exit "$1"; }
 CODE_COMMIT=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -264,6 +265,41 @@ PY
   "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" || finish 8
 }
 
+# Re-attach to a Lium pod whose box-side driver died (2026-09-15: a pm2 restart
+# of the watcher killed the reign-13 driver while the pod kept running its cells).
+# Waits for the pod's run_suite processes to end, then does the tail the driver
+# would have done: retry + summarize, Prime Evals push, pull, publish, release.
+#   BENCHSUITE_ATTACH_POD=<pod name> run_pass.sh <ref> <label> <run_id> attach
+attach_lium() {
+  local POD="${BENCHSUITE_ATTACH_POD:?BENCHSUITE_ATTACH_POD required}"
+  cleanup_lium() { log "releasing Lium pod $POD"; "$PY" "$HERE/kingpod.py" release "$POD" || true; }
+  trap cleanup_lium EXIT
+  export LIUM_API_KEY="${LIUM_API_KEY:-${LIUM:-}}"
+  local HOST PORT API_KEY
+  HOST=$("$PY" -c 'import json; print(json.load(open("'"$HERE"'/state/pods.json"))["'"$POD"'"]["ssh_host"])')
+  PORT=$("$PY" -c 'import json; print(json.load(open("'"$HERE"'/state/pods.json"))["'"$POD"'"]["ssh_port"])')
+  API_KEY=$("$PY" -c 'import json; print(json.load(open("'"$HERE"'/state/pods.json"))["'"$POD"'"]["key"])')
+  local USER_HOST="root@$HOST" SSH_KEY="$HOME/.ssh/id_ed25519" KH="$HERE/state/known_hosts" RHOME=/root
+  SSH=(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$KH" -o ConnectTimeout=20 -o LogLevel=ERROR -p "$PORT" "$USER_HOST")
+  local REMOTE_ENV="export BENCH_API_KEY='$API_KEY' PRIME_API_KEY='${PRIME_API_KEY:-}' HF_TOKEN='${HF_TOKEN:-}' BENCHSUITE_CHAT_IMAGE=affine-bench-chat:py311; cd $RHOME/affine/ops/benchsuite"
+  local PYR="$RHOME/benchsuite/verifiers/.venv/bin/python"
+  log "attached to $POD ($HOST:$PORT) for $RUN_ID; waiting for the pod's run_suite processes"
+  while :; do
+    local N; N=$("${SSH[@]}" "pgrep -fc 'run_suite.py run --run-id $RUN_ID' || true" 2>/dev/null || echo "ssh")
+    [ "$N" = "ssh" ] && { log "ssh to the pod failed; retrying in 5 min"; sleep 300; continue; }
+    [ "${N:-0}" -eq 0 ] && break
+    pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"
+    "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" --only-state --partial || true
+    sleep 900
+  done
+  log "pod's cells finished; running the tail (retry, summarize, push, pull, publish)"
+  "${SSH[@]}" "$REMOTE_ENV && $PYR run_suite.py retry --run-id $RUN_ID --out $RHOME/benchsuite/runs --verifiers-dir $RHOME/benchsuite/verifiers && $PYR run_suite.py summarize --run-id $RUN_ID --out $RHOME/benchsuite/runs" || log "retry/summarize returned non-zero"
+  "${SSH[@]}" "$REMOTE_ENV && $PYR push_evals.py --run-dir $RHOME/benchsuite/runs/$RUN_ID --models king" || log "push_evals returned non-zero; continuing"
+  pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"
+  "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" || finish 8
+  finish 0
+}
+
 pull_run() {  # user@host port key known_hosts remote_home
   tar_cmd="cd $5/benchsuite/runs && tar czf - --exclude='*/logs/attempt_*' $RUN_ID"
   ssh -i "$3" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$4" -o LogLevel=ERROR -p "$2" "$1" "$tar_cmd" | tar xzf - -C "$BENCH_HOME/runs" || log "pull failed (will retry at the end)"
@@ -337,7 +373,8 @@ case "$MODE" in
   prime)       run_on_prime_pod king gated ;;
   full)        run_on_prime_pod king,teacher always ;;
   challenger)  run_lium never ;;
-  genesis)     run_lium never ;;   # hf://<repo>@<rev> ref, chat sets only, teacher reused; the kingboard's Genesis row
+  genesis)     run_lium never ;;
+  attach)      attach_lium ;;   # hf://<repo>@<rev> ref, chat sets only, teacher reused; the kingboard's Genesis row
   comparables) run_comparables ;;
   *) log "unknown mode $MODE"; finish 9 ;;
 esac
