@@ -41,7 +41,8 @@ WEIGHTS_SCHEMA = pa.schema([
     ("source", pa.string()), ("harness", pa.string()), ("action_kind", pa.string()),
     ("depth_bin", pa.string()), ("n_turns", pa.int64()), ("n_slice_keys", pa.int64()),
     ("bucketed", pa.bool_()), ("n_obs", pa.int64()), ("n_w", pa.float64()),
-    ("M", pa.float64()), ("S", pa.float64()), ("M_t", pa.float64()), ("S_t", pa.float64()),
+    ("M", pa.float64()), ("S", pa.float64()), ("forfeit_rate", pa.float64()), ("forfeit_share", pa.float64()),
+    ("M_t", pa.float64()), ("S_t", pa.float64()),
     ("prior_M", pa.float64()), ("prior_S", pa.float64()), ("probe_yield", pa.float64()),
     ("w", pa.float64()), ("rank_pct", pa.float64()), ("m_shadow", pa.int32()),
     ("m_applied", pa.int32()), ("draws_50", pa.int64()), ("distinct_turns_50", pa.int64()),
@@ -154,6 +155,11 @@ def compute(args) -> dict:
         r = roll["stratum"].get(s) or {}
         rec.update({"n_obs": int(r.get("n_obs") or 0), "n_w": float(r.get("n_w") or 0.0),
                     "M": r.get("M"), "S": r.get("S"), "Dbar": r.get("Dbar"),
+                    "forfeit_rate": r.get("forfeit_rate"),
+                    # share of the king's misses that were forfeits ("cannot
+                    # answer") rather than live turns under theta ("answers badly")
+                    "forfeit_share": (float(r["forfeit_rate"]) / float(r["M"])
+                                      if r.get("M") and r.get("forfeit_rate") is not None else None),
                     "draws_50": int(r.get("draws_50") or 0),
                     "distinct_turns_50": int(r.get("distinct_turns_50") or 0),
                     "max_turn_draws_50": int(r.get("max_turn_draws_50") or 0),
@@ -173,13 +179,16 @@ def compute(args) -> dict:
 
     tot_keys = sum(current_keys.values()) or 1
     current = {g: current_keys.get(g, 0) / tot_keys for g in sorted(groups | set(current_keys))}
-    raw_shares = rule.raw_group_shares(strata)
-    # Diagnostic variant: Σ w over the sampler's units (slice keys) with a
-    # bucket's weight = the mean w of the base strata it merges. Under the
-    # phase-9 buckets the plan's Σ over base strata re-inflates the bucketed
-    # teacher groups by their base-strata count; this column shows the
-    # vector the same rule gives when it counts what the sampler draws.
+    # Σ w per group. Operator decision 2026-09-15 00:39 UTC (lever 2): sum
+    # over the SLICE KEYS -- the phase-9 buckets, the unit the duel draws one
+    # turn from -- with a bucket's weight = the mean w of the base strata it
+    # merges. The plan's Σ over base strata is kept as a diagnostic column:
+    # it re-imports coding's raw 14k stratum count and pulls the vector back
+    # toward coding / terminal, against the directive.
+    raw_base = rule.raw_group_shares(strata)
     raw_slicekeys = rule.raw_group_shares_by_slice_key(strata, index_rows)
+    share_unit = str(cfg.get("share_unit") or "slice_keys")
+    raw_shares = raw_slicekeys if share_unit == "slice_keys" else raw_base
     vec = rule.group_vector(raw_shares, static, current, floor_frac=float(cfg["floor_frac_of_static"]),
                             floor_ct=float(cfg["floor_coding_terminal"]), cap=float(cfg["group_cap"]),
                             max_shift=float(cfg["max_share_shift"]))
@@ -196,11 +205,13 @@ def compute(args) -> dict:
     for s in sorted(strata):
         rec = strata[s]
         wrows.append({f.name: rec.get(f.name) for f in WEIGHTS_SCHEMA})
-        for k in ("n_w", "M", "S", "M_t", "S_t", "prior_M", "prior_S", "probe_yield", "w", "rank_pct", "Dbar"):
+        for k in ("n_w", "M", "S", "forfeit_rate", "forfeit_share", "M_t", "S_t", "prior_M", "prior_S",
+                  "probe_yield", "w", "rank_pct", "Dbar"):
             wrows[-1][k] = clean_float(wrows[-1][k])
     knobs = {k: cfg[k] for k in ("rule_version", "half_life_verdicts", "n_0", "gamma", "eps", "theta_pct",
                                  "m_max", "floor_coding_terminal", "floor_frac_of_static", "group_cap",
                                  "max_share_shift", "min_new_verdicts")}
+    knobs["share_unit"] = share_unit
     hashed = {"rule_version": int(cfg["rule_version"]), "knobs": knobs, "ledger_sha256": lsha,
               "manifest_sha256": msha, "theta": ledger_doc.get("theta"), "probes_sha256": probes_sha,
               "strata": wrows}
@@ -218,6 +229,7 @@ def compute(args) -> dict:
         g_rows[g] = {
             "share_raw": clean_float(vec["raw"].get(g, 0.0)),
             "share_raw_slice_keys": clean_float(raw_slicekeys.get(g, 0.0)),
+            "share_raw_base_strata": clean_float(raw_base.get(g, 0.0)),
             "share_after_floor": clean_float(vec["after_floor"].get(g, 0.0)),
             "share_after_clamp": clean_float(vec["after_clamp"].get(g, 0.0)),
             "share_applied": clean_float(applied.get(g, 0.0)),
@@ -235,6 +247,7 @@ def compute(args) -> dict:
             "m_hist_shadow": dict(sorted(Counter(int(r["m_shadow"]) for r in ss).items())),
         }
     groups_doc = {"mode": mode, "rule_version": int(cfg["rule_version"]), "weights_sha256": wsha,
+                  "share_unit": share_unit,
                   "ledger_sha256": lsha, "manifest_sha256": msha, "corpus_epoch": epoch,
                   "joint_floor_applied": vec["joint_floor_applied"], "corpus_prior_M": rule.CORPUS_PRIOR_M,
                   "corpus_prior_S": clean_float(corpus_s), "groups": g_rows,
@@ -291,7 +304,8 @@ def compute(args) -> dict:
     top = sorted(strata.values(), key=lambda r: (-float(r["w"]), r["stratum"]))[:10]
     rule_doc = {
         "rule_version": int(cfg["rule_version"]), "mode": mode, "knobs": knobs,
-        "formula": "w_s = (M~_s + eps)^gamma * S~_s; share_g ∝ Σ w; floors (coding+terminal ≥ floor_coding_terminal, "
+        "formula": "w_s = (M~_s + eps)^gamma * S~_s; share_g ∝ Σ w over the group's slice keys (a phase-9 bucket "
+                   "weighs the mean w of the base strata it merges; share_unit = base_strata sums base strata instead); floors (coding+terminal ≥ floor_coding_terminal, "
                    "every group ≥ floor_frac_of_static × [mix]); cap group_cap; clamp ± max_share_shift vs the live "
                    "slice share; m_s = 1 + round(2 · rank_pct_within_group), ≤ n_turns, ≤ m_max",
         "theta": ledger_doc.get("theta"), "window": ledger_doc.get("window"),
@@ -304,11 +318,13 @@ def compute(args) -> dict:
         "computed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "top10_by_weight": [{"stratum": r["stratum"], "group": r["group"], "cell": r["cell"],
                              "w": clean_float(r["w"]), "M_t": clean_float(r["M_t"]), "S_t": clean_float(r["S_t"]),
+                             "M": clean_float(r["M"]), "forfeit_rate": clean_float(r["forfeit_rate"]),
+                             "forfeit_share": clean_float(r["forfeit_share"]),
                              "n_obs": r["n_obs"], "n_turns": r["n_turns"], "m_shadow": r["m_shadow"]} for r in top],
     }
     write_json(rule_doc, out / "rule.json")
     print(f"weights_sha256 {wsha}")
-    log("weights: shares " + ", ".join(
+    log(f"weights: share_unit={share_unit}; shares " + ", ".join(
         f"{g} {100 * vec['after_clamp'][g]:.1f}% ({vec['reasons'][g]}; raw {100 * vec['raw'][g]:.1f}%, "
         f"now {100 * current.get(g, 0):.1f}%)" for g in sorted(vec["after_clamp"], key=lambda k: -vec["after_clamp"][k])))
     return rule_doc

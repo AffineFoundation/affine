@@ -154,6 +154,26 @@ class GroupVectorTests(unittest.TestCase):
         self.assertEqual(r["below_floor"], ["terminal"])
 
 
+class SliceKeyAggregationTests(unittest.TestCase):
+    def test_bucket_weighs_mean_of_its_base_strata(self):
+        # coding: 3 base strata merged into ONE bucket; king_fail: one stratum = one key
+        strata = {"r1|pr": {"group": "coding", "w": 0.1}, "r2|pr": {"group": "coding", "w": 0.3},
+                  "r3|pr": {"group": "coding", "w": 0.2}, "king_fail:0001": {"group": "king_fail", "w": 0.4}}
+        index_rows = [{"stratum": "coding:b00001", "stratum_src": "r1|pr"},
+                      {"stratum": "coding:b00001", "stratum_src": "r2|pr"},
+                      {"stratum": "coding:b00001", "stratum_src": "r3|pr"},
+                      {"stratum": "king_fail:0001#0", "stratum_src": "king_fail:0001"},
+                      {"stratum": "king_fail:0001#1", "stratum_src": "king_fail:0001"}]
+        by_key = rule.raw_group_shares_by_slice_key(strata, index_rows)
+        by_base = rule.raw_group_shares(strata)
+        # slice keys: coding 0.2 (one bucket, mean w) vs king_fail 0.4 + 0.4 (two sub-strata)
+        self.assertAlmostEqual(by_key["coding"], 0.2 / 1.0)
+        self.assertAlmostEqual(by_key["king_fail"], 0.8 / 1.0)
+        # base strata: coding 0.6 vs king_fail 0.4 -- the count re-inflates coding
+        self.assertAlmostEqual(by_base["coding"], 0.6)
+        self.assertGreater(by_base["coding"], by_key["coding"])
+
+
 class MultiplicityTests(unittest.TestCase):
     def test_rank_to_m_and_caps(self):
         strata = {f"s{i}": {"group": "g", "w": float(i), "n_turns": 9} for i in range(5)}

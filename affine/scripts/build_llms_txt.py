@@ -1939,7 +1939,10 @@ king's miss rate on stratum s (a forfeit, or a live turn score under θ = the \
 bottom quartile of the king's live turn scores in the window) and `S~` the \
 share of live turns (≥ 2 distinct teacher references — where the meter can \
 see the thought), both shrunk stratum → cell → group → corpus with prior count \
-n_0 = 8. Group share ∝ Σ w, floored (coding + terminal ≥ 0.40, every group ≥ \
+n_0 = 8. Group share ∝ Σ w over the group's slice keys — the phase-9 buckets, \
+the unit a duel draws one turn from; a bucket weighs the mean w of the base \
+strata it merges (`groups.json` also shows the sum over base strata as \
+`share_raw_base_strata`) — floored (coding + terminal ≥ 0.40, every group ≥ \
 half its static `[mix]` share), capped at 0.60, moved at most 5 points per \
 fold from the live slice share. Inside a group a stratum gets 1–3 sub-strata \
 (`<stratum>#k`) by weight rank, so it is drawn 1–3 times per duel. gamma = 1. \
