@@ -53,7 +53,7 @@ from common import (  # noqa: E402
 from affine import score as S  # noqa: E402
 
 ROW_SORT = ("challenge_id", "side", "turn_id")
-LEDGER_VERSION = 2   # 2: rollup gained M_live / mean_live_score / q25_live_score / n_live_answered (rows unchanged)
+LEDGER_VERSION = 3   # 2: rollup + M_live / q25_live_score; 3: + Dbar_plus / n_d_w (rule v1.2). Rows unchanged.
 
 
 # -- history --------------------------------------------------------------------
@@ -373,6 +373,7 @@ def rollup(rows: list[dict], scored_cids: list[str], cfg: dict) -> list[dict]:
             acc[k] = {"level": level, "key": key, "n_obs": 0, "n_w": 0.0, "miss_w": 0.0,
                       "live_w": 0.0, "forfeit_w": 0.0, "score_w": 0.0, "n_d": 0, "d_w": 0.0,
                       "livevalid_w": 0.0, "livemiss_w": 0.0, "livescore_w": 0.0, "live_scores": [],
+                      "dplus_sum": 0.0,
                       "dw_sum": 0.0, "draws_50": 0, "turns_50": defaultdict(int),
                       "n_draws_total": 0, "turns_all": set(), "group": "", "cell": ""}
         return acc[k]
@@ -411,6 +412,7 @@ def rollup(rows: list[dict], scored_cids: list[str], cfg: dict) -> list[dict]:
                 s["n_d"] += 1
                 s["d_w"] += a
                 s["dw_sum"] += a * float(r["d"])
+                s["dplus_sum"] += a * max(0.0, float(r["d"]))
     out = []
     for (level, key), s in sorted(acc.items()):
         n = s["n_w"]
@@ -421,7 +423,9 @@ def rollup(rows: list[dict], scored_cids: list[str], cfg: dict) -> list[dict]:
             "S": clean_float(s["live_w"] / n) if n > 0 else None,
             "forfeit_rate": clean_float(s["forfeit_w"] / n) if n > 0 else None,
             "mean_score": clean_float(s["score_w"] / n) if n > 0 else None,
-            "n_d": s["n_d"], "Dbar": clean_float(s["dw_sum"] / s["d_w"]) if s["d_w"] > 0 else None,
+            "n_d": s["n_d"], "n_d_w": clean_float(s["d_w"]),
+            "Dbar": clean_float(s["dw_sum"] / s["d_w"]) if s["d_w"] > 0 else None,
+            "Dbar_plus": clean_float(s["dplus_sum"] / s["d_w"]) if s["d_w"] > 0 else None,
             "M_live": clean_float(s["livemiss_w"] / s["livevalid_w"]) if s["livevalid_w"] > 0 else None,
             "mean_live_score": clean_float(s["livescore_w"] / s["livevalid_w"]) if s["livevalid_w"] > 0 else None,
             "q25_live_score": clean_float(float(np.percentile(np.array(sorted(s["live_scores"])), 25)))
@@ -456,7 +460,7 @@ ROLLUP_SCHEMA = pa.schema([
     ("level", pa.string()), ("key", pa.string()), ("group", pa.string()), ("cell", pa.string()),
     ("n_obs", pa.int64()), ("n_w", pa.float64()), ("M", pa.float64()), ("S", pa.float64()),
     ("forfeit_rate", pa.float64()), ("mean_score", pa.float64()), ("n_d", pa.int64()),
-    ("Dbar", pa.float64()), ("M_live", pa.float64()), ("mean_live_score", pa.float64()),
+    ("n_d_w", pa.float64()), ("Dbar", pa.float64()), ("Dbar_plus", pa.float64()), ("M_live", pa.float64()), ("mean_live_score", pa.float64()),
     ("q25_live_score", pa.float64()), ("n_live_answered", pa.int64()),
     ("draws_50", pa.int64()), ("distinct_turns_50", pa.int64()),
     ("max_turn_draws_50", pa.int64()), ("n_draws_total", pa.int64()),
@@ -548,6 +552,7 @@ def build(args) -> dict:
             "d": "challenger turn_score - king turn_score on the same turn (both sides scored)",
             "gated_near_king": "verdict had no rejection_reason and |z| < near_king_z",
             "rollup.n_w": "sum over king rows of 0.5^(age_in_verdicts / half_life_verdicts)",
+            "rollup.Dbar_plus": "decayed mean over gated near-king challenger rows of max(0, challenger - king turn score): 'a challenger can do better here'",
             "rollup.M_live": "miss rate among live, answered king rows (score < theta): 'answers badly'; M - M_live*S_answered ~ forfeits",
             "rollup.q25_live_score": "unweighted 25th percentile of live answered king scores in the key (compare with the global theta)",
         },

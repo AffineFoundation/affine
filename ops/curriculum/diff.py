@@ -130,11 +130,16 @@ def build_diff(new: Path, prev: Path | None) -> str:
         dec.append(f"{g}: M~ {_f(r.get('mean_M_t_slice_keys'), 3)} · S~ {_f(r.get('mean_S_t_slice_keys'), 3)} · "
                    f"w {_f(r.get('mean_w_slice_keys'), 3)} → v1 {_pct(r['share_after_clamp'])} | M~-only "
                    f"{_pct(r.get('share_m_only_after_clamp'))} | v1.1 gate {_pct(r.get('share_v11_after_clamp'))} "
-                   f"({r.get('v11_eligible_strata')}/{r.get('n_strata')} eligible) | floors-only {_pct(r.get('share_floors_only'))}")
+                   f"({r.get('v11_eligible_strata')}/{r.get('n_strata')} eligible) | v1.2 F~ {_f(r.get('mean_F_t_slice_keys'), 3)} + "
+                   f"Dbar+~ {_f(r.get('mean_Dp_t_slice_keys'), 4)} → M12~ {_f(r.get('mean_M12_t_slice_keys'), 3)} → "
+                   f"{_pct(r.get('share_v12_after_clamp'))} [{r.get('v12_reason')}] | floors-only {_pct(r.get('share_floors_only'))}")
     v11 = grp_n.get("v11") or {}
+    v12 = grp_n.get("v12") or {}
     lines.append("9. **Decomposition per group** (means over slice keys; shares after floors + clamp; v1 counted, "
-                 f"M~-only = same rule with S~ = 1, v1.1 = S~ as a gate ≥ {v11.get('s_gate', 0.5)} then weight = M~ "
-                 "(informational, not counted), floors-only = live share with only the plan's floors): "
+                 f"M~-only = same rule with S~ = 1, v1.1 = S~ as a gate ≥ {v11.get('s_gate', 0.5)} then weight = M~, "
+                 f"v1.2 = king forfeit rate F~ + {_f(v12.get('dplus_scale'), 2)} × mean positive challenger gap Dbar+~ "
+                 f"(scale = corpus forfeit {_f(v12.get('corpus_mean_forfeit'), 3)} / corpus Dbar+ {_f(v12.get('corpus_mean_Dbar_plus'), 4)}), "
+                 "S~ gate — both informational, not counted; floors-only = live share with only the plan's floors): "
                  + "; ".join(dec) + ".")
     # 10 the king's miss rate per group, raw from the ledger
     km = []
@@ -147,6 +152,20 @@ def build_diff(new: Path, prev: Path | None) -> str:
     lines.append("10. **King miss rate per group** (decayed means over king rows; M = forfeit OR live score < θ; "
                  "live-answered miss = share of answered live turns under the GLOBAL θ — 0.25 means the group sits on "
                  "the corpus distribution, higher means θ is easier to fall under there): " + "; ".join(km) + ".")
+    # 11 criterion per rule
+    cbr = _load(new, "criterion_by_rule.json") or {}
+    if cbr:
+        fl = lambda x: "PASS" if x is True else "FAIL" if x is False else "n/a"  # noqa: E731
+        parts = []
+        for name, r in cbr.items():
+            parts.append(f"{name}{' (counted)' if r.get('counted') else ''}: counterfactual plan "
+                         f"{fl(r['3_counterfactual_plan']['pass'])} ({100 * (r['3_counterfactual_plan']['mean_abs_z_shift'] or 0):+.1f} %, "
+                         f"{len(r['3_counterfactual_plan']['sign_flips_abs_z_ge_2'])} flips) / variant {fl(r['3b_counterfactual_variant']['pass'])} · "
+                         f"stable {fl(r['4_stable_vs_previous'].get('pass'))} · recurrence {fl(r['5_recurrence']['pass'])} "
+                         f"({_f(r['5_recurrence']['max_turn_draws_per_duel'], 3)}) · floors {fl(r['6_floors_and_cap']['pass'])}")
+        lines.append("11. **Criterion per rule** (items 3–6; 1, 2 and 7 are rule-independent): " + "; ".join(parts)
+                     + ". Decision pending (coordinator 2026-09-15 00:55 UTC): v1.2 becomes the counted rule at fold 3 if it "
+                       "moves the vector toward the king groups as phase 9 did; v1 counted until then.")
     head = (f"# Curriculum diff — epoch {rule_n['corpus_epoch']} → next fold\n\n"
             f"Computed {rule_n.get('computed_at')} UTC. Files: `rule.json`, `weights.parquet`, `groups.json`, "
             f"`recurrence.json`, `deficit_by_source.json`, `counterfactual.json`, `criterion.json`.\n\n")

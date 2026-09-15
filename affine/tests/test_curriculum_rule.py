@@ -76,6 +76,32 @@ class WeightTests(unittest.TestCase):
         self.assertEqual(rule.stratum_weight(0.9, 0.0, eps=0.02, gamma=1.0), 0.0)
 
 
+class RuleV12Tests(unittest.TestCase):
+    def test_forfeit_plus_scaled_gap_with_gate(self):
+        # corpus mean forfeit 0.03, corpus mean Dbar+ 0.006 -> scale 5: units match
+        m12, w = rule.stratum_weight_v12(0.10, 0.010, 0.9, dplus_scale=5.0, eps=0.02, gamma=1.0, s_gate=0.5)
+        self.assertAlmostEqual(m12, 0.10 + 0.05)
+        self.assertAlmostEqual(w, 0.17)
+        # ref-dead stratum: gated out, the deficit is not observable there
+        _, w_dead = rule.stratum_weight_v12(0.10, 0.010, 0.2, dplus_scale=5.0, eps=0.02, gamma=1.0, s_gate=0.5)
+        self.assertEqual(w_dead, 0.0)
+        # a negative mean gap never subtracts
+        m12n, _ = rule.stratum_weight_v12(0.0, -0.4, 0.9, dplus_scale=5.0, eps=0.02, gamma=1.0, s_gate=0.5)
+        self.assertEqual(m12n, 0.0)
+
+    def test_shrink_field_chain(self):
+        strata = {"a": {"group": "g", "cell": "c", "n_w": 0.0, "forfeit_rate": None},
+                  "b": {"group": "g", "cell": "c", "n_w": 8.0, "forfeit_rate": 0.5}}
+        cells = {"c": {"group": "g", "n_w": 8.0, "forfeit_rate": 0.5}}
+        groups = {"g": {"n_w": 8.0, "forfeit_rate": 0.5}}
+        rule.shrink_field(strata, cells, groups, field="forfeit_rate", n_field="n_w", out="F_t",
+                          corpus_prior=0.1, n0=8)
+        g_t = rule.shrink(8, 0.5, 0.1, 8)          # 0.3
+        c_t = rule.shrink(8, 0.5, g_t, 8)          # 0.4
+        self.assertAlmostEqual(strata["a"]["F_t"], c_t)
+        self.assertAlmostEqual(strata["b"]["F_t"], rule.shrink(8, 0.5, c_t, 8))
+
+
 class GroupVectorTests(unittest.TestCase):
     def _vec(self, raw, current, static=STATIC, **over):
         return rule.group_vector(raw, static, current, **{**KNOBS, **over})

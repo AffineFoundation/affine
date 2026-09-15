@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import counterfactual  # noqa: E402
 import ledger  # noqa: E402
 import publish  # noqa: E402
+import rule  # noqa: E402
 import weights  # noqa: E402
 from common import (  # noqa: E402
     CRITERION_HISTORY, DATA_BASE, EVALS_DIR, HISTORY_PATH, INDEX_CACHE, LATEST_PATH, REPO, SNAPSHOT_DIR,
@@ -86,6 +87,45 @@ def top10_cards(snapshot: Path, rows_path: Path) -> None:
                        f"https://affine.io/api/v1/dataset/turn?turn_id={r['turn_id']}\n")
         out.append("- verdict: [ ] decision state  [ ] wreckage  [ ] one-reply prompt\n")
     (snapshot / "top10_cards.md").write_text("".join(out), encoding="utf-8")
+
+
+RULE_SHARE_KEYS = {"v1": "share_after_clamp", "v1.1": "share_v11_after_clamp", "v1.2": "share_v12_after_clamp"}
+
+
+def per_rule_criterion(*, cfg: dict, groups: dict, prev_groups: dict | None, rows_path: Path,
+                       strata_m: dict[str, dict], static: dict[str, float]) -> dict:
+    """Items 3 / 4 / 5 / 6 for every published vector (v1 counted, v1.1 and
+    v1.2 informational), so fold 3 can pick a rule with its criterion in hand."""
+    out = {}
+    for name, key in RULE_SHARE_KEYS.items():
+        shares = {g: (r.get(key) or 0.0) for g, r in groups["groups"].items()}
+        if sum(shares.values()) <= 0:
+            continue
+        cf = counterfactual.run(rows_path, shares, int(cfg["counterfactual_verdicts"]))
+        proj = rule.recurrence_projection(strata_m, shares)
+        over_g = {g: d["expected_draws_per_turn_per_duel"] for g, d in proj["groups"].items()
+                  if d["expected_draws_per_turn_per_duel"] > cfg["recurrence_group_cap"]}
+        fc = rule.check_floors(shares, static, floor_frac=float(cfg["floor_frac_of_static"]),
+                               floor_ct=float(cfg["floor_coding_terminal"]), cap=float(cfg["group_cap"]),
+                               supply={g: (groups["groups"][g].get("n_strata") or 0) > 0 for g in shares})
+        stab = None
+        if prev_groups:
+            deltas = {g: abs(shares.get(g, 0.0) - (prev_groups["groups"].get(g, {}).get(key) or 0.0))
+                      for g in set(shares) | set(prev_groups["groups"])}
+            worst = max(deltas.items(), key=lambda kv: kv[1]) if deltas else ("", 0.0)
+            stab = {"pass": worst[1] < cfg["max_share_shift"], "max_abs_delta": clean_float(worst[1]), "group": worst[0]}
+        out[name] = {
+            "counted": name == "v1", "shares": {g: clean_float(v) for g, v in sorted(shares.items())},
+            "3_counterfactual_plan": {"pass": bool(cf["pass"]), "mean_abs_z_shift": cf["mean_abs_z_shift"],
+                                      "sign_flips_abs_z_ge_2": cf["sign_flips_abs_z_ge_2"]},
+            "3b_counterfactual_variant": {"pass": bool(cf["pass_variant"])},
+            "4_stable_vs_previous": stab if stab else {"pass": None},
+            "5_recurrence": {"pass": not over_g and proj["max_turn_draws_per_duel"] <= cfg["recurrence_turn_cap"],
+                             "max_turn_draws_per_duel": clean_float(proj["max_turn_draws_per_duel"]),
+                             "groups_over_cap": over_g},
+            "6_floors_and_cap": {"pass": bool(fc["ok"]), "coding_plus_terminal": clean_float(fc["coding_plus_terminal"])},
+        }
+    return out
 
 
 def criterion(*, cfg: dict, ledger_doc: dict, rebuild_ok: bool | None, groups: dict, rec: dict, cf: dict,
@@ -159,6 +199,7 @@ def write_fold_vector(cfg: dict, latest: dict, groups: dict, snapshot: Path) -> 
                 break
         row = {"share": r["share_after_clamp"], "share_shadow": r["share_after_clamp"],
                "share_v11_informational": r.get("share_v11_after_clamp"),
+               "share_v12_informational": r.get("share_v12_after_clamp"),
                "share_raw": r["share_raw"], "share_current": r["share_current"],
                "share_static": r["share_static"], "reason": r["reason"], "m": med if n else 1,
                "m_hist_shadow": r.get("m_hist_shadow"), "n_strata": r["n_strata"]}
@@ -251,6 +292,16 @@ def main() -> None:
     n_new = int(ledger_doc["window"]["n_verdicts"]) - int(prev_n)
     crit = criterion(cfg=cfg, ledger_doc=ledger_doc, rebuild_ok=rebuild_ok, groups=groups, rec=rec, cf=cf,
                      prev_groups=prev_groups, n_new_verdicts=n_new)
+    wtab = pq.read_table(snapshot / "weights.parquet", columns=["stratum", "group", "n_turns", "m_shadow"]).to_pylist()
+    strata_m = {r["stratum"]: {"group": r["group"], "n_turns": r["n_turns"], "m": r["m_shadow"]} for r in wtab}
+    static_mix = {g: (r.get("share_static") or 0.0) for g, r in groups["groups"].items()}
+    crit["by_rule"] = per_rule_criterion(cfg=cfg, groups=groups, prev_groups=prev_groups,
+                                         rows_path=LEDGER_DIR / f"{lsha}.rows.parquet", strata_m=strata_m,
+                                         static=static_mix)
+    crit["counted_rule"] = "v1"
+    crit["pending_decision"] = ("coordinator 2026-09-15 00:55 UTC: v1.2 becomes the counted rule at fold 3 if it moves "
+                                "the vector toward the king groups as phase 9 did; v1 counted until then")
+    write_json(crit["by_rule"], snapshot / "criterion_by_rule.json")
     crit["weights_sha256"] = wsha
     crit["ledger_sha256"] = lsha
     crit["computed_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -278,6 +329,14 @@ def main() -> None:
     for k, v in crit["items"].items():
         print(f"  {k}: {'PASS' if v['pass'] is True else 'FAIL' if v['pass'] is False else 'n/a'}  "
               f"{ {kk: vv for kk, vv in v.items() if kk != 'pass'} }")
+    print("  --- per rule (v1 counted; v1.1 / v1.2 informational) ---")
+    for name, r in crit["by_rule"].items():
+        flag = lambda x: "PASS" if x is True else "FAIL" if x is False else "n/a"  # noqa: E731
+        print(f"  {name:5s} cf-plan {flag(r['3_counterfactual_plan']['pass'])} ({100 * (r['3_counterfactual_plan']['mean_abs_z_shift'] or 0):+.1f}%, "
+              f"flips {len(r['3_counterfactual_plan']['sign_flips_abs_z_ge_2'])}) · cf-variant {flag(r['3b_counterfactual_variant']['pass'])} · "
+              f"stable {flag(r['4_stable_vs_previous']['pass'])} · recurrence {flag(r['5_recurrence']['pass'])} "
+              f"({r['5_recurrence']['max_turn_draws_per_duel']:.3f}) · floors {flag(r['6_floors_and_cap']['pass'])} · "
+              + ", ".join(f"{g} {100 * v:.1f}" for g, v in sorted(r["shares"].items(), key=lambda kv: -kv[1])[:6]))
     print(f"  counts_as_shadow_fold={crit['counts_as_shadow_fold']} (n_new_verdicts={n_new}); "
           f"automatic_items_pass={crit['automatic_items_pass']} pending={crit['automatic_items_pending']}")
     print((snapshot / "diff.md").read_text())
