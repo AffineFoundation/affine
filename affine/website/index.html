@@ -9,7 +9,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
   <link rel="stylesheet" href="fonts/fonts.css?v=20" />
-  <link rel="stylesheet" href="style.css?v=79" />
+  <link rel="stylesheet" href="style.css?v=80" />
 </head>
 <body>
   <header class="top-nav">
@@ -132,7 +132,7 @@
          kings newest first, genesis. Explanations live in tooltips only. -->
     <section class="section" id="kings">
       <div class="section-head">
-        <h2 class="section-title">Benchmarks <span class="info" title="Held-out benchmarks, greedy T=0, never in the duel corpus D; score = share of tasks passed (SWE-bench Verified: finished-only). Rows: the teacher, then kings newest first, then the genesis seed. Cell tint = gap to the teacher (green above, red below). total = mean over the columns every row with data shares (hover the total header for the list); full = mean over all columns, only for complete rows. … = benchmark pass running; · = never run. Hover any cell for the 95% interval, n and source.">ⓘ</span></h2>
+        <h2 class="section-title">Benchmarks <span class="info" title="Held-out benchmarks, greedy T=0, never in the duel corpus D; score = share of tasks passed (SWE-bench Verified: finished-only). Rows: the teacher, then kings newest first, then reference models (italic: open checkpoints of the genesis family benchmarked for comparison, not kings), then the genesis seed. Cell tint = gap to the teacher (green above, red below). total = mean over the columns every row with data shares (hover the total header for the list); full = mean over all columns, only for complete rows. … = benchmark pass running; · = never run. Hover any cell for the 95% interval, n and source.">ⓘ</span></h2>
       </div>
       <div class="table-scroll" id="kings-bench-wrap"><div class="empty">loading…</div></div>
     </section>
@@ -291,6 +291,6 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=90"></script>
+  <script type="module" src="app.js?v=91"></script>
 </body>
 </html>
