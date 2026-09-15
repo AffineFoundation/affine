@@ -167,26 +167,39 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         payload["suites"] = suites
         return _json(payload, max_age=5, request=request)
 
-    _matrix_cache: dict = {"mtime": None, "payload": None}
+    _kingboard_cache: dict[str, dict] = {}
+
+    def _kingboard_file(path: Path, what: str, request: Request) -> Response:
+        """Serve a JSON file the kingboard's refresh pass writes on this box
+        (mtime-cached), 503 until it exists."""
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return JSONResponse({"error": f"{what} not built yet"}, status_code=503,
+                                headers={"Cache-Control": "no-store", "Retry-After": "60"})
+        cache = _kingboard_cache.setdefault(str(path), {"mtime": None, "payload": None})
+        if cache["mtime"] != mtime:
+            try:
+                cache.update(mtime=mtime, payload=json.loads(path.read_text()))
+            except (OSError, ValueError) as exc:
+                log.warning("%s unreadable: %s", path.name, exc)
+                return JSONResponse({"error": f"{what} unreadable"}, status_code=503,
+                                    headers={"Cache-Control": "no-store", "Retry-After": "60"})
+        return _json(cache["payload"], max_age=60, request=request)
 
     @app.get("/api/v1/matrix")
     def api_matrix(request: Request):
         """Model x (benchmark | environment) average-score matrix: teacher,
         genesis, every crowned king. Built by ops/kingboard (see MATRIX_PATH);
         monitoring only, never part of the score."""
-        try:
-            mtime = MATRIX_PATH.stat().st_mtime
-        except OSError:
-            return JSONResponse({"error": "matrix not built yet"}, status_code=503,
-                                headers={"Cache-Control": "no-store", "Retry-After": "60"})
-        if _matrix_cache["mtime"] != mtime:
-            try:
-                _matrix_cache.update(mtime=mtime, payload=json.loads(MATRIX_PATH.read_text()))
-            except (OSError, ValueError) as exc:
-                log.warning("matrix.json unreadable: %s", exc)
-                return JSONResponse({"error": "matrix unreadable"}, status_code=503,
-                                    headers={"Cache-Control": "no-store", "Retry-After": "60"})
-        return _json(_matrix_cache["payload"], max_age=60, request=request)
+        return _kingboard_file(MATRIX_PATH, "matrix", request)
+
+    @app.get("/api/v1/dataset_table")
+    def api_dataset_table(request: Request):
+        """Dataset D per source / fold group: rollouts, turns and strata in D,
+        turns per duel, supply limit, curriculum shadow weight, king solve
+        rate (ops/kingboard build_dataset_table; same refresh as the matrix)."""
+        return _kingboard_file(MATRIX_PATH.with_name("dataset_table.json"), "dataset table", request)
 
     @app.get("/api/v1/contract")
     def api_contract(request: Request):

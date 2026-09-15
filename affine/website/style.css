@@ -2042,7 +2042,22 @@ table.data-table.kings td.model .cur {
   vertical-align: middle;
 }
 
+/* Dataset D: 45 columns (36 sources + 9 king groups), 10 metric rows */
+table.data-table.kings.dataset { font-size: 9.5px; }
+table.data-table.kings.dataset th { font-size: 8.5px; padding: 4px 2px; cursor: default; }
+table.data-table.kings.dataset td { padding: 3px 2px; color: var(--color-fg-2); }
+table.data-table.kings.dataset td.model .name { color: var(--color-fg-2); font-weight: 400; }
+table.data-table.kings.dataset tr.headline td { color: var(--color-fg); font-weight: 500; background: rgba(243, 196, 73, 0.05); }
+table.data-table.kings.dataset tr.headline td.model .name { color: var(--color-gold); }
+table.data-table.kings.dataset td.warn { color: var(--color-warn); }
+table.data-table.kings.dataset td.king_group { color: var(--color-fg-3); }
+table.data-table.kings.dataset tr.headline td.king_group { color: var(--color-fg-2); }
+
 @media (max-width: 1100px) {
+  table.data-table.kings.dataset { font-size: 8px; }
+  table.data-table.kings.dataset th { font-size: 7px; }
+  table.data-table.kings.dataset td, table.data-table.kings.dataset th { padding-left: 1px; padding-right: 1px; }
+  table.data-table.kings.dataset td.model, table.data-table.kings.dataset th.model { padding-left: 3px; padding-right: 4px; }
   table.data-table.kings.env { font-size: 9.5px; }
   table.data-table.kings.env th { font-size: 8px; }
   table.data-table.kings.env td, table.data-table.kings.env th { padding-left: 1px; padding-right: 1px; }

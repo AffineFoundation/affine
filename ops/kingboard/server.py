@@ -49,6 +49,8 @@ status: dict = {
 }
 _stats_cache: dict = {"mtime": None, "body": b""}
 _matrix_cache: dict = {"mtime": None, "body": b""}
+DATASET_TABLE_PATH = STATE_DIR / "dataset_table.json"
+_dataset_cache: dict = {"mtime": None, "body": b""}
 
 
 def run_build_once() -> None:
@@ -120,6 +122,14 @@ def api_matrix() -> Response:
     """Model x (benchmark | environment) score matrix (build.py::build_matrix),
     rebuilt by the same refresh pass as stats.json."""
     return _json_file_response(matrix_bytes())
+
+
+@app.get("/api/dataset_table")
+@app.get("/api/dataset_table.json")
+def api_dataset_table() -> Response:
+    """Dataset D per source: rollouts, turns / strata in D, turns per duel,
+    supply limit, curriculum weight (build.py::build_dataset_table)."""
+    return _json_file_response(_cached_bytes(DATASET_TABLE_PATH, _dataset_cache))
 
 
 @app.get("/api/benchsuite.json")
