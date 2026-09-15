@@ -40,7 +40,11 @@ from rollouts.r2mirror import R2TraceMirror
 from rollouts.registry import Registry, load_registry
 from rollouts.runners.base import BatchResult, EndpointHealth
 from rollouts.runners.mini_swe import MiniSweRunner
-from rollouts.runners.verifiers import VerifiersChatRunner, VerifiersRunner
+from rollouts.runners.verifiers import (
+    VerifiersChatRunner,
+    VerifiersRunner,
+    reap_all_verifiers_containers,
+)
 from rollouts.scheduler import Scheduler, UnifiedState
 from rollouts.store import TraceStore
 from rollouts.uploader import TraceMirror
@@ -139,6 +143,7 @@ def process_batch(cfg: RolloutsConfig, source, policy, batch: list[dict],
         state.mark(
             source.name, uid, _outcome(row),
             policy_id=policy.id,
+            harness=policy.harness,
             n_turns=kept_by_sid.get(sid, 0),
             provider=endpoint_label,
             detail=row.get("error") or row.get("stop") or "",
@@ -153,9 +158,14 @@ def process_batch(cfg: RolloutsConfig, source, policy, batch: list[dict],
         log.info("%d task(s) produced no trace; will be re-selected",
                  len(missing))
 
-    log.info("batch %s [%s/%s]: %d rollouts, %d kept turns in %.0fs",
-             tag, policy.id, endpoint_label, len(result.envelopes),
-             len(kept), time.time() - t0)
+    stops: dict[str, int] = {}
+    for env in result.envelopes:
+        stop = str(env["trace"].get("stop_condition") or "none")
+        stops[stop] = stops.get(stop, 0) + 1
+    log.info("batch %s [%s/%s]: %d rollouts, %d kept turns in %.0fs; "
+             "stops=%s", tag, policy.id, endpoint_label,
+             len(result.envelopes), len(kept), time.time() - t0,
+             dict(sorted(stops.items())))
     shutil.rmtree(run_dir, ignore_errors=True)
     return result.produced_output, len(kept)
 
@@ -185,8 +195,16 @@ def main() -> None:
     ap.add_argument("--source", default=None,
                     help="bypass the scheduler and force this source "
                          "every cycle (diagnostics)")
+    ap.add_argument("--policy", default=None,
+                    help="bypass the policy pick and force this policy id "
+                         "every cycle (diagnostics; with --source)")
     ap.add_argument("--no-mirror", action="store_true",
                     help="skip the HF cold copy of trace chunks")
+    ap.add_argument("--reap-all", action="store_true",
+                    help="at start-up, remove EVERY container in the verifiers "
+                         "image namespaces, whoever created it (pod-start "
+                         "orphan sweep; the per-batch reaper only touches this "
+                         "supervisor's and dead supervisors' containers)")
     args = ap.parse_args()
     logging.basicConfig(
         level=logging.INFO,
@@ -208,8 +226,11 @@ def main() -> None:
         sys.exit("no policy endpoint has its key env set (fail-closed)")
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(cfg.data_dir / "runs", ignore_errors=True)
+    if args.reap_all:
+        reap_all_verifiers_containers()
 
-    state = UnifiedState(cfg.state_path)
+    state = UnifiedState(cfg.state_path, harness_of={
+        pid: p.harness for pid, p in registry.policies.items()})
     health = EndpointHealth()
     scheduler = Scheduler(registry, state, env, health)
     store = TraceStore(cfg.store_dir)
@@ -244,8 +265,8 @@ def main() -> None:
     pools = {name: ordered_rows(cfg, name, load_catalog(cfg, src))
              for name, src in registry.sources.items()}
     for name, rows in pools.items():
-        log.info("source %s: %d selectable tasks (%d processed by the teacher "
-                 "seat)", name, len(rows), len(state.done_for(name)))
+        log.info("source %s: %d selectable tasks (%d processed by some "
+                 "teacher-side seat)", name, len(rows), len(state.done_for(name)))
 
     fails = 0
     while True:
@@ -260,12 +281,21 @@ def main() -> None:
         # Per source: tasks some usable seat still has to run (the king seat
         # replays the teacher's tasks, so an exhausted teacher pool is not
         # an exhausted source while the king is up).
+        # Per seat: the teacher's work and the king's work per source.
+        # Cycles are seat-scoped (scheduler.pick_source / pick_policy): the
+        # king's guaranteed share (KING_BATCH_SHARE) picks among sources
+        # with king work, every other cycle among sources with teacher work.
         remaining = {name: scheduler.remaining(name, rows)
                      for name, rows in pools.items()}
+        teacher_remaining = {name: scheduler.remaining(name, rows, teacher_only=True)
+                             for name, rows in pools.items()}
+        king_remaining = {name: scheduler.remaining(name, rows, king_only=True)
+                          for name, rows in pools.items()}
         if args.source:
             name = args.source if remaining.get(args.source) else None
+            scheduler.king_cycle = False
         else:
-            name = scheduler.pick_source(remaining)
+            name = scheduler.pick_source(teacher_remaining, king_remaining)
         if name is None:
             log.info("all pools exhausted or cooling; sleeping %ds",
                      POOL_EXHAUSTED_SLEEP_S)
@@ -277,12 +307,19 @@ def main() -> None:
                      for n, s in registry.sources.items()}
             continue
         source = registry.sources[name]
-        policy = scheduler.pick_policy(name, pools[name])
+        if args.policy:
+            policy = registry.policies[args.policy]
+        else:
+            policy = scheduler.pick_policy(
+                name, pools[name], king_only=scheduler.king_cycle,
+                teacher_only=not scheduler.king_cycle and not args.source)
         pending = scheduler.pending(name, pools[name], policy)
         batch = pending[: cfg.batch_size]
-        log.info("cycle: source=%s policy=%s batch=%d seat_pending=%d "
-                 "remaining=%s", name, policy.id, len(batch), len(pending),
-                 remaining)
+        log.info("cycle: source=%s policy=%s seat=%s picks=%d/%d batch=%d "
+                 "seat_pending=%d remaining=%s", name, policy.id,
+                 "king" if scheduler.king_cycle else "teacher",
+                 scheduler.picks_king, scheduler.picks_total, len(batch),
+                 len(pending), remaining)
         if not health.preflight(policy, env):
             # A dynamic endpoint (the king seat) does not answer: struck, so
             # the scheduler prefers another policy while it cools. Not a
