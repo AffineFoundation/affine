@@ -70,6 +70,133 @@ def _serving_subs() -> dict[str, str]:
 
 
 R2_GO_LIVE_DATE = "2026-09-03"
+WVK15_EFFECTIVE = "2026-09-12"
+WVK16_EFFECTIVE = "2026-09-13"
+WVK17_EFFECTIVE = "2026-09-14"
+
+
+def _payout_subs() -> dict[str, str]:
+    """Payout-window facts (`[subnet].king_payout_window_hours`,
+    `king_payout_rule_effective_at`) from the toml so the published payout
+    rule can never drift from the one the validator runs."""
+    sub = _toml()["subnet"]
+    hours = float(sub.get("king_payout_window_hours", 72))
+    effective = str(sub.get("king_payout_rule_effective_at") or "").strip()
+    return {
+        "{PAYOUT_WINDOW_H}": f"{hours:g}",
+        "{PAYOUT_EFFECTIVE}": (effective.replace("+00:00", "Z")
+                               if effective else "the validator restart that shipped it"),
+    }
+
+
+def _margin_subs() -> dict[str, str]:
+    """Crown-margin facts (`[duel] min_margin_*`, `min_z`,
+    `near_miss_window_mode`) substituted from the toml so the published
+    δ rule can never drift from the one the validator runs."""
+    d = _toml()["duel"]
+    mode = str(d.get("min_margin_mode", "fixed"))
+    base = float(d["min_margin"])
+    cap = float(d.get("min_margin_peak_cap", base))
+    floor = float(d.get("min_margin_floor", base))
+    hours = float(d.get("min_margin_decay_hours", 0.0))
+    shape = str(d.get("min_margin_decay_shape", "linear"))
+    min_z = float(d.get("min_z", 0.0))
+    window = str(d.get("near_miss_window_mode", "absolute"))
+    if mode == "decay":
+        delta_rule = (
+            f"δ is not fixed: it resets to `min_margin_peak_cap = {cap:g}` at "
+            f"every crown and falls {shape}ly to `min_margin_floor = {floor:g}` "
+            f"over `min_margin_decay_hours = {hours:g}` hours, clocked in "
+            f"blocks since the crown block (12 s/block); see Fork history: wvk 15")
+        delta_formula = (
+            f"δ = decaying margin: peak_cap = {cap:g} at the crown,\n"
+            f"                         {shape} to floor = {floor:g} over {hours:g} h\n"
+            f"                         (blocks since crown_block; wvk 15)")
+    else:
+        delta_rule = f"`min_margin = {base:g}`"
+        delta_formula = f"δ = min_margin = {base:g}"
+    if min_z > 0:
+        min_z_clause = (f" **and** `z = margin/SE ≥ min_z = {min_z:g}` "
+                        f"(a statistical tie cannot crown, whatever δ is)")
+        min_z_formula = f"\n                        AND z = margin/SE ≥ min_z = {min_z:g}"
+        min_z_line = (f"A crown also needs `z = margin/SE ≥ {min_z:g}` "
+                      f"(`[duel].min_z`); a verdict that clears the bar but "
+                      f"not this reads `rejection_reason = \"z_below_min\"`.")
+    else:
+        min_z_clause = ""
+        min_z_formula = ""
+        min_z_line = ("`[duel].min_z = 0` (off): no minimum z beyond the "
+                      "`k_sigma·SE` leg; the hard floor `min_margin_floor` is "
+                      "the safeguard.")
+    if window == "bar":
+        window_rule = ("(0.5·bar, 1.5·bar) around this slice's own crown bar "
+                       "`bar = max(k_sigma·SE, δ)` (`near_miss_window_mode = "
+                       "\"bar\"`; at δ = 0.002 and a typical SE this is the old "
+                       "(0.001, 0.003))")
+        window_formula = ("0.5·bar < margin(slice 0) < 1.5·bar,\n"
+                          "                        bar = max(k_sigma·SE, δ) of slice 0")
+    else:
+        lo, hi = float(d["near_miss_low"]), float(d["near_miss_high"])
+        window_rule = f"`(near_miss_low, near_miss_high) = ({lo:g}, {hi:g})`"
+        window_formula = (f"near_miss_low < margin(slice 0) < near_miss_high\n"
+                          f"                        ({lo:g} < margin < {hi:g})")
+    crown_mode = str(d.get("crown_mode", "duel"))
+    wb = int(d.get("crown_window_blocks", 3600))
+    wh = wb * 12 / 3600
+    confirm = bool(d.get("crown_confirm_slice", True))
+    cmax = int(d.get("crown_confirm_max", 2))
+    one = bool(d.get("crown_one_entry_per_hotkey", True))
+    if crown_mode == "window_best":
+        crown_rule = (
+            f" **Since wvk 15 the crown is decided per window, not per duel:** "
+            f"the king is frozen for fixed windows of `crown_window_blocks = {wb}` "
+            f"chain blocks ({wh:g} h; window id = decision block // {wb}); every "
+            f"challenger judged inside a window duels that king; at the window "
+            f"close the candidate with the **largest positive paired margin** "
+            f"(gates passed{', one candidate per hotkey' if one else ''}) is crowned"
+            + (f" once one fresh `n_turns` slice keeps its pooled margin > 0 "
+               f"(up to `crown_confirm_max = {cmax}` candidates are tried)" if confirm else "")
+            + "; if nobody confirms the king stays. The `max(k_sigma·SE, δ)` bar "
+            f"is still computed and stamped on every verdict (`duel_rule_wins`) but "
+            f"no longer decides — see Fork history: wvk 15.")
+        crown_formula = (
+            f"Crown (wvk 15)         = window_best: king frozen per window of {wb} blocks\n"
+            f"                        (id = decision_block // {wb}); candidate = finite\n"
+            f"                        margin > 0 AND gates pass{' AND best per hotkey' if one else ''};\n"
+            f"                        window close → largest margin"
+            + (f" → 1 fresh slice, pooled\n                        margin > 0 (else next-best, ≤ {cmax} tries)" if confirm else "")
+            + "\n                        → crowned; nobody confirms → king stays.\n"
+            f"                        max(k_sigma·SE, δ) below is stamped as duel_rule_wins")
+    else:
+        crown_rule = ""
+        crown_formula = "Crown decided per duel (crown_mode = \"duel\")"
+    return {
+        "{CROWN_RULE}": crown_rule,
+        "{CROWN_FORMULA}": crown_formula,
+        "{CROWN_MODE}": crown_mode,
+        "{CROWN_WB}": str(wb),
+        "{CROWN_WH}": f"{wh:g}",
+        "{CROWN_CMAX}": str(cmax),
+        "{DELTA_RULE}": delta_rule,
+        "{DELTA_FORMULA}": delta_formula,
+        "{MIN_Z_CLAUSE}": min_z_clause,
+        "{MIN_Z_FORMULA}": min_z_formula,
+        "{MIN_Z_LINE}": min_z_line,
+        "{NM_WINDOW_RULE}": window_rule,
+        "{NM_WINDOW_FORMULA}": window_formula,
+        "{MM_CAP}": f"{cap:g}",
+        "{MM_FLOOR}": f"{floor:g}",
+        "{MM_HOURS}": f"{hours:g}",
+        "{MM_SHAPE}": shape,
+        "{MIN_Z}": f"{min_z:g}",
+        "{WVK15_EFFECTIVE}": WVK15_EFFECTIVE,
+        "{WVK16_EFFECTIVE}": WVK16_EFFECTIVE,
+        "{WVK17_EFFECTIVE}": WVK17_EFFECTIVE,
+        "{BAND_C}": f"{float(d.get('band_c', 2.0)):g}",
+        "{BAND_FLOOR}": f"{float(d.get('band_floor', 0.002)):g}",
+        "{MINER_CAP}": str(int(d["max_thought_tokens"]) + int(d["max_action_tokens"])),
+        "{REF_MAX_TOKENS}": str(int(d.get("ref_max_tokens") or (int(d["max_thought_tokens"]) + int(d["max_action_tokens"])))),
+    }
 
 
 def _r2_subs() -> dict[str, str]:
@@ -124,7 +251,11 @@ SOURCES: list[tuple[str, str]] = [
     ("evalsrv/r2store.py", "how the eval pod fetches your private prefix and "
      "verifies every file against the signed manifest before vLLM loads it"),
     ("affine/priors.py", "published prior bank behind the bank telemetry"),
-    ("affine/chain.py", "reveal payload contract + commit builders"),
+    ("affine/chain.py", "reveal payload contract + commit builders + "
+     "set_payout_weights (hotkey shares → uids, burn fallback)"),
+    ("affine/payout.py", "payout rule: which crowns are paid (the "
+     "{PAYOUT_WINDOW_H}-hour window per crown), the equal shares, the burn "
+     "case — the exact computation behind api/v1/snapshot payout"),
     ("evalsrv/dueling.py", "live duel: slice seeding, injectability probe, scoring loop"),
     ("evalsrv/protocol_probe.py", "chat-protocol conformance probe (staged "
      "admission check, see Upcoming changes): the fixed prompt set, the pass "
@@ -206,14 +337,36 @@ root ({BASE}/).
 **In this file (read on)**
 
 - How the game works — rules, duel flow, emissions
+- **Payout rule (effective {PAYOUT_EFFECTIVE}) — a crown is paid for at most \
+{PAYOUT_WINDOW_H} hours; every crown inside its window gets one equal share; \
+older crowns earn nothing even on the throne; no paid crown = burn.** \
+Throne / duel rules unchanged, no `weight_version_key` bump
 - Submit checklist — Ed25519 hotkey, private R2 upload, the two on-chain \
 signals, what "private" means (and the retiring HF path)
 - Serving stack — how your checkpoint is loaded; pre-flight before you burn \
 the slot
 - min(R, G) — the one score you optimize (and the telemetry published \
 around it)
-- **Fork history: wvk 14 — Terminus 2 JSON dialect (effective \
-2026-09-10)** — `terminus_json` joins the admitted dialects: under the \
+- Sequential near-miss (2026-09-11, no fork; OFF since wvk 16) — a \
+first-slice margin in the near-miss window drew a second seeded slice; one \
+seeded slice decides again
+- **Fork history: wvk 17 — wider grounding band + teacher reference cap \
+(effective {WVK17_EFFECTIVE})** — `band_c` 2 → {BAND_C} (the k = 3 band was so \
+tight the teacher's own thought fell outside it 25% of the time); the \
+teacher's references may run to {REF_MAX_TOKENS} tokens (miners stay at \
+{MINER_CAP}); nothing changes in what miners emit
+- **Fork history: wvk 16 — per-duel crown restored (effective \
+{WVK16_EFFECTIVE})** — the 12 h window rule is retired after one day: reign \
+13 was a re-upload of reign 12's weights that won its window on noise; a \
+challenger crowns iff `margin > max(2·SE, 0.002)` on one slice, as under \
+wvk 3–14; reign 13 uncrowned, reign 12 stands
+- Fork history: wvk 15 — window-best crown (effective \
+{WVK15_EFFECTIVE}, retired {WVK16_EFFECTIVE}) — the king was frozen per {CROWN_WH} h window; the best \
+positive paired margin of the window is crowned at the window close after a \
+confirmation slice; one candidate per hotkey; nobody confirms → the king \
+stays; every verdict stamps `crown_mode` / `window_id`
+- Fork history: wvk 14 — Terminus 2 JSON dialect (effective \
+2026-09-10) — `terminus_json` joins the admitted dialects: under the \
 terminal-bench agent harness the reply is one JSON command batch, and that \
 object is the action
 - Fork history: wvk 13 — models must work as chat models (notice \
@@ -328,7 +481,11 @@ git revision.)
 verdict). Failed hygiene, failed probe, or lost duel still burns the slot.
 4. Eval machine runs a duel on an `n_turns = 1300` slice of D seeded by \
 `blake2b(reveal_block_hash ‖ your_hotkey)` — you cannot know the slice before \
-reveal; anyone can re-derive it after.
+reveal; anyone can re-derive it after. If that slice's margin lands inside \
+the near-miss window `(near_miss_low, near_miss_high) = (0.001, 0.003)`, a \
+second slice of 1300 (seed `blake2b(block_hash ‖ hotkey ‖ "|slice1")`, \
+disjoint turns) is scored and the crown is decided on the pooled 2600 \
+turns (see "Sequential near-miss" below).
 5. Both sides are scored with min(R, G) v5 (centered Reason + banded \
 Grounding + δ + thought-length floor + B gate): the teacher samples `k = 3` \
 reference rollouts per turn; each ref scores \
@@ -337,15 +494,18 @@ of the `a_i` **minus their plain mean** (`tau = 0.03`; a flat, \
 task-independent lift cancels exactly); the G leg checks your thought's own \
 teacher likelihood `m = lpC(z_A|x)` against the band `mu ± w` built from \
 the teacher's reference thoughts `t_i = lpC(z_C^i|x)` \
-(`w = max(band_c·sd, band_floor)`, `band_c = 2`, `band_floor = 0.002`); the \
+(`w = max(band_c·sd, band_floor)`, `band_c = {BAND_C}`, `band_floor = {BAND_FLOOR}`); the \
 turn score is `min(R, G)`; miner score = mean over turns. You dethrone the \
 king iff the paired mean `turn_c − turn_k` beats `max(k_sigma·SE, δ)` \
-(`k_sigma = 2`, `min_margin = 0.002`) **and** your median stripped thought \
+(`k_sigma = 2`; {DELTA_RULE}){MIN_Z_CLAUSE} **and** your median stripped thought \
 length is at least `min_thought_chars = 80` **and** at least \
 `causality_gamma = 0.30` of pairs pass teacher-side B \
-(`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no leakage). No lpA gates.
-6. Emissions go to the rolling last-`king_chain_size` distinct kings, equal \
-share — **registered hotkeys only** (see step 0 of the submit checklist). \
+(`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no leakage). No lpA gates.{CROWN_RULE}
+6. Emissions go to every crown that is less than \
+`king_payout_window_hours = {PAYOUT_WINDOW_H}` hours old, one equal share per \
+crown — **registered hotkeys only** (see step 0 of the submit checklist). A \
+crown older than that earns nothing, even while it still holds the throne; no \
+crown inside the window → the emission burns. See "Payout rule" below. \
 Advisory tau2 benches never affect Reason or crowning.
 7. Every dethrone is reviewed post-crown by a published LLM audit (see the \
 exploit-audit section below). An `exploit = true` verdict reverts the crown \
@@ -359,6 +519,73 @@ Replayability is the trust model: two checkpoints + public D + \
 after {RETENTION_DAYS} days); every crowned model is published under \
 `{MODELS_URL}/models/sha256/<model_digest>/` together with its signed \
 manifest, so every verdict that changed the board is replayable.
+
+---
+
+## Payout rule — {PAYOUT_WINDOW_H}-hour crown window (effective {PAYOUT_EFFECTIVE})
+
+Explicit dated operator directive (Jacob Steeves, 2026-09-14 11:09 UTC): \
+"A king can only get paid for max 3 days. Once they have been a king for \
+this long they no longer get paid, and the prize pool for the next slot goes \
+up as those older kings get cycled out. This way if you have the king models \
+you are always incentivized to train a new model. If there are no kings to \
+set weights to, the subnet burns the emission. Otherwise if there are only 2 \
+kings they get 50/50."
+
+**The rule, in plain words.**
+
+- A **crown** is one win of the throne (one `crowned` row, one reign number).
+- Every crown is **paid for at most `king_payout_window_hours = \
+{PAYOUT_WINDOW_H}` hours** after its `crowned_at` — from the instant the \
+verdict lands, not from the next weight sweep.
+- At every weight sweep the validator lists every crown that is still inside \
+its window. That is the **paid set**. Each paid crown gets **one equal \
+share**: 1 paid crown → 100%, 2 → 50/50, 3 → one third each, n → 1/n.
+- A crown **older than {PAYOUT_WINDOW_H} hours earns nothing** — even while \
+that model still holds the throne and keeps judging challengers. The throne \
+is a duel fact; the payout is a clock fact.
+- **No crown inside the window → the emission burns** (`[subnet].burn_uid`, \
+the same path the unpaid genesis used).
+- Revoked or reverted reigns are out of the lineage and are never paid. \
+Genesis / seed kings (no hotkey) never earn.
+- **One share per crown, not per hotkey.** If you dethrone your own king \
+with a new model, both crowns are paid while both are inside their windows \
+(you hold 2/n). That is the point of the rule: holding the throne is not \
+income after three days; winning it again is.
+- A paid crown whose hotkey is not registered on the metagraph is skipped \
+for that sweep and its share goes to the other paid crowns (none left → \
+burn). A crown whose model is provably gone or gated forfeits its share \
+while it is dark (unchanged accessibility sweep).
+- Weights are re-set at least every `weight_interval_s = 300` s (chain rate \
+limit 100 blocks ≈ 20 min), so an expiry takes effect within ~20 minutes.
+
+**Worked example (the lineage at the effective time).** Reign 12 was crowned \
+2026-09-12 21:48 UTC, reign 11 on 2026-09-10 03:55 UTC, reign 10 on \
+2026-09-10 02:02 UTC. At {PAYOUT_EFFECTIVE} only reign 12 is younger than \
+{PAYOUT_WINDOW_H} hours, so its hotkey holds 100% of the miner emission; \
+reigns 11 and 10 (and older) hold 0%. Reign 12 stops being paid at \
+2026-09-15 21:48 UTC even if nobody has dethroned it by then — from that \
+instant the emission burns until a challenger wins a new crown. If a \
+challenger wins on 2026-09-15 at 10:00 UTC, the paid set is reign 13 + \
+reign 12 at 50/50 until 21:48 UTC, then reign 13 alone at 100%. Before \
+this rule the last five distinct kings each held 20% indefinitely.
+
+**What does not change.** The crown rule (`margin > max(2·SE, δ)`, \
+thought-length floor, B gate), min(R, G), the corpus, admission, the \
+one-slot-per-hotkey policy. This is a payout rule, not a scoring rule, so \
+`weight_version_key` is **not** bumped (this validator is the only one \
+judging duels on netuid 120; the two other permit holders mirror its weight \
+vector). Forward-only: nothing before {PAYOUT_EFFECTIVE} is re-decided.
+
+**Where to read it live.** `api/v1/snapshot` → `payout` (the paid set right \
+now: reign, hotkey, uid, `share`, `paid_until`, `burn`) and `reign.members` \
+(every reign with `earning` / `share` / `paid_until` / `expired`); \
+`api/v1/contract` → `payout` (rule text, window, effective time) and \
+`subnet.king_payout_window_hours`; the dashboard Reign table (`weight` \
+column shows the share and "expired" once the window closed). The exact \
+computation is `annotate_lineage` in `code/affine/payout.py`; the chain \
+call is `set_payout_weights` in `code/affine/chain.py`; the validator logs \
+`payout sweep (window {PAYOUT_WINDOW_H}h): …` on every sweep.
 
 ---
 
@@ -402,11 +629,13 @@ pre-flight or train (see the serving stack section — Lium). Then \
 Registration maps your hotkey to a UID, and weights can only be set on UIDs: \
 **an unregistered hotkey earns nothing, even if it wins the crown**. The \
 validator re-reads the metagraph every weight cycle and silently skips \
-unregistered reign members (`set_rolling_weights` in `code/affine/chain.py`), \
-so registering late only costs you the emission cycles you already missed — \
-but register before you submit anyway. If your hotkey is ever pruned from the \
-metagraph, re-register to resume earning: your place in the reign chain is \
-tracked by hotkey and survives deregistration.
+unregistered paid crowns (`set_payout_weights` in `code/affine/chain.py`; \
+their share goes to the other paid crowns), so registering late only costs \
+you the emission cycles you already missed — but register before you submit \
+anyway. If your hotkey is ever pruned from the metagraph, re-register to \
+resume earning: your crown is tracked by hotkey and survives deregistration, \
+but its {PAYOUT_WINDOW_H}-hour payout window keeps running while you are \
+unregistered.
 
 **Step 1 — train.** Distill a coding model that emits closed bash-fenced \
 actions and usable thoughts under the Affine chat contract (see the probe in \
@@ -595,16 +824,23 @@ m                     = lpC(z_A | x)      (your thought under the teacher)
 t_i                   = lpC(z_C^i | x)    (the k reference thoughts, same echo)
 G (per turn)          = min( m − (mu − w), (mu + w) − m )
                         mu = mean(t_i), w = max(band_c·sd(t_i), band_floor)
-                        (band_c = 2, band_floor = 0.002)
+                        (band_c = {BAND_C}, band_floor = {BAND_FLOOR})
 Turn score            = min(R, G)         if the turn has a parseable action
                       = forfeit_turn_score = −0.1   otherwise (wvk 12, 2026-09-05)
 Miner score           = mean(turn) over all turns, forfeits included
 Crown                 = paired mean(turn_c − turn_k) > max(k_sigma·SE, δ)
                         AND median(len(z_A.strip())) ≥ min_thought_chars
-                        AND B pass rate ≥ causality_gamma
-                        (k_sigma = 2, δ = min_margin = 0.002,
-                         min_thought_chars = 80, causality_gamma = 0.30,
+                        AND B pass rate ≥ causality_gamma{MIN_Z_FORMULA}
+                        (k_sigma = 2, min_thought_chars = 80,
+                         causality_gamma = 0.30,
                          SE = sd/√n over paired turns)
+                        {DELTA_FORMULA}
+{CROWN_FORMULA}
+Sequential near-miss  = if {NM_WINDOW_FORMULA}
+                        and no gate blocks, score
+                        near_miss_extra_slices = 1 more slice of n_turns
+                        (seed blake2b(block_hash ‖ hotkey ‖ "|slice1"),
+                        turns disjoint) and apply Crown to the POOLED turns
 B (per rollout)       = lpC(y_A | z_A) − lpC(y_A | ∅)
                         passes iff B ≥ 0.02 and z does not contain y
 ```
@@ -666,7 +902,10 @@ the king slightly lower and the ratchet leaked. δ = 0.002 (~1.5x the \
 median 2·SE of 0.0013 across live v4 duels) is the buffer that absorbs \
 that bias: crowns must clear the noise by enough that a reign change is \
 overwhelmingly a real improvement. Reigns crowned under wvk 8 stand; \
-the revert is forward-only.
+the revert is forward-only. For one day (wvk 15, {WVK15_EFFECTIVE} → \
+{WVK16_EFFECTIVE}) the crown was decided per 12 h window and the δ bar was \
+only stamped (`duel_rule_wins`); since wvk 16 ({WVK16_EFFECTIVE}) the bar \
+above decides again (Fork history: wvk 16 below).
 
 **Live instrumentation.** Each scored turn runs one miner sample, `k = 3` \
 Reason echoes (`lpC(y_i|z_A)`, one per teacher reference), one grounding \
@@ -720,6 +959,242 @@ Score changes fork the chain: `weight_version_key` bumps and the toml \
 comment carries the dated rationale. Corpus refreshes are data events: the \
 manifest's `corpus_epoch` increments and every verdict records which \
 manifest it was scored against.
+
+---
+
+## Sequential near-miss (2026-09-11, no fork; OFF since wvk 16)
+
+**Off since wvk 16 ({WVK16_EFFECTIVE}):** `[duel].near_miss_enabled = false` \
+— one seeded `n_turns` slice decides the duel, as before 2026-09-11. The \
+text below describes the rule as it ran 2026-09-11 → {WVK16_EFFECTIVE}; \
+verdicts of that period stamp `near_miss.enabled = true` and replay \
+bit-identically.
+
+**A sampling-size rule, not a scoring change.** Per-turn scores, the crown \
+formula and δ are exactly as above; `weight_version_key` does not move. \
+Every verdict stamps `near_miss.enabled`, so you can see whether the rule \
+was on for a given duel.
+
+**The rule.** After the normal `n_turns = 1300` slice is scored, if the \
+paired margin `mean(turn_c − turn_k)` lands strictly inside the window \
+{NM_WINDOW_RULE} and no validity gate \
+(thought floor, B license) already blocks the crown, the eval draws \
+`near_miss_extra_slices = 1` more slice of 1300 turns — seed \
+`blake2b(reveal_block_hash ‖ hotkey ‖ "|slice1")`, drawn from the turns \
+the duel has not scored yet with the same stratified round-robin — scores \
+both sides on it exactly as before, and applies the unchanged crown rule to \
+the **pooled** turns: pooled mean, pooled `SE = sd/√n_pooled` (~2600), \
+gates over the pooled challenger rows, forfeits at the same floor. Outside \
+the window the first slice decides as it always has.
+
+**Why.** The crown bar is `max(2·SE, δ)`; at the live noise scale \
+(`2·SE ≈ 0.0010–0.0018`) δ = 0.002 is the binding term. Across 349 stored \
+duels (2026-08-27 → 2026-09-10) twelve challengers cleared the 2σ test \
+(z 2.0–3.8) with margins 0.0014–0.0019 and were blocked by δ alone — and \
+on the advisory bench those near-miss losers score like kings. A true \
++δ improver lands below δ on half of all 1300-turn slices; only more turns \
+can separate "just below δ by noise" from "just below δ for real". δ stays \
+where the 2026-08-22 winner's-curse decision put it; the estimate it is \
+compared against gets √2 sharper on the ~10% of duels where the two are \
+within noise of each other (35/349 historical margins fell in the window: \
+the 12 near-miss losers, 6 crowns at 0.0022–0.0028, 17 sub-2σ losers).
+
+**What you see.** `verdict.margin / se / z / n_paired_turns` are the \
+deciding (pooled) numbers. `verdict.near_miss = {enabled, low, high, \
+extra_slices, triggered, slices: [{index, seed, n, digest, n_paired_turns, \
+n_forfeit_turns, margin, se, z, challenger_wins}, …], pooled: {…} | null}` \
+shows what each slice said on its own. `verdict.slice` keeps the first \
+slice's `seed` / `digest` as always and adds `extra_slices` + `n_pooled` \
+when the rule fired. The published artifact's `turn_ids` covers every \
+scored turn in slice order and `slices[i].turn_ids` splits them per draw. \
+Knobs: `[duel] near_miss_enabled / near_miss_low / near_miss_high / \
+near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
+`near_miss_triggered` in `code/affine/score.py`; the draw is \
+`duel_seed(block_hash, hotkey, slice_index)` in `code/evalsrv/dueling.py`.
+
+---
+
+## Fork history: wvk 17 — wider grounding band + teacher reference cap (effective {WVK17_EFFECTIVE})
+
+**Effective {WVK17_EFFECTIVE} at the first duel dispatched after the eval \
+pod redeploy (explicit dated operator directive, 2026-09-14 10:30 UTC).** \
+`weight_version_key = 17`; `[duel].band_c = {BAND_C}` (was 2.0; \
+`band_floor = {BAND_FLOOR}` unchanged); new `[duel].ref_max_tokens = \
+{REF_MAX_TOKENS}` (teacher side only). Everything else — the per-turn score \
+min(R, G), the crown bar `margin > max(2·SE, 0.002)`, the thought-length \
+floor, the B gate, miners' token caps, the reign chain — is unchanged.
+
+**1. Why the band is wider.** The G leg checks your thought's own teacher \
+likelihood `m = lpC(z_A|x)` against a band `mu ± w` built from the \
+teacher's own k = 3 reference thoughts on the same turn \
+(`w = max(band_c·sd(t_i), band_floor)`). Three samples give a noisy \
+estimate of that spread. We measured it: the teacher's OWN 4th thought — \
+a held-out sample from the very distribution the band is supposed to \
+describe — landed **outside** the c = 2 band on **25.5%** of turns. On \
+those turns G was penalising an honest, teacher-like thought for nothing \
+but sampling noise, and because the turn score is min(R, G), that noise \
+could decide the turn. `band_c = {BAND_C}` is the smallest width at which \
+≥ 90% of held-out teacher thoughts fall inside (90.3%). Checked on the \
+stored verdicts: no crown and no window decision flips; the reign-12 \
+margin moves from z 2.3 to z 2.9; the positive control (a genuine \
+held-out teacher thought vs a base-model thought) stays decisive at z 4.2 \
+(was 4.64); filler and generic thoughts still lose at z −8 / −12, so the \
+band still does its job against padding. Replay: `docs/scoring-today.md` \
+in the operator's store, summarised in the toml history paragraph.
+
+**2. Why the teacher gets a longer reference.** Each turn is scored \
+against k = 3 teacher reference rollouts. Until now the teacher sampled \
+them under the same cap as miners, {MINER_CAP} tokens (thought + action). \
+On deep turns — long trajectories, hard states — the teacher's own \
+reference ran out of tokens on ~21% of samples, so those turns had fewer \
+or truncated references, or were dropped entirely (fewer than 2 refs). \
+The miner was judged against the weakest references exactly where the \
+task is hardest. With `ref_max_tokens = {REF_MAX_TOKENS}` the references \
+may run to {REF_MAX_TOKENS} tokens: in the replay, references per turn \
+rise 1.99 → 2.27 and the share of turns with a dead R leg falls 41% → \
+30%. **Only the teacher's reference budget changes.** Your \
+`max_thought_tokens = 1024` / `max_action_tokens = 768` are the same; a \
+reply longer than that is cut exactly as before.
+
+**What changes for you.** Nothing in what you emit. G becomes fairer \
+(fewer honest thoughts pushed out of the band by noise), and more deep \
+turns become scorable with full references. The cost is ours: ~+15–20% \
+teacher echo compute and +25–40% teacher-side wall time per duel, so a \
+verdict takes roughly 50 minutes instead of ~40. Verdicts stamp \
+`duel_params.band_c`, `duel_params.band_floor` and \
+`duel_params.ref_max_tokens` (absent on pre-wvk-17 verdicts, meaning the \
+shared cap).
+
+**Forward-only.** Reign 12 stands; no re-verdicts; `min_submission_block` \
+unchanged. Pre-wvk-17 verdicts replay bit-identically through their own \
+stamped `band_c` and the shared cap.
+
+---
+
+## Fork history: wvk 16 — per-duel crown restored (effective {WVK16_EFFECTIVE})
+
+**Effective {WVK16_EFFECTIVE} at the first duel dispatched after the eval \
+pod redeploy (explicit dated operator directive, 2026-09-13 12:10 UTC: \
+"go back to the original delta threshold, the original system we had more \
+than a day ago; uncrown the copied model").** `weight_version_key = 16`; \
+`[duel].crown_mode = "duel"`, `near_miss_enabled = false`. `k_sigma = 2.0`, \
+`min_margin = 0.002`, `min_margin_mode = "fixed"`, `min_z = 0`, the per-turn \
+score min(R, G), the thought-length floor, the B gate and the reign chain / \
+payouts are unchanged.
+
+**What changes.** The crown is decided per duel again, exactly as under \
+wvk 3–14: a challenger crowns iff its paired `mean(turn_c − turn_k)` over \
+ONE seeded `n_turns = 1300` slice is **> max(k_sigma·SE, δ) = max(2·SE, \
+0.002)**, its median stripped thought length is ≥ 80 characters and its B \
+pass rate is ≥ 0.30. No 12 h windows, no frozen king, no best-of-window, no \
+pooled confirmation slice, no near-miss second slice. Verdicts no longer \
+carry `crown_mode` / `window_id` / `duel_rule_wins`; `challenger_wins` \
+decides the crown again and `ranking_formula` no longer has the near-miss \
+suffix.
+
+**Why.** Reign 13 (`chal-00461`, crowned 2026-09-13 09:59 UTC as the best \
+positive margin of window 2515) was **reign 12's weights re-uploaded**: \
+every one of the 1,026 tensors byte-identical (70,214,363,872 bytes), only \
+the shard split differed (16 files → 2), so every file hash and the \
+`model_digest` changed and the file-level copy check passed it. Its duel \
+margin was +0.00074 (z = 0.93); its confirmation slice was −0.00065 \
+(z = −0.91); the pooled margin was +0.000045 (z = 0.08) and the window rule \
+crowned on `pooled margin > 0`. The δ bar would have refused it (0.00074 < \
+0.002 and < 2·SE = 0.0016). A second entry in the next window was reign 12 \
+with 26 single-element edits. Under the restored bar a copy's noise margin \
+crowns with probability ≈ 1e-4 per duel; under the window rule ≈ 0.75 once \
+it was the window's best positive margin. The window / near-miss / \
+decaying-δ code stays in the tree behind its knobs so wvk-15 verdicts replay.
+
+**Reign 13 is uncrowned; reign 12 stands.** The `crowned` history row of \
+`chal-00461` is rewritten to `event = "crown_revoked"` (fields kept, plus \
+`revoked_at` / `revoked_reason`), a `failed` row `rejected_model_copy` is \
+appended, and window 2516 (open at the flip, king = the same weights) is \
+recorded as `window_close` with `outcome = "king_stays_fork_wvk16"` — no \
+candidate of it was confirmed or crowned. Weights point at reign 12's hotkey \
+from the next weight sweep. No other verdict is re-decided. \
+`min_submission_block` unchanged. Identical-weights re-uploads of a crowned \
+model will not crown: they sit at the noise floor, below δ.
+
+---
+
+## Fork history: wvk 15 — window-best crown (effective {WVK15_EFFECTIVE}, retired {WVK16_EFFECTIVE})
+
+**Effective {WVK15_EFFECTIVE} at the first duel dispatched after the eval \
+pod redeploy (explicit dated operator directive, 2026-09-12 16:39 / 16:43 \
+UTC).** `weight_version_key = 15`; `[duel].crown_mode = "window_best"`, \
+`crown_window_blocks = {CROWN_WB}`, `crown_confirm_slice = true`, \
+`crown_confirm_max = {CROWN_CMAX}`, `crown_one_entry_per_hotkey = true`. \
+The per-turn score min(R, G), the thought-length floor, the B gate, \
+`k_sigma`, `min_margin = 0.002` and the reign chain / payouts are untouched.
+
+**What changes.** The crown is no longer decided duel by duel. Time is the \
+**block clock**: fixed windows of `crown_window_blocks = {CROWN_WB}` chain \
+blocks ({CROWN_WH} h at 12 s/block), aligned on the block number — window \
+id = `decision_block // {CROWN_WB}`, where `decision_block` is the chain \
+block the validator read when it dispatched the duel. **The king is frozen \
+for a window**: every challenger dispatched inside window N duels window \
+N's king, so all margins of the window are measured against the same \
+model and are comparable. A duel dispatched in the last minutes of window \
+N is still window N's candidate (the close waits for it). **At the window \
+close** the candidates are the window's verdicts with a finite paired \
+margin **> 0** and no gate rejection (`rejection_reason` empty: thought \
+floor, B license, probes, min_z); probe rejections, unservable checkpoints \
+and infra faults are not candidates. **One candidate per hotkey** (its best \
+margin; the rest are dropped as `hotkey_duplicate`). Candidates are \
+ranked by margin (ties: higher z, then earlier id). **Confirmation:** the \
+best candidate gets ONE fresh `n_turns = 1300` slice against the frozen \
+king — the near-miss second-slice draw, seed \
+`blake2b(block_hash ‖ hotkey ‖ "|slice<k>")`, turns disjoint from every \
+turn its original duel scored — and is crowned only if the **pooled** \
+margin over its original slice(s) and this one is still > 0 (exact pooling \
+of the two samples' n / mean / SE, the same numbers `score.duel` gives on \
+the concatenated rows). If it fails, the next-best candidate is confirmed, \
+up to `crown_confirm_max = {CROWN_CMAX}` tries. **If no positive candidate \
+confirms, the king stays.** The confirmation runs at the start of window \
+N+1, before N+1's first duel, and is not an N+1 verdict. A window crown \
+changes nothing else: reign number +1, reign chain and payouts as before. \
+The old crown test `margin > max(k_sigma·SE, δ)` is still computed on every \
+duel and stamped as `duel_rule_wins`, but it does not decide.
+
+**Why.** Under the per-duel rule a challenger crowned the moment it \
+cleared a fixed bar; 12 challengers since the genesis reset beat the king \
+at 2σ and were blocked by δ alone, while the throne could also change \
+several times a day on near-noise margins. The window rule makes the \
+comparison relative and periodic: the same frozen king for everyone in the \
+window, the best margin wins, and a fresh slice has to agree before the \
+crown. Replay of the 364 stored scored duels (16 days, 11 real crowns) \
+under 12 h windows: 26 of 32 windows had a positive candidate; with the \
+confirmation step ~22–23 windows would have crowned (~1.4 kings/day; 8 of \
+those winners at z < 2), 10 of the 11 real crowns are window winners. \
+24 h windows: 14 of 17 windows (~0.8 kings/day, 4 winners at z < 2). \
+Caveats: stored margins were measured against the real king of the hour, \
+not a frozen window king, and only 2026-09-11+ verdicts carry a second \
+slice, so confirmation outcomes are modelled (z ≥ 1 assumed to confirm, \
+z < 1 a coin). Replay script: `code/../affine/scripts/replay_window_best.py` \
+in the repo.
+
+**What you see.** Every verdict stamps `crown_mode`, `window_id`, \
+`window_blocks`, `decision_block`, `duel_rule_wins` (the old test's \
+outcome) and `crown_decision` (`window_candidate` or \
+`not_candidate:<reason>`); `challenger_wins` is `false` on every duel row \
+because a duel no longer crowns. Every window close writes a \
+`window_close` history row: `window_id`, `window_blocks_range`, the king, \
+`verdicts_considered` (id, hotkey, margin, se, z, rejection), the ranked \
+`candidates`, `dropped` with reasons, each `confirmations[]` entry \
+(`slice` numbers, `base`, `pooled`, `passed`), `winner`, `outcome` \
+(`crowned`, `king_stays_no_candidates`, `king_stays_none_confirmed`, \
+`king_stays_confirmation_unavailable`), `crown_block`. A crown appears as \
+the usual `crowned` row for the winner's challenge id with `via = \
+"window_best"` and the confirmation inside `verdict.confirmation`; its \
+duel record is the original `evals/<challenge_id>.json.gz`, the \
+confirmation slice's record is `evals/<challenge_id>-confirm.json.gz`. \
+Replays are exact from the stamps: `rank_window_candidates` and \
+`pooled_margin_stats` in `code/affine/score.py`.
+
+**Forward-only.** Reign 11 stands; no re-verdicts; no genesis reset; \
+`min_submission_block` unchanged. Pre-fork verdicts carry no `crown_mode` \
+(meaning the per-duel rule) and replay bit-identically.
 
 ---
 
@@ -1029,10 +1504,32 @@ scaffold rather than the task. Two prompt styles over the same tasks make \
 turns about evenly.
 
 **Target slice shares** (set by strata count in the corpus index; the slicer \
-draws ~1 turn per stratum): coding 0.50, terminal 0.25, nl2repo 0.05, \
-math (`boxed`) 0.10, tool_use (`tool_call`) 0.10. Verdicts will publish \
-per-dialect `mean_r_leg` / `mean_g_leg` / `g_bind_frac` and the parse rate \
-per side.
+draws one turn per stratum, uniformly over strata, so a group's share of D's \
+strata is its share of every 1,300-turn duel slice). Historical vector at the \
+wvk-11 fork: coding 0.50, terminal 0.25, nl2repo 0.05, math (`boxed`) 0.10, \
+tool_use (`tool_call`) 0.10. **Since corpus epoch 39 (2026-09-14, data event, \
+no fork)** the slice is re-weighted toward the states where the incumbent \
+king fails, on the operator's directive to sample the failure data more \
+aggressively: king-derived groups (`king_fail`, `king_loop_onset`, \
+`king_pivot`, `king_done`, `king_tooluse`, `king_recoverable`, \
+`completion_pre`) plus `completion` hold ~33 % of the strata (was ~12 %); \
+coding + terminal ~57 % (floor 40 %); general 5 %, tool_use 2 %, math 2 %, \
+nl2repo 1 %. Mechanism (`[strata_budget]` in `rollouts/sources.toml`, applied \
+by the fold to the index only -- no turn left D, chunks and old manifests are \
+unchanged): teacher-trajectory groups are merged into fixed strata buckets \
+(`coding:b<n>`, `terminal:b<n>`, `general:b<n>`, `tool_use:b<n>` = \
+`sha256(original stratum) % N`), and supply-limited king groups split each \
+task stratum into up to 3 sub-strata by turn (`king_fail:0552:2` = \
+`<stratum>:<sha256(turn_id) % k>`; k = 3 for king_fail / king_loop_onset / \
+king_pivot / king_recoverable / completion_pre, 2 for king_done / \
+king_tooluse / completion), so one duel may draw up to k different turns of \
+the same task. The original key is kept in the index column `stratum_src`. \
+Trade-off (RT-6): a king task recurs across duels k times as often -- \
+simulated per-duel overlap between two seeded slices rose from 0.9 % to \
+2.1 % of turn ids (5.8 % to 9.6 % of rollouts); fresh per-duel teacher \
+references and block-hash-seeded slices remain the defense, and every fold \
+announce publishes the simulated recurrence. Verdicts publish per-dialect \
+`mean_r_leg` / `mean_g_leg` / `g_bind_frac` and the parse rate per side.
 
 **What to do.** Make your checkpoint fluent in all three formats. A model \
 that only emits bash forfeits every math and tool turn; a model that \
@@ -1234,7 +1731,11 @@ during the duel:
 resolves forever: `turns/manifests/{hash}.json` for schema ≤ 2 verdicts, \
 `corpus/manifests/{hash}.json` on `corpus_base_url` for schema 3 — so you \
 can re-derive the exact slice from public D even after shards are retired.
-  - `turn_ids` — `{traj_id}:{turn_idx}` keys into the public corpus.
+  - `turn_ids` — `{traj_id}:{turn_idx}` keys into the public corpus, every \
+scored turn in slice order. `slices` — one entry per seeded draw \
+(`{index, seed, n, digest, …, turn_ids}`; a single entry unless the \
+sequential near-miss rule pooled a second slice) and `near_miss` — the same \
+stamp as the verdict.
   - `teacher_refs` — the teacher's reference rollouts per turn: \
 `{turn_id: [{z, y, lp_own, lp_empty, lp_thought}]}` (`lp_thought` = \
 `lpC(z_C|x)`, the grounding-band component, wvk ≥ 10). This is \
@@ -1446,12 +1947,14 @@ def build() -> str:
                   .replace("{BASE}", _site_base())
                   .replace("{DATA}", _data_base())
                   .replace("{DASH}", _dash_base()))
-    for token, value in {**_serving_subs(), **_r2_subs()}.items():
+    for token, value in {**_serving_subs(), **_r2_subs(), **_margin_subs(),
+                         **_payout_subs()}.items():
         text = text.replace(token, value)
     # Fail closed if we somehow produced a broken index.
     if "## Table of contents" not in text or "data/validator_log.txt" not in text:
         raise RuntimeError("llms.txt build failed closed: missing table of contents")
-    leftovers = ["{BASE}", "{DATA}", "{DASH}", "{CODE_LINKS}", *_serving_subs(), *_r2_subs()]
+    leftovers = ["{BASE}", "{DATA}", "{DASH}", "{CODE_LINKS}", *_serving_subs(), *_r2_subs(),
+                 *_margin_subs(), *_payout_subs()]
     if any(t in text for t in leftovers):
         raise RuntimeError("llms.txt build failed closed: unsubstituted placeholder")
     score_copy = CODE_DIR / "affine" / "score.py"

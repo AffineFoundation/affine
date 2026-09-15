@@ -33,10 +33,22 @@
 # unwinds as coding grows. `general` strata are the fold-assigned hashed
 # buckets `general:<offset + sha256(task) % n>` per source (see the
 # strata_offset table under "-- general --"), like math / tool_use.
-coding = 0.3966
-terminal = 0.2434
-nl2repo = 0.03
-math = 0.03
+# 2026-09-14 phase 9 (Jacob 23:25 UTC: "sample from the dataset more
+# aggressively -- the model is already good on the previous states; put more
+# of this data in"). Measured on 22 wvk-16/17 verdicts (27,994 paired turns):
+# mean paired |d| coding 0.012 (41 % of turns king ~ challenger within
+# 0.001), terminal 0.008 (48 %), tool_use 0.0075 (59 %, 34 % R-dead) vs
+# king_fail 0.021, king_loop_onset 0.022, king_pivot 0.019, king_recoverable
+# 0.019, completion_pre 0.018, completion 0.016, king_done 0.014,
+# king_tooluse 0.012. The king-derived groups + completion move to ~32 % of
+# the slice (was ~12 %) via [strata_budget] below; coding + terminal keep
+# >= 40 % (they land at ~58 % because the king groups are supply-limited).
+# Within the block the shares follow the measured deficit: the |d| >= 0.018
+# groups draw 3 turns per task, king_done / king_tooluse / completion 2.
+coding = 0.36
+terminal = 0.22
+nl2repo = 0.01
+math = 0.02
 tool_use = 0.02
 # 2026-09-12 phase 5: + king_recoverable 0.02 out of king_fail (0.08 -> 0.06).
 # 2026-09-13 (Jacob 06:40 + 07:08 UTC, docs/king-data-spec.md): king budget
@@ -54,15 +66,46 @@ tool_use = 0.02
 # `text`), completion 0.03 -> 0.05, + completion_pre 0.01 (the 1-2 teacher
 # turns before a solved stop). The 0.05 comes from coding and terminal
 # proportionally (0.4276/0.2624 -> 0.3966/0.2434).
-king_fail = 0.02
-king_loop_onset = 0.03
-king_pivot = 0.03
-king_recoverable = 0.04
-king_done = 0.03
-king_tooluse = 0.02
-completion = 0.05
-completion_pre = 0.01
+king_fail = 0.09
+king_loop_onset = 0.04
+king_pivot = 0.02
+king_recoverable = 0.02
+king_done = 0.01
+king_tooluse = 0.02   # phase 9b: ~540 When2Call candidates/day + persist states from five tool feeders
+completion = 0.10
+completion_pre = 0.02
 general = 0.05
+
+[strata_budget]
+# Phase 9 (2026-09-14). The duel slicer draws one turn per stratum uniformly
+# over strata, so slice share = strata share. `buckets` merges a teacher-
+# trajectory group into N fixed strata (`<group>:b<sha(original stratum) %
+# N>`; no turn leaves D, each is drawn less often); `sub_strata` splits each
+# task stratum of a supply-limited group into up to k sub-strata by turn
+# (`<stratum>:<sha(turn_id) % k>`), so one duel may draw up to k turns of the
+# same task. The original key stays in the index column `stratum_src`.
+# RT-6 trade-off: a king task recurs across duels k times as often; fresh
+# per-duel teacher references and block-hash-seeded slices remain the
+# defense, and the fold announce logs the simulated per-duel recurrence.
+# Sized so that king groups + completion ~ 32 % of strata with the supply
+# at epoch 38 (coding + terminal ~ 58 %, general 5 %, tool_use 2 %).
+enabled = true
+
+[strata_budget.buckets]
+coding = 6030
+terminal = 3700
+general = 830
+tool_use = 332
+
+[strata_budget.sub_strata]
+king_fail = 3
+king_loop_onset = 3
+king_pivot = 3
+king_recoverable = 3
+completion_pre = 3
+king_done = 2
+king_tooluse = 2
+completion = 2
 
 [king_common]
 # Rules every king_* group inherits (king-data spec §3.1, 2026-09-13).
@@ -209,7 +252,7 @@ lift_exclude = ["affine_agent", "affine_wikispeedia"]
 # an admitted dialect since wvk 13 -- a routing decision, not a contract
 # change. One-reply rollouts allowed (the prompt-with-tools IS the state);
 # the common exclusions are not inherited (they exclude these sources).
-strata_buckets = 2000
+strata_buckets = 4000   # 2000 -> 4000 (2026-09-14 phase 9b: When2Call + tool-feeder persist supply)
 inherit_exclude = false
 one_reply_ok = true
 prose_sources = ["affine_when2call", "affine_notool"]   # datagen P1 sources (2026-09-14); when2call rows carry repo = when2call/<label> -- only request_for_info / cannot_answer items are no-tool prompts
@@ -273,7 +316,7 @@ kind = "text"
 # no "decide to stop" state -- its only turn is the answer -- and routing
 # it would drain the source group's growth into this one. Sources whose
 # fold-mix share is 0 (general, until set) are excluded by the fold too.
-strata_buckets = 1000
+strata_buckets = 4000   # 1000 -> 4000 (2026-09-14 phase 9b: 972 of 1000 buckets were occupied; supply must not cap while the share rises)
 exclude_sources = ["affine_wiki"]
 leak_exempt = false
 min_replies = 2
@@ -647,6 +690,7 @@ policies = ["teacher_toolcall", "king_toolcall", "king_toolcall_greedy"]   # + k
 strata_buckets = 500
 strata_offset = 470
 share = 1.0
+king_rollouts_per_hour = 6   # king_tooluse persist-state feeder (2026-09-14); 0 king rollouts here in the 24 h before
 
 [source.affine_notool]
 # "Do not act" states (improvement-loop P1, 2026-09-13): knowledge
@@ -726,7 +770,16 @@ pass_dataset = false
 policies = ["teacher_when2call", "king_when2call", "king_when2call_greedy"]
 strata_buckets = 230
 strata_offset = 1200
-share = 1.0
+# Lever 1 for king_tooluse (2026-09-14 23:30 UTC; 88 strata vs a 517 cap):
+# share 2.0 and a king floor. The king's wrong calls here are the group's
+# main supply (77 % of no-tool items at T 0.8, 92 % greedy), but a 1-turn
+# source meets its turn target with a batch a day; the floor makes the
+# king seat run ~16 rollouts/h per pod (~one 36-48 batch every 2.5-3 h,
+# ~2 min each; measured over a 6 h window, scheduler.KING_FLOOR_WINDOW_S)
+# -> ~48 king rollouts/h fleet-wide, ~25 wrong-call candidates/h before
+# the fold's gates.
+share = 2.0
+king_rollouts_per_hour = 16
 
 # -- general (env wave 1, 2026-09-11; data plan W3 "environment breadth") ---------
 #
@@ -920,6 +973,7 @@ policies = ["teacher_toolcall", "king_toolcall", "king_toolcall_greedy"]   # + k
 strata_buckets = 230
 strata_offset = 1600
 share = 1.0
+king_rollouts_per_hour = 6   # king_tooluse persist-state feeder (2026-09-14); 0 king rollouts here in the 24 h before
 
 # -- env wave 2 (2026-09-12; data plan W3, teacher-first) ------------------------
 #
@@ -1013,6 +1067,7 @@ strata_offset = 2000
 max_batch = 16
 max_concurrency = 8
 share = 1.0
+king_rollouts_per_hour = 3   # king_tooluse persist-state feeder (2026-09-14); 0 king rollouts here in the 24 h before
 
 [source.affine_numina]
 # NuminaMath-LEAN (104k statements) in a Mathlib sandbox, `solved` = clean
@@ -1064,6 +1119,7 @@ policies = ["teacher_bashtool", "teacher_pi", "teacher_textbased", "king_bashtoo
 strata_buckets = 230
 strata_offset = 2430
 share = 1.0
+king_rollouts_per_hour = 4   # king_tooluse persist-state feeder (2026-09-14); 0 king rollouts here in the 24 h before
 
 [source.affine_autobench]
 # Zapier AutomationBench (Environments Hub `zapier/AutomationBench`, 29 stars
@@ -1084,6 +1140,7 @@ strata_offset = 2660
 # Probe 2026-09-12 (after the tool-server bridge): 4/12 solved, partial credit
 # 0.6-0.86 on most misses, 10.5 calls p50, 92 % of completions under the ref cap.
 share = 1.0
+king_rollouts_per_hour = 4   # king_tooluse persist-state feeder (2026-09-14); 0 king rollouts here in the 24 h before
 
 [source.affine_uuidctf]
 # uuid-ctf (research-environments reasoning/uuid_ctf_v1): forensic CTF in a
