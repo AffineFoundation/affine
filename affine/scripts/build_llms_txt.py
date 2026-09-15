@@ -1894,22 +1894,95 @@ event, not a scoring fork), so keep your local copy synced to the manifest.
 **The king seat (since 2026-09-10, data event).** The current king also \
 plays the agent seat on the datagen envs (same tasks and harnesses as the \
 teacher; `policy.id` starts with `king_`, `policy.model` is \
-`king/king-<digest12>`). Only the king's **failed** rollouts (`rewards.solved \
-== 0`) enter D, as the fold group `king_fail` with its own slice strata \
-(`king_fail:NNNN`, target ~10% of the slice as it fills; the other groups \
-scale down proportionally). Those prefixes are the king's own trajectory at \
-the places it went wrong; the teacher's fresh refs on them are what both \
-sides are scored against, so a challenger that recovers like the teacher \
-where the incumbent loops or stalls gains exactly there. The king's \
-successful, errored (harness or API failure — `outcome = errored`, never \
-counted as a king failure) and unscored rollouts are published in `traces/` \
-for provenance but do not enter D. Turns are stamped like every other turn \
-(`source`, `stratum`, `action_kind`); the record carries `outcome` and \
-`fold_group`. With the same release the per-turn prefix cap rose from \
-120,000 to **300,000 characters** (plus a tokenizer guard at 110,000 teacher \
-tokens, inside the 131,072-token serving window), so deep turns of long \
-agent trajectories now enter D — expect longer prefixes in new epochs. Data \
-event, no `weight_version_key` change.
+`king/king-<digest12>`; a new king starts the pools over). Its rollouts are \
+published in `traces/` whatever the outcome; only the states listed below \
+enter D. Those prefixes are the king's own trajectory at the places it went \
+wrong; the teacher's fresh references on them are what both sides are \
+scored against, so a challenger that recovers like the teacher where the \
+incumbent loops, stalls or over-acts gains exactly there. Since epoch 39 \
+(2026-09-14) the king-derived groups plus `completion` are ~33% of every \
+duel slice (see "Target slice shares" above). The per-turn prefix cap is \
+300,000 characters (tokenizer guard 110,000 teacher tokens), so deep turns \
+of long agent trajectories are in D. Data events, no `weight_version_key` \
+change.
+
+**King failure groups — what each turn is.** One line per group: selection \
+rule → reference kind the teacher is parsed with at duel time → strata / \
+share of the slice at epoch 40 (14,900 strata; live numbers in \
+`{DATA}/corpus/fold_stats.json` and `{DASH}/api/v1/dataset`). Filter in the \
+index parquet by `stratum` (or the original key `stratum_src`) starting with \
+`<group>:`; the view record carries `fold_group` and `outcome`. A turn's \
+`action_kind` column is the reference kind.
+
+- `king_fail` — any scorable turn of a king rollout the env graded failed \
+(multi-turn agent sources only; at most 8 turns per rollout, the labeler's \
+escape turns first). Reference kind: the harness dialect (`bash`, \
+`tool_call`, `terminus_json`), `text` where the teacher answers in prose. \
+1,531 strata / 10.3%.
+- `king_loop_onset` — the FIRST repeat of the same command after the same \
+observation in a failed king rollout (first onset per rollout; later onsets \
+of the same loop are dropped). Harness dialect or `text`. 572 / 3.8%.
+- `king_pivot` — the LLM-judged decision point of a failed king run (the \
+review pipeline's side-table; the turn where the run could still have gone \
+right). Harness dialect or `text`. 329 / 2.2%.
+- `king_done` — the task was already finished (a `submit`, a finish tool, \
+Terminus `task_complete` or a prose report) and the king kept going for \
+two or more turns; the routed state is the first turn after the finish. \
+Failed AND solved king rollouts count. Reference kind `text` (the teacher \
+stops with a report). 196 / 1.3%.
+- `king_tooluse` — the king called a tool where the right move was to \
+answer, ask or refuse: (a) first reply is a tool call on a prose-answer \
+prompt served with tool schemas (NVIDIA When2Call train split \
+`request_for_info` / `cannot_answer` rows and the in-house `affine_notool`; \
+When2Call `tool_call` rows are excluded — calling is correct there); (b) the \
+same tool call repeated after an error / empty observation on a tool \
+source. Reference kind `text`. 102 / 0.7% (growing: ~500 candidates a day).
+- `king_recoverable` — king failure states the teacher recovers from in 2 of \
+3 continuations (side-table of `ops/recoverable`; rows tagged \
+`recoverable.proxy` come from a same-task proxy, not the exact state). \
+Harness dialect or `text`. 199 / 1.3%.
+- `completion_pre` — the two turns before a premature finish: the king \
+declared itself done (`agent_completed`) and the env graded the run failed. \
+Reference kind `text`. 246 / 1.7%.
+- `completion` — the final reply that ended a SOLVED rollout on purpose \
+(teacher or king): a `submit`, a finish tool call, `task_complete`, or the \
+prose final report (`text`). 1,738 / 11.7%.
+
+Precedence when one turn qualifies for several groups: king_done > \
+king_recoverable > king_tooluse > king_pivot > king_loop_onset > king_fail \
+> completion > completion_pre. King groups skip wiki / agent / math and the \
+one-reply general sources (the state would be the task prompt).
+
+**Teacher-probe admission gate (king groups, since epoch 35, 2026-09-14).** \
+Before a king-group turn enters D the teacher is sampled 3 times at its \
+prefix under the duel's own settings (T 0.8, 1,792 tokens, the turn's \
+dialect parser). The turn is admitted only if at least 2 of the 3 samples \
+parse to an action and the parsed actions are not all identical (identical \
+references make centered R exactly 0); when 2 or more samples are prose with \
+no action in the dialect, the turn is admitted with `action_kind = text` \
+instead. Failing turns never enter, and already published turns that fail \
+are retired from the index (chunks and old manifests unchanged). The \
+side-table is published at \
+`{DATA}/curriculum/teacher_probe/probes.jsonl.gz` (one row per turn id: \
+`n_valid`, `identical`, `text_valid`, `text_distinct`, sample kinds). Math \
+problems need at least 2 in-cap boxed teacher answers in the traces. Pass \
+rates at the first pass: king_fail 76%, king_loop_onset 44%, king_pivot 62%, \
+king_recoverable 72%, king_done 85%, king_tooluse 86%, completion_pre 84%.
+
+**New sources since 2026-09-13** (all teacher + king seats; live mix by \
+source at `{DASH}/api/v1/dataset`): tool_use — `affine_when2call` (NVIDIA \
+When2Call train split, CC-BY-4.0) and `affine_notool` (knowledge questions \
+served with unrelated tool schemas); terminal — `affine_tmax` (TMax Harbor \
+tasks); math — `affine_i3math` (INTELLECT-3-RL math, `boxed`); general — \
+`affine_eog` (EnterpriseOps-Gym MCP services), `affine_sql` (Spider train \
+text-to-SQL), `affine_autobench` (Zapier AutomationBench), `affine_uuidctf` \
+(forensic CTF), `affine_i3code` (INTELLECT-3-RL code), `affine_numina` \
+(NuminaMath-LEAN in a Mathlib sandbox), `affine_deshuffle` (paper paragraph \
+reordering), `affine_rgym` (reasoning-gym), `affine_rcore` (reasoning-core), \
+`affine_pydantic` (JSON validated against a Pydantic model), \
+`affine_verbatim` (exact copy, `text`), `affine_oolong` (long-context QA), \
+`affine_longcot` (staged at 0). Each new source enters at its `[mix]` group's \
+share; the `stratum` prefix tells you the group.
 
 Suggested agent loop: poll `evals/index.jsonl` → fetch new \
 `evals/*.json.gz` → train on `teacher_refs` (distillation) and on your own \
