@@ -62,6 +62,30 @@ def shrunk_rates(strata: dict[str, dict], cells: dict[str, dict], groups: dict[s
         rec["prior_S"] = ps
 
 
+def shrink_field(strata: dict[str, dict], cells: dict[str, dict], groups: dict[str, dict], *,
+                 field: str, n_field: str, out: str, corpus_prior: float, n0: float) -> None:
+    """Generic stratum -> cell -> group -> corpus shrinkage of `field`
+    (observation mass in `n_field`), written to strata[s][out]."""
+    g_v = {g: shrink(rec.get(n_field) or 0.0, rec.get(field), corpus_prior, n0) for g, rec in groups.items()}
+    c_v = {c: shrink(rec.get(n_field) or 0.0, rec.get(field), g_v.get(rec.get("group"), corpus_prior), n0)
+           for c, rec in cells.items()}
+    for s, rec in strata.items():
+        prior = c_v.get(rec.get("cell"), g_v.get(rec.get("group"), corpus_prior))
+        rec[out] = shrink(rec.get(n_field) or 0.0, rec.get(field), prior, n0)
+
+
+def stratum_weight_v12(f_t: float, dplus_t: float, s_t: float, *, dplus_scale: float, eps: float,
+                       gamma: float, s_gate: float) -> tuple[float, float]:
+    """Rule v1.2 (coordinator 2026-09-15 00:55 UTC; informational, candidate
+    for the fold-3 apply): the deficit is what the meter CAN see on king
+    failure states -- "the king cannot answer here" (forfeit rate) plus "a
+    challenger can do better here" (mean positive paired gap, scaled so its
+    corpus mean equals the corpus mean forfeit rate). S~ is a gate.
+    Returns (M12~, w)."""
+    m12 = max(f_t, 0.0) + dplus_scale * max(dplus_t, 0.0)
+    return m12, ((m12 + eps) ** gamma if s_t >= s_gate else 0.0)
+
+
 def stratum_weight(m_t: float, s_t: float, *, eps: float, gamma: float) -> float:
     return (max(m_t, 0.0) + eps) ** gamma * max(s_t, 0.0)
 
