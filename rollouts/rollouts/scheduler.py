@@ -263,9 +263,12 @@ class Scheduler:
         # turn target says.
         floor_due = self._king_floor_due(king_cands) if king_cands else []
         if floor_due:
+            # Not counted in picks_king / picks_total: a floor cycle sits on
+            # top of the 40 % share. Counting it (2026-09-15 morning) made a
+            # new king's six floor batches push the ratio to 47 %, after
+            # which the picker ran ~20 teacher cycles in a row to bring it
+            # back — two hours with no king batch on any pod.
             self.king_cycle = True
-            self.picks_total += 1
-            self.picks_king += 1
             return floor_due[0]
         if king_cands and self._king_due():
             return self._king_pick(king_cands)
