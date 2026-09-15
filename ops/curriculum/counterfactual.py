@@ -75,7 +75,8 @@ def rescore(v: dict, weights: dict[str, float] | None, n: int = SLICE_N) -> dict
     return {"margin": margin, "se": se, "z": z}
 
 
-def run(rows_path: Path, shares: dict[str, float], n_last: int, tol_z: float = 0.10) -> dict:
+def run(rows_path: Path, shares: dict[str, float], n_last: int, tol_z: float = 0.10,
+        variant_max_shift: float = 0.25) -> dict:
     verd = load_verdict_groups(rows_path, n_last)
     per = []
     for cid, v in verd.items():
@@ -104,8 +105,14 @@ def run(rows_path: Path, shares: dict[str, float], n_last: int, tol_z: float = 0
         "median_se_realized": clean_float(med(se_s)), "median_se_shadow": clean_float(med(se_h)),
         "median_se_shift": clean_float(med(se_h) / med(se_s) - 1.0) if med(se_s) and med(se_h) else None,
         "sign_flips_abs_z_ge_2": flips_strong, "sign_flips_any": flips_any,
+        # plan §7.3 item 3: mean |z| within ±tol_z of stored, no sign change at |z| >= 2
         "pass": (shift is not None and abs(shift) <= tol_z and not flips_strong),
         "tolerance_abs_z_shift": tol_z,
+        # operator variant (2026-09-15 00:39 UTC, printed alongside, NOT the criterion yet):
+        # 0 sign flips at |z| >= 2 and mean |z| shift <= +variant_max_shift -- larger |z|
+        # with zero flips is the intended effect of concentrating signal
+        "pass_variant": (shift is not None and shift <= variant_max_shift and not flips_strong),
+        "variant_max_abs_z_shift": variant_max_shift,
         "per_verdict": per,
     }
     return doc

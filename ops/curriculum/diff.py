@@ -75,8 +75,9 @@ def build_diff(new: Path, prev: Path | None) -> str:
     for g, r in sorted(grp_n["groups"].items(), key=lambda kv: -(kv[1]["share_after_clamp"] or 0)):
         old = (grp_p or {}).get("groups", {}).get(g, {}).get("share_after_clamp") if grp_p else None
         gs.append(f"{g} {_pct(old) if grp_p else _pct(r['share_current'])}→{_pct(r['share_after_clamp'])} "
-                  f"[{r['reason']}; raw {_pct(r['share_raw'])}]")
-    lines.append(f"4. **Group shares** ({'previous shadow' if grp_p else 'live'} → shadow; applied = "
+                  f"[{r['reason']}; raw {_pct(r['share_raw'])}, base-strata raw {_pct(r.get('share_raw_base_strata'))}]")
+    lines.append(f"4. **Group shares** ({'previous shadow' if grp_p else 'live'} → shadow; Σw over "
+                 f"{grp_n.get('share_unit', 'slice_keys')}; applied = "
                  f"{'shadow' if grp_n['mode'] == 'apply' else 'live static mix'}): " + "; ".join(gs) + ".")
     # 5 top-10 gain / loss
     if w_p:
@@ -84,14 +85,14 @@ def build_diff(new: Path, prev: Path | None) -> str:
         gains = [(d, s) for d, s in reversed(deltas) if d > 0][:10]
         losses = [(d, s) for d, s in deltas if d < 0][:10]
         fmt = lambda d, s: (f"`{s}` {d:+.4f} (M~ {_f(w_n[s]['M_t'], 3)}, S~ {_f(w_n[s]['S_t'], 3)}, "  # noqa: E731
-                            f"n {_f(w_n[s]['n_w'], 1)})")
+                            f"n {_f(w_n[s]['n_w'], 1)}, forfeit_share {_f(w_n[s].get('forfeit_share'), 2)})")
         lines.append("5. **Top-10 strata by weight gain:** " + ("; ".join(fmt(d, s) for d, s in gains) or "none")
                      + ". **Loss:** " + ("; ".join(fmt(d, s) for d, s in losses) or "none") + ".")
     else:
         top = sorted(w_n.values(), key=lambda r: (-(r["w"] or 0), r["stratum"]))[:10]
         lines.append("5. **Top-10 strata by weight** (first snapshot, no previous): " + "; ".join(
             f"`{r['stratum']}` w {_f(r['w'])} (M~ {_f(r['M_t'], 3)}, S~ {_f(r['S_t'], 3)}, n {_f(r['n_w'], 1)}, "
-            f"{r['group']})" for r in top) + ".")
+            f"forfeit_share {_f(r.get('forfeit_share'), 2)}, {r['group']})" for r in top) + ".")
     # 6 multiplicity histogram
     hist = Counter(int(r["m_shadow"]) for r in w_n.values())
     hist_g = {g: dict(sorted(Counter(int(r["m_shadow"]) for r in w_n.values() if r["group"] == g).items()))
@@ -116,7 +117,9 @@ def build_diff(new: Path, prev: Path | None) -> str:
                      f"{_f(cf_n['mean_abs_z_stored'], 2)} → {_f(cf_n['mean_abs_z_shadow'], 2)} "
                      f"({100 * (cf_n['mean_abs_z_shift'] or 0):+.1f}%), median SE {_f(cf_n['median_se_realized'], 6)} → "
                      f"{_f(cf_n['median_se_shadow'], 6)} ({100 * (cf_n['median_se_shift'] or 0):+.1f}%), sign flips among "
-                     f"|z| ≥ 2: {len(cf_n['sign_flips_abs_z_ge_2'])} {cf_n['sign_flips_abs_z_ge_2'] or ''}.")
+                     f"|z| ≥ 2: {len(cf_n['sign_flips_abs_z_ge_2'])} {cf_n['sign_flips_abs_z_ge_2'] or ''}; plan item "
+                     f"(±10 %, 0 flips) {'PASS' if cf_n.get('pass') else 'FAIL'}; variant (≤ +25 %, 0 flips) "
+                     f"{'PASS' if cf_n.get('pass_variant') else 'FAIL'}.")
     else:
         lines.append("8. **Counterfactual:** not computed.")
     head = (f"# Curriculum diff — epoch {rule_n['corpus_epoch']} → next fold\n\n"

@@ -50,8 +50,8 @@ def top10_cards(snapshot: Path, rows_path: Path) -> None:
     top = rule_doc["top10_by_weight"]
     strata = {t["stratum"] for t in top}
     t = pq.read_table(rows_path, columns=["base_stratum", "side", "turn_id", "challenge_id", "turn_score",
-                                          "forfeit", "live", "miss", "is_king_row", "prefix_chars", "source",
-                                          "harness", "action_kind"])
+                                          "forfeit", "live", "miss", "is_king_row", "scored", "prefix_chars",
+                                          "source", "harness", "action_kind"])
     by: dict[str, list[dict]] = {s: [] for s in strata}
     for r in t.to_pylist():
         if r["base_stratum"] in strata and r["side"] == "king":
@@ -59,12 +59,25 @@ def top10_cards(snapshot: Path, rows_path: Path) -> None:
     out = [f"# Top-10 upweighted strata — hand read (stage-3 item 7)\n",
            f"Weights `{rule_doc['weights_sha256'][:12]}`, epoch {rule_doc['corpus_epoch']}. For each stratum: is it a "
            "decision state (a point where the next action matters), not wreckage or a one-reply prompt? "
-           "Mark ≥ 7/10 yes to pass.\n"]
+           "Mark ≥ 7/10 yes to pass. `forfeit_share` = share of the king's misses that were forfeits "
+           "(\"cannot answer\": no parseable action / no `</think>`); the rest are live turns scored under θ "
+           "(\"answers badly\").\n\n| # | stratum | group | M | forfeit_share | cannot answer | answers badly | n_obs | w |\n"
+           "|---|---|---|---:|---:|---:|---:|---:|---:|\n"]
+    for i, tp in enumerate(top, 1):
+        kr = [r for r in by.get(tp["stratum"], []) if r["is_king_row"] and r["scored"]]
+        n_miss = sum(1 for r in kr if r["miss"])
+        n_forf = sum(1 for r in kr if r["forfeit"])
+        fs = (n_forf / n_miss) if n_miss else None
+        tp["_cannot"], tp["_badly"], tp["_fs"] = n_forf, n_miss - n_forf, fs
+        out.append(f"| {i} | `{tp['stratum']}` | {tp['group']} | {tp['M'] if tp.get('M') is not None else '-'} | "
+                   f"{'-' if fs is None else f'{fs:.2f}'} | {n_forf} | {n_miss - n_forf} | {len(kr)} | {tp['w']:.4f} |\n")
     for i, tp in enumerate(top, 1):
         rows = sorted(by.get(tp["stratum"], []), key=lambda r: (r["challenge_id"], r["turn_id"]))
         out.append(f"\n## {i}. `{tp['stratum']}` — {tp['group']} · cell `{tp['cell']}`\n")
+        fs_txt = "-" if tp["_fs"] is None else f"{tp['_fs']:.2f}"
         out.append(f"w {tp['w']:.4f} · M~ {tp['M_t']:.3f} · S~ {tp['S_t']:.3f} · n_obs {tp['n_obs']} · "
-                   f"turns in D {tp['n_turns']} · m_shadow {tp['m_shadow']}\n")
+                   f"turns in D {tp['n_turns']} · m_shadow {tp['m_shadow']} · forfeit_share {fs_txt} "
+                   f"(cannot answer {tp['_cannot']} / answers badly {tp['_badly']})\n")
         if not rows:
             out.append("- no king draws in the window (weight comes from the cell / group prior)\n")
         for r in rows[-6:]:
@@ -86,7 +99,13 @@ def criterion(*, cfg: dict, ledger_doc: dict, rebuild_ok: bool | None, groups: d
     jr = (ledger_doc.get("window") or {}).get("join_rate")
     items["2_turn_join_ge_95pct"] = {"pass": jr is not None and jr >= 0.95, "join_rate": jr}
     items["3_counterfactual"] = {"pass": bool(cf.get("pass")), "mean_abs_z_shift": cf.get("mean_abs_z_shift"),
-                                 "sign_flips_abs_z_ge_2": cf.get("sign_flips_abs_z_ge_2")}
+                                 "sign_flips_abs_z_ge_2": cf.get("sign_flips_abs_z_ge_2"),
+                                 "rule": f"plan §7.3: |mean |z| shift| <= {cf.get('tolerance_abs_z_shift')} and 0 flips at |z| >= 2"}
+    # printed next to item 3, not counted (operator 2026-09-15 00:39 UTC: adopt at fold 3 if fold 2 shows the same shape)
+    items["3b_counterfactual_variant_informational"] = {
+        "pass": bool(cf.get("pass_variant")), "counted": False,
+        "mean_abs_z_shift": cf.get("mean_abs_z_shift"), "sign_flips_abs_z_ge_2": cf.get("sign_flips_abs_z_ge_2"),
+        "rule": f"variant: mean |z| shift <= +{cf.get('variant_max_abs_z_shift')} and 0 flips at |z| >= 2"}
     if prev_groups:
         deltas = {g: abs(shares.get(g, 0.0) - (prev_groups["groups"].get(g, {}).get("share_after_clamp") or 0.0))
                   for g in set(shares) | set(prev_groups["groups"])}
@@ -104,12 +123,14 @@ def criterion(*, cfg: dict, ledger_doc: dict, rebuild_ok: bool | None, groups: d
     fc = groups["floors_check"]
     items["6_floors_and_cap_hold"] = {"pass": bool(fc["ok"]), **{k: v for k, v in fc.items() if k != "ok"}}
     items["7_hand_read_top10"] = {"pass": None, "detail": "manual: read top10_cards.md; ≥ 7 of 10 decision states"}
-    auto = [v["pass"] for k, v in items.items() if k != "7_hand_read_top10"]
+    informational = {"7_hand_read_top10", "3b_counterfactual_variant_informational"}
+    auto = [v["pass"] for k, v in items.items() if k not in informational]
     return {
         "counts_as_shadow_fold": n_new_verdicts >= cfg["min_new_verdicts"],
         "n_new_verdicts": n_new_verdicts, "min_new_verdicts": cfg["min_new_verdicts"],
         "automatic_items_pass": all(v is True for v in auto),
-        "automatic_items_pending": [k for k, v in items.items() if v["pass"] is None and k != "7_hand_read_top10"],
+        "automatic_items_pending": [k for k, v in items.items() if v["pass"] is None and k not in informational],
+        "informational_items": sorted(informational),
         "items": items,
         "decision_rule": "apply at the third fold iff every item passes on shadow folds 1 and 2 (plan §7.3); "
                          "one retry fold; a second failure keeps mode = shadow",

@@ -64,6 +64,7 @@ CURRICULUM_DEFAULTS: dict = {
     "mode": "shadow",
     "weights_path": "ops/curriculum/out/groups.json",
     "rule_version": 1,
+    "share_unit": "slice_keys",
     "half_life_verdicts": 60,
     "n_0": 8,
     "gamma": 1.0,

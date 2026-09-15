@@ -362,6 +362,11 @@ share = 1.0
 mode = "shadow"
 weights_path = "ops/curriculum/out/groups.json"   # the fold's hook reads this (group vector + manifest block)
 rule_version = 1
+# Σ w per group runs over the SLICE KEYS (phase-9 buckets = the unit a duel
+# draws one turn from), a bucket weighing the mean w of its base strata
+# (operator decision 2026-09-15 00:39 UTC); "base_strata" is the plan's
+# original sum, kept as the diagnostic column share_raw_base_strata.
+share_unit = "slice_keys"
 half_life_verdicts = 60
 n_0 = 8
 gamma = 1.0
