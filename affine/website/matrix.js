@@ -19,7 +19,7 @@ const TABLES = [
   { id: "kings-bench", title: "held-out benchmarks", total: "total:bench", kind: "bench",
     caption: "greedy T=0 · never in D · score = tasks passed" },
   { id: "kings-env", title: "datagen environments", total: "total:env", kind: "env",
-    caption: "solve rate over the king seat's rollouts · teacher = teacher_* rollouts" },
+    caption: "solve rate over sampled (T=0.8) rollouts · king seat + coverage backfill · teacher = teacher_* rollouts · greyed = < 30 rollouts" },
 ];
 
 const state = {
@@ -88,7 +88,9 @@ function cellTip(row, col, cell, teacherCell) {
     if (cell.all_rollouts != null) lines.push(`all rollouts (timeouts count as failed): ${fmt(cell.all_rollouts)}`);
     lines.push(`card ${cell.run_id}${cell.mode ? ` · ${cell.mode}` : ""}`);
   } else {
-    lines.push(`${num(cell.solved)} solved / ${num(cell.n)} graded (${num(cell.rollouts)} rollouts, ${num(cell.errored)} errored)`);
+    lines.push(`${num(cell.solved)} solved / ${num(cell.n)} graded (${num(cell.rollouts)} rollouts, ${num(cell.errored)} errored)${cell.temp ? ` · ${cell.temp} T=0.8` : ""}`);
+    if (cell.low_n) lines.push(`fewer than 30 graded rollouts — provisional until the backfill lands`);
+    if (cell.greedy && cell.greedy.n) lines.push(`greedy T=0 (not pooled in): ${cell.greedy.score != null ? fmt(cell.greedy.score) : "–"} over ${num(cell.greedy.n)} graded`);
     lines.push(`datagen rollouts on ${col.env}${col.env_id ? ` · ${col.env_id}` : ""}`);
   }
   if (row.kind !== "teacher" && teacherCell && teacherCell.score != null) {
@@ -214,7 +216,7 @@ function renderTable(m, spec) {
       const cell = r.cells[c.key];
       const has = cell && cell.score != null;
       const running = !has && cell && cell.running;
-      const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? "" : running ? "running" : "blank"].filter(Boolean).join(" ");
+      const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? (cell.low_n ? "lown" : "") : running ? "running" : "blank"].filter(Boolean).join(" ");
       const style = has && r.kind !== "teacher" ? tint(cell.delta) : "";
       return `<td class="${tcls} duel-hit" data-tip="${esc(cellTip(r, c, cell, teacher.cells[c.key]))}"`
         + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) : running ? "…" : "·"}</td>`;
