@@ -30,7 +30,7 @@ REPO=$PWD
 KH="$REPO/ops/king-datagen/state/known_hosts"
 FILES=(schema.py registry.py catalog.py run.py king.py scheduler.py policies.toml sources.toml
        loopguard.py loopguard_site/sitecustomize.py adapters/mini_swe.py adapters/verifiers.py
-       dockerwrap/docker diskgc.py
+       dockerwrap/docker diskgc.py backfill.py
        runners/base.py runners/verifiers.py runners/mini_swe.py)
 # + view.py / slicer.py (2026-09-14): the pods derive turns for YIELD
 # ACCOUNTING only, but with the pre-wvk-13 copies a teacher's prose reply
