@@ -178,10 +178,16 @@ BENCH_COLUMNS = [
     ("bfcl-v3", "BFCL v3"), ("when2call", "When2Call"),
     ("swebench-verified", "SWE-bench Verified"), ("minif2f", "miniF2F"),
     ("graphwalks", "GraphWalks"), ("mrcr-v2", "MRCR"), ("oolong-synth", "Oolong"),
+    # agentic set (benchsuite docs §11, 2026-09-15): its own column group, last
+    ("terminal-bench-2", "Terminal-Bench 2"), ("tau2-airline", "τ²-bench airline"),
+    ("tau2-retail", "τ²-bench retail"), ("tau2-telecom", "τ²-bench telecom"),
+    ("tau3-banking", "τ³-bench banking"), ("swebench-pro", "SWE-bench Pro"),
 ]
 # Benchmarks scored on the rollouts that finished inside the time / context
 # budget (card `finished_only`), per the 2026-09-15 directive.
-BENCH_FINISHED_ONLY = {"swebench-verified"}
+BENCH_FINISHED_ONLY = {"swebench-verified", "swebench-pro"}
+BENCH_AGENTIC_GROUP = "agentic"
+CAP_BOUND_FRAC = 0.20            # share of replies cut at the completion cap that flags a cell
 BENCH_TEMPERATURE = 0.0          # the primary (greedy) card row
 # Card modes that are not a king / genesis / teacher measurement.
 BENCH_SKIP_MODES = {"challenger", "comparables"}
@@ -205,6 +211,8 @@ BENCH_ABBR = {
     "mmlu-pro": "MMLU", "math500": "M500", "gpqa-diamond": "GPQA", "aime25": "AIME",
     "ifbench": "IFB", "ifeval": "IFE", "humaneval": "HE", "livecodebench": "LCB",
     "bfcl-v3": "BFCL", "when2call": "W2C", "swebench-verified": "SWE", "minif2f": "F2F",
+    "terminal-bench-2": "TB2", "tau2-airline": "T2A", "tau2-retail": "T2R", "tau2-telecom": "T2T",
+    "tau3-banking": "T3B", "swebench-pro": "SWEP",
     "graphwalks": "GW", "mrcr-v2": "MRCR", "oolong-synth": "OOL",
 }
 # Horizontal header labels for the benchmark table (<= 10 chars).
@@ -213,6 +221,8 @@ BENCH_SHORT = {
     "ifbench": "IFBench", "ifeval": "IFEval", "humaneval": "HumanEval", "livecodebench": "LCB",
     "bfcl-v3": "BFCL v3", "when2call": "When2Call", "swebench-verified": "SWE-bench",
     "minif2f": "miniF2F", "graphwalks": "GraphWalks", "mrcr-v2": "MRCR", "oolong-synth": "Oolong",
+    "terminal-bench-2": "TB2", "tau2-airline": "τ² airline", "tau2-retail": "τ² retail",
+    "tau2-telecom": "τ² telecom", "tau3-banking": "τ³ banking", "swebench-pro": "SWE-Pro",
 }
 GROUP_ABBR = {"coding": "code", "terminal": "term", "math": "math", "tool_use": "tool",
               "nl2repo": "nl2r", "general": "gen", "agent": "agent", "other": "other"}
@@ -1040,6 +1050,8 @@ def bench_value(side: dict | None, env: str) -> dict | None:
         src = side["finished_only"]
         metric = "finished_only"
     ci = src.get("ci95") or [None, None]
+    cap = side.get("finish_length_frac")
+    cap = float(cap) if isinstance(cap, (int, float)) and not isinstance(cap, bool) else None
     return {
         "score": round(100.0 * float(src["score"]), 2),
         "lo": None if ci[0] is None else round(100.0 * float(ci[0]), 2),
@@ -1048,6 +1060,10 @@ def bench_value(side: dict | None, env: str) -> dict | None:
         "metric": metric,
         "all_rollouts": (round(100.0 * float(side["score"]), 2)
                          if metric == "finished_only" else None),
+        # share of the model's replies cut at the completion cap (scored 0):
+        # above CAP_BOUND_FRAC the number is a lower bound, not a measure
+        "cap_frac": None if cap is None else round(cap, 4),
+        "cap_bound": bool(cap is not None and cap > CAP_BOUND_FRAC),
     }
 
 
@@ -1067,6 +1083,10 @@ def card_cells(cards: list[dict], side: str) -> dict[str, dict]:
                 continue
             val.update(run_id=card.get("run_id"), mode=card.get("mode"),
                        created_at=card.get("created_at"), kind="bench")
+            if row.get("graded") == "llm_judge":
+                # advisory: an LLM judge graded the rollouts; never part of the score
+                val["judge"] = row.get("judge") or {}
+                val["graded"] = "llm_judge"
             if side == "teacher" and (row.get("teacher") or {}).get("reused_from"):
                 val["reused_from"] = row["teacher"]["reused_from"]
             out[env] = val
@@ -1225,9 +1245,17 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
     for c in cards:
         for r in c.get("rows") or []:
             if r.get("env") and r["env"] not in bench_notes:
-                bench_notes[r["env"]] = {"group": r.get("group"), "note": r.get("note"), "n": r.get("n")}
-    ordered_bench = [e for e, _ in BENCH_COLUMNS if e in bench_envs_seen] + \
-        [e for e in bench_envs_seen if e not in {b for b, _ in BENCH_COLUMNS}]
+                bench_notes[r["env"]] = {"group": r.get("group"), "note": r.get("note"), "n": r.get("n"),
+                                         "graded": r.get("graded"), "judge": r.get("judge")}
+    known = {b for b, _ in BENCH_COLUMNS}
+    is_agentic = lambda e: (bench_notes.get(e, {}).get("group") == BENCH_AGENTIC_GROUP)
+    # known order first; unknown card envs appended in card order; the agentic
+    # group always forms the last block (cards gain agentic rows by merge, so
+    # the column set is re-read on every refresh)
+    ordered_bench = [e for e, _ in BENCH_COLUMNS if e in bench_envs_seen and not is_agentic(e)] \
+        + [e for e in bench_envs_seen if e not in known and not is_agentic(e)] \
+        + [e for e, _ in BENCH_COLUMNS if e in bench_envs_seen and is_agentic(e)] \
+        + [e for e in bench_envs_seen if e not in known and is_agentic(e)]
     labels = dict(BENCH_COLUMNS)
     columns = [{"key": "total", "label": "total", "abbr": "total", "kind": "total",
                 "note": "unweighted mean of the row's available benchmark and environment cells (0-100)"}]
@@ -1239,6 +1267,9 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
             "kind": "bench", "env": e,
             "group": meta.get("group"), "n": meta.get("n"), "note": meta.get("note"),
             "metric": "finished_only" if e in BENCH_FINISHED_ONLY else "score",
+            "graded": meta.get("graded") or "deterministic",
+            "judge": meta.get("judge") if meta.get("graded") == "llm_judge" else None,
+            "advisory": meta.get("graded") == "llm_judge",
         })
     env_groups = {e["source"]: e.get("group") or "other" for e in stats.get("envs") or []}
     env_ids = {e["source"]: e.get("env_id") or "" for e in stats.get("envs") or []}
@@ -1421,6 +1452,9 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                      "for the model is running and this cell is planned (ops/benchsuite pass log)",
             "colour": "cell tint = score minus the teacher's score in the same column: green above, "
                       "red below, stronger with the gap",
+            "markers": f"‡ = cap-bound: more than {int(CAP_BOUND_FRAC * 100)}% of the model's replies hit the "
+                       "completion cap and scored 0, so the number is a lower bound; ⚖ = judge-graded "
+                       "(graded = llm_judge): an LLM judge graded the rollouts — advisory, never part of the score",
             "ci": "95% interval: Wilson on graded rollouts (environments) or the card's ci95 "
                   "(benchmarks), shown in the tooltip",
             "cards": "benchmark scorecards from affine/state/benchsuite/ (ops/benchsuite); when a "

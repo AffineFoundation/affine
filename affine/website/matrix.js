@@ -86,6 +86,8 @@ function cellTip(row, col, cell, teacherCell) {
   if (col.kind === "bench") {
     lines.push(`n = ${num(cell.n)} tasks · greedy T=0${cell.metric === "finished_only" ? " · finished-only" : ""}`);
     if (cell.all_rollouts != null) lines.push(`all rollouts (timeouts count as failed): ${fmt(cell.all_rollouts)}`);
+    if (cell.cap_bound) lines.push(`‡ cap-bound: ${Math.round(100 * cell.cap_frac)}% of rollouts hit the completion cap (scored 0); lower bound`);
+    if (cell.graded === "llm_judge") lines.push(`⚖ judge-graded: ${judgeText(cell.judge)} — advisory, never part of the score`);
     lines.push(`card ${cell.run_id}${cell.mode ? ` · ${cell.mode}` : ""}`);
   } else {
     lines.push(`${num(cell.solved)} solved / ${num(cell.n)} graded (${num(cell.rollouts)} rollouts, ${num(cell.errored)} errored)${cell.temp ? ` · ${cell.temp} T=0.8` : ""}`);
@@ -99,6 +101,10 @@ function cellTip(row, col, cell, teacherCell) {
   if (col.note) lines.push(col.note);
   return lines.join("\n");
 }
+
+const judgeText = (j) => j && (j.model || j.via)
+  ? `LLM judge ${j.model || "?"}${j.via ? ` via ${j.via}` : ""}${j.temperature != null ? ` (T=${j.temperature})` : ""}`
+  : "LLM judge";
 
 function tableColumns(m, spec) {
   return m.columns.filter((c) => c.kind === spec.kind);
@@ -138,7 +144,7 @@ function visibleRows(m, spec) {
   const teacher = m.rows.find((r) => r.kind === "teacher");
   const rest = m.rows.filter((r) => r !== teacher);
   const sort = state.sort[spec.id] || { key: null, desc: true };
-  const cols = tableColumns(m, spec);
+  const cols = tableColumns(m, spec).filter((c) => !c.advisory);
   const tot = totals([...(teacher ? [teacher] : []), ...rest], cols, commonColumns([...(teacher ? [teacher] : []), ...rest], cols), teacher);
   const val = (r) => sort.key === "total" ? tot.get(r.key).common
     : sort.key === "full" ? tot.get(r.key).full
@@ -159,7 +165,7 @@ function visibleRows(m, spec) {
 function groupBlocks(cols) {
   const blocks = [];
   for (const c of cols) {
-    const name = c.kind === "env" ? (c.group || "other") : "";
+    const name = c.kind === "env" ? (c.group || "other") : c.kind === "bench" ? (c.group === "agentic" ? "agentic" : "") : "";
     const last = blocks[blocks.length - 1];
     if (last && last.name === name) { last.n += 1; continue; }
     blocks.push({ name, n: 1, first: c.key });
@@ -174,13 +180,18 @@ function renderTable(m, spec) {
   const rows = visibleRows(m, spec);
   const teacher = m.rows.find((r) => r.kind === "teacher") || { cells: {} };
   const sort = state.sort[spec.id] || { key: null, desc: true };
-  const common = commonColumns(rows, cols);
-  const tot = totals(rows, cols, common, m.rows.find((r) => r.kind === "teacher"));
+  // judge-graded (advisory) columns are shown but never enter total / full
+  const scoreCols = cols.filter((c) => !c.advisory);
+  const common = commonColumns(rows, scoreCols);
+  const tot = totals(rows, scoreCols, common, m.rows.find((r) => r.kind === "teacher"));
   const commonTitle = `mean over the ${common.length} columns every displayed row with data has a value for:\n`
     + (common.map((c) => c.short || c.abbr || c.label).join(", ") || "(none)")
-    + `\nrecomputed as rows change; Δ vs the teacher on the same columns`;
-  const fullTitle = `mean over all ${cols.length} columns — only for rows that have every column; blank otherwise`;
-  const blocks = spec.kind === "env" ? groupBlocks(cols) : [];
+    + `\nrecomputed as rows change; Δ vs the teacher on the same columns${scoreCols.length < cols.length ? "; judge-graded columns excluded" : ""}`;
+  const fullTitle = `mean over all ${scoreCols.length} scored columns — only for rows that have every column; blank otherwise`;
+  const allBlocks = groupBlocks(cols);
+  // the environments table always shows its fold groups; the benchmarks table
+  // gets a block row only once an agentic column exists
+  const blocks = spec.kind === "env" || allBlocks.some((b) => b.name === "agentic") ? allBlocks : [];
   const sepAt = new Set(blocks.filter((b) => b.name).map((b) => b.first));
   const mark = (key) => (sort.key === key ? (sort.desc ? " ▾" : " ▴") : "");
 
@@ -193,8 +204,9 @@ function renderTable(m, spec) {
     + `<th class="col full${sort.key === "full" ? " sorted" : ""}" data-sort="full" title="${esc(fullTitle)}\nclick to sort">full${mark("full")}</th>`
     + cols.map((c) => {
       const cls = ["col", c.kind, sepAt.has(c.key) ? "sep" : "", sort.key === c.key ? "sorted" : ""].filter(Boolean).join(" ");
-      const title = `${c.label}${c.kind === "env" && c.group ? ` · ${c.group}` : ""}${c.kind === "bench" && c.n ? ` · n = ${c.n}` : ""}${c.note ? `\n${c.note}` : ""}\nclick to sort`;
-      return `<th class="${cls}" data-sort="${esc(c.key)}" title="${esc(title)}">${esc(c.short || c.abbr || c.label)}${mark(c.key)}</th>`;
+      const judge = c.advisory ? `\n⚖ judge-graded: ${judgeText(c.judge)} — advisory, never part of the score` : "";
+      const title = `${c.label}${c.kind === "env" && c.group ? ` · ${c.group}` : ""}${c.kind === "bench" && c.group ? ` · ${c.group}` : ""}${c.kind === "bench" && c.n ? ` · n = ${c.n}` : ""}${judge}${c.note ? `\n${c.note}` : ""}\nclick to sort`;
+      return `<th class="${cls}${c.advisory ? " advisory" : ""}" data-sort="${esc(c.key)}" title="${esc(title)}">${esc(c.short || c.abbr || c.label)}${c.advisory ? `<span class="mk judge">⚖</span>` : ""}${mark(c.key)}</th>`;
     }).join("") + "</tr>";
 
   const body = rows.map((r) => {
@@ -205,8 +217,8 @@ function renderTable(m, spec) {
       + (t.common != null ? `${fmt(t.common)} over ${common.length} columns` + (t.commonDelta != null ? ` · teacher on the same columns → Δ ${signed(t.commonDelta)} pt` : "")
         : t.running ? "benchmark pass running — total appears when its cells land" : "no value on one of the common columns")
       + `\n${common.map((c) => c.short || c.abbr || c.label).join(", ")}`;
-    const fullTip = `${rowName(r)} · full total\n` + (t.full != null ? `${fmt(t.full)} over all ${cols.length} columns` + (t.fullDelta != null ? ` · Δ ${signed(t.fullDelta)} pt vs teacher` : "")
-      : `blank: the row has ${cols.filter((c) => hasValue(r, c.key)).length} of ${cols.length} columns`);
+    const fullTip = `${rowName(r)} · full total\n` + (t.full != null ? `${fmt(t.full)} over all ${scoreCols.length} columns` + (t.fullDelta != null ? ` · Δ ${signed(t.fullDelta)} pt vs teacher` : "")
+      : `blank: the row has ${scoreCols.filter((c) => hasValue(r, c.key)).length} of ${scoreCols.length} scored columns`);
     const totalTd = `<td class="cell total${t.common == null ? " blank" : ""} duel-hit" data-tip="${esc(totalTip)}"`
       + `${t.common != null && r.kind !== "teacher" ? ` style="${tint(t.commonDelta)}"` : ""}>${t.common != null ? fmt(t.common, d) : t.running ? "…" : "·"}</td>`;
     const fullTd = `<td class="cell full${t.full == null ? " blank" : ""} duel-hit" data-tip="${esc(fullTip)}">${t.full != null ? fmt(t.full, d) : "·"}</td>`;
@@ -216,8 +228,9 @@ function renderTable(m, spec) {
       const running = !has && cell && cell.running;
       const tcls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", has ? (cell.low_n ? "lown" : "") : running ? "running" : "blank"].filter(Boolean).join(" ");
       const style = has && r.kind !== "teacher" ? tint(cell.delta) : "";
+      const marks = has ? `${cell.cap_bound ? `<span class="mk cap">‡</span>` : ""}${cell.graded === "llm_judge" ? `<span class="mk judge">⚖</span>` : ""}` : "";
       return `<td class="${tcls} duel-hit" data-tip="${esc(cellTip(r, c, cell, teacher.cells[c.key]))}"`
-        + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) : running ? "…" : "·"}</td>`;
+        + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score, d) + marks : running ? "…" : "·"}</td>`;
     }).join("");
     return `<tr class="${cls}"><td class="model duel-hit" data-tip="${esc(rowTip(r))}">`
       + `<span class="name">${esc(rowName(r))}</span>${r.current ? `<i class="cur" title="current king"></i>` : ""}</td>${totalTd}${fullTd}${cells}</tr>`;
