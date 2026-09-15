@@ -259,6 +259,10 @@ def build_cmd(env: dict, model: str, url: str, key_env: str, temp: float,
     # the subprocess runtime. runtime="none" cells therefore also use the
     # container runtime given on the command line (docker: python:3.11-slim,
     # ~5 s boot per task).
+    if env.get("runtime") == "subprocess":
+        # tasksets that ship their own orchestrator (tau2-bench) pin the agent
+        # runtime to a subprocess on the driver host; a container would break them
+        runtime = "subprocess"
     cmd += ["--env.agent.runtime.type", runtime]
     if runtime == "docker" and chat_image:
         # A pre-baked python:3.11-slim with uv + the harness script deps in the

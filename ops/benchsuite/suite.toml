@@ -97,6 +97,10 @@ lium_prime_sandbox_envs = ["minif2f"]
 teacher_from = "20260912T1455Z-0ce59769300c"   # reference run whose teacher cells are reused
 chat_envs = ["aime25", "math500", "gpqa-diamond", "mmlu-pro", "ifbench", "ifeval", "humaneval", "livecodebench", "bfcl-v3", "when2call"]
 sandbox_envs = ["swebench-verified", "minif2f", "graphwalks", "oolong-synth", "mrcr-v2"]
+# `agentic` pass mode (own pod, king only, merged into the king's card): docker
+# on the pod for the Harbor sets, the tau2 orchestrator as a subprocess on the pod.
+agentic_envs = ["terminal-bench-2", "tau2-airline", "tau2-retail", "tau2-telecom", "swebench-pro"]
+agentic_cheap_envs = ["terminal-bench-2", "tau2-airline"]   # the first-look set (~$15 + ~$15 user-sim per model)
 prime_king_replicas = "31001:0,1:2;31002:2,3:2;31003:4,5:2;31004:6,7:2"   # king-only pod layout
 cheap_plan = "h200-1x"
 
@@ -409,5 +413,92 @@ max_turns = 300
 rollout_timeout = 3600      # fixed budget: same for every reign
 concurrency = 48            # fixed: 48 tasks in flight, run alone on the pod (parallel_envs 1 in the sandbox phase)
 note = "SWE-bench Verified, all 500, mini-swe-agent harness, prebuilt swebench/sweb.eval images; the task's own hidden tests grade."
+
+# ------------------------------------------------------------ agentic set
+# Added 2026-09-15 (Jacob: "kings comparable to public agentic releases",
+# Occamy-1.0 reports Terminal-Bench 2.1, tau3 Banking, BFCL v4, IFEval, ...).
+# Run by the `agentic` pass mode on its own Lium pod (modes.agentic_envs) and
+# merged into the king's card (BENCHSUITE_MERGE_INTO); the teacher gets the
+# same cells from a teacher pod (hf://Qwen/Qwen3.8-27B). Group "agentic" is
+# what the affine.io table groups the columns by.
+[[envs]]
+id = "terminal-bench-2"
+taskset = "terminal-bench-2"
+install = "terminal/terminal_bench_2"
+group = "agentic"
+n = -1
+harness = "terminus_2"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "solved"
+secondary = false
+max_turns = 200
+rollout_timeout = 3600
+concurrency = 16
+note = "Terminal-Bench 2.0, all 89 tasks (Harbor dataset terminal-bench/terminal-bench-2, alexgshaw/* Docker Hub images), Terminus 2 harness = the public leaderboard's reference agent; each task's hidden verifier grades pass/fail. Fixed 1 h budget per task. Occamy reports 'Terminal-Bench 2.1' (same task set, harness release 2.1)."
+
+[[envs]]
+id = "swebench-pro"
+taskset = "swebench-pro"
+install = "swe/swebench_pro"
+group = "agentic"
+n = -1
+harness = "mini_swe_agent"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "solved"
+secondary = false
+max_turns = 300
+rollout_timeout = 3600
+concurrency = 48
+note = "SWE-bench Pro public split, all 731 (Harbor dataset scale-ai/swe-bench-pro, SWEAP jefzda/* images), mini-swe-agent harness like our SWE-bench Verified row (the public leaderboard uses SWE-agent; not directly comparable). ~16 h on one H200; read finished-only next to the full score."
+
+[[envs]]
+id = "tau2-airline"
+taskset = "tau2-bench"
+install = "tool_use/tau2_bench"
+group = "agentic"
+n = -1
+harness = "tau2-bench"
+runtime = "subprocess"
+max_tokens = 8192
+reward = "tau2_reward"
+secondary = false
+rollout_timeout = 3600
+concurrency = 8
+taskset_config = { domain = "airline" }
+note = "tau2-bench airline (50 tasks, base split), Sierra's official simulation and DB-state scoring; the USER is simulated by gpt-4.1 at T=0 through Prime Inference (the benchmark's standard user model) — the only external LLM in the suite; it is a simulated customer, not a judge. Pass^1, one trial."
+
+[[envs]]
+id = "tau2-retail"
+taskset = "tau2-bench"
+install = "tool_use/tau2_bench"
+group = "agentic"
+n = -1
+harness = "tau2-bench"
+runtime = "subprocess"
+max_tokens = 8192
+reward = "tau2_reward"
+secondary = false
+rollout_timeout = 3600
+concurrency = 8
+taskset_config = { domain = "retail" }
+note = "tau2-bench retail (114 tasks); see tau2-airline."
+
+[[envs]]
+id = "tau2-telecom"
+taskset = "tau2-bench"
+install = "tool_use/tau2_bench"
+group = "agentic"
+n = -1
+harness = "tau2-bench"
+runtime = "subprocess"
+max_tokens = 8192
+reward = "tau2_reward"
+secondary = false
+rollout_timeout = 3600
+concurrency = 8
+taskset_config = { domain = "telecom" }
+note = "tau2-bench telecom (114 tasks, manual troubleshooting policy); see tau2-airline."
 
 # Skipped by rule (no judge in the suite): HLE (judge-only reward).

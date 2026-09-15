@@ -60,6 +60,11 @@ TEACHER_FROM=$(toml modes.teacher_from)
 # BENCHSUITE_CHAT_ENVS (comma list) restricts the chat cells — used to add one
 # new env to an existing card (When2Call on reign 11) without re-running the rest.
 CHAT_ENVS="${BENCHSUITE_CHAT_ENVS:-$(toml modes.chat_envs)}"
+# `agentic` mode runs modes.agentic_envs (Terminal-Bench 2, tau2, SWE-bench Pro) as
+# the "chat" phase on its own pod — docker for the Harbor sets, subprocess for tau2 —
+# and merges the cells into an existing card (BENCHSUITE_MERGE_INTO=<run_id>,
+# BENCHSUITE_MERGE_AS=king|teacher) instead of publishing a card of its own.
+[ "$MODE" = "agentic" ] && CHAT_ENVS="${BENCHSUITE_CHAT_ENVS:-$(toml modes.agentic_envs)}"
 SANDBOX_ENVS=$(toml modes.sandbox_envs)
 PREV_CARD=$(ls -t "$REPO/$(toml suite.state_dir)"/*.json 2>/dev/null | head -1)
 
@@ -239,7 +244,7 @@ PY
   pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"
   # PARTIAL card now (chat cells): the attribution job watches affine/state/benchsuite/*.json
   local PARTIAL_FLAG=""; [ "$SANDBOX_POLICY" != "never" ] && PARTIAL_FLAG="--partial"
-  "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" --only-state $PARTIAL_FLAG || log "partial publish failed; continuing"
+  [ -z "${BENCHSUITE_MERGE_INTO:-}" ] && { "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" --only-state $PARTIAL_FLAG || log "partial publish failed; continuing"; }
   local TRIGGER="always"
   [ "$SANDBOX_POLICY" = "gated" ] && TRIGGER=$(sandbox_trigger)
   [ "$SANDBOX_POLICY" = "never" ] && TRIGGER="never"
@@ -262,7 +267,31 @@ PY
   # (one platform run per cell, account `arbos`) and records the URLs in the summaries/manifest.
   "${SSH[@]}" "$REMOTE_ENV && $PYR push_evals.py --run-dir $RHOME/benchsuite/runs/$RUN_ID --models king" || log "push_evals returned non-zero; continuing"
   pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"
-  "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" || finish 8
+  if [ -n "${BENCHSUITE_MERGE_INTO:-}" ]; then merge_into_card; else "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" || finish 8; fi
+}
+
+# Copy this run's king cells into another run's card (as king or teacher cells)
+# and republish only those cells: the agentic set lands on the king's existing
+# card instead of a second card for the same king.
+merge_into_card() {
+  local INTO="$BENCH_HOME/runs/${BENCHSUITE_MERGE_INTO}" AS="${BENCHSUITE_MERGE_AS:-king}" CELLS=""
+  [ -d "$INTO" ] || { log "merge target $INTO missing"; finish 8; }
+  for d in "$RUN_DIR"/king/*/; do
+    [ -f "$d/summary.json" ] || continue
+    local cell; cell=$(basename "$d")
+    rm -rf "$INTO/$AS/$cell"; mkdir -p "$INTO/$AS"; cp -r "$d" "$INTO/$AS/$cell"
+    "$PY" - "$INTO/$AS/$cell/summary.json" "$RUN_ID" "$(toml modes.lium_plan)" <<'PY'
+import json, sys
+p, run_id, plan = sys.argv[1:]
+s = json.load(open(p))
+s["where"] = {"note": f"cell from agentic pass {run_id} (Lium {plan}, same lock)", "run_id": run_id, "provider": "Lium (our fleet, TAO)"}
+json.dump(s, open(p, "w"), indent=1)
+PY
+    CELLS="${CELLS:+$CELLS,}$AS/$cell"
+  done
+  cp "$RUN_DIR/manifest.json" "$INTO/manifest-agentic-$AS.json" 2>/dev/null || true
+  log "merged cells [$CELLS] into $BENCHSUITE_MERGE_INTO as $AS"
+  "$PY" "$HERE/publish.py" --run-dir "$INTO" --only-cells "$CELLS" || finish 8
 }
 
 # Re-attach to a Lium pod whose box-side driver died (2026-09-15: a pm2 restart
@@ -374,6 +403,7 @@ case "$MODE" in
   full)        run_on_prime_pod king,teacher always ;;
   challenger)  run_lium never ;;
   genesis)     run_lium never ;;
+  agentic)     run_lium never ;;   # modes.agentic_envs on its own pod; BENCHSUITE_MERGE_INTO merges into a card
   attach)      attach_lium ;;   # hf://<repo>@<rev> ref, chat sets only, teacher reused; the kingboard's Genesis row
   comparables) run_comparables ;;
   *) log "unknown mode $MODE"; finish 9 ;;

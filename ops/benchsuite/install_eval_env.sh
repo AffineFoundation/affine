@@ -96,6 +96,8 @@ uv pip install -q --no-deps -e "$BENCH_HOME/research-environments/environments/s
 uv pip install -q datasets math-verify langdetect nltk immutabledict spacy emoji syllapy \
   "setuptools<78" pip huggingface-hub python-dateutil filelock "soundfile>=0.13.0" \
   "bfcl-eval @ git+https://github.com/mikasenghaas/gorilla.git@898763a#subdirectory=berkeley-function-call-leaderboard"
+# agentic set (2026-09-15): tau2-bench ships Sierra's orchestrator as a git dependency
+uv pip install -q "tau2 @ git+https://github.com/sierra-research/tau2-bench.git@337326e" 2>&1 | tail -1
 uv pip install -q hf_transfer
 uv tool install -q prime   # separate tool env: prime depends on PyPI verifiers, which would shadow the checkout
 uv pip install -q --no-deps -e .   # re-assert the editable verifiers checkout
@@ -119,7 +121,7 @@ DF
 fi
 
 echo "== check"
-for ts in aime25 math500 mmlu-pro gpqa-strict ifbench ifeval humaneval livecodebench bfcl-v3 when2call-mcq minif2f oolong-synth mrcr-v2 graphwalks swebench-verified; do
+for ts in aime25 math500 mmlu-pro gpqa-strict ifbench ifeval humaneval livecodebench bfcl-v3 when2call-mcq minif2f oolong-synth mrcr-v2 graphwalks swebench-verified terminal-bench-2 swebench-pro tau2-bench; do
   .venv/bin/eval "$ts" --dry-run -n 1 --no-rich --no-push -m x >/dev/null 2>&1 && echo "ok  $ts" || echo "BAD $ts"
 done
 echo "INSTALL_DONE $(git -C "$BENCH_HOME/verifiers" rev-parse --short HEAD) $(git -C "$BENCH_HOME/research-environments" rev-parse --short HEAD)"
