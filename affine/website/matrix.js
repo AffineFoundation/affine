@@ -221,8 +221,6 @@ function renderTable(m, spec) {
   }).join("");
 
   wrap.innerHTML = `<table class="data-table kings ${spec.kind}"><thead>${groupRow}${head}</thead><tbody>${body}</tbody></table>`;
-  const meta = $(`${spec.id}-meta`);
-  if (meta) meta.textContent = `${cols.length} columns · total = mean over the ${common.length} columns every row with data shares · ${spec.caption}`;
 }
 
 // -- Dataset D: columns = sources (+ king groups), rows = metrics ----------
@@ -319,12 +317,7 @@ function render() {
   const m = state.matrix;
   if (!m) return;
   for (const spec of TABLES) renderTable(m, spec);
-  renderDataset();
-  const kings = m.rows.filter((r) => r.kind === "king");
-  const meta = $("kings-meta");
-  if (meta) meta.textContent = `${kings.length} reigns · ${m.columns.filter((c) => c.kind === "bench").length} benchmarks · ${m.columns.filter((c) => c.kind === "env").length} environments · built ${when(m.generated_at)}`;
-  const hidden = (m.hidden || []).length;
-  if (meta && hidden) meta.textContent += ` · ${hidden} older reigns without measurements not shown`;
+  renderDataset();   // no-op on affine.io (no #kings-dataset-wrap); api/v1/dataset_table stays served
 }
 
 function wire() {
@@ -343,11 +336,11 @@ function wire() {
 }
 
 async function refresh() {
-  const [m, d] = await Promise.all([fetchMatrix().catch(() => null), fetchDatasetTable().catch(() => null)]);
+  const wantDataset = Boolean($("kings-dataset-wrap"));
+  const [m, d] = await Promise.all([fetchMatrix().catch(() => null), wantDataset ? fetchDatasetTable().catch(() => null) : null]);
   if (d && Array.isArray(d.columns)) state.dataset = d;
-  else if (!state.dataset) {
-    const wrap = $("kings-dataset-wrap");
-    if (wrap) wrap.innerHTML = `<div class="empty">dataset table not built yet</div>`;
+  else if (wantDataset && !state.dataset) {
+    $("kings-dataset-wrap").innerHTML = `<div class="empty">dataset table not built yet</div>`;
   }
   if (!m || !Array.isArray(m.rows)) {
     if (!state.matrix) {

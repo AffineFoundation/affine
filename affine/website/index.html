@@ -9,7 +9,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
   <link rel="stylesheet" href="fonts/fonts.css?v=20" />
-  <link rel="stylesheet" href="style.css?v=77" />
+  <link rel="stylesheet" href="style.css?v=78" />
 </head>
 <body>
   <header class="top-nav">
@@ -127,43 +127,34 @@
     <!-- Kings vs teacher: average score per held-out benchmark and per datagen
          environment group, one row per reign. Data: api/v1/matrix (built by
          ops/kingboard). Monitoring only — never part of the score. -->
+    <!-- Kings vs teacher (api/v1/matrix, built by ops/kingboard): average score
+         0-100 per held-out benchmark / datagen environment, rows = teacher,
+         kings newest first, genesis. Explanations live in tooltips only. -->
     <section class="section" id="kings">
       <div class="section-head">
-        <h2 class="section-title">Kings vs teacher — performance over time</h2>
-        <span class="section-right note" id="kings-meta">loading…</span>
-      </div>
-      <div class="kings-bar">
-        <span class="note">avg score 0–100 · teacher, then kings newest first, genesis last · tint = gap to the teacher · hover for the full name, CI and n · click a header to sort</span>
-      </div>
-      <div class="kings-sub">
-        <span class="kings-sub-title">held-out benchmarks</span>
-        <span class="note" id="kings-bench-meta"></span>
+        <h2 class="section-title">Benchmarks <span class="info" title="Held-out benchmarks, greedy T=0, never in the duel corpus D; score = share of tasks passed (SWE-bench Verified: finished-only). Rows: the teacher, then kings newest first, then the genesis seed. Cell tint = gap to the teacher (green above, red below). total = mean over the columns every row with data shares (hover the total header for the list); full = mean over all columns, only for complete rows. … = benchmark pass running; · = never run. Hover any cell for the 95% interval, n and source.">ⓘ</span></h2>
       </div>
       <div class="table-scroll" id="kings-bench-wrap"><div class="empty">loading…</div></div>
-      <div class="kings-sub">
-        <span class="kings-sub-title">datagen environments</span>
-        <span class="note" id="kings-env-meta"></span>
+    </section>
+
+    <section class="section" id="environments">
+      <div class="section-head">
+        <h2 class="section-title">Environments <span class="info" title="Datagen environments (the sources of the duel corpus D), grouped by fold group. Value = solve rate of the king seat's rollouts on the environment; the teacher row = teacher_* rollouts; blank under 5 graded rollouts. Same rows, tint and total rule as the Benchmarks table. Hover a header for the environment's full name, a cell for solved / graded and the 95% interval.">ⓘ</span></h2>
       </div>
       <div class="table-scroll" id="kings-env-wrap"><div class="empty">loading…</div></div>
-      <div class="kings-sub">
-        <span class="kings-sub-title">Dataset D — where the duel draws from</span>
-        <span class="note" id="kings-dataset-meta">loading…</span>
-      </div>
-      <div class="table-scroll" id="kings-dataset-wrap"><div class="empty">loading…</div></div>
     </section>
 
     <section class="section" id="reign">
       <div class="section-head">
-        <h2 class="section-title">Reign</h2>
+        <h2 class="section-title">Reign <span class="info" title="Payout rule (since 2026-09-14): a crown is paid for at most 72 hours after it is won. Every crown inside its window gets one equal share (2 paid crowns = 50/50, 3 = thirds); an older crown earns nothing even while it still holds the throne for duels; no paid crown = the emission burns. Throne and duel rules are unchanged. Live paid set: api/v1/snapshot → payout; rule text: api/v1/contract → payout; details in llms.txt → Payout rule.">ⓘ</span></h2>
         <span class="section-right" id="reign-meta"></span>
       </div>
       <div id="reign-wrap"><div class="empty">loading…</div></div>
-      <p class="section-note" id="payout-rule">Payout rule (since 2026-09-14): a crown is paid for at most 72 hours after it is won. Every crown inside its window gets one equal share (2 paid crowns = 50/50, 3 = thirds); an older crown earns nothing even while it still holds the throne for duels; no paid crown = the emission burns. Throne and duel rules are unchanged. Live paid set: <code>api/v1/snapshot → payout</code>; rule text: <code>api/v1/contract → payout</code>; details in <a href="/llms.txt">llms.txt → Payout rule</a>.</p>
     </section>
 
     <section class="section" id="queue">
       <div class="section-head">
-        <h2 class="section-title">duel queue</h2>
+        <h2 class="section-title">Queue</h2>
         <span class="section-right" id="queue-meta"></span>
       </div>
       <div id="queue-wrap"><div class="empty">loading…</div></div>
@@ -171,8 +162,8 @@
 
     <section class="section" id="history">
       <div class="section-head">
-        <h2 class="section-title">history</h2>
-        <span class="section-right" id="history-meta"></span>
+        <h2 class="section-title">History <span class="info" id="history-info" title="">ⓘ</span></h2>
+        <span class="section-right" id="history-meta" hidden></span>
       </div>
       <div class="filter-bar">
         <input id="filter-input" type="search" placeholder="filter hotkey / repo / event" autocomplete="off" spellcheck="false" />
@@ -300,6 +291,6 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=88"></script>
+  <script type="module" src="app.js?v=89"></script>
 </body>
 </html>

@@ -1922,6 +1922,19 @@ table.data-table td.audit-summary {
 }
 
 /* ---------- kings vs teacher matrix (#kings): two stacked tables ---------- */
+.section-title .info {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--color-fg-4);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: help;
+  vertical-align: -1px;
+}
+
+.section-title .info:hover { color: var(--color-gold); }
+
 .kings-bar {
   display: flex;
   align-items: center;
