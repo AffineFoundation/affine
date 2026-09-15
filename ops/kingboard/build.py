@@ -64,6 +64,7 @@ import json
 import logging
 import math
 import os
+import re
 import sqlite3
 import statistics
 import sys
@@ -113,6 +114,11 @@ VALIDATOR_HISTORY = Path(os.environ.get(
     "KINGBOARD_VALIDATOR_HISTORY", REPO / "affine" / "state" / "history.jsonl"))
 BENCHSUITE_DIR = Path(os.environ.get(
     "BENCHSUITE_STATE_DIR", REPO / "affine" / "state" / "benchsuite"))
+# ops/benchsuite pass logs: `pass-<run_id>.log` without a `.exit` sibling and
+# written recently = a benchmark pass in flight (cells shown as running).
+BENCHSUITE_RUNS_DIR = Path(os.environ.get("BENCHSUITE_RUNS_DIR", REPO / "ops" / "benchsuite" / "state"))
+BENCHSUITE_SUITE_TOML = Path(os.environ.get("BENCHSUITE_SUITE_TOML", REPO / "ops" / "benchsuite" / "suite.toml"))
+INFLIGHT_STALE_S = 2 * 3600      # a pass log untouched this long is dead, not running (a sandbox cell can be silent ~1 h)
 DATA_URL = os.environ.get("KINGBOARD_DATA_URL", "https://data.affine.io").rstrip("/")
 R2_BUCKET = os.environ.get("DATA_R2_BUCKET", "affine-data")
 MANIFEST_KEY = "traces/manifest.json"
@@ -840,6 +846,71 @@ def load_cards() -> list[dict]:
     return cards
 
 
+def load_inflight_passes() -> list[dict]:
+    """Benchmark passes running now, from ops/benchsuite/state/pass-*.log:
+    first line `pass <run_id> mode=<m> ref=<ref> label=<label>`, then
+    `start king/<env> t=<T>` / `done king/<env> t=<T>` per cell."""
+    out = []
+    if not BENCHSUITE_RUNS_DIR.is_dir():
+        return out
+    try:
+        suite = tomllib.loads(BENCHSUITE_SUITE_TOML.read_text()) if BENCHSUITE_SUITE_TOML.exists() else {}
+    except (OSError, ValueError):
+        suite = {}
+    chat_envs = list((suite.get("modes") or {}).get("chat_envs") or [])
+    now = time.time()
+    for log_path in sorted(BENCHSUITE_RUNS_DIR.glob("pass-*.log")):
+        if log_path.with_suffix(".exit").exists():
+            continue
+        try:
+            mtime = log_path.stat().st_mtime
+            if now - mtime > INFLIGHT_STALE_S:
+                continue
+            text = log_path.read_text(errors="replace")
+        except OSError:
+            continue
+        run_id = log_path.stem[len("pass-"):]
+        head = text.splitlines()[0] if text else ""
+        fields = dict(re.findall(r"(\w+)=(\S+)", head))
+        started: list[str] = []
+        done: set[str] = set()
+        started_at = None
+        for m in re.finditer(r"^\[\w+\] (\S+) (start|done) king/([\w\-]+) t=([\d.]+)", text, re.M):
+            ts, kind, env, temp = m.groups()
+            if temp not in ("0", "0.0"):
+                continue
+            started_at = started_at or ts
+            if kind == "start" and env not in started:
+                started.append(env)
+            elif kind == "done":
+                done.add(env)
+        m0 = re.search(r"^\[run_pass\] (\S+) pass ", text, re.M)
+        planned = list(dict.fromkeys([*chat_envs, *started]))
+        running_env = next((e for e in reversed(started) if e not in done), None)
+        t_first = parse_iso(m0.group(1)) if m0 else mtime
+        n_done = len(done)
+        eta = None
+        if n_done and t_first:
+            per_cell = (now - t_first) / n_done
+            eta = now + per_cell * max(0, len(planned) - n_done)
+        label = fields.get("label") or ""
+        ref = fields.get("ref") or ""
+        digest12 = None
+        m_d = re.search(r"([0-9a-f]{12})$", run_id)
+        if m_d:
+            digest12 = m_d.group(1)
+        elif "@" in ref:
+            digest12 = ref.rsplit("@", 1)[-1][:12]
+        out.append({
+            "run_id": run_id, "mode": fields.get("mode") or "", "label": label, "ref": ref,
+            "digest12": digest12, "genesis": label == "genesis" or GENESIS_DIGEST12 in ref,
+            "started_at": (m0.group(1) if m0 else None), "log_mtime": mtime,
+            "planned": planned, "done": sorted(done), "running_env": running_env,
+            "eta_ts": eta, "n_done": n_done, "n_planned": len(planned),
+        })
+    return out
+
+
 def card_digest12(card: dict) -> str | None:
     k = card.get("king") or {}
     d = str(k.get("digest") or "")
@@ -997,8 +1068,9 @@ def removed_kings_meta(stats: dict) -> list[dict]:
     } for k in sorted(stats.get("revoked_kings") or [], key=lambda k: k.get("crowned_at") or "", reverse=True)]
 
 
-def build_matrix(stats: dict, cards: list[dict]) -> dict:
+def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = None) -> dict:
     now = time.time()
+    inflight = inflight or []
     model_cards = [c for c in cards if is_model_card(c)]
     # best-first per digest: the fullest card wins, ties -> newest
     rank = lambda c: (-len({r.get("env") for r in c.get("rows") or []}), c.get("created_at") or "")
@@ -1102,6 +1174,25 @@ def build_matrix(stats: dict, cards: list[dict]) -> dict:
         row["cells"] = cells
         row["n_cells"] = sum(1 for k in value_keys if cells.get(k) and cells[k].get("score") is not None)
         row["cards"] = sorted({v["run_id"] for v in bench.values() if v.get("run_id")})
+    # benchmark passes in flight: planned-but-missing cells render as "running"
+    for p in inflight:
+        target = next((r for r in rows if (r["kind"] == "genesis" and p["genesis"])
+                       or (r["kind"] == "king" and p["digest12"] and r["digest12"] == p["digest12"])), None)
+        if target is None:
+            continue
+        eta_iso = (datetime.fromtimestamp(p["eta_ts"], timezone.utc).isoformat(timespec="minutes")
+                   if p.get("eta_ts") else None)
+        target["inflight"] = {**{k: p[k] for k in ("run_id", "mode", "started_at", "planned", "done",
+                                                    "running_env", "n_done", "n_planned")}, "eta": eta_iso}
+        for e in p["planned"]:
+            key = f"bench:{e}"
+            if target["cells"].get(key, {}).get("score") is None:
+                target["cells"][key] = {"score": None, "running": True, "kind": "bench",
+                                        "run_id": p["run_id"], "eta": eta_iso,
+                                        "state": ("running now" if e == p["running_env"]
+                                                  else "finished, card not published yet" if e in p["done"]
+                                                  else "queued in this pass"),
+                                        "reason": f"benchmark pass {p['run_id']} in progress"}
     # delta vs the teacher row, per cell. The total compares against the
     # teacher's mean over the SAME columns the row has (rows differ in
     # coverage: a chat-only card has 10 benchmarks, the teacher has 15).
@@ -1127,6 +1218,8 @@ def build_matrix(stats: dict, cards: list[dict]) -> dict:
         "columns": columns,
         "rows": rows,
         "removed": removed_kings_meta(stats),
+        "inflight": [{k: p[k] for k in ("run_id", "mode", "label", "digest12", "genesis", "started_at",
+                                         "n_done", "n_planned", "running_env")} for p in inflight],
         "n_cards": len(cards),
         "cards": [{"run_id": c.get("run_id"), "mode": c.get("mode"), "status": c.get("status"),
                    "created_at": c.get("created_at"), "digest12": card_digest12(c),
@@ -1148,7 +1241,8 @@ def build_matrix(stats: dict, cards: list[dict]) -> dict:
                      "columns; the tooltip shows how many entered and the teacher's mean on the "
                      "same columns",
             "blank": f"no measurement (no benchmark card for the model, or fewer than "
-                     f"{MATRIX_MIN_GRADED} graded rollouts on the environment)",
+                     f"{MATRIX_MIN_GRADED} graded rollouts on the environment); '…' = a benchmark pass "
+                     "for the model is running and this cell is planned (ops/benchsuite pass log)",
             "colour": "cell tint = score minus the teacher's score in the same column: green above, "
                       "red below, stronger with the gap",
             "ci": "95% interval: Wilson on graded rollouts (environments) or the card's ci95 "
@@ -1411,7 +1505,7 @@ def write_matrix(stats: dict) -> dict:
     # written by an older builder has no revoked_kings
     stats = {**stats, "kings": load_kings() or stats.get("kings") or [],
              "revoked_kings": load_revoked_kings()}
-    matrix = build_matrix(stats, load_cards())
+    matrix = build_matrix(stats, load_cards(), load_inflight_passes())
     tmp = MATRIX_PATH.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(matrix, separators=(",", ":")))
     tmp.replace(MATRIX_PATH)
