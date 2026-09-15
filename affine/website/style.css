@@ -1922,6 +1922,19 @@ table.data-table td.audit-summary {
 }
 
 /* ---------- kings vs teacher matrix (#kings): two stacked tables ---------- */
+.section-title .info {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--color-fg-4);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: help;
+  vertical-align: -1px;
+}
+
+.section-title .info:hover { color: var(--color-gold); }
+
 .kings-bar {
   display: flex;
   align-items: center;
@@ -2026,7 +2039,6 @@ table.data-table.kings td {
 
 table.data-table.kings.env td, table.data-table.kings.env th { padding-left: 2px; padding-right: 2px; }
 table.data-table.kings td.blank { color: var(--color-fg-4); text-align: center; }
-table.data-table.kings td.lown { color: var(--color-fg-3); font-style: italic; }
 table.data-table.kings tr.teacher td { color: var(--color-fg-2); border-bottom: 1px solid var(--color-border-hover); }
 table.data-table.kings tr.teacher td.model .name { color: var(--color-accent); }
 table.data-table.kings tr.genesis td.model .name { color: var(--color-bar); }

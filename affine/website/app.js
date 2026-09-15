@@ -18,7 +18,7 @@ import {
   fingerprint,
   watchSnapshot,
 } from "./api.js?v=69";
-import { initMatrix } from "./matrix.js?v=7";
+import { initMatrix } from "./matrix.js?v=8";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -612,6 +612,9 @@ function renderHistory(h) {
   meta.textContent = (rule ? `${rule} · ${shown} shown` : `${shown} shown`)
     + (retired ? ` · rows tagged "${RETIRED_WINDOW_TAG}" were judged under the 12 h window rule (2026-09-12 17:01 -> 2026-09-13 13:01 UTC), kept for audit; no window runs now` : "");
   if (rule) meta.title = rule;
+  // the line itself is hidden (boilerplate); the rule sits in the header's ⓘ tooltip
+  const info = $("history-info");
+  if (info) info.title = meta.textContent;
   if (!shown) {
     $("history-wrap").innerHTML = `<div class="empty">empty</div>`;
     return;
