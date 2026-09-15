@@ -16,6 +16,51 @@
 </header>
 
 <main>
+  <nav class="tabs" id="tabs">
+    <a href="#envs" data-tab="envs" class="active">Environments</a>
+    <a href="#benchmarks" data-tab="benchmarks">Benchmarks</a>
+    <a href="#challengers" data-tab="challengers">Challengers</a>
+  </nav>
+
+  <section id="tab-challengers" class="tab hidden">
+    <h2>Losing challengers, benchmarked <span class="muted small">chat sets only (T=0), each challenger vs the king it duelled; Δ in points with the king card's 95% half-width; the duel margin next to it — does the meter's ordering match the benchmarks? Monitoring only.</span></h2>
+    <div class="table-wrap"><table id="chal-table"><thead></thead><tbody></tbody></table></div>
+    <div id="chal-note" class="muted small"></div>
+  </section>
+
+  <section id="tab-benchmarks" class="tab hidden">
+    <h2>Standard benchmarks <span class="muted small">king vs teacher on held-out Hub benchmarks (never in D); greedy T=0 unless marked; Wilson 95% intervals. Monitoring only — not part of the score.</span></h2>
+    <div class="controls inline">
+      <label>Run <select id="bench-run"></select></label>
+      <span id="bench-meta" class="muted small"></span>
+    </div>
+    <div class="table-wrap">
+      <table id="bench-table">
+        <thead>
+          <tr>
+            <th>benchmark</th>
+            <th>group</th>
+            <th class="num">T</th>
+            <th class="num">n</th>
+            <th class="num">king <span class="muted small">[95% CI]</span></th>
+            <th class="num">teacher <span class="muted small">[95% CI]</span></th>
+            <th class="num">Δ king−teacher</th>
+            <th class="num">king finished-only <span class="muted small">(inside budget)</span></th>
+            <th class="num">king tokens out</th>
+            <th class="num">hit cap</th>
+            <th class="num">wall</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <h2 style="margin-top:22px">History across reigns <span class="muted small">king score per benchmark, one column per run (T=0 rows)</span></h2>
+    <div class="table-wrap"><table id="bench-history"><thead></thead><tbody></tbody></table></div>
+    <div id="bench-skipped" class="muted small"></div>
+    <div id="bench-links" class="muted small"></div>
+  </section>
+
+  <div id="tab-envs" class="tab">
   <section class="controls">
     <label>Reign
       <select id="reign"></select>
@@ -40,8 +85,6 @@
             <th data-key="unscored" class="num">unscored</th>
             <th data-key="median_turns" class="num">med. turns</th>
             <th data-key="timeout_rate" class="num">timeouts</th>
-            <th data-key="loop_guard_rate" class="num" title="share of rollouts the datagen loop guard cut short (stop_condition loop_guard); loop onsets inside finished rollouts are not counted">loop rate <span class="muted small">(guard)</span></th>
-            <th data-key="greedy_rate" class="num" title="king solve rate at T=0 (king_*_greedy) vs T=0.8 (sampled); n in brackets">greedy / sampled</th>
             <th data-key="teacher_rate" class="num">teacher <span class="muted small">(graded n)</span></th>
             <th data-key="delta" class="num">Δ king−teacher</th>
             <th class="spark">14 d</th>
@@ -68,8 +111,6 @@
               <th data-key="unscored" class="num">unscored</th>
               <th data-key="median_turns" class="num">med. turns</th>
               <th data-key="timeout_rate" class="num">timeouts</th>
-              <th data-key="loop_guard_rate" class="num">loop rate <span class="muted small">(guard)</span></th>
-              <th data-key="greedy_rate" class="num">greedy / sampled</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -94,6 +135,7 @@
       <div id="stops" class="muted small"></div>
     </details>
   </section>
+  </div>
 </main>
 
 <footer class="muted small">
@@ -101,5 +143,6 @@
 </footer>
 
 <script src="/static/app.js"></script>
+<script src="/static/bench.js"></script>
 </body>
 </html>
