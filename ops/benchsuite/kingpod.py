@@ -180,7 +180,7 @@ def cmd_rent(args: argparse.Namespace) -> int:
         if res in (None, "RATE_LIMITED"):
             log(f"rent on {str(cand['id'])[:12]} failed ({res}); next candidate")
             continue
-        update_pod(name, digest=digest, served=f"king-{digest[:12]}", plan=plan, r2=args.r2 or "",
+        update_pod(name, digest=digest, served=f"king-{digest[:12]}", plan=plan, r2=args.r2 or "", hf=args.hf or "",
                    executor_id=str(cand["id"]), machine=cand.get("machine_name"), price=price,
                    rented_at=time.time(), key=secrets.token_hex(24), state="rented")
         log(f"rented {name}: {plan['name']} {cand.get('machine_name')} "
@@ -210,8 +210,16 @@ def bootstrap(name: str, mem: dict, pod: dict, cfg: dict) -> bool:
         f'GPU_UTIL="{cfg["gpu_memory_utilization"]}"',
         f'BATCHED_TOKENS="{cfg["max_num_batched_tokens"]}"',
         f'MAX_NUM_SEQS="{cfg["max_num_seqs"]}"',
-        f'VLLM_VERSION="{cfg["vllm_version"]}"', f'DIGEST="{mem["digest"]}"',
+        f'VLLM_VERSION="{cfg["vllm_version"]}"',
     ]
+    if mem.get("hf"):
+        # genesis: an HF repo at a pinned revision (bootstrap_king.sh's HF_MODEL path);
+        # DIGEST stays empty so the public-copy download path is not taken
+        repo, _, rev = mem["hf"].partition("@")
+        lines += ['DIGEST=""', f'HF_MODEL="{repo}"', f'HF_REV="{rev or "main"}"',
+                  f'HF_TOKEN="{os.environ.get("HF_TOKEN", "")}"']
+    else:
+        lines.append(f'DIGEST="{mem["digest"]}"')
     if mem.get("r2"):
         # a private (challenger) ref: the pod downloads with the eval pods' read-only key
         endpoint = os.environ.get("AFFINE_EVAL_R2_ENDPOINT") or os.environ.get("R2_ENDPOINT") or ""
@@ -356,6 +364,7 @@ def main() -> int:
     r.add_argument("--plan", required=True)
     r.add_argument("--digest", required=True)
     r.add_argument("--r2", default="", help="private r2://bucket/prefix/ ref (challenger); needs AFFINE_EVAL_R2_* in the env")
+    r.add_argument("--hf", default="", help="Hugging Face repo@revision instead of a public digest (genesis)")
     for c in ("wait", "endpoint"):
         sub.add_parser(c).add_argument("name")
     rel = sub.add_parser("release")

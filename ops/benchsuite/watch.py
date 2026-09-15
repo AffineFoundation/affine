@@ -99,7 +99,11 @@ def latest_card() -> dict | None:
             c = json.loads(p.read_text())
         except (OSError, ValueError):
             continue
-        if c.get("status") in ("complete", "partial") and (c.get("king") or {}).get("digest"):
+        k = c.get("king") or {}
+        # kings only: challenger / comparable / genesis cards carry a label, not a reign,
+        # and their weights are not on the public copy (2026-09-15: a challenger card was
+        # picked as "previous king" and the identity check 404'd)
+        if c.get("status") in ("complete", "partial") and k.get("digest") and k.get("reign") is not None:
             if best is None or (c.get("created_at") or "") > (best.get("created_at") or ""):
                 best = c
     return best

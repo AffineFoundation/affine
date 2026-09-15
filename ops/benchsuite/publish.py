@@ -31,6 +31,8 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 SUITE = tomllib.loads((HERE / "suite.toml").read_text())
 FORBIDDEN_PREFIXES = ("traces/", "views/", "corpus/", "turns/")
+PARTIAL = False
+
 
 
 def log(msg: str) -> None:
@@ -117,7 +119,7 @@ def scorecard(run_dir: Path) -> dict:
                         if d.is_dir() and (d / "cmd.txt").exists() and not (d / "summary.json").exists())
     return {
         "run_id": manifest.get("run_id"),
-        "status": "partial" if unfinished else "complete",
+        "status": "partial" if (unfinished or PARTIAL) else "complete",
         "unfinished_cells": unfinished,
         "king": manifest.get("king"), "teacher": manifest.get("teacher"),
         "where": manifest.get("where"), "code": manifest.get("code"),
@@ -143,9 +145,12 @@ def main() -> int:
     ap.add_argument("--state-dir", default=str(REPO / SUITE["suite"]["state_dir"]))
     ap.add_argument("--no-r2", action="store_true")
     ap.add_argument("--only-state", action="store_true", help="write the scorecard JSON only")
+    ap.add_argument("--partial", action="store_true", help="mark the card partial (more cells will follow, e.g. the sandbox phase)")
     ap.add_argument("--only-cells", default="", help="comma list of <model>/<env>__t<T>: upload just those "
                     "cell dirs (+ manifests), merge into the existing R2 index (a cell added to a published run)")
     a = ap.parse_args()
+    global PARTIAL
+    PARTIAL = a.partial
     run_dir = Path(a.run_dir).expanduser().resolve()
     run_id = run_dir.name
     card = scorecard(run_dir)

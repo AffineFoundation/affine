@@ -22,6 +22,8 @@
 #                (+ CHALLENGER_REVISION=<sha256>, CHALLENGER_MARGIN/Z/VS_REIGN for the card),
 #                <label> = chal-NNNNN. Lium 1x H200 (king-seat bootstrap reading the private
 #                bucket with the eval pods' read-only key), chat sets only, teacher reused.
+#   genesis      hf://Qwen/Qwen3.6-35B-A3B@<rev> on a Lium 1x H200 (bootstrap_king.sh HF path), chat sets
+#                only, teacher reused — the unpaid reign-0 baseline row (2026-09-15).
 #   comparables  <model_ref> = Prime Inference model id (e.g. qwen/qwen3.6-35b-a3b),
 #                <label> = display label. No pod: the eval driver runs here (docker),
 #                the model is Prime Inference, chat sets only, teacher reused.
@@ -207,7 +209,14 @@ remote_suite() {  # models policy sandbox_runtime user@host port key known_hosts
   local META; META=$("$PY" - "$REF" "$LABEL" "$POD_ID" "$USD_HR" "$CODE_COMMIT" "$MODE" "$TEACHER_FROM" "$MODELS" "$PROVIDER" "$SB_RUNTIME" <<'PY'
 import json, os, sys
 ref, label, pod, usd, commit, mode, tfrom, models, provider, sbr = sys.argv[1:]
-king = {"digest": ref} if not ref.startswith("r2://") else {"repo": ref, "digest": os.environ.get("CHALLENGER_REVISION", "")}
+if ref.startswith("r2://"):
+    king = {"repo": ref, "digest": os.environ.get("CHALLENGER_REVISION", "")}
+elif ref.startswith("hf://"):
+    spec = ref[len("hf://"):]
+    king = {"repo": ref, "hf_repo": spec.split("@")[0], "hf_revision": spec.partition("@")[2],
+            "digest": "hf-" + spec.partition("@")[2][:10]}
+else:
+    king = {"digest": ref}
 if label.isdigit(): king["reign"] = int(label)
 else: king["label"] = label
 duel = {k: os.environ.get(f"CHALLENGER_{k.upper()}") for k in ("margin", "z", "vs_reign", "vs_king_digest", "judged_at", "hotkey")}
@@ -228,7 +237,8 @@ PY
   "${SSH[@]}" "$REMOTE_ENV && $PYR $(suite_cmd "$MODEL_FLAGS" docker "$CHAT_ENVS" primary,secondary 64 manifest.json)" || log "chat suite returned non-zero; continuing"
   pull_run "$USER_HOST" "$PORT" "$SSH_KEY" "$KH" "$RHOME"
   # PARTIAL card now (chat cells): the attribution job watches affine/state/benchsuite/*.json
-  "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" --only-state || log "partial publish failed; continuing"
+  local PARTIAL_FLAG=""; [ "$SANDBOX_POLICY" != "never" ] && PARTIAL_FLAG="--partial"
+  "$PY" "$HERE/publish.py" --run-dir "$RUN_DIR" --only-state $PARTIAL_FLAG || log "partial publish failed; continuing"
   local TRIGGER="always"
   [ "$SANDBOX_POLICY" = "gated" ] && TRIGGER=$(sandbox_trigger)
   [ "$SANDBOX_POLICY" = "never" ] && TRIGGER="never"
@@ -291,6 +301,11 @@ run_lium() {  # $1 = sandbox policy (gated|never)
     DIGEST="${CHALLENGER_REVISION:?CHALLENGER_REVISION (sha256 model_digest) required for an r2:// ref}"
     R2FLAG="--r2 $REF"
     export AFFINE_EVAL_R2_ENDPOINT="${AFFINE_EVAL_R2_ENDPOINT:-${R2_ENDPOINT:-}}"
+  elif [[ "$REF" == hf://* ]]; then
+    # genesis: hf://<repo>@<revision>; the card's digest is hf-<revision[:10]>
+    local HFSPEC="${REF#hf://}"
+    DIGEST="hf-$(echo "${HFSPEC#*@}" | cut -c1-10)"
+    R2FLAG="--hf $HFSPEC"
   fi
   if [ -n "${BENCHSUITE_REUSE_POD:-}" ]; then
     POD="$BENCHSUITE_REUSE_POD"          # an already-serving pod (state ready in pods.json)
@@ -322,6 +337,7 @@ case "$MODE" in
   prime)       run_on_prime_pod king gated ;;
   full)        run_on_prime_pod king,teacher always ;;
   challenger)  run_lium never ;;
+  genesis)     run_lium never ;;   # hf://<repo>@<rev> ref, chat sets only, teacher reused; the kingboard's Genesis row
   comparables) run_comparables ;;
   *) log "unknown mode $MODE"; finish 9 ;;
 esac
