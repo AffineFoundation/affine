@@ -1504,10 +1504,32 @@ scaffold rather than the task. Two prompt styles over the same tasks make \
 turns about evenly.
 
 **Target slice shares** (set by strata count in the corpus index; the slicer \
-draws ~1 turn per stratum): coding 0.50, terminal 0.25, nl2repo 0.05, \
-math (`boxed`) 0.10, tool_use (`tool_call`) 0.10. Verdicts will publish \
-per-dialect `mean_r_leg` / `mean_g_leg` / `g_bind_frac` and the parse rate \
-per side.
+draws one turn per stratum, uniformly over strata, so a group's share of D's \
+strata is its share of every 1,300-turn duel slice). Historical vector at the \
+wvk-11 fork: coding 0.50, terminal 0.25, nl2repo 0.05, math (`boxed`) 0.10, \
+tool_use (`tool_call`) 0.10. **Since corpus epoch 39 (2026-09-14, data event, \
+no fork)** the slice is re-weighted toward the states where the incumbent \
+king fails, on the operator's directive to sample the failure data more \
+aggressively: king-derived groups (`king_fail`, `king_loop_onset`, \
+`king_pivot`, `king_done`, `king_tooluse`, `king_recoverable`, \
+`completion_pre`) plus `completion` hold ~33 % of the strata (was ~12 %); \
+coding + terminal ~57 % (floor 40 %); general 5 %, tool_use 2 %, math 2 %, \
+nl2repo 1 %. Mechanism (`[strata_budget]` in `rollouts/sources.toml`, applied \
+by the fold to the index only -- no turn left D, chunks and old manifests are \
+unchanged): teacher-trajectory groups are merged into fixed strata buckets \
+(`coding:b<n>`, `terminal:b<n>`, `general:b<n>`, `tool_use:b<n>` = \
+`sha256(original stratum) % N`), and supply-limited king groups split each \
+task stratum into up to 3 sub-strata by turn (`king_fail:0552:2` = \
+`<stratum>:<sha256(turn_id) % k>`; k = 3 for king_fail / king_loop_onset / \
+king_pivot / king_recoverable / completion_pre, 2 for king_done / \
+king_tooluse / completion), so one duel may draw up to k different turns of \
+the same task. The original key is kept in the index column `stratum_src`. \
+Trade-off (RT-6): a king task recurs across duels k times as often -- \
+simulated per-duel overlap between two seeded slices rose from 0.9 % to \
+2.1 % of turn ids (5.8 % to 9.6 % of rollouts); fresh per-duel teacher \
+references and block-hash-seeded slices remain the defense, and every fold \
+announce publishes the simulated recurrence. Verdicts publish per-dialect \
+`mean_r_leg` / `mean_g_leg` / `g_bind_frac` and the parse rate per side.
 
 **What to do.** Make your checkpoint fluent in all three formats. A model \
 that only emits bash forfeits every math and tool turn; a model that \

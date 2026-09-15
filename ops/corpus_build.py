@@ -58,6 +58,8 @@ import os
 import re
 import shutil
 import sqlite3
+import random
+import statistics
 import sys
 import tempfile
 import tomllib
@@ -705,12 +707,117 @@ def lang_bucket(rec: dict) -> str:
     return LANG_BUCKETS.get(str(rec.get("language") or "").lower(), "python")
 
 
+# -- strata budget (phase 9, Jacob 2026-09-14 23:25 UTC: "sample from the
+# dataset more aggressively") ------------------------------------------------
+# The duel slicer draws one turn per stratum, uniformly over strata, so a
+# group's slice share IS its strata share. Two levers, both index-side:
+#   buckets:    teacher-trajectory groups (coding, terminal, general,
+#               tool_use) are merged into N fixed strata per group
+#               (`<group>:b<sha(original stratum) % N>`); no turn leaves D,
+#               each is just drawn less often.
+#   sub_strata: supply-limited king groups (+ completion) split each task
+#               stratum into up to k sub-strata by turn (`<stratum>:<sha(
+#               turn_id) % k>`), so a duel may draw up to k different turns
+#               of the same task. RT-6 trade-off: a task recurs across duels
+#               k times as often; fresh per-duel teacher refs and the
+#               block-hash-seeded slice stay the defense, and the fold logs
+#               the simulated per-duel recurrence in the announce.
+# The original key is kept in the index column `stratum_src`, so the
+# mapping is idempotent and re-tunable without a rewrite of chunks.
+STRATA_BUDGET: dict = {}
+SRC2GRP_GLOBAL: dict[str, str] = {}
+
+
+def load_strata_budget() -> dict:
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("strata_budget") or {}
+    if not raw or not raw.get("enabled", False):
+        return {}
+    return {"buckets": {str(k): int(v) for k, v in (raw.get("buckets") or {}).items() if int(v) > 0},
+            "sub_strata": {str(k): int(v) for k, v in (raw.get("sub_strata") or {}).items() if int(v) > 1},
+            "signature": json.dumps(raw, sort_keys=True)}
+
+
+def budget_stratum(group: str, stratum_src: str, turn_id: str, cfg: dict | None = None) -> str:
+    """The slice stratum a turn gets under the budget; `stratum_src` is the
+    ORIGINAL (pre-budget) key. Identity for groups the budget does not list."""
+    cfg = STRATA_BUDGET if cfg is None else cfg
+    if not cfg:
+        return stratum_src
+    n = cfg["buckets"].get(group)
+    if n:
+        h = int(hashlib.sha256(stratum_src.encode("utf-8")).hexdigest()[:8], 16)
+        return f"{group}:b{h % n:05d}"
+    k = cfg["sub_strata"].get(group)
+    if k:
+        h = int(hashlib.sha256(turn_id.encode("utf-8")).hexdigest()[:8], 16)
+        return f"{stratum_src}:{h % k}"
+    return stratum_src
+
+
+def group_from_row(stratum_src: str, source: str, src2grp: dict[str, str]) -> str:
+    ns = str(stratum_src).split(":")[0]
+    return ns if ns in ROUTED_GROUPS or ns in ("math", "tool_use", "general", "king_fail") \
+        else src2grp.get(str(source), DEFAULT_GROUP)
+
+
+def apply_budget_table(table: pa.Table, src2grp: dict[str, str], cfg: dict) -> pa.Table:
+    """Index table -> same rows with `stratum` = budget key and `stratum_src`
+    = original key (added when missing)."""
+    if not cfg:
+        return table
+    has_src = "stratum_src" in table.column_names
+    src_col = table.column("stratum_src").to_pylist() if has_src else table.column("stratum").to_pylist()
+    tids = table.column("turn_id").to_pylist()
+    sources = table.column("source").to_pylist()
+    new = [budget_stratum(group_from_row(s0, src, src2grp), str(s0), tid, cfg)
+           for s0, src, tid in zip(src_col, sources, tids)]
+    i = table.column_names.index("stratum")
+    table = table.set_column(i, "stratum", pa.array(new, pa.string()))
+    src_arr = pa.array([str(x) for x in src_col], pa.string())
+    return table.set_column(table.column_names.index("stratum_src"), "stratum_src", src_arr) \
+        if has_src else table.append_column("stratum_src", src_arr)
+
+
+def simulate_recurrence(rows: list[tuple[str, str]], n: int = 1300, n_slices: int = 4,
+                        seed0: int = 20260914) -> dict:
+    """Mean pairwise overlap between simulated duel slices (the evalsrv
+    round-robin sampler: seed-shuffled strata, one turn per stratum): share
+    of turn ids and of rollouts (traj_id) a slice shares with another."""
+    by: dict[str, list[str]] = {}
+    for tid, st in rows:
+        by.setdefault(st, []).append(tid)
+    slices: list[set[str]] = []
+    for s in range(n_slices):
+        rng = random.Random(seed0 + s)
+        keys = sorted(by)
+        rng.shuffle(keys)
+        picked: list[str] = []
+        for k in keys:
+            picked.append(rng.choice(by[k]))
+            if len(picked) >= n:
+                break
+        slices.append(set(picked))
+    def rollouts(sl: set[str]) -> set[str]:
+        return {t.rsplit(":", 1)[0] for t in sl}
+    pairs = [(a, b) for i, a in enumerate(slices) for b in slices[i + 1:]]
+    t_ov = statistics.mean(len(a & b) / n for a, b in pairs)
+    r_ov = statistics.mean(len(rollouts(a) & rollouts(b)) / len(rollouts(a)) for a, b in pairs)
+    return {"turn_overlap": round(t_ov, 4), "rollout_overlap": round(r_ov, 4),
+            "n_strata": len(by), "n": n, "n_slices": n_slices}
+
+
 def record_strata(rec: dict) -> set[str]:
     """Slice strata this record's turns land in (affine.corpus.materialize.
     stratum_key on the index row: explicit bucket for math / tool_use,
-    repo|phase from traj_id otherwise)."""
-    return {stratum_key({"stratum": m.get("stratum") or rec.get("stratum"),
-                         "traj_id": rec.get("traj_id")}) for m in rec["turns"]}
+    repo|phase from traj_id otherwise), under the strata budget when one is
+    configured."""
+    g = rec.get("fold_group") or SRC2GRP_GLOBAL.get(rec.get("source") or "", DEFAULT_GROUP)
+    out: set[str] = set()
+    for m in rec["turns"]:
+        base = stratum_key({"stratum": m.get("stratum") or rec.get("stratum"),
+                            "traj_id": rec.get("traj_id")})
+        out.add(budget_stratum(g, base, f"{rec['traj_id']}:{m['turn_idx']}"))
+    return out
 
 
 # Keys with a target at or above this are "anchors" for the GROUP mix: only
@@ -1528,7 +1635,7 @@ def strata_after_retire(pub: PublicCorpus, live: dict | None, group: str,
     for tid, stratum in zip(table.column("turn_id").to_pylist(),
                             table.column("stratum").to_pylist()):
         if str(stratum).startswith(f"{group}:") and tid not in retire:
-            out.add(stratum)
+            out.add(budget_stratum(group, str(stratum), tid))
     return out
 
 
@@ -1757,7 +1864,13 @@ def merge_index(pack: PackResult, publisher: CorpusPublisher,
         log(f"index: retired {prev_table.num_rows - kept.num_rows} of "
             f"{len(retire_turn_ids)} listed turn rows from the previous index")
         prev_table = kept
-    merged = pa.concat_tables([prev_table, pq.read_table(pack.index_path)])
+    new_table = pq.read_table(pack.index_path)
+    if STRATA_BUDGET:
+        prev_table = apply_budget_table(prev_table, SRC2GRP_GLOBAL, STRATA_BUDGET)
+        new_table = apply_budget_table(new_table, SRC2GRP_GLOBAL, STRATA_BUDGET)
+    elif "stratum_src" in prev_table.column_names and "stratum_src" not in new_table.column_names:
+        new_table = new_table.append_column("stratum_src", new_table.column("stratum"))
+    merged = pa.concat_tables([prev_table, new_table], promote_options="default")
     merged_path = pack.index_path.with_name(f"turns_{epoch:04d}_merged.parquet")
     pq.write_table(merged, merged_path, compression="zstd")
     pack.index_path = merged_path
@@ -1815,7 +1928,15 @@ def finalize(state: dict, manifest: dict, mhash: str) -> None:
         "strata": {g: len(v) for g, v in state["group_strata"].items()},
         "init": bool(pending.get("init")),
         "n_retired": len(pending.get("retire_turn_ids") or []),
+        "recurrence": pending.get("recurrence"),
+        "budget_migrated": bool(pending.get("budget_migrated")),
+        "strata_raw_before_budget": pending.get("strata_raw_before_budget"),
+        "recurrence_before_budget": pending.get("recurrence_before_budget"),
     }
+    if pending.get("budget_signature"):
+        state["strata_budget_signature"] = pending["budget_signature"]
+        state.pop("group_strata_raw_before_budget", None)
+        state.pop("recurrence_before_budget", None)
     state["history"].append({
         "epoch": int(pending["epoch"]), "n_turns": int(pending["n_turns"]),
         "n_chunks": len(pending["folded_chunks"]),
@@ -1824,6 +1945,27 @@ def finalize(state: dict, manifest: dict, mhash: str) -> None:
     })
     state["pending"] = None
     save_state(state)
+
+
+def budget_note(info: dict) -> str:
+    rec = info.get("recurrence")
+    if not rec:
+        return ""
+    out = ""
+    if info.get("budget_migrated") and info.get("strata_raw_before_budget"):
+        raw = info["strata_raw_before_budget"]; tr = sum(raw.values()) or 1
+        top = sorted(raw.items(), key=lambda kv: -kv[1])[:6]
+        out += ("**Strata budget (phase 9, operator directive 2026-09-14):** slice re-weighted toward "
+                "the king's failure states (fixed buckets for teacher groups, up to 3 turns per task "
+                "for king groups; no turn left D). Before: " + ", ".join(
+                    f"{k} {100 * v / tr:.0f}%" for k, v in top) + ", ...\n")
+    before = info.get("recurrence_before_budget")
+    out += (f"Simulated per-duel recurrence: {100 * rec['turn_overlap']:.1f}% turn ids / "
+            f"{100 * rec['rollout_overlap']:.1f}% rollouts shared between two duels"
+            + (f" (before {100 * before['turn_overlap']:.1f}% / {100 * before['rollout_overlap']:.1f}%)"
+               if before else "")
+            + " -- RT-6 watch item.\n")
+    return out
 
 
 def announce(state: dict, public_base: str) -> None:
@@ -1847,9 +1989,9 @@ def announce(state: dict, public_base: str) -> None:
         f"{dialects_line}; by group: {groups_line}.\n"
         f"Slice composition (share of strata = share of every duel slice): "
         f"{strata_line}.\n"
-        + (f"Retired from the index: {info['n_retired']:,} math turns of problems the "
-           "teacher answers deterministically (chunks unchanged; see llms.txt).\n"
+        + (f"Retired from the index: {info['n_retired']:,} turns (chunks unchanged; see llms.txt).\n"
            if info.get("n_retired") else "")
+        + budget_note(info)
         + "\n"
         f"- corpus_epoch: **{epoch}**\n"
         f"- schema_version: **3** (view `{VIEW_SPEC}`: one record per rollout "
@@ -2314,6 +2456,41 @@ def main() -> None:
             retire_surviving[src_g] = strata_after_retire(pub, live, src_g, ids)
             log(f"{src_g}: {len(retire_surviving[src_g])} strata survive the retirement")
     pivot_retire = sorted(set().union(*extra_retire.values())) if extra_retire else []
+    budget_cfg = load_strata_budget()
+    STRATA_BUDGET.clear(); STRATA_BUDGET.update(budget_cfg)
+    SRC2GRP_GLOBAL.clear(); SRC2GRP_GLOBAL.update(src2grp)
+    budget_migrated = False
+    if budget_cfg and state.get("strata_budget_signature") != budget_cfg["signature"]:
+        # First fold under this budget: re-key the mix state from the live
+        # index (the deliberate composition shift; --allow-shift required).
+        bt = index_table(pub, live, ["turn_id", "stratum", "source"])
+        if bt is not None:
+            src_col = bt.column("stratum").to_pylist()
+            raw_groups: dict[str, set[str]] = {}
+            new_groups: dict[str, set[str]] = {}
+            for tid, s0, src in zip(bt.column("turn_id").to_pylist(), src_col, bt.column("source").to_pylist()):
+                g = group_from_row(str(s0), str(src), src2grp)
+                raw_groups.setdefault(g, set()).add(str(s0))
+                new_groups.setdefault(g, set()).add(budget_stratum(g, str(s0), tid, budget_cfg))
+            tr = sum(len(v) for v in raw_groups.values()) or 1
+            tn = sum(len(v) for v in new_groups.values()) or 1
+            raw_rec = simulate_recurrence(list(zip(bt.column("turn_id").to_pylist(),
+                                                   [str(x) for x in src_col])))
+            log(f"strata budget: per-duel recurrence BEFORE the budget {raw_rec}")
+            state["recurrence_before_budget"] = raw_rec
+            log("strata budget: live index re-keyed -- " + "; ".join(
+                f"{g} {len(raw_groups.get(g, ()))}->{len(new_groups.get(g, ()))} "
+                f"({100 * len(raw_groups.get(g, ())) / tr:.1f}% -> {100 * len(new_groups.get(g, ())) / tn:.1f}%)"
+                for g in sorted(new_groups, key=lambda k: -len(new_groups[k]))))
+            state["group_strata"] = {g: sorted(v) for g, v in new_groups.items()}
+            state["group_strata_raw_before_budget"] = {g: len(v) for g, v in raw_groups.items()}
+            budget_migrated = True
+            if not args.allow_shift:
+                msg = "strata budget re-keys the live index (deliberate composition shift); rerun with --allow-shift"
+                if args.no_publish:
+                    log(f"GUARD (dry run): {msg}")
+                else:
+                    fatal(msg)
     probe = load_teacher_probe()
     probe_held: list[dict] = []
     if probe:
@@ -2394,6 +2571,8 @@ def main() -> None:
         f"strata), deferred {len(deferred)}")
     # Language strata credited only for coding rollouts that made it through
     # the group stage too.
+    if lang_mix and STRATA_BUDGET.get("buckets", {}).get("coding"):
+        lang_mix = {}     # coding strata are fixed buckets; language mix by strata is moot
     if lang_mix:
         kept_ids = {id(r) for r in selected}
         lang_added = {}
@@ -2431,13 +2610,33 @@ def main() -> None:
         else:
             fatal(msg)
 
+    recurrence = None
+    if STRATA_BUDGET:
+        bt = index_table(pub, live, ["turn_id", "stratum", "source"])
+        sim_rows: list[tuple[str, str]] = []
+        if bt is not None:
+            for tid, s0, src in zip(bt.column("turn_id").to_pylist(), bt.column("stratum").to_pylist(),
+                                    bt.column("source").to_pylist()):
+                if tid in set(retire_ids) or tid in set(pivot_retire):
+                    continue
+                sim_rows.append((tid, budget_stratum(group_from_row(str(s0), str(src), src2grp), str(s0), tid)))
+        for r in selected:
+            g = group_of(r, src2grp, mix)
+            for m in r["turns"]:
+                tid = f"{r['traj_id']}:{m['turn_idx']}"
+                base = stratum_key({"stratum": m.get("stratum") or r.get("stratum"), "traj_id": r["traj_id"]})
+                sim_rows.append((tid, budget_stratum(g, base, tid)))
+        recurrence = simulate_recurrence(sim_rows)
+        per_duel = {g: round(1300 * a / (sum(after.values()) or 1), 1) for g, a in after.items()}
+        log(f"strata budget: simulated per-duel recurrence {recurrence}; projected turns per duel {per_duel}")
+
     n_new = sum(len(r["turns"]) for r in selected)
     stale = False
     if unfolded:
         newest = max(datetime.fromisoformat(c["created_at"]) for c in unfolded)
         stale = (datetime.now(timezone.utc) - newest).total_seconds() >= STALE_AFTER_S
     if n_new < MIN_NEW_TURNS and not stale and not args.force and not args.init \
-            and not retire_ids and not pivot_retire:
+            and not retire_ids and not pivot_retire and not budget_migrated:
         log(f"only {n_new} mix-eligible new turns (< {MIN_NEW_TURNS}); skipping")
         return
     if not selected and not legacy:
@@ -2468,6 +2667,11 @@ def main() -> None:
         "epoch": epoch, "pack_dir": str(pack.chunk_paths[0].parent),
         "n_turns": n_new, "group_turns": group_turns,
         "group_strata_added": {g: sorted(v) for g, v in group_added.items()},
+        "recurrence": recurrence,
+        "budget_signature": budget_cfg.get("signature") if budget_cfg else None,
+        "budget_migrated": budget_migrated,
+        "strata_raw_before_budget": state.get("group_strata_raw_before_budget") if budget_migrated else None,
+        "recurrence_before_budget": state.get("recurrence_before_budget") if budget_migrated else None,
         "lang_strata_added": {b: sorted(v) for b, v in lang_added.items()},
         "by_dialect": by_dialect, "allowed_kinds": list(allowed),
         "folded_chunks": [c["key"] for c in unfolded], "init": bool(args.init),
