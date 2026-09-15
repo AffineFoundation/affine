@@ -7,6 +7,7 @@
  */
 
 import { fetchMatrix } from "./api.js?v=68";
+import { kingName } from "./charts.js?v=73";
 
 const REFRESH_MS = 300000;
 const TINT_FULL_PT = 40;      // |Δ| in points where the tint saturates
@@ -36,17 +37,24 @@ function tint(delta) {
     : `background-color: rgba(255, 71, 71, ${a.toFixed(3)})`;
 }
 
+// Same names as the Reign table: reign n → Affine-<roman(n + 1)> (charts.js
+// kingName); the teacher and the genesis seed keep their plain labels.
+function rowName(r) {
+  if (r.kind === "king" && r.reign != null) return kingName(r.reign);
+  return r.label;
+}
+
 function rowTip(r) {
   if (r.kind === "teacher") return `${r.model} — the frozen teacher (the score's fixed point)`;
-  if (r.kind === "genesis") return `${r.model} — reign 0, the seed king; never won a duel`;
-  return `reign ${r.reign} · king-${r.digest12}\ncrowned ${when(r.crowned_at)}`
+  if (r.kind === "genesis") return `${r.model} — reign 0 (${kingName(0)}), the seed king; never won a duel`;
+  return `${kingName(r.reign)} · reign ${r.reign} · king-${r.digest12}\ncrowned ${when(r.crowned_at)}`
     + (r.challenge_id ? ` · ${r.challenge_id}` : "")
     + (r.hotkey ? `\nhotkey ${r.hotkey}` : "")
     + (r.current ? "\ncurrent king" : "");
 }
 
 function cellTip(row, col, cell, teacherCell) {
-  const head = `${row.label} · ${col.label}`;
+  const head = `${rowName(row)} · ${col.label}`;
   if (!cell || cell.score == null) {
     return `${head}\n${cell?.reason || "no measurement"}`
       + (col.kind === "bench" ? "\nno benchmark card for this model yet" : "");
@@ -132,7 +140,7 @@ function render() {
         + `${style ? ` style="${style}"` : ""}>${has ? fmt(cell.score) : "·"}</td>`;
     }).join("");
     return `<tr class="${cls}"><td class="model duel-hit" data-tip="${esc(rowTip(r))}">`
-      + `<span class="name">${esc(r.label)}</span>${r.current ? `<i class="cur" title="current king"></i>` : ""}</td>${cells}</tr>`;
+      + `<span class="name">${esc(rowName(r))}</span>${r.current ? `<i class="cur" title="current king"></i>` : ""}</td>${cells}</tr>`;
   }).join("");
 
   wrap.innerHTML = `<table class="data-table kings"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
