@@ -24,11 +24,55 @@
 
   const state = { runs: [], runId: null };
 
+  const TABS = ["kings", "envs", "benchmarks", "challengers"];
   function showTab(name) {
-    document.querySelectorAll("#tabs a").forEach((a) => a.classList.toggle("active", a.dataset.tab === name));
-    $("#tab-envs").classList.toggle("hidden", name !== "envs");
-    $("#tab-benchmarks").classList.toggle("hidden", name !== "benchmarks");
-    if (name === "benchmarks" && !state.runs.length) load();
+    document.querySelectorAll("#tabs a[data-tab]").forEach((a) => a.classList.toggle("active", a.dataset.tab === name));
+    for (const t of TABS) $(`#tab-${t}`).classList.toggle("hidden", name !== t);
+    if ((name === "benchmarks" || name === "challengers") && !state.runs.length) load();
+  }
+
+  // -- Challengers tab: challenger cards (mode "challenger") vs the king they duelled --
+  const CHAL_ENVS = ["aime25", "math500", "gpqa-diamond", "mmlu-pro", "ifbench", "ifeval", "humaneval", "livecodebench", "bfcl-v3"];
+  function kingCardFor(card) {
+    const d = card.duel || {};
+    const byDigest = state.runs.filter((r) => r.mode !== "challenger" && r.mode !== "comparables" && r.king && r.king.digest === d.vs_king_digest && r.status !== "skipped_identical_weights");
+    if (byDigest.length) return byDigest.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0];
+    const byReign = state.runs.filter((r) => r.mode !== "challenger" && r.king && String(r.king.reign) === String(d.vs_reign));
+    return byReign.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0] || null;
+  }
+  function renderChallengers() {
+    const thead = $("#chal-table thead"), tbody = $("#chal-table tbody");
+    thead.innerHTML = ""; tbody.innerHTML = "";
+    const cards = state.runs.filter((r) => r.mode === "challenger" || (r.king && r.king.duel));
+    if (!cards.length) { $("#chal-note").textContent = "no challenger cards yet"; return; }
+    const envs = CHAL_ENVS.filter((e) => cards.some((c) => c.rows.some((x) => x.env === e && x.temperature === 0)));
+    const head = el("tr", {}, el("th", {}, "challenger"), el("th", { class: "num" }, "duel margin"), el("th", { class: "num" }, "z"), el("th", {}, "vs king"), el("th", {}, "status"));
+    for (const e of envs) head.append(el("th", { class: "num" }, e));
+    head.append(el("th", { class: "num" }, "mean Δ"));
+    thead.append(head);
+    cards.sort((a, b) => ((b.duel || {}).margin || 0) - ((a.duel || {}).margin || 0));
+    for (const c of cards) {
+      const d = c.duel || {}; const base = kingCardFor(c);
+      const tr = el("tr", {}, el("td", { title: c.run_id }, (c.king && c.king.label) || c.run_id),
+        el("td", { class: "num" }, d.margin !== undefined && d.margin !== null ? (d.margin > 0 ? "+" : "") + Number(d.margin).toFixed(5) : "–"),
+        el("td", { class: "num" }, d.z !== undefined && d.z !== null ? Number(d.z).toFixed(2) : "–"),
+        el("td", { class: "muted" }, base ? `reign ${base.king.reign}` : (d.vs_reign ? `reign ${d.vs_reign} (no card)` : "–")),
+        el("td", { class: "muted" }, c.status === "partial" ? "running" : c.status));
+      const deltas = [];
+      for (const e of envs) {
+        const row = c.rows.find((x) => x.env === e && x.temperature === 0 && x.king);
+        const brow = base ? base.rows.find((x) => x.env === e && x.temperature === 0 && x.king) : null;
+        if (!row) { tr.append(el("td", { class: "num muted" }, "…")); continue; }
+        if (!brow) { tr.append(el("td", { class: "num" }, pct(row.king.score))); continue; }
+        const delta = 100 * (row.king.score - brow.king.score), hw = 100 * (brow.king.ci95[1] - brow.king.ci95[0]) / 2;
+        deltas.push(delta);
+        const cls = Math.abs(delta) > hw ? (delta > 0 ? "good" : "bad") : "";
+        tr.append(el("td", { class: "num " + cls, title: `${pct(row.king.score)} vs king ${pct(brow.king.score)} [±${hw.toFixed(1)}]` }, `${delta > 0 ? "+" : ""}${delta.toFixed(1)}${Math.abs(delta) > hw ? "*" : ""}`));
+      }
+      tr.append(el("td", { class: "num" }, deltas.length ? `${(deltas.reduce((a, b) => a + b, 0) / deltas.length).toFixed(1)} pt` : "–"));
+      tbody.append(tr);
+    }
+    $("#chal-note").textContent = "* = outside the king card's 95% interval. Rows sorted by duel margin (the meter's order); if the meter tracked the benchmarks, mean Δ would fall down the table.";
   }
 
   function runLabel(r) {
@@ -36,9 +80,9 @@
     if (k.model) return `${r.run_id} · ${k.label || k.model} (Prime Inference)`;
     const reign = k.reign !== undefined ? `reign ${k.reign}` : (k.label || "");
     const digest = k.digest ? `king-${String(k.digest).slice(0, 12)}` : "";
-    return `${r.run_id} · ${reign} ${digest}`.trim();
+    return `${r.run_id} · ${reign}${k.uncrowned ? " (removed)" : ""} ${digest}`.trim();
   }
-  const colLabel = (r) => { const k = (r && r.king) || {}; return k.model ? (k.label || k.model) : k.reign !== undefined ? `reign ${k.reign}` : (k.label || r.run_id); };
+  const colLabel = (r) => { const k = (r && r.king) || {}; return k.model ? (k.label || k.model) : k.reign !== undefined ? `reign ${k.reign}${k.uncrowned ? " (removed)" : ""}` : (k.label || r.run_id); };
 
   function renderRunSelect() {
     const sel = $("#bench-run");
@@ -56,7 +100,7 @@
     tbody.innerHTML = "";
     if (!r) { $("#bench-meta").textContent = "no benchmark runs published yet"; return; }
     const w = r.where || {};
-    const ident = r.identical_to ? `IDENTICAL WEIGHTS — same ${r.identical_to.n_tensors} tensors as reign ${r.identical_to.reign} (${r.identical_to.run_id}); numbers shown are that run's, no new pass · ` : "";
+    const ident = r.identical_to ? `IDENTICAL WEIGHTS — same weights as reign ${r.identical_to.reign} (${r.identical_to.run_id}; ${r.identical_to.how || (r.identical_to.n_tensors + " tensors")}); numbers shown are that run's, no new pass · ` : "";
     $("#bench-meta").textContent = `${r.rows.length} rows · ${ident}${r.status === "partial" ? "PARTIAL (still running) · " : ""}run created ${(r.created_at || "").replace("T", " ")} · ` +
       `${w.provider || ""} ${w.gpu || ""} · teacher ${(r.teacher || {}).hf_repo || ""}` +
       (r.prime_spent_usd !== undefined && r.prime_spent_usd !== null ? ` · pod cost ≈ $${r.prime_spent_usd}` : "");
@@ -78,10 +122,35 @@
         el("td", { class: "num muted" }, k ? kfmt(k.completion_tokens) : "–"),
         el("td", { class: "num muted" }, k && k.finish_length_frac !== undefined ? pct(k.finish_length_frac, 0) : "–"),
         el("td", { class: "num muted" }, k ? mins(k.wall_seconds) : "–")));
+      // Per gold class (When2Call): accuracy per class and how often each side
+      // answered with the tool call — on a non-tool class that is the
+      // "called a tool when none was needed" rate.
+      const kb = (k && k.by_class) || {}, tb = (t && t.by_class) || {};
+      const classes = [...new Set([...Object.keys(kb), ...Object.keys(tb)])].sort()
+        .filter((c) => !row.show_classes || row.show_classes.includes(c));
+      for (const cls of classes) {
+        const kc = kb[cls], tc = tb[cls];
+        const dd = kc && tc ? kc.score - tc.score : null;
+        const toolRate = (c) => c && c.metrics && c.metrics.pred_tool_call !== undefined ? ` · →tool ${pct(c.metrics.pred_tool_call, 0)}` : "";
+        tbody.append(el("tr", { class: "subrow", title: `${row.env}: rows whose gold answer is "${cls}"` },
+          el("td", { class: "muted" }, `  ↳ ${cls}`),
+          el("td", { class: "muted" }, "gold class"),
+          el("td", { class: "num muted" }, ""),
+          el("td", { class: "num muted" }, (kc || tc || {}).n),
+          el("td", { class: "num muted" }, kc ? pct(kc.score) + ci(kc) + toolRate(kc) : "–"),
+          el("td", { class: "num muted" }, tc ? pct(tc.score) + ci(tc) + toolRate(tc) : "–"),
+          el("td", { class: "num muted" }, dd === null ? "–" : (dd > 0 ? "+" : "") + (100 * dd).toFixed(1) + " pt"),
+          el("td", { class: "num muted" }, ""), el("td", { class: "num muted" }, ""),
+          el("td", { class: "num muted" }, ""), el("td", { class: "num muted" }, "")));
+      }
     }
     const sk = (r.skipped || []).map((s) => `${s.env}: ${s.why}`);
     $("#bench-skipped").textContent = sk.length ? "Not run — " + sk.join(" · ") : "";
     $("#bench-links").innerHTML = "";
+    if (r.prime_evals && Object.keys(r.prime_evals).length) {
+      $("#bench-links").append(el("span", {}, `Prime Evals: ${Object.keys(r.prime_evals).length} runs on account ${r.prime_evals_account || "arbos"} · `),
+        el("a", { href: "https://app.primeintellect.ai/dashboard/evaluations", target: "_blank" }, "Evaluations tab"), " · ");
+    }
     if (r.r2_prefix) {
       $("#bench-links").append("Every rollout (prompts, replies, grades, tokens, timing): ",
         el("a", { href: `https://data.affine.io/${r.r2_prefix}index.json`, target: "_blank" }, `data.affine.io/${r.r2_prefix}`));
@@ -125,10 +194,13 @@
     renderRunSelect();
     renderTable();
     renderHistory();
+    renderChallengers();
   }
 
   $("#bench-run").addEventListener("change", (e) => { state.runId = e.target.value; renderTable(); });
-  window.addEventListener("hashchange", () => showTab(location.hash === "#benchmarks" ? "benchmarks" : "envs"));
-  showTab(location.hash === "#benchmarks" ? "benchmarks" : "envs");
-  setInterval(() => { if (location.hash === "#benchmarks") load(); }, 300000);
+  // the matrix (#kings) is the landing view; the older tabs stay behind the nav
+  const tabOf = () => { const h = location.hash.replace("#", ""); return TABS.includes(h) ? h : "kings"; };
+  window.addEventListener("hashchange", () => showTab(tabOf()));
+  showTab(tabOf());
+  setInterval(() => { if (tabOf() === "benchmarks" || tabOf() === "challengers") load(); }, 300000);
 })();
