@@ -338,3 +338,53 @@ policies = ["teacher_toolcall", "king_toolcall"]
 strata_buckets = 500
 strata_offset = 470
 share = 1.0
+
+[curriculum]
+# Adaptive, auditable curriculum (operator directive 2026-09-14 23:32 UTC,
+# pre-approved 23:39 UTC; plan: docs/adaptive-curriculum-plan.md). Rule v1:
+#   w_s = (M~_s + eps)^gamma * S~_s   per base stratum s of D
+# M~ = the sitting king's miss rate on s (forfeit, or a live turn score under
+# the bottom-quartile threshold theta), S~ = the live-reference rate (>= 2
+# distinct teacher refs), both shrunk stratum -> cell -> group -> corpus with
+# prior count n_0 over a ledger of every scored verdict since chal-00367
+# (wvk 13) decayed with half_life_verdicts. Group share ∝ Σ w, floored
+# (coding + terminal >= floor_coding_terminal; every group >= floor_frac_of_
+# static × its [mix] share), capped at group_cap, moved at most max_share_
+# shift per fold vs the live slice share; a stratum gets 1..m_max sub-strata
+# by weight rank inside its group. Job: ops/curriculum/run.py (pm2
+# `affine-curriculum`, daily before the 16:00 UTC fold); outputs under
+# https://data.affine.io/curriculum/. `mode`: off = the fold ignores the
+# vector; shadow = published, [mix] above still applied; apply = the fold
+# uses `groups.json` share_after_clamp and `weights.parquet` m_applied.
+# Kill switch = mode = "off". Stage 3 (apply) needs the seven-item criterion
+# (plan §7.3) on two shadow folds; a fold counts only with >= min_new_verdicts
+# new verdicts in the ledger. Data event, no scoring change, no wvk.
+mode = "shadow"
+weights_path = "ops/curriculum/out/groups.json"   # the fold's hook reads this (group vector + manifest block)
+rule_version = 1
+# Σ w per group runs over the SLICE KEYS (phase-9 buckets = the unit a duel
+# draws one turn from), a bucket weighing the mean w of its base strata
+# (operator decision 2026-09-15 00:39 UTC); "base_strata" is the plan's
+# original sum, kept as the diagnostic column share_raw_base_strata.
+share_unit = "slice_keys"
+# Which rule's weights drive the published shares: v1 (counted until fold 3),
+# v1.1 (S~ as a gate), v1.2 (king forfeit rate + scaled positive challenger
+# gap). The others are published next to it. Switch = coordinator decision.
+counted_rule = "v1.2"   # coordinator decision 2026-09-15 01:05 UTC (lever 2): v1.2 counted from shadow fold 2
+half_life_verdicts = 60
+n_0 = 8
+gamma = 1.0
+eps = 0.02
+theta_pct = 0.25
+m_max = 3
+floor_coding_terminal = 0.40
+floor_frac_of_static = 0.5
+group_cap = 0.60
+max_share_shift = 0.05
+min_new_verdicts = 10
+recurrence_window_verdicts = 50
+recurrence_group_cap = 0.18
+recurrence_turn_cap = 0.20
+counterfactual_verdicts = 20
+near_king_z = 5.0
+first_challenge = "chal-00367"
