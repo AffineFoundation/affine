@@ -249,14 +249,15 @@ def group_vector(raw: dict[str, float], static: dict[str, float], current: dict[
 
 
 # -- multiplicity ---------------------------------------------------------------
-def multiplicity(strata: dict[str, dict], *, m_max: int) -> None:
+def multiplicity(strata: dict[str, dict], *, m_max: int, field: str = "w") -> None:
     """Fill `rank_pct` and `m` per stratum: 1 + round(2 * rank_pct) inside
-    the group, at most n_turns and m_max. Ties broken by key order."""
+    the group (rank by `field`), at most n_turns and m_max. Ties broken by
+    key order."""
     by_group: dict[str, list[str]] = {}
     for s, rec in strata.items():
         by_group.setdefault(rec["group"], []).append(s)
     for g, keys in by_group.items():
-        keys.sort(key=lambda k: (float(strata[k]["w"]), k))
+        keys.sort(key=lambda k: (float(strata[k][field]), k))
         n = len(keys)
         for i, k in enumerate(keys):
             pct = 0.5 if n == 1 else i / (n - 1)

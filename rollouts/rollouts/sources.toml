@@ -367,6 +367,10 @@ rule_version = 1
 # (operator decision 2026-09-15 00:39 UTC); "base_strata" is the plan's
 # original sum, kept as the diagnostic column share_raw_base_strata.
 share_unit = "slice_keys"
+# Which rule's weights drive the published shares: v1 (counted until fold 3),
+# v1.1 (S~ as a gate), v1.2 (king forfeit rate + scaled positive challenger
+# gap). The others are published next to it. Switch = coordinator decision.
+counted_rule = "v1"
 half_life_verdicts = 60
 n_0 = 8
 gamma = 1.0
