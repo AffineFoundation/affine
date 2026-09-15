@@ -9,7 +9,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
   <link rel="stylesheet" href="fonts/fonts.css?v=20" />
-  <link rel="stylesheet" href="style.css?v=72" />
+  <link rel="stylesheet" href="style.css?v=81" />
 </head>
 <body>
   <header class="top-nav">
@@ -21,6 +21,7 @@
       <div class="nav-center">
         <a id="nav-king" class="nav-chip" target="_blank" rel="noopener">AFFINE</a>
         <a href="./llms.txt" class="nav-chip" id="nav-llms">llms.txt</a>
+        <a class="nav-chip" href="#kings" id="nav-kings">Kings</a>
         <a class="nav-chip" href="#dataset" id="nav-dataset">Dataset</a>
         <a class="nav-chip" href="#audits" id="nav-audits">Audits</a>
         <a class="nav-chip" href="#metrics" id="nav-metrics">Metrics</a>
@@ -123,9 +124,29 @@
   </section>
 
   <main class="page">
+    <!-- Kings vs teacher: average score per held-out benchmark and per datagen
+         environment group, one row per reign. Data: api/v1/matrix (built by
+         ops/kingboard). Monitoring only — never part of the score. -->
+    <!-- Kings vs teacher (api/v1/matrix, built by ops/kingboard): average score
+         0-100 per held-out benchmark / datagen environment, rows = teacher,
+         kings newest first, genesis. Explanations live in tooltips only. -->
+    <section class="section" id="kings">
+      <div class="section-head">
+        <h2 class="section-title">Benchmarks <span class="info" title="Held-out benchmarks, greedy T=0, never in the duel corpus D; score = share of tasks passed (SWE-bench Verified: finished-only). Rows: the teacher, then kings newest first, then reference models (italic: open checkpoints of the genesis family benchmarked for comparison, not kings), then the genesis seed. Cell tint = gap to the teacher (green above, red below). total = mean over the columns every row with data shares (hover the total header for the list); full = mean over all columns, only for complete rows. … = benchmark pass running; · = never run. ‡ = cap-bound (over 20% of the model's replies hit the completion cap and scored 0: a lower bound); ⚖ = judge-graded (an LLM judge graded the rollouts: advisory, never part of the score). The agentic set (Terminal-Bench 2, τ²/τ³-bench, SWE-bench Pro) forms its own column group as cards land. Hover any cell for the 95% interval, n and source.">ⓘ</span></h2>
+      </div>
+      <div class="table-scroll" id="kings-bench-wrap"><div class="empty">loading…</div></div>
+    </section>
+
+    <section class="section" id="environments">
+      <div class="section-head">
+        <h2 class="section-title">Environments <span class="info" title="Datagen environments (the sources of the duel corpus D), grouped by fold group. Value = solve rate over sampled (T=0.8) rollouts of the king seat plus the coverage backfill (greedy T=0 runs are shown in the tooltip, not pooled); the teacher row = teacher_* rollouts; blank under 5 graded rollouts, greyed italics under 30; environments without a grader (affine_wiki) stay blank. Same rows, tint and total rule as the Benchmarks table. Hover a header for the environment's full name, a cell for solved / graded and the 95% interval.">ⓘ</span></h2>
+      </div>
+      <div class="table-scroll" id="kings-env-wrap"><div class="empty">loading…</div></div>
+    </section>
+
     <section class="section" id="reign">
       <div class="section-head">
-        <h2 class="section-title">Reign</h2>
+        <h2 class="section-title">Reign <span class="info" title="Payout rule (since 2026-09-14): a crown is paid for at most 72 hours after it is won. Every crown inside its window gets one equal share (2 paid crowns = 50/50, 3 = thirds); an older crown earns nothing even while it still holds the throne for duels; no paid crown = the emission burns. Throne and duel rules are unchanged. Live paid set: api/v1/snapshot → payout; rule text: api/v1/contract → payout; details in llms.txt → Payout rule.">ⓘ</span></h2>
         <span class="section-right" id="reign-meta"></span>
       </div>
       <div id="reign-wrap"><div class="empty">loading…</div></div>
@@ -133,7 +154,7 @@
 
     <section class="section" id="queue">
       <div class="section-head">
-        <h2 class="section-title">duel queue</h2>
+        <h2 class="section-title">Queue</h2>
         <span class="section-right" id="queue-meta"></span>
       </div>
       <div id="queue-wrap"><div class="empty">loading…</div></div>
@@ -141,8 +162,8 @@
 
     <section class="section" id="history">
       <div class="section-head">
-        <h2 class="section-title">history</h2>
-        <span class="section-right" id="history-meta"></span>
+        <h2 class="section-title">History <span class="info" id="history-info" title="">ⓘ</span></h2>
+        <span class="section-right" id="history-meta" hidden></span>
       </div>
       <div class="filter-bar">
         <input id="filter-input" type="search" placeholder="filter hotkey / repo / event" autocomplete="off" spellcheck="false" />
@@ -270,6 +291,6 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=80"></script>
+  <script type="module" src="app.js?v=92"></script>
 </body>
 </html>
