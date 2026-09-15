@@ -8,7 +8,7 @@
  * from charts.js kingName, the Reign table's source. Monitoring only.
  */
 
-import { fetchMatrix } from "./api.js?v=68";
+import { fetchDatasetTable, fetchMatrix } from "./api.js?v=69";
 import { kingName } from "./charts.js?v=73";
 
 const REFRESH_MS = 300000;
@@ -24,6 +24,7 @@ const TABLES = [
 
 const state = {
   matrix: null,
+  dataset: null,
   sort: {},             // table id -> { key, desc }
   showAll: false,       // rows without any measurement
 };
@@ -171,10 +172,101 @@ function renderTable(m, spec) {
   if (meta) meta.textContent = `${cols.length - 1} columns · ${rows.length} of ${m.rows.length} rows · ${spec.caption}`;
 }
 
+// -- Dataset D: columns = sources (+ king groups), rows = metrics ----------
+const compact = (n) => {
+  if (n == null) return "·";
+  const v = Number(n);
+  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+  if (v >= 1e4) return `${Math.round(v / 1e3)}k`;
+  if (v >= 1e3) return `${(v / 1e3).toFixed(1)}k`;
+  return `${Math.round(v)}`;
+};
+
+function datasetValue(row, col) {
+  const v = col[row.key];
+  if (row.fmt === "bool") return v == null ? "·" : (v ? "yes" : "no");
+  if (v == null) return "·";
+  if (row.fmt === "pct") return `${(100 * v).toFixed(v < 0.1 ? 1 : 0)}%`;
+  if (row.fmt === "score") return `${Math.round(v)}`;
+  if (row.fmt === "draws") return v >= 10 ? `${Math.round(v)}` : v.toFixed(1);
+  return compact(v);
+}
+
+function datasetTip(row, col) {
+  const gm = col.group_meta || {};
+  const head = `${col.label}${col.kind === "env" ? ` (${col.group})` : " (fold group)"} · ${row.label}`;
+  const v = col[row.key];
+  const lines = [head];
+  if (row.key === "turns_per_duel") {
+    lines.push(v == null ? "no draws published" : `${Number(v).toFixed(2)} turns of ${state.dataset.header.n_per_duel ?? 1300} per duel`);
+    if (gm.draws_per_duel != null) lines.push(`group ${col.group}: ${Number(gm.draws_per_duel).toFixed(1)} draws per duel = share ${(100 * gm.share).toFixed(1)}% (target ${gm.static_mix != null ? (100 * gm.static_mix).toFixed(0) + "%" : "–"})`);
+    if (col.strata_share_in_group != null) lines.push(`this source holds ${(100 * col.strata_share_in_group).toFixed(1)}% of the group's strata`);
+    lines.push(col.turns_per_duel_note || "");
+  } else if (row.key === "supply_limited") {
+    lines.push(v == null ? "no cap for this group" : `${v ? "yes" : "no"} — group strata ${num(gm.strata)} vs cap ${num(gm.cap)} (${gm.cap_source || ""})`);
+    if (gm.share != null) lines.push(`slice share ${(100 * gm.share).toFixed(1)}% vs [mix] target ${gm.static_mix != null ? (100 * gm.static_mix).toFixed(0) + "%" : "–"}`);
+  } else if (row.key === "curriculum_share") {
+    lines.push(v == null ? "no curriculum weight for this group" : `${(100 * v).toFixed(2)}% of the slice for group ${col.group} under the v1.2 shadow rule (not applied yet)`);
+  } else if (row.key === "king_solve") {
+    lines.push(v == null ? "no graded king rollouts on this source" : `${Number(v).toFixed(1)}% solved over ${num(col.king_solve_n)} graded rollouts (current king)`);
+  } else if (row.key === "turns" || row.key === "strata") {
+    lines.push(v == null ? "not in D" : `${num(v)} ${row.key} in D` + (col.kind === "env" ? ` under group ${col.group}` : ""));
+    if (gm.turns != null) lines.push(`group ${col.group}: ${num(gm.turns)} turns, ${num(gm.strata)} strata (slice keys${gm.sub_strata_k > 1 ? `, sub-strata k = ${gm.sub_strata_k}` : ""})`);
+  } else {
+    lines.push(v == null ? "not a datagen source (fold-routed group)" : `${num(v)} rollouts`);
+  }
+  if (row.note) lines.push(row.note);
+  return lines.filter(Boolean).join("\n");
+}
+
+function renderDataset() {
+  const d = state.dataset;
+  const wrap = $("kings-dataset-wrap");
+  if (!d || !wrap) return;
+  const cols = d.columns || [];
+  const blocks = [];
+  for (const c of cols) {
+    const name = c.kind === "env" ? (c.group || "other") : "king groups";
+    const last = blocks[blocks.length - 1];
+    if (last && last.name === name) { last.n += 1; continue; }
+    blocks.push({ name, n: 1, first: c.key });
+  }
+  const sepAt = new Set(blocks.map((b) => b.first));
+  const groupRow = `<tr class="blocks"><th class="model"></th>${blocks.map((b) =>
+    `<th class="block sep" colspan="${b.n}" title="${esc(b.name)}">${esc(b.name.replace("_", " "))}</th>`).join("")}</tr>`;
+  const head = `<tr><th class="model">metric</th>${cols.map((c) => {
+    const gm = c.group_meta || {};
+    const title = `${c.label}${c.kind === "env" ? ` · group ${c.group}${c.env_id ? ` · ${c.env_id}` : ""}` : " · fold group (routed from king / teacher rollouts)"}`
+      + `${gm.turns != null ? `\ngroup: ${num(gm.turns)} turns · ${num(gm.strata)} strata · ${Number(gm.draws_per_duel || 0).toFixed(1)} draws/duel` : ""}`;
+    return `<th class="col ${c.kind}${sepAt.has(c.key) ? " sep" : ""}" title="${esc(title)}">${esc(c.abbr)}</th>`;
+  }).join("")}</tr>`;
+  const body = (d.rows || []).map((r) => {
+    const cells = cols.map((c) => {
+      const v = c[r.key];
+      const cls = ["cell", c.kind, sepAt.has(c.key) ? "sep" : "", v == null ? "blank" : "",
+        r.fmt === "bool" && v === true ? "warn" : ""].filter(Boolean).join(" ");
+      return `<td class="${cls} duel-hit" data-tip="${esc(datasetTip(r, c))}">${esc(datasetValue(r, c))}</td>`;
+    }).join("");
+    return `<tr class="metric${r.headline ? " headline" : ""}"><td class="model duel-hit" data-tip="${esc(`${r.label}\n${r.note || ""}`)}"><span class="name">${esc(r.short || r.label)}</span></td>${cells}</tr>`;
+  }).join("");
+  wrap.innerHTML = `<table class="data-table kings dataset"><thead>${groupRow}${head}</thead><tbody>${body}</tbody></table>`;
+  const h = d.header || {};
+  const rec = h.recurrence || {};
+  const meta = $("kings-dataset-meta");
+  if (meta) {
+    meta.textContent = `D = ${num(h.n_turns)} turns · ${num(h.n_strata)} strata · epoch ${h.epoch ?? "–"}`
+      + `${h.manifest_sha12 ? ` · manifest ${h.manifest_sha12}` : ""}`
+      + ` · ${h.n_per_duel ?? 1300} turns per duel`
+      + `${rec.rollout_overlap != null ? ` · simulated recurrence between two duels: ${(100 * rec.rollout_overlap).toFixed(1)}% of rollouts, ${(100 * rec.turn_overlap).toFixed(1)}% of turns` : ""}`
+      + `${h.curriculum_mode ? ` · curriculum ${h.curriculum_mode} (${h.curriculum_rule || ""}, for epoch ${h.curriculum_for_epoch ?? "–"})` : ""}`;
+  }
+}
+
 function render() {
   const m = state.matrix;
   if (!m) return;
   for (const spec of TABLES) renderTable(m, spec);
+  renderDataset();
   const kings = m.rows.filter((r) => r.kind === "king");
   const meta = $("kings-meta");
   if (meta) meta.textContent = `${kings.length} reigns · ${m.columns.filter((c) => c.kind === "bench").length} benchmarks · ${m.columns.filter((c) => c.kind === "env").length} environments · built ${when(m.generated_at)}`;
@@ -204,7 +296,12 @@ function wire() {
 }
 
 async function refresh() {
-  const m = await fetchMatrix().catch(() => null);
+  const [m, d] = await Promise.all([fetchMatrix().catch(() => null), fetchDatasetTable().catch(() => null)]);
+  if (d && Array.isArray(d.columns)) state.dataset = d;
+  else if (!state.dataset) {
+    const wrap = $("kings-dataset-wrap");
+    if (wrap) wrap.innerHTML = `<div class="empty">dataset table not built yet</div>`;
+  }
   if (!m || !Array.isArray(m.rows)) {
     if (!state.matrix) {
       for (const spec of TABLES) {

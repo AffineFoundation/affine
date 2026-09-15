@@ -58,6 +58,8 @@ import os
 import re
 import shutil
 import sqlite3
+import random
+import statistics
 import sys
 import tempfile
 import tomllib
@@ -74,9 +76,9 @@ sys.path.insert(0, str(REPO / "affine"))
 
 from affine import dialects  # noqa: E402
 from affine.config import load_config  # noqa: E402
-from affine.corpus.completion import final_completion  # noqa: E402
-from affine.corpus.loops import IN_LOOP, ONSET, label_loops  # noqa: E402
-from affine.corpus.materialize import stratum_key  # noqa: E402
+from affine.corpus.completion import completion_kind, final_completion  # noqa: E402
+from affine.corpus.loops import ESCAPE, IN_LOOP, ONSET, label_loops  # noqa: E402
+from affine.corpus.materialize import materialize_turn, node_path, stratum_key  # noqa: E402
 from affine.corpus.pack import PackResult  # noqa: E402
 from affine.corpus.publish import CorpusPublisher  # noqa: E402
 from affine.corpus.trace import (  # noqa: E402
@@ -221,23 +223,55 @@ def load_king_fail() -> dict:
     cfg = raw.get("king_fail") or {}
     if not cfg:
         return {}
+    common = load_king_common()
     return {"group": "king_fail",
             "strata_buckets": int(cfg.get("strata_buckets", 0) or 0),
-            "policy_prefix": str(cfg.get("policy_prefix") or "king_"),
+            "policy_prefix": str(cfg.get("policy_prefix") or common["policy_prefix"]),
             "exclude_sources": frozenset(str(x) for x in
-                                         (cfg.get("exclude_sources") or []))}
+                                         (cfg.get("exclude_sources") or []))
+            | common["exclude_sources"],
+            "common": common}
 
 
 # Turn-routed fold groups (2026-09-11, data events): derive_chunk splits
 # single turns of a rollout off into a second record of the same rollout
 # with `fold_group` set and a bucketed stratum `<group>:NNNN`. Precedence
-# when one turn qualifies for several: king_pivot > king_loop_onset >
-# completion (a turn can only be one of them by construction: the first two
-# need a FAILED king rollout, completion a SOLVED one).
+# when one turn qualifies for several: king_recoverable > king_pivot >
+# king_loop_onset > completion (completion needs a SOLVED rollout, the king
+# groups a FAILED one, so only the king groups can overlap).
 KING_LOOP_GROUP = "king_loop_onset"
 KING_PIVOT_GROUP = "king_pivot"
+KING_RECOVERABLE_GROUP = "king_recoverable"
+KING_DONE_GROUP = "king_done"
+KING_TOOLUSE_GROUP = "king_tooluse"
 COMPLETION_GROUP = "completion"
-ROUTED_GROUPS = (KING_PIVOT_GROUP, KING_LOOP_GROUP, COMPLETION_GROUP)
+COMPLETION_PRE_GROUP = "completion_pre"
+KING_COACHED_GROUP = "king_coached"
+KING_GROUPS = ("king_fail", KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_TOOLUSE_GROUP,
+               KING_PIVOT_GROUP, KING_LOOP_GROUP, COMPLETION_PRE_GROUP, KING_COACHED_GROUP)
+# Precedence order when one turn qualifies for several (king-data spec §3.3).
+ROUTED_GROUPS = (KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_TOOLUSE_GROUP, KING_PIVOT_GROUP,
+                 KING_LOOP_GROUP, COMPLETION_GROUP, COMPLETION_PRE_GROUP)
+
+
+def load_king_common() -> dict:
+    """[king_common] (king-data spec, 2026-09-13): rules every king_* group
+    inherits. `exclude_sources` are unioned into each group's own list;
+    `one_reply_ok = false` keeps one-reply rollouts (the state is just the
+    task prompt, already in D through the teacher) out of every king group;
+    `first_onset_only` keeps one loop onset per rollout; `max_turns_per_
+    rollout` caps king_fail; `kind_by_teacher` is a KNOB ONLY (not
+    implemented -- it would change which parser scores a turn; Jacob's
+    call)."""
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("king_common") or {}
+    return {"policy_prefix": str(raw.get("policy_prefix") or "king_"),
+            "exclude_sources": frozenset(str(x) for x in (raw.get("exclude_sources") or [])),
+            "one_reply_ok": bool(raw.get("one_reply_ok", False)),
+            "first_onset_only": bool(raw.get("first_onset_only", True)),
+            "max_turns_per_rollout": int(raw.get("max_turns_per_rollout", 0) or 0),
+            "kind_by_teacher": bool(raw.get("kind_by_teacher", False)),
+            "retire_excluded_published": bool(raw.get("retire_excluded_published", False)),
+            "retire_later_onsets": bool(raw.get("retire_later_onsets", False))}
 
 
 def _group_cfg(group: str) -> dict:
@@ -246,13 +280,27 @@ def _group_cfg(group: str) -> dict:
     cfg = raw.get(group) or {}
     if not cfg:
         return {}
-    return {"group": group,
-            "strata_buckets": int(cfg.get("strata_buckets", 0) or 0),
-            "policy_prefix": str(cfg.get("policy_prefix") or ""),
-            "exclude_sources": frozenset(str(s) for s in
-                                         (cfg.get("exclude_sources") or [])),
-            "leak_exempt": bool(cfg.get("leak_exempt", False)),
-            "raw": cfg}
+    out = {"group": group,
+           "strata_buckets": int(cfg.get("strata_buckets", 0) or 0),
+           "policy_prefix": str(cfg.get("policy_prefix") or ""),
+           "exclude_sources": frozenset(str(s) for s in
+                                        (cfg.get("exclude_sources") or [])),
+           "leak_exempt": bool(cfg.get("leak_exempt", False)),
+           "raw": cfg}
+    if group in KING_GROUPS:
+        common = dict(load_king_common())
+        out["policy_prefix"] = out["policy_prefix"] or common["policy_prefix"]
+        # `inherit_exclude = false`: the group keeps only its own list (a tool
+        # group must see the tool sources the others exclude). `lift_exclude`:
+        # sources taken back out of the inherited list.
+        if cfg.get("inherit_exclude", True):
+            out["exclude_sources"] = out["exclude_sources"] | common["exclude_sources"]
+        out["exclude_sources"] = out["exclude_sources"] - frozenset(
+            str(x) for x in (cfg.get("lift_exclude") or []))
+        if "one_reply_ok" in cfg:
+            common["one_reply_ok"] = bool(cfg["one_reply_ok"])
+        out["common"] = common
+    return out
 
 
 def load_king_loop_onset() -> dict:
@@ -265,24 +313,13 @@ def load_king_loop_onset() -> dict:
     return cfg
 
 
-def load_king_pivot() -> dict:
-    """[king_pivot]: the turns an LLM judge marked as the decision point of
-    a failed king rollout (ops/king-review, PR #8). Rows come from the
-    per-king side-tables under `side_table_dir` (`<digest>.jsonl`, one JSON
-    line per (rollout_id, turn_idx)); only `admit == true` rows at or above
-    `min_confidence` and outside `exclude_categories` route. Every table in
-    the directory is read: an earlier king's pivots stay valid states. The
-    leak rule is waived as for king_loop_onset. `table` =
-    {rollout_id: {turn_idx: row}}."""
-    cfg = _group_cfg(KING_PIVOT_GROUP)
-    if not cfg:
-        return {}
+def _load_side_table(cfg: dict, *, default_dir: str, row_ok) -> dict:
+    """Per-king side-tables `<digest>.jsonl` under `side_table_dir`: one JSON
+    line per (rollout_id, turn_idx); rows passing `row_ok` become
+    `table[rollout_id][turn_idx]`. Every table in the directory is read:
+    an earlier king's states stay valid prefixes."""
     raw = cfg["raw"]
-    cfg["policy_prefix"] = cfg["policy_prefix"] or "king_"
-    cfg["leak_exempt"] = True
-    excluded = {str(c) for c in (raw.get("exclude_categories") or [])}
-    min_conf = float(raw.get("min_confidence", 0.7))
-    side_dir = REPO / str(raw.get("side_table_dir") or "affine/state/king_pivots")
+    side_dir = REPO / str(raw.get("side_table_dir") or default_dir)
     table: dict[str, dict[int, dict]] = {}
     n_rows = n_files = 0
     for path in sorted(side_dir.glob("*.jsonl")) if side_dir.is_dir() else []:
@@ -292,14 +329,113 @@ def load_king_pivot() -> dict:
                 continue
             row = json.loads(line)
             n_rows += 1
-            if not row.get("admit") or str(row.get("failure_category")) in excluded:
-                continue
-            if float(row.get("confidence") or 0) < min_conf:
-                continue
-            table.setdefault(str(row["rollout_id"]), {})[int(row["turn_idx"])] = row
+            if row_ok(row):
+                table.setdefault(str(row["rollout_id"]), {})[int(row["turn_idx"])] = row
     cfg.update(table=table, side_table_dir=str(side_dir), n_files=n_files,
-               n_rows=n_rows,
+               n_rows=n_rows, leak_exempt=True,
+               policy_prefix=cfg["policy_prefix"] or "king_",
                readmit_published=bool(raw.get("readmit_published", False)))
+    return cfg
+
+
+def load_king_pivot() -> dict:
+    """[king_pivot]: the turns an LLM judge marked as the decision point of
+    a failed king rollout (ops/king-review, PR #8). Routed: `admit == true`
+    at or above `min_confidence`, category not excluded. Leak rule waived
+    as for king_loop_onset."""
+    cfg = _group_cfg(KING_PIVOT_GROUP)
+    if not cfg:
+        return {}
+    raw = cfg["raw"]
+    excluded = {str(c) for c in (raw.get("exclude_categories") or [])}
+    min_conf = float(raw.get("min_confidence", 0.7))
+    return _load_side_table(
+        cfg, default_dir="affine/state/king_pivots",
+        row_ok=lambda row: (bool(row.get("admit"))
+                            and str(row.get("failure_category")) not in excluded
+                            and float(row.get("confidence") or 0) >= min_conf))
+
+
+def load_king_recoverable() -> dict:
+    """[king_recoverable] (phase 5, 2026-09-12): failure states of the king
+    the TEACHER recovers from -- ops/recoverable (PR #13) replays the king's
+    prefix and lets the teacher continue; `admit` = teacher solved from the
+    state AND its first action differs from the king's. Any state kind
+    (loop onset, pivot). Wins over king_pivot / king_loop_onset for the same
+    turn. Leak rule waived as for the other king groups."""
+    cfg = _group_cfg(KING_RECOVERABLE_GROUP)
+    if not cfg:
+        return {}
+    return _load_side_table(cfg, default_dir="affine/state/recoverable",
+                            row_ok=lambda row: bool(row.get("admit")))
+
+
+def load_king_done() -> dict:
+    """[king_done] (king-data spec §2.2, 2026-09-13): done-blind states.
+    The king's reply at turn k-1 was completion-eligible by the harness
+    rule (affine.corpus.completion: `submit`, a finish tool, Terminus
+    `task_complete`, a prose report with no action) yet the rollout went on
+    for >= `min_more_turns` more replies on the main root; the routed state
+    is turn k -- the first turn where the king kept going instead of
+    stopping. One per rollout (the first). Leak rule waived like every king
+    group."""
+    cfg = _group_cfg(KING_DONE_GROUP)
+    if cfg:
+        cfg["leak_exempt"] = True
+        cfg["min_more_turns"] = int(cfg["raw"].get("min_more_turns", 2) or 2)
+        # Duel-time kind: at a done state the teacher stops -- a prose report
+        # or a finish tool call; `text` parses both (Jacob 2026-09-13).
+        cfg["kind"] = str(cfg["raw"].get("kind") or dialects.TEXT_KIND)
+    return cfg
+
+
+def load_king_tooluse() -> dict:
+    """[king_tooluse] (improvement loop P1; Jacob 2026-09-13 14:58 UTC:
+    "route based on king so we get points where the king failed"). Selected
+    by the KING's behaviour alone:
+      (a) one-shot: on a prose-answer prompt set served with tool schemas
+          (`prose_sources`; the datagen worker's P1 source), the king's first
+          reply is a tool call -> the king's turn 0;
+      (b) persist: on a tool source (`tool_sources`), the king repeats the
+          same tool call after an error / empty / nudge observation -> that
+          turn (`affine.corpus.loops` `persist`).
+    Duel-time kind: `text` (`kind`) -- it parses a whole visible reply, tool
+    XML included, so the teacher's references stay parseable whether the
+    teacher answers in prose or calls a tool; under `tool_call` a prose
+    reference would drop and zero the group. One-reply rollouts allowed
+    (the prompt-with-tools IS the state); the common exclusions are not
+    inherited (they exclude exactly these sources)."""
+    cfg = _group_cfg(KING_TOOLUSE_GROUP)
+    if not cfg:
+        return {}
+    raw = cfg["raw"]
+    cfg.update(leak_exempt=True,
+               prose_sources=frozenset(str(x) for x in (raw.get("prose_sources") or [])),
+               tool_sources=frozenset(str(x) for x in (raw.get("tool_sources") or [])),
+               # Rule (a) skips rollouts whose task repo is listed: When2Call
+               # stamps `repo = when2call/<label>`, and on `tool_call` items a
+               # first-reply call is the RIGHT move (datagen worker, 2026-09-14).
+               prose_skip_repos=frozenset(str(x) for x in (raw.get("prose_skip_repos") or [])),
+               kind=str(raw.get("kind") or dialects.TEXT_KIND))
+    cfg["sources"] = cfg["prose_sources"] | cfg["tool_sources"]
+    return cfg
+
+
+def load_completion_pre() -> dict:
+    """[completion_pre] (improvement loop P3, king-selected per Jacob
+    2026-09-13): the KING finished on its own (`agent_completed`, the final
+    main-root reply completion-eligible) and the env graded the rollout
+    FAILED -- a premature finish. The routed states are the `n_before` turns
+    right before that final reply: where the king should have verified
+    (run the tests, check the diff) instead of finishing. Duel-time kind
+    `kind` (default `text`, so a teacher that verifies with a tool and a
+    teacher that finishes in prose both parse). A king group: leak rule
+    waived, common exclusions inherited."""
+    cfg = _group_cfg(COMPLETION_PRE_GROUP)
+    if cfg:
+        cfg.update(leak_exempt=True,
+                   n_before=int(cfg["raw"].get("n_before", 2) or 2),
+                   kind=str(cfg["raw"].get("kind") or dialects.TEXT_KIND))
     return cfg
 
 
@@ -325,24 +461,88 @@ def _policy_ok(env: dict, cfg: dict) -> bool:
     return str(env.get("source") or "") not in cfg["exclude_sources"]
 
 
+def main_reply_count(env: dict) -> int:
+    return len(main_root_indices(env["trace"]))
+
+
+def king_multi_turn(env: dict, cfg: dict) -> bool:
+    """One-reply rollouts never route to a king group unless the common
+    block says so (`one_reply_ok`)."""
+    common = (cfg or {}).get("common") or {}
+    return bool(common.get("one_reply_ok")) or main_reply_count(env) >= 2
+
+
 def king_loop_candidate(env: dict, cfg: dict) -> bool:
     """A rollout the loop labeler runs on: played by a king policy, graded
     FAILED by its env (the same test as `route_king_fail`), from a source
     the group admits. tool_use sources are excluded by config: the teacher's
     next tool call is near-deterministic there, so centered R is ~0 and a
     loop prefix carries no signal (wvk-11 findings)."""
-    return _policy_ok(env, cfg) and rollout_outcome(env["trace"]) == "failed"
+    return (_policy_ok(env, cfg) and king_multi_turn(env, cfg)
+            and rollout_outcome(env["trace"]) == "failed")
 
 
-def king_pivot_turns(env: dict, cfg: dict) -> dict[int, dict]:
-    """Admitted pivot rows for this rollout, {turn_idx: row}; {} when the
-    rollout has none or is not a failed king rollout."""
-    if not _policy_ok(env, cfg):
+def king_done_candidate(env: dict, cfg: dict) -> bool:
+    """king_done needs no failed grade: the state is "the work is done and
+    the king kept going", which a SOLVED rollout shows just as well (bash-
+    tool harness 2026-09-14: 49/90 loop-guard stops graded solved). Errored
+    / unscored rollouts stay out."""
+    return (_policy_ok(env, cfg) and king_multi_turn(env, cfg)
+            and rollout_outcome(env["trace"]) in ("failed", "solved"))
+
+
+def side_table_turns(env: dict, cfg: dict) -> dict[int, dict]:
+    """Admitted side-table rows for this rollout, {turn_idx: row}; {} when
+    the rollout has none or is not a failed king rollout of an admitted
+    source (king_pivot, king_recoverable)."""
+    if not cfg or not _policy_ok(env, cfg) or not king_multi_turn(env, cfg):
         return {}
     rows = cfg["table"].get(str(env.get("rollout_id") or ""))
     if not rows or rollout_outcome(env["trace"]) != "failed":
         return {}
     return dict(rows)
+
+
+def king_done_turn(main_convs: list[list[dict]], kind: str, min_more: int) -> int | None:
+    """Position (within the main-root replies) of the first turn that
+    follows a completion-eligible reply while >= `min_more` replies follow
+    it -- the king said/attempted "done" and kept going. None if no such
+    turn."""
+    for k in range(1, len(main_convs)):
+        if len(main_convs) - k < min_more:
+            return None
+        prev = main_convs[k - 1]
+        if prev and prev[-1]["role"] == "assistant" \
+                and completion_kind(prev[-1]["content"], kind) is not None:
+            return k
+    return None
+
+
+def first_reply_is_tool_call(convs: list[list[dict]], main: list[int], kind: str) -> bool | None:
+    """Does the first main-root reply carry a tool call (`<tool_call>` block
+    or native tool_calls baked into the content)? None when there is no
+    reply."""
+    if not main:
+        return None
+    reply = convs[main[0]][-1]["content"]
+    return len(dialects.get("tool_call").actions(reply)) >= 1
+
+
+def cap_king_fail_turns(idx: set[int], escapes: set[int], cap: int) -> set[int]:
+    """At most `cap` king_fail turns per rollout: labeler escape turns first
+    (recovery states), then the rest spread evenly over depth."""
+    if cap <= 0 or len(idx) <= cap:
+        return set(idx)
+    keep = sorted(i for i in idx if i in escapes)[:cap]
+    rest = sorted(i for i in idx if i not in keep)
+    room = cap - len(keep)
+    if room > 0 and rest:
+        step = len(rest) / room
+        keep += [rest[min(len(rest) - 1, int(j * step))] for j in range(room)]
+    return set(keep)
+
+
+king_pivot_turns = side_table_turns
 
 
 def completion_candidate(env: dict, cfg: dict) -> bool:
@@ -428,6 +628,10 @@ def route_king_fail(records: list[dict], king: dict, drops: dict[str, int]
             # signal (teacher refs identical there); they leave the seat.
             drops["king_excluded_source"] = drops.get("king_excluded_source", 0) + 1
             continue
+        if (not (king.get("common") or {}).get("one_reply_ok")
+                and int(rec.get("n_replies", 99)) < 2):
+            drops["king_one_reply"] = drops.get("king_one_reply", 0) + 1
+            continue
         outcome = rec.get("outcome") or "unscored"
         if outcome == "solved":
             drops["king_not_failed"] = drops.get("king_not_failed", 0) + 1
@@ -504,12 +708,255 @@ def lang_bucket(rec: dict) -> str:
     return LANG_BUCKETS.get(str(rec.get("language") or "").lower(), "python")
 
 
+# -- strata budget (phase 9, Jacob 2026-09-14 23:25 UTC: "sample from the
+# dataset more aggressively") ------------------------------------------------
+# The duel slicer draws one turn per stratum, uniformly over strata, so a
+# group's slice share IS its strata share. Two levers, both index-side:
+#   buckets:    teacher-trajectory groups (coding, terminal, general,
+#               tool_use) are merged into N fixed strata per group
+#               (`<group>:b<sha(original stratum) % N>`); no turn leaves D,
+#               each is just drawn less often.
+#   sub_strata: supply-limited king groups (+ completion) split each task
+#               stratum into up to k sub-strata by turn (`<stratum>#<sha(
+#               turn_id) % k>`), so a duel may draw up to k different turns
+#               of the same task. INTERFACE for the adaptive curriculum
+#               (docs/adaptive-curriculum-plan.md): the ledger strips `#k`
+#               to the base stratum; `[curriculum] mode = "apply"` sets k
+#               per group from the published weights. RT-6 trade-off: a task recurs across duels
+#               k times as often; fresh per-duel teacher refs and the
+#               block-hash-seeded slice stay the defense, and the fold logs
+#               the simulated per-duel recurrence in the announce.
+# The original key is kept in the index column `stratum_src`, so the
+# mapping is idempotent and re-tunable without a rewrite of chunks.
+STRATA_BUDGET: dict = {}
+SRC2GRP_GLOBAL: dict[str, str] = {}
+FOLD_STATS_PATH = STATE_DIR / "fold_stats.json"
+FOLD_STATS_KEY = "corpus/fold_stats.json"
+
+
+def load_curriculum() -> dict:
+    """[curriculum] (adaptive curriculum, docs/adaptive-curriculum-plan.md;
+    hook spec internal/curriculum/hooks-for-fold.md). mode: off | shadow |
+    apply. `weights_path` is the published group vector the curriculum job
+    writes (JSON: {"groups": {<group>: {"share": x, "m": k}}} or a flat
+    {<group>: share}); `shadow` logs it in the announce next to the static
+    [mix]; `apply` uses the shares as the group targets and `m` as the
+    sub-strata count. A missing / unreadable vector falls back to the static
+    [mix] (mode reported as `fallback`)."""
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("curriculum") or {}
+    mode = str(raw.get("mode") or "off")
+    out = {"mode": mode, "raw": raw, "groups": {}, "m": {}, "path": None, "error": None}
+    if mode == "off":
+        return out
+    path = REPO / str(raw.get("weights_path") or "ops/curriculum/out/groups.json")
+    out["path"] = str(path)
+    if not path.exists():
+        out["error"] = "missing"
+        return out
+    try:
+        data = json.loads(path.read_text())
+        groups = data.get("groups", data) if isinstance(data, dict) else {}
+        # Decision 2026-09-15 (coordinator): the fold reads the rule summed
+        # over SLICE KEYS (phase-9 buckets / sub-strata), not base strata --
+        # per-group `share_raw_slice_keys`, else the top-level table of the
+        # same name; then the apply / shadow shares as published.
+        top_slice = data.get("share_raw_slice_keys") if isinstance(data, dict) else None
+        for g, v in groups.items():
+            if isinstance(v, dict):
+                share = v.get("share_raw_slice_keys")
+                if share is None and isinstance(top_slice, dict):
+                    share = top_slice.get(g)
+                if share is None:
+                    share = v.get("share_applied", v.get("share", v.get("share_shadow")))
+                if share is not None:
+                    out["groups"][str(g)] = float(share)
+                if v.get("m") is not None:
+                    out["m"][str(g)] = int(v["m"])
+            else:
+                out["groups"][str(g)] = float(v)
+        out["vector"] = ("share_raw_slice_keys" if any(isinstance(v, dict) and "share_raw_slice_keys" in v
+                                                        for v in groups.values()) or isinstance(top_slice, dict)
+                         else "share")
+        blk = data.get("manifest_curriculum_block") if isinstance(data, dict) else None
+        if isinstance(blk, dict) and all(k in blk for k in ("rule_version", "mode", "ledger_sha256",
+                                                            "weights_sha256", "manifest_sha256")):
+            out["manifest_block"] = {"rule_version": int(blk["rule_version"]), "mode": str(blk["mode"]),
+                                     "ledger_sha256": str(blk["ledger_sha256"]),
+                                     "weights_sha256": str(blk["weights_sha256"]),
+                                     "manifest_sha256": str(blk["manifest_sha256"])}
+        if str(data.get("mode") or mode) != mode:
+            out["error"] = f"mode mismatch (vector {data.get('mode')} vs toml {mode})"
+        age_h = (datetime.now(timezone.utc) - datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)).total_seconds() / 3600
+        if age_h > 24:
+            out["error"] = f"vector older than 24 h ({age_h:.0f} h)"
+        out["meta"] = {k: data.get(k) for k in ("epoch", "ledger_sha256", "weights_sha256", "rule_version", "generated_at")
+                       if isinstance(data, dict) and k in data}
+        tot = sum(out["groups"].values())
+        if not out["groups"] or abs(tot - 1.0) > 0.02:
+            out["error"] = f"bad vector (sum {tot:.3f})"
+    except (OSError, ValueError, TypeError) as e:
+        out["error"] = f"{type(e).__name__}: {e}"
+    return out
+
+
+def curriculum_line(cur: dict, static_mix: dict[str, float]) -> str:
+    if not cur or cur["mode"] == "off":
+        return ""
+    if cur.get("error"):
+        return f"curriculum: mode {cur['mode']} -> fallback to static [mix] ({cur['error']}; {cur.get('path')})"
+    moves = sorted(((g, cur["groups"].get(g, 0.0) - static_mix.get(g, 0.0)) for g in set(cur["groups"]) | set(static_mix)),
+                   key=lambda kv: -abs(kv[1]))[:3]
+    meta = cur.get("meta") or {}
+    epoch = meta.get("epoch")
+    return (f"curriculum: mode {cur['mode']}, rule v{meta.get('rule_version', '?')}, ledger "
+            f"{str(meta.get('ledger_sha256') or '')[:12] or 'n/a'}, weights "
+            f"{str(meta.get('weights_sha256') or '')[:12] or 'n/a'} ({cur.get('vector', 'share')}); "
+            "top moves vs static [mix]: " + ", ".join(f"{g} {d:+.3f}" for g, d in moves)
+            + (f"; m>1 on {sorted(g for g, k in cur['m'].items() if k > 1)}" if cur.get("m") else "")
+            + (f"; diff https://data.affine.io/curriculum/{epoch}/diff.md" if epoch else ""))
+
+
+def write_fold_stats(epoch: int, after: dict[str, int], turns_by_group: dict[str, int],
+                     recurrence: dict | None, cur: dict | None, mix: dict[str, float],
+                     n_turns: int, publisher) -> None:
+    """Per-group draw statistics for the curriculum job (published next to
+    the manifest as corpus/fold_stats.json): strata, turns, slice share,
+    expected draws per 1,300-turn duel, draws per turn per duel, sub-strata
+    k / bucket N, and the simulated per-duel recurrence."""
+    tot = sum(after.values()) or 1
+    groups = {}
+    for g, n_strata in sorted(after.items()):
+        share = n_strata / tot
+        draws = 1300 * share
+        nt = turns_by_group.get(g, 0)
+        groups[g] = {"strata": n_strata, "turns": nt, "share": round(share, 5),
+                     "draws_per_duel": round(draws, 2),
+                     "draws_per_turn_per_duel": round(draws / nt, 6) if nt else None,
+                     "sub_strata_k": (STRATA_BUDGET.get("sub_strata") or {}).get(g, 1),
+                     "bucket_n": (STRATA_BUDGET.get("buckets") or {}).get(g),
+                     "static_mix": mix.get(g)}
+    doc = {"epoch": epoch, "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+           "n_turns": n_turns, "n_strata": tot, "n_per_duel": 1300,
+           "sub_strata_separator": "#", "bucket_prefix": "b",
+           "groups": groups, "recurrence": recurrence,
+           "curriculum": {"mode": cur["mode"], "error": cur.get("error"), "groups": cur.get("groups"),
+                          "m": cur.get("m"), "meta": cur.get("meta")} if cur else None}
+    FOLD_STATS_PATH.write_text(json.dumps(doc, indent=1, sort_keys=True))
+    if publisher is not None:
+        publisher.put(FOLD_STATS_KEY, json.dumps(doc, sort_keys=True).encode(), "application/json",
+                      cache_control="public, max-age=60")
+    log(f"fold stats written: {FOLD_STATS_PATH}" + (f" + {FOLD_STATS_KEY}" if publisher is not None else ""))
+
+
+def load_strata_budget() -> dict:
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("strata_budget") or {}
+    if not raw or not raw.get("enabled", False):
+        return {}
+    return {"buckets": {str(k): int(v) for k, v in (raw.get("buckets") or {}).items() if int(v) > 0},
+            "sub_strata": {str(k): int(v) for k, v in (raw.get("sub_strata") or {}).items() if int(v) > 1},
+            # the separator / naming version is part of the signature so a
+            # rename re-keys the index once
+            "signature": json.dumps({"raw": raw, "sub_sep": "#", "v": 2}, sort_keys=True)}
+
+
+def budget_stratum(group: str, stratum_src: str, turn_id: str, cfg: dict | None = None) -> str:
+    """The slice stratum a turn gets under the budget; `stratum_src` is the
+    ORIGINAL (pre-budget) key. Identity for groups the budget does not list."""
+    cfg = STRATA_BUDGET if cfg is None else cfg
+    if not cfg:
+        return stratum_src
+    n = cfg["buckets"].get(group)
+    if n:
+        h = int(hashlib.sha256(stratum_src.encode("utf-8")).hexdigest()[:8], 16)
+        return f"{group}:b{h % n:05d}"
+    k = cfg["sub_strata"].get(group)
+    if k:
+        # `<stratum>#<k>` -- the interface the curriculum ledger strips
+        # (docs/adaptive-curriculum-plan.md §1, §7.1). Stable; do not rename.
+        h = int(hashlib.sha256(turn_id.encode("utf-8")).hexdigest()[:8], 16)
+        return f"{stratum_src}#{h % k}"
+    return stratum_src
+
+
+def group_from_row(stratum_src: str, source: str, src2grp: dict[str, str]) -> str:
+    ns = str(stratum_src).split(":")[0]
+    return ns if ns in ROUTED_GROUPS or ns in ("math", "tool_use", "general", "king_fail") \
+        else src2grp.get(str(source), DEFAULT_GROUP)
+
+
+def live_rows_for_budget(pub: PublicCorpus, live: dict | None) -> list[tuple[str, str, str]]:
+    """(turn_id, ORIGINAL stratum, source) for every live index row -- the
+    pre-budget key comes from `stratum_src` once the index carries it."""
+    if not live or not live.get("index"):
+        return []
+    raw = pub.get(live["index"]["key"])
+    if hashlib.sha256(raw).hexdigest() != live["index"]["sha256"]:
+        fatal(f"live index sha mismatch for {live['index']['key']}")
+    t = pq.read_table(io.BytesIO(raw))
+    src = t.column("stratum_src").to_pylist() if "stratum_src" in t.column_names \
+        else t.column("stratum").to_pylist()
+    return list(zip(t.column("turn_id").to_pylist(), [str(x) for x in src],
+                    [str(x) for x in t.column("source").to_pylist()]))
+
+
+def apply_budget_table(table: pa.Table, src2grp: dict[str, str], cfg: dict) -> pa.Table:
+    """Index table -> same rows with `stratum` = budget key and `stratum_src`
+    = original key (added when missing)."""
+    if not cfg:
+        return table
+    has_src = "stratum_src" in table.column_names
+    src_col = table.column("stratum_src").to_pylist() if has_src else table.column("stratum").to_pylist()
+    tids = table.column("turn_id").to_pylist()
+    sources = table.column("source").to_pylist()
+    new = [budget_stratum(group_from_row(s0, src, src2grp), str(s0), tid, cfg)
+           for s0, src, tid in zip(src_col, sources, tids)]
+    i = table.column_names.index("stratum")
+    table = table.set_column(i, "stratum", pa.array(new, pa.string()))
+    src_arr = pa.array([str(x) for x in src_col], pa.string())
+    return table.set_column(table.column_names.index("stratum_src"), "stratum_src", src_arr) \
+        if has_src else table.append_column("stratum_src", src_arr)
+
+
+def simulate_recurrence(rows: list[tuple[str, str]], n: int = 1300, n_slices: int = 4,
+                        seed0: int = 20260914) -> dict:
+    """Mean pairwise overlap between simulated duel slices (the evalsrv
+    round-robin sampler: seed-shuffled strata, one turn per stratum): share
+    of turn ids and of rollouts (traj_id) a slice shares with another."""
+    by: dict[str, list[str]] = {}
+    for tid, st in rows:
+        by.setdefault(st, []).append(tid)
+    slices: list[set[str]] = []
+    for s in range(n_slices):
+        rng = random.Random(seed0 + s)
+        keys = sorted(by)
+        rng.shuffle(keys)
+        picked: list[str] = []
+        for k in keys:
+            picked.append(rng.choice(by[k]))
+            if len(picked) >= n:
+                break
+        slices.append(set(picked))
+    def rollouts(sl: set[str]) -> set[str]:
+        return {t.rsplit(":", 1)[0] for t in sl}
+    pairs = [(a, b) for i, a in enumerate(slices) for b in slices[i + 1:]]
+    t_ov = statistics.mean(len(a & b) / n for a, b in pairs)
+    r_ov = statistics.mean(len(rollouts(a) & rollouts(b)) / len(rollouts(a)) for a, b in pairs)
+    return {"turn_overlap": round(t_ov, 4), "rollout_overlap": round(r_ov, 4),
+            "n_strata": len(by), "n": n, "n_slices": n_slices}
+
+
 def record_strata(rec: dict) -> set[str]:
     """Slice strata this record's turns land in (affine.corpus.materialize.
     stratum_key on the index row: explicit bucket for math / tool_use,
-    repo|phase from traj_id otherwise)."""
-    return {stratum_key({"stratum": m.get("stratum") or rec.get("stratum"),
-                         "traj_id": rec.get("traj_id")}) for m in rec["turns"]}
+    repo|phase from traj_id otherwise), under the strata budget when one is
+    configured."""
+    g = rec.get("fold_group") or SRC2GRP_GLOBAL.get(rec.get("source") or "", DEFAULT_GROUP)
+    out: set[str] = set()
+    for m in rec["turns"]:
+        base = stratum_key({"stratum": m.get("stratum") or rec.get("stratum"),
+                            "traj_id": rec.get("traj_id")})
+        out.add(budget_stratum(g, base, f"{rec['traj_id']}:{m['turn_idx']}"))
+    return out
 
 
 # Keys with a target at or above this are "anchors" for the GROUP mix: only
@@ -741,7 +1188,16 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                  king_loop: dict | None = None,
                  king_pivot: dict | None = None,
                  completion: dict | None = None,
-                 notes: dict[str, int] | None = None) -> list[dict]:
+                 king_recoverable: dict | None = None,
+                 king_done: dict | None = None,
+                 king_fail_cfg: dict | None = None,
+                 notes: dict[str, int] | None = None,
+                 published_king_ns: dict[str, str] | None = None,
+                 reclaimed: dict[str, set[str]] | None = None,
+                 probe_text: frozenset[str] = frozenset(),
+                 king_tooluse: dict | None = None,
+                 completion_pre: dict | None = None,
+                 leak_exempt_all: bool = False) -> list[dict]:
     """View records for one trace chunk, with only the turns that pass the
     fold contract and are not yet published. Records with no surviving
     turn are dropped.
@@ -766,10 +1222,18 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
     telemetry that is not a drop (`<group>_leak_exempt`: routed turns
     admitted that the leak rule would have refused; `<group>_leaked`:
     candidate turns the leak rule did refuse because the group is not
-    exempt)."""
+    exempt).
+    `published_king_ns` ({turn_id: king group it is published under}) lets a
+    routed king group RECLAIM a turn already in D under a lower-precedence
+    king group: the turn is admitted here and its id recorded in
+    `reclaimed[<old group>]` so the caller retires the old index row in the
+    same revision (one group per turn, precedence wins)."""
     notes = notes if notes is not None else {}
     cfgs = {KING_LOOP_GROUP: king_loop, KING_PIVOT_GROUP: king_pivot,
-            COMPLETION_GROUP: completion}
+            COMPLETION_GROUP: completion, KING_RECOVERABLE_GROUP: king_recoverable,
+            KING_DONE_GROUP: king_done, KING_TOOLUSE_GROUP: king_tooluse,
+            COMPLETION_PRE_GROUP: completion_pre}
+    common = (king_fail_cfg or {}).get("common") or load_king_common()
     out: list[dict] = []
     for env in iter_jsonl_gz(path):
         convs = None
@@ -778,9 +1242,22 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         in_loop: set[int] = set()
         kind = (env.get("policy") or {}).get("action_kind") or "bash"
         want_loop = bool(king_loop) and king_loop_candidate(env, king_loop)
-        pivots = king_pivot_turns(env, king_pivot) if king_pivot else {}
+        pivots = side_table_turns(env, king_pivot) if king_pivot else {}
+        recoverable = side_table_turns(env, king_recoverable) if king_recoverable else {}
+        want_done = bool(king_done) and king_done_candidate(env, king_done)
+        want_tooluse = (bool(king_tooluse) and _policy_ok(env, king_tooluse)
+                        and str(env.get("source") or "") in king_tooluse["sources"])
+        # P3 (king-selected): the king finished by itself and still failed.
+        want_pre = (bool(completion_pre) and _policy_ok(env, completion_pre)
+                    and king_multi_turn(env, completion_pre)
+                    and env["trace"].get("stop_condition") == "agent_completed"
+                    and rollout_outcome(env["trace"]) == "failed")
+        is_king_fail = (bool(king_fail_cfg) and _policy_ok(env, king_fail_cfg)
+                        and rollout_outcome(env["trace"]) == "failed")
+        one_reply_king = (is_king_fail and not king_multi_turn(env, king_fail_cfg))
+        escapes: set[int] = set()
         want_completion = bool(completion) and completion_candidate(env, completion)
-        if want_loop or want_completion:
+        if want_loop or want_completion or want_done or want_tooluse or want_pre:
             try:
                 convs = trace_conversations(env["trace"], baker)
             except (ToolParityError, TraceShapeError) as e:
@@ -801,19 +1278,45 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                 route[i] = COMPLETION_GROUP
                 extra[i] = {"completion_kind": ckind}
                 _count(notes, f"completion_kind_{ckind}")
+
+        later_onsets: set[int] = set()
+        loop_labels = None
+        if (want_loop or want_tooluse) and main_convs:
+            loop_labels = label_loops(main_convs, kind)
         if want_loop and main_convs:
             n_on = 0
-            for j, lab in enumerate(label_loops(main_convs, kind)):
+            for j, lab in enumerate(loop_labels):
                 i = main[j]
                 if lab.label == ONSET:
-                    route[i] = KING_LOOP_GROUP
-                    extra[i] = {"loop_onset_of": int(main[int(lab.repeats)])}
                     n_on += 1
+                    if n_on > 1 and common["first_onset_only"]:
+                        # Later onsets are near-duplicate prefixes of the same
+                        # wreck (first onsets recover 28 %, later 13 %).
+                        later_onsets.add(i)
+                        continue
+                    route[i] = KING_LOOP_GROUP
+                    extra[i] = {"loop_onset_of": int(main[int(lab.repeats)]),
+                                "onset_rank": n_on}
                 elif lab.label == IN_LOOP:
                     in_loop.add(i)
+                elif lab.label == ESCAPE:
+                    escapes.add(i)
             _count(notes, "king_loop_labelled_rollouts")
             _count(notes, "king_loop_onset_labels", n_on)
             _count(notes, "king_loop_in_loop_labels", len(in_loop))
+            _count(notes, "king_later_onset_labels", len(later_onsets))
+        if want_done and main_convs:
+            k = king_done_turn(main_convs, kind, king_done["min_more_turns"])
+            if k is not None:
+                i = main[k]
+                _count(notes, "king_done_states")
+                if route.get(i) == KING_LOOP_GROUP:
+                    _count(notes, "king_done_over_onset")
+                done_route = i
+            else:
+                done_route = None
+        else:
+            done_route = None
         if pivots:
             _count(notes, "king_pivot_rollouts")
             for i, row in pivots.items():
@@ -821,16 +1324,103 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                     _count(notes, "king_pivot_over_onset")
                 route[i] = KING_PIVOT_GROUP
                 in_loop.discard(i)
+                later_onsets.discard(i)
                 extra[i] = {"pivot": {
                     "category": row.get("failure_category"),
                     "confidence": row.get("confidence"),
                     "judge": row.get("judge_model"),
                     "prompt_hash": row.get("prompt_hash")}}
+        if recoverable:
+            _count(notes, "king_recoverable_rollouts")
+            for i, row in recoverable.items():
+                if route.get(i) in (KING_LOOP_GROUP, KING_PIVOT_GROUP):
+                    _count(notes, f"king_recoverable_over_{route[i]}")
+                route[i] = KING_RECOVERABLE_GROUP
+                in_loop.discard(i)
+                extra[i] = {"recoverable": {
+                    "state_kind": row.get("state_kind"),
+                    "teacher_turns": row.get("teacher_turns"),
+                    "teacher_first_action_kind": row.get("teacher_first_action_kind"),
+                    # PR #13: "same_task" = the ACP same-task proxy (the teacher
+                    # solved the task, not necessarily from this state); the
+                    # pipeline caps it at RECOVERABLE_ACP_MAX_SHARE. Tagged so
+                    # the duel telemetry can compare proxy vs continuation rows.
+                    "proxy": row.get("proxy"),
+                    "timestamp": row.get("timestamp")}}
+                _count(notes, f"king_recoverable_proxy_{row.get('proxy') or 'continuation'}")
+        kind_stamp: dict[int, str] = {}     # turn -> duel-time action_kind
+        if want_tooluse and convs and main:
+            src = str(env.get("source") or "")
+            # (a) one-shot on a prose-answer prompt set: the king opened with a tool call.
+            repo = str((env.get("task") or {}).get("repo") or "")
+            if src in king_tooluse["prose_sources"] and repo in king_tooluse["prose_skip_repos"]:
+                _count(notes, "king_tooluse_skip_tool_call_label")
+            elif src in king_tooluse["prose_sources"] and first_reply_is_tool_call(convs, main, kind):
+                i = main[0]
+                if route.get(i) not in (KING_DONE_GROUP, KING_RECOVERABLE_GROUP):
+                    route[i] = KING_TOOLUSE_GROUP
+                    in_loop.discard(i); later_onsets.discard(i)
+                    extra[i] = {"tooluse": {"rule": "tool_call_on_prose_prompt"}}
+                    kind_stamp[i] = king_tooluse["kind"]
+                    _count(notes, "king_tooluse_one_shot")
+            # (b) persist on a tool source: the same tool call again after a
+            # bad observation (the king's own labels; no teacher involved).
+            if src in king_tooluse["tool_sources"]:
+                for j, lab in enumerate(loop_labels or []):
+                    i = main[j]
+                    if not lab.persist or route.get(i) in (KING_DONE_GROUP, KING_RECOVERABLE_GROUP):
+                        continue
+                    if not dialects.get("tool_call").actions(convs[i][-1]["content"]):
+                        continue
+                    route[i] = KING_TOOLUSE_GROUP
+                    in_loop.discard(i); later_onsets.discard(i)
+                    extra[i] = {"tooluse": {"rule": "persist_after_bad_obs", "prev_obs": lab.prev_obs}}
+                    kind_stamp[i] = king_tooluse["kind"]
+                    _count(notes, "king_tooluse_persist")
+        if want_pre and main_convs and len(main) >= 2:
+            final = main[-1]
+            if completion_kind(main_convs[-1][-1]["content"], kind) is not None:
+                for back in range(1, completion_pre["n_before"] + 1):
+                    j = len(main) - 1 - back
+                    if j < 0:
+                        break
+                    i = main[j]
+                    if i in route:
+                        # Lowest king precedence: never displaces an onset,
+                        # pivot, recoverable, tooluse or done state.
+                        continue
+                    route[i] = COMPLETION_PRE_GROUP
+                    in_loop.discard(i); later_onsets.discard(i)
+                    extra[i] = {"pre_finish": {"final_turn": int(final), "rank": back}}
+                    kind_stamp[i] = completion_pre["kind"]
+                    _count(notes, "completion_pre_states")
+        if done_route is not None:
+            if route.get(done_route) in (KING_RECOVERABLE_GROUP, KING_PIVOT_GROUP):
+                _count(notes, f"king_done_over_{route[done_route]}")
+            route[done_route] = KING_DONE_GROUP
+            in_loop.discard(done_route)
+            later_onsets.discard(done_route)
+            extra[done_route] = {"done": {"after_turn": int(done_route) - 1}}
+            kind_stamp[done_route] = king_done["kind"]
+        if one_reply_king and not any(g == KING_TOOLUSE_GROUP for g in route.values()):
+            # The state is the task prompt, which the teacher's own rollout
+            # already puts in D: nothing of this rollout enters a king group
+            # (king_tooluse is the exception: the prompt-with-tools IS the state).
+            _count(drops, "king_one_reply")
+            continue
         leak_exempt = frozenset(i for i, g in route.items() if cfgs[g]["leak_exempt"])
+        if leak_exempt_all:
+            # every reply index; convs may not have been built (no routing)
+            leak_exempt = frozenset(range(10_000))
+        # Turns scored under `text` may be recorded from a reply with no action
+        # in the policy dialect (the affine_sql king answers with a bare
+        # ```sql block; 26 of 28 refused king_done states, 2026-09-13).
+        text_replies = frozenset(i for i, k in kind_stamp.items() if k == dialects.TEXT_KIND)
         try:
             rec = build_view_record(env, baker=baker,
                                     generated_at=env.get("stored_at"),
-                                    convs=convs, leak_exempt=leak_exempt)
+                                    convs=convs, leak_exempt=leak_exempt,
+                                    text_replies=text_replies)
         except (ToolParityError, TraceShapeError) as e:
             _count(drops, type(e).__name__)
             continue
@@ -839,18 +1429,40 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                 _count_leaked(route, convs, kind, leak_exempt, notes)
             _count(drops, "no_scorable_turn")
             continue
+        if kind_stamp:
+            # Duel-time kind per routed turn (Jacob 2026-09-13: whatever keeps
+            # the teacher's references parseable at the state). Stamped on
+            # the meta so the record, the index and the duel all see it.
+            # `text` needs a system message in the prefix (its mandate check);
+            # Terminus prefixes have none, so those keep the policy dialect.
+            for m in rec["turns"]:
+                k_new = kind_stamp.get(m["turn_idx"])
+                if not k_new or k_new == m["action_kind"]:
+                    continue
+                prefix = [{"role": nd["role"], "content": nd["content"]}
+                          for nd in node_path(rec["nodes"], int(m["node_id"]))[:-1]]
+                if not dialects.get(k_new).mandate_ok(prefix):
+                    _count(notes, f"{route[m['turn_idx']]}_kind_kept_{m['action_kind']}")
+                    continue
+                m["action_kind"] = k_new
+                _count(notes, f"{route[m['turn_idx']]}_kind_{k_new}")
         turns = view_turns(rec)
         present = {t["turn_idx"] for t in turns}
         if route and convs:
             _count_leaked({i: g for i, g in route.items() if i not in present},
                           convs, kind, leak_exempt, notes)
         rest = [t for t in turns if t["turn_idx"] not in route
-                and t["turn_idx"] not in in_loop]
+                and t["turn_idx"] not in in_loop and t["turn_idx"] not in later_onsets]
         routed = [t for t in turns if t["turn_idx"] in route]
-        n_in_loop = len(turns) - len(routed) - len(rest)
+        n_later = sum(1 for t in turns if t["turn_idx"] in later_onsets
+                      and t["turn_idx"] not in route)
+        n_in_loop = len(turns) - len(routed) - len(rest) - n_later
         if n_in_loop:
             _count(drops, "king_in_loop", n_in_loop)
-        kept, d = validate_turns(rest, panel=panel, allowed_kinds=allowed_kinds)
+        if n_later:
+            _count(drops, "king_later_onset", n_later)
+        kept, d = validate_turns(rest, panel=panel, allowed_kinds=allowed_kinds,
+                                 leak_check=not leak_exempt_all)
         for k, v in d.items():
             _count(drops, k, v)
         kept_routed: list[dict] = []
@@ -869,10 +1481,25 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             tid = f"{t['traj_id']}:{t['turn_idx']}"
             g = route.get(t["turn_idx"])
             if tid in published:
-                _count(drops, "already_published")
-                if g is not None:
-                    _count(notes, f"{g}_already_published")
-                continue
+                old_ns = (published_king_ns or {}).get(tid)
+                rank = {grp: i for i, grp in enumerate(ROUTED_GROUPS)}
+                if (g in KING_GROUPS and old_ns in KING_GROUPS and old_ns != g
+                        and rank.get(g, 99) < rank.get(old_ns, 99)
+                        and reclaimed is not None):
+                    reclaimed.setdefault(old_ns, set()).add(tid)
+                    _count(notes, f"{g}_reclaimed_from_{old_ns}")
+                elif (g in KING_GROUPS and old_ns in KING_GROUPS and tid in probe_text
+                        and reclaimed is not None):
+                    # Probe says the teacher answers in prose here: the row is
+                    # re-published with kind `text` (chunk records are
+                    # immutable, so a new record replaces the old row).
+                    reclaimed.setdefault(old_ns, set()).add(tid)
+                    _count(notes, f"{g}_restamp_reclaimed")
+                else:
+                    _count(drops, "already_published")
+                    if g is not None:
+                        _count(notes, f"{g}_already_published")
+                    continue
             if prefix_over_token_cap(t, baker):
                 _count(drops, "prefix_too_many_tokens")
                 continue
@@ -883,8 +1510,15 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             leaks = reference_leaks(t["prefix"], dialects.last_action(
                 t["reference_turn"], t["action_kind"]))
             _count(notes, f"{g}_leak_exempt" if leaks else f"{g}_not_leaking")
+        if is_king_fail and common["max_turns_per_rollout"] \
+                and len(keep_idx) > common["max_turns_per_rollout"]:
+            capped = cap_king_fail_turns(keep_idx, escapes, common["max_turns_per_rollout"])
+            _count(drops, "king_fail_cap", len(keep_idx) - len(capped))
+            keep_idx = capped
         metas = rec["turns"]
         rec["turns"] = [m for m in metas if m["turn_idx"] in keep_idx]
+        if is_king_fail:
+            rec["n_replies"] = len(main)
         if rec["turns"]:
             out.append(rec)
         for g in ROUTED_GROUPS:
@@ -990,7 +1624,14 @@ def load_math_filter() -> dict:
     cfg = raw.get("math_filter") or {}
     if not cfg or not cfg.get("enabled", True):
         return {}
-    return {"source": str(cfg.get("source") or "affine_math"),
+    sources = cfg.get("sources") or [cfg.get("source") or "affine_math"]
+    return {"source": str(sources[0]),
+            "sources": frozenset(str(x) for x in sources),
+            # P4 (2026-09-14): the teacher must have >= this many boxed answers
+            # that fit the duel's reference cap among its datagen samples;
+            # 0 disables. cap_chars approximates 1,792 tokens.
+            "min_boxed_within_cap": int(cfg.get("min_boxed_within_cap", 0) or 0),
+            "cap_chars": int(cfg.get("cap_chars", 7000) or 7000),
             "retire_published": bool(cfg.get("retire_published", True)),
             "min_surviving_strata": int(cfg.get("min_surviving_strata", 100) or 0),
             "teacher_prefix": str(cfg.get("teacher_prefix") or "teacher_"),
@@ -1014,41 +1655,65 @@ def boxed_answer(trace: dict) -> str | None:
     return " ".join(body.split())
 
 
+def final_reply_chars(trace: dict) -> int:
+    nodes = trace.get("nodes") or []
+    final = next((nd for nd in reversed(nodes)
+                  if nd.get("sampled") and (nd.get("message") or {}).get("role") == "assistant"),
+                 None)
+    if final is None:
+        return 0
+    m = final["message"] or {}
+    return len(message_text(m.get("content"))) + len(str(m.get("reasoning_content") or ""))
+
+
 def math_keep_set(pub: PublicCorpus, traces_manifest: dict, cfg: dict
                   ) -> tuple[set[str], dict]:
     """Problems (task sid) the proxy keeps, plus the survey."""
     per: dict[str, dict] = {}
     n_chunks = 0
     for c in traces_manifest["chunks"]:
-        if not c["key"].rsplit("/", 1)[-1].startswith(f"{cfg['source']}-"):
+        name = c["key"].rsplit("/", 1)[-1]
+        if not any(name.startswith(f"{src}-") for src in cfg["sources"]):
             continue
         n_chunks += 1
         for env in iter_jsonl_gz(pub.cached(c["key"], c["sha256"], gz_sha=True)):
-            if str(env.get("source") or "") != cfg["source"]:
+            if str(env.get("source") or "") not in cfg["sources"]:
                 continue
             sid = str((env.get("task") or {}).get("sid") or "")
             pid = str((env.get("policy") or {}).get("id") or "")
             outcome = rollout_outcome(env["trace"])
             row = per.setdefault(sid, {"answers": set(), "teacher_failed": False,
-                                       "king_failed": False, "n_teacher": 0, "n_king": 0})
+                                       "king_failed": False, "n_teacher": 0, "n_king": 0,
+                                       "n_boxed_in_cap": 0})
             if pid.startswith(cfg["teacher_prefix"]):
                 if outcome in ("solved", "failed"):
                     row["n_teacher"] += 1
                     ans = boxed_answer(env["trace"])
                     if ans is not None:
                         row["answers"].add(ans)
+                        if final_reply_chars(env["trace"]) <= cfg["cap_chars"]:
+                            row["n_boxed_in_cap"] += 1
                     row["teacher_failed"] |= outcome == "failed"
             elif pid.startswith(cfg["king_prefix"]):
                 if outcome in ("solved", "failed"):
                     row["n_king"] += 1
                     row["king_failed"] |= outcome == "failed"
-    keep = {sid for sid, r in per.items()
+    base = {sid for sid, r in per.items()
             if len(r["answers"]) >= 2 or r["teacher_failed"] or r["king_failed"]}
-    stats = {"chunks": n_chunks, "problems": len(per), "kept": len(keep),
+    # In-cap rule (P4): the teacher must box within the duel cap on at least
+    # min(min_boxed_within_cap, its sample count) of its samples -- most
+    # problems have a single teacher sample, so "2 of 1" cannot be asked.
+    def in_cap_ok(r: dict) -> bool:
+        need = min(cfg["min_boxed_within_cap"], max(1, r["n_teacher"]))
+        return r["n_boxed_in_cap"] >= need
+    keep = {sid for sid in base if in_cap_ok(per[sid])} if cfg["min_boxed_within_cap"] else base
+    stats = {"chunks": n_chunks, "problems": len(per), "kept": len(keep), "kept_base_rule": len(base),
+             "in_cap_ok": sum(in_cap_ok(r) for r in per.values()),
              "multi_sample": sum(r["n_teacher"] >= 2 for r in per.values()),
              "disagree": sum(len(r["answers"]) >= 2 for r in per.values()),
              "teacher_failed": sum(r["teacher_failed"] for r in per.values()),
              "king_failed": sum(r["king_failed"] for r in per.values())}
+    stats["_base_keep"] = base
     return keep, stats
 
 
@@ -1071,7 +1736,7 @@ def math_retire_plan(pub: PublicCorpus, live: dict | None, cfg: dict,
     retired_strata: set[str] = set()
     for tid, traj, src, stratum in zip(*(table.column(c).to_pylist()
                                           for c in ("turn_id", "traj_id", "source", "stratum"))):
-        if src != cfg["source"] or not str(stratum).startswith(f"{group}:"):
+        if src not in cfg["sources"] or not str(stratum).startswith(f"{group}:"):
             continue
         m = TRAJ_SHA8_RE.search(traj or "")
         if m and m.group(1) in keep_sha8:
@@ -1082,34 +1747,311 @@ def math_retire_plan(pub: PublicCorpus, live: dict | None, cfg: dict,
     return retire, surviving, retired_strata - surviving
 
 
-def pivot_readmit_plan(pub: PublicCorpus, live: dict | None, cfg: dict
-                       ) -> tuple[list[str], set[str], set[str]]:
-    """Retire-and-readmit (2026-09-12): admitted pivot turns that were
-    published under `king_fail:*` before the judge saw them. Returns (turn
-    ids to retire from the index, surviving king_fail strata, king_fail
-    strata lost). The caller removes those ids from `published` and
-    re-derives their chunks so derive_chunk readmits them as `king_pivot`;
-    a turn that is not readmitted in the same run stays in king_fail (its
-    id is dropped from the retire list). Pivots already under
-    `king_loop_onset:*` are left where they are."""
+def readmit_plan(pub: PublicCorpus, live: dict | None, cfg: dict,
+                 from_groups: tuple[str, ...]) -> dict[str, list[str]]:
+    """Retire-and-readmit (2026-09-12): side-table turns already published
+    under one of `from_groups` (`<group>:*` strata). Returns
+    {from_group: [turn ids]}. The caller removes those ids from `published`
+    and re-derives their chunks so derive_chunk readmits them under the
+    side-table's group; a turn not readmitted in the same run stays where
+    it is (its id is dropped from the retire list)."""
     admitted = {str(row.get("turn_id") or "")
                 for rows in cfg["table"].values() for row in rows.values()}
     table = index_table(pub, live, ["turn_id", "stratum"])
+    plan: dict[str, list[str]] = {g: [] for g in from_groups}
     if table is None:
-        return [], set(), set()
-    retire: list[str] = []
-    surviving: set[str] = set()
-    lost: set[str] = set()
+        return plan
     for tid, stratum in zip(table.column("turn_id").to_pylist(),
                             table.column("stratum").to_pylist()):
-        if not str(stratum).startswith("king_fail:"):
+        ns = str(stratum).split(":")[0]
+        if ns in plan and tid in admitted:
+            plan[ns].append(tid)
+    return plan
+
+
+def strata_after_retire(pub: PublicCorpus, live: dict | None, group: str,
+                        retire: set[str]) -> set[str]:
+    """Strata of `group:*` index rows that keep at least one turn."""
+    table = index_table(pub, live, ["turn_id", "stratum"])
+    out: set[str] = set()
+    if table is None:
+        return out
+    for tid, stratum in zip(table.column("turn_id").to_pylist(),
+                            table.column("stratum").to_pylist()):
+        if str(stratum).startswith(f"{group}:") and tid not in retire:
+            out.add(budget_stratum(group, str(stratum), tid))
+    return out
+
+
+def king_fail_source_retire(pub: PublicCorpus, live: dict | None,
+                            excluded: frozenset[str]) -> list[str]:
+    """Published `king_fail:*` rows whose source the king groups now exclude
+    (wiki / agent / math and the one-reply general sources): the state is
+    the task prompt or an R-dead tool loop (king-data spec §1.2)."""
+    table = index_table(pub, live, ["turn_id", "stratum", "source"])
+    if table is None:
+        return []
+    return [tid for tid, stratum, src in zip(table.column("turn_id").to_pylist(),
+                                              table.column("stratum").to_pylist(),
+                                              table.column("source").to_pylist())
+            if str(stratum).startswith("king_fail:") and str(src) in excluded]
+
+
+def later_onset_retire(pub: PublicCorpus, live: dict | None) -> list[str]:
+    """Published `king_loop_onset:*` rows that are not the FIRST onset of
+    their rollout (lowest turn_idx per traj_id): near-duplicate prefixes of
+    the same wreck (king-data spec §1.3)."""
+    table = index_table(pub, live, ["turn_id", "traj_id", "turn_idx", "stratum"])
+    if table is None:
+        return []
+    first: dict[str, tuple[int, str]] = {}
+    rows: list[tuple[str, str, int]] = []
+    for tid, traj, tix, stratum in zip(*(table.column(c).to_pylist()
+                                         for c in ("turn_id", "traj_id", "turn_idx", "stratum"))):
+        if not str(stratum).startswith("king_loop_onset:"):
             continue
-        if tid in admitted:
-            retire.append(tid)
-            lost.add(stratum)
+        rows.append((tid, traj, int(tix)))
+        if traj not in first or int(tix) < first[traj][0]:
+            first[traj] = (int(tix), tid)
+    return [tid for tid, traj, _ in rows if first[traj][1] != tid]
+
+
+# -- king_coached (coached-teacher recovery, 2026-09-15) ------------------------
+def load_king_coached() -> dict:
+    """[king_coached] (docs/coached-recovery.md; Jacob 2026-09-15, lever 1/2):
+    the teacher's HINT-FREE continuation from a king failure state where the
+    coach was DECISIVE -- the coached teacher solved >= `min_coached_solved`
+    of 3 continuations while the plain teacher solved <= `max_plain_solved`
+    of 3. Envelopes (datagen schema + a top-level `privileged` block with the
+    coach's per-turn notes) sit in `envelopes_dir`; the fold drops the
+    `privileged` block before deriving, so the notes never reach a prefix
+    (Jacob's rule: miners do not see hints). The trace itself is hint-free,
+    so the prefixes are what a miner would see: king trajectory + teacher
+    continuation. Stratum = king_coached:<sha256(king state id) % n>; the
+    teacher-probe gate applies like every king group."""
+    cfg = _group_cfg(KING_COACHED_GROUP)
+    if cfg:
+        raw = cfg["raw"]
+        cfg["leak_exempt"] = True
+        cfg["envelopes_dir"] = REPO / str(raw.get("envelopes_dir") or "affine/state/king_coached")
+        # Handoff (internal/hints/coached/king-coached-handoff.md): fold iff
+        # origin.hint_decisive (coached solved >= 1 of 3, plain 0 of >= 2);
+        # the thresholds below are the fallback when the flag is absent.
+        cfg["rule"] = str(raw.get("rule") or "hint_decisive")
+        cfg["min_coached_solved"] = int(raw.get("min_coached_solved", 1) or 1)
+        cfg["max_plain_solved"] = int(raw.get("max_plain_solved", 0) or 0)
+        cfg["policy_prefix"] = str(raw.get("policy_prefix") or "coached_")
+        ids = raw.get("envelope_ids")
+        cfg["envelope_ids"] = None
+        if ids and (REPO / str(ids)).exists():
+            cfg["envelope_ids"] = {l.strip() for l in (REPO / str(ids)).read_text().split("\n") if l.strip()}
+    return cfg
+
+
+def coached_decisive(env: dict, cfg: dict) -> bool:
+    o = ((env.get("privileged") or {}).get("origin") or {})
+    pid = str((env.get("policy") or {}).get("id") or "")
+    if not pid.startswith(cfg["policy_prefix"]) or not o:
+        return False
+    if cfg["envelope_ids"] is not None and str(env.get("rollout_id")) not in cfg["envelope_ids"]:
+        return False
+    if cfg["rule"] == "hint_decisive" and "hint_decisive" in o:
+        if not bool(o["hint_decisive"]):
+            return False
+    elif cfg["rule"] == "hint_decisive_strict" and "hint_decisive_strict" in o:
+        if not bool(o["hint_decisive_strict"]):
+            return False
+    else:
+        if int(o.get("coached_n_solved") or 0) < cfg["min_coached_solved"]:
+            return False
+        if int(o.get("plain_n_solved") or 0) > cfg["max_plain_solved"] or int(o.get("plain_n") or 0) < 2:
+            return False
+    return rollout_outcome(env["trace"]) == "solved"
+
+
+def derive_coached(cfg: dict, baker: ToolBaker, panel, allowed_kinds, published: set[str],
+                   drops: dict[str, int], notes: dict[str, int], folded: set[str]) -> list[dict]:
+    """View records for the decisive coached continuations: filter, strip
+    `privileged`, derive like a trace chunk, route to king_coached."""
+    out: list[dict] = []
+    files = sorted(cfg["envelopes_dir"].glob("*.jsonl.gz")) if cfg["envelopes_dir"].exists() else []
+    tmp_dir = WORK_DIR / "coached"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    for f in files:
+        kept_envs: list[tuple[dict, dict]] = []
+        n_all = 0
+        with gzip.open(f, "rt", encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                env = json.loads(line)
+                n_all += 1
+                if str(env.get("rollout_id")) in folded:
+                    continue      # derived by an earlier fold (published or in the carryover)
+                if not coached_decisive(env, cfg):
+                    _count(notes, "king_coached_not_decisive")
+                    continue
+                origin = dict(env["privileged"]["origin"])
+                env.pop("privileged", None)          # never in a record or prefix
+                kept_envs.append((env, origin))
+        if not kept_envs:
+            log(f"king_coached: {f.name}: 0 of {n_all} envelopes decisive")
+            continue
+        stripped = tmp_dir / f.name
+        with gzip.open(stripped, "wt", encoding="utf-8") as fh:
+            for env, _ in kept_envs:
+                fh.write(json.dumps(env, ensure_ascii=False) + "\n")
+        by_rid = {str(env.get("rollout_id")): origin for env, origin in kept_envs}
+        recs = derive_chunk(stripped, baker, panel, allowed_kinds, published, drops,
+                            notes=notes, leak_exempt_all=True)
+        n = cfg["strata_buckets"]
+        for rec in recs:
+            origin = by_rid.get(str(rec.get("rollout_id")), {})
+            sid = str(origin.get("state_id") or rec.get("instance_id") or rec["traj_id"])
+            h = int(hashlib.sha256(sid.encode("utf-8")).hexdigest()[:8], 16)
+            rec["fold_group"] = KING_COACHED_GROUP
+            rec["stratum"] = f"{KING_COACHED_GROUP}:{h % n:04d}"
+            rec["coached"] = {"state_id": sid, "king_digest": origin.get("king_digest"),
+                              "king_turn_idx": origin.get("king_turn_idx"),
+                              "state_kind": origin.get("state_kind"),
+                              "coached_n_solved": origin.get("coached_n_solved"),
+                              "plain_n_solved": origin.get("plain_n_solved"),
+                              "hint_decisive_strict": origin.get("hint_decisive_strict"),
+                              "harness": (rec.get("policy") or {}).get("harness")}
+            for m in rec["turns"]:
+                m["stratum"] = rec["stratum"]
+                published.add(f"{rec['traj_id']}:{m['turn_idx']}")
+            _count(notes, "king_coached_rollouts")
+            _count(notes, "king_coached_turns", len(rec["turns"]))
+        folded.update(str(env.get("rollout_id")) for env, _ in kept_envs)
+        log(f"king_coached: {f.name}: {len(kept_envs)} of {n_all} envelopes decisive -> "
+            f"{len(recs)} records / {sum(len(r['turns']) for r in recs)} new turns "
+            f"({len({r['stratum'] for r in recs})} states)")
+        out.extend(recs)
+    return out
+
+
+# -- teacher probe gate (improvement loop P4, 2026-09-14) -----------------------
+# ~25 % of king-group strata were dead for every miner: the teacher itself
+# gave <= 1 parseable reference or forfeited there. The gate: a turn of a
+# king group enters D only with a probe row (ops/teacher_probe/probe.py:
+# 3 teacher samples at the prefix under the duel's cap and parser) showing
+# >= `min_valid` parsed actions that are not all identical. Turns without a
+# row are held (record deferred, turn written to pending.jsonl for the
+# probe job); failing turns are dropped (`probe_failed`); published king
+# rows with a failing probe are retired once.
+PROBE_STATE_DIR = REPO / "affine" / "state" / "teacher_probe"
+
+
+def load_teacher_probe() -> dict:
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("teacher_probe") or {}
+    if not raw or not raw.get("enabled", False):
+        return {}
+    path = REPO / str(raw.get("side_table") or "affine/state/teacher_probe/probes.jsonl")
+    rows: dict[str, dict] = {}
+    if path.exists():
+        for line in path.read_text().split("\n"):
+            if line.strip():
+                row = json.loads(line)
+                rows[str(row["turn_id"])] = row     # last row wins (re-probes)
+    return {"rows": rows, "path": str(path),
+            "groups": frozenset(str(g) for g in (raw.get("groups") or KING_GROUPS)),
+            "min_valid": int(raw.get("min_valid", 2) or 2),
+            "require_distinct": bool(raw.get("require_distinct", True)),
+            "retire_failed_published": bool(raw.get("retire_failed_published", True)),
+            "restamp_text": bool(raw.get("restamp_text", True)),
+            "pending_path": REPO / str(raw.get("pending") or "affine/state/teacher_probe/pending.jsonl")}
+
+
+def probe_verdict(cfg: dict, turn_id: str) -> str:
+    """pass | pass_text | fail | missing.
+    pass_text (Jacob's rule, 2026-09-14: select by king failure, label by
+    whatever keeps the teacher's references parseable): >= min_valid of the
+    teacher's samples are prose with no action in the turn's dialect and
+    not all identical -- the teacher answers / says "done" where the king
+    repeated a tool call. The turn is admitted with kind `text` instead of
+    dropped. Rows probed before the text fields existed with >= 2 prose
+    samples are `missing` (re-probed), not failed."""
+    row = cfg["rows"].get(turn_id)
+    if row is None:
+        return "missing"
+    n_valid = int(row.get("n_valid") or 0)
+    if n_valid >= cfg["min_valid"] and not (cfg["require_distinct"] and row.get("identical")):
+        return "pass"
+    if cfg["restamp_text"] and row.get("kind") != dialects.TEXT_KIND:
+        if "text_distinct" in row:
+            if int(row["text_valid"]) >= cfg["min_valid"] and \
+                    (int(row["text_distinct"]) >= 2 or not cfg["require_distinct"]):
+                return "pass_text"
+        elif sum(k == dialects.TEXT_KIND for k in (row.get("sample_kinds") or [])) >= cfg["min_valid"]:
+            return "missing"      # probed before the text fields existed
+    return "fail"
+
+
+def probe_gate(records: list[dict], cfg: dict, drops: dict[str, int],
+               src2grp: dict[str, str], mix: dict[str, float]
+               ) -> tuple[list[dict], list[dict], list[dict]]:
+    """(records ready for the mix, records held for probing, pending turns).
+    Runs after routing on new and carryover records alike; a record whose
+    turns all pass proceeds, failing turns are dropped, and a record with
+    any unprobed turn is held whole."""
+    ready: list[dict] = []
+    held: list[dict] = []
+    pending: list[dict] = []
+    for rec in records:
+        g = group_of(rec, src2grp, mix)
+        if g not in cfg["groups"]:
+            ready.append(rec)
+            continue
+        keep, missing = [], []
+        for m in rec["turns"]:
+            tid = f"{rec['traj_id']}:{m['turn_idx']}"
+            v = probe_verdict(cfg, tid)
+            if v == "pass_text":
+                prefix = [{"role": nd["role"], "content": nd["content"]}
+                          for nd in node_path(rec["nodes"], int(m["node_id"]))[:-1]]
+                if dialects.get(dialects.TEXT_KIND).mandate_ok(prefix):
+                    m["action_kind"] = dialects.TEXT_KIND
+                    _count(drops, f"probe_restamped_text_{g}")
+                    keep.append(m)
+                else:
+                    _count(drops, "probe_failed")
+                    _count(drops, f"probe_failed_{g}_text_mandate")
+            elif v == "pass":
+                keep.append(m)
+            elif v == "fail":
+                _count(drops, "probe_failed")
+                _count(drops, f"probe_failed_{g}")
+            else:
+                missing.append(m)
+        if missing:
+            for m in missing:
+                t = materialize_turn(rec, m)
+                pending.append({"turn_id": f"{rec['traj_id']}:{m['turn_idx']}", "group": g,
+                                "kind": m.get("action_kind") or rec.get("action_kind"),
+                                "prefix": t["prefix"]})
+            rec["turns"] = keep + missing
+            held.append(rec)
+            continue
+        if keep:
+            rec["turns"] = keep
+            ready.append(rec)
         else:
-            surviving.add(stratum)
-    return retire, surviving, lost - surviving
+            _count(drops, f"probe_emptied_{g}")
+    return ready, held, pending
+
+
+def failed_published(pub: PublicCorpus, live: dict | None, cfg: dict) -> dict[str, list[str]]:
+    """Published rows of the gated groups whose probe row fails: {group: [turn ids]}."""
+    table = index_table(pub, live, ["turn_id", "stratum"])
+    out: dict[str, list[str]] = {}
+    if table is None:
+        return out
+    for tid, stratum in zip(table.column("turn_id").to_pylist(), table.column("stratum").to_pylist()):
+        ns = str(stratum).split(":")[0]
+        if ns in cfg["groups"] and probe_verdict(cfg, tid) == "fail":
+            out.setdefault(ns, []).append(tid)
+    return out
 
 
 # -- composition guard ----------------------------------------------------------
@@ -1181,7 +2123,13 @@ def merge_index(pack: PackResult, publisher: CorpusPublisher,
         log(f"index: retired {prev_table.num_rows - kept.num_rows} of "
             f"{len(retire_turn_ids)} listed turn rows from the previous index")
         prev_table = kept
-    merged = pa.concat_tables([prev_table, pq.read_table(pack.index_path)])
+    new_table = pq.read_table(pack.index_path)
+    if STRATA_BUDGET:
+        prev_table = apply_budget_table(prev_table, SRC2GRP_GLOBAL, STRATA_BUDGET)
+        new_table = apply_budget_table(new_table, SRC2GRP_GLOBAL, STRATA_BUDGET)
+    elif "stratum_src" in prev_table.column_names and "stratum_src" not in new_table.column_names:
+        new_table = new_table.append_column("stratum_src", new_table.column("stratum"))
+    merged = pa.concat_tables([prev_table, new_table], promote_options="default")
     merged_path = pack.index_path.with_name(f"turns_{epoch:04d}_merged.parquet")
     pq.write_table(merged, merged_path, compression="zstd")
     pack.index_path = merged_path
@@ -1212,6 +2160,11 @@ def publish_pending(state: dict, publisher: CorpusPublisher,
              "allowed_action_kinds": pending["allowed_kinds"]}
     if legacy_sha:
         extra["legacy_turns_manifest_sha256"] = legacy_sha
+    if pending.get("curriculum_block"):
+        # Adaptive curriculum stamp (plan §2.3 / §3.4; evalsrv reads it into
+        # slice.curriculum_version). manifest_sha256 = the manifest the
+        # weights were computed AGAINST.
+        extra["curriculum"] = pending["curriculum_block"]
     return publisher.publish_revision(
         pack, epoch=epoch, view_spec=VIEW_SPEC, prev_manifest=prev_manifest,
         prev_shards=prev_shards, extra=extra)
@@ -1239,7 +2192,18 @@ def finalize(state: dict, manifest: dict, mhash: str) -> None:
         "strata": {g: len(v) for g, v in state["group_strata"].items()},
         "init": bool(pending.get("init")),
         "n_retired": len(pending.get("retire_turn_ids") or []),
+        "recurrence": pending.get("recurrence"),
+        "budget_migrated": bool(pending.get("budget_migrated")),
+        "strata_raw_before_budget": pending.get("strata_raw_before_budget"),
+        "recurrence_before_budget": pending.get("recurrence_before_budget"),
+        "curriculum_line": pending.get("curriculum_line"),
     }
+    if pending.get("coached_folded") is not None:
+        state["coached_folded"] = pending["coached_folded"]
+    if pending.get("budget_signature"):
+        state["strata_budget_signature"] = pending["budget_signature"]
+        state.pop("group_strata_raw_before_budget", None)
+        state.pop("recurrence_before_budget", None)
     state["history"].append({
         "epoch": int(pending["epoch"]), "n_turns": int(pending["n_turns"]),
         "n_chunks": len(pending["folded_chunks"]),
@@ -1248,6 +2212,27 @@ def finalize(state: dict, manifest: dict, mhash: str) -> None:
     })
     state["pending"] = None
     save_state(state)
+
+
+def budget_note(info: dict) -> str:
+    rec = info.get("recurrence")
+    if not rec:
+        return ""
+    out = ""
+    if info.get("budget_migrated") and info.get("strata_raw_before_budget"):
+        raw = info["strata_raw_before_budget"]; tr = sum(raw.values()) or 1
+        top = sorted(raw.items(), key=lambda kv: -kv[1])[:6]
+        out += ("**Strata budget (phase 9, operator directive 2026-09-14):** slice re-weighted toward "
+                "the king's failure states (fixed buckets for teacher groups, up to 3 turns per task "
+                "for king groups; no turn left D). Before: " + ", ".join(
+                    f"{k} {100 * v / tr:.0f}%" for k, v in top) + ", ...\n")
+    before = info.get("recurrence_before_budget")
+    out += (f"Simulated per-duel recurrence: {100 * rec['turn_overlap']:.1f}% turn ids / "
+            f"{100 * rec['rollout_overlap']:.1f}% rollouts shared between two duels"
+            + (f" (before {100 * before['turn_overlap']:.1f}% / {100 * before['rollout_overlap']:.1f}%)"
+               if before else "")
+            + " -- RT-6 watch item.\n")
+    return out
 
 
 def announce(state: dict, public_base: str) -> None:
@@ -1271,9 +2256,10 @@ def announce(state: dict, public_base: str) -> None:
         f"{dialects_line}; by group: {groups_line}.\n"
         f"Slice composition (share of strata = share of every duel slice): "
         f"{strata_line}.\n"
-        + (f"Retired from the index: {info['n_retired']:,} math turns of problems the "
-           "teacher answers deterministically (chunks unchanged; see llms.txt).\n"
+        + (f"Retired from the index: {info['n_retired']:,} turns (chunks unchanged; see llms.txt).\n"
            if info.get("n_retired") else "")
+        + budget_note(info)
+        + (f"{info['curriculum_line']}\n" if info.get("curriculum_line") else "")
         + "\n"
         f"- corpus_epoch: **{epoch}**\n"
         f"- schema_version: **3** (view `{VIEW_SPEC}`: one record per rollout "
@@ -1289,12 +2275,16 @@ def announce(state: dict, public_base: str) -> None:
         "chunk objects you need. Layout: https://affine.io/llms.txt. Eval "
         "pods pick the new manifest up automatically."
     )
+    if len(content) > 1990:
+        # Discord caps a message at 2,000 characters; keep the head (the
+        # numbers) and drop the tail (the layout boilerplate) rather than fail.
+        content = content[:1980].rsplit("\n", 1)[0] + "\n…"
     r = httpx.post(
         f"https://discord.com/api/v10/channels/{DISCORD_CHANNEL_ID}/messages",
         headers={"Authorization": f"Bot {env_value('DISCORD_BOT_TOKEN_ARBOS_BITTENSOR')}"},
         json={"content": content}, timeout=30)
     if r.status_code >= 300:
-        log(f"announce failed (HTTP {r.status_code}); will retry next cycle")
+        log(f"announce failed (HTTP {r.status_code}: {r.text[:200]}); will retry next cycle")
         return
     mid = r.json().get("id")
     log(f"announced epoch {epoch}: https://discord.com/channels/"
@@ -1484,15 +2474,23 @@ def main() -> None:
     mix, src2grp, lang_mix, buckets = load_mix(ignore_fold_mix=args.ignore_fold_mix)
     routed = {KING_LOOP_GROUP: load_king_loop_onset(),
               KING_PIVOT_GROUP: load_king_pivot(),
-              COMPLETION_GROUP: load_completion()}
+              KING_RECOVERABLE_GROUP: load_king_recoverable(),
+              KING_DONE_GROUP: load_king_done(),
+              KING_TOOLUSE_GROUP: load_king_tooluse(),
+              COMPLETION_GROUP: load_completion(),
+              COMPLETION_PRE_GROUP: load_completion_pre()}
+    king = load_king_fail()
+    log(f"king_common: {load_king_common()}")
     for g, cfg in routed.items():
         if cfg and mix.get(g, 0.0) <= 0:
             # Fail closed: group_of would file the routed records under coding.
             fatal(f"[{g}] is configured but the fold mix has no {g} share")
         shown = {k: v for k, v in (cfg or {}).items() if k not in ("raw", "table")}
         log(f"{g}: {'off' if not cfg else shown}")
-    king_loop, king_pivot, completion = (routed[g] for g in
-                                         (KING_LOOP_GROUP, KING_PIVOT_GROUP, COMPLETION_GROUP))
+    king_loop, king_pivot, completion, king_recoverable, king_done, king_tooluse, completion_pre = (
+        routed[g] for g in (KING_LOOP_GROUP, KING_PIVOT_GROUP, COMPLETION_GROUP,
+                            KING_RECOVERABLE_GROUP, KING_DONE_GROUP, KING_TOOLUSE_GROUP,
+                            COMPLETION_PRE_GROUP))
     if completion:
         # A group the fold mix holds at 0 contributes nothing to D -- not
         # even its finals (env wave 1: `general` = 0.0 until the operator
@@ -1501,21 +2499,42 @@ def main() -> None:
         completion["exclude_sources"] = completion["exclude_sources"] | zero
         log(f"{COMPLETION_GROUP}: excluding sources {sorted(completion['exclude_sources'])} "
             f"(config + zero-share groups); min_replies {completion['min_replies']}")
-    if king_pivot:
-        log(f"{KING_PIVOT_GROUP}: {king_pivot['n_rows']} side-table rows in "
-            f"{king_pivot['n_files']} file(s) -> admitted pivots on "
-            f"{len(king_pivot['table'])} rollouts / "
-            f"{sum(len(v) for v in king_pivot['table'].values())} turns")
+    for g, cfg in ((KING_PIVOT_GROUP, king_pivot), (KING_RECOVERABLE_GROUP, king_recoverable)):
+        if cfg:
+            log(f"{g}: {cfg['n_rows']} side-table rows in {cfg['n_files']} file(s) -> "
+                f"admitted on {len(cfg['table'])} rollouts / "
+                f"{sum(len(v) for v in cfg['table'].values())} turns")
 
-    pivot_retire: list[str] = []
-    kf_surviving: set[str] = set()
-    kf_lost: set[str] = set()
-    if king_pivot and king_pivot.get("readmit_published"):
-        pivot_retire, kf_surviving, kf_lost = pivot_readmit_plan(pub, live, king_pivot)
-        log(f"{KING_PIVOT_GROUP}: readmit -- {len(pivot_retire)} admitted pivot turns are "
-            f"published under king_fail; unpublishing them for this run "
-            f"({len(kf_lost)} king_fail strata would empty)")
-        published -= set(pivot_retire)
+    # Retire-and-readmit plans: side-table groups whose turns were published
+    # under another king group before the side-table existed.
+    readmit_from = {KING_PIVOT_GROUP: ("king_fail",),
+                    KING_RECOVERABLE_GROUP: ("king_fail", KING_LOOP_GROUP, KING_PIVOT_GROUP)}
+    readmits: dict[str, dict[str, list[str]]] = {}
+    for g, cfg in ((KING_PIVOT_GROUP, king_pivot), (KING_RECOVERABLE_GROUP, king_recoverable)):
+        if cfg and cfg.get("readmit_published"):
+            readmits[g] = readmit_plan(pub, live, cfg, readmit_from[g])
+            ids = {t for v in readmits[g].values() for t in v}
+            log(f"{g}: readmit -- {len(ids)} admitted turns are published under "
+                f"{ {k: len(v) for k, v in readmits[g].items()} }; unpublishing them for this run")
+            published -= ids
+
+    # King rows in the live index by group: lets a higher-precedence king
+    # group reclaim a turn published under a lower one (king_done over
+    # king_fail, ...); the old row is retired in this revision.
+    published_king_ns: dict[str, str] = {}
+    kt = index_table(pub, live, ["turn_id", "stratum"])
+    if kt is not None:
+        for tid, stratum in zip(kt.column("turn_id").to_pylist(),
+                                kt.column("stratum").to_pylist()):
+            ns = str(stratum).split(":")[0]
+            if ns in KING_GROUPS:
+                published_king_ns[tid] = ns
+    reclaimed: dict[str, set[str]] = {}
+    probe_early = load_teacher_probe()
+    probe_text = frozenset(tid for tid in (probe_early.get("rows") or {})
+                           if probe_verdict(probe_early, tid) == "pass_text") if probe_early else frozenset()
+    if probe_text:
+        log(f"teacher probe: {len(probe_text)} turns pass as `text` (teacher answers in prose)")
 
     baker = ToolBaker.from_pretrained()
     panel = panel_keys()
@@ -1526,7 +2545,11 @@ def main() -> None:
         path = pub.cached(c["key"], c["sha256"], gz_sha=True)
         recs = derive_chunk(path, baker, panel, allowed, published, drops,
                             king_loop=king_loop, king_pivot=king_pivot,
-                            completion=completion, notes=notes)
+                            completion=completion, king_recoverable=king_recoverable,
+                            king_done=king_done, king_fail_cfg=king, notes=notes,
+                            published_king_ns=published_king_ns, reclaimed=reclaimed,
+                            probe_text=probe_text,
+                            king_tooluse=king_tooluse, completion_pre=completion_pre)
         for rec in recs:
             for m in rec["turns"]:
                 published.add(f"{rec['traj_id']}:{m['turn_idx']}")
@@ -1534,6 +2557,11 @@ def main() -> None:
         if i % 100 == 0 or i == len(unfolded):
             log(f"derived {i}/{len(unfolded)} chunks: {len(candidates)} rollouts, "
                 f"{sum(len(r['turns']) for r in candidates)} turns")
+    king_coached = load_king_coached()
+    coached_folded: set[str] = set(state.get("coached_folded") or [])
+    if king_coached:
+        candidates.extend(derive_coached(king_coached, baker, panel, allowed, published, drops, notes,
+                                         coached_folded))
     log(f"drops: {drops or 'none'}")
     if _TOKEN_CACHE is not None:
         log(f"prefix token cache: {_TOKEN_CACHE.hits} hits / {_TOKEN_CACHE.misses} misses")
@@ -1551,6 +2579,37 @@ def main() -> None:
             f"{notes.get(f'{KING_PIVOT_GROUP}_already_published', 0)} already published "
             f"(stay in their current group); {notes.get('king_pivot_over_onset', 0)} "
             f"took precedence over an onset")
+    if king_done:
+        log(f"king done: {notes.get('king_done_states', 0)} done-blind states; admitted "
+            f"{notes.get(f'{KING_DONE_GROUP}_leak_exempt', 0)} leak-exempt + "
+            f"{notes.get(f'{KING_DONE_GROUP}_not_leaking', 0)} not leaking; "
+            f"{notes.get(f'{KING_DONE_GROUP}_already_published', 0)} already published; "
+            f"over onset {notes.get('king_done_over_onset', 0)} / recoverable "
+            f"{notes.get(f'king_done_over_{KING_RECOVERABLE_GROUP}', 0)} / pivot "
+            f"{notes.get(f'king_done_over_{KING_PIVOT_GROUP}', 0)}; later onsets dropped "
+            f"{drops.get('king_later_onset', 0)} (labels {notes.get('king_later_onset_labels', 0)}); "
+            f"one-reply king rollouts dropped {drops.get('king_one_reply', 0)}; king_fail "
+            f"per-rollout cap dropped {drops.get('king_fail_cap', 0)} turns")
+    if king_tooluse:
+        log(f"king tooluse (king-selected): one-shot {notes.get('king_tooluse_one_shot', 0)} + "
+            f"persist {notes.get('king_tooluse_persist', 0)} states; kind stamped "
+            f"{ {k: v for k, v in notes.items() if k.startswith('king_tooluse_kind_')} }; admitted "
+            f"{notes.get(f'{KING_TOOLUSE_GROUP}_leak_exempt', 0) + notes.get(f'{KING_TOOLUSE_GROUP}_not_leaking', 0)}; "
+            f"already published {notes.get(f'{KING_TOOLUSE_GROUP}_already_published', 0)}")
+    if completion_pre:
+        log(f"completion_pre (king premature finish): {notes.get('completion_pre_states', 0)} states; "
+            f"kind stamped { {k: v for k, v in notes.items() if k.startswith('completion_pre_kind_')} }; admitted "
+            f"{notes.get(f'{COMPLETION_PRE_GROUP}_leak_exempt', 0) + notes.get(f'{COMPLETION_PRE_GROUP}_not_leaking', 0)}; "
+            f"already published {notes.get(f'{COMPLETION_PRE_GROUP}_already_published', 0)}")
+    if king_done:
+        log(f"king done kind stamped { {k: v for k, v in notes.items() if k.startswith('king_done_kind_')} }")
+    if king_recoverable:
+        log(f"king recoverable: {notes.get('king_recoverable_rollouts', 0)} rollouts with admitted "
+            f"states seen; admitted {notes.get(f'{KING_RECOVERABLE_GROUP}_leak_exempt', 0)} "
+            f"leak-exempt + {notes.get(f'{KING_RECOVERABLE_GROUP}_not_leaking', 0)} not leaking; "
+            f"{notes.get(f'{KING_RECOVERABLE_GROUP}_already_published', 0)} already published; "
+            f"took precedence over onset {notes.get(f'king_recoverable_over_{KING_LOOP_GROUP}', 0)} / "
+            f"pivot {notes.get(f'king_recoverable_over_{KING_PIVOT_GROUP}', 0)}")
     if completion:
         kinds = {k[len('completion_kind_'):]: v for k, v in notes.items()
                  if k.startswith('completion_kind_')}
@@ -1570,23 +2629,40 @@ def main() -> None:
     math_retired_strata: set[str] = set()
     if math_cfg:
         keep, mstats = math_keep_set(pub, traces_manifest, math_cfg)
+        base_keep = mstats.pop("_base_keep")
         log(f"math re-source: {mstats}")
         retire_ids, math_surviving, math_retired_strata = math_retire_plan(
             pub, live, math_cfg, keep, src2grp.get(math_cfg["source"], DEFAULT_GROUP))
-        cand_math = [r for r in candidates if str(r.get("source") or "") == math_cfg["source"]]
+        cand_math = [r for r in candidates if str(r.get("source") or "") in math_cfg["sources"]]
         cand_keep = [r for r in cand_math if str(r.get("instance_id")) in keep]
         # Survival = strata the kept published turns hold + what kept
         # candidates would open (bucket assignment happens below; recompute
         # the bucket here from the source's setting).
-        n_b, off = buckets.get(math_cfg["source"], (0, 0))
-        grp = src2grp.get(math_cfg["source"], DEFAULT_GROUP)
-        cand_strata = {f"{grp}:{off + int(hashlib.sha256(str(r['instance_id']).encode()).hexdigest()[:8], 16) % n_b:04d}"
-                       for r in cand_keep} if n_b else set()
+        cand_strata: set[str] = set()
+        for r in cand_keep:
+            n_b, off = buckets.get(str(r.get("source") or ""), (0, 0))
+            if n_b:
+                grp = src2grp.get(str(r.get("source") or ""), DEFAULT_GROUP)
+                h = int(hashlib.sha256(str(r["instance_id"]).encode()).hexdigest()[:8], 16)
+                cand_strata.add(f"{grp}:{off + h % n_b:04d}")
         surviving_total = len(math_surviving | cand_strata)
         log(f"math re-source: published math turns {len(retire_ids) + 0} to retire, "
             f"surviving published strata {len(math_surviving)}, retired strata "
             f"{len(math_retired_strata)}; candidates {len(cand_math)} -> kept {len(cand_keep)}; "
             f"surviving strata incl. candidates {surviving_total}")
+        if surviving_total < math_cfg["min_surviving_strata"] and keep != base_keep:
+            # The in-cap rule alone would empty the group: fall back to the
+            # phase-3 proxy (disagreement / failure), never to "no filter".
+            log(f"math re-source: only {surviving_total} strata would survive the in-cap rule "
+                f"(< {math_cfg['min_surviving_strata']}); falling back to the base proxy")
+            keep = base_keep
+            retire_ids, math_surviving, math_retired_strata = math_retire_plan(
+                pub, live, math_cfg, keep, src2grp.get(math_cfg["source"], DEFAULT_GROUP))
+            cand_keep = [r for r in cand_math if str(r.get("instance_id")) in keep]
+            surviving_total = len(math_surviving | {
+                f"{src2grp.get(str(r.get('source') or ''), DEFAULT_GROUP)}:{buckets.get(str(r.get('source') or ''), (0, 0))[1] + int(hashlib.sha256(str(r['instance_id']).encode()).hexdigest()[:8], 16) % buckets.get(str(r.get('source') or ''), (1, 0))[0]:04d}"
+                for r in cand_keep if buckets.get(str(r.get("source") or ""), (0, 0))[0]})
+            log(f"math re-source (base proxy): retire {len(retire_ids)}, surviving strata {surviving_total}")
         if surviving_total < math_cfg["min_surviving_strata"]:
             log(f"math re-source: only {surviving_total} strata would survive "
                 f"(< {math_cfg['min_surviving_strata']}); keeping the old math pool")
@@ -1595,7 +2671,7 @@ def main() -> None:
             n0 = len(candidates)
             keep_ids = {id(r) for r in cand_keep}
             candidates = [r for r in candidates
-                          if str(r.get("source") or "") != math_cfg["source"] or id(r) in keep_ids]
+                          if str(r.get("source") or "") not in math_cfg["sources"] or id(r) in keep_ids]
             _count(drops, "math_deterministic", n0 - len(candidates))
             if not math_cfg["retire_published"]:
                 retire_ids, math_surviving, math_retired_strata = [], set(), set()
@@ -1604,7 +2680,6 @@ def main() -> None:
         f"({ {k: (n if not off else f'{n}@{off}') for k, (n, off) in buckets.items() if n} })")
     # King seat: after the source buckets so `king_fail:NNNN` wins for king
     # rollouts on bucketed sources (math / tool_use) too.
-    king = load_king_fail()
     n_before = len(candidates)
     king_drops: dict[str, int] = {}
     candidates = route_king_fail(candidates, king, king_drops)
@@ -1620,33 +2695,121 @@ def main() -> None:
         log(f"routed groups: dropped {n_before - len(candidates)} carryover records "
             f"from excluded sources")
     stamped = stamp_routed_groups(candidates, routed)
-    if pivot_retire:
+    extra_retire: dict[str, set[str]] = {}   # from_group -> retired ids
+    # Reclaimed turns: admitted above under a higher-precedence king group;
+    # retire their old rows (only those actually kept in a candidate record).
+    kept_now = {f"{r['traj_id']}:{m['turn_idx']}" for r in candidates
+                if r.get("fold_group") in KING_GROUPS for m in r["turns"]}
+    for old_ns, ids in reclaimed.items():
+        ok = {t for t in ids if t in kept_now}
+        extra_retire.setdefault(old_ns, set()).update(ok)
+        log(f"{old_ns}: {len(ok)} published rows reclaimed by higher-precedence king groups")
+    common = king.get("common") or load_king_common()
+    if common.get("retire_excluded_published") and king:
+        ids = king_fail_source_retire(pub, live, king["exclude_sources"])
+        extra_retire.setdefault("king_fail", set()).update(ids)
+        log(f"king_fail: retiring {len(ids)} published rows from excluded sources "
+            f"{sorted(king['exclude_sources'])}")
+    if common.get("retire_later_onsets"):
+        ids = later_onset_retire(pub, live)
+        extra_retire.setdefault(KING_LOOP_GROUP, set()).update(ids)
+        log(f"{KING_LOOP_GROUP}: retiring {len(ids)} published later-onset rows (first onset per rollout kept)")
+    for g, plan in readmits.items():
         readmitted = {f"{r['traj_id']}:{m['turn_idx']}" for r in candidates
-                      if r.get("fold_group") == KING_PIVOT_GROUP for m in r["turns"]}
-        missing = [t for t in pivot_retire if t not in readmitted]
-        if missing:
-            # Not re-derived in this run (chunk not listed) or refused: keep
-            # them in king_fail rather than lose them; redo the strata math.
-            log(f"{KING_PIVOT_GROUP}: {len(missing)} retire candidates were not readmitted "
-                f"as king_pivot in this run -> they stay in king_fail")
-            pivot_retire = [t for t in pivot_retire if t in readmitted]
-            rs = set(pivot_retire)
-            table = index_table(pub, live, ["turn_id", "stratum"])
-            kf_surviving, lost = set(), set()
-            for tid, stratum in zip(table.column("turn_id").to_pylist(),
-                                    table.column("stratum").to_pylist()):
-                if str(stratum).startswith("king_fail:"):
-                    (lost if tid in rs else kf_surviving).add(stratum)
-            kf_lost = lost - kf_surviving
-        log(f"{KING_PIVOT_GROUP}: retiring {len(pivot_retire)} king_fail index rows, "
-            f"readmitted as king_pivot; king_fail strata {len(kf_surviving)} survive, "
-            f"{len(kf_lost)} empty")
-    for g in ROUTED_GROUPS:
-        if not routed[g]:
-            continue
-        recs_g = [r for r in candidates if r.get("fold_group") == g]
-        log(f"{g}: {stamped.get(g, 0)} records ({sum(len(r['turns']) for r in recs_g)} "
-            f"turns, {len({r['stratum'] for r in recs_g})} strata)")
+                      if r.get("fold_group") == g for m in r["turns"]}
+        n_missing = 0
+        for src_g, ids in plan.items():
+            kept = [t for t in ids if t in readmitted]
+            n_missing += len(ids) - len(kept)
+            extra_retire.setdefault(src_g, set()).update(kept)
+        if n_missing:
+            log(f"{g}: {n_missing} retire candidates were not readmitted in this run "
+                f"-> they stay where they are")
+        log(f"{g}: retiring {sum(len([t for t in ids if t in readmitted]) for ids in plan.values())} "
+            f"index rows, readmitted as {g}")
+    retire_surviving: dict[str, set[str]] = {}
+    for src_g, ids in extra_retire.items():
+        if ids:
+            retire_surviving[src_g] = strata_after_retire(pub, live, src_g, ids)
+            log(f"{src_g}: {len(retire_surviving[src_g])} strata survive the retirement")
+    pivot_retire = sorted(set().union(*extra_retire.values())) if extra_retire else []
+    budget_cfg = load_strata_budget()
+    STRATA_BUDGET.clear(); STRATA_BUDGET.update(budget_cfg)
+    SRC2GRP_GLOBAL.clear(); SRC2GRP_GLOBAL.update(src2grp)
+    static_mix = dict(mix)
+    curriculum = load_curriculum()
+    if curriculum["mode"] != "off":
+        log(curriculum_line(curriculum, static_mix))
+    if curriculum["mode"] == "apply" and not curriculum.get("error"):
+        # The published vector becomes the group targets; `m` the sub-strata
+        # count (changes the budget signature -> re-key + --allow-shift).
+        mix = {g: float(v) for g, v in curriculum["groups"].items() if float(v) > 0}
+        if curriculum["m"] and budget_cfg:
+            budget_cfg["sub_strata"].update({g: k for g, k in curriculum["m"].items() if k > 1})
+            budget_cfg["signature"] = json.dumps({"base": budget_cfg["signature"], "m": curriculum["m"]}, sort_keys=True)
+            STRATA_BUDGET.clear(); STRATA_BUDGET.update(budget_cfg)
+    budget_migrated = False
+    rename_only = False
+    if budget_cfg and state.get("strata_budget_signature") != budget_cfg["signature"]:
+        # A naming-version change alone (same [strata_budget] raw table) re-keys
+        # the index without moving any share: no guard, no announce note.
+        try:
+            old_sig = json.loads(state.get("strata_budget_signature") or "null")
+            old_raw = old_sig.get("raw", old_sig) if isinstance(old_sig, dict) else None
+            rename_only = old_raw is not None and old_raw == json.loads(budget_cfg["signature"])["raw"]
+        except (ValueError, TypeError):
+            rename_only = False
+        # First fold under this budget: re-key the mix state from the live
+        # index (the deliberate composition shift; --allow-shift required).
+        live_rows = live_rows_for_budget(pub, live)
+        if live_rows:
+            raw_groups: dict[str, set[str]] = {}
+            new_groups: dict[str, set[str]] = {}
+            for tid, s0, src in live_rows:
+                g = group_from_row(str(s0), str(src), src2grp)
+                raw_groups.setdefault(g, set()).add(str(s0))
+                new_groups.setdefault(g, set()).add(budget_stratum(g, str(s0), tid, budget_cfg))
+            tr = sum(len(v) for v in raw_groups.values()) or 1
+            tn = sum(len(v) for v in new_groups.values()) or 1
+            raw_rec = simulate_recurrence([(tid, s0) for tid, s0, _ in live_rows])
+            log(f"strata budget: per-duel recurrence BEFORE the budget {raw_rec}")
+            state["recurrence_before_budget"] = raw_rec
+            log("strata budget: live index re-keyed -- " + "; ".join(
+                f"{g} {len(raw_groups.get(g, ()))}->{len(new_groups.get(g, ()))} "
+                f"({100 * len(raw_groups.get(g, ())) / tr:.1f}% -> {100 * len(new_groups.get(g, ())) / tn:.1f}%)"
+                for g in sorted(new_groups, key=lambda k: -len(new_groups[k]))))
+            state["group_strata"] = {g: sorted(v) for g, v in new_groups.items()}
+            state["group_strata_raw_before_budget"] = {g: len(v) for g, v in raw_groups.items()}
+            budget_migrated = not rename_only
+            if rename_only:
+                log("strata budget: naming-version change only (shares unchanged); re-keyed without a guard")
+            if not args.allow_shift and not rename_only:
+                msg = "strata budget re-keys the live index (deliberate composition shift); rerun with --allow-shift"
+                if args.no_publish:
+                    log(f"GUARD (dry run): {msg}")
+                else:
+                    fatal(msg)
+    probe = load_teacher_probe()
+    probe_held: list[dict] = []
+    if probe:
+        candidates, probe_held, pending = probe_gate(candidates, probe, drops, src2grp, mix)
+        probe["pending_path"].parent.mkdir(parents=True, exist_ok=True)
+        probe["pending_path"].write_text("".join(json.dumps(p) + "\n" for p in pending))
+        log(f"teacher probe: {len(probe['rows'])} rows; held {len(probe_held)} records / "
+            f"{len(pending)} unprobed turns -> {probe['pending_path']}; "
+            f"dropped { {k: v for k, v in drops.items() if k.startswith('probe_')} }")
+        if probe["retire_failed_published"]:
+            fp = failed_published(pub, live, probe)
+            for src_g, ids in fp.items():
+                extra_retire.setdefault(src_g, set()).update(ids)
+            if fp:
+                log(f"teacher probe: retiring published rows that fail the probe "
+                    f"{ {k: len(v) for k, v in fp.items()} }")
+                for src_g in fp:
+                    retire_surviving[src_g] = strata_after_retire(
+                        pub, live, src_g, extra_retire[src_g])
+                    log(f"{src_g}: {len(retire_surviving[src_g])} strata survive the retirement")
+                pivot_retire = sorted(set().union(*extra_retire.values()))
     if not state.get("mix_seeded"):
         state["mix_seeded"] = True
         # Mix state is the set of slice strata each group / language bucket
@@ -1694,18 +2857,20 @@ def main() -> None:
     if retire_ids:
         # The retired math strata are gone from D; the cap sees what survives.
         have_groups[src2grp.get(math_cfg["source"], DEFAULT_GROUP)] = set(math_surviving)
-    if pivot_retire:
-        have_groups["king_fail"] = set(kf_surviving)
+    for src_g, surv in retire_surviving.items():
+        have_groups[src_g] = set(surv)
     budgets = {g: catchup_budget(state.get("group_strata") or {}, g)
                for g, v in mix.items() if v > 0}
     selected, deferred, group_added = cap_fill(
         candidates, lambda r: group_of(r, src2grp, mix), have_groups, mix,
         anchor_min_target=ANCHOR_MIN_TARGET, max_new=budgets)
-    deferred += lang_deferred
+    deferred += lang_deferred + probe_held
     log(f"mix: selected {len(selected)} rollouts (+{ {g: len(v) for g, v in group_added.items()} } "
         f"strata), deferred {len(deferred)}")
     # Language strata credited only for coding rollouts that made it through
     # the group stage too.
+    if lang_mix and STRATA_BUDGET.get("buckets", {}).get("coding"):
+        lang_mix = {}     # coding strata are fixed buckets; language mix by strata is moot
     if lang_mix:
         kept_ids = {id(r) for r in selected}
         lang_added = {}
@@ -1726,8 +2891,8 @@ def main() -> None:
     if retire_ids:
         mg = src2grp.get(math_cfg["source"], DEFAULT_GROUP)
         after[mg] = len(math_surviving)
-    if pivot_retire:
-        after["king_fail"] = len(kf_surviving)
+    for src_g, surv in retire_surviving.items():
+        after[src_g] = len(surv)
     for g, keys in group_added.items():
         after[g] = after.get(g, 0) + len(keys)
     rows = composition_table(before, after)
@@ -1743,13 +2908,42 @@ def main() -> None:
         else:
             fatal(msg)
 
+    recurrence = None
+    if STRATA_BUDGET:
+        live_rows = live_rows_for_budget(pub, live)
+        retired_now = set(retire_ids) | set(pivot_retire)
+        sim_rows: list[tuple[str, str]] = []
+        for tid, s0, src in live_rows:
+            if tid in retired_now:
+                continue
+            sim_rows.append((tid, budget_stratum(group_from_row(s0, src, src2grp), s0, tid)))
+        for r in selected:
+            g = group_of(r, src2grp, mix)
+            for m in r["turns"]:
+                tid = f"{r['traj_id']}:{m['turn_idx']}"
+                base = stratum_key({"stratum": m.get("stratum") or r.get("stratum"), "traj_id": r["traj_id"]})
+                sim_rows.append((tid, budget_stratum(g, base, tid)))
+        recurrence = simulate_recurrence(sim_rows)
+        per_duel = {g: round(1300 * a / (sum(after.values()) or 1), 1) for g, a in after.items()}
+        log(f"strata budget: simulated per-duel recurrence {recurrence}; projected turns per duel {per_duel}")
+        turns_by_group: dict[str, int] = {}
+        for tid, s0, src in live_rows:
+            if tid not in retired_now:
+                g = group_from_row(s0, src, src2grp)
+                turns_by_group[g] = turns_by_group.get(g, 0) + 1
+        for r in selected:
+            g = group_of(r, src2grp, mix)
+            turns_by_group[g] = turns_by_group.get(g, 0) + len(r["turns"])
+        write_fold_stats((int(live["corpus_epoch"]) if live else 0) + 1, after, turns_by_group, recurrence,
+                         curriculum, mix, sum(turns_by_group.values()), None if args.no_publish else publisher)
+
     n_new = sum(len(r["turns"]) for r in selected)
     stale = False
     if unfolded:
         newest = max(datetime.fromisoformat(c["created_at"]) for c in unfolded)
         stale = (datetime.now(timezone.utc) - newest).total_seconds() >= STALE_AFTER_S
     if n_new < MIN_NEW_TURNS and not stale and not args.force and not args.init \
-            and not retire_ids and not pivot_retire:
+            and not retire_ids and not pivot_retire and not budget_migrated:
         log(f"only {n_new} mix-eligible new turns (< {MIN_NEW_TURNS}); skipping")
         return
     if not selected and not legacy:
@@ -1780,6 +2974,14 @@ def main() -> None:
         "epoch": epoch, "pack_dir": str(pack.chunk_paths[0].parent),
         "n_turns": n_new, "group_turns": group_turns,
         "group_strata_added": {g: sorted(v) for g, v in group_added.items()},
+        "recurrence": recurrence,
+        "coached_folded": sorted(coached_folded),
+        "budget_signature": budget_cfg.get("signature") if budget_cfg else None,
+        "budget_migrated": budget_migrated,
+        "strata_raw_before_budget": state.get("group_strata_raw_before_budget") if budget_migrated else None,
+        "recurrence_before_budget": state.get("recurrence_before_budget") if budget_migrated else None,
+        "curriculum_line": curriculum_line(curriculum, static_mix) if curriculum["mode"] != "off" else None,
+        "curriculum_block": curriculum.get("manifest_block") if curriculum["mode"] != "off" and not curriculum.get("error") else None,
         "lang_strata_added": {b: sorted(v) for b, v in lang_added.items()},
         "by_dialect": by_dialect, "allowed_kinds": list(allowed),
         "folded_chunks": [c["key"] for c in unfolded], "init": bool(args.init),
@@ -1787,7 +2989,7 @@ def main() -> None:
         "group_strata_after_retire": {
             **({src2grp.get(math_cfg["source"], DEFAULT_GROUP): sorted(math_surviving)}
                if retire_ids else {}),
-            **({"king_fail": sorted(kf_surviving)} if pivot_retire else {}),
+            **{src_g: sorted(surv) for src_g, surv in retire_surviving.items()},
         },
     }
     save_state(state)

@@ -185,6 +185,7 @@ def build_view_record(envelope: dict, *, baker=None,
                       generated_at: str | None = None,
                       convs: list[list[dict]] | None = None,
                       leak_exempt: frozenset[int] | set[int] = frozenset(),
+                      text_replies: frozenset[int] | set[int] = frozenset(),
                       ) -> dict | None:
     """View record for one envelope, or None when nothing is scorable
     (errored rollout, no reply passes the slicer). Raises ToolParityError /
@@ -193,7 +194,12 @@ def build_view_record(envelope: dict, *, baker=None,
     `convs`: the trace's baked conversations when the caller already has
     them (the fold labels loops on them first); None derives them here.
     `leak_exempt`: reply indices sliced without the reference-leakage
-    predicate (the fold's `king_loop_onset` turns, see datagen.slicer)."""
+    predicate (the fold's `king_loop_onset` turns, see datagen.slicer).
+    `text_replies`: reply indices the fold scores under the `text` dialect
+    (king_done / king_tooluse / completion_pre, 2026-09-13): a reply with no
+    action in the policy's dialect (a bare ```sql block, a prose report
+    mid-rollout) is then recorded as a `text` turn instead of being
+    skipped, exactly like the final-reply fallback."""
     trace = envelope["trace"]
     task = envelope["task"]
     policy = envelope["policy"]
@@ -219,7 +225,7 @@ def build_view_record(envelope: dict, *, baker=None,
     traj_id = ""
     for i, conv in enumerate(convs):
         recs = slice_messages(conv, turn=(i, len(convs)),
-                              text_final=(i == final_idx),
+                              text_final=(i == final_idx or i in text_replies),
                               leak_check=i not in leak_exempt,
                               **common)
         if not recs:

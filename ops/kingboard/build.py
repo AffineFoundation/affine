@@ -87,6 +87,10 @@ try:
 except ImportError:
     def loads(b: bytes) -> dict:
         return json.loads(b)
+try:
+    import pyarrow.parquet as pq   # corpus index (dataset table); optional
+except ImportError:
+    pq = None
 
 log = logging.getLogger("kingboard.build")
 
@@ -96,6 +100,11 @@ STATE_DIR = Path(os.environ.get("KINGBOARD_STATE_DIR", HERE / "state"))
 DB_PATH = STATE_DIR / "rollouts.sqlite"
 STATS_PATH = STATE_DIR / "stats.json"
 MATRIX_PATH = STATE_DIR / "matrix.json"
+DATASET_TABLE_PATH = STATE_DIR / "dataset_table.json"
+INDEX_STATS_PATH = STATE_DIR / "index_stats.json"     # per (group, source) turns / strata of D, keyed by index sha
+CORPUS_MANIFEST_KEY = "corpus/manifest.json"
+FOLD_STATS_KEY = "corpus/fold_stats.json"
+CURRICULUM_KEY = "curriculum/latest.json"
 SOURCES_TOML = Path(os.environ.get(
     "KINGBOARD_SOURCES_TOML", REPO / "rollouts" / "rollouts" / "sources.toml"))
 VALIDATOR_STATE = Path(os.environ.get(
@@ -179,6 +188,13 @@ BENCH_SHORT = {
 }
 GROUP_ABBR = {"coding": "code", "terminal": "term", "math": "math", "tool_use": "tool",
               "nl2repo": "nl2r", "general": "gen", "agent": "agent", "other": "other"}
+# Fold groups that are not backed by a datagen source (routed from king /
+# teacher rollouts by the fold): extra column groups of the dataset table.
+KING_GROUP_ORDER = ["king_fail", "king_loop_onset", "king_pivot", "king_done", "king_tooluse",
+                    "king_recoverable", "completion_pre", "completion", "king_coached"]
+KING_GROUP_ABBR = {"king_fail": "KFAIL", "king_loop_onset": "KLOOP", "king_pivot": "KPIV",
+                   "king_done": "KDONE", "king_tooluse": "KTOOL", "king_recoverable": "KREC",
+                   "completion_pre": "CPRE", "completion": "COMPL", "king_coached": "KCOACH"}
 # Datagen sources -> 3-5 char headers (operator list 2026-09-15); unknown
 # sources fall back to the first 4 letters after `affine_`, upper-cased.
 ENV_ABBR = {
@@ -626,6 +642,8 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
     per_king: dict[str, dict] = {}
     stops: dict[str, int] = {}
     recent = {"king_1h": 0, "king_24h": 0, "all_1h": 0, "all_24h": 0}
+    # per source x seat: every rollout (any outcome), all time and last 24 h
+    seat_counts: dict[str, dict[str, dict[str, int]]] = {}
     last_ts = 0.0
     n_king = n_teacher = 0
 
@@ -644,6 +662,11 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
             recent["all_1h"] += 1
         if age <= 86400:
             recent["all_24h"] += 1
+        if seat in ("teacher", "king"):
+            sc = seat_counts.setdefault(source, {}).setdefault(seat, {"n": 0, "n_24h": 0})
+            sc["n"] += 1
+            if age <= 86400:
+                sc["n_24h"] += 1
         if seat == "teacher":
             n_teacher += 1
             teacher_env.setdefault(source, Agg()).add(outcome, timeout, n_calls, wall, stop)
@@ -770,6 +793,7 @@ def compute_stats(conn: sqlite3.Connection, manifest_info: dict,
         "envs": [{"source": s, "env_id": env_ids.get(s, ""),
                   "group": src_group.get(s, "other")}
                  for s in sorted(env_ids)],
+        "seat_counts": seat_counts,
         "stop_conditions": stops,
         "definitions": {
             "outcome": "same rule as the fold (affine.corpus.view.rollout_outcome): errored = a real "
@@ -1136,6 +1160,252 @@ def build_matrix(stats: dict, cards: list[dict]) -> dict:
     }
 
 
+# -- dataset table (api/dataset_table) ---------------------------------------------
+def fetch_json(fetcher: Fetcher, key: str) -> dict | None:
+    try:
+        return loads(fetcher.get(key))
+    except Exception as e:  # network / parse: the table renders what it has
+        log.warning("%s unavailable: %s", key, e)
+        return None
+
+
+def stratum_group(stratum: str) -> str | None:
+    """Fold group encoded in a stratum key (`<group>:...`); None for the
+    plain `repo|phase` strata (nl2repo sources), whose group is the source's."""
+    if ":" not in stratum:
+        return None
+    return stratum.split(":", 1)[0]
+
+
+def index_source_stats(fetcher: Fetcher, manifest: dict | None) -> dict | None:
+    """Turns and strata of D per (fold group, source) from the corpus view
+    index (one parquet; ~7 MB at epoch 41), cached by the index sha256."""
+    idx = (manifest or {}).get("index") or {}
+    key, sha = idx.get("key"), idx.get("sha256")
+    if not key or not sha:
+        return None
+    try:
+        cached = json.loads(INDEX_STATS_PATH.read_text())
+        if cached.get("sha256") == sha:
+            return cached
+    except (OSError, ValueError):
+        pass
+    if pq is None:
+        log.warning("pyarrow missing: dataset table has no per-source turns / strata")
+        return None
+    t0 = time.time()
+    blob = fetcher.get(key)
+    if hashlib.sha256(blob).hexdigest() != sha:
+        log.warning("index %s: sha mismatch, skipped", key)
+        return None
+    table = pq.read_table(io.BytesIO(blob), columns=["source", "stratum", "stratum_src"])
+    turns: dict[tuple[str, str], int] = {}
+    strata: dict[tuple[str, str], set] = {}
+    for source, stratum, stratum_src in zip(table.column("source").to_pylist(),
+                                            table.column("stratum").to_pylist(),
+                                            table.column("stratum_src").to_pylist()):
+        g = stratum_group(stratum or "") or ""       # "" = the source's own group
+        k = (g, source or "")
+        turns[k] = turns.get(k, 0) + 1
+        strata.setdefault(k, set()).add(stratum_src or stratum or "")
+    out = {
+        "sha256": sha, "key": key, "n_turns": int(table.num_rows), "computed_at": time.time(),
+        "cells": [{"group": g, "source": s, "turns": n, "strata": len(strata[(g, s)])}
+                  for (g, s), n in sorted(turns.items())],
+    }
+    INDEX_STATS_PATH.write_text(json.dumps(out))
+    log.info("index %s: %d turns -> %d (group, source) cells in %.1fs",
+             sha[:12], table.num_rows, len(out["cells"]), time.time() - t0)
+    return out
+
+
+def load_fold_caps() -> dict:
+    """Strata caps from rollouts/sources.toml: [strata_budget.buckets] for
+    the bucketed teacher groups, strata_buckets x sub_strata for the king
+    groups (and [mix] targets)."""
+    if not SOURCES_TOML.exists():
+        return {"buckets": {}, "sub_strata": {}, "strata_buckets": {}, "mix": {}}
+    cfg = tomllib.loads(SOURCES_TOML.read_text())
+    budget = cfg.get("strata_budget") or {}
+    # math / tool_use: the fold hashes each source into its own
+    # [source.<name>].strata_buckets -> the group's cap is their sum
+    source_buckets: dict[str, int] = {}
+    for name, block in (cfg.get("source") or {}).items():
+        if isinstance(block, dict) and block.get("strata_buckets"):
+            g = str(block.get("group") or "other")
+            source_buckets[g] = source_buckets.get(g, 0) + int(block["strata_buckets"])
+    return {
+        "buckets": {**source_buckets, **dict(budget.get("buckets") or {})},
+        "sub_strata": dict(budget.get("sub_strata") or {}),
+        "strata_buckets": {g: int(cfg[g]["strata_buckets"]) for g in KING_GROUP_ORDER
+                           if isinstance(cfg.get(g), dict) and cfg[g].get("strata_buckets")},
+        "mix": {k: float(v) for k, v in (cfg.get("mix") or {}).items() if isinstance(v, (int, float))},
+    }
+
+
+def fmt_compact(n: float | int | None) -> str | None:
+    if n is None:
+        return None
+    n = float(n)
+    if n >= 1e6:
+        return f"{n / 1e6:.1f}M"
+    if n >= 1e4:
+        return f"{n / 1e3:.0f}k"
+    if n >= 1e3:
+        return f"{n / 1e3:.1f}k"
+    return f"{n:.0f}"
+
+
+def build_dataset_table(stats: dict, matrix: dict, fold: dict | None, curriculum: dict | None,
+                        manifest: dict | None, index_stats: dict | None, caps: dict) -> dict:
+    now = time.time()
+    fold = fold or {}
+    fgroups = fold.get("groups") or {}
+    curr = (curriculum or {}).get("shares_after_clamp") or {}
+    seat_counts = stats.get("seat_counts") or {}
+    env_groups = {e["source"]: e.get("group") or "other" for e in stats.get("envs") or []}
+    env_cols = [c for c in matrix["columns"] if c["kind"] == "env"]
+    current = next((r for r in matrix["rows"] if r.get("current")), None)
+
+    # per (group, source) turns / strata of D
+    cells_by = {}
+    for c in (index_stats or {}).get("cells") or []:
+        cells_by[(c["group"], c["source"])] = c
+    def d_cell(group: str, source: str) -> dict:
+        own = cells_by.get(("", source), {})            # repo|phase strata (nl2repo)
+        tagged = cells_by.get((group, source), {})
+        return {"turns": (own.get("turns") or 0) + (tagged.get("turns") or 0),
+                "strata": (own.get("strata") or 0) + (tagged.get("strata") or 0)}
+    group_raw_strata: dict[str, int] = {}
+    for (g, s), c in cells_by.items():
+        gg = g or env_groups.get(s, "other")
+        group_raw_strata[gg] = group_raw_strata.get(gg, 0) + c["strata"]
+
+    def cap_of(group: str) -> tuple[int | None, str]:
+        if group in caps["buckets"]:
+            return int(caps["buckets"][group]), "strata_budget.buckets / source strata_buckets"
+        if group in caps["strata_buckets"]:
+            return int(caps["strata_buckets"][group]) * int(caps["sub_strata"].get(group, 1)), \
+                "strata_buckets x sub_strata"
+        return None, ""
+
+    def group_meta(group: str) -> dict:
+        fg = fgroups.get(group) or {}
+        cap, cap_src = cap_of(group)
+        strata = fg.get("strata")
+        limited = (strata is not None and cap is not None and strata < cap)
+        return {
+            "group": group, "turns": fg.get("turns"), "strata": strata,
+            "draws_per_duel": fg.get("draws_per_duel"), "share": fg.get("share"),
+            "static_mix": fg.get("static_mix") if fg.get("static_mix") is not None else caps["mix"].get(group),
+            "sub_strata_k": fg.get("sub_strata_k"), "bucket_n": fg.get("bucket_n"),
+            "cap": cap, "cap_source": cap_src,
+            "supply_limited": limited if (strata is not None and cap is not None) else None,
+            "curriculum_share": curr.get(group),
+            "raw_strata": group_raw_strata.get(group),
+        }
+
+    columns = []
+    for c in env_cols:
+        s = c["env"]
+        g = c["group"]
+        gm = group_meta(g)
+        dc = d_cell(g, s)
+        sc = seat_counts.get(s) or {}
+        share_in_group = (dc["strata"] / gm["raw_strata"]) if gm.get("raw_strata") and dc["strata"] else None
+        king_cell = (current or {}).get("cells", {}).get(f"env:{s}") if current else None
+        columns.append({
+            "key": f"env:{s}", "kind": "env", "label": s, "abbr": c["abbr"], "group": g,
+            "env_id": c.get("env_id", ""), "group_meta": gm,
+            "teacher_24h": (sc.get("teacher") or {}).get("n_24h", 0), "teacher_total": (sc.get("teacher") or {}).get("n", 0),
+            "king_24h": (sc.get("king") or {}).get("n_24h", 0), "king_total": (sc.get("king") or {}).get("n", 0),
+            "turns": dc["turns"] or None, "strata": dc["strata"] or None,
+            "strata_share_in_group": share_in_group,
+            # one turn per stratum per duel: the group's draws split by the source's strata share
+            "turns_per_duel": (gm["draws_per_duel"] * share_in_group) if (gm.get("draws_per_duel") and share_in_group) else None,
+            "turns_per_duel_note": "group draws per duel x the source's share of the group's strata (approximation: "
+                                   "bucketed groups merge strata, so a source's exact draw rate is not published)",
+            "supply_limited": gm["supply_limited"], "curriculum_share": gm["curriculum_share"],
+            "king_solve": king_cell.get("score") if king_cell else None,
+            "king_solve_n": king_cell.get("n") if king_cell else None,
+        })
+    for g in KING_GROUP_ORDER:
+        if g not in fgroups and g not in curr:
+            continue
+        gm = group_meta(g)
+        columns.append({
+            "key": f"group:{g}", "kind": "king_group", "label": g, "abbr": KING_GROUP_ABBR.get(g, g[:5].upper()),
+            "group": g, "group_meta": gm,
+            "teacher_24h": None, "teacher_total": None, "king_24h": None, "king_total": None,
+            "turns": gm["turns"], "strata": gm["strata"], "strata_share_in_group": None,
+            "turns_per_duel": gm["draws_per_duel"], "turns_per_duel_note": "fold_stats draws_per_duel (exact)",
+            "supply_limited": gm["supply_limited"], "curriculum_share": gm["curriculum_share"],
+            "king_solve": None, "king_solve_n": None,
+        })
+
+    rows = [
+        {"key": "teacher_24h", "label": "teacher rollouts, 24 h", "short": "teacher 24h", "fmt": "count",
+         "note": "teacher_* rollouts on the source that landed in the trace store in the last 24 h (any outcome)"},
+        {"key": "teacher_total", "label": "teacher rollouts, total", "short": "teacher total", "fmt": "count",
+         "note": "all teacher_* rollouts on the source in the trace store"},
+        {"key": "king_24h", "label": "king rollouts, 24 h", "short": "king 24h", "fmt": "count",
+         "note": "king_* rollouts (any reign) on the source in the last 24 h"},
+        {"key": "king_total", "label": "king rollouts, total", "short": "king total", "fmt": "count",
+         "note": "all king_* rollouts on the source in the trace store"},
+        {"key": "turns", "label": "turns in D", "short": "turns in D", "fmt": "count",
+         "note": "published turns in the duel corpus (view index) whose stratum belongs to this column's group"},
+        {"key": "strata", "label": "strata in D", "short": "strata in D", "fmt": "count",
+         "note": "distinct strata (index stratum_src, sub-strata merged) for the column; king groups: fold_stats slice keys"},
+        {"key": "turns_per_duel", "label": "turns per duel (of 1,300)", "short": "turns / duel", "fmt": "draws", "headline": True,
+         "note": "expected turns of this column in one 1,300-turn duel slice (fold_stats draws_per_duel)"},
+        {"key": "supply_limited", "label": "supply-limited", "short": "supply-lim.", "fmt": "bool",
+         "note": "the column's group has fewer strata than its cap ([strata_budget.buckets] or strata_buckets x sub_strata), so more rollouts would raise its slice share"},
+        {"key": "curriculum_share", "label": "curriculum shadow weight", "short": "curric. w", "fmt": "pct",
+         "note": "adaptive-curriculum share for the group (v1.2 counted rule, shares_after_clamp, shadow mode: not applied to the fold yet)"},
+        {"key": "king_solve", "label": "king solve rate", "short": "king solve %", "fmt": "score",
+         "note": "current king's solve rate on the source (same cell as the environments table above)"},
+    ]
+    rec = fold.get("recurrence") or {}
+    return {
+        "generated_at": datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds"),
+        "generated_ts": now,
+        "header": {
+            "n_turns": fold.get("n_turns") or (index_stats or {}).get("n_turns"),
+            "n_strata": fold.get("n_strata"),
+            "epoch": fold.get("epoch") or (manifest or {}).get("corpus_epoch"),
+            "manifest_sha12": ((curriculum or {}).get("manifest_sha256") or "")[:12] or None,
+            "index_sha12": ((index_stats or {}).get("sha256") or "")[:12] or None,
+            "n_per_duel": fold.get("n_per_duel"),
+            "recurrence": rec,
+            "fold_generated_at": fold.get("generated_at"),
+            "curriculum_mode": (curriculum or {}).get("mode"),
+            "curriculum_rule": (curriculum or {}).get("knobs", {}).get("counted_rule"),
+            "curriculum_for_epoch": (curriculum or {}).get("for_epoch"),
+        },
+        "rows": rows,
+        "columns": columns,
+        "groups": {g: group_meta(g) for g in sorted(set(list(fgroups) + list(env_groups.values())))},
+        "sources": {"fold_stats": FOLD_STATS_KEY, "curriculum": CURRICULUM_KEY,
+                    "index": (index_stats or {}).get("key"), "rollouts": "traces manifest via kingboard stats"},
+    }
+
+
+def write_dataset_table(stats: dict, matrix: dict, fetcher: Fetcher) -> dict:
+    manifest = fetch_json(fetcher, CORPUS_MANIFEST_KEY)
+    fold = fetch_json(fetcher, FOLD_STATS_KEY)
+    curriculum = fetch_json(fetcher, CURRICULUM_KEY)
+    try:
+        index_stats = index_source_stats(fetcher, manifest)
+    except Exception as e:
+        log.warning("corpus index stats failed: %s", e)
+        index_stats = None
+    table = build_dataset_table(stats, matrix, fold, curriculum, manifest, index_stats, load_fold_caps())
+    tmp = DATASET_TABLE_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(table, separators=(",", ":")))
+    tmp.replace(DATASET_TABLE_PATH)
+    return table
+
+
 def write_matrix(stats: dict) -> dict:
     # reign lists re-read from the validator files: cheap, and a stats.json
     # written by an older builder has no revoked_kings
@@ -1154,10 +1424,14 @@ def main() -> int:
     t0 = time.time()
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     if "--matrix-only" in sys.argv[1:]:
+        # derived files only (matrix + dataset table) from the existing stats.json
         stats = json.loads(STATS_PATH.read_text())
         matrix = write_matrix(stats)
         log.info("matrix.json written from existing stats: %d rows x %d columns, %d cards",
                  len(matrix["rows"]), len(matrix["columns"]), matrix["n_cards"])
+        table = write_dataset_table(stats, matrix, Fetcher())
+        log.info("dataset_table.json written: %d columns, epoch %s",
+                 len(table["columns"]), table["header"].get("epoch"))
         return 0
     conn = sqlite3.connect(DB_PATH)
     conn.executescript(SCHEMA)
@@ -1179,6 +1453,13 @@ def main() -> int:
                  len(matrix["rows"]), len(matrix["columns"]), matrix["n_cards"])
     except Exception:  # the env stats must still publish if a card is malformed
         log.exception("matrix build failed")
+        return 0
+    try:
+        table = write_dataset_table(stats, matrix, fetcher)
+        log.info("dataset_table.json written: %d columns, epoch %s",
+                 len(table["columns"]), table["header"].get("epoch"))
+    except Exception:
+        log.exception("dataset table build failed")
     return 0
 
 

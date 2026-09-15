@@ -95,6 +95,13 @@ export async function fetchMatrix(signal) {
   return getJSON(`${API}/matrix`, { signal });
 }
 
+/** Dataset D per source (rollouts, turns / strata in D, turns per duel, …). */
+export async function fetchDatasetTable(signal) {
+  const m = await detectMode({ signal });
+  if (m !== "api") return null;
+  return getJSON(`${API}/dataset_table`, { signal });
+}
+
 /** Post-crown exploit-audit verdicts (newest first). */
 export async function fetchAudits(signal) {
   const m = await detectMode({ signal });
