@@ -17,6 +17,9 @@
 #                                                   redeploy looks the same)
 #   daemon alive, validator not online, 2nd tick  -> pm2 restart affine-validator
 #   pause file present and younger than PAUSE_MAX -> do nothing, say nothing
+#   any pm2 app with cron_restart: last start > 26 h old, or exited non-zero
+#                                                 -> one Discord line (see
+#                                                   check_crons), no action
 #
 # Pause during a deploy:  touch /home/const/.affine/deadman.pause
 # (auto-expires after 6 h; delete it when done). Documented in AGENTS.md §9.
@@ -118,6 +121,51 @@ alert() {
 
 clear_alerts() { rm -f "$STATE_DIR"/alert.* "$STATE_DIR/miss.$APP"; }
 
+# Cron apps = every pm2 app with a `cron_restart`. pm2 starts them on schedule
+# but has no notion of "missed" or "failed": a stopped app that exits 1 just
+# sits there as `stopped` with ↺ 0 (2026-09-15: the 16:00 fold died after
+# 93 s on a FATAL and nobody saw it). Two checks, own state files (cron.*) so
+# the validator's clear_alerts never resets them:
+#   stale : last start (pm_uptime) older than CRON_STALE_S -> one line per
+#           CRON_ALERT_EVERY while it stays stale; state cleared when fresh.
+#   failed: status stopped/errored with exit_code != 0 -> one line per run
+#           (keyed by the run's start time).
+CRON_STALE_S=$((26 * 3600))
+CRON_ALERT_EVERY=$((6 * 3600))
+
+cron_alert() {
+  local key=$1 every=$2 msg=$3 now last
+  now=$(date +%s)
+  last=$(cat "$STATE_DIR/cron.$key" 2>/dev/null || echo 0)
+  if (( now - last >= every )); then
+    post "$msg" && [ "$DRY" = 0 ] && echo "$now" > "$STATE_DIR/cron.$key"
+  else
+    log "cron alert '$key' suppressed (last $((now - last)) s ago): $msg"
+  fi
+}
+
+check_crons() {
+  local out now name st cron up code logp age
+  out=$(timeout 60 setpriv --reuid="$USER_NAME" --regid="$USER_NAME" --init-groups env HOME="$HOME_DIR" USER="$USER_NAME" PM2_HOME="$PM2_HOME" PATH="$PM2_PATH" "$PM2" jlist 2>/dev/null) || { log "crons: jlist failed"; return; }
+  out=$(printf '%s\n' "$out" | grep -v '^\[PM2\]' | sed -n '/^\[/,$p')
+  now=$(date +%s)
+  while IFS=$'\t' read -r name st cron up code logp; do
+    [ -n "$name" ] || continue
+    age=$(( now - up / 1000 ))
+    if (( age > CRON_STALE_S )); then
+      cron_alert "stale-$name" "$CRON_ALERT_EVERY" \
+        "[$host $stamp] deadman: cron app $name ('$cron') last started $((age / 3600)) h ago (> 26 h), status=$st — pm2 did not run it; check \`pm2 describe $name\`"
+    else
+      rm -f "$STATE_DIR/cron.stale-$name"
+    fi
+    if [ "$code" != "0" ] && [ "$code" != "null" ] && { [ "$st" = stopped ] || [ "$st" = errored ]; }; then
+      cron_alert "exit-$name-$up" "$((48 * 3600))" \
+        "[$host $stamp] deadman: cron app $name ('$cron') started $(date -u -d "@$((up / 1000))" +%H:%MZ) and exited with code $code — see $logp"
+    fi
+    log "cron $name: status=$st last_start=$(date -u -d "@$((up / 1000))" +%m-%dT%H:%MZ) exit=$code"
+  done < <(printf '%s' "$out" | jq -r '.[] | select(.pm2_env.cron_restart != null) | [.name, .pm2_env.status, .pm2_env.cron_restart, (.pm2_env.pm_uptime // 0), (.pm2_env.exit_code // "null"), (.pm2_env.pm_out_log_path // "-")] | @tsv' 2>/dev/null)
+}
+
 run_action() {
   log "action: $*"
   [ "$DRY" = 1 ] && return 0
@@ -138,6 +186,8 @@ if [ "$STATUS_ONLY" = 1 ]; then
   echo "pm2-const=$unit_state $APP=$status"
   exit 0
 fi
+
+[ "$status" != daemon-dead ] && check_crons
 
 # Pause file: a deploy is in progress. Silent no-op while it is fresh.
 if [ -e "$PAUSE_FILE" ]; then

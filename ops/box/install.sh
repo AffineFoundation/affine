@@ -47,5 +47,8 @@ sudo loginctl enable-linger "$USER_NAME"
 echo "pm2-const:      enabled=$(systemctl is-enabled pm2-const) active=$(systemctl is-active pm2-const)"
 echo "deadman timer:  enabled=$(systemctl is-enabled affine-deadman.timer) active=$(systemctl is-active affine-deadman.timer)"
 echo "linger:         $(loginctl show-user "$USER_NAME" -p Linger --value)"
-echo "needrestart:    $(sudo needrestart -b -r l 2>/dev/null | grep -c 'pm2-const' || true) pm2-const line(s) pending (0 is expected)"
+# `needrestart -r l` lists pm2-const whenever a library it uses was upgraded;
+# the override only stops the *restart* (it lands in "restarts being deferred").
+# So check that the override file is evaluated, not the list.
+echo "needrestart:    override file evaluated = $(sudo needrestart -v -b -r l 2>&1 | grep -c '50-pm2-const.conf' || true) (1 expected)"
 echo "deadman status: $(sudo /usr/local/sbin/affine-deadman --status)"
