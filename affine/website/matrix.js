@@ -26,7 +26,6 @@ const state = {
   matrix: null,
   dataset: null,
   sort: {},             // table id -> { key, desc }
-  showAll: false,       // rows without any measurement
 };
 
 const $ = (id) => document.getElementById(id);
@@ -131,12 +130,10 @@ function totals(rows, cols, common, teacher) {
 }
 
 function visibleRows(m, spec) {
+  // the API's row set: teacher, kings newest first, genesis last (kings
+  // without any measurement are under m.hidden, never rendered)
   const teacher = m.rows.find((r) => r.kind === "teacher");
-  let rest = m.rows.filter((r) => r !== teacher);
-  if (!state.showAll) {
-    rest = rest.filter((r) => r.current || r.kind === "genesis" || r.inflight
-      || Object.keys(r.cells).some((k) => k.startsWith(`${spec.kind}:`) && r.cells[k].score != null));
-  }
+  const rest = m.rows.filter((r) => r !== teacher);
   const sort = state.sort[spec.id] || { key: null, desc: true };
   const cols = tableColumns(m, spec);
   const tot = totals([...(teacher ? [teacher] : []), ...rest], cols, commonColumns([...(teacher ? [teacher] : []), ...rest], cols), teacher);
@@ -178,7 +175,7 @@ function renderTable(m, spec) {
   const tot = totals(rows, cols, common, m.rows.find((r) => r.kind === "teacher"));
   const commonTitle = `mean over the ${common.length} columns every displayed row with data has a value for:\n`
     + (common.map((c) => c.short || c.abbr || c.label).join(", ") || "(none)")
-    + `\nrecomputed as rows change (show all reigns); Δ vs the teacher on the same columns`;
+    + `\nrecomputed as rows change; Δ vs the teacher on the same columns`;
   const fullTitle = `mean over all ${cols.length} columns — only for rows that have every column; blank otherwise`;
   const blocks = spec.kind === "env" ? groupBlocks(cols) : [];
   const sepAt = new Set(blocks.filter((b) => b.name).map((b) => b.first));
@@ -225,7 +222,7 @@ function renderTable(m, spec) {
 
   wrap.innerHTML = `<table class="data-table kings ${spec.kind}"><thead>${groupRow}${head}</thead><tbody>${body}</tbody></table>`;
   const meta = $(`${spec.id}-meta`);
-  if (meta) meta.textContent = `${cols.length} columns · total = mean over the ${common.length} columns every row with data shares · ${rows.length} of ${m.rows.length} rows · ${spec.caption}`;
+  if (meta) meta.textContent = `${cols.length} columns · total = mean over the ${common.length} columns every row with data shares · ${spec.caption}`;
 }
 
 // -- Dataset D: columns = sources (+ king groups), rows = metrics ----------
@@ -326,13 +323,8 @@ function render() {
   const kings = m.rows.filter((r) => r.kind === "king");
   const meta = $("kings-meta");
   if (meta) meta.textContent = `${kings.length} reigns · ${m.columns.filter((c) => c.kind === "bench").length} benchmarks · ${m.columns.filter((c) => c.kind === "env").length} environments · built ${when(m.generated_at)}`;
-  const withData = m.rows.filter((r) => r.n_cells > 0 || r.current || r.kind === "genesis" || r.kind === "teacher").length;
-  const hidden = m.rows.length - withData;
-  const showAll = $("kings-show-all");
-  if (showAll) {
-    showAll.textContent = state.showAll ? "hide reigns without data" : `show all reigns${hidden ? ` (+${hidden})` : ""}`;
-    showAll.hidden = !hidden && !state.showAll;
-  }
+  const hidden = (m.hidden || []).length;
+  if (meta && hidden) meta.textContent += ` · ${hidden} older reigns without measurements not shown`;
 }
 
 function wire() {
@@ -348,7 +340,6 @@ function wire() {
       render();
     });
   }
-  $("kings-show-all")?.addEventListener("click", () => { state.showAll = !state.showAll; render(); });
 }
 
 async function refresh() {

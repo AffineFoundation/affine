@@ -1193,6 +1193,17 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                                                   else "finished, card not published yet" if e in p["done"]
                                                   else "queued in this pass"),
                                         "reason": f"benchmark pass {p['run_id']} in progress"}
+    # Row set (operator 2026-09-15 20:27 UTC): teacher, then kings newest first,
+    # genesis as the bottom row. Kings with no measurement at all (and not the
+    # current king) are not backfilled and leave the table -> `hidden`.
+    hidden = [r for r in rows if r["kind"] == "king" and not r["current"] and r["n_cells"] == 0
+              and not any(v.get("running") for v in r["cells"].values())]
+    rows = [r for r in rows if r not in hidden]
+    genesis_row = next((r for r in rows if r["kind"] == "genesis"), None)
+    if genesis_row:
+        rows = [r for r in rows if r is not genesis_row] + [genesis_row]
+    for i, r in enumerate(rows):
+        r["order"] = i
     # delta vs the teacher row, per cell. The total compares against the
     # teacher's mean over the SAME columns the row has (rows differ in
     # coverage: a chat-only card has 10 benchmarks, the teacher has 15).
@@ -1218,6 +1229,8 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
         "columns": columns,
         "rows": rows,
         "removed": removed_kings_meta(stats),
+        "hidden": [{k: r.get(k) for k in ("key", "label", "reign", "digest12", "crowned_at", "challenge_id")}
+                   for r in hidden],
         "inflight": [{k: p[k] for k in ("run_id", "mode", "label", "digest12", "genesis", "started_at",
                                          "n_done", "n_planned", "running_env")} for p in inflight],
         "n_cards": len(cards),
@@ -1228,9 +1241,10 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                    "genesis": is_genesis_card(c), "used": is_model_card(c)}
                   for c in cards],
         "definitions": {
-            "rows": "models in reign order: the teacher, the genesis seed (reign 0), then every "
-                    "crowned king newest first. Reigns the operator revoked after the crown "
-                    "(history.jsonl crown_revoked) are not rows; they are listed under `removed`",
+            "rows": "the teacher, then the crowned kings newest first, then the genesis seed (reign 0) "
+                    "as the bottom row. Kings without any measurement (no benchmark card, no king-seat "
+                    "rollouts; never backfilled) are listed under `hidden`, not rows; reigns the operator "
+                    "revoked after the crown (history.jsonl crown_revoked) are under `removed`",
             "value": "average score 0-100 per cell. Benchmarks: the card's greedy (T=0) row, "
                      "score = share of tasks passed; SWE-bench Verified uses the finished-only score "
                      "(rollouts inside the time / context budget). Datagen environments: solve rate "
