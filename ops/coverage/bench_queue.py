@@ -201,21 +201,33 @@ def pod_of(run_id: str) -> str | None:
     return m.group(1) if m else None
 
 
+RELEASE_LINE = re.compile(r"released=\w+ after ([\d.]+)h . \$([\d.]+)")
+
+
 def spend(q: list[dict]) -> dict:
-    """Pod $ recorded on finished passes + a running estimate for live ones +
-    the Prime miniF2F fee per pass that ran the sandbox sets."""
+    """Pod $ for every attempt of every queue entry (each pass log carries
+    kingpod's release line with the actual hours x price), plus a running
+    estimate for pods not released yet, plus the Prime miniF2F fee per pass
+    that reached the sandbox sets."""
     pod_usd = 0.0
     prime = 0.0
     for e in q:
-        if e.get("pod_usd") is not None:
-            pod_usd += float(e["pod_usd"])
-        elif e.get("status") == "running" and e.get("started_at"):
-            c = pod_cost(e["run_id"])
-            if c.get("usd_per_hour"):
-                t0 = datetime.fromisoformat(e["started_at"]).timestamp()
-                pod_usd += c["usd_per_hour"] * (time.time() - t0) / 3600
-        if e.get("status") in ("done", "running") and e.get("sandbox", True):
-            prime += PRIME_MINIF2F_USD
+        tag = f"-genesis-{digest12_of_ref(e['ref'])}" if e["label"] == "genesis" else f"-{digest12_of_ref(e['ref'])}"
+        for f in BENCH_STATE.glob(f"pass-*{tag}.log"):
+            try:
+                text = f.read_text(errors="replace")
+            except OSError:
+                continue
+            rel = RELEASE_LINE.findall(text)
+            if rel:
+                pod_usd += sum(float(usd) for _, usd in rel)
+            elif e.get("status") == "running" and e.get("run_id") and f.stem.endswith(e["run_id"]):
+                c = pod_cost(e["run_id"])
+                if c.get("usd_per_hour") and e.get("started_at"):
+                    t0 = datetime.fromisoformat(e["started_at"]).timestamp()
+                    pod_usd += c["usd_per_hour"] * (time.time() - t0) / 3600
+            if "sandbox sets (" in text and e.get("sandbox", True):
+                prime += PRIME_MINIF2F_USD
     return {"pod_usd": round(pod_usd, 2), "prime_usd_est": round(prime, 2),
             "total_usd": round(pod_usd + prime, 2)}
 
