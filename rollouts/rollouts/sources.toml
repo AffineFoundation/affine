@@ -76,13 +76,64 @@ completion = 0.10
 completion_pre = 0.02
 general = 0.05
 
+[curriculum]
+# Adaptive, auditable curriculum (operator directive 2026-09-14 23:32 UTC,
+# pre-approved 23:39 UTC; plan: docs/adaptive-curriculum-plan.md; fold hook
+# spec internal/curriculum/hooks-for-fold.md). Rule v1:
+#   w_s = (M~_s + eps)^gamma * S~_s   per stratum s of D
+# M~ = the sitting king's miss rate on s (forfeit, or a live turn score under
+# the bottom-quartile threshold theta), S~ = the live-reference rate (>= 2
+# distinct teacher refs), both shrunk stratum -> cell -> group -> corpus with
+# prior count n_0 over a ledger of every scored verdict since chal-00367
+# (wvk 13) decayed with half_life_verdicts. Group share ∝ Σ w, floored
+# (coding + terminal >= floor_coding_terminal; every group >= floor_frac_of_
+# static × its [mix] share), capped at group_cap, moved at most max_share_
+# shift per fold vs the live slice share; a stratum gets 1..m_max sub-strata
+# by weight rank inside its group. Job: ops/curriculum/run.py (pm2
+# `affine-curriculum`, 15:20 UTC daily, before the 16:00 UTC fold); outputs
+# under https://data.affine.io/curriculum/.
+# Fold side (ops/corpus_build.py load_curriculum): `mode` off = the fold
+# ignores the vector; shadow = the fold logs the vector in the announce and
+# stamps the manifest `curriculum` block (rule_version, mode, ledger_sha256,
+# weights_sha256, manifest_sha256 = the manifest the weights were computed
+# against) while [mix] above still decides; apply = the vector's shares
+# become the group targets and its `m` the per-group sub-strata count (the
+# phase-9 `<stratum>#k` interface). The fold reads the rule summed over
+# SLICE KEYS (`share_raw_slice_keys`, decision 2026-09-15), falling back to
+# `share_applied` / `share` / `share_shadow`. A missing, malformed, > 24 h
+# old or mode-mismatched vector falls back to the static [mix] and says so.
+# Kill switch = mode = "off". Stage 3 (apply) needs the seven-item criterion
+# (plan §7.3) on two shadow folds; a fold counts only with >= min_new_verdicts
+# new verdicts in the ledger. Data event, no scoring change, no wvk.
+mode = "shadow"
+weights_path = "ops/curriculum/out/groups.json"   # the fold's hook reads this (group vector + manifest block)
+rule_version = 1
+share_unit = "slice_keys"   # Σw over the phase-9 slice keys (operator 2026-09-15 00:39 UTC); base_strata = the plan's original sum, kept as share_raw_base_strata
+half_life_verdicts = 60
+n_0 = 8
+gamma = 1.0
+eps = 0.02
+theta_pct = 0.25
+m_max = 3
+floor_coding_terminal = 0.40
+floor_frac_of_static = 0.5
+group_cap = 0.60
+max_share_shift = 0.05
+min_new_verdicts = 10
+recurrence_window_verdicts = 50
+recurrence_group_cap = 0.18
+recurrence_turn_cap = 0.20
+counterfactual_verdicts = 20
+near_king_z = 5.0
+first_challenge = "chal-00367"
+
 [strata_budget]
 # Phase 9 (2026-09-14). The duel slicer draws one turn per stratum uniformly
 # over strata, so slice share = strata share. `buckets` merges a teacher-
 # trajectory group into N fixed strata (`<group>:b<sha(original stratum) %
 # N>`; no turn leaves D, each is drawn less often); `sub_strata` splits each
 # task stratum of a supply-limited group into up to k sub-strata by turn
-# (`<stratum>:<sha(turn_id) % k>`), so one duel may draw up to k turns of the
+# (`<stratum>#<sha(turn_id) % k>` -- the curriculum interface, stable), so one duel may draw up to k turns of the
 # same task. The original key stays in the index column `stratum_src`.
 # RT-6 trade-off: a king task recurs across duels k times as often; fresh
 # per-duel teacher references and block-hash-seeded slices remain the
