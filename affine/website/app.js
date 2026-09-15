@@ -4,7 +4,6 @@ import {
   duelTurnUrl,
   fetchAudit,
   fetchAudits,
-  fetchBenchmarks,
   fetchDataset,
   fetchDatasetTurn,
   fetchDatasetTurns,
@@ -18,7 +17,8 @@ import {
   fetchSnapshot,
   fingerprint,
   watchSnapshot,
-} from "./api.js?v=67";
+} from "./api.js?v=68";
+import { initMatrix } from "./matrix.js?v=1";
 import {
   GATE_METRICS,
   HERO_CHARTS,
@@ -50,8 +50,8 @@ import {
 const $ = (id) => document.getElementById(id);
 
 let filter = "";
-let cache = { dashboard: null, benchmarks: null, history: null, regHistory: null, contract: null, audits: null };
-let fps = { dashboard: "", benchmarks: "", history: "", hero: "", reg: "", gates: "", audits: "" };
+let cache = { dashboard: null, history: null, regHistory: null, contract: null, audits: null };
+let fps = { dashboard: "", history: "", hero: "", reg: "", gates: "", audits: "" };
 let closeWatch = null;
 
 // Public bucket root — audit workspaces live under audits/reign_NNNN/ and are
@@ -195,52 +195,14 @@ function renderMarketBar(d) {
 
 /* ---------- sections ---------- */
 
-// Advisory bench references shown as deltas in the reign table. As of the
-// min(R,G) era (wvk 10, 2026-08-27) the genesis IS the stock Qwen base, so
-// baseline and genesis coincide. Matched by label (repo as fallback).
-const BENCH_BASELINE = { label: "baseline", repo: "Qwen/Qwen3.6-35B-A3B" };
-const BENCH_GENESIS = {
-  label: "reign-0",
-  repo: "Qwen/Qwen3.6-35B-A3B",
-};
-// The frozen teacher C (affine.toml [teacher]). min(R,G) has its fixed point
-// at the teacher, so this is the ceiling the current mechanism can reach;
-// benched 2026-09-07 via scripts/bench_run.py (label "teacher").
-const BENCH_TEACHER = { label: "teacher", repo: "Qwen/Qwen3.8-27B" };
+// Genesis (reign 0 → Affine-I) is the stock Qwen base since the min(R,G)
+// era (wvk 10, 2026-08-27). Held-out benchmark scores per reign live in the
+// "Kings vs teacher" matrix (#kings, api/v1/matrix), not in this table.
+const GENESIS_REPO = "Qwen/Qwen3.6-35B-A3B";
 
-// Genesis (reign 0 → Affine-I) is known statically; the rest of the reign
-// lookup arrives with the first snapshot (see applySnapshot).
-setReignLookup([], BENCH_GENESIS.repo);
-
-function benchInfo(b) {
-  const suite = (Array.isArray(b?.suites) && b.suites[0]) || "swe_rebench_lite";
-  const scores = new Map();
-  for (const m of b?.models || []) {
-    const s = m?.suites?.[suite]?.score;
-    if (s != null && Number.isFinite(Number(s))) {
-      scores.set(m.model_repo, Number(s));
-    }
-  }
-  const refScore = (ref) => {
-    const hit = (b?.models || []).find(
-      (m) => m.label === ref.label || m.model_repo === ref.repo);
-    const s = hit?.suites?.[suite]?.score;
-    return s != null && Number.isFinite(Number(s)) ? Number(s) : null;
-  };
-  return { suite, scores, qwen: refScore(BENCH_BASELINE), genesis: refScore(BENCH_GENESIS),
-           teacher: refScore(BENCH_TEACHER) };
-}
-
-function deltaCell(score, ref) {
-  if (score == null || ref == null) return `<td class="r dim">—</td>`;
-  const d = score - ref;
-  const cls = d > 0 ? "delta-up" : d < 0 ? "delta-down" : "dim";
-  return `<td class="r ${cls}">${esc(fmtPctDelta(d))}</td>`;
-}
-
-// swe-rebench scores are fractions of 1; display as percentages.
-const fmtPct = (v) => (v == null ? "—" : `${(Number(v) * 100).toFixed(1)}%`);
-const fmtPctDelta = (d) => `${d > 0 ? "+" : ""}${(d * 100).toFixed(1)}%`;
+// Genesis is known statically; the rest of the reign lookup arrives with
+// the first snapshot (see applySnapshot).
+setReignLookup([], GENESIS_REPO);
 
 function renderReign(d) {
   const members = reignMembers(d);
@@ -249,50 +211,17 @@ function renderReign(d) {
     $("reign-wrap").innerHTML = `<div class="empty">no weight holders — emissions burn</div>`;
     return;
   }
-  const bench = benchInfo(cache.benchmarks);
   const earners = members.filter((m) => m.earning || (m.weight_bps || 0) > 0);
   const pct = earners.length
     ? ((earners[0].weight_bps || 0) / 100).toFixed(0)
     : "0";
   const windowH = d?.reign?.payout_window_hours ?? d?.payout?.window_hours;
   const windowTxt = windowH != null ? `${Number(windowH).toFixed(0)} h payout window` : "payout window";
-  const benchBits = [];
-  if (bench.qwen != null) benchBits.push(`qwen ${fmtPct(bench.qwen)}`);
-  if (bench.genesis != null) benchBits.push(`Affine-I ${fmtPct(bench.genesis)}`);
-  if (bench.teacher != null) benchBits.push(`teacher ${fmtPct(bench.teacher)}`);
   $("reign-meta").textContent =
-    `${members.length} reigns · ${earners.length ? `${earners.length} paid · ${pct}% each` : "none paid · emissions burn"} · ${windowTxt}`
-    + (benchBits.length ? ` · swe: ${benchBits.join(" / ")}` : "");
-  // swe delta vs the previous king in the reign chain (reign 0 = genesis).
-  const sweOf = (m) => (bench.scores.has(m.repo) ? bench.scores.get(m.repo) : null);
-  const sweByReign = new Map(members
-    .filter((m) => m.reign_number != null)
-    .map((m) => [Number(m.reign_number), sweOf(m)]));
-  if (!sweByReign.has(0) && bench.genesis != null) sweByReign.set(0, bench.genesis);
-  const prevDelta = (m) => {
-    const rn = m.reign_number;
-    const swe = sweOf(m);
-    const prev = rn != null && rn > 0 ? sweByReign.get(Number(rn) - 1) : null;
-    return swe != null && prev != null ? swe - prev : null;
-  };
-  const maxAbsPrev = Math.max(
-    ...members.map((m) => Math.abs(prevDelta(m) ?? 0)), 1e-9);
-  const prevCell = (m) => {
-    const dd = prevDelta(m);
-    if (dd == null) return `<td class="r dim">—</td>`;
-    const cls = dd > 0 ? "delta-up" : dd < 0 ? "delta-down" : "dim";
-    const w = Math.min(Math.abs(dd) / maxAbsPrev, 1) * 50;
-    const left = dd >= 0 ? 50 : 50 - w;
-    const color = dd > 0 ? "#7fb98a" : "#c98080";
-    return `<td class="r ${cls}" title="swe vs previous king"><span class="pm-cell">${esc(fmtPctDelta(dd))}
-      <span class="pm-bar"><i style="left:${left}%;width:${w}%;background:${color}"></i></span></span></td>`;
-  };
+    `${members.length} reigns · ${earners.length ? `${earners.length} paid · ${pct}% each` : "none paid · emissions burn"} · ${windowTxt}`;
   $("reign-wrap").innerHTML = `<table class="data-table">
     <thead><tr>
       <th>reign</th><th>crowned</th><th>uid</th><th>model</th><th>hotkey</th>
-      <th class="r">swe</th><th class="r" title="swe vs the king it dethroned">vs prev</th>
-      <th class="r">vs qwen</th><th class="r">vs Affine-I</th>
-      <th class="r" title="swe vs the frozen teacher Qwen3.8-27B — the ceiling of min(R,G)">vs teacher</th>
       <th class="r">Reason</th><th class="r">α/day</th><th class="r">$/day</th>
       <th class="r" title="each crown is paid one equal share until crowned_at + payout window; then it earns nothing even while it holds the throne">weight</th>
     </tr></thead>
@@ -302,18 +231,12 @@ function renderReign(d) {
       const until = m.paid_until ? fmtTime(m.paid_until) : "";
       const alpha = earning ? fmtAlpha(m.alpha_per_day) : "—";
       const usd = earning ? fmtUsd(m.usd_per_day) : "—";
-      const swe = bench.scores.has(m.repo) ? bench.scores.get(m.repo) : null;
       return `<tr class="${m.current ? "current" : ""}">
         <td class="${m.current ? "gold" : "dim"}">${m.reign_number != null ? `#${esc(m.reign_number)}` : "prior"}</td>
         <td class="when">${m.crowned_at ? esc(fmtTime(m.crowned_at)) : "—"}</td>
         <td class="dim">${m.uid != null ? esc(m.uid) : "—"}</td>
         <td>${modelLink(m.repo, m.hotkey, m.reign_number)}</td>
         <td>${hotkeyLink(m.hotkey)}</td>
-        <td class="r ${swe != null ? "" : "dim"}">${esc(fmtPct(swe))}</td>
-        ${prevCell(m)}
-        ${deltaCell(swe, bench.qwen)}
-        ${deltaCell(swe, bench.genesis)}
-        ${deltaCell(swe, bench.teacher)}
         <td class="r ${m.current ? "gold" : ""}">${esc(fmtScore(m.score))}</td>
         <td class="r ${earning ? "gold" : "dim"}">${esc(alpha)}</td>
         <td class="r ${earning ? "" : "dim"}">${esc(usd)}</td>
@@ -609,7 +532,7 @@ function renderQueue(d) {
 function opponentKing(r) {
   const members = reignMembers(cache.dashboard || {})
     .filter((m) => m.reign_number != null && m.repo);
-  const genesis = { repo: BENCH_GENESIS.repo, hotkey: "", reign_number: 0 };
+  const genesis = { repo: GENESIS_REPO, hotkey: "", reign_number: 0 };
   if (r.event === "crowned" && r.reign_number != null) {
     const prevReign = Number(r.reign_number) - 1;
     return members.find((m) => m.reign_number === prevReign)
@@ -2290,7 +2213,7 @@ function applySnapshot(snap) {
   if (fp === fps.dashboard) return;
   fps.dashboard = fp;
   cache.dashboard = snap;
-  setReignLookup(reignMembers(snap), BENCH_GENESIS.repo);
+  setReignLookup(reignMembers(snap), GENESIS_REPO);
   const navKing = $("nav-king");
   if (navKing && snap.king?.repo) {
     navKing.textContent =
@@ -2306,10 +2229,9 @@ function applySnapshot(snap) {
   renderFails(cache.history);
 }
 
-async function refreshHistoryAndBench() {
-  const [h, b, reg] = await Promise.all([
+async function refreshHistory() {
+  const [h, reg] = await Promise.all([
     fetchHistory({ limit: 100, q: filter }),
-    fetchBenchmarks(),
     fetchRegHistory(),
   ]);
   const hfp = fingerprint(h);
@@ -2322,13 +2244,6 @@ async function refreshHistoryAndBench() {
     renderHistory(cache.history);
     renderFails(cache.history);
     drawOpenChart();
-  }
-  const bfp = fingerprint(b);
-  if (b && bfp !== fps.benchmarks) {
-    fps.benchmarks = bfp;
-    cache.benchmarks = b;
-    // Bench scores render inside the reign table now.
-    if (cache.dashboard) renderReign(cache.dashboard);
   }
   if (reg?.points?.length) {
     const rfp = fingerprint({
@@ -2347,7 +2262,7 @@ async function refreshHistoryAndBench() {
 function wire() {
   $("filter-input")?.addEventListener("input", (e) => {
     filter = e.target.value.trim().toLowerCase();
-    refreshHistoryAndBench();
+    refreshHistory();
   });
   window.addEventListener("resize", () => {
     fps.hero = "";
@@ -2428,10 +2343,11 @@ function wire() {
 async function boot() {
   wire();
   wireChartTip();
+  initMatrix();
   route(); // deep link straight to a duel page (#duel/<cid>)
   cache.contract = await fetchContract().catch(() => null);
   renderLiveContract();
-  await Promise.all([refreshHistoryAndBench(), refreshAudits()]);
+  await Promise.all([refreshHistory(), refreshAudits()]);
   route(); // retry the duel render now that history is cached (static mode)
   closeWatch = watchSnapshot(applySnapshot, {
     onStatus: (s) => {
@@ -2440,7 +2356,7 @@ async function boot() {
     },
   });
   // History grows slower than live snapshot — refresh on an interval.
-  setInterval(refreshHistoryAndBench, 15000);
+  setInterval(refreshHistory, 15000);
   setInterval(refreshAudits, 30000);
 }
 

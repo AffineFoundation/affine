@@ -163,6 +163,15 @@ BENCH_SKIP_MODES = {"challenger", "comparables"}
 BENCH_SKIP_STATUS = {"skipped_identical_weights"}
 MATRIX_MIN_GRADED = 5            # datagen env cell needs this many graded rollouts
 MATRIX_GROUP_ORDER = ["coding", "terminal", "math", "tool_use", "nl2repo", "general", "agent", "other"]
+# Short header labels for the compact matrix (full names travel in `label`).
+BENCH_ABBR = {
+    "mmlu-pro": "MMLU", "math500": "M500", "gpqa-diamond": "GPQA", "aime25": "AIME",
+    "ifbench": "IFB", "ifeval": "IFE", "humaneval": "HE", "livecodebench": "LCB",
+    "bfcl-v3": "BFCL", "when2call": "W2C", "swebench-verified": "SWE", "minif2f": "F2F",
+    "graphwalks": "GW", "mrcr-v2": "MRCR", "oolong-synth": "OOL",
+}
+GROUP_ABBR = {"coding": "code", "terminal": "term", "math": "math", "tool_use": "tool",
+              "nl2repo": "nl2r", "general": "gen", "agent": "agent", "other": "other"}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS chunks (
@@ -869,6 +878,27 @@ def env_cell(agg: dict | None) -> dict | None:
     }
 
 
+def group_cell(aggs: list[dict], group: str) -> dict | None:
+    """Pooled solve rate over a fold group's environments (solved / graded
+    summed over the envs that clear MATRIX_MIN_GRADED)."""
+    solved = graded = rollouts = errored = 0
+    envs = []
+    for a in aggs:
+        if not a or not a.get("graded") or int(a["graded"]) < MATRIX_MIN_GRADED:
+            continue
+        solved += int(a.get("solved") or 0)
+        graded += int(a["graded"])
+        rollouts += int(a.get("n") or 0)
+        errored += int(a.get("errored") or 0)
+        envs.append(a["source"])
+    if not graded:
+        return None
+    rate, lo, hi = wilson(solved, graded)
+    return {"score": round(100.0 * rate, 2), "lo": round(100.0 * lo, 2), "hi": round(100.0 * hi, 2),
+            "n": graded, "kind": "group", "group": group, "solved": solved, "rollouts": rollouts,
+            "errored": errored, "envs": sorted(envs)}
+
+
 def total_cell(cells: dict[str, dict], keys: list[str]) -> dict | None:
     vals = [(k, cells[k]["score"]) for k in keys if cells.get(k) and cells[k].get("score") is not None]
     if not vals:
@@ -877,15 +907,15 @@ def total_cell(cells: dict[str, dict], keys: list[str]) -> dict | None:
     return {"score": round(sum(scores) / len(scores), 2), "n_cols": len(vals),
             "cols": [k for k, _ in vals], "kind": "total",
             "n_bench": sum(1 for k, _ in vals if k.startswith("bench:")),
-            "n_env": sum(1 for k, _ in vals if k.startswith("env:"))}
+            "n_env": sum(1 for k, _ in vals if k.startswith("group:"))}
 
 
 def matrix_rows_meta(stats: dict) -> list[dict]:
-    """Row skeletons in display order: teacher, genesis, kings newest first
-    (revoked reigns sit where their crown date falls)."""
+    """Row skeletons in display order: teacher, genesis, kings newest first.
+    Reigns the operator revoked are NOT rows (operator directive 2026-09-15);
+    the payload lists them under `removed`."""
     kings = [k for k in stats.get("kings") or [] if k.get("digest12") != GENESIS_DIGEST12
              and int(k.get("reign") or 0) != 0]
-    revoked = stats.get("revoked_kings") or []
     genesis = next((k for k in stats.get("kings") or []
                     if k.get("digest12") == GENESIS_DIGEST12 or int(k.get("reign") or 0) == 0), None)
     rows = [{
@@ -897,20 +927,27 @@ def matrix_rows_meta(stats: dict) -> list[dict]:
         "crowned_at": (genesis or {}).get("crowned_at", ""),
         "sub": f"{GENESIS_MODEL} · reign 0 (seed)", "order": 1,
     }]
-    crowned = sorted([*kings, *revoked], key=lambda k: k.get("crowned_at") or "", reverse=True)
+    crowned = sorted(kings, key=lambda k: k.get("crowned_at") or "", reverse=True)
     for i, k in enumerate(crowned):
         rows.append({
             "key": k["digest12"], "kind": "king",
-            "label": f"King {k['reign']}" + (" (removed)" if k.get("revoked") else ""),
+            "label": f"King {k['reign']}",
             "reign": k["reign"], "digest12": k["digest12"], "digest": k.get("digest", ""),
             "hotkey": k.get("hotkey", ""), "crowned_at": k.get("crowned_at", ""),
             "challenge_id": k.get("challenge_id", ""), "current": bool(k.get("current")),
-            "revoked": bool(k.get("revoked")), "revoked_at": k.get("revoked_at", ""),
-            "revoked_reason": k.get("revoked_reason", ""),
             "sub": f"king-{k['digest12']} · crowned {str(k.get('crowned_at') or '')[:16].replace('T', ' ')}",
             "order": 2 + i,
         })
     return rows
+
+
+def removed_kings_meta(stats: dict) -> list[dict]:
+    """Revoked reigns, for the record only (never rendered as rows)."""
+    return [{
+        "reign": k["reign"], "digest12": k["digest12"], "digest": k.get("digest", ""),
+        "crowned_at": k.get("crowned_at", ""), "revoked_at": k.get("revoked_at", ""),
+        "reason": k.get("revoked_reason", ""), "challenge_id": k.get("challenge_id", ""),
+    } for k in sorted(stats.get("revoked_kings") or [], key=lambda k: k.get("crowned_at") or "", reverse=True)]
 
 
 def build_matrix(stats: dict, cards: list[dict]) -> dict:
@@ -949,22 +986,31 @@ def build_matrix(stats: dict, cards: list[dict]) -> dict:
     ordered_bench = [e for e, _ in BENCH_COLUMNS if e in bench_envs_seen] + \
         [e for e in bench_envs_seen if e not in {b for b, _ in BENCH_COLUMNS}]
     labels = dict(BENCH_COLUMNS)
-    columns = [{"key": "total", "label": "total", "kind": "total",
-                "note": "unweighted mean of the row's available benchmark and environment cells (0-100)"}]
+    columns = [{"key": "total", "label": "total", "abbr": "total", "kind": "total",
+                "note": "unweighted mean of the row's available benchmark and environment-group cells (0-100)"}]
     for e in ordered_bench:
         meta = bench_notes.get(e, {})
         columns.append({
-            "key": f"bench:{e}", "label": labels.get(e, e), "kind": "bench", "env": e,
+            "key": f"bench:{e}", "label": labels.get(e, e), "abbr": BENCH_ABBR.get(e, e[:4].upper()),
+            "kind": "bench", "env": e,
             "group": meta.get("group"), "n": meta.get("n"), "note": meta.get("note"),
             "metric": "finished_only" if e in BENCH_FINISHED_ONLY else "score",
         })
     env_groups = {e["source"]: e.get("group") or "other" for e in stats.get("envs") or []}
     env_ids = {e["source"]: e.get("env_id") or "" for e in stats.get("envs") or []}
     gorder = {g: i for i, g in enumerate(MATRIX_GROUP_ORDER)}
+    groups_present = sorted({g for g in env_groups.values()}, key=lambda g: (gorder.get(g, 99), g))
+    # default view: one pooled column per fold group; the per-env columns
+    # sit behind the page's "expand environments" toggle
+    for g in groups_present:
+        members = sorted(s for s, gg in env_groups.items() if gg == g)
+        columns.append({"key": f"group:{g}", "label": f"{g} environments", "abbr": GROUP_ABBR.get(g, g[:4]),
+                        "kind": "group", "group": g, "envs": members,
+                        "note": f"pooled solve rate over the {g} datagen environments: " + ", ".join(members)})
     for s in sorted(env_groups, key=lambda s: (gorder.get(env_groups[s], 99), s)):
-        columns.append({"key": f"env:{s}", "label": s, "kind": "env", "env": s,
-                        "group": env_groups[s], "env_id": env_ids.get(s, "")})
-    value_keys = [c["key"] for c in columns if c["key"] != "total"]
+        columns.append({"key": f"env:{s}", "label": s, "abbr": s.replace("affine_", "")[:10],
+                        "kind": "env", "env": s, "group": env_groups[s], "env_id": env_ids.get(s, "")})
+    value_keys = [c["key"] for c in columns if c["kind"] in ("bench", "group")]
 
     # -- rows
     teacher_envs = (stats.get("teacher") or {}).get("envs") or {}
@@ -975,18 +1021,23 @@ def build_matrix(stats: dict, cards: list[dict]) -> dict:
         cells: dict[str, dict] = {}
         if row["kind"] == "teacher":
             bench = card_cells(teacher_cards, "teacher")
-            envs = {s: env_cell(a) for s, a in teacher_envs.items()}
+            env_aggs = {s: {**a, "source": s} for s, a in teacher_envs.items()}
         elif row["kind"] == "genesis":
             bench = card_cells(genesis_cards, "king")
-            envs = {s: env_cell(a) for s, a in reign_envs.get(GENESIS_DIGEST12, {}).items()}
+            env_aggs = reign_envs.get(GENESIS_DIGEST12, {})
         else:
             bench = card_cells(by_digest.get(row["digest12"], []), "king")
-            envs = {s: env_cell(a) for s, a in reign_envs.get(row["digest12"], {}).items()}
+            env_aggs = reign_envs.get(row["digest12"], {})
         for e, v in bench.items():
             cells[f"bench:{e}"] = v
-        for s, v in envs.items():
+        for s, a in env_aggs.items():
+            v = env_cell(a)
             if v is not None:
                 cells[f"env:{s}"] = v
+        for g in groups_present:
+            v = group_cell([a for s, a in env_aggs.items() if env_groups.get(s) == g], g)
+            if v is not None:
+                cells[f"group:{g}"] = v
         tot = total_cell(cells, value_keys)
         if tot:
             cells["total"] = tot
@@ -1017,6 +1068,7 @@ def build_matrix(stats: dict, cards: list[dict]) -> dict:
         "stats_generated_at": stats.get("generated_at"),
         "columns": columns,
         "rows": rows,
+        "removed": removed_kings_meta(stats),
         "n_cards": len(cards),
         "cards": [{"run_id": c.get("run_id"), "mode": c.get("mode"), "status": c.get("status"),
                    "created_at": c.get("created_at"), "digest12": card_digest12(c),
@@ -1026,17 +1078,17 @@ def build_matrix(stats: dict, cards: list[dict]) -> dict:
                   for c in cards],
         "definitions": {
             "rows": "models in reign order: the teacher, the genesis seed (reign 0), then every "
-                    "crowned king newest first. Reigns the operator removed after the crown "
-                    "(history.jsonl crown_revoked) stay in the table greyed as 'removed'; their "
-                    "reign numbers were re-used by later crowns, so rows are identified by crown "
-                    "date + digest",
+                    "crowned king newest first. Reigns the operator revoked after the crown "
+                    "(history.jsonl crown_revoked) are not rows; they are listed under `removed`",
             "value": "average score 0-100 per cell. Benchmarks: the card's greedy (T=0) row, "
                      "score = share of tasks passed; SWE-bench Verified uses the finished-only score "
                      "(rollouts inside the time / context budget). Datagen environments: solve rate "
                      "= solved / (solved + failed) over the row's rollouts (king seat for kings, "
-                     "teacher_* policies for the teacher), same outcome rule as the fold",
-            "total": "unweighted mean over the row's available columns (benchmarks and environments "
-                     "alike); the tooltip shows how many columns entered",
+                     "teacher_* policies for the teacher), same outcome rule as the fold; a group "
+                     "column pools solved / graded over its environments",
+            "total": "unweighted mean over the row's available benchmark and environment-group "
+                     "columns; the tooltip shows how many entered and the teacher's mean on the "
+                     "same columns",
             "blank": f"no measurement (no benchmark card for the model, or fewer than "
                      f"{MATRIX_MIN_GRADED} graded rollouts on the environment)",
             "colour": "cell tint = score minus the teacher's score in the same column: green above, "

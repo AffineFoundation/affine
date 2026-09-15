@@ -1,6 +1,9 @@
-/* Kingboard "Benchmarks" tab: renders /api/benchsuite.json (one scorecard per
+/* Kingboard "Challengers" tab: renders /api/benchsuite.json (one scorecard per
    benchmark-suite run, written by ops/benchsuite/publish.py). Tab switching
-   is by URL hash (#envs | #benchmarks) so links are shareable. */
+   is by URL hash (#envs | #challengers) so links are shareable. The per-run
+   benchmark table and the reign-by-reign matrix moved to affine.io/#kings
+   (api/v1/matrix); renderTable / renderHistory stay for a page that has the
+   elements. */
 (function () {
   "use strict";
 
@@ -24,11 +27,11 @@
 
   const state = { runs: [], runId: null };
 
-  const TABS = ["kings", "envs", "benchmarks", "challengers"];
+  const TABS = ["envs", "challengers"];
   function showTab(name) {
     document.querySelectorAll("#tabs a[data-tab]").forEach((a) => a.classList.toggle("active", a.dataset.tab === name));
     for (const t of TABS) $(`#tab-${t}`).classList.toggle("hidden", name !== t);
-    if ((name === "benchmarks" || name === "challengers") && !state.runs.length) load();
+    if (name === "challengers" && !state.runs.length) load();
   }
 
   // -- Challengers tab: challenger cards (mode "challenger") vs the king they duelled --
@@ -86,6 +89,7 @@
 
   function renderRunSelect() {
     const sel = $("#bench-run");
+    if (!sel) return;
     sel.innerHTML = "";
     for (const r of state.runs) sel.append(el("option", { value: r.run_id }, runLabel(r)));
     if (!state.runId || !state.runs.some((r) => r.run_id === state.runId)) state.runId = state.runs[0] && state.runs[0].run_id;
@@ -95,6 +99,7 @@
   function current() { return state.runs.find((r) => r.run_id === state.runId); }
 
   function renderTable() {
+    if (!$("#bench-table")) return;
     const r = current();
     const tbody = $("#bench-table tbody");
     tbody.innerHTML = "";
@@ -159,6 +164,7 @@
 
   function renderHistory() {
     const thead = $("#bench-history thead"), tbody = $("#bench-history tbody");
+    if (!thead) return;
     thead.innerHTML = ""; tbody.innerHTML = "";
     const runs = [...state.runs].sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
     if (!runs.length) return;
@@ -197,10 +203,10 @@
     renderChallengers();
   }
 
-  $("#bench-run").addEventListener("change", (e) => { state.runId = e.target.value; renderTable(); });
-  // the matrix (#kings) is the landing view; the older tabs stay behind the nav
-  const tabOf = () => { const h = location.hash.replace("#", ""); return TABS.includes(h) ? h : "kings"; };
+  $("#bench-run")?.addEventListener("change", (e) => { state.runId = e.target.value; renderTable(); });
+  // Environments is the landing view; the reign-by-reign matrix moved to affine.io/#kings
+  const tabOf = () => { const h = location.hash.replace("#", ""); return TABS.includes(h) ? h : "envs"; };
   window.addEventListener("hashchange", () => showTab(tabOf()));
   showTab(tabOf());
-  setInterval(() => { if (tabOf() === "benchmarks" || tabOf() === "challengers") load(); }, 300000);
+  setInterval(() => { if (tabOf() === "challengers") load(); }, 300000);
 })();

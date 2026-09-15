@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Affine kings — performance over time</title>
-<meta name="description" content="SN120 kings vs the teacher: average score per held-out benchmark and per datagen environment, one row per reign.">
+<title>Affine kingboard — king vs teacher per datagen env</title>
+<meta name="description" content="How the current SN120 king performs on each datagen environment next to the teacher; losing challengers benchmarked. The reign-by-reign score matrix lives on affine.io/#kings.">
 <link rel="icon" href="https://affine.io/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/fonts/fonts.css?v=1">
 <link rel="stylesheet" href="/static/style.css?v=3">
@@ -18,11 +18,9 @@
       <span class="brand-sub">kings</span>
     </a>
     <nav class="nav-center" id="tabs">
-      <a href="#kings" data-tab="kings" class="nav-chip active">Kings</a>
-      <a href="#envs" data-tab="envs" class="nav-chip">Environments</a>
-      <a href="#benchmarks" data-tab="benchmarks" class="nav-chip">Benchmarks</a>
+      <a href="#envs" data-tab="envs" class="nav-chip active">Environments</a>
       <a href="#challengers" data-tab="challengers" class="nav-chip">Challengers</a>
-      <a href="https://affine.io/" class="nav-chip nav-chip-home">affine.io</a>
+      <a href="https://affine.io/#kings" class="nav-chip nav-chip-home" title="Kings vs teacher — performance over time (on affine.io)">Kings matrix ↗</a>
     </nav>
     <div class="nav-right">
       <a class="nav-icon" href="https://github.com/AffineFoundation/affine" target="_blank" rel="noopener noreferrer" title="GitHub — AffineFoundation/affine" aria-label="GitHub">
@@ -47,27 +45,6 @@
 </header>
 
 <main class="page">
-  <!-- landing view: model x (benchmark | environment) matrix -->
-  <section id="tab-kings" class="tab section">
-    <div class="section-head">
-      <h2 class="section-title">Kings vs teacher · performance over time</h2>
-      <span class="section-right note" id="matrix-meta">loading…</span>
-    </div>
-    <p class="section-note matrix-lead">Rows: the teacher, the genesis seed, then every crowned king, newest first. Columns: held-out benchmarks (greedy, T=0; never in D), then the datagen environments. Value: average score 0–100. Tint = gap to the teacher (green above, red below). Hover a cell for the 95% interval and the sample; click a column header to sort by it, the first header restores reign order.</p>
-    <div class="matrix-wrap table-wrap" id="matrix-wrap">
-      <table class="data-table matrix" id="matrix">
-        <thead></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-    <div class="matrix-legend" id="matrix-legend"></div>
-    <details class="defs">
-      <summary>How the matrix is computed</summary>
-      <ul id="matrix-definitions"></ul>
-      <div id="matrix-cards" class="muted small"></div>
-    </details>
-  </section>
-
   <section id="tab-challengers" class="tab section hidden">
     <div class="section-head">
       <h2 class="section-title">Losing challengers, benchmarked</h2>
@@ -75,44 +52,6 @@
     </div>
     <div class="table-wrap"><table id="chal-table" class="data-table"><thead></thead><tbody></tbody></table></div>
     <div id="chal-note" class="muted small"></div>
-  </section>
-
-  <section id="tab-benchmarks" class="tab section hidden">
-    <div class="section-head">
-      <h2 class="section-title">Standard benchmarks</h2>
-      <span class="section-right note">king vs teacher on held-out Hub benchmarks (never in D); greedy T=0 unless marked; Wilson 95% intervals. Monitoring only — not part of the score.</span>
-    </div>
-    <div class="controls inline">
-      <label>Run <select id="bench-run"></select></label>
-      <span id="bench-meta" class="muted small"></span>
-    </div>
-    <div class="table-wrap">
-      <table id="bench-table" class="data-table">
-        <thead>
-          <tr>
-            <th>benchmark</th>
-            <th>group</th>
-            <th class="num">T</th>
-            <th class="num">n</th>
-            <th class="num">king <span class="muted small">[95% CI]</span></th>
-            <th class="num">teacher <span class="muted small">[95% CI]</span></th>
-            <th class="num">Δ king−teacher</th>
-            <th class="num">king finished-only <span class="muted small">(inside budget)</span></th>
-            <th class="num">king tokens out</th>
-            <th class="num">hit cap</th>
-            <th class="num">wall</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-    <div class="section-head sub">
-      <h2 class="section-title">History across reigns</h2>
-      <span class="section-right note">king score per benchmark, one column per run (T=0 rows)</span>
-    </div>
-    <div class="table-wrap"><table id="bench-history" class="data-table"><thead></thead><tbody></tbody></table></div>
-    <div id="bench-skipped" class="muted small"></div>
-    <div id="bench-links" class="muted small"></div>
   </section>
 
   <div id="tab-envs" class="tab hidden">
@@ -206,13 +145,10 @@
 </main>
 
 <footer class="muted small">
-  Source: trace envelopes on <a href="https://data.affine.io/traces/manifest.json">data.affine.io</a> (R2 bucket <code>affine-data</code>) and the benchmark scorecards (<code>affine/state/benchsuite</code>). Stats regenerate every few minutes; the page refreshes every 60 s. <span id="build-info"></span>
+  Source: trace envelopes on <a href="https://data.affine.io/traces/manifest.json">data.affine.io</a> (R2 bucket <code>affine-data</code>) and the benchmark scorecards (<code>affine/state/benchsuite</code>; the reign-by-reign matrix is on <a href="https://affine.io/#kings">affine.io/#kings</a>, data <code>/api/matrix</code>). Stats regenerate every few minutes; the page refreshes every 60 s. <span id="build-info"></span>
 </footer>
-
-<div id="chart-tip" hidden></div>
 
 <script src="/static/app.js?v=3"></script>
 <script src="/static/bench.js?v=3"></script>
-<script src="/static/matrix.js?v=3"></script>
 </body>
 </html>
