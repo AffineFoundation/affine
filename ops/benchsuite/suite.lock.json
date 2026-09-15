@@ -416,7 +416,118 @@
    "rollout_timeout_s": 3600,
    "concurrency": 48,
    "datasets": {}
+  },
+  "terminal-bench-2": {
+   "taskset": "terminal-bench-2",
+   "package_version": "0.1.0",
+   "install": "terminal/terminal_bench_2",
+   "harness": "terminus_2",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "solved",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": 200,
+   "rollout_timeout_s": 3600,
+   "concurrency": 16,
+   "datasets": {}
+  },
+  "swebench-pro": {
+   "taskset": "swebench-pro",
+   "package_version": "0.1.0",
+   "install": "swe/swebench_pro",
+   "harness": "mini_swe_agent",
+   "runtime": "sandbox",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "solved",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": null,
+   "max_turns": 300,
+   "rollout_timeout_s": 3600,
+   "concurrency": 48,
+   "datasets": {}
+  },
+  "tau2-airline": {
+   "taskset": "tau2-bench",
+   "package_version": "0.3.1",
+   "install": "tool_use/tau2_bench",
+   "harness": "tau2-bench",
+   "runtime": "subprocess",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "tau2_reward",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": {
+    "domain": "airline"
+   },
+   "max_turns": null,
+   "rollout_timeout_s": 3600,
+   "concurrency": 8,
+   "datasets": {}
+  },
+  "tau2-retail": {
+   "taskset": "tau2-bench",
+   "package_version": "0.3.1",
+   "install": "tool_use/tau2_bench",
+   "harness": "tau2-bench",
+   "runtime": "subprocess",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "tau2_reward",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": {
+    "domain": "retail"
+   },
+   "max_turns": null,
+   "rollout_timeout_s": 3600,
+   "concurrency": 8,
+   "datasets": {}
+  },
+  "tau2-telecom": {
+   "taskset": "tau2-bench",
+   "package_version": "0.3.1",
+   "install": "tool_use/tau2_bench",
+   "harness": "tau2-bench",
+   "runtime": "subprocess",
+   "temperatures": [
+    0.0
+   ],
+   "secondary_rollouts": null,
+   "max_tokens": 8192,
+   "reward": "tau2_reward",
+   "subset": {
+    "n": "all"
+   },
+   "taskset_config": {
+    "domain": "telecom"
+   },
+   "max_turns": null,
+   "rollout_timeout_s": 3600,
+   "concurrency": 8,
+   "datasets": {}
   }
  },
- "lock_sha256": "0b4b8e7139ec2a0a"
+ "lock_sha256": "efad175efa863baf"
 }
