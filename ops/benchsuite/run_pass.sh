@@ -212,7 +212,13 @@ remote_suite() {  # models policy sandbox_runtime user@host port key known_hosts
     "${SCP[@]}" "/tmp/teacher-$RUN_ID.tgz" "$USER_HOST:/tmp/teacher.tgz" && "${SSH[@]}" "cd $RHOME/benchsuite/runs && tar xzf /tmp/teacher.tgz"
     rm -f "/tmp/teacher-$RUN_ID.tgz"
   fi
-  local META; META=$("$PY" - "$REF" "$LABEL" "$POD_ID" "$USD_HR" "$CODE_COMMIT" "$MODE" "$TEACHER_FROM" "$MODELS" "$PROVIDER" "$SB_RUNTIME" <<'PY'
+  # hardware of the serving pod (Lium: pods.json machine / plan), recorded on the card
+  local POD_GPU="" POD_PLAN=""
+  if [ -n "$POD_ID" ] && [ -f "$HERE/state/pods.json" ]; then
+    POD_GPU=$("$PY" -c 'import json,sys; m=json.load(open(sys.argv[1])).get(sys.argv[2]) or {}; print(m.get("machine") or "")' "$HERE/state/pods.json" "$POD_ID" 2>/dev/null || echo "")
+    POD_PLAN=$("$PY" -c 'import json,sys; m=json.load(open(sys.argv[1])).get(sys.argv[2]) or {}; print((m.get("plan") or {}).get("name") or "")' "$HERE/state/pods.json" "$POD_ID" 2>/dev/null || echo "")
+  fi
+  local META; META=$(BENCH_POD_GPU="$POD_GPU" BENCH_POD_PLAN="$POD_PLAN" "$PY" - "$REF" "$LABEL" "$POD_ID" "$USD_HR" "$CODE_COMMIT" "$MODE" "$TEACHER_FROM" "$MODELS" "$PROVIDER" "$SB_RUNTIME" <<'PY'
 import json, os, sys
 ref, label, pod, usd, commit, mode, tfrom, models, provider, sbr = sys.argv[1:]
 if ref.startswith("r2://"):
@@ -232,6 +238,10 @@ meta = {"mode": mode, "king": king,
         "where": {"provider": provider, "pod_id": pod, "usd_per_hour": float(usd),
                   "eval_driver": f"same pod; docker runtime for chat sets, {sbr} runtime for sandbox sets"},
         "code": {"affine_commit": commit}}
+if os.environ.get("BENCH_POD_GPU"):
+    meta["where"]["gpu"] = os.environ["BENCH_POD_GPU"]
+if os.environ.get("BENCH_POD_PLAN"):
+    meta["where"]["plan"] = os.environ["BENCH_POD_PLAN"]
 if models == "king": meta["teacher"] = {"reused_from": tfrom}
 print(json.dumps(meta))
 PY
