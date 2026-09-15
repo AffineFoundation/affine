@@ -1947,10 +1947,22 @@ Reference kind `text`. 246 / 1.7%.
 - `completion` — the final reply that ended a SOLVED rollout on purpose \
 (teacher or king): a `submit`, a finish tool call, `task_complete`, or the \
 prose final report (`text`). 1,738 / 11.7%.
+- `king_coached` (since epoch 41, 2026-09-15) — the TEACHER's hint-free \
+continuation from a king failure state where a coach was decisive: a coached \
+teacher solved the task in 2 or more of 3 continuations while the plain \
+teacher solved 0 of 3 (the coached-recovery run; `policy.id` starts with \
+`coached_`). The turns are the teacher's own replies after the king's \
+failure point; the coach's per-turn notes exist only in a `privileged` block \
+the fold strips — they are never in a prefix, a record or a reference. \
+References at duel time are the ordinary fresh unhinted teacher refs. \
+Harness dialect. Small at first (21 states / 291 turns / 56 strata at \
+epoch 41; 74% of its turns passed the probe), grows with the coach loop; \
+share 0.02, 3 sub-strata per state.
 
 Precedence when one turn qualifies for several groups: king_done > \
 king_recoverable > king_tooluse > king_pivot > king_loop_onset > king_fail \
-> completion > completion_pre. King groups skip wiki / agent / math and the \
+> completion > completion_pre (`king_coached` rollouts are their own \
+envelopes and never overlap). King groups skip wiki / agent / math and the \
 one-reply general sources (the state would be the task prompt).
 
 **Teacher-probe admission gate (king groups, since epoch 35, 2026-09-14).** \

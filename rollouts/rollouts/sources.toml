@@ -45,7 +45,7 @@
 # >= 40 % (they land at ~58 % because the king groups are supply-limited).
 # Within the block the shares follow the measured deficit: the |d| >= 0.018
 # groups draw 3 turns per task, king_done / king_tooluse / completion 2.
-coding = 0.36
+coding = 0.34   # 0.36 -> 0.34: king_coached 0.02 (2026-09-15)
 terminal = 0.22
 nl2repo = 0.01
 math = 0.02
@@ -75,6 +75,35 @@ king_tooluse = 0.02   # phase 9b: ~540 When2Call candidates/day + persist states
 completion = 0.10
 completion_pre = 0.02
 general = 0.05
+# 2026-09-15 (Jacob, lever 1/2): + king_coached 0.02 out of coding -- the
+# teacher's hint-free continuations from coach-decisive king failure states
+# (docs/coached-recovery.md). Small today (11 strict-decisive states / 24
+# solved continuations), grows with the coach loop.
+king_coached = 0.02
+
+[king_coached]
+# Coached-teacher recovery (docs/coached-recovery.md; Jacob 2026-09-15,
+# approved). What enters D: the TEACHER's hint-free continuation trajectory
+# from a king failure state where the coach was decisive (rule =
+# "hint_decisive": the envelope's privileged.origin.hint_decisive flag --
+# coached teacher solved >= 1 of 3 continuations, plain teacher 0 of >= 2;
+# "hint_decisive_strict" = coached majority; the thresholds are the
+# fallback when the flag is absent). Envelopes (datagen schema + a top-level
+# `privileged` block: origin state, the coach's per-turn notes, coach
+# config) are dropped into envelopes_dir by the hint program; the fold
+# strips `privileged` before deriving -- the notes never reach a prefix or a
+# record (miners do not see hints). References at duel time are the
+# ordinary fresh unhinted teacher refs; the teacher-probe gate applies.
+# Stratum = king_coached:<sha256(king state id) % strata_buckets>, k = 3
+# sub-strata via [strata_budget]. envelope_ids (optional file, one
+# rollout_id per line) restricts to a hand-picked list.
+strata_buckets = 4000
+envelopes_dir = "affine/state/king_coached"
+policy_prefix = "coached_"
+rule = "hint_decisive"
+min_coached_solved = 1
+max_plain_solved = 0
+# envelope_ids = "affine/state/king_coached/envelope_ids.txt"
 
 [curriculum]
 # Adaptive, auditable curriculum (operator directive 2026-09-14 23:32 UTC,
@@ -154,6 +183,7 @@ king_loop_onset = 3
 king_pivot = 3
 king_recoverable = 3
 completion_pre = 3
+king_coached = 3
 king_done = 2
 king_tooluse = 2
 completion = 2
@@ -433,7 +463,7 @@ cap_chars = 7000
 enabled = true
 side_table = "affine/state/teacher_probe/probes.jsonl"
 pending = "affine/state/teacher_probe/pending.jsonl"
-groups = ["king_fail", "king_done", "king_recoverable", "king_tooluse", "king_pivot", "king_loop_onset", "completion_pre"]
+groups = ["king_fail", "king_done", "king_recoverable", "king_tooluse", "king_pivot", "king_loop_onset", "completion_pre", "king_coached"]
 min_valid = 2
 require_distinct = true
 # Jacob's rule (2026-09-14): when >= min_valid teacher samples are prose with
