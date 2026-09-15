@@ -247,6 +247,16 @@ KING_TOOLUSE_GROUP = "king_tooluse"
 COMPLETION_GROUP = "completion"
 COMPLETION_PRE_GROUP = "completion_pre"
 KING_COACHED_GROUP = "king_coached"
+# Env backfill rollouts (internal/coverage/env-backfill-spec.md) live under
+# their own prefix and policy id and never enter D; isolation is the traces
+# manifest, this is the belt-and-braces drop (`backfill_excluded`).
+BACKFILL_POLICY_PREFIX = "backfill_"
+BACKFILL_CHUNK_PREFIX = "traces-backfill/"
+
+
+def is_backfill(env: dict, chunk_key: str = "") -> bool:
+    pid = str((env.get("policy") or {}).get("id") or "")
+    return pid.startswith(BACKFILL_POLICY_PREFIX) or str(chunk_key).startswith(BACKFILL_CHUNK_PREFIX)
 KING_GROUPS = ("king_fail", KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_TOOLUSE_GROUP,
                KING_PIVOT_GROUP, KING_LOOP_GROUP, COMPLETION_PRE_GROUP, KING_COACHED_GROUP)
 # Precedence order when one turn qualifies for several (king-data spec §3.3).
@@ -1263,7 +1273,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                  probe_text: frozenset[str] = frozenset(),
                  king_tooluse: dict | None = None,
                  completion_pre: dict | None = None,
-                 leak_exempt_all: bool = False) -> list[dict]:
+                 leak_exempt_all: bool = False,
+                 chunk_key: str = "") -> list[dict]:
     """View records for one trace chunk, with only the turns that pass the
     fold contract and are not yet published. Records with no surviving
     turn are dropped.
@@ -1302,6 +1313,9 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
     common = (king_fail_cfg or {}).get("common") or load_king_common()
     out: list[dict] = []
     for env in iter_jsonl_gz(path):
+        if is_backfill(env, chunk_key):
+            _count(drops, "backfill_excluded")
+            continue
         convs = None
         route: dict[int, str] = {}          # turn_idx -> group (final)
         extra: dict[int, dict] = {}         # turn_idx -> meta fields to stamp
@@ -2269,6 +2283,7 @@ def finalize(state: dict, manifest: dict, mhash: str) -> None:
         "strata": {g: len(v) for g, v in state["group_strata"].items()},
         "init": bool(pending.get("init")),
         "n_retired": len(pending.get("retire_turn_ids") or []),
+        "n_backfill_excluded": int(pending.get("n_backfill_excluded") or 0),
         "recurrence": pending.get("recurrence"),
         "budget_migrated": bool(pending.get("budget_migrated")),
         "strata_raw_before_budget": pending.get("strata_raw_before_budget"),
@@ -2335,6 +2350,8 @@ def announce(state: dict, public_base: str) -> None:
         f"{strata_line}.\n"
         + (f"Retired from the index: {info['n_retired']:,} turns (chunks unchanged; see llms.txt).\n"
            if info.get("n_retired") else "")
+        + (f"Env backfill rollouts excluded from D: {info['n_backfill_excluded']:,}.\n"
+           if info.get("n_backfill_excluded") else "")
         + budget_note(info)
         + (f"{info['curriculum_line']}\n" if info.get("curriculum_line") else "")
         + "\n"
@@ -2624,7 +2641,13 @@ def main() -> None:
     candidates: list[dict] = list(carryover)
     for i, c in enumerate(unfolded, 1):
         path = pub.cached(c["key"], c["sha256"], gz_sha=True)
+        if str(c["key"]).startswith(BACKFILL_CHUNK_PREFIX):
+            n_bf = sum(1 for _ in iter_jsonl_gz(path))
+            _count(drops, "backfill_excluded", n_bf)
+            log(f"backfill chunk {c['key']} excluded ({n_bf} rollouts)")
+            continue
         recs = derive_chunk(path, baker, panel, allowed, published, drops,
+                            chunk_key=str(c["key"]),
                             king_loop=king_loop, king_pivot=king_pivot,
                             completion=completion, king_recoverable=king_recoverable,
                             king_done=king_done, king_fail_cfg=king, notes=notes,
@@ -2645,6 +2668,10 @@ def main() -> None:
     seen_tids: set[str] = set()
     deduped: list[dict] = []
     n_dup_turns = n_dup_recs = 0
+    n_bf_carry = sum(1 for rec in candidates if is_backfill(rec))
+    if n_bf_carry:
+        _count(drops, "backfill_excluded", n_bf_carry)
+        candidates = [rec for rec in candidates if not is_backfill(rec)]
     for rec in candidates:
         keep = []
         for m in rec["turns"]:
@@ -3089,6 +3116,7 @@ def main() -> None:
         "coached_folded": sorted(coached_folded),
         "src_override": dict(SRC_OVERRIDE),
         "n_strata_after": int(sum(after.values())),
+        "n_backfill_excluded": int(drops.get("backfill_excluded", 0)),
         "budget_signature": budget_cfg.get("signature") if budget_cfg else None,
         "budget_migrated": budget_migrated,
         "strata_raw_before_budget": state.get("group_strata_raw_before_budget") if budget_migrated else None,
