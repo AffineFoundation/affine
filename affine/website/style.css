@@ -415,6 +415,7 @@ button {
   position: fixed;
   z-index: 120;
   pointer-events: none;
+  white-space: pre-line;
   max-width: 420px;
   padding: 6px 9px;
   background: #1c1c1c;
@@ -1918,4 +1919,97 @@ table.data-table td.audit-summary {
   .chat-page-inner {
     min-height: calc(100vh - 120px);
   }
+}
+
+/* ---------- kings vs teacher matrix (#kings) ---------- */
+.kings-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px 14px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.kings-bar .note {
+  flex: 1 1 320px;
+}
+
+.kings-toggle {
+  border: 1px solid var(--color-border);
+  color: var(--color-fg-2);
+  border-radius: 3px;
+  padding: 4px 10px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.kings-toggle:hover {
+  color: var(--color-fg);
+  border-color: var(--color-border-hover);
+}
+
+#kings-wrap { max-height: 70vh; overflow: auto; }
+
+table.data-table.kings {
+  width: 100%;
+  font-size: 11px;
+}
+
+table.data-table.kings th {
+  padding: 6px 4px;
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  text-align: right;
+  cursor: pointer;
+  user-select: none;
+}
+
+table.data-table.kings th.model,
+table.data-table.kings td.model {
+  text-align: left;
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--color-bg);
+  padding-left: 6px;
+  padding-right: 10px;
+  white-space: nowrap;
+}
+
+table.data-table.kings th.sorted { color: var(--color-gold); }
+table.data-table.kings th.total,
+table.data-table.kings td.total { border-right: 1px solid var(--color-border-hover); font-weight: 500; }
+table.data-table.kings th.first-env,
+table.data-table.kings td.first-env { border-left: 1px solid var(--color-border-hover); }
+
+table.data-table.kings td {
+  padding: 5px 4px;
+  color: var(--color-fg);
+  white-space: nowrap;
+}
+
+table.data-table.kings td.blank { color: var(--color-fg-4); text-align: center; }
+table.data-table.kings tr.teacher td { color: var(--color-fg-2); border-bottom: 1px solid var(--color-border-hover); }
+table.data-table.kings tr.teacher td.model .name { color: var(--color-accent); }
+table.data-table.kings tr.genesis td.model .name { color: var(--color-bar); }
+table.data-table.kings tr.king td.model .name { color: var(--color-gold); }
+table.data-table.kings tbody tr:hover td { background-color: rgba(90, 200, 250, 0.06); }
+table.data-table.kings tbody tr:hover td.model { background: #232323; }
+table.data-table.kings tbody tr.current td { background: none; }
+table.data-table.kings tbody tr.current td.model { box-shadow: inset 3px 0 0 var(--color-gold); }
+table.data-table.kings td.model .cur {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--color-gold);
+  vertical-align: middle;
+}
+
+@media (max-width: 720px) {
+  table.data-table.kings th,
+  table.data-table.kings td { padding: 6px 4px; font-size: 10px; }
 }

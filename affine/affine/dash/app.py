@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
@@ -44,6 +45,12 @@ from .tmc import (
 log = logging.getLogger("affine.dash")
 
 WEBSITE_DIR = Path(__file__).resolve().parents[2] / "website"
+# Kings-vs-teacher score matrix (ops/kingboard/build.py::build_matrix): the
+# kingboard's refresh pass writes it on this box every ~3 min; the dash only
+# serves the file so affine.io's landing section and kings.affine.io agree.
+MATRIX_PATH = Path(os.environ.get(
+    "AFFINE_MATRIX_PATH",
+    Path(__file__).resolve().parents[3] / "ops" / "kingboard" / "state" / "matrix.json"))
 
 
 def _etag(payload) -> str:
@@ -159,6 +166,27 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         payload["generated_at"] = snap.get("generated_at")
         payload["suites"] = suites
         return _json(payload, max_age=5, request=request)
+
+    _matrix_cache: dict = {"mtime": None, "payload": None}
+
+    @app.get("/api/v1/matrix")
+    def api_matrix(request: Request):
+        """Model x (benchmark | environment) average-score matrix: teacher,
+        genesis, every crowned king. Built by ops/kingboard (see MATRIX_PATH);
+        monitoring only, never part of the score."""
+        try:
+            mtime = MATRIX_PATH.stat().st_mtime
+        except OSError:
+            return JSONResponse({"error": "matrix not built yet"}, status_code=503,
+                                headers={"Cache-Control": "no-store", "Retry-After": "60"})
+        if _matrix_cache["mtime"] != mtime:
+            try:
+                _matrix_cache.update(mtime=mtime, payload=json.loads(MATRIX_PATH.read_text()))
+            except (OSError, ValueError) as exc:
+                log.warning("matrix.json unreadable: %s", exc)
+                return JSONResponse({"error": "matrix unreadable"}, status_code=503,
+                                    headers={"Cache-Control": "no-store", "Retry-After": "60"})
+        return _json(_matrix_cache["payload"], max_age=60, request=request)
 
     @app.get("/api/v1/contract")
     def api_contract(request: Request):

@@ -9,7 +9,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="affine-mark.png" type="image/png" />
   <link rel="stylesheet" href="fonts/fonts.css?v=20" />
-  <link rel="stylesheet" href="style.css?v=72" />
+  <link rel="stylesheet" href="style.css?v=73" />
 </head>
 <body>
   <header class="top-nav">
@@ -21,6 +21,7 @@
       <div class="nav-center">
         <a id="nav-king" class="nav-chip" target="_blank" rel="noopener">AFFINE</a>
         <a href="./llms.txt" class="nav-chip" id="nav-llms">llms.txt</a>
+        <a class="nav-chip" href="#kings" id="nav-kings">Kings</a>
         <a class="nav-chip" href="#dataset" id="nav-dataset">Dataset</a>
         <a class="nav-chip" href="#audits" id="nav-audits">Audits</a>
         <a class="nav-chip" href="#metrics" id="nav-metrics">Metrics</a>
@@ -123,6 +124,22 @@
   </section>
 
   <main class="page">
+    <!-- Kings vs teacher: average score per held-out benchmark and per datagen
+         environment group, one row per reign. Data: api/v1/matrix (built by
+         ops/kingboard). Monitoring only — never part of the score. -->
+    <section class="section" id="kings">
+      <div class="section-head">
+        <h2 class="section-title">Kings vs teacher — performance over time</h2>
+        <span class="section-right note" id="kings-meta">loading…</span>
+      </div>
+      <div class="kings-bar">
+        <span class="note">avg score 0–100 · greedy T=0 benchmarks, then datagen environment groups · tint = gap to the teacher · hover for CI and n · click a header to sort</span>
+        <button type="button" class="kings-toggle" id="kings-expand">expand environments</button>
+        <button type="button" class="kings-toggle" id="kings-show-all" hidden>show all reigns</button>
+      </div>
+      <div class="table-scroll" id="kings-wrap"><div class="empty">loading…</div></div>
+    </section>
+
     <section class="section" id="reign">
       <div class="section-head">
         <h2 class="section-title">Reign</h2>
@@ -271,6 +288,6 @@
     </div>
   </section>
 
-  <script type="module" src="app.js?v=81"></script>
+  <script type="module" src="app.js?v=82"></script>
 </body>
 </html>

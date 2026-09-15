@@ -88,6 +88,13 @@ export async function fetchBenchmarks(signal) {
   return getJSON("data/benchmarks.json", { signal });
 }
 
+/** Kings-vs-teacher score matrix (built by ops/kingboard; API only). */
+export async function fetchMatrix(signal) {
+  const m = await detectMode({ signal });
+  if (m !== "api") return null;
+  return getJSON(`${API}/matrix`, { signal });
+}
+
 /** Post-crown exploit-audit verdicts (newest first). */
 export async function fetchAudits(signal) {
   const m = await detectMode({ signal });
