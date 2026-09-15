@@ -18,7 +18,7 @@ import {
   fingerprint,
   watchSnapshot,
 } from "./api.js?v=68";
-import { initMatrix } from "./matrix.js?v=1";
+import { initMatrix } from "./matrix.js?v=2";
 import {
   GATE_METRICS,
   HERO_CHARTS,
