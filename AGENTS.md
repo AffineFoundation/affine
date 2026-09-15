@@ -974,6 +974,16 @@ Bench map: `research/harness/config.py` `KING_BENCH` (swe-rebench scores).
 - Don’t run two teacher-heavy jobs concurrently on one pod.
 - Chain scripts: wait on **result line counts**, not “process absent”.
 - Validator/CPU host needs no GPU; rent GPUs only for evalsrv / scoring.
+- **Validator box (ArbosLife) supervision, 2026-09-13** (`ops/box/`): pm2 runs
+  under `pm2-const.service` (`Restart=always`; `systemctl stop pm2-const` =
+  `pm2 kill`, use `pm2 stop <app>` for one app), `needrestart` is told never to
+  restart it (an `apt-get install` restarted every app mid-duel on 09-13 09:15),
+  and `affine-deadman.timer` (2 min) restarts `affine-validator` if it is not
+  online for two ticks and posts one line to the PRIVATE Arbos channel. Before a
+  deliberate `pm2 stop affine-validator` (redeploy flow) run
+  `touch ~/.affine/deadman.pause` (auto-expires after 6 h) and delete it after
+  `pm2 start`. `/usr/bin/kill -9 -<pid>` without `--` is `kill(-1)` = every
+  process of the user — the 09-13 00:24 and 03:09 wipes (`arbos-qa`, now off).
 
 ---
 

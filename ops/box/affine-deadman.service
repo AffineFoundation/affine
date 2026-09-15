@@ -1,0 +1,10 @@
+[Unit]
+Description=Affine validator dead-man check (restart pm2/affine-validator if not online)
+Documentation=file:///usr/local/sbin/affine-deadman
+After=network-online.target pm2-const.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/affine-deadman
+TimeoutStartSec=180
+Nice=5
