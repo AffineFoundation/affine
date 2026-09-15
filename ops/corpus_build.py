@@ -716,9 +716,12 @@ def lang_bucket(rec: dict) -> str:
 #               (`<group>:b<sha(original stratum) % N>`); no turn leaves D,
 #               each is just drawn less often.
 #   sub_strata: supply-limited king groups (+ completion) split each task
-#               stratum into up to k sub-strata by turn (`<stratum>:<sha(
+#               stratum into up to k sub-strata by turn (`<stratum>#<sha(
 #               turn_id) % k>`), so a duel may draw up to k different turns
-#               of the same task. RT-6 trade-off: a task recurs across duels
+#               of the same task. INTERFACE for the adaptive curriculum
+#               (docs/adaptive-curriculum-plan.md): the ledger strips `#k`
+#               to the base stratum; `[curriculum] mode = "apply"` sets k
+#               per group from the published weights. RT-6 trade-off: a task recurs across duels
 #               k times as often; fresh per-duel teacher refs and the
 #               block-hash-seeded slice stay the defense, and the fold logs
 #               the simulated per-duel recurrence in the announce.
@@ -726,6 +729,122 @@ def lang_bucket(rec: dict) -> str:
 # mapping is idempotent and re-tunable without a rewrite of chunks.
 STRATA_BUDGET: dict = {}
 SRC2GRP_GLOBAL: dict[str, str] = {}
+FOLD_STATS_PATH = STATE_DIR / "fold_stats.json"
+FOLD_STATS_KEY = "corpus/fold_stats.json"
+
+
+def load_curriculum() -> dict:
+    """[curriculum] (adaptive curriculum, docs/adaptive-curriculum-plan.md;
+    hook spec internal/curriculum/hooks-for-fold.md). mode: off | shadow |
+    apply. `weights_path` is the published group vector the curriculum job
+    writes (JSON: {"groups": {<group>: {"share": x, "m": k}}} or a flat
+    {<group>: share}); `shadow` logs it in the announce next to the static
+    [mix]; `apply` uses the shares as the group targets and `m` as the
+    sub-strata count. A missing / unreadable vector falls back to the static
+    [mix] (mode reported as `fallback`)."""
+    raw = tomllib.loads(SOURCES_TOML.read_text()).get("curriculum") or {}
+    mode = str(raw.get("mode") or "off")
+    out = {"mode": mode, "raw": raw, "groups": {}, "m": {}, "path": None, "error": None}
+    if mode == "off":
+        return out
+    path = REPO / str(raw.get("weights_path") or "ops/curriculum/out/groups.json")
+    out["path"] = str(path)
+    if not path.exists():
+        out["error"] = "missing"
+        return out
+    try:
+        data = json.loads(path.read_text())
+        groups = data.get("groups", data) if isinstance(data, dict) else {}
+        # Decision 2026-09-15 (coordinator): the fold reads the rule summed
+        # over SLICE KEYS (phase-9 buckets / sub-strata), not base strata --
+        # per-group `share_raw_slice_keys`, else the top-level table of the
+        # same name; then the apply / shadow shares as published.
+        top_slice = data.get("share_raw_slice_keys") if isinstance(data, dict) else None
+        for g, v in groups.items():
+            if isinstance(v, dict):
+                share = v.get("share_raw_slice_keys")
+                if share is None and isinstance(top_slice, dict):
+                    share = top_slice.get(g)
+                if share is None:
+                    share = v.get("share_applied", v.get("share", v.get("share_shadow")))
+                if share is not None:
+                    out["groups"][str(g)] = float(share)
+                if v.get("m") is not None:
+                    out["m"][str(g)] = int(v["m"])
+            else:
+                out["groups"][str(g)] = float(v)
+        out["vector"] = ("share_raw_slice_keys" if any(isinstance(v, dict) and "share_raw_slice_keys" in v
+                                                        for v in groups.values()) or isinstance(top_slice, dict)
+                         else "share")
+        blk = data.get("manifest_curriculum_block") if isinstance(data, dict) else None
+        if isinstance(blk, dict) and all(k in blk for k in ("rule_version", "mode", "ledger_sha256",
+                                                            "weights_sha256", "manifest_sha256")):
+            out["manifest_block"] = {"rule_version": int(blk["rule_version"]), "mode": str(blk["mode"]),
+                                     "ledger_sha256": str(blk["ledger_sha256"]),
+                                     "weights_sha256": str(blk["weights_sha256"]),
+                                     "manifest_sha256": str(blk["manifest_sha256"])}
+        if str(data.get("mode") or mode) != mode:
+            out["error"] = f"mode mismatch (vector {data.get('mode')} vs toml {mode})"
+        age_h = (datetime.now(timezone.utc) - datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)).total_seconds() / 3600
+        if age_h > 24:
+            out["error"] = f"vector older than 24 h ({age_h:.0f} h)"
+        out["meta"] = {k: data.get(k) for k in ("epoch", "ledger_sha256", "weights_sha256", "rule_version", "generated_at")
+                       if isinstance(data, dict) and k in data}
+        tot = sum(out["groups"].values())
+        if not out["groups"] or abs(tot - 1.0) > 0.02:
+            out["error"] = f"bad vector (sum {tot:.3f})"
+    except (OSError, ValueError, TypeError) as e:
+        out["error"] = f"{type(e).__name__}: {e}"
+    return out
+
+
+def curriculum_line(cur: dict, static_mix: dict[str, float]) -> str:
+    if not cur or cur["mode"] == "off":
+        return ""
+    if cur.get("error"):
+        return f"curriculum: mode {cur['mode']} -> fallback to static [mix] ({cur['error']}; {cur.get('path')})"
+    moves = sorted(((g, cur["groups"].get(g, 0.0) - static_mix.get(g, 0.0)) for g in set(cur["groups"]) | set(static_mix)),
+                   key=lambda kv: -abs(kv[1]))[:3]
+    meta = cur.get("meta") or {}
+    epoch = meta.get("epoch")
+    return (f"curriculum: mode {cur['mode']}, rule v{meta.get('rule_version', '?')}, ledger "
+            f"{str(meta.get('ledger_sha256') or '')[:12] or 'n/a'}, weights "
+            f"{str(meta.get('weights_sha256') or '')[:12] or 'n/a'} ({cur.get('vector', 'share')}); "
+            "top moves vs static [mix]: " + ", ".join(f"{g} {d:+.3f}" for g, d in moves)
+            + (f"; m {cur['m']}" if cur.get("m") else "")
+            + (f"; diff https://data.affine.io/curriculum/{epoch}/diff.md" if epoch else ""))
+
+
+def write_fold_stats(epoch: int, after: dict[str, int], turns_by_group: dict[str, int],
+                     recurrence: dict | None, cur: dict | None, mix: dict[str, float],
+                     n_turns: int, publisher) -> None:
+    """Per-group draw statistics for the curriculum job (published next to
+    the manifest as corpus/fold_stats.json): strata, turns, slice share,
+    expected draws per 1,300-turn duel, draws per turn per duel, sub-strata
+    k / bucket N, and the simulated per-duel recurrence."""
+    tot = sum(after.values()) or 1
+    groups = {}
+    for g, n_strata in sorted(after.items()):
+        share = n_strata / tot
+        draws = 1300 * share
+        nt = turns_by_group.get(g, 0)
+        groups[g] = {"strata": n_strata, "turns": nt, "share": round(share, 5),
+                     "draws_per_duel": round(draws, 2),
+                     "draws_per_turn_per_duel": round(draws / nt, 6) if nt else None,
+                     "sub_strata_k": (STRATA_BUDGET.get("sub_strata") or {}).get(g, 1),
+                     "bucket_n": (STRATA_BUDGET.get("buckets") or {}).get(g),
+                     "static_mix": mix.get(g)}
+    doc = {"epoch": epoch, "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+           "n_turns": n_turns, "n_strata": tot, "n_per_duel": 1300,
+           "sub_strata_separator": "#", "bucket_prefix": "b",
+           "groups": groups, "recurrence": recurrence,
+           "curriculum": {"mode": cur["mode"], "error": cur.get("error"), "groups": cur.get("groups"),
+                          "m": cur.get("m"), "meta": cur.get("meta")} if cur else None}
+    FOLD_STATS_PATH.write_text(json.dumps(doc, indent=1, sort_keys=True))
+    if publisher is not None:
+        publisher.put(FOLD_STATS_KEY, json.dumps(doc, sort_keys=True).encode(), "application/json",
+                      cache_control="public, max-age=60")
+    log(f"fold stats written: {FOLD_STATS_PATH}" + (f" + {FOLD_STATS_KEY}" if publisher is not None else ""))
 
 
 def load_strata_budget() -> dict:
@@ -734,7 +853,9 @@ def load_strata_budget() -> dict:
         return {}
     return {"buckets": {str(k): int(v) for k, v in (raw.get("buckets") or {}).items() if int(v) > 0},
             "sub_strata": {str(k): int(v) for k, v in (raw.get("sub_strata") or {}).items() if int(v) > 1},
-            "signature": json.dumps(raw, sort_keys=True)}
+            # the separator / naming version is part of the signature so a
+            # rename re-keys the index once
+            "signature": json.dumps({"raw": raw, "sub_sep": "#", "v": 2}, sort_keys=True)}
 
 
 def budget_stratum(group: str, stratum_src: str, turn_id: str, cfg: dict | None = None) -> str:
@@ -749,8 +870,10 @@ def budget_stratum(group: str, stratum_src: str, turn_id: str, cfg: dict | None 
         return f"{group}:b{h % n:05d}"
     k = cfg["sub_strata"].get(group)
     if k:
+        # `<stratum>#<k>` -- the interface the curriculum ledger strips
+        # (docs/adaptive-curriculum-plan.md §1, §7.1). Stable; do not rename.
         h = int(hashlib.sha256(turn_id.encode("utf-8")).hexdigest()[:8], 16)
-        return f"{stratum_src}:{h % k}"
+        return f"{stratum_src}#{h % k}"
     return stratum_src
 
 
@@ -758,6 +881,21 @@ def group_from_row(stratum_src: str, source: str, src2grp: dict[str, str]) -> st
     ns = str(stratum_src).split(":")[0]
     return ns if ns in ROUTED_GROUPS or ns in ("math", "tool_use", "general", "king_fail") \
         else src2grp.get(str(source), DEFAULT_GROUP)
+
+
+def live_rows_for_budget(pub: PublicCorpus, live: dict | None) -> list[tuple[str, str, str]]:
+    """(turn_id, ORIGINAL stratum, source) for every live index row -- the
+    pre-budget key comes from `stratum_src` once the index carries it."""
+    if not live or not live.get("index"):
+        return []
+    raw = pub.get(live["index"]["key"])
+    if hashlib.sha256(raw).hexdigest() != live["index"]["sha256"]:
+        fatal(f"live index sha mismatch for {live['index']['key']}")
+    t = pq.read_table(io.BytesIO(raw))
+    src = t.column("stratum_src").to_pylist() if "stratum_src" in t.column_names \
+        else t.column("stratum").to_pylist()
+    return list(zip(t.column("turn_id").to_pylist(), [str(x) for x in src],
+                    [str(x) for x in t.column("source").to_pylist()]))
 
 
 def apply_budget_table(table: pa.Table, src2grp: dict[str, str], cfg: dict) -> pa.Table:
@@ -1901,6 +2039,11 @@ def publish_pending(state: dict, publisher: CorpusPublisher,
              "allowed_action_kinds": pending["allowed_kinds"]}
     if legacy_sha:
         extra["legacy_turns_manifest_sha256"] = legacy_sha
+    if pending.get("curriculum_block"):
+        # Adaptive curriculum stamp (plan §2.3 / §3.4; evalsrv reads it into
+        # slice.curriculum_version). manifest_sha256 = the manifest the
+        # weights were computed AGAINST.
+        extra["curriculum"] = pending["curriculum_block"]
     return publisher.publish_revision(
         pack, epoch=epoch, view_spec=VIEW_SPEC, prev_manifest=prev_manifest,
         prev_shards=prev_shards, extra=extra)
@@ -1932,6 +2075,7 @@ def finalize(state: dict, manifest: dict, mhash: str) -> None:
         "budget_migrated": bool(pending.get("budget_migrated")),
         "strata_raw_before_budget": pending.get("strata_raw_before_budget"),
         "recurrence_before_budget": pending.get("recurrence_before_budget"),
+        "curriculum_line": pending.get("curriculum_line"),
     }
     if pending.get("budget_signature"):
         state["strata_budget_signature"] = pending["budget_signature"]
@@ -1992,6 +2136,7 @@ def announce(state: dict, public_base: str) -> None:
         + (f"Retired from the index: {info['n_retired']:,} turns (chunks unchanged; see llms.txt).\n"
            if info.get("n_retired") else "")
         + budget_note(info)
+        + (f"{info['curriculum_line']}\n" if info.get("curriculum_line") else "")
         + "\n"
         f"- corpus_epoch: **{epoch}**\n"
         f"- schema_version: **3** (view `{VIEW_SPEC}`: one record per rollout "
@@ -2459,23 +2604,42 @@ def main() -> None:
     budget_cfg = load_strata_budget()
     STRATA_BUDGET.clear(); STRATA_BUDGET.update(budget_cfg)
     SRC2GRP_GLOBAL.clear(); SRC2GRP_GLOBAL.update(src2grp)
+    static_mix = dict(mix)
+    curriculum = load_curriculum()
+    if curriculum["mode"] != "off":
+        log(curriculum_line(curriculum, static_mix))
+    if curriculum["mode"] == "apply" and not curriculum.get("error"):
+        # The published vector becomes the group targets; `m` the sub-strata
+        # count (changes the budget signature -> re-key + --allow-shift).
+        mix = {g: float(v) for g, v in curriculum["groups"].items() if float(v) > 0}
+        if curriculum["m"] and budget_cfg:
+            budget_cfg["sub_strata"].update({g: k for g, k in curriculum["m"].items() if k > 1})
+            budget_cfg["signature"] = json.dumps({"base": budget_cfg["signature"], "m": curriculum["m"]}, sort_keys=True)
+            STRATA_BUDGET.clear(); STRATA_BUDGET.update(budget_cfg)
     budget_migrated = False
+    rename_only = False
     if budget_cfg and state.get("strata_budget_signature") != budget_cfg["signature"]:
+        # A naming-version change alone (same [strata_budget] raw table) re-keys
+        # the index without moving any share: no guard, no announce note.
+        try:
+            old_sig = json.loads(state.get("strata_budget_signature") or "null")
+            old_raw = old_sig.get("raw", old_sig) if isinstance(old_sig, dict) else None
+            rename_only = old_raw is not None and old_raw == json.loads(budget_cfg["signature"])["raw"]
+        except (ValueError, TypeError):
+            rename_only = False
         # First fold under this budget: re-key the mix state from the live
         # index (the deliberate composition shift; --allow-shift required).
-        bt = index_table(pub, live, ["turn_id", "stratum", "source"])
-        if bt is not None:
-            src_col = bt.column("stratum").to_pylist()
+        live_rows = live_rows_for_budget(pub, live)
+        if live_rows:
             raw_groups: dict[str, set[str]] = {}
             new_groups: dict[str, set[str]] = {}
-            for tid, s0, src in zip(bt.column("turn_id").to_pylist(), src_col, bt.column("source").to_pylist()):
+            for tid, s0, src in live_rows:
                 g = group_from_row(str(s0), str(src), src2grp)
                 raw_groups.setdefault(g, set()).add(str(s0))
                 new_groups.setdefault(g, set()).add(budget_stratum(g, str(s0), tid, budget_cfg))
             tr = sum(len(v) for v in raw_groups.values()) or 1
             tn = sum(len(v) for v in new_groups.values()) or 1
-            raw_rec = simulate_recurrence(list(zip(bt.column("turn_id").to_pylist(),
-                                                   [str(x) for x in src_col])))
+            raw_rec = simulate_recurrence([(tid, s0) for tid, s0, _ in live_rows])
             log(f"strata budget: per-duel recurrence BEFORE the budget {raw_rec}")
             state["recurrence_before_budget"] = raw_rec
             log("strata budget: live index re-keyed -- " + "; ".join(
@@ -2484,8 +2648,10 @@ def main() -> None:
                 for g in sorted(new_groups, key=lambda k: -len(new_groups[k]))))
             state["group_strata"] = {g: sorted(v) for g, v in new_groups.items()}
             state["group_strata_raw_before_budget"] = {g: len(v) for g, v in raw_groups.items()}
-            budget_migrated = True
-            if not args.allow_shift:
+            budget_migrated = not rename_only
+            if rename_only:
+                log("strata budget: naming-version change only (shares unchanged); re-keyed without a guard")
+            if not args.allow_shift and not rename_only:
                 msg = "strata budget re-keys the live index (deliberate composition shift); rerun with --allow-shift"
                 if args.no_publish:
                     log(f"GUARD (dry run): {msg}")
@@ -2612,14 +2778,13 @@ def main() -> None:
 
     recurrence = None
     if STRATA_BUDGET:
-        bt = index_table(pub, live, ["turn_id", "stratum", "source"])
+        live_rows = live_rows_for_budget(pub, live)
+        retired_now = set(retire_ids) | set(pivot_retire)
         sim_rows: list[tuple[str, str]] = []
-        if bt is not None:
-            for tid, s0, src in zip(bt.column("turn_id").to_pylist(), bt.column("stratum").to_pylist(),
-                                    bt.column("source").to_pylist()):
-                if tid in set(retire_ids) or tid in set(pivot_retire):
-                    continue
-                sim_rows.append((tid, budget_stratum(group_from_row(str(s0), str(src), src2grp), str(s0), tid)))
+        for tid, s0, src in live_rows:
+            if tid in retired_now:
+                continue
+            sim_rows.append((tid, budget_stratum(group_from_row(s0, src, src2grp), s0, tid)))
         for r in selected:
             g = group_of(r, src2grp, mix)
             for m in r["turns"]:
@@ -2629,6 +2794,16 @@ def main() -> None:
         recurrence = simulate_recurrence(sim_rows)
         per_duel = {g: round(1300 * a / (sum(after.values()) or 1), 1) for g, a in after.items()}
         log(f"strata budget: simulated per-duel recurrence {recurrence}; projected turns per duel {per_duel}")
+        turns_by_group: dict[str, int] = {}
+        for tid, s0, src in live_rows:
+            if tid not in retired_now:
+                g = group_from_row(s0, src, src2grp)
+                turns_by_group[g] = turns_by_group.get(g, 0) + 1
+        for r in selected:
+            g = group_of(r, src2grp, mix)
+            turns_by_group[g] = turns_by_group.get(g, 0) + len(r["turns"])
+        write_fold_stats((int(live["corpus_epoch"]) if live else 0) + 1, after, turns_by_group, recurrence,
+                         curriculum, mix, sum(turns_by_group.values()), None if args.no_publish else publisher)
 
     n_new = sum(len(r["turns"]) for r in selected)
     stale = False
@@ -2672,6 +2847,8 @@ def main() -> None:
         "budget_migrated": budget_migrated,
         "strata_raw_before_budget": state.get("group_strata_raw_before_budget") if budget_migrated else None,
         "recurrence_before_budget": state.get("recurrence_before_budget") if budget_migrated else None,
+        "curriculum_line": curriculum_line(curriculum, static_mix) if curriculum["mode"] != "off" else None,
+        "curriculum_block": curriculum.get("manifest_block") if curriculum["mode"] != "off" and not curriculum.get("error") else None,
         "lang_strata_added": {b: sorted(v) for b, v in lang_added.items()},
         "by_dialect": by_dialect, "allowed_kinds": list(allowed),
         "folded_chunks": [c["key"] for c in unfolded], "init": bool(args.init),

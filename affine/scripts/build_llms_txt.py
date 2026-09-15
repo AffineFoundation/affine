@@ -1530,8 +1530,8 @@ by the fold to the index only -- no turn left D, chunks and old manifests are \
 unchanged): teacher-trajectory groups are merged into fixed strata buckets \
 (`coding:b<n>`, `terminal:b<n>`, `general:b<n>`, `tool_use:b<n>` = \
 `sha256(original stratum) % N`), and supply-limited king groups split each \
-task stratum into up to 3 sub-strata by turn (`king_fail:0552:2` = \
-`<stratum>:<sha256(turn_id) % k>`; k = 3 for king_fail / king_loop_onset / \
+task stratum into up to 3 sub-strata by turn (`king_fail:0552#2` = \
+`<stratum>#<sha256(turn_id) % k>`; k = 3 for king_fail / king_loop_onset / \
 king_pivot / king_recoverable / completion_pre, 2 for king_done / \
 king_tooluse / completion), so one duel may draw up to k different turns of \
 the same task. The original key is kept in the index column `stratum_src`. \
