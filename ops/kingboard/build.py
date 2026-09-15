@@ -118,6 +118,7 @@ BENCHSUITE_DIR = Path(os.environ.get(
 # written recently = a benchmark pass in flight (cells shown as running).
 BENCHSUITE_RUNS_DIR = Path(os.environ.get("BENCHSUITE_RUNS_DIR", REPO / "ops" / "benchsuite" / "state"))
 BENCHSUITE_SUITE_TOML = Path(os.environ.get("BENCHSUITE_SUITE_TOML", REPO / "ops" / "benchsuite" / "suite.toml"))
+CHAT_SET_MODES = {"lium", "prime", "full", "full-king-only", "genesis", "cheap", "challenger"}
 INFLIGHT_STALE_S = 2 * 3600      # a pass log untouched this long is dead, not running (a sandbox cell can be silent ~1 h)
 DATA_URL = os.environ.get("KINGBOARD_DATA_URL", "https://data.affine.io").rstrip("/")
 R2_BUCKET = os.environ.get("DATA_R2_BUCKET", "affine-data")
@@ -885,7 +886,10 @@ def load_inflight_passes() -> list[dict]:
             elif kind == "done":
                 done.add(env)
         m0 = re.search(r"^\[run_pass\] (\S+) pass ", text, re.M)
-        planned = list(dict.fromkeys([*chat_envs, *started]))
+        mode = fields.get("mode") or ""
+        # the standard passes run the chat sets (then sandbox sets when triggered);
+        # other modes (agentic, ...) plan only what their log has started
+        planned = list(dict.fromkeys([*(chat_envs if mode in CHAT_SET_MODES else []), *started]))
         running_env = next((e for e in reversed(started) if e not in done), None)
         t_first = parse_iso(m0.group(1)) if m0 else mtime
         n_done = len(done)
@@ -896,13 +900,15 @@ def load_inflight_passes() -> list[dict]:
         label = fields.get("label") or ""
         ref = fields.get("ref") or ""
         digest12 = None
-        m_d = re.search(r"([0-9a-f]{12})$", run_id)
+        m_d = re.search(r"(?:^|-)([0-9a-f]{12})(?:-|\.|$)", run_id)   # ...-<digest12>[-agentic][.attemptN]
         if m_d:
             digest12 = m_d.group(1)
+        elif re.fullmatch(r"[0-9a-f]{64}", ref):
+            digest12 = ref[:12]
         elif "@" in ref:
             digest12 = ref.rsplit("@", 1)[-1][:12]
         out.append({
-            "run_id": run_id, "mode": fields.get("mode") or "", "label": label, "ref": ref,
+            "run_id": run_id, "mode": mode, "label": label, "ref": ref,
             "digest12": digest12, "genesis": label == "genesis" or GENESIS_DIGEST12 in ref,
             "started_at": (m0.group(1) if m0 else None), "log_mtime": mtime,
             "planned": planned, "done": sorted(done), "running_env": running_env,
