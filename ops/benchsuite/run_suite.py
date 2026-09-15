@@ -31,6 +31,7 @@ import gzip
 import json
 import math
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -91,7 +92,29 @@ def prime_wallet(api_key: str | None) -> float | None:
 
 
 # ------------------------------------------------------------- summaries
-def summarize_traces(path: Path, reward_name: str) -> dict:
+def by_class_summary(rows: list[dict]) -> dict:
+    """Per-class accuracy + per-class mean of every metric, over the rows that
+    carry a `class` (envs with `class_field` in suite.toml, e.g. When2Call's
+    gold decision). The metric means are what make the confusion readable:
+    `pred_tool_call` averaged over a non-tool class IS the "called a tool when
+    none was needed" rate for that class."""
+    out: dict = {}
+    for cls in sorted({r["class"] for r in rows if r.get("class")}):
+        sub = [r for r in rows if r.get("class") == cls and r["score"] is not None]
+        k = int(sum(r["score"] for r in sub))
+        lo, hi = wilson(k, len(sub))
+        names = sorted({m for r in sub for m in (r["metrics"] or {})})
+        metrics = {}
+        for m in names:
+            vals = [float(r["metrics"][m]) for r in sub if r["metrics"].get(m) is not None]
+            if vals:
+                metrics[m] = round(sum(vals) / len(vals), 4)
+        out[cls] = {"n": len(sub), "k": k, "score": round(k / len(sub), 4) if sub else 0.0,
+                    "ci95": [round(lo, 4), round(hi, 4)], "metrics": metrics}
+    return out
+
+
+def summarize_traces(path: Path, reward_name: str, class_field: str = "") -> dict:
     """Per-rollout records + aggregate from a verifiers traces.jsonl."""
     rows = []
     opener = gzip.open if path.suffix == ".gz" else open
@@ -131,6 +154,7 @@ def summarize_traces(path: Path, reward_name: str) -> dict:
                 "episode_id": e.get("id"), "trace_id": t.get("id"),
                 "task_idx": data.get("idx"),
                 "task_key": task.get("key") or data.get("name"),
+                "class": data.get(class_field) if class_field else None,
                 "score": score,
                 "rewards": {k: (v.get("score") if isinstance(v, dict) else v)
                             for k, v in rw.items()},
@@ -190,11 +214,21 @@ def summarize_traces(path: Path, reward_name: str) -> dict:
         "completion_tokens": sum(r["completion_tokens"] for r in rows),
         "reasoning_tokens": sum(r["reasoning_tokens"] for r in rows),
         "finish_length_frac": round(sum(1 for r in rows if "length" in (r["finish_reasons"] or [])) / max(1, len(rows)), 4),
+        "by_class": by_class_summary(rows) if class_field else {},
         "rollouts": rows,
     }
 
 
 # ------------------------------------------------------------- eval cells
+def eval_bin(env: dict, verifiers_dir: Path) -> Path:
+    """The `eval` console script for this env: the shared verifiers venv, or a
+    side venv under <bench_home>/venvs/<name> for tasksets whose dependency pins
+    cannot share it (tau3-bench pins a newer `tau2` than tau2-bench)."""
+    if env.get("venv"):
+        return verifiers_dir.parent / "venvs" / env["venv"] / "bin" / "eval"
+    return verifiers_dir / ".venv" / "bin" / "eval"
+
+
 def cell_dir(out: Path, model: str, env_id: str, temp: float) -> Path:
     return out / model / f"{env_id}__t{temp:g}"
 
@@ -207,7 +241,7 @@ def build_cmd(env: dict, model: str, url: str, key_env: str, temp: float,
     # command-line default so every reign gets the same one.
     concurrency = int(env.get("concurrency") or concurrency)
     cmd = [
-        str(verifiers_dir / ".venv" / "bin" / "eval"), env["taskset"],
+        str(eval_bin(env, verifiers_dir)), env["taskset"],
         "-m", model,
         "--client.base-url", url,
         "--client.api-key-var", key_env,
@@ -234,6 +268,10 @@ def build_cmd(env: dict, model: str, url: str, key_env: str, temp: float,
     # the subprocess runtime. runtime="none" cells therefore also use the
     # container runtime given on the command line (docker: python:3.11-slim,
     # ~5 s boot per task).
+    if env.get("runtime") == "subprocess":
+        # tasksets that ship their own orchestrator (tau2-bench) pin the agent
+        # runtime to a subprocess on the driver host; a container would break them
+        runtime = "subprocess"
     cmd += ["--env.agent.runtime.type", runtime]
     if runtime == "docker" and chat_image:
         # A pre-baked python:3.11-slim with uv + the harness script deps in the
@@ -282,7 +320,7 @@ def run_cell(env: dict, model_label: str, model: str, url: str, key_env: str,
             if rt.get("type") == "docker" and rt.get("image") != chat_image:
                 rt["image"] = chat_image
                 resolved.write_text(json.dumps(cfg, indent=1))
-        cmd = [str(verifiers_dir / ".venv" / "bin" / "eval"), "@", str(resolved), "--resume"]
+        cmd = [str(eval_bin(env, verifiers_dir)), "@", str(resolved), "--resume"]
         log(f"resume {model_label}/{env['id']} t={temp:g}")
     else:
         cmd = build_cmd(env, model, url, key_env, temp, rollouts, out, dirname, runtime,
@@ -302,7 +340,7 @@ def run_cell(env: dict, model_label: str, model: str, url: str, key_env: str,
             f"(see {d / 'eval.log'})")
         results[(model_label, env["id"], temp)] = {"error": f"exit {p.returncode}", "wall_seconds": wall}
         return
-    summ = summarize_traces(traces, env["reward"])
+    summ = summarize_traces(traces, env["reward"], env.get("class_field", ""))
     summ.update({
         "env": env["id"], "taskset": env["taskset"], "model": model_label,
         "temperature": temp, "rollouts_per_task": rollouts,
@@ -504,6 +542,61 @@ def cmd_run(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rescore(a: argparse.Namespace) -> int:
+    """Re-grade finished cells in place with the taskset as installed now
+    (verifiers `replay`: same messages and calls, only rewards/metrics change; no
+    model, no runtime). For grader fixes such as when2call-mcq 0.1.1's tool-call
+    fallback. The previous traces are kept as traces.pre-rescore-<k>.jsonl.gz and
+    summary.json records every rescoring (when, why, package version)."""
+    out = Path(a.out).expanduser() / a.run_id
+    verifiers_dir = Path(a.verifiers_dir).expanduser()
+    by_id = {e["id"]: e for e in SUITE["envs"]}
+    for cell in [c for c in a.cells.split(",") if c]:
+        d = out / cell
+        env_id = d.name.rpartition("__t")[0]
+        env = by_id[env_id]
+        traces = d / "traces.jsonl"
+        if not traces.exists():
+            with gzip.open(d / "traces.jsonl.gz", "rb") as fi, traces.open("wb") as fo:
+                shutil.copyfileobj(fi, fo)
+        tmp = d / "rescore.tmp"
+        shutil.rmtree(tmp, ignore_errors=True)
+        cmd = [str(verifiers_dir / ".venv/bin/replay"), str(d), "-o", str(tmp), "--no-rich", "--no-push"]
+        log(f"rescore {cell}: {' '.join(cmd)}")
+        with (d / "rescore.log").open("a") as fh:
+            p = subprocess.run(cmd, cwd=str(verifiers_dir), stdout=fh, stderr=subprocess.STDOUT,
+                               env=os.environ.copy())
+        new = tmp / "traces.jsonl"
+        if p.returncode != 0 or not new.exists():
+            log(f"rescore FAILED {cell}: exit={p.returncode} (see {d / 'rescore.log'})")
+            return 1
+        n_old = sum(1 for _ in traces.open()) if traces.exists() else 0
+        n_new = sum(1 for _ in new.open())
+        if n_new != n_old:
+            log(f"rescore FAILED {cell}: {n_new} replayed traces vs {n_old} original")
+            return 1
+        k = len(list(d.glob("traces.pre-rescore-*.jsonl.gz")))
+        keep = d / f"traces.pre-rescore-{k}.jsonl.gz"
+        with traces.open("rb") as fi, gzip.open(keep, "wb", compresslevel=6) as fo:
+            shutil.copyfileobj(fi, fo)
+        shutil.move(str(new), str(traces))
+        (d / "traces.jsonl.gz").unlink(missing_ok=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+        prev = json.loads((d / "summary.json").read_text()) if (d / "summary.json").exists() else {}
+        summ = summarize_traces(traces, env["reward"], env.get("class_field", ""))
+        summ.update({key: prev[key] for key in prev if key not in summ})
+        inst = env["install"]
+        pyproj = (HERE / inst if inst.startswith("envs/") else Path("/nonexistent")) / "pyproject.toml"
+        version = tomllib.loads(pyproj.read_text())["project"].get("version") if pyproj.exists() else None
+        summ["rescored"] = (prev.get("rescored") or []) + [{
+            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "why": a.why,
+            "taskset": env["taskset"], "package_version": version, "kept": keep.name,
+            "score_before": prev.get("score"), "score_after": summ["score"]}]
+        (d / "summary.json").write_text(json.dumps(summ, indent=1))
+        log(f"rescored {cell}: {prev.get('score')} -> {summ['score']} ci={summ['ci95']} (original kept as {keep.name})")
+    return 0
+
+
 def cmd_summarize(a: argparse.Namespace) -> int:
     """Re-derive summary.json for every cell that has traces (after edits or a crash)."""
     out = Path(a.out).expanduser() / a.run_id
@@ -518,9 +611,11 @@ def cmd_summarize(a: argparse.Namespace) -> int:
         env = by_id.get(env_id)
         if env is None:
             continue
-        summ = summarize_traces(traces, env["reward"])
+        summ = summarize_traces(traces, env["reward"], env.get("class_field", ""))
         prev = json.loads((d / "summary.json").read_text()) if (d / "summary.json").exists() else {}
-        summ.update({k: prev.get(k) for k in ("wall_seconds", "exit_code") if k in prev})
+        # keep everything the run/rescore/publish steps recorded that is not re-derived
+        # from the traces (wall time, exit code, where, rescored, reused_from, ...)
+        summ.update({k: prev[k] for k in prev if k not in summ})
         summ.update({"env": env_id, "taskset": env["taskset"], "model": d.parent.name,
                      "temperature": float(temp), "reward": env["reward"],
                      "harness": env["harness"], "max_tokens": env["max_tokens"]})
@@ -549,12 +644,12 @@ def cmd_retry(a: argparse.Namespace) -> int:
     def one(d: Path, s: dict) -> None:
         with sem:
             env = by_id[s["env"]]
-            cmd = [str(verifiers_dir / ".venv/bin/eval"), "@", str(d / "configs/resolved/eval.json"), "--resume"]
+            cmd = [str(eval_bin(env, verifiers_dir)), "@", str(d / "configs/resolved/eval.json"), "--resume"]
             log(f"retry {d.parent.name}/{d.name}: {s['n_errored']} errored")
             t0 = time.time()
             with (d / "eval.log").open("a") as fh:
                 subprocess.run(cmd, cwd=str(verifiers_dir), stdout=fh, stderr=subprocess.STDOUT)
-            new = summarize_traces(d / "traces.jsonl", env["reward"])
+            new = summarize_traces(d / "traces.jsonl", env["reward"], env.get("class_field", ""))
             s.update({k: new[k] for k in new})
             s["wall_seconds"] = round(float(s.get("wall_seconds") or 0) + time.time() - t0, 1)
             s["retried"] = int(s.get("retried") or 0) + 1
@@ -612,11 +707,17 @@ def main() -> int:
     s = sub.add_parser("summarize")
     s.add_argument("--run-id", required=True)
     s.add_argument("--out", required=True)
+    rs = sub.add_parser("rescore", help="re-grade cells in place with the installed taskset (verifiers replay)")
+    rs.add_argument("--run-id", required=True)
+    rs.add_argument("--out", required=True)
+    rs.add_argument("--verifiers-dir", required=True)
+    rs.add_argument("--cells", required=True, help="comma list of <model>/<env>__t<T>")
+    rs.add_argument("--why", default="grader change")
     a = ap.parse_args()
     if a.cmd in ("run", "retry") and not (Path(a.verifiers_dir).expanduser() / ".venv/bin/eval").exists():
         raise SystemExit("verifiers venv missing: run install_eval_env.sh first")
     return {"run": cmd_run, "summarize": cmd_summarize, "retry": cmd_retry,
-            "compare": cmd_compare}[a.cmd](a)
+            "compare": cmd_compare, "rescore": cmd_rescore}[a.cmd](a)
 
 
 if __name__ == "__main__":

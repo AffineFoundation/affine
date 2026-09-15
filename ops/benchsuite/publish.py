@@ -31,6 +31,8 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 SUITE = tomllib.loads((HERE / "suite.toml").read_text())
 FORBIDDEN_PREFIXES = ("traces/", "views/", "corpus/", "turns/")
+PARTIAL = False
+
 
 
 def log(msg: str) -> None:
@@ -96,15 +98,20 @@ def scorecard(run_dir: Path) -> dict:
             rows.append({
                 "env": env_id, "group": e.get("group"), "temperature": float(tkey[1:]),
                 "note": e.get("note"),
+                "show_classes": e.get("show_classes"),
+                "graded": e.get("graded", "deterministic"),   # "llm_judge" = advisory, never in the score
+                "judge": e.get("judge"),
                 "n": (k or t or {}).get("n"),
                 "king": None if not k else {"score": k["score"], "ci95": k["ci95"], "n": k["n"],
                                             "n_errored": k["n_errored"], "n_timeout": k.get("n_timeout"), "n_context_overflow": k.get("n_context_overflow"), "finished_only": k.get("finished_only"), "completion_tokens": k["completion_tokens"],
                                             "prompt_tokens": k["prompt_tokens"], "wall_seconds": k.get("wall_seconds"),
-                                            "finish_length_frac": k.get("finish_length_frac")},
+                                            "finish_length_frac": k.get("finish_length_frac"),
+                                            "by_class": k.get("by_class") or None},
                 "teacher": None if not t else {"score": t["score"], "ci95": t["ci95"], "n": t["n"],
                                                "n_errored": t["n_errored"], "n_timeout": t.get("n_timeout"), "n_context_overflow": t.get("n_context_overflow"), "finished_only": t.get("finished_only"), "completion_tokens": t["completion_tokens"],
                                                "prompt_tokens": t["prompt_tokens"], "wall_seconds": t.get("wall_seconds"),
                                                "finish_length_frac": t.get("finish_length_frac"),
+                                               "by_class": t.get("by_class") or None,
                                                "reused_from": t.get("reused_from")},
                 "delta": None if not (k and t) else round(k["score"] - t["score"], 4),
                 "prime_eval_url": {m: s.get("prime_eval_url") for m, s in models.items() if s.get("prime_eval_url")} or None,
@@ -114,7 +121,7 @@ def scorecard(run_dir: Path) -> dict:
                         if d.is_dir() and (d / "cmd.txt").exists() and not (d / "summary.json").exists())
     return {
         "run_id": manifest.get("run_id"),
-        "status": "partial" if unfinished else "complete",
+        "status": "partial" if (unfinished or PARTIAL) else "complete",
         "unfinished_cells": unfinished,
         "king": manifest.get("king"), "teacher": manifest.get("teacher"),
         "where": manifest.get("where"), "code": manifest.get("code"),
@@ -122,6 +129,7 @@ def scorecard(run_dir: Path) -> dict:
         "published_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "prime_spent_usd": manifest.get("prime_spent_usd"),
         "lock": manifest.get("lock"),
+        "duel": (manifest.get("king") or {}).get("duel"),
         "prime_evals": manifest.get("prime_evals"),
         "prime_evals_account": manifest.get("prime_evals_account"),
         "mode": manifest.get("mode"),
@@ -139,7 +147,12 @@ def main() -> int:
     ap.add_argument("--state-dir", default=str(REPO / SUITE["suite"]["state_dir"]))
     ap.add_argument("--no-r2", action="store_true")
     ap.add_argument("--only-state", action="store_true", help="write the scorecard JSON only")
+    ap.add_argument("--partial", action="store_true", help="mark the card partial (more cells will follow, e.g. the sandbox phase)")
+    ap.add_argument("--only-cells", default="", help="comma list of <model>/<env>__t<T>: upload just those "
+                    "cell dirs (+ manifests), merge into the existing R2 index (a cell added to a published run)")
     a = ap.parse_args()
+    global PARTIAL
+    PARTIAL = a.partial
     run_dir = Path(a.run_dir).expanduser().resolve()
     run_id = run_dir.name
     card = scorecard(run_dir)
@@ -159,11 +172,14 @@ def main() -> int:
     assert not prefix.startswith(FORBIDDEN_PREFIXES), prefix
     bucket = SUITE["suite"]["r2_bucket"]
     s3 = r2_client()
+    only = [c.strip("/") for c in a.only_cells.split(",") if c.strip()]
     files = []
     for p in sorted(run_dir.rglob("*")):
         if not p.is_file():
             continue
         rel = p.relative_to(run_dir).as_posix()
+        if only and not (any(rel.startswith(c + "/") for c in only) or "/" not in rel):
+            continue      # partial publish: the named cells + the run's top-level manifests
         if rel.endswith("traces.jsonl"):
             gz = p.with_suffix(".jsonl.gz")
             if not gz.exists() or gz.stat().st_mtime < p.stat().st_mtime:
@@ -174,10 +190,18 @@ def main() -> int:
             continue      # uploaded via its .jsonl sibling above
         files.append((p, rel))
     index = []
+    if only:
+        try:
+            old = json.loads(s3.get_object(Bucket=bucket, Key=prefix + "index.json")["Body"].read())
+            uploaded = {rel for _, rel in files}
+            index = [f for f in old.get("files", []) if f["path"] not in uploaded]
+        except s3.exceptions.NoSuchKey:
+            index = []
     for p, rel in files:
         key = prefix + rel
         s3.upload_file(str(p), bucket, key)
         index.append({"path": rel, "bytes": p.stat().st_size, "sha256": sha256_file(p)})
+    index.sort(key=lambda f: f["path"])
     index_doc = {"run_id": run_id, "bucket": bucket, "prefix": prefix,
                  "public_base": f"https://data.affine.io/{prefix}",
                  "files": index, "published_at": card["published_at"]}
@@ -185,7 +209,7 @@ def main() -> int:
                   Body=json.dumps(index_doc, indent=1).encode(), ContentType="application/json")
     s3.put_object(Bucket=bucket, Key=prefix + "scorecard.json",
                   Body=json.dumps(card, indent=1).encode(), ContentType="application/json")
-    log(f"uploaded {len(files)} files ({sum(f['bytes'] for f in index)/1e6:.1f} MB) -> "
+    log(f"uploaded {len(files)} files ({sum(p.stat().st_size for p, _ in files)/1e6:.1f} MB; index {len(index)} files) -> "
         f"https://data.affine.io/{prefix}")
     return 0
 

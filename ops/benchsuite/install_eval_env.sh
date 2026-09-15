@@ -82,7 +82,8 @@ mapfile -t INSTALLS < <($PY - "$HERE/suite.toml" <<'PY'
 import sys, tomllib
 d = tomllib.load(open(sys.argv[1], "rb"))
 for e in d["envs"]:
-    print(e["install"])
+    if not e.get("venv"):          # side-venv tasksets are installed below
+        print(e["install"])
 PY
 )
 for inst in "${INSTALLS[@]}"; do
@@ -96,6 +97,8 @@ uv pip install -q --no-deps -e "$BENCH_HOME/research-environments/environments/s
 uv pip install -q datasets math-verify langdetect nltk immutabledict spacy emoji syllapy \
   "setuptools<78" pip huggingface-hub python-dateutil filelock "soundfile>=0.13.0" \
   "bfcl-eval @ git+https://github.com/mikasenghaas/gorilla.git@898763a#subdirectory=berkeley-function-call-leaderboard"
+# agentic set (2026-09-15): tau2-bench ships Sierra's orchestrator as a git dependency
+uv pip install -q "tau2 @ git+https://github.com/sierra-research/tau2-bench.git@337326e" 2>&1 | tail -1
 uv pip install -q hf_transfer
 uv tool install -q prime   # separate tool env: prime depends on PyPI verifiers, which would shadow the checkout
 uv pip install -q --no-deps -e .   # re-assert the editable verifiers checkout
@@ -118,8 +121,21 @@ DF
   rm -rf "$DOCKERFILE"
 fi
 
+# Side venv "tau3": tau3-bench pins tau2[knowledge]@58e5e1a (banking_knowledge domain), which
+# drops `tau2.user.base` that tau2-bench@337326e imports — the two cannot share a venv.
+# Same verifiers checkout (editable, so the patched files apply), python 3.12.
+SIDE="$BENCH_HOME/venvs/tau3"
+if [ ! -x "$SIDE/bin/eval" ]; then
+  uv venv -q "$SIDE" -p 3.12
+  VIRTUAL_ENV="$SIDE" uv pip install -q -e "$BENCH_HOME/verifiers" 2>&1 | tail -1
+  VIRTUAL_ENV="$SIDE" uv pip install -q --no-deps -e "$BENCH_HOME/research-environments/environments/tool_use/tau3_bench"
+  VIRTUAL_ENV="$SIDE" uv pip install -q "tau2[knowledge] @ git+https://github.com/sierra-research/tau2-bench.git@58e5e1a" 2>&1 | tail -1
+fi
+export VIRTUAL_ENV="$BENCH_HOME/verifiers/.venv"
+"$SIDE/bin/eval" tau3-bench --dry-run -n 1 --no-rich --no-push -m x >/dev/null 2>&1 && echo "ok  tau3-bench (venvs/tau3)" || echo "BAD tau3-bench (venvs/tau3)"
+
 echo "== check"
-for ts in aime25 math500 mmlu-pro gpqa-strict ifbench ifeval humaneval livecodebench bfcl-v3 minif2f oolong-synth mrcr-v2 graphwalks swebench-verified; do
+for ts in aime25 math500 mmlu-pro gpqa-strict ifbench ifeval humaneval livecodebench bfcl-v3 when2call-mcq minif2f oolong-synth mrcr-v2 graphwalks swebench-verified terminal-bench-2 swebench-pro tau2-bench; do
   .venv/bin/eval "$ts" --dry-run -n 1 --no-rich --no-push -m x >/dev/null 2>&1 && echo "ok  $ts" || echo "BAD $ts"
 done
 echo "INSTALL_DONE $(git -C "$BENCH_HOME/verifiers" rev-parse --short HEAD) $(git -C "$BENCH_HOME/research-environments" rev-parse --short HEAD)"

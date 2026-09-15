@@ -47,11 +47,16 @@ def pct(x: float | None, d: int = 1) -> str:
     return "–" if x is None else f"{100 * x:.{d}f}"
 
 
+CAP_MARK = 0.20   # cap-hit fraction above which a cell is flagged as cap-bound
+
+
 def side(s: dict | None) -> str:
     if not s:
         return "–"
     lo, hi = s["ci95"]
-    return f"{pct(s['score'])} [{pct(lo, 0)}–{pct(hi, 0)}]"
+    cap = s.get("finish_length_frac")
+    mark = f" ‡cap {pct(cap, 0)}" if cap is not None and cap > CAP_MARK else ""
+    return f"{pct(s['score'])} [{pct(lo, 0)}–{pct(hi, 0)}]{mark}"
 
 
 def table(rows: list[list[str]], header: list[str], markdown: bool) -> str:
@@ -78,7 +83,8 @@ def scorecard(card: dict, markdown: bool) -> str:
         kk, tt = r.get("king"), r.get("teacher")
         d = r.get("delta")
         body.append([
-            r["env"], r.get("group") or "", f"{r['temperature']:g}", str(r.get("n") or "–"),
+            r["env"] + (" (LLM judge, advisory)" if r.get("graded") == "llm_judge" else ""),
+            r.get("group") or "", f"{r['temperature']:g}", str(r.get("n") or "–"),
             side(kk), side(tt),
             "–" if d is None else f"{100 * d:+.1f}",
             "–" if not (kk and kk.get("finished_only")) else f"{pct(kk['finished_only']['score'])} (n={kk['finished_only']['n']})",
@@ -90,10 +96,40 @@ def scorecard(card: dict, markdown: bool) -> str:
     header = ["benchmark", "group", "T", "n", "king % [95% CI]", "teacher % [95% CI]",
               "Δ pt", "king finished-only", "king cap %", "king t/o/ctx", "teacher t/o/ctx", "min"]
     out = "\n".join(head) + "\n\n" + table(body, header, markdown)
+    for r in rows:
+        if (r.get("king") or {}).get("by_class") or (r.get("teacher") or {}).get("by_class"):
+            out += f"\n\n{r['env']} T={r['temperature']:g} — per gold class (accuracy; share of rows the model answered with the tool call):\n"
+            out += table(*by_class_rows(r), markdown)
+    out += ("\n\n‡cap N% = N% of the model's replies hit the completion cap (the answer was cut; scored 0). "
+            "Above 20% the number is cap-bound, not a measure of what the model knows.")
+    if any(r.get("graded") == "llm_judge" for r in rows):
+        out += "\nLLM judge, advisory = graded by an LLM judge (model pinned in suite.lock.json); never part of the score."
     sk = card.get("skipped") or []
     if sk:
         out += "\n\nnot run: " + "; ".join(f"{s['env']} — {s['why']}" for s in sk)
     return out
+
+
+def by_class_rows(r: dict) -> tuple[list[list[str]], list[str]]:
+    """Rows for an env with a per-class breakdown (When2Call). One line per
+    gold class: n, king / teacher accuracy with CI, and how often each side
+    picked the tool call — on a non-tool class that is the 'called a tool when
+    none was needed' rate."""
+    kb = (r.get("king") or {}).get("by_class") or {}
+    tb = (r.get("teacher") or {}).get("by_class") or {}
+    body = []
+    for cls in sorted(set(kb) | set(tb)):
+        k, t = kb.get(cls), tb.get(cls)
+        body.append([
+            cls, str((k or t or {}).get("n") or "–"),
+            side(k) if k else "–", side(t) if t else "–",
+            "–" if not (k and t) else f"{100 * (k['score'] - t['score']):+.1f}",
+            "–" if not k else pct((k.get("metrics") or {}).get("pred_tool_call")),
+            "–" if not t else pct((t.get("metrics") or {}).get("pred_tool_call")),
+        ])
+    header = ["gold class", "n", "king % [95% CI]", "teacher % [95% CI]", "Δ pt",
+              "king → tool %", "teacher → tool %"]
+    return body, header
 
 
 def history(runs: list[dict], markdown: bool) -> str:

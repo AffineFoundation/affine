@@ -20,6 +20,8 @@ mode 0600. Never prints a secret.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
 import os
 import secrets
@@ -64,12 +66,36 @@ def load_pods() -> dict:
     return {}
 
 
+@contextlib.contextmanager
+def pods_lock():
+    """Serialise read-modify-write of pods.json: two passes renting at once
+    (challengers run in parallel) clobbered each other's entry on 2026-09-14
+    and one pod went untracked."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(STATE_DIR / "pods.lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
 def save_pods(pods: dict) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = PODS_JSON.with_suffix(".tmp")
     tmp.write_text(json.dumps(pods, indent=1, sort_keys=True))
     os.chmod(tmp, 0o600)
     tmp.replace(PODS_JSON)
+
+
+def update_pod(name: str, **fields) -> dict:
+    """Atomic merge of `fields` into one pod's record (re-reads under the lock)."""
+    with pods_lock():
+        pods = load_pods()
+        mem = pods.setdefault(name, {})
+        mem.update(fields)
+        save_pods(pods)
+        return mem
 
 
 def ssh_run(host: str, port: int, cmd: str, *, input_text: str | None = None,
@@ -93,9 +119,21 @@ def plan_of(name: str) -> dict:
     return dict(plans[name], name=name)
 
 
+BLACKLIST = STATE_DIR / "blacklist.txt"   # executor ids that bootstrapped too slowly or failed
+
+
+def blacklist_ids() -> set[str]:
+    if not BLACKLIST.exists():
+        return set()
+    return {l.split()[0] for l in BLACKLIST.read_text().splitlines() if l.strip()}
+
+
 def match_stock(stock: list[dict], plan: dict) -> list[dict]:
     out = []
+    bl = blacklist_ids()
     for n in stock:
+        if str(n.get("id")) in bl:
+            continue
         if int(n.get("gpu_count") or 0) != plan["gpu_count"]:
             continue
         avail = n.get("available_gpu_count")
@@ -127,6 +165,8 @@ def cmd_rent(args: argparse.Namespace) -> int:
     plan = plan_of(args.plan)
     digest = args.digest
     name = f"{POD_PREFIX}{digest[:12]}-{secrets.token_hex(2)}"
+    if args.r2 and not (os.environ.get("AFFINE_EVAL_R2_ACCESS_KEY_ID") and os.environ.get("AFFINE_EVAL_R2_SECRET_ACCESS_KEY")):
+        raise SystemExit("--r2 needs AFFINE_EVAL_R2_ACCESS_KEY_ID / AFFINE_EVAL_R2_SECRET_ACCESS_KEY in the environment")
     sess = lium_api.session()
     pubkey = (Path.home() / ".ssh/id_ed25519.pub").read_text().strip()
     stock = match_stock(lium_api.executors(sess), plan)
@@ -140,14 +180,9 @@ def cmd_rent(args: argparse.Namespace) -> int:
         if res in (None, "RATE_LIMITED"):
             log(f"rent on {str(cand['id'])[:12]} failed ({res}); next candidate")
             continue
-        pods = load_pods()
-        pods[name] = {
-            "digest": digest, "served": f"king-{digest[:12]}", "plan": plan,
-            "executor_id": str(cand["id"]), "machine": cand.get("machine_name"),
-            "price": price, "rented_at": time.time(), "key": secrets.token_hex(24),
-            "state": "rented",
-        }
-        save_pods(pods)
+        update_pod(name, digest=digest, served=f"king-{digest[:12]}", plan=plan, r2=args.r2 or "", hf=args.hf or "",
+                   executor_id=str(cand["id"]), machine=cand.get("machine_name"), price=price,
+                   rented_at=time.time(), key=secrets.token_hex(24), state="rented")
         log(f"rented {name}: {plan['name']} {cand.get('machine_name')} "
             f"${price:.2f}/h executor={str(cand['id'])[:12]}")
         print(name)
@@ -175,8 +210,22 @@ def bootstrap(name: str, mem: dict, pod: dict, cfg: dict) -> bool:
         f'GPU_UTIL="{cfg["gpu_memory_utilization"]}"',
         f'BATCHED_TOKENS="{cfg["max_num_batched_tokens"]}"',
         f'MAX_NUM_SEQS="{cfg["max_num_seqs"]}"',
-        f'VLLM_VERSION="{cfg["vllm_version"]}"', f'DIGEST="{mem["digest"]}"',
+        f'VLLM_VERSION="{cfg["vllm_version"]}"',
     ]
+    if mem.get("hf"):
+        # genesis: an HF repo at a pinned revision (bootstrap_king.sh's HF_MODEL path);
+        # DIGEST stays empty so the public-copy download path is not taken
+        repo, _, rev = mem["hf"].partition("@")
+        lines += ['DIGEST=""', f'HF_MODEL="{repo}"', f'HF_REV="{rev or "main"}"',
+                  f'HF_TOKEN="{os.environ.get("HF_TOKEN", "")}"']
+    else:
+        lines.append(f'DIGEST="{mem["digest"]}"')
+    if mem.get("r2"):
+        # a private (challenger) ref: the pod downloads with the eval pods' read-only key
+        endpoint = os.environ.get("AFFINE_EVAL_R2_ENDPOINT") or os.environ.get("R2_ENDPOINT") or ""
+        lines += [f'KING_R2="{mem["r2"]}"', f'AFFINE_EVAL_R2_ENDPOINT="{endpoint}"',
+                  f'AFFINE_EVAL_R2_ACCESS_KEY_ID="{os.environ.get("AFFINE_EVAL_R2_ACCESS_KEY_ID", "")}"',
+                  f'AFFINE_EVAL_R2_SECRET_ACCESS_KEY="{os.environ.get("AFFINE_EVAL_R2_SECRET_ACCESS_KEY", "")}"']
     subprocess.run(["ssh-keygen", "-R", f"[{host}]:{port}", "-f", str(KNOWN_HOSTS)],
                    capture_output=True)
     try:
@@ -220,11 +269,13 @@ def probe(mem: dict, canary: bool = True) -> bool:
         if not canary:
             return True
         r = httpx.post(f"{base}/chat/completions", headers=headers, timeout=180.0,
-                       json={"model": mem["served"], "max_tokens": 32, "temperature": 0,
+                       json={"model": mem["served"], "max_tokens": 64, "temperature": 0,
                              "messages": [{"role": "user", "content": "Say OK."}]})
         r.raise_for_status()
         msg = r.json()["choices"][0]["message"]
-        return bool(msg.get("content") or msg.get("reasoning_content"))
+        # vLLM 0.28's qwen3 reasoning parser returns the thinking as `reasoning`
+        # (older builds: `reasoning_content`); a short canary may be all thinking.
+        return bool(msg.get("content") or msg.get("reasoning_content") or msg.get("reasoning"))
     except (httpx.HTTPError, KeyError, TypeError, ValueError):
         return False
 
@@ -241,11 +292,11 @@ def cmd_wait(args: argparse.Namespace) -> int:
         pod = find_pod(sess, args.name)
         if mem["state"] == "rented" and pod is not None:
             if bootstrap(args.name, mem, pod, cfg):
-                save_pods(pods)
+                update_pod(args.name, **mem)
         elif mem["state"] == "booting":
             if probe(mem):
                 mem.update(state="ready", ready_at=time.time())
-                save_pods(pods)
+                update_pod(args.name, **mem)
                 log(f"{args.name}: READY at {mem['base_url']}")
                 print(mem["base_url"])
                 return 0
@@ -261,12 +312,18 @@ def cmd_wait(args: argparse.Namespace) -> int:
                         log(f"{args.name}: {tail[-1][:160]}")
                     if p.stdout.strip() and "FATAL" in p.stdout:
                         log(f"{args.name}: bootstrap FAILED")
-                        mem["state"] = "failed"
-                        save_pods(pods)
+                        update_pod(args.name, state="failed")
                         return 3
         time.sleep(30)
     log(f"{args.name}: timeout waiting for READY")
     return 3
+
+
+def cmd_stock(args: argparse.Namespace) -> int:
+    """How many executors match a plan right now (price cap + blacklist applied)."""
+    n = len(match_stock(lium_api.executors(lium_api.session()), plan_of(args.plan)))
+    print(n)
+    return 0
 
 
 def cmd_status(_: argparse.Namespace) -> int:
@@ -275,7 +332,7 @@ def cmd_status(_: argparse.Namespace) -> int:
     for name, mem in load_pods().items():
         pod = listing.get(name)
         up = probe(mem, canary=False) if mem.get("base_url") else False
-        age = (time.time() - mem["rented_at"]) / 3600
+        age = ((mem.get("released_at") or time.time()) - mem["rented_at"]) / 3600
         print(f"{name}: {mem['plan']['name']} ${mem['price']:.2f}/h {mem['state']} "
               f"listed={'yes' if pod else 'no'} up={up} age={age:.1f}h "
               f"url={mem.get('base_url')} spent≈${age * mem['price']:.2f}")
@@ -295,11 +352,15 @@ def cmd_release(args: argparse.Namespace) -> int:
     if mem is None:
         raise SystemExit(f"unknown pod {args.name}")
     ok = lium_api.remove(args.name, POD_PREFIX)
+    if args.strike and mem.get("executor_id"):
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        with BLACKLIST.open("a") as fh:
+            fh.write(f"{mem['executor_id']} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {args.strike}\n")
+        log(f"{args.name}: executor {mem['executor_id'][:12]} blacklisted ({args.strike})")
     age = (time.time() - mem["rented_at"]) / 3600
     log(f"{args.name}: released={ok} after {age:.2f}h ≈ ${age * mem['price']:.2f}")
-    mem.update(state="released", released_at=time.time(),
+    update_pod(args.name, state="released", released_at=time.time(),
                cost_usd=round(age * mem["price"], 2))
-    save_pods(pods)
     return 0 if ok else 1
 
 
@@ -309,11 +370,18 @@ def main() -> int:
     r = sub.add_parser("rent")
     r.add_argument("--plan", required=True)
     r.add_argument("--digest", required=True)
-    for c in ("wait", "endpoint", "release"):
+    r.add_argument("--r2", default="", help="private r2://bucket/prefix/ ref (challenger); needs AFFINE_EVAL_R2_* in the env")
+    r.add_argument("--hf", default="", help="Hugging Face repo@revision instead of a public digest (genesis)")
+    for c in ("wait", "endpoint"):
         sub.add_parser(c).add_argument("name")
+    rel = sub.add_parser("release")
+    rel.add_argument("name")
+    rel.add_argument("--strike", default="", help="also blacklist the executor, with this reason")
+    st = sub.add_parser("stock", help="count of executors matching a plan")
+    st.add_argument("--plan", required=True)
     sub.add_parser("status")
     args = ap.parse_args()
-    return {"rent": cmd_rent, "wait": cmd_wait, "status": cmd_status,
+    return {"rent": cmd_rent, "wait": cmd_wait, "status": cmd_status, "stock": cmd_stock,
             "endpoint": cmd_endpoint, "release": cmd_release}[args.cmd](args)
 
 

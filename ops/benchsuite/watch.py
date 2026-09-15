@@ -21,6 +21,7 @@ provider (Prime pod by default) and the budget guard.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import subprocess
@@ -30,12 +31,13 @@ import tomllib
 from pathlib import Path
 
 from challengers import near_misses
-from weights_fingerprint import fingerprint, identical
+from weights_fingerprint import same_weights
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 SUITE = tomllib.loads((HERE / "suite.toml").read_text())
 STATE_DIR = HERE / "state"
+FINGERPRINT_TIMEOUT_S = 120     # the identity check must not delay the pass
 WATCH_JSON = STATE_DIR / "watch.json"
 CARDS_DIR = REPO / SUITE["suite"]["state_dir"]
 VALIDATOR_STATE = REPO / "affine" / "state" / "state.json"
@@ -97,7 +99,11 @@ def latest_card() -> dict | None:
             c = json.loads(p.read_text())
         except (OSError, ValueError):
             continue
-        if c.get("status") in ("complete", "partial") and (c.get("king") or {}).get("digest"):
+        k = c.get("king") or {}
+        # kings only: challenger / comparable / genesis cards carry a label, not a reign,
+        # and their weights are not on the public copy (2026-09-15: a challenger card was
+        # picked as "previous king" and the identity check 404'd)
+        if c.get("status") in ("complete", "partial") and k.get("digest") and k.get("reign") is not None:
             if best is None or (c.get("created_at") or "") > (best.get("created_at") or ""):
                 best = c
     return best
@@ -110,29 +116,38 @@ def skip_if_identical_weights(king: dict, run_id: str) -> bool:
     prev = latest_card()
     if prev is None or prev["king"]["digest"] == king["digest"]:
         return False
+    # Cheap by construction (manifest hashes, then sampled range reads — no
+    # shard is pulled) and hard-capped: a slow or broken check must never hold
+    # the pass. 2026-09-14 the old full-shard fingerprint took 90 min.
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    fut = pool.submit(same_weights, king["digest"], prev["king"]["digest"])
     try:
-        fp_new = fingerprint(king["digest"])
-        fp_prev = fingerprint(prev["king"]["digest"])
-    except Exception as e:  # download / parse trouble: fall through and bench
-        log(f"fingerprint failed ({e!r}); benching anyway")
+        same, how = fut.result(timeout=FINGERPRINT_TIMEOUT_S)
+    except concurrent.futures.TimeoutError:
+        log(f"weight-identity check did not finish in {FINGERPRINT_TIMEOUT_S} s; benching anyway")
+        pool.shutdown(wait=False, cancel_futures=True)
         return False
-    if not identical(fp_new, fp_prev):
-        log(f"weights differ from reign {prev['king'].get('reign')} "
-            f"({fp_new['tensor_set_sha256'][:12]} vs {fp_prev['tensor_set_sha256'][:12]}); benching")
+    except Exception as e:  # manifest / range trouble: fall through and bench
+        log(f"weight-identity check failed ({e!r}); benching anyway")
         return False
+    finally:
+        pool.shutdown(wait=False)
+    if not same:
+        log(f"weights differ from reign {prev['king'].get('reign')} ({how}); benching")
+        return False
+    log(f"identical weights: {how}")
     stub = dict(prev)
     stub.update({
         "run_id": run_id, "king": king, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "published_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "status": "skipped_identical_weights",
         "identical_to": {"run_id": prev["run_id"], "digest": prev["king"]["digest"],
-                         "reign": prev["king"].get("reign"), "tensor_set_sha256": fp_new["tensor_set_sha256"],
-                         "n_tensors": fp_new["n_tensors"]},
+                         "reign": prev["king"].get("reign"), "how": how},
         "mode": "skipped", "prime_spent_usd": 0.0,
     })
     CARDS_DIR.mkdir(parents=True, exist_ok=True)
     (CARDS_DIR / f"{run_id}.json").write_text(json.dumps(stub, indent=1))
-    log(f"reign {king.get('reign')} ({king['digest'][:12]}) has the same {fp_new['n_tensors']} tensors as "
+    log(f"reign {king.get('reign')} ({king['digest'][:12]}) has the same weights as "
         f"reign {prev['king'].get('reign')} ({prev['king']['digest'][:12]}); pass skipped, stub card written")
     return True
 
@@ -143,11 +158,15 @@ def start_pass(w: dict, ref: str, label: str, run_id: str, mode: str, why: str,
     logp = STATE_DIR / f"pass-{run_id}.log"
     env = dict(os.environ)
     env.update(extra_env or {})
-    cmd = ["bash", str(HERE / "run_pass.sh"), ref, label, run_id, mode]
+    # setsid -f: the driver is re-parented to init, so a pm2 restart of the watcher
+    # (which kills the whole process tree) cannot take a running pass down with it
+    # (2026-09-15: the reign-13 driver died that way, its pod kept running). The
+    # driver's own pid comes from state/pass-<run_id>.pid, written by run_pass.sh.
+    cmd = ["setsid", "-f", "bash", str(HERE / "run_pass.sh"), ref, label, run_id, mode]
     with logp.open("a") as fh:
-        proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, cwd=str(HERE),
-                                start_new_session=True, env=env)
-    w["passes"].append({"run_id": run_id, "mode": mode, "state": "running", "pid": proc.pid,
+        subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, cwd=str(HERE), env=env).wait()
+    w["passes"].append({"run_id": run_id, "mode": mode, "state": "running", "pid": None,
+                        "pidfile": str(STATE_DIR / f"pass-{run_id}.pid"),
                         "log": str(logp), "why": why,
                         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **fields})
     save_watch(w)
@@ -175,9 +194,14 @@ def start_challenger_if_due(w: dict, a: argparse.Namespace) -> bool:
         return False
     pick = w["challenger_queue"].pop(0)
     run_id = time.strftime("%Y%m%dT%H%MZ", time.gmtime()) + f"-{pick['challenge_id']}"
+    king = current_king() or {}
     start_pass(w, pick["repo"], pick["challenge_id"], run_id, "challenger",
                f"near-miss loser margin {pick['margin']:+.5f} (z {pick.get('z')})",
-               extra_env={"CHALLENGER_REVISION": pick["revision"]},
+               extra_env={"CHALLENGER_REVISION": pick["revision"],
+                          "CHALLENGER_MARGIN": str(pick["margin"]), "CHALLENGER_Z": str(pick.get("z") or ""),
+                          "CHALLENGER_VS_REIGN": str(king.get("reign") or ""),
+                          "CHALLENGER_VS_KING_DIGEST": str(king.get("digest") or ""),
+                          "CHALLENGER_JUDGED_AT": str(pick.get("at") or ""), "CHALLENGER_HOTKEY": str(pick.get("hotkey") or "")},
                revision=pick["revision"], challenge_id=pick["challenge_id"])
     return True
 
@@ -191,6 +215,9 @@ def tick(a: argparse.Namespace) -> None:
     running = [p for p in w["passes"] if p.get("state") == "running"]
     if running:
         p = running[0]
+        if p.get("pid") is None and p.get("pidfile") and Path(p["pidfile"]).exists():
+            p["pid"] = int(Path(p["pidfile"]).read_text().strip() or 0) or None
+            save_watch(w)
         if a.dry_run or p.get("pid") is None:
             log(f"pass {p['run_id']} marked running")
             return
