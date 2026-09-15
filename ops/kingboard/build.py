@@ -178,6 +178,9 @@ BENCH_TEMPERATURE = 0.0          # the primary (greedy) card row
 BENCH_SKIP_MODES = {"challenger", "comparables"}
 BENCH_SKIP_STATUS = {"skipped_identical_weights"}
 MATRIX_MIN_GRADED = 5            # datagen env cell needs this many graded rollouts
+# Kings before this reign are never rows (operator 2026-09-15 20:31 UTC:
+# Affine-XI and older are not backfilled); they are listed under `hidden`.
+MATRIX_MIN_REIGN = 11
 MATRIX_GROUP_ORDER = ["coding", "terminal", "math", "tool_use", "nl2repo", "general", "agent", "other"]
 # Short header labels for the compact matrix (full names travel in `label`).
 BENCH_ABBR = {
@@ -1199,11 +1202,11 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                                                   else "finished, card not published yet" if e in p["done"]
                                                   else "queued in this pass"),
                                         "reason": f"benchmark pass {p['run_id']} in progress"}
-    # Row set (operator 2026-09-15 20:27 UTC): teacher, then kings newest first,
-    # genesis as the bottom row. Kings with no measurement at all (and not the
-    # current king) are not backfilled and leave the table -> `hidden`.
-    hidden = [r for r in rows if r["kind"] == "king" and not r["current"] and r["n_cells"] == 0
-              and not any(v.get("running") for v in r["cells"].values())]
+    # Row set (operator 2026-09-15 20:27 / 20:31 UTC): teacher, then kings newest
+    # first, genesis as the bottom row. Kings before MATRIX_MIN_REIGN are never
+    # rows, whatever cards or passes exist -> `hidden`.
+    hidden = [r for r in rows if r["kind"] == "king" and int(r.get("reign") or 0) < MATRIX_MIN_REIGN
+              and not r["current"]]
     rows = [r for r in rows if r not in hidden]
     genesis_row = next((r for r in rows if r["kind"] == "genesis"), None)
     if genesis_row:
@@ -1248,8 +1251,8 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                   for c in cards],
         "definitions": {
             "rows": "the teacher, then the crowned kings newest first, then the genesis seed (reign 0) "
-                    "as the bottom row. Kings without any measurement (no benchmark card, no king-seat "
-                    "rollouts; never backfilled) are listed under `hidden`, not rows; reigns the operator "
+                    f"as the bottom row. Kings before reign {MATRIX_MIN_REIGN} (Affine-XI and older, not "
+                    "backfilled) are listed under `hidden`, never rows; reigns the operator "
                     "revoked after the crown (history.jsonl crown_revoked) are under `removed`",
             "value": "average score 0-100 per cell. Benchmarks: the card's greedy (T=0) row, "
                      "score = share of tasks passed; SWE-bench Verified uses the finished-only score "
