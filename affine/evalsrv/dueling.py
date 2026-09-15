@@ -813,12 +813,15 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
     # from them) are unchanged by the flip.
     require_think_close = bool(duel_cfg.get("require_think_close", False))
     async with httpx.AsyncClient() as http:
+        text_fallback = bool(duel_cfg.get("text_fallback_at_tool_turns", False))
+
         def _pool(served: Served | list[Served],
                   require_close: bool = False) -> ModelPool:
             items = served if isinstance(served, list) else [served]
             return ModelPool([
                 VllmModel(s, http, asyncio.Semaphore(conc),
-                          require_think_close=require_close) for s in items
+                          require_think_close=require_close,
+                          text_fallback_at_tool_turns=text_fallback) for s in items
             ])
         teacher_m = _pool(teacher)
         king_m = _pool(king, require_think_close)
@@ -992,6 +995,9 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
                           (teacher_sum, teacher_m)):
         summary["n_samples"] = pool.n_samples
         summary["think_close_rate"] = pool.think_close_rate
+        # wvk 18: samples that became a prose `text` action at a tool_call
+        # turn (0 when the knob is off — telemetry either way).
+        summary["n_text_fallback"] = pool.n_text_fallback
     # Per-dialect telemetry (wvk 11 watch item): parse rate and leg means
     # per action_kind on each side; teacher ref yield per dialect.
     kind_by_tid = {turn_id(rec): rec.get("action_kind") or dialects.DEFAULT_KIND
@@ -1121,6 +1127,8 @@ async def run_duel(engine_cfg: dict, turns_path: Path | None,
             "allowed_action_kinds": allowed_kinds,
             "max_thought_tokens": int(duel_cfg["max_thought_tokens"]),
             "max_action_tokens": int(duel_cfg["max_action_tokens"]),
+            # wvk 18: prose reply at a tool_call turn = `text` action.
+            "text_fallback_at_tool_turns": text_fallback,
             # Teacher-only reference budget (wvk 17); None = shared cap.
             "ref_max_tokens": (int(duel_cfg["ref_max_tokens"])
                                if duel_cfg.get("ref_max_tokens") is not None else None),

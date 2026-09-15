@@ -197,6 +197,10 @@ class DuelCfg:
     # max_thought_tokens + max_action_tokens, i.e. the pre-wvk-17 shared
     # cap. Miners' caps are not affected by this knob.
     ref_max_tokens: int | None = None
+    # wvk 18 (2026-09-15): at a tool_call turn a closed-think reply with no
+    # tool call but a non-empty visible reply is a `text` action (teacher
+    # reference and miner alike). False = pre-wvk-18 (dropped / forfeit).
+    text_fallback_at_tool_turns: bool = False
     # v6 (2026-09-04): per-turn score for a side with no parseable action.
     # None = legacy (turn dropped from pairing). Contract knob: changing it
     # is a weight_version_key event.
@@ -540,6 +544,7 @@ def _duel(raw: dict) -> DuelCfg:
         max_thought_tokens=int(d["max_thought_tokens"]),
         max_action_tokens=int(d["max_action_tokens"]),
         ref_max_tokens=_ref_max_tokens(d),
+        text_fallback_at_tool_turns=bool(d.get("text_fallback_at_tool_turns", False)),
         concurrency=int(d["concurrency"]), timeout_s=int(d["timeout_s"]),
         score_bank=bool(d.get("score_bank", False)),
         reason_only=bool(d.get("reason_only", True)),
