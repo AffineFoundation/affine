@@ -88,6 +88,7 @@ tool_call_parser = "qwen3_xml"
 [modes]
 default = "lium"            # operator decision 2026-09-13 (later the same day): in-house GPUs paid in TAO
 lium_plan = "h200-1x"       # [pods.plans.*]: 1x H200 = one TP1 replica, ~$3/h; the whole pass runs on that pod
+lium_plan_fallbacks = ["b200-1x"]   # tried in order when the primary plan has no stock
 # Sandbox sets on Lium: the pod's docker runs SWE-bench Verified (public Docker Hub
 # images; a Docker Hub login lifts the anonymous pull cap), GraphWalks, Oolong, MRCR.
 # miniF2F's Lean image lives in Prime's private Docker Hub org and pulls only through
@@ -95,8 +96,12 @@ lium_plan = "h200-1x"       # [pods.plans.*]: 1x H200 = one TP1 replica, ~$3/h; 
 lium_docker_sandbox_envs = ["swebench-verified", "graphwalks", "oolong-synth", "mrcr-v2"]
 lium_prime_sandbox_envs = ["minif2f"]
 teacher_from = "20260912T1455Z-0ce59769300c"   # reference run whose teacher cells are reused
-chat_envs = ["aime25", "math500", "gpqa-diamond", "mmlu-pro", "ifbench", "ifeval", "humaneval", "livecodebench", "bfcl-v3"]
+chat_envs = ["aime25", "math500", "gpqa-diamond", "mmlu-pro", "ifbench", "ifeval", "humaneval", "livecodebench", "bfcl-v3", "when2call"]
 sandbox_envs = ["swebench-verified", "minif2f", "graphwalks", "oolong-synth", "mrcr-v2"]
+# `agentic` pass mode (own pod, king only, merged into the king's card): docker
+# on the pod for the Harbor sets, the tau2 orchestrator as a subprocess on the pod.
+agentic_envs = ["terminal-bench-2", "tau2-airline", "tau2-retail", "tau2-telecom", "tau3-banking", "swebench-pro"]
+agentic_std_envs = ["terminal-bench-2", "tau2-airline", "tau2-retail", "tau2-telecom", "tau3-banking"]   # every model that gets agentic cells (operator 2026-09-15); swebench-pro is queued separately
 prime_king_replicas = "31001:0,1:2;31002:2,3:2;31003:4,5:2;31004:6,7:2"   # king-only pod layout
 cheap_plan = "h200-1x"
 
@@ -120,10 +125,12 @@ models = [
 
 [challenger]
 # watch.py: once per UTC day, the top-k LOSING challengers of the last
-# `window_hours` with margin > 0 (the near-misses) get a chat-only pass.
-per_day = 3
+# `window_hours` by duel margin (margin > 0 = the near-misses) get a chat-only
+# card on a Lium 1x H200 (~$15 each), published under the kingboard
+# "Challengers" tab next to their duel margin. Enabled 2026-09-14 (operator).
+per_day = 2
 window_hours = 24
-enabled = false          # flip to true to start the daily challenger benches
+enabled = true
 
 # ---------------------------------------------------------------- Prime path
 # Prime Intellect pod that serves both models (pod_bootstrap.sh) and runs
@@ -159,6 +166,13 @@ gpu_count = 1
 tp = 1
 replicas = 1
 max_price = 5.0
+
+[pods.plans.b200-1x]          # fallback when no 1x H200 is listed (2026-09-15: three of ours held the stock)
+match = "B200"
+gpu_count = 1
+tp = 1
+replicas = 1
+max_price = 8.0
 
 [pods.plans.h200-8x]
 match = "H200"
@@ -315,7 +329,24 @@ runtime = "sandbox"
 max_tokens = 4096
 reward = "correct"
 secondary = false
+class_field = "category"
+show_classes = ["irrelevance", "live_irrelevance", "live_relevance"]
 note = "BFCL v3, every scoring category (single-turn AST/relevance + multi-turn); official bfcl_eval checkers; tools served as MCP."
+
+[[envs]]
+id = "when2call"
+taskset = "when2call-mcq"
+install = "envs/when2call_mcq"
+group = "tool-use"
+n = -1
+harness = "null"
+runtime = "none"
+max_tokens = 8192
+reward = "correct"
+secondary = false
+class_field = "correct_class"
+show_classes = ["tool_call", "request_for_info", "cannot_answer", "direct"]
+note = "NVIDIA When2Call TEST split (3,652 rows; gold: tool_call 1,295 / cannot_answer 1,295 / request_for_info 1,062 / direct 0), generative 4-way MCQ: pick the best reply — call the tool, answer, ask, or say cannot. Per-class accuracy + 'answered with the tool call' rate per class. TRAIN split is a D source (datagen P1); this env reads only test/ at a pinned revision and checks its sha256 (splits in suite.lock.json). Letter choice, not the paper's log-likelihood MCQ."
 
 [[envs]]
 id = "minif2f"
@@ -390,5 +421,110 @@ max_turns = 300
 rollout_timeout = 3600      # fixed budget: same for every reign
 concurrency = 48            # fixed: 48 tasks in flight, run alone on the pod (parallel_envs 1 in the sandbox phase)
 note = "SWE-bench Verified, all 500, mini-swe-agent harness, prebuilt swebench/sweb.eval images; the task's own hidden tests grade."
+
+# ------------------------------------------------------------ agentic set
+# Added 2026-09-15 (Jacob: "kings comparable to public agentic releases",
+# Occamy-1.0 reports Terminal-Bench 2.1, tau3 Banking, BFCL v4, IFEval, ...).
+# Run by the `agentic` pass mode on its own Lium pod (modes.agentic_envs) and
+# merged into the king's card (BENCHSUITE_MERGE_INTO); the teacher gets the
+# same cells from a teacher pod (hf://Qwen/Qwen3.8-27B). Group "agentic" is
+# what the affine.io table groups the columns by.
+[[envs]]
+id = "terminal-bench-2"
+taskset = "terminal-bench-2"
+install = "terminal/terminal_bench_2"
+group = "agentic"
+n = -1
+harness = "terminus_2"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "solved"
+secondary = false
+max_turns = 200
+rollout_timeout = 3600
+concurrency = 16
+note = "Terminal-Bench 2.0, all 89 tasks (Harbor dataset terminal-bench/terminal-bench-2, alexgshaw/* Docker Hub images), Terminus 2 harness = the public leaderboard's reference agent; each task's hidden verifier grades pass/fail. Fixed 1 h budget per task. Occamy reports 'Terminal-Bench 2.1' (same task set, harness release 2.1)."
+
+[[envs]]
+id = "swebench-pro"
+taskset = "swebench-pro"
+install = "swe/swebench_pro"
+group = "agentic"
+n = -1
+harness = "mini_swe_agent"
+runtime = "sandbox"
+max_tokens = 8192
+reward = "solved"
+secondary = false
+max_turns = 300
+rollout_timeout = 3600
+concurrency = 48
+note = "SWE-bench Pro public split, all 731 (Harbor dataset scale-ai/swe-bench-pro, SWEAP jefzda/* images), mini-swe-agent harness like our SWE-bench Verified row (the public leaderboard uses SWE-agent; not directly comparable). ~16 h on one H200; read finished-only next to the full score."
+
+[[envs]]
+id = "tau2-airline"
+taskset = "tau2-bench"
+install = "tool_use/tau2_bench"
+group = "agentic"
+n = -1
+harness = "tau2-bench"
+runtime = "subprocess"
+max_tokens = 8192
+reward = "tau2_reward"
+secondary = false
+rollout_timeout = 3600
+concurrency = 8
+taskset_config = { domain = "airline" }
+note = "tau2-bench airline (50 tasks, base split), Sierra's official simulation and DB-state scoring; the USER is simulated by gpt-4.1 at T=0 through Prime Inference (the benchmark's standard user model) — the only external LLM in the suite; it is a simulated customer, not a judge. Pass^1, one trial."
+
+[[envs]]
+id = "tau2-retail"
+taskset = "tau2-bench"
+install = "tool_use/tau2_bench"
+group = "agentic"
+n = -1
+harness = "tau2-bench"
+runtime = "subprocess"
+max_tokens = 8192
+reward = "tau2_reward"
+secondary = false
+rollout_timeout = 3600
+concurrency = 8
+taskset_config = { domain = "retail" }
+note = "tau2-bench retail (114 tasks); see tau2-airline."
+
+[[envs]]
+id = "tau2-telecom"
+taskset = "tau2-bench"
+install = "tool_use/tau2_bench"
+group = "agentic"
+n = -1
+harness = "tau2-bench"
+runtime = "subprocess"
+max_tokens = 8192
+reward = "tau2_reward"
+secondary = false
+rollout_timeout = 3600
+concurrency = 8
+taskset_config = { domain = "telecom" }
+note = "tau2-bench telecom (114 tasks, manual troubleshooting policy); see tau2-airline."
+
+[[envs]]
+id = "tau3-banking"
+taskset = "tau3-bench"
+install = "tool_use/tau3_bench"
+venv = "tau3"                 # tau3-bench pins tau2[knowledge]@58e5e1a, tau2-bench pins tau2@337326e: separate venv
+group = "agentic"
+n = -1
+harness = "tau3-bench"
+runtime = "subprocess"
+max_tokens = 8192
+reward = "tau3_reward"
+secondary = false
+rollout_timeout = 3600
+concurrency = 8
+graded = "llm_judge"          # ADVISORY ONLY (operator 2026-09-15): the card and the column tooltip mark it
+judge = { model = "openai/gpt-4.1", via = "Prime Inference (api.pinference.ai)", temperature = 0, role = "NL-assertion judge; the same model simulates the user", pinned_by = "tau3-bench 0.3.0 harness.py (evaluator_nl_assertions.DEFAULT_LLM_NL_ASSERTIONS)" }
+note = "tau3-bench banking_knowledge (97 tasks, Sierra tau2-bench@58e5e1a), the row Occamy reports as 'tau3-Bench (Banking)'. Official reward: DB state + NL assertions judged by gpt-4.1 (T=0, Prime Inference) — the suite's only judge-graded cell; advisory, never in the score."
 
 # Skipped by rule (no judge in the suite): HLE (judge-only reward).
