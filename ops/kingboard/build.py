@@ -162,6 +162,12 @@ HARNESS_LABELS = {
 # -- matrix (api/matrix) -----------------------------------------------------------
 TEACHER_MODEL = "Qwen/Qwen3.8-27B"
 GENESIS_MODEL = "Qwen/Qwen3.6-35B-A3B"
+# Reference models: open checkpoints of the genesis family benchmarked for
+# comparison (cards with king.label and no reign / duel; not kings, never
+# paid). Rendered as a reference row just above Genesis. Notes per label.
+REFERENCE_NOTES = {
+    "occamy-1.0": "Accio-Lab/occamy-1.0 — Alibaba, Qwen3.6-35B-A3B post-train, admissible reference; not a king",
+}
 GENESIS_DIGEST12 = "995ad96eacd9"     # HF revision 995ad96e… = reign 0 (seed)
 # Held-out benchmarks in display order (benchsuite `[[envs]].id` -> label).
 # Cards may carry more ids; unknown ones are appended in card order.
@@ -1186,14 +1192,22 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
     rank = lambda c: (-len({r.get("env") for r in c.get("rows") or []}), c.get("created_at") or "")
     by_digest: dict[str, list[dict]] = {}
     genesis_cards: list[dict] = []
+    known_digests = {k.get("digest12") for k in [*(stats.get("kings") or []), *(stats.get("revoked_kings") or [])]}
+    reference_cards: dict[str, list[dict]] = {}     # label -> cards (fullest first)
     for c in model_cards:
         if is_genesis_card(c):
             genesis_cards.append(c)
             continue
+        kb = c.get("king") or {}
         d12 = card_digest12(c)
+        if kb.get("label") and kb.get("reign") is None and d12 not in known_digests:
+            reference_cards.setdefault(str(kb["label"]), []).append(c)
+            continue
         if d12:
             by_digest.setdefault(d12, []).append(c)
     for lst in by_digest.values():
+        lst.sort(key=rank)
+    for lst in reference_cards.values():
         lst.sort(key=rank)
     genesis_cards.sort(key=rank)
     # teacher: a card whose teacher cells were measured (not copied) first
@@ -1265,6 +1279,18 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
     reign_envs = {r["digest12"]: {e["source"]: e for e in r.get("envs") or []}
                   for r in stats.get("reigns") or []}
     rows = matrix_rows_meta(stats)
+    for i, (label, lst) in enumerate(sorted(reference_cards.items())):
+        kb = lst[0].get("king") or {}
+        rev = str(kb.get("hf_revision") or "")
+        rows.append({
+            "key": f"ref:{label}", "kind": "reference", "label": label[:1].upper() + label[1:],
+            "model": kb.get("hf_repo") or kb.get("repo") or label, "hf_revision": rev,
+            "digest12": card_digest12(lst[0]),
+            "sub": f"{kb.get('hf_repo') or label}{' @ ' + rev[:8] if rev else ''}",
+            "tip": REFERENCE_NOTES.get(label, f"{kb.get('hf_repo') or label} — reference model (open checkpoint "
+                                              "of the genesis family, benchmarked for comparison); not a king, never paid"),
+            "order": 1000 + i,
+        })
     for row in rows:
         cells: dict[str, dict] = {}
         if row["kind"] == "teacher":
@@ -1273,6 +1299,9 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
         elif row["kind"] == "genesis":
             bench = card_cells(genesis_cards, "king")
             env_aggs = reign_envs.get(GENESIS_DIGEST12, {})
+        elif row["kind"] == "reference":
+            bench = card_cells(reference_cards.get(row["key"][len("ref:"):], []), "king")
+            env_aggs = reign_envs.get(row.get("digest12") or "", {})   # blank unless a backfill ran it
         else:
             bench = card_cells(by_digest.get(row["digest12"], []), "king")
             env_aggs = reign_envs.get(row["digest12"], {})
@@ -1303,7 +1332,8 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
     # benchmark passes in flight: planned-but-missing cells render as "running"
     for p in inflight:
         target = next((r for r in rows if (r["kind"] == "genesis" and p["genesis"])
-                       or (r["kind"] == "king" and p["digest12"] and r["digest12"] == p["digest12"])), None)
+                       or (r["kind"] == "king" and p["digest12"] and r["digest12"] == p["digest12"])
+                       or (r["kind"] == "reference" and p["label"] and r["key"] == f"ref:{p['label']}")), None)
         if target is None:
             continue
         eta_iso = (datetime.fromtimestamp(p["eta_ts"], timezone.utc).isoformat(timespec="minutes")
@@ -1326,8 +1356,9 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
               and not r["current"]]
     rows = [r for r in rows if r not in hidden]
     genesis_row = next((r for r in rows if r["kind"] == "genesis"), None)
-    if genesis_row:
-        rows = [r for r in rows if r is not genesis_row] + [genesis_row]
+    refs = [r for r in rows if r["kind"] == "reference"]
+    rows = [r for r in rows if r["kind"] != "reference" and r is not genesis_row] + refs \
+        + ([genesis_row] if genesis_row else [])
     for i, r in enumerate(rows):
         r["order"] = i
     # delta vs the teacher row, per cell. The total compares against the
@@ -1368,7 +1399,9 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                   for c in cards],
         "definitions": {
             "rows": "the teacher, then the crowned kings newest first, then the genesis seed (reign 0) "
-                    f"as the bottom row. Kings before reign {MATRIX_MIN_REIGN} (Affine-XI and older, not "
+                    "as the bottom row, with reference models (open checkpoints of the genesis family "
+                    "benchmarked for comparison; not kings, never paid) just above it. "
+                    f"Kings before reign {MATRIX_MIN_REIGN} (Affine-XI and older, not "
                     "backfilled) are listed under `hidden`, never rows; reigns the operator "
                     "revoked after the crown (history.jsonl crown_revoked) are under `removed`",
             "value": "average score 0-100 per cell. Benchmarks: the card's greedy (T=0) row, "

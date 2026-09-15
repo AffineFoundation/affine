@@ -53,6 +53,7 @@ function rowName(r) {
 }
 
 function rowTip(r) {
+  if (r.kind === "reference") return r.tip || `${r.model} — reference model; not a king`;
   if (r.kind === "teacher") return `${r.model} — the frozen teacher (the score's fixed point)`;
   if (r.kind === "genesis") return `${r.model} — reign 0 (${kingName(0)}), the seed king; never won a duel`;
   return `${kingName(r.reign)} · reign ${r.reign} · king-${r.digest12}\ncrowned ${when(r.crowned_at)}`
