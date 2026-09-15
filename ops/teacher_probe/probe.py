@@ -182,6 +182,7 @@ def main() -> None:
     ap.add_argument("--concurrency", type=int, default=12)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--force", action="store_true", help="re-probe already probed turn ids")
+    ap.add_argument("--groups", default="", help="comma list: restrict --pending items to these fold groups")
     ap.add_argument("--manifest-sha", default="", help="read --published rows from this historical manifest")
     ap.add_argument("--turn-ids", default="", help="file of turn ids to restrict --published to")
     ap.add_argument("--reprobe-text", action="store_true",
@@ -201,6 +202,9 @@ def main() -> None:
                 if it["turn_id"] not in seen:
                     seen.add(it["turn_id"])
                     items.append(it)
+        if args.groups:
+            want = {g.strip() for g in args.groups.split(",") if g.strip()}
+            items = [it for it in items if it.get("group") in want]
         log(f"pending: {len(items)} turns")
     n_pending = len(items)
     only_ids: set[str] | None = None

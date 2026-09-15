@@ -246,8 +246,9 @@ KING_DONE_GROUP = "king_done"
 KING_TOOLUSE_GROUP = "king_tooluse"
 COMPLETION_GROUP = "completion"
 COMPLETION_PRE_GROUP = "completion_pre"
+KING_COACHED_GROUP = "king_coached"
 KING_GROUPS = ("king_fail", KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_TOOLUSE_GROUP,
-               KING_PIVOT_GROUP, KING_LOOP_GROUP, COMPLETION_PRE_GROUP)
+               KING_PIVOT_GROUP, KING_LOOP_GROUP, COMPLETION_PRE_GROUP, KING_COACHED_GROUP)
 # Precedence order when one turn qualifies for several (king-data spec §3.3).
 ROUTED_GROUPS = (KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_TOOLUSE_GROUP, KING_PIVOT_GROUP,
                  KING_LOOP_GROUP, COMPLETION_GROUP, COMPLETION_PRE_GROUP)
@@ -811,7 +812,7 @@ def curriculum_line(cur: dict, static_mix: dict[str, float]) -> str:
             f"{str(meta.get('ledger_sha256') or '')[:12] or 'n/a'}, weights "
             f"{str(meta.get('weights_sha256') or '')[:12] or 'n/a'} ({cur.get('vector', 'share')}); "
             "top moves vs static [mix]: " + ", ".join(f"{g} {d:+.3f}" for g, d in moves)
-            + (f"; m {cur['m']}" if cur.get("m") else "")
+            + (f"; m>1 on {sorted(g for g, k in cur['m'].items() if k > 1)}" if cur.get("m") else "")
             + (f"; diff https://data.affine.io/curriculum/{epoch}/diff.md" if epoch else ""))
 
 
@@ -1195,7 +1196,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                  reclaimed: dict[str, set[str]] | None = None,
                  probe_text: frozenset[str] = frozenset(),
                  king_tooluse: dict | None = None,
-                 completion_pre: dict | None = None) -> list[dict]:
+                 completion_pre: dict | None = None,
+                 leak_exempt_all: bool = False) -> list[dict]:
     """View records for one trace chunk, with only the turns that pass the
     fold contract and are not yet published. Records with no surviving
     turn are dropped.
@@ -1407,6 +1409,9 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             _count(drops, "king_one_reply")
             continue
         leak_exempt = frozenset(i for i, g in route.items() if cfgs[g]["leak_exempt"])
+        if leak_exempt_all:
+            # every reply index; convs may not have been built (no routing)
+            leak_exempt = frozenset(range(10_000))
         # Turns scored under `text` may be recorded from a reply with no action
         # in the policy dialect (the affine_sql king answers with a bare
         # ```sql block; 26 of 28 refused king_done states, 2026-09-13).
@@ -1456,7 +1461,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
             _count(drops, "king_in_loop", n_in_loop)
         if n_later:
             _count(drops, "king_later_onset", n_later)
-        kept, d = validate_turns(rest, panel=panel, allowed_kinds=allowed_kinds)
+        kept, d = validate_turns(rest, panel=panel, allowed_kinds=allowed_kinds,
+                                 leak_check=not leak_exempt_all)
         for k, v in d.items():
             _count(drops, k, v)
         kept_routed: list[dict] = []
@@ -1810,6 +1816,121 @@ def later_onset_retire(pub: PublicCorpus, live: dict | None) -> list[str]:
     return [tid for tid, traj, _ in rows if first[traj][1] != tid]
 
 
+# -- king_coached (coached-teacher recovery, 2026-09-15) ------------------------
+def load_king_coached() -> dict:
+    """[king_coached] (docs/coached-recovery.md; Jacob 2026-09-15, lever 1/2):
+    the teacher's HINT-FREE continuation from a king failure state where the
+    coach was DECISIVE -- the coached teacher solved >= `min_coached_solved`
+    of 3 continuations while the plain teacher solved <= `max_plain_solved`
+    of 3. Envelopes (datagen schema + a top-level `privileged` block with the
+    coach's per-turn notes) sit in `envelopes_dir`; the fold drops the
+    `privileged` block before deriving, so the notes never reach a prefix
+    (Jacob's rule: miners do not see hints). The trace itself is hint-free,
+    so the prefixes are what a miner would see: king trajectory + teacher
+    continuation. Stratum = king_coached:<sha256(king state id) % n>; the
+    teacher-probe gate applies like every king group."""
+    cfg = _group_cfg(KING_COACHED_GROUP)
+    if cfg:
+        raw = cfg["raw"]
+        cfg["leak_exempt"] = True
+        cfg["envelopes_dir"] = REPO / str(raw.get("envelopes_dir") or "affine/state/king_coached")
+        # Handoff (internal/hints/coached/king-coached-handoff.md): fold iff
+        # origin.hint_decisive (coached solved >= 1 of 3, plain 0 of >= 2);
+        # the thresholds below are the fallback when the flag is absent.
+        cfg["rule"] = str(raw.get("rule") or "hint_decisive")
+        cfg["min_coached_solved"] = int(raw.get("min_coached_solved", 1) or 1)
+        cfg["max_plain_solved"] = int(raw.get("max_plain_solved", 0) or 0)
+        cfg["policy_prefix"] = str(raw.get("policy_prefix") or "coached_")
+        ids = raw.get("envelope_ids")
+        cfg["envelope_ids"] = None
+        if ids and (REPO / str(ids)).exists():
+            cfg["envelope_ids"] = {l.strip() for l in (REPO / str(ids)).read_text().split("\n") if l.strip()}
+    return cfg
+
+
+def coached_decisive(env: dict, cfg: dict) -> bool:
+    o = ((env.get("privileged") or {}).get("origin") or {})
+    pid = str((env.get("policy") or {}).get("id") or "")
+    if not pid.startswith(cfg["policy_prefix"]) or not o:
+        return False
+    if cfg["envelope_ids"] is not None and str(env.get("rollout_id")) not in cfg["envelope_ids"]:
+        return False
+    if cfg["rule"] == "hint_decisive" and "hint_decisive" in o:
+        if not bool(o["hint_decisive"]):
+            return False
+    elif cfg["rule"] == "hint_decisive_strict" and "hint_decisive_strict" in o:
+        if not bool(o["hint_decisive_strict"]):
+            return False
+    else:
+        if int(o.get("coached_n_solved") or 0) < cfg["min_coached_solved"]:
+            return False
+        if int(o.get("plain_n_solved") or 0) > cfg["max_plain_solved"] or int(o.get("plain_n") or 0) < 2:
+            return False
+    return rollout_outcome(env["trace"]) == "solved"
+
+
+def derive_coached(cfg: dict, baker: ToolBaker, panel, allowed_kinds, published: set[str],
+                   drops: dict[str, int], notes: dict[str, int], folded: set[str]) -> list[dict]:
+    """View records for the decisive coached continuations: filter, strip
+    `privileged`, derive like a trace chunk, route to king_coached."""
+    out: list[dict] = []
+    files = sorted(cfg["envelopes_dir"].glob("*.jsonl.gz")) if cfg["envelopes_dir"].exists() else []
+    tmp_dir = WORK_DIR / "coached"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    for f in files:
+        kept_envs: list[tuple[dict, dict]] = []
+        n_all = 0
+        with gzip.open(f, "rt", encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                env = json.loads(line)
+                n_all += 1
+                if str(env.get("rollout_id")) in folded:
+                    continue      # derived by an earlier fold (published or in the carryover)
+                if not coached_decisive(env, cfg):
+                    _count(notes, "king_coached_not_decisive")
+                    continue
+                origin = dict(env["privileged"]["origin"])
+                env.pop("privileged", None)          # never in a record or prefix
+                kept_envs.append((env, origin))
+        if not kept_envs:
+            log(f"king_coached: {f.name}: 0 of {n_all} envelopes decisive")
+            continue
+        stripped = tmp_dir / f.name
+        with gzip.open(stripped, "wt", encoding="utf-8") as fh:
+            for env, _ in kept_envs:
+                fh.write(json.dumps(env, ensure_ascii=False) + "\n")
+        by_rid = {str(env.get("rollout_id")): origin for env, origin in kept_envs}
+        recs = derive_chunk(stripped, baker, panel, allowed_kinds, published, drops,
+                            notes=notes, leak_exempt_all=True)
+        n = cfg["strata_buckets"]
+        for rec in recs:
+            origin = by_rid.get(str(rec.get("rollout_id")), {})
+            sid = str(origin.get("state_id") or rec.get("instance_id") or rec["traj_id"])
+            h = int(hashlib.sha256(sid.encode("utf-8")).hexdigest()[:8], 16)
+            rec["fold_group"] = KING_COACHED_GROUP
+            rec["stratum"] = f"{KING_COACHED_GROUP}:{h % n:04d}"
+            rec["coached"] = {"state_id": sid, "king_digest": origin.get("king_digest"),
+                              "king_turn_idx": origin.get("king_turn_idx"),
+                              "state_kind": origin.get("state_kind"),
+                              "coached_n_solved": origin.get("coached_n_solved"),
+                              "plain_n_solved": origin.get("plain_n_solved"),
+                              "hint_decisive_strict": origin.get("hint_decisive_strict"),
+                              "harness": (rec.get("policy") or {}).get("harness")}
+            for m in rec["turns"]:
+                m["stratum"] = rec["stratum"]
+                published.add(f"{rec['traj_id']}:{m['turn_idx']}")
+            _count(notes, "king_coached_rollouts")
+            _count(notes, "king_coached_turns", len(rec["turns"]))
+        folded.update(str(env.get("rollout_id")) for env, _ in kept_envs)
+        log(f"king_coached: {f.name}: {len(kept_envs)} of {n_all} envelopes decisive -> "
+            f"{len(recs)} records / {sum(len(r['turns']) for r in recs)} new turns "
+            f"({len({r['stratum'] for r in recs})} states)")
+        out.extend(recs)
+    return out
+
+
 # -- teacher probe gate (improvement loop P4, 2026-09-14) -----------------------
 # ~25 % of king-group strata were dead for every miner: the teacher itself
 # gave <= 1 parseable reference or forfeited there. The gate: a turn of a
@@ -2077,6 +2198,8 @@ def finalize(state: dict, manifest: dict, mhash: str) -> None:
         "recurrence_before_budget": pending.get("recurrence_before_budget"),
         "curriculum_line": pending.get("curriculum_line"),
     }
+    if pending.get("coached_folded") is not None:
+        state["coached_folded"] = pending["coached_folded"]
     if pending.get("budget_signature"):
         state["strata_budget_signature"] = pending["budget_signature"]
         state.pop("group_strata_raw_before_budget", None)
@@ -2152,12 +2275,16 @@ def announce(state: dict, public_base: str) -> None:
         "chunk objects you need. Layout: https://affine.io/llms.txt. Eval "
         "pods pick the new manifest up automatically."
     )
+    if len(content) > 1990:
+        # Discord caps a message at 2,000 characters; keep the head (the
+        # numbers) and drop the tail (the layout boilerplate) rather than fail.
+        content = content[:1980].rsplit("\n", 1)[0] + "\n…"
     r = httpx.post(
         f"https://discord.com/api/v10/channels/{DISCORD_CHANNEL_ID}/messages",
         headers={"Authorization": f"Bot {env_value('DISCORD_BOT_TOKEN_ARBOS_BITTENSOR')}"},
         json={"content": content}, timeout=30)
     if r.status_code >= 300:
-        log(f"announce failed (HTTP {r.status_code}); will retry next cycle")
+        log(f"announce failed (HTTP {r.status_code}: {r.text[:200]}); will retry next cycle")
         return
     mid = r.json().get("id")
     log(f"announced epoch {epoch}: https://discord.com/channels/"
@@ -2430,6 +2557,11 @@ def main() -> None:
         if i % 100 == 0 or i == len(unfolded):
             log(f"derived {i}/{len(unfolded)} chunks: {len(candidates)} rollouts, "
                 f"{sum(len(r['turns']) for r in candidates)} turns")
+    king_coached = load_king_coached()
+    coached_folded: set[str] = set(state.get("coached_folded") or [])
+    if king_coached:
+        candidates.extend(derive_coached(king_coached, baker, panel, allowed, published, drops, notes,
+                                         coached_folded))
     log(f"drops: {drops or 'none'}")
     if _TOKEN_CACHE is not None:
         log(f"prefix token cache: {_TOKEN_CACHE.hits} hits / {_TOKEN_CACHE.misses} misses")
@@ -2843,6 +2975,7 @@ def main() -> None:
         "n_turns": n_new, "group_turns": group_turns,
         "group_strata_added": {g: sorted(v) for g, v in group_added.items()},
         "recurrence": recurrence,
+        "coached_folded": sorted(coached_folded),
         "budget_signature": budget_cfg.get("signature") if budget_cfg else None,
         "budget_migrated": budget_migrated,
         "strata_raw_before_budget": state.get("group_strata_raw_before_budget") if budget_migrated else None,
