@@ -76,7 +76,8 @@ worker_a() {
   swe_pro_job "$TEA" teacher 20260912T1455Z-0ce59769300c teacher
 }
 worker_b() {
-  sleep 1500   # let worker A re-pin the lock first
+  # worker A's first job re-pins the lock (tau3 side venv); start only once it is in
+  until grep -q '"tau3-banking"' "$HERE/suite.lock.json"; do sleep 300; done
   job "$TEA" teacher 20260912T1455Z-0ce59769300c teacher "$STD"
   job "$U69" 12      20260914T2152Z-6c877fd2242d king    "$STD"
 }
