@@ -118,6 +118,7 @@ BENCHSUITE_DIR = Path(os.environ.get(
 # written recently = a benchmark pass in flight (cells shown as running).
 BENCHSUITE_RUNS_DIR = Path(os.environ.get("BENCHSUITE_RUNS_DIR", REPO / "ops" / "benchsuite" / "state"))
 BENCHSUITE_SUITE_TOML = Path(os.environ.get("BENCHSUITE_SUITE_TOML", REPO / "ops" / "benchsuite" / "suite.toml"))
+CHAT_SET_MODES = {"lium", "prime", "full", "full-king-only", "genesis", "cheap", "challenger"}
 INFLIGHT_STALE_S = 2 * 3600      # a pass log untouched this long is dead, not running (a sandbox cell can be silent ~1 h)
 DATA_URL = os.environ.get("KINGBOARD_DATA_URL", "https://data.affine.io").rstrip("/")
 R2_BUCKET = os.environ.get("DATA_R2_BUCKET", "affine-data")
@@ -956,7 +957,10 @@ def load_inflight_passes() -> list[dict]:
             elif kind == "done":
                 done.add(env)
         m0 = re.search(r"^\[run_pass\] (\S+) pass ", text, re.M)
-        planned = list(dict.fromkeys([*chat_envs, *started]))
+        mode = fields.get("mode") or ""
+        # the standard passes run the chat sets (then sandbox sets when triggered);
+        # other modes (agentic, ...) plan only what their log has started
+        planned = list(dict.fromkeys([*(chat_envs if mode in CHAT_SET_MODES else []), *started]))
         running_env = next((e for e in reversed(started) if e not in done), None)
         t_first = parse_iso(m0.group(1)) if m0 else mtime
         n_done = len(done)
@@ -967,13 +971,15 @@ def load_inflight_passes() -> list[dict]:
         label = fields.get("label") or ""
         ref = fields.get("ref") or ""
         digest12 = None
-        m_d = re.search(r"([0-9a-f]{12})$", run_id)
+        m_d = re.search(r"(?:^|-)([0-9a-f]{12})(?:-|\.|$)", run_id)   # ...-<digest12>[-agentic][.attemptN]
         if m_d:
             digest12 = m_d.group(1)
+        elif re.fullmatch(r"[0-9a-f]{64}", ref):
+            digest12 = ref[:12]
         elif "@" in ref:
             digest12 = ref.rsplit("@", 1)[-1][:12]
         out.append({
-            "run_id": run_id, "mode": fields.get("mode") or "", "label": label, "ref": ref,
+            "run_id": run_id, "mode": mode, "label": label, "ref": ref,
             "digest12": digest12, "genesis": label == "genesis" or GENESIS_DIGEST12 in ref,
             "started_at": (m0.group(1) if m0 else None), "log_mtime": mtime,
             "planned": planned, "done": sorted(done), "running_env": running_env,
@@ -1310,6 +1316,17 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                                                   else "finished, card not published yet" if e in p["done"]
                                                   else "queued in this pass"),
                                         "reason": f"benchmark pass {p['run_id']} in progress"}
+    # Row set (operator 2026-09-15 20:27 UTC): teacher, then kings newest first,
+    # genesis as the bottom row. Kings with no measurement at all (and not the
+    # current king) are not backfilled and leave the table -> `hidden`.
+    hidden = [r for r in rows if r["kind"] == "king" and not r["current"] and r["n_cells"] == 0
+              and not any(v.get("running") for v in r["cells"].values())]
+    rows = [r for r in rows if r not in hidden]
+    genesis_row = next((r for r in rows if r["kind"] == "genesis"), None)
+    if genesis_row:
+        rows = [r for r in rows if r is not genesis_row] + [genesis_row]
+    for i, r in enumerate(rows):
+        r["order"] = i
     # delta vs the teacher row, per cell. The total compares against the
     # teacher's mean over the SAME columns the row has (rows differ in
     # coverage: a chat-only card has 10 benchmarks, the teacher has 15).
@@ -1335,6 +1352,8 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
         "columns": columns,
         "rows": rows,
         "removed": removed_kings_meta(stats),
+        "hidden": [{k: r.get(k) for k in ("key", "label", "reign", "digest12", "crowned_at", "challenge_id")}
+                   for r in hidden],
         "inflight": [{k: p[k] for k in ("run_id", "mode", "label", "digest12", "genesis", "started_at",
                                          "n_done", "n_planned", "running_env")} for p in inflight],
         "n_cards": len(cards),
@@ -1345,9 +1364,10 @@ def build_matrix(stats: dict, cards: list[dict], inflight: list[dict] | None = N
                    "genesis": is_genesis_card(c), "used": is_model_card(c)}
                   for c in cards],
         "definitions": {
-            "rows": "models in reign order: the teacher, the genesis seed (reign 0), then every "
-                    "crowned king newest first. Reigns the operator revoked after the crown "
-                    "(history.jsonl crown_revoked) are not rows; they are listed under `removed`",
+            "rows": "the teacher, then the crowned kings newest first, then the genesis seed (reign 0) "
+                    "as the bottom row. Kings without any measurement (no benchmark card, no king-seat "
+                    "rollouts; never backfilled) are listed under `hidden`, not rows; reigns the operator "
+                    "revoked after the crown (history.jsonl crown_revoked) are under `removed`",
             "value": "average score 0-100 per cell. Benchmarks: the card's greedy (T=0) row, "
                      "score = share of tasks passed; SWE-bench Verified uses the finished-only score "
                      "(rollouts inside the time / context budget). Datagen environments: solve rate "

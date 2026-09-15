@@ -34,6 +34,9 @@ STATE_DIR = Path(os.environ.get("COVERAGE_STATE_DIR", HERE / "state"))
 MATRIX_PATH = KINGBOARD_STATE / "matrix.json"
 COVERAGE_PATH = STATE_DIR / "coverage.json"
 MIN_ENV_ROLLOUTS = 30            # operator: a king env score on < 30 rollouts is an inconsistency
+# Operator 2026-09-15 20:27 UTC: rows before Affine-XII (reign 11) are NOT filled.
+# Kings with a lower reign stay on the page but are out of the coverage contract.
+MIN_KING_REIGN = int(os.environ.get("COVERAGE_MIN_KING_REIGN", "11"))
 BACKFILL_ENV_TARGET = 50         # the backfill runs >= 50 rollouts per env per model
 DISCORD_CHANNEL = "1510910974498967613"   # private Arbos ops channel (no public posts)
 DISCORD_TOKEN_ENV = "DISCORD_BOT_TOKEN_ARBOS_BITTENSOR"
@@ -46,9 +49,13 @@ def load_matrix(path: Path = MATRIX_PATH) -> dict:
 def classify(matrix: dict) -> dict:
     cols = [c for c in matrix["columns"] if c["kind"] in ("bench", "env")]
     rows_out = []
+    out_of_scope = []
     totals = {"missing_bench": 0, "missing_env": 0, "low_env": 0, "running_bench": 0,
               "unfillable_env": 0, "cells": 0, "complete": 0}
     for row in matrix["rows"]:
+        if row["kind"] == "king" and int(row.get("reign") or 0) < MIN_KING_REIGN:
+            out_of_scope.append({"label": row["label"], "reign": row.get("reign"), "digest12": row.get("digest12")})
+            continue
         cells = row.get("cells") or {}
         missing_bench, missing_env, low_env, running, unfillable = [], [], [], [], []
         for c in cols:
@@ -87,7 +94,8 @@ def classify(matrix: dict) -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "matrix_generated_at": matrix.get("generated_at"),
         "n_rows": len(rows_out), "n_bench": n_bench, "n_env": n_env,
-        "min_env_rollouts": MIN_ENV_ROLLOUTS, "totals": totals, "rows": rows_out,
+        "min_env_rollouts": MIN_ENV_ROLLOUTS, "min_king_reign": MIN_KING_REIGN,
+        "totals": totals, "rows": rows_out, "out_of_scope": out_of_scope,
         "inflight": matrix.get("inflight") or [],
     }
 
@@ -116,7 +124,7 @@ def spend_line() -> str:
 
 def summary_lines(rep: dict) -> list[str]:
     t = rep["totals"]
-    lines = [f"kings coverage {rep['generated_at'][:16]}Z — {rep['n_rows']} rows × "
+    lines = [f"kings coverage {rep['generated_at'][:16]}Z — {rep['n_rows']} rows in scope (teacher, genesis, reign ≥ {rep['min_king_reign']}) × "
              f"({rep['n_bench']} benchmarks + {rep['n_env']} envs): {t['complete']}/{t['cells']} cells scored; "
              f"missing {t['missing_bench']} bench + {t['missing_env']} env, {t['low_env']} env cells on "
              f"< {rep['min_env_rollouts']} rollouts, {t['running_bench']} bench cells running, "
@@ -140,7 +148,9 @@ def summary_lines(rep: dict) -> list[str]:
 
 def markdown(rep: dict) -> str:
     out = [f"# Kings coverage — {rep['generated_at']}", "",
-           f"Rows {rep['n_rows']}, benchmark columns {rep['n_bench']}, environment columns {rep['n_env']}. "
+           f"Rows in scope {rep['n_rows']} (teacher, genesis, kings with reign ≥ {rep['min_king_reign']}; "
+           f"out of scope: {', '.join(r['label'] for r in rep['out_of_scope']) or 'none'}), "
+           f"benchmark columns {rep['n_bench']}, environment columns {rep['n_env']}. "
            f"Scored cells {rep['totals']['complete']} of {rep['totals']['cells']}.", "",
            "| row | model | missing benchmarks | missing envs | env cells on < 30 rollouts | bench running |",
            "|---|---|---|---|---|---|"]
