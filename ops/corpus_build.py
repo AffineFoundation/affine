@@ -1917,10 +1917,27 @@ def load_king_coached() -> dict:
         # Handoff (internal/hints/coached/king-coached-handoff.md): fold iff
         # origin.hint_decisive (coached solved >= 1 of 3, plain 0 of >= 2);
         # the thresholds below are the fallback when the flag is absent.
+        # rule "plain_0_of_n" (2026-09-15 19:58 UTC, the 3-draw label was
+        # ~2/3 noise): the plain teacher solved 0 of >= min_plain_n draws
+        # and the coached teacher solved >= min_coached_solved. Draw counts
+        # come from the envelope's origin block, overridden by the verdict
+        # side-table (`verdict_table`: {"keep": [state_id], "demote": [...],
+        # "missing": [...]}); `keep_missing` keeps untestable states.
         cfg["rule"] = str(raw.get("rule") or "hint_decisive")
         cfg["min_coached_solved"] = int(raw.get("min_coached_solved", 1) or 1)
         cfg["max_plain_solved"] = int(raw.get("max_plain_solved", 0) or 0)
-        cfg["policy_prefix"] = str(raw.get("policy_prefix") or "coached_")
+        cfg["min_plain_n"] = int(raw.get("min_plain_n", 6) or 6)
+        cfg["keep_missing"] = bool(raw.get("keep_missing", True))
+        pp = raw.get("policy_prefix") or "coached_"
+        cfg["policy_prefixes"] = tuple(str(x) for x in (pp if isinstance(pp, list) else [pp]))
+        cfg["policy_prefix"] = cfg["policy_prefixes"][0]
+        cfg["verdict"] = {}
+        vt = raw.get("verdict_table")
+        if vt and (REPO / str(vt)).exists():
+            v = json.loads((REPO / str(vt)).read_text())
+            for label in ("keep", "demote", "missing"):
+                for sid in v.get(label) or []:
+                    cfg["verdict"][str(sid)] = label
         ids = raw.get("envelope_ids")
         cfg["envelope_ids"] = None
         if ids and (REPO / str(ids)).exists():
@@ -1931,10 +1948,24 @@ def load_king_coached() -> dict:
 def coached_decisive(env: dict, cfg: dict) -> bool:
     o = ((env.get("privileged") or {}).get("origin") or {})
     pid = str((env.get("policy") or {}).get("id") or "")
-    if not pid.startswith(cfg["policy_prefix"]) or not o:
+    if not pid.startswith(cfg["policy_prefixes"]) or not o:
         return False
     if cfg["envelope_ids"] is not None and str(env.get("rollout_id")) not in cfg["envelope_ids"]:
         return False
+    if rollout_outcome(env["trace"]) != "solved":
+        return False
+    if cfg["rule"] == "plain_0_of_n":
+        if int(o.get("coached_n_solved") or 0) < cfg["min_coached_solved"]:
+            return False
+        label = cfg["verdict"].get(str(o.get("state_id")))
+        if label == "demote":
+            return False
+        if label == "keep":
+            return True
+        if label == "missing":
+            return cfg["keep_missing"]
+        return (int(o.get("plain_n") or 0) >= cfg["min_plain_n"]
+                and int(o.get("plain_n_solved") or 0) <= cfg["max_plain_solved"])
     if cfg["rule"] == "hint_decisive" and "hint_decisive" in o:
         if not bool(o["hint_decisive"]):
             return False
@@ -1947,6 +1978,30 @@ def coached_decisive(env: dict, cfg: dict) -> bool:
         if int(o.get("plain_n_solved") or 0) > cfg["max_plain_solved"] or int(o.get("plain_n") or 0) < 2:
             return False
     return rollout_outcome(env["trace"]) == "solved"
+
+
+def coached_retire_ids(cfg: dict, pub: PublicCorpus, live: dict | None) -> tuple[list[str], set[str]]:
+    """Published king_coached rows whose envelope no longer passes the
+    admission rule (a demoted state): (turn ids to retire, demoted state ids)."""
+    files = sorted(cfg["envelopes_dir"].glob("*.jsonl.gz")) if cfg["envelopes_dir"].exists() else []
+    failing_rollouts: dict[str, str] = {}
+    for f in files:
+        with gzip.open(f, "rt", encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                env = json.loads(line)
+                if not coached_decisive(env, cfg):
+                    sid = str(((env.get("privileged") or {}).get("origin") or {}).get("state_id") or "")
+                    failing_rollouts[str(env.get("rollout_id"))] = sid
+    if not failing_rollouts or not live or not live.get("index"):
+        return [], set()
+    t = index_table(pub, live, ["turn_id", "rollout_id", "stratum"])
+    ids = [tid for tid, rid, st in zip(t.column("turn_id").to_pylist(), t.column("rollout_id").to_pylist(),
+                                       t.column("stratum").to_pylist())
+           if str(rid) in failing_rollouts and str(st).startswith(f"{KING_COACHED_GROUP}:")]
+    states = {failing_rollouts[str(rid)] for rid in t.column("rollout_id").to_pylist() if str(rid) in failing_rollouts}
+    return ids, states
 
 
 def derive_coached(cfg: dict, baker: ToolBaker, panel, allowed_kinds, published: set[str],
@@ -2942,6 +2997,15 @@ def main() -> None:
                         pub, live, src_g, extra_retire[src_g])
                     log(f"{src_g}: {len(retire_surviving[src_g])} strata survive the retirement")
                 pivot_retire = sorted(set().union(*extra_retire.values()))
+    if king_coached:
+        cr_ids, cr_states = coached_retire_ids(king_coached, pub, live)
+        if cr_ids:
+            extra_retire.setdefault(KING_COACHED_GROUP, set()).update(cr_ids)
+            retire_surviving[KING_COACHED_GROUP] = strata_after_retire(
+                pub, live, KING_COACHED_GROUP, extra_retire[KING_COACHED_GROUP])
+            pivot_retire = sorted(set().union(*extra_retire.values()))
+            log(f"king_coached: retiring {len(cr_ids)} published rows of {len(cr_states)} demoted states; "
+                f"{len(retire_surviving[KING_COACHED_GROUP])} strata survive")
     if not state.get("mix_seeded"):
         state["mix_seeded"] = True
         # Mix state is the set of slice strata each group / language bucket

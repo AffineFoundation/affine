@@ -99,10 +99,19 @@ king_coached = 0.02
 # rollout_id per line) restricts to a hand-picked list.
 strata_buckets = 4000
 envelopes_dir = "affine/state/king_coached"
-policy_prefix = "coached_"
-rule = "hint_decisive"
+policy_prefix = ["coached_", "template_"]   # coach2 P2 template-coach envelopes carry template_<harness>
+# 2026-09-15 19:58 UTC: the 3-draw hint-decisive label was ~2/3 noise (13 of
+# 22 states recoverable by the plain teacher within 6 draws). Rule now
+# plain_0_of_n: plain teacher 0 of >= min_plain_n draws AND coached solved
+# >= min_coached_solved; the P1 verdict side-table (keep / demote / missing)
+# overrides the envelope's own 3-draw counts; untestable states stay
+# (keep_missing). Demoted states' published rows are retired.
+rule = "plain_0_of_n"
+min_plain_n = 6
 min_coached_solved = 1
 max_plain_solved = 0
+keep_missing = true
+verdict_table = "affine/state/king_coached/p1_verdict.json"
 # envelope_ids = "affine/state/king_coached/envelope_ids.txt"
 
 [curriculum]
