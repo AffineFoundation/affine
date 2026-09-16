@@ -75,6 +75,7 @@ WVK16_EFFECTIVE = "2026-09-13"
 WVK17_EFFECTIVE = "2026-09-14"
 WVK18_EFFECTIVE = "2026-09-15"
 WVK19_EFFECTIVE = "2026-09-16"
+WVK20_EFFECTIVE = "2026-09-16"
 
 
 def _payout_subs() -> dict[str, str]:
@@ -196,6 +197,12 @@ def _margin_subs() -> dict[str, str]:
         "{WVK17_EFFECTIVE}": WVK17_EFFECTIVE,
         "{WVK18_EFFECTIVE}": WVK18_EFFECTIVE,
         "{WVK19_EFFECTIVE}": WVK19_EFFECTIVE,
+        "{WVK20_EFFECTIVE}": WVK20_EFFECTIVE,
+        "{CAP_RATIO}": f"{float(d.get('thought_cap_ratio', 0.0)):g}",
+        "{CAP_RULE}": (f" Per turn the thought cap is `max({int(d['max_thought_tokens'])}, "
+                       f"floor({float(d.get('thought_cap_ratio', 0.0)):g} × L_T))`, L_T = the longest "
+                       "valid teacher reference thought on that turn in teacher tokens (wvk 20)."
+                       if float(d.get("thought_cap_ratio", 0.0)) > 0 else ""),
         "{CONFIRMATION}": str(bool(d.get("confirmation_required", False))).lower(),
         "{CONFIRM_CLAUSE}": (" **A pass is then confirmed on a second independent "
                              "1,300-turn slice: that slice's own margin must be > 0 and "
@@ -374,6 +381,10 @@ around it)
 - Sequential near-miss (2026-09-11, no fork; OFF since wvk 16) — a \
 first-slice margin in the near-miss window drew a second seeded slice; one \
 seeded slice decides again
+- **Fork history: wvk 20 — teacher-relative thought cap (effective \
+{WVK20_EFFECTIVE})** — per turn you may think up to {MAX_THOUGHT} tokens or \
+{CAP_RATIO}× the teacher's longest reference thought on that turn, whichever \
+is larger; nothing else changes
 - **Fork history: wvk 19 — a crown must win twice (effective \
 {WVK19_EFFECTIVE})** — a duel that clears the bar is confirmed on a second \
 independent 1,300-turn slice (own margin > 0, pooled margin over the bar) \
@@ -1049,6 +1060,49 @@ Knobs: `[duel] near_miss_enabled / near_miss_low / near_miss_high / \
 near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
 `near_miss_triggered` in `code/affine/score.py`; the draw is \
 `duel_seed(block_hash, hotkey, slice_index)` in `code/evalsrv/dueling.py`.
+
+---
+
+## Fork history: wvk 20 — teacher-relative thought cap (effective {WVK20_EFFECTIVE})
+
+**Effective {WVK20_EFFECTIVE} at the first duel dispatched after the eval \
+pod redeploy (explicit dated operator directive, 2026-09-16 14:31 UTC).** \
+`weight_version_key = 20`; new `[duel].thought_cap_ratio = {CAP_RATIO}`. \
+`max_thought_tokens = {MAX_THOUGHT}`, `max_action_tokens = {MAX_ACTION}`, the \
+teacher's `ref_max_tokens = {REF_MAX_TOKENS}`, the score min(R, G), the crown \
+bar, the confirmation slice and the reign chain are unchanged.
+
+**What changes.** Until now your reply was cut at a fixed \
+`{MAX_THOUGHT} + {MAX_ACTION}` tokens on every turn. From wvk 20 the thought \
+budget follows the teacher: on each turn the validator first samples the \
+teacher's k = 3 reference rollouts (as before), measures the **longest valid \
+reference thought** L_T in tokens of the teacher's own tokenizer \
+(`Qwen/Qwen3.8-27B`; a reference with no parseable action does not count), \
+and sets your thought cap for that turn to \
+**`cap_T = max({MAX_THOUGHT}, floor({CAP_RATIO} × L_T))`**. In words: you may \
+think up to {MAX_THOUGHT} tokens, or {CAP_RATIO}× as long as the teacher's \
+longest reference thought on that turn, whichever is larger. The action cap \
+({MAX_ACTION}) is unchanged. King and challenger read the same references, so \
+both sides get the same cap on every turn.
+
+**Why.** The fixed cap cuts exactly where the task is hard enough that the \
+teacher itself thinks long. On the stored wvk-18 duels the rule relaxes the \
+cap on ~11% of turns (those where the teacher thinks > 1,640 tokens) and \
+there frees 45–47% of the remaining forfeits; it never lowers the cap. \
+Re-scoring those duels: 0 decision flips, the largest margin move +0.0003. \
+The largest possible cap is `floor({CAP_RATIO} × {REF_MAX_TOKENS})` tokens, \
+which fits the serving window with the 110k-token prefix cap.
+
+**What you see.** `duel_params.thought_cap_rule = "max(fixed, {CAP_RATIO}*L_T)"`, \
+`duel_params.thought_cap_ratio`, `duel_params.thought_cap_tokenizer`; every \
+turn row in the duel record carries `cap_tokens` (the cap that side sampled \
+under) and `ref_thought_tokens` (L_T), so a replay is exact; per side \
+`n_turns_cap_raised`, `mean_cap_tokens`, `max_cap_tokens`. Pre-wvk-20 \
+verdicts have no `thought_cap_ratio` (= fixed cap) and replay unchanged.
+
+**What changes for you.** You may think longer where the teacher does. Nothing \
+else. Forward-only: reign 13 stands; no re-verdicts; `min_submission_block` \
+unchanged.
 
 ---
 
