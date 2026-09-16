@@ -247,11 +247,16 @@ def compute(args) -> dict:
     raw_slicekeys = rule.shares_by_slice_key(strata, index_rows, "w_counted")
     share_unit = str(cfg.get("share_unit") or "slice_keys")
     raw_shares = raw_slicekeys if share_unit == "slice_keys" else raw_base
+    # Phase 10 (fold worker, 2026-09-16): the stop-state block keeps >= stop_state_floor of
+    # the slice; the rule honours it as a constraint so the published vector already does.
+    ss_groups = tuple(cfg.get("stop_state_groups") or ())
+    block_floors = ({"stop_state": (ss_groups, float(cfg.get("stop_state_floor") or 0.0))}
+                    if ss_groups and float(cfg.get("stop_state_floor") or 0) > 0 else {})
     vec = rule.group_vector(raw_shares, static, current, floor_frac=float(cfg["floor_frac_of_static"]),
                             floor_ct=float(cfg["floor_coding_terminal"]), cap=float(cfg["group_cap"]),
-                            max_shift=float(cfg["max_share_shift"]))
+                            max_shift=float(cfg["max_share_shift"]), block_floors=block_floors)
     fill_kw = dict(floor_frac=float(cfg["floor_frac_of_static"]), floor_ct=float(cfg["floor_coding_terminal"]),
-                   cap=float(cfg["group_cap"]), max_shift=float(cfg["max_share_shift"]))
+                   cap=float(cfg["group_cap"]), max_shift=float(cfg["max_share_shift"]), block_floors=block_floors)
     # Decomposition (coordinator 2026-09-15 00:46 UTC): what drives the vector.
     #   m_only     -- the same rule with S~ = 1 (king miss rate alone)
     #   v1.1       -- S~ as a GATE (live share >= s_gate -> eligible), weight = miss rate; informational
@@ -296,6 +301,8 @@ def compute(args) -> dict:
                                  "max_share_shift", "min_new_verdicts")}
     knobs["share_unit"] = share_unit
     knobs["counted_rule"] = counted
+    knobs["stop_state_groups"] = list(ss_groups)
+    knobs["stop_state_floor"] = cfg.get("stop_state_floor")
     hashed = {"rule_version": int(cfg["rule_version"]), "knobs": knobs, "ledger_sha256": lsha,
               "manifest_sha256": msha, "theta": ledger_doc.get("theta"), "probes_sha256": probes_sha,
               "strata": wrows}
@@ -404,7 +411,8 @@ def compute(args) -> dict:
                   "ledger_sha256": lsha, "manifest_sha256": msha, "corpus_epoch": epoch,
                   "joint_floor_applied": vec["joint_floor_applied"], "corpus_prior_M": rule.CORPUS_PRIOR_M,
                   "corpus_prior_S": clean_float(corpus_s), "groups": g_rows,
-                  "floors_check": rule.check_floors(vec["after_clamp"], static,
+                  "block_floors": vec["blocks"],
+                  "floors_check": rule.check_floors(vec["after_clamp"], static, block_floors=block_floors,
                                                     floor_frac=float(cfg["floor_frac_of_static"]),
                                                     floor_ct=float(cfg["floor_coding_terminal"]),
                                                     cap=float(cfg["group_cap"]),

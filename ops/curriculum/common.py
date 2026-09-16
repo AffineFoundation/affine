@@ -66,7 +66,9 @@ CURRICULUM_DEFAULTS: dict = {
     "rule_version": 1,
     "share_unit": "slice_keys",
     "counted_rule": "v1",          # v1 | v1.1 | v1.2 | v2 -- which rule's weights drive the published shares
-    "auto_apply_on_pass": False,   # coordinator 2026-09-16 17:04 UTC: the job flips mode -> apply when the decision table says APPLY
+    "auto_apply_on_pass": False,
+    "stop_state_groups": [],       # phase 10 (fold worker): block floor on the stop-state classes
+    "stop_state_floor": 0.0,   # coordinator 2026-09-16 17:04 UTC: the job flips mode -> apply when the decision table says APPLY
     "v2_eps": 0.20,                # uniform floor mass over ALL strata (no-forgetting guarantee)
     "v2_gamma": 1.0,
     "v2_component_weights": {"action": 0.25, "forfeit": 0.25, "score": 0.25, "gap": 0.25},
