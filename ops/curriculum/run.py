@@ -181,10 +181,12 @@ def per_rule_criterion(*, cfg: dict, groups: dict, prev_groups: dict | None, row
         proj = rule.recurrence_projection(sm, shares)
         over_g = {g: d["expected_draws_per_turn_per_duel"] for g, d in proj["groups"].items()
                   if d["expected_draws_per_turn_per_duel"] > cfg["recurrence_group_cap"] + 1e-9}
+        ss = tuple(cfg.get("stop_state_groups") or ())
+        bf = {"stop_state": (ss, float(cfg.get("stop_state_floor") or 0))} if ss and float(cfg.get("stop_state_floor") or 0) > 0 else {}
         fc = rule.check_floors(shares, static, floor_frac=float(cfg["floor_frac_of_static"]),
                                floor_ct=float(cfg["floor_coding_terminal"]), cap=float(cfg["group_cap"]),
                                supply={g: (groups["groups"][g].get("n_strata") or 0) > 0 for g in shares},
-                               guard_cut=set(guard["groups_cut"]))
+                               guard_cut=set(guard["groups_cut"]), block_floors=bf)
         stab = None
         if prev_groups:
             deltas = {g: abs(shares.get(g, 0.0) - (prev_groups["groups"].get(g, {}).get(key) or 0.0))
@@ -201,7 +203,9 @@ def per_rule_criterion(*, cfg: dict, groups: dict, prev_groups: dict | None, row
             "5_recurrence": {"pass": not over_g and proj["max_turn_draws_per_duel"] <= cfg["recurrence_turn_cap"] + 1e-9,
                              "max_turn_draws_per_duel": clean_float(proj["max_turn_draws_per_duel"]),
                              "groups_over_cap": over_g},
-            "6_floors_and_cap": {"pass": bool(fc["ok"]), "coding_plus_terminal": clean_float(fc["coding_plus_terminal"])},
+            "6_floors_and_cap": {"pass": bool(fc["ok"]), "coding_plus_terminal": clean_float(fc["coding_plus_terminal"]),
+                                 "block_floors": {k: {kk: (clean_float(vv) if isinstance(vv, float) else vv) for kk, vv in v.items()}
+                                                  for k, v in fc.get("block_floors", {}).items()}},
             "recurrence_guard_actions": len(guard["actions"]),
         }
     return out

@@ -298,3 +298,33 @@ class RuleV2Tests(unittest.TestCase):
         self.assertAlmostEqual(strata["c"]["w_v2"], 0.2 / 3 + 0.8)    # all the divergence mass
         rule.weights_v2(strata, eps=1.0, gamma=1.0)
         self.assertAlmostEqual(strata["c"]["w_v2"], 1 / 3)            # eps = 1 -> uniform
+
+
+class BlockFloorTests(unittest.TestCase):
+    def test_stop_state_block_floor_holds_through_clamp(self):
+        static = {"coding": 0.28, "terminal": 0.18, "completion": 0.15, "king_done": 0.03, "king_tooluse": 0.03,
+                  "completion_pre": 0.02, "king_divergence": 0.03, "king_fail": 0.08, "general": 0.05,
+                  "king_loop_onset": 0.04, "math": 0.02, "tool_use": 0.02, "nl2repo": 0.01, "king_pivot": 0.02,
+                  "king_recoverable": 0.02, "king_coached": 0.02}
+        current = {g: v for g, v in static.items()}      # live == static, block = 0.26
+        raw = dict(static)
+        # the rule wants the stop-state block down to ~0.16
+        for g in ("completion", "king_done", "king_tooluse", "completion_pre", "king_divergence"):
+            raw[g] *= 0.6
+        block = (("completion", "king_done", "king_tooluse", "completion_pre", "king_divergence"), 0.25)
+        v = rule.group_vector(raw, static, current, floor_frac=0.5, floor_ct=0.40, cap=0.60, max_shift=0.05,
+                              block_floors={"stop_state": block})
+        tot = sum(v["after_clamp"][g] for g in block[0])
+        self.assertGreaterEqual(tot, 0.25 - 1e-9)
+        self.assertTrue(v["blocks"]["stop_state"]["raised"])
+        self.assertAlmostEqual(sum(v["after_clamp"].values()), 1.0)
+        # members are held up either by the block floor or, when the clamp binds first, by the clamp
+        self.assertTrue(all(v["reasons"][g] in ("clamped_down", "block_floor:stop_state", "floor", "free") for g in block[0]))
+        v2 = rule.group_vector(raw, static, current, floor_frac=0.5, floor_ct=0.40, cap=0.60, max_shift=1.0,
+                               block_floors={"stop_state": block})
+        self.assertGreaterEqual(sum(v2["after_clamp"][g] for g in block[0]), 0.25 - 1e-9)
+        self.assertTrue(any(r.startswith("block_floor:stop_state") for r in v2["reasons"].values()))
+        fc = rule.check_floors(v["after_clamp"], static, floor_frac=0.5, floor_ct=0.40, cap=0.60,
+                               block_floors={"stop_state": block})
+        self.assertTrue(fc["ok"])
+        self.assertTrue(fc["block_floors"]["stop_state"]["ok"])
