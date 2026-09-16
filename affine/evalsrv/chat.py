@@ -113,8 +113,12 @@ def think_closed(text: str) -> bool:
     return THINK_CLOSE in text
 
 
+TEXT_FALLBACK_KINDS = ("tool_call",)
+
+
 def split_rollout(text: str, action_kind: str | None = dialects.DEFAULT_KIND,
-                  require_think_close: bool = False) -> tuple[str, str]:
+                  require_think_close: bool = False,
+                  text_fallback_at_tool_turns: bool = False) -> tuple[str, str]:
     """Split a completion (which started inside <think>) into (z, y).
 
     Returns ("", "") when the rollout contains no complete action in the
@@ -131,13 +135,22 @@ def split_rollout(text: str, action_kind: str | None = dialects.DEFAULT_KIND,
     Flipping the knob changes which turns score, so it is a
     weight_version_key event.
     """
-    if THINK_CLOSE in text:
+    closed = THINK_CLOSE in text
+    if closed:
         latent, _, rest = text.partition(THINK_CLOSE)
     elif require_think_close:
         return "", ""
     else:
         latent, rest = "", text
     before, y = dialects.split_action(rest, action_kind)
+    if not y and text_fallback_at_tool_turns and closed \
+            and (action_kind or dialects.DEFAULT_KIND) in TEXT_FALLBACK_KINDS:
+        # wvk 18 (2026-09-15): at a tool-call turn a reply that closed its
+        # reasoning and says something visible but calls no tool is a
+        # prose (`text`) action — the whole visible reply — the same rule
+        # the fold's teacher probe applies. Only with </think> closed: an
+        # unclosed block has no visible reply and stays a forfeit / drop.
+        before, y = dialects.split_action(rest, "text")
     if not y:
         return "", ""
     visible = THOUGHT_LABEL_RE.sub("", before.strip())
