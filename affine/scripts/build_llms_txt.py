@@ -74,6 +74,8 @@ WVK15_EFFECTIVE = "2026-09-12"
 WVK16_EFFECTIVE = "2026-09-13"
 WVK17_EFFECTIVE = "2026-09-14"
 WVK18_EFFECTIVE = "2026-09-15"
+WVK19_EFFECTIVE = "2026-09-16"
+WVK20_EFFECTIVE = "2026-09-16"
 
 
 def _payout_subs() -> dict[str, str]:
@@ -194,6 +196,23 @@ def _margin_subs() -> dict[str, str]:
         "{WVK16_EFFECTIVE}": WVK16_EFFECTIVE,
         "{WVK17_EFFECTIVE}": WVK17_EFFECTIVE,
         "{WVK18_EFFECTIVE}": WVK18_EFFECTIVE,
+        "{WVK19_EFFECTIVE}": WVK19_EFFECTIVE,
+        "{WVK20_EFFECTIVE}": WVK20_EFFECTIVE,
+        "{CAP_RATIO}": f"{float(d.get('thought_cap_ratio', 0.0)):g}",
+        "{CAP_RULE}": (f" Per turn the thought cap is `max({int(d['max_thought_tokens'])}, "
+                       f"floor({float(d.get('thought_cap_ratio', 0.0)):g} × L_T))`, L_T = the longest "
+                       "valid teacher reference thought on that turn in teacher tokens (wvk 20)."
+                       if float(d.get("thought_cap_ratio", 0.0)) > 0 else ""),
+        "{CONFIRMATION}": str(bool(d.get("confirmation_required", False))).lower(),
+        "{CONFIRM_CLAUSE}": (" **A pass is then confirmed on a second independent "
+                             "1,300-turn slice: that slice's own margin must be > 0 and "
+                             "the pooled margin over both slices must clear "
+                             "`max(k_sigma·SE_pooled, δ)`; otherwise the verdict is "
+                             "`confirmation_failed` and the king stands (wvk 19).**"
+                             if d.get("confirmation_required", False) else ""),
+        "{CONFIRM_FORMULA}": ("\n                        THEN confirmation slice (wvk 19): margin_2 > 0"
+                              "\n                        AND pooled margin > max(k_sigma·SE_pooled, δ)"
+                              if d.get("confirmation_required", False) else ""),
         "{MAX_THOUGHT}": str(int(d["max_thought_tokens"])),
         "{MAX_ACTION}": str(int(d["max_action_tokens"])),
         "{TEXT_FALLBACK}": str(bool(d.get("text_fallback_at_tool_turns", False))).lower(),
@@ -362,6 +381,15 @@ around it)
 - Sequential near-miss (2026-09-11, no fork; OFF since wvk 16) — a \
 first-slice margin in the near-miss window drew a second seeded slice; one \
 seeded slice decides again
+- **Fork history: wvk 20 — teacher-relative thought cap (effective \
+{WVK20_EFFECTIVE})** — per turn you may think up to {MAX_THOUGHT} tokens or \
+{CAP_RATIO}× the teacher's longest reference thought on that turn, whichever \
+is larger; nothing else changes
+- **Fork history: wvk 19 — a crown must win twice (effective \
+{WVK19_EFFECTIVE})** — a duel that clears the bar is confirmed on a second \
+independent 1,300-turn slice (own margin > 0, pooled margin over the bar) \
+before it crowns; a failed confirmation is a loss; noise crowns fall from \
+≈0.5% to ≈0.01% per attempt; honest improvers wait ~40 min more
 - **Fork history: wvk 18 — miner thought cap 2,048 + prose answers at tool \
 turns (effective {WVK18_EFFECTIVE})** — you may think up to {MAX_THOUGHT} \
 tokens (was 1024; action cap {MAX_ACTION} unchanged); at a tool-call turn a \
@@ -521,7 +549,7 @@ king iff the paired mean `turn_c − turn_k` beats `max(k_sigma·SE, δ)` \
 (`k_sigma = 2`; {DELTA_RULE}){MIN_Z_CLAUSE} **and** your median stripped thought \
 length is at least `min_thought_chars = 80` **and** at least \
 `causality_gamma = 0.30` of pairs pass teacher-side B \
-(`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no leakage). No lpA gates.{CROWN_RULE}
+(`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no leakage). No lpA gates.{CONFIRM_CLAUSE}{CROWN_RULE}
 6. Emissions go to every crown that is less than \
 `king_payout_window_hours = {PAYOUT_WINDOW_H}` hours old, one equal share per \
 crown — **registered hotkeys only** (see step 0 of the submit checklist). A \
@@ -851,7 +879,7 @@ Turn score            = min(R, G)         if the turn has a parseable action
 Miner score           = mean(turn) over all turns, forfeits included
 Crown                 = paired mean(turn_c − turn_k) > max(k_sigma·SE, δ)
                         AND median(len(z_A.strip())) ≥ min_thought_chars
-                        AND B pass rate ≥ causality_gamma{MIN_Z_FORMULA}
+                        AND B pass rate ≥ causality_gamma{MIN_Z_FORMULA}{CONFIRM_FORMULA}
                         (k_sigma = 2, min_thought_chars = 80,
                          causality_gamma = 0.30,
                          SE = sd/√n over paired turns)
@@ -1032,6 +1060,99 @@ Knobs: `[duel] near_miss_enabled / near_miss_low / near_miss_high / \
 near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
 `near_miss_triggered` in `code/affine/score.py`; the draw is \
 `duel_seed(block_hash, hotkey, slice_index)` in `code/evalsrv/dueling.py`.
+
+---
+
+## Fork history: wvk 20 — teacher-relative thought cap (effective {WVK20_EFFECTIVE})
+
+**Effective {WVK20_EFFECTIVE} at the first duel dispatched after the eval \
+pod redeploy (explicit dated operator directive, 2026-09-16 14:31 UTC).** \
+`weight_version_key = 20`; new `[duel].thought_cap_ratio = {CAP_RATIO}`. \
+`max_thought_tokens = {MAX_THOUGHT}`, `max_action_tokens = {MAX_ACTION}`, the \
+teacher's `ref_max_tokens = {REF_MAX_TOKENS}`, the score min(R, G), the crown \
+bar, the confirmation slice and the reign chain are unchanged.
+
+**What changes.** Until now your reply was cut at a fixed \
+`{MAX_THOUGHT} + {MAX_ACTION}` tokens on every turn. From wvk 20 the thought \
+budget follows the teacher: on each turn the validator first samples the \
+teacher's k = 3 reference rollouts (as before), measures the **longest valid \
+reference thought** L_T in tokens of the teacher's own tokenizer \
+(`Qwen/Qwen3.8-27B`; a reference with no parseable action does not count), \
+and sets your thought cap for that turn to \
+**`cap_T = max({MAX_THOUGHT}, floor({CAP_RATIO} × L_T))`**. In words: you may \
+think up to {MAX_THOUGHT} tokens, or {CAP_RATIO}× as long as the teacher's \
+longest reference thought on that turn, whichever is larger. The action cap \
+({MAX_ACTION}) is unchanged. King and challenger read the same references, so \
+both sides get the same cap on every turn.
+
+**Why.** The fixed cap cuts exactly where the task is hard enough that the \
+teacher itself thinks long. On the stored wvk-18 duels the rule relaxes the \
+cap on ~11% of turns (those where the teacher thinks > 1,640 tokens) and \
+there frees 45–47% of the remaining forfeits; it never lowers the cap. \
+Re-scoring those duels: 0 decision flips, the largest margin move +0.0003. \
+The largest possible cap is `floor({CAP_RATIO} × {REF_MAX_TOKENS})` tokens, \
+which fits the serving window with the 110k-token prefix cap.
+
+**What you see.** `duel_params.thought_cap_rule = "max(fixed, {CAP_RATIO}*L_T)"`, \
+`duel_params.thought_cap_ratio`, `duel_params.thought_cap_tokenizer`; every \
+turn row in the duel record carries `cap_tokens` (the cap that side sampled \
+under) and `ref_thought_tokens` (L_T), so a replay is exact; per side \
+`n_turns_cap_raised`, `mean_cap_tokens`, `max_cap_tokens`. Pre-wvk-20 \
+verdicts have no `thought_cap_ratio` (= fixed cap) and replay unchanged.
+
+**What changes for you.** You may think longer where the teacher does. Nothing \
+else. Forward-only: reign 13 stands; no re-verdicts; `min_submission_block` \
+unchanged.
+
+---
+
+## Fork history: wvk 19 — a crown must win twice (effective {WVK19_EFFECTIVE})
+
+**Effective {WVK19_EFFECTIVE} at the first duel dispatched after the eval \
+pod redeploy (explicit dated operator directive, 2026-09-16 11:10 UTC).** \
+`weight_version_key = 19`; new `[duel].confirmation_required = \
+{CONFIRMATION}`. The per-duel rule is unchanged: you beat the king on a \
+1,300-turn slice iff your paired margin `mean(turn_c − turn_k)` clears \
+`max(k_sigma·SE, δ)` with `k_sigma = 2`, `δ = 0.002`, plus the thought-length \
+floor and the B gate. What changes is what happens next.
+
+**A pass is a candidate, not a crown.** When your first slice clears the \
+bar, the validator immediately scores a **second, independent slice** of \
+1,300 turns against the same king: seed `blake2b(block_hash ‖ hotkey ‖ \
+"|slice1")` (derived from your reveal block, so nobody can pick it), turns \
+disjoint from the first slice, fresh teacher references, the same engines \
+(already loaded, so about 40 more minutes). You are crowned only if **(a)** \
+the second slice's own paired margin is **> 0** and **(b)** the **pooled** \
+margin over both slices (exact pooling of the two samples' n / mean / SE) \
+clears **`max(k_sigma·SE_pooled, δ)`** — the same bar, now over 2,600 turns. \
+If either fails, the verdict is recorded as `confirmation_failed`: a loss \
+like any other, the king stands, your hotkey's slot is consumed, nothing is \
+re-queued. You may submit again from another hotkey as before.
+
+**Why.** Every one of the 15 crowns since the wvk-10 reset rested on a \
+single slice. The only two crowns that ever got a second slice — under the \
+retired 12-hour-window rule — saw it come back at or below zero, and both \
+were later revoked. A single slice at `δ = 0.002 ≈ 2.6·SE` lets a challenger \
+that is exactly as good as the king crown by luck on about **0.5% of \
+attempts**; with the confirmation that falls to about **0.01%** (Monte \
+Carlo at today's SE 0.00078). A real improver loses nothing but ~40 \
+minutes: a genuine +0.003 margin clears the pooled bar with z ≈ 5. First \
+slices cleared the bar on 15 of 447 scored verdicts (3.4%), so the \
+confirmation runs a few times a week, not on every duel.
+
+**What you see.** `duel_params.confirmation_required = true`; on a duel whose \
+first slice passed, `verdict.confirmation = {seed, n, margin, se, z, \
+pooled_n, pooled_margin, pooled_se, pooled_z, bar, passed, …}`; the \
+confirmation slice's full record is `evals/<challenge_id>-confirm.json.gz`. \
+A crowned row carries `challenger_wins = true` and `confirmation.passed = \
+true`; a failed confirmation carries `rejection_reason = \
+"confirmation_failed"`.
+
+**What changes for you.** Nothing in what you emit. A winner must win twice; \
+honest improvers wait ~40 minutes longer; noise crowns stop. Forward-only: \
+reign 13 stands; no re-verdicts; `min_submission_block` unchanged. Pre-wvk-19 \
+verdicts carry no `confirmation_required` stamp (= false) and replay \
+unchanged.
 
 ---
 
@@ -1587,15 +1708,20 @@ aggressively: king-derived groups (`king_fail`, `king_loop_onset`, \
 `king_pivot`, `king_done`, `king_tooluse`, `king_recoverable`, \
 `completion_pre`) plus `completion` hold ~33 % of the strata (was ~12 %); \
 coding + terminal ~57 % (floor 40 %); general 5 %, tool_use 2 %, math 2 %, \
-nl2repo 1 %. Mechanism (`[strata_budget]` in `rollouts/sources.toml`, applied \
+nl2repo 1 %. **Since epoch 45 (2026-09-16, phase 10)** the stop-state classes \
+— the steps where the teacher stops but the king does not: `completion`, \
+`king_done`, `king_tooluse`, `completion_pre`, `king_divergence` — are the \
+dominant king-derived mass at ≥ 25 % of every slice (25.3 % at epoch 45: \
+completion 17.0, king_tooluse 3.3, completion_pre 2.4, king_done 2.1, \
+king_divergence 0.5), taken from coding + terminal (43.4 %, floor 40 %); \
+every stop-state group draws up to 3 turns per task. Mechanism (`[strata_budget]` in `rollouts/sources.toml`, applied \
 by the fold to the index only -- no turn left D, chunks and old manifests are \
 unchanged): teacher-trajectory groups are merged into fixed strata buckets \
 (`coding:b<n>`, `terminal:b<n>`, `general:b<n>`, `tool_use:b<n>` = \
 `sha256(original stratum) % N`), and supply-limited king groups split each \
 task stratum into up to 3 sub-strata by turn (`king_fail:0552#2` = \
-`<stratum>#<sha256(turn_id) % k>`; k = 3 for king_fail / king_loop_onset / \
-king_pivot / king_recoverable / completion_pre, 2 for king_done / \
-king_tooluse / completion), so one duel may draw up to k different turns of \
+`<stratum>#<sha256(turn_id) % k>`; k = 3 for every king group and for \
+completion since phase 10), so one duel may draw up to k different turns of \
 the same task. The original key is kept in the index column `stratum_src`. \
 Trade-off (RT-6): a king task recurs across duels k times as often -- \
 simulated per-duel overlap between two seeded slices rose from 0.9 % to \
@@ -2008,7 +2134,15 @@ declared itself done (`agent_completed`) and the env graded the run failed. \
 Reference kind `text`. 246 / 1.7%.
 - `completion` — the final reply that ended a SOLVED rollout on purpose \
 (teacher or king): a `submit`, a finish tool call, `task_complete`, or the \
-prose final report (`text`). 1,738 / 11.7%.
+prose final report (`text`). 2,315 / 17.0% (epoch 45).
+- `king_divergence` (since epoch 45, 2026-09-16) — the king's FIRST \
+out-of-reference action in a failed rollout: the first turn where its action \
+is outside the three teacher references sampled at that very prefix (the \
+improvement-loop worker's divergence side-table, regenerated per king; \
+`ref_n_valid ≥ 2`, references not all identical — so the probe gate is met by \
+construction). Where 2 or more references STOP (a finish or a prose report) \
+and the king acted, the turn is scored as `text`; otherwise the harness \
+dialect. 74 states / 0.5% at epoch 45, growing per king.
 - `king_coached` (since epoch 41, 2026-09-15) — the TEACHER's hint-free \
 continuation from a king failure state where a coach was decisive: a coached \
 teacher solved the task while the plain teacher solved 0 of at least 6 \
@@ -2119,8 +2253,25 @@ makes the corpus mean of Dbar⁺ equal the corpus mean forfeit rate, S~ a gate \
 ≥ 0.5; same shrinkage, floors, cap and clamp. Reason: on the king's own \
 failure states min(R, G) compresses to 0, so a global bottom-quartile θ on \
 the king's score cannot see them; challengers on the same turns can. \
-`[curriculum].counted_rule` names the rule whose weights are published as \
-`share`; the others stay in the file.
+**v2 — the divergence rule (operator direction 2026-09-16: "sample more where \
+the divergence between king and teacher is greatest, ranked intelligently, \
+with a non-zero chance of visiting every turn so nothing can be forgotten"; \
+candidate for the apply):** per stratum `D_s` = the mean of four king-vs- \
+teacher distances, each divided by its corpus mean — action disagreement \
+`1 − soft A_match` (token-Jaccard between the king's normalised action and \
+each reference action), the king's forfeit rate, the score deficit \
+`max(0, teacher own-action lift − king B)`, and the challenger gap `Dbar⁺` — \
+shrunk stratum → cell → group → corpus with n_0 = 8; then \
+`w_s = ε/N + (1 − ε) · D_s^γ / Σ D^γ` with ε = 0.20 spread over ALL strata (so \
+every turn keeps a non-zero draw probability — the no-forgetting guarantee; \
+at the slice-key level that floor reproduces the live share vector, so v2 = \
+0.2 · live + 0.8 · divergence-driven), γ = 1; group shares ∝ Σ w over slice \
+keys; same floors, cap, clamp and recurrence guard. Component weights and \
+corpus means are in `rule.json.v2`. The loop it closes: the floor keeps \
+drawing "solved" strata, so a stratum on which the king's score falls again \
+raises its D and is re-weighted (shown per fold in `forgetting_check.json` on \
+the coding group). `[curriculum].counted_rule` names the rule whose weights \
+are published as `share`; the others stay in the file.
 - **Mode.** `shadow` = weights published, the static `[mix]` still decides the \
 slice. `apply` = the fold uses `share_after_clamp` and `m_applied`. Any \
 rebuild mismatch or guard trip falls back to the static mix; `off` is the \

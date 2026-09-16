@@ -77,7 +77,7 @@ sys.path.insert(0, str(REPO / "affine"))
 from affine import dialects  # noqa: E402
 from affine.config import load_config  # noqa: E402
 from affine.corpus.completion import completion_kind, final_completion  # noqa: E402
-from affine.corpus.loops import ESCAPE, IN_LOOP, ONSET, label_loops  # noqa: E402
+from affine.corpus.loops import ESCAPE, IN_LOOP, ONSET, label_loops, norm_ws  # noqa: E402
 from affine.corpus.materialize import materialize_turn, node_path, stratum_key  # noqa: E402
 from affine.corpus.pack import PackResult  # noqa: E402
 from affine.corpus.publish import CorpusPublisher  # noqa: E402
@@ -247,6 +247,7 @@ KING_TOOLUSE_GROUP = "king_tooluse"
 COMPLETION_GROUP = "completion"
 COMPLETION_PRE_GROUP = "completion_pre"
 KING_COACHED_GROUP = "king_coached"
+KING_DIVERGENCE_GROUP = "king_divergence"
 # Env backfill rollouts (internal/coverage/env-backfill-spec.md) live under
 # their own prefix and policy id and never enter D; isolation is the traces
 # manifest, this is the belt-and-braces drop (`backfill_excluded`).
@@ -257,11 +258,16 @@ BACKFILL_CHUNK_PREFIX = "traces-backfill/"
 def is_backfill(env: dict, chunk_key: str = "") -> bool:
     pid = str((env.get("policy") or {}).get("id") or "")
     return pid.startswith(BACKFILL_POLICY_PREFIX) or str(chunk_key).startswith(BACKFILL_CHUNK_PREFIX)
-KING_GROUPS = ("king_fail", KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_TOOLUSE_GROUP,
-               KING_PIVOT_GROUP, KING_LOOP_GROUP, COMPLETION_PRE_GROUP, KING_COACHED_GROUP)
+KING_GROUPS = ("king_fail", KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_DIVERGENCE_GROUP,
+               KING_TOOLUSE_GROUP, KING_PIVOT_GROUP, KING_LOOP_GROUP, COMPLETION_PRE_GROUP,
+               KING_COACHED_GROUP)
+# Phase 10 (Jacob 2026-09-16): "sample more from steps where the teacher
+# stops but the king doesn't" -- the stop-state classes, >= 25 % of the slice.
+STOP_STATE_GROUPS = (KING_DONE_GROUP, KING_TOOLUSE_GROUP, COMPLETION_PRE_GROUP,
+                     COMPLETION_GROUP, KING_DIVERGENCE_GROUP)
 # Precedence order when one turn qualifies for several (king-data spec §3.3).
-ROUTED_GROUPS = (KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_TOOLUSE_GROUP, KING_PIVOT_GROUP,
-                 KING_LOOP_GROUP, COMPLETION_GROUP, COMPLETION_PRE_GROUP)
+ROUTED_GROUPS = (KING_DONE_GROUP, KING_RECOVERABLE_GROUP, KING_DIVERGENCE_GROUP, KING_TOOLUSE_GROUP,
+                 KING_PIVOT_GROUP, KING_LOOP_GROUP, COMPLETION_GROUP, COMPLETION_PRE_GROUP)
 
 
 def load_king_common() -> dict:
@@ -323,7 +329,7 @@ def load_king_loop_onset() -> dict:
     return cfg
 
 
-def _load_side_table(cfg: dict, *, default_dir: str, row_ok) -> dict:
+def _load_side_table(cfg: dict, *, default_dir: str, row_ok, file_ok=None) -> dict:
     """Per-king side-tables `<digest>.jsonl` under `side_table_dir`: one JSON
     line per (rollout_id, turn_idx); rows passing `row_ok` become
     `table[rollout_id][turn_idx]`. Every table in the directory is read:
@@ -333,11 +339,15 @@ def _load_side_table(cfg: dict, *, default_dir: str, row_ok) -> dict:
     table: dict[str, dict[int, dict]] = {}
     n_rows = n_files = 0
     for path in sorted(side_dir.glob("*.jsonl")) if side_dir.is_dir() else []:
+        if file_ok is not None and not file_ok(path):
+            continue
         n_files += 1
         for line in path.read_text().split("\n"):
             if not line.strip():
                 continue
             row = json.loads(line)
+            if "rollout_id" not in row or "turn_idx" not in row:
+                continue
             n_rows += 1
             if row_ok(row):
                 table.setdefault(str(row["rollout_id"]), {})[int(row["turn_idx"])] = row
@@ -378,6 +388,57 @@ def load_king_recoverable() -> dict:
         return {}
     return _load_side_table(cfg, default_dir="affine/state/recoverable",
                             row_ok=lambda row: bool(row.get("admit")))
+
+
+def load_king_divergence() -> dict:
+    """[king_divergence] (phase 10, Jacob 2026-09-16): the king's FIRST
+    out-of-reference action -- the step where the teacher's references stop
+    or go elsewhere and the king keeps going its own way (improvement-loop
+    worker's divergence side-table, one row per (rollout_id, turn_idx),
+    `admit` = the state passed the worker's checks). Precedence below
+    king_done / king_recoverable, above king_tooluse / pivot / onset. Leak
+    rule waived like every king group; teacher-probe gate applies."""
+    cfg = _group_cfg(KING_DIVERGENCE_GROUP)
+    if not cfg:
+        return {}
+    raw = cfg["raw"]
+    cfg["leak_exempt"] = True
+    min_valid = int(raw.get("min_ref_valid", 2) or 2)
+    stop_refs_for_text = int(raw.get("stop_refs_for_text", 2) or 2)
+    require_stop = bool(raw.get("require_stop_eligible", False))
+
+    def row_ok(row: dict) -> bool:
+        if row.get("admit") is False or str(row.get("outcome") or "failed") != "failed":
+            return False
+        if require_stop and not row.get("stop_eligible"):
+            return False
+        return int(row.get("ref_n_valid") or 0) >= min_valid and not row.get("ref_unanimous")
+
+    out = _load_side_table(cfg, default_dir="affine/state/king_divergence", row_ok=row_ok,
+                           file_ok=lambda p: ".turns" not in p.name)   # <digest12>.jsonl only
+    # The row's teacher references ARE a P4 probe at the state (3 samples,
+    # same teacher): register them so the gate does not re-sample. Where
+    # >= stop_refs_for_text references stopped (prose / finish), the turn is
+    # scored as `text` (kind_by_teacher, as with king_tooluse).
+    n_text = 0
+    for rid, turns in out["table"].items():
+        for ti, row in turns.items():
+            refs = row.get("refs") or []
+            stops = [r for r in refs if r.get("stop")]
+            stop_texts = {norm_ws(str(r.get("visible") or "")) for r in stops if str(r.get("visible") or "").strip()}
+            row["_kind"] = dialects.TEXT_KIND if len(stops) >= stop_refs_for_text else None
+            n_text += row["_kind"] is not None
+            SIDE_PROBE_ROWS[str(row.get("turn_id") or f"{row.get('traj_id')}:{ti}")] = {
+                "turn_id": row.get("turn_id"), "group": KING_DIVERGENCE_GROUP,
+                "kind": row["_kind"] or row.get("kind"), "n": len(refs),
+                "n_valid": len(stops) if row["_kind"] else int(row.get("ref_n_valid") or 0),
+                "identical": (len(stop_texts) <= 1) if row["_kind"] else bool(row.get("ref_unanimous")),
+                "n_distinct": len(stop_texts) if row["_kind"] else None,
+                "text_valid": len(stops), "text_distinct": len(stop_texts),
+                "sample_kinds": ["text" if r.get("stop") else str(row.get("kind")) for r in refs],
+                "source": "king_divergence_side_table", "probed_at": row.get("probed_at")}
+    out["n_text_kind"] = n_text
+    return out
 
 
 def load_king_done() -> dict:
@@ -1265,6 +1326,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                  king_pivot: dict | None = None,
                  completion: dict | None = None,
                  king_recoverable: dict | None = None,
+                 king_divergence: dict | None = None,
                  king_done: dict | None = None,
                  king_fail_cfg: dict | None = None,
                  notes: dict[str, int] | None = None,
@@ -1308,6 +1370,7 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
     notes = notes if notes is not None else {}
     cfgs = {KING_LOOP_GROUP: king_loop, KING_PIVOT_GROUP: king_pivot,
             COMPLETION_GROUP: completion, KING_RECOVERABLE_GROUP: king_recoverable,
+            KING_DIVERGENCE_GROUP: king_divergence,
             KING_DONE_GROUP: king_done, KING_TOOLUSE_GROUP: king_tooluse,
             COMPLETION_PRE_GROUP: completion_pre}
     common = (king_fail_cfg or {}).get("common") or load_king_common()
@@ -1324,6 +1387,8 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
         want_loop = bool(king_loop) and king_loop_candidate(env, king_loop)
         pivots = side_table_turns(env, king_pivot) if king_pivot else {}
         recoverable = side_table_turns(env, king_recoverable) if king_recoverable else {}
+        divergence = side_table_turns(env, king_divergence) if king_divergence else {}
+        divergence_text: dict[int, str] = {}
         want_done = bool(king_done) and king_done_candidate(env, king_done)
         want_tooluse = (bool(king_tooluse) and _policy_ok(env, king_tooluse)
                         and str(env.get("source") or "") in king_tooluse["sources"])
@@ -1428,7 +1493,21 @@ def derive_chunk(path: Path, baker: ToolBaker, panel, allowed_kinds,
                     "proxy": row.get("proxy"),
                     "timestamp": row.get("timestamp")}}
                 _count(notes, f"king_recoverable_proxy_{row.get('proxy') or 'continuation'}")
-        kind_stamp: dict[int, str] = {}     # turn -> duel-time action_kind
+        if divergence:
+            _count(notes, "king_divergence_rollouts")
+            for i, row in divergence.items():
+                if route.get(i) in (KING_DONE_GROUP, KING_RECOVERABLE_GROUP):
+                    continue        # higher precedence keeps the turn
+                if route.get(i) in (KING_LOOP_GROUP, KING_PIVOT_GROUP):
+                    _count(notes, f"king_divergence_over_{route[i]}")
+                route[i] = KING_DIVERGENCE_GROUP
+                in_loop.discard(i)
+                extra[i] = {"divergence": {k: row.get(k) for k in (
+                    "divergence_kind", "stop_eligible", "ref_stop", "king_stop", "ref_n_valid",
+                    "ref_unanimous", "king", "probed_at") if k in row}}
+                if row.get("_kind"):
+                    divergence_text[i] = row["_kind"]
+        kind_stamp: dict[int, str] = dict(divergence_text)     # turn -> duel-time action_kind
         if want_tooluse and convs and main:
             src = str(env.get("source") or "")
             # (a) one-shot on a prose-answer prompt set: the king opened with a tool call.
@@ -2081,6 +2160,7 @@ def derive_coached(cfg: dict, baker: ToolBaker, panel, allowed_kinds, published:
 # probe job); failing turns are dropped (`probe_failed`); published king
 # rows with a failing probe are retired once.
 PROBE_STATE_DIR = REPO / "affine" / "state" / "teacher_probe"
+SIDE_PROBE_ROWS: dict[str, dict] = {}   # probe evidence carried by side-tables (king_divergence)
 
 
 def load_teacher_probe() -> dict:
@@ -2094,6 +2174,8 @@ def load_teacher_probe() -> dict:
             if line.strip():
                 row = json.loads(line)
                 rows[str(row["turn_id"])] = row     # last row wins (re-probes)
+    for tid, row in SIDE_PROBE_ROWS.items():
+        rows.setdefault(tid, row)          # a real probe row wins
     return {"rows": rows, "path": str(path),
             "groups": frozenset(str(g) for g in (raw.get("groups") or KING_GROUPS)),
             "min_valid": int(raw.get("min_valid", 2) or 2),
@@ -2628,6 +2710,7 @@ def main() -> None:
     routed = {KING_LOOP_GROUP: load_king_loop_onset(),
               KING_PIVOT_GROUP: load_king_pivot(),
               KING_RECOVERABLE_GROUP: load_king_recoverable(),
+              KING_DIVERGENCE_GROUP: load_king_divergence(),
               KING_DONE_GROUP: load_king_done(),
               KING_TOOLUSE_GROUP: load_king_tooluse(),
               COMPLETION_GROUP: load_completion(),
@@ -2644,6 +2727,7 @@ def main() -> None:
         routed[g] for g in (KING_LOOP_GROUP, KING_PIVOT_GROUP, COMPLETION_GROUP,
                             KING_RECOVERABLE_GROUP, KING_DONE_GROUP, KING_TOOLUSE_GROUP,
                             COMPLETION_PRE_GROUP))
+    king_divergence = routed[KING_DIVERGENCE_GROUP]
     if completion:
         # A group the fold mix holds at 0 contributes nothing to D -- not
         # even its finals (env wave 1: `general` = 0.0 until the operator
@@ -2652,7 +2736,8 @@ def main() -> None:
         completion["exclude_sources"] = completion["exclude_sources"] | zero
         log(f"{COMPLETION_GROUP}: excluding sources {sorted(completion['exclude_sources'])} "
             f"(config + zero-share groups); min_replies {completion['min_replies']}")
-    for g, cfg in ((KING_PIVOT_GROUP, king_pivot), (KING_RECOVERABLE_GROUP, king_recoverable)):
+    for g, cfg in ((KING_PIVOT_GROUP, king_pivot), (KING_RECOVERABLE_GROUP, king_recoverable),
+                   (KING_DIVERGENCE_GROUP, king_divergence)):
         if cfg:
             log(f"{g}: {cfg['n_rows']} side-table rows in {cfg['n_files']} file(s) -> "
                 f"admitted on {len(cfg['table'])} rollouts / "
@@ -2661,9 +2746,11 @@ def main() -> None:
     # Retire-and-readmit plans: side-table groups whose turns were published
     # under another king group before the side-table existed.
     readmit_from = {KING_PIVOT_GROUP: ("king_fail",),
-                    KING_RECOVERABLE_GROUP: ("king_fail", KING_LOOP_GROUP, KING_PIVOT_GROUP)}
+                    KING_RECOVERABLE_GROUP: ("king_fail", KING_LOOP_GROUP, KING_PIVOT_GROUP),
+                    KING_DIVERGENCE_GROUP: ("king_fail", KING_LOOP_GROUP, KING_PIVOT_GROUP, KING_TOOLUSE_GROUP)}
     readmits: dict[str, dict[str, list[str]]] = {}
-    for g, cfg in ((KING_PIVOT_GROUP, king_pivot), (KING_RECOVERABLE_GROUP, king_recoverable)):
+    for g, cfg in ((KING_PIVOT_GROUP, king_pivot), (KING_RECOVERABLE_GROUP, king_recoverable),
+                   (KING_DIVERGENCE_GROUP, king_divergence)):
         if cfg and cfg.get("readmit_published"):
             readmits[g] = readmit_plan(pub, live, cfg, readmit_from[g])
             ids = {t for v in readmits[g].values() for t in v}
@@ -2705,6 +2792,7 @@ def main() -> None:
                             chunk_key=str(c["key"]),
                             king_loop=king_loop, king_pivot=king_pivot,
                             completion=completion, king_recoverable=king_recoverable,
+                            king_divergence=king_divergence,
                             king_done=king_done, king_fail_cfg=king, notes=notes,
                             published_king_ns=published_king_ns, reclaimed=reclaimed,
                             probe_text=probe_text,
@@ -2931,6 +3019,16 @@ def main() -> None:
         # The published vector becomes the group targets; `m` the sub-strata
         # count (changes the budget signature -> re-key + --allow-shift).
         mix = {g: float(v) for g, v in curriculum["groups"].items() if float(v) > 0}
+        # Phase 10 floor: the stop-state block keeps >= stop_state_floor of the
+        # vector however the rule re-weights (belt-and-braces next to the
+        # rule's own stop-state bonus; the excess is taken from the others).
+        floor = float((curriculum.get("raw") or {}).get("stop_state_floor", 0.25) or 0)
+        block = sum(mix.get(g, 0.0) for g in STOP_STATE_GROUPS)
+        if floor and 0 < block < floor:
+            up = floor / block
+            down = (1 - floor) / max(1e-9, 1 - block)
+            mix = {g: v * (up if g in STOP_STATE_GROUPS else down) for g, v in mix.items()}
+            log(f"curriculum apply: stop-state block {block:.3f} < floor {floor:.2f}; rescaled to the floor")
         if curriculum["m"] and budget_cfg:
             budget_cfg["sub_strata"].update({g: k for g, k in curriculum["m"].items() if k > 1})
             budget_cfg["signature"] = json.dumps({"base": budget_cfg["signature"], "m": curriculum["m"]}, sort_keys=True)
