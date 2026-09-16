@@ -79,6 +79,11 @@ ARMS = {
     "mix3": {"hints": [FACT, ("deepseek", "plan"), ("deepseek", "action")], "max_tokens": MAX_TOKENS,
              "think": True, "heldout": True},
     "coached_1792": {"hints": [("coached", "fact")], "max_tokens": MAX_TOKENS, "think": True, "heldout": True},
+    # Coached A-term probe (2026-09-16): plain vs coached references at the
+    # same 4,096 cap; the coached hint is the coach note exactly as the
+    # teacher saw it in the decisive continuation (level "note").
+    "H0_4096": {"hints": None, "max_tokens": 4096, "think": True, "heldout": True},
+    "coached_4096": {"hints": [("coached", "note")], "max_tokens": 4096, "think": True, "heldout": True},
 }
 for _name, _gl in CONDITIONS.items():
     if _gl is not None:
@@ -113,14 +118,17 @@ def recorded_miner(turn: dict) -> tuple[str, str] | None:
     return z, y
 
 
-def stored_miners(turn: dict) -> dict[str, tuple[str, str]]:
+def stored_miners(turn: dict, max_chal: int = 3) -> dict[str, tuple[str, str, str]]:
+    """(z, y, cid) per stored miner: the king and up to `max_chal`
+    challengers, most recent verdict first (`stored_chal`, `stored_chal2`, …).
+    Both sides must be valid in the record the king is taken from."""
     out = {}
-    for rec in turn.get("stored") or []:
-        if rec.get("king") and rec.get("chal"):
-            out["stored_king"] = (rec["king"]["z"], rec["king"]["y"])
-            out["stored_chal"] = (rec["chal"]["z"], rec["chal"]["y"])
-            out["_stored_cid"] = rec["cid"]
-            break
+    recs = sorted((r for r in turn.get("stored") or [] if r.get("king") and r.get("chal")),
+                  key=lambda r: r["cid"], reverse=True)
+    for i, rec in enumerate(recs[:max_chal]):
+        if i == 0:
+            out["stored_king"] = (rec["king"]["z"], rec["king"]["y"], rec["cid"])
+        out["stored_chal" if i == 0 else f"stored_chal{i + 1}"] = (rec["chal"]["z"], rec["chal"]["y"], rec["cid"])
     return out
 
 
@@ -264,10 +272,14 @@ async def run_turn(turn: dict, box: Box, king: Box | None, hints, cond_names: li
     rec = recorded_miner(turn)
     if rec:
         miners["recorded"] = {"source": turn.get("policy_id"), "z": rec[0], "y": rec[1], "valid": True}
-    st = stored_miners(turn)
-    for name in ("stored_king", "stored_chal"):
-        if name in st:
-            miners[name] = {"source": st.get("_stored_cid"), "z": st[name][0], "y": st[name][1], "valid": True}
+    for name, (sz, sy, scid) in stored_miners(turn).items():
+        miners[name] = {"source": scid, "z": sz, "y": sy, "valid": True}
+    # extra stored miners carried by the turn row (e.g. `coached_stored` = the
+    # first reply of the decisive coached continuation at this state).
+    for name, m in (turn.get("extra_miners") or {}).items():
+        if m.get("z") and m.get("y"):
+            miners[name] = {"source": m.get("trace_id"), "z": m["z"], "y": m["y"], "valid": True,
+                            **{k: m[k] for k in ("solved", "hinted_first") if k in m}}
     if king is not None:
         try:
             ks = (await sample_side(king, prefix, 1, action_kind=kind, require_think_close=True))[0]

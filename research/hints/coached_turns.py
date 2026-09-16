@@ -86,19 +86,26 @@ def main() -> None:
                 "reference_action": dialects.last_action(reply, kind) if kind in ("bash", "tool_call", "terminus_json", "text", "boxed") else "",
                 "reference_thought": (replies[t].get("reasoning_content") or "").strip() if t < len(replies) else "",
                 "hindsight": hs, "pivot": None, "recoverable": None, "stored": [],
-                "coached": {k: s.get(k) for k in ("coached_n_solved", "plain_n_solved", "hint_decisive", "hint_decisive_strict", "pivot_category", "select_tag")},
+                "coached": {k: s.get(k) for k in ("coached_n_solved", "plain_n_solved", "hint_decisive", "hint_decisive_strict", "pivot_category", "select_tag",
+                                                  "set", "arm", "label6", "also_arms", "run_id")},
             }
             ft.write(json.dumps(row, ensure_ascii=False) + "\n")
             note = first_note(s)
             if note:
-                for level in ("fact", "plan", "action"):
-                    text = (note["levels"] or {}).get(level)
+                levels = dict(note["levels"] or {})
+                # "note" = the reviewer note exactly as injected (fact+plan for
+                # the DeepSeek coach, the reminder for the template coach).
+                if note.get("note"):
+                    levels["note"] = note["note"]
+                coach_model = "template_coach.py" if s.get("arm") == "template" else "deepseek/deepseek-v4-pro (per-step coach)"
+                for level in ("note", "fact", "plan", "action", "template"):
+                    text = levels.get(level)
                     if not text:
                         continue
                     text = " ".join(str(text).split())
                     hr = {"turn_id": s["turn_id"], "group": "coached_decisive", "action_kind": kind,
                           "generator": "coached", "level": level, "text": text, "ok": True,
-                          "model": "deepseek/deepseek-v4-pro (per-step coach, coached-20260913a)",
+                          "model": f"{coach_model}, run {s.get('run_id')}",
                           "coach_trace_id": note["trace_id"], "coach_injected": note["injected"],
                           "coach_reason": note["reason"],
                           "hint_id": H.hint_id(s["turn_id"], "coached", level, text)}
