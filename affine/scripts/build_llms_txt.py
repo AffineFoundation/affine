@@ -74,6 +74,7 @@ WVK15_EFFECTIVE = "2026-09-12"
 WVK16_EFFECTIVE = "2026-09-13"
 WVK17_EFFECTIVE = "2026-09-14"
 WVK18_EFFECTIVE = "2026-09-15"
+WVK19_EFFECTIVE = "2026-09-16"
 
 
 def _payout_subs() -> dict[str, str]:
@@ -194,6 +195,17 @@ def _margin_subs() -> dict[str, str]:
         "{WVK16_EFFECTIVE}": WVK16_EFFECTIVE,
         "{WVK17_EFFECTIVE}": WVK17_EFFECTIVE,
         "{WVK18_EFFECTIVE}": WVK18_EFFECTIVE,
+        "{WVK19_EFFECTIVE}": WVK19_EFFECTIVE,
+        "{CONFIRMATION}": str(bool(d.get("confirmation_required", False))).lower(),
+        "{CONFIRM_CLAUSE}": (" **A pass is then confirmed on a second independent "
+                             "1,300-turn slice: that slice's own margin must be > 0 and "
+                             "the pooled margin over both slices must clear "
+                             "`max(k_sigma·SE_pooled, δ)`; otherwise the verdict is "
+                             "`confirmation_failed` and the king stands (wvk 19).**"
+                             if d.get("confirmation_required", False) else ""),
+        "{CONFIRM_FORMULA}": ("\n                        THEN confirmation slice (wvk 19): margin_2 > 0"
+                              "\n                        AND pooled margin > max(k_sigma·SE_pooled, δ)"
+                              if d.get("confirmation_required", False) else ""),
         "{MAX_THOUGHT}": str(int(d["max_thought_tokens"])),
         "{MAX_ACTION}": str(int(d["max_action_tokens"])),
         "{TEXT_FALLBACK}": str(bool(d.get("text_fallback_at_tool_turns", False))).lower(),
@@ -362,6 +374,11 @@ around it)
 - Sequential near-miss (2026-09-11, no fork; OFF since wvk 16) — a \
 first-slice margin in the near-miss window drew a second seeded slice; one \
 seeded slice decides again
+- **Fork history: wvk 19 — a crown must win twice (effective \
+{WVK19_EFFECTIVE})** — a duel that clears the bar is confirmed on a second \
+independent 1,300-turn slice (own margin > 0, pooled margin over the bar) \
+before it crowns; a failed confirmation is a loss; noise crowns fall from \
+≈0.5% to ≈0.01% per attempt; honest improvers wait ~40 min more
 - **Fork history: wvk 18 — miner thought cap 2,048 + prose answers at tool \
 turns (effective {WVK18_EFFECTIVE})** — you may think up to {MAX_THOUGHT} \
 tokens (was 1024; action cap {MAX_ACTION} unchanged); at a tool-call turn a \
@@ -521,7 +538,7 @@ king iff the paired mean `turn_c − turn_k` beats `max(k_sigma·SE, δ)` \
 (`k_sigma = 2`; {DELTA_RULE}){MIN_Z_CLAUSE} **and** your median stripped thought \
 length is at least `min_thought_chars = 80` **and** at least \
 `causality_gamma = 0.30` of pairs pass teacher-side B \
-(`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no leakage). No lpA gates.{CROWN_RULE}
+(`B = lpC(y_A|z_A) − lpC(y_A|∅) ≥ 0.02`, no leakage). No lpA gates.{CONFIRM_CLAUSE}{CROWN_RULE}
 6. Emissions go to every crown that is less than \
 `king_payout_window_hours = {PAYOUT_WINDOW_H}` hours old, one equal share per \
 crown — **registered hotkeys only** (see step 0 of the submit checklist). A \
@@ -851,7 +868,7 @@ Turn score            = min(R, G)         if the turn has a parseable action
 Miner score           = mean(turn) over all turns, forfeits included
 Crown                 = paired mean(turn_c − turn_k) > max(k_sigma·SE, δ)
                         AND median(len(z_A.strip())) ≥ min_thought_chars
-                        AND B pass rate ≥ causality_gamma{MIN_Z_FORMULA}
+                        AND B pass rate ≥ causality_gamma{MIN_Z_FORMULA}{CONFIRM_FORMULA}
                         (k_sigma = 2, min_thought_chars = 80,
                          causality_gamma = 0.30,
                          SE = sd/√n over paired turns)
@@ -1032,6 +1049,56 @@ Knobs: `[duel] near_miss_enabled / near_miss_low / near_miss_high / \
 near_miss_extra_slices` in `code/affine.toml`; the decision helper is \
 `near_miss_triggered` in `code/affine/score.py`; the draw is \
 `duel_seed(block_hash, hotkey, slice_index)` in `code/evalsrv/dueling.py`.
+
+---
+
+## Fork history: wvk 19 — a crown must win twice (effective {WVK19_EFFECTIVE})
+
+**Effective {WVK19_EFFECTIVE} at the first duel dispatched after the eval \
+pod redeploy (explicit dated operator directive, 2026-09-16 11:10 UTC).** \
+`weight_version_key = 19`; new `[duel].confirmation_required = \
+{CONFIRMATION}`. The per-duel rule is unchanged: you beat the king on a \
+1,300-turn slice iff your paired margin `mean(turn_c − turn_k)` clears \
+`max(k_sigma·SE, δ)` with `k_sigma = 2`, `δ = 0.002`, plus the thought-length \
+floor and the B gate. What changes is what happens next.
+
+**A pass is a candidate, not a crown.** When your first slice clears the \
+bar, the validator immediately scores a **second, independent slice** of \
+1,300 turns against the same king: seed `blake2b(block_hash ‖ hotkey ‖ \
+"|slice1")` (derived from your reveal block, so nobody can pick it), turns \
+disjoint from the first slice, fresh teacher references, the same engines \
+(already loaded, so about 40 more minutes). You are crowned only if **(a)** \
+the second slice's own paired margin is **> 0** and **(b)** the **pooled** \
+margin over both slices (exact pooling of the two samples' n / mean / SE) \
+clears **`max(k_sigma·SE_pooled, δ)`** — the same bar, now over 2,600 turns. \
+If either fails, the verdict is recorded as `confirmation_failed`: a loss \
+like any other, the king stands, your hotkey's slot is consumed, nothing is \
+re-queued. You may submit again from another hotkey as before.
+
+**Why.** Every one of the 15 crowns since the wvk-10 reset rested on a \
+single slice. The only two crowns that ever got a second slice — under the \
+retired 12-hour-window rule — saw it come back at or below zero, and both \
+were later revoked. A single slice at `δ = 0.002 ≈ 2.6·SE` lets a challenger \
+that is exactly as good as the king crown by luck on about **0.5% of \
+attempts**; with the confirmation that falls to about **0.01%** (Monte \
+Carlo at today's SE 0.00078). A real improver loses nothing but ~40 \
+minutes: a genuine +0.003 margin clears the pooled bar with z ≈ 5. First \
+slices cleared the bar on 15 of 447 scored verdicts (3.4%), so the \
+confirmation runs a few times a week, not on every duel.
+
+**What you see.** `duel_params.confirmation_required = true`; on a duel whose \
+first slice passed, `verdict.confirmation = {seed, n, margin, se, z, \
+pooled_n, pooled_margin, pooled_se, pooled_z, bar, passed, …}`; the \
+confirmation slice's full record is `evals/<challenge_id>-confirm.json.gz`. \
+A crowned row carries `challenger_wins = true` and `confirmation.passed = \
+true`; a failed confirmation carries `rejection_reason = \
+"confirmation_failed"`.
+
+**What changes for you.** Nothing in what you emit. A winner must win twice; \
+honest improvers wait ~40 minutes longer; noise crowns stop. Forward-only: \
+reign 13 stands; no re-verdicts; `min_submission_block` unchanged. Pre-wvk-19 \
+verdicts carry no `confirmation_required` stamp (= false) and replay \
+unchanged.
 
 ---
 

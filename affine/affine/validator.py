@@ -1018,6 +1018,17 @@ class Validator:
                                    accepted=False, label=cid)
             self.dashboard.flush(force=True)
             return
+        if verdict.get("challenger_wins") and self.cfg.duel.confirmation_required:
+            # wvk 19: a first-slice pass is a candidate, not a crown. One more
+            # independent slice must agree (own margin > 0, pooled margin over
+            # the bar). A failed confirmation is a plain loss: the slot is
+            # consumed, the king stands, nothing is re-queued.
+            conf = await self._confirm_crown(entry, king, verdict, block_hash,
+                                             margin, info)
+            verdict["confirmation"] = conf
+            if not conf.get("passed"):
+                verdict["challenger_wins"] = False
+                verdict["rejection_reason"] = "confirmation_failed"
         accepted = bool(verdict.get("challenger_wins"))
         crowned_entry = entry
         if accepted and is_r2_ref(entry.repo):
@@ -1046,6 +1057,86 @@ class Validator:
             crowned_entry.repo, entry.revision, entry.hotkey, accepted=accepted,
             label=(f"reign-{self.state.king.reign_number}" if accepted else cid))
         self.dashboard.flush(force=True)
+
+    async def _confirm_crown(self, entry: QueueEntry, king: King, first: dict,
+                             block_hash: str, margin: dict, info) -> dict:
+        """wvk 19 confirmation slice for a first-slice crown pass.
+
+        Same king and challenger (engines are warm), seed
+        blake2b(block_hash ‖ hotkey ‖ "|slice<k>") with k = number of slices
+        the first verdict scored (1; 2 if the near-miss rule pooled), turns
+        disjoint from those, fresh teacher references. The pod pools the two
+        samples exactly (pooled_margin_stats) and applies rule "per_duel":
+        passed = own margin > 0 AND pooled margin > max(k_sigma·SE_pooled, δ).
+        Returns the flat stamp {seed, n, margin, se, z, pooled_margin,
+        pooled_se, pooled_z, bar, passed, ...} plus the pod's sub-blocks.
+        Infra faults propagate (the whole challenge is requeued as infra)."""
+        cid = entry.challenge_id
+        nm = first.get("near_miss") or {}
+        n_slices = len(nm.get("slices") or []) or 1
+        confirm = {"challenge_id": cid, "slice_index": n_slices, "rule": "per_duel",
+                   "k_sigma": float(self.cfg.duel.k_sigma),
+                   "min_margin": float(margin["min_margin_effective"]),
+                   "base": {"n": int(first.get("n_paired_turns") or 0),
+                            "margin": first.get("margin"), "se": first.get("se")}}
+        self.state.current_eval = {
+            "challenge_id": f"{cid} (confirmation slice)", "repo": entry.repo,
+            "hotkey": entry.hotkey, "stage": "dispatching", "progress": {},
+            "started_at": now_iso(),
+        }
+        self.state.set_phase("confirmation", challenge_id=cid)
+        self.dashboard.flush(force=True)
+        log.info("%s: first slice cleared the bar (margin=%s z=%s) — running the "
+                 "confirmation slice", cid, first.get("margin"), first.get("z"))
+
+        def on_progress(data: dict) -> None:
+            self.watchdog.beat()
+            if self.state.current_eval is not None:
+                self.state.current_eval["stage"] = data.get("phase", "scoring")
+                self.state.current_eval["progress"] = data
+            self.dashboard.flush()
+
+        verdict = await self.eval_client.run_duel(
+            king_repo=king.repo, king_revision=king.revision,
+            challenger_repo=entry.repo, challenger_revision=entry.revision,
+            challenger_hotkey=entry.hotkey, block_hash=block_hash,
+            challenger_weight_bytes=info.total_safetensors_bytes,
+            margin=margin, confirm=confirm, on_progress=on_progress)
+        self.state.current_eval = None
+        pod = dict(verdict.get("confirmation") or {})
+        sl = pod.get("slice") or {}
+        pooled = pod.get("pooled") or {}
+        conf = {
+            "required": True, "rule": "per_duel",
+            "seed": sl.get("seed"), "n": sl.get("n_paired_turns"),
+            "n_forfeit_turns": sl.get("n_forfeit_turns"), "digest": sl.get("digest"),
+            "margin": sl.get("margin"), "se": sl.get("se"), "z": sl.get("z"),
+            "pooled_n": pooled.get("n"), "pooled_margin": pooled.get("margin"),
+            "pooled_se": pooled.get("se"), "pooled_z": pooled.get("z"),
+            "bar": pod.get("bar"), "k_sigma": confirm["k_sigma"],
+            "min_margin": confirm["min_margin"],
+            "passed": bool(pod.get("passed")),
+            "rejection_reason_on_slice": (sl.get("rejection_reason")
+                                          or verdict.get("rejection_reason")),
+            "job_id": verdict.get("job_id"), "base": pod.get("base"),
+        }
+        if not pod:
+            conf["passed"] = False
+            conf["error"] = ("pod returned no confirmation stamp (stale eval pod? "
+                             "redeploy scripts/redeploy_pods.py)")
+            log.error("confirmation of %s: %s", cid, conf["error"])
+        if conf["rejection_reason_on_slice"]:
+            conf["passed"] = False
+        art = QueueEntry(challenge_id=f"{cid}-confirm", hotkey=entry.hotkey,
+                         repo=entry.repo, revision=entry.revision,
+                         block=entry.block, queued_at="")
+        verdict["confirmation_of"] = cid
+        await self._publish_eval_artifact(art, verdict)
+        log.info("confirmation %s: slice margin=%s z=%s | pooled margin=%s se=%s "
+                 "z=%s bar=%s -> passed=%s", cid, conf["margin"], conf["z"],
+                 conf["pooled_margin"], conf["pooled_se"], conf["pooled_z"],
+                 conf["bar"], conf["passed"])
+        return conf
 
     def _repromote_if_private(self, member: dict) -> None:
         """A reign member still pointing at its private prefix (promotion
