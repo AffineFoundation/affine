@@ -278,7 +278,12 @@ def compute(args) -> dict:
                                   turn_cap=float(cfg["recurrence_turn_cap"]))
     if guard["actions"]:
         log(f"weights: recurrence guard -- {len(guard['actions'])} actions, e.g. {guard['actions'][:3]}")
-    vec["after_clamp"] = guard["shares"]
+    vec["after_clamp"] = rule.restore_block_floors(
+        guard["shares"], block_floors, fixed=set(guard["groups_cut"]), floor=vec["floor"], cap=float(cfg["group_cap"]),
+        current=current, max_shift=float(cfg["max_share_shift"]))
+    if guard["actions"]:
+        vec["blocks"] = {name: {**b, "after_guard": sum(vec["after_clamp"].get(g, 0.0) for g in b["members"])}
+                         for name, b in vec["blocks"].items()}
     applied = vec["after_clamp"] if mode == "apply" else current
     proj_shadow = rule.recurrence_projection(strata, vec["after_clamp"])
     proj_applied = rule.recurrence_projection(strata, applied)
@@ -305,6 +310,9 @@ def compute(args) -> dict:
     knobs["stop_state_floor"] = cfg.get("stop_state_floor")
     hashed = {"rule_version": int(cfg["rule_version"]), "knobs": knobs, "ledger_sha256": lsha,
               "manifest_sha256": msha, "theta": ledger_doc.get("theta"), "probes_sha256": probes_sha,
+              # the group vector is an output of the rule too: a share change (guard, block floor)
+              # with an unchanged strata table must still be a new snapshot
+              "shares_after_clamp": {g: clean_float(v) for g, v in sorted(vec["after_clamp"].items())},
               "strata": wrows}
     wsha = sha256_bytes(canonical_json(hashed))
 

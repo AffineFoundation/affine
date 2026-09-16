@@ -176,7 +176,12 @@ def per_rule_criterion(*, cfg: dict, groups: dict, prev_groups: dict | None, row
         sm = copy.deepcopy(strata_m)
         guard = rule.recurrence_guard(sm, shares, group_cap=float(cfg["recurrence_group_cap"]),
                                       turn_cap=float(cfg["recurrence_turn_cap"]))
-        shares = guard["shares"]
+        ss0 = tuple(cfg.get("stop_state_groups") or ())
+        bf0 = {"stop_state": (ss0, float(cfg.get("stop_state_floor") or 0))} if ss0 and float(cfg.get("stop_state_floor") or 0) > 0 else {}
+        floors0 = {g: float(cfg["floor_frac_of_static"]) * (groups["groups"][g].get("share_static") or 0.0) for g in shares}
+        current0 = {g: (groups["groups"][g].get("share_current") or 0.0) for g in shares}
+        shares = rule.restore_block_floors(guard["shares"], bf0, fixed=set(guard["groups_cut"]), floor=floors0,
+                                           cap=float(cfg["group_cap"]), current=current0, max_shift=float(cfg["max_share_shift"]))
         cf = counterfactual.run(rows_path, shares, int(cfg["counterfactual_verdicts"]))
         proj = rule.recurrence_projection(sm, shares)
         over_g = {g: d["expected_draws_per_turn_per_duel"] for g, d in proj["groups"].items()

@@ -414,6 +414,37 @@ def recurrence_guard(strata: dict[str, dict], shares: dict[str, float], *, group
                   and all(d["expected_draws_per_turn_per_duel"] <= group_cap + 1e-12 for d in proj["groups"].values())}
 
 
+def restore_block_floors(shares: dict[str, float], block_floors: dict[str, tuple[tuple[str, ...], float]],
+                         *, fixed: set[str] | frozenset[str], floor: dict[str, float], cap: float,
+                         current: dict[str, float], max_shift: float) -> dict[str, float]:
+    """After the recurrence guard cut a member's share, a block can sit a
+    hair under its floor. Lift the block's OTHER members proportionally
+    back to the floor (cut groups stay fixed), taking the mass from the
+    groups outside the block, inside the usual per-group bounds."""
+    shares = dict(shares)
+    for members, bfloor in block_floors.values():
+        live = [g for g in members if shares.get(g, 0.0) > 0]
+        tot = sum(shares[g] for g in live)
+        if not live or tot >= bfloor - EPS_SUM:
+            continue
+        movable = [g for g in live if g not in fixed]
+        if not movable:
+            continue
+        need = bfloor - tot
+        base = sum(shares[g] for g in movable) or 1.0
+        lo = {g: shares[g] for g in shares}
+        hi = {g: shares[g] for g in shares}
+        for g in movable:
+            lo[g] = hi[g] = shares[g] + need * shares[g] / base
+        for g in shares:
+            if g in fixed or g in members:
+                continue
+            lo[g] = max(floor.get(g, 0.0), current.get(g, 0.0) - max_shift) if shares[g] > 0 else 0.0
+            hi[g] = max(lo[g], min(cap, current.get(g, 0.0) + max_shift)) if shares[g] > 0 else 0.0
+        shares = constrained_fill(shares, lo, hi)
+    return shares
+
+
 def check_floors(shares: dict[str, float], static: dict[str, float], *, floor_frac: float,
                  floor_ct: float, cap: float, supply: dict[str, bool] | None = None,
                  guard_cut: set[str] | frozenset[str] = frozenset(), tol: float = 1e-6,
